@@ -645,6 +645,7 @@ def verify_custodial(
     min_factor: str | None = None,
     revoked_op_certs: frozenset[str] = frozenset(),
     member_roles: Mapping[str, str] = {},
+    live_items: Mapping[str, str] = {},
 ) -> dict[str, Any]:
     """The host's check of a custodial event (spec §5 "Verification in the workspace"). ``event`` is the event as
     delivered (E plus ``sig``; the host adds ``seq``/``at``/``prev``/``ws_seq``/``host_sig`` only when it appends).
@@ -679,10 +680,16 @@ def verify_custodial(
         "item_hash" in event and (type(event["item_hash"]) is not str or not _ITEM_HASH.fullmatch(event["item_hash"]))
     ):
         raise Refused("malformed")
+    # selective mode (§8.6): only the four decisions, on a ticket log, text-only answers
+    from .phase4 import SELECTIVE_TYPES, check_custodial_payload
+
+    if mode == "selective":
+        if typ not in SELECTIVE_TYPES or log == "workspace":
+            raise Refused("not_custodial")
+        if typ == "question.answered" and "option" in event:
+            raise Refused("malformed")
     # the exact payload of the type (§8.5 event side, L2-C3-1); a type outside the table is refused at 7b
     if (typ, log_kind(log)) in CUSTODIAL_TYPES:
-        from .phase4 import check_custodial_payload
-
         check_custodial_payload(event, log)
     user = actor["id"][2:]
     # 2. the hub this workspace is bound to
@@ -719,6 +726,10 @@ def verify_custodial(
         raise Refused("channel_revoked")
     if mode == "selective":
         if user not in granted_users:
+            raise Refused("not_granted")
+        # the item check at admission (§8.6, core §15.7): ``live_items`` = the host's live shared items
+        # ``{item_hash: chain.log}``; the event's item is one of them, of this log
+        if live_items.get(event["item_hash"]) != log:
             raise Refused("not_granted")
     elif snapshot["roles"].get(user) not in ROLES:
         raise Refused("forbidden_role")

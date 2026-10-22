@@ -653,6 +653,7 @@ def build_p4(
         ("gate_payload_under_people_changed", "people.changed", gp, "a gate body under another type"),
         ("status_changed_without_from", "status.changed", {"to": "open"}, "the hub derives from"),
         ("unknown_field", "log.added", {"text": "hi", "priority": "high"}, ""),
+        ("log_in_body", "log.added", {"text": "hi", "log": TICKET_2}, "the log is the signed context's, never a body field"),
         ("text_with_bidi", "log.added", {"text": "Pay \u202ex"}, "the text rule holds on the event too"),
     ):  # fmt: skip
         case(f"custodial_event_{nm}", "custodial", {**adm, "log": EVENT_PAYLOADS[typ][0],
@@ -1253,6 +1254,43 @@ def build_p4(
     rt("relay_route_mailbox_get", RR.mailbox_get_request(HUB_ID, CH_ALICE, mid2), ok_("mailbox_get", id=mid2))
     rt("relay_route_mailbox_delete", RR.mailbox_delete_request(HUB_ID, CH_ALICE, mid2), ok_("mailbox_delete", id=mid2))
     rt("relay_route_mailbox_purge", RR.mailbox_delete_request(HUB_ID, CH_ALICE), ok_("mailbox_purge"))
+    # ---- §10.8.3 cut-over (relay E3): the hub's signed requests and the state rules on both sides
+    co_put, co_get, co_del = (RR.cutover_request(HUB_ID, WS_A, m_) for m_ in ("PUT", "GET", "DELETE"))
+    rt("relay_route_cutover_put", co_put, {"ok": {"route": "cutover_put", "workspace_id": WS_A}})
+    rt("relay_route_cutover_get", co_get, {"ok": {"route": "cutover_get", "workspace_id": WS_A}})
+    rt("relay_route_cutover_delete", co_del, {"error": "not_allowed"}, "a hub never reverses a cut-over")
+    rt("relay_route_cutover_put_empty_body", (co_put[0], co_put[1], b""), {"error": "malformed"})
+    rt("relay_route_cutover_put_pending", (co_put[0], co_put[1], cj({"v": 2, "state": "pending"})),
+       {"error": "malformed"}, "a hub only confirms")  # fmt: skip
+    rt("relay_route_cutover_put_names_hub", (co_put[0], co_put[1], cj({"v": 2, "state": "cut_over", "hub_id": HUB_ID})),
+       {"error": "malformed"}, "the hub is the signer, never a body field")  # fmt: skip
+    rt("relay_route_cutover_bad_ws", (co_get[0], co_get[1].replace(WS_A, WS_A.upper()), b""), {"error": "malformed"})
+    rt("relay_route_cutover_post", ("POST", co_put[1], co_put[2]), {"error": "not_found"})
+    hub_b = fake16("hub_b")
+    pend, cut = {"state": "pending", "hub_id": HUB_ID}, {"state": "cut_over", "hub_id": HUB_ID}
+
+    def co(name: str, side: str, row: Any, req: tuple[str, str, bytes], expect: dict[str, Any], note: str = "") -> None:
+        m_, t_, b_ = req
+        a = {"side": side, "row": row, "method": m_, "target": t_, "hub_id": HUB_ID, "body_hex": b_.hex()}
+        case(name, "cutover", a, expect, 4, note)
+
+    co("cutover_hub_confirms_pending", "hub", pend, co_put, {"ok": cut})
+    co("cutover_hub_confirm_is_idempotent", "hub", cut, co_put, {"ok": cut})
+    co("cutover_hub_reads_state", "hub", pend, co_get, {"ok": pend})
+    co("cutover_hub_unknown_workspace", "hub", None, co_put, {"error": "other_hub"},
+       "unknown, not named and another hub's workspace are one answer")  # fmt: skip
+    co("cutover_hub_other_hub_named", "hub", {"state": "pending", "hub_id": hub_b}, co_put, {"error": "other_hub"})
+    co("cutover_hub_get_other_hub", "hub", {"state": "cut_over", "hub_id": hub_b}, co_get, {"error": "other_hub"})
+    ws_req = lambda st, h=HUB_ID: ("PUT", "", cj({"v": 2, "hub_id": h, "state": st}))
+    co("cutover_workspace_names_hub", "workspace", None, ws_req("pending"), {"ok": {"row": pend}})
+    co("cutover_workspace_cuts_over_directly", "workspace", None, ws_req("cut_over"), {"ok": {"row": cut}})
+    co("cutover_workspace_renames_pending", "workspace", pend, ws_req("pending", hub_b),
+       {"ok": {"row": {"state": "pending", "hub_id": hub_b}}})  # fmt: skip
+    co("cutover_workspace_pending_after_cut_over", "workspace", cut, ws_req("pending"), {"error": "cut_over"},
+       "naming a hub never weakens a cut-over: DELETE first")  # fmt: skip
+    co("cutover_workspace_reverses", "workspace", cut, ("DELETE", "", b""), {"ok": {"row": None}})
+    co("cutover_workspace_bad_state", "workspace", None, ws_req("direct"), {"error": "malformed"})
+
     m, t, b = put_req
     rt(
         "relay_route_push_put_bad_env",
@@ -1784,6 +1822,8 @@ def build_p4(
             "push_put": _rr_entry(put_req),
             "push_send": _rr_entry(send_req),
             "mailbox_put": _rr_entry(mb_put),
+            "cutover_put": _rr_entry(RR.cutover_request(HUB_ID, WS_A)),
+            "cutover_get": _rr_entry(RR.cutover_request(HUB_ID, WS_A, "GET")),
             "push_seal": {
                 "channel_key": "channel_alice_phone",
                 "channel_id": CH_ALICE,

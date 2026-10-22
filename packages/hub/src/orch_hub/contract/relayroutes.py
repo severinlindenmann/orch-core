@@ -123,7 +123,57 @@ def route(method: str, target: str, hub_id: str, body: bytes) -> dict[str, Any]:
             if method in ("GET", "DELETE"):
                 _empty(body)
                 return {"route": "mailbox_get" if method == "GET" else "mailbox_delete", "channel_id": ch, "id": mid}
+    if kind == "workspaces" and len(segs) == 3 and segs[2] == "cutover" and method in ("PUT", "GET", "DELETE"):
+        ws = _chan(segs[1])  # 32 lower-case hex, else malformed
+        if method == "PUT":
+            o = _obj(body, {"v", "state"})
+            if o["state"] != "cut_over":
+                raise Refused("malformed")  # a hub only confirms; it never names, redirects or sets pending
+            return {"route": "cutover_put", "workspace_id": ws}
+        _empty(body)
+        if method == "DELETE":
+            raise Refused("not_allowed")  # a hub never reverses a cut-over (403)
+        return {"route": "cutover_get", "workspace_id": ws}
     raise Refused("not_found")
+
+
+# --- §10.8.3 the cut-over state at the relay (relay E3) ---------------------------------------------------------------
+
+CUTOVER_STATES = ("pending", "cut_over")
+
+
+def cutover_view(row: Mapping[str, Any] | None) -> dict[str, Any]:
+    return {"state": "direct"} if row is None else {"state": row["state"], "hub_id": row["hub_id"]}
+
+
+def cutover_workspace(row: Mapping[str, Any] | None, method: str, body: bytes) -> dict[str, Any] | None:
+    """The workspace's own request (its session, WSK): the new row (None = direct). ``PUT {v: 2, hub_id, state}``
+    names a hub (``pending``) or cuts over at once (``cut_over``); naming a hub never weakens a cut-over
+    (``cut_over``, 403: DELETE first); ``DELETE`` always returns to the direct path."""
+    if method == "DELETE":
+        _empty(body)
+        return None
+    if method != "PUT":
+        raise Refused("not_found")
+    o = _obj(body, {"v", "hub_id", "state"})
+    if type(o["hub_id"]) is not str or not _HEX32.fullmatch(o["hub_id"]):
+        raise Refused("malformed")
+    if o["state"] not in CUTOVER_STATES:
+        raise Refused("malformed")
+    if row is not None and row["state"] == "cut_over" and o["state"] == "pending":
+        raise Refused("cut_over")
+    return {"state": o["state"], "hub_id": o["hub_id"]}
+
+
+def cutover_hub(row: Mapping[str, Any] | None, hub_id: str, route_name: str) -> dict[str, Any]:
+    """The hub's request after :func:`route`: only for a workspace that named exactly this hub (unknown, not named and
+    another hub's are one answer, ``other_hub`` 403). ``cutover_put`` confirms ``pending`` -> ``cut_over``
+    (idempotent); ``cutover_get`` reads."""
+    if row is None or row["hub_id"] != hub_id:
+        raise Refused("other_hub")
+    if route_name == "cutover_put":
+        row = {"state": "cut_over", "hub_id": hub_id}
+    return cutover_view(row)
 
 
 def _chan(x: str) -> str:
@@ -174,6 +224,11 @@ def mailbox_get_request(hub_id: str, channel_id: str, msg_id: str) -> tuple[str,
 def mailbox_delete_request(hub_id: str, channel_id: str, msg_id: str | None = None) -> tuple[str, str, bytes]:
     tail = f"/{msg_id}" if msg_id else ""
     return "DELETE", f"{base(hub_id)}/mailbox/{channel_id}{tail}", b""
+
+
+def cutover_request(hub_id: str, workspace_id: str, method: str = "PUT") -> tuple[str, str, bytes]:
+    body = cj({"v": 2, "state": "cut_over"}) if method == "PUT" else b""
+    return method, f"{base(hub_id)}/workspaces/{workspace_id}/cutover", body
 
 
 # --- the sealed push payload (§10.8.2) --------------------------------------------------------------------------------

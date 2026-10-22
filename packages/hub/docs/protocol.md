@@ -471,7 +471,9 @@ host↔hub link has no operation that asks the hub to sign (§10).
 
 1. shape: `auth == "hub"`, every field of §8.1 present, `type` in the custodial grammar, `actor` exactly
    `{kind: "person", id: "u_<32 hex>", via}` with `via == channel`, `channel_factor` in the closed list, no host
-   fields, `item_hash` (a hash) present exactly in selective mode → `malformed`; for a `(type, log)` of the §8.5
+   fields, `item_hash` (a hash) present exactly in selective mode → `malformed`; selective mode: `type` one of the
+   four decisions of §8.6 and `log` a ticket → else `not_custodial`, a `question.answered` without `option` → else
+   `malformed`; a `log` key in the event body (the log is the signed context's) → `malformed`; for a `(type, log)` of the §8.5
    table, the envelope and payload are exactly the event side of §8.5 ("The event side") → `malformed` (reference
    `check_custodial_payload`, vectors `custodial_event_*`);
 2. `hub_id` is the hub this workspace is bound to → `other_hub`;
@@ -487,7 +489,9 @@ host↔hub link has no operation that asks the hub to sign (§10).
    the certificates so an unauthenticated event learns nothing of the id map; `channel` in that snapshot's
    `revoked_channels` → `channel_revoked`; full mode: the user has a role in
    it → else `forbidden_role` (which verbs each role may use is the role table of spec D70, applied after this);
-   selective mode: the user is explicitly granted by the owner → else `not_granted`, and the item is shared (C6);
+   selective mode: the user is explicitly granted by the owner → else `not_granted`, and **the item check at
+   admission** (§8.6, core §15.7): `item_hash` is the current hash of a live item the host shared, and that item's
+   `chain.log` is the event's log → else `not_granted` (reference input `live_items` = `{item_hash: chain.log}`);
    7b. (p4) the event's `(type, log)` is in the custodial table of §8.5 → else `not_custodial`; the user's role
    reaches the type's lowest role → else `forbidden_role`. **Selective mode (L2P4-1):** there is no hub role; the
    floor is the F1 member role of the user's canonical person (its alias to a member `p_`, §9.1) mapped `owner` →
@@ -1528,6 +1532,43 @@ the seal is anonymous (anyone who knows a channel's public key can make one), so
 and the app acts only on what it fetches from the hub over its authenticated channel, never on this payload. The `id`,
 `ch` and `hub` in `outer` are not secret; the `type` and `ref` are.
 
+### 10.8.3 Cut-over of a workspace's direct relay path (phase 4, relay E3, orch-core #896)
+
+**Purpose.** Until H5 a workspace keeps its direct (v2) relay path. When it moves behind a hub, the relay closes that
+path for it. The relay holds no hub ↔ workspace binding, so **the workspace names the hub first and the hub only
+confirms**: a hub alone can never close (DoS) someone's direct path, redirect it or reverse it.
+
+**Workspace side** (v2 relay session of the workspace itself, i.e. its `WSK`; a device or any other session is
+`403 not_eligible`, a `GET` also from a member device):
+
+| Route | Body | Effect / answer |
+|---|---|---|
+| `PUT /v2/workspaces/{ws}/cutover` | `{v: 2, hub_id, state: "pending" \| "cut_over"}` | `pending`: names (or renames) the hub; `cut_over`: closes the direct path at once (the workspace's own act). `pending` while `cut_over` is `403 cut_over` (naming never weakens a cut-over; `DELETE` first). Answer: the state below |
+| `DELETE /v2/workspaces/{ws}/cutover` | empty | back to `direct` (only the workspace reverses) |
+| `GET /v2/workspaces/{ws}/cutover` | empty | `{state: "direct" \| "pending" \| "cut_over", hub_id, cut_over_ms, drain_until_ms, purged}` (`direct`: `state` only) |
+
+**Hub side** (signed under §10.8 and checked in its order before the route; then the §10.8.1 body rules; not subject
+to the push-configuration `404`):
+
+| Route | Body | Answer |
+|---|---|---|
+| `PUT /v2/hubs/{hub}/workspaces/{ws}/cutover` | `{v: 2, state: "cut_over"}` | confirms `pending` → `cut_over` for a workspace that named **exactly this hub**; a repeat on `cut_over` is `200` and changes nothing (times kept). Answer: the state |
+| `GET /v2/hubs/{hub}/workspaces/{ws}/cutover` | empty | the state, only for a workspace that named this hub |
+| `DELETE /v2/hubs/{hub}/workspaces/{ws}/cutover` | empty | always `403 not_allowed` |
+
+- An unknown workspace, one that named no hub (`direct`) and one that named another hub all answer the hub
+  `403 other_hub`, so a hub learns nothing about workspaces that did not name it. `{ws}` not 32 lower-case hex, a
+  query, or another body is `400 malformed`; another method `404 not_found`. **DECIDED HERE (changes to E3):** the
+  hub's `PUT` carries `{v: 2, state: "cut_over"}` (not an empty body), like every other signed `PUT` of §10.8.1, so the
+  signed bytes name the act; and a workspace `pending` over a `cut_over` is `403 cut_over` (E3: `malformed`).
+- **After `cut_over`** the relay refuses `403 cut_over` (details `drain_until_ms`, `drained`) on the workspace's
+  direct writes at once (bridge and pairing posts, direct envelopes, push registration, push send); reads of the
+  direct mailbox and the host's hold/poll stay open for the drain window (relay configuration, default 7 days), then
+  the direct mailbox, replay records and push registrations of the workspace are purged and every direct route is
+  refused. Push unregistration stays allowed (cleanup).
+- Reference `relayroutes.route` (`cutover_put`/`cutover_get`), `cutover_hub`, `cutover_workspace`; vectors
+  `relay_route_cutover_*`, `cutover_*`, and the signed request bytes `phase4.relay_routes.cutover_put`/`cutover_get`.
+
 ## 11. Publish through the hub (phase 2, D76, V3-D4)
 
 **Purpose.** A workspace publishes through its hub; orch-publish accepts it only with the workspace's live binding
@@ -1712,6 +1753,7 @@ v2 codes keep their meaning (v2 §14). New in H0:
 | `challenge_invalid` (p4) | channel registration | §6.3: not the challenge the hub issued, or expired. Reused there: `factor_mismatch` (the attestation is not the gate the hub checked), `other_user`, `other_hub` |
 | `bad_invite`, `unavailable`, `internal` | link reply | `join` with an unknown, used or expired invite; an op whose backend (e.g. publish forwarder) is not available; an unexpected hub-side failure (no detail) |
 | `not_bound` (403), `unknown_hub` (401), `bad_hub_signature` (401) | publish, admin read, relay request | §11.2, §10.6, §10.8 (with `stale_op_cert`, `replay`, `other_hub`). Statuses are per path: on relay registration and the public card read `unknown_hub` is 404 and `stale_op_cert` 409 (§10.8) |
+| `cut_over` (403) (p4) | relay, §10.8.3 | the workspace's direct relay path is closed (cut over to a hub); also a workspace `pending` over a `cut_over` |
 | `not_found` (404), `message_conflict` (409) (p4) | relay routes | §10.8.1: an unknown route, method or message; another body under a held mailbox `id`. Reused there: `malformed`, `too_large` (413), `quota_exceeded` (429), `overloaded` (503), `not_allowed` (403, registration) |
 | `approval_required`, `bad_approval` (403) | publish | §11.3 |
 
@@ -1737,7 +1779,7 @@ link errors travel as `{"error": code}` reply bodies; host-side refusals are loc
 | `spaces` | V3-D8: the space key per epoch, `sk_commit`, one sealed item (salt, derived key, AAD, plaintext object) and one wrap (ephemeral seed, AAD) |
 | `phase4` | p4: the `log_sync` lines, heads, view key, AAD and one sealed page; a prepared context and digest; a relay request and its bytes; the relay routes' request bytes and one sealed push payload (`relay_routes`); the custodial type table; the `space.accept` built from the vector proposal |
 | `share_item_f1` | C3b addendum: a ticket item with an `f1` block and its `item_hash` (§10.2b, §8.6) |
-| `cases` | 712 cases (186 positive, 526 negative): `check`, `args`, `expect` (`{"ok": …}` or `{"error": code}`), `phase` |
+| `cases` | 738 cases (195 positive, 543 negative): `check`, `args`, `expect` (`{"ok": …}` or `{"error": code}`), `phase` |
 
 The negative cases cover, per object where it applies: wrong domain, wrong signer, expired, binding for another
 workspace, unbound after leave, missing dev marker, dev at a real verifier, extra or unknown field, non-canonical
@@ -1796,6 +1838,7 @@ plus `selective_build`. The hub also runs `hub_join`. Each case carries its `pha
 | 38 | Selective custodial events (C3b addendum) | additive `f1` block in `share.item`; four decision types only; action names `item`; text-only answers in V3; `item_hash` in the event (§8.6, §10.2b) | core #1031 §15.7 |
 | 39 | Event side of §8.5 (C3b addendum) | exact payload per custodial type incl. derived fields; `base_rev` is a `{path: hash}` object keyed exactly by `set`; host checks it in step 1; one event-shaped vector per type | L2-C3-1, C3 review |
 | 40 | `log_sync` sender rules (C3b addendum, C14) | old pages kept across rotation; 1 MiB raw; no oversize line; resume probe instead of a head-read op; `reset` not tied to `restore`; one live link per workspace (§10.7) | orch-core #1027 |
+| 41 | Relay cut-over (E3) | workspace names the hub, the hub only confirms; `other_hub` for every workspace that did not name it; hub `PUT` body `{v: 2, state: "cut_over"}`; `cut_over` (403) (§10.8.3) | orch-relay #88 |
 | 34 | New audit types | `channel` and `share` are additive `type` values of `hub.audit` in `hv: 0`: **orch-core's audit verifier must accept them** (its type enum and event field table), as the hub does | orchestrator lean, adopted |
 
 **SHORTCUTS added by the phase-4 extension** (for the #838 table): `Phone key attestation by operator pairing code (no

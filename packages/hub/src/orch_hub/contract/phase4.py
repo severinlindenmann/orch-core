@@ -1174,7 +1174,7 @@ def check_custodial_payload(event: Any, log: str) -> None:
     depth, is ``malformed``. The caller has checked the custodial fields; the type's table entry and role are 7b."""
     from .hub import CUSTODIAL_FIELDS as CF
 
-    if type(event) is not dict:
+    if type(event) is not dict or "log" in event:  # the log is the context's, never a body field
         raise Refused("malformed")
     typ = event.get("type")
     rest = {k: v for k, v in event.items() if k not in ENVELOPE and k not in CF and k not in ("sig", "item_hash")}

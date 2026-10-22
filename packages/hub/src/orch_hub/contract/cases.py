@@ -198,6 +198,7 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
             min_factor=a.get("min_factor"),
             revoked_op_certs=_later(a),
             member_roles=a.get("member_roles", {}),
+            live_items=a.get("live_items", {}),
         )
     if check == "binding_store":
         s = _apply_store(a["steps"], a["workspace_id"], unb64u(a["wsk_pub"], 65), now, dev)
@@ -402,6 +403,11 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
             "body": bytes.fromhex(r["body_hex"]),
         }
         return P4.check_relay_request(req, st, now_ms=now, dev_mode=dev)
+    if check == "cutover":
+        if a["side"] == "workspace":
+            return {"row": RR.cutover_workspace(a["row"], a["method"], bytes.fromhex(a["body_hex"]))}
+        r = RR.route(a["method"], a["target"], a["hub_id"], bytes.fromhex(a["body_hex"]))
+        return RR.cutover_hub(a["row"], a["hub_id"], r["route"])
     if check == "relay_route":
         return RR.route(a["method"], a["target"], a["hub_id"], bytes.fromhex(a["body_hex"]))
     raise ValueError(f"unknown check {check}")

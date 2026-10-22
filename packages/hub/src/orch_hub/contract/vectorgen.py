@@ -1220,10 +1220,39 @@ def build() -> dict[str, Any]:
         4,
     )
     ev_sel = custodial(item_hash=ITEM_HASH_SEL)
+    LIVE = {ITEM_HASH_SEL: TICKET}
+    sel_ok = {
+        **cus,
+        "mode": "selective",
+        "live_items": LIVE,
+        "granted_users": [U_ALICE],
+        "member_roles": {U_ALICE: "owner"},
+    }
+    for nm, args, exp, why in (
+        ("custodial_selective_item_not_live", {**sel_ok, "event": ev_sel, "live_items": {}}, "not_granted",
+         "the item check at admission: the event's item_hash is a live shared item"),
+        ("custodial_selective_item_of_other_log", {**sel_ok, "event": ev_sel, "live_items": {ITEM_HASH_SEL: "01J9ZP0000000000000000TKT2"}},
+         "not_granted", "the item's chain.log is the event's log"),
+        ("custodial_selective_log_added", {**sel_ok, "event": custodial(typ="log.added", item_hash=ITEM_HASH_SEL)},
+         "not_custodial", "only the four decisions in selective mode"),
+        ("custodial_selective_workspace_log", {**sel_ok, "log": "workspace",
+         "event": custodial(typ="addon.disabled", item_hash=ITEM_HASH_SEL)}, "not_custodial", "no selective workspace-log types"),
+        ("custodial_selective_answer_with_option",
+         {**sel_ok, "event": custodial(typ="question.answered", item_hash=ITEM_HASH_SEL)}, "malformed",
+         "text-only answers in selective mode (options are not shared)"),
+    ):  # fmt: skip
+        case(nm, "custodial", args, {"error": exp}, 4, why)
     case(
         "custodial_selective_without_item_hash",
         "custodial",
-        {**cus, "event": ev, "mode": "selective", "granted_users": [U_ALICE], "member_roles": {U_ALICE: "owner"}},
+        {
+            **cus,
+            "event": ev,
+            "mode": "selective",
+            "live_items": LIVE,
+            "granted_users": [U_ALICE],
+            "member_roles": {U_ALICE: "owner"},
+        },
         {"error": "malformed"},
         4,
         "C3b addendum: a selective custodial event names the shared item it was built on (item_hash)",
@@ -1239,7 +1268,7 @@ def build() -> dict[str, Any]:
     case(
         "custodial_selective_not_granted",
         "custodial",
-        {**cus, "event": ev_sel, "mode": "selective", "granted_users": [U_BOB]},
+        {**cus, "event": ev_sel, "mode": "selective", "live_items": LIVE, "granted_users": [U_BOB]},
         {"error": "not_granted"},
         4,
         "D80: hub roles do not reach a selective workspace",
@@ -1247,7 +1276,14 @@ def build() -> dict[str, Any]:
     case(
         "custodial_selective_granted_owner",
         "custodial",
-        {**cus, "event": ev_sel, "mode": "selective", "granted_users": [U_ALICE], "member_roles": {U_ALICE: "owner"}},
+        {
+            **cus,
+            "event": ev_sel,
+            "mode": "selective",
+            "live_items": LIVE,
+            "granted_users": [U_ALICE],
+            "member_roles": {U_ALICE: "owner"},
+        },
         ok_cus,
         4,
     )
@@ -1259,24 +1295,32 @@ def build() -> dict[str, Any]:
             **cus,
             "event": custodial(typ="people.changed", item_hash=ITEM_HASH_SEL),
             "mode": "selective",
+            "live_items": LIVE,
             "granted_users": [U_ALICE],
             "member_roles": {U_ALICE: "member"},
         },
-        {"error": "forbidden_role"},
+        {"error": "not_custodial"},
         4,
-        "a granted member is edit, not admin",
+        "selective mode builds only the four decision types (§8.6); people.changed is never selective",
     )
     case(
         "custodial_selective_granted_member_decides",
         "custodial",
-        {**cus, "event": ev_sel, "mode": "selective", "granted_users": [U_ALICE], "member_roles": {U_ALICE: "member"}},
+        {
+            **cus,
+            "event": ev_sel,
+            "mode": "selective",
+            "live_items": LIVE,
+            "granted_users": [U_ALICE],
+            "member_roles": {U_ALICE: "member"},
+        },
         ok_cus,
         4,
     )
     case(
         "custodial_selective_granted_unaliased_is_viewer",
         "custodial",
-        {**cus, "event": ev_sel, "mode": "selective", "granted_users": [U_ALICE]},
+        {**cus, "event": ev_sel, "mode": "selective", "live_items": LIVE, "granted_users": [U_ALICE]},
         {"error": "forbidden_role"},
         4,
         "a granted user without an alias to a member is a viewer and signs nothing",

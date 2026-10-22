@@ -80,14 +80,15 @@ class DeliveryQueue:
         sender: Callable[[str, str, dict[str, Any]], int | None] | None = None,
     ) -> None:
         """``sender(ws, log, event)`` is the write seam (serve wiring: ``Router.send_event``): it writes one
-        ``event_deliver`` to the workspace's live link and raises when it cannot. It may return the h2w ``seq`` (replies
-        are then matched on it); returning None means the reply of the one in-flight send is matched by op alone, which
-        is safe because the queue keeps one event in flight per workspace. Without it the queue writes on the port the
-        link server attached."""
-        self._sender = sender
-        """``notify(outcome)`` is called once per ended event with ``{workspace_id, log, event_id, type, user_id,
+        ``event_deliver`` to the workspace's live link and raises when it cannot. It MUST return the h2w ``seq`` of the
+        write: a reply counts only when it matches (workspace, seq) of the one in-flight send, so a late ack of an
+        earlier attempt can never end a later event. A sender that returns no seq is a failed send. Without it the queue
+        writes on the port the link server attached.
+
+        ``notify(outcome)`` is called once per ended event with ``{workspace_id, log, event_id, type, user_id,
         channel_id, outcome ("done" | "dropped"), code (None when done), attempts}``: tell the channel (D13). It never
         carries event bytes and a failing hook never stops the queue."""
+        self._sender = sender
         self._now = now_ms or (lambda: int(time.time() * 1000))
         self._timeout, self._notify, self._poll = reply_timeout_ms, notify, poll_s
         self._dblock = threading.RLock()
@@ -109,8 +110,11 @@ class DeliveryQueue:
         actor = event["actor"]["id"]
         now = self._now()
         with self._dblock:
+            if self._db.execute("SELECT 1 FROM deliver WHERE event_id=?", (event["id"],)).fetchone() is not None:
+                _log.warning("event %s is already queued; not queued twice", event["id"])
+                return
             self._db.execute(
-                "INSERT OR IGNORE INTO deliver (ws, log, event_id, event_type, user_id, channel_id, event, enq_ms, "
+                "INSERT INTO deliver (ws, log, event_id, event_type, user_id, channel_id, event, enq_ms, "
                 "next_ms) VALUES (?,?,?,?,?,?,?,?,?)",
                 (ws, log, event["id"], event["type"], actor[2:], event["channel"], blob, now, now),
             )
@@ -153,8 +157,9 @@ class DeliveryQueue:
         if o.get("op") != "event_deliver":
             return
         with link.lock:
-            if link.inflight is None or link.inflight[1] not in (0, o.get("re")):
-                return  # seq 0: the sender did not report one
+            if link.inflight is None or link.inflight[1] != o.get("re"):
+                _log.info("event_deliver reply for ws %s matches no in-flight send; dropped", ws)
+                return
             row_id, _seq, _sent = link.inflight
             link.inflight = None
             self._settle(row_id, o.get("body"))
@@ -213,7 +218,9 @@ class DeliveryQueue:
         try:
             if self._sender is not None:
                 r = self._sender(ws, log, event)
-                seq = r if type(r) is int and r > 0 else 0
+                if type(r) is not int or r < 1:
+                    raise OSError("sender returned no seq")  # unmatchable reply: treated as a failed send
+                seq = r
             else:
                 seq = link.port.send_request("event_deliver", {"log": log, "event": event})
         except Exception:  # noqa: BLE001 (the link is gone: no reply)

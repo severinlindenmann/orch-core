@@ -97,7 +97,8 @@ def test_a_link_with_a_rotated_out_key_gets_no_delivery(rig, monkeypatch):
 
 def test_a_link_whose_binding_ended_gets_no_delivery(rig, monkeypatch):
     q, h, c = rig
-    monkeypatch.setattr(h.registry, "mode", lambda ws: None)
+    real = h.registry.binding_state
+    monkeypatch.setattr(h.registry, "binding_state", lambda ws: {**real(ws), "status": "unbound"})
     q(G.WS_A, LOG, ev())
     time.sleep(0.3)
     _silent(c)
@@ -107,6 +108,18 @@ def test_a_link_whose_binding_ended_gets_no_delivery(rig, monkeypatch):
 def test_a_stale_link_is_detached_at_the_next_dispatch(rig, monkeypatch):
     q, h, c = rig
     assert G.WS_A in q._links
-    monkeypatch.setattr(h.registry, "mode", lambda ws: None)
-    c.request("snapshot_get", {})
+    real = h.registry.binding_state
+    monkeypatch.setattr(h.registry, "binding_state", lambda ws: {**real(ws), "status": "unbound"})
+    with pytest.raises(LinkError):
+        c.request("snapshot_get", {})  # not_bound; the dispatch still detaches the stale link
     assert until(lambda: G.WS_A not in q._links)
+
+
+def test_a_rebind_detaches_the_link_then_it_attaches_afresh(rig, monkeypatch):
+    q, h, c = rig
+    old = q._links[G.WS_A]
+    real = h.registry.binding_state
+    seq = real(G.WS_A)["binding_seq"]
+    monkeypatch.setattr(h.registry, "binding_state", lambda ws: {**real(ws), "binding_seq": seq + 1})
+    c.request("snapshot_get", {})  # the next dispatch sees binding_seq moved: detach, attach to the new binding
+    assert old.dead and q._links[G.WS_A] is not old

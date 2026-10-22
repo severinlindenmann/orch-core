@@ -326,20 +326,33 @@ def test_a_link_that_drops_with_an_event_in_flight_makes_the_next_link_wait(rig)
     assert len(rig.port.sent) == 1
 
 
-def test_sender_seam_without_seq_matches_the_reply_by_op(tmp_path):
-    sent = []
-    t = [1_000_000]
-    q = DeliveryQueue(now_ms=lambda: t[0], sender=lambda ws, log, e: sent.append((ws, log, e)))
+class Sender:
+    """The write seam as ``Router.send_event`` must be: returns the h2w seq of the write."""
+
+    def __init__(self):
+        self.sent, self.seq = [], 0
+
+    def __call__(self, ws, log, e):
+        self.seq += 1
+        self.sent.append((ws, log, e["id"]))
+        return self.seq
+
+
+def test_sender_seam_matches_the_reply_on_seq():
+    snd, t = Sender(), [1_000_000]
+    q = DeliveryQueue(now_ms=lambda: t[0], sender=snd)
     q(WS, LOG, ev())
     link = q.attach(WS, Port())
     q.pump()
-    assert sent == [(WS, LOG, ev())]
-    q.on_reply(WS, link, {"op": "event_deliver", "re": 77, "body": {}})
+    assert snd.sent == [(WS, LOG, ev()["id"])]
+    q.on_reply(WS, link, {"op": "event_deliver", "re": 77, "body": {}})  # not the in-flight seq: dropped
+    assert q.pending()
+    q.on_reply(WS, link, {"op": "event_deliver", "re": 1, "body": {}})
     assert q.outcomes()[0]["state"] == "done"
     q.close()
 
 
-def test_sender_that_raises_is_no_reply_and_keeps_the_link(tmp_path):
+def test_sender_that_raises_is_no_reply_and_keeps_the_link():
     t = [1_000_000]
 
     def boom(ws, log, e):
@@ -351,3 +364,43 @@ def test_sender_that_raises_is_no_reply_and_keeps_the_link(tmp_path):
     q.pump()
     assert not link.dead and q.pending()[0]["last_code"] == "unavailable"
     q.close()
+
+
+def test_sender_that_returns_no_seq_is_a_failed_send_never_an_unmatchable_one():
+    q = DeliveryQueue(now_ms=lambda: 1_000_000, sender=lambda ws, log, e: None)
+    q(WS, LOG, ev())
+    link = q.attach(WS, Port())
+    q.pump()
+    assert link.inflight is None and q.pending()[0]["last_code"] == "unavailable"
+    q.close()
+
+
+def test_l2_d9b_1_a_late_reply_to_an_earlier_attempt_never_ends_the_next_event():
+    """A's attempt 1 times out, A is resent (attempt 2); the host's late reply to attempt 1 arrives while attempt 2 is in
+    flight and again while B is in flight: neither is taken for another send's reply."""
+    snd, t = Sender(), [1_000_000]
+    q = DeliveryQueue(now_ms=lambda: t[0], reply_timeout_ms=30_000, sender=snd)
+    a, b = ev(1), ev(2)
+    q(WS, LOG, a)
+    q(WS, LOG, b)
+    link = q.attach(WS, Port())
+    q.pump()  # A attempt 1 (seq 1)
+    t[0] += 31_000
+    q.pump()  # timeout -> backoff 1 s
+    t[0] += 1_000
+    q.pump()  # A attempt 2 (seq 2)
+    q.on_reply(WS, link, {"op": "event_deliver", "re": 1, "body": {}})  # late reply to attempt 1: dropped
+    assert [p["event_id"] for p in q.pending()] == [a["id"], b["id"]]
+    q.on_reply(WS, link, {"op": "event_deliver", "re": 2, "body": {}})  # A done
+    q.pump()  # B (seq 3)
+    q.on_reply(WS, link, {"op": "event_deliver", "re": 1, "body": {}})  # a stale ack again
+    st = {o["event_id"]: o["state"] for o in q.outcomes()}
+    assert st == {a["id"]: "done"} and [p["event_id"] for p in q.pending()] == [b["id"]]
+    q.close()
+
+
+def test_a_duplicate_event_id_is_logged_not_silently_ignored(rig, caplog):
+    rig.q(WS, LOG, ev())
+    with caplog.at_level(logging.WARNING):
+        rig.q(WS, LOG, ev())
+    assert "already queued" in caplog.text

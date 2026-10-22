@@ -41,6 +41,7 @@ RUN_CHECKS = frozenset(
         "custodial",  # V3 C3 phase 4: replayed against the PRODUCTION module orch.hubclient.custodial
         "share_item",  # V3 C6 (phase 4): replayed through the test-side opener (share_open.py)
         "share_revoke",
+        "log_sync",  # V3 C14: the vector pages applied by the test-side hub port (tests/hub/logview.py)
     }
 )
 SKIPPED_CHECKS = {
@@ -52,7 +53,6 @@ SKIPPED_CHECKS = {
     "prepared": "channels (orch-mobile, browser home) recompute the digest; the host sees only the signed event",
     "render": "channels render view-derived text (protocol 8.4); not a host check",
     "relay_request": "hub to relay (protocol 10.8): orch-relay verifies",
-    "log_sync": "phase 4 log_sync (protocol 10.7): its own core task",
     "space_proposal": "phase 4 space proposals (protocol 10.4): its own core task",
     "audit": "hub audit chain (D4): hub side",
     "audit_ack": "hub audit chain (D4): hub side",
@@ -182,6 +182,8 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
         return _run_custodial(a)
     if check in ("share_item", "share_revoke"):
         return _run_share(check, a)
+    if check == "log_sync":
+        return _run_log_sync(a)
     raise ValueError(f"check {check} is not replayed by core")
 
 
@@ -272,3 +274,15 @@ def outcome(case: dict[str, Any]) -> dict[str, Any]:
         return {"ok": run(case["check"], case["args"])}
     except (H.Refused, HubRefused) as r:
         return {"error": r.code}
+
+
+def _run_log_sync(a: dict[str, Any]) -> dict[str, Any]:
+    """Apply the pages in order to an empty hub view (the test-side port of the hub's rules); the first refusal is the
+    outcome, else the held ``{log: {seq, head}}``."""
+    from . import logview
+
+    view = logview.View()
+    wk = {int(e): bytes.fromhex(k) for e, k in a["wk_epochs"].items()}
+    for page in a["pages"]:
+        logview.apply_page(view, page, workspace_id=a["workspace_id"], wsk_pub=unb64u(a["wsk_pub"], 65), wk=wk)
+    return view.summary()

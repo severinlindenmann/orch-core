@@ -273,6 +273,9 @@ class WorkspaceService:
 
         peerops.maybe_start(self)  # V3 C12: the receive thread of a workspace that uses peers (never fails the open)
         shareauto.maybe_start(self)  # V3 C6: the debounced share pass of a workspace that has share state
+        from . import logsyncops
+
+        logsyncops.start(self)  # V3 C14: the hub log_sync sender of a full-mode workspace (never fails the open)
 
     # -- the relay worker (§11A.4 "The hook", R5)
     def _relay_open(self) -> None:
@@ -423,6 +426,8 @@ class WorkspaceService:
         append (it publishes now, not at its next idle check), the membership thread (it re-plans) and the
         unpublished consumer after a commit that can revoke. Called inside the store's critical section; the wakes only
         set events and never raise."""
+        from . import logsyncops
+
         committed = journal.committed
 
         def hook(log: str, event: dict[str, Any]) -> None:
@@ -431,6 +436,9 @@ class WorkspaceService:
             finally:
                 self._relay_wake(event)
                 shareauto.touch(self)  # V3 C6: a debounced share pass (selective mode only; flag + wake, never raises)
+                logsyncops.wake(
+                    self
+                )  # V3 C14: a committed event, so the hub view follows (debounced; only sets a flag)
 
         return hook
 
@@ -806,6 +814,9 @@ class WorkspaceService:
 
         peerops.stop(self)  # V3 C12: the ws->ws receive thread, before the store goes
         shareauto.stop(self)  # V3 C6: the share pass thread, before the store goes
+        from . import logsyncops
+
+        logsyncops.stop(self)  # V3 C14
         # §11A.7 shutdown: the relay worker stops first and its threads are waited for (bounded by 120 s) before the
         # job that closes the store is queued; jobs it queued before stopping run first (the worker FIFO)
         with self.relay_cond:

@@ -10,7 +10,6 @@ write can hang.
 from __future__ import annotations
 
 import hmac
-import select
 import socket
 import threading
 import time
@@ -20,6 +19,7 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from OpenSSL import SSL
 
+from orch import fdwait
 from orch.crypto.encoding import EncodingError, b64u, unb64u
 
 __all__ = [
@@ -67,8 +67,7 @@ class TlsConn:
         left = deadline - time.monotonic()
         if left <= 0:
             raise LinkTimeout
-        r, w, _ = select.select([] if write else [self._s], [self._s] if write else [], [], left)
-        if not (r or w):
+        if not (fdwait.writable if write else fdwait.readable)(self._s, left):
             raise LinkTimeout
 
     def _run(self, fn, deadline: float):

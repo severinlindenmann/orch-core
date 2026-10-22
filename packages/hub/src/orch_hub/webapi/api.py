@@ -286,17 +286,12 @@ class _Limiter:
 
 
 def _norm_ip(addr: str) -> str:
-    """One source per network that a host can freely pick addresses in: an IPv6 /64 is one source."""
-    try:
-        ip = ipaddress.ip_address(addr)
-    except ValueError:
-        if addr == "":
-            return addr
-        raise
+    """One source per network that a host can freely pick addresses in: an IPv6 /48 is one source."""
+    ip = ipaddress.ip_address(addr)  # ValueError for "" and anything that is not an address
     if isinstance(ip, ipaddress.IPv6Address):
         if ip.ipv4_mapped is not None:
             return str(ip.ipv4_mapped)
-        return str(ipaddress.ip_network(f"{ip}/64", strict=False))
+        return str(ipaddress.ip_network(f"{ip}/48", strict=False))
     return str(ip)
 
 
@@ -364,7 +359,7 @@ class WebApi:
     def _source(self, headers: dict[str, str], peer: str) -> str:
         """The client address: the socket peer, or, only when that peer is the configured edge, the rightmost
         ``X-Forwarded-For`` entry that is not itself a trusted proxy (so a chain of trusted proxies works; entries
-        left of the first untrusted one are client-controlled and never read). An IPv6 source is its /64 and an
+        left of the first untrusted one are client-controlled and never read). An IPv6 source is its /48 and an
         IPv4-mapped one its IPv4. Anything that is not an IP address is the peer."""
         if peer in self.d.trusted_peers:
             for entry in reversed(headers.get("x-forwarded-for", "").split(",")):
@@ -378,7 +373,7 @@ class WebApi:
         try:
             return _norm_ip(peer)
         except ValueError:
-            return peer
+            return peer or "unknown"  # a source is never empty
 
     def handle(
         self, method: str, target: str, headers: dict[str, str], body: bytes, peer: str = ""

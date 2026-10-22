@@ -207,7 +207,7 @@ export function clickProblem(e: unknown): ClickProblem {
     case 'sign.convenience_unavailable': {
       const r = refusalOf(e)!
       // The switch moved after the page chose its way: nothing is wrong, the next try follows the host's current answer.
-      if (r.reason === 'disabled') return { title: 'Click-to-sign was switched off', body: 'Click-to-sign is off for this workspace now. To sign in the Terminal, the key must first move back to a passphrase: `orch keys custody passphrase --workspace <prefix> --in-place`. Try again makes a new request for the Terminal.', next: 'retry', stale: true }
+      if (r.reason === 'disabled') return { title: 'Click-to-sign was switched off', body: `${refusalSentence(r)} To sign in the Terminal, the key must first move back to a passphrase: "orch keys custody passphrase --workspace <prefix> --in-place". Try again makes a new request for the Terminal.`, next: 'retry', stale: true, devices: r.devices }
       return { title: 'Click-to-sign is not available here', body: r.reason === 'dev_host' ? refusalSentence(r) : `${refusalSentence(r)}${OFF}`, next: 'terminal', devices: r.devices }
     }
     case DEV_REFUSED:

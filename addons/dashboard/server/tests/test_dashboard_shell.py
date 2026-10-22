@@ -99,6 +99,7 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/runner/forget",
         "/api/testrun/{run}",
         "/api/testrun/{run}/previous",
+        "/api/testrun/{run}/screenshots.zip",
         "/api/testrun/{run}/steps/{step}",
         "/api/testrun/{run}/steps/{step}/images",
         "/api/testrun/{run}/images/{name}",

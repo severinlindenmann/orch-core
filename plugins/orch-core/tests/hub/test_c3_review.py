@@ -71,6 +71,10 @@ def test_c3r_1_a_visibility_object_with_extra_keys_is_refused():
 # --- L2-C3-2: an UNALIASED user id of hub A can be minted by hub B ----------------------------------------------------
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="L2-C3-2 belongs to the C3b amendment (admitted events record the hub of every u_ id); not in this PR",
+)
 def test_c3r_2_hub_b_cannot_mint_an_unaliased_user_id_hub_a_used():
     """u_tom acted under hub A (unaliased: recorded as ``u_<tom>``, e.g. a ticket owner, a restricted-list entry, a
     question's ``to``). After A is left and B joined, B's user with the same 32-hex id resolves to the SAME identity

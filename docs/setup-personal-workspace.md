@@ -6,7 +6,9 @@ what you should see and what to do if you don't.
 
 **Out of scope.** The phone app, the relay, publishing and the hub are not part of this guide. They come with the hub.
 
-**The one-line installer is parked.** Until it exists, this manual path is the supported way.
+**The one-line installer is parked.** Until it exists, this manual path is the supported way. It uses plain commands rather
+than the `orch setup` wizard, so that every step is visible and can be checked on its own. Step 6 (the background service)
+is the least tested part.
 
 ## Words you will meet
 
@@ -173,14 +175,18 @@ Leave `click-to-sign=off`. It is the safe default and you don't need it (see ste
 
 ## 7. Open Mission Control
 
-Mission Control is an add-on, and an add-on runs only after you turn it on for the workspace. Do that once:
+Mission Control is an add-on, and an add-on runs only after you turn it on for the workspace. Do that once.
+
+> **Temporary step (until [#951](https://github.com/severinlindenmann/orch-core/issues/951) is fixed).** Today Mission Control
+> stays empty until you run this. When #951 is fixed the dashboard will offer it itself and this step goes away.
 
 ```bash
 orch addon grant dashboard
 ```
 
 orch shows what you are turning on (`serve web pages from this computer`); type the word it asks for, then your
-passphrase. You should see `ok addon.granted dashboard`. Then open it:
+passphrase. You should see `ok addon.granted dashboard`, then the add-on's version, its package digest and
+`capabilities serve_http`. Then open it:
 
 ```bash
 orch dashboard
@@ -236,6 +242,9 @@ orch shows what you are granting; you type `GRANT`, then your passphrase.
 
 An agent needs two environment variables: the grant and a session id. Mission Control's "Start agent" sets both for you.
 To start Claude Code by hand, in the agent's window, in the workspace folder:
+
+> **Temporary step (until [#950](https://github.com/severinlindenmann/orch-core/issues/950) is fixed).** Today nothing hands a
+> hand-started agent a session id, so you make one with the `ORCH_SESSION` line below. When #950 is fixed orch will do it.
 
 ```bash
 export ORCH_GRANT=gr_...                    # the value from 9.1
@@ -341,8 +350,8 @@ orch host status      # host: answers ... workspace DEMO ... ok
 orch dashboard --print-url   # a 127.0.0.1 link (open it within 30 seconds)
 ```
 
-`orch doctor` and `orch check` report `0` problems. If `orch doctor` reports problems, run `orch doctor --repair`; it
-only does the safe repairs.
+`orch doctor` and `orch check` report `0` problems. If `orch doctor` reports problems, run `orch host doctor` and read what it names. When all is well it prints the host
+state (`host: answers on ...`, `workspace DEMO ... ok`) and ends with the line `ok`.
 
 ## 11. Uninstall
 

@@ -107,6 +107,46 @@ ITEM_FIELDS = {
 }  # fmt: skip
 
 
+_QID = re.compile(r"Q[1-9][0-9]{0,5}")
+_REF = re.compile(r"refs/heads/[!-~]{1,244}")
+_SHA = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
+
+
+def _f1_gate(name: str, g: Any) -> bool:
+    src = name in ("code", "verify")
+    if type(g) is not dict or set(g) != {"gen", "hash", "policy_hash"} | ({"source_sha"} if src else set()):
+        return False
+    if not (type(g["gen"]) is int and 0 <= g["gen"] < 2**53 and rx(_HASH)(g["hash"]) and rx(_HASH)(g["policy_hash"])):
+        return False
+    if not src:
+        return True
+    s = g["source_sha"]
+    if type(s) is not list or len(s) > 32:
+        return False
+    if not all(
+        type(e) is dict and set(e) == {"repo", "ref", "sha"} and text(512)(e["repo"]) and rx(_REF)(e["ref"])
+        and rx(_SHA)(e["sha"])
+        for e in s
+    ):  # fmt: skip
+        return False
+    return [e["repo"] for e in s] == sorted({e["repo"] for e in s})
+
+
+def check_f1(f1: Any, chain: Mapping[str, Any]) -> None:
+    """Contract 10.2b: the optional ``f1`` block (written from the text, not shared with production)."""
+    ok = (
+        type(f1) is dict and set(f1) == {"roster_v", "gates", "questions"}
+        and type(f1["roster_v"]) is int and 0 <= f1["roster_v"] < 2**53
+        and type(f1["gates"]) is dict and all(k in ("requirements", "plan", "code", "verify") and _f1_gate(k, v)
+                                              for k, v in f1["gates"].items())
+        and type(f1["questions"]) is dict and len(f1["questions"]) <= 64
+        and all(rx(_QID)(k) and type(v) is dict and set(v) == {"hash"} and rx(_HASH)(v["hash"])
+                for k, v in f1["questions"].items())
+    )  # fmt: skip
+    if not ok or chain["log"] == "workspace":
+        raise Refused("malformed")
+
+
 def aad(hub_id: str, workspace_id: str, item_id: str, version: int) -> bytes:
     return (
         LABEL_AAD + bytes([S.SUITE_ID]) + unhex(hub_id, 16) + unhex(workspace_id, 16) + unhex(item_id, 16)
@@ -145,7 +185,9 @@ def open_share_item(
     signed = H.parse(pt)
     o = H._envelope(signed, "share.item")  # noqa: SLF001
     H._signature(signed, LABEL_SIG, wsk_pub)  # noqa: SLF001
-    if set(o) != {"v", "suite", "kind", "hv", *ITEM_FIELDS} or not all(ok(o[k]) for k, ok in ITEM_FIELDS.items()):
+    if set(o) - {"f1"} != {"v", "suite", "kind", "hv", *ITEM_FIELDS} or not all(
+        ok(o[k]) for k, ok in ITEM_FIELDS.items()
+    ):
         raise Refused("malformed")
     if o["hub_id"] != hub_id:
         raise Refused("other_hub")
@@ -156,6 +198,8 @@ def open_share_item(
     spec, c = CONTENT[o["item_kind"]], o["content"]
     if set(c) != set(spec) or not all(ok(c[k]) for k, ok in spec.items()):
         raise Refused("malformed")
+    if "f1" in o:
+        check_f1(o["f1"], o["chain"])
     H._dev(o, dev_mode)  # noqa: SLF001
     h = item_hash(signed)
     if held is not None:

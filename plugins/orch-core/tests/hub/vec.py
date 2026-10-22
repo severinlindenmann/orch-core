@@ -101,7 +101,6 @@ PENDING_VECTORS = frozenset(
         "custodial_selective_verdict_in_item",
         "custodial_selective_without_item_hash",
         "custodial_selective_workspace_log",
-        "share_item_with_f1",
     }
 )
 

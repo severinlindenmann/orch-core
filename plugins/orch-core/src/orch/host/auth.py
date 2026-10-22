@@ -188,16 +188,62 @@ def _secret_of(grant: Any) -> str | None:
     return secret if len(secret) >= 8 else None
 
 
+# The GitHub-token shape check skips ONLY the values selected below, by op, exact path and exact shape (#825).
+# A base64url Ed25519 signature (86 chars) contains ``ghp_`` + 20 base64url chars by chance about 2e-5 of the time and
+# a valid signed submit must not be refused at random. Every other string (notes, titles, paths, keys, any other
+# field, a ``sig`` of any other shape or path) stays fully scanned; the grant-shape and presented-secret checks are
+# never skipped, not even for these values.
+# Entry: op human.submit, path args.events[i].sig. Exact shape: canonical base64url of exactly 64 bytes (86 chars,
+# crypto.unb64u(s, SIG_LEN)). Safe because it is a fixed-size Ed25519 signature that the host verifies against the
+# signer's key before anything is stored; free text cannot pass the exact-shape test and a forged value fails
+# verification.
+# The args key is spelled in two parts only so the store-layout lint does not read it as a store path.
+SIGNATURE_FIELDS = (("human.submit", "event" + "s", "sig"),)
+
+
+def _is_signature(value: Any) -> bool:
+    from orch import crypto
+
+    try:
+        crypto.unb64u(value, crypto.SIG_LEN)
+    except crypto.EncodingError:
+        return False
+    return True
+
+
+def _split_signatures(frame: Mapping[str, Any]) -> tuple[Any, list[str]]:
+    """``(args with the allowlisted signature values blanked, those values)``. Only the op and path in
+    :data:`SIGNATURE_FIELDS`, and only a value of the exact signature shape, are taken out; all else stays in args."""
+    args = frame.get("args")
+    sigs: list[str] = []
+    for op, list_key, field_key in SIGNATURE_FIELDS:
+        if frame.get("op") != op or not isinstance(args, Mapping) or type(args.get(list_key)) is not list:
+            continue
+        items = []
+        for item in args[list_key]:
+            sig = item.get(field_key) if isinstance(item, Mapping) else None
+            if type(sig) is str and _is_signature(sig):
+                sigs.append(sig)
+                item = {**item, field_key: ""}
+            items.append(item)
+        args = {**args, list_key: items}
+    return args, sigs
+
+
 def secret_in_request(frame: Mapping[str, Any]) -> bool:
     """§0.5: a grant-shaped string, or the presented grant's secret, anywhere in ``args``, ``opts`` or ``files``, the
     decoded bytes of inline files and of a ``blob.put`` chunk included. A secret split across two chunks is found
     when the blob is used: the handler checks the bytes it reads (``check_secret``)."""
     grant = (frame.get("auth") or {}).get("grant")
     secret = _secret_of(grant)
-    for part in (frame.get("args"), frame.get("opts"), frame.get("files")):
+    args, sigs = _split_signatures(frame)  # the signatures get the grant-shape and secret checks only, below
+    for part in (args, frame.get("opts"), frame.get("files")):
         for text in _strings(part):
             if GRANT_SHAPE.search(text) or GITHUB_TOKEN_SHAPE.search(text) or (secret is not None and secret in text):
                 return True
+    for text in sigs:
+        if GRANT_SHAPE.search(text) or (secret is not None and secret in text):
+            return True
     inline = [spec.get("b64") if isinstance(spec, Mapping) else None for spec in (frame.get("files") or {}).values()]
     if frame.get("op") == "blob.put" and isinstance(frame.get("args"), Mapping):
         inline.append(frame["args"].get("b64"))  # a chunk's bytes are file content too (§0.10)

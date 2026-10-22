@@ -231,8 +231,9 @@ def select(rules: Iterable[Mapping[str, str]], tickets: Iterable[TicketFact]) ->
 
 
 class SealedItemBuilder(Protocol):
-    def __call__(self, item_id: str, item: ShareItem, version: int) -> str:
-        """The b64u ``sealed`` of one put: the ``WSK``-signed ``share.item`` at ``version``, sealed under a fresh item
+    def __call__(self, item_id: str, item: ShareItem, version: int) -> tuple[str, str]:
+        """``(sealed, item_hash)`` of one put. The b64u ``sealed`` is the ``WSK``-signed ``share.item`` at
+        ``version``, sealed under a fresh item
         key that is itself sealed to ``HXK``. Refuses (``malformed``, ``too_large``) rather than send anything the hub
         would refuse."""
         ...
@@ -251,7 +252,7 @@ def make_builder(
     """The 10.2b builder for one hub binding. ``chain_of(ticket_uid)`` is ``(seq, head)`` of that ticket's log now
     (``None``: the log is unreadable or empty, which refuses: an item without its chain head is never sent)."""
 
-    def build(item_id: str, item: ShareItem, version: int) -> str:
+    def build(item_id: str, item: ShareItem, version: int) -> tuple[str, str]:
         head = chain_of(item.ticket_uid)
         if head is None:
             raise HubRefused("malformed")
@@ -260,7 +261,7 @@ def make_builder(
             item_version=version, issued_ms=now_ms(), chain={"log": item.ticket_uid, "seq": head[0], "head": head[1]},
             content=item.payload, dev=dev, sign=sign,
         )  # fmt: skip
-        return sharefmt.seal_share_item(signed, hxk_pub=hxk_pub)
+        return sharefmt.seal_share_item(signed, hxk_pub=hxk_pub), sharefmt.item_hash(signed)
 
     return build
 
@@ -270,8 +271,9 @@ def make_builder(
 
 @dataclass
 class ShareState:
-    """``rules``: the owner's rules. ``sent``: logical id -> ``{"item_id", "digest", "version"}`` (``digest``
-    ``None``: a put whose reply never came: the next sync re-sends under the same id and a higher ``version``;
+    """``rules``: the owner's rules. ``sent``: logical id -> ``{"item_id", "digest", "version", "item_hash"}``
+    (``item_hash``: the hash of the live put, for the 10.2b return check; ``digest`` ``None``: a put whose reply
+    never came: the next sync re-sends under the same id and a higher ``version``;
     the version only grows, it is the hub's order of an item's puts, 10.2b). ``withdrawn``: logical ids the owner
     revoked by hand: never re-shared while they match, forgotten once they stop matching or a ``ticket`` rule names
     them again."""
@@ -294,13 +296,17 @@ class ShareState:
         for lg, v in d["sent"].items():
             ok = (
                 type(lg) is str and type(v) is dict
-                and {"item_id", "digest"} <= set(v) <= {"item_id", "digest", "version"}
+                and {"item_id", "digest"} <= set(v) <= {"item_id", "digest", "version", "item_hash"}
                 and wire.hex16(v["item_id"]) and (v["digest"] is None or type(v["digest"]) is str)
                 and (type(v.get("version", 0)) is int and 0 <= v.get("version", 0) < 2**32 - 1)
+                and (v.get("item_hash") is None or sharefmt.HASH_RE.fullmatch(str(v["item_hash"])) is not None)
             )  # fmt: skip
             if not ok:
                 raise HubRefused("malformed")
-            sent[lg] = {"item_id": v["item_id"], "digest": v["digest"], "version": v.get("version", 0)}
+            sent[lg] = {
+                "item_id": v["item_id"], "digest": v["digest"], "version": v.get("version", 0),
+                "item_hash": v.get("item_hash"),
+            }  # fmt: skip
         if any(type(x) is not str for x in d["withdrawn"]):
             raise HubRefused("malformed")
         return cls(rules=rules, sent=sent, withdrawn=list(d["withdrawn"]))
@@ -363,14 +369,14 @@ def sync(
         item_id = new_id() if have is None else have["item_id"]
         version = (0 if have is None else have.get("version", 0)) + 1  # every put attempt takes a higher version
         try:
-            sealed = build(item_id, item, version)  # may refuse: nothing is recorded or sent for this item
+            sealed, ihash = build(item_id, item, version)  # may refuse: nothing is recorded or sent for this item
         except HubRefused as exc:
             if exc.code not in ITEM_REFUSALS:
                 raise
             refused[lg] = exc.code
             continue
         if have is None:
-            have = state.sent[lg] = {"item_id": item_id, "digest": None, "version": version}
+            have = state.sent[lg] = {"item_id": item_id, "digest": None, "version": version, "item_hash": None}
         have["version"] = version
         save(
             state
@@ -383,6 +389,7 @@ def sync(
             refused[lg] = exc.code
             continue
         have["digest"] = item.digest
+        have["item_hash"] = ihash  # what a custodial event about this item binds (10.2b), for the return check
         counts["put"] += 1
         save(state)
     if refused:

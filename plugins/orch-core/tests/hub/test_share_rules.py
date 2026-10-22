@@ -81,7 +81,7 @@ def test_state_round_trips_and_a_damaged_file_is_refused():
     st = S.ShareState()
     st.add_rule({"kind": "tag", "tag": "public"})
     assert not st.add_rule({"kind": "tag", "tag": "public"})
-    st.sent["ticket:a"] = {"item_id": "11" * 16, "digest": "d", "version": 3}
+    st.sent["ticket:a"] = {"item_id": "11" * 16, "digest": "d", "version": 3, "item_hash": None}
     assert S.ShareState.from_json(st.to_json()).to_json() == st.to_json()
     for bad in (
         None,
@@ -105,7 +105,7 @@ class FakeLink:
 
 
 def fake_build(item_id, item, version):
-    return f"sealed:{item_id}:{item.logical}:{version}"
+    return f"sealed:{item_id}:{item.logical}:{version}", "sha256:" + "ab" * 32
 
 
 def run(st, tickets, link, **kw):

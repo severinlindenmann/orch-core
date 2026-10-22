@@ -348,3 +348,19 @@ def test_one_workspace_may_share_1000_items_and_not_more():
     with pytest.raises(HubRefused) as e:
         run(st, items, HubSim())
     assert e.value.code == "too_many_items"
+
+
+def test_the_item_hash_the_hub_computes_is_kept_per_shared_item_and_survives_the_state_file():
+    """C6-5: the return check of 10.2b needs each live item's hash; it is the hub's own value of that put."""
+    st, hub = SH.ShareState(rules=[{"kind": "tag", "tag": "public"}]), HubSim()
+    run(st, [T()], hub)
+    (have,) = st.sent.values()
+    assert have["item_hash"] == hub.held[have["item_id"]]["hash"]
+    assert SH.ShareState.from_json(st.to_json()).sent == st.sent
+    run(st, [T(title="Changed")], hub)  # a new version is a new hash, kept in place of the old one
+    assert st.sent["ticket:01J9ZP0000000000000000TKT1"]["item_hash"] == hub.held[have["item_id"]]["hash"]
+    old = {"rules": [], "sent": {"x": {"item_id": "11" * 16, "digest": "d"}}, "withdrawn": []}
+    assert SH.ShareState.from_json(old).sent["x"]["item_hash"] is None  # a state file from before: unknown, not guessed
+    bad = {**old, "sent": {"x": {"item_id": "11" * 16, "digest": "d", "item_hash": "nope"}}}
+    with pytest.raises(HubRefused):
+        SH.ShareState.from_json(bad)

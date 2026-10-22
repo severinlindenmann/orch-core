@@ -302,10 +302,11 @@ def _builder(service: WorkspaceService) -> Any:
     """:func:`_make_builder`, built on the first put: a sync that only revokes needs no key and no card."""
     held: list[Any] = []
 
-    def build(item_id: str, item: Any, version: int) -> str:
+    def build(item_id: str, item: Any, version: int) -> tuple[str, str]:
         if not held:
             held.append(_make_builder(service))
-        return str(held[0](item_id, item, version))
+        sealed, ihash = held[0](item_id, item, version)
+        return str(sealed), str(ihash)
 
     return build
 

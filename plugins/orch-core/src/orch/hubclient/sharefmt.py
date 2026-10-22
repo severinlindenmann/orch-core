@@ -58,6 +58,7 @@ _DATE = re.compile(r"[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])")
 _QID = re.compile(r"Q[1-9][0-9]{0,5}")
 _ULID = re.compile(r"[0-9A-HJKMNP-TV-Z]{26}")
 _HASH = re.compile(r"sha256:[0-9a-f]{64}")
+HASH_RE = _HASH
 MAX_LABELS = 32
 
 

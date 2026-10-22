@@ -20,8 +20,8 @@ from orch.canon.jcs import dumps as cj
 from orch.canon.jcs import loads_strict
 from orch.crypto import suite
 from orch.crypto.encoding import b64u, unb64u
-from orch.hub.tlslink import client as C
-from orch.hub.tlslink import framing, tls
+from orch.hubclient.tlslink import client as C
+from orch.hubclient.tlslink import framing, tls
 
 Handler = Callable[["TlsHub", dict[str, Any]], Any]
 

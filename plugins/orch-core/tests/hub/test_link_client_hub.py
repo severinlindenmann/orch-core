@@ -15,7 +15,7 @@ import pytest
 
 from orch.crypto import suite
 from orch.crypto.encoding import unb64u
-from orch.hub.tlslink.client import LinkClient, LinkError
+from orch.hubclient.tlslink.client import LinkClient, LinkError
 
 HUB_SRC = os.environ.get("ORCH_HUB_SRC", "")
 pytestmark = pytest.mark.skipif(

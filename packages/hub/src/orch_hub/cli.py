@@ -50,6 +50,9 @@ def _parser() -> argparse.ArgumentParser:
     dr.add_argument("--state", help="hub state dir (default: $ORCH_HUB_STATE)")
     dr.add_argument("--listen", help="the running hub's loopback host:port: its TLS key must match the card pin")
     dr.add_argument("--publish-url", help="orch-publish base URL: its /v2/hub/card route must answer")
+    from .access.cli import add_parsers
+
+    add_parsers(sub)
     return p
 
 
@@ -69,6 +72,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         except (ValueError, KeysError) as e:
             print(f"orch-hub: refused: {e}", file=sys.stderr)
             return 1
+    if args.group in ("users", "groups", "grants", "channels", "access"):
+        from .access.cli import run as run_access
+
+        return run_access(args)
     if args.group == "doctor":
         from .doctor import run
 

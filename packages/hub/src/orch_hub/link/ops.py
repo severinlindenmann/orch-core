@@ -2,7 +2,8 @@
 
 A handler gets an :class:`OpContext` (the link's workspace and its verified request body) and returns the reply body
 or raises :class:`~orch_hub.contract.hub.Refused` (sent back as ``{"error": code}``). There is no op that makes the hub
-sign anything for the host. Ops of later phases (``route_*``, ``wk_seal``, ``audit_ack``, the share ops until C6) are
+sign anything for the host. ``route_out`` is served when a router is configured (``route_in`` is the hub's own
+h2w request, see :mod:`orch_hub.router`). Ops of later phases (``wk_seal``, ``audit_ack``, the share ops until C6) are
 not served: ``unknown_op``.
 """
 
@@ -10,13 +11,16 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from ..contract import hub as H
 from ..contract.canon import unb64u
 from ..contract.hub import Refused
 from ..contract.keystore import OpSigner
 from .registry import Registry
+
+if TYPE_CHECKING:
+    from ..router import Router
 
 
 class InviteGate(Protocol):
@@ -26,6 +30,9 @@ class InviteGate(Protocol):
     def check(self, invite: str, now_ms: int) -> str | None: ...
 
     def consume(self, invite: str, workspace_id: str) -> None: ...
+
+    # Optional: ``owner_user(invite) -> str | None``, the hub user the admin aliased to the joining workspace's owner
+    # (V3-D19). A gate without it gives no alias.
 
 
 class SnapshotProvider(Protocol):
@@ -99,6 +106,8 @@ class OpContext:
     downstream: Downstream
     now_ms: int
     dev_mode: bool
+    router: Router | None = None
+    access: Any = None  # D3's orch_hub.access.Access (the serve() instance); None until wired
 
 
 def _require_pin(c: OpContext) -> dict[str, str]:
@@ -140,6 +149,8 @@ def join(c: OpContext) -> dict[str, Any]:
             join_msg["binding"], workspace_id=c.workspace_id, wsk_pub=wsk, now_ms=c.now_ms, dev_mode=c.dev_mode
         )
         state = H.apply_binding(c.registry.binding_state(c.workspace_id), b)
+        owner_user = getattr(c.invites, "owner_user", None)
+        alias = owner_user(invite) if owner_user is not None else None
         c.registry.commit_join(
             c.workspace_id,
             pin["owner_person_id"],
@@ -148,6 +159,7 @@ def join(c: OpContext) -> dict[str, Any]:
             join_msg["card"],
             state,
             join_msg["binding"],
+            owner_alias=alias,
         )
         c.invites.consume(invite, c.workspace_id)
     c.downstream.card(c.workspace_id, join_msg["card"], join_msg["pk_pub"])
@@ -217,12 +229,24 @@ def publish_out(c: OpContext) -> dict[str, Any]:
     return c.publish.forward(c.workspace_id, c.body["request"])
 
 
+def route_out(c: OpContext) -> dict[str, Any]:
+    """A ws->ws envelope for another workspace of this hub. The reply says whether it was handed to the recipient's
+    live link (``forwarded``) or queued (``queued``); refusals are the router's codes (protocol.md §14)."""
+    with c.registry.lock:
+        _require_pin(c)
+        _require_bound(c)
+    if c.router is None:
+        raise Refused("unknown_op")  # no router configured: the op is not served
+    return {"state": c.router.route_out(c.workspace_id, unb64u(c.body["envelope"]))}
+
+
 HANDLERS: dict[str, Callable[[OpContext], dict[str, Any]]] = {
     "join": join,
     "card_put": card_put,
     "binding_put": binding_put,
     "snapshot_get": snapshot_get,
     "publish_out": publish_out,
+    "route_out": route_out,
 }
 
 __all__ = ["HANDLERS", "OpContext"]

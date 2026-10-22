@@ -10,7 +10,10 @@ Output (``--json``)::
         "workspace_id": "...", "owner_person_id": "...", "wsk_pub": "<b64u>", "wsk_fingerprint": "<sha256 hex>",
         "mode": "selective" | "full" | null,
         "binding": {"state": "bound" | "unbound", "binding_seq": N},
-        "ops": {"<op>": {"accepted": N, "refused": N}, ...}   # always includes "wk_seal"
+        "snapshot": {"version": N, "roles": {"<user_id>": "read"|"edit"|"admin"}},   # last issued (0, {} if none yet)
+        "ops": {"<op>": {"accepted": N, "refused": N}, ...},  # always includes "wk_seal", "route_out", "route_in"
+        "routes": [{"id": "<envelope id hex16>", "from": "<ws>", "to": "<ws>", "sha256": "<hex of the envelope bytes>"}]
+                                      # envelopes the router took where this workspace is sender or recipient
     }},
      "unjoined_ops": {"<op>": {"accepted": N, "refused": N}}}   # links with no pinned workspace; unknown ops = "other"
 """
@@ -26,7 +29,8 @@ from typing import Any
 from .contract.canon import unb64u
 
 REGISTRY_FILE = "registry.db"
-ALWAYS_COUNTED = ("wk_seal",)
+ROUTE_QUEUE_FILE = "route-queue.db"
+ALWAYS_COUNTED = ("wk_seal", "route_out", "route_in")
 
 
 class InspectError(Exception):
@@ -43,6 +47,53 @@ def _hub_card(state: Path) -> dict[str, Any]:
         return o
     except OSError, ValueError, KeyError, TypeError:
         raise InspectError("no readable hub card in the state dir") from None
+
+
+def workspace_mode(state: Path, workspace: str) -> str | None:
+    """The binding mode of one workspace from the registry (read-only), or None if unknown / unreadable."""
+    try:
+        w = inspect(state, workspace)["workspaces"].get(workspace)
+    except InspectError, sqlite3.Error, OSError, ValueError:
+        return None
+    return w["mode"] if w else None
+
+
+def _snapshots(state: Path) -> dict[str, dict[str, Any]]:
+    """Per workspace ``{version, roles}`` of the last issued snapshot (access.db, read-only); empty if none."""
+    path = state / "access.db"
+    if not path.is_file():
+        return {}
+    db = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True, timeout=5)
+    try:
+        db.execute("PRAGMA query_only=ON")
+        rows = db.execute("SELECT workspace_id, version, signed FROM snapshots").fetchall()
+    except sqlite3.Error:
+        return {}
+    finally:
+        db.close()
+    out = {}
+    for ws, v, sg in rows:
+        try:
+            out[ws] = {"version": int(v), "roles": dict(json.loads(sg)["o"]["roles"])}
+        except ValueError, KeyError, TypeError:
+            continue  # a corrupt row is left out, never a crash
+    return out
+
+
+def _routes(state: Path) -> list[dict[str, str]]:
+    """Ids and SHA-256 of the envelopes the router has taken (queued or delivered); never their bytes."""
+    path = state / ROUTE_QUEUE_FILE
+    if not path.is_file():
+        return []
+    db = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True, timeout=5)
+    try:
+        db.execute("PRAGMA query_only=ON")
+        rows = db.execute("SELECT env_id, from_ws, to_ws, digest FROM route_queue ORDER BY id").fetchall()
+    except sqlite3.OperationalError:
+        return []
+    finally:
+        db.close()
+    return [{"id": i, "from": f, "to": t, "sha256": bytes(d).hex()} for i, f, t, d in rows]
 
 
 def inspect(state: Path, workspace: str | None = None) -> dict[str, Any]:
@@ -62,12 +113,18 @@ def inspect(state: Path, workspace: str | None = None) -> dict[str, Any]:
             counts = []
     finally:
         db.close()
+    snaps = _snapshots(state)
+    routes = _routes(state)
     out: dict[str, Any] = {}
     for ws, owner, wsk_pub, bstate in rows:
         if workspace is not None and ws != workspace:
             continue
-        st = json.loads(bstate)
-        b = st.get("binding")
+        try:
+            st = json.loads(bstate)
+            b = st.get("binding")
+            binding_view = {"state": st["status"], "binding_seq": st["binding_seq"]}
+        except ValueError, KeyError, TypeError, AttributeError:
+            st, b, binding_view = {}, None, {"state": "corrupt", "binding_seq": None}
         ops: dict[str, dict[str, int]] = {op: {"accepted": 0, "refused": 0} for op in ALWAYS_COUNTED}
         for cws, op, outcome, n in counts:
             if cws == ws:
@@ -78,8 +135,10 @@ def inspect(state: Path, workspace: str | None = None) -> dict[str, Any]:
             "wsk_pub": wsk_pub,
             "wsk_fingerprint": hashlib.sha256(unb64u(wsk_pub, 65)).hexdigest(),
             "mode": b.get("mode") if type(b) is dict else None,
-            "binding": {"state": st["status"], "binding_seq": st["binding_seq"]},
+            "binding": binding_view,
             "ops": ops,
+            "snapshot": snaps.get(ws, {"version": 0, "roles": {}}),
+            "routes": [r for r in routes if ws in (r["from"], r["to"])],
         }
     unjoined = {op: {"accepted": 0, "refused": 0} for op in ALWAYS_COUNTED}
     for cws, op, outcome, n in counts:

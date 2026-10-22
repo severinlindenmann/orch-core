@@ -9,7 +9,7 @@ orch-publish after a restart. One ready line is printed on stdout once the port 
 from __future__ import annotations
 
 import ipaddress
-import os
+import re
 import signal
 import sys
 import threading
@@ -17,20 +17,40 @@ import urllib.parse
 from pathlib import Path
 from typing import TextIO
 
+from .access import Access, AccessSnapshots
+from .access.cli import ACCESS_FILE
 from .contract.hub import Refused
 from .keys import HubKeys
 from .link import LinkServer, Registry
 from .publish import HttpPublishSync, HubPublish, PublishConfig
+from .router import AccessAuthz, RouteQueue, Router
 
 REGISTRY_FILE = "registry.db"
+ROUTE_QUEUE_FILE = "route-queue.db"
+
+
+_HEX16 = re.compile(r"[0-9a-f]{32}")
 
 
 class FixedInvites:
-    """Invite codes given on the command line: not bound to a workspace, single use."""
+    """Invite codes given on the command line: not bound to a workspace, single use. ``CODE=USER_ID`` also aliases the
+    joining workspace's owner to that hub user (V3-D19): the hub admin says who the owner is, the host cannot."""
 
     def __init__(self, codes: list[str]) -> None:
-        self._codes = set(codes)
+        self._codes, self._owner = set(), {}
+        for i, c in enumerate(codes, 1):
+            code, sep, user = c.rpartition("=")
+            if not sep:
+                self._codes.add(c)
+            elif code and _HEX16.fullmatch(user):
+                self._codes.add(code)
+                self._owner[code] = user
+            else:  # CODE=<not a 32-hex user id>: refuse to start rather than silently drop the alias
+                raise ValueError(f"invite #{i}: the part after '=' ({user[:40]!r}) is not a 32-hex hub user id")
         self._lock = threading.Lock()
+
+    def owner_user(self, invite: str) -> str | None:
+        return self._owner.get(invite)
 
     def check(self, invite: str, now_ms: int) -> str | None:
         with self._lock:
@@ -66,16 +86,29 @@ def serve(
 ) -> int:
     out = out or sys.stdout
     host, port = parse_listen(listen)
+    gate = FixedInvites(invites)  # a bad invite refuses before any state is opened
     u = urllib.parse.urlsplit(publish_url)
     api_host = api_host or u.netloc
     keys = HubKeys.open(state)
     reg_path = state / REGISTRY_FILE
     registry = Registry(str(reg_path))
-    os.chmod(reg_path, 0o600)
+    access = Access(str(state / ACCESS_FILE))
+    queue_path = state / ROUTE_QUEUE_FILE
+    queue = RouteQueue(str(queue_path))
+    router = Router(registry, queue, AccessAuthz(registry, access))
     fw = HubPublish(keys, HttpPublishSync(publish_url), PublishConfig(publish_url, api_host))
     stop = stop or threading.Event()
     server = LinkServer.from_keys(
-        keys, registry=registry, invites=FixedInvites(invites), publish=fw, downstream=fw, host=host, port=port
+        keys,
+        snapshots=AccessSnapshots(access, keys),
+        registry=registry,
+        invites=gate,
+        publish=fw,
+        downstream=fw,
+        router=router,
+        access=access,
+        host=host,
+        port=port,
     )
     try:
         fw.restore(registry.binding_objects())
@@ -92,5 +125,7 @@ def serve(
         stop.wait()
     finally:
         server.close()
+        queue.close()
         registry.close()
+        access.close()
     return 0

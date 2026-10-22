@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from publish_helpers import HOST, FakeUpstream, RecordingSync, host_request
 
 from orch_hub.contract import keystore as KS
@@ -35,6 +37,7 @@ def test_old_registry_file_without_the_column_is_migrated(tmp_path):
     )
     db.commit()
     db.close()
+    os.chmod(path, 0o600)  # a pre-existing file must already be private
     r = Registry(path)
     assert r.binding_objects() == {}
     r.close()

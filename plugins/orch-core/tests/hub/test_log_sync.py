@@ -460,3 +460,37 @@ def test_page_size_shrinks_to_fit(full):
     p = s.pages()
     assert all(len(x["sealed"]) <= LS.MAX_SEALED for x in p) and sum(x["count"] for x in p) == 4 and len(p) > 1
     assert hub_view(full) == local_summary(logs)
+
+
+# --- l2-c14 adversarial (Opus security review, 22 Oct) ------------------------------------------------------------
+
+
+def test_l2_c14_1_a_leave_during_a_pass_stops_the_next_page(full):
+    """L2-C14-1 (P1): a leave (or switch/unbind) that lands while a pass is on the network must stop the pass before
+    its next page. A hostile hub that ignores the leave and keeps acknowledging must not receive lines committed after
+    the leave, sealed under the old epoch it still holds (the 10.7 claim "a host that rotated the hub out cannot leak
+    later content")."""
+    logs = Logs()
+    logs.add("workspace", "member.added")
+    logs.add(TKT, "ticket.created")
+    s = Sender(full, logs)
+    link = HubLink(full.wire, hub_id=full.state.hub_id, workspace_id=WS, hk_op_pub=pub("hk_op"), sign=sign_wsk,
+                   mode=full.state.mode, now_ms=lambda: V["now_ms"])  # fmt: skip
+    after_leave: list[dict[str, Any]] = []
+    left = []
+
+    def call(op: str, body: dict[str, Any]) -> dict[str, Any]:
+        if left:  # the hostile hub: takes everything, ignores the leave
+            after_leave.append(body)
+            return {"seq": body["from_seq"] + body["count"] - 1, "head": body["head"]}
+        reply = link.call(op, body)
+        full.leave()  # the owner leaves while the pass is on the network
+        left.append(True)
+        logs.add(TKT, "ticket.updated", note="WRITTEN-AFTER-THE-LEAVE")
+        return reply
+
+    try:
+        s.run(call=call)
+    except HubRefused:
+        pass  # stopping with a refusal is fine
+    assert after_leave == [], f"{len(after_leave)} page(s) sent to the hub after the leave"

@@ -21,7 +21,7 @@ from .labels import HUB_LABELS, V2_REUSED, L, custodial_label
 NOW = 1_790_000_000_000
 DAY = 86_400_000
 KEY_NAMES = ("hk_root", "hk_op", "hk_op_next", "hxk", "uk_alice", "uk_bob", "channel_alice_phone",
-             "channel_bob_browser", "wsk_a", "wsk_b", "pk_alice", "dk_alice_mac.sig", "dk_alice_mac.kx",
+             "channel_bob_browser", "wsk_a", "wsk_b", "wxk_a", "pk_alice", "dk_alice_mac.sig", "dk_alice_mac.kx",
              "pk_mallory", "dk_mallory.sig", "dk_mallory.kx", "hk_root_rogue", "hk_op_rogue")
 
 
@@ -147,6 +147,20 @@ def custodial(user_key: str = "uk_alice", ch_key: str = "channel_alice_phone", u
     if tamper_after_sign:
         out.update(tamper_after_sign)
     return out
+
+
+def v2_card(ws: str = WS_A, pk: str = "pk_alice", wsk: str = "wsk_a", **kw: Any) -> dict[str, Any]:
+    """A protocol-v2 §7.1 directory card (delegation by PK, card by WSK; the sealed part is FAKE bytes)."""
+    d = signed(pk, "sig_ws_delegation", {"v": 2, "suite": 2, "kind": "ws_delegation", "workspace_id": ws,
+                                          "wsk_pub": K.b(wsk), "owner_person_id": H.person_id(K.pub[pk]),
+                                          "client_hosted": False, "issued_ms": NOW - 30 * DAY})
+    sealed = S.fake_seed("hub/v2_card_sealed") * 3
+    o = {"v": 2, "suite": 2, "kind": "card", "workspace_id": ws, "wsk_pub": K.b(wsk), "wxk_pub": K.b("wxk_a"),
+         "wxk_version": 1, "owner_person_id": H.person_id(K.pub[pk]), "relay_url": "https://relay.dev.severin.io",
+         "card_seq": 1, "issued_ms": NOW - DAY, "sealed_hash": b64u(S.sha256(sealed)),
+         "ck_commit": b64u(S.fake_seed("hub/v2_card_ck_commit")), **kw}
+    c = signed(wsk, "sig_card_wsk", o)
+    return {"delegation": d, "o": c["o"], "sig": c["sig"], "sealed": b64u(sealed)}
 
 
 def device_cert(pk: str = "pk_alice", dk: str = "dk_alice_mac", **kw: Any) -> dict[str, Any]:
@@ -464,6 +478,46 @@ def build() -> dict[str, Any]:
          {**bs, "steps": [{"binding": b1}, {"unbound": signed("hk_op", "sig_hub_unbound", u1["o"])}]},
          {"error": "bad_signature"}, 2, "only the workspace ends its binding")
 
+    # ---- the hub's join check (L2-3): the v2 directory card vouches for WSK, first come per workspace_id
+    jn = {**base, "hub_id": HUB_ID}
+    alice_join = {"card": v2_card(), "pk_pub": K.b("pk_alice"), "binding": b1}
+    ok_join = {"ok": {"workspace_id": WS_A, "owner_person_id": P_ALICE, "wsk_pub": K.b("wsk_a")}}
+    case("hub_join_valid", "hub_join", {**jn, "join": alice_join}, ok_join, 2)
+    case("hub_join_rejoin_same_owner_and_wsk", "hub_join", {**jn, "prior_joins": [alice_join], "join": alice_join},
+         ok_join, 2)
+    case("hub_join_binding_without_card", "hub_join", {**jn, "join": {"binding": b1}}, {"error": "unknown_workspace"}, 2,
+         "L2-3: a self-signed binding alone proves nothing about the workspace id")
+    case("hub_join_same_ws_other_owner", "hub_join",
+         {**jn, "prior_joins": [alice_join],
+          "join": {"card": v2_card(pk="pk_mallory", wsk="wsk_b"), "pk_pub": K.b("pk_mallory"),
+                   "binding": binding(wsk="wsk_b")}}, {"error": "other_person"}, 2,
+         "L2-3: a squatter cannot take a workspace id the hub already pinned")
+    case("hub_join_squat_before_real_owner", "hub_join",
+         {**jn, "prior_joins": [{"card": v2_card(pk="pk_mallory", wsk="wsk_b"), "pk_pub": K.b("pk_mallory"),
+                                 "binding": binding(wsk="wsk_b")}], "join": alice_join}, {"error": "other_person"}, 2,
+         "residual TOFU: the first join wins; same as a v2 first publication (protocol §9.5)")
+    case("hub_join_same_owner_other_wsk", "hub_join",
+         {**jn, "prior_joins": [alice_join],
+          "join": {"card": v2_card(wsk="wsk_b"), "pk_pub": K.b("pk_alice"), "binding": binding(wsk="wsk_b")}},
+         {"error": "wsk_mismatch"}, 2)
+    case("hub_join_binding_wsk_not_the_cards", "hub_join",
+         {**jn, "join": {**alice_join, "binding": binding(wsk="wsk_b")}}, {"error": "bad_signature"}, 2)
+    case("hub_join_card_of_other_owner_pk", "hub_join", {**jn, "join": {**alice_join, "pk_pub": K.b("pk_mallory")}},
+         {"error": "other_person"}, 2)
+    case("hub_join_card_not_signed_by_delegated_wsk", "hub_join",
+         {**jn, "join": {**alice_join, "card": {**v2_card(), "sig": signed("wsk_b", "sig_card_wsk", v2_card()["o"])["sig"]}}},
+         {"error": "bad_signature"}, 2)
+    case("hub_join_card_other_wsk_than_delegation", "hub_join",
+         {**jn, "join": {**alice_join, "card": {**v2_card(), **{k: v for k, v in signed(
+             "wsk_a", "sig_card_wsk", {**v2_card()["o"], "wsk_pub": K.b("wsk_b")}).items()}}}},
+         {"error": "delegation_mismatch"}, 2)
+    case("hub_join_invite_for_other_workspace", "hub_join", {**jn, "invite_workspace_id": WS_B, "join": alice_join},
+         {"error": "other_workspace"}, 2, "the invite code is bound to one workspace id")
+    case("hub_join_binding_for_other_hub", "hub_join",
+         {**jn, "join": {**alice_join, "binding": binding(root="hk_root_rogue")}}, {"error": "other_hub"}, 2)
+    case("v2_card_valid", "v2_card", {**base, "card": v2_card(), "pk_pub": K.b("pk_alice")},
+         {"ok": {"workspace_id": WS_A}}, 2)
+
     # ---- hub.joined payload, aliases
     pay = {"hub_id": HUB_ID, "hk_root_pub": root, "mode": "selective", "binding_seq": 1,
            "aliases": [{"person_id": P_ALICE, "user_id": U_ALICE}]}
@@ -646,7 +700,7 @@ def build() -> dict[str, Any]:
                 "op_cert_next": OP_CERT_NEXT, "channel_alice_phone": CH_ALICE, "channel_bob_browser": CH_BOB,
                 "ticket": TICKET},
         "labels": {**HUB_LABELS, "custodial_family": "orch/v2/hub-custodial|<event type>|"},
-        "objects": {"card": c, "uk_cert_alice": uk_cert(), "channel_cert_alice_phone": channel_cert(),
+        "objects": {"card": c, "v2_card_a": v2_card(), "uk_cert_alice": uk_cert(), "channel_cert_alice_phone": channel_cert(),
                     "snapshot_a_v3": snapshot(), "binding_a_1": b1, "unbound_a_1": u1, "op_revoked": rev,
                     "publish_approval": ap},
         "signatures": sigs,

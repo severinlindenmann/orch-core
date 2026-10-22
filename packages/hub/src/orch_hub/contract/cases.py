@@ -80,6 +80,15 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
         o = H.verify_link(a["signed"], direction=a["direction"], hub_id_=a["hub_id"], workspace_id=a["workspace_id"],
                           mode=a["mode"], pub=unb64u(a["pub"], 65), now_ms=now)
         return {"op": o["op"], "seq": o["seq"]}
+    if check == "hub_join":
+        pins = dict(a.get("pins", {}))
+        for prior in a.get("prior_joins", []):
+            pin = H.check_hub_join(prior, hub_id_=a["hub_id"], pins=pins, now_ms=now, dev_mode=dev)
+            pins[pin["workspace_id"]] = pin
+        return H.check_hub_join(a["join"], hub_id_=a["hub_id"], pins=pins, now_ms=now, dev_mode=dev,
+                                invite_workspace_id=a.get("invite_workspace_id"))
+    if check == "v2_card":
+        return {"workspace_id": H.verify_v2_card(a["card"], unb64u(a["pk_pub"], 65), now_ms=now)["workspace_id"]}
     if check == "publish":
         held = _held({**a, "card": a["hub_card"]})
         bindings = {w: _apply_store(steps, w, unb64u(a["cards"][w]["wsk_pub"], 65), now, dev)

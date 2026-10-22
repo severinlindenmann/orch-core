@@ -44,6 +44,8 @@ V2_REUSED: dict[str, str] = {
     "sig_publish": "orch/v2/publish|",
     "sig_device_cert": "orch/v2/sig/device-cert|",
     "sig_ws_event": "orch/v2/sig/ws-event|",
+    "sig_ws_delegation": "orch/v2/sig/ws-delegation|",
+    "sig_card_wsk": "orch/v2/sig/card-wsk|",
     "h_person_id": "orch/v2/id/person|",
     "h_device_id": "orch/v2/id/device|",
 }

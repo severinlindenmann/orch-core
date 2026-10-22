@@ -102,3 +102,22 @@ def test_hub_labels_prefix_free_with_live_core_table():
     assert not hub & live
     for a, b in itertools.permutations(sorted(live | hub), 2):
         assert not b.startswith(a), (a, b)
+
+
+def test_v2_card_check_accepts_the_relay_corpus_card():
+    """L2-3: the hub's v2 directory-card check accepts the card from orch-relay's own vectors (as copied into
+    orch-core's publish_v2.json), an independent fixture, and refuses it under another owner key."""
+    from orch_hub.contract import hub as H
+
+    fx = SRC.parent / "tests" / "publish" / "vectors" / "publish_v2.json"
+    v2 = json.loads(fx.read_text())
+    card = v2["card"]["card"]
+    pk = bytes.fromhex(v2["keys"]["person_alice.sig"]["pub"])
+    assert H.verify_v2_card(card, pk, now_ms=card["o"]["issued_ms"])["workspace_id"] == v2["ids"]["workspace_a"]
+    other = bytes.fromhex(v2["keys"]["wsk_a.sig"]["pub"])
+    try:
+        H.verify_v2_card(card, other, now_ms=card["o"]["issued_ms"])
+    except H.Refused as r:
+        assert r.code == "other_person"
+    else:
+        raise AssertionError("card accepted under another owner key")

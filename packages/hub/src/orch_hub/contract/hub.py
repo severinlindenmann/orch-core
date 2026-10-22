@@ -524,6 +524,75 @@ def apply_unbound(state: Mapping[str, Any] | None, u: Mapping[str, Any]) -> dict
     return {"binding_seq": u["binding_seq"], "status": "unbound", "binding": None if state is None else state["binding"]}
 
 
+# --- the hub's trust in a workspace at join (L2-3) ------------------------------------------------------------------
+
+V2_DELEGATION_FIELDS = {"v", "suite", "kind", "workspace_id", "wsk_pub", "owner_person_id", "client_hosted",
+                        "issued_ms"}
+V2_CARD_FIELDS = {"v", "suite", "kind", "workspace_id", "wsk_pub", "wxk_pub", "wxk_version", "owner_person_id",
+                  "relay_url", "card_seq", "issued_ms", "sealed_hash", "ck_commit"}
+
+
+def verify_v2_card(card: Any, pk_pub: bytes, *, now_ms: int) -> dict[str, Any]:
+    """A workspace's v2 directory card (protocol-v2 §7.1): the owner's PK-signed delegation names ``WSK`` once, the
+    card is ``WSK``-signed. The sealed part is not opened; ``sealed_hash`` binds it. Returns the card's ``o``."""
+    if (type(card) is not dict or set(card) != {"delegation", "o", "sig", "sealed"} or type(card["delegation"]) is not dict
+            or set(card["delegation"]) != {"o", "sig"}):
+        raise Refused("malformed")
+    d, o = card["delegation"]["o"], card["o"]
+    if type(d) is not dict or type(o) is not dict or set(d) != V2_DELEGATION_FIELDS or set(o) != V2_CARD_FIELDS:
+        raise Refused("malformed")
+    if d["v"] != 2 or o["v"] != 2 or d["kind"] != "ws_delegation" or o["kind"] != "card":
+        raise Refused("malformed")
+    if d["suite"] != S.SUITE_ID or o["suite"] != S.SUITE_ID:
+        raise Refused("wrong_suite")
+    if not (_hex16(d["workspace_id"]) and _pub(d["wsk_pub"]) and _hex16(d["owner_person_id"]) and _pub(o["wxk_pub"])
+            and _int_min(1)(o["card_seq"]) and _b64u_n(32)(o["sealed_hash"]) and _b64u_n(32)(o["ck_commit"])):
+        raise Refused("malformed")
+    if person_id(pk_pub) != d["owner_person_id"]:
+        raise Refused("other_person")
+    _signature(card["delegation"], L["sig_ws_delegation"], pk_pub)
+    if (o["workspace_id"], o["wsk_pub"], o["owner_person_id"]) != (d["workspace_id"], d["wsk_pub"],
+                                                                    d["owner_person_id"]):
+        raise Refused("delegation_mismatch")
+    _signature(card, L["sig_card_wsk"], unb64u(d["wsk_pub"], 65))
+    try:
+        if b64u(S.sha256(unb64u(card["sealed"]))) != o["sealed_hash"]:
+            raise Refused("malformed")
+    except CanonError:
+        raise Refused("malformed") from None
+    if type(o["issued_ms"]) is not int or o["issued_ms"] > now_ms + CLOCK_SKEW_MS:
+        raise Refused("malformed")
+    return o
+
+
+def check_hub_join(join: Any, *, hub_id_: str, pins: Mapping[str, Mapping[str, str]], now_ms: int, dev_mode: bool,
+                   invite_workspace_id: str | None = None) -> dict[str, str]:
+    """The hub's check of a workspace joining (L2-3). ``join`` = {card (v2 directory card), pk_pub (the owner's PK),
+    binding}. ``pins`` = {workspace_id: {owner_person_id, wsk_pub}}, first come (TOFU per workspace_id). Returns the
+    pin for this workspace. The binding is self-signed by the key it names, so without the card it proves nothing."""
+    if type(join) is not dict or set(join) - {"card", "pk_pub", "binding"} or "binding" not in join:
+        raise Refused("malformed")
+    if "card" not in join or "pk_pub" not in join:
+        raise Refused("unknown_workspace")
+    if not _pub(join["pk_pub"]):
+        raise Refused("malformed")
+    co = verify_v2_card(join["card"], unb64u(join["pk_pub"], 65), now_ms=now_ms)
+    ws = co["workspace_id"]
+    if invite_workspace_id is not None and ws != invite_workspace_id:
+        raise Refused("other_workspace")
+    b = verify_binding(join["binding"], workspace_id=ws, wsk_pub=unb64u(co["wsk_pub"], 65), now_ms=now_ms,
+                       dev_mode=dev_mode)
+    if b["hub_id"] != hub_id_:
+        raise Refused("other_hub")
+    pin = pins.get(ws)
+    if pin is not None:
+        if pin["owner_person_id"] != co["owner_person_id"]:
+            raise Refused("other_person")
+        if pin["wsk_pub"] != co["wsk_pub"]:
+            raise Refused("wsk_mismatch")
+    return {"workspace_id": ws, "owner_person_id": co["owner_person_id"], "wsk_pub": co["wsk_pub"]}
+
+
 # --- the hub.joined payload and aliases ------------------------------------------------------------------------------
 
 
@@ -563,6 +632,10 @@ LINK_OPS: dict[str, tuple[str, str | None, dict[str, Check]]] = {
     "route_in": ("h2w", None, {"envelope": _b64u_any}),
     "wk_seal": ("w2h", "full", {"epoch": _int_min(1), "wrap": _b64u_any}),
     "publish_out": ("w2h", None, {"request": lambda x: type(x) is dict}),
+    "join": ("w2h", None, {"invite": lambda x: type(x) is str, "card": lambda x: type(x) is dict, "pk_pub": _pub,
+                           "binding": lambda x: type(x) is dict}),
+    "card_put": ("w2h", None, {"card": lambda x: type(x) is dict, "pk_pub": _pub}),
+    "binding_put": ("w2h", None, {"object": lambda x: type(x) is dict}),
     "audit_ack": ("w2h", None, {"seq": _int_min(1), "head": _b64u_n(32)}),
     "share_put": ("w2h", "selective", {"item_id": _hex16, "sealed": _b64u_any}),
     "share_revoke": ("w2h", "selective", {"item_id": _hex16}),

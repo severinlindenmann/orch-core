@@ -460,6 +460,32 @@ State: `{binding_seq, status: bound | unbound, binding}`.
 Publish evicts a binding "like a card" (spec §8): the store keeps the `unbound` record, so a replayed binding is refused
 (vectors `binding_replayed_after_leave`, `publish_after_leave`).
 
+### 9.5 The hub's trust in a workspace at join (L2-3)
+
+A `hub.binding` is signed by the key it names, so on its own it proves nothing about which workspace that key speaks
+for. **At join the host hands the hub its v2 directory card** (v2 §7.1: the owner's `PK`-signed `ws_delegation` naming
+`WSK` once, and the `WSK`-signed card) and the owner's `pk_pub`, in the link op `join` (§10), together with the
+binding. The hub checks, in order:
+
+1. card and `pk_pub` present → `unknown_workspace` (vector `hub_join_binding_without_card`);
+2. the card (v2 §7.1): members and field sets → `malformed`; suite → `wrong_suite`; `person_id(pk_pub) ==
+   delegation.owner_person_id` → `other_person`; the delegation under `PK` with `orch/v2/sig/ws-delegation|` →
+   `bad_signature`; `workspace_id`, `wsk_pub` and `owner_person_id` of card and delegation equal →
+   `delegation_mismatch`; the card under the delegation's `WSK` with `orch/v2/sig/card-wsk|` → `bad_signature`;
+   `sealed_hash == H(sealed)` → `malformed` (the sealed part is not opened);
+3. the invite code is bound to one `workspace_id` when the hub admin made it for an existing workspace: the card's
+   must equal it → `other_workspace`;
+4. the binding verifies under the card's `WSK` for the card's `workspace_id` (§9.2 steps 2–6) → `bad_signature`,
+   `other_workspace`, `wsk_mismatch`, …; its `hub_id` is this hub → `other_hub`;
+5. **first come per `workspace_id` (TOFU):** the hub pins `workspace_id → (owner_person_id, wsk_pub)` at the first
+   successful join. A later join for the same `workspace_id` under another owner → `other_person`; under the same
+   owner with another `WSK` → `wsk_mismatch` (v2: a workspace's `WSK` never changes).
+
+From then on the hub verifies link auth (§10.1), every w2h link message and every binding it forwards under the pinned
+`WSK`. The residual is the same as v2's first publication: whoever joins a never-seen `workspace_id` first owns it on
+this hub (vector `hub_join_squat_before_real_owner`); the real owner's join is refused, visibly, and a
+`workspace_id` is 16 random bytes that only the host knows before it publishes its card.
+
 ## 10. The host↔hub link
 
 **Purpose.** The only channel between a host and its hub (D68). The host dials out; both sides authenticate; every
@@ -479,7 +505,8 @@ Sign(WSK, "orch/v2/sig/hub-link-auth|" || suite || hub_id (16) || workspace_id (
 ```
 
 where `exporter` is the TLS exporter with label `"EXPORTER-orch-hub-link"`, empty context, 32 bytes. The hub verifies it
-against the `WSK` of the workspace's `hub.binding` (vector `link_auth`). One link serves one `workspace_id`.
+against the `WSK` it pinned for that workspace at join (§9.5; the first link of a join takes it from the verified
+card in the `join` message) (vector `link_auth`). One link serves one `workspace_id`.
 
 ### 10.2 `hub.link` messages
 
@@ -503,6 +530,9 @@ unknown `op` is `unknown_op`.
 | `route_in` | h2w | both | `{"envelope": b64u}` | `{}` |
 | `wk_seal` | w2h | full | `{"epoch", "wrap": b64u}`: `WK_e` sealed to `HXK` (v2 §5.3) | `{}` |
 | `publish_out` | w2h | both | `{"request": {method, host, target, headers, body_hex}}` (§11) | `{"status", "body_hex"}` |
+| `join` | w2h | both | `{"invite", "card", "pk_pub", "binding"}`: the v2 card, the owner's PK, the binding (§9.5) | `{}` |
+| `card_put` | w2h | both | `{"card", "pk_pub"}`: the workspace's v2 card, opaque to the hub, forwarded to publish and the relay (§16) | `{}` |
+| `binding_put` | w2h | both | `{"object"}`: a `hub.binding` or `hub.unbound`, forwarded as is | `{}` |
 | `audit_ack` | w2h | both | `{"seq", "head": b64u(32)}` | `{}` |
 | `share_put` | w2h | selective | `{"item_id", "sealed": b64u}` | `{}` |
 | `share_revoke` | w2h | selective | `{"item_id"}` | `{}` |
@@ -635,7 +665,7 @@ Requests for `secret` or `sealed` access keep the v2 path: the host evaluates th
 | Workspace host | card (pinned root), op revocations, snapshots, custodial events, h2w link messages | pin of `HK_root`, newest card, revoked op certs, newest snapshot (and all, in the ledger), alias map |
 | orch-publish | bindings, unbounds, hub cards (by binding), forwarded requests, owner approvals | workspace cards (v2), binding store, hub cards, nonces |
 | orch-relay (phase 4) | hub cards, bindings | hub accounts by card |
-| orch hub | link auth, w2h link messages, bindings it forwards, channel proofs before it signs | its keys, users, channels, snapshots, audit |
+| orch hub | the v2 card and binding at join (§9.5), link auth, w2h link messages, bindings it forwards, channel proofs before it signs | its keys, users, channels, snapshots, audit, the `workspace_id → (owner, WSK)` pins |
 
 ## 13. Threat notes for the reviewer
 
@@ -698,7 +728,7 @@ encoding (b64u padding, upper-case hex, duplicate key, float), wrong suite, futu
 
 Every implementation runs the cases of the checks it implements: the hub all of them; orch-core `card`, `op_*`,
 `snapshot`, `uk_cert`, `channel_cert`, `custodial`, `joined_payload`, `link` (h2w); orch-publish `binding_store`,
-`publish`, `card`. The cross-repo contract job (V3-D8) runs from phase 2.
+`publish`, `card`, `v2_card`. The hub also runs `hub_join`. The cross-repo contract job (V3-D8) runs from phase 2.
 
 ## 16. Decided here, and open points for L2
 
@@ -720,10 +750,16 @@ Every implementation runs the cases of the checks it implements: the hub all of 
 | 14 | Link replay | `seq` carried, not enforced | SHORTCUT (L7) |
 | 15 | Binding replay after leave | store keeps the unbound record (§9.4) | spec §8 "no later hub.unbound" |
 | 16 | Unbound delivery with the hub down | the host sends it to publish directly | spec §8 break-glass "none needs the hub" |
+| 17 | The hub's trust in a workspace's `WSK` at join | the v2 directory card + owner `PK` in `join`; first come per `workspace_id` | L2-3 |
+| 18 | `WSK` source after H5 | the v2 directory card, carried opaquely through the hub (`card_put`); publish never pins bindings first-come | L2 recommendation, adopted |
 
-**Open (not decidable within the spec and V3 DECISIONS; for the orchestrator / owner):**
+**Open / decided after L2:**
 
-- **Workspace cards after H5.** orch-publish trusts `WSK` through the v2 directory card. When H5 removes the direct
-  relay path from core, the workspace card needs another source (the hub forwarding the owner-signed `ws_delegation`,
-  or publish pinning the first binding). Not needed before H5; to decide before C10/H6.
+- (Decided, L2 recommendation adopted by the orchestrator.) **The one source of a workspace's `WSK`, for orch-publish,
+  the relay and the hub, is the v2 directory card**, with the v2 update rules (`workspace_id`, owner and `WSK` never
+  change; `card_seq` strictly increases). After H5 the host no longer talks to the relay directly, so it sends its
+  card through the hub as an opaque object (`card_put`, §10) and the hub forwards it to the relay and orch-publish. The
+  hub cannot forge or replace it (`PK`-signed delegation, `WSK` signature, never-change rules); it can only withhold
+  it, which only stops publishing. **orch-publish never pins a binding first-come:** that would make the hub's choice
+  of `WSK` authoritative. A binding counts only under the `WSK` of the card publish already holds (§9.2, §11.2 step 5).
 - **Relay accounts by hub card** (E1) and hub↔hub objects (H7) are not in H0.

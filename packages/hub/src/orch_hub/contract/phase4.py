@@ -1160,9 +1160,7 @@ def build_selective(action: Any, item: Mapping[str, Any]) -> tuple[str, dict[str
 VIEW_PROJ_KEYS = frozenset({"seq", "head", "ws_seq", "ws_head", "status", "roster_v", "gates"})
 
 
-def check_view_proj(
-    proj: Any, *, log: str, seq: int, head: str, line_ws_seq: Any, ws_heads: list[str]
-) -> None:
+def check_view_proj(proj: Any, *, log: str, seq: int, head: str, line_ws_seq: Any, ws_heads: list[str]) -> None:
     """The hub's check of a page's ``proj`` (§10.7 "The ticket projection"), after the page's lines passed. ``seq`` /
     ``head`` are the page's last line, ``line_ws_seq`` that line's ``ws_seq``, ``ws_heads`` the workspace view the hub
     holds. Exact keys at every depth; the gate entries are the §10.2b ``f1`` gate schema."""

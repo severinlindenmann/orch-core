@@ -727,9 +727,9 @@ nested schemas, same text rule) plus the fields the hub derives, nothing else at
 |---|---|
 | `ticket.created` | `key` (the host's `next_key`), `owner` (`u_` + the signer's user id); `based_on: null`; the log is the new uid |
 | `ticket.updated` | `base_rev`: **an object** `{path: value hash}` whose keys are **exactly** the keys of `set` (ticket-format §5.8, value hash §5.6). Never a single hash string |
-| `status.changed`, `ticket.moved` | `from` (the current status, status list) |
+| `status.changed`, `ticket.moved` | `from` (the current status, status list; full mode: `P.status`, §10.7 D15b) |
 | `question.asked` | `question.id` (`Q<n>`), `qid` (32 hex), `hash` (question hash) |
-| `gate.approved` | `gate_gen` (integer ≥ 0), `policy_hash`; `source_sha` (the source list `[{repo, ref, sha}]`, sorted by `repo`) **only and always** on `gate: "code"` |
+| `gate.approved` | (full mode: from the projection `P`, §10.7 D15b; selective: from `f1`) `gate_gen` (integer ≥ 0), `policy_hash`; `source_sha` (the source list `[{repo, ref, sha}]`, sorted by `repo`) **only and always** on `gate: "code"` |
 | `gate.changes_requested` | `gate_gen`, `policy_hash` (no `source_sha`) |
 | `verdict.given` | `gate_gen`, `policy_hash`, `source_sha` (always) |
 | every other type | nothing (`ticket.submitted`, `ticket.closed`, `ticket.reopened`, `claim.released`, `log.added`, `handoff.written`, `question.answered`, `visibility.changed`, `people.changed`, `addon.*`) |
@@ -1406,7 +1406,7 @@ logged event (ticket-format §5.1, with `seq`, `prev`, `ws_seq` and `host_sig`);
 K_view(e) = HKDF(WK_e, salt = "", info = "orch/v2/hub-view|" || hex(workspace_id) || "|" || dec(e))
 AAD       = "orch/v2/hub-view-aad|" || suite || workspace_id (16) || u32(epoch) || lp16(log) || u64(from_seq)
             || u32(count) || head (32 raw bytes) || u8(reset)
-sealed    = SALTED-AEAD(K_view(epoch), "orch/v2/hub-view-msg", AAD, cj({"lines": [event, …]}))     (v2 §5.1)
+sealed    = SALTED-AEAD(K_view(epoch), "orch/v2/hub-view-msg", AAD, cj({"lines": [event, …], "proj"?: P}))  (v2 §5.1)
 ```
 
 Sealed although the link is TLS (DECIDED HERE): the hub stores the pages sealed and opens them with `WK_e` only inside a
@@ -1423,8 +1423,8 @@ frame (§10.3). A sender may count the text (stricter).
 2. `epoch` is the newest epoch the hub holds a `wk_seal` wrap for → else `bad_epoch` (the host sends `wk_seal` first);
 3. position: `from_seq ≤ held + 1` for that log (with `reset`, held = 0) → else `view_gap`;
 4. size → `too_large`; the seal opens under `K_view(epoch)` with that AAD → else `bad_wrap` (a page moved to another
-   log, range, workspace or epoch, or a lying `head`); the plaintext is exactly `{"lines": [...]}` with `count` lines
-   → `malformed`;
+   log, range, workspace or epoch, or a lying `head`); the plaintext is exactly `{"lines": [...]}` or `{"lines": [...],
+   "proj": P}` (D15b, below) with `count` lines → `malformed`;
 5. per line, in order: `seq = from_seq + i` and `host_sig` present → `malformed`; `host_sig` under the **pinned**
    `WSK` (§9.5) over `"orch/v2/sig/host-event|" || cj({contract: 1, suite: 2, workspace_id, log, event without
    host_sig})` → `bad_signature`; `prev` is the head of the line before (`null` at `seq` 1), and a line at a `seq`
@@ -1432,6 +1432,40 @@ frame (§10.3). A sender may count the text (stricter).
    workspace-log `seq` the hub holds → else `view_gap` (sync the workspace log first);
 6. the last head equals `head` → `malformed`; then the view of that log is the held one extended (an overlap that
    matched changes nothing: resends are idempotent). Reply `{"seq", "head"}` of the hub's view after the page.
+7. (D15b) a `proj`, after the lines, against the view after this page (reference `check_view_proj`): the exact shape
+   below and a ticket log → `malformed`; `P.seq` and `P.head` are the page's last line, and `P.ws_seq` is not
+   before that line's `ws_seq` → `malformed`; `P.ws_seq` is held in the workspace view → `view_gap`; `P.ws_head` is
+   the held head at `P.ws_seq` → `view_fork`. The hub keeps, per ticket log, the newer `P` by `(seq, ws_seq)` (a tie:
+   this page's); a page without `proj` keeps the held one. A reset of a log drops its `P`; a reset of the workspace
+   log drops every `P` (with the ticket views, L2P4-9). Reference `apply_view_page_proj`, vectors `log_sync_proj_*`.
+
+**The ticket projection `P` (D15b, orch-core #1043).** The five full-mode types whose derived fields need the F1
+engine (§8.5: `gate.approved`, `gate.changes_requested`, `verdict.given` need `gate_gen`, `policy_hash`, the gate
+`hash` and `source_sha`; `status.changed`, `ticket.moved` need `from`) take them from the host, never from a hub
+computation. The lines hold every input (section hashes and `refs`, artifact digests, receipts, `branch.pushed`,
+policies, people, addon bindings), but the values come from core's whole F1 replay (generations with cascades and
+voids, canonical identities, effective policies, the done rule, the status table); a second engine in the hub could
+drift, and then the person would see values the host refuses. So the host sends its own:
+
+```
+P = {"seq", "head",          the ticket log's last line in this page (int ≥ 1, hash)
+     "ws_seq", "ws_head",    the workspace-log position P was computed at (int ≥ 1, hash)
+     "status",               the ticket's status there (status list, §10.2b)
+     "roster_v",             int ≥ 0
+     "gates": {<gate>: {"gen", "hash", "policy_hash", "source_sha"?}}}   exactly the §10.2b f1 gate entries
+```
+
+The host computes `P` with the same code it admits custodial events with (core: the C6b `f1` values plus the status),
+from one locked read together with the page's lines. `gates` lists only the gates (`requirements`, `plan`, `code`,
+`verify`) whose hash the host can build now; `source_sha` exactly on `code` and `verify`. `P` adds no disclosure: every
+value follows from lines a full hub already holds. **Build** (reference `build_from_proj`, vectors `proj_build_*`),
+after the visibility check: `P.seq`/`P.head` are the held ticket view's last line and `P.roster_v` equals the
+`roster_v` the hub counts from its workspace lines → else `unavailable` (stale: the host sends a newer `P`, sender
+rule 7); `status.changed`, `ticket.moved`: `from = P.status`; a decision: `P.gates[gate]` (`verify` for
+`verdict.given`) exists → else `unknown_item`, its `hash` equals `action.hash` → else `event_changed`, and the event
+takes `gate_gen = gen`, `policy_hash`, `hash` and (on a `code` approval and on a verdict) `source_sha` byte for byte,
+as §8.6 does from `f1`. `P` authorizes nothing and is not bound into the event: the host checks the values themselves
+against its own log (§8.3 step 9), so a stale or false `P` only gets an event refused (`event_changed`).
 
 **What the hub trusts, and what it does not.** The hub verifies that every line is the host's (`WSK`) and that the
 lines form one chain; it does not replay F1 authorization (devices, grants) over them. That is enough because of the
@@ -1487,13 +1521,18 @@ canonical, §9.1). A ticket that is not visible reads as `unknown_item` in a bui
    under the view lock against the view as it is then, so pages from a closing link and the new one interleave
    safely (an idempotent overlap or a `view_gap`, never a wrong view). The host runs one sync pass per workspace at a
    time.
+7. **The projection (D15b).** Every ticket page that ends at that log's current head carries `P`. After any append
+   (workspace or ticket log) the host recomputes `P` of every synced ticket log, and where it changed (compare a
+   digest of `cj(P)` without `ws_seq`/`ws_head`) it sends the log's last line again as a one-line overlap page with the
+   new `P` (an idempotent overlap that only refreshes `P`; vector `log_sync_proj_refreshed_by_overlap`). The workspace
+   log is synced up to `P.ws_seq` first.
 
 **Size cap.** At most 64 MiB sealed per workspace on the hub; a workspace whose log exceeds it answers `too_large` on
 every page, and a `reset` refills to the same cap, so the host must keep its synced logs under it (hardening: a
 rate-limited, cached projection and a global cap).
 
-**Not here:** the hub's projection code (F1 replay on the view) is the hub's; body text and artifact bytes are not
-synced in hv 0 (custodial `ticket.updated` is `set` only, §8.5), so the channel shows section hashes, not text, for
+**Not here:** the hub's projection code beyond `P` (roster version, questions, ticket fields, people) is the hub's; it
+never computes F1 gate values or the status (D15b). Body text and artifact bytes are not synced in hv 0 (custodial `ticket.updated` is `set` only, §8.5), so the channel shows section hashes, not text, for
 anything bound to them.
 
 ### 10.8 Hub → relay requests (phase 4, E1)
@@ -1957,10 +1996,10 @@ link errors travel as `{"error": code}` reply bodies; host-side refusals are loc
 | `link_auth` | challenge, exporter, signed bytes, signature |
 | `audit`, `admin_read` | V3-D4 / F3: a 4-record chain with its events and hashes; the admin read signed bytes, a request and a row |
 | `spaces` | V3-D8: the space key per epoch, `sk_commit`, one sealed item (salt, derived key, AAD, plaintext object) and one wrap (ephemeral seed, AAD) |
-| `phase4` | p4: the `log_sync` lines, heads, view key, AAD and one sealed page; a prepared context and digest; a relay request and its bytes; the relay routes' request bytes and one sealed push payload (`relay_routes`); the custodial type table; the `space.accept` built from the vector proposal |
+| `phase4` | p4: the `log_sync` lines, heads, view key, AAD and one sealed page; a ticket projection `proj_ticket`, a ticket page carrying it and its plaintext bytes (D15b); a prepared context and digest; a relay request and its bytes; the relay routes' request bytes and one sealed push payload (`relay_routes`); the custodial type table; the `space.accept` built from the vector proposal |
 | `share_item_f1` | C3b addendum: a ticket item with an `f1` block and its `item_hash` (§10.2b, §8.6) |
 | `phase4.channel_api` | B stream: a pairing link and its fingerprint, a signed `hub.api_origin`, a `session_ref`, a signed `hub.channel_auth` and `hub.channel_push`, a channel → relay request with its signed bytes, the mailbox list answer |
-| `cases` | 859 cases (214 positive, 645 negative): `check`, `args`, `expect` (`{"ok": …}` or `{"error": code}`), `phase` |
+| `cases` | 888 cases (226 positive, 662 negative): `check`, `args`, `expect` (`{"ok": …}` or `{"error": code}`), `phase` |
 
 The negative cases cover, per object where it applies: wrong domain, wrong signer, expired, binding for another
 workspace, unbound after leave, missing dev marker, dev at a real verifier, extra or unknown field, non-canonical
@@ -1975,7 +2014,8 @@ and the host side of `log_sync` (it builds the pages the vectors open); orch-pub
 relay `channel_request` and `channel_route`. C3b addendum: orch-core runs `custodial` (now with
 `custodial_event_*`, the event-shaped vector per custodial type, for its step-1 exact-payload check), `user_hub`,
 `deliver_next` (the host's reading of its own replies) and `share_item` incl. `f1` (it builds them); the hub runs all,
-plus `selective_build`. The hub also runs `hub_join`. Each case carries its `phase`; the L2 cases name their finding in `note`. The cross-repo contract job (V3-D8) runs from phase 2.
+plus `selective_build`. D15b: orch-core builds the `log_sync_proj_*` pages (its seal of `phase4.log_sync.proj_ticket`
+must equal `page_ticket_with_proj` byte for byte) and the hub runs `proj_build`. The hub also runs `hub_join`. Each case carries its `phase`; the L2 cases name their finding in `note`. The cross-repo contract job (V3-D8) runs from phase 2.
 
 ## 16. Decided here, and open points for L2
 
@@ -2024,6 +2064,7 @@ plus `selective_build`. The hub also runs `hub_join`. Each case carries its `pha
 | 42 | Addendum review (l2-add) | L2-ADD-1: selective admission checks the target in the item's `f1` and the chain head (§8.3 step 7); L2-ADD-2: §10.8.3 carries the E3 fixes (fence, one gate with an allow-list, purge of hooks and Drop, `pending` TTL 24 h, registered `hub_id`, no state to anonymous callers); L2-ADD-3: a superseded item version is `event_changed`; L2-ADD-7: vector renamed | state/l2-review-p4.md "Addendum hub#34" |
 | 41 | Relay cut-over (E3) | workspace names the hub, the hub only confirms; `other_hub` for every workspace that did not name it; hub `PUT` body `{v: 2, state: "cut_over"}`; `cut_over` (403) (§10.8.3) | orch-relay #88 |
 | 43 | The phone side (B stream) | §6.4: operator pairing link pins `hub_id`, and the `HK_op`-signed `hub.api_origin` must equal the link's host before any password (L2B-1); pairing session → channel session by a channel-key-signed, session-bound `hub.channel_auth` (12 h from the password sign-in, scope without registration or admin); a separate software push key named by `hub.channel_push` (the NSE runs locked; one key, one use), §10.8.2 seals to it; §10.8.4 channel-signed mailbox read under `/v2/hub-channels/`, certificate in a header; the hub's signed mailbox purge marks the channel revoked at the relay (`channel_revoked`); a real build refuses loopback/http pairing links; hints also left in the mailbox | state/design-b-phone.md, orch-core #861–#866 |
+| 44 | Full-mode gate decisions and status moves (D15b, orch-core #1043) | the host's own projection `P` (F1 gate values, status, roster version at one ticket head and workspace position) inside the sealed `log_sync` page; the hub copies, never computes; stale → `unavailable`; no new op, label or event field (§10.7) | state/design-d15b.md; one engine decides what is shown and what is checked |
 | 34 | New audit types | `channel` and `share` are additive `type` values of `hub.audit` in `hv: 0`: **orch-core's audit verifier must accept them** (its type enum and event field table), as the hub does | orchestrator lean, adopted |
 
 **SHORTCUTS added by the phase-4 extension** (for the #838 table): `Phone key attestation by operator pairing code (no

@@ -1819,7 +1819,12 @@ def build_p4(
         "gates": {
             "requirements": {"gen": 1, "hash": "sha256:" + "a1" * 32, "policy_hash": "sha256:" + "b1" * 32},
             "code": {"gen": 2, "hash": "sha256:" + "a3" * 32, "policy_hash": "sha256:" + "b3" * 32, "source_sha": src},
-            "verify": {"gen": 4, "hash": "sha256:" + "a4" * 32, "policy_hash": "sha256:" + "b4" * 32, "source_sha": src},
+            "verify": {
+                "gen": 4,
+                "hash": "sha256:" + "a4" * 32,
+                "policy_hash": "sha256:" + "b4" * 32,
+                "source_sha": src,
+            },
         },
     }
     pj1 = {**pj, "seq": 1, "head": P4.event_head(TK_LINES[0]), "ws_seq": 1, "ws_head": P4.event_head(WS_LINES[0])}
@@ -1855,8 +1860,14 @@ def build_p4(
         [ws_p, page(TICKET, TK_LINES, proj={**pj, "ws_head": ht})],
         {"error": "view_fork"},
     )
-    sync("log_sync_proj_extra_key", [ws_p, page(TICKET, TK_LINES, proj={**pj, "questions": {}})], {"error": "malformed"})
-    sync("log_sync_proj_bad_status", [ws_p, page(TICKET, TK_LINES, proj={**pj, "status": "waiting"})], {"error": "malformed"})
+    sync(
+        "log_sync_proj_extra_key", [ws_p, page(TICKET, TK_LINES, proj={**pj, "questions": {}})], {"error": "malformed"}
+    )
+    sync(
+        "log_sync_proj_bad_status",
+        [ws_p, page(TICKET, TK_LINES, proj={**pj, "status": "waiting"})],
+        {"error": "malformed"},
+    )
     g_req_src = {**pj["gates"], "requirements": {**pj["gates"]["requirements"], "source_sha": src}}
     sync(
         "log_sync_proj_source_on_requirements",
@@ -1932,10 +1943,21 @@ def build_p4(
     pbuild(
         "proj_build_verdict_uses_verify_gate",
         {"type": "verdict.given", "outcome": "pass", "hash": g["verify"]["hash"]},
-        {"ok": {"gate_gen": 4, "hash": g["verify"]["hash"], "policy_hash": g["verify"]["policy_hash"], "source_sha": src}},
+        {
+            "ok": {
+                "gate_gen": 4,
+                "hash": g["verify"]["hash"],
+                "policy_hash": g["verify"]["policy_hash"],
+                "source_sha": src,
+            }
+        },
     )
     pbuild("proj_build_status_changed_from", {"type": "status.changed", "to": "open"}, {"ok": {"from": "testing"}})
-    pbuild("proj_build_ticket_moved_from", {"type": "ticket.moved", "to": "backlog", "reason": "Later"}, {"ok": {"from": "testing"}})
+    pbuild(
+        "proj_build_ticket_moved_from",
+        {"type": "ticket.moved", "to": "backlog", "reason": "Later"},
+        {"ok": {"from": "testing"}},
+    )
     pbuild(
         "proj_build_stale_ticket_head",
         ap,
@@ -1943,7 +1965,9 @@ def build_p4(
         "the ticket moved after the projection: wait for the host's next one, never guess",
         proj=pj1,
     )
-    pbuild("proj_build_roster_moved", ap, {"error": "unavailable"}, "a member change not yet in the projection", roster_v=4)
+    pbuild(
+        "proj_build_roster_moved", ap, {"error": "unavailable"}, "a member change not yet in the projection", roster_v=4
+    )
     pbuild("proj_build_without_projection", ap, {"error": "unavailable"}, proj=None)
     pbuild(
         "proj_build_gate_left_out",

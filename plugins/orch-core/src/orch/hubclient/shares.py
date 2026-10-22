@@ -1,4 +1,5 @@
-"""Selective-mode share rules and their evaluation (V3 C6; spec 8a, D80; hub contract 10.2 ``share_put`` / ``share_revoke``).
+"""Selective-mode share rules and their evaluation (V3 C6; spec 8a, D80; hub contract 10.2,
+``share_put`` / ``share_revoke``).
 
 A selective workspace shows the hub only what its owner selects. The owner's **share rules** are a closed list:
 
@@ -10,7 +11,8 @@ A selective workspace shows the hub only what its owner selects. The owner's **s
 * ``{"kind": "questions"}``: the open questions addressed to the owner ("questions to me").
 
 :func:`select` turns rules plus the owner's view of the tickets into the items to share (pure, no I/O). :func:`sync`
-makes the hub's copy equal that set: ``share_put`` for a new or changed item, ``share_revoke`` for an item that no longer
+makes the hub's copy equal that set: ``share_put`` for a new or changed item, ``share_revoke`` for an item that no
+longer
 matches (rule removed, label removed, ticket closed, owner withdrew it). It resends only what changed: a put that did
 not get a reply keeps its item id, so a retry replaces the item and never duplicates it.
 
@@ -65,7 +67,12 @@ def normalize_rule(rule: Any) -> dict[str, str]:
         raise HubRefused("malformed")
     for k in _RULE_KEYS[kind]:
         v = rule[k]
-        if type(v) is not str or not 0 < len(v) <= 100 or v != v.strip() or any(ord(c) < 0x20 or ord(c) == 0x7F for c in v):
+        if (
+            type(v) is not str
+            or not 0 < len(v) <= 100
+            or v != v.strip()
+            or any(ord(c) < 0x20 or ord(c) == 0x7F for c in v)
+        ):
             raise HubRefused("malformed")
     return {k: rule[k] for k in ("kind", *sorted(_RULE_KEYS[kind]))}
 
@@ -171,7 +178,9 @@ def select(rules: Iterable[Mapping[str, str]], tickets: Iterable[TicketFact]) ->
             for n in t.needs:
                 if not n.to_owner:
                     continue
-                title = next((q.text for q in t.questions if q.qid == n.ref), t.title) if n.kind == "question" else t.title
+                title = (
+                    next((q.text for q in t.questions if q.qid == n.ref), t.title) if n.kind == "question" else t.title
+                )
                 lg = f"summary:{t.uid}:{n.kind}:{n.ref or ''}"
                 out[lg] = _item(
                     lg, "summary", t, {"kind": "summary", "type": n.kind, "title": _line(title), "deadline": t.due}
@@ -184,7 +193,7 @@ def select(rules: Iterable[Mapping[str, str]], tickets: Iterable[TicketFact]) ->
 
 class SealedItemBuilder(Protocol):
     def __call__(self, item_id: str, item: ShareItem) -> str:
-        """The b64u ``sealed`` of one item (per-item key sealed to ``HXK`` plus the ``WSK``-signed state and chain head)."""
+        """The b64u ``sealed`` of one item (per-item key sealed to ``HXK``, ``WSK``-signed state, chain head)."""
         ...
 
 

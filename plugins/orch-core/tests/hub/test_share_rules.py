@@ -73,7 +73,12 @@ def test_state_round_trips_and_a_damaged_file_is_refused():
     assert not st.add_rule({"kind": "tag", "tag": "public"})
     st.sent["ticket:a"] = {"item_id": "11" * 16, "digest": "d"}
     assert S.ShareState.from_json(st.to_json()).to_json() == st.to_json()
-    for bad in (None, {}, {**st.to_json(), "rules": [{"kind": "x"}]}, {**st.to_json(), "sent": {"a": {"item_id": "zz"}}}):
+    for bad in (
+        None,
+        {},
+        {**st.to_json(), "rules": [{"kind": "x"}]},
+        {**st.to_json(), "sent": {"a": {"item_id": "zz"}}},
+    ):
         with pytest.raises(HubRefused):
             S.ShareState.from_json(bad)
 

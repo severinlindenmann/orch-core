@@ -14,7 +14,7 @@ from .tls import TlsConn
 
 __all__ = ["HEADER", "MAX_FRAME", "FrameError", "read_frame", "write_frame"]
 
-MAX_FRAME = 1 << 20  # 1 MiB
+MAX_FRAME = 1_500_000  # the hub's cap (protocol 10.3): a 1 MiB envelope as base64url inside a signed message
 HEADER = 4
 
 

@@ -22,6 +22,10 @@ F1 = Path(__file__).parent.parent / "vectors" / "f1" / "labels.json"
 PLANNED = {
     "kdf_host_drop_recovery": "orch/v2/host-drop-recovery|",
     "sig_drop_handoff": "orch/v2/sig/drop-handoff|",
+    "sig_hub_binding": "orch/v2/sig/hub-binding|",  # V3 C2a: what the WSK signs for a hub
+    "sig_hub_unbound": "orch/v2/sig/hub-unbound|",
+    "sig_hub_link": "orch/v2/sig/hub-link|",
+    "sig_hub_link_auth": "orch/v2/sig/hub-link-auth|",
 }
 
 

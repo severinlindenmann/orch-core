@@ -23,7 +23,15 @@ from .views import TicketView, WorkspaceView, ticket_view, workspace_view
 
 # Workspace events that cannot change what an existing ticket view shows (so `advance` keeps those views).
 _NO_TICKET_EFFECT = frozenset(
-    {"device.added", "device.removed", "grant.issued", "projection.repaired", "invalid.acknowledged"}
+    {
+        "device.added",
+        "device.removed",
+        "grant.issued",
+        "projection.repaired",
+        "invalid.acknowledged",
+        "hub.joined",
+        "hub.left",
+    }
 )
 
 

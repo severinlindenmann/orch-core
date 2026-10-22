@@ -314,6 +314,23 @@ def _person_op(prepared: Mapping[str, Any]) -> None:
                 and isinstance(e.get("text"), str)
                 and e["text"].startswith(MARK + "\n")
             )
+        elif (
+            op == "hub.join"
+        ):  # V3 C2a: one hub.joined on the workspace log, selective mode, exactly the contract's members
+            ok = (
+                len(events) == 1
+                and log == "workspace"
+                and e["type"] == "hub.joined"
+                and e.get("mode") == "selective"
+                and set(e) - review.ENVELOPE == {"hub_id", "hk_root_pub", "mode", "binding_seq", "aliases"}
+            )
+        elif op == "hub.leave":  # V3 C2a: one hub.left on the workspace log, naming the hub and the binding it ends
+            ok = (
+                len(events) == 1
+                and log == "workspace"
+                and e["type"] == "hub.left"
+                and set(e) - review.ENVELOPE == {"hub_id", "binding_seq"}
+            )
         elif op == "settings.set":
             sets = e.get("set")
             ok = e["type"] == "settings.changed" and log == "workspace" and isinstance(sets, dict) and bool(sets)
@@ -614,6 +631,8 @@ _PLAIN = {
     "people.set": "change the {role} of {ticket}",
     "relay.pair_device": "add the paired device {device} to your devices",
     "publish.share": "let the staged copy of files of {ticket} be shared outside this computer",
+    "hub.join": "join hub {hub_id} in {mode} mode: the hub sees only what you share and never gets the workspace key",
+    "hub.leave": "leave hub {hub_id} (binding {binding_seq}) and tell it that this workspace is no longer bound",
 }
 
 

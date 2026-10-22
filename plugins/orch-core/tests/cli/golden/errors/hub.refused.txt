@@ -1,0 +1,1 @@
+err hub.refused the hub is refused · retry:false · next: check the hub card and that this is a dev workspace for a dev hub · fix: orch status

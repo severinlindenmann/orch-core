@@ -329,6 +329,20 @@ def check(service: Any, person: str, device: str, *, gate: Any = None) -> None:
         raise unavailable(*found)
 
 
+#: V3 C2a: the ops that bind the workspace to (or free it from) a hub. The owner's own key at the terminal signs them;
+#: a convenience (click-to-sign) key never does, however the label reads.
+HUB_OPS = frozenset({"hub.join", "hub.leave"})
+
+
+def refuse_hub_op(op: str, auth: str | None) -> None:
+    if op in HUB_OPS and auth == "convenience":
+        raise HostError(
+            "sign.convenience_unavailable",
+            "joining or leaving a hub is signed with your own key at the terminal, never with click-to-sign",
+            hint="sign in your terminal with orch sign CODE (or run orch hub join / orch hub leave there)",
+        )
+
+
 def refuse_reader_op(
     service: Any,
     op: str,

@@ -87,6 +87,8 @@ _WORKSPACE_ONLY = frozenset(
         "addon.granted",
         "addon.disabled",
         "addon.purged",
+        "hub.joined",
+        "hub.left",
     }
 )
 _BOTH_LOGS = frozenset({"policy.changed", "projection.repaired", "restore", "invalid.acknowledged"})
@@ -789,12 +791,32 @@ def validate_settings(value: Any, *, repos: dict[str, Any] | None = None) -> Non
     _check_repos(name, ("set", "repos"), resulting)
 
 
+def _ev_hub_joined(obj: dict[str, Any], actor: dict[str, Any]) -> None:
+    """Hub contract 9.1: ``hub_id`` is derived from ``hk_root_pub``; aliases sorted by ``person_id``, unique on both
+    members (a re-pointed alias across joins is the model's check)."""
+    from orch.crypto.encoding import EncodingError, unb64u
+    from orch.hubclient import wire
+    from orch.hubclient.errors import HubRefused
+
+    try:
+        root = unb64u(obj["hk_root_pub"], 65)
+        if obj["hub_id"] != wire.hub_id(root):
+            raise SchemaError("event", "/hub_id", "hub_id is not the hub id of hk_root_pub")
+    except (EncodingError, HubRefused):
+        raise SchemaError("event", "/hk_root_pub", "hk_root_pub is not a key") from None
+    pids = [a["person_id"] for a in obj["aliases"]]
+    uids = [a["user_id"] for a in obj["aliases"]]
+    if pids != sorted(set(pids)) or len(set(uids)) != len(uids):
+        raise SchemaError("event", "/aliases", "aliases must be sorted by person_id and unique")
+
+
 def _ev_settings_changed(obj: dict[str, Any], actor: dict[str, Any]) -> None:
     _check_repos("event", ("set", "repos"), obj["set"].get("repos", {}))
 
 
 _EVENT_CHECKS = {
     "settings.changed": _ev_settings_changed,
+    "hub.joined": _ev_hub_joined,
     "ticket.created": _ev_ticket_created,
     "ticket.updated": _ev_ticket_updated,
     "edit.external": _ev_edit_external,

@@ -369,6 +369,105 @@ def handle_publish_share(ctx: Context, args: dict[str, Any]) -> Result:
     return h.ticket_result(view, done, {"staged_id": facts.staged_id}, f"orch publish send {facts.staged_id}")
 
 
+def handle_hub_join(ctx: Context, args: dict[str, Any]) -> Result:
+    """``hub.join {hub_card, mode, aliases?}`` (V3 C2a, hub contract 9.1, spec 8 and 8a): ``hub.joined`` on the
+    workspace log, signed by the owner at the host terminal. Selective mode only: ``full`` is refused here (C2b) and by
+    the model and the signer. The hub card is verified here against the host's own clock and dev state
+    (``ctx.prepare.hub``); the event adds no member and carries no key material beyond the hub's public root."""
+    from orch.hubclient import wire
+    from orch.hubclient.errors import HubRefused
+
+    h = _Human(ctx, "hub.join")
+    _owner(h, "hub.join")
+    facts = getattr(ctx.prepare, "hub", None)
+    if facts is None or type(getattr(facts, "now_ms", None)) is not int:
+        raise OrchError("human_only", "hub.join is prepared only by the host, with its own facts")
+    if args["mode"] != "selective":
+        raise OrchError("hub.full_mode_later", "a full join comes later (C2b); only the selective mode exists now")
+    current = h.store.state.workspace.hub
+    if current and current.get("status") == "joined":
+        raise OrchError("hub.already_joined", "this workspace is already joined to a hub; leave it first")
+    try:
+        verified = wire.verify_card(args["hub_card"], now_ms=facts.now_ms, dev_mode=facts.dev_mode)
+        me = h.person.removeprefix("p_")  # the owner is the only person a selective join may alias (spec 8a)
+        aliases = list(args.get("aliases") or [])
+        if any(a["person_id"] != me for a in aliases) or len(aliases) > 1:
+            raise HubRefused("malformed")
+        payload = wire.joined_payload(
+            hk_root_pub=verified["hk_root_pub"],
+            mode="selective",
+            binding_seq=int(current.get("binding_seq", 0)) + 1,
+            aliases=aliases,
+            prior_aliases=dict(current.get("aliases", {})),
+        )
+    except HubRefused as exc:
+        raise OrchError("hub.refused", f"the hub is refused: {exc.code}") from None
+    done = h.run({"type": "hub.joined", **payload}, "workspace", f"join hub {payload['hub_id']}", review=[])
+    data = {"hub_id": payload["hub_id"], "mode": "selective", "binding_seq": payload["binding_seq"]}
+    return h.workspace_result(done, data, "orch hub join continues with the hub (orch host hub connect)")
+
+
+def handle_hub_leave(ctx: Context, args: dict[str, Any]) -> Result:
+    """``hub.leave {}`` (V3 C2a, hub contract 9.1; break-glass, spec 8): ``hub.left`` naming the joined hub and its
+    binding. Works with the hub down: nothing here talks to it."""
+    h = _Human(ctx, "hub.leave")
+    _owner(h, "hub.leave")
+    current = h.store.state.workspace.hub
+    if not current or current.get("status") != "joined":
+        raise OrchError("hub.not_joined", "this workspace is not joined to a hub")
+    event = {"type": "hub.left", "hub_id": current["hub_id"], "binding_seq": current["binding_seq"]}
+    done = h.run(event, "workspace", f"leave hub {current['hub_id']}", review=[])
+    data = {"hub_id": current["hub_id"], "binding_seq": current["binding_seq"]}
+    return h.workspace_result(done, data, "the host now tells the hub that this workspace is unbound")
+
+
+_HEX32 = {"type": "string", "pattern": "^[0-9a-f]{32}$"}
+HUB_JOIN = operation(
+    "hub.join",
+    "Human only",
+    "Join a hub in selective mode: the hub sees only what you share and never gets the workspace key.",
+    who="human",
+    props={
+        "hub_card": {"type": "object", "description": "the hub card (hub contract 5), verified by the host"},
+        "mode": E("the join mode", "selective", "full"),
+        "aliases": {
+            "type": "array",
+            "maxItems": 1,
+            "description": "the owner's name on the hub: {person_id, user_id}",
+            "items": {
+                "type": "object",
+                "properties": {"person_id": _HEX32, "user_id": _HEX32},
+                "required": ["person_id", "user_id"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    required=("hub_card", "mode"),
+    emits=("hub.joined",),
+    text="ok hub.joined {hub_id} seq={seq}\nnext: {next}",
+    data=obj({"hub_id": STR, "mode": STR, "binding_seq": {"type": "integer"}}),
+    errors=(
+        err("role.denied"),
+        err("hub.refused"),
+        err("hub.full_mode_later"),
+        err("hub.already_joined"),
+    ),
+    handler=handle_hub_join,
+)
+HUB_LEAVE = operation(
+    "hub.leave",
+    "Human only",
+    "Leave the hub (break-glass): the workspace logs it and stops being bound, also while the hub is down.",
+    who="human",
+    props={},
+    required=(),
+    emits=("hub.left",),
+    text="ok hub.left {hub_id} seq={seq}\nnext: {next}",
+    data=obj({"hub_id": STR, "binding_seq": {"type": "integer"}}),
+    errors=(err("role.denied"), err("hub.not_joined")),
+    handler=handle_hub_leave,
+)
+
 _PERSON = {"type": "string", "pattern": "^p_[0-9a-f]{32}$"}
 PEOPLE_SET = operation(
     "people.set",
@@ -571,6 +670,8 @@ OPS: dict[str, Operation] = {
         PEOPLE_SET,
         PAIR_DEVICE,
         PUBLISH_SHARE,
+        HUB_JOIN,
+        HUB_LEAVE,
         AC_ACCEPT,
         AC_UNACCEPT,
         TASK_MARK_DONE,

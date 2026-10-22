@@ -49,6 +49,7 @@ class Code(StrEnum):
     UNATTENDED_DENIED = "unattended.denied"
     VALIDATION_EVENT = "validation.event"
     SETTINGS_INVALID = "settings.invalid"
+    HUB_INVALID = "hub.invalid"
     ADDON_UNKNOWN = "addon.unknown"
     ADDON_FIELD_UNKNOWN = "addon.field_unknown"
     ADDON_VALUE_INVALID = "addon.value_invalid"

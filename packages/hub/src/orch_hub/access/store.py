@@ -354,9 +354,6 @@ class Access:
     def revoke_channel(self, channel_id: str) -> None:
         self._w("INSERT OR IGNORE INTO revoked_channels VALUES (?)", (_hex(channel_id, "channel_id"),))
 
-    def unrevoke_channel(self, channel_id: str) -> None:
-        self._w("DELETE FROM revoked_channels WHERE channel_id=?", (_hex(channel_id, "channel_id"),))
-
     def revoked_channels(self) -> list[str]:
         return [c for (c,) in self._q("SELECT channel_id FROM revoked_channels ORDER BY channel_id")]
 

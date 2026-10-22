@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from . import audit as AU
 from . import hub as H
 from . import spaces as SP
 from . import suite as S
@@ -73,6 +74,16 @@ def _space_flow(a: dict[str, Any]) -> dict[str, Any]:
             o = SP.verify_space(st["space"], held, dev_mode=dev, prior=prior)
             states[sid] = SP.apply_space(states[sid], o) if sid in states else SP.new_state(o)
             return None
+        if "unbind" in st:
+            u = st["unbind"]
+            sid = u["space_id"]
+            rec = (
+                SP.verify_space(u["space"], held, dev_mode=dev, prior=states[sid]["space"]) if u.get("space") else None
+            )
+            states[sid] = SP.apply_unbind(states.get(sid), u["ws"], rec)
+            if states[sid] is None:
+                del states[sid]
+            return None
         kind = next(k for k in ("put", "revoke", "get") if k in st)
         c = st[kind]
         cur = states.get(c["body"]["space_id"])
@@ -93,6 +104,16 @@ def _space_flow(a: dict[str, Any]) -> dict[str, Any]:
     if "entries" in out:
         return {"seqs": [e["seq"] for e in out["entries"]], "next": out["next"]}
     return out
+
+
+def _audit(a: dict[str, Any]) -> dict[str, Any]:
+    dev, held = a.get("dev_mode", True), _held(a)
+    head = a.get("head")
+    for st in a.get("steps", []):
+        head = AU.apply_record(head, st, AU.verify_record(st, held, dev_mode=dev))
+    o = AU.verify_record(a["signed"], held, dev_mode=dev, event=a.get("event"), revoked_op_certs=_later(a))
+    new = AU.apply_record(head, a["signed"], o)
+    return {"seq": new["seq"], "hash": new["hash"]}
 
 
 def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
@@ -237,6 +258,25 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
             dev_mode=dev,
         )
         return {"author": o["workspace_id"]}
+    if check == "audit":
+        return _audit(a)
+    if check == "audit_ack":
+        return AU.check_ack(a["chain"], a.get("acked", {}), a["workspace_id"], a["body"])
+    if check == "admin_read":
+        r = a["request"]
+        st = {
+            "cards": a["cards"],
+            "bindings": {
+                w: _apply_store(steps, w, unb64u(a["cards"][w]["wsk_pub"], 65), now, dev)
+                for w, steps in a.get("bindings", {}).items()
+            },
+            "hub_cards": {a["hub_id"]: a["hub_card"]},
+            "revoked_op_certs": a.get("revoked_op_certs", []),
+        }
+        return H.check_admin_read(r, st, now_ms=now, dev_mode=dev)
+    if check == "admin_read_row":
+        H.check_admin_read_row(a["row"])
+        return {"row": True}
     if check == "space_flow":
         return _space_flow(a)
     raise ValueError(f"unknown check {check}")

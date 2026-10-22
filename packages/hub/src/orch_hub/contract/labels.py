@@ -18,6 +18,7 @@ HUB_LABELS: dict[str, str] = {
     "sig_hub_route": "orch/v2/hub-route|",
     "sig_hub_publish": "orch/v2/hub-publish|",
     "sig_hub_audit": "orch/v2/hub-audit|",  # reserved for D4 (audit chain); no object in H0
+    "sig_hub_admin_read": "orch/v2/hub-admin-read|",  # F3: hub admin metadata read at orch-publish
     "sig_hub_space": "orch/v2/hub-space|",  # V3-D8 shared spaces (§10.4): a space record at one epoch
     "sig_hub_space_wrap": "orch/v2/hub-space-wrap|",  # V3-D8: SK_e sealed to one member workspace's WXK
     # signatures by a channel key
@@ -36,6 +37,8 @@ HUB_LABELS: dict[str, str] = {
     "h_channel_id": "orch/v2/id/channel|",
     "h_hub_event_digest": "orch/v2/hub-event-digest|",
     "h_hub_publish_request": "orch/v2/hub-publish-request|",
+    "h_hub_audit_chain": "orch/v2/hub-audit-chain|",  # D4: hash of one signed audit record (the chain link)
+    "h_hub_audit_event": "orch/v2/hub-audit-event|",  # D4: hash of an audit event, signed into its record
     "h_sk_commit": "orch/v2/hub-sk-commit|",  # V3-D8: commitment to SK_e inside the signed space record
     # AAD of a sealed space item
     "aad_space": "orch/v2/space-aad|",

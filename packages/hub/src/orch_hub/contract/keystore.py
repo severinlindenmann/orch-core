@@ -83,6 +83,7 @@ class OpSigner(_Signer):
             "hub.snapshot": "sig_hub_snapshot",
             "hub.space": "sig_hub_space",
             "hub.space_wrap": "sig_hub_space_wrap",
+            "hub.audit": "sig_hub_audit",
         }
     )
     LINK_DIR = "h2w"
@@ -97,6 +98,15 @@ class OpSigner(_Signer):
         if type(o) is dict and o.get("kind") == "hub.card" and "op_cert" in o:
             raise KeyUseError("pass the card's o, not the card")
         return super().sign_object(o)
+
+    def admin_read(self, hub_id: str, ts_ms: int, method: str, target: str) -> bytes:
+        """The hub admin read signature (§10.6) over the exact bytes; the method is GET or HEAD only."""
+        if method not in ("GET", "HEAD"):
+            raise KeyUseError("admin reads are GET or HEAD")
+        try:
+            return self._sig(H.admin_read_bytes(hub_id, ts_ms, method, target))
+        except H.Refused as r:
+            raise KeyUseError(r.code) from None
 
     def publish_transport(self, hub_id: str, wsk_signed_bytes: bytes) -> bytes:
         """The forwarding signature (§11.1) over hub-path WSK-signed bytes only."""

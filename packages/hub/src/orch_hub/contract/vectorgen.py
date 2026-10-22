@@ -12,6 +12,7 @@ import json
 import sys
 from typing import Any
 
+from . import audit as AU
 from . import hub as H
 from . import spaces as SP
 from . import suite as S
@@ -500,6 +501,96 @@ def put_body(
         "item_id": iid,
         "sealed": sealed_item(ws, iid, epoch, space, **kw),
     }
+
+
+# --- D4 audit chain, admin read (§10.5, §10.6) -------------------------------------------------------------------------
+
+AUDIT_EVENTS: list[tuple[str, dict[str, Any]]] = [
+    (
+        "custodial",
+        {
+            "workspace_id": WS_A,
+            "log": TICKET,
+            "verb": "gate.approved",
+            "user_id": U_ALICE,
+            "channel_id": CH_ALICE,
+            "digest": b64u(S.fake_seed("hub/audit_digest")),
+        },
+    ),
+    ("grant", {"group": "ops", "workspace_id": WS_A, "role": "edit", "actor_user_id": U_ALICE}),
+    ("membership", {"group": "ops", "user_id": U_BOB, "added": True, "actor_user_id": U_ALICE}),
+    (
+        "space",
+        {"space_id": SPACE, "epoch": 2, "change": "remove", "workspace_id": WS_B, "actor_user_id": U_ALICE},
+    ),
+]
+
+
+def audit_rec(
+    seq: int, prev: str, typ: str, event: dict[str, Any], *, scope: Any = "auto", signer: str = "hk_op", **kw: Any
+) -> dict[str, Any]:
+    o = {
+        **hdr("hub.audit"),
+        "hub_id": HUB_ID,
+        "op_cert_id": OP_CERT_ID,
+        "seq": seq,
+        "prev": prev,
+        "ts_ms": NOW - 1000 * (10 - seq),
+        "type": typ,
+        "scope": AU.scope_of(event) if scope == "auto" else scope,
+        "event_hash": AU.event_hash(event),
+        "dev": True,
+        **kw,
+    }
+    return signed(signer, "sig_hub_audit", o)
+
+
+def audit_chain(n: int = 4) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    prev = AU.GENESIS_PREV
+    for i in range(n):
+        typ, ev = AUDIT_EVENTS[i]
+        r = audit_rec(i + 1, prev, typ, ev)
+        out.append(r)
+        prev = AU.chain_hash(r)
+    return out
+
+
+ADMIN_TARGET = "/v1/admin/releases?workspace=" + WS_A + "&state=active"
+
+
+def admin_req(
+    method: str = "GET",
+    target: str = ADMIN_TARGET,
+    *,
+    ts: int = NOW,
+    key: str = "hk_op",
+    signed_target: str | None = None,
+    signed_method: str | None = None,
+    hub: str = HUB_ID,
+    **hdr_kw: Any,
+) -> dict[str, Any]:
+    msg = H.admin_read_bytes(hub, ts, signed_method or method, signed_target or target)
+    headers = {
+        "Orch-Hub": hub,
+        "Orch-Hub-Ts": str(ts),
+        "Orch-Hub-Signature": b64u(S.sign(K.priv[key], msg, deterministic=True)),
+    }
+    headers.update(hdr_kw)
+    return {"method": method, "target": target, "headers": {k: v for k, v in headers.items() if v is not None}}
+
+
+ADMIN_ROW = {
+    "workspace_id": WS_A,
+    "release_id": "rel_2026_10_22_a",
+    "kind": "share",
+    "state": "active",
+    "created_ms": NOW - DAY,
+    "expires_ms": NOW + DAY,
+    "revoked": False,
+    "bytes": 12_345,
+    "public_url": None,
+}
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -1898,6 +1989,401 @@ def build() -> dict[str, Any]:
         "pollers that already read seq 1 see the revocation at seq 2; it cannot take back what was read",
     )
 
+    # ---- D4 audit chain (phase 3, protocol.md §10.5)
+    ch = audit_chain()
+    h = [AU.chain_hash(r) for r in ch]
+    au = {**with_card}
+    case("audit_genesis", "audit", {**au, "signed": ch[0]}, {"ok": {"seq": 1, "hash": h[0]}}, 3)
+    case("audit_next_record", "audit", {**au, "steps": [ch[0]], "signed": ch[1]}, {"ok": {"seq": 2, "hash": h[1]}}, 3)
+    case("audit_four_in_a_row", "audit", {**au, "steps": ch[:3], "signed": ch[3]}, {"ok": {"seq": 4, "hash": h[3]}}, 3)
+    case(
+        "audit_resend_is_idempotent",
+        "audit",
+        {**au, "steps": ch[:2], "signed": ch[1]},
+        {"ok": {"seq": 2, "hash": h[1]}},
+        3,
+    )
+    case(
+        "audit_from_anchor_head",
+        "audit",
+        {**au, "head": {"seq": 2, "hash": h[1]}, "signed": ch[2]},
+        {"ok": {"seq": 3, "hash": h[2]}},
+        3,
+        "a workspace that joined later starts from a head it was given",
+    )
+    case(
+        "audit_event_matches",
+        "audit",
+        {**au, "signed": ch[0], "event": AUDIT_EVENTS[0][1]},
+        {"ok": {"seq": 1, "hash": h[0]}},
+        3,
+    )
+    case(
+        "audit_event_altered",
+        "audit",
+        {**au, "signed": ch[0], "event": {**AUDIT_EVENTS[0][1], "user_id": U_BOB}},
+        {"error": "audit_mismatch"},
+        3,
+        "the record signs the event's hash",
+    )
+    bad_ev = {**AUDIT_EVENTS[1][1], "extra": 1}
+    case(
+        "audit_event_extra_field",
+        "audit",
+        {
+            **au,
+            "signed": audit_rec(1, AU.GENESIS_PREV, "grant", AUDIT_EVENTS[1][1], event_hash=AU.event_hash(bad_ev)),
+            "event": bad_ev,
+        },
+        {"error": "malformed"},
+        3,
+    )
+    case(
+        "audit_scope_not_the_events",
+        "audit",
+        {
+            **au,
+            "signed": audit_rec(1, AU.GENESIS_PREV, "grant", AUDIT_EVENTS[1][1], scope=WS_B),
+            "event": AUDIT_EVENTS[1][1],
+        },
+        {"error": "audit_mismatch"},
+        3,
+        "a record cannot be filed under another workspace",
+    )
+    case(
+        "audit_type_not_the_events",
+        "audit",
+        {**au, "signed": audit_rec(1, AU.GENESIS_PREV, "space", AUDIT_EVENTS[1][1]), "event": AUDIT_EVENTS[1][1]},
+        {"error": "malformed"},
+        3,
+    )
+    case(
+        "audit_gap_record_removed",
+        "audit",
+        {**au, "steps": [ch[0]], "signed": ch[2]},
+        {"error": "audit_gap"},
+        3,
+        "a record taken out of the chain",
+    )
+    case("audit_first_record_not_genesis", "audit", {**au, "signed": ch[1]}, {"error": "audit_gap"}, 3)
+    case(
+        "audit_fork_other_prev",
+        "audit",
+        {**au, "steps": [ch[0]], "signed": audit_rec(2, AU.chain_hash(ch[1]), *AUDIT_EVENTS[1])},
+        {"error": "audit_fork"},
+        3,
+    )
+    case(
+        "audit_fork_other_bytes_at_taken_seq",
+        "audit",
+        {**au, "steps": ch[:2], "signed": audit_rec(2, h[0], *AUDIT_EVENTS[1], ts_ms=NOW)},
+        {"error": "audit_fork"},
+        3,
+        "the hub signed two different records for seq 2",
+    )
+    case(
+        "audit_first_record_rewritten",
+        "audit",
+        {**au, "steps": [audit_rec(1, AU.GENESIS_PREV, *AUDIT_EVENTS[0], ts_ms=NOW)], "signed": ch[1]},
+        {"error": "audit_fork"},
+        3,
+        "a rewritten record breaks every later prev",
+    )
+    case(
+        "audit_genesis_with_prev",
+        "audit",
+        {**au, "signed": audit_rec(1, h[0], *AUDIT_EVENTS[0])},
+        {"error": "malformed"},
+        3,
+    )
+    case(
+        "audit_signed_by_workspace_key",
+        "audit",
+        {**au, "signed": signed("wsk_a", "sig_hub_audit", ch[0]["o"])},
+        {"error": "bad_signature"},
+        3,
+    )
+    case(
+        "audit_under_snapshot_label",
+        "audit",
+        {**au, "signed": signed("hk_op", "sig_hub_snapshot", ch[0]["o"])},
+        {"error": "bad_signature"},
+        3,
+    )
+    case(
+        "audit_stale_op_cert",
+        "audit",
+        {**au, "signed": resign("hk_op", "sig_hub_audit", ch[0], op_cert_id=OP_CERT_NEXT)},
+        {"error": "stale_op_cert"},
+        3,
+    )
+    case(
+        "audit_unknown_type",
+        "audit",
+        {**au, "signed": resign("hk_op", "sig_hub_audit", ch[0], type="login")},
+        {"error": "malformed"},
+        3,
+    )
+    case(
+        "audit_seq_zero",
+        "audit",
+        {**au, "signed": resign("hk_op", "sig_hub_audit", ch[0], seq=0)},
+        {"error": "malformed"},
+        3,
+    )
+    case(
+        "audit_missing_dev_marker",
+        "audit",
+        {**au, "signed": resign("hk_op", "sig_hub_audit", ch[0], dev=DROP)},
+        {"error": "malformed"},
+        3,
+    )
+
+    ak = {"chain": ch, "workspace_id": WS_A}
+    case("audit_ack_valid", "audit_ack", {**ak, "body": {"seq": 2, "head": h[1]}}, {"ok": {"acked": 2}}, 3)
+    case("audit_ack_head", "audit_ack", {**ak, "body": {"seq": 4, "head": h[3]}}, {"ok": {"acked": 4}}, 3)
+    case(
+        "audit_ack_older_keeps_the_newer",
+        "audit_ack",
+        {**ak, "acked": {WS_A: 4}, "body": {"seq": 2, "head": h[1]}},
+        {"ok": {"acked": 4}},
+        3,
+    )
+    case(
+        "audit_ack_wrong_head",
+        "audit_ack",
+        {**ak, "body": {"seq": 2, "head": h[2]}},
+        {"error": "audit_fork"},
+        3,
+        "the workspace holds a chain the hub did not sign there",
+    )
+    case(
+        "audit_ack_beyond_the_chain", "audit_ack", {**ak, "body": {"seq": 5, "head": h[3]}}, {"error": "audit_fork"}, 3
+    )
+
+    # ---- hub admin read for orch-publish (phase 3, protocol.md §10.6)
+    acards = {WS_A: {"wsk_pub": K.b("wsk_a"), "owner_person_id": P_ALICE}}
+    ab = {**base, "hub_id": HUB_ID, "hub_card": c, "cards": acards, "bindings": {WS_A: [{"binding": binding()}]}}
+    ok_ar = {"ok": {"hub": HUB_ID, "workspaces": [WS_A]}}
+    ws_path = f"/v1/ws/{WS_A}/releases?state=active"
+    case("admin_read_valid", "admin_read", {**ab, "request": admin_req()}, ok_ar, 3)
+    case("admin_read_workspace_path_in_scope", "admin_read", {**ab, "request": admin_req(target=ws_path)}, ok_ar, 3)
+    case("admin_read_head", "admin_read", {**ab, "request": admin_req("HEAD")}, ok_ar, 3)
+    case(
+        "admin_read_post_refused",
+        "admin_read",
+        {**ab, "request": admin_req("POST")},
+        {"error": "malformed"},
+        3,
+        "read-only: no write method is ever an admin read",
+    )
+    case(
+        "admin_read_missing_ts",
+        "admin_read",
+        {**ab, "request": admin_req(**{"Orch-Hub-Ts": None})},
+        {"error": "malformed"},
+        3,
+    )
+    case(
+        "admin_read_ts_leading_zero",
+        "admin_read",
+        {**ab, "request": admin_req(**{"Orch-Hub-Ts": "0" + str(NOW)})},
+        {"error": "malformed"},
+        3,
+    )
+    case(
+        "admin_read_short_signature",
+        "admin_read",
+        {**ab, "request": admin_req(**{"Orch-Hub-Signature": b64u(b"x" * 63)})},
+        {"error": "malformed"},
+        3,
+    )
+    case(
+        "admin_read_relative_target",
+        "admin_read",
+        {**ab, "request": admin_req(target="v1/x", signed_target="v1/x")},
+        {"error": "malformed"},
+        3,
+    )
+    case(
+        "admin_read_stale_ts",
+        "admin_read",
+        {**ab, "request": admin_req(ts=NOW - 120_001)},
+        {"error": "stale_timestamp"},
+        3,
+    )
+    case(
+        "admin_read_future_ts",
+        "admin_read",
+        {**ab, "request": admin_req(ts=NOW + 120_001)},
+        {"error": "stale_timestamp"},
+        3,
+    )
+    case("admin_read_edge_of_window", "admin_read", {**ab, "request": admin_req(ts=NOW - 120_000)}, ok_ar, 3)
+    case(
+        "admin_read_swapped_query",
+        "admin_read",
+        {**ab, "request": admin_req(target="/v1/admin/releases?workspace=" + WS_B, signed_target=ADMIN_TARGET)},
+        {"error": "bad_hub_signature"},
+        3,
+        "the raw query is signed",
+    )
+    case(
+        "admin_read_swapped_path",
+        "admin_read",
+        {**ab, "request": admin_req(target=ws_path, signed_target=ADMIN_TARGET)},
+        {"error": "bad_hub_signature"},
+        3,
+    )
+    case(
+        "admin_read_swapped_method",
+        "admin_read",
+        {**ab, "request": admin_req("HEAD", signed_method="GET")},
+        {"error": "bad_hub_signature"},
+        3,
+    )
+    pr = publish_request()
+    case(
+        "admin_read_publish_signature_replayed",
+        "admin_read",
+        {**ab, "request": admin_req(**{"Orch-Hub-Signature": pr["headers"]["Orch-Hub-Signature"]})},
+        {"error": "bad_hub_signature"},
+        3,
+        "a hub transport signature over a publish request is not an admin read",
+    )
+    case(
+        "admin_read_signed_by_root",
+        "admin_read",
+        {**ab, "request": admin_req(key="hk_root")},
+        {"error": "bad_hub_signature"},
+        3,
+    )
+    case(
+        "admin_read_signed_by_workspace_key",
+        "admin_read",
+        {**ab, "request": admin_req(key="wsk_a")},
+        {"error": "bad_hub_signature"},
+        3,
+    )
+    case(
+        "admin_read_revoked_op_cert",
+        "admin_read",
+        {**ab, "request": admin_req(), "revoked_op_certs": [OP_CERT_ID]},
+        {"error": "unknown_hub"},
+        3,
+        "the held card is re-verified for every request",
+    )
+    case(
+        "admin_read_unknown_hub",
+        "admin_read",
+        {**ab, "request": admin_req(hub=ROGUE_HUB_ID)},
+        {"error": "unknown_hub"},
+        3,
+    )
+    case(
+        "admin_read_dev_card_at_real_verifier",
+        "admin_read",
+        {**ab, "request": admin_req(), "dev_mode": False, "bindings": {}},
+        {"error": "unknown_hub"},
+        3,
+    )
+    case(
+        "admin_read_workspace_not_bound",
+        "admin_read",
+        {**ab, "request": admin_req(target=f"/v1/ws/{WS_B}/releases")},
+        {"error": "not_bound"},
+        3,
+        "only workspaces with a current binding to this hub",
+    )
+    case(
+        "admin_read_workspace_after_unbound",
+        "admin_read",
+        {
+            **ab,
+            "bindings": {WS_A: [{"binding": binding()}, {"unbound": unbound()}]},
+            "request": admin_req(target=ws_path),
+        },
+        {"error": "not_bound"},
+        3,
+    )
+    case(
+        "admin_read_scope_excludes_unbound",
+        "admin_read",
+        {**ab, "bindings": {WS_A: [{"binding": binding()}, {"unbound": unbound()}]}, "request": admin_req()},
+        {"ok": {"hub": HUB_ID, "workspaces": []}},
+        3,
+    )
+    case(
+        "admin_read_binding_to_other_hub",
+        "admin_read",
+        {**ab, "bindings": {WS_A: [{"binding": binding(root="hk_root_rogue")}]}, "request": admin_req(target=ws_path)},
+        {"error": "not_bound"},
+        3,
+    )
+    case("admin_read_row_valid", "admin_read_row", {"row": ADMIN_ROW}, {"ok": {"row": True}}, 3)
+    case(
+        "admin_read_row_with_public_url",
+        "admin_read_row",
+        {"row": {**ADMIN_ROW, "public_url": "https://x.example/p/abc"}},
+        {"ok": {"row": True}},
+        3,
+    )
+    case(
+        "admin_read_row_extra_content_field",
+        "admin_read_row",
+        {"row": {**ADMIN_ROW, "content": "aGk"}},
+        {"error": "malformed"},
+        3,
+        "metadata only",
+    )
+    case(
+        "admin_read_row_missing_field",
+        "admin_read_row",
+        {"row": {k: v for k, v in ADMIN_ROW.items() if k != "bytes"}},
+        {"error": "malformed"},
+        3,
+    )
+    case("admin_read_row_wrong_type", "admin_read_row", {"row": {**ADMIN_ROW, "revoked": 0}}, {"error": "malformed"}, 3)
+
+    # ---- unbind removes the workspace from every space (same step as hub.unbound)
+    e2_a = space_rec(2, [WS_A])
+    un = lambda ws, rec, sid=SPACE: {"unbind": {"ws": ws, "space_id": sid, "space": rec}}
+    flow(
+        "space_unbind_removes_member",
+        [s1, put_a, un(WS_B, e2_a)],
+        {"get": {"ws": WS_B, "body": {"space_id": SPACE, "since": 0}}},
+        {"error": "not_member"},
+    )
+    flow(
+        "space_unbind_then_put",
+        [s1, un(WS_B, e2_a)],
+        {"put": {"ws": WS_B, "body": put_body(WS_B, epoch=2)}},
+        {"error": "not_member"},
+    )
+    flow(
+        "space_unbind_keeps_the_others",
+        [s1, put_a, un(WS_B, e2_a)],
+        {"get": {"ws": WS_A, "body": {"space_id": SPACE, "since": 0}}},
+        {"ok": {"seqs": [1], "next": 1}},
+    )
+    flow(
+        "space_unbind_record_still_lists_it",
+        [s1],
+        un(WS_B, space_rec(2, [WS_A, WS_B])),
+        {"error": "malformed"},
+        "the hub cannot keep an unbound workspace in the space",
+    )
+    flow("space_unbind_record_missing", [s1], un(WS_B, None), {"error": "malformed"})
+    flow("space_unbind_record_skips_an_epoch", [s1], un(WS_B, space_rec(3, [WS_A])), {"error": "malformed"})
+    flow("space_unbind_record_changes_others", [s1], un(WS_B, space_rec(2, [WS_C])), {"error": "malformed"})
+    flow("space_unbind_non_member_needs_no_record", [s1], un(WS_C, None), {"ok": {}})
+    flow(
+        "space_unbind_last_member_ends_the_space",
+        [{"space": space_rec(1, [WS_A])}, un(WS_A, None, SPACE)],
+        {"get": {"ws": WS_A, "body": {"space_id": SPACE, "since": 0}}},
+        {"error": "not_member"},
+    )
+
     # ---- publish through the hub (phase 2)
     cards = {WS_A: {"wsk_pub": K.b("wsk_a"), "owner_person_id": P_ALICE}}
     pb = {**base, "workspace_id": WS_A, "cards": cards, "hub_card": c, "bindings": {WS_A: [{"binding": b1}]}}
@@ -2115,6 +2601,7 @@ def build() -> dict[str, Any]:
     sig_entry("unbound", "wsk_a", "sig_hub_unbound", u1)
     sig_entry("link_w2h_publish_out", "wsk_a", "sig_hub_link", pub_out)
     sig_entry("link_h2w_snapshot_reply", "hk_op", "sig_hub_route", reply)
+    sig_entry("audit_1", "hk_op", "sig_hub_audit", audit_chain()[0])
     sig_entry("space_e1", "hk_op", "sig_hub_space", space_rec(1))
     sig_entry("space_wrap_b_e1", "hk_op", "sig_hub_space_wrap", space_wrap())
     sig_entry("space_item_a", "wsk_a", "sig_space_item", space_item_obj())
@@ -2241,6 +2728,7 @@ def build() -> dict[str, Any]:
             "unbound_a_1": u1,
             "op_revoked": rev,
             "publish_approval": ap,
+            "audit_1": audit_chain()[0],
             "space_e1": space_rec(1),
             "space_wrap_b_e1": space_wrap(),
             "space_item_a": space_item_obj(),
@@ -2251,6 +2739,19 @@ def build() -> dict[str, Any]:
         "publish": publish_vec,
         "link_auth": link_auth_vec,
         "spaces": spaces_vec,
+        "audit": {
+            "chain": audit_chain(),
+            "events": [{"type": t, "event": e} for t, e in AUDIT_EVENTS],
+            "hashes": [AU.chain_hash(r) for r in audit_chain()],
+            "genesis_prev": AU.GENESIS_PREV,
+        },
+        "admin_read": {
+            "target": ADMIN_TARGET,
+            "ts_ms": NOW,
+            "signed_hex": H.admin_read_bytes(HUB_ID, NOW, "GET", ADMIN_TARGET).hex(),
+            "request": admin_req(),
+            "row": ADMIN_ROW,
+        },
         "cases": cases,
     }
 

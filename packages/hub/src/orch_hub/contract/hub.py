@@ -214,6 +214,17 @@ FIELDS: dict[str, dict[str, Check]] = {
         "issued_ms": _int_min(0),
         "dev": _bool,
     },
+    "hub.audit": {
+        "hub_id": _hex16,
+        "op_cert_id": _hex16,
+        "seq": _int_min(1),
+        "prev": _b64u_n(32),
+        "ts_ms": _int_min(0),
+        "type": _enum("custodial", "grant", "membership", "space"),
+        "scope": lambda x: x is None or _hex16(x),
+        "event_hash": _b64u_n(32),
+        "dev": _bool,
+    },
     "hub.space_wrap": {
         "hub_id": _hex16,
         "op_cert_id": _hex16,
@@ -253,6 +264,7 @@ LABEL_OF_KIND = {
     "hub.publish_approval": "sig_hub_publish_approval",
     "hub.space": "sig_hub_space",
     "hub.space_wrap": "sig_hub_space_wrap",
+    "hub.audit": "sig_hub_audit",
     "space.item": "sig_space_item",
     # hub.link: the label depends on the direction (sig_hub_link w2h, sig_hub_route h2w)
 }
@@ -845,6 +857,8 @@ LINK_OPS: dict[str, tuple[str, str | None, dict[str, Check]]] = {
     "audit_ack": ("w2h", None, {"seq": _int_min(1), "head": _b64u_n(32)}),
     "share_put": ("w2h", "selective", {"item_id": _hex16, "sealed": _b64u_any}),
     "share_revoke": ("w2h", "selective", {"item_id": _hex16}),
+    # D4 audit (§10.5): the hub's chain is global; a workspace pulls it and acknowledges the head it verified
+    "audit_get": ("w2h", None, {"since": _int_min(0)}),
     # V3-D8 shared spaces (§10.4): both modes; what a selective workspace may put is its owner's share rules (host side)
     "space_list": ("w2h", None, {}),
     "space_put": ("w2h", None, {"space_id": _hex16, "epoch": _int_min(1), "item_id": _hex16, "sealed": _b64u_any}),
@@ -1197,3 +1211,98 @@ def check_hub_publish(req: Mapping[str, Any], st: Mapping[str, Any], *, now_ms: 
         revoked_devices=st.get("revoked_devices", frozenset()),
     )
     return {"workspace": wsx, "hub": hub, "approved": True}
+
+
+# --- hub admin read for orch-publish (F3, §10.6) ---------------------------------------------------------------------
+
+ADMIN_READ_WINDOW_MS = 120_000
+_WS_PATH = re.compile(r"/v1/ws/([0-9a-f]{32})(?:[/?]|$)")
+#: The metadata an admin read may return per release, and nothing else (never content or secrets).
+ADMIN_READ_ROW: dict[str, Check] = {
+    "workspace_id": _hex16,
+    "release_id": lambda x: type(x) is str and 0 < len(x) <= 64,
+    "kind": lambda x: type(x) is str and 0 < len(x) <= 32,
+    "state": lambda x: type(x) is str and 0 < len(x) <= 32,
+    "created_ms": _int_min(0),
+    "expires_ms": lambda x: x is None or _int_min(0)(x),
+    "revoked": _bool,
+    "bytes": _int_min(0),
+    "public_url": lambda x: x is None or (type(x) is str and x.isascii() and 0 < len(x) <= 2048),
+}
+
+
+def admin_read_bytes(hub_id_: str, ts_ms: int, method: str, target: str) -> bytes:
+    """``label || suite || hub_id (16) || u64(ts_ms) || lp16(METHOD) || lp16(path + raw query)``. The raw query is
+    signed as sent, so a swapped query or path verifies as ``bad_hub_signature``; the label keeps a publish
+    transport signature from being read as an admin read."""
+    if type(ts_ms) is not int or not 0 <= ts_ms < 1 << 64:
+        raise Refused("malformed")
+    for part in (method, target):
+        if type(part) is not str or not part.isascii():
+            raise Refused("malformed")
+    return (
+        L["sig_hub_admin_read"]
+        + bytes([S.SUITE_ID])
+        + unhex(hub_id_, 16)
+        + struct.pack(">Q", ts_ms)
+        + _lp16(method.encode("ascii"))
+        + _lp16(target.encode("ascii"))
+    )
+
+
+def check_admin_read(req: Mapping[str, Any], st: Mapping[str, Any], *, now_ms: int, dev_mode: bool) -> dict[str, Any]:
+    """orch-publish's check of a hub admin read (§10.6), in order. ``req`` = {method, target (path + raw query),
+    headers}. ``st`` = {cards: {ws: {wsk_pub}}, bindings: {ws: binding state}, hub_cards: {hub_id: signed hub card},
+    revoked_op_certs}. Returns the hub and the workspaces the read may cover. No nonce store, deliberately: the read
+    is idempotent metadata, so a replay inside the 120 s window returns what the original did."""
+    h = {str(k).lower(): v for k, v in req["headers"].items()}
+    try:
+        hub = h["orch-hub"]
+        unhex(hub, 16)
+        if type(h["orch-hub-ts"]) is not str or not _TS.fullmatch(h["orch-hub-ts"]):
+            raise CanonError("ts")
+        ts = int(h["orch-hub-ts"])
+        sig = unb64u(h["orch-hub-signature"], 64)
+        if req["method"] not in ("GET", "HEAD") or not str(req["target"]).startswith("/"):
+            raise CanonError("method or target")
+        msg = admin_read_bytes(hub, ts, req["method"], req["target"])
+    except KeyError, CanonError, Refused:
+        raise Refused("malformed") from None
+    if abs(now_ms - ts) > ADMIN_READ_WINDOW_MS:
+        raise Refused("stale_timestamp", server_ms=now_ms)
+    # The held card is verified again for this request: op cert valid and not revoked, hub_id of the root, dev marker.
+    try:
+        held = verify_card(
+            st["hub_cards"][hub],
+            now_ms=now_ms,
+            dev_mode=dev_mode,
+            revoked_op_certs=frozenset(st.get("revoked_op_certs", [])),
+        )
+    except KeyError, Refused:
+        raise Refused("unknown_hub") from None
+    if not S.verify(held["hk_op_pub"], sig, msg):
+        raise Refused("bad_hub_signature")
+    scope = sorted(
+        ws
+        for ws, b in st["bindings"].items()
+        if b["status"] == "bound"
+        and b["binding"]["hub_id"] == hub
+        and b["binding"]["hk_root_pub"] == b64u(held["hk_root_pub"])
+        and ws in st["cards"]
+        and b["binding"]["wsk_pub"] == st["cards"][ws]["wsk_pub"]
+    )
+    m = _WS_PATH.match(req["target"])
+    if m is not None and m.group(1)[:32] not in scope:
+        raise Refused("not_bound")
+    return {"hub": hub, "workspaces": scope}
+
+
+def check_admin_read_row(row: Any) -> dict[str, Any]:
+    """The only shape of a release row an admin read returns."""
+    if (
+        type(row) is not dict
+        or set(row) != set(ADMIN_READ_ROW)
+        or not all(ok(row[k]) for k, ok in ADMIN_READ_ROW.items())
+    ):
+        raise Refused("malformed")
+    return row

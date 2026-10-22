@@ -369,3 +369,23 @@ def space_get(state: dict[str, Any] | None, ws: str, body: Mapping[str, Any]) ->
     ]
     entries = [{"seq": s, "item_id": k, "epoch": v["epoch"], "revoked": v["revoked"]} for s, k, v in rows]
     return {"entries": entries, "next": entries[-1]["seq"] if entries else body["since"]}
+
+
+def apply_unbind(state: dict[str, Any] | None, ws: str, space: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """A workspace's ``hub.unbound`` removes it from every space it is in, in the same step: ``space`` must be the
+    hub's next record (epoch + 1, the old members minus ``ws``, a fresh ``SK_e`` by construction). A workspace that is
+    not a member needs no record (``space`` is None, nothing changes). A record that still lists ``ws`` or changes
+    anything else is ``malformed``."""
+    if state is None or ws not in state["space"]["members"]:
+        return state
+    old = state["space"]
+    if old["members"] == [ws]:
+        return None  # the last member left: the space ends (audited as "delete"); its items go with it
+    if (
+        space is None
+        or space["space_id"] != old["space_id"]
+        or space["epoch"] != old["epoch"] + 1
+        or space["members"] != [m for m in old["members"] if m != ws]
+    ):
+        raise Refused("malformed")
+    return apply_space(state, space)

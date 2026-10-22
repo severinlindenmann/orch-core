@@ -49,7 +49,7 @@ def test_hub_b_cannot_mint_hub_a_user_id(w):
     ws = core(w).ws
     assert identity.canonical(ws, "u_" + U_MARA) == w.people["mara"]  # history: still mara (the union)
     r = identity.hub_actor(ws, hub_b, U_MARA)  # ...but hub B may not act with that id
-    assert isinstance(r, Refusal) and r.code == Code.HUB_INVALID and "another hub" in r.detail
+    assert isinstance(r, Refusal) and r.code == Code.HUB_FOREIGN_USER
     assert identity.hub_actor(ws, hub_b, U_TOM) == "u_" + U_TOM  # B's own, unaliased users are fine
 
 

@@ -1852,6 +1852,14 @@ def build() -> dict[str, Any]:
         "a rogue hub or member planting an item of a workspace outside the space",
     )
     case(
+        "space_item_author_key_from_hub_differs_from_card",
+        "space_item",
+        {**it, "sealed": sealed_item(ws=WS_B, key="hk_op")},
+        {"error": "bad_signature"},
+        3,
+        "the hub sealed an item 'from B' signed with a key of its own; the reader's pin of B comes from B's v2 card",
+    )
+    case(
         "space_item_author_unknown_key",
         "space_item",
         {**it, "sealed": good, "wsk_pubs": {WS_B: K.b("wsk_b")}},

@@ -11067,6 +11067,66 @@
      "f6d7c85d726aa1e390c7280d5ed7d6bb"
     ],
     "now_ms": 1790000000000,
+    "sealed": "Ge7HaP6PzrcNuVphZYYhmkskDfBJgIFIWQ_4X6UccU6iqdbLYmGomNqYlwG-JBw3mtuc3VdhrkjDd6qbpIN6D18NIe3HAgdqL5Qst7ulRKByatPzk8i3xEjsF7cLWykHKqwPh8Xl4Q39D_H7UBSeBLjBSKWPMgpLW-SCveDk7Ds36gnWHCaJ7CHdPxkO8_UhbSQdLDncVUm5SOh9yGRcgczwPjb_Tk0tMquh965TZMMaehDq4TcyNlpeoOoInhL5M2PCS8eFtfHnI0lIppM7CbiAQaUd4rEY4MbEIOA3-L_IC7LHbf8DVS_GBqjul1GZyZMRriZp4MfYL3I261JPCUBJ0C4uE_2ztm79zS2O8DCEZiVEXDHxAAEB4jeTs8PlzsosiiYYKdXsUthc62CAOx6KEDAKuSVP8MEOJyd6B7MP3wM7RWEJJ4KJZvoNlJ9FuIf-6dKc43girK9TX7HO9BL6m1J2S00vUgWp0uv5g687YxsgIUkerkPf2108k3q0qZn4G7AmhiXA-pBEQhDgNHYD_NLuWAi1--eka-pEcmcSCMAbF2EIvDS-TFqBfbBaIPeJiW3ndNqOXJXWdXwp0QEGV5wEMN6P7YL8xCg0Bm5uBvNpbCMEfG8GUYmt8kRKB09OgolFTOf9-xOYe_2NSzJm5n8KnP9iRjcXmGrI5YYsbSOcn19TC9Chocpz0ekyTEYmdsMpDQq3UIDCIV4Lna2DZsdetIaMDbQc",
+    "sk_hex": "22d4bc06b8ff0b7a0a7cac41f1d7fbf060b61e207537c73e9c8d24e61779d4a8",
+    "space_id": "48b10604b4d421b6206839fd19b35d0e",
+    "wsk_pubs": {
+     "336afd0fd4c349f575c2ec155d7258ad": "BDzZgQT_t0MMh_OvV3sfGP8o3PTzrNfF4qCqUIITRQsBQDFDvyR4h_aSd6FS2ZWjBnsUIQmQQJDCE7FNYJOf9Fc",
+     "f6d7c85d726aa1e390c7280d5ed7d6bb": "BKJvKJCvEX4uZlg8WpzQAy8wJxp8jHqAxXUnjmY2CbJQ-eKZmg0Ez-YC4ay3VtASULCY4P-S0aD3Tkjv_S0TabE"
+    }
+   },
+   "check": "space_item",
+   "expect": {
+    "error": "bad_signature"
+   },
+   "name": "space_item_author_key_from_hub_differs_from_card",
+   "note": "the hub sealed an item 'from B' signed with a key of its own; the reader's pin of B comes from B's v2 card",
+   "phase": 3
+  },
+  {
+   "args": {
+    "card": {
+     "o": {
+      "card_seq": 1,
+      "dev": true,
+      "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "hxk_pub": "BPL5BSYzK4pViSYlGYnw-Ow5FIY3-D1et4PP74_LVjLF1s_FvTIh8KJq3syjmkJN6B2VQoHH14tnC7fsxzTtuX0",
+      "issued_ms": 1789913600000,
+      "kind": "hub.card",
+      "relay_url": null,
+      "suite": 2,
+      "tls_spki_sha256": "19dzV-BWnXf27oDtjqrK-6FGcfYbFEPuMUYMTzOrlY4",
+      "v": 2
+     },
+     "op_cert": {
+      "o": {
+       "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "dev": true,
+       "expires_ms": 1821536000000,
+       "hk_op_pub": "BGKyaYh6M5-PTj4pcMYwjvcmBflbTMCaHcCtr8J0vV4knajypjV15SXhIGpnZO404RAfMhkTi9R1g6_7JxV96s4",
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "kind": "hub.op_cert",
+       "op_seq": 1,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "IkiDO7ivIMFh9v4YZOITIZ4S2fsRo8hL5q7RBkafUZ5q3ZMpIXjeXU-g16p8YbpDLpjxC4N0eCWK-IRhCkW1bg"
+     },
+     "sig": "YxOSEHHCj0u5x8_T_UD2foB8QYYPEwzBTLTrI7Dtxg31_nxiqxlsCCjsmcMzhUSSQB_LJGmmgvRWpGLrzdXpZQ"
+    },
+    "dev_mode": true,
+    "epoch": 1,
+    "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+    "item_id": "0b5fcd582b210fa85cdc22bee4ec6c31",
+    "members": [
+     "336afd0fd4c349f575c2ec155d7258ad",
+     "f6d7c85d726aa1e390c7280d5ed7d6bb"
+    ],
+    "now_ms": 1790000000000,
     "sealed": "WfLzT3vnl_LnlQEjR1dVvIgAs9za0955LYV0AF6daW2_XnCaCsmtXfE3EQRoZL85t3ae-njaLESH8dnmK693hFoZ51qvwKOQoLpz_GK2jPrqRX8S45lRpTx-kAuVd2z5DNmdH-yArOc5fp1LMDMDQBHzNqc7-p9vXethWO6jecx2tMQVYN4-5-lxVIXSvKng7wdraVHN6BCxCF60mcouM2dVBeISRFPKIy0ysLxaoI5eBZ6pEsITl_YnJDD8Dc0lLvkLxq_bOnr9q2xLZTUHcjTKdCz9ICtWeMN3DmNWL38loe_az72E5SzNwVt7om3OUZHmkRXG4RGnz00wFAshFxTpE1lTalAdNOFGe0fTFpSpB-j1LXlraXEEL4stjpJyrZUBh_i2pzZ1b_poZMarjx6p0N-8qwG6XY14iJUxVGap7tbQCGPXUEAQIBP2tQkdV5V171Y9zvGKpyms45T8sAYWLjmWHM5Oy-3b9kSoByAKI4pdFUQRWV1NYDKa-3H34p74q86PYEH65_TzfDnwPw0EZVlXO6erX6SkW4Hr5ZrOxCgTf6Q3ppKuNQMXf9rnlqTOZKBB7zkla5wY9GNpnb4VDs49h3U9PF68cv0VopEXdJ7bE-AvhjH6IWJ4eHgMm3p5ALFHQ7u4ey7B9y9cBtd1UAsdPCMcq4rHXxfLa7uPl0sdZXw3ppdGDjGdbAJ7z-rUu-79MM_aVm72H3KkqnLzmdlqnokvm69Z",
     "sk_hex": "22d4bc06b8ff0b7a0a7cac41f1d7fbf060b61e207537c73e9c8d24e61779d4a8",
     "space_id": "48b10604b4d421b6206839fd19b35d0e",

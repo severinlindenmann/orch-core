@@ -680,6 +680,16 @@ space.item     {v, suite, kind: "space.item", hv, hub_id, space_id, epoch, membe
 
 `space.accept` is the fourth object: see the consent rules above (signed by the workspace's `WSK`).
 
+**Where a reader gets a co-member's `WSK` (L2P-7).** Only from that workspace's v2 directory card, verified through its
+`ws_delegation` (the same card store and never-change rules as orch-publish, §16), **pinned per `workspace_id` by the
+reader itself**; never from a map the hub supplies (the hub holds every `SK_e` and can seal anything, so a hub-supplied
+key would let it plant items "from Marketing"). The `wsk_pubs` argument of `verify_item` is that pin. A member with no
+pin gives an item that is **refused** ("author unverified"); agents never act on it (vectors
+`space_item_author_key_from_hub_differs_from_card`, `space_item_author_unknown_key`). **Residual, stated:** the first
+card of a co-member is first-come (relay directory), and after H5 cards travel through the hub (`card_put`), so a hub can
+introduce a fabricated card for a `workspace_id` the reader has never seen; what a human verifies once is the card's
+`owner_person_id`.
+
 #### Operations (§10.2 table; w2h; both modes)
 
 | Op | Rules, in order | Refusals |
@@ -954,6 +964,19 @@ Requests for `secret` or `sealed` access keep the v2 path: the host evaluates th
 - A **compromised hub** can sign as any user in full mode (accepted, spec §9) but cannot forge a channel proof
   (vector `custodial_proof_not_by_channel`) without a channel key it does not hold; it can drop or delay events. It
   cannot revive a binding after leave (§9.4) and cannot unbind a workspace (only `WSK` can).
+- **The audit chain, honestly (L7 gap).** A workspace detects a **gap** (a record removed from what it is shown) and a
+  **fork** on its own path, and nobody can alter a record without breaking every later `prev`. What is **not** true
+  until an off-hub witness exists (L7): that a compromised hub "cannot silently drop entries". It can show workspace A
+  one chain and workspace B another (**equivocation**); each verifies consistently, and the acks go to the hub itself,
+  so nothing in this contract detects it. What the acks give today: an honest hub holds `WSK`-signed link messages
+  saying "W verified up to `seq`/`head`" (evidence against a later rewrite, if someone outside the hub ever looks);
+  against a compromised hub, nothing. The L7 proposal: the hub posts `HK_op`-signed checkpoints `{seq, head}` to
+  orch-publish (append-only per `hub_id`; two heads at one `seq` are a transferable fork proof) and hosts compare. The
+  "anchor head" a workspace starts from (taken at join and stored) is trust-on-first-use for the prefix. The hub also
+  chooses a record's `scope_tag` (it can file a record about A under another tag so A never sees the event); hosts
+  should cross-check that every custodial event and every `hub.space` epoch they accepted has a matching record within
+  the next sync (phase 4). The spec sentence in orch-v2-hub.md §10 ("a hash-chained audit acknowledged by the
+  workspaces" as mitigation of a taken-over hub) overstates this and is to be amended to match.
 - **Replays.** Snapshots are monotonic (§7); custodial events are bound to workspace, log and type and go through the
   F1 id and generation checks; publish requests through the v2 nonce store; link messages only through the 120 s
   window in V3 (SHORTCUT).
@@ -1005,7 +1028,7 @@ link errors travel as `{"error": code}` reply bodies; host-side refusals are loc
 | `link_auth` | challenge, exporter, signed bytes, signature |
 | `audit`, `admin_read` | V3-D4 / F3: a 4-record chain with its events and hashes; the admin read signed bytes, a request and a row |
 | `spaces` | V3-D8: the space key per epoch, `sk_commit`, one sealed item (salt, derived key, AAD, plaintext object) and one wrap (ephemeral seed, AAD) |
-| `cases` | 285 cases (66 positive, 219 negative): `check`, `args`, `expect` (`{"ok": …}` or `{"error": code}`), `phase` |
+| `cases` | 348 cases (81 positive, 267 negative): `check`, `args`, `expect` (`{"ok": …}` or `{"error": code}`), `phase` |
 
 The negative cases cover, per object where it applies: wrong domain, wrong signer, expired, binding for another
 workspace, unbound after leave, missing dev marker, dev at a real verifier, extra or unknown field, non-canonical

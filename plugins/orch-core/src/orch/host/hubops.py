@@ -30,7 +30,18 @@ from .errors import HostError
 if TYPE_CHECKING:
     from .workspace import Call, WorkspaceService
 
-__all__ = ["HUB_CAPS", "HUB_OPS", "NETWORK_OPS", "HubFacts", "execute", "facts_for", "serve", "workspace_dev"]
+__all__ = [
+    "HUB_CAPS",
+    "HUB_OPS",
+    "NETWORK_OPS",
+    "HubFacts",
+    "execute",
+    "facts_for",
+    "publish_link",
+    "publish_route",
+    "serve",
+    "workspace_dev",
+]
 
 HUB_OPS: dict[str, int] = {"hub.connect": 1, "hub.unbind": 1, "hub.status": 1}
 NETWORK_OPS = frozenset({"hub.connect", "hub.unbind"})
@@ -244,6 +255,59 @@ def _addr(args: dict[str, Any], state: Any, dev: bool) -> str | None:
     else the one kept in ``hub.json``. The address is not signed and not trusted: the card's TLS pin decides."""
     env = os.environ.get("ORCH_HUB_ADDR") if dev else None
     return env or args.get("addr") or (None if state is None else state.addr)
+
+
+# -- publish through the hub (V3 C7) ---------------------------------------------------------------------------------
+
+
+def publish_route(service: WorkspaceService) -> dict[str, Any] | None:
+    """Where a publish request of this workspace goes, decided from the signed log and the host's hub state (worker
+    thread): ``None`` is the direct path, a dict is the hub (``publish_link`` opens it).
+
+    * The log has no ``hub.joined``, or its newest hub record is ``hub.left``: the workspace is not in hub mode, so
+      the direct path stays (until the H6 switch). The old binding is not consulted: leaving ends it.
+    * The log says joined: the hub is the **only** path. If ``hub.json`` is missing, is not the joined hub's bound
+      binding (same ``hub_id`` and ``binding_seq``, selective), or cannot be read, the request is refused
+      (``hub.not_joined`` / ``hub.state_mismatch``); it never falls back to direct, which would bypass the hub."""
+    from orch.crypto.encoding import unb64u
+
+    model = dict(service.store.state.workspace.hub)
+    if not model or model.get("status") != "joined":
+        return None
+    state = _load_state(service)
+    if (
+        state is None
+        or state.status != "bound"
+        or state.hub_id != model.get("hub_id")
+        or state.binding_seq != model.get("binding_seq")
+    ):
+        raise HostError(
+            "hub.not_joined", "this workspace has joined a hub but is not connected to it yet: orch hub connect"
+        )
+    if state.mode != "selective" or model.get("mode") != "selective":
+        raise HostError("hub.state_mismatch", "only selective hub mode publishes today")
+    dev = bool(state.binding["o"]["dev"])
+    return {
+        "hub_id": state.hub_id,
+        "hk_op": unb64u(state.hk_op_pub, 65),
+        "addr": _addr({}, state, dev),
+        "spki": state.tls_spki,
+        "mode": state.mode,
+    }
+
+
+def publish_link(service: WorkspaceService, route: dict[str, Any]) -> tuple[Any, Any, bytes, Any]:
+    """``(HubLink, transport, wsk_pub, sign)`` for a :func:`publish_route`; the caller closes the transport."""
+    from orch.hubclient import HubLink
+
+    wsk_pub, sign = _wsk_sign(service)
+    link = {"addr": route["addr"], "spki": route["spki"], "hk_op": route["hk_op"], "wsk_pub": wsk_pub, "sign": sign}
+    transport = _transport(service, route["hub_id"], link)
+    hub_link = HubLink(
+        transport, hub_id=route["hub_id"], workspace_id=service.workspace_id, hk_op_pub=route["hk_op"], sign=sign,
+        mode=route["mode"], now_ms=lambda: int(service.clock() * 1000),
+    )  # fmt: skip
+    return hub_link, transport, wsk_pub, sign
 
 
 # -- checks --------------------------------------------------------------------------------------------------------

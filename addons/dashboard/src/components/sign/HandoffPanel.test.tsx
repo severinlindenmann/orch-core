@@ -58,15 +58,13 @@ it('separates the command from the verification fingerprint', () => {
   expect(screen.queryByTestId('handoff-runner-note')).toBeNull()
 })
 
-it('tells an Extend that running agents stop and what r does, from the signed events', () => {
+it('tells an Extend what r does, from the signed events (the stop warning is in the review notes, once)', () => {
   const events = [grantEvent('grant.issued', { grant: 'gr_new', label: 'runner' }), grantEvent('grant.revoked', { grant: 'gr_old', reason: 'extended' })]
   render(<HandoffPanel request={{ ...fakeRequest({ events }), content: { headline: 'Extend agent access' } }} />)
   const note = screen.getByTestId('handoff-runner-note')
-  expect(note).toHaveTextContent('Running agents will stop.')
+  expect(note).not.toHaveTextContent('Running agents will stop.')
   expect(note).toHaveTextContent('choose r in Terminal to give the new access to this Mac’s agent runner')
   expect(note).toHaveTextContent('The agent runner is the part of orch on this Mac that starts agents for you.')
-  const text = document.body.textContent!
-  expect(text.indexOf('Running agents will stop.')).toBeLessThan(text.indexOf('orch sign'))
 })
 
 it('a plain runner grant gets the r note but not the stop warning; another grant gets neither', () => {
@@ -77,4 +75,11 @@ it('a plain runner grant gets the r note but not the stop warning; another grant
   unmount()
   render(<HandoffPanel request={{ ...fakeRequest({ events: issued('ci') }), content: { headline: 'g' } }} />)
   expect(screen.queryByTestId('handoff-runner-note')).toBeNull()
+})
+
+it('says some values come from orch on this Mac when the host named the access taken back (material.grants)', () => {
+  const base = fakeRequest()
+  const request = { ...base, material: { ...base.material, grants: { gr_old: { label: 'runner', scope: 'workable', expires_at: '2026-10-25T00:37:00Z', person: 'p_x' } } }, content: { headline: 'Take back agent access' } }
+  render(<HandoffPanel request={request} />)
+  expect(screen.getByText('Some values come from orch on this Mac (see details)')).toBeVisible()
 })

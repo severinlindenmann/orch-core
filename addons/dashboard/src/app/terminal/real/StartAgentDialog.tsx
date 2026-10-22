@@ -521,7 +521,6 @@ export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initi
       {handoff && workspace && action.hours > 0 && <HandoffDialog ws={ws} title={extend ? 'Extend agent access' : 'Issue runner grant'} action={action} autoStart
         summary={extend ? <div className="space-y-1" data-testid="extend-summary">
           <p>Your current agent access ends {fmtDateTime(extend.until)} <span className="text-text-muted">(per host, not signed)</span>. The new access lasts {hoursText(hours)} from the moment you sign.</p>
-          <p className="font-medium">Running agents will stop.</p>
         </div> : <p>Agents on this machine can act for you on {scope === 'all' ? 'all tickets' : 'the tickets you may work on'} for {hoursText(hours)}. When you sign in the terminal, you type GRANT to continue, then choose to hand the grant to the orch runner.</p>}
         onSettled={(phase, _state, request) => {
           if (phase !== 'done') return

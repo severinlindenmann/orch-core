@@ -299,16 +299,13 @@ class Channels:
 
     # --- sessions --------------------------------------------------------------------------------------------------
 
-    def sign_in(
-        self, user_id: str, password: str, totp: str, source: str = "", *, scope: str = "full"
-    ) -> dict[str, Any]:
-        """Password and TOTP together; any mismatch is one generic ``bad_credentials`` (no hint which part, none whether
+    def _credentials(self, user_id: str, password: str, totp: str, source: str) -> tuple[str, str, int, int]:
+        """The password + TOTP check shared by sign-in and the registration re-entry. Returns ``(user, subject, attempt,
+        matched TOTP step)``; the caller claims the step in its own transaction. Password and TOTP together; any mismatch is one generic ``bad_credentials`` (no hint which part, none whether
         the user exists). After :data:`MAX_FAILURES` failures in :data:`FAIL_WINDOW_MS` the pair (user, ``source``) is
         ``rate_limited`` even with correct credentials, until the window passes. ``source`` is the caller's network
         address (the web layer's); the counter is per pair so a stranger who knows a user id cannot lock that user out
         from the user's own address. Without a ``source`` the counter is per user."""
-        if scope not in ("full", "pairing"):  # a channel session is made by :meth:`bind_session` only
-            raise ChannelError("malformed", "scope")
         u = self._user(user_id)
         subject = u if not source else f"{u}|{str(source)[:64]}"
         if type(password) is not str or type(totp) is not str or len(password) > 1024:
@@ -336,6 +333,16 @@ class Channels:
             ok_pw and match
         ):  # one answer for all: wrong password, wrong TOTP, or a tripped lock/backoff
             raise ChannelError("bad_credentials")  # the reserved attempt stays counted
+        return u, subject, rid, match
+
+    def sign_in(
+        self, user_id: str, password: str, totp: str, source: str = "", *, scope: str = "full"
+    ) -> dict[str, Any]:
+        """Password and TOTP together (:meth:`_credentials`: any mismatch is one generic ``bad_credentials``). ``scope``:
+        ``full`` (the browser) or ``pairing`` (the phone before it binds, protocol §6.4)."""
+        if scope not in ("full", "pairing"):  # a channel session is made by :meth:`bind_session` only
+            raise ChannelError("malformed", "scope")
+        u, subject, rid, match = self._credentials(user_id, password, totp, source)
         token = secrets.token_urlsafe(32)
         now = self._now()
 
@@ -500,8 +507,30 @@ class Channels:
         self._guard(lambda: self._event("pairing_code", u, None, "operator"))
         return {"code": code, "expires_ms": now + PAIRING_TTL_MS}
 
+    def reauth(self, user_id: str, password: str, totp: str, source: str = "") -> None:
+        """Password + TOTP typed again (A8-3), through the same limiter state, hashing and single-use TOTP step as
+        :meth:`sign_in`, without making a session. The code must be a later step than the last one accepted for the user
+        (a code used at sign-in is refused: the person waits for the next one). ``bad_credentials`` for any mismatch."""
+        u, subject, rid, match = self._credentials(user_id, password, totp, source)
+
+        def go() -> None:
+            with self._tx() as db:
+                if (
+                    db.execute(
+                        "UPDATE credentials SET totp_last=? WHERE user_id=? AND totp_last<?", (match, u, match)
+                    ).rowcount
+                    != 1
+                ):
+                    raise ChannelError("bad_credentials")
+                self._succeed(db, "login", subject, rid)
+                db.execute(
+                    "DELETE FROM failures WHERE (kind='totp' AND subject=?) OR (kind='pw' AND subject=?)", (u, subject)
+                )
+
+        self._guard(go)
+
     def begin_registration(self, token: str, key_pub: bytes, label: str = "") -> dict[str, Any]:
-        """Browser channel, inside a session."""
+        """Browser channel, inside a session. The caller has re-verified password + TOTP (:meth:`reauth`, A8-3)."""
         u = self.session_user(token)
         return self._begin(u, "browser", key_pub, _sha(token), label, _sha(token))
 

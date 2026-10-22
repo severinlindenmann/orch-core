@@ -11,6 +11,17 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
+
+
+def _https_origin(o: str) -> bool:
+    u = urlsplit(o)
+    return (
+        u.scheme == "https"
+        and bool(u.hostname)
+        and not (u.path or u.query or u.fragment or u.username)
+        and o == f"https://{u.netloc}"
+    )
 
 
 @dataclass(frozen=True)
@@ -46,6 +57,9 @@ class HubConfig:
             )
         if self.behind_edge and self.resolved_api_origin() is None:
             raise ValueError("behind_edge with several --web-origin values needs --api-origin (the one the phone uses)")
+        if self.behind_edge and not all(_https_origin(o) for o in self.allowed_origins):
+            # the cookie is Secure and the Host check derives from these (design-a8 A8-4): exactly https://<console host>
+            raise ValueError("behind_edge needs --web-origin to be exactly https://<host>[:port] (no path, no http)")
         if (self.behind_edge or self.trusted_peers or self.allowed_origins) and self.web_listen is None:
             raise ValueError("--trusted-peer / --behind-edge / --web-origin need --web-listen")
 

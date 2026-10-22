@@ -48,6 +48,7 @@ from ..contract import suite as S
 from ..contract.canon import CanonError, loads_strict, unb64u
 from ..contract.hub import HV, Refused
 from ..relay.client import RelayError
+from .static import StaticSite
 
 MAX_BODY = 64 * 1024
 COOKIE = "orch_hub_session"
@@ -399,6 +400,7 @@ class WebApi:
         self._hashing = threading.BoundedSemaphore(SIGNIN_CONCURRENCY)
         self._busy: set[str] = set()  # sources holding a hashing slot right now (max 1 each), under _plock
         self._hosts = frozenset(urllib.parse.urlsplit(o).netloc for o in deps.allowed_origins)
+        self._site = StaticSite(hsts=deps.secure_cookies)
 
     def allow_origin(self, origin: str) -> None:
         """Add one exact origin before the server starts (the loopback dev server learns its port only after it
@@ -449,6 +451,9 @@ class WebApi:
         self, method: str, target: str, headers: dict[str, str], body: bytes, peer: str = ""
     ) -> tuple[int, list[tuple[str, str]], bytes]:
         try:
+            path = urllib.parse.urlsplit(target).path
+            if not path.startswith("/api/"):
+                return self._static(method, path, headers)
             return self._handle(method, target, headers, body, self._source(headers, peer))
         except ApiError as e:
             return self._fail(e.code)
@@ -456,6 +461,16 @@ class WebApi:
             return self._fail(WIRE.get(e.code, e.code))
         except Exception:  # noqa: BLE001 - unexpected: no detail leaves the process
             return self._fail("internal")
+
+    def _static(self, method: str, path: str, headers: dict[str, str]) -> tuple[int, list[tuple[str, str]], bytes]:
+        """The console's own files (I7): GET/HEAD of an exact allow-listed path through the same Host check as the API;
+        every other method or path is the JSON ``unknown_op`` (the origin serves nothing else)."""
+        if self._hosts and headers.get("host", "") not in self._hosts:
+            raise ApiError("not_allowed")
+        hit = self._site.get(path) if method in ("GET", "HEAD") else None
+        if hit is None:
+            raise ApiError("unknown_op")
+        return hit
 
     def _fail(self, code: str) -> tuple[int, list[tuple[str, str]], bytes]:
         if code not in STATUS:
@@ -596,18 +611,13 @@ class WebApi:
 
     # --- (a) session -------------------------------------------------------------------------------------------------
 
-    def _h_sign_in(self, c: Ctx, p: dict, q: dict, b: dict | None):
-        b = _need(b, user_id=str, password=str, totp=str)
-        client = b.get("client", "browser")
-        if client not in ("browser", "app"):
-            raise ApiError("malformed")
-        if client == "browser" and c.origin is None:  # a cookie is only ever set for a request the browser labelled
-            raise ApiError("not_allowed")
+    def _guarded_credentials(self, c: Ctx, user_id: str, check: Callable[[], Any]) -> Any:
+        """Every password + TOTP check (sign-in and the browser registration re-entry) goes through these caps."""
         # caps BEFORE any hashing: per source, and the sign-ins hashing right now (never queue: refuse)
         self._limit.hit("signin-src", c.source, SIGNIN_SOURCE_LIMIT)
         # the aggregate (IPv6 /48, IPv4 /24): a neighbour cannot exhaust our bucket, one allocation cannot spray; a
         # source that signed in as this user is exempt (cheap indexed read, no hashing), so neighbours cannot lock it out
-        if not self.d.channels.known_source(b["user_id"], c.source):
+        if not self.d.channels.known_source(user_id, c.source):
             try:
                 net = ipaddress.ip_network(c.source, strict=False)
                 net = net.supernet(new_prefix=48 if net.version == 6 else 24)
@@ -624,14 +634,28 @@ class WebApi:
             if not self._hashing.acquire(blocking=False):
                 raise ApiError("rate_limited")
             try:
-                s = self.d.channels.sign_in(
-                    b["user_id"], b["password"], b["totp"], c.source, scope="full" if client == "browser" else "pairing"
-                )
+                result = check()
             finally:
                 self._hashing.release()
         finally:
             with self._plock:
                 self._busy.discard(c.source)
+        return result
+
+    def _h_sign_in(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        b = _need(b, user_id=str, password=str, totp=str)
+        client = b.get("client", "browser")
+        if client not in ("browser", "app"):
+            raise ApiError("malformed")
+        if client == "browser" and c.origin is None:  # a cookie is only ever set for a request the browser labelled
+            raise ApiError("not_allowed")
+        s = self._guarded_credentials(
+            c,
+            b["user_id"],
+            lambda: self.d.channels.sign_in(
+                b["user_id"], b["password"], b["totp"], c.source, scope="full" if client == "browser" else "pairing"
+            ),
+        )
         out: dict[str, Any] = {"user_id": s["user_id"], "expires_ms": s["expires_ms"]}
         if client == "app":  # the phone keeps the token itself and sends it as a bearer
             out["token"] = s["token"]
@@ -869,6 +893,12 @@ class WebApi:
         if type(label) is not str:
             raise ApiError("malformed")
         if b["kind"] == "browser":
+            # A8-3: a browser key is minted only by someone who knows the password and a fresh TOTP code, so a stolen
+            # cookie or a script on the page cannot register a key it holds
+            pw, totp = b.get("password"), b.get("totp")
+            if type(pw) is not str or type(totp) is not str:
+                raise ApiError("malformed")
+            self._guarded_credentials(c, c.user_id, lambda: self.d.channels.reauth(c.user_id, pw, totp, c.source))
             return 200, self.d.channels.begin_registration(c.token, key, label)
         if b["kind"] == "phone":
             code = b.get("pairing_code")

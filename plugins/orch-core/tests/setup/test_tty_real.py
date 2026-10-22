@@ -76,6 +76,7 @@ def _run(answer: bytes, early: bytes = b"") -> tuple[int, str]:
             break
     else:
         os.kill(pid, 9)
+        os.close(fd)  # macOS: a killed child blocks in exit until the pty master is closed
         os.waitpid(pid, 0)
         raise AssertionError(f"no confirmation prompt on the terminal: {seen!r}")
     if not done:

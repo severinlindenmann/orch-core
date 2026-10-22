@@ -263,6 +263,7 @@ def run_review(*typed: bytes) -> str:
         time.sleep(0.05)
     else:
         os.kill(pid, signal.SIGKILL)
+        os.close(tty)  # macOS: a killed child blocks in exit until the pty master is closed
         os.waitpid(pid, 0)
         raise AssertionError(f"the review prompt did not finish; it showed {buf!r}")
     out = os.read(r, 4096).decode()

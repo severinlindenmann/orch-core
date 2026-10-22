@@ -164,8 +164,10 @@ class HubKeys:
         return self
 
     @classmethod
-    def open(cls, state: Path, **kw: Any) -> HubKeys:
-        """Open an existing store. Fails closed on any wrong mode, owner, type, missing or inconsistent file."""
+    def open(cls, state: Path, *, prune: bool = True, **kw: Any) -> HubKeys:
+        """Open an existing store. Fails closed on any wrong mode, owner, type, missing or inconsistent file.
+        ``prune=False`` never removes anything (read-only callers such as ``doctor``: a stray ``op/<n>`` may be a
+        rotation in progress)."""
         self = cls(state, **kw)
         try:
             check_dir(self.state)
@@ -211,7 +213,8 @@ class HubKeys:
                 if r.code not in ("cert_expired", "revoked"):  # those are handled at use; rotate-op must still work
                     raise KeysError("bad_state", f"op certificate: {r.code}") from None
             self._op = self._sc["op"](op_key)
-            self._prune_gens()
+            if prune:
+                self._prune_gens()
         except StateError as e:
             raise KeysError(e.code, str(e)) from None
         return self

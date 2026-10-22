@@ -63,7 +63,7 @@ def check_state_modes(state: Path) -> None:
 
 def open_keys(state: Path) -> HubKeys:
     try:
-        return HubKeys.open(state)
+        return HubKeys.open(state, prune=False)
     except KeysError as e:
         raise Check(f"key store refused: {e.code}") from None
 

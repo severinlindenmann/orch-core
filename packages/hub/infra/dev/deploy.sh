@@ -76,10 +76,13 @@ restart_all() {
     return "$rc"
 }
 check_all() {
-    local i out
+    local i out pid
     for i in 1 2 3 4 5 6 7 8 9 10; do
-        if sudo orch-unit status orch-hub >/dev/null 2>&1 \
-                && out="$(sudo orch-unit logs orch-hub 20 2>/dev/null | grep -F 'orch-hub ready' | tail -n 1)" && [ -n "$out" ]; then
+        # only the ready line of the CURRENT main process counts (a line from before the restart is stale)
+        pid="$(systemctl show -p MainPID --value orch-hub 2>/dev/null || true)"
+        if [ -n "$pid" ] && [ "$pid" != 0 ] && sudo orch-unit status orch-hub >/dev/null 2>&1 \
+                && out="$(sudo orch-unit logs orch-hub 50 2>/dev/null | grep -F "orch-hub[${pid}]:" | grep -F 'orch-hub ready' | tail -n 1)" \
+                && [ -n "$out" ]; then
             echo "orch-hub: active, ready line seen"
             return 0
         fi

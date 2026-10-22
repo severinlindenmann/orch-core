@@ -140,3 +140,14 @@ def test_unreadable_registry_fails(state, capsys):
     rc, out = doctor(capsys, state)
     assert rc == 1
     assert "FAIL registry readable" in out
+
+
+def test_doctor_is_read_only_a_stray_generation_survives(state, capsys):
+    stray = state / "op" / "99"
+    stray.mkdir(mode=0o700)
+    (stray / "key").write_bytes(b"x")
+    os.chmod(stray / "key", 0o600)
+    doctor(capsys, state)
+    assert stray.is_dir() and (stray / "key").exists()
+    HubKeys.open(state)  # the default open still prunes uncommitted generations
+    assert not stray.exists()

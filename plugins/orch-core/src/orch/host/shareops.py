@@ -176,7 +176,14 @@ def _save(service: WorkspaceService, st: Any) -> None:
 # --- facts and selection ----------------------------------------------------------------------------------------------
 
 
-def tickets_for(service: WorkspaceService) -> list[Any]:
+def _shareable(state: Any, viewer: str | None) -> dict[str, Any]:
+    """Share candidates, failing closed: only workspace-visible tickets (a restricted ticket is never shared or
+    previewed, C6-4), and with a ``viewer`` only those that person may see."""
+    pool = state.tickets if viewer is None else state.visible_to(viewer)
+    return {u: t for u, t in pool.items() if t.visibility == "workspace"}
+
+
+def tickets_for(service: WorkspaceService, viewer: str | None = None) -> list[Any]:
     """The owner's visible tickets as :class:`~orch.hubclient.shares.TicketFact` (restricted tickets the owners cannot
     see are never offered). A question or need is "to me" when an owner of this workspace is an addressee."""
     from orch.hubclient.shares import NeedFact, QuestionFact, TicketFact
@@ -187,9 +194,7 @@ def tickets_for(service: WorkspaceService) -> list[Any]:
     with store.locked():
         state = store.state
         owners = sorted(p for p, m in state.workspace.members.items() if m.role == "owner")
-        seen: dict[str, Any] = {}
-        for o in owners:
-            seen.update(state.visible_to(o))
+        seen = _shareable(state, viewer)
         out = []
         for uid, t in sorted(seen.items()):
             texts = {q["id"]: str(q.get("text", "")) for q in t.fields.get("questions", ()) if isinstance(q, Mapping)}
@@ -248,7 +253,7 @@ def _read(call: Call, op: str, args: dict[str, Any]) -> dict[str, Any]:
     from .workspace import ok_result
 
     st = _load(call.service)
-    facts = tickets_for(call.service)
+    facts = tickets_for(call.service, call.viewer)
     try:
         if op == "share.rules":
             rules = [{**r, "count": len(S.select([r], facts)), "describes": S.describe(r)} for r in st.rules]
@@ -392,7 +397,7 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
             return ok_result(got)
         with _MU:
             st = _load(service)
-            facts = tickets_for(service)
+            facts = tickets_for(service, call.viewer)
             if op == "share.revoke":
                 lg = _find(st, args["ref"], facts)
                 if lg not in st.withdrawn:

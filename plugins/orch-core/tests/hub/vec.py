@@ -38,27 +38,27 @@ RUN_CHECKS = frozenset(
         "space_wrap",
         "space_item",
         "host_put",
+        "custodial",  # V3 C3 phase 4: replayed against the PRODUCTION module orch.hubclient.custodial
         "share_item",  # V3 C6 (phase 4): replayed through the test-side opener (share_open.py)
         "share_revoke",
     }
 )
 SKIPPED_CHECKS = {
-    "custodial": "phase 4: custodial events are verified by C3, not before",
     "publish": "orch-publish verifies section 11.2; core only builds the request",
     "space_flow": "the hub's put / revoke / get rules over a space: hub side (orch_hub), core sees only the replies",
-    "action": "phase 4: what a channel may ask the hub to build; hub side (C3 custodial)",
-    "log_sync": "phase 4: the hub's WK-sealed view of a workspace log (C3/D6), not part of the share format",
-    "channel_register": "phase 4: channel registration at the hub, hub side",
-    "relay_request": "phase 4: hub -> relay requests, orch-relay (E1)",
-    "space_proposal": "phase 4: HK_op-signed space proposals (C13 follow-up), not part of the share format",
-    "prepared": "phase 4: what a channel shows and signs, hub side (C3)",
+    "action": "hub side (check_action, protocol 8.5): a host never receives an action, only the built event",
+    "built": "hub side (check_built, protocol 8.4); the host's side is the decision hash check in custodial.py",
+    "channel_register": "hub side (protocol 6.3); orch-mobile and the browser home sign the object",
+    "prepared": "channels (orch-mobile, browser home) recompute the digest; the host sees only the signed event",
+    "render": "channels render view-derived text (protocol 8.4); not a host check",
+    "relay_request": "hub to relay (protocol 10.8): orch-relay verifies",
+    "log_sync": "phase 4 log_sync (protocol 10.7): its own core task",
+    "space_proposal": "phase 4 space proposals (protocol 10.4): its own core task",
     "audit": "hub audit chain (D4): hub side",
     "audit_ack": "hub audit chain (D4): hub side",
     "admin_read": "hub admin reads (D3/D4): hub side",
     "admin_read_row": "hub admin reads (D3/D4): hub side",
     "admin_read_rows": "hub admin reads (D3/D4): hub side",
-    "built": "phase 4: what the hub builds for a channel decision, hub side (C3 custodial)",
-    "render": "phase 4: how a channel shows a view text, hub side (C3 custodial)",
 }
 
 
@@ -178,6 +178,8 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
         return {"workspace_id": H.verify_v2_card(a["card"], unb64u(a["pk_pub"], 65), now_ms=now)["workspace_id"]}
     if check in ("space", "space_wrap", "space_item", "host_put"):
         return _run_space(check, a)
+    if check == "custodial":
+        return _run_custodial(a)
     if check in ("share_item", "share_revoke"):
         return _run_share(check, a)
     raise ValueError(f"check {check} is not replayed by core")
@@ -208,6 +210,26 @@ def _held_prod(a: dict[str, Any]) -> dict[str, Any]:
     kw = {"now_ms": a["now_ms"], "dev_mode": a.get("dev_mode", True), "pinned_root": pinned, "revoked_op_certs": rev}
     prior = wire.verify_card(a["held_card"], **kw) if a.get("held_card") else None
     return wire.verify_card(a["card"], **kw, held=prior)
+
+
+def _run_custodial(a: dict[str, Any]) -> dict[str, Any]:
+    from orch.hubclient import custodial as C
+
+    r = C.verify_custodial(
+        a["event"],
+        workspace_id=a["workspace_id"],
+        log=a["log"],
+        held=_held_prod(a),
+        snapshot=a["snapshot"],
+        now_ms=a["now_ms"],
+        dev_mode=a.get("dev_mode", True),
+        mode=a.get("mode", "full"),
+        granted_users=frozenset(a.get("granted_users", [])),
+        member_roles=a.get("member_roles", {}),
+        min_factor=a.get("min_factor", "password+totp"),  # required by core; the weakest value is "no requirement"
+        revoked_op_certs=frozenset(a.get("revoked_op_certs", [])),
+    )
+    return {"channel": r["channel"], "role": r["role"], "user_id": r["user_id"]}
 
 
 def _run_space(check: str, a: dict[str, Any]) -> dict[str, Any]:

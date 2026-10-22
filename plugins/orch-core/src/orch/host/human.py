@@ -1688,7 +1688,10 @@ def _sigs_digested(args: dict[str, Any]) -> dict[str, Any]:
     """``args`` with every event's ``sig`` string replaced by ``sha256:<hex>`` of it (a copy; ``args`` is unchanged)."""
     import hashlib
 
-    events = args.get("events")
+    from .auth import SIGNATURE_FIELDS
+
+    key = SIGNATURE_FIELDS[0][1]  # the args key of the event list (not a store path; see auth.SIGNATURE_FIELDS)
+    events = args.get(key)
     if type(events) is not list:
         return args
     out = []
@@ -1696,4 +1699,4 @@ def _sigs_digested(args: dict[str, Any]) -> dict[str, Any]:
         if isinstance(e, dict) and type(e.get("sig")) is str:
             e = {**e, "sig": "sha256:" + hashlib.sha256(e["sig"].encode()).hexdigest()}
         out.append(e)
-    return {**args, "events": out}
+    return {**args, key: out}

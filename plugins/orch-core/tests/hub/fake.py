@@ -11,9 +11,10 @@ exactly the signed ``hub.link`` objects of the contract (orch-hub ``docs/protoco
   the host must (the held card's ``HK_op``, label ``orch/v2/hub-route|``).
 
 Fake-only behaviour, not in the contract (the contract fixes request bodies only, reply bodies are D5/C5):
-an invite the fake does not know is refused with ``bad_invite``; after ``hub.unbound`` every op except ``join`` and
-``binding_put`` is refused with ``not_bound``; an unreadable request still gets a signed ``{"error": code}`` reply
-(a real hub would drop the link).
+an invite the fake does not know (or has used: invites are single use) is refused with ``bad_invite``; after ``hub.unbound`` every op except ``join`` and
+``binding_put`` is refused with ``not_bound``; an op outside the closed list is answered as op ``error`` (never
+echoed, correlate by ``re``); an unreadable request still gets a signed ``{"error": code}`` reply (a real hub would
+drop the link).
 """
 
 from __future__ import annotations
@@ -135,7 +136,11 @@ class FakeHub:
         if pin is None:
             raise H.Refused("unknown_workspace")
         msg = H.link_auth_bytes(self.hub_id, workspace_id, challenge, exporter)
-        if not S.verify(unb64u(pin["wsk_pub"], 65), unb64u(sig, 64), msg):
+        try:
+            raw = unb64u(sig, 64)
+        except H.CanonError:
+            raise H.Refused("malformed") from None
+        if not S.verify(unb64u(pin["wsk_pub"], 65), raw, msg):
             raise H.Refused("bad_signature")
 
     # --- the transport --------------------------------------------------------------------------------------------
@@ -143,7 +148,7 @@ class FakeHub:
     def send(self, msg: Any) -> Json:
         """Deliver one signed w2h ``hub.link`` object (a dict, or JSON text/bytes parsed strictly); returns the signed
         h2w reply. Refusals travel as ``{"error": code}`` reply bodies."""
-        ws_id, seq, op = ZERO_WS, 1, "unknown"
+        ws_id, seq, op = ZERO_WS, 1, "error"
         try:
             if isinstance(msg, (bytes, str)):
                 msg = H.parse(msg)
@@ -151,7 +156,7 @@ class FakeHub:
             if isinstance(o, dict):
                 ws_id = o["workspace_id"] if H._hex16(o.get("workspace_id")) else ZERO_WS
                 seq = o["seq"] if H._int_min(1)(o.get("seq")) else 1
-                op = o["op"] if isinstance(o.get("op"), str) else "unknown"
+                op = o["op"] if o.get("op") in H.LINK_OPS else "error"
             body = self._dispatch(msg, ws_id)
             result = "ok"
         except H.Refused as r:
@@ -244,7 +249,7 @@ class FakeHub:
     def _op_join(self, body: Json, ws_id: str, ws: _Ws | None) -> Json:
         invite_ws = None
         if self.invites is not None:
-            if body["invite"] not in self.invites:
+            if body["invite"] not in self.invites:  # unknown or already used
                 raise H.Refused("bad_invite")
             invite_ws = self.invites[body["invite"]]
         join = {"card": body["card"], "pk_pub": body["pk_pub"], "binding": body["binding"]}
@@ -254,6 +259,10 @@ class FakeHub:
         )  # fmt: skip
         if pin["workspace_id"] != ws_id:
             raise H.Refused("other_workspace")
+        if ws is not None:  # a re-join carries a card too: same ordering as card_put
+            self._check_card_order(
+                ws, H.verify_v2_card(body["card"], unb64u(body["pk_pub"], 65), now_ms=self.now_ms), body["card"]
+            )
         b = body["binding"]["o"]
         state = H.apply_binding(None if ws is None else ws.binding, b)
         if ws is None:
@@ -272,6 +281,8 @@ class FakeHub:
             ws.binding, ws.mode, ws.v2_card = state, b["mode"], body["card"]
         self.pins[ws_id] = pin
         self.published_cards[ws_id] = body["card"]
+        if self.invites is not None:
+            self.invites.pop(body["invite"], None)  # single use, consumed by a successful join
         return {}
 
     def _op_card_put(self, body: Json, ws_id: str, ws: _Ws | None) -> Json:
@@ -287,13 +298,15 @@ class FakeHub:
             raise H.Refused("other_person")
         if co["wsk_pub"] != pin["wsk_pub"]:
             raise H.Refused("wsk_mismatch")
-        held = ws.v2_card["o"]
-        if co["card_seq"] < held["card_seq"] or (
-            co["card_seq"] == held["card_seq"] and H.cj(body["card"]) != H.cj(ws.v2_card)
-        ):
-            raise H.Refused("stale_card")
+        self._check_card_order(ws, co, body["card"])
         ws.v2_card = self.published_cards[ws_id] = body["card"]
         return {}
+
+    @staticmethod
+    def _check_card_order(ws: _Ws, co: Json, card: Json) -> None:
+        held = ws.v2_card["o"]
+        if co["card_seq"] < held["card_seq"] or (co["card_seq"] == held["card_seq"] and H.cj(card) != H.cj(ws.v2_card)):
+            raise H.Refused("stale_card")
 
     def _op_binding_put(self, body: Json, ws_id: str, ws: _Ws | None) -> Json:
         if ws is None:
@@ -323,11 +336,14 @@ class FakeHub:
         assert ws is not None
         req = body["request"]
         if (
-            not all(type(req.get(k)) is str for k in ("method", "host", "target", "body_hex"))
-            or type(req.get("headers")) is not dict
+            set(req) != {"method", "host", "target", "headers", "body_hex"}
+            or not all(type(req[k]) is str for k in ("method", "host", "target", "body_hex"))
+            or type(req["headers"]) is not dict
         ):
             raise H.Refused("malformed")
         h = {str(k).lower(): v for k, v in req["headers"].items()}
+        if len(h) != len(req["headers"]):  # names are case-insensitively unique
+            raise H.Refused("malformed")
         try:
             wsid = H.unhex(h["orch-workspace"], 16)
             if type(h["orch-ts"]) is not str or not H._TS.fullmatch(h["orch-ts"]):
@@ -428,7 +444,8 @@ class HostLink:
         H._signature(reply, H.L["sig_hub_route"], self.hk_op_pub)
         H._fields(o, "hub.link")
         want = request["o"]
-        if o["dir"] != "h2w" or o["re"] != want["seq"] or o["op"] != want["op"]:
+        known = want["op"] in H.LINK_OPS
+        if o["dir"] != "h2w" or o["re"] != want["seq"] or o["op"] != (want["op"] if known else "error"):
             raise H.Refused("malformed")
         if o["hub_id"] != self.hub.hub_id:
             raise H.Refused("other_hub")

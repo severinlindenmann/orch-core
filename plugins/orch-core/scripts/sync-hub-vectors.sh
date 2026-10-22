@@ -10,7 +10,10 @@ hub="${ORCH_HUB_DIR:-$HOME/orch-dev/orch-hub}"
 dest="$(cd "$(dirname "${BASH_SOURCE[0]}")/../tests/hub/vectors" && pwd)"
 git -C "$hub" fetch -q
 sha="$(git -C "$hub" rev-parse "$ref^{commit}")"
-git -C "$hub" show "$sha:vectors/vectors_hub.json" > "$dest/vectors_hub.json"
-digest="$(python3 -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$dest/vectors_hub.json")"
+tmp="$(mktemp "$dest/.sync.XXXXXX")"
+trap 'rm -f "$tmp"' EXIT
+git -C "$hub" show "$sha:vectors/vectors_hub.json" > "$tmp"  # a git failure leaves the vendored file untouched
+digest="$(python3 -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$tmp")"
+mv "$tmp" "$dest/vectors_hub.json"
 printf 'hub_repo: orch-hub\nhub_commit: %s\nvectors_hub_sha256: %s\n' "$sha" "$digest" > "$dest/SOURCE"
 echo "synced tests/hub/vectors from orch-hub $sha"

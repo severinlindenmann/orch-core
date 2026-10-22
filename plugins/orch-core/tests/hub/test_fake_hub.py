@@ -146,6 +146,7 @@ def test_unknown_workspace_before_join(link: HostLink):
 
 def test_unknown_op_and_hub_to_workspace_ops_from_the_workspace(joined: HostLink):
     assert code(joined, "sign_something", {}) == "unknown_op"
+    assert joined.request("sign_something", {})["op"] == "error"
     assert code(joined, "route_in", {"envelope": "AA"}) == "unknown_op"
     assert code(joined, "event_deliver", {"log": "workspace", "event": {}}) == "unknown_op"
 
@@ -343,6 +344,7 @@ def test_unbound_for_another_hub_and_stale(joined: HostLink):
 
 def vector_publish_request(**hdr):
     r = json.loads(json.dumps(V["publish"]["request"]))
+    r.pop("access")  # route metadata of orch-publish, not a member of the section 10.2 request
     r["headers"] = {k: v for k, v in r["headers"].items() if k != "Orch-Hub-Signature"} | hdr
     return r
 
@@ -407,3 +409,72 @@ def test_call_log_records_every_op_and_result(joined: HostLink, hub: FakeHub):
     code(joined, "wk_seal", {"epoch": 1, "wrap": "AA"})
     assert hub.calls[-2:] == [(WS, "snapshot_get", "ok"), (WS, "wk_seal", "wrong_mode")]
     assert base64.urlsafe_b64decode("AAAA") == b"\0\0\0"
+
+
+# --- tightening: invites, request shape, card order on re-join, authenticate, error ops -------------------------------
+
+
+def test_invites_are_single_use(hub: FakeHub):
+    hub = FakeHub(invites={"once": None})
+    host = HostLink(hub)
+    assert host.join("once") == {}
+    assert code(host, "join", vector_join_body("once")) == "bad_invite"
+    assert hub.invites == {}
+
+
+def test_a_failed_join_does_not_consume_the_invite():
+    hub = FakeHub(invites={"once": None})
+    host = HostLink(hub)
+    assert code(host, "join", {**vector_join_body("once"), "pk_pub": V["keys"]["pk_mallory"]["pub"]}) == "other_person"
+    assert "once" in hub.invites
+
+
+def test_publish_out_request_has_exactly_the_table_fields(joined: HostLink, hub: FakeHub):
+    req = vector_publish_request()
+    assert code(joined, "publish_out", {"request": {**req, "access": "public"}}) == "malformed"
+    assert code(joined, "publish_out", {"request": {**req, "extra": 1}}) == "malformed"
+    short = dict(req)
+    del short["body_hex"]
+    assert code(joined, "publish_out", {"request": short}) == "malformed"
+    assert hub.forwarded == []
+
+
+def test_header_names_are_case_insensitively_unique(joined: HostLink, hub: FakeHub):
+    req = vector_publish_request()
+    req["headers"]["orch-nonce"] = req["headers"]["Orch-Nonce"]
+    assert code(joined, "publish_out", {"request": req}) == "malformed"
+    assert hub.forwarded == []
+
+
+def test_rejoin_with_an_older_or_conflicting_card_is_refused(joined: HostLink, hub: FakeHub):
+    pk = V["keys"]["pk_alice"]["pub"]
+    base = vector_join_body()
+    joined.call("card_put", {"card": next_card(2), "pk_pub": pk})
+    assert code(joined, "join", base) == "stale_card"  # card_seq 1 after 2
+    same_seq = {**base, "card": next_card(2, relay_url=None)}
+    assert code(joined, "join", same_seq) == "stale_card"
+    assert hub.published_cards[WS] == next_card(2) or hub.published_cards[WS]["o"]["card_seq"] == 2
+    assert joined.call("join", {**base, "card": next_card(3), "binding": binding(2)}) == {}
+    assert hub.published_cards[WS]["o"]["card_seq"] == 3
+
+
+@pytest.mark.parametrize("sig", ["", "!!", "AA", "A" * 86 + "=", 5, None])
+def test_authenticate_refuses_a_malformed_sig_with_a_code(joined: HostLink, hub: FakeHub, sig):
+    a = V["link_auth"]
+    with pytest.raises(H.Refused) as e:
+        hub.authenticate(WS, bytes.fromhex(a["challenge_hex"]), bytes.fromhex(a["exporter_hex"]), sig)
+    assert e.value.code == "malformed"
+
+
+@pytest.mark.parametrize("op", ["sign_something", "<script>", "x" * 5000, 7, None, "join\n"])
+def test_error_reply_to_an_unknown_op_never_echoes_it(joined: HostLink, hub: FakeHub, op):
+    msg = joined.message("snapshot_get", {})
+    o = {**msg["o"], "op": op}
+    reply = hub.send(sign_with(private_key("wsk_a"), "sig_hub_link", o))
+    assert reply["o"]["op"] == "error" and reply["o"]["re"] == msg["o"]["seq"]
+    assert reply["o"]["body"]["error"] in ("unknown_op", "malformed")
+
+
+def test_known_ops_are_echoed_and_correlated_by_re(joined: HostLink):
+    r = joined.request("wk_seal", {"epoch": 1, "wrap": "AA"})
+    assert r["op"] == "wk_seal" and r["body"] == {"error": "wrong_mode"} and r["re"] == joined.seq

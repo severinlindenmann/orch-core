@@ -69,11 +69,7 @@ SKIPPED_CHECKS = {
 }
 #: cases of a check core runs whose rules core has not implemented yet (orch-core#1036): non-strict xfail, so CI shows
 #: them and a fix turns them into XPASS
-PENDING_VECTORS = frozenset(
-    {
-        "share_item_with_f1",
-    }
-)
+PENDING_VECTORS = frozenset({})
 
 
 def private_key(name: str):

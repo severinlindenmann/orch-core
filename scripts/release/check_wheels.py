@@ -4,7 +4,8 @@
     check_wheels.py --core X.whl --dashboard Y.whl --version V --channel C --commit SHA
 
 The core wheel must carry orch/_build.json (written by stamp.py), valid JSON with version, channel, commit and
-built_at; version, channel and commit must equal the release being built. The dashboard wheel must carry the prebuilt page (orch_dashboard/static/index.html) and its add-on
+built_at; version, channel and commit must equal the release being built.
+The dashboard wheel must carry the prebuilt page (orch_dashboard/static/index.html) and its add-on
 manifest (orch_dashboard/orch-addon.json); see addons/dashboard/server/hatch_build.py.
 """
 

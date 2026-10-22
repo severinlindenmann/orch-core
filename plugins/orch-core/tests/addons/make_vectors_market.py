@@ -20,6 +20,8 @@ OFFICIAL = "https://github.com/severinlindenmann/orch-marketplace"
 OTHER = "https://github.com/acme/orch-market"
 KEYS = {n: ec.generate_private_key(ec.SECP256R1()) for n in ("official", "jane", "mallory")}
 PUB = {n: b64u(k.public_key().public_bytes(Encoding.X962, PublicFormat.UncompressedPoint)) for n, k in KEYS.items()}
+PYRT = {"kind": "python-requirements", "lock": "requirements.txt"}
+NODERT = {"kind": "node-package-lock", "lock": "package-lock.json"}
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
 
 REQ = (
@@ -163,7 +165,7 @@ def build() -> None:
 
     # ---- index only
     add("index_valid_minimal", "index", {"index": index(OTHER, [])}, ok(addons=[]))
-    fl2 = files_for("jira", caps=["network", "serve_http"], extra={"requirements.txt": REQ})
+    fl2 = files_for("jira", caps=["network", "serve_http"], extra={"requirements.txt": REQ}, runtime=PYRT)
     full = entry(
         "jira",
         fl2,
@@ -280,7 +282,7 @@ def build() -> None:
         inst(),
         ok(id="standup", version="1.0.0", package_sha256=e["package_sha256"], **{"class": "other"}, tofu="unsigned"),
     )
-    jf = files_for("jira", caps=["network", "serve_http"], extra={"requirements.txt": REQ})
+    jf = files_for("jira", caps=["network", "serve_http"], extra={"requirements.txt": REQ}, runtime=PYRT)
     je = entry(
         "jira",
         jf,
@@ -297,7 +299,7 @@ def build() -> None:
         inst(ji, jf, "jira", known_keys={f"{OTHER}|jira": PUB["jane"]}),
         {"ok": {**jok["ok"], "tofu": "known"}},
     )
-    nf = files_for("slack", caps=["network"], extra={"package-lock.json": NODE})
+    nf = files_for("slack", caps=["network"], extra={"package-lock.json": NODE}, runtime=NODERT)
     ne = entry("slack", nf, caps=["network"], runtime={"kind": "node-package-lock", "lock": "package-lock.json"})
     add(
         "install_ok_node_lock",
@@ -384,7 +386,7 @@ def build() -> None:
     )
     forged = copy.deepcopy(je)
     forged["version"] = "1.0.1"  # signed as 1.0.0
-    jf101 = files_for("jira", "1.0.1", ["network", "serve_http"], extra={"requirements.txt": REQ})
+    jf101 = files_for("jira", "1.0.1", ["network", "serve_http"], extra={"requirements.txt": REQ}, runtime=PYRT)
     forged["package_sha256"] = package_digest({p: t.encode() for p, t in jf101.items()})
     add("install_bad_signature", "install", inst(index(OTHER, [forged]), jf101, "jira"), refuse("bad_signature"))
     add("install_community_without_isolation", "install", inst(isolation=False), refuse("community_unisolated"))
@@ -508,8 +510,9 @@ def build() -> None:
         name: str, text: str | None, code: str, kind: str = "python-requirements", path: str = "requirements.txt"
     ) -> None:
         ex = {} if text is None else {path: text}
-        fl = files_for("jira", caps=["network"], extra=ex)
-        en = entry("jira", fl, caps=["network"], runtime={"kind": kind, "lock": path})
+        rt = {"kind": kind, "lock": path}
+        fl = files_for("jira", caps=["network"], extra=ex, runtime=rt)
+        en = entry("jira", fl, caps=["network"], runtime=rt)
         add(name, "install", inst(index(OTHER, [en]), fl, "jira"), refuse(code))
 
     lock_case("install_lock_missing", None, "lock_missing")
@@ -674,7 +677,7 @@ def build() -> None:
         refuse("bad_signature"),
     )
     # rollback: a validly signed older entry
-    jf0 = files_for("jira", "0.9.0", ["network", "serve_http"], extra={"requirements.txt": REQ})
+    jf0 = files_for("jira", "0.9.0", ["network", "serve_http"], extra={"requirements.txt": REQ}, runtime=PYRT)
     je0 = entry(
         "jira",
         jf0,
@@ -1049,6 +1052,51 @@ def build() -> None:
     )
     reused = {"standup": {"origin": OTHER, "version": "1.0.0", "package_sha256": "sha256:" + "0" * 64}}
     add("install_same_version_other_bytes", "install", inst(installed=reused), refuse("version_reused"))
+
+    # ---- L2M-8: the runtime declaration is in the manifest (so in the digest and the grant); the index copy must agree
+    nr = files_for("jira", caps=["network"], extra={"requirements.txt": REQ})
+    add(
+        "install_index_adds_a_runtime_the_manifest_lacks",
+        "install",
+        inst(index(OTHER, [entry("jira", nr, caps=["network"], runtime=PYRT)]), nr, "jira"),
+        refuse("manifest_mismatch"),
+    )
+    mr = files_for("jira", caps=["network"], extra={"requirements.txt": REQ}, runtime=PYRT)
+    add(
+        "install_manifest_runtime_the_index_omits",
+        "install",
+        inst(index(OTHER, [entry("jira", mr, caps=["network"])]), mr, "jira"),
+        refuse("manifest_mismatch"),
+    )
+    other_lock = files_for(
+        "jira",
+        caps=["network"],
+        extra={"requirements.txt": REQ, "other.txt": REQ},
+        runtime={"kind": "python-requirements", "lock": "other.txt"},
+    )
+    add(
+        "install_index_names_another_lockfile",
+        "install",
+        inst(index(OTHER, [entry("jira", other_lock, caps=["network"], runtime=PYRT)]), other_lock, "jira"),
+        refuse("manifest_mismatch"),
+    )
+    add(
+        "install_index_names_another_kind",
+        "install",
+        inst(
+            index(
+                OTHER,
+                [
+                    entry(
+                        "jira", mr, caps=["network"], runtime={"kind": "node-package-lock", "lock": "requirements.txt"}
+                    )
+                ],
+            ),
+            mr,
+            "jira",
+        ),
+        refuse("manifest_mismatch"),
+    )
 
 
 if __name__ == "__main__":

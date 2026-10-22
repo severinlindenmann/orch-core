@@ -90,7 +90,7 @@ Entry (required unless noted):
 | `capabilities` | exactly the manifest's capabilities, sorted, from the closed list (`git_push`, `network`, `pty`, `serve_http`, `spawn_agent`) |
 | `min_orch` | lowest orch core version that runs it, grammar of `min_core` in addon-api §2. Must equal the manifest's `min_core` |
 | `api` (optional) | display copy of the manifest's api range. The manifest decides |
-| `runtime` (optional) | `{kind, lock}`: the lockfile kind (`python-requirements` or `node-package-lock`) and its path inside the package (§8) |
+| `runtime` (optional) | `{kind, lock}`: the lockfile kind (`python-requirements` or `node-package-lock`) and its path inside the package. **A display copy:** the manifest's `runtime` is the truth and the two MUST be equal, both present or both absent (`market.manifest_mismatch`, §8.1) |
 | `publisher` (optional) | `{key, sig}`: an ECDSA P-256 public key (65-byte uncompressed point) and a signature, canonical unpadded base64url. The signature is bound to this marketplace's URL (§4.3) |
 
 A marketplace add-on MUST ship `orch.addon/3` (it needs `min_core`). One entry per id: the index states the current
@@ -232,8 +232,8 @@ network and write nothing; the first network access is step 11.
 | 11 | **Fetch** into a fresh staging directory (§5.1): every connection address is checked, then the fetched object id must equal `commit` | `market.address_refused`, `market.fetch_failed`, `market.commit_mismatch` |
 | 12 | **Read once**: `read_package` on the staged subdirectory (all §8.1 rules). From here every decision uses those bytes, never the directory | `market.package_invalid` |
 | 13 | The package digest equals `package_sha256` of the entry | `market.digest_mismatch` |
-| 14 | The manifest agrees with the entry: schema `orch.addon/3`, `name` = `id`, `version`, sorted `capabilities`, `min_core` = `min_orch` | `market.manifest_mismatch` |
-| 15 | If `runtime` is set: the lockfile exists in the package and passes the lockfile rules (§8) | `market.lock_missing`, `market.lock_invalid` |
+| 14 | The manifest agrees with the entry: schema `orch.addon/3`, `name` = `id`, `version`, sorted `capabilities`, `min_core` = `min_orch`, and `runtime` equal (or both absent) | `market.manifest_mismatch` |
+| 15 | If the **manifest** declares `runtime`: the lockfile it names exists in the package and passes the lockfile rules (§8). No other file is ever treated as a lockfile | `market.lock_missing`, `market.lock_invalid` |
 | 16 | Compatibility with this core (`incompatibility()` of addon-api §3) | existing `addon.incompatible` |
 | 17 | **Review**, then the human signs `addon.granted` for exactly `grant_event(manifest, package)` of the staged bytes | the owner declines |
 | 18 | Under the store lock, the host re-reads the staged package, checks its digest equals the digest in the signed grant, appends `addon.granted`, swaps the directory by rename, records origin and (now) the TOFU key | `market.staged_changed` |
@@ -338,10 +338,15 @@ remove or revoke anything installed. Yank and advisory handling is the backlog i
 
 ### 8.1 What a package may declare
 
-A package that needs libraries or another runtime declares one lockfile in the index (`runtime.kind`, `runtime.lock`)
-and ships it in the package. **The lockfile is a file of the package, so it is inside `package_sha256`** (§8.1 digest
-covers every file). Changing one hash in it changes the digest and needs a new grant. The manifest itself does not
-change in G0; G4 adds the declaration that the manifest and the index agree on.
+A package that needs libraries or another runtime declares one lockfile in its **manifest** (`runtime`: `{kind, lock}`)
+and ships it in the package. The manifest is inside the digest and is what the owner signs as `grant_event`, so *which*
+file is the lockfile, its kind, and whether dependencies are installed at all are all signed; the index only repeats
+them, and a difference is `market.manifest_mismatch`. Installing at step 19, and any later rebuild of the
+environment (a retry, a new machine), reads the `runtime` of the granted manifest and nothing from the index. Two
+lockfiles in one package cannot be chosen between by anyone but the manifest's author. **The lockfile is a file of the package, so it is inside `package_sha256`** (§8.1 digest
+covers every file). Changing one hash in it changes the digest and needs a new grant. The `runtime` key is a new optional
+key of `orch.addon/3` that G4 adds to the `addon-manifest` schema (this task fixes its shape and the agreement rule; the
+review line "installs these packages" is derived from the granted manifest and lockfile, not from the index).
 
 | `runtime.kind` | File | Rules (all `market.lock_invalid`) |
 |---|---|---|

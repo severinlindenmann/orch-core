@@ -412,12 +412,13 @@ def install(a: dict[str, Any]) -> dict[str, Any]:
             and m["version"] == entry["version"]
             and sorted(m.get("capabilities", [])) == entry["capabilities"]
             and m.get("min_core") == entry["min_orch"]
+            and m.get("runtime") == entry.get("runtime")  # the manifest decides; the index copy must agree (L2M-8)
         )
     except (ValueError, KeyError, TypeError):
         same = False
     if not same:
         raise Refuse("market.manifest_mismatch")
-    rt = entry.get("runtime")
+    rt = m.get("runtime")  # step 15 reads the *granted manifest*, never the index
     if rt is not None:
         if rt["lock"] not in a["files"]:
             raise Refuse("market.lock_missing")

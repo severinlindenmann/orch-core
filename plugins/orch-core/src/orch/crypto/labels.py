@@ -89,6 +89,9 @@ PLANNED_LABELS: dict[str, str] = {
     "sig_hub_unbound": "orch/v2/sig/hub-unbound|",
     "sig_hub_link": "orch/v2/sig/hub-link|",
     "sig_hub_link_auth": "orch/v2/sig/hub-link-auth|",
+    # V3 C7 (hub contract 11.1): the WSK signature of a publish request that goes through the hub (its own label, so it
+    # never verifies as a direct v2 12.1 request).
+    "sig_publish_hub": "orch/v2/publish-hub|",
 }
 
 L: dict[str, bytes] = {k: v.encode("ascii") for k, v in {**LABELS, **PLANNED_LABELS}.items()}

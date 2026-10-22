@@ -26,6 +26,7 @@ PLANNED = {
     "sig_hub_unbound": "orch/v2/sig/hub-unbound|",
     "sig_hub_link": "orch/v2/sig/hub-link|",
     "sig_hub_link_auth": "orch/v2/sig/hub-link-auth|",
+    "sig_publish_hub": "orch/v2/publish-hub|",  # V3 C7: publish through the hub
 }
 
 

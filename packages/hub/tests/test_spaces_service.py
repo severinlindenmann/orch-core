@@ -291,3 +291,121 @@ def test_records_and_wraps_verify_with_the_contract_under_the_hub_card(shub):
     SP.verify_space(row[2], HELD, dev_mode=True)
     w = h.store.wrap(rec["space_id"], 1, G.WS_B)
     SP.verify_space_wrap(w, HELD, rec, workspace_id=G.WS_B, wxk_priv=G.K.priv["wxk_b"], wxk_version=1, dev_mode=True)
+
+
+# --- review follow-ups: mode change, strict wrap, unavailable spaces, malformed ids ------------------------------------
+
+
+def rebind(c, ws, wsk, mode, seq):
+    c.request("binding_put", {"object": G.binding(ws=ws, wsk=wsk, mode=mode, seq=seq)})
+
+
+def test_full_to_selective_rebind_removes_the_workspace_from_every_space(shub):
+    h, a, b = two(shub)
+    s1 = h.svc.create("one", [G.WS_A, G.WS_B], ADMIN)["space_id"]
+    s2 = h.svc.create("two", [G.WS_A, G.WS_B], ADMIN)["space_id"]
+    rebind(b, G.WS_B, "wsk_b", "selective", 2)
+    for sid in (s1, s2):
+        assert h.store.current_epoch(sid) == 2 and h.store.epoch_row(sid, 2)[0] == [G.WS_A]
+        assert h.store.wrap(sid, 2, G.WS_B) is None
+        refused(b, "space_get", {"space_id": sid, "since": 0}, "not_member")
+    # coming back is the add path: a selective workspace needs its owner's accept for that transition
+    with pytest.raises(SpaceError) as e:
+        h.svc.add(s1, G.WS_B, ADMIN)
+    assert e.value.code == "not_accepted"
+
+
+def test_selective_to_full_rebind_and_same_mode_rebind_keep_memberships(shub):
+    h, a, b = two(shub)
+    sid = h.svc.create("one", [G.WS_A, G.WS_B], ADMIN)["space_id"]
+    rebind(b, G.WS_B, "wsk_b", "full", 2)  # same mode, new binding seq
+    assert h.store.current_epoch(sid) == 1
+    h2, a2, b2 = two(shub, mode_b="selective")
+    sid2 = h2.svc.create("solo", [G.WS_A], ADMIN)["space_id"]
+    rebind(b2, G.WS_B, "wsk_b", "full", 2)  # selective -> full is not a loss of consent
+    assert h2.store.current_epoch(sid2) == 1
+
+
+def test_a_selective_member_that_joined_with_its_accept_stays_through_a_reconcile(shub):
+    h, a, b = two(shub, mode_b="selective")
+    sid = h.svc.create("solo", [G.WS_A], ADMIN)["space_id"]
+    with pytest.raises(SpaceError) as e:
+        h.svc.add(sid, G.WS_B, ADMIN)
+    need = e.value.need
+    accept = KS.WskSigner(G.K.priv["wsk_b"]).sign_object(
+        {
+            "v": 2,
+            "suite": 2,
+            "kind": "space.accept",
+            "hv": 0,
+            "hub_id": G.HUB_ID,
+            "space_id": sid,
+            "workspace_id": G.WS_B,
+            "epoch": need["epoch"],
+            "prev_members_hash": need["prev_members_hash"],
+            "members_hash": need["members_hash"],
+            "dev": True,
+        }
+    )
+    b.request("space_accept", {"accept": accept})
+    h.svc.add(sid, G.WS_B, ADMIN)
+    h.svc.reconcile()
+    assert h.store.current_epoch(sid) == 2  # still a member: it has its accept
+
+
+def test_a_wrap_is_sealed_only_to_the_wxk_of_the_verified_card(shub):
+    h, a, b = two(shub)
+    good = h.registry.card(G.WS_B)
+    pin = h.registry.pin(G.WS_B)
+    unsigned = {"wxk_pub": G.K.b("wxk_b"), "wxk_version": 1}  # a bare shape, no signature
+    for bad in (
+        unsigned,
+        {"o": good["o"]},  # signed part without its signature and delegation
+        {**good, "o": {**good["o"], "wxk_pub": G.K.b("wxk_a")}},  # WXK swapped after signing
+        {**good, "sig": G.b64u(bytes(64))},
+        {},
+    ):
+        h.registry.put_card(G.WS_B, pin["pk_pub"], bad)
+        with pytest.raises(SpaceError) as e:
+            h.svc.create("x", [G.WS_A, G.WS_B], ADMIN)
+        assert e.value.code == "unknown_workspace"
+        assert h.store.space_ids() == []
+    h.registry.put_card(G.WS_B, pin["pk_pub"], good)
+    assert h.svc.create("x", [G.WS_A, G.WS_B], ADMIN)["epoch"] == 1
+
+
+def test_a_space_that_cannot_rotate_is_unavailable_until_it_can(shub, monkeypatch):
+    h, a, b = two(shub)
+    sid = h.svc.create("x", [G.WS_A, G.WS_B], ADMIN)["space_id"]
+    other = h.svc.create("y", [G.WS_A], ADMIN)["space_id"]
+    real = h.store.add_epoch
+
+    def broken(*args, **kw):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(h.store, "add_epoch", broken)
+    b.request("binding_put", {"object": G.unbound(ws=G.WS_B, wsk="wsk_b", seq=1)})  # the unbind is recorded anyway
+    assert h.registry.binding_state(G.WS_B)["status"] == "unbound"
+    h.svc.reconcile()  # logs, retries, does not raise: the hub still starts
+    ha = Host(a, G.WS_A)
+    refused(a, "space_get", {"space_id": sid, "since": 0}, "unavailable")
+    refused(a, "space_put", {"space_id": sid, "epoch": 1, "item_id": IT1, "sealed": "AAAA"}, "unavailable")
+    assert [s["o"]["space_id"] for s in a.request("space_list", {})["spaces"]] == [other]
+    ha.sync(other)  # other spaces are unaffected
+    monkeypatch.setattr(h.store, "add_epoch", real)
+    r = a.request("space_get", {"space_id": sid, "since": 0})  # the next op retries and reconciles
+    assert r["space"]["o"]["epoch"] == 2 and r["space"]["o"]["members"] == [G.WS_A]
+
+
+def test_ids_are_type_checked_before_any_lookup(shub):
+    h, a, b = two(shub)
+    for bad in ("zz", "A" * 32, "", 5, None, "0" * 31):
+        with pytest.raises(SpaceError) as e:
+            h.svc.add(bad, G.WS_A, ADMIN)
+        assert e.value.code == "malformed"
+        with pytest.raises(H.Refused) as r:
+            h.svc.get(G.WS_A, {"space_id": bad, "since": 0})
+        assert r.value.code == "malformed"
+        with pytest.raises(H.Refused) as r:
+            h.svc.put(G.WS_A, {"space_id": bad, "epoch": 1, "item_id": IT1, "sealed": "AA"})
+        assert r.value.code == "malformed"

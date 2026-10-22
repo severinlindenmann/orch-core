@@ -104,7 +104,7 @@ def test_output_has_only_public_fields(make_hub, state):
     d = inspect(state)
     assert set(d) == {"dev", "hub_id", "workspaces", "unjoined_ops", "spaces", "audit"}
     assert set(d["workspaces"][G.WS_A]) == {
-        "workspace_id", "owner_person_id", "wsk_pub", "wsk_fingerprint", "mode", "binding", "ops", "snapshot", "routes",
+        "workspace_id", "owner_person_id", "wsk_pub", "wsk_fingerprint", "mode", "binding", "ops", "snapshot", "routes", "wk_epochs",
     }  # fmt: skip
 
 

@@ -38,6 +38,7 @@ from ..keys import HubKeys
 from . import framing, ops, tls
 from .registry import Registry
 from .tls import LinkClosed, LinkTimeout
+from .wkseal import WkSeals
 
 if TYPE_CHECKING:
     from ..router import Router
@@ -65,6 +66,7 @@ class LinkServer:
         access: Any = None,
         spaces: Any = None,
         audit: Any = None,
+        wk_seals: WkSeals | None = None,
         host: str = "127.0.0.1",
         port: int = 0,
         dev_mode: bool = True,
@@ -85,6 +87,7 @@ class LinkServer:
         self._access = access
         self._spaces = spaces
         self._audit = audit
+        self._wk_seals = wk_seals
         self._dev, self._now = dev_mode, now_ms
         self._max, self._t_hs, self._t_rd, self._t_idle = max_frame, handshake_timeout, read_timeout, idle_timeout
         self._t_unjoined = unjoined_idle_timeout
@@ -257,7 +260,9 @@ class LinkServer:
             if pin is not None and unb64u(pin["wsk_pub"], 65) != wsk:
                 self._refuse(conn, "wsk_mismatch")
                 return
-            mode = self._reg.mode(ws) or "selective"
+            mode = (
+                self._reg.mode(ws) or self._reg.last_mode(ws) or "selective"
+            )  # unbound: its last mode, so ops get not_bound
             now = self._now()
             try:
                 o = H.verify_link(
@@ -325,6 +330,7 @@ class LinkServer:
                 access=self._access,
                 spaces=self._spaces,
                 audit=self._audit,
+                wk_seals=self._wk_seals,
             )
             return handler(ctx)
         except Refused as e:

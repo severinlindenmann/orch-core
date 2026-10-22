@@ -6,7 +6,21 @@
   "type": "object",
   "properties": {
     "schema": {
-      "const": "orch.addon/2"
+      "enum": [
+        "orch.addon/2",
+        "orch.addon/3"
+      ],
+      "description": "/2 is read as api >=1.0,<2 with no min_core; /3 adds api and min_core (addon-api.md)"
+    },
+    "api": {
+      "type": "string",
+      "pattern": "^(?:(?:>=|<=|==|>|<)(?:0|[1-9][0-9]{0,3})(?:\\.(?:0|[1-9][0-9]{0,3}))?(?:,(?=[<>=])|(?![\\s\\S]))){1,4}(?![\\s\\S])",
+      "description": "orch.addon/3 only: the addon-api range the addon needs, e.g. >=1.0,<2 (comma-joined comparators)"
+    },
+    "min_core": {
+      "type": "string",
+      "pattern": "^(?:(?:0|[1-9][0-9]{0,3})(?:\\.(?:0|[1-9][0-9]{0,3})){0,2}(?:\\.dev(?:0|[1-9][0-9]{0,5}))?)(?![\\s\\S])",
+      "description": "orch.addon/3 only: the lowest core version the addon runs on, e.g. 2.0.0.dev60"
     },
     "name": {
       "$ref": "https://schemas.orch.dev/v2/common#/$defs/addonName"
@@ -533,5 +547,40 @@
     "version",
     "title",
     "entry"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "schema": {
+            "const": "orch.addon/3"
+          }
+        },
+        "required": [
+          "schema"
+        ]
+      },
+      "then": {
+        "required": [
+          "api"
+        ]
+      },
+      "else": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "api"
+              ]
+            },
+            {
+              "required": [
+                "min_core"
+              ]
+            }
+          ]
+        }
+      }
+    }
   ]
 }

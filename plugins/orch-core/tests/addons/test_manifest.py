@@ -340,3 +340,63 @@ def test_directories_count_toward_the_entry_cap(tmp_path):
         (d / f"d{i}").mkdir()
     with pytest.raises(PackageError, match="files and directories"):
         read_package(d)
+
+
+# ---------------------------------------------------------------------------------- orch.addon/3 (api, min_core)
+
+
+def test_a_v2_manifest_still_loads_and_reads_as_api_1():
+    m = load_manifest(raw(MANIFEST))
+    assert m.api == ">=1.0,<2" and m.min_core is None
+
+
+def test_a_v3_manifest_carries_api_and_min_core_and_grants_the_same_declarations():
+    v3 = manifest(schema="orch.addon/3", api=">=1.0,<2", min_core="2.0.0.dev60")
+    m = load_manifest(raw(v3))
+    assert (m.api, m.min_core) == (">=1.0,<2", "2.0.0.dev60")
+    assert declarations(m) == declarations(load_manifest(raw(MANIFEST)))  # the grant covers nothing new
+    assert m.capabilities == ["serve_http"]
+
+
+def test_v3_requires_api_and_min_core_is_optional():
+    with pytest.raises(ManifestError):
+        load_manifest(raw(manifest(schema="orch.addon/3")))
+    assert load_manifest(raw(manifest(schema="orch.addon/3", api=">=1.1,<2"))).min_core is None
+
+
+@pytest.mark.parametrize("extra", [{"api": ">=1.0,<2"}, {"min_core": "2.0.0"}])
+def test_v2_refuses_the_v3_keys(extra):
+    with pytest.raises(ManifestError):
+        load_manifest(raw(manifest(**extra)))
+
+
+@pytest.mark.parametrize(
+    "api",
+    ["", "1.0", ">=1.0,", ",>=1.0", ">=1.0,,<2", ">=1.0 ,<2", ">=1.0.0", "^1.0", ">=01.0", ">=1.0,<2\n"]
+    + [">=1.0,<2,>=1.0,<2,>=1.0"],
+)
+def test_a_malformed_api_range_is_refused(api):
+    with pytest.raises(ManifestError):
+        load_manifest(raw(manifest(schema="orch.addon/3", api=api)))
+
+
+def test_a_bare_major_is_a_valid_api_range():
+    assert load_manifest(raw(manifest(schema="orch.addon/3", api=">=1"))).api == ">=1"
+
+
+@pytest.mark.parametrize("v", ["", "v2", "2.0.0.dev", "2.0.0.rc1", "2.0.0.0", ">=2.0", "2.0.0\n", 2])
+def test_a_malformed_min_core_is_refused(v):
+    with pytest.raises(ManifestError):
+        load_manifest(raw(manifest(schema="orch.addon/3", api=">=1.0,<2", min_core=v)))
+
+
+def test_an_unknown_schema_version_is_refused():
+    with pytest.raises(ManifestError):
+        load_manifest(raw(manifest(schema="orch.addon/4", api=">=1.0,<2")))
+
+
+def test_core_declares_its_addon_api():
+    from orch.addons.manifest import ADDON_API, incompatibility
+
+    assert ADDON_API == "1.0"
+    assert incompatibility(load_manifest(raw(MANIFEST)), "2.0.0.dev0") is None

@@ -245,6 +245,26 @@ def _runtime(service: WorkspaceService, *, start: bool = True) -> _Runtime:
     return rt
 
 
+def shared_link(service: WorkspaceService, *, dial: bool = True) -> Any:
+    """The ONE live hub link of this workspace (full mode): the one the ws->ws runtime keeps. Other users (the
+    ``log_sync`` sender, spaces) send over it instead of dialing their own, because the hub serves one live link per
+    workspace and a second one replaces the first (protocol 10.7 rule 6). ``dial=False``: the link as it is now, or
+    ``None``; nothing is opened (and no runtime started)."""
+    if not dial:
+        with _MU:
+            rt = _RUNTIMES.get(_key(service))
+        return None if rt is None else rt.svc.current_link()
+    return _runtime(service).svc._ensure()  # noqa: SLF001
+
+
+def drop_shared_link(service: WorkspaceService, link: Any) -> None:
+    """The caller's call on ``link`` failed: forget it (only if it is still the current one) so the next use redials."""
+    with _MU:
+        rt = _RUNTIMES.get(_key(service))
+    if rt is not None:
+        rt.svc.drop_link(only=link)
+
+
 def _loop(service: WorkspaceService, rt: _Runtime) -> None:
     wait = 0.5
     while not rt.stop.is_set():

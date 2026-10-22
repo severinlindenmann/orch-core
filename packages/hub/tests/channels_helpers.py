@@ -5,11 +5,11 @@ import hashlib
 from cryptography.hazmat.primitives.asymmetric import ec
 
 from orch_hub.access import Access, AccessSnapshots
-from orch_hub.channels import Channels, registration_digest
+from orch_hub.audit import open_log
+from orch_hub.channels import Channels, registration_object
 from orch_hub.channels.service import totp_code
 from orch_hub.contract import keystore as KS
 from orch_hub.contract import suite as S
-from orch_hub.contract.canon import b64u
 from orch_hub.keys import HubKeys
 
 PW = "correct horse battery"
@@ -31,7 +31,8 @@ class Env:
         self.clock = Clock()
         self.keys = HubKeys.init(tmp_path / "hub", now_ms=self.clock)
         self.acc = Access(str(tmp_path / "hub" / "access.db"), now_ms=self.clock)
-        self.svc = Channels(self.keys, self.acc, tmp_path / "hub" / "channels.db", now_ms=self.clock)
+        self.audit = open_log(tmp_path / "hub", self.keys, now_ms=self.clock)
+        self.svc = Channels(self.keys, self.acc, tmp_path / "hub" / "channels.db", now_ms=self.clock, audit=self.audit)
         self.snaps = AccessSnapshots(self.acc, self.keys, self.clock)
         self.secrets: dict[str, bytes] = {}
 
@@ -66,20 +67,16 @@ class Env:
     def close(self) -> None:
         self.svc.close()
         self.acc.close()
+        self.audit.store.close()
 
 
 def new_channel() -> KS.ChannelSigner:
     return KS.ChannelSigner(ec.generate_private_key(ec.SECP256R1()))
 
 
-def prove(signer: KS.ChannelSigner, begun: dict) -> str:
-    return b64u(signer.proof(unb64(begun["digest"])))
-
-
-def unb64(x: str) -> bytes:
-    from orch_hub.contract.canon import unb64u
-
-    return unb64u(x, 32)
+def prove(signer: KS.ChannelSigner, begun: dict) -> dict:
+    """The channel key signs the ``hub.channel_register`` object the hub returned (own label, §6.3)."""
+    return signer.sign_object(begun["challenge"])
 
 
 def register(env: Env, u: str, signer: KS.ChannelSigner | None = None):
@@ -89,4 +86,4 @@ def register(env: Env, u: str, signer: KS.ChannelSigner | None = None):
     return signer, env.svc.complete_registration(begun["challenge_id"], prove(signer, begun))
 
 
-__all__ = ["Env", "S", "hashlib", "new_channel", "prove", "register", "registration_digest"]
+__all__ = ["Env", "S", "hashlib", "new_channel", "prove", "register", "registration_object"]

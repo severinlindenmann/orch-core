@@ -63,16 +63,26 @@ def test_registration_without_proof_of_possession_is_refused(env):
     token = env.sign_in(u)
     mine, other = new_channel(), new_channel()
     begun = env.svc.begin_registration(token, mine.public)
-    refused("bad_proof", env.svc.complete_registration, begun["challenge_id"], b64u(b"\0" * 64))
+    refused(
+        "bad_signature",
+        env.svc.complete_registration,
+        begun["challenge_id"],
+        {"o": begun["challenge"], "sig": b64u(b"\0" * 64)},
+    )
     # the challenge is single use: even the right proof afterwards is refused
     refused("challenge_invalid", env.svc.complete_registration, begun["challenge_id"], prove(mine, begun))
     # a proof by another key (someone registering a key they do not hold) is refused
     begun = env.svc.begin_registration(token, mine.public)
-    refused("bad_proof", env.svc.complete_registration, begun["challenge_id"], prove(other, begun))
+    refused(
+        "challenge_invalid",  # a valid registration, but for a key the gate was not opened for
+        env.svc.complete_registration,
+        begun["challenge_id"],
+        other.sign_object({**begun["challenge"], "key_pub": b64u(other.public)}),
+    )
     # a proof over another challenge does not carry over
     b1 = env.svc.begin_registration(token, mine.public)
     b2 = env.svc.begin_registration(token, mine.public)
-    refused("bad_proof", env.svc.complete_registration, b2["challenge_id"], prove(mine, b1))
+    refused("challenge_invalid", env.svc.complete_registration, b2["challenge_id"], prove(mine, b1))
     assert env.svc.channels(u) == []
     assert env.keys.channel_certs(u) == []
 
@@ -275,3 +285,71 @@ def test_parallel_pairing_guesses_are_limited(env):
     out = _race(10, lambda: env.svc.begin_phone_registration(u, "1111-1111-1111", s.public))
     codes = [v for _, v in out]
     assert codes.count("bad_pairing_code") == 5 and codes.count("rate_limited") == 5, codes
+
+
+def _forged(signer, begun, label_key="sig_hub_channel_register", **change):
+    """A registration object signed by the channel key the way a hostile client would: other label or other fields."""
+    from orch_hub.contract.canon import cj
+    from orch_hub.contract.labels import L
+
+    o = {**begun["challenge"], **change}
+    return {"o": o, "sig": b64u(signer._sig(L[label_key] + cj(o)))}
+
+
+def test_registration_is_signed_under_its_own_label(env):
+    u = env.user("ann")
+    token = env.sign_in(u)
+    s = new_channel()
+    begun = env.svc.begin_registration(token, s.public)
+    forged = _forged(s, begun, "sig_hub_channel_proof")  # the custodial proof label: a different domain
+    refused("bad_signature", env.svc.complete_registration, begun["challenge_id"], forged)
+    assert env.svc.channels(u) == []
+
+
+def test_factor_follows_the_gate_the_hub_checked_not_the_claim(env):
+    u = env.user("ann")
+    token = env.sign_in(u)
+    s = new_channel()
+    # a browser session whose key claims a pairing code: not a valid (kind, attestation) pair
+    begun = env.svc.begin_registration(token, s.public)
+    refused(
+        "malformed",
+        env.svc.complete_registration,
+        begun["challenge_id"],
+        _forged(s, begun, attestation="pairing-code"),
+    )
+    # a phone paired by code that claims the session gate: factor_mismatch, no cert
+    code = env.svc.create_pairing_code(u)["code"]
+    begun = env.svc.begin_phone_registration(u, code, s.public)
+    refused(
+        "factor_mismatch",
+        env.svc.complete_registration,
+        begun["challenge_id"],
+        _forged(s, begun, channel_kind="browser", attestation="session"),
+    )
+    assert env.svc.channels(u) == [] and env.keys.channel_certs(u) == []
+    # the honest phone path (a fresh code, the first was spent by its begin) gets se-unlocked
+    code = env.svc.create_pairing_code(u)["code"]
+    begun = env.svc.begin_phone_registration(u, code, s.public)
+    cert = env.svc.complete_registration(begun["challenge_id"], prove(s, begun))
+    assert cert["o"]["factor"] == "se-unlocked"
+
+
+def test_register_and_revoke_are_on_the_audit_chain(env):
+    from orch_hub.contract import audit as AU
+
+    u = env.user("ann")
+    _, cert = register(env, u)
+    cid = cert["o"]["channel_id"]
+    env.svc.revoke(cid)
+    env.svc.revoke(cid)  # idempotent: no second record
+    rows = env.audit.store.after(0, 100)
+    assert [r[1]["o"]["type"] for r in rows] == ["channel", "channel"]
+    ev = [r[2] for r in rows]
+    assert [e["change"] for e in ev] == ["register", "revoke"]
+    assert all(e["channel_id"] == cid and e["user_id"] == u for e in ev)
+    assert ev[0]["factor"] == "password+totp" and ev[0]["actor_user_id"] == u
+    assert ev[1]["actor_user_id"] is None  # the operator at the terminal
+    assert all(r[1]["o"]["scope_tag"] is None for r in rows)  # hub-wide
+    for e in ev:
+        AU.check_event("channel", e)

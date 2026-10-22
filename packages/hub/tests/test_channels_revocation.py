@@ -125,15 +125,25 @@ def test_revoke_as_session_and_list_for_session(env):
     assert env.svc.active_channel(ann, c_ann["o"]["channel_id"]) is None
 
 
-def test_operator_may_revoke_an_unregistered_id_and_unrevoke(env):
+def test_revocation_is_permanent_and_the_key_never_registers_again(env):
+    from channels_helpers import new_channel, prove
+
+    assert not hasattr(env.svc, "unrevoke") and not hasattr(env.acc, "unrevoke_channel")
     u = env.user("ann")
-    _, cert = register(env, u)
+    s, cert = register(env, u)
     cid = cert["o"]["channel_id"]
-    env.svc.revoke("ee" * 16)
-    assert "ee" * 16 in env.acc.revoked_channels()
     env.svc.revoke(cid)
-    env.svc.unrevoke(cid)
-    assert env.svc.active_channel(u, cid) is not None
+    assert env.svc.active_channel(u, cid) is None
+    begun = env.svc.begin_registration(env.sign_in(u), s.public)
+    refused("channel_revoked", env.svc.complete_registration, begun["challenge_id"], prove(s, begun))
+    # the operator may revoke an id this hub never registered; that key can never register either
+    t = new_channel()
+    from orch_hub.contract.hub import channel_id
+
+    env.svc.revoke(channel_id(t.public))
+    begun = env.svc.begin_registration(env.sign_in(u), t.public)
+    refused("channel_revoked", env.svc.complete_registration, begun["challenge_id"], prove(t, begun))
+    assert env.svc.channels(u)[0]["status"] == "revoked" and len(env.svc.channels(u)) == 1
 
 
 def run(state, capsys, *argv, stdin=None, code=0, monkeypatch=None):
@@ -179,5 +189,11 @@ def test_cli_password_totp_list_revoke_and_pairing(tmp_path, capsys, monkeypatch
     assert run(st, capsys, "channels", "list")[0]["status"] == "revoked"
     assert run(st, capsys, "channels", "revoked") == [cid]
     assert [e["action"] for e in run(st, capsys, "channels", "events")] == ["pairing_code", "register", "revoke"]
+    from orch_hub.audit import AuditStore
+
+    store = AuditStore(str(st / "audit.db"))  # the terminal revoke is on the chain, by the operator
+    (rec,) = [e for _, r, e in store.after(0, 100) if e.get("change") == "revoke"]
+    store.close()
+    assert rec["channel_id"] == cid and rec["actor_user_id"] is None
     assert (st / "channels.db").stat().st_mode & 0o077 == 0
     assert b64u(s.public) not in json.dumps(run(st, capsys, "channels", "revoked"))

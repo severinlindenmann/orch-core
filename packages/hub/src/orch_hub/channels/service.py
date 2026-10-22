@@ -68,6 +68,8 @@ PW_BACKOFF_CAP_MS = 60_000
 PW_USER_FREE = 10
 KNOWN_SOURCE_MS = 30 * 86_400_000
 MIN_PASSWORD = 10
+CHANNEL_SESSION_MS = 12 * 3_600_000  # spec §7, protocol §6.4 (the contract's constant is the same)
+RENEW_BELOW_MS = 16 * 86_400_000  # a channel certificate (31 days) in its second half is renewed at bind
 #: the gate the hub checked for each channel kind (browser: live password+TOTP session; phone: operator pairing code)
 GATE_OF = {"browser": "session", "phone": "pairing-code"}
 _HEX32 = re.compile(r"[0-9a-f]{32}")
@@ -297,12 +299,16 @@ class Channels:
 
     # --- sessions --------------------------------------------------------------------------------------------------
 
-    def sign_in(self, user_id: str, password: str, totp: str, source: str = "") -> dict[str, Any]:
+    def sign_in(
+        self, user_id: str, password: str, totp: str, source: str = "", *, scope: str = "full"
+    ) -> dict[str, Any]:
         """Password and TOTP together; any mismatch is one generic ``bad_credentials`` (no hint which part, none whether
         the user exists). After :data:`MAX_FAILURES` failures in :data:`FAIL_WINDOW_MS` the pair (user, ``source``) is
         ``rate_limited`` even with correct credentials, until the window passes. ``source`` is the caller's network
         address (the web layer's); the counter is per pair so a stranger who knows a user id cannot lock that user out
         from the user's own address. Without a ``source`` the counter is per user."""
+        if scope not in ("full", "pairing"):  # a channel session is made by :meth:`bind_session` only
+            raise ChannelError("malformed", "scope")
         u = self._user(user_id)
         subject = u if not source else f"{u}|{str(source)[:64]}"
         if type(password) is not str or type(totp) is not str or len(password) > 1024:
@@ -353,8 +359,8 @@ class Channels:
                     db.execute("DELETE FROM known_sources WHERE ts_ms <= ?", (now - KNOWN_SOURCE_MS,))
                 db.execute("DELETE FROM sessions WHERE expires_ms <= ?", (now,))
                 db.execute(
-                    "INSERT INTO sessions(token_hash, user_id, created_ms, expires_ms) VALUES (?,?,?,?)",
-                    (_sha(token), u, now, now + SESSION_TTL_MS),
+                    "INSERT INTO sessions(token_hash, user_id, created_ms, expires_ms, scope, login_ms) VALUES (?,?,?,?,?,?)",
+                    (_sha(token), u, now, now + SESSION_TTL_MS, scope, now),
                 )
 
         self._guard(go)
@@ -374,6 +380,111 @@ class Channels:
         except AccessError:
             raise ChannelError("no_session") from None
         return rows[0][0]
+
+    def session_info(self, token: str) -> dict[str, Any]:
+        """The live session behind ``token``: ``{user_id, scope, channel_id, expires_ms, login_ms}`` (``scope`` is
+        ``full`` for a browser, ``pairing`` before a phone binds, ``channel`` after). ``no_session`` for anything else."""
+        user = self.session_user(token)
+        rows = self._guard(
+            lambda: self.db.q(
+                "SELECT scope, channel_id, expires_ms, login_ms, created_ms FROM sessions WHERE token_hash=?",
+                (_sha(token),),
+            )
+        )
+        if not rows:
+            raise ChannelError("no_session")
+        scope, cid, exp, login, created = rows[0]
+        return {
+            "user_id": user,
+            "scope": scope,
+            "channel_id": cid,
+            "expires_ms": exp,
+            "login_ms": login if login is not None else created,
+        }
+
+    def channel_state(self, user_id: str, channel_id: str) -> str:
+        """``active`` | ``revoked`` | ``expired`` | ``unknown`` for one channel of the user (fail closed: ``unknown``)."""
+        try:
+            for c in self.channels(user_id):
+                if c["channel_id"] == channel_id:
+                    return c["status"]
+        except ChannelError:
+            pass
+        return "unknown"
+
+    def bind_session(self, token: str, signed: Any) -> dict[str, Any]:
+        """``POST /api/v1/session/channel`` (protocol §6.4): a channel key binds the live PAIRING session ``token`` of its
+        user to itself. Checks with the contract's ``verify_channel_auth``; the pairing session is consumed and the
+        channel session made in ONE transaction, so two racing binds never both win (the loser is ``no_session``). The
+        channel session lives until 12 h after the password sign-in or the certificate's end, whichever is first. A
+        certificate in its second half is renewed here (the key holder has just proved itself)."""
+        from ..contract import channelapi as CA
+
+        now = self._now()
+        new_token = secrets.token_urlsafe(32)
+        with self._tx() as db:
+            row = db.execute(
+                "SELECT user_id, scope, created_ms, login_ms FROM sessions WHERE token_hash=? AND expires_ms>?",
+                (_sha(str(token)), now),
+            ).fetchone()
+            if row is None or row[1] != "pairing":
+                raise ChannelError("no_session")
+            user = row[0]
+            try:
+                if not self.acc.has_user(user):
+                    raise ChannelError("no_session")
+            except AccessError:
+                raise ChannelError("no_session") from None
+            revoked = self.acc.revoked_channels()
+            directory: dict[str, dict[str, Any]] = {}
+            for cid, kind, rv in db.execute(
+                "SELECT channel_id, kind, revoked_ms FROM channels WHERE user_id=?", (user,)
+            ).fetchall():
+                cert = self._cert_of(user, cid)
+                directory[cid] = {
+                    "user_id": user,
+                    "kind": kind,
+                    "key_pub": cert["o"]["key_pub"] if cert else "",
+                    "expires_ms": cert["o"]["expires_ms"] if cert else 0,
+                    "revoked": rv is not None or cid in revoked,
+                }
+            try:
+                got = CA.verify_channel_auth(
+                    signed,
+                    hub_id=self.keys.hub_id,
+                    session_user=user,
+                    session_token=token,
+                    channels=directory,
+                    now_ms=now,
+                    dev_mode=self._dev,
+                )
+            except H.Refused as r:
+                raise ChannelError(r.code) from None
+            cid = got["channel_id"]
+            cert = self._cert_of(user, cid)
+            if cert is None:
+                raise ChannelError("unknown_channel")
+            if cert["o"]["expires_ms"] - now < RENEW_BELOW_MS:  # cert renewal at bind
+                factor = db.execute("SELECT factor FROM channels WHERE channel_id=?", (cid,)).fetchone()[0]
+                try:
+                    cert = self.keys.issue_channel(user, unb64u(cert["o"]["key_pub"], 65), factor)
+                except KeysError as e:
+                    raise ChannelError("issue_failed", e.code) from None
+                db.execute(
+                    "INSERT INTO events(ts_ms, action, user_id, channel_id, actor) VALUES (?,?,?,?,?)",
+                    (now, "renew", user, cid, "bind"),
+                )
+            login = row[3] if row[3] is not None else row[2]
+            expires = min(login + CHANNEL_SESSION_MS, cert["o"]["expires_ms"])
+            if db.execute("DELETE FROM sessions WHERE token_hash=? AND scope='pairing'", (_sha(token),)).rowcount != 1:
+                raise ChannelError("no_session")
+            db.execute("DELETE FROM sessions WHERE expires_ms <= ?", (now,))
+            db.execute(
+                "INSERT INTO sessions(token_hash, user_id, created_ms, expires_ms, scope, channel_id, login_ms) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (_sha(new_token), user, now, expires, "channel", cid, login),
+            )
+        return {"token": new_token, "user_id": user, "channel_id": cid, "expires_ms": expires, "channel_cert": cert}
 
     def sign_out(self, token: str) -> None:
         self._guard(lambda: self.db.w("DELETE FROM sessions WHERE token_hash=?", (_sha(str(token)),)))
@@ -616,6 +727,20 @@ class Channels:
                     self.on_revoke(cid)
                 except Exception:  # noqa: BLE001 - the revocation is done; a failing hook must not undo or hide it
                     log.warning("on_revoke hook failed")
+
+    def remove_user(self, user_id: str, *, actor: str | None = None) -> None:
+        """Remove a user (the access model decides whether ``actor`` may) AND revoke every channel of theirs, each
+        revocation permanent, audited, and through ``on_revoke`` purging the push target and mailbox at the relay. The
+        user goes first: a refused removal revokes nothing, and a user without a record has no active channel anyway
+        (``active_channel`` fails closed)."""
+        u = self._user(user_id)
+        live = [c["channel_id"] for c in self.channels(u) if c["status"] != "revoked"]
+        try:
+            self.acc.remove_user(u, actor=actor)
+        except AccessError as e:
+            raise ChannelError(e.code) from None
+        for cid in live:
+            self.revoke(cid)  # the operator-level path: the removal above was the authorised act
 
     def revoke_as(self, token: str, channel_id: str) -> None:
         self.revoke(channel_id, actor=self.session_user(token))

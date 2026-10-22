@@ -21,6 +21,9 @@ CREATE INDEX IF NOT EXISTS failures_by ON failures(kind, subject, ts_ms);
 CREATE TABLE IF NOT EXISTS sessions (
   token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, created_ms INTEGER NOT NULL, expires_ms INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS push_keys (
+  channel_id TEXT PRIMARY KEY, push_pub TEXT NOT NULL, issued_ms INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS challenges (
   challenge_id TEXT PRIMARY KEY, user_id TEXT NOT NULL, kind TEXT NOT NULL, key_pub TEXT NOT NULL,
   binding TEXT NOT NULL, label TEXT NOT NULL, expires_ms INTEGER NOT NULL, session TEXT NOT NULL DEFAULT ''
@@ -47,6 +50,14 @@ class ChannelsDB:
         try:
             self.db = open_private_db(path, check_same_thread=False, isolation_level=None)
             self.db.executescript(SCHEMA)
+            cols = {r[1] for r in self.db.execute("PRAGMA table_info(sessions)")}
+            for name, decl in (
+                ("scope", "TEXT NOT NULL DEFAULT 'full'"),  # full (browser) | pairing | channel (H1, protocol §6.4)
+                ("channel_id", "TEXT"),
+                ("login_ms", "INTEGER"),  # the password sign-in a channel session's 12 h run from
+            ):
+                if name not in cols:
+                    self.db.execute(f"ALTER TABLE sessions ADD COLUMN {name} {decl}")
             if "session" not in {r[1] for r in self.db.execute("PRAGMA table_info(challenges)")}:
                 self.db.execute("DROP TABLE challenges")  # open challenges live 120 s: drop, do not migrate
                 self.db.executescript(SCHEMA)

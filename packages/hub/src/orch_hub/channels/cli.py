@@ -13,6 +13,8 @@ from typing import Any
 
 from ..audit import open_log
 from ..config import dev_of
+from ..contract import channelapi as CA
+from ..contract.hub import Refused
 from ..keys import HubKeys
 from .service import CHANNELS_FILE, ChannelError, Channels
 
@@ -33,8 +35,32 @@ def add_channels_parsers(c: argparse._SubParsersAction, J: argparse.ArgumentPars
     p.add_argument("channel_id")
     p = c.add_parser("pair-code", parents=[J], help="one-time code for a phone to pair with the hub")
     p.add_argument("--user", required=True)
+    p.add_argument(
+        "--link",
+        action="store_true",
+        help="also print the orch://hub-pair/... link for the phone's QR (needs --api-origin)",
+    )
+    p.add_argument("--api-origin", help="with --link: the hub's public API origin, as the phone will use it")
     c.add_parser("revoked", parents=[J], help="the revoked channel ids (what snapshots carry)")
     c.add_parser("events", parents=[J], help="the channel event log")
+
+
+def pair_link(hub_id: str, user_id: str, code: str, api_origin: str | None, dev: bool) -> str:
+    """The §6.4 link ``orch://hub-pair/<authority>#h1.<hub_id>.<user_id>.<code>`` for ``api_origin`` (https; plain http
+    only for a loopback host at a dev hub). Parsed back with the contract's ``parse_pair_link`` before it is printed."""
+    if api_origin is None:
+        raise ChannelError("malformed", "--link needs --api-origin")
+    scheme, sep, authority = api_origin.partition("://")
+    if not sep or scheme not in ("http", "https"):
+        raise ChannelError("malformed", "--api-origin must be https://host[:port]")
+    link = f"{CA.PAIR_PREFIX}{authority}#h1.{hub_id}.{user_id}.{code}"
+    try:
+        parsed = CA.parse_pair_link(link, dev_mode=dev)
+    except Refused:
+        raise ChannelError("malformed", "--api-origin is not a valid pairing authority") from None
+    if parsed["api"] != api_origin:  # e.g. http on a real host, or https on a loopback host
+        raise ChannelError("malformed", "--api-origin does not round-trip through the link grammar")
+    return link
 
 
 def dispatch(args: argparse.Namespace, state: Path, acc: Any) -> Any:
@@ -49,6 +75,9 @@ def dispatch(args: argparse.Namespace, state: Path, acc: Any) -> Any:
                 pw = getpass.getpass("password: ") if sys.stdin.isatty() else sys.stdin.readline().rstrip("\n")
                 svc.set_password(args.user_id, pw)
                 return {}
+            if c == "remove":  # the user's channels are revoked first, then the user goes
+                svc.remove_user(args.user_id)
+                return {}
             return svc.new_totp(args.user_id)
         if c == "list":
             return svc.channels(args.user)
@@ -56,7 +85,11 @@ def dispatch(args: argparse.Namespace, state: Path, acc: Any) -> Any:
             svc.revoke(args.channel_id)
             return {}
         if c == "pair-code":
-            return svc.create_pairing_code(args.user)
+            got = svc.create_pairing_code(args.user)
+            if args.link:
+                got["link"] = pair_link(keys.hub_id, args.user, got["code"], args.api_origin, dev_of(keys))
+                got["fingerprint"] = CA.fingerprint(keys.hub_id)
+            return got
         if c == "events":
             return svc.events()
         return acc.revoked_channels()

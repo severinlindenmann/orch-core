@@ -9,7 +9,10 @@ Rules every request goes through, in this order (``WebApi.handle``):
    with the session cookie (an ambient credential) MUST carry an allowed ``Origin``; a request that carries its token
    explicitly (``Authorization: Bearer``, the phone) has nothing ambient to forge. Refusal: ``not_allowed``;
 4. the session: the token (cookie or bearer) must be a live ``Channels`` session of a user the access model still has
-   (else ``no_session``); admin routes then need ``Access.is_hub_admin`` (else ``forbidden_role``);
+   (else ``no_session``) whose scope fits the carrier (cookie = ``full``, the browser; bearer = ``pairing`` or
+   ``channel``, the phone) and the route (:data:`SCOPE_ROUTES`: a pairing session can only pair and bind, a channel
+   session is bound to one channel and answers ``channel_revoked`` / ``cert_expired`` once that channel is; else
+   ``forbidden_role``); admin routes then need ``Access.is_hub_admin`` (else ``forbidden_role``);
 5. the body is strict JSON (``canon.loads_strict``), an object, at most :data:`MAX_BODY` bytes (else ``malformed``);
 6. the handler. Workspace-level routes re-read the user's role and the workspace's mode from the hub's own data; a
    workspace the user has no part in is ``unknown_workspace`` (the same answer as one that does not exist).
@@ -24,7 +27,6 @@ Nothing secret is logged: this module does not log at all.
 
 from __future__ import annotations
 
-import hashlib
 import ipaddress
 import json
 import re
@@ -40,9 +42,12 @@ from ..access import Access, AccessError, role_rank
 from ..access.store import check_name
 from ..channels import Channels
 from ..channels.service import ChannelError
+from ..contract import channelapi as CA
 from ..contract import phase4 as P4
+from ..contract import suite as S
 from ..contract.canon import CanonError, loads_strict, unb64u
-from ..contract.hub import Refused
+from ..contract.hub import HV, Refused
+from ..relay.client import RelayError
 
 MAX_BODY = 64 * 1024
 COOKIE = "orch_hub_session"
@@ -152,9 +157,10 @@ class SessionBridge:
 
     def valid(self, session: Any, user_id: str, channel_id: str) -> bool:
         try:
-            return (
-                self._ch.session_user(session) == user_id and self._ch.active_channel(user_id, channel_id) is not None
-            )
+            info = self._ch.session_info(session)
+            if info["scope"] == "pairing" or (info["scope"] == "channel" and info["channel_id"] != channel_id):
+                return False  # a pairing session never signs; a channel session signs for its own channel only
+            return info["user_id"] == user_id and self._ch.active_channel(user_id, channel_id) is not None
         except ChannelError:
             return False
 
@@ -177,6 +183,11 @@ class WebDeps:
     #: or every request would have the edge as its source and the per-source caps would be one shared bucket
     behind_edge: bool = False
     secure_cookies: bool = True  # the loopback dev server over plain http passes False
+    #: the hub's public API origin, from ``HubConfig`` (the same value family as ``allowed_origins``); signed into
+    #: ``hub.api_origin`` for ``GET /hub/card``. None = the route answers ``unavailable``
+    api_origin: str | None = None
+    #: the notifier that holds the push targets and keys (None = no relay: ``PUT /channels/{id}/push`` is ``unavailable``)
+    push: Any = None
     now_ms: Callable[[], int] = lambda: int(time.time() * 1000)
 
 
@@ -199,10 +210,19 @@ def _r(method: str, path: str, auth: str, handler: str, purpose: str) -> Route:
 
 
 ROUTES: tuple[Route, ...] = (
+    # (0) the public card (phone pairing, protocol §6.4)
+    _r("GET", "/hub/card", "none", "hub_card", "The held card and the signed API origin (pairing; no session)"),
     # (a) session
     _r("POST", "/session", "none", "sign_in", "Sign in with user id, password and TOTP; sets the session cookie"),
     _r("GET", "/session", "session", "whoami", "Who am I: user id, name, hub-admin flag"),
     _r("DELETE", "/session", "session", "sign_out", "Sign out (the session dies at once)"),
+    _r(
+        "POST",
+        "/session/channel",
+        "session",
+        "bind",
+        "A phone's channel key binds its pairing session to itself; the pairing session is consumed",
+    ),
     # (b) person home
     _r("GET", "/me/workspaces", "session", "my_workspaces", "My workspaces with my role and the workspace mode"),
     _r(
@@ -236,6 +256,13 @@ ROUTES: tuple[Route, ...] = (
         "Return the channel's signed proof, get the cert",
     ),
     _r("POST", "/channels/{channel_id}/revoke", "session", "revoke", "Revoke one of my channels (permanent)"),
+    _r(
+        "PUT",
+        "/channels/{channel_id}/push",
+        "session",
+        "push",
+        "Register the phone's APNs target and push key (channel session of that channel)",
+    ),
     # (d) admin console
     _r("GET", "/admin/users", "admin", "a_users", "List users"),
     _r("POST", "/admin/users", "admin", "a_user_add", "Create a user (new id and signing key)"),
@@ -253,6 +280,34 @@ ROUTES: tuple[Route, ...] = (
     _r("POST", "/admin/channels/{channel_id}/revoke", "admin", "revoke", "Revoke any channel (permanent)"),
     _r("GET", "/admin/audit", "admin", "a_audit", "Read the audit chain (?since=N, up to 100 records)"),
 )
+#: handler -> the session scopes that may call it (protocol §6.4). ``full`` is the browser's cookie session; ``pairing``
+#: (password + TOTP from the app) may only read the card, register a phone, bind and sign out; ``channel`` is bound to
+#: one channel and never registers a channel or reaches an admin route. A route not listed here is ``full`` only.
+_PAIR = frozenset({"sign_out", "reg_begin", "reg_complete", "bind"})
+_CHAN = frozenset(
+    {
+        "whoami",
+        "sign_out",
+        "my_workspaces",
+        "needs_you",
+        "item",
+        "my_channels",
+        "prepare",
+        "prepared",
+        "sign",
+        "revoke",
+        "push",
+    }
+)
+_FULL_NOT = frozenset({"bind", "push"})  # channel-session routes the browser cookie never uses
+SCOPE_ROUTES: dict[str, frozenset[str]] = {
+    h: frozenset(
+        ({"full"} if h not in _FULL_NOT else set())
+        | ({"pairing"} if h in _PAIR else set())
+        | ({"channel"} if h in _CHAN else set())
+    )
+    for h in {rt.handler for rt in ROUTES}
+}
 _BY_METHOD: dict[str, list[Route]] = {}
 for _rt in ROUTES:
     _BY_METHOD.setdefault(_rt.method, []).append(_rt)
@@ -263,6 +318,8 @@ class Ctx:
     user_id: str = ""
     token: str = ""
     cookie: bool = False
+    scope: str = ""  # full | pairing | channel
+    channel_id: str | None = None  # the channel a ``channel`` session is bound to
     origin: str | None = None
     source: str = ""
 
@@ -338,7 +395,7 @@ class WebApi:
             str, tuple[str, str, str, str, int, Any]
         ] = {}  # id -> user, channel, workspace, log, expires, Prepared
         self._plock = threading.Lock()
-        self._kinds: dict[str, tuple[str, int]] = {}  # sha256(token) -> (client kind, expires_ms), this process only
+        self._origins: dict[tuple[str, str], dict[str, Any]] = {}
         self._hashing = threading.BoundedSemaphore(SIGNIN_CONCURRENCY)
         self._busy: set[str] = set()  # sources holding a hashing slot right now (max 1 each), under _plock
         self._hosts = frozenset(urllib.parse.urlsplit(o).netloc for o in deps.allowed_origins)
@@ -348,6 +405,11 @@ class WebApi:
         binds). Origins and the Hosts derived from them are replaced as whole values, never edited in place."""
         self.d.allowed_origins = self.d.allowed_origins | {origin}
         self._hosts = frozenset(urllib.parse.urlsplit(o).netloc for o in self.d.allowed_origins)
+
+    def allow_loopback_origin(self, origin: str) -> None:
+        """The loopback dev server: its own bound address is both an allowed origin and the API origin it signs."""
+        self.allow_origin(origin)
+        self.d.api_origin = self.d.api_origin or origin
 
     # --- the request pipeline ----------------------------------------------------------------------------------------
 
@@ -424,13 +486,22 @@ class WebApi:
             ctx.token, ctx.cookie = (bearer, False) if bearer else (cookie_token, True)
             if not ctx.token:
                 raise ApiError("no_session")
-            ctx.user_id = self.d.channels.session_user(ctx.token)
-            # a session is for the carrier it was issued for (cookie = browser, bearer = app); one this process did not
-            # issue (e.g. from before a restart) is refused and the person signs in again
-            if self._kinds.get(hashlib.sha256(ctx.token.encode()).hexdigest(), ("", 0))[0] != (
-                "browser" if ctx.cookie else "app"
-            ):
+            info = self.d.channels.session_info(ctx.token)
+            ctx.user_id, ctx.scope, ctx.channel_id = info["user_id"], info["scope"], info["channel_id"]
+            # a session is for the carrier it was issued for (cookie = browser: ``full``; bearer = app: ``pairing`` or
+            # ``channel``); the scope is stored with the session, so it also holds across a restart
+            if (ctx.scope == "full") != ctx.cookie:
                 raise ApiError("no_session")
+            if ctx.scope not in SCOPE_ROUTES.get(route.handler, frozenset()):
+                raise ApiError("forbidden_role")
+            if ctx.scope == "channel":  # every request re-checks the channel (revocation takes effect at once)
+                state = self.d.channels.channel_state(ctx.user_id, ctx.channel_id or "")
+                if state == "revoked":
+                    raise ApiError("channel_revoked")
+                if state == "expired":
+                    raise ApiError("cert_expired")
+                if state != "active":
+                    raise ApiError("no_session")
             if route.auth == "admin" and not self.d.access.is_hub_admin(ctx.user_id):
                 raise ApiError("forbidden_role")
         body = self._body(raw)
@@ -553,24 +624,100 @@ class WebApi:
             if not self._hashing.acquire(blocking=False):
                 raise ApiError("rate_limited")
             try:
-                s = self.d.channels.sign_in(b["user_id"], b["password"], b["totp"], c.source)
+                s = self.d.channels.sign_in(
+                    b["user_id"], b["password"], b["totp"], c.source, scope="full" if client == "browser" else "pairing"
+                )
             finally:
                 self._hashing.release()
         finally:
             with self._plock:
                 self._busy.discard(c.source)
         out: dict[str, Any] = {"user_id": s["user_id"], "expires_ms": s["expires_ms"]}
-        with self._plock:
-            now = self.d.now_ms()
-            if len(self._kinds) > 4096:
-                self._kinds = {k: v for k, v in self._kinds.items() if v[1] > now}
-            self._kinds[hashlib.sha256(s["token"].encode()).hexdigest()] = (client, s["expires_ms"])
         if client == "app":  # the phone keeps the token itself and sends it as a bearer
             out["token"] = s["token"]
             return 200, out, []
         ttl = max(0, (s["expires_ms"] - self.d.now_ms()) // 1000)
         attrs = f"{self._cookie_name}={s['token']}; Path=/; HttpOnly; SameSite=Strict; Max-Age={ttl}"
         return 200, out, [("Set-Cookie", attrs + ("; Secure" if self.d.secure_cookies else ""))]
+
+    def _h_hub_card(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        """Public: the held card and the ``hub.api_origin`` that names this hub's own API origin (§6.4, L2B-1)."""
+        return 200, {"card": self.d.keys.card(), "api_origin": self._api_origin()}
+
+    def _api_origin(self) -> dict[str, Any]:
+        """Signed with the current HK_op from ``WebDeps.api_origin`` (HubConfig), never from a request. One object per
+        (op cert, origin): reissued with every new HK_op (a new origin needs a new HK_op and a revoked old op cert)."""
+        origin = self.d.api_origin
+        if origin is None:
+            raise ApiError("unavailable")
+        cert_id = self.d.keys.op_cert()["o"]["cert_id"]
+        with self._plock:
+            hit = self._origins.get((cert_id, origin))
+            if hit is not None:
+                return hit
+        dev = self.d.keys.card()["o"].get("dev")
+        if type(dev) is not bool:
+            raise ApiError("unavailable")
+        signed = self.d.keys.op_signer.sign_object(
+            {
+                "v": 2,
+                "suite": S.SUITE_ID,
+                "kind": "hub.api_origin",
+                "hv": HV,
+                "hub_id": self.d.keys.hub_id,
+                "op_cert_id": cert_id,
+                "origin": origin,
+                "issued_ms": self.d.now_ms(),
+                "dev": dev,
+            }
+        )
+        with self._plock:
+            self._origins = {k: v for k, v in self._origins.items() if k[0] == cert_id}
+            self._origins[(cert_id, origin)] = signed
+        return signed
+
+    def _h_bind(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        """The channel key binds this pairing session to itself (§6.4); the pairing session is consumed atomically."""
+        b = _need(b, auth=dict)
+        got = self.d.channels.bind_session(c.token, b["auth"])
+        return 200, {**got, "card": self.d.keys.card()}
+
+    def _h_push(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        """Register the phone's APNs target and its push key (§6.4). The key arrives as a ``hub.channel_push`` signed by
+        the channel key (``verify_channel_push``, newer than the held one); ``null`` keeps the held key."""
+        b = _need(b, env=str, topic=str, token=str)
+        if p["channel_id"] != c.channel_id:
+            raise ApiError("other_user")
+        if self.d.push is None:
+            raise ApiError("unavailable")
+        cert = self.d.channels.active_channel(c.user_id, p["channel_id"])
+        if cert is None:
+            raise ApiError("channel_revoked")
+        try:
+            token = unb64u(b["token"], None)
+        except CanonError, TypeError:
+            raise ApiError("malformed") from None
+        pk, issued = None, None
+        if "push_key" not in b:
+            raise ApiError("malformed")
+        if b["push_key"] is not None:
+            o = CA.verify_channel_push(
+                b["push_key"],
+                hub_id=self.d.keys.hub_id,
+                channel_id=p["channel_id"],
+                key_pub=unb64u(cert["o"]["key_pub"], 65),
+                now_ms=self.d.now_ms(),
+                dev_mode=bool(self.d.keys.card()["o"]["dev"]),
+                held_issued_ms=self.d.push.held_push_issued_ms(p["channel_id"]),
+            )
+            pk, issued = unb64u(o["push_pub"], 65), o["issued_ms"]
+        elif self.d.push.held_push_issued_ms(p["channel_id"]) is None:
+            raise ApiError("malformed")  # nothing to keep
+        try:
+            self.d.push.register_target(c.user_id, p["channel_id"], b["env"], b["topic"], token, pk, issued)
+        except RelayError as e:
+            raise ApiError(e.code if e.code in ("malformed", "replay", "unknown_channel") else "unavailable") from None
+        return 200, {"registered": True}
 
     def _h_whoami(self, c: Ctx, p: dict, q: dict, b: dict | None):
         name = next((u["name"] for u in self.d.access.users() if u["user_id"] == c.user_id), None)
@@ -668,6 +815,8 @@ class WebApi:
         b = _need(b, workspace_id=str, channel_id=str, action=dict)
         self._limit.hit("prepare", c.user_id, PREPARE_LIMIT)
         ws, ch = _hex32(b["workspace_id"]), _hex32(b["channel_id"])
+        if c.scope == "channel" and ch != c.channel_id:
+            raise ApiError("other_user")  # a channel session prepares for its own channel only
         self._mine(c.user_id, ws)
         pr = self._engine().prepare(c.token, ws, c.user_id, ch, b["action"])
         with self._plock:
@@ -684,7 +833,7 @@ class WebApi:
         it does not consume the request. Another user's id and an unknown id are both ``unknown_prepared``."""
         with self._plock:
             mine = self._prepared.get(p["prepared_id"])
-        if mine is None or mine[0] != c.user_id:
+        if mine is None or mine[0] != c.user_id or (c.scope == "channel" and mine[1] != c.channel_id):
             raise ApiError("unknown_prepared")
         if mine[4] <= self.d.now_ms():
             raise ApiError("prepared_expired")
@@ -698,7 +847,7 @@ class WebApi:
             mine = self._prepared.pop(b["prepared_id"], None)
         if mine is None or mine[0] != c.user_id:
             raise ApiError("unknown_prepared")  # another user's prepared id looks like an unknown one
-        if mine[1] != b["channel_id"]:
+        if mine[1] != b["channel_id"] or (c.scope == "channel" and b["channel_id"] != c.channel_id):
             raise ApiError("other_user")
         if not SessionBridge(self.d.channels).valid(c.token, c.user_id, mine[1]):
             raise ApiError("channel_revoked")
@@ -710,6 +859,8 @@ class WebApi:
 
     def _h_reg_begin(self, c: Ctx, p: dict, q: dict, b: dict | None):
         b = _need(b, kind=str, key_pub=str)
+        if c.scope == "pairing" and b["kind"] != "phone":
+            raise ApiError("forbidden_role")  # a pairing session registers a phone, nothing else
         label = b.get("label", "")
         try:
             key = unb64u(b["key_pub"], 65)
@@ -734,6 +885,8 @@ class WebApi:
         return 200, {"channels": self.d.channels.channels(c.user_id)}
 
     def _h_revoke(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        if c.scope == "channel" and p["channel_id"] != c.channel_id:
+            raise ApiError("other_user")  # a channel session revokes its own channel only
         self.d.channels.revoke_as(c.token, p["channel_id"])  # the channel's owner, or a hub-admin (checked there)
         return 200, {"ok": True}
 
@@ -755,7 +908,7 @@ class WebApi:
         return 200, {"user_id": uid}
 
     def _h_a_user_remove(self, c: Ctx, p: dict, q: dict, b: dict | None):
-        self.d.access.remove_user(p["user_id"], actor=c.user_id)
+        self.d.channels.remove_user(p["user_id"], actor=c.user_id)  # revokes and purges the user's channels too
         return 200, {"ok": True}
 
     def _h_a_groups(self, c: Ctx, p: dict, q: dict, b: dict | None):

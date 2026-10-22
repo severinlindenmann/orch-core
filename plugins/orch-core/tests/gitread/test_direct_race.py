@@ -56,6 +56,7 @@ class Flipper:
         self.config, self.benign, self.hostile = config, benign, hostile
         self.stop = threading.Event()
         self.flips = 0
+        self.started = threading.Event()  # set once the first rewrite is done
         self.t = threading.Thread(target=self.run, daemon=True)
 
     def run(self) -> None:
@@ -64,9 +65,20 @@ class Flipper:
                 with open(self.config, "wb") as f:  # same file, same inode: an in-place rewrite
                     f.write(data)
                 self.flips += 1
+                self.started.set()
+
+    def wait_for_flip(self, timeout: float = 10) -> None:
+        """Block until at least one more rewrite has happened: the caller's next operation then provably starts
+        after (and so overlaps) the flipper's activity, whatever the scheduler or the GIL does."""
+        seen = self.flips
+        deadline = time.monotonic() + timeout
+        while self.flips == seen and time.monotonic() < deadline and self.t.is_alive():
+            time.sleep(0.0005)
+        assert self.flips > seen, "the flipper made no progress"
 
     def __enter__(self) -> Flipper:
         self.t.start()
+        assert self.started.wait(10), "the flipper never started"  # no timing guess: wait for the first rewrite
         return self
 
     def __exit__(self, *exc: object) -> None:
@@ -114,8 +126,9 @@ def test_a_moved_operation_never_runs_the_racing_filter(make_repo, tmp_path, op)
     fn = _ops(r)[op]
     with Flipper(r.gitdir / "config", benign, hostile) as flip:
         for _ in range(ROUNDS):
+            flip.wait_for_flip()  # every round runs against a config that was just rewritten
             fn()
-        assert flip.flips > 0
+        assert flip.flips >= ROUNDS
     assert not marker.exists(), f"{op} ran the filter {marker.read_text().count('ran')} times"
 
 

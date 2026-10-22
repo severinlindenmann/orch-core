@@ -314,3 +314,33 @@ def test_overall_deadline_bounds_a_hub_that_never_answers(make_hub) -> None:
     with pytest.raises(LinkTimeout):
         open_link(hub, timeout=0.5)
     assert time.monotonic() - started < 1.5
+
+
+class _Pipe:
+    """A TlsConn stand-in: bytes written come back from reads."""
+
+    def __init__(self) -> None:
+        self.buf = bytearray()
+
+    def send_all(self, data: bytes, deadline: float) -> None:
+        self.buf += data
+
+    def recv_exact(self, n: int, deadline: float) -> bytes:
+        out, self.buf = bytes(self.buf[:n]), self.buf[n:]
+        return out
+
+
+def test_frame_cap_is_the_hubs_1_5_mb_and_a_1_mib_envelope_round_trips() -> None:
+    from orch.hubclient.tlslink import framing
+
+    assert framing.MAX_FRAME == 1_500_000
+    msg = {"o": {"op": "route_out", "body": {"envelope": b64u(bytes(1 << 20))}}, "sig": "x"}
+    pipe = _Pipe()
+    framing.write_frame(pipe, msg, timeout=5)  # type: ignore[arg-type]
+    assert 1_300_000 < len(pipe.buf) < framing.MAX_FRAME
+    assert framing.read_frame(pipe, timeout=5) == msg  # type: ignore[arg-type]
+    with pytest.raises(framing.FrameError):  # over the cap: refused before anything is sent
+        framing.write_frame(_Pipe(), {"x": "a" * framing.MAX_FRAME}, timeout=5)  # type: ignore[arg-type]
+    pipe.buf += (framing.MAX_FRAME + 1).to_bytes(4, "big")
+    with pytest.raises(framing.FrameError):  # over the cap: refused from the header, no payload allocated
+        framing.read_frame(pipe, timeout=5)  # type: ignore[arg-type]

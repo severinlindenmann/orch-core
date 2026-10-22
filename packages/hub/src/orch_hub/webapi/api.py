@@ -50,7 +50,9 @@ CSRF_HEADER = "x-orch-csrf"
 PREPARE_LIMIT = (10, 60_000)  # per user: 10 prepares a minute (orch-hub#25 item 6)
 SIGN_LIMIT = (20, 60_000)
 SIGNIN_SOURCE_LIMIT = (20, 60_000)  # per network source, counted before any password hashing
-SIGNIN_GLOBAL_LIMIT = (300, 60_000)  # all sources together
+# No global request bucket, by design: any hub-wide bucket is a lockout lever a few sources can hold. What bounds the
+# load is the concurrency cap below (refuse, never queue) plus the per-source cap; per-user guessing is bounded in
+# Channels.sign_in (per (user, source) and per user for "password right, TOTP wrong").
 SIGNIN_CONCURRENCY = 4  # sign-ins hashing at the same moment (scrypt is 16 MiB and ~50 ms each)
 MAX_PREPARED = 4096
 _HEX32 = re.compile(r"[0-9a-f]{32}")
@@ -170,6 +172,9 @@ class WebDeps:
     allowed_origins: frozenset[str] = frozenset()
     #: addresses of the edge that may state the client address (``X-Forwarded-For``, last entry); any other peer is its own source
     trusted_peers: frozenset[str] = frozenset()
+    #: True when the API is served behind the edge (not the loopback dev server): then ``trusted_peers`` is required,
+    #: or every request would have the edge as its source and the per-source caps would be one shared bucket
+    behind_edge: bool = False
     secure_cookies: bool = True  # the loopback dev server over plain http passes False
     now_ms: Callable[[], int] = lambda: int(time.time() * 1000)
 
@@ -280,6 +285,21 @@ class _Limiter:
                     del self._hits[k]
 
 
+def _norm_ip(addr: str) -> str:
+    """One source per network that a host can freely pick addresses in: an IPv6 /64 is one source."""
+    try:
+        ip = ipaddress.ip_address(addr)
+    except ValueError:
+        if addr == "":
+            return addr
+        raise
+    if isinstance(ip, ipaddress.IPv6Address):
+        if ip.ipv4_mapped is not None:
+            return str(ip.ipv4_mapped)
+        return str(ipaddress.ip_network(f"{ip}/64", strict=False))
+    return str(ip)
+
+
 class ApiError(Exception):
     def __init__(self, code: str) -> None:
         super().__init__(code)
@@ -314,6 +334,8 @@ def _hex32(x: Any) -> str:
 
 class WebApi:
     def __init__(self, deps: WebDeps) -> None:
+        if deps.behind_edge and not deps.trusted_peers:
+            raise ValueError("web API behind the edge needs trusted_peers (the edge's addresses)")
         self.d = deps
         self._limit = _Limiter(deps.now_ms)
         self._prepared: dict[
@@ -340,15 +362,23 @@ class WebApi:
         return status, h, json.dumps(obj, sort_keys=True, separators=(",", ":")).encode()
 
     def _source(self, headers: dict[str, str], peer: str) -> str:
-        """The client address: the socket peer, or, only when that peer is the configured edge, the last
-        ``X-Forwarded-For`` entry (the one the edge appended). Anything that is not an IP address is the peer."""
+        """The client address: the socket peer, or, only when that peer is the configured edge, the rightmost
+        ``X-Forwarded-For`` entry that is not itself a trusted proxy (so a chain of trusted proxies works; entries
+        left of the first untrusted one are client-controlled and never read). An IPv6 source is its /64 and an
+        IPv4-mapped one its IPv4. Anything that is not an IP address is the peer."""
         if peer in self.d.trusted_peers:
-            last = headers.get("x-forwarded-for", "").rsplit(",", 1)[-1].strip()
-            try:
-                return str(ipaddress.ip_address(last))
-            except ValueError:
-                pass
-        return peer
+            for entry in reversed(headers.get("x-forwarded-for", "").split(",")):
+                entry = entry.strip()
+                if entry in self.d.trusted_peers:
+                    continue
+                try:
+                    return _norm_ip(entry)
+                except ValueError:
+                    break
+        try:
+            return _norm_ip(peer)
+        except ValueError:
+            return peer
 
     def handle(
         self, method: str, target: str, headers: dict[str, str], body: bytes, peer: str = ""
@@ -499,9 +529,8 @@ class WebApi:
             raise ApiError("malformed")
         if client == "browser" and c.origin is None:  # a cookie is only ever set for a request the browser labelled
             raise ApiError("not_allowed")
-        # caps BEFORE any hashing: per source, all sources, and the sign-ins hashing right now (never queue: refuse)
+        # caps BEFORE any hashing: per source, and the sign-ins hashing right now (never queue: refuse)
         self._limit.hit("signin-src", c.source, SIGNIN_SOURCE_LIMIT)
-        self._limit.hit("signin-all", "", SIGNIN_GLOBAL_LIMIT)
         if not self._hashing.acquire(blocking=False):
             raise ApiError("rate_limited")
         try:
@@ -695,7 +724,12 @@ class WebApi:
         b = _need(b, name=str)
         check_name(b["name"])  # before any key is made: a refused name must leave no orphan UK behind
         uid = self.d.keys.issue_uk(None)["o"]["user_id"]
-        self.d.access.add_user(uid, b["name"])
+        try:
+            self.d.access.add_user(uid, b["name"])
+        except AccessError:  # names are not unique, so only a store error gets here: leave no orphan UK
+            for f in (self.d.keys.state / "uk" / f"{uid}.key", self.d.keys._gen_dir() / "uk" / f"{uid}.json"):
+                f.unlink(missing_ok=True)
+            raise
         return 200, {"user_id": uid}
 
     def _h_a_user_remove(self, c: Ctx, p: dict, q: dict, b: dict | None):

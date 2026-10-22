@@ -416,6 +416,8 @@ def main(
         return _fail(out, args.json, HostError("human.request_mismatch", text))
     except signer.SignerRefused as exc:
         return _fail(out, args.json, HostError("invalid.input", f"{exc}; nothing was signed"))
+    except KeyboardInterrupt:  # Ctrl-C at the passphrase prompt: signer.finish already cancelled the request
+        return _fail(out, args.json, HostError("invalid.input", "Cancelled, nothing was signed."))
     except HostError as exc:
         return _fail(out, args.json, exc)
     except (OSError, ConnectionError) as exc:

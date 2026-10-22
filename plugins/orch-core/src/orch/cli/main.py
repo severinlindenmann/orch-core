@@ -235,6 +235,19 @@ def _progress(line: str, err: TextIO) -> None:
         pass
 
 
+def entry() -> int:
+    """The ``orch`` command (console script and ``python -m orch``). Ctrl-C (a passphrase prompt, a wait) ends calmly:
+    one line, exit 130, no traceback. ``main`` itself still lets KeyboardInterrupt through (tests simulate a kill)."""
+    try:
+        return main()
+    except KeyboardInterrupt:
+        try:
+            sys.stderr.write("Cancelled.\n")
+        except (OSError, ValueError):
+            pass
+        return 130
+
+
 def main(
     argv: list[str] | None = None,
     *,

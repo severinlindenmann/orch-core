@@ -153,7 +153,7 @@ class ShareService:
             st = self._reg.binding_state(ws)
             if st is None or st["status"] != "bound" or self._reg.mode(ws) != "selective":
                 self.purge(ws)
-        except Exception:
+        except Exception:  # noqa: BLE001  any sink failure must leave the other unbind steps running
             self._pending.add(ws)
             _log.exception("share purge failed; items kept, retry at the next sync")
 

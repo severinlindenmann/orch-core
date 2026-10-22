@@ -99,32 +99,83 @@ def test_r3_wrong_password_and_tripped_lock_answer_identically(w):
     assert wrong[0] == tripped[0] == 401 and wrong[1] == tripped[1]
 
 
+class _T:
+    """Advance the one test clock (hub channels, web API and the TOTP codes all read it)."""
+
+    def __init__(self, w):
+        self.w = w
+
+    def __getitem__(self, _i):
+        return self.w.env.clock()
+
+    def __setitem__(self, _i, v):
+        self.w.env.clock.advance(v - self.w.env.clock())
+
+
 def _clock(w):
-    ch = w.api.d.channels
-    t = [ch._now()]
-    ch._now = lambda: t[0]
-    w.api.d.now_ms = lambda: t[0]
-    return t
+    return _T(w)
 
 
-def test_r3_password_backoff_is_per_user_and_source(w):
+def test_r3_password_backoff_is_per_user_and_source(w, monkeypatch):
+    from orch_hub.channels import service as CS
+
+    monkeypatch.setattr(CS, "PW_FREE_TRIES", 0)
     t = _clock(w)
-    for _ in range(3):  # 3 free tries, then a delay for this source
+    for _ in range(3):  # no free tries: a delay for this source
         _try(w, w.ann, "203.0.113.1", password="wrong wrong wrong")
         t[0] += 1
-    s, o, _ = w.call("POST", "/session", sign_in_body(w, w.ann, client="app"), origin=None, peer="203.0.113.1")
+    body = {"user_id": w.ann, "password": "correct horse battery", "totp": w.env.code(w.ann), "client": "app"}
+    s, o, _ = w.call("POST", "/session", body, origin=None, peer="203.0.113.1")  # same clock: inside the 8 s delay
     assert (s, o) == (401, {"error": "bad_credentials"})  # inside the backoff, same generic answer
     t[0] += 61_000
     s, o, _ = w.call("POST", "/session", sign_in_body(w, w.ann, client="app"), origin=None, peer="203.0.113.1")
     assert s == 200, o
 
 
-def test_r3_stranger_without_the_password_cannot_delay_or_lock_the_user_from_another_source(w):
-    _clock(w)
-    for i in range(60):  # a distributed password spray at one user from many sources
+def _good(w, peer):
+    return w.call("POST", "/session", sign_in_body(w, w.ann, client="app"), origin=None, peer=peer)
+
+
+def test_r3_stranger_without_the_password_cannot_delay_or_lock_the_user_from_a_known_source(w):
+    t = _clock(w)
+    assert _good(w, "198.51.100.200")[0] == 200  # the real user's usual address becomes a known source
+    t[0] += 1000
+    for i in range(50):  # a distributed password spray at one user from 50 sources
         _try(w, w.ann, f"203.0.113.{i + 1}", password="wrong wrong wrong")
-    s, o, _ = w.call("POST", "/session", sign_in_body(w, w.ann, client="app"), origin=None, peer="198.51.100.200")
+        t[0] += 10
+    s, o, _ = _good(w, "198.51.100.200")
+    assert s == 200, o  # the real user from a known source is never delayed
+
+
+def test_r3_distributed_password_guess_across_50_sources_is_slowed(w):
+    t = _clock(w)
+    for i in range(50):
+        _try(w, w.ann, f"203.0.113.{i + 1}", password="wrong wrong wrong")
+        t[0] += 10
+    # a source that never signed in as this user is refused (generic answer) while the counter is tripped ...
+    assert _good(w, "192.0.2.9")[:2] == (401, {"error": "bad_credentials"})
+    t[0] += 61_000  # ... and only for the delay: never a hard lock
+    s, o, _ = _good(w, "192.0.2.9")
     assert s == 200, o
+
+
+def test_r3_new_source_for_the_real_user_is_slowed_only_while_tripped(w):
+    t = _clock(w)
+    assert _good(w, "192.0.2.10")[0] == 200  # nothing tripped: a brand-new source signs in at once
+    t[0] += 1000
+    for i in range(20):
+        _try(w, w.ann, f"203.0.113.{i + 1}", password="wrong wrong wrong")
+        t[0] += 1
+    assert _good(w, "192.0.2.11")[0] == 401  # tripped
+    t[0] += 61_000
+    assert _good(w, "192.0.2.11")[0] == 200  # over
+
+
+def test_r3_ipv4_24_aggregate(w, monkeypatch):
+    monkeypatch.setattr(A, "SIGNIN_NET_LIMIT", (30, 60_000))
+    codes = [_try(w, "0" * 32, f"203.0.113.{i}")[1].get("error") for i in range(1, 60)]
+    assert "rate_limited" in codes
+    assert _try(w, "0" * 32, "203.0.114.1")[1].get("error") == "bad_credentials"  # another /24 is untouched
 
 
 def test_r3_ipv6_neighbour_64_cannot_exhaust_ours_but_the_48_is_capped(w, monkeypatch):

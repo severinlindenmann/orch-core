@@ -50,7 +50,7 @@ CSRF_HEADER = "x-orch-csrf"
 PREPARE_LIMIT = (10, 60_000)  # per user: 10 prepares a minute (orch-hub#25 item 6)
 SIGN_LIMIT = (20, 60_000)
 SIGNIN_SOURCE_LIMIT = (20, 60_000)  # per network source (IPv6: per /64), counted before any password hashing
-SIGNIN_NET_LIMIT = (200, 60_000)  # looser aggregate per IPv6 /48 so one allocation cannot spray via many /64s
+SIGNIN_NET_LIMIT = (200, 60_000)  # looser aggregate per IPv6 /48 and per IPv4 /24: one allocation cannot spray
 # No global request bucket, by design: any hub-wide bucket is a lockout lever a few sources can hold. What bounds the
 # load is the concurrency cap below (refuse, never queue) plus the per-source cap; per-user guessing is bounded in
 # Channels.sign_in (per (user, source) and per user for "password right, TOTP wrong").
@@ -527,9 +527,12 @@ class WebApi:
             raise ApiError("not_allowed")
         # caps BEFORE any hashing: per source, and the sign-ins hashing right now (never queue: refuse)
         self._limit.hit("signin-src", c.source, SIGNIN_SOURCE_LIMIT)
-        if ":" in c.source:  # IPv6: also the /48 aggregate (a neighbour /64 cannot exhaust ours, ours cannot spray)
-            net = ipaddress.ip_network(c.source, strict=False).supernet(new_prefix=48)
+        try:  # also the aggregate: IPv6 /48, IPv4 /24 (a neighbour cannot exhaust our bucket, one allocation cannot spray)
+            net = ipaddress.ip_network(c.source, strict=False)
+            net = net.supernet(new_prefix=48 if net.version == 6 else 24)
             self._limit.hit("signin-net", str(net), SIGNIN_NET_LIMIT)
+        except ValueError:  # "unknown" (no usable peer address) has no aggregate
+            pass
         if not self._hashing.acquire(blocking=False):
             raise ApiError("rate_limited")
         try:

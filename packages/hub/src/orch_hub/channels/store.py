@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS credentials (
   updated_ms INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS failures (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, subject TEXT NOT NULL, ts_ms INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS known_sources (user_id TEXT NOT NULL, source TEXT NOT NULL, ts_ms INTEGER NOT NULL, PRIMARY KEY (user_id, source));
 CREATE INDEX IF NOT EXISTS failures_by ON failures(kind, subject, ts_ms);
 CREATE TABLE IF NOT EXISTS sessions (
   token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, created_ms INTEGER NOT NULL, expires_ms INTEGER NOT NULL

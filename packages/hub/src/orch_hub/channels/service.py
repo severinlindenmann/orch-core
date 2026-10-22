@@ -60,6 +60,12 @@ MAX_TOTP_FAILURES = 10
 #: so a stranger's wrong passwords must not be able to delay or lock the real user coming from another address.
 PW_FREE_TRIES = 3
 PW_BACKOFF_CAP_MS = 60_000
+#: failed passwords per user across ALL sources (distributed guessing reveals a reused password even though TOTP blocks
+#: the sign-in). Past PW_USER_FREE the sources that never signed in as this user are refused with ``bad_credentials``
+#: for a delay doubling per failure (cap PW_BACKOFF_CAP_MS). A source that signed in as this user within KNOWN_SOURCE_MS
+#: is exempt, so the real user is never delayed by a stranger.
+PW_USER_FREE = 10
+KNOWN_SOURCE_MS = 30 * 86_400_000
 MIN_PASSWORD = 10
 #: the gate the hub checked for each channel kind (browser: live password+TOTP session; phone: operator pairing code)
 GATE_OF = {"browser": "session", "phone": "pairing-code"}
@@ -225,7 +231,7 @@ class Channels:
                 "INSERT INTO failures(kind, subject, ts_ms) VALUES (?,?,?)", (kind, subject, now)
             ).lastrowid
 
-    def _judge(self, user: str, subject: str, ok_pw: bool, ok_totp: bool) -> bool:
+    def _judge(self, user: str, subject: str, source: str, ok_pw: bool, ok_totp: bool) -> bool:
         """After the full password and TOTP check: is this sign-in blocked by the per-user TOTP lock or the password
         backoff for this (user, source)? One transaction with exactly one insert in every case (same work whatever
         the outcome). A blocked attempt is not counted, so a stranger cannot extend the block."""
@@ -237,8 +243,19 @@ class Channels:
                 "SELECT COUNT(*), COALESCE(MAX(ts_ms),0) FROM failures WHERE kind='pw' AND subject=?", (subject,)
             ).fetchone()
             delay = 0 if npw < PW_FREE_TRIES else min(PW_BACKOFF_CAP_MS, 1000 * 2 ** (npw - PW_FREE_TRIES))
-            blocked = nt >= MAX_TOTP_FAILURES or now < last + delay
-            kind = "noop" if (blocked or (ok_pw and ok_totp)) else ("pw" if not ok_pw else "totp")
+            nall, lall = db.execute(
+                "SELECT COUNT(*), COALESCE(MAX(ts_ms),0) FROM failures WHERE kind='pw' AND (subject=? OR subject LIKE ?)",
+                (user, user + "|%"),
+            ).fetchone()
+            dall = 0 if nall < PW_USER_FREE else min(PW_BACKOFF_CAP_MS, 1000 * 2 ** (nall - PW_USER_FREE))
+            known = db.execute(
+                "SELECT 1 FROM known_sources WHERE user_id=? AND source=? AND ts_ms>?",
+                (user, source, now - KNOWN_SOURCE_MS),
+            ).fetchone()
+            pair_blocked = nt >= MAX_TOTP_FAILURES or now < last + delay
+            blocked = pair_blocked or (not known and now < lall + dall)
+            # the cross-source slow-down keeps counting wrong passwords (so it escalates) but never a right one
+            kind = "noop" if (pair_blocked or (ok_pw and ok_totp)) else ("pw" if not ok_pw else "totp")
             rid = db.execute(
                 "INSERT INTO failures(kind, subject, ts_ms) VALUES (?,?,?)",
                 (kind, subject if kind == "pw" else user, now),
@@ -297,7 +314,7 @@ class Channels:
             for c in (counter - 1, counter, counter + 1):
                 if hmac.compare_digest(totp_code(secret, c), totp) and c > last:
                     match = c
-        blocked = self._guard(lambda: self._judge(u, subject, ok_pw, bool(match)))
+        blocked = self._guard(lambda: self._judge(u, subject, source, ok_pw, bool(match)))
         if blocked or not (
             ok_pw and match
         ):  # one answer for all: wrong password, wrong TOTP, or a tripped lock/backoff
@@ -316,8 +333,13 @@ class Channels:
                     raise ChannelError("bad_credentials")
                 self._succeed(db, "login", subject, rid)
                 db.execute(
-                    "DELETE FROM failures WHERE kind IN ('totp','pw') AND (subject=? OR subject LIKE ?)", (u, u + "|%")
+                    "DELETE FROM failures WHERE (kind='totp' AND subject=?) OR (kind='pw' AND subject=?)", (u, subject)
                 )
+                if source:  # remembered 30 days: this address is exempt from the cross-source password slow-down
+                    db.execute(
+                        "INSERT OR REPLACE INTO known_sources(user_id, source, ts_ms) VALUES (?,?,?)", (u, source, now)
+                    )
+                    db.execute("DELETE FROM known_sources WHERE ts_ms <= ?", (now - KNOWN_SOURCE_MS,))
                 db.execute("DELETE FROM sessions WHERE expires_ms <= ?", (now,))
                 db.execute(
                     "INSERT INTO sessions(token_hash, user_id, created_ms, expires_ms) VALUES (?,?,?,?)",

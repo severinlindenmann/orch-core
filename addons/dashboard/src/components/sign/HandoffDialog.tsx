@@ -242,11 +242,26 @@ export function HandoffDialog(p: HandoffDialogProps) {
     if (click.prepared && click.problem?.next !== 'check' && !['done', 'cancelled', 'idle'].includes(click.phase)) await click.cancel()
     p.onClose()
   }
-  const prepareClickAgain = () => {
-    if (p.action) void click.again(p.action) // cancels an open request first: no leaked slot
+  const prepareClickAgain = async () => {
+    if (!p.action) return
+    // The switch moved since the page chose: a NEW request follows the host's current answer (an open request keeps
+    // the method it was made for and is cancelled, never signed another way).
+    if (method !== 'click') {
+      if (click.prepared) await click.cancel()
+      click.reset()
+      startMethod(method, Math.max(run.retry, click.retry) + 1)
+      return
+    }
+    void click.again(p.action) // cancels an open request first: no leaked slot
   }
   const again = () => {
     if (!p.action) return
+    if (method === 'click' && phase === 'error' && run.error?.code === 'sign.click_only') {
+      // The switch moved after the page chose the terminal: a NEW request, the way the host answers now.
+      run.reset()
+      startMethod('click', Math.max(run.retry, click.retry) + 1)
+      return
+    }
     run.reset(phase === 'unknown' || phase === 'error') // the same key where the host may already have the request
     void run.prepare(p.action)
   }
@@ -328,6 +343,9 @@ export function HandoffDialog(p: HandoffDialogProps) {
             onPhone={phoneLink}
             phoneDisabled={switching || phoneRun.busy}
           />
+        )}
+        {click.phase === 'ready' && click.problem?.stale && p.action && (
+          <Button data-testid="click-try-again" onClick={() => void prepareClickAgain()}>Try again</Button>
         )}
 
         {click.phase === 'settling' && (
@@ -434,15 +452,15 @@ export function HandoffDialog(p: HandoffDialogProps) {
             {click.phase === 'failed' && click.problem && (
               <>
                 {click.problem.next === 'review' && <Button onClick={() => void click.review()}>Read the review again</Button>}
-                {click.problem.next === 'prepare' && p.action && <Button onClick={prepareClickAgain}>Start again</Button>}
-                {click.problem.next === 'again' && p.action && <Button onClick={prepareClickAgain}>Do it again</Button>}
-                {click.problem.next === 'retry' && p.action && <Button onClick={prepareClickAgain}>Try again</Button>}
+                {click.problem.next === 'prepare' && p.action && <Button onClick={() => void prepareClickAgain()}>Start again</Button>}
+                {click.problem.next === 'again' && p.action && <Button onClick={() => void prepareClickAgain()}>Do it again</Button>}
+                {click.problem.next === 'retry' && p.action && <Button onClick={() => void prepareClickAgain()}>Try again</Button>}
                 <Button ref={cancelRef} variant="ghost" onClick={() => void close()}>
                   {click.prepared ? 'Cancel' : 'Close'}
                 </Button>
               </>
             )}
-            {click.phase === 'cancelled' && p.action && <Button onClick={prepareClickAgain}>Try again</Button>}
+            {click.phase === 'cancelled' && p.action && <Button onClick={() => void prepareClickAgain()}>Try again</Button>}
             {(click.phase === 'done' || click.phase === 'cancelled') && (
               <Button ref={cancelRef} variant={click.phase === 'done' ? 'default' : 'ghost'} onClick={() => void close()}>
                 Close

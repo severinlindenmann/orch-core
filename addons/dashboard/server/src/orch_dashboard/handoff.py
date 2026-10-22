@@ -1348,8 +1348,10 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
 
 
 CLICK_ONLY = (
-    "This workspace signs in the dashboard. Use Sign here, or turn convenience off from the terminal with "
-    "`orch host convenience off --workspace {ws}`."
+    "This workspace now signs with one click: use Sign in the dashboard (the page is updating; press Try "
+    "again). To sign in "
+    "the terminal instead, run `orch host convenience off --workspace {ws}` and then move the key back with "
+    "`orch keys custody passphrase --workspace {ws} --in-place`."
 )
 
 

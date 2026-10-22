@@ -347,22 +347,26 @@ def main(
     return 0
 
 
-def envelope(code: str, message: str, *, hint: str | None = None) -> tuple[dict[str, Any], int]:
+def envelope(
+    code: str, message: str, *, hint: str | None = None, fix: list[str] | None = None
+) -> tuple[dict[str, Any], int]:
     """The catalog error envelope and exit code (the P1 catalog, then the host's table)."""
     from orch.cli.render import error_envelope
     from orch.host.errors import disposition
     from orch.ops.errors import OrchError
 
-    env = error_envelope(OrchError(code, message[:400], hint=hint))
+    env = error_envelope(OrchError(code, message[:400], hint=hint, fix=fix))
     exit_code, retryable = disposition(code)
     env["error"]["retryable"] = bool(env["error"].get("retryable") or retryable)
     return env, exit_code
 
 
-def write_error(out: TextIO, as_json: bool, code: str, message: str, *, hint: str | None = None) -> int:
+def write_error(
+    out: TextIO, as_json: bool, code: str, message: str, *, hint: str | None = None, fix: list[str] | None = None
+) -> int:
     from orch.cli.render import error_text
 
-    env, exit_code = envelope(code, message, hint=hint)
+    env, exit_code = envelope(code, message, hint=hint, fix=fix)
     out.write((json.dumps(env, sort_keys=True) if as_json else error_text(env)) + "\n")
     return exit_code
 

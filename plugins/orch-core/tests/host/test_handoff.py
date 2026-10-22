@@ -531,7 +531,8 @@ def test_one_workspace_failing_does_not_stop_the_search(human, served, monkeypat
     track.failing = {0}  # the first one asked answers workspace.unavailable
     rc, doc, errs = cli(p["request"]["code"])
     assert rc == 0, doc
-    assert "not asked:" in errs and "workspace.unavailable" in errs
+    assert "not asked:" in errs and "1 other workspace on this Mac is not reachable" in errs
+    assert "workspace.unavailable" not in errs and entry["workspace_id"] not in errs  # F2: plain words, no ids
     assert track.all_closed() and len(track.opened) == 2  # the failing connection was closed (33625455)
 
 
@@ -542,7 +543,7 @@ def test_when_no_workspace_holds_the_code_the_failures_are_reported(human, serve
     track = Track(monkeypatch)
     track.failing = {0}
     rc, doc, _ = cli(p["request"]["code"])
-    assert rc != 0 and doc["error"]["code"] == "not_found" and "workspace.unavailable" in doc["error"]["message"]
+    assert rc != 0 and doc["error"]["code"] == "not_found" and "not reachable" in doc["error"]["message"]
     assert track.all_closed()
     assert by_id(human.c, p["request"]["id"])["state"] == "prepared"  # fails closed: nothing bound or signed
 
@@ -687,3 +688,29 @@ def test_ctrl_c_after_the_signature_does_not_claim_that_nothing_was_signed(human
     assert "nothing was signed" not in doc["error"]["message"]
     assert doc["error"]["message"].startswith("Interrupted;")
     assert cli.backend.payloads  # it was signed
+
+
+def test_a_key_in_one_click_custody_with_click_off_is_told_plainly_and_nothing_is_signed():
+    """F1: the key stays in one-click custody after `convenience off`; the host refuses the binding (`disabled`). The
+    person gets the two ways out, and the request keeps its method (no silent signing with another one)."""
+    import pytest
+
+    class Convenience:
+        auth = "convenience"
+
+    class Passphrase:
+        auth = "passphrase"
+
+    def refuse(*a, backend, **kw):
+        raise HostError(
+            "sign.convenience_unavailable", "disabled: convenience signing is off", detail={"reason": "disabled"}
+        )
+
+    entry = {"workspace_id": "a" * 32, "prefix": "ORCHI"}
+    with pytest.raises(HostError) as caught:
+        handoff._sign_code_explained(entry, refuse, backend=Convenience())
+    assert "one-click custody" in caught.value.message and "ORCHI" in (caught.value.hint or "")
+    assert "orch keys custody passphrase" in (caught.value.hint or "")
+    with pytest.raises(HostError) as other:  # a passphrase key never gets this rewrite
+        handoff._sign_code_explained(entry, refuse, backend=Passphrase())
+    assert other.value.message.startswith("disabled: convenience signing is off")

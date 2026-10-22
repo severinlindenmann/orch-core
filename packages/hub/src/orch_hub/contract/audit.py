@@ -14,6 +14,7 @@ from typing import Any
 from . import suite as S
 from .canon import CanonError, b64u, cj, unb64u, unhex
 from .hub import (
+    CLOCK_SKEW_MS,
     Refused,
     _b64u_n,
     _bool,
@@ -122,18 +123,21 @@ def _record_key(
     held: Mapping[str, Any],
     op_certs: Any,
     dev_mode: bool,
-    revoked_op_certs: frozenset[str],
+    now_ms: int,
     trusted_seq: int,
 ) -> tuple[bytes, int]:
     """The key a record verifies under and that op cert's ``op_seq`` (L2P-3). A record names the op cert it was signed
-    under: the held card's current one, or an earlier one that the hub's root certified (``op_certs``, root-signed
-    objects the hub serves with ``audit_get``), valid at the record's time. A revoked op cert still stands for records
-    the verifier already passed (``seq <= trusted_seq``, covered by the hash chain) and for nothing newer."""
-    cid, seq, ts = o.get("op_cert_id"), o.get("seq"), o.get("ts_ms")
-    if not _hex16(cid) or type(seq) is not int or type(ts) is not int:
+    under: the held card's current one, or an earlier one that the hub's root certified (``op_certs``, served with
+    ``audit_get``) and that was valid at the record's time. A non-current cert must have been valid
+    at the record's date AND not have lapsed before its successor was issued (``stale_op_cert``), and, for a record
+    beyond the verifier's trusted head (``seq > trusted_seq``), must not be expired at the verifier's own time
+    (``cert_expired``): an expired old key cannot be made to sign a "backdated" new record. Records up to the trusted
+    head are history already accepted, covered by the hash chain. (Revocation is handled by the caller.)"""
+    cid, ts = o.get("op_cert_id"), o.get("ts_ms")
+    if not _hex16(cid) or type(o.get("seq")) is not int or type(ts) is not int:
         raise Refused("malformed")
-    if cid in revoked_op_certs and seq > trusted_seq:
-        raise Refused("revoked")
+    if ts > now_ms + CLOCK_SKEW_MS:
+        raise Refused("not_yet_valid")  # a record from the future (L2P-3: no dating by the record alone)
     cur = held["op_cert"]
     if cid == cur["cert_id"]:
         return held["hk_op_pub"], cur["op_seq"]
@@ -142,6 +146,17 @@ def _record_key(
             oc = verify_op_cert(c, held["hk_root_pub"], now_ms=ts, dev_mode=dev_mode)
             if oc["hub_id"] != held["card"]["hub_id"]:
                 raise Refused("other_hub")
+            if oc["op_seq"] >= cur["op_seq"]:
+                raise Refused("stale_op_cert")
+            succ = [cur["issued_ms"]]
+            for x in op_certs:
+                if type(x) is dict and type(x.get("o")) is dict and x["o"].get("op_seq", 0) > oc["op_seq"]:
+                    xo = verify_op_cert(x, held["hk_root_pub"], now_ms=x["o"]["issued_ms"], dev_mode=dev_mode)
+                    succ.append(xo["issued_ms"])
+            if oc["expires_ms"] < min(succ):
+                raise Refused("stale_op_cert")  # lapsed before its successor existed
+            if o["seq"] > trusted_seq and oc["expires_ms"] <= now_ms:
+                raise Refused("cert_expired")
             return unb64u(oc["hk_op_pub"], 65), oc["op_seq"]
     raise Refused("stale_op_cert")
 
@@ -151,16 +166,30 @@ def verify_record_ex(
     held: Mapping[str, Any],
     *,
     dev_mode: bool,
+    now_ms: int,
     event: Any = None,
     op_certs: Any = (),
     revoked_op_certs: frozenset[str] = frozenset(),
+    accepted_hashes: Mapping[int, str] | None = None,
     trusted_seq: int = 0,
 ) -> tuple[dict[str, Any], int]:
     """The record under the op cert it names (see :func:`_record_key`), then fields, hub, dev marker and genesis rule.
+    ``now_ms`` is the verifier's clock (a record may not be dated ahead of it, plus skew). ``accepted_hashes`` maps
+    ``seq`` to the chain hash the verifier already accepted: a record signed under a **revoked** op cert verifies only
+    if it IS that record (same bytes, same hash), so a revoked key cannot forge anything, not even at a past ``seq``.
     If the host has the event (it concerns the host), it must hash to ``event_hash``, be a valid event of the record's
     ``type`` and match its ``scope_tag``: ``audit_mismatch`` otherwise. Returns ``(record object, op_seq)``."""
     o = _envelope(signed, "hub.audit")
-    pub, op_seq = _record_key(o, held, op_certs, dev_mode, revoked_op_certs, trusted_seq)
+    revoked = o.get("op_cert_id") in revoked_op_certs
+    same = (
+        revoked
+        and accepted_hashes is not None
+        and type(o.get("seq")) is int
+        and accepted_hashes.get(o["seq"]) == chain_hash(signed)
+    )
+    if revoked and not same:
+        raise Refused("revoked")
+    pub, op_seq = _record_key(o, held, op_certs, dev_mode, now_ms, trusted_seq)
     _signature(signed, L["sig_hub_audit"], pub)
     _fields(o, "hub.audit")
     if o["hub_id"] != held["card"]["hub_id"]:
@@ -182,20 +211,30 @@ def verify_record(signed: Any, held: Mapping[str, Any], **kw: Any) -> dict[str, 
 
 
 def apply_record(
-    head: Mapping[str, Any] | None, signed: Mapping[str, Any], o: Mapping[str, Any], *, op_seq: int | None = None
+    head: Mapping[str, Any] | None,
+    signed: Mapping[str, Any],
+    o: Mapping[str, Any],
+    *,
+    op_seq: int | None = None,
+    current_op_seq: int | None = None,
+    accepted_hashes: Mapping[int, str] | None = None,
 ) -> dict[str, Any]:
-    """Chain rule. ``head`` = ``{"seq", "hash", "op_seq"?}`` of the last record the verifier accepted, or None (it
-    expects genesis). Next record: ``seq = head.seq + 1`` and ``prev = head.hash``. A skipped ``seq`` is ``audit_gap``;
-    the right ``seq`` with another ``prev``, or the head's own ``seq`` with other bytes, is ``audit_fork`` (the hub told
-    two stories). A record older than the head is ignored (a host that keeps only its head cannot compare it, and
-    overlapping ``audit_get`` pages re-deliver records: not a fork, L2P-10). ``op_seq`` (of the op cert the record
-    verified under) never decreases along the chain: ``stale_op_cert``."""
+    """Chain rule. ``head`` = ``{"seq", "hash", "op_seq"?, "ts_ms"?}`` of the last record the verifier accepted, or None
+    (it expects genesis). Next record: ``seq = head.seq + 1`` and ``prev = head.hash``. A skipped ``seq`` is
+    ``audit_gap``; the right ``seq`` with another ``prev``, or the head's own ``seq`` with other bytes, is
+    ``audit_fork`` (the hub told two stories). A record older than the head is ignored (overlapping ``audit_get`` pages
+    re-deliver records, L2P-10) unless the verifier kept the hash it accepted for that ``seq`` (``accepted_hashes``): then
+    other bytes are ``audit_fork``. Along the chain ``ts_ms`` never decreases (``stale_timestamp``) and ``op_seq`` of the
+    op cert never decreases (``stale_op_cert``): the floor is the head's ``op_seq``, or ``current_op_seq`` (the held
+    card's) when the head has none, so a head without it cannot be used to take an old key back."""
     h = chain_hash(signed)
     if head is None:
         if o["seq"] != 1:
             raise Refused("audit_gap")
-        return {"seq": 1, "hash": h, "op_seq": op_seq}
+        return {"seq": 1, "hash": h, "op_seq": op_seq, "ts_ms": o["ts_ms"]}
     if o["seq"] < head["seq"]:
+        if accepted_hashes is not None and o["seq"] in accepted_hashes and accepted_hashes[o["seq"]] != h:
+            raise Refused("audit_fork")
         return dict(head)
     if o["seq"] == head["seq"]:
         if h == head["hash"]:
@@ -205,9 +244,12 @@ def apply_record(
         raise Refused("audit_gap")
     if o["prev"] != head["hash"]:
         raise Refused("audit_fork")
-    if op_seq is not None and head.get("op_seq") is not None and op_seq < head["op_seq"]:
+    floor = head.get("op_seq") if head.get("op_seq") is not None else current_op_seq
+    if op_seq is not None and floor is not None and op_seq < floor:
         raise Refused("stale_op_cert")
-    return {"seq": o["seq"], "hash": h, "op_seq": op_seq if op_seq is not None else head.get("op_seq")}
+    if head.get("ts_ms") is not None and o["ts_ms"] < head["ts_ms"]:
+        raise Refused("stale_timestamp")
+    return {"seq": o["seq"], "hash": h, "op_seq": op_seq if op_seq is not None else floor, "ts_ms": o["ts_ms"]}
 
 
 def check_ack(

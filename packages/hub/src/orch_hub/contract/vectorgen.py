@@ -2419,10 +2419,12 @@ def build() -> dict[str, Any]:
     )
 
     # ---- HK_op rotation (L2P-3): records verify under the root-certified op cert they name
-    rot = card(op=op_cert(cert_id=OP_CERT_NEXT, key="hk_op_next"), op_key="hk_op_next", card_seq=2)
+    rot = card(
+        op=op_cert(cert_id=OP_CERT_NEXT, key="hk_op_next", issued_ms=NOW - 5000), op_key="hk_op_next", card_seq=2
+    )
     cert1 = op_cert()
     rot_args = {**base, "card": rot, "held_card": c, "op_certs": [cert1]}
-    r2n = audit_rec(2, h[0], *AUDIT_EVENTS[1], signer="hk_op_next", op_cert_id=OP_CERT_NEXT)
+    r2n = audit_rec(2, h[0], *AUDIT_EVENTS[1], signer="hk_op_next", op_cert_id=OP_CERT_NEXT, ts_ms=NOW - 4000)
     case(
         "audit_across_op_rotation",
         "audit",
@@ -2450,14 +2452,100 @@ def build() -> dict[str, Any]:
         3,
         "an op cert not signed by this hub's root is no cert",
     )
-    r1n = audit_rec(1, AU.GENESIS_PREV, *AUDIT_EVENTS[0], signer="hk_op_next", op_cert_id=OP_CERT_NEXT)
+    r1n = audit_rec(
+        1, AU.GENESIS_PREV, *AUDIT_EVENTS[0], signer="hk_op_next", op_cert_id=OP_CERT_NEXT, ts_ms=NOW - 4500
+    )
     case(
         "audit_op_seq_goes_back",
         "audit",
-        {**rot_args, "steps": [r1n], "signed": audit_rec(2, AU.chain_hash(r1n), *AUDIT_EVENTS[1])},
+        {**rot_args, "steps": [r1n], "signed": audit_rec(2, AU.chain_hash(r1n), *AUDIT_EVENTS[1], ts_ms=NOW - 6000)},
         {"error": "stale_op_cert"},
         3,
         "a lower op cert after a higher one: an old key signing new records",
+    )
+    case(
+        "audit_head_without_op_seq_uses_the_held_card",
+        "audit",
+        {**rot_args, "head": {"seq": 1, "hash": h[0]}, "signed": ch[1]},
+        {"error": "stale_op_cert"},
+        3,
+        "an anchor head without op_seq cannot be used to take an old key back: the floor is the held card's op_seq",
+    )
+    old_c = op_cert(issued_ms=NOW - 10 * DAY, expires_ms=NOW - 2 * DAY)
+    new_c = op_cert(cert_id=OP_CERT_NEXT, key="hk_op_next", issued_ms=NOW - 4 * DAY)
+    rot_old = card(op=new_c, op_key="hk_op_next", card_seq=2)
+    ra = {**base, "card": rot_old, "op_certs": [old_c]}
+    ra1 = audit_rec(1, AU.GENESIS_PREV, *AUDIT_EVENTS[0], ts_ms=NOW - 5 * DAY)
+    case(
+        "audit_expired_key_backdated_into_its_validity",
+        "audit",
+        {**ra, "steps": [ra1], "signed": audit_rec(2, AU.chain_hash(ra1), *AUDIT_EVENTS[1], ts_ms=NOW - 3 * DAY)},
+        {"error": "cert_expired"},
+        3,
+        "an expired key is made to sign a new record dated inside its validity: a record beyond the head needs a cert "
+        "that is not expired now",
+    )
+    case(
+        "audit_expired_key_old_record_still_verifies",
+        "audit",
+        {**ra, "steps": [ra1], "signed": ra1},
+        {"ok": {"seq": 1, "hash": AU.chain_hash(ra1)}},
+        3,
+        "history already accepted (<= the trusted head) is covered by the hash chain, whatever became of the cert",
+    )
+    lapsed = op_cert(issued_ms=NOW - 20 * DAY, expires_ms=NOW - 8 * DAY)
+    case(
+        "audit_cert_lapsed_before_its_successor",
+        "audit",
+        {
+            **base,
+            "card": card(op=new_c, op_key="hk_op_next", card_seq=2),
+            "op_certs": [lapsed],
+            "signed": audit_rec(1, AU.GENESIS_PREV, *AUDIT_EVENTS[0], ts_ms=NOW - 9 * DAY),
+        },
+        {"error": "stale_op_cert"},
+        3,
+        "the old cert expired 4 days before the new one existed: nothing signed it in that gap",
+    )
+    case(
+        "audit_record_from_the_future",
+        "audit",
+        {**au, "signed": audit_rec(1, AU.GENESIS_PREV, *AUDIT_EVENTS[0], ts_ms=NOW + 300_001)},
+        {"error": "not_yet_valid"},
+        3,
+    )
+    case(
+        "audit_timestamp_goes_back",
+        "audit",
+        {**au, "steps": ch[:2], "signed": audit_rec(3, h[1], *AUDIT_EVENTS[2], ts_ms=NOW - 8500)},
+        {"error": "stale_timestamp"},
+        3,
+        "ts_ms never decreases along the chain",
+    )
+    case(
+        "audit_revoked_key_forges_a_passed_seq",
+        "audit",
+        {
+            **with_card,
+            "steps": ch[:2],
+            "signed": audit_rec(1, AU.GENESIS_PREV, *AUDIT_EVENTS[0], ts_ms=NOW - 9500),
+            "revoked_op_certs": [OP_CERT_ID],
+        },
+        {"error": "revoked"},
+        3,
+        "other bytes at seq 1 signed by the revoked key: only the exact record already accepted verifies",
+    )
+    case(
+        "audit_revoked_key_forges_the_head_seq",
+        "audit",
+        {
+            **with_card,
+            "steps": ch[:2],
+            "signed": audit_rec(2, h[0], *AUDIT_EVENTS[1], ts_ms=NOW - 100),
+            "revoked_op_certs": [OP_CERT_ID],
+        },
+        {"error": "revoked"},
+        3,
     )
     case(
         "audit_new_record_under_revoked_op",

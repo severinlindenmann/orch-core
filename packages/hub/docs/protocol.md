@@ -741,12 +741,31 @@ hub.audit {v, suite, kind: "hub.audit", hv, hub_id, op_cert_id, seq ≥ 1, prev:
 
 **Verification by a workspace** (reference `verify_record_ex` + `apply_record`). **Key rotation (L2P-3):** a record
 verifies under the op certificate **it names** (`op_cert_id`): the held card's current one, or an earlier one that this
-hub's root signed (`hub.op_cert`, served in `audit_get`'s `op_certs`) and that was valid at the record's `ts_ms`. The
-chain therefore survives a routine `HK_op` rotation: a new workspace verifies from genesis, an offline one past its
-head. `op_seq` of the op cert never decreases along the chain (`stale_op_cert`: an old key signing new records). A
-**revoked** op cert (`hub.op_revoked`) stands for the records the verifier already passed (`seq` ≤ its head, covered by
-the hash chain) and for nothing newer (`revoked`); an op cert that is not served, or not signed by this root, gives
-`stale_op_cert` / `bad_signature`. Then the usual checks (`hub_id`, dev marker, exact fields), `seq = 1` ⇒ genesis `prev`;
+hub's root signed (`hub.op_cert`, served in `audit_get`'s `op_certs`). The chain therefore survives a routine `HK_op`
+rotation: a new workspace verifies from genesis, an offline one past its head. The verifier does not trust the record's
+own date alone:
+
+- `ts_ms` may not be ahead of the verifier's clock plus 300 s (`not_yet_valid`) and **never decreases along the chain**
+  (`stale_timestamp`);
+- a non-current op cert must have been valid at the record's `ts_ms` and must **not have lapsed before its successor was
+  issued** (`stale_op_cert`: nothing could have signed in that gap); and a record **beyond the verifier's trusted head**
+  needs a cert that is **not expired at the verifier's own time** (`cert_expired`): an expired old key cannot be made to
+  sign a "backdated" new record (vector `audit_expired_key_backdated_into_its_validity`). History up to the trusted head
+  is covered by the hash chain and stays valid whatever became of the cert (vector
+  `audit_expired_key_old_record_still_verifies`). Consequence, stated: a workspace that was offline longer than an old
+  cert's life cannot catch up through records that cert signed beyond its head, and a new workspace cannot verify from
+  genesis through expired certs; both start from an anchor head obtained at join (see the L7 note);
+- `op_seq` of the op cert never decreases along the chain (`stale_op_cert`). The floor is the head's `op_seq`, or, when
+  the head has none (an anchor head), **the held card's current `op_seq`**, so an anchor cannot be used to take an old
+  key back (vector `audit_head_without_op_seq_uses_the_held_card`). A non-current cert that is not served, not signed by
+  this root, or not lower than the current one is refused (`stale_op_cert`, `bad_signature`);
+- a **revoked** op cert (`hub.op_revoked`) signs nothing, not even at a past `seq`: a record under it verifies only if it
+  **is** the record the verifier already accepted (same bytes: the verifier keeps the chain hash it accepted per `seq`),
+  otherwise `revoked` (vectors `audit_revoked_key_forges_a_passed_seq`, `…_the_head_seq`). A workspace that joins after a
+  revocation therefore starts from an anchor head it was given at join (stored, trust-on-first-use for the prefix, see the
+  L7 note below) and does not re-verify history signed by the revoked key.
+
+Then the usual checks (`hub_id`, dev marker, exact fields), `seq = 1` ⇒ genesis `prev`;
 then, with its head `{seq, hash}` (or none: it expects genesis, or starts from an anchor head it was given):
 
 | Situation | Result |
@@ -754,7 +773,7 @@ then, with its head `{seq, hash}` (or none: it expects genesis, or starts from a
 | `seq = head.seq + 1` and `prev = head.hash` | accept; the head moves |
 | `seq > head.seq + 1`, or no head and `seq > 1` | `audit_gap` (a record was dropped, or the hub withholds it) |
 | `seq = head.seq + 1` and another `prev`; or `seq = head.seq` with other bytes | `audit_fork` (the hub signed two histories) |
-| the same bytes at `seq = head.seq`, or any record older than the head | ignored: the head stays (L2P-10: overlapping `audit_get` pages re-deliver records, and a host that keeps only its head cannot compare an older one; it keeps any two valid records with one `seq` and different bytes as fork evidence) |
+| the same bytes at `seq = head.seq`, or a record older than the head | ignored: the head stays (L2P-10: overlapping `audit_get` pages re-deliver records). If the verifier kept the hash it accepted for that `seq` and the bytes differ: `audit_fork`. It keeps any two valid records with one `seq` and different bytes as fork evidence |
 | an event it holds does not hash to `event_hash`, is no valid event of that `type`, or its tag is not the record's `scope_tag` | `audit_mismatch` |
 
 **`audit_get {since}`** (w2h, added so the ack has something to refer to): returns up to 100 records after `since`

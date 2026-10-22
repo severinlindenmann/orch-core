@@ -83,7 +83,7 @@ def test_l2p3_audit_record_before_op_rotation_still_verifies():
     rec1 = G.audit_chain(1)[0]
     held = _held_rotated()
     try:
-        o = AU.verify_record(rec1, held, op_certs=[G.op_cert()], **DEV)
+        o = AU.verify_record(rec1, held, op_certs=[G.op_cert()], now_ms=G.NOW, **DEV)
     except TypeError:
         pytest.fail("verify_record cannot verify a record signed under an earlier (root-certified) HK_op")
     assert o["seq"] == 1
@@ -169,5 +169,5 @@ def test_l2p10_redelivered_old_record_is_not_a_fork():
     ch = G.audit_chain(3)
     head = None
     for r in ch:
-        head = AU.apply_record(head, r, AU.verify_record(r, _held(), **DEV))
+        head = AU.apply_record(head, r, AU.verify_record(r, _held(), now_ms=G.NOW, **DEV))
     assert AU.apply_record(head, ch[1], ch[1]["o"]) == head

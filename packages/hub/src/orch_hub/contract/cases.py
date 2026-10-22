@@ -118,21 +118,26 @@ def _space_flow(a: dict[str, Any]) -> dict[str, Any]:
 def _audit(a: dict[str, Any]) -> dict[str, Any]:
     dev = a.get("dev_mode", True)
     held = _held({**a, "revoked_op_certs": []})  # revocations are checked per record (they stand for passed history)
-    certs = a.get("op_certs", [])
+    certs, now = a.get("op_certs", []), a["now_ms"]
+    cur = held["op_cert"]["op_seq"]
     head = a.get("head")
+    accepted: dict[int, str] = {}
     for st in a.get("steps", []):  # the history the verifier accepted before any revocation it learns of now
-        o, ops = AU.verify_record_ex(st, held, dev_mode=dev, op_certs=certs)
-        head = AU.apply_record(head, st, o, op_seq=ops)
+        o, ops = AU.verify_record_ex(st, held, dev_mode=dev, now_ms=now, op_certs=certs, trusted_seq=1 << 62)
+        head = AU.apply_record(head, st, o, op_seq=ops, current_op_seq=cur)
+        accepted[o["seq"]] = AU.chain_hash(st)
     o, ops = AU.verify_record_ex(
         a["signed"],
         held,
         dev_mode=dev,
+        now_ms=now,
         event=a.get("event"),
         op_certs=certs,
         revoked_op_certs=frozenset(a.get("revoked_op_certs", [])),
+        accepted_hashes=accepted,
         trusted_seq=head["seq"] if head else 0,
     )
-    new = AU.apply_record(head, a["signed"], o, op_seq=ops)
+    new = AU.apply_record(head, a["signed"], o, op_seq=ops, current_op_seq=cur, accepted_hashes=accepted)
     return {"seq": new["seq"], "hash": new["hash"]}
 
 

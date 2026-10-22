@@ -58,6 +58,7 @@ class PeerService:
         self.me, self._sign, self._wxk_for, self._wxk_current = me, sign, wxk_for, wxk_current
         self.mb, self._save, self._connect, self._now = mailbox, save, connect, now_ms
         self._route_mu = threading.Lock()
+        self._link_mu = threading.Lock()  # dialing and swapping the link; never held while sending
         self._mu = threading.RLock()  # the mailbox; never held across a blocking read
         self._link: RouteLink | None = None
         self._gate = gate  # False: the binding this service was built for is gone; nothing more is taken or stored
@@ -65,12 +66,15 @@ class PeerService:
     # --- link -----------------------------------------------------------------------------------------------------
 
     def _ensure(self) -> RouteLink:
-        if self._link is None:
-            self._link = self._connect()
-        return self._link
+        """The one link of this workspace: the sender and the receive thread share it, and only one of them dials."""
+        with self._link_mu:
+            if self._link is None:
+                self._link = self._connect()
+            return self._link
 
     def drop_link(self) -> None:
-        link, self._link = self._link, None
+        with self._link_mu:
+            link, self._link = self._link, None
         if link is not None:
             link.close()
 

@@ -1215,6 +1215,18 @@ class MembershipKeys:
         except Refused as e:
             raise CustodyRefused(f"wk seal: {e.code}") from None
 
+    def view_key(self, epoch: int) -> bytes:
+        """``K_view(epoch)`` for the hub's ``log_sync`` (hub contract 10.7): ``HKDF(WK_epoch, "", "orch/v2/hub-view|" ||
+        hex(workspace_id) || "|" || dec(epoch))``, derived here so only the derived key leaves this object. Same rule as
+        :meth:`sealed_wk`: refused for a burned epoch or one never held."""
+        if self._forked():
+            raise MembershipUnsafe("forked")
+        with self._seal:
+            wk = self._wk.get(epoch) if type(epoch) is int and epoch not in self._burned else None
+        if wk is None or not 1 <= epoch < 1 << 32:
+            raise CustodyRefused("no view key for this epoch")
+        return crypto.hkdf(wk, b"", b"orch/v2/hub-view|" + self.workspace_id.encode() + b"|" + str(epoch).encode())
+
 
 class R6Gate:
     """The store's hook (11A.15.2): ``raise_for(device, reason)`` inside the store's critical section that appends

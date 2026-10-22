@@ -54,10 +54,10 @@ class Wire:
 class Epochs:
     """The host's adapter over a real membership key store (``orch.host.hubops._Epochs``)."""
 
-    def __init__(self, mk, local_owner=None) -> None:
+    def __init__(self, mk, local_owner=None, sealed_epoch=None) -> None:
         from orch.host.hubops import _Epochs
 
-        self._e = _Epochs(mk, local_owner)
+        self._e = _Epochs(mk, local_owner, sealed_epoch)
 
     def __getattr__(self, name):
         return getattr(self._e, name)
@@ -79,7 +79,7 @@ def mk(tmp_path):
 class Host:
     def __init__(self, hub: FakeHub, mk, local_owner=None) -> None:
         self.hub, self.wire, self.state, self.log, self.mk = hub, Wire(hub), None, [], mk
-        self.epochs = Epochs(mk, local_owner)
+        self.epochs = Epochs(mk, local_owner, self._sealed_epoch)
         self.kw = dict(
             invite="invite-1", hub_card=V["objects"]["card"], v2_card=V["objects"]["v2_card_a"],
             pk_pub=pub("pk_alice"), workspace_id=WS, wsk_pub=pub("wsk_a"), sign_wsk=sign_wsk, dev_mode=True,
@@ -115,6 +115,10 @@ class Host:
             state=self.state, hub_card=V["objects"]["card"], workspace_id=WS, sign_wsk=sign_wsk, dev_mode=True,
             now_ms=lambda: NOW, transport=self.wire, save=self._save, epochs=self.epochs, **over,
         )  # fmt: skip
+
+    def _sealed_epoch(self):
+        st = self.state
+        return None if st is None or st.sealed is None else int(st.sealed["epoch"])
 
     def leave(self):
         return leave(

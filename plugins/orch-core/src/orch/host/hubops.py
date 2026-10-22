@@ -130,19 +130,63 @@ def _load_state(service: WorkspaceService) -> Any:
 
 
 def _save_state(service: WorkspaceService, state: Any) -> None:
+    with _MU:
+        _write_state(service, state)
+
+
+def _write_state(service: WorkspaceService, state: Any) -> None:
+    """The write itself; the caller holds ``_MU``."""
     import json
 
     from orch.store.fsio import write_atomic
 
     from .custody import ensure_private_dir
 
+    d = _dir(service)
+    for level in (d.parent, d):
+        ensure_private_dir(level, service.host_uid)
+    write_atomic(
+        d / "hub.json", json.dumps(state.to_json(), sort_keys=True, separators=(",", ":")).encode(), mode=0o600
+    )
+
+
+def _save_snapshot(service: WorkspaceService, fetched: Any) -> None:
+    """Commit what a snapshot refresh learned, without trusting the state it started from (the fetch ran on the network,
+    outside any lock). Under ``_MU`` hub.json is read again and checked: still the same bound binding of the same hub,
+    else nothing is written (a leave or unbind that ran meanwhile stays). The pin only moves up (a racing higher
+    version is never rolled back; the same version with other bytes is ``snapshot_conflict``); the revoked set only
+    grows; a newer card is adopted only if it is not older than the one now on disk."""
+    from orch.hubclient import HubRefused, wire
+
     with _MU:
-        d = _dir(service)
-        for level in (d.parent, d):
-            ensure_private_dir(level, service.host_uid)
-        write_atomic(
-            d / "hub.json", json.dumps(state.to_json(), sort_keys=True, separators=(",", ":")).encode(), mode=0o600
-        )
+        cur = _load_state(service)
+        if (
+            cur is None
+            or cur.status != "bound"
+            or cur.hub_id != fetched.hub_id
+            or cur.binding_seq != fetched.binding_seq
+        ):
+            raise HubRefused("not_joined")
+        changed = False
+        new = fetched.snapshot
+        if new is not None:
+            held = None if cur.snapshot is None else cur.snapshot["o"]
+            if held is None or new["o"]["version"] > held["version"]:
+                cur.snapshot, changed = new, True
+            elif new["o"]["version"] == held["version"] and wire.cj(new["o"]) != wire.cj(held):
+                raise HubRefused("snapshot_conflict")
+        revoked = sorted({*cur.revoked_op_certs, *fetched.revoked_op_certs})
+        if revoked != sorted(cur.revoked_op_certs):
+            cur.revoked_op_certs, changed = revoked, True
+        if fetched.card is not None and cur.card != fetched.card:
+            on_disk, mine = cur.card, fetched.card
+            if on_disk is None or (mine["op_cert"]["o"]["op_seq"], mine["o"]["card_seq"]) >= (
+                on_disk["op_cert"]["o"]["op_seq"],
+                on_disk["o"]["card_seq"],
+            ):
+                cur.card, cur.hk_op_pub, changed = mine, fetched.hk_op_pub, True
+        if changed:
+            _write_state(service, cur)
 
 
 def _wsk_sign(service: WorkspaceService) -> Any:
@@ -524,13 +568,13 @@ def _refresh(
     try:
         changed = snapshot.refresh(
             state=state, link=hub_link, workspace_id=service.workspace_id, dev_mode=plan["dev"], now_ms=now,
-            save=save, hub_card=plan.get("hub_card"),
+            save=lambda fetched: _save_snapshot(service, fetched), hub_card=plan.get("hub_card"),
         )  # fmt: skip
     finally:
         getattr(transport, "close", lambda: None)()
-    view = snapshot.pinned_view(state) or {}
-    _audit(call, "hub.snapshot", hub_id=state.hub_id, version=view.get("version"), changed=changed)
-    return {"hub_id": state.hub_id, "changed": changed, "snapshot": snapshot.pinned_view(state)}
+    view = snapshot.pinned_view(_load_state(service))  # what is on disk now, not the copy this call started from
+    _audit(call, "hub.snapshot", hub_id=state.hub_id, version=(view or {}).get("version"), changed=changed)
+    return {"hub_id": state.hub_id, "changed": changed, "snapshot": view}
 
 
 def _first_snapshot(

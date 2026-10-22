@@ -231,3 +231,68 @@ def test_a_snapshot_that_does_not_verify_does_not_undo_the_connect(human, served
     assert ok(served.client().req("hub.status", {}, idem=False))["data"]["snapshot"] is None
     monkeypatch.setattr(hub, "_op_snapshot_get", real)
     assert ok(served.client().req("hub.refresh", {}, idem=True))["data"]["snapshot"]["version"] == 1
+
+
+def _race_rig(human, served, monkeypatch):
+    from orch.hubclient import HubState, snapshot
+
+    hub = fake_for(served)
+    monkeypatch.setattr(hubops, "TRANSPORT", lambda service, hub_id: hub)
+    card = copy.deepcopy(V["objects"]["card"])
+    human.run("hub.join", {"hub_card": card, "mode": "selective"})
+    ok(served.client().req("hub.connect", {"invite": "invite-1", "hub_card": card}, idem=True))
+    service = _service(served)
+    wsk_pub, sign = hubops._wsk_sign(service)  # noqa: SLF001
+
+    def fetch(copy_of_state):
+        """One refresh that started from ``copy_of_state`` (loaded earlier), saving through the host's merge."""
+        link, transport = hubops._snapshot_link(service, copy_of_state, wsk_pub, sign, True)  # noqa: SLF001
+        try:
+            return snapshot.refresh(
+                state=copy_of_state, link=link, workspace_id=service.workspace_id, dev_mode=True,
+                now_ms=lambda: int(service.clock() * 1000),
+                save=lambda f: hubops._save_snapshot(service, f),  # noqa: SLF001
+            )  # fmt: skip
+        finally:
+            transport.close() if hasattr(transport, "close") else None
+
+    def started_now():
+        return HubState.from_json(hubops._load_state(service).to_json())  # noqa: SLF001
+
+    return hub, service, fetch, started_now
+
+
+def test_two_racing_refreshes_never_roll_the_pin_back(human, served, monkeypatch):
+    hub, service, fetch, started_now = _race_rig(human, served, monkeypatch)
+    a, b = started_now(), started_now()  # both read hub.json before either fetched
+    hub.set_snapshot(served.wid, {"11" * 16: "admin"})
+    fetch(a)  # the slow one's rival finishes with version 2 ...
+    hub.set_snapshot(served.wid, {"11" * 16: "admin", "22" * 16: "read"})
+    fetch(b)  # ... and this one with version 3
+    assert hubops._load_state(service).snapshot["o"]["version"] == 3  # noqa: SLF001
+    # now a refresh that fetched version 2 earlier but saves last: it must not win
+    hub.workspaces[served.wid].snapshot = hub._snapshot(served.wid, 2, {"11" * 16: "admin"}, [])  # noqa: SLF001
+    stale = started_now()
+    stale.snapshot = None  # as if it started before any pin
+    fetch(stale)  # its own view says "newer" (no pin), but the merge under the lock sees version 3 on disk: no write
+    assert hubops._load_state(service).snapshot["o"]["version"] == 3  # noqa: SLF001
+    assert hubops.hub_role(service, "22" * 16) == "read"
+
+
+def test_a_leave_during_a_refresh_is_not_undone(human, served, monkeypatch):
+    from orch.hubclient import HubRefused
+
+    hub, service, fetch, started_now = _race_rig(human, served, monkeypatch)
+    started = started_now()  # the refresh read a bound state ...
+    hub.set_snapshot(served.wid, {"11" * 16: "admin"})
+    human.run("hub.leave", {})  # ... and the owner leaves while it is on the network
+    assert ok(served.client().req("hub.unbind", {}, idem=True))["data"]["delivered"]
+    assert hubops._load_state(service).status == "unbound"  # noqa: SLF001
+    with pytest.raises(HubRefused):  # the hub itself says not_bound; if it did not, the merge says not_joined
+        fetch(started)
+    started.snapshot = hub._snapshot(served.wid, 2, {"11" * 16: "admin"}, [])  # noqa: SLF001
+    with pytest.raises(HubRefused):  # the merge alone, as if the hub had still answered
+        hubops._save_snapshot(service, started)  # noqa: SLF001
+    assert hubops._load_state(service).status == "unbound"  # noqa: SLF001
+    assert hubops._load_state(service).snapshot["o"]["version"] == 1  # noqa: SLF001 - nothing from the late refresh
+    assert hubops.hub_role(service, "11" * 16) is None  # an unbound workspace has no hub roles

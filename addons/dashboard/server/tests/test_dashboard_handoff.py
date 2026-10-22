@@ -567,7 +567,8 @@ def test_an_idem_conflict_at_the_host_is_an_open_attempt_and_prepares_nothing_mo
     assert post(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "hi"}).status_code == 409
 
 
-def test_a_retry_after_the_request_ended_answers_its_terminal_state(ready, monkeypatch):
+def test_a_press_after_the_request_ended_makes_a_fresh_one(ready, monkeypatch):
+    """#794: the server steps past an ended (cancelled) attempt of the same action: pressing again is a new request."""
     client, token, stub, rich, signing = ready
     lose(monkeypatch)
     body = {"action": "comment", "key": "DEMO-0001", "message": "hi"}
@@ -575,8 +576,43 @@ def test_a_retry_after_the_request_ended_answers_its_terminal_state(ready, monke
     (made,) = signing.stub.requests.table
     signing.stub.requests.cancel({"request_id": made})
     again = post(client, token, stub, body)
-    assert again.status_code == 200 and again.json()["id"] == made and again.json()["state"] == "cancelled"
-    assert len(signing.stub.requests.table) == 1
+    assert again.status_code == 200 and again.json()["id"] != made and again.json()["state"] in ("prepared", "bound")
+    assert len(signing.stub.requests.table) == 2 and states(signing)[made] == "cancelled"
+
+
+def test_cancel_twice_then_press_is_fresh_and_an_open_one_is_the_same(ready):
+    client, token, stub, rich, signing = ready
+    body = {"action": "comment", "key": "DEMO-0001", "message": "hi"}
+    ids = []
+    for _ in range(2):
+        made = post(client, token, stub, body)
+        assert made.status_code == 200
+        ids.append(made.json()["id"])
+        assert client.delete(f"{base(stub)}/{ids[-1]}", headers=auth(token, True)).status_code == 200
+    third = post(client, token, stub, body)
+    assert third.status_code == 200 and third.json()["id"] not in ids
+    assert third.json()["state"] in ("prepared", "bound")
+    # an open request is returned as it is (double click, second tab): no further request
+    twin = post(client, token, stub, body)
+    assert twin.json()["id"] == third.json()["id"] and len(signing.stub.requests.table) == 3
+    # also when the page starts from a higher retry that is still ahead of the open one
+    assert post(client, token, stub, {**body, "retry": 1}).json()["id"] == third.json()["id"]
+
+
+def test_the_walk_is_capped_and_says_so(ready):
+    from orch_dashboard.handoff import NEXT_RETRY_HOPS
+
+    client, token, stub, rich, signing = ready
+    body = {"action": "comment", "key": "DEMO-0001", "message": "hi"}
+    for r in range(NEXT_RETRY_HOPS + 1):
+        made = post(client, token, stub, {**body, "retry": r})
+        assert client.delete(f"{base(stub)}/{made.json()['id']}", headers=auth(token, True)).status_code == 200
+    made_so_far = len(signing.stub.requests.table)
+    res = post(client, token, stub, body)
+    assert res.status_code == 409 and res.json()["error"]["code"] == "intent.exhausted"
+    assert len(signing.stub.requests.table) == made_so_far  # the walk made nothing
+    carry_on = post(client, token, stub, {**body, "retry": NEXT_RETRY_HOPS + 1})
+    assert carry_on.status_code == 200 and len(signing.stub.requests.table) == made_so_far + 1
 
 
 def test_a_retry_after_a_signature_answers_submitted(ready, monkeypatch):

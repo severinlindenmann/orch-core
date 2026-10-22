@@ -19,7 +19,20 @@ from typing import Any
 from orch.canon import HashError, event_head, log_acc
 from orch.schema import LOG_TYPES, SchemaError, validate, validate_settings
 
-from . import authz, claims, edits, gates, generations, lifecycle, questions, source, tasks, visibility, workspace
+from . import (
+    authz,
+    claims,
+    edits,
+    gates,
+    generations,
+    hubledger,
+    lifecycle,
+    questions,
+    source,
+    tasks,
+    visibility,
+    workspace,
+)
 from .codes import Code, Refusal
 from .types import WORKSPACE, Core, InvalidEvent, LogCore, TCore, WsCore, position, ts
 from .verifier import SigContext, Verifier
@@ -47,6 +60,7 @@ class Ctx:
     expected_genesis: str | None = None
     admit: bool = False  # pre-append: no host_sig yet, ws_seq must be the workspace head
     verb_events: Any = None  # operation name -> event types it emits (grant verbs are operation names, F1 10.1)
+    hub_dev: bool = False  # C3b 15.3: the reader is a dev workspace (host configuration, never a field of an event)
 
 
 def _head(e: dict[str, Any]) -> str | None:
@@ -185,7 +199,8 @@ def _ticket_handler(core: Core, t: TCore, lc: LogCore, e: dict[str, Any]) -> Ref
         h[k] = lambda: tasks.task_event(ws, t, e)
     for k in ("artifact.added", "artifact.replaced"):
         h[k] = lambda: tasks.artifact_event(ws, t, e)
-    return h[typ]()
+    fn = h.get(typ)
+    return fn() if fn else Refusal(Code.EVENT_UNKNOWN_TYPE, f"{typ} has no handler in the ticket log")
 
 
 def _ack(ws: WsCore, lc: LogCore, e: dict[str, Any]) -> Refusal | None:
@@ -215,11 +230,13 @@ def _workspace_handler(core: Core, lc: LogCore, e: dict[str, Any], ctx: Ctx) -> 
         "addon.purged": lambda: workspace.addon_event(core, e),
         "hub.joined": lambda: workspace.hub_joined(ws, e),
         "hub.left": lambda: workspace.hub_left(ws, e),
+        "hub.pinned": lambda: hubledger.apply_pin(ws, e, v, dev=ctx.hub_dev),
         "restore": lambda: workspace.restore(core, lc, e, v),
         "invalid.acknowledged": lambda: _ack(ws, lc, e),
         "projection.repaired": lambda: None,
     }
-    return h[typ]()
+    fn = h.get(typ)
+    return fn() if fn else Refusal(Code.EVENT_UNKNOWN_TYPE, f"{typ} has no handler in the workspace log")
 
 
 def _authorize(core: Core, log: str, t: TCore | None, e: dict[str, Any], ctx: Ctx) -> Refusal | None:

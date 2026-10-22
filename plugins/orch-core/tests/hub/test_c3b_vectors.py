@@ -294,3 +294,222 @@ def test_every_event_vector_verifies_its_own_signatures() -> None:
         assert S.verify(uk, unb64u(e2["sig"], 64), C.custodial_label(e2["type"]) + C._context(WS, X["ticket"], body)), (  # noqa: SLF001
             name
         )
+
+
+# --- the second runner: the same cases through the MODEL (ticket-format §15.13 task 3) -----------------------------
+#
+# The model decides the order and the state (``hubledger.apply_pin``, ``authz.authorize_hub``, ``identity``); the
+# crypto is injected through the three ``Verifier`` methods. ``HubAdapter`` is the test-side stand-in for the host
+# Verifier of task 5: it is built only from the production verifiers the reference above uses. It must agree with the
+# reference on every case. Not modelled here: the admission steps (dedup by id, the pins riding on a delivery, the
+# ``item_hash`` check of §15.7, task 6) are done by the runner exactly as ``RefLedger`` does them, and the voiding of
+# open decisions at a channel-revoking pin is task 4 (``generations``), so ``voids`` is not asserted here.
+
+import datetime  # noqa: E402
+
+from orch.model import authz, hubledger, workspace  # noqa: E402
+from orch.model import identity as ident  # noqa: E402
+from orch.model.types import Core, Member, WsCore  # noqa: E402
+
+
+class HubAdapter:
+    """The three C3b ``Verifier`` methods over ``orch.hubclient``; ``HubRefused`` becomes the contract code."""
+
+    def verify_custodial_sigs(self, event: Any, *, workspace_id: str, log: str) -> bool:
+        try:
+            body = {k: v for k, v in event.items() if k not in C.NOT_SIGNED}
+            uk = unb64u(event["uk_cert"]["o"]["uk_pub"], 65)
+            ch = unb64u(event["channel_cert"]["o"]["key_pub"], 65)
+            ok = S.verify(
+                uk,
+                unb64u(event["sig"], 64),
+                C.custodial_label(event["type"]) + C._context(workspace_id, log, body),  # noqa: SLF001
+            )
+            return ok and S.verify(
+                ch,
+                unb64u(event["channel_proof"], 64),
+                C.SIG_CHANNEL_PROOF + C.event_digest(workspace_id, log, body),
+            )
+        except (HubRefused, KeyError, TypeError, ValueError):
+            return False
+
+    @staticmethod
+    def _held(card: Any, at_ms: int, dev: bool, revoked: frozenset[str]) -> dict[str, Any]:
+        return wire.verify_card(
+            card, now_ms=at_ms, dev_mode=dev, pinned_root=unb64u(X["pinned_root"], 65), revoked_op_certs=revoked
+        )
+
+    def verify_hub_pin(self, obj: Any, *, root: str, card: Any, revoked: frozenset[str], snapshot: Any,
+                       workspace_id: str, at_ms: int, dev: bool) -> str | None:  # fmt: skip
+        try:
+            kind = obj["o"]["kind"]
+            if kind == "hub.op_revoked":
+                wire.verify_op_revoked(obj, unb64u(root, 65))
+            elif kind == "hub.card":
+                old = None
+                if card is not None:  # the card as it was verified when pinned (no revocation, its own issue time)
+                    old = wire.verify_card(
+                        card, now_ms=card["op_cert"]["o"]["issued_ms"] + 1, dev_mode=dev, pinned_root=unb64u(root, 65)
+                    )
+                wire.verify_card(
+                    obj, now_ms=at_ms, dev_mode=dev, pinned_root=unb64u(root, 65), revoked_op_certs=revoked, held=old
+                )
+            elif kind == "hub.snapshot":
+                held = self._held(card, at_ms, dev, revoked)
+                verify_snapshot(
+                    obj, held, workspace_id=workspace_id, dev_mode=dev, pinned=snapshot["o"] if snapshot else None,
+                    revoked_op_certs=revoked,
+                )  # fmt: skip
+            else:
+                return "malformed"
+        except HubRefused as e:
+            return e.code
+        return None
+
+    def verify_hub_actor(self, event: Any, *, workspace_id: str, log: str, card: Any, revoked: frozenset[str],
+                         snapshot: Any, revoked_channels: frozenset[str], at_ms: int, dev: bool, mode: str,
+                         member_role: str | None) -> str | None:  # fmt: skip
+        try:
+            if card is None:
+                return "no_card"
+            if snapshot is None:
+                return "unknown_snapshot"
+            held = self._held(card, at_ms, dev, revoked)
+            snap = {**snapshot["o"], "revoked_channels": sorted(revoked_channels)}
+            user = event["actor"]["id"][2:]
+            delivered = {k: v for k, v in event.items() if k not in C.HOST_FIELDS}  # a log line has the host fields
+            C.verify_custodial(
+                delivered, workspace_id=workspace_id, log=log, held=held, snapshot=snap, now_ms=at_ms, dev_mode=dev,
+                mode=mode, granted_users=frozenset({user}) if member_role is not None else frozenset(),
+                member_roles={user: member_role} if member_role is not None else {},
+                revoked_op_certs=revoked, min_factor=NO_FLOOR,
+            )  # fmt: skip
+        except HubRefused as e:
+            return e.code
+        return None
+
+
+def _stamp(ms: int) -> str:
+    return datetime.datetime.fromtimestamp(ms // 1000, datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+class ModelLedger:
+    """One case run through the model: ``ws.hub`` as ``hub.joined`` and ``hub.pinned`` build it."""
+
+    def __init__(self, hub: dict[str, Any]) -> None:
+        joined, book = hub["joined"], {k: dict(v) for k, v in hub["aliases"].items()}
+        self.ws = WsCore(created=True, workspace_id=WS)
+        persons = {p for al in book.values() for p in al} | {p[2:] for p in hub.get("members", {})}
+        roles = hub.get("members")
+        self.ws.members = {
+            "p_" + p: Member("p_" + p, p[:4], "owner", "k") for p in persons if roles is None or "p_" + p in roles
+        }
+        for p, r in {**(roles or {}), **hub.get("member_roles", {})}.items():
+            self.ws.members[p] = Member(p, p[2:6], r, "k")
+        self.ws.members["p_" + "0" * 32] = Member("p_" + "0" * 32, "own", "owner", "k")
+        if joined is not None:
+            self.ws.hub = {
+                "hub_id": joined, "hk_root_pub": X["pinned_root"], "mode": hub["mode"], "binding_seq": 1,
+                "status": "joined", "aliases": dict(book.get(joined, {})), "alias_book": book,
+                "user_hub": dict(hub.get("user_hub", {})), "ledger": {joined: hubledger.new_ledger(X["pinned_root"])},
+                **({"member": {"kind": "hub", "hub_id": joined}} if hub["mode"] == "full" else {}),
+            }  # fmt: skip
+        self.v = HubAdapter()
+        self.ids: dict[str, bytes] = {}
+        self.lines = 0
+        self.info: dict[str, Any] = {}
+
+    def pin(self, obj: dict[str, Any], at: int, ws: WsCore | None = None) -> str:
+        ws = ws or self.ws
+        e = {"hub_id": X["hub_id"], "object": obj, "at": _stamp(at)}
+        r = hubledger.apply_pin(ws, e, self.v, dev=DEV)  # type: ignore[arg-type]
+        if r is None:
+            self.lines += ws is self.ws
+            return "ok"
+        return r.detail
+
+    def custodial(self, event: dict[str, Any], log: str, at: int, ws: WsCore | None = None) -> str:
+        ws = ws or self.ws
+        signed = cj({k: v for k, v in event.items() if k not in C.NOT_SIGNED} | {"sig": event["sig"]})
+        if ws.hub and event["id"] in self.ids:  # admission step 2: dedup before verification
+            return "duplicate" if self.ids[event["id"]] == signed else "replay"
+        ws.roster_v = event["roster_v"]  # the event's own view: roster_v is checked by the type rules elsewhere
+        line = {**event, "at": _stamp(at)}
+        r = authz.authorize_hub(Core(ws=ws), log, line, self.v, dev=DEV)  # type: ignore[arg-type]
+        if r is not None:
+            return r.detail if r.code.value.startswith("hub.") else r.code.value
+        sg = ident.signer(ws, line)
+        assert not hasattr(sg, "code")
+        self.info = {"actor": sg.person, "role": sg.role}
+        self.ids[event["id"]] = signed
+        return "ok"
+
+    def join(self, aliases: dict[str, str]) -> str:
+        h = self.ws.hub
+        self.ws.hub = {**h, "status": "left"}  # hub.left came first: the model's own rules for a (re)join
+        e = {
+            "type": "hub.joined", "actor": {"kind": "person", "id": "p_" + "0" * 32}, "hub_id": h["hub_id"],
+            "hk_root_pub": X["pinned_root"], "mode": h["mode"], "binding_seq": 2,
+            "aliases": [{"person_id": p, "user_id": u} for p, u in aliases.items()],
+        }  # fmt: skip
+        r = workspace.hub_joined(self.ws, e)
+        if r is not None:
+            self.ws.hub = h
+            return r.detail
+        return "ok"
+
+    def deliver(self, event: dict[str, Any], holds: dict[str, Any], log: str, at: int) -> str:
+        tmp = copy.deepcopy(self.ws)
+        snap = hubledger.ledger_of(tmp, X["hub_id"])["snapshot"]  # type: ignore[index]
+        if snap is None or event["snapshot_version"] > snap["o"]["version"]:
+            if self.pin(holds, at, tmp) not in ("ok", "already_pinned"):
+                return "unavailable"
+        r = self.custodial(event, log, at, tmp)
+        if r == "ok":
+            self.ws = tmp
+            self.lines += 1 if (snap is None or event["snapshot_version"] > snap["o"]["version"]) else 0
+        return r
+
+
+def run_model_case(case: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    led = ModelLedger(copy.deepcopy(case["hub"]))
+    out = []
+    for st in case["steps"]:
+        led.info = {}
+        if "pin" in st:
+            r = led.pin(X["objects"][st["pin"]], st["at_ms"])
+        elif "custodial" in st:
+            r = led.custodial(X["events"][st["custodial"]], X["ticket"], st["at_ms"])
+        elif "deliver" in st:
+            for _ in range(st.get("repeat", 1)):
+                r = led.deliver(X["events"][st["deliver"]], X["objects"][st["holds"]], X["ticket"], st["at_ms"])
+        elif "join" in st:
+            r = led.join(st["join"])
+        else:
+            r = "ok"  # consume: task 4
+        led.info["ledger_lines"] = led.lines
+        out.append((r, dict(led.info)))
+    return out
+
+
+MODEL_CASES = [
+    pytest.param(
+        c, id=c["name"], marks=[pytest.mark.skip(reason="admission item check: task 6")] if "pending" in c else []
+    )
+    for c in X["replay"]
+]
+
+
+@pytest.mark.parametrize("case", MODEL_CASES)
+def test_model_replay_case_agrees_with_the_reference(case: dict[str, Any]) -> None:
+    got = run_model_case(case)
+    assert [g[0] for g in got] == [st["expect"] for st in case["steps"]]
+    for (_, info), st in zip(got, case["steps"], strict=True):
+        for k in ("actor", "role", "ledger_lines"):  # "voids": task 4
+            if k in st:
+                assert info.get(k) == st[k], (st, k, info)
+
+
+@pytest.mark.parametrize("case", [c for c in X["replay"] if "pending" not in c], ids=lambda c: c["name"])
+def test_model_and_reference_give_the_same_outcomes(case: dict[str, Any]) -> None:
+    assert [r for r, _ in run_model_case(case)] == [r for r, _ in run_case(case)]

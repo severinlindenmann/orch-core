@@ -1857,7 +1857,11 @@ these codes; they are the stable `error.code` strings of §10.4 for these refusa
 | `unattended.denied` | §5.2 an unattended event outside what unattended agents may do |
 | `validation.event` | §5.11 step 0 malformed event payload, including duplicate repo names or normalised repo paths (§5.4.2); replay breaks the chain at that line |
 | `settings.invalid` | §5.4.2 duplicate declared identities, or a `local:` remote naming another repo |
-| `hub.invalid` | §5.4.2 `hub.joined` or `hub.left` the model refuses: not the owner, a mode other than selective, a hub already joined, a `binding_seq` that is not higher, a re-pointed alias, or a `hub.left` that names no joined hub and binding |
+| `hub.invalid` | §5.4.2 `hub.joined` or `hub.left` the model refuses: not the owner, a mode other than selective, a hub already joined, a `binding_seq` that is not higher, a re-pointed alias, a `hub.left` that names no joined hub and binding, or (C3b, §15) a `hub.pinned` or hub-signed line the ledger refuses (detail: the contract code, or `not_joined`, `malformed`, `already_pinned`, `too_many`, `too_large`) or a `hub.joined` alias of another hub's user id (detail `foreign_user`) |
+| `hub.cert_invalid` | §15.3 a custodial event's `uk_cert` or `channel_cert` does not chain to the hub material pinned at its position (detail: the contract code) |
+| `hub.unknown_snapshot` | §15.3 no snapshot pinned, or `snapshot_version` above the pinned one |
+| `hub.foreign_user` | §15.6 the event's `u_` id belongs to another hub of this workspace |
+| `hub.denied` | §15.3 channel revoked, no role or not granted, type not custodial for that log or role below its floor, factor too weak (detail: the contract code) |
 | `addon.unknown` | §5.4.2 the addon is not granted or not enabled |
 | `addon.field_unknown` | §8.1 the field is not declared in the addon's grant |
 | `addon.value_invalid` | §8.1 the value is not valid for the declared field type and limits |

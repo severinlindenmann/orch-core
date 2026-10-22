@@ -105,6 +105,8 @@ def _chain_check(core: Core, log: str, lc: LogCore, e: dict[str, Any], ctx: Ctx)
         return Refusal(Code.CHAIN_BROKEN, "seq/prev do not continue the log")
     if e["actor"]["kind"] != "person" and any(field in e for field in ("sig", "auth", "roster_v")):
         return Refusal(Code.CHAIN_BROKEN, "sig, auth and roster_v appear only on person events")
+    if e["actor"]["kind"] == "person" and ("via" in e["actor"]) != (e.get("auth") == "hub"):
+        return Refusal(Code.CHAIN_BROKEN, "the via actor shape appears exactly when auth is hub (15.1)")
     # a second one, or one that is not seq 1, is checked like any event (and never trusted with wsk_pub=None)
     genesis = e["type"] == "workspace.created" and not core.ws.created and e["seq"] == 1
     if genesis:  # refuse a foreign genesis before it is trusted with wsk_pub=None
@@ -124,7 +126,11 @@ def _chain_check(core: Core, log: str, lc: LogCore, e: dict[str, Any], ctx: Ctx)
         wid = ctx.expected_workspace_id if genesis else core.ws.workspace_id
         if not ctx.verifier.verify_host(e, log=log, wsk_pub=wsk, workspace_id=wid):
             return Refusal(Code.CHAIN_BROKEN, "host_sig does not verify")
-        if e["actor"]["kind"] == "person" and (r := _person_sig_check(core, log, e, ctx, genesis)) is not None:
+        if "via" in e["actor"]:  # 15.3 line checks: the hub's two signatures instead of a device signature
+            sigs = getattr(ctx.verifier, "verify_custodial_sigs", None)
+            if sigs is None or "sig" not in e or not sigs(e, workspace_id=core.ws.workspace_id, log=log):
+                return Refusal(Code.CHAIN_BROKEN, "the hub signatures do not verify")
+        elif e["actor"]["kind"] == "person" and (r := _person_sig_check(core, log, e, ctx, genesis)) is not None:
             return r
     if kind == "ticket":
         wsh = core.logs[WORKSPACE].seq if WORKSPACE in core.logs else 0
@@ -247,6 +253,12 @@ def _authorize(core: Core, log: str, t: TCore | None, e: dict[str, Any], ctx: Ct
         return None if not ws.created else Refusal(Code.GENESIS_INVALID, "the workspace already has a genesis")
     if not ws.created:
         return Refusal(Code.GENESIS_INVALID, "the first event of a workspace is workspace.created")
+    if a["kind"] == "person" and "via" in a:
+        if (r := authz.authorize_hub(core, log, e, ctx.verifier, dev=ctx.hub_dev)) is not None:
+            return r
+        # C3b PR A: the type rules (gates, questions, lifecycle...) still read device actors. Until the consumers go
+        # through identity.signer (PR B, task 4) a verified hub line is refused rather than half-applied (fail closed).
+        return Refusal(Code.HUB_INVALID, "consumers_not_ready")
     if a["kind"] == "person":
         if (r := authz.authorize_person(core, log, e, ctx.verifier)) is not None:
             return r

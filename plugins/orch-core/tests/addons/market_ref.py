@@ -156,13 +156,13 @@ CAPABILITIES = ("git_push", "network", "pty", "serve_http", "spawn_agent")
 def hub_policy_ok(hub: Any) -> bool:
     """Section 9: ``orch.hub-policy/1`` is exactly ``{allow: [url], block: [url], ceiling: [cap] | null}``, URLs in
     canonical form. Anything else counts as an empty allow list."""
-    urls = lambda x: (
-        isinstance(x, list)
-        and all(  # noqa: E731
+
+    def urls(x: Any) -> bool:
+        return isinstance(x, list) and all(
             isinstance(u, str) and re.fullmatch(r"https://[a-z0-9.-]+(?:/[^/\s]+)+", u) and is_canonical_url(u)
             for u in x
         )
-    )
+
     ceiling = hub.get("ceiling") if isinstance(hub, dict) else 0
     return (
         isinstance(hub, dict)
@@ -288,10 +288,11 @@ def check_lock(kind: str, text: str) -> None:
 
 def check_tree(entries: list[dict[str, Any]]) -> None:
     """Section 5.1.1, before any blob is read or written: the ``git ls-tree -r -z -l`` listing of the package
-    directory must already satisfy every §8.1 rule, so a hostile tree never reaches the disk. Raises ``package_invalid``."""
+    directory must already satisfy every §8.1 rule, so a hostile tree never reaches the disk.
+    Raises ``package_invalid``."""
     import unicodedata
 
-    from orch.addons.package import MAX_FILE_BYTES, MAX_FILES, MAX_TOTAL_BYTES, MANIFEST_FILE, PackageError, check_path
+    from orch.addons.package import MANIFEST_FILE, MAX_FILE_BYTES, MAX_FILES, MAX_TOTAL_BYTES, PackageError, check_path
 
     seen: dict[str, str] = {}
     dirs: set[str] = set()

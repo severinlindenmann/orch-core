@@ -1,6 +1,6 @@
 # orch add-on marketplace: spec and contract (`orch.market/1`)
 
-Status: G0 draft for the L2 gate (orch-core #847), 22 Oct 2026. Stream G (#917), task #918. Runs standalone (D79): nothing
+Status: G0, 22 Oct 2026; revised after the L2 security pass (findings L2M-1 to L2M-10 folded in, answers to the open points marked provisional in §15.2). Stream G (#917), task #918. Runs standalone (D79): nothing
 here needs a hub.
 
 - **Builds on, and does not weaken:** the add-on manifest (`orch.addon/3`, [addon-api.md](addon-api.md)), the package
@@ -470,7 +470,7 @@ hub but whose hub record is missing or unreadable is *not* standalone; it refuse
 | A hub never installs or grants for a workspace; it can only refuse | |
 | Policy does not override the human gate: even an allowed marketplace needs the signed grant | |
 
-Whether the ceiling also applies to built-in add-ons and to grants that already exist is a D14/G7 decision (§15).
+Whether the ceiling also applies to built-in add-ons and to grants that already exist is a D14/G7 decision; the spec's provisional answer is yes (§15.2, point 4).
 
 ## 10. Community marketplaces
 
@@ -480,7 +480,7 @@ granted add-on today runs as the person, and a third-party add-on with `network`
 publisher's code with the person's files and keys within reach. A review cannot make that safe; isolation can.
 
 Isolation is a property core detects (a configured, working per-add-on user), not a setting the owner or an index can
-claim. When #287 lands, G-follow-up #929 flips this check; the format and the flow do not change. The local folder used
+claim. (Whether a hub-pinned company marketplace may be allowed earlier is open point 12 in §15.3.) When #287 lands, G-follow-up #929 flips this check; the format and the flow do not change. The local folder used
 by `orch addon dev` is not a marketplace source: it works only in workspaces marked `dev`.
 
 ## 11. Who may do what
@@ -585,42 +585,73 @@ git, a network or a running host; G2 to G4 test them with a local git repo and a
 | File | What |
 |---|---|
 | `src/orch/addons/schemas/market.v1.json` | strict JSON Schema 2020-12 for the index |
-| `tests/addons/vectors_market.json` | 114 cases: `index` (schema and index rules), `install` (steps 0 to 15 with a context), `lock`, `address` |
-| `tests/addons/market_ref.py` | the reference checker and the entry signing helpers (test code) |
+| `tests/addons/vectors_market.json` | the vectors. `check` is one of `index` (schema and index rules), `install` (steps 0 to 15 with a context), `lock`, `address`, `tree` (§5.1.1), `env_paths`, `env_stamp` (§8.2) |
+| `tests/addons/market_ref.py` | the reference checker and the signing helpers (test code) |
 | `tests/addons/make_vectors_market.py` | builds the vectors; run again to change them. Signatures are random, so the file is the artefact |
 | `tests/addons/test_market_vectors.py` | runs every vector, checks the schema, that every code in §13 has a vector or is listed as untestable here, and that signatures verify only for the signed bytes |
+| `tests/addons/test_market_adversarial.py` | the L2 reviewer's cases (findings L2M-1 to L2M-10), kept as an independent second check |
 
-A vector's `install` context is `{actor, core_version, market_repo, isolation, official{repo,key}, hub|null,
-builtin[], git_hosts[], installed{id->{origin,version}}, known_keys{"<url>|<id>"->key}, seen{"<url>|<id>"->version}, last_version}`. A product implementation is
-conformant when it gives the same `ok` or `refuse` for every case.
+An `install` context is `{actor, core_version, market_repo, isolation, official{repo,key}, hub|null, builtin[],
+official_ids[], moved[], git_hosts[], installed{id->{origin,version,package_sha256}}, known_keys{"<url>|<id>"->key},
+seen{"<url>|<id>"->version}, last_version}`. A product implementation is conformant when it gives the same `ok` or
+`refuse` for every case.
 
-## 15. Open points (need an owner decision)
+## 15. Residual risks and open points
 
-1. **Should `addon.granted` carry provenance** (`source`: marketplace URL and commit)? This spec says no: the digest is
-   the binding, provenance stays in the unsigned install record and is shown as "per host, not signed". Putting it in
-   the event makes replay and audit know the origin, at the cost of an event schema change in a Tier S area.
-2. **Official marketplace key custody.** The pinned official key signs every official entry. Same root and a separate
-   purpose, as the add-on catalog key in addon-platform §3, is the obvious choice; the ceremony and rotation are the
-   owner's. Until then official entries cannot be signed and the official shelf cannot ship.
-3. **Relation to the signed catalog** (addon-platform §3, `orch.addon-catalog/1`, tar archives). This spec makes git
-   plus `marketplace.json` the way to ship non-built-in add-ons and keeps the staged update and grant machinery of
-   addon-platform §4 unchanged. Does the catalog remain only for the add-ons built into the wheel, or is it retired once
-   G6 lands? The staged grant (`addon.stage`, `addon.grant staged`) is designed there; G3 must find it built or build
-   it.
-4. **Ceiling scope** (D14/G7): does the hub ceiling also bind built-in add-ons and already granted ones (an already
-   granted add-on over the ceiling would have to pause)? This document only fixes the check for marketplace installs.
-5. **Direct sources.** A single add-on repo has no index. This spec treats it as a one-entry "other" marketplace that the
-   owner fills in (commit and digest on the command line). Allowed at all before #287? As written: no.
-6. **Dependency kinds beyond Python and Node**, and whether wheels with compiled code are acceptable (`--only-binary`
-   allows them; §8.1 refuses `.so` inside a package, not inside an environment). A stricter v1 would be pure-Python
-   wheels only.
-7. **Index signature.** Only entries are signed. A signed index would also protect the set of entries and the version
-   counter against a hostile mirror; not needed while the official URL is one pinned git host over https.
-8. **Yank and advisories** (#932) and **add-on secrets** (#930): no field is reserved for them. Both will need an
-   `orch.market/2` or an advisory file next to the index.
-9. **Index freshness.** `version` stops rollbacks within one host, but a host that was offline never sees a newer index.
-   Is a maximum age ("refresh older than N days is shown as stale") wanted, and does a stale index block installs?
-10. **TOFU scope.** The key is stored per (marketplace URL, id). The same publisher key under another marketplace is
-    "new" there. A per-key (not per-URL) store would carry trust across marketplaces and mirrors; it is weaker against
-    a marketplace swap. This spec chose the stricter one.
-11. **Parsers in the product.** The reference uses `packaging` for PEP 508. It is not a runtime dependency of core today; G4 either adds it or writes a strict marker grammar with the same vectors. Likewise the registry host lists per ecosystem and the default git host allow list (`github.com`, `gitlab.com`) are owner choices.
+### 15.1 Stated limits (Tier A)
+
+The install record (TOFU keys, highest versions seen, origins, the host allow list), the hub-join record and any
+isolation flag are files on the person's own account, and a same-user agent (tier A) can write them. For the official
+shelf that is harmless: the key is pinned in core, the digest binds the bytes, and the grant needs the person's
+signature. For any other marketplace (after #287) TOFU and `allow-host` are *advisory* against such an agent. Isolation
+(#287) MUST be detected from the operating system, never from a same-user-writable flag; a test keeps that.
+
+Crash safety: between appending `addon.granted` and the directory rename (step 18) the registry sees `changed` and
+fails closed; recovery at start finishes or rolls the rename back by comparing digests with the last grant
+(addon-platform §4), and records the origin and the TOFU key idempotently.
+
+### 15.2 Answers adopted from the L2 review (provisional, owner may overrule)
+
+These are the spec's answers; each is marked **provisional** until the owner confirms it.
+
+1. **Provenance in `addon.granted`: no** for v1. The digest is the binding, and a signed origin would invite trusting
+   it. Revisit with G7 if the hub must audit origin. *Provisional.*
+2. **Official key:** the same root, its own certificate with `purpose: "marketplace"` and its own CI environment, never
+   the catalog or core key. Core pins a list of two (current and next) so a rotation is not an emergency release.
+   Revocation is through the signed index (§3.1). *Provisional.*
+3. **Catalog versus marketplace:** retire the signed add-on catalog for non-built-in add-ons once G6 lands, and only
+   because the official index now has the catalog's guarantees (version, expiry, revocation: §3.1). Keep the bundled
+   snapshot for the built-ins. The staged grant (`addon.stage`, grant from staged) is designed in addon-platform §4;
+   G3 must find it built or build it. *Provisional.*
+4. **Ceiling scope:** the hub ceiling binds new grants of every add-on, built-ins included; an existing grant over the
+   ceiling is paused with "needs approval". A ceiling that existing grants escape is not a ceiling. *Provisional.*
+5. **Direct sources:** refused before #287. After it, allowed only with an explicit commit and digest. *Provisional.*
+6. **Dependency kinds:** Python and Node only in v1. Compiled wheels are allowed only from the pinned PyPI with hashes;
+   `.pth`, `sitecustomize` and `usercustomize` are refused (§8.2). *Provisional.*
+7. **Index signature:** required for the official index now (§3.1), optional for others. *Provisional.*
+8. **Yank and advisories, secrets:** `revoked` is reserved and signed in the official index now (§3.1); tracking and
+   pausing installed revoked add-ons is #932; add-on secrets stay #930. *Provisional.*
+9. **Freshness:** signed `expires_at` (about 30 days). A stale index is a warning, not a block, for installing the
+   current pinned entries; it blocks `--allow-downgrade`. *Provisional.*
+10. **TOFU scope:** per (canonical URL, id), the stricter choice. With canonical URLs (§4.1) it does not fragment.
+    *Provisional.*
+11. **Parsers and host lists:** add `packaging` as a core dependency (a hand-written marker grammar is the riskier
+    option). Default git hosts `github.com`, `gitlab.com`; npm `registry.npmjs.org`; PyPI `pypi.org` and
+    `files.pythonhosted.org`. *Provisional.*
+
+### 15.3 Open for the owner
+
+12. **Company marketplaces before #287.** The concept page shows "official plus your own company marketplace first";
+    §10 refuses every non-official marketplace until #287. Two options:
+
+    - **Option A (as written, safest):** refuse every non-official marketplace and direct source until per-add-on
+      OS-user isolation exists. A company waits for #287. Nothing third-party runs as the person, ever, before then.
+    - **Option B (reviewer's recommendation):** allow a company marketplace before #287 **only when a hub is joined and
+      its policy lists the marketplace in `allow` with a pinned publisher key** (pinned by the hub, not remembered by
+      TOFU). Without a hub the refusal stays. The code is third-party code running as the person, but the company's
+      admin chose it and pinned who signs it, and every install still needs the person's own signature on the exact
+      digest. The residual risk is a compromised company publisher key or a hostile admin, and the tier-A agent
+      limits of §15.1 do not apply to a key the hub pins.
+
+    The spec, schema and vectors implement Option A. Option B adds one field to `orch.hub-policy/1`
+    (`pinned_keys: {url -> key}`) and one branch at step 4; it needs no change to the index format.

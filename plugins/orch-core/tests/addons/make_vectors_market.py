@@ -96,7 +96,8 @@ def entry(
 def index(
     repo: str, entries: list[dict[str, Any]], version: int = 7, name: str = "acme-market", **kw: Any
 ) -> dict[str, Any]:
-    """An index. With ``signed=True`` (the official one only) it gets an expiry and the official signature; ``sign_with``
+    """An index. With ``signed=True`` (the official one only) it gets an expiry and the official signature;
+    ``sign_with``
     names another key (a negative vector)."""
     signed = kw.pop("signed", False)
     sign_with = kw.pop("sign_with", "official")

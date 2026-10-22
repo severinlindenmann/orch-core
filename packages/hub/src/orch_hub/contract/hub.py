@@ -266,6 +266,31 @@ FIELDS: dict[str, dict[str, Check]] = {
         "expires_ms": _int_min(1),
         "dev": _bool,
     },
+    # p4 (B, §6.4, L2B-1): the hub's own public API origin, signed by HK_op; the phone compares it with its link
+    "hub.api_origin": {
+        "hub_id": _hex16,
+        "op_cert_id": _hex16,
+        "origin": lambda x: type(x) is str and _URL.fullmatch(x) is not None,
+        "issued_ms": _int_min(0),
+        "dev": _bool,
+    },
+    # p4 (B, §6.4): a channel key binds a pairing session of its user to itself (signed by the channel key)
+    "hub.channel_auth": {
+        "hub_id": _hex16,
+        "user_id": _hex16,
+        "channel_id": _hex16,
+        "session_ref": _b64u_n(32),
+        "ts_ms": _int_min(0),
+        "dev": _bool,
+    },
+    # p4 (B, §6.4): a channel key names the push key its hints are sealed to (signed by the channel key)
+    "hub.channel_push": {
+        "hub_id": _hex16,
+        "channel_id": _hex16,
+        "push_pub": _pub,
+        "issued_ms": _int_min(0),
+        "dev": _bool,
+    },
     # p4 (§10.2b, C6/D9): one item a selective workspace shares with its hub (signed by its WSK, sealed to HXK)
     "share.item": {
         "hub_id": _hex16,
@@ -316,6 +341,9 @@ LABEL_OF_KIND = {
     "space.item": "sig_space_item",
     "space.accept": "sig_space_accept",
     "hub.channel_register": "sig_hub_channel_register",
+    "hub.channel_auth": "sig_hub_channel_auth",
+    "hub.api_origin": "sig_hub_api_origin",
+    "hub.channel_push": "sig_hub_channel_push",
     "share.item": "sig_share_item",
     "hub.space_proposal": "sig_hub_space_proposal",
     # hub.link: the label depends on the direction (sig_hub_link w2h, sig_hub_route h2w)

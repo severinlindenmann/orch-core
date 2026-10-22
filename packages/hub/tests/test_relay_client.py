@@ -17,6 +17,8 @@ from orch_hub.contract.canon import loads_strict, unb64u
 from orch_hub.relay import PushNotifier, RelayClient, RelayError
 
 TOKEN = bytes(range(40))
+PUSH_PRIV = S.key_from_seed(bytes(range(1, 33)))  # the phone's push key (§6.4), never its channel key
+PUSH_PUB = S.public_bytes(PUSH_PRIV)
 
 
 class World:
@@ -77,12 +79,12 @@ def test_push_target_put_replace_delete(w):
     assert w.relay.targets == {}
 
 
-def test_push_reaches_the_phone_path_sealed_to_the_channel_key(w):
+def test_push_reaches_the_phone_path_sealed_to_the_push_key_with_a_mailbox_copy(w):
     w.client.register()
     u = w.env.user("ann")
     signer, cid = w.phone(u)
     n = PushNotifier(w.client, w.env.svc)
-    n.register_target(u, cid, "sandbox", "io.severin.orch", TOKEN)
+    n.register_target(u, cid, "sandbox", "io.severin.orch", TOKEN, PUSH_PUB)
     ref = "cd" * 16
     assert n.notify_user(u, "prepare", ref) == {cid: "sent"}
     (sent,) = w.relay.sent
@@ -90,19 +92,34 @@ def test_push_reaches_the_phone_path_sealed_to_the_channel_key(w):
     assert set(outer) == {"v", "hub", "ch", "id", "c"} and outer["hub"] == w.env.keys.hub_id and outer["ch"] == cid
     # what the relay and APNs hold is ciphertext only
     assert b"prepare" not in sent["outer"] and ref.encode() not in sent["outer"]
-    # the phone's NSE opens it with the channel key
-    got = RR.open_push(outer["c"], hub_id=outer["hub"], channel_id=cid, msg_id=outer["id"], channel_priv=signer)
+    # the same c under the same id waits in the channel's mailbox (§10.8.1: the phone's catch-up path)
+    assert w.relay.mailbox[(cid, outer["id"])]["c"] == outer["c"]
+    # the phone's NSE opens it with its push key (§6.4, §10.8.2)
+    args = {"hub_id": outer["hub"], "channel_id": cid, "msg_id": outer["id"], "recipient_priv": PUSH_PRIV}
+    got = RR.open_push(outer["c"], **args)
     assert got["type"] == "prepare" and got["ref"] == ref and got["ts_ms"] == w.env.clock()
-    # and only with that key, that hub, that channel, that message id
-    other_priv = ec.generate_private_key(ec.SECP256R1())
+    # and only with that key, that hub, that channel, that message id; never with the channel's signing key
     for kw in (
-        {"channel_priv": other_priv},
+        {"recipient_priv": signer},
+        {"recipient_priv": ec.generate_private_key(ec.SECP256R1())},
         {"hub_id": "11" * 16},
         {"msg_id": "22" * 16},
     ):
-        args = {"hub_id": outer["hub"], "channel_id": cid, "msg_id": outer["id"], "channel_priv": signer} | kw
         with pytest.raises(H.Refused):
-            RR.open_push(outer["c"], **args)
+            RR.open_push(outer["c"], **(args | kw))
+
+
+def test_no_push_key_no_hint_and_the_signing_key_is_never_one(w):
+    w.client.register()
+    u = w.env.user("ann")
+    signer, cid = w.phone(u)
+    n = PushNotifier(w.client, w.env.svc)
+    n.register_target(u, cid, "sandbox", "io.severin.orch", TOKEN)  # APNs target only, no push key yet
+    assert n.notify_user(u, "prepare", "cd" * 16) == {} and w.relay.sent == [] and w.relay.mailbox == {}
+    with pytest.raises(RelayError) as e:
+        n.register_target(u, cid, "sandbox", "io.severin.orch", TOKEN, S.public_bytes(signer))
+    assert e.value.code == "malformed"
+    assert n.notify_user(u, "prepare") == {} and w.relay.sent == []
 
 
 def test_only_live_phone_channels_of_that_user_get_a_push(w):
@@ -116,7 +133,7 @@ def test_only_live_phone_channels_of_that_user_get_a_push(w):
     register(w.env, u)  # a browser channel: no APNs target, never pushed
     n = PushNotifier(w.client, w.env.svc)
     for c, user in ((c1, u), (c2, u), (other, v)):
-        n.register_target(user, c, "sandbox", "io.severin.orch", TOKEN)
+        n.register_target(user, c, "sandbox", "io.severin.orch", TOKEN, PUSH_PUB)
     w.env.svc.revoke(c2)
     res = n.notify_user(u, "needs_you")
     assert res == {c1: "sent"}  # c2 revoked, browser skipped, bob's phone is not ann's
@@ -129,7 +146,7 @@ def test_register_target_refuses_a_channel_of_another_user(w):
     _, cid = w.phone(u)
     n = PushNotifier(w.client, w.env.svc)
     with pytest.raises(RelayError) as e:
-        n.register_target(v, cid, "sandbox", "io.severin.orch", TOKEN)
+        n.register_target(v, cid, "sandbox", "io.severin.orch", TOKEN, PUSH_PUB)
     assert e.value.code == "unknown_channel" and w.relay.targets == {}
 
 
@@ -139,7 +156,7 @@ def test_revocation_deletes_target_and_mailbox_at_the_relay(w):
     _, cid = w.phone(u)
     n = PushNotifier(w.client, w.env.svc)
     w.env.svc.on_revoke = n.channel_revoked
-    n.register_target(u, cid, "sandbox", "io.severin.orch", TOKEN)
+    n.register_target(u, cid, "sandbox", "io.severin.orch", TOKEN, PUSH_PUB)
     w.client.mailbox_put(cid, "ee" * 16, "AAAA")
     assert cid in w.relay.targets and w.relay.mailbox
     w.env.svc.revoke(cid)
@@ -153,7 +170,7 @@ def test_failed_cleanup_is_remembered_and_repeated(w):
     _, cid = w.phone(u)
     n = PushNotifier(w.client, w.env.svc)
     w.env.svc.on_revoke = n.channel_revoked
-    n.register_target(u, cid, "sandbox", "io.severin.orch", TOKEN)
+    n.register_target(u, cid, "sandbox", "io.severin.orch", TOKEN, PUSH_PUB)
     w.relay.faults = [OSError("down")] * 8
     w.env.svc.revoke(cid)  # the revocation itself stands
     assert cid in w.env.acc.revoked_channels() and n.pending_cleanup == {cid} and cid in w.relay.targets
@@ -298,6 +315,7 @@ def test_relay_errors_are_failures_and_unknown_codes_are_not_logged(w, caplog):
     def refuse(*_a, **_k):
         raise RelayError("<script>evil", 400)
 
+    n.register_target(u, cid, "sandbox", "io.severin.orch", TOKEN, PUSH_PUB)
     w.client.send_push = refuse
     with caplog.at_level("WARNING"):
         assert n.notify_user(u, "prepare") == {cid: "failed"}
@@ -312,7 +330,7 @@ def test_register_target_refuses_a_browser_channel(w):
     cid = cert["o"]["channel_id"]
     n = PushNotifier(w.client, w.env.svc)
     with pytest.raises(RelayError) as e:
-        n.register_target(u, cid, "sandbox", "io.severin.orch", TOKEN)
+        n.register_target(u, cid, "sandbox", "io.severin.orch", TOKEN, PUSH_PUB)
     assert e.value.code == "unknown_channel"
 
 
@@ -321,7 +339,7 @@ def test_restart_pass_cleans_channels_revoked_before_the_restart(w):
     u = w.env.user("ann")
     _, cid = w.phone(u)
     n = PushNotifier(w.client, w.env.svc)
-    n.register_target(u, cid, "sandbox", "io.severin.orch", TOKEN)
+    n.register_target(u, cid, "sandbox", "io.severin.orch", TOKEN, PUSH_PUB)
     w.client.mailbox_put(cid, "ee" * 16, "AAAA")
     w.env.svc.revoke(cid)  # no hook: as if the hub died before the cleanup ran
     assert cid in w.relay.targets
@@ -341,7 +359,7 @@ def test_notify_async_returns_at_once_and_the_worker_sends(w):
     u = w.env.user("ann")
     _, cid = w.phone(u)
     n = PushNotifier(w.client, w.env.svc)
-    n.register_target(u, cid, "sandbox", "io.severin.orch", TOKEN)
+    n.register_target(u, cid, "sandbox", "io.severin.orch", TOKEN, PUSH_PUB)
     gate = threading.Event()
     real = w.client.send_push
 

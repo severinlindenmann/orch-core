@@ -193,7 +193,8 @@ def test_the_wired_hub_end_to_end(hub):
     items = [i for ws in o.get("workspaces", []) for i in ws.get("items", [])] or o.get("items", [])
     assert any(i.get("title") == "CSV or API?" or i.get("hash") == qhash for i in items), o
 
-    # 3. a prepare pushes to the user's phone through the relay
+    # 3. a prepare: the phone has an APNs target but no push key yet (the route for it, PUT /channels/{id}/push, is
+    # H1), so no hint goes out at all (§10.8.2, L2B-4: never sealed to the signing key). H1 restores the push here.
     cid = register_phone(hub, token)
     relay.targets[cid] = {
         "env": "sandbox",
@@ -203,8 +204,7 @@ def test_the_wired_hub_end_to_end(hub):
     act = {"type": "ticket.updated", "log": LOG, "set": {"ticket.priority": "high"}}
     s, p = web.call("POST", "/sign/prepare", {"workspace_id": WS, "channel_id": cid, "action": act}, token)
     assert s == 200, p
-    until(lambda: relay.sent, "a push at the fake relay")
-    assert relay.sent[0]["channel_id"] == cid
+    assert relay.sent == []
 
     # 4. revoking the channel deletes the push target at the relay
     assert cid in relay.targets

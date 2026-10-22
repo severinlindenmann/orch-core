@@ -1246,14 +1246,14 @@ def build_p4(
 
     tok = S.fake_seed("hub/apns_token") + S.fake_seed("hub/apns_token2")[:8]  # 40 bytes
     mid, mid2 = fake16("push_msg"), fake16("mailbox_msg")
-    ch_pub = K.pub["channel_alice_phone"]
+    push_pub = K.pub["push_alice_phone"]  # §6.4 (B): hints are sealed to the channel's push key, not its signing key
     eph_seed = S.fake_seed("hub/push_eph")
     payload = RR.push_payload("prepare", NOW, fake16("push_ref"))
     sealed = RR.seal_push(
-        payload, hub_id=HUB_ID, channel_id=CH_ALICE, msg_id=mid, channel_pub=ch_pub, eph_seed=eph_seed
+        payload, hub_id=HUB_ID, channel_id=CH_ALICE, msg_id=mid, recipient_pub=push_pub, eph_seed=eph_seed
     )
     assert (
-        RR.open_push(sealed, hub_id=HUB_ID, channel_id=CH_ALICE, msg_id=mid, channel_priv=K.priv["channel_alice_phone"])
+        RR.open_push(sealed, hub_id=HUB_ID, channel_id=CH_ALICE, msg_id=mid, recipient_priv=K.priv["push_alice_phone"])
         == payload
     )
     put_req = RR.push_put_request(HUB_ID, CH_ALICE, "sandbox", "io.severin.orch", tok)
@@ -1838,7 +1838,7 @@ def build_p4(
             "cutover_put": _rr_entry(RR.cutover_request(HUB_ID, WS_A)),
             "cutover_get": _rr_entry(RR.cutover_request(HUB_ID, WS_A, "GET")),
             "push_seal": {
-                "channel_key": "channel_alice_phone",
+                "push_key": "push_alice_phone",
                 "channel_id": CH_ALICE,
                 "msg_id": mid,
                 "eph_seed_hex": eph_seed.hex(),

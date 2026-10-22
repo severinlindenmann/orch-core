@@ -22,10 +22,14 @@ HUB_LABELS: dict[str, str] = {
     "sig_hub_space": "orch/v2/hub-space|",  # V3-D8 shared spaces (§10.4): a space record at one epoch
     "sig_hub_space_wrap": "orch/v2/hub-space-wrap|",  # V3-D8: SK_e sealed to one member workspace's WXK
     "sig_hub_space_proposal": "orch/v2/hub-space-proposal|",  # p4 (#1020): a proposed member transition, to an invitee
-    "sig_hub_relay_request": "orch/v2/hub-relay-req|",  # p4 (E1): a hub -> relay request, bytes as admin read
+    "sig_hub_relay_request": "orch/v2/hub-relay-req|",
+    "sig_hub_api_origin": "orch/v2/hub-api-origin|",  # p4 (B, §6.4, L2B-1): the hub names its own public API origin  # p4 (E1): a hub -> relay request, bytes as admin read
     # signatures by a channel key
     "sig_hub_channel_proof": "orch/v2/hub-channel-proof|",
     "sig_hub_channel_register": "orch/v2/hub-channel-reg|",  # p4: proof of possession at channel registration
+    "sig_hub_channel_auth": "orch/v2/hub-channel-auth|",  # p4 (B, §6.4): binds a pairing session to the channel
+    "sig_hub_channel_push": "orch/v2/hub-channel-push|",  # p4 (B, §6.4): names the channel's push key
+    "sig_hub_channel_relay_req": "orch/v2/hub-channel-relay-req|",  # p4 (B, §10.8.4): a channel -> relay request
     # signatures by WSK (workspace host)
     "sig_hub_binding": "orch/v2/sig/hub-binding|",
     "sig_hub_unbound": "orch/v2/sig/hub-unbound|",
@@ -41,6 +45,7 @@ HUB_LABELS: dict[str, str] = {
     "h_channel_id": "orch/v2/id/channel|",
     "h_hub_event_digest": "orch/v2/hub-event-digest|",
     "h_hub_publish_request": "orch/v2/hub-publish-request|",
+    "h_hub_session_ref": "orch/v2/hub-session-ref|",  # p4 (B, §6.4): names a pairing session inside channel_auth
     "h_hub_audit_chain": "orch/v2/hub-audit-chain|",  # D4: hash of one signed audit record (the chain link)
     "h_hub_audit_scope": "orch/v2/hub-audit-scope|",  # L2P-4: blinded workspace tag of an audit record
     "h_hub_audit_event": "orch/v2/hub-audit-event|",  # D4: hash of an audit event, signed into its record

@@ -85,6 +85,7 @@ class OpSigner(_Signer):
             "hub.space_wrap": "sig_hub_space_wrap",
             "hub.audit": "sig_hub_audit",
             "hub.space_proposal": "sig_hub_space_proposal",
+            "hub.api_origin": "sig_hub_api_origin",
         }
     )
     LINK_DIR = "h2w"
@@ -145,20 +146,48 @@ class UkSigner(_Signer):
 
 
 class ChannelSigner(_Signer):
-    """A channel key (phone, browser): the proof over a 32-byte event digest, and its own registration object (§6.3)
-    naming this very key, nothing else."""
+    """A channel key (phone, browser): the proof over a 32-byte event digest, its own registration object (§6.3), and
+    (§6.4, §10.8.4) the session binding, the push-key object and the channel -> relay request bytes, each naming this
+    very key or channel, nothing else."""
 
-    KINDS = MappingProxyType({"hub.channel_register": "sig_hub_channel_register"})
+    KINDS = MappingProxyType(
+        {
+            "hub.channel_register": "sig_hub_channel_register",
+            "hub.channel_auth": "sig_hub_channel_auth",
+            "hub.channel_push": "sig_hub_channel_push",
+        }
+    )
+
+    @property
+    def channel_id(self) -> str:
+        return H.channel_id(self.public)
 
     def sign_object(self, o: Mapping[str, Any]) -> dict[str, Any]:
         if type(o) is dict and o.get("kind") == "hub.channel_register" and o.get("key_pub") != b64u(self.public):
             raise KeyUseError("a channel key registers itself only")
+        if type(o) is dict and o.get("kind") in ("hub.channel_auth", "hub.channel_push"):
+            if o.get("channel_id") != self.channel_id:
+                raise KeyUseError("a channel key speaks for its own channel only")
+            if o.get("kind") == "hub.channel_push" and o.get("push_pub") == b64u(self.public):
+                raise KeyUseError("the channel key is never its own push key")
         return super().sign_object(o)
 
     def proof(self, digest: bytes) -> bytes:
         if type(digest) is not bytes or len(digest) != 32:
             raise KeyUseError("a channel key signs 32-byte event digests only")
         return self._sig(H.channel_proof_bytes(digest))
+
+    def relay_request(self, hub_id: str, ts_ms: int, nonce: bytes, method: str, target: str, body: bytes) -> bytes:
+        """§10.8.4: the signature of a request to this channel's own mailbox at the relay."""
+        from .channelapi import _parse_channel_target, channel_request_bytes
+
+        try:
+            hub, ch, _ = _parse_channel_target(target)
+            if hub != hub_id or ch != self.channel_id:
+                raise KeyUseError("a channel key reads its own mailbox only")
+            return self._sig(channel_request_bytes(hub_id, ch, ts_ms, nonce, method, target, body))
+        except H.Refused as r:
+            raise KeyUseError(r.code) from None
 
 
 class WskSigner(_Signer):

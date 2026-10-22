@@ -21,8 +21,10 @@ from __future__ import annotations
 import logging
 import queue
 import threading
+from collections.abc import MutableMapping
 from typing import Any
 
+from ..contract import suite as S
 from ..contract.canon import CanonError, unb64u
 from .client import RelayClient, RelayError
 
@@ -44,8 +46,11 @@ def _safe_code(code: object) -> str:
 
 
 class PushNotifier:
-    def __init__(self, client: RelayClient, channels: Any) -> None:
+    def __init__(self, client: RelayClient, channels: Any, push_keys: MutableMapping[str, bytes] | None = None) -> None:
+        """``push_keys``: channel id -> the push key the phone registered (§6.4 ``hub.channel_push``, verified by the
+        web API). In memory by default; a running hub passes a persistent store (H1). No key, no hint (§10.8.2)."""
         self._client, self._channels = client, channels
+        self._push_keys: MutableMapping[str, bytes] = push_keys if push_keys is not None else {}
         self._lock = threading.Lock()
         self.pending_cleanup: set[str] = set()
         self._q: queue.Queue[tuple[str, str, str | None]] = queue.Queue(QUEUE_MAX)
@@ -53,13 +58,23 @@ class PushNotifier:
 
     # --- the phone gave its APNs token (over its authenticated channel session; the caller has checked that) -------
 
-    def register_target(self, user_id: str, channel_id: str, env: str, topic: str, token: bytes) -> None:
-        """Register or replace the push target of one of the user's own live phone channels."""
-        if self._cert_pub(user_id, channel_id) is None or not any(
+    def register_target(
+        self, user_id: str, channel_id: str, env: str, topic: str, token: bytes, push_pub: bytes | None = None
+    ) -> None:
+        """Register or replace the push target of one of the user's own live phone channels. ``push_pub`` is the push
+        key of a ``hub.channel_push`` the caller verified (§6.4); ``None`` keeps the held one. It is never the
+        channel's signing key (``malformed``)."""
+        cert_pub = self._cert_pub(user_id, channel_id)
+        if cert_pub is None or not any(
             c["channel_id"] == channel_id and c["kind"] == "phone" for c in self._channels.channels(user_id)
         ):
             raise RelayError("unknown_channel")
+        if push_pub is not None and (not S.valid_public_key(push_pub) or push_pub == cert_pub):
+            raise RelayError("malformed")
         self._client.put_push_target(channel_id, env, topic, token)
+        if push_pub is not None:
+            with self._lock:
+                self._push_keys[channel_id] = push_pub
 
     # --- push -----------------------------------------------------------------------------------------------------
 
@@ -73,12 +88,17 @@ class PushNotifier:
             return None
 
     def live_phone_channels(self, user_id: str) -> list[tuple[str, bytes]]:
+        """``(channel_id, push_pub)`` of every live phone channel of the user that registered a push key: a channel
+        without one gets no hint at all (§10.8.2), and the signing key is never a recipient."""
         out = []
         for ch in self._channels.channels(user_id):
             if ch["status"] == "active" and ch["kind"] == "phone":
-                pub = self._cert_pub(user_id, ch["channel_id"])
-                if pub is not None:
-                    out.append((ch["channel_id"], pub))
+                cid = ch["channel_id"]
+                cert_pub = self._cert_pub(user_id, cid)
+                with self._lock:
+                    push = self._push_keys.get(cid)
+                if cert_pub is not None and push is not None and push != cert_pub:
+                    out.append((cid, push))
         return out
 
     def notify_user(self, user_id: str, kind: str, ref: str | None = None) -> dict[str, str]:
@@ -91,9 +111,9 @@ class PushNotifier:
         except Exception:  # noqa: BLE001 - a hook must never break the caller; the failure is logged by type only
             log.warning("push: channel list failed")
             return out
-        for cid, pub in targets:
+        for cid, push_pub in targets:
             try:
-                out[cid] = "sent" if self._client.send_push(cid, pub, kind, ref) else "no_target"
+                out[cid] = "sent" if self._client.send_push(cid, push_pub, kind, ref) else "no_target"
             except RelayError as e:
                 out[cid] = "failed"
                 log.warning("push to %s failed: %s", cid[:8], _safe_code(e.code))
@@ -142,6 +162,7 @@ class PushNotifier:
             return False
         with self._lock:
             self.pending_cleanup.discard(channel_id)
+            self._push_keys.pop(channel_id, None)
         return True
 
     def channel_revoked_async(self, channel_id: str) -> None:

@@ -177,3 +177,38 @@ def test_too_many_items_refuse_before_anything_is_sent(monkeypatch):
     with pytest.raises(HubRefused) as e:
         run(st, [T(str(n)) for n in range(3)], link)
     assert e.value.code == "too_many_items" and link.calls == []
+
+
+def test_one_refused_item_is_skipped_and_reported_and_the_rest_goes_on():
+    st, link = S.ShareState(), FakeLink()
+    st.add_rule({"kind": "tag", "tag": "public"})
+    tickets = [T("a", labels=["public"]), T("b", labels=["public"]), T("c", labels=["public"])]
+    n = iter(range(1, 1000))
+
+    def build(item_id, item, version):
+        if item.ticket_key == "K-2":
+            raise HubRefused("malformed")
+        return fake_build(item_id, item, version)
+
+    got = S.sync(st, S.select(st.rules, tickets), link=link, build=build, save=lambda s: None,
+                 new_id=lambda: f"{next(n):032x}")  # fmt: skip
+    assert got == {"put": 2, "revoke": 0, "kept": 0, "refused": {"ticket:b": "malformed"}}
+    assert [b["item_id"] for o, b in link.calls if o == "share_put"] == [f"{1:032x}", f"{3:032x}"]
+    assert "ticket:b" not in st.sent  # nothing was recorded for the refused item
+
+
+def test_a_put_the_hub_refuses_for_the_item_is_skipped_but_a_link_failure_still_stops():
+    class Link(FakeLink):
+        def call(self, op, body):
+            if op == "share_put" and body["item_id"] == f"{1:032x}":
+                raise HubRefused("too_large")
+            return super().call(op, body)
+
+    st = S.ShareState()
+    st.add_rule({"kind": "tag", "tag": "public"})
+    tickets = [T("a", labels=["public"]), T("b", labels=["public"])]
+    assert run(st, tickets, Link())["refused"] == {"ticket:a": "too_large"}
+    link = FakeLink()
+    link.fail_on = "share_put"
+    with pytest.raises(HubRefused):  # hub_unreachable is not about the item: stop
+        run(S.ShareState(rules=[{"kind": "tag", "tag": "public"}]), tickets, link)

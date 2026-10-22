@@ -326,9 +326,8 @@ def test_item_payloads_are_the_exact_contract_content():
 
 def test_an_item_without_a_readable_log_is_never_sent():
     st, hub = SH.ShareState(rules=[{"kind": "tag", "tag": "public"}]), HubSim()
-    with pytest.raises(HubRefused) as e:
-        run(st, [T(uid="XNOLOG")], hub)
-    assert e.value.code == "malformed" and hub.calls == [] and st.sent == {}
+    got = run(st, [T(uid="XNOLOG")], hub)  # skipped and reported, not sent (one item never stops the sync)
+    assert got["refused"] == {"ticket:XNOLOG": "malformed"} and hub.calls == [] and st.sent == {}
 
 
 def test_the_state_file_keeps_the_version_and_reads_an_older_one_as_zero():

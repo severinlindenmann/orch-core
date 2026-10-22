@@ -163,6 +163,8 @@ def _multiline(text: str) -> str:
     return clean(text.replace("\r\n", "\n").replace("\r", "\n")).strip()
 
 
+# a refusal about this one item (its content), not about the hub, the mode or the link: the sync goes on without it
+ITEM_REFUSALS = frozenset({"malformed", "too_large"})
 ITEM_KIND = {"summary": "needs_you", "ticket": "ticket", "question": "question"}
 
 
@@ -334,17 +336,20 @@ def sync(
     build: SealedItemBuilder,
     save: Callable[[ShareState], None],
     new_id: Callable[[], str] = new_item_id,
-) -> dict[str, int]:
+) -> dict[str, Any]:
     """Make the hub's copy equal ``wanted`` minus the owner's withdrawn items. Revokes first, then puts; ``save`` runs
     after every link call that succeeded, so a crash or an unreachable hub loses nothing and repeats nothing. Returns
-    the counts ``{"put", "revoke", "kept"}``. Stops at the first refusal (the state stays as far as it got)."""
+    the counts ``{"put", "revoke", "kept"}``, plus ``"refused"`` (logical id -> code) when items were skipped. One item
+    the contract or the hub refuses as such (``malformed``, ``too_large``) is skipped and reported, and the rest goes
+    on; any other refusal (hub not reachable, wrong mode, ...) stops the sync (the state stays as far as it got)."""
     items = {i.logical: i for i in wanted}
     if len(items) > MAX_ITEMS:
         raise HubRefused("too_many_items")  # before anything is sent
     # a withdrawal ends when the item no longer matches
     state.withdrawn = [lg for lg in state.withdrawn if lg in items]
     live = {lg: i for lg, i in items.items() if lg not in state.withdrawn}
-    counts = {"put": 0, "revoke": 0, "kept": 0}
+    counts: dict[str, Any] = {"put": 0, "revoke": 0, "kept": 0}
+    refused: dict[str, str] = {}
     for lg in sorted(set(state.sent) - set(live)):
         link.call("share_revoke", {"item_id": state.sent[lg]["item_id"]})
         del state.sent[lg]
@@ -357,16 +362,30 @@ def sync(
             continue
         item_id = new_id() if have is None else have["item_id"]
         version = (0 if have is None else have.get("version", 0)) + 1  # every put attempt takes a higher version
-        sealed = build(item_id, item, version)  # may refuse: nothing is recorded or sent for this item
+        try:
+            sealed = build(item_id, item, version)  # may refuse: nothing is recorded or sent for this item
+        except HubRefused as exc:
+            if exc.code not in ITEM_REFUSALS:
+                raise
+            refused[lg] = exc.code
+            continue
         if have is None:
             have = state.sent[lg] = {"item_id": item_id, "digest": None, "version": version}
         have["version"] = version
         save(
             state
         )  # id and version are recorded BEFORE the put: a lost reply is retried under the same id, higher version
-        link.call("share_put", {"item_id": item_id, "sealed": sealed})
+        try:
+            link.call("share_put", {"item_id": item_id, "sealed": sealed})
+        except HubRefused as exc:
+            if exc.code not in ITEM_REFUSALS:
+                raise
+            refused[lg] = exc.code
+            continue
         have["digest"] = item.digest
         counts["put"] += 1
         save(state)
+    if refused:
+        counts["refused"] = refused
     save(state)
     return counts

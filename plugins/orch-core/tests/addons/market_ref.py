@@ -42,22 +42,23 @@ def schema() -> dict[str, Any]:
 # ------------------------------------------------------------------------------------------------ signatures
 
 
-def entry_message(entry: dict[str, Any]) -> bytes:
-    """What a publisher signs: the label and ``cj`` of the entry with ``publisher`` reduced to ``{key}``."""
+def entry_message(entry: dict[str, Any], market: str) -> bytes:
+    """What a publisher signs: the label and ``cj`` of the entry (``publisher`` reduced to ``{key}``) together with the
+    URL of the marketplace it is published in, so a signed entry cannot be replayed into another marketplace."""
     e = copy.deepcopy(entry)
     e["publisher"] = {"key": entry["publisher"]["key"]}
-    return ENTRY_LABEL + dumps(e)
+    return ENTRY_LABEL + dumps({"entry": e, "market": market})
 
 
-def sign_entry(entry: dict[str, Any], private_key: ec.EllipticCurvePrivateKey) -> str:
+def sign_entry(entry: dict[str, Any], private_key: ec.EllipticCurvePrivateKey, market: str) -> str:
     from orch.crypto.encoding import b64u
 
-    der = private_key.sign(entry_message(entry), ec.ECDSA(hashes.SHA256()))
+    der = private_key.sign(entry_message(entry, market), ec.ECDSA(hashes.SHA256()))
     r, s = decode_dss_signature(der)
     return b64u(r.to_bytes(32, "big") + s.to_bytes(32, "big"))
 
 
-def verify_entry(entry: dict[str, Any]) -> bool:
+def verify_entry(entry: dict[str, Any], market: str) -> bool:
     try:
         key = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), unb64u(entry["publisher"]["key"], 65))
         raw = unb64u(entry["publisher"]["sig"], 64)
@@ -65,7 +66,7 @@ def verify_entry(entry: dict[str, Any]) -> bool:
         n = 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551
         if not (1 <= r < n and 1 <= s < n):
             return False
-        key.verify(encode_dss_signature(r, s), entry_message(entry), ec.ECDSA(hashes.SHA256()))
+        key.verify(encode_dss_signature(r, s), entry_message(entry, market), ec.ECDSA(hashes.SHA256()))
         return True
     except (InvalidSignature, EncodingError, ValueError):
         return False
@@ -106,7 +107,9 @@ def check_index(index: Any) -> dict[str, Any]:
         if isinstance(e, dict):
             if not isinstance(e.get("commit"), str) or not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", e["commit"]):
                 raise Refuse("market.unpinned")
-            if not isinstance(e.get("package_sha256"), str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", e["package_sha256"]):
+            if not isinstance(e.get("package_sha256"), str) or not re.fullmatch(
+                r"sha256:[0-9a-f]{64}", e["package_sha256"]
+            ):
                 raise Refuse("market.bad_digest_format")
     if next(Draft202012Validator(schema()).iter_errors(doc), None) is not None:
         raise Refuse("market.malformed")
@@ -121,34 +124,88 @@ def check_index(index: Any) -> dict[str, Any]:
 
 # ------------------------------------------------------------------------------------------------ lockfiles
 
-_PY_LINE = re.compile(
-    r"[A-Za-z0-9][A-Za-z0-9._-]*==[A-Za-z0-9.!+_-]+(?: *; *[^#\\]+?)?(?: +--hash=sha256:[0-9a-f]{64})+"
-)
+_PY_LINE = re.compile(r"(?P<req>\S.*?)(?P<hashes>(?: +--hash=sha256:[0-9a-f]{64})+)")
+NODE_HOSTS = ("registry.npmjs.org",)  # the registry hosts a node lockfile may name (per ecosystem, pinned in core)
+
+
+def _py_requirement_ok(req: str) -> bool:
+    """A real PEP 508 parse: one name, one exact ``==`` pin, an optional environment marker, nothing else. Options
+    (``--index-url``…) cannot hide in a marker because the whole text must parse as a requirement."""
+    from packaging.requirements import InvalidRequirement, Requirement
+
+    try:
+        r = Requirement(req)
+    except InvalidRequirement:
+        return False
+    specs = list(r.specifier)
+    return r.url is None and len(specs) == 1 and specs[0].operator == "==" and "*" not in specs[0].version
+
+
+def _node_entry_ok(p: Any) -> bool:
+    if not isinstance(p, dict) or p.get("link"):
+        return False
+    resolved, integrity = p.get("resolved"), p.get("integrity")
+    if not isinstance(resolved, str) or not isinstance(integrity, str) or not integrity.startswith("sha512-"):
+        return False
+    m = re.fullmatch(r"https://([a-z0-9.-]+)/[A-Za-z0-9@._~/-]+", resolved)
+    return m is not None and m[1] in NODE_HOSTS
 
 
 def check_lock(kind: str, text: str) -> None:
-    """Section 8: every entry pinned and hashed, nothing that resolves or fetches by itself. Raises ``lock_invalid``."""
+    """Section 8: every entry pinned and hashed, nothing that resolves or fetches by itself. Raises ``lock_invalid``.
+    Install scripts are not judged here: lock metadata is the publisher's claim. The installer turns scripts off."""
     if kind == "python-requirements":
         logical = re.sub(r" *\\\n *", " ", text)
         lines = [ln.strip() for ln in logical.splitlines() if ln.strip() and not ln.strip().startswith("#")]
-        if not lines or not all(_PY_LINE.fullmatch(ln) for ln in lines):
+        ok = bool(lines)
+        for ln in lines:
+            m = _PY_LINE.fullmatch(ln)
+            ok = ok and m is not None and _py_requirement_ok(m["req"])
+        if not ok:
             raise Refuse("market.lock_invalid")
     elif kind == "node-package-lock":
         try:
             lock = json.loads(text, object_pairs_hook=_strict_pairs)
             pkgs = lock["packages"]
-            ok = lock["lockfileVersion"] == 3 and isinstance(pkgs, dict) and len(pkgs) > 1
+            root = pkgs[""]
+            ok = lock["lockfileVersion"] == 3 and isinstance(pkgs, dict) and len(pkgs) > 1 and isinstance(root, dict)
+            # the root entry is the add-on itself: it is not fetched, so it must not claim a source or a link,
+            # and everything it depends on must be a locked entry
+            ok = ok and not ({"resolved", "integrity", "link", "inBundle"} & set(root))
+            for field in ("dependencies", "optionalDependencies", "peerDependencies"):
+                for dep in root.get(field, {}):
+                    ok = ok and f"node_modules/{dep}" in pkgs
             for key, p in pkgs.items():
-                if key == "":
-                    continue
-                ok = ok and p.get("resolved", "").startswith("https://") and p.get("integrity", "").startswith("sha512-")
-                ok = ok and not p.get("link") and "hasInstallScript" not in p
+                if key != "":
+                    ok = ok and key.startswith("node_modules/") and _node_entry_ok(p)
         except (ValueError, KeyError, TypeError, AttributeError):
             ok = False
         if not ok:
             raise Refuse("market.lock_invalid")
     else:  # the schema only lets the two kinds through
         raise Refuse("market.malformed")
+
+
+# ------------------------------------------------------------------------------------------------ network targets
+
+
+def check_address(ip: str) -> None:
+    """Section 5.1: the address a connection is about to use, after DNS resolution (and again after any redirect)."""
+    import ipaddress
+
+    try:
+        a = ipaddress.ip_address(ip)
+    except ValueError:
+        raise Refuse("market.address_refused") from None
+    if getattr(a, "ipv4_mapped", None) is not None:
+        a = a.ipv4_mapped
+    if not a.is_global or a.is_multicast:
+        raise Refuse("market.address_refused")
+
+
+def _semver(v: str) -> tuple[int, int, int]:
+    a, b, c = v.split(".")
+    return int(a), int(b), int(c)
 
 
 # ------------------------------------------------------------------------------------------------ install
@@ -177,15 +234,21 @@ def install(a: dict[str, Any]) -> dict[str, Any]:
     entry = next((e for e in doc["addons"] if e["id"] == a["id"]), None)
     if entry is None:
         raise Refuse("market.unknown_addon")
+    host = lambda u: u.split("/")[2]  # noqa: E731  (schema guarantees https://host/…)
+    if host(entry["source"]["git"]) != host(repo) and host(entry["source"]["git"]) not in ctx["git_hosts"]:
+        raise Refuse("market.host_not_allowed")
     if not official and entry["id"] in ctx["builtin"]:
         raise Refuse("market.reserved_id")
     prior = ctx["installed"].get(entry["id"])
     if prior is not None and prior["origin"] != repo:
         raise Refuse("market.origin_changed")
+    floor = [v for v in (prior and prior["version"], ctx["seen"].get(f"{repo}|{entry['id']}")) if v]
+    if any(_semver(entry["version"]) < _semver(v) for v in floor):
+        raise Refuse("market.rollback")
     pub = entry.get("publisher")
     if official and (pub is None or pub["key"] != ctx["official"]["key"]):
         raise Refuse("market.official_unsigned")
-    if pub is not None and not verify_entry(entry):
+    if pub is not None and not verify_entry(entry, repo):
         raise Refuse("market.bad_signature")
     known = ctx["known_keys"].get(f"{repo}|{entry['id']}")
     if known is not None and (pub is None or pub["key"] != known):
@@ -237,6 +300,9 @@ def run_case(case: dict[str, Any]) -> dict[str, Any]:
             return {"ok": {"addons": [e["id"] for e in doc["addons"]]}}
         if case["check"] == "install":
             return {"ok": install(case["args"])}
+        if case["check"] == "address":
+            check_address(case["args"]["ip"])
+            return {"ok": {}}
         if case["check"] == "lock":
             check_lock(case["args"]["kind"], case["args"]["text"])
             return {"ok": {}}

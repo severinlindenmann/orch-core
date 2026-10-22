@@ -40,8 +40,8 @@ def test_vector(case):
 def test_vector_names_are_unique_and_the_set_is_not_one_sided():
     names = [c["name"] for c in CASES]
     assert len(names) == len(set(names))
-    assert sum("ok" in c["expect"] for c in CASES) >= 8
-    assert sum("refuse" in c["expect"] for c in CASES) >= 40
+    assert sum("ok" in c["expect"] for c in CASES) >= 14
+    assert sum("refuse" in c["expect"] for c in CASES) >= 80
 
 
 def test_every_code_in_the_doc_has_a_vector_and_every_vector_code_is_in_the_doc():
@@ -66,6 +66,13 @@ def test_the_spec_names_the_brief_negatives():
         "install_community_without_isolation",
         "install_agent_refused",
         "install_lock_tampered_after_indexing",
+        "install_signed_entry_replayed_into_another_marketplace",
+        "install_older_signed_entry_than_seen",
+        "lock_python_marker_smuggles_index_url",
+        "lock_node_resolved_other_host",
+        "index_entry_ip_literal_host",
+        "install_entry_host_not_allowed",
+        "address_refused_link_local_metadata",
     ):
         assert n in names
 
@@ -73,10 +80,15 @@ def test_the_spec_names_the_brief_negatives():
 def test_a_valid_signature_over_the_entry_verifies_and_any_change_breaks_it():
     idx = next(c for c in CASES if c["name"] == "index_valid_full")["args"]["index"]
     entry = next(e for e in idx["addons"] if "publisher" in e)
-    assert ref.verify_entry(entry)
+    market = idx["source"]["git"]
+    assert ref.verify_entry(entry, market)
     for field, value in (("version", "9.9.9"), ("commit", "f" * 40), ("package_sha256", "sha256:" + "0" * 64)):
-        assert not ref.verify_entry({**entry, field: value}), field
-    assert not ref.verify_entry({**entry, "publisher": {**entry["publisher"], "key": VECTORS["keys"]["mallory"]}})
+        assert not ref.verify_entry({**entry, field: value}, market), field
+    assert not ref.verify_entry(
+        {**entry, "publisher": {**entry["publisher"], "key": VECTORS["keys"]["mallory"]}}, market
+    )
+    # the signature names the marketplace: the same entry does not verify anywhere else
+    assert not ref.verify_entry(entry, "https://github.com/evil/mirror")
 
 
 def test_the_vector_keys_are_distinct_and_no_private_key_is_in_the_file():

@@ -27,7 +27,7 @@
   "$defs": {
     "name": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}(?![\\s\\S])"},
     "oneLine": {"type": "string", "minLength": 1, "maxLength": 140, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029]+(?![\\s\\S])"},
-    "gitUrl": {"type": "string", "maxLength": 200, "pattern": "^https://[a-z0-9][a-z0-9.-]{0,98}[a-z0-9](?::[0-9]{1,5})?(?:/[A-Za-z0-9][A-Za-z0-9._~-]{0,99}){1,6}(?![\\s\\S])", "description": "https only, lower-case host, no credentials, no query, no fragment, every path segment starts with a letter or digit (so no '.' or '..')"},
+    "gitUrl": {"type": "string", "maxLength": 200, "pattern": "^https://(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.){1,5}[a-z]{2,24}(?:/[A-Za-z0-9][A-Za-z0-9._~-]{0,99}){1,6}(?![\\s\\S])", "description": "https only; a dotted lower-case DNS name whose last label is letters (so no IP literal in any notation and no 'localhost'); no port (443 only), no credentials, query or fragment; every path segment starts with a letter or digit (so no '.' or '..'). Which hosts are allowed is a rule of the installer (section 5.1), not of the schema"},
     "semver": {"type": "string", "pattern": "^(?:0|[1-9][0-9]{0,3})\\.(?:0|[1-9][0-9]{0,3})\\.(?:0|[1-9][0-9]{0,3})(?![\\s\\S])"},
     "coreVersion": {"type": "string", "pattern": "^(?:0|[1-9][0-9]{0,3})(?:\\.(?:0|[1-9][0-9]{0,3})){0,2}(?:\\.dev(?:0|[1-9][0-9]{0,5}))?(?![\\s\\S])", "description": "same grammar as min_core in addon-api.md section 2"},
     "b64uKey": {"type": "string", "minLength": 87, "maxLength": 87, "pattern": "^[A-Za-z0-9_-]{86}[AEIMQUYcgkosw048](?![\\s\\S])", "description": "65-byte uncompressed P-256 point, canonical unpadded base64url"},
@@ -77,7 +77,7 @@
             "key": {"$ref": "#/$defs/b64uKey"},
             "sig": {"$ref": "#/$defs/b64uSig"}
           },
-          "description": "optional; sig = Sign(key, 'orch/market/1/entry|' || cj(entry with publisher reduced to {key}))"
+          "description": "optional; sig = Sign(key, 'orch/market/1/entry|' || cj({'entry': entry with publisher reduced to {key}, 'market': the marketplace source URL}))"
         }
       }
     }

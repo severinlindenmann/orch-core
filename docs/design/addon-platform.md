@@ -181,8 +181,12 @@ callers by the host as well. The plugin guard denies these commands in Bash.
 - **Settings → Versions** (extends the About/versions block from T10). It shows orch core, dashboard and every add-on
   per workspace, each with installed, granted and latest version; an **Update available** badge; a **Needs approval**
   badge; and the changelog (data, capped).
-- **Data:** a host op `versions.get` (read-only). The **host** fetches `channel.json` and `addons.json` at most every
-  6 hours and when `orch update --check` runs. It verifies them before caching in `<state>/host/update-check.json` and
+- **Data:** a host op `versions.get` (read-only). The **host** fetches `channel.json` and `addons.json` only when
+  asked: `orch update --check`, or **Check now** in Settings → Versions (host op `versions.check`, at most once a
+  minute; it writes only the cache). The **background check is off by default** (owner decision 3). The signed
+  setting `updates.auto_check` turns on a check every 6 hours. It goes through the usual `settings.set` review and is
+  human-only like every `settings.set`. The host honours it from a workspace whose owner is this machine's person;
+  setting it off there stops the check. The fetched data is the same either way. It verifies them before caching in `<state>/host/update-check.json` and
   serves only what it verified. The page never fetches GitHub: its CSP stays `connect-src 'self'`. A failed check
   shows "Last checked … (could not reach the release server)".
 - **Core/dashboard update: a copy-the-command card, never a signed request from the browser.** Replacing the host,
@@ -210,7 +214,7 @@ callers by the host as well. The plugin guard denies these commands in Bash.
 Units: the catalog vectors (same suite as release vectors, plus `purpose` confusion), the api-range and `min_core`
 compare, the registry state `incompatible`, safe tar extraction (links, `..`, absolute paths, size bombs),
 grant-from-staged under the lock (a digest swap between staging and grant → refused), crash recovery of the rename,
-review diff lines, agent refusals, and `versions.get` with a fake fetcher (an unverified cache is never served). Dashboard:
+review diff lines, agent refusals, and `versions.get` with a fake fetcher (an unverified cache is never served), no network call while `updates.auto_check` is off and nobody asked, the `versions.check` rate limit. Dashboard:
 vitest for the Versions view and the copy card, a Playwright check of the add-on update review on an isolated HOME. E2E:
 `e2e/run.sh addon-update` (a test-channel catalog: stage wiki 0.2.0 → review → sign → active on the new digest; the
 old version keeps running before the signature).
@@ -225,8 +229,8 @@ old version keeps running before the signature).
 | A4 | now, Tier S | `addon.grant` from staged: lock, swap, recovery, `addon.stage` op, catalog codes and goldens | `uv run pytest tests/addons/test_grant_staged.py -x -q` |
 | A5 | now | Review diff (capabilities ±, changelog label) in CLI and Settings → Add-ons | `uv run pytest tests/addons/test_review_lines.py -x -q` |
 | A6 | now | `orch update addon` / `orch addon install`, core preflight | `uv run pytest tests/update/test_addon_update.py -x -q` |
-| A7 | now | Host fetch and cache, `versions.get` op | `uv run pytest tests/host/test_versions_op.py -x -q` |
-| A8 | now | Dashboard Settings → Versions, copy card, update → stage → existing review | `cd addons/dashboard && npx vitest run src/app/settings/versions.test.tsx` |
+| A7 | now | Host fetch and cache on request (`versions.check`, rate-limited), `versions.get`, the signed `updates.auto_check` setting (off by default) and the 6-hour timer | `uv run pytest tests/host/test_versions_op.py -x -q` |
+| A8 | now | Dashboard Settings → Versions, "Check now", the auto-check switch (signed), copy card, update → stage → existing review | `cd addons/dashboard && npx vitest run src/app/settings/versions.test.tsx` |
 | A9 | now | Declarative UI v1 schema plus renderer; port estimate, model-routing, usage | `cd addons/dashboard && npx vitest run src/app/addons/declarative.test.tsx` |
 | A10 | later | Add-on frames and the `postMessage` bridge (Opus design review first) | (later) |
 | A11 | later | Runner-side add-on code under tier B; waves 2 and 3 | (later) |
@@ -237,5 +241,11 @@ before pushing.
 
 ## 12. Owner questions
 
-1. Automatic update check: the host contacts GitHub at most every 6 hours (no identifiers sent). Should it be on by
-   default, or off until switched on in Settings (local-only default, 16 Oct)?
+### Decisions (owner, 22 Oct)
+
+1. **Background update check off by default.** New versions show up through `orch update --check` and "Check now"
+   in Settings → Versions. The 6-hourly check is a human-only signed setting (§8; tasks A7, A8).
+2. **Linux from the start** and **root key in Proton Pass "Agents"**: see install-update §12. The catalog key is
+   certified by the same ceremony (install-update §4.5).
+
+No open questions.

@@ -12,6 +12,7 @@ from typing import Any
 
 from . import audit as AU
 from . import hub as H
+from . import phase4 as P4
 from . import spaces as SP
 from . import suite as S
 from .canon import b64u, unb64u
@@ -313,6 +314,53 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
         return {"put": True}
     if check == "space_flow":
         return _space_flow(a)
+    # ---- phase 4 (V3-D23)
+    if check == "action":
+        o = P4.check_action(a["action"], role=a["role"])
+        return {"type": o["type"]}
+    if check == "prepared":
+        return {"digest_hex": P4.check_prepared(a["ctx"], a["digest_hex"]).hex()}
+    if check == "log_sync":
+        views: dict[str, list[str]] = {}
+        wk = {int(e): bytes.fromhex(k) for e, k in a["wk_epochs"].items()}
+        for body in a["pages"]:
+            views = P4.apply_view_page(
+                views, body, workspace_id=a["workspace_id"], wsk_pub=unb64u(a["wsk_pub"], 65), wk_epochs=wk
+            )
+        return {log: {"seq": len(hs), "head": hs[-1]} for log, hs in sorted(views.items())}
+    if check == "channel_register":
+        r = P4.verify_channel_register(
+            a["signed"], hub_id=a["hub_id"], challenge=a["challenge"], now_ms=now, dev_mode=dev
+        )
+        return {"channel_id": r["channel_id"], "factor": r["factor"]}
+    if check == "space_proposal":
+        held = _held(a)
+        held_space = SP.verify_space(a["held_space"], held, dev_mode=dev) if a.get("held_space") else None
+        o = P4.verify_space_proposal(
+            a["signed"],
+            held,
+            workspace_id=a["workspace_id"],
+            now_ms=now,
+            dev_mode=dev,
+            held_space=held_space,
+            revoked_op_certs=_later(a),
+        )
+        acc = P4.accept_from_proposal(o)
+        return {"epoch": o["epoch"], "members_hash": acc["members_hash"], "prev_members_hash": acc["prev_members_hash"]}
+    if check == "relay_request":
+        r = a["request"]
+        st = {
+            "hub_cards": {a["hub_id"]: a["hub_card"]},
+            "revoked_op_certs": a.get("revoked_op_certs", []),
+            "nonces": a.get("nonces", {}),
+        }
+        req = {
+            "method": r["method"],
+            "target": r["target"],
+            "headers": r["headers"],
+            "body": bytes.fromhex(r["body_hex"]),
+        }
+        return P4.check_relay_request(req, st, now_ms=now, dev_mode=dev)
     raise ValueError(f"unknown check {check}")
 
 

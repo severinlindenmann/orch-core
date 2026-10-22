@@ -21,8 +21,11 @@ HUB_LABELS: dict[str, str] = {
     "sig_hub_admin_read": "orch/v2/hub-admin-read|",  # F3: hub admin metadata read at orch-publish
     "sig_hub_space": "orch/v2/hub-space|",  # V3-D8 shared spaces (§10.4): a space record at one epoch
     "sig_hub_space_wrap": "orch/v2/hub-space-wrap|",  # V3-D8: SK_e sealed to one member workspace's WXK
+    "sig_hub_space_proposal": "orch/v2/hub-space-proposal|",  # p4 (#1020): a proposed member transition, to an invitee
+    "sig_hub_relay_request": "orch/v2/hub-relay-req|",  # p4 (E1): a hub -> relay request, bytes as admin read
     # signatures by a channel key
     "sig_hub_channel_proof": "orch/v2/hub-channel-proof|",
+    "sig_hub_channel_register": "orch/v2/hub-channel-reg|",  # p4: proof of possession at channel registration
     # signatures by WSK (workspace host)
     "sig_hub_binding": "orch/v2/sig/hub-binding|",
     "sig_hub_unbound": "orch/v2/sig/hub-unbound|",
@@ -45,12 +48,16 @@ HUB_LABELS: dict[str, str] = {
     "h_sk_commit": "orch/v2/hub-sk-commit|",  # V3-D8: commitment to SK_e inside the signed space record
     # AAD of a sealed space item
     "aad_space": "orch/v2/space-aad|",
+    # AAD of a sealed workspace-view page (p4, log_sync)
+    "aad_hub_view": "orch/v2/hub-view-aad|",
 }
 
 #: HKDF labels and seal purposes of V3-D8 (not signed/AAD bytes, so outside the prefix-free table; protocol-v2 §3 rules:
 #: ``info`` = label followed by ``|`` fields).
 KDF_SPACE_ITEM = b"orch/v2/space-item"  # HKDF(SK_e, "", label|space|epoch) -> the space's item key
 KDF_SPACE_ITEM_MSG = b"orch/v2/space-item-msg"  # HKDF(item key, salt16, label) -> one item's AEAD key
+KDF_HUB_VIEW = b"orch/v2/hub-view"  # p4: HKDF(WK_e, "", label|ws|epoch) -> the view key of one epoch
+KDF_HUB_VIEW_MSG = b"orch/v2/hub-view-msg"  # p4: SALTED-AEAD msg label of one view page
 PURPOSE_SPACE_SK = (
     "space-sk"  # seal_to purpose: SK_e to a member workspace's WXK (an addition to v2 §5.3's closed list)
 )
@@ -69,6 +76,8 @@ V2_REUSED: dict[str, str] = {
     "sig_card_wsk": "orch/v2/sig/card-wsk|",
     "h_person_id": "orch/v2/id/person|",
     "h_device_id": "orch/v2/id/device|",
+    "sig_host_event": "orch/v2/sig/host-event|",  # ticket-format §5.5: host_sig of every log line (log_sync)
+    "h_event": "orch/v2/event|",  # ticket-format §5.5: the event head (log_sync chain)
 }
 
 L: dict[str, bytes] = {k: v.encode("ascii") for k, v in {**HUB_LABELS, **V2_REUSED}.items()}

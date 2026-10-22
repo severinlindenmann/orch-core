@@ -84,6 +84,7 @@ class OpSigner(_Signer):
             "hub.space": "sig_hub_space",
             "hub.space_wrap": "sig_hub_space_wrap",
             "hub.audit": "sig_hub_audit",
+            "hub.space_proposal": "sig_hub_space_proposal",
         }
     )
     LINK_DIR = "h2w"
@@ -105,6 +106,20 @@ class OpSigner(_Signer):
             raise KeyUseError("admin reads are GET or HEAD")
         try:
             return self._sig(H.admin_read_bytes(hub_id, ts_ms, method, target))
+        except H.Refused as r:
+            raise KeyUseError(r.code) from None
+
+    def relay_request(
+        self, hub_id: str, op_cert_id: str, ts_ms: int, nonce: bytes, method: str, target: str, body: bytes
+    ) -> bytes:
+        """A hub -> relay request (§10.8) over the exact bytes; the target must be canonical and name this hub."""
+        from . import phase4 as P4
+
+        if method not in P4.RELAY_METHODS:
+            raise KeyUseError("not a relay request method")
+        try:
+            P4.parse_relay_target(target, hub_id)
+            return self._sig(P4.relay_request_bytes(hub_id, op_cert_id, ts_ms, nonce, method, target, body))
         except H.Refused as r:
             raise KeyUseError(r.code) from None
 
@@ -130,9 +145,15 @@ class UkSigner(_Signer):
 
 
 class ChannelSigner(_Signer):
-    """A channel key (phone, browser): the proof over a 32-byte event digest only."""
+    """A channel key (phone, browser): the proof over a 32-byte event digest, and its own registration object (§6.3)
+    naming this very key, nothing else."""
 
-    KINDS = MappingProxyType({})
+    KINDS = MappingProxyType({"hub.channel_register": "sig_hub_channel_register"})
+
+    def sign_object(self, o: Mapping[str, Any]) -> dict[str, Any]:
+        if type(o) is dict and o.get("kind") == "hub.channel_register" and o.get("key_pub") != b64u(self.public):
+            raise KeyUseError("a channel key registers itself only")
+        return super().sign_object(o)
 
     def proof(self, digest: bytes) -> bytes:
         if type(digest) is not bytes or len(digest) != 32:

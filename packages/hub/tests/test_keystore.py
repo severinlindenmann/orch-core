@@ -9,6 +9,7 @@ from orch_hub.contract import hub as H
 from orch_hub.contract import keystore as KS
 from orch_hub.contract import suite as S
 from orch_hub.contract import vectorgen as G
+from orch_hub.contract import vectorgen_p4 as G4
 from orch_hub.contract.canon import unb64u
 
 NOW = G.NOW
@@ -33,6 +34,8 @@ SAMPLES = {
     "hub.binding": G.binding()["o"],
     "hub.unbound": G.unbound()["o"],
     "hub.publish_approval": G.approval()["o"],
+    "hub.channel_register": G4.register()["o"],
+    "hub.space_proposal": G4.proposal()["o"],
     "link.w2h": G.link("snapshot_get", {})["o"],
     "link.h2w": G.link("route_in", {"envelope": "eA"}, direction="h2w", key="hk_op")["o"],
 }
@@ -46,10 +49,11 @@ ALLOWED = {
         "hub.space",
         "hub.space_wrap",
         "hub.audit",
+        "hub.space_proposal",
         "link.h2w",
     },
     KS.UkSigner: set(),
-    KS.ChannelSigner: set(),
+    KS.ChannelSigner: {"hub.channel_register"},
     KS.WskSigner: {"hub.binding", "hub.unbound", "space.item", "space.accept", "link.w2h"},
     KS.OwnerDeviceSigner: {"hub.publish_approval"},
 }
@@ -152,3 +156,25 @@ def test_op_admin_read_signs_only_get_or_head_over_the_exact_bytes():
             op.admin_read(G.HUB_ID, NOW, bad, G.ADMIN_TARGET)
     for other in (KS.RootSigner, KS.WskSigner, KS.UkSigner):
         assert not hasattr(signer(other), "admin_read")
+
+
+def test_channel_registers_only_its_own_key():
+    ch = KS.ChannelSigner(G.K.priv["channel_alice_phone"])
+    with pytest.raises(KS.KeyUseError):
+        ch.sign_object(G4.register(key="channel_bob_browser")["o"])
+
+
+def test_op_relay_request_signs_only_canonical_targets_of_its_hub():
+    from orch_hub.contract import phase4 as P4
+
+    op = KS.OpSigner(G.K.priv["hk_op"])
+    sig = op.relay_request(G.HUB_ID, G.OP_CERT_ID, NOW, G4.RELAY_NONCE, "POST", G4.RELAY_TARGET, G4.RELAY_BODY)
+    msg = P4.relay_request_bytes(G.HUB_ID, G.OP_CERT_ID, NOW, G4.RELAY_NONCE, "POST", G4.RELAY_TARGET, G4.RELAY_BODY)
+    assert S.verify(op.public, sig, msg)
+    for method, target in (
+        ("POST", f"/v2/hubs/{G.fake16('other')}/push"),
+        ("POST", f"/v2/hubs/{G.HUB_ID}/../x"),
+        ("PATCH", G4.RELAY_TARGET),
+    ):
+        with pytest.raises(KS.KeyUseError):
+            op.relay_request(G.HUB_ID, G.OP_CERT_ID, NOW, G4.RELAY_NONCE, method, target, b"")

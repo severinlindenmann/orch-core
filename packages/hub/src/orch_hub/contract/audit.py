@@ -71,6 +71,15 @@ EVENT_FIELDS: dict[str, dict[str, Any]] = {
         "workspace_id": _opt_hex16,
         "actor_user_id": _opt_hex16,
     },
+    # p4 (§10.5): a channel key was registered or revoked (revocation is permanent); hub-wide, so no scope tag.
+    # actor_user_id: the user who registered or revoked it, or None for the operator at the hub terminal.
+    "channel": {
+        "channel_id": _hex16,
+        "user_id": _hex16,
+        "change": _enum("register", "revoke"),
+        "factor": _enum("se-unlocked", "passkey", "password+totp"),
+        "actor_user_id": _opt_hex16,
+    },
 }
 
 

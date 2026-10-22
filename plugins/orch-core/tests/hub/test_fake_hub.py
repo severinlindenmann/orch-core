@@ -345,7 +345,8 @@ def test_unbound_for_another_hub_and_stale(joined: HostLink):
 def vector_publish_request(**hdr):
     r = json.loads(json.dumps(V["publish"]["request"]))
     r.pop("access")  # route metadata of orch-publish, not a member of the section 10.2 request
-    r["headers"] = {k: v for k, v in r["headers"].items() if k != "Orch-Hub-Signature"} | hdr
+    # the host's header set only (11.1): the vector is the forwarded request, so the hub's two headers come off
+    r["headers"] = {k: v for k, v in r["headers"].items() if k not in ("Orch-Hub", "Orch-Hub-Signature")} | hdr
     return r
 
 
@@ -354,7 +355,8 @@ def test_publish_out_forwards_unchanged_plus_a_verifiable_hub_signature(joined: 
     assert joined.call("publish_out", {"request": req}) == {"status": 200, "body_hex": ""}
     (fwd,) = hub.forwarded
     assert fwd.workspace_id == WS and fwd.at_ms == NOW
-    sent = {k: v for k, v in fwd.request["headers"].items() if k != "Orch-Hub-Signature"}
+    sent = {k: v for k, v in fwd.request["headers"].items() if k not in ("Orch-Hub", "Orch-Hub-Signature")}
+    assert fwd.request["headers"]["Orch-Hub"] == hub.hub_id
     assert sent == req["headers"] and fwd.request["body_hex"] == req["body_hex"]
     # what orch-publish checks (section 11.2 step 7): the hub signature over the vector's hub-path WSK bytes
     wsk_bytes = bytes.fromhex(V["publish"]["wsk_signed_hex"])
@@ -382,9 +384,9 @@ def test_publish_out_refusals(joined: HostLink, hub: FakeHub):
     bad = vector_publish_request()
     del bad["headers"]["Orch-Nonce"]
     assert code(joined, "publish_out", {"request": bad}) == "malformed"
-    assert code(joined, "publish_out", {"request": vector_publish_request(**{"Orch-Hub": V["ids"]["hub_rogue"]})}) == (
-        "other_hub"
-    )
+    for hub_header in ("Orch-Hub", "Orch-Hub-Signature"):  # the hub's headers are the hub's alone (#981)
+        host_sent = vector_publish_request(**{hub_header: V["ids"]["hub"]})
+        assert code(joined, "publish_out", {"request": host_sent}) == "malformed"
     assert code(joined, "publish_out", {"request": vector_publish_request(**{"Orch-Workspace": "00" * 16})}) == (
         "other_workspace"
     )

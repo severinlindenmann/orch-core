@@ -21,6 +21,7 @@ type-checked, there is no replay store.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import socket
@@ -68,6 +69,7 @@ class LinkServer:
         audit: Any = None,
         wk_seals: WkSeals | None = None,
         views: Any = None,
+        shares: Any = None,
         host: str = "127.0.0.1",
         port: int = 0,
         dev_mode: bool = True,
@@ -90,6 +92,8 @@ class LinkServer:
         self._audit = audit
         self._wk_seals = wk_seals
         self._views = views
+        self._shares = shares
+        self._retry_at = float("-inf")
         self._dev, self._now = dev_mode, now_ms
         self._max, self._t_hs, self._t_rd, self._t_idle = max_frame, handshake_timeout, read_timeout, idle_timeout
         self._t_unjoined = unjoined_idle_timeout
@@ -315,6 +319,12 @@ class LinkServer:
             if o["op"] not in ("join", "binding_put"):
                 st = self._reg.binding_state(ws)
                 if st is not None and st["status"] != "bound":
+                    if self._shares is not None and time.monotonic() - self._retry_at >= 30.0:
+                        self._retry_at = time.monotonic()  # at most once per 30 s, globally (registry lock held by it)
+                        with contextlib.suppress(
+                            Exception
+                        ):  # D9-1: best effort; purge stale share items if the sink is back
+                            self._shares.retry_pending()
                     raise Refused("not_bound")  # after hub.unbound only join and binding_put are served
             ctx = ops.OpContext(
                 hub_id=self.hub_id,
@@ -334,6 +344,7 @@ class LinkServer:
                 audit=self._audit,
                 wk_seals=self._wk_seals,
                 views=self._views,
+                shares=self._shares,
             )
             return handler(ctx)
         except Refused as e:

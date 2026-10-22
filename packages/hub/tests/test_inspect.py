@@ -104,7 +104,7 @@ def test_output_has_only_public_fields(make_hub, state):
     d = inspect(state)
     assert set(d) == {"dev", "hub_id", "workspaces", "unjoined_ops", "spaces", "audit"}
     assert set(d["workspaces"][G.WS_A]) == {
-        "workspace_id", "owner_person_id", "wsk_pub", "wsk_fingerprint", "mode", "binding", "ops", "snapshot", "routes", "wk_epochs",
+        "workspace_id", "owner_person_id", "wsk_pub", "wsk_fingerprint", "mode", "binding", "ops", "snapshot", "routes", "wk_epochs", "shares",
     }  # fmt: skip
 
 
@@ -151,3 +151,21 @@ def test_unjoined_link_does_not_grow_the_table(make_hub, state):
     d = inspect(state)
     assert d["workspaces"] == {} and d["unjoined_ops"]["snapshot_get"]["refused"] == 203
     db.close()
+
+
+def test_inspect_shows_share_counts_only(make_hub, state):
+    from orch_hub.shares import ShareService, ShareStore
+
+    store = ShareStore(str(state / "shares.db"))
+    reg = Registry(str(state / "registry.db"))
+    hub = make_hub(registry=reg, shares=ShareService(store, reg, hub_id=G.HUB_ID, hxk=G.K.priv["hxk"], dev_mode=True))
+    c = joined(hub)
+    from orch_hub.contract import vectorgen_p4 as V4
+
+    b = V4.share_body(V4.share_item(item_id=G.fake16("i1")))
+    c.request("share_put", b)
+    w = inspect(state)["workspaces"][G.WS_A]
+    assert w["shares"] == {"items": 1, "bytes": len(unb64u(b["sealed"]))}
+    assert w["ops"]["share_put"] == {"accepted": 1, "refused": 0}
+    assert G.fake16("i1") not in json.dumps(inspect(state))
+    store.close()

@@ -57,6 +57,11 @@ def _parser() -> argparse.ArgumentParser:
     dr.add_argument("--state", help="hub state dir (default: $ORCH_HUB_STATE)")
     dr.add_argument("--listen", help="the running hub's loopback host:port: its TLS key must match the card pin")
     dr.add_argument("--publish-url", help="orch-publish base URL: its /v2/hub/card route must answer")
+    rg = sub.add_parser("relay", help="dev: the hub's account at its relay (card from the key store)")
+    rg.add_argument("--state", help="hub state dir (default: $ORCH_HUB_STATE)")
+    rg.add_argument("--relay-url", help="override the card's relay_url (https, or http on loopback)")
+    rgs = rg.add_subparsers(dest="cmd", required=True)
+    rgs.add_parser("register", help="register or rotate the account by hub card (POST /v2/hubs, unsigned)")
     from .access.cli import add_parsers
 
     add_parsers(sub)
@@ -64,6 +69,18 @@ def _parser() -> argparse.ArgumentParser:
 
     add_space_parsers(sub)
     return p
+
+
+def _relay_register(args: argparse.Namespace) -> int:
+    from .relay import RelayClient, RelayError
+
+    try:
+        keys = HubKeys.open(Path(args.state) if args.state else default_state_dir())
+        print(dumps(RelayClient(keys, args.relay_url, dev=True).register()))  # the V3 hub is dev only
+    except (KeysError, RelayError) as e:
+        print(f"orch-hub: refused: {e}", file=sys.stderr)
+        return 1
+    return 0
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -90,6 +107,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         from .spaces.cli import run as run_spaces
 
         return run_spaces(args)
+    if args.group == "relay":
+        return _relay_register(args)
     if args.group == "releases":
         return _releases(args)
     if args.group == "doctor":

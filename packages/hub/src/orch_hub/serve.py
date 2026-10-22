@@ -26,12 +26,14 @@ from .link import LinkServer, Registry
 from .link.wkseal import WkSeals
 from .publish import HttpPublishSync, HubPublish, PublishConfig
 from .router import AccessAuthz, RouteQueue, Router
+from .shares import ShareService, ShareStore, hxk_handle
 from .spaces import SpaceService, SpaceStore
 
 REGISTRY_FILE = "registry.db"
 ROUTE_QUEUE_FILE = "route-queue.db"
 SPACES_FILE = "spaces.db"
 WK_SEAL_FILE = "wk-seal.db"
+SHARES_FILE = "shares.db"
 
 
 _HEX16 = re.compile(r"[0-9a-f]{32}")
@@ -114,6 +116,15 @@ def serve(
         lambda: keys.op_cert()["o"]["cert_id"],
         on_change=audit.space_change,
     )
+    share_store = ShareStore(str(state / SHARES_FILE))
+    shares = ShareService(
+        share_store,
+        registry,
+        hub_id=keys.hub_id,
+        hxk=hxk_handle(keys.hxk_pub, keys.hxk_exchange),
+        dev_mode=True,  # dev serve only (loopback); ShareService itself defaults to the fail-closed False
+        on_change=audit.share_change,
+    )
     fw = HubPublish(keys, HttpPublishSync(publish_url), PublishConfig(publish_url, api_host))
     stop = stop or threading.Event()
     server = LinkServer.from_keys(
@@ -128,12 +139,20 @@ def serve(
         spaces=spaces,
         audit=audit,
         wk_seals=wk_seals,
+        shares=shares,
         host=host,
         port=port,
     )
     try:
+        shares.reconcile()  # items of a workspace that is no longer a bound selective one are deleted
         spaces.reconcile()  # a workspace that is no longer bound leaves its spaces (also after a crash)
         fw.restore(registry.binding_objects())
+
+        def _retry_shares() -> None:  # D9-1: a pending share purge is retried while the hub runs
+            while not stop.wait(30):
+                shares.retry_pending()
+
+        threading.Thread(target=_retry_shares, name="share-purge-retry", daemon=True).start()
         server.start()
         if threading.current_thread() is threading.main_thread():
             for sig in (signal.SIGTERM, signal.SIGINT):
@@ -149,6 +168,7 @@ def serve(
         server.close()
         queue.close()
         space_store.close()
+        share_store.close()
         audit.store.close()
         registry.close()
         wk_seals.close()

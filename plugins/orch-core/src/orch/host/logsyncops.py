@@ -82,6 +82,22 @@ def _eligible(state: Any) -> bool:
     )
 
 
+def _model_joined(service: WorkspaceService, hub_id: str, binding_seq: int) -> bool:
+    """Does the signed log still say joined, full, to this hub and binding? A ``hub.left`` that reached the log by
+    another path (a replay, another host process) ends sending even while hub.json still says bound. Any doubt is no."""
+    try:
+        service.store.refresh()
+        m = dict(service.store.state.workspace.hub)
+    except Exception:  # noqa: BLE001
+        return False
+    return (m.get("status"), m.get("hub_id"), m.get("binding_seq"), m.get("mode")) == (
+        "joined",
+        hub_id,
+        binding_seq,
+        "full",
+    )
+
+
 def _path(service: WorkspaceService) -> Path:
     from . import hubops
 
@@ -128,7 +144,7 @@ def start(service: WorkspaceService) -> bool:
         k = _key(service)
         with _MU:
             rt = _RUNTIMES.get(k)
-            if not _eligible(state):
+            if not _eligible(state) or not _model_joined(service, state.hub_id, state.binding_seq):
                 if rt is not None:
                     _retire(k, rt)
                 return False
@@ -217,7 +233,11 @@ def _pass(service: WorkspaceService, rt: _Runtime) -> None:
     from . import hubops, peerops
 
     state = hubops._load_state(service)  # noqa: SLF001 - every pass: a leave or a rebinding ends this runtime
-    if not _eligible(state) or (state.hub_id, state.binding_seq) != (rt.hub_id, rt.binding_seq):
+    if (
+        not _eligible(state)
+        or (state.hub_id, state.binding_seq) != (rt.hub_id, rt.binding_seq)
+        or not _model_joined(service, rt.hub_id, rt.binding_seq)
+    ):
         raise HubRefused("not_joined")
     store = service.store
     epochs = hubops.epochs_for(service)
@@ -239,6 +259,7 @@ def _pass(service: WorkspaceService, rt: _Runtime) -> None:
             _eligible(cur)
             and (cur.hub_id, cur.binding_seq) == (rt.hub_id, rt.binding_seq)
             and int(cur.sealed["epoch"]) == epoch
+            and _model_joined(service, rt.hub_id, rt.binding_seq)
             and not rt.stop.is_set()
         )
 

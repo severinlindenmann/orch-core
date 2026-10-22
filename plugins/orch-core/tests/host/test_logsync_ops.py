@@ -187,6 +187,35 @@ def test_l2_c14_1_a_leave_stops_a_pass_that_a_slow_hub_keeps_alive(monkeypatch, 
     assert loghub.view.summary() != local_summary(served)
 
 
+def test_a_hub_left_in_the_log_stops_sending_even_while_hub_json_lags(human, served, stub, loghub):  # noqa: F811
+    human.run("hub.join", join_args(mode="full"))
+    ok(served.client().req("hub.connect", connect_args(), idem=True))
+    assert until(lambda: loghub.view.summary() == local_summary(served))
+    human.run("hub.leave", {})  # recorded in the log; hub.unbind has NOT run, hub.json still says bound
+    assert hubops._load_state(served.service).status == "bound"  # noqa: SLF001
+    assert not logsyncops._model_joined(  # noqa: SLF001
+        served.service,
+        HUB_ID,
+        hubops._load_state(served.service).binding_seq,  # noqa: SLF001
+    )
+    n = len(loghub.calls)
+    human.ticket("after the hub.left")
+    time.sleep(0.5)
+    assert len(loghub.calls) == n and loghub.view.summary() != local_summary(served)
+
+
+@pytest.mark.parametrize(
+    ("op", "kind", "stops"),
+    [("hub.unbind", None, True), ("hub.connect", "join", True), ("hub.connect", "switch", True),
+     ("hub.connect", "seal", False), ("hub.refresh", None, False)],
+)  # fmt: skip
+def test_every_hub_op_that_can_change_the_binding_stops_the_sender_first(monkeypatch, op, kind, stops):
+    calls = []
+    monkeypatch.setattr(logsyncops, "stop", lambda service, wait=0.0: calls.append(wait))
+    hubops._quiesce_logsync(object(), {"op": op, "kind": kind})  # noqa: SLF001
+    assert bool(calls) is stops and (not stops or calls == [logsyncops.STOP_WAIT_S])
+
+
 def test_the_position_is_kept_in_a_private_file_and_survives_a_restart(human, served, stub, loghub):  # noqa: F811
     human.run("hub.join", join_args(mode="full"))
     ok(served.client().req("hub.connect", connect_args(), idem=True))

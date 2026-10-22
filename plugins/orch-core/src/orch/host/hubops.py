@@ -667,10 +667,7 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
     now = lambda: int(service.clock() * 1000)  # noqa: E731
     save = lambda s: _save_state(service, s)  # noqa: E731
     model, state = plan["model"], plan["state"]
-    if plan["op"] == "hub.unbind" or plan.get("kind") == "switch":
-        from . import logsyncops
-
-        logsyncops.stop(service, wait=logsyncops.STOP_WAIT_S)  # L2-C14-1: no more log pages once a leave/switch is sent
+    _quiesce_logsync(service, plan)
     try:
         if plan["op"] == "hub.connect":
             aliases = [{"person_id": p, "user_id": u} for p, u in sorted(model.get("aliases", {}).items())]
@@ -701,6 +698,16 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
     except HubRefused as exc:
         _audit(call, "hub.refused", op=plan["op"], code=exc.code)
         raise _refused(exc.code) from None
+
+
+def _quiesce_logsync(service: Any, plan: dict[str, Any]) -> None:
+    """The ONE rule (L2-C14-1): every hub op calls this before it sends. The log_sync sender is stopped, and waited for
+    (bounded), for everything that can change the hub, binding or mode it was started for: ``hub.unbind`` and every
+    ``hub.connect`` except a plain re-seal of the same binding. ``hub.refresh`` changes none of them."""
+    from . import logsyncops
+
+    if plan["op"] == "hub.unbind" or (plan["op"] == "hub.connect" and plan.get("kind") != "seal"):
+        logsyncops.stop(service, wait=logsyncops.STOP_WAIT_S)
 
 
 def _stop_peers(service: Any) -> None:

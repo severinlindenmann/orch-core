@@ -42,6 +42,7 @@ class LinkClient:
         self._c, self.hub_id, self.workspace_id, self._wsk = conn, hub_id, workspace_id, wsk
         self._hk_op, self._now, self._t, self.mode = hk_op_pub, now_ms, timeout, mode
         self.seq = 0
+        self.inbox: list[dict[str, Any]] = []  # h2w ``route_in`` requests that arrived while waiting for a reply
 
     @staticmethod
     def open(
@@ -134,11 +135,48 @@ class LinkClient:
         req = self.build(op, body)
         self.send_raw(req)
         o = self.recv_reply()
+        while o["re"] is None and o["op"] == "route_in":  # the hub pushed an envelope in between: keep it
+            self.inbox.append(o)
+            o = self.recv_reply()
         if o["re"] != req["o"]["seq"] or o["op"] != op:
             raise LinkError("malformed")
         if set(o["body"]) == {"error"}:
             raise LinkError(str(o["body"]["error"]))
         return o["body"]
+
+    def route_out(self, envelope: bytes) -> str:
+        """Send a ws->ws envelope (the sender's exact bytes). Returns ``"forwarded"`` or ``"queued"``; raises
+        :class:`LinkError` with the hub's code (``not_allowed``, ``queue_full``, ``too_large`` ...)."""
+        return self.request("route_out", {"envelope": b64u(envelope)})["state"]
+
+    def next_route_in(self) -> bytes:
+        """The next envelope the hub delivers (``route_in``), the exact bytes the sender signed. Call :meth:`ack_route_in`
+        after the host has stored it; the hub resends an unacknowledged one after a reconnect."""
+        o = self.inbox.pop(0) if self.inbox else self.recv_reply()
+        if o["re"] is not None or o["op"] != "route_in":
+            raise LinkError("malformed")
+        self._pending_in = o
+        return unb64u(o["body"]["envelope"])
+
+    def ack_route_in(self, error: str | None = None) -> None:
+        """Answer the last delivered ``route_in`` (w2h reply, same op, ``re`` = its seq). The hub then sends the next."""
+        o = self._pending_in
+        self.seq += 1
+        reply = {
+            "v": 2,
+            "suite": 2,
+            "kind": "hub.link",
+            "hv": H.HV,
+            "hub_id": self.hub_id,
+            "workspace_id": self.workspace_id,
+            "dir": "w2h",
+            "seq": self.seq,
+            "ts_ms": self._now(),
+            "op": "route_in",
+            "re": o["seq"],
+            "body": {} if error is None else {"error": error},
+        }
+        self.send_raw(self._wsk.sign_object(reply))
 
     def close(self) -> None:
         self._c.close()

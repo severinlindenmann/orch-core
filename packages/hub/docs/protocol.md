@@ -569,6 +569,27 @@ Reply rules:
 - After the link is authenticated, a request is accepted only while the link's key is the workspace's current pinned `WSK`; a link opened before the pin (the first link of a join) is closed with `wsk_mismatch` as soon as another link pinned a different key.
 - After `hub.unbound`, every op except `join` and `binding_put` is refused with `not_bound`.
 
+### 10.3 Routing (`route_out`, `route_in`; phase 3, V3-D8)
+
+The envelope is the v2 §11.1 layout, forwarded as the sender's exact bytes (the hub never opens, re-signs or edits it,
+and never logs it). `route_out` checks, in order: size ≤ 1 MiB (`too_large`); layout, magic, version, suite, flags,
+reserved byte, `COSIGNED` block (`malformed`); `from_ws` is the link's workspace (`other_workspace`); `to_ws` is not
+the sender (`malformed`); the sender's pinned `WSK` signature over `"orch/v2/ws-envelope|" || header || body`
+(`bad_signature`); the recipient is joined, bound to this hub and the route is allowed (`not_allowed`: one code for
+"not here", "unbound" and "denied", so a member learns nothing about other workspaces); the recipient's queue has room
+(`queue_full`: per recipient 256 entries / 16 MiB / 64 per sender); the same `(from_ws, id)` with other bytes
+(`replay`). The sender's own state is checked by the generic rules (`unknown_workspace`, `not_bound`).
+
+Reply body: `{"state": "forwarded" | "queued"}` (additive to the H0 `{}`; `forwarded` = pushed to the recipient's live
+link, `queued` = held). A route is allowed in phase 3 when both workspaces are bound to this hub and the hub's access
+layer (D3) does not deny it.
+
+`route_in` is an h2w request `{"envelope"}` pushed on the recipient's link, one unacknowledged request per link, in
+enqueue order. The host answers with a w2h reply (`op: "route_in"`, `re` = the request's `seq`, body `{}`, or
+`{"error": code}` if its receiver refused it); only the answer removes the entry, so delivery is at least once and the
+receiver deduplicates on `(from_ws, id)` (v2 §11.4). Queued envelopes are persisted, delivered in order on reconnect and
+expire after 31 days. Frames may be up to 1.5 MB (an envelope of 1 MiB as base64url).
+
 ## 11. Publish through the hub (phase 2, D76, V3-D4)
 
 **Purpose.** A workspace publishes through its hub; orch-publish accepts it only with the workspace's live binding
@@ -717,6 +738,7 @@ v2 codes keep their meaning (v2 §14). New in H0:
 | `unknown_op`, `wrong_mode` | link | §10 |
 | `auth_failed` | link open | §10.1: every failure before the link is authenticated (unknown workspace, key mismatch, bad signature) returns this one code, so an unauthenticated peer learns nothing; the reason stays in the hub's log |
 | `not_bound` | link reply | any op after `hub.unbound` except `join` and `binding_put` (§10.2 reply rules); the same code as the publish refusal of §11.2 |
+| `not_allowed`, `queue_full`, `too_large` | `route_out` reply | §10.3; `too_large` is the v2 code, reused |
 | `bad_invite`, `unavailable`, `internal` | link reply | `join` with an unknown, used or expired invite; an op whose backend (e.g. publish forwarder) is not available; an unexpected hub-side failure (no detail) |
 | `not_bound` (403), `unknown_hub` (401), `bad_hub_signature` (401) | publish | §11.2 |
 | `approval_required`, `bad_approval` (403) | publish | §11.3 |

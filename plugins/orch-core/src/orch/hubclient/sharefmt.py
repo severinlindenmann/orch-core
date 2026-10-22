@@ -9,6 +9,9 @@ workspace, item id and version::
 
     sealed = b64u(u32(item_version) || wrap (113) || salt (16) || AES-256-GCM(...))
 
+An item of a ticket log may carry an ``f1`` block (``roster_v``, per-gate ``gen`` / ``hash`` / ``policy_hash`` /
+``source_sha``, per-question ``hash``; contract 10.2b, 8.6): the values a selective custodial event is built on.
+
 Core refuses to sign what the hub would refuse (``malformed``, ``too_large``): the checks below mirror the contract's
 content rules and are run before the signature, never after."""
 
@@ -37,8 +40,11 @@ __all__ = [
     "MAX_SEALED",
     "NEEDS_YOU_TYPES",
     "STATUSES",
+    "F1_GATES",
     "build_signed_item",
     "check_content",
+    "check_f1",
+    "f1_gate_ok",
     "item_hash",
     "seal_share_item",
     "text_ok",
@@ -145,6 +151,63 @@ def check_content(item_kind: str, content: Any) -> None:
         raise HubRefused("malformed")
 
 
+F1_GATES = ("requirements", "plan", "code", "verify")
+F1_SOURCE_GATES = ("code", "verify")  # ticket-format 5.7: only these carry a source list
+F1_MAX_QUESTIONS = 64
+F1_MAX_SOURCES = 32
+_REF = re.compile(r"refs/heads/[!-~]{1,244}")
+_SHA = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
+
+
+def _int0(x: Any) -> bool:
+    return type(x) is int and 0 <= x < 2**53
+
+
+def _source_ok(x: Any) -> bool:
+    return (
+        type(x) is dict and set(x) == {"repo", "ref", "sha"} and text_ok(x["repo"], 512)
+        and type(x["ref"]) is str and _REF.fullmatch(x["ref"]) is not None
+        and type(x["sha"]) is str and _SHA.fullmatch(x["sha"]) is not None
+    )  # fmt: skip
+
+
+def f1_gate_ok(name: Any, x: Any) -> bool:
+    """One ``f1.gates`` entry (contract 10.2b): exact keys, ``source_sha`` exactly on ``code`` and ``verify``, sorted by
+    repo, one entry per repo, at most 32."""
+    if name not in F1_GATES or type(x) is not dict:
+        return False
+    with_source = name in F1_SOURCE_GATES
+    if set(x) != {"gen", "hash", "policy_hash"} | ({"source_sha"} if with_source else set()):
+        return False
+    if not (_int0(x["gen"]) and _re(_HASH)(x["hash"]) and _re(_HASH)(x["policy_hash"])):
+        return False
+    if not with_source:
+        return True
+    src = x["source_sha"]
+    if type(src) is not list or len(src) > F1_MAX_SOURCES or not all(_source_ok(e) for e in src):
+        return False
+    repos = [e["repo"] for e in src]
+    return repos == sorted(set(repos))
+
+
+def check_f1(f1: Any, chain: Mapping[str, Any]) -> None:
+    """The optional ``f1`` block of a ``share.item`` (contract 10.2b): exact keys at every depth, only on an item of a
+    ticket log (``malformed`` otherwise). Core refuses to sign what the hub would refuse."""
+    if (
+        type(f1) is not dict or set(f1) != {"roster_v", "gates", "questions"} or not _int0(f1["roster_v"])
+        or type(f1["gates"]) is not dict or not all(f1_gate_ok(k, v) for k, v in f1["gates"].items())
+        or type(f1["questions"]) is not dict or len(f1["questions"]) > F1_MAX_QUESTIONS
+        or not all(
+            type(k) is str and _QID.fullmatch(k) is not None and type(v) is dict and set(v) == {"hash"}
+            and _re(_HASH)(v["hash"])
+            for k, v in f1["questions"].items()
+        )
+    ):  # fmt: skip
+        raise HubRefused("malformed")
+    if chain.get("log") == "workspace":
+        raise HubRefused("malformed")
+
+
 def _chain_ok(c: Any) -> bool:
     return (
         type(c) is dict
@@ -174,6 +237,7 @@ def build_signed_item(
     content: Mapping[str, Any],
     dev: bool,
     sign: Callable[[bytes], bytes],
+    f1: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The ``WSK``-signed ``share.item``. Everything is checked first (never sign what the hub would refuse)."""
     if not (wire.hex16(hub_id) and wire.hex16(workspace_id) and wire.hex16(item_id)):
@@ -183,11 +247,15 @@ def build_signed_item(
     if not _chain_ok(dict(chain)):
         raise HubRefused("malformed")
     check_content(item_kind, dict(content))
+    if f1 is not None:
+        check_f1(f1, chain)
     o = {
         "v": 2, "suite": suite.SUITE_ID, "kind": "share.item", "hv": wire.HV, "hub_id": hub_id,
         "workspace_id": workspace_id, "item_id": item_id, "item_kind": item_kind, "item_version": item_version,
         "issued_ms": issued_ms, "chain": dict(chain), "content": dict(content), "dev": bool(dev),
     }  # fmt: skip
+    if f1 is not None:
+        o["f1"] = dict(f1)
     return {"o": o, "sig": b64u(sign(L["sig_share_item"] + wire.cj(o)))}
 
 

@@ -120,9 +120,9 @@ def join(c: OpContext) -> dict[str, Any]:
     invite = c.body["invite"]
     if type(invite) is not str or not invite:
         raise Refused("malformed")
-    inv_ws = c.invites.check(invite, c.now_ms)
     join_msg = {k: c.body[k] for k in ("card", "pk_pub", "binding")}
-    with c.registry.lock:  # the TOFU check and the write are one step
+    with c.registry.lock:  # invite check, TOFU check, pin write and invite consume are one step
+        inv_ws = c.invites.check(invite, c.now_ms)
         pin = H.check_hub_join(
             join_msg,
             hub_id_=c.hub_id,

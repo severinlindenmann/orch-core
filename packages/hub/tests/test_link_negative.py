@@ -66,7 +66,7 @@ def test_auth_signature_by_another_key(hub):
     c = raw(hub)
     ch = challenge(c)
     framing.write_frame(c, auth_frame("wsk_b", G.WS_A, ch, c.exporter()), timeout=5)
-    assert reply_of(c) == {"t": "error", "error": "bad_signature"}
+    assert reply_of(c) == {"t": "error", "error": "auth_failed"}
 
 
 def test_auth_replayed_from_another_tls_session(hub):
@@ -75,7 +75,7 @@ def test_auth_replayed_from_another_tls_session(hub):
     ch = challenge(c2)
     # a signature made over the exporter of ANOTHER session (a replay / relay of someone's auth)
     framing.write_frame(c2, auth_frame("wsk_a", G.WS_A, ch, c1.exporter()), timeout=5)
-    assert reply_of(c2) == {"t": "error", "error": "bad_signature"}
+    assert reply_of(c2) == {"t": "error", "error": "auth_failed"}
 
 
 def test_auth_over_another_challenge(hub):
@@ -83,13 +83,13 @@ def test_auth_over_another_challenge(hub):
     c = raw(hub)
     challenge(c)
     framing.write_frame(c, auth_frame("wsk_a", G.WS_A, b"\x01" * 32, c.exporter()), timeout=5)
-    assert reply_of(c) == {"t": "error", "error": "bad_signature"}
+    assert reply_of(c) == {"t": "error", "error": "auth_failed"}
 
 
 def test_unpinned_workspace_needs_wsk_pub(hub):
     c = raw(hub)
     framing.write_frame(c, auth_frame("wsk_a", G.WS_A, challenge(c), c.exporter()), timeout=5)
-    assert reply_of(c) == {"t": "error", "error": "unknown_workspace"}
+    assert reply_of(c) == {"t": "error", "error": "auth_failed"}
 
 
 def test_pinned_workspace_other_claimed_key(hub):
@@ -97,7 +97,7 @@ def test_pinned_workspace_other_claimed_key(hub):
     c = raw(hub)
     ch = challenge(c)
     framing.write_frame(c, auth_frame("wsk_b", G.WS_A, ch, c.exporter(), wsk_pub=G.K.b("wsk_b")), timeout=5)
-    assert reply_of(c) == {"t": "error", "error": "wsk_mismatch"}
+    assert reply_of(c) == {"t": "error", "error": "auth_failed"}
 
 
 @pytest.mark.parametrize("bad", [{"t": "nope"}, {"t": "auth"}, {"t": "auth", "workspace_id": "zz", "sig": "AA"}])
@@ -224,6 +224,7 @@ def test_oversize_frame_closes_the_link_before_reading_it(make_hub):
     h = make_hub(max_frame=4096)
     c = joined(h)
     c._c.send_all((4097).to_bytes(4, "big"), time.monotonic() + 5)  # header only: nothing is allocated for the body
+    assert framing.read_frame(c._c, first_timeout=3, rest_timeout=3) == {"t": "error", "error": "malformed"}
     with pytest.raises((tls.LinkClosed, tls.LinkTimeout)):
         framing.read_frame(c._c, first_timeout=3, rest_timeout=3)
 
@@ -232,6 +233,7 @@ def test_oversize_frame_closes_the_link_before_reading_it(make_hub):
 def test_non_strict_frame_closes_the_link(hub, payload):
     c = joined(hub)
     c._c.send_all(len(payload).to_bytes(4, "big") + payload, time.monotonic() + 5)
+    assert framing.read_frame(c._c, first_timeout=3, rest_timeout=3) == {"t": "error", "error": "malformed"}
     with pytest.raises((tls.LinkClosed, tls.LinkTimeout)):
         framing.read_frame(c._c, first_timeout=3, rest_timeout=3)
 
@@ -283,7 +285,7 @@ def test_squatter_cannot_open_a_link_for_a_pinned_workspace(hub):
     joined(hub)
     with pytest.raises(LinkError) as e:
         hub.open(wsk="wsk_b", first=True)
-    assert e.value.code == "wsk_mismatch"
+    assert e.value.code == "auth_failed"
 
 
 def test_join_card_key_differs_from_link_key(hub):
@@ -365,3 +367,34 @@ def test_concurrent_joins_for_one_workspace_pin_exactly_one(hub):
     [t.join(10) for t in ts]
     assert sorted(results.values()) == ["ok", "other_person"] or sorted(results.values()) == ["ok", "wsk_mismatch"]
     assert hub.registry.pin(G.WS_A) is not None
+
+
+def test_link_opened_before_the_pin_dies_when_the_owner_joins_elsewhere(hub):
+    attacker = hub.open(wsk="wsk_b", first=True)  # unjoined, offers its own key for ws A
+    owner = hub.open(first=True)
+    owner.request("join", hub.join_body())
+    attacker.send_raw(attacker.build("snapshot_get", {}))
+    with pytest.raises(LinkError) as e:
+        attacker.recv_reply()
+    assert e.value.code == "wsk_mismatch"
+    with pytest.raises((tls.LinkClosed, tls.LinkTimeout)):
+        framing.read_frame(attacker._c, first_timeout=2, rest_timeout=2)
+    assert "snapshot" in owner.request("snapshot_get", {})
+
+
+def test_pre_auth_failures_are_indistinguishable(hub, caplog):
+    joined(hub)
+    codes = set()
+    for ws, key, claim in ((G.WS_B, "wsk_a", False), (G.WS_A, "wsk_b", True), (G.WS_A, "wsk_b", False)):
+        c = raw(hub)
+        extra = {"wsk_pub": G.K.b(key)} if claim else {}
+        framing.write_frame(c, auth_frame(key, ws, challenge(c), c.exporter(), **extra), timeout=5)
+        codes.add(reply_of(c)["error"])
+    assert codes == {"auth_failed"}
+
+
+def test_unjoined_link_has_a_short_idle_timeout(make_hub):
+    h = make_hub(unjoined_idle_timeout=0.4)
+    c = h.open(first=True)
+    with pytest.raises(tls.LinkClosed):
+        framing.read_frame(c._c, first_timeout=5, rest_timeout=5)

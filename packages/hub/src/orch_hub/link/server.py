@@ -21,6 +21,7 @@ type-checked, there is no replay store.
 
 from __future__ import annotations
 
+import logging
 import os
 import socket
 import threading
@@ -36,6 +37,8 @@ from ..contract.keystore import OpSigner
 from . import framing, ops, tls
 from .registry import Registry
 from .tls import LinkClosed, LinkTimeout
+
+_log = logging.getLogger("orch_hub.link")
 
 
 def _now_ms() -> int:
@@ -62,6 +65,7 @@ class LinkServer:
         handshake_timeout: float = 10.0,
         read_timeout: float = 10.0,
         idle_timeout: float = 300.0,
+        unjoined_idle_timeout: float = 30.0,
         max_connections: int = 64,
     ) -> None:
         self._ctx = tls.server_context(identity)
@@ -71,6 +75,7 @@ class LinkServer:
         self._down = downstream or ops.NoDownstream()
         self._dev, self._now = dev_mode, now_ms
         self._max, self._t_hs, self._t_rd, self._t_idle = max_frame, handshake_timeout, read_timeout, idle_timeout
+        self._t_unjoined = unjoined_idle_timeout
         self._slots = threading.BoundedSemaphore(max_connections)
         self._stop = threading.Event()
         self._listen = socket.socket()
@@ -124,7 +129,10 @@ class LinkServer:
         try:
             conn = tls.accept(self._ctx, sock, time.monotonic() + self._t_hs, self._stop)
             self._link(conn)
-        except LinkClosed, LinkTimeout, framing.FrameError:
+        except framing.FrameError:
+            if conn is not None:
+                self._refuse(conn, "malformed")
+        except LinkClosed, LinkTimeout:
             pass
         except Exception:  # noqa: BLE001, S110  # fail closed on anything unexpected; never echo it
             pass
@@ -169,16 +177,18 @@ class LinkServer:
             pin = self._reg.pin(ws)
             if pin is None:
                 if claimed is None:
-                    raise Refused("unknown_workspace")
+                    raise Refused("auth_failed", why="unknown_workspace")
                 wsk = claimed
             else:
                 wsk = unb64u(pin["wsk_pub"], 65)
                 if claimed is not None and claimed != wsk:
-                    raise Refused("wsk_mismatch")
+                    raise Refused("auth_failed", why="wsk_mismatch")
             msg = H.link_auth_bytes(self.hub_id, ws, challenge, conn.exporter())
             if not S.verify(wsk, sig, msg):
-                raise Refused("bad_signature")
+                raise Refused("auth_failed", why="bad_signature")
         except (Refused, CanonError) as e:
+            if isinstance(e, Refused) and "why" in e.extra:  # the reason stays here, the peer sees one code
+                _log.info("link auth refused: %s", e.extra["why"])
             self._refuse(conn, e.code if isinstance(e, Refused) else "malformed")
             return None
         self._send(conn, {"t": "ready", "hub_id": self.hub_id})
@@ -191,9 +201,16 @@ class LinkServer:
         ws, wsk = who
         seq = 0
         while not self._stop.is_set():
+            pin = self._reg.pin(ws)
             try:
-                signed = self._recv(conn, self._t_idle)
+                signed = self._recv(conn, self._t_idle if pin is not None else self._t_unjoined)
             except LinkTimeout:
+                return
+            # The link's key must be the CURRENT pinned key: a link opened before the pin (offering its own key)
+            # dies as soon as another link has pinned the workspace.
+            pin = self._reg.pin(ws)
+            if pin is not None and unb64u(pin["wsk_pub"], 65) != wsk:
+                self._refuse(conn, "wsk_mismatch")
                 return
             mode = self._reg.mode(ws) or "selective"
             now = self._now()

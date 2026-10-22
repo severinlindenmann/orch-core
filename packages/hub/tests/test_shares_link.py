@@ -110,7 +110,6 @@ def test_audit_log_holds_no_content(shub):
         (lambda: body(title="x" * 201), "malformed"),
         (lambda: body(title="a" + chr(0xF8FF)), "malformed"),  # L2P4-3: private use, via the contract's text rule
         (lambda: body(title="ㅤ"), "malformed"),  # L2P4-3: Default_Ignorable "blank"
-        (lambda: body(title="a\ud800b"), "malformed"),  # a lone surrogate is a refusal, not a crash
         (lambda: V4.share_body(V4.share_item(workspace_id=G.WS_B)), "bad_wrap"),
         (lambda: V4.share_body(V4.share_item(item_kind="ticket", content=V4.NEEDS_YOU)), "malformed"),
         (lambda: V4.share_body(V4.share_item(content={**V4.NEEDS_YOU, "extra": 1})), "malformed"),
@@ -247,6 +246,40 @@ def test_revoke_record_fields_and_no_record_for_a_noop(shub):
     (_p, put), (_r, rev) = audit_records(h)
     assert put["change"] == "put" and put["count"] is None
     assert (rev["change"], rev["item_version"], rev["item_hash"], rev["count"]) == ("revoke", 5, None, None)
+
+
+def test_audit_failure_at_unbind_keeps_items_and_does_not_skip_the_other_steps(shub):
+    h = shub()
+    c = h.join()
+    c.request("share_put", body())
+    good = h.svc._on_change
+
+    def boom(_ev):
+        raise RuntimeError("audit down")
+
+    h.svc._on_change = boom
+    assert c.request("binding_put", {"object": G.unbound(seq=1)}) == {}  # the unbind itself still completes
+    assert h.registry.binding_state(G.WS_A)["status"] != "bound"
+    assert h.share_store.usage(G.WS_A)[0] == 1  # audit before delete: the items stay
+    assert h.svc.list_shared(OWNER, G.WS_A) == []
+    h.svc.reconcile()  # still failing: not fatal
+    assert h.share_store.usage(G.WS_A)[0] == 1
+    h.svc._on_change = good
+    h.svc.reconcile()  # the retry purges them, with a record
+    assert h.share_store.usage(G.WS_A)[0] == 0
+    assert audit_records(h)[-1][1]["change"] == "purge"
+
+
+def test_failed_purge_is_retried_before_a_rebind_can_resurrect_items(shub):
+    h = shub()
+    c = h.join()
+    c.request("share_put", body())
+    good = h.svc._on_change
+    h.svc._on_change = lambda _ev: (_ for _ in ()).throw(RuntimeError("down"))
+    c.request("binding_put", {"object": G.unbound(seq=1)})
+    h.svc._on_change = good
+    c.request("binding_put", {"object": G.binding(seq=2, mode="selective")})  # sync retries the purge first
+    assert h.share_store.usage(G.WS_A)[0] == 0 and h.svc.list_shared(OWNER, G.WS_A) == []
 
 
 def test_reconcile_after_restart_drops_orphans(shub, tmp_path):

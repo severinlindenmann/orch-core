@@ -45,11 +45,16 @@ class ShareService:
         self._hub, self._hxk, self._dev = hub_id, hxk, dev_mode
         self._now = now_ms or (lambda: int(time.time() * 1000))
         self._on_change = on_change
+        self._pending: set[str] = (
+            set()
+        )  # workspaces whose purge failed (audit down): retried at the next sync/reconcile
 
     def _selective(self, ws: str) -> None:
         """The caller holds the registry lock."""
         if self._reg.pin(ws) is None:
             raise Refused("unknown_workspace")
+        if ws in self._pending:
+            raise Refused("not_bound")  # stale items of an earlier binding are still there: fail closed until purged
         st = self._reg.binding_state(ws)
         if st is None or st["status"] != "bound":
             raise Refused("not_bound")
@@ -138,15 +143,25 @@ class ShareService:
 
     def sync(self, ws: str) -> None:
         """Items belong to a live SELECTIVE binding only: any other state deletes them. The caller holds the registry
-        lock (binding_put / join) or startup."""
-        st = self._reg.binding_state(ws)
-        if st is None or st["status"] != "bound" or self._reg.mode(ws) != "selective":
-            self.purge(ws)
+        lock (binding_put / join) or startup. Never raises: a failing purge (audit sink down) keeps the items, marks the
+        workspace for a retry (here, at the next sync or reconcile) and lets the other unbind steps go on; until the
+        retry succeeds the workspace serves and accepts nothing."""
+        try:
+            if ws in self._pending:
+                self.purge(ws)  # the items are those of an earlier binding, whatever the state is now
+                self._pending.discard(ws)
+            st = self._reg.binding_state(ws)
+            if st is None or st["status"] != "bound" or self._reg.mode(ws) != "selective":
+                self.purge(ws)
+        except Exception:
+            self._pending.add(ws)
+            _log.exception("share purge failed; items kept, retry at the next sync")
 
     def reconcile(self) -> None:
-        """At startup: drop the items of every workspace that is no longer a bound selective one (also after a crash)."""
+        """At startup: drop the items of every workspace that is no longer a bound selective one (also after a crash).
+        A failure of one workspace is logged and retried later; it never stops the startup."""
         with self._reg.lock:
-            for ws in self.store.workspaces():
+            for ws in sorted(set(self.store.workspaces()) | self._pending):
                 self.sync(ws)
 
     # --- read API (D13: the hub web view and the phone) -----------------------------------------------------------

@@ -86,6 +86,8 @@ def test_vector_replay(tmp_path, case):
 
     try:
         want = case["expect"]
+        if "ok" in want:  # D15b: which projection the service keeps is the hub's task 1 (#1043); its checks run here
+            want = {"ok": {k: v for k, v in want["ok"].items() if k != "proj"}}
         if "error" in want:
             got = None
             with pytest.raises(Refused) as r:

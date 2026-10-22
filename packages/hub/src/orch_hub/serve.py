@@ -24,9 +24,11 @@ from .keys import HubKeys
 from .link import LinkServer, Registry
 from .publish import HttpPublishSync, HubPublish, PublishConfig
 from .router import AccessAuthz, RouteQueue, Router
+from .spaces import SpaceService, SpaceStore
 
 REGISTRY_FILE = "registry.db"
 ROUTE_QUEUE_FILE = "route-queue.db"
+SPACES_FILE = "spaces.db"
 
 
 _HEX16 = re.compile(r"[0-9a-f]{32}")
@@ -96,6 +98,10 @@ def serve(
     queue_path = state / ROUTE_QUEUE_FILE
     queue = RouteQueue(str(queue_path))
     router = Router(registry, queue, AccessAuthz(registry, access))
+    space_store = SpaceStore(str(state / SPACES_FILE))
+    spaces = SpaceService(
+        space_store, registry, access, keys.op_signer, keys.hub_id, lambda: keys.op_cert()["o"]["cert_id"]
+    )
     fw = HubPublish(keys, HttpPublishSync(publish_url), PublishConfig(publish_url, api_host))
     stop = stop or threading.Event()
     server = LinkServer.from_keys(
@@ -107,10 +113,12 @@ def serve(
         downstream=fw,
         router=router,
         access=access,
+        spaces=spaces,
         host=host,
         port=port,
     )
     try:
+        spaces.reconcile()  # a workspace that is no longer bound leaves its spaces (also after a crash)
         fw.restore(registry.binding_objects())
         server.start()
         if threading.current_thread() is threading.main_thread():
@@ -126,6 +134,7 @@ def serve(
     finally:
         server.close()
         queue.close()
+        space_store.close()
         registry.close()
         access.close()
     return 0

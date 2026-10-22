@@ -107,6 +107,7 @@ class OpContext:
     now_ms: int
     dev_mode: bool
     router: Router | None = None
+    spaces: Any = None  # orch_hub.spaces.SpaceService; None = shared spaces not served (unknown_op)
     access: Any = None  # D3's orch_hub.access.Access (the serve() instance); None until wired
 
 
@@ -211,6 +212,8 @@ def binding_put(c: OpContext) -> dict[str, Any]:
             raise Refused("malformed")
         c.registry.set_binding_state(c.workspace_id, state, obj)
     c.downstream.binding(c.workspace_id, obj)
+    if kind == "hub.unbound" and c.spaces is not None:
+        c.spaces.on_unbind(c.workspace_id)  # leaves every space in the same step (protocol.md §10.4)
     return {}
 
 
@@ -240,6 +243,35 @@ def route_out(c: OpContext) -> dict[str, Any]:
     return {"state": c.router.route_out(c.workspace_id, unb64u(c.body["envelope"]))}
 
 
+def _spaces(c: OpContext) -> Any:
+    with c.registry.lock:
+        _require_pin(c)
+        _require_bound(c)
+    if c.spaces is None:
+        raise Refused("unknown_op")
+    return c.spaces
+
+
+def space_list(c: OpContext) -> dict[str, Any]:
+    return {"spaces": _spaces(c).list_for(c.workspace_id)}
+
+
+def space_put(c: OpContext) -> dict[str, Any]:
+    return _spaces(c).put(c.workspace_id, c.body)
+
+
+def space_revoke(c: OpContext) -> dict[str, Any]:
+    return _spaces(c).revoke(c.workspace_id, c.body)
+
+
+def space_get(c: OpContext) -> dict[str, Any]:
+    return _spaces(c).get(c.workspace_id, c.body)
+
+
+def space_accept(c: OpContext) -> dict[str, Any]:
+    return _spaces(c).accept(c.workspace_id, c.body)
+
+
 HANDLERS: dict[str, Callable[[OpContext], dict[str, Any]]] = {
     "join": join,
     "card_put": card_put,
@@ -247,6 +279,11 @@ HANDLERS: dict[str, Callable[[OpContext], dict[str, Any]]] = {
     "snapshot_get": snapshot_get,
     "publish_out": publish_out,
     "route_out": route_out,
+    "space_list": space_list,
+    "space_put": space_put,
+    "space_revoke": space_revoke,
+    "space_get": space_get,
+    "space_accept": space_accept,
 }
 
 __all__ = ["HANDLERS", "OpContext"]

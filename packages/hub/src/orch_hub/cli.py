@@ -53,6 +53,9 @@ def _parser() -> argparse.ArgumentParser:
     from .access.cli import add_parsers
 
     add_parsers(sub)
+    from .spaces.cli import add_parsers as add_space_parsers
+
+    add_space_parsers(sub)
     return p
 
 
@@ -76,6 +79,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         from .access.cli import run as run_access
 
         return run_access(args)
+    if args.group == "spaces":
+        from .spaces.cli import run as run_spaces
+
+        return run_spaces(args)
     if args.group == "doctor":
         from .doctor import run
 

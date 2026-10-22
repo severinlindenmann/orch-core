@@ -525,6 +525,7 @@ drops. The host never sends it.
 | `hub.unreachable` | 9 | yes | stays | the hub could not be reached or did not answer; the join stays recorded and `orch hub connect` finishes it, a leave is already recorded and `orch hub unbind` tells the hub later (V3 C2a) | `retry_after_ms` |
 | `hub.no_card` | 3 | no | stays | `hub.connect` on a workspace with no v2 directory card yet (link a relay first) (V3 C2a) | — |
 | `hub.state_mismatch` | 3 | no | stays | the host's `hub.json` cannot be read: the host refuses to guess (V3 C2a) | — |
+| `hub.unbind_pending` | 3 | no | stays | `hub.connect` while a signed `hub.unbound` is still owed to the previous hub (or the leave is on the log but the hub was not told): run `orch hub unbind` first (V3 C2a) | — |
 | `hub.not_joined` | 3 | no | stays | `hub.connect` or `hub.unbind` while the log has no `hub.joined` / no `hub.left` for them (V3 C2a) | — |
 
 Other v1.6 refusals reuse existing codes: an unknown or invisible run (also `run.stop` on a run already gone),

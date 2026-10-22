@@ -64,6 +64,7 @@ quick.unlabelled 9 retry:true
 hub.refused 3 retry:false
 hub.full_mode_later 3 retry:false
 hub.already_joined 3 retry:false
+hub.unbind_pending 3 retry:false
 hub.not_joined 3 retry:false
 retry.later 9 retry:true
 quota.unattended 9 retry:true

@@ -446,7 +446,13 @@ HUB_JOIN = operation(
     emits=("hub.joined",),
     text="ok hub.joined {hub_id} seq={seq}\nnext: {next}",
     data=obj({"hub_id": STR, "mode": STR, "binding_seq": {"type": "integer"}}),
-    errors=(err("role.denied"), err("hub.refused"), err("hub.full_mode_later"), err("hub.already_joined")),
+    errors=(
+        err("role.denied"),
+        err("hub.refused"),
+        err("hub.full_mode_later"),
+        err("hub.already_joined"),
+        err("hub.unbind_pending"),
+    ),
     handler=handle_hub_join,
 )
 HUB_LEAVE = operation(

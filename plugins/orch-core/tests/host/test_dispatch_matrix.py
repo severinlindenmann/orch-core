@@ -18,6 +18,7 @@ from orch.host.dispatch import FILE_OPS, GIT_OPS, HOST_OPS, NOT_SERVED, PERSON_R
 from orch.host.errors import HostError, disposition
 from orch.host.hubops import HUB_OPS
 from orch.host.human import HUMAN_OPS
+from orch.host.peerops import PEER_OPS, PEER_READS
 from orch.host.publishing import PUBLISH_OPS
 from orch.host.reads import READ_OPS
 from orch.host.records import RECORDS_OPS
@@ -82,6 +83,7 @@ def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
     host |= set(WORKTREE_OPS)  # H11d
     host |= set(PUBLISH_OPS)  # P5
     host |= set(HUB_OPS)  # V3 C2a
+    host |= set(PEER_OPS)  # V3 C12
     host |= set(GRANT_OPS) | set(AGENT_OPS)  # H11c
     host |= {"reader.declare"}  # H12d-2
     host |= {"phone.request", "phone.cancel"}  # B10 Part B
@@ -214,6 +216,8 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
             assert kind == want
         elif op in HUB_OPS:  # V3 C2a: P only (the op checks the owner role); status reads
             assert kind == (("person_read", "read") if op == "hub.status" else ("person_write", "write"))
+        elif op in PEER_OPS:  # V3 C12: reads for P and G, writes P only (owner role)
+            assert kind == (("pg_read", "read") if op in PEER_READS else ("person_write", "write"))
         elif op in AGENT_OPS:  # H11c: P only
             assert kind == (("person_read", "read") if op == "agent.preview" else ("person_write", "write"))
         elif op in GRANT_OPS:  # H11c: deposit needs a grant; status and forget are P only

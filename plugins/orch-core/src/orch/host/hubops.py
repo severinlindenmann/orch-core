@@ -298,7 +298,7 @@ def _transport(service: WorkspaceService, hub_id: str, link: dict[str, Any] | No
 
     return TlsTransport(
         addr=link["addr"], tls_spki_sha256=link["spki"], hub_id=hub_id, workspace_id=service.workspace_id,
-        hk_op_pub=link["hk_op"], wsk_pub=link["wsk_pub"], sign=link["sign"],
+        hk_op_pub=link["hk_op"], wsk_pub=link["wsk_pub"], sign=link["sign"], mode=link.get("mode", "selective"),
         now_ms=lambda: int(service.clock() * 1000),
     )  # fmt: skip
 
@@ -368,7 +368,8 @@ def publish_link(service: WorkspaceService, route: dict[str, Any]) -> tuple[Any,
     from orch.hubclient import HubLink
 
     wsk_pub, sign = _wsk_sign(service)
-    link = {"addr": route["addr"], "spki": route["spki"], "hk_op": route["hk_op"], "wsk_pub": wsk_pub, "sign": sign}
+    link = {"addr": route["addr"], "spki": route["spki"], "hk_op": route["hk_op"], "wsk_pub": wsk_pub, "sign": sign,
+            "mode": route["mode"]}  # fmt: skip
     transport = _transport(service, route["hub_id"], link)
     hub_link = HubLink(
         transport, hub_id=route["hub_id"], workspace_id=service.workspace_id, hk_op_pub=route["hk_op"], sign=sign,
@@ -643,12 +644,14 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
                 "hk_op": plan["hk_op"],
                 "wsk_pub": wsk_pub,
                 "sign": sign,
+                "mode": model["mode"],  # the link carries wk_seal only in full mode
             }
             transport = _transport(service, model["hub_id"], link)
             try:
                 r = _connect(state, plan, model, service, wsk_pub, sign, now, save, transport, aliases)
             finally:
                 getattr(transport, "close", lambda: None)()
+            _stop_peers(service)  # a (re)binding: ws->ws restarts on the new binding at its next use
             _audit(call, "hub.connect", hub_id=r.hub_id, binding_seq=r.binding_seq, mode=r.mode, kind=plan["kind"])
             out = {"hub_id": r.hub_id, "status": r.status, "binding_seq": r.binding_seq, "mode": r.mode,
                    "sealed_epoch": None if not r.sealed else r.sealed["epoch"]}  # fmt: skip
@@ -656,10 +659,18 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
             return ok_result(out)
         if plan["op"] == "hub.refresh":
             return ok_result(_refresh(call, plan, state, wsk_pub, sign, now, save))
-        return ok_result(_unbind(call, plan, state, sign, wsk_pub, now, save, leave, flush_outbox))
+        out = _unbind(call, plan, state, sign, wsk_pub, now, save, leave, flush_outbox)
+        _stop_peers(service)  # unbound: the ws->ws link and receive thread end here
+        return ok_result(out)
     except HubRefused as exc:
         _audit(call, "hub.refused", op=plan["op"], code=exc.code)
         raise _refused(exc.code) from None
+
+
+def _stop_peers(service: Any) -> None:
+    from . import peerops
+
+    peerops.stop(service)
 
 
 def _snapshot_link(service: Any, state: Any, wsk_pub: bytes, sign: Any, dev: bool) -> tuple[Any, Any]:
@@ -668,7 +679,8 @@ def _snapshot_link(service: Any, state: Any, wsk_pub: bytes, sign: Any, dev: boo
     from orch.hubclient import HubLink
 
     hk_op = unb64u(state.hk_op_pub, 65)
-    link = {"addr": _addr({}, state, dev), "spki": state.tls_spki, "hk_op": hk_op, "wsk_pub": wsk_pub, "sign": sign}
+    link = {"addr": _addr({}, state, dev), "spki": state.tls_spki, "hk_op": hk_op, "wsk_pub": wsk_pub, "sign": sign,
+            "mode": state.mode}  # fmt: skip
     transport = _transport(service, state.hub_id, link)
     hub_link = HubLink(
         transport, hub_id=state.hub_id, workspace_id=service.workspace_id, hk_op_pub=hk_op, sign=sign,
@@ -720,7 +732,7 @@ def _transport_for(service: Any, wsk_pub: bytes, sign: Any) -> Any:
     def make(hub_id: str, e: dict[str, Any]) -> Any:
         link = {"addr": e["addr"],  # the entry's own address wins: ORCH_HUB_ADDR is for the hub being joined only
                  "spki": e["tls_spki"],
-                "hk_op": unb64u(e["hk_op_pub"], 65), "wsk_pub": wsk_pub, "sign": sign}  # fmt: skip
+                "hk_op": unb64u(e["hk_op_pub"], 65), "wsk_pub": wsk_pub, "sign": sign, "mode": e["mode"]}  # fmt: skip
         return _transport(service, hub_id, link)
 
     return make

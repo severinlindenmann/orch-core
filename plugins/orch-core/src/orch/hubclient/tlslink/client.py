@@ -62,6 +62,7 @@ W2H_OPS: dict[str, str | None] = {
     "wk_seal": "full",
 }
 _REPLY: dict[str, Callable[[dict[str, Any]], bool]] = {
+    "route_out": lambda b: set(b) == {"state"} and b["state"] in ("forwarded", "queued"),
     "snapshot_get": lambda b: set(b) == {"snapshot"} and type(b["snapshot"]) is dict,
     "publish_out": lambda b: (
         set(b) == {"status", "body_hex"} and type(b["status"]) is int and type(b["body_hex"]) is str
@@ -113,6 +114,11 @@ class LinkClient:
         self.mode, self._now, self._t, self._max = mode, now_ms, timeout, max_frame
         self._lock = threading.Lock()
         self._open = True
+        self._sign: Callable[[bytes], bytes] | None = None
+        self._seq = 0  # the highest w2h seq used on this link (requests carry the caller's, acks continue from here)
+        self._push: list[dict[str, Any]] = []  # verified h2w ``route_in`` requests not yet handed out
+        self._pending: dict[str, Any] | None = None  # the handed-out one, awaiting its ack
+        self._last_in = 0  # highest h2w route_in seq accepted
 
     @staticmethod
     def open(
@@ -165,7 +171,7 @@ class LinkClient:
         except BaseException:
             conn.close()
             raise
-        return LinkClient(
+        client = LinkClient(
             conn,
             hub_id=hub_id,
             workspace_id=workspace_id,
@@ -175,30 +181,119 @@ class LinkClient:
             timeout=timeout,
             max_frame=max_frame,
         )
+        client._sign = sign
+        return client
 
     # --- messages -------------------------------------------------------------------------------------------------
 
     def send(self, message: dict[str, Any]) -> dict[str, Any]:
         """``HubTransport.send``: write one signed w2h message, return the verified signed h2w reply. Transport
         failures raise ``OSError`` subclasses (``LinkClosed``, ``LinkTimeout``); anything the hub sent that fails
-        verification raises :class:`LinkError` and closes the link."""
+        verification raises :class:`LinkError` and closes the link. A ``route_in`` the hub pushes meanwhile is kept
+        for :meth:`next_route_in`."""
         o = self._check_request(message)
         with self._lock:
             if not self._open:
                 raise LinkClosed("closed")
             try:
                 framing.write_frame(self._c, message, timeout=self._t, max_bytes=self._max)
-                reply = framing.read_frame(self._c, timeout=self._t, max_bytes=self._max)
-                if reply.get("t") == "error":  # unsigned link-level refusal; the hub closes
-                    raise LinkError(_code(reply.get("error")))
-                self._verify_reply(reply, o)
+                self._seq = max(self._seq, o["seq"])
+                while True:
+                    reply = framing.read_frame(self._c, timeout=self._t, max_bytes=self._max)
+                    if reply.get("t") == "error":  # unsigned link-level refusal; the hub closes
+                        raise LinkError(_code(reply.get("error")))
+                    if self._take_push(reply):
+                        continue
+                    self._verify_reply(reply, o)
+                    return reply
             except FrameError:
                 self.close()
                 raise LinkError("malformed") from None
             except (LinkError, LinkClosed, LinkTimeout):
                 self.close()
                 raise
-        return reply
+
+    # --- route_in (h2w requests the hub pushes; protocol 10.3) -----------------------------------------------------
+
+    def _take_push(self, frame: dict[str, Any]) -> bool:
+        """If ``frame`` is an h2w ``route_in`` request: verify it, keep it, return True. A frame that is not one
+        returns False (it is the reply being waited for)."""
+        o = frame.get("o")
+        if type(o) is not dict or o.get("dir") != "h2w" or o.get("re") is not None:
+            return False
+        self._verify_signed(frame)
+        body = frame["o"]["body"]
+        if o["op"] != "route_in" or set(body) != {"envelope"} or type(body["envelope"]) is not str:
+            raise LinkError("malformed")
+        if type(o["seq"]) is not int or o["seq"] <= self._last_in:
+            raise LinkError("malformed")
+        self._last_in = o["seq"]
+        self._push.append(o)
+        return True
+
+    def next_route_in(self, wait: float = 0.0) -> bytes | None:
+        """The next envelope the hub delivers, the exact bytes the sender signed, or ``None`` when nothing arrives
+        within ``wait`` seconds. At most one is outstanding: call :meth:`ack_route_in` after the host verified and
+        stored it (the hub resends an unacknowledged one after a reconnect)."""
+        with self._lock:
+            if not self._open:
+                raise LinkClosed("closed")
+            if self._pending is not None:
+                raise LinkError("malformed")  # a caller bug: the last one was never acknowledged
+            try:
+                if not self._push:
+                    if not self._c.wait_readable(wait):
+                        return None
+                    frame = framing.read_frame(self._c, timeout=self._t, max_bytes=self._max)
+                    if frame.get("t") == "error":
+                        raise LinkError(_code(frame.get("error")))
+                    if not self._take_push(frame):
+                        raise LinkError("malformed")
+                self._pending = self._push.pop(0)
+                try:
+                    return unb64u(self._pending["body"]["envelope"])
+                except EncodingError:
+                    raise LinkError("malformed") from None
+            except FrameError:
+                self.close()
+                raise LinkError("malformed") from None
+            except (LinkError, LinkClosed, LinkTimeout):
+                self.close()
+                raise
+
+    def ack_route_in(self, error: str | None = None) -> None:
+        """Answer the outstanding ``route_in`` (a w2h reply: same op, ``re`` = its seq, body ``{}`` or
+        ``{"error": code}``). Only this removes the entry at the hub."""
+        with self._lock:
+            if not self._open or self._sign is None:
+                raise LinkClosed("closed")
+            if self._pending is None:
+                raise LinkError("malformed")
+            if error is not None and not (type(error) is str and 0 < len(error) <= 40):
+                raise LinkError("malformed")
+            self._seq += 1
+            o = {
+                "v": 2, "suite": suite.SUITE_ID, "kind": "hub.link", "hv": HV, "hub_id": self.hub_id,
+                "workspace_id": self.workspace_id, "dir": "w2h", "seq": self._seq, "ts_ms": self._now(),
+                "op": "route_in", "re": self._pending["seq"], "body": {} if error is None else {"error": error},
+            }  # fmt: skip
+            try:
+                framing.write_frame(
+                    self._c, {"o": o, "sig": b64u(self._sign(SIG_LINK + cj(o)))}, timeout=self._t, max_bytes=self._max
+                )
+            except (FrameError, LinkClosed, LinkTimeout):
+                self.close()
+                raise
+            self._pending = None
+
+    def route_out(self, envelope: bytes, *, seq: int | None = None) -> str:
+        """Send one ws->ws envelope (the sender's exact bytes); returns ``"forwarded"`` or ``"queued"``. Raises
+        :class:`LinkError` with the hub's code (``not_allowed``, ``queue_full``, ``too_large``, ``replay``, ...)."""
+        if self._sign is None:
+            raise LinkClosed("closed")
+        return self.request("route_out", {"envelope": b64u(envelope)}, sign=self._sign, seq=seq or self._seq + 1)[
+            "state"
+        ]
 
     def _check_request(self, m: Any) -> dict[str, Any]:
         """Never send anything outside the closed list or for another hub / workspace / mode."""
@@ -219,8 +314,8 @@ class LinkClient:
             raise LinkError("other_workspace")
         return o
 
-    def _verify_reply(self, r: dict[str, Any], want: dict[str, Any]) -> None:
-        """Section 10.2 steps 1-6 for an h2w reply under the held card's HK_op, then the reply rules."""
+    def _verify_signed(self, r: dict[str, Any]) -> dict[str, Any]:
+        """Any h2w frame: envelope shape, suite, signature under HK_op, direction, hub, workspace, clock window."""
         o = r.get("o") if set(r) == {"o", "sig"} else None
         if type(o) is not dict or o.get("kind") != "hub.link":
             raise LinkError("malformed")
@@ -246,18 +341,23 @@ class LinkClient:
             raise LinkError("malformed")
         if type(o["seq"]) is not int or o["seq"] < 1 or type(o["ts_ms"]) is not int:
             raise LinkError("malformed")
-        # An unknown or failed op is answered with the literal "error", never an echo of a peer-chosen string.
-        body, is_error = o["body"], o["op"] == "error"
-        if o["op"] != want["op"] and not is_error:
-            raise LinkError("malformed")
-        if type(o["re"]) is not int or o["re"] != want["seq"]:
-            raise LinkError("malformed")
         if o["hub_id"] != self.hub_id:
             raise LinkError("other_hub")
         if o["workspace_id"] != self.workspace_id:
             raise LinkError("other_workspace")
         if abs(self._now() - o["ts_ms"]) > LINK_WINDOW_MS:
             raise LinkError("stale_timestamp")
+        return o
+
+    def _verify_reply(self, r: dict[str, Any], want: dict[str, Any]) -> None:
+        """Section 10.2 steps 1-6 for an h2w reply under the held card's HK_op, then the reply rules."""
+        o = self._verify_signed(r)
+        # An unknown or failed op is answered with the literal "error", never an echo of a peer-chosen string.
+        body, is_error = o["body"], o["op"] == "error"
+        if o["op"] != want["op"] and not is_error:
+            raise LinkError("malformed")
+        if type(o["re"]) is not int or o["re"] != want["seq"]:
+            raise LinkError("malformed")
         if set(body) == {"error"}:
             return
         if is_error or not _REPLY.get(want["op"], lambda b: b == {})(body):

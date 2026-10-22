@@ -494,7 +494,10 @@ host↔hub link has no operation that asks the hub to sign (§10).
    earlier version of a live item is `event_changed` (a re-put raced the decision; the person may sign again), else
    `not_granted`; (ii) that item's `chain.log` is the event's log, and the decision's target is in that item's `f1`
    (`gates[gate]`, `gates.verify` for `verdict.given`, `questions[question]`) → else `not_granted` (a question item
-   never admits a gate decision); (iii) `chain.head` is the head of `chain.log` at `chain.seq` in the host's own log
+   never admits a gate decision); the event carries exactly that item's values: `hash` = the entry's `hash`, on gate
+   decisions `gate_gen` = `gen`, `policy_hash` = `policy_hash` and (where present) `source_sha` = `source_sha`, and
+   always `based_on` = `chain.head` and `roster_v` = `f1.roster_v` → else `event_changed` (vectors
+   `custodial_selective_value_*_differs`); (iii) `chain.head` is the head of `chain.log` at `chain.seq` in the host's own log
    → else `view_fork`. Reference inputs: `live_items = {item_hash: {chain, f1}}` (current versions),
    `superseded_items` (earlier hashes of live items), `log_heads = {log: [head of seq 1, …]}`; vectors
    `custodial_selective_*` use the real `share_item_f1` item;
@@ -1797,7 +1800,7 @@ link errors travel as `{"error": code}` reply bodies; host-side refusals are loc
 | `spaces` | V3-D8: the space key per epoch, `sk_commit`, one sealed item (salt, derived key, AAD, plaintext object) and one wrap (ephemeral seed, AAD) |
 | `phase4` | p4: the `log_sync` lines, heads, view key, AAD and one sealed page; a prepared context and digest; a relay request and its bytes; the relay routes' request bytes and one sealed push payload (`relay_routes`); the custodial type table; the `space.accept` built from the vector proposal |
 | `share_item_f1` | C3b addendum: a ticket item with an `f1` block and its `item_hash` (§10.2b, §8.6) |
-| `cases` | 746 cases (196 positive, 550 negative): `check`, `args`, `expect` (`{"ok": …}` or `{"error": code}`), `phase` |
+| `cases` | 756 cases (198 positive, 558 negative): `check`, `args`, `expect` (`{"ok": …}` or `{"error": code}`), `phase` |
 
 The negative cases cover, per object where it applies: wrong domain, wrong signer, expired, binding for another
 workspace, unbound after leave, missing dev marker, dev at a real verifier, extra or unknown field, non-canonical

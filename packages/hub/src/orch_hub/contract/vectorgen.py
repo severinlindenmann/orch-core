@@ -1224,7 +1224,8 @@ def build() -> dict[str, Any]:
     item = f1_item()
     h_item = P4.item_hash(item)
     plan = F1["gates"]["plan"]
-    on_plan = {"gate": "plan", "gate_gen": plan["gen"], "hash": plan["hash"], "policy_hash": plan["policy_hash"]}
+    on_plan = {"gate": "plan", "gate_gen": plan["gen"], "hash": plan["hash"], "policy_hash": plan["policy_hash"],
+               "based_on": CHAIN["head"]}  # fmt: skip
     ev_sel = custodial(item_hash=h_item, payload=on_plan)
     LIVE = {h_item: {"chain": CHAIN, "f1": F1}}
     HEADS = {TICKET: ["sha256:" + S.fake_seed("hub/ev/head1").hex(), CHAIN["head"]]}
@@ -1250,7 +1251,7 @@ def build() -> dict[str, Any]:
         ("custodial_selective_gate_not_in_item_f1", {**sel_ok, "event": custodial(item_hash=h_item)}, "not_granted",
          "L2-ADD-1: the decision's gate is in the f1 of the item the person was shown"),
         ("custodial_selective_question_not_in_item_f1", {**sel_ok, "event": custodial(typ="question.answered",
-         item_hash=h_item, payload={"question": "Q7", "hash": HASH_Q, "text": "yes"})}, "not_granted",
+         item_hash=h_item, payload={"question": "Q7", "hash": HASH_Q, "text": "yes", "based_on": CHAIN["head"]})}, "not_granted",
          "L2-ADD-1: the question is in the item's f1"),
         ("custodial_selective_question_item_gate_decision", {**sel_ok,
          "live_items": {h_q: {"chain": CHAIN, "f1": q_only["o"]["f1"]}},
@@ -1278,11 +1279,39 @@ def build() -> dict[str, Any]:
     ):  # fmt: skip
         case(nm, "custodial", args, {"error": exp}, 4, why)
     case("custodial_selective_granted_owner", "custodial", {**sel_ok, "event": ev_sel}, ok_cus, 4)
+    # the event is bound to the item's values (§8.3 step 7 (ii)): one vector per field
+    code_g, ver_g = F1["gates"]["code"], F1["gates"]["verify"]
+    on_code = {"gate": "code", "gate_gen": code_g["gen"], "hash": code_g["hash"], "policy_hash": code_g["policy_hash"],
+               "source_sha": code_g["source_sha"], "based_on": CHAIN["head"]}  # fmt: skip
+    case("custodial_selective_code_approval_in_item", "custodial",
+         {**sel_ok, "event": custodial(item_hash=h_item, payload=on_code)}, ok_cus, 4)  # fmt: skip
+    on_ver = {"outcome": "pass", "gate_gen": ver_g["gen"], "hash": ver_g["hash"], "policy_hash": ver_g["policy_hash"],
+              "source_sha": ver_g["source_sha"], "based_on": CHAIN["head"]}  # fmt: skip
+    case("custodial_selective_verdict_in_item", "custodial",
+         {**sel_ok, "event": custodial(typ="verdict.given", item_hash=h_item, payload=on_ver)}, ok_cus, 4)  # fmt: skip
+    q1 = {"question": "Q1", "hash": HASH_Q, "text": "CSV", "based_on": CHAIN["head"]}
+    other = "sha256:" + S.fake_seed("hub/ev/other_value").hex()
+    for nm, typ, pl in (
+        ("gate_hash", "gate.approved", {**on_plan, "hash": other}),
+        ("gate_gen", "gate.approved", {**on_plan, "gate_gen": plan["gen"] + 1}),
+        ("policy_hash", "gate.approved", {**on_plan, "policy_hash": other}),
+        ("source_sha", "gate.approved", {**on_code, "source_sha": code_g["source_sha"][:1]}),
+        ("based_on", "gate.approved", {**on_plan, "based_on": other}),
+        ("question_hash", "question.answered", {**q1, "hash": other}),
+        ("question_based_on", "question.answered", {**q1, "based_on": other}),
+    ):
+        case(f"custodial_selective_value_{nm}_differs", "custodial",
+             {**sel_ok, "event": custodial(typ=typ, item_hash=h_item, payload=pl)}, {"error": "event_changed"}, 4,
+             "the event is built on exactly the values of the item the person was shown")  # fmt: skip
+    case("custodial_selective_value_roster_v_differs", "custodial",
+         {**sel_ok, "event": custodial(item_hash=h_item, payload={**on_plan, "roster_v": F1["roster_v"] + 1})},
+         {"error": "event_changed"}, 4, "roster_v is the item's f1.roster_v")  # fmt: skip
     case(
         "custodial_selective_answer_in_item",
         "custodial",
         {**sel_ok, "event": custodial(typ="question.answered", item_hash=h_item,
-                                      payload={"question": "Q1", "hash": HASH_Q, "text": "CSV"})},
+                                      payload={"question": "Q1", "hash": HASH_Q, "text": "CSV",
+                                               "based_on": CHAIN["head"]})},
         ok_cus,
         4,
     )  # fmt: skip

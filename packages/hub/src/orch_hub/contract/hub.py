@@ -775,6 +775,17 @@ def _selective_item(
         targets, key = f1.get("gates"), "verify" if typ == "verdict.given" else event.get("gate")
     if type(targets) is not dict or type(key) is not str or key not in targets:
         raise Refused("not_granted")
+    # the event is built on exactly this item's values (what the person was shown); another value → event_changed
+    t = targets[key]
+    if type(t) is not dict:
+        raise Refused("not_granted")
+    want = {"hash": t.get("hash"), "based_on": chain.get("head"), "roster_v": f1.get("roster_v")}
+    if typ != "question.answered":
+        want.update(gate_gen=t.get("gen"), policy_hash=t.get("policy_hash"))
+    if "source_sha" in event:  # step 1 already requires it exactly on a code approval and a verdict
+        want["source_sha"] = t.get("source_sha")
+    if any(v is None or event.get(k) != v for k, v in want.items()):
+        raise Refused("event_changed")
     heads, seq = log_heads.get(log), chain.get("seq")
     if (
         type(heads) is not list

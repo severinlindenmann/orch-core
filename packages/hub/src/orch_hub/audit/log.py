@@ -19,7 +19,6 @@ from .store import AuditStore
 #: ``actor_user_id`` of a change made at the hub's own terminal (the dev CLI) rather than by a named hub user.
 OPERATOR = "0" * 32
 PAGE = 100
-_NEEDS_NONCE = ("custodial", "grant", "space")
 
 
 class AuditLog:
@@ -43,11 +42,11 @@ class AuditLog:
     # --- appending -----------------------------------------------------------------------------------------------
 
     def append(self, typ: str, event: dict[str, Any]) -> dict[str, Any]:
-        """Add one record. The event is checked with the contract's own field rules (``scope_nonce`` is drawn here);
+        """Add one record. The event is checked with the contract's own field rules (its ``nonce`` is drawn here);
         the record is signed under the current op cert and stored in order. Returns the signed record."""
         ev = dict(event)
-        if typ in _NEEDS_NONCE and "scope_nonce" not in ev:
-            ev["scope_nonce"] = b64u(os.urandom(16))
+        if "nonce" not in ev:  # one rule, no type exempt: 32 random bytes inside every event (protocol.md §10.5)
+            ev["nonce"] = b64u(os.urandom(32))
         AU.check_event(typ, ev)
         with self._lock:
             head = self.store.head()

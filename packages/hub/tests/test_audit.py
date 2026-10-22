@@ -15,6 +15,7 @@ from orch_hub.audit import OPERATOR, AuditLog, AuditStore
 from orch_hub.contract import audit as AU
 from orch_hub.contract import keystore as KS
 from orch_hub.contract import vectorgen as G
+from orch_hub.contract.canon import unb64u
 from orch_hub.link import LinkError
 
 NOW = G.NOW
@@ -235,3 +236,40 @@ def test_events_are_checked_against_the_contract_before_signing():
         digest="A" * 43,
     )
     assert r["o"]["type"] == "custodial" and r["o"]["scope_tag"]
+
+
+def test_every_event_type_carries_a_fresh_32_byte_nonce_so_hashes_are_not_guessable():
+    store = AuditStore()
+    log = AuditLog(store, KS.OpSigner(G.K.priv["hk_op"]), G.HUB_ID, lambda: G.OP_CERT_ID, now_ms=lambda: NOW)
+    ev = {"group": "ops", "user_id": G.U_BOB, "added": True, "actor_user_id": OPERATOR}
+    r1, r2 = log.append("membership", ev), log.append("membership", ev)  # the very same change twice
+    assert r1["o"]["event_hash"] != r2["o"]["event_hash"]
+    # a tenant who guesses the fields cannot confirm the hash without the nonce
+    assert AU.event_hash(ev) not in (r1["o"]["event_hash"], r2["o"]["event_hash"])
+    for typ, e in (
+        (
+            "custodial",
+            dict(
+                zip(
+                    ("workspace_id", "log", "verb", "user_id", "channel_id", "digest"),
+                    (G.WS_A, G.TICKET, "gate.approved", G.U_ALICE, G.CH_ALICE, "A" * 43),
+                    strict=True,
+                )
+            ),
+        ),
+        ("grant", {"group": "g", "workspace_id": G.WS_A, "role": "edit", "actor_user_id": OPERATOR}),
+        ("space", {"space_id": G.SPACE, "epoch": 1, "change": "create", "workspace_id": None, "actor_user_id": None}),
+    ):
+        got = [store.after(log.append(typ, e)["o"]["seq"] - 1, 1)[0][2]["nonce"] for _ in range(2)]
+        assert got[0] != got[1] and all(len(unb64u(n, 32)) == 32 for n in got)
+    assert all("nonce" in ev for _, _, ev in store.after(0, 100))
+
+
+def test_an_event_handed_in_without_a_valid_nonce_is_refused_by_the_contract_checker():
+    from orch_hub.contract.hub import Refused
+
+    ev = {"group": "ops", "user_id": G.U_BOB, "added": True, "actor_user_id": OPERATOR}
+    with pytest.raises(Refused):
+        AU.check_event("membership", ev)  # no nonce
+    with pytest.raises(Refused):
+        AU.check_event("membership", {**ev, "nonce": G.b64u(bytes(16))})  # 16 bytes

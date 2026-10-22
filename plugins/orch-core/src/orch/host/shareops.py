@@ -201,7 +201,7 @@ def tickets_for(service: WorkspaceService, viewer: str | None = None) -> list[An
         gates = tuple(
             GateFact(
                 g.gate, g.gen, g.hash, g.policy_hash,
-                tuple((e["repo"], e["ref"], e["sha"]) for e in g.input["source_sha"])
+                tuple((e["repo"], e["ref"], e["sha"]) for e in g.input.get("source_sha", ()))
                 if g.gate in ("code", "verify") else None,
             )
             for g in t.gates.values()

@@ -157,8 +157,7 @@ def test_each_item_kind_gets_its_own_f1():
         items[f"question:{UID}:Q1"].f1["questions"] == {"Q1": {"hash": H}}
         and items[f"question:{UID}:Q1"].f1["gates"] == {}
     )
-    tk = items[f"ticket:{UID}"].f1  # the owner's open needs on the ticket
-    assert set(tk["gates"]) == {"code"} and set(tk["questions"]) == {"Q1"}
+    assert items[f"ticket:{UID}"].f1 is None  # a ticket item names no decision
 
 
 @pytest.mark.parametrize(
@@ -179,13 +178,15 @@ def test_any_changed_f1_value_changes_the_digest_but_not_the_plan(change):
     for lg in (f"summary:{UID}:approve:code", f"summary:{UID}:question:Q1", f"question:{UID}:Q1"):
         if base[lg].f1 != now[lg].f1:
             assert base[lg].digest != now[lg].digest
-        assert base[lg].shown == now[lg].shown  # what the owner is shown (the payload) did not change
+        if base[lg].data == now[lg].data:
+            assert base[lg].shown == now[lg].shown  # what the owner is shown did not change
     assert any(base[k].digest != now[k].digest for k in base)
 
 
 def test_a_roster_change_changes_every_item():
     a, b = _select(_ticket(roster_v=3)), _select(_ticket(roster_v=4))
-    assert all(a[k].digest != b[k].digest for k in a)
+    assert all(a[k].digest != b[k].digest for k in a if a[k].f1 is not None)
+    assert a[f"ticket:{UID}"].digest == b[f"ticket:{UID}"].digest  # a ticket item carries no f1
 
 
 # --- sync: a changed value is a higher item_version ---
@@ -204,7 +205,7 @@ def test_sync_re_puts_under_a_higher_version_only_when_f1_changed():
     st, link, built = SH.ShareState(), _Link(), []
 
     def build(item_id, item, version):
-        built.append((item.logical, item.f1["roster_v"], version))
+        built.append((item.logical, (item.f1 or {}).get("roster_v"), version))
         return "sealed", "sha256:" + "0" * 64
 
     def run(t):
@@ -217,10 +218,10 @@ def test_sync_re_puts_under_a_higher_version_only_when_f1_changed():
     again, none = run(_ticket())
     assert (again["put"], again["kept"]) == (0, 4) and none == []  # nothing changed: nothing sent
     bumped, news = run(_ticket(roster_v=4))  # a member change raises roster_v: every item is put again
-    assert (bumped["put"], bumped["kept"]) == (4, 0)
+    assert (bumped["put"], bumped["kept"]) == (3, 1)  # the ticket item carries no f1
     assert {v for _, r, v in news} == {2} and {r for _, r, _v in news} == {4}
     gate, news = run(_ticket(roster_v=4, gates=(_gate("plan"), _gate("code", "7", sources=SRC), _gate("verify", "3"))))
-    assert gate["put"] == 2 and {lg for lg, _r, _v in news} == {f"summary:{UID}:approve:code", f"ticket:{UID}"}
+    assert gate["put"] == 1 and {lg for lg, _r, _v in news} == {f"summary:{UID}:approve:code"}
     assert {v for _, _r, v in news} == {3}
 
 
@@ -228,7 +229,7 @@ def test_an_f1_that_does_not_fit_the_cap_is_shared_without_it_not_dropped():
     t = _ticket(gates=[_gate("code", sources=[
         {"repo": "https://github.com/demo/" + f"r{i:02}" + "x" * 480, "ref": "refs/heads/" + "b" * 200, "sha": "1" * 64}
         for i in range(32)])])  # fmt: skip
-    item = SH.select([{"kind": "ticket", "ticket": "DEMO-1"}], [t])[0]
+    item = next(i for i in SH.select([{"kind": "needs_you"}], [t]) if i.f1 and i.f1["gates"])
     assert item.f1 is not None and len(item.f1["gates"]["code"]["source_sha"]) == 32
     from tests.hub.vec import private_key, pub
 

@@ -152,12 +152,14 @@ class ShareItem:
     payload: dict[str, Any]  # the exact 10.2b content of this kind (shown to the owner; the builder signs and seals it)
     digest: str  # b64u SHA-256 of the canonical payload and f1: a change of either re-sends (a new item_version)
     f1: dict[str, Any] | None = field(default=None, compare=False)  # the 10.2b f1 block (None: shared without one)
-    shown: str = field(default="", compare=False)  # b64u SHA-256 of the payload alone: what ``share.preview`` plans
+    shown: str = field(default="", compare=False)  # b64u SHA-256 of what the owner is shown (payload + decision data)
+    data: tuple[str, ...] = field(default=(), compare=False)  # decision data lines (repos and refs of f1), C6b-3
 
     def line(self) -> str:
         """One line for the owner's review."""
+        extra = "".join(f" [{d}]" for d in self.data)
         if self.kind == "summary":
-            return f"needs you: {self.payload['type']}: {self.payload['title']}"
+            return f"needs you: {self.payload['type']}: {self.payload['title']}{extra}"
         if self.kind == "question":
             return f"question on {clean_line(self.ticket_key)}: {self.payload['title']}"
         return f"ticket {clean_line(self.ticket_key)}: {self.payload['title']}"
@@ -211,6 +213,17 @@ def make_f1(t: TicketFact, gates: Iterable[str] = (), questions: Iterable[str] =
     return f1
 
 
+def decision_data(f1: Mapping[str, Any] | None) -> list[str]:
+    """What f1 carries beyond ids and hashes, as preview lines: the repo URLs and branch refs of a gate's source list
+    (C6b-3). They reach the hub, so the preview shows them and the plan covers them."""
+    if f1 is None:
+        return []
+    return sorted(
+        f"{g} source: {clean_line(e['repo'])} {clean_line(e['ref'])}"
+        for g, v in f1["gates"].items() for e in v.get("source_sha", ())
+    )  # fmt: skip
+
+
 def _item(
     logical: str, kind: str, t: TicketFact, payload: dict[str, Any], f1: dict[str, Any] | None = None
 ) -> ShareItem | None:
@@ -223,9 +236,10 @@ def _item(
         sharefmt.check_content(ITEM_KIND[kind], payload)
     except HubRefused:
         return None
-    shown = b64u(suite.sha256(wire.cj(payload)))
+    data = decision_data(f1)
+    shown = b64u(suite.sha256(wire.cj(payload if not data else {"payload": payload, "decision_data": data})))
     digest = shown if f1 is None else b64u(suite.sha256(wire.cj({"payload": payload, "f1": f1})))
-    return ShareItem(logical, kind, t.uid, t.key, payload, digest, f1, shown)
+    return ShareItem(logical, kind, t.uid, t.key, payload, digest, f1, shown, tuple(data))
 
 
 def _valid_labels(labels: Iterable[str]) -> list[str]:
@@ -250,15 +264,21 @@ def select(rules: Iterable[Mapping[str, str]], tickets: Iterable[TicketFact]) ->
             or any(r["kind"] == "tag" and r["tag"] in t.labels for r in rs)
         )
         if hit:
-            put(_item(
-                f"ticket:{t.uid}", "ticket", t,
-                {"key": t.key, "type": t.type, "title": _line(t.title), "status": t.status,
-                 "labels": _valid_labels(t.labels), "deadline": t.due},
-                make_f1(
-                    t, {n.ref for n in t.needs if n.kind == "approve" and n.to_owner and n.ref},
-                    {q.qid for q in t.questions if q.to_owner},
-                ),
-            ))  # fmt: skip
+            put(
+                _item(
+                    f"ticket:{t.uid}",
+                    "ticket",
+                    t,
+                    {
+                        "key": t.key,
+                        "type": t.type,
+                        "title": _line(t.title),
+                        "status": t.status,
+                        "labels": _valid_labels(t.labels),
+                        "deadline": t.due,
+                    },
+                )
+            )  # fmt: skip  (no f1: a decision is only built from an item that names that decision, C6b-1/2)
         if "questions" in kinds:
             for q in t.questions:
                 if q.to_owner:

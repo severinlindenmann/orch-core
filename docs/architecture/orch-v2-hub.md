@@ -162,8 +162,11 @@ front-page warning name both. That is why the split layout is the recommendation
   `secure-enclave` (presence per signature, D41) is met only by `passkey` with user verification. `se-unlocked`
   meets a D49-level policy, and `password+totp` meets neither.
 - **Audit.** Every custodial signature and every grant or membership change is in a hash-chained hub audit log.
-  Workspaces acknowledge its head on every sync, so a compromised hub cannot silently drop entries. The workspace also
-  keeps each signed event.
+  Workspaces verify the records they see and acknowledge the head to the hub (`audit_ack`), so a gap in what a workspace
+  receives is detectable (orch-hub `docs/protocol.md` §10.5). The acks go to the hub itself, though: nothing yet detects
+  a hub that shows different chains to different workspaces. Fork detection needs HK_op-signed checkpoints, an open L7
+  gap (orch-core #1007), so a compromised hub can still silently rewrite or withhold entries from workspaces it chooses.
+  The workspace also keeps each signed event.
 
 ## 6. Access model
 

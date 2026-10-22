@@ -116,12 +116,23 @@ def _space_flow(a: dict[str, Any]) -> dict[str, Any]:
 
 
 def _audit(a: dict[str, Any]) -> dict[str, Any]:
-    dev, held = a.get("dev_mode", True), _held(a)
+    dev = a.get("dev_mode", True)
+    held = _held({**a, "revoked_op_certs": []})  # revocations are checked per record (they stand for passed history)
+    certs = a.get("op_certs", [])
     head = a.get("head")
-    for st in a.get("steps", []):
-        head = AU.apply_record(head, st, AU.verify_record(st, held, dev_mode=dev))
-    o = AU.verify_record(a["signed"], held, dev_mode=dev, event=a.get("event"), revoked_op_certs=_later(a))
-    new = AU.apply_record(head, a["signed"], o)
+    for st in a.get("steps", []):  # the history the verifier accepted before any revocation it learns of now
+        o, ops = AU.verify_record_ex(st, held, dev_mode=dev, op_certs=certs)
+        head = AU.apply_record(head, st, o, op_seq=ops)
+    o, ops = AU.verify_record_ex(
+        a["signed"],
+        held,
+        dev_mode=dev,
+        event=a.get("event"),
+        op_certs=certs,
+        revoked_op_certs=frozenset(a.get("revoked_op_certs", [])),
+        trusted_seq=head["seq"] if head else 0,
+    )
+    new = AU.apply_record(head, a["signed"], o, op_seq=ops)
     return {"seq": new["seq"], "hash": new["hash"]}
 
 
@@ -238,8 +249,10 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
         return H.check_hub_publish(req, st, now_ms=now, dev_mode=dev)
     if check == "space":
         prior = None
-        if a.get("prior"):
-            prior = SP.verify_space(a["prior"], _held(a), dev_mode=dev)
+        if a.get("prior"):  # held under the card that was current when it was accepted
+            prior = SP.verify_space(
+                a["prior"], _held({**a, "card": a.get("held_card", a["card"]), "held_card": None}), dev_mode=dev
+            )
         o = SP.verify_space(a["signed"], _held(a), dev_mode=dev, prior=prior, revoked_op_certs=_later(a))
         return {"epoch": o["epoch"], "members": o["members"]}
     if check == "space_wrap":

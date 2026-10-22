@@ -12,15 +12,19 @@ from collections.abc import Mapping
 from typing import Any
 
 from . import suite as S
-from .canon import CanonError, b64u, cj
+from .canon import CanonError, b64u, cj, unb64u
 from .hub import (
     Refused,
     _b64u_n,
     _bool,
+    _dev,
     _enum,
+    _envelope,
+    _fields,
     _hex16,
     _int_min,
-    _under_card,
+    _signature,
+    verify_op_cert,
 )
 from .labels import L
 
@@ -96,17 +100,55 @@ def scope_of(event: Mapping[str, Any]) -> str | None:
     return event.get("workspace_id")
 
 
-def verify_record(
+def _record_key(
+    o: Mapping[str, Any],
+    held: Mapping[str, Any],
+    op_certs: Any,
+    dev_mode: bool,
+    revoked_op_certs: frozenset[str],
+    trusted_seq: int,
+) -> tuple[bytes, int]:
+    """The key a record verifies under and that op cert's ``op_seq`` (L2P-3). A record names the op cert it was signed
+    under: the held card's current one, or an earlier one that the hub's root certified (``op_certs``, root-signed
+    objects the hub serves with ``audit_get``), valid at the record's time. A revoked op cert still stands for records
+    the verifier already passed (``seq <= trusted_seq``, covered by the hash chain) and for nothing newer."""
+    cid, seq, ts = o.get("op_cert_id"), o.get("seq"), o.get("ts_ms")
+    if not _hex16(cid) or type(seq) is not int or type(ts) is not int:
+        raise Refused("malformed")
+    if cid in revoked_op_certs and seq > trusted_seq:
+        raise Refused("revoked")
+    cur = held["op_cert"]
+    if cid == cur["cert_id"]:
+        return held["hk_op_pub"], cur["op_seq"]
+    for c in op_certs or ():
+        if type(c) is dict and type(c.get("o")) is dict and c["o"].get("cert_id") == cid:
+            oc = verify_op_cert(c, held["hk_root_pub"], now_ms=ts, dev_mode=dev_mode)
+            if oc["hub_id"] != held["card"]["hub_id"]:
+                raise Refused("other_hub")
+            return unb64u(oc["hk_op_pub"], 65), oc["op_seq"]
+    raise Refused("stale_op_cert")
+
+
+def verify_record_ex(
     signed: Any,
     held: Mapping[str, Any],
     *,
     dev_mode: bool,
     event: Any = None,
+    op_certs: Any = (),
     revoked_op_certs: frozenset[str] = frozenset(),
-) -> dict[str, Any]:
-    """The record under the held hub card. If the host has the event (it concerns the host), it must hash to
-    ``event_hash``, be a valid event of the record's ``type`` and match its ``scope``: ``audit_mismatch`` otherwise."""
-    o = _under_card(signed, "hub.audit", held, dev_mode, revoked_op_certs)
+    trusted_seq: int = 0,
+) -> tuple[dict[str, Any], int]:
+    """The record under the op cert it names (see :func:`_record_key`), then fields, hub, dev marker and genesis rule.
+    If the host has the event (it concerns the host), it must hash to ``event_hash``, be a valid event of the record's
+    ``type`` and match its ``scope``: ``audit_mismatch`` otherwise. Returns ``(record object, op_seq)``."""
+    o = _envelope(signed, "hub.audit")
+    pub, op_seq = _record_key(o, held, op_certs, dev_mode, revoked_op_certs, trusted_seq)
+    _signature(signed, L["sig_hub_audit"], pub)
+    _fields(o, "hub.audit")
+    if o["hub_id"] != held["card"]["hub_id"]:
+        raise Refused("other_hub")
+    _dev(o, dev_mode)
     if o["seq"] == 1 and o["prev"] != GENESIS_PREV:
         raise Refused("malformed")
     if event is not None:
@@ -115,28 +157,40 @@ def verify_record(
         check_event(o["type"], event)
         if scope_of(event) != o["scope"]:
             raise Refused("audit_mismatch")
-    return o
+    return o, op_seq
 
 
-def apply_record(head: Mapping[str, Any] | None, signed: Mapping[str, Any], o: Mapping[str, Any]) -> dict[str, Any]:
-    """Chain rule. ``head`` = ``{"seq", "hash"}`` of the last record the verifier accepted, or None (it expects
-    genesis). Next record: ``seq = head.seq + 1`` and ``prev = head.hash``. A skipped ``seq`` is ``audit_gap``; the right
-    ``seq`` with another ``prev``, or an old ``seq`` with other bytes, is ``audit_fork`` (the hub told two stories). An
-    old ``seq`` with the same bytes is idempotent."""
+def verify_record(signed: Any, held: Mapping[str, Any], **kw: Any) -> dict[str, Any]:
+    return verify_record_ex(signed, held, **kw)[0]
+
+
+def apply_record(
+    head: Mapping[str, Any] | None, signed: Mapping[str, Any], o: Mapping[str, Any], *, op_seq: int | None = None
+) -> dict[str, Any]:
+    """Chain rule. ``head`` = ``{"seq", "hash", "op_seq"?}`` of the last record the verifier accepted, or None (it
+    expects genesis). Next record: ``seq = head.seq + 1`` and ``prev = head.hash``. A skipped ``seq`` is ``audit_gap``;
+    the right ``seq`` with another ``prev``, or the head's own ``seq`` with other bytes, is ``audit_fork`` (the hub told
+    two stories). A record older than the head is ignored (a host that keeps only its head cannot compare it, and
+    overlapping ``audit_get`` pages re-deliver records: not a fork, L2P-10). ``op_seq`` (of the op cert the record
+    verified under) never decreases along the chain: ``stale_op_cert``."""
     h = chain_hash(signed)
     if head is None:
         if o["seq"] != 1:
             raise Refused("audit_gap")
-        return {"seq": 1, "hash": h}
-    if o["seq"] <= head["seq"]:
-        if o["seq"] == head["seq"] and h == head["hash"]:
+        return {"seq": 1, "hash": h, "op_seq": op_seq}
+    if o["seq"] < head["seq"]:
+        return dict(head)
+    if o["seq"] == head["seq"]:
+        if h == head["hash"]:
             return dict(head)
-        raise Refused("audit_fork")  # an older record cannot be checked against the head: other bytes at a taken seq
+        raise Refused("audit_fork")
     if o["seq"] > head["seq"] + 1:
         raise Refused("audit_gap")
     if o["prev"] != head["hash"]:
         raise Refused("audit_fork")
-    return {"seq": o["seq"], "hash": h}
+    if op_seq is not None and head.get("op_seq") is not None and op_seq < head["op_seq"]:
+        raise Refused("stale_op_cert")
+    return {"seq": o["seq"], "hash": h, "op_seq": op_seq if op_seq is not None else head.get("op_seq")}
 
 
 def check_ack(

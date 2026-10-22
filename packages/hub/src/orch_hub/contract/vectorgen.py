@@ -2303,6 +2303,99 @@ def build() -> dict[str, Any]:
         3,
     )
 
+    # ---- HK_op rotation (L2P-3): records verify under the root-certified op cert they name
+    rot = card(op=op_cert(cert_id=OP_CERT_NEXT, key="hk_op_next"), op_key="hk_op_next", card_seq=2)
+    cert1 = op_cert()
+    rot_args = {**base, "card": rot, "held_card": c, "op_certs": [cert1]}
+    r2n = audit_rec(2, h[0], *AUDIT_EVENTS[1], signer="hk_op_next", op_cert_id=OP_CERT_NEXT)
+    case(
+        "audit_across_op_rotation",
+        "audit",
+        {**rot_args, "steps": [ch[0]], "signed": r2n},
+        {"ok": {"seq": 2, "hash": AU.chain_hash(r2n)}},
+        3,
+        "a record signed before the rotation, one after",
+    )
+    case(
+        "audit_from_genesis_after_rotation",
+        "audit",
+        {**rot_args, "signed": ch[0]},
+        {"ok": {"seq": 1, "hash": h[0]}},
+        3,
+        "a new workspace verifies the whole chain under the op certs the hub serves",
+    )
+    case(
+        "audit_old_cert_missing", "audit", {**rot_args, "op_certs": [], "signed": ch[0]}, {"error": "stale_op_cert"}, 3
+    )
+    case(
+        "audit_old_cert_forged",
+        "audit",
+        {**rot_args, "op_certs": [op_cert(root="hk_root_rogue")], "signed": ch[0]},
+        {"error": "bad_signature"},
+        3,
+        "an op cert not signed by this hub's root is no cert",
+    )
+    r1n = audit_rec(1, AU.GENESIS_PREV, *AUDIT_EVENTS[0], signer="hk_op_next", op_cert_id=OP_CERT_NEXT)
+    case(
+        "audit_op_seq_goes_back",
+        "audit",
+        {**rot_args, "steps": [r1n], "signed": audit_rec(2, AU.chain_hash(r1n), *AUDIT_EVENTS[1])},
+        {"error": "stale_op_cert"},
+        3,
+        "a lower op cert after a higher one: an old key signing new records",
+    )
+    case(
+        "audit_new_record_under_revoked_op",
+        "audit",
+        {**with_card, "steps": [ch[0]], "signed": ch[1], "revoked_op_certs": [OP_CERT_ID]},
+        {"error": "revoked"},
+        3,
+        "the op cert was revoked: nothing newer than what the verifier passed",
+    )
+    case(
+        "audit_passed_record_under_revoked_op_stays_valid",
+        "audit",
+        {**with_card, "steps": ch[:2], "signed": ch[0], "revoked_op_certs": [OP_CERT_ID]},
+        {"ok": {"seq": 2, "hash": h[1]}},
+        3,
+        "history already passed (<= head) is covered by the hash chain",
+    )
+    sr = resign("hk_op_next", "sig_hub_space", e1, op_cert_id=OP_CERT_NEXT)
+    case(
+        "space_resigned_after_rotation",
+        "space",
+        {**base, "card": rot, "held_card": c, "signed": sr, "prior": e1},
+        {"ok": {"epoch": 1, "members": sorted([WS_A, WS_B])}},
+        3,
+        "the same record under the new op cert is no conflict",
+    )
+    case(
+        "space_resigned_after_rotation_other_members",
+        "space",
+        {
+            **base,
+            "card": rot,
+            "held_card": c,
+            "prior": e1,
+            "signed": resign("hk_op_next", "sig_hub_space", e1, op_cert_id=OP_CERT_NEXT, members=[WS_A]),
+        },
+        {"error": "space_conflict"},
+        3,
+    )
+    case(
+        "space_resigned_after_rotation_other_key",
+        "space",
+        {
+            **base,
+            "card": rot,
+            "held_card": c,
+            "prior": e1,
+            "signed": resign("hk_op_next", "sig_hub_space", e1, op_cert_id=OP_CERT_NEXT, sk_commit=b64u(bytes(32))),
+        },
+        {"error": "space_conflict"},
+        3,
+    )
+
     ak = {"chain": ch, "workspace_id": WS_A}
     case("audit_ack_valid", "audit_ack", {**ak, "body": {"seq": 2, "head": h[1]}}, {"ok": {"acked": 2}}, 3)
     case("audit_ack_head", "audit_ack", {**ak, "body": {"seq": 4, "head": h[3]}}, {"ok": {"acked": 4}}, 3)

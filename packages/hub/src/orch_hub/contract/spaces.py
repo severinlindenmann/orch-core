@@ -184,6 +184,10 @@ def _members(o: dict[str, Any]) -> list[str]:
     return m
 
 
+def _identity(o: Mapping[str, Any]) -> tuple[Any, ...]:
+    return (o["space_id"], o["epoch"], tuple(o["members"]), o["sk_commit"])
+
+
 def verify_space(
     signed: Any,
     held: Mapping[str, Any],
@@ -202,7 +206,9 @@ def verify_space(
         if o["epoch"] < prior["epoch"]:
             raise Refused("stale_epoch")
         if o["epoch"] == prior["epoch"]:
-            if cj(o) != cj(dict(prior)):
+            # Identity is the content, not the signature or the op cert it names (L2P-3): after an HK_op rotation the hub
+            # re-signs the current record, and that is not a conflict.
+            if _identity(o) != _identity(prior):
                 raise Refused("space_conflict")
             return dict(prior)
     return o

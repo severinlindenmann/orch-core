@@ -556,7 +556,7 @@ unknown `op` is `unknown_op`.
 | `card_put` | w2h | both | `{"card", "pk_pub"}`: the workspace's v2 card, opaque to the hub, forwarded to publish and the relay (§16) | `{}` |
 | `binding_put` | w2h | both | `{"object"}`: a `hub.binding` or `hub.unbound`, forwarded as is | `{}` |
 | `audit_ack` | w2h | both | `{"seq", "head": b64u(32)}` | `{"acked": seq}` (§10.5) |
-| `audit_get` | w2h | both | `{"since"}` | `{"records": [{"record": <hub.audit>, "event"?}], "head"}` (D4, §10.5; added) |
+| `audit_get` | w2h | both | `{"since"}` | `{"records": [{"record": <hub.audit>, "event"?}], "head", "op_certs": [<hub.op_cert>]}` (D4, §10.5; added) |
 | `share_put` | w2h | selective | `{"item_id", "sealed": b64u}` | `{}` |
 | `share_revoke` | w2h | selective | `{"item_id"}` | `{}` |
 | `space_list` | w2h | both | `{}` | `{"spaces": [<hub.space>]}` (V3-D8, §10.4) |
@@ -689,7 +689,9 @@ space.item     {v, suite, kind: "space.item", hv, hub_id, space_id, epoch, membe
 **One answer for "no such space" and "not a member"** (`not_member`), so a workspace learns nothing about spaces it
 is not in. A host that gets `stale_epoch` or sees a higher `epoch` in a reply verifies the new `hub.space`
 (under the pinned hub card, epochs only rise: `stale_epoch` for a replayed older record, `space_conflict` for the same
-epoch with other bytes), then its wrap: signature, this workspace is listed, the wrap names this space, epoch,
+epoch with other **content**: the identity of a record is `(space_id, epoch, members, sk_commit)`, not its signature, so
+the hub's re-signed record after an `HK_op` rotation is no conflict, L2P-3; after a rotation the hub re-signs the
+current record of every space and every wrap it may still serve under the new op cert), then its wrap: signature, this workspace is listed, the wrap names this space, epoch,
 workspace and its `WXK` version (`bad_wxk_version` otherwise: rotate and ask again), the seal opens (`bad_wrap`) and the
 key matches `sk_commit` (`commit_mismatch`).
 
@@ -727,21 +729,27 @@ hub.audit {v, suite, kind: "hub.audit", hv, hub_id, op_cert_id, seq ≥ 1, prev:
   workspace_id | null, actor_user_id | null}`. The acting admin's `UK` signature on a grant or membership change is
   the custodial event it came from (spec §10); the audit record points at it, it does not replace it.
 
-**Verification by a workspace** (reference `verify_record` + `apply_record`): the record under the held hub card (the
-`_under_card` checks of §7: signature, `hub_id`, `op_cert_id`, dev marker, exact fields), `seq = 1` ⇒ genesis `prev`;
+**Verification by a workspace** (reference `verify_record_ex` + `apply_record`). **Key rotation (L2P-3):** a record
+verifies under the op certificate **it names** (`op_cert_id`): the held card's current one, or an earlier one that this
+hub's root signed (`hub.op_cert`, served in `audit_get`'s `op_certs`) and that was valid at the record's `ts_ms`. The
+chain therefore survives a routine `HK_op` rotation: a new workspace verifies from genesis, an offline one past its
+head. `op_seq` of the op cert never decreases along the chain (`stale_op_cert`: an old key signing new records). A
+**revoked** op cert (`hub.op_revoked`) stands for the records the verifier already passed (`seq` ≤ its head, covered by
+the hash chain) and for nothing newer (`revoked`); an op cert that is not served, or not signed by this root, gives
+`stale_op_cert` / `bad_signature`. Then the usual checks (`hub_id`, dev marker, exact fields), `seq = 1` ⇒ genesis `prev`;
 then, with its head `{seq, hash}` (or none: it expects genesis, or starts from an anchor head it was given):
 
 | Situation | Result |
 |---|---|
 | `seq = head.seq + 1` and `prev = head.hash` | accept; the head moves |
 | `seq > head.seq + 1`, or no head and `seq > 1` | `audit_gap` (a record was dropped, or the hub withholds it) |
-| `seq = head.seq + 1` and another `prev`; or `seq ≤ head.seq` with other bytes | `audit_fork` (the hub signed two histories) |
-| the same bytes at `seq = head.seq` | idempotent |
+| `seq = head.seq + 1` and another `prev`; or `seq = head.seq` with other bytes | `audit_fork` (the hub signed two histories) |
+| the same bytes at `seq = head.seq`, or any record older than the head | ignored: the head stays (L2P-10: overlapping `audit_get` pages re-deliver records, and a host that keeps only its head cannot compare an older one; it keeps any two valid records with one `seq` and different bytes as fork evidence) |
 | an event it holds does not hash to `event_hash`, is no valid event of that `type`, or its workspace is not the record's `scope` | `audit_mismatch` |
 
 **`audit_get {since}`** (w2h, added so the ack has something to refer to): returns up to 100 records after `since`
-in order, each with its `event` only if it concerns the caller (`scope` equals its workspace), and the hub's `head`
-`{seq, hash}`. **`audit_ack {seq, head}`**: the workspace says "I verified the chain up to `seq`, whose chain hash is
+in order, each with its `event` only if it concerns the caller (`scope` equals its workspace), the hub's `head`
+`{seq, hash}`, and the root-signed `op_certs` the page's records name (reply `{"records", "head", "op_certs"}`). **`audit_ack {seq, head}`**: the workspace says "I verified the chain up to `seq`, whose chain hash is
 `head`". The hub checks `head` against its own record `seq` (`seq` beyond its chain, or another hash: `audit_fork`: the
 workspace holds a chain the hub did not sign there) and stores the highest acked `seq` per workspace; an older ack
 changes nothing. Reply `{"acked": seq}`. Gaps are found by the workspace (`audit_gap`), forks by either side

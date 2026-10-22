@@ -367,3 +367,68 @@ def test_a_relay_linked_key_store_never_makes_a_local_epoch(tmp_path):
     with pytest.raises((CustodyRefused, MembershipUnsafe)):  # a linked store with no head is unsafe too
         linked.advance_local(V["ids"]["person_alice"])
     linked.close()
+
+
+def test_a_crash_between_expose_and_commit_is_completed_by_the_next_advance(tmp_path):
+    from orch.relay.r6.keystore import MembershipKeys, R6Gate
+
+    crash = {"on": True}
+
+    def fault(point):
+        if crash["on"] and point == "after_expose":
+            raise RuntimeError("crash")
+
+    own = MembershipKeys(tmp_path / "m5", WS, now_ms=lambda: NOW, fault=fault)
+    R6Gate(own).install(lambda: r6kit.KitStore())
+    owner = V["ids"]["person_alice"]
+    with pytest.raises(RuntimeError):
+        own.advance_local(owner)
+    assert own.current_epoch() == 0 and own.head()["exposed"] is not None  # wedged without the fix
+    crash["on"] = False
+    assert own.advance_local(owner) == 1  # the complete, valid exposed body is committed, not duplicated
+    assert own.current_epoch() == 1 and own.head()["exposed"] is None
+    assert own.advance_local(owner) == 2 and own.wk(2) != own.wk(1)
+    own.close()
+
+
+def test_an_invalid_exposed_body_is_abandoned_and_a_new_epoch_follows(tmp_path):
+    from orch.relay.r6.keystore import MembershipKeys, R6Gate
+
+    crash = {"on": True}
+
+    def fault(point):
+        if crash["on"] and point == "after_expose":
+            raise RuntimeError("crash")
+
+    own = MembershipKeys(tmp_path / "m6", WS, now_ms=lambda: NOW, fault=fault)
+    R6Gate(own).install(lambda: r6kit.KitStore())
+    owner = V["ids"]["person_alice"]
+    with pytest.raises(RuntimeError):
+        own.advance_local(owner)
+    own._head["exposed"]["digest"] = "sha256:" + "0" * 64  # damaged on disk: not complete and valid
+    crash["on"] = False
+    e = own.advance_local(owner)
+    assert e == 2 and own.current_epoch() == 2 and own.head()["exposed"] is None  # epoch 1 burned, never used
+    assert 1 in own.head()["burned"]["epochs"] or own.is_burned(1)
+    own.close()
+
+
+def test_a_relay_linked_later_in_the_process_stops_local_epochs(tmp_path):
+    from orch.relay.r6.keystore import CustodyRefused, MembershipKeys, R6Gate
+
+    linked = {"v": False}
+    own = MembershipKeys(tmp_path / "m7", WS, now_ms=lambda: NOW)
+    R6Gate(own).install(lambda: r6kit.KitStore())
+    own.link_probe = lambda: linked["v"]
+    owner = V["ids"]["person_alice"]
+    assert own.advance_local(owner) == 1 and own.has_local_epochs()
+    assert own.previously_linked is False
+    linked["v"] = True  # a relay is linked after the key store was opened
+    assert own.previously_linked is True
+    with pytest.raises(CustodyRefused):
+        own.advance_local(owner)
+    assert own.current_epoch() == 1
+    own.link_probe = lambda: (_ for _ in ()).throw(OSError("unreadable"))
+    with pytest.raises(CustodyRefused):  # an unreadable link state counts as linked
+        own.advance_local(owner)
+    own.close()

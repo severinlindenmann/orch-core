@@ -365,7 +365,7 @@ def epochs_for(service: WorkspaceService, *, create: bool = False) -> Any:
     try:
         mk = relayr6.keys_for(service)
         owner = None
-        if not mk.previously_linked:
+        if not mk.previously_linked:  # fresh each call (the probe), never the answer cached at the first open
             owner = crypto.person_id(relayr3.owner_pk_pub(service)).hex()
         return _Epochs(mk, owner)
     except Exception:  # noqa: BLE001 - an unsafe or unreadable key store: no epochs (fail closed)

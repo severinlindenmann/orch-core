@@ -86,6 +86,7 @@ CLAMP = 2**16  # 11A.15.4: a rotation target is at most committed + 2^16
 H7_MARGIN = 1024  # §11 H7: both high-water marks raised by 1024 above everything known
 MAX_SAFE_INT = 2**53 - 1
 HEAD = "head.json"
+LOCAL_MARK = "local-epochs.json"  # advance_local ran: the workspace has epochs no relay knows (V3 C2b)
 PRIMARY = "primary.json"  # R6c: the verified primary's certificate and the human's label (11A.15.1)
 log = logging.getLogger("orch.relay.r6")
 GATE_REASONS = frozenset(
@@ -300,6 +301,8 @@ class MembershipKeys:
         crypto.unhex(workspace_id, 16)
         self._pid = os.getpid()
         self._previously_linked = previously_linked is True
+        #: the host's fresh "is a relay linked now?" (``relayr6.keys_for`` sets it); consulted by every local epoch
+        self.link_probe: Callable[[], bool] | None = None
         self.workspace_id = workspace_id
         self.root = Path(root)
         self._now_ms = now_ms
@@ -775,21 +778,68 @@ class MembershipKeys:
 
     @property
     def previously_linked(self) -> bool:
-        """The workspace is (or may be) linked to a relay: its epochs then come from the relay path only."""
-        return self._previously_linked
+        """The workspace is (or may be) linked to a relay: its epochs then come from the relay path only. Fresh on
+        every call: the construction-time answer OR the host's probe (a relay linked later in this process counts)."""
+        return self._linked_now()
+
+    def _linked_now(self) -> bool:
+        if self._previously_linked:
+            return True
+        probe = self.link_probe
+        if probe is None:
+            return False
+        try:
+            return bool(probe())
+        except Exception:  # noqa: BLE001 - an unreadable link state counts as linked (fail closed)
+            return True
+
+    def has_local_epochs(self) -> bool:
+        """This store made an epoch without a relay (:meth:`advance_local`): see :data:`LOCAL_MARK`."""
+        with self._write():
+            return self._dir.read_json(LOCAL_MARK) is not None
+
+    def _complete_exposed(self, ex: Mapping[str, Any]) -> bool:
+        """Commit an exposed body left by a crash between ``expose`` and ``commit`` when it is complete and valid for
+        this store (its own workspace, list_seq, epoch, digest and ``wk_commit`` of the claimed key); ``False``
+        (nothing written) otherwise."""
+        try:
+            body = crypto.unb64u(ex["body"])
+            o = _list_of(body)
+            if (
+                o.get("workspace_id") != self.workspace_id
+                or o.get("epoch") != ex["epoch"]
+                or o.get("list_seq") != ex["list_seq"]
+                or ex["digest"] != _list_digest(body)
+                or o.get("wk_commit") != self.wk_commit_of(ex["epoch"])
+            ):
+                return False
+            return self.commit(
+                list_seq=ex["list_seq"], epoch=ex["epoch"], list_hash=ex["digest"], list_obj=o, at_ms=self._now_ms()
+            )
+        except (CustodyRefused, MembershipUnsafe, crypto.EncodingError, KeyError, TypeError, ValueError):
+            return False
 
     def advance_local(self, owner_person_id: str) -> int:
         """A relay-less workspace makes its own epoch (V3 C2b): the first one (the genesis epoch, an empty list) or the
         next one (the committed list's members carried over), through the same write-ahead steps as a rotation:
         ``new_epoch_key``, one ``expose``, one ``commit``. Same file formats, same custody, no new crypto; the list is
-        not signed or sent anywhere (no relay). Refused for a workspace that is or was linked to a relay: its
-        epochs are the publisher's (a local list there would collide with the relay's ``list_seq`` and epoch)."""
+        not signed or sent anywhere (no relay). Refused, fail closed, for a workspace that is or was linked to a relay
+        (checked fresh here, not at open): its epochs are the publisher's. The ``local-epochs.json`` mark is written
+        before any key, so a store with local epochs is always marked (a relay link is refused for it).
+
+        A crash between ``expose`` and ``commit`` leaves an exposed body: it is committed when complete and valid
+        (that epoch is the one returned), else abandoned (its ``list_seq`` and epoch burned), then a new one is made."""
         self._require_safe()
-        if self._previously_linked:
+        if self._linked_now():
             raise CustodyRefused("a relay-linked workspace gets its epochs from the relay path")
         with self._write():
-            if self._head["exposed"] is not None:
-                raise CustodyRefused("a rotation is exposed and not committed")
+            if self._dir.read_json(LOCAL_MARK) is None:
+                self._dir.write_json(LOCAL_MARK, {"v": 1, "created_ms": self._now_ms()})
+            ex = self._head["exposed"]
+            if ex is not None:
+                if self._complete_exposed(ex):
+                    return int(ex["epoch"])
+                self.abandon()
             with self._seal:
                 ehw, lhw = self._ehw, self._lhw
             committed = self._head["committed"]

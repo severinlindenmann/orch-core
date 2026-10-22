@@ -70,6 +70,7 @@ def keys_for(service: Any) -> Any:
                 previously_linked=_previously_linked(service),
             )  # fmt: skip
             _OPEN[str(path)] = mk
+        mk.link_probe = lambda: _previously_linked(service)  # a relay linked later in this process is seen at once
         return mk
 
 

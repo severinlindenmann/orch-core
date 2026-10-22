@@ -72,6 +72,9 @@ Top level (all required except `title`):
 | `version` | integer ≥ 1 | the index version, raised at every change. Lower than the last one seen = rollback (`market.rollback`) |
 | `source.git` | https URL | where this index lives. MUST equal the URL the owner added it from (`market.source_mismatch`) |
 | `addons` | array of entries, at most 500 | |
+| `expires_at` | integer unix seconds | required for the official index, optional otherwise. Covered by the index signature. A stale index (now past `expires_at`) is shown as stale; it does not block installing a pinned current entry (§3.1) |
+| `revoked` (optional) | array of `id@version` | covered by the index signature. An entry whose `id@version` is listed cannot be installed, and an installed one is shown as revoked (§3.1). The pause/disable behaviour of an installed revoked add-on is #932 |
+| `signature` (optional) | `{key, sig}` | a signature over the index (§3.1). **Required for the official index**, with the key pinned in core; optional for others |
 
 Entry (required unless noted):
 
@@ -114,6 +117,41 @@ Example (the digest is shortened):
 }
 ```
 
+### 3.1 The signed index
+
+The official marketplace replaces the signed add-on catalog (addon-platform §3), which has a sequence number, an expiry
+and revocation. The official index keeps all three, so it is signed as a whole:
+
+```
+sig = Sign(key, "orch/market/1/index|" || cj({
+        "market":     <canonical source URL>,
+        "version":    <index version>,
+        "expires_at": <integer>,
+        "entries":    [[id, version, package_sha256], …]   // sorted by id
+        "revoked":    [id@version, …]}))                   // sorted
+```
+
+(suite 2, as §4.3). Titles, summaries and the other display fields are not covered; everything a verifier acts on
+is. The key is the official marketplace key pinned in core (§4.2), never one read from the index.
+
+- **Verify first.** For the official index the signature is checked right after the strict parse and the URL check
+  (`market.index_unsigned`), before any value is taken from it. A host MUST NOT record `last_version`, the highest
+  seen versions, the reserved-id additions or the revocations from an index it has not verified. So an unsigned file
+  that claims version 2^53−1 cannot freeze later honest indexes, and an old validly signed index replayed to a host
+  that never saw a newer one still carries its old `expires_at`.
+- **Expiry.** `expires_at` is set by the official CI (about 30 days ahead; provisional). A stale index is a warning in the review and
+  in `market list`. It does not block installing the pinned current entries, but it blocks `--allow-downgrade`. A
+  host that cannot refresh keeps working on what it has.
+- **Rollback floor.** `last_version` is the version of the last *verified* official index. The per-add-on floor is the
+  installed version, plus the highest version of an entry that a human reviewed in an install or update; merely seeing
+  an entry (an agent may run `market refresh`) never raises it, so a hostile or compromised source cannot block later
+  versions of an id by showing a huge version.
+- **Revocation.** Listing `id@version` in `revoked` refuses new installs of it (`market.revoked`). Tracking and
+  pausing installed revoked add-ons is #932; the field and its signature coverage are fixed now so that it needs no new
+  format.
+- **Other marketplaces** may sign their index with any key they like. A present signature MUST verify
+  (`market.index_unsigned` otherwise); it is remembered by TOFU like a publisher key (§4.4). It is not required.
+
 ## 4. Identity, trust classes and the publisher key
 
 ### 4.1 Identity and the canonical URL
@@ -136,7 +174,7 @@ repository can never hold two TOFU slots, two rollback floors, two origins, or s
 
 | Class | Test | Extra rule |
 |---|---|---|
-| official | URL equals the pinned official URL | every entry MUST carry a `publisher` whose key equals the official key pinned in the core release (`market.official_unsigned`), and verify |
+| official | URL equals the pinned official URL | the **index** MUST carry `expires_at` and a `signature` by the official key pinned in the core release, and verify (`market.index_unsigned`, §3.1); and every **entry** MUST carry a `publisher` whose key equals that official key and verify (`market.official_unsigned`). Both are required: the index signature protects the set, the version and the revocations; the entry signature protects each entry when it is mirrored |
 | other | any other marketplace or direct source | refused unless OS-user isolation is in place (§10); a `publisher` is optional |
 
 The pinned official URL and key are constants of the core release, not read from disk or from any index. Changing them
@@ -182,11 +220,11 @@ network and write nothing; the first network access is step 11.
 |---|---|---|
 | 0 | The caller is the human: no `ORCH_GRANT`/`ORCH_SESSION`, a terminal or a device key, not a mandate | `market.actor_refused` |
 | 1 | Read the cached index with the strict parser. The pin and digest fields are checked first (a missing or non-hex `commit`, a bad `package_sha256`), then the schema, then sorted capabilities and unique ids | `market.unpinned`, `market.bad_digest_format`, `market.malformed`, `market.duplicate_id` |
-| 2 | `source.git` of the index equals the URL it was added from | `market.source_mismatch` |
-| 3 | `version` is not lower than the last version seen for this URL | `market.rollback` |
+| 2 | `source.git` of the index equals the URL it was added from. For the official index (and for any index that carries one) the index signature, `expires_at` and key are verified now, before anything is taken from the index | `market.source_mismatch`, `market.index_unsigned` |
+| 3 | `version` is not lower than the last version of a *verified* index for this URL | `market.rollback` |
 | 4 | Class (§4.2): an "other" marketplace needs OS-user isolation (§10) | `market.community_unisolated` |
 | 5 | Hub policy, when a hub is joined (§9): block list, then allow list | `market.blocked`, `market.not_allowed` |
-| 6 | Select the entry by `id`; its git host is the marketplace's host or on the allow list (§5.1); reserved ids; an installed add-on of this id came from this URL; the entry's `version` is not lower than the installed one or the highest seen for this `(URL, id)` | `market.unknown_addon`, `market.host_not_allowed`, `market.reserved_id`, `market.origin_changed`, `market.rollback` |
+| 6 | Select the entry by `id`; the index does not list `id@version` as revoked; its git host is the marketplace's host or on the allow list (§5.1); reserved ids; an installed add-on of this id came from this URL; the entry's `version` is not lower than the installed one or the highest seen for this `(URL, id)` | `market.unknown_addon`, `market.revoked`, `market.host_not_allowed`, `market.reserved_id`, `market.origin_changed`, `market.rollback` |
 | 7 | Publisher: official key rule, signature, TOFU (§4) | `market.official_unsigned`, `market.bad_signature`, `market.publisher_key_changed` |
 | 8 | Hub capability ceiling (§9): entry capabilities ⊆ ceiling | `market.capability_ceiling` |
 | 9 | `min_orch` ≤ the running core version (a `.devN` build sorts before its release; an unparsable version fails) | `market.min_orch` |
@@ -401,6 +439,7 @@ The invariants are numbered; the tests and the review point at them.
 |---|---|---|
 | **Malicious or compromised index** (lies about digest, capabilities, commit) | The index can only point at bytes. Digest, capabilities and manifest facts are re-derived from the package that was read (steps 13, 14), and the owner signs what the review derives from the package, not what the index says | I1, I3 |
 | **Compromised publisher** (pushes a bad release, or signs one) | It reaches a staged update that needs a new review and signature, showing the capability and dependency diff and "new key" if the key changed. The old version keeps running and nothing is widened without the signature | I1, I4, §6 |
+| **Official repo or URL taken over without the official key** (account or token compromise, repo-jack): version 2^53−1 to freeze updates, an old index served to fresh hosts, withheld updates, an edited reserved list, a removed entry passed off as revocation | The index is signed by the pinned key over URL, version, expiry, entries and revocations; nothing is recorded from an unverified index; the reserved set ships in core; revocation is an explicit signed list | I4, §3.1 |
 | **Signature replay** (a good publisher's signed entry copied into a hostile or mirror marketplace) | The signature covers the marketplace URL, so it fails there (`bad_signature`) | I4 |
 | **Stolen or replaced publisher key** | `market.publisher_key_changed`; replacing needs `trust --replace` by a human with both fingerprints. A key is continuity, not identity, and the review says so | §4.4, I2 |
 | **Git history rewrite, force-pushed tags, moved branches** | Fetch is by full object id and the digest is the binding. A rewritten history cannot change what is accepted. A removed commit means `market.fetch_failed`, never a silent fallback to a branch head. The diff flags "not a fast-forward" | I1, I4 |
@@ -433,11 +472,13 @@ are new in the v1 catalog; G2/G3 declare them per op and regenerate the CLI gold
 | `market.bad_digest_format` | `package_sha256` missing or not `sha256:` + 64 lower-case hex | 1 |
 | `market.duplicate_id` | two entries with the same `id` | 1 |
 | `market.source_mismatch` | the index's `source.git` is not the URL it was added from | 2 |
+| `market.index_unsigned` | the official index has no valid signature by the pinned key or no `expires_at`, or a signature present on another index does not verify | 2 |
 | `market.rollback` | index version lower than the last seen, or entry version lower than the installed or highest seen one | 3, 6 |
 | `market.community_unisolated` | a non-official marketplace or direct source without OS-user isolation | 4 |
 | `market.blocked` | the hub's block list names this marketplace | 5 |
 | `market.not_allowed` | with a hub, the marketplace is not on the allow list (or the policy is unreadable) | 5 |
 | `market.unknown_addon` | the id is not in the index | 6 |
+| `market.revoked` | the signed index lists this `id@version` as revoked | 6 |
 | `market.host_not_allowed` | the entry's git host is neither the marketplace's host nor on the host allow list | 6 |
 | `market.reserved_id` | a non-official marketplace claims a built-in id | 6 |
 | `market.origin_changed` | the installed add-on came from a different marketplace | 6 |

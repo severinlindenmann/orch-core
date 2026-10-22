@@ -13,7 +13,7 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from orch.addons.package import package_digest
 from orch.crypto.encoding import b64u
-from tests.addons.market_ref import sign_entry
+from tests.addons.market_ref import sign_entry, sign_index
 
 OUT = Path(__file__).with_name("vectors_market.json")
 OFFICIAL = "https://github.com/severinlindenmann/orch-marketplace"
@@ -91,8 +91,30 @@ def entry(
     return e
 
 
-def index(repo: str, entries: list[dict[str, Any]], version: int = 7, name: str = "acme-market") -> dict[str, Any]:
-    return {"format": "orch.market/1", "name": name, "version": version, "source": {"git": repo}, "addons": entries}
+def index(
+    repo: str, entries: list[dict[str, Any]], version: int = 7, name: str = "acme-market", **kw: Any
+) -> dict[str, Any]:
+    """An index. With ``signed=True`` (the official one only) it gets an expiry and the official signature; ``sign_with``
+    names another key (a negative vector)."""
+    signed = kw.pop("signed", False)
+    sign_with = kw.pop("sign_with", "official")
+    doc: dict[str, Any] = {
+        "format": "orch.market/1",
+        "name": name,
+        "version": version,
+        "source": {"git": repo},
+        "addons": copy.deepcopy(entries),
+    }
+    doc.update(kw)
+    if signed:
+        doc.setdefault("expires_at", 1800000000)
+        sign_index(doc, KEYS[sign_with], PUB[sign_with])
+    return doc
+
+
+def oindex(repo: str, entries: list[dict[str, Any]], **kw: Any) -> dict[str, Any]:
+    kw.setdefault("signed", True)
+    return index(repo, entries, **kw)
 
 
 def ctx(**kw: Any) -> dict[str, Any]:
@@ -288,7 +310,7 @@ def build() -> None:
     add(
         "install_ok_official_signed",
         "install",
-        inst(index(OFFICIAL, [ge], name="orch-marketplace"), gf, "github", market_repo=OFFICIAL, isolation=False),
+        inst(oindex(OFFICIAL, [ge], name="orch-marketplace"), gf, "github", market_repo=OFFICIAL, isolation=False),
         ok(id="github", version="1.0.0", package_sha256=ge["package_sha256"], **{"class": "official"}, tofu="new"),
     )
     add(
@@ -388,7 +410,7 @@ def build() -> None:
         "install_hub_blocks_official_not_listed",
         "install",
         inst(
-            index(OFFICIAL, [ge], name="orch-marketplace"),
+            oindex(OFFICIAL, [ge], name="orch-marketplace"),
             gf,
             "github",
             market_repo=OFFICIAL,
@@ -417,7 +439,7 @@ def build() -> None:
         "install_official_entry_unsigned",
         "install",
         inst(
-            index(OFFICIAL, [entry("github", gf, caps=["git_push", "network"])], name="orch-marketplace"),
+            oindex(OFFICIAL, [entry("github", gf, caps=["git_push", "network"])], name="orch-marketplace"),
             gf,
             "github",
             market_repo=OFFICIAL,
@@ -428,7 +450,7 @@ def build() -> None:
         "install_official_entry_wrong_key",
         "install",
         inst(
-            index(
+            oindex(
                 OFFICIAL,
                 [entry("github", gf, caps=["git_push", "network"], signer="mallory", market=OFFICIAL)],
                 name="orch-marketplace",
@@ -928,14 +950,14 @@ def build() -> None:
     add(
         "install_official_entry_shadows_builtin_id",
         "install",
-        inst(index(OFFICIAL, [de], name="orch-marketplace"), df, "dashboard", market_repo=OFFICIAL, isolation=False),
+        inst(oindex(OFFICIAL, [de], name="orch-marketplace"), df, "dashboard", market_repo=OFFICIAL, isolation=False),
         refuse("reserved_id"),
     )
     add(
         "install_official_entry_with_a_moved_builtin_id_ok",
         "install",
         inst(
-            index(OFFICIAL, [de], name="orch-marketplace"),
+            oindex(OFFICIAL, [de], name="orch-marketplace"),
             df,
             "dashboard",
             market_repo=OFFICIAL,
@@ -944,6 +966,66 @@ def build() -> None:
         ),
         ok(id="dashboard", version="1.0.0", package_sha256=de["package_sha256"], **{"class": "official"}, tofu="new"),
     )
+
+    # ---- L2M-1: the official index is signed (URL, version, expiry, entries, revoked)
+    og = entry("github", gf, caps=["git_push", "network"], signer="official", market=OFFICIAL)
+
+    def off(doc: dict[str, Any], **cx: Any) -> dict[str, Any]:
+        return inst(doc, gf, "github", market_repo=OFFICIAL, isolation=False, **cx)
+
+    add(
+        "install_official_index_unsigned_max_version",
+        "install",
+        off(oindex(OFFICIAL, [og], version=9007199254740991, name="orch-marketplace", signed=False)),
+        refuse("index_unsigned"),
+    )
+    add(
+        "install_official_index_unsigned",
+        "install",
+        off(oindex(OFFICIAL, [og], name="orch-marketplace", signed=False)),
+        refuse("index_unsigned"),
+    )
+    add(
+        "install_official_index_signed_by_another_key",
+        "install",
+        off(oindex(OFFICIAL, [og], name="orch-marketplace", sign_with="mallory")),
+        refuse("index_unsigned"),
+    )
+    t = oindex(OFFICIAL, [og], name="orch-marketplace")
+    t["version"] = 9007199254740991
+    add("install_official_index_version_changed_after_signing", "install", off(t), refuse("index_unsigned"))
+    t = oindex(OFFICIAL, [og], name="orch-marketplace")
+    t["addons"][0]["package_sha256"] = "sha256:" + "0" * 64
+    add("install_official_index_entry_changed_after_signing", "install", off(t), refuse("index_unsigned"))
+    t = oindex(OFFICIAL, [og], name="orch-marketplace")
+    t["revoked"] = []
+    t["expires_at"] += 1
+    add("install_official_index_expiry_changed_after_signing", "install", off(t), refuse("index_unsigned"))
+    t = oindex(OFFICIAL, [og], name="orch-marketplace", signed=False)
+    sign_index(t, KEYS["official"], PUB["official"])
+    add("install_official_index_signed_without_expiry", "install", off(t), refuse("index_unsigned"))
+    add(
+        "install_official_index_revoked_entry",
+        "install",
+        off(oindex(OFFICIAL, [og], name="orch-marketplace", revoked=["github@1.0.0"])),
+        refuse("revoked"),
+    )
+    add(
+        "install_official_index_revoked_other_version_ok",
+        "install",
+        off(oindex(OFFICIAL, [og], name="orch-marketplace", revoked=["github@0.9.0"])),
+        ok(id="github", version="1.0.0", package_sha256=og["package_sha256"], **{"class": "official"}, tofu="new"),
+    )
+    other_signed = index(OTHER, [e], signed=False)
+    sign_index(other_signed, KEYS["jane"], PUB["jane"])
+    add(
+        "install_ok_other_index_with_valid_signature",
+        "install",
+        inst(other_signed),
+        ok(id="standup", version="1.0.0", package_sha256=e["package_sha256"], **{"class": "other"}, tofu="unsigned"),
+    )
+    other_signed["version"] = 8
+    add("install_other_index_with_bad_signature", "install", inst(other_signed), refuse("index_unsigned"))
 
 
 if __name__ == "__main__":

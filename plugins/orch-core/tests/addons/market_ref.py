@@ -26,6 +26,7 @@ from orch.crypto.encoding import EncodingError, unb64u
 
 SCHEMA_PATH = Path(__file__).parents[2] / "src/orch/addons/schemas/market.v1.json"
 ENTRY_LABEL = b"orch/market/1/entry|"
+INDEX_LABEL = b"orch/market/1/index|"
 
 
 class Refuse(Exception):
@@ -70,6 +71,46 @@ def verify_entry(entry: dict[str, Any], market: str) -> bool:
         return True
     except (InvalidSignature, EncodingError, ValueError):
         return False
+
+
+def index_message(doc: dict[str, Any]) -> bytes:
+    """What the official key signs: the URL, the index version, the expiry, every (id, version, digest) and the
+    revoked list. Nothing else in the file is covered (titles and summaries are display text)."""
+    body = {
+        "market": doc["source"]["git"],
+        "version": doc["version"],
+        "expires_at": doc.get("expires_at"),
+        "entries": [[e["id"], e["version"], e["package_sha256"]] for e in sorted(doc["addons"], key=lambda e: e["id"])],
+        "revoked": sorted(doc.get("revoked", [])),
+    }
+    return INDEX_LABEL + dumps(body)
+
+
+def sign_index(doc: dict[str, Any], private_key: ec.EllipticCurvePrivateKey, key_b64: str) -> None:
+    from orch.crypto.encoding import b64u
+
+    der = private_key.sign(index_message(doc), ec.ECDSA(hashes.SHA256()))
+    r, s = decode_dss_signature(der)
+    doc["signature"] = {"key": key_b64, "sig": b64u(r.to_bytes(32, "big") + s.to_bytes(32, "big"))}
+
+
+def _verify(key_b64: str, sig_b64: str, message: bytes) -> bool:
+    try:
+        key = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), unb64u(key_b64, 65))
+        raw = unb64u(sig_b64, 64)
+        r, s = int.from_bytes(raw[:32], "big"), int.from_bytes(raw[32:], "big")
+        n = 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551
+        if not (1 <= r < n and 1 <= s < n):
+            return False
+        key.verify(encode_dss_signature(r, s), message, ec.ECDSA(hashes.SHA256()))
+        return True
+    except (InvalidSignature, EncodingError, ValueError):
+        return False
+
+
+def verify_index(doc: dict[str, Any]) -> bool:
+    sig = doc.get("signature")
+    return sig is not None and _verify(sig["key"], sig["sig"], index_message(doc))
 
 
 # ------------------------------------------------------------------------------------------------ the index
@@ -273,6 +314,14 @@ def install(a: dict[str, Any]) -> dict[str, Any]:
     doc = check_index(a["index"])
     if doc["source"]["git"] != repo:
         raise Refuse("market.source_mismatch")
+    # the signature is checked before anything is taken from the index: a version, an id list or a revocation that is
+    # not from a verified official index is never recorded (L2M-1)
+    isig = doc.get("signature")
+    if repo == ctx["official"]["repo"]:
+        if isig is None or isig["key"] != ctx["official"]["key"] or "expires_at" not in doc or not verify_index(doc):
+            raise Refuse("market.index_unsigned")
+    elif isig is not None and not verify_index(doc):
+        raise Refuse("market.index_unsigned")
     if ctx["last_version"] is not None and doc["version"] < ctx["last_version"]:
         raise Refuse("market.rollback")
     official = repo == ctx["official"]["repo"]
@@ -287,6 +336,8 @@ def install(a: dict[str, Any]) -> dict[str, Any]:
     entry = next((e for e in doc["addons"] if e["id"] == a["id"]), None)
     if entry is None:
         raise Refuse("market.unknown_addon")
+    if f"{entry['id']}@{entry['version']}" in doc.get("revoked", []):
+        raise Refuse("market.revoked")
     host = lambda u: u.split("/")[2]  # noqa: E731  (schema guarantees https://host/…)
     if host(entry["source"]["git"]) != host(repo) and host(entry["source"]["git"]) not in ctx["git_hosts"]:
         raise Refuse("market.host_not_allowed")

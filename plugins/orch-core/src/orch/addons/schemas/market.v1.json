@@ -18,6 +18,15 @@
       "properties": {"git": {"$ref": "#/$defs/gitUrl"}},
       "description": "where this index lives; must equal the URL the owner added it from"
     },
+    "expires_at": {"type": "integer", "minimum": 1, "maximum": 9007199254740991, "description": "unix seconds; required and signed for the official index. A stale index is shown as stale, it does not block (section 3.1)"},
+    "revoked": {"type": "array", "maxItems": 500, "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}@(?:0|[1-9][0-9]{0,3})\\.(?:0|[1-9][0-9]{0,3})\\.(?:0|[1-9][0-9]{0,3})(?![\\s\\S])"}, "description": "id@version pairs that must not be installed or kept; covered by the index signature (section 3.1)"},
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "sig"],
+      "properties": {"key": {"$ref": "#/$defs/b64uKey"}, "sig": {"$ref": "#/$defs/b64uSig"}},
+      "description": "sig = Sign(key, 'orch/market/1/index|' || cj({market, version, expires_at, entries: [[id, version, package_sha256]] by id, revoked})). Required for the official index, with the key pinned in core"
+    },
     "addons": {
       "type": "array",
       "maxItems": 500,

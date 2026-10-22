@@ -49,8 +49,8 @@
        "min_orch": "2.0.0",
        "package_sha256": "sha256:50383dc9e008e3a6cde3a80b1d772cd30a53a1d9de466893af42d8fb7b9ad0ac",
        "publisher": {
-        "key": "BDB_vAKjtqUFH6M6cQwZtO1DoKGNvTkrEno-OTaYmLgEQgSOzz17V3D9gKD3aM-eKIEEkCQVZv5-8OYgyYwofFA",
-        "sig": "4yeSF6YT8pFOUAfM8reczP9YfbJWNfFUzhk3tyDS8mO1o00RFGzytFkKE0JnwPm2ToqCAoZeY9aO4zzXZ3cBJw"
+        "key": "BI3gPK8aINxSLI1O0uz8W9HLTdaZ5MlFHPotWZwIJgdBa8wz_uBba5qObTSH9e4dDQ0hsoVuOlnzZZpOn6GBNxg",
+        "sig": "PmASB5mdl5NxgVDpdx2d4KB0FWb0SVd-b59mtF4uGl6wUNApSZKFBL_AYnP-d7dCdaAZj8as2CZh6MeJofvAPw"
        },
        "runtime": {
         "kind": "python-requirements",
@@ -735,7 +735,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -808,7 +808,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -835,8 +835,8 @@
        "min_orch": "2.0.0",
        "package_sha256": "sha256:50383dc9e008e3a6cde3a80b1d772cd30a53a1d9de466893af42d8fb7b9ad0ac",
        "publisher": {
-        "key": "BDB_vAKjtqUFH6M6cQwZtO1DoKGNvTkrEno-OTaYmLgEQgSOzz17V3D9gKD3aM-eKIEEkCQVZv5-8OYgyYwofFA",
-        "sig": "jjLbQ5wVLA7EOnRB8ZDeaTfCtOD60EG1D4YKsBzvGZz71vHaSMY5rHl0AdUa10FSE5FRyRy6Gum84RyTwoXUrA"
+        "key": "BI3gPK8aINxSLI1O0uz8W9HLTdaZ5MlFHPotWZwIJgdBa8wz_uBba5qObTSH9e4dDQ0hsoVuOlnzZZpOn6GBNxg",
+        "sig": "xnmo1QTOCtTxKmDR3o07kd6WyrqAOnqgItXesy-FrSHXWEH7vTtyx1N43tAvHHJotr8twI2-F-S55mFpby9Cxg"
        },
        "runtime": {
         "kind": "python-requirements",
@@ -887,13 +887,13 @@
      "installed": {},
      "isolation": true,
      "known_keys": {
-      "https://github.com/acme/orch-market|jira": "BDB_vAKjtqUFH6M6cQwZtO1DoKGNvTkrEno-OTaYmLgEQgSOzz17V3D9gKD3aM-eKIEEkCQVZv5-8OYgyYwofFA"
+      "https://github.com/acme/orch-market|jira": "BI3gPK8aINxSLI1O0uz8W9HLTdaZ5MlFHPotWZwIJgdBa8wz_uBba5qObTSH9e4dDQ0hsoVuOlnzZZpOn6GBNxg"
      },
      "last_version": null,
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -920,8 +920,8 @@
        "min_orch": "2.0.0",
        "package_sha256": "sha256:50383dc9e008e3a6cde3a80b1d772cd30a53a1d9de466893af42d8fb7b9ad0ac",
        "publisher": {
-        "key": "BDB_vAKjtqUFH6M6cQwZtO1DoKGNvTkrEno-OTaYmLgEQgSOzz17V3D9gKD3aM-eKIEEkCQVZv5-8OYgyYwofFA",
-        "sig": "jjLbQ5wVLA7EOnRB8ZDeaTfCtOD60EG1D4YKsBzvGZz71vHaSMY5rHl0AdUa10FSE5FRyRy6Gum84RyTwoXUrA"
+        "key": "BI3gPK8aINxSLI1O0uz8W9HLTdaZ5MlFHPotWZwIJgdBa8wz_uBba5qObTSH9e4dDQ0hsoVuOlnzZZpOn6GBNxg",
+        "sig": "xnmo1QTOCtTxKmDR3o07kd6WyrqAOnqgItXesy-FrSHXWEH7vTtyx1N43tAvHHJotr8twI2-F-S55mFpby9Cxg"
        },
        "runtime": {
         "kind": "python-requirements",
@@ -976,7 +976,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -1054,7 +1054,7 @@
      "market_repo": "https://github.com/severinlindenmann/orch-marketplace",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -1080,8 +1080,8 @@
        "min_orch": "2.0.0",
        "package_sha256": "sha256:5f0c958d357a741a15bbfb9af573ac2152e5b8d60c0a1b44f16d84ed82d53699",
        "publisher": {
-        "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
-        "sig": "N4aMYKMtoYHbg2tgKghTOjbhSnhc5V5RoWvQu6D4Zt1x7g2bs7VY-owZyqTI2IqeYKL6TSnFWJA7ClE3GoSV_w"
+        "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
+        "sig": "04PGmaweOHCcxeT7vjoO4WKSt5Bsm_0V4P0mCEyJwR6fde2TVsLDPSLzR3GrfADcVDA8ia9PqlymcwKoJy7Fqg"
        },
        "source": {
         "git": "https://github.com/acme/github",
@@ -1090,8 +1090,13 @@
        "version": "1.0.0"
       }
      ],
+     "expires_at": 1800000000,
      "format": "orch.market/1",
      "name": "orch-marketplace",
+     "signature": {
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
+      "sig": "SzSQNUGw6IfaIJ7d3JBCB0qFG_w4Q7TOP6QwB1SvOcVv1bjDE2jy3u_ilj-i3Ar7FZDWCXX9YW1Xg6uQz7wDMQ"
+     },
      "source": {
       "git": "https://github.com/severinlindenmann/orch-marketplace"
      },
@@ -1141,7 +1146,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -1214,7 +1219,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -1292,7 +1297,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -1365,7 +1370,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -1432,7 +1437,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -1499,7 +1504,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -1566,7 +1571,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -1634,7 +1639,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -1708,7 +1713,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -1781,7 +1786,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -1848,7 +1853,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -1915,7 +1920,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -1978,13 +1983,13 @@
      "installed": {},
      "isolation": true,
      "known_keys": {
-      "https://github.com/acme/orch-market|jira": "BGGeLvhoJ4OG_Vjfjby0fpvwadY3feqrMHasnV4IblWs7O2k5tBt21l-M6dKmKDX_sL-kqDhTjnyUTnUWTNyesw"
+      "https://github.com/acme/orch-market|jira": "BJw_mWkMjQpiESXcQJ6P77wfBFAqfTB15M94AMeYG0MMCLA9d1GhvxjKEpQmWEWrMIuSLDkz-ADTXUsCu7SiMqo"
      },
      "last_version": null,
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -2011,8 +2016,8 @@
        "min_orch": "2.0.0",
        "package_sha256": "sha256:50383dc9e008e3a6cde3a80b1d772cd30a53a1d9de466893af42d8fb7b9ad0ac",
        "publisher": {
-        "key": "BDB_vAKjtqUFH6M6cQwZtO1DoKGNvTkrEno-OTaYmLgEQgSOzz17V3D9gKD3aM-eKIEEkCQVZv5-8OYgyYwofFA",
-        "sig": "jjLbQ5wVLA7EOnRB8ZDeaTfCtOD60EG1D4YKsBzvGZz71vHaSMY5rHl0AdUa10FSE5FRyRy6Gum84RyTwoXUrA"
+        "key": "BI3gPK8aINxSLI1O0uz8W9HLTdaZ5MlFHPotWZwIJgdBa8wz_uBba5qObTSH9e4dDQ0hsoVuOlnzZZpOn6GBNxg",
+        "sig": "xnmo1QTOCtTxKmDR3o07kd6WyrqAOnqgItXesy-FrSHXWEH7vTtyx1N43tAvHHJotr8twI2-F-S55mFpby9Cxg"
        },
        "runtime": {
         "kind": "python-requirements",
@@ -2057,13 +2062,13 @@
      "installed": {},
      "isolation": true,
      "known_keys": {
-      "https://github.com/acme/orch-market|jira": "BDB_vAKjtqUFH6M6cQwZtO1DoKGNvTkrEno-OTaYmLgEQgSOzz17V3D9gKD3aM-eKIEEkCQVZv5-8OYgyYwofFA"
+      "https://github.com/acme/orch-market|jira": "BI3gPK8aINxSLI1O0uz8W9HLTdaZ5MlFHPotWZwIJgdBa8wz_uBba5qObTSH9e4dDQ0hsoVuOlnzZZpOn6GBNxg"
      },
      "last_version": null,
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -2136,7 +2141,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -2163,8 +2168,8 @@
        "min_orch": "2.0.0",
        "package_sha256": "sha256:90a54e8e2d0e5850fca2ad767c2de73544b9e26f585da6e042dcb36fb222f54c",
        "publisher": {
-        "key": "BDB_vAKjtqUFH6M6cQwZtO1DoKGNvTkrEno-OTaYmLgEQgSOzz17V3D9gKD3aM-eKIEEkCQVZv5-8OYgyYwofFA",
-        "sig": "jjLbQ5wVLA7EOnRB8ZDeaTfCtOD60EG1D4YKsBzvGZz71vHaSMY5rHl0AdUa10FSE5FRyRy6Gum84RyTwoXUrA"
+        "key": "BI3gPK8aINxSLI1O0uz8W9HLTdaZ5MlFHPotWZwIJgdBa8wz_uBba5qObTSH9e4dDQ0hsoVuOlnzZZpOn6GBNxg",
+        "sig": "xnmo1QTOCtTxKmDR3o07kd6WyrqAOnqgItXesy-FrSHXWEH7vTtyx1N43tAvHHJotr8twI2-F-S55mFpby9Cxg"
        },
        "runtime": {
         "kind": "python-requirements",
@@ -2213,7 +2218,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -2286,7 +2291,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -2357,7 +2362,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -2432,7 +2437,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -2505,7 +2510,7 @@
      "market_repo": "https://github.com/severinlindenmann/orch-marketplace",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -2531,8 +2536,8 @@
        "min_orch": "2.0.0",
        "package_sha256": "sha256:5f0c958d357a741a15bbfb9af573ac2152e5b8d60c0a1b44f16d84ed82d53699",
        "publisher": {
-        "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
-        "sig": "N4aMYKMtoYHbg2tgKghTOjbhSnhc5V5RoWvQu6D4Zt1x7g2bs7VY-owZyqTI2IqeYKL6TSnFWJA7ClE3GoSV_w"
+        "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
+        "sig": "04PGmaweOHCcxeT7vjoO4WKSt5Bsm_0V4P0mCEyJwR6fde2TVsLDPSLzR3GrfADcVDA8ia9PqlymcwKoJy7Fqg"
        },
        "source": {
         "git": "https://github.com/acme/github",
@@ -2541,8 +2546,13 @@
        "version": "1.0.0"
       }
      ],
+     "expires_at": 1800000000,
      "format": "orch.market/1",
      "name": "orch-marketplace",
+     "signature": {
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
+      "sig": "JI8ZRNeTBWaCro6WGnm_EJ_E1pBK7B8fVMvi6RgDTA80KoB-jzFx88jBuk0xN_y98gYyM6kxW9jWSTa3UgKfHA"
+     },
      "source": {
       "git": "https://github.com/severinlindenmann/orch-marketplace"
      },
@@ -2577,7 +2587,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -2644,7 +2654,7 @@
      "market_repo": "https://github.com/evil/copy-of-acme",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -2711,7 +2721,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -2778,7 +2788,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -2848,7 +2858,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -2915,7 +2925,7 @@
      "market_repo": "https://github.com/severinlindenmann/orch-marketplace",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -2947,8 +2957,13 @@
        "version": "1.0.0"
       }
      ],
+     "expires_at": 1800000000,
      "format": "orch.market/1",
      "name": "orch-marketplace",
+     "signature": {
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
+      "sig": "x9T5WyjgEizsMOFSN2rFLvJRBkW6gT6BdwRdR-_bevv9_-RRHTFqC_eTGuxJBxIXfp7GBD81Qkz7RGj7JGZEMg"
+     },
      "source": {
       "git": "https://github.com/severinlindenmann/orch-marketplace"
      },
@@ -2983,7 +2998,7 @@
      "market_repo": "https://github.com/severinlindenmann/orch-marketplace",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -3009,8 +3024,8 @@
        "min_orch": "2.0.0",
        "package_sha256": "sha256:5f0c958d357a741a15bbfb9af573ac2152e5b8d60c0a1b44f16d84ed82d53699",
        "publisher": {
-        "key": "BGGeLvhoJ4OG_Vjfjby0fpvwadY3feqrMHasnV4IblWs7O2k5tBt21l-M6dKmKDX_sL-kqDhTjnyUTnUWTNyesw",
-        "sig": "dG_ZkHVt8O7wG2IU87GiLHzjUUdYaVGidlthx2sm1Pqj2QlyZs9nGQj6TzaJyGmkumr_p-GC67913pZ2rw5buQ"
+        "key": "BJw_mWkMjQpiESXcQJ6P77wfBFAqfTB15M94AMeYG0MMCLA9d1GhvxjKEpQmWEWrMIuSLDkz-ADTXUsCu7SiMqo",
+        "sig": "Bk1ZhVqrD1QRFqLPCenKfzsDLKOcrjuqNv6RBuhLxK0M1wDFnnQLAXONPJaDCGl3ETPsFgjGYCW5cVHecWLZ7w"
        },
        "source": {
         "git": "https://github.com/acme/github",
@@ -3019,8 +3034,13 @@
        "version": "1.0.0"
       }
      ],
+     "expires_at": 1800000000,
      "format": "orch.market/1",
      "name": "orch-marketplace",
+     "signature": {
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
+      "sig": "sVrfi9Y0JP2OhGGZoOyaSL_vsF9ThXYggFYhpbznE_I2g6SLP_wzuCGU8-Cz3Jtm3TxCL5ABi6CgeuCmWCPYJw"
+     },
      "source": {
       "git": "https://github.com/severinlindenmann/orch-marketplace"
      },
@@ -3055,7 +3075,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -3122,7 +3142,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -3189,7 +3209,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -3256,7 +3276,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -3323,7 +3343,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -3390,7 +3410,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -3457,7 +3477,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -3528,7 +3548,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -3600,7 +3620,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -3672,7 +3692,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -3744,7 +3764,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -3816,7 +3836,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -3888,7 +3908,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -3960,7 +3980,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -4032,7 +4052,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -4104,7 +4124,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -4176,7 +4196,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -4203,8 +4223,8 @@
        "min_orch": "2.0.0",
        "package_sha256": "sha256:50383dc9e008e3a6cde3a80b1d772cd30a53a1d9de466893af42d8fb7b9ad0ac",
        "publisher": {
-        "key": "BDB_vAKjtqUFH6M6cQwZtO1DoKGNvTkrEno-OTaYmLgEQgSOzz17V3D9gKD3aM-eKIEEkCQVZv5-8OYgyYwofFA",
-        "sig": "jjLbQ5wVLA7EOnRB8ZDeaTfCtOD60EG1D4YKsBzvGZz71vHaSMY5rHl0AdUa10FSE5FRyRy6Gum84RyTwoXUrA"
+        "key": "BI3gPK8aINxSLI1O0uz8W9HLTdaZ5MlFHPotWZwIJgdBa8wz_uBba5qObTSH9e4dDQ0hsoVuOlnzZZpOn6GBNxg",
+        "sig": "xnmo1QTOCtTxKmDR3o07kd6WyrqAOnqgItXesy-FrSHXWEH7vTtyx1N43tAvHHJotr8twI2-F-S55mFpby9Cxg"
        },
        "runtime": {
         "kind": "python-requirements",
@@ -4407,7 +4427,7 @@
      "market_repo": "https://github.com/evil/mirror",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -4434,8 +4454,8 @@
        "min_orch": "2.0.0",
        "package_sha256": "sha256:50383dc9e008e3a6cde3a80b1d772cd30a53a1d9de466893af42d8fb7b9ad0ac",
        "publisher": {
-        "key": "BDB_vAKjtqUFH6M6cQwZtO1DoKGNvTkrEno-OTaYmLgEQgSOzz17V3D9gKD3aM-eKIEEkCQVZv5-8OYgyYwofFA",
-        "sig": "jjLbQ5wVLA7EOnRB8ZDeaTfCtOD60EG1D4YKsBzvGZz71vHaSMY5rHl0AdUa10FSE5FRyRy6Gum84RyTwoXUrA"
+        "key": "BI3gPK8aINxSLI1O0uz8W9HLTdaZ5MlFHPotWZwIJgdBa8wz_uBba5qObTSH9e4dDQ0hsoVuOlnzZZpOn6GBNxg",
+        "sig": "xnmo1QTOCtTxKmDR3o07kd6WyrqAOnqgItXesy-FrSHXWEH7vTtyx1N43tAvHHJotr8twI2-F-S55mFpby9Cxg"
        },
        "runtime": {
         "kind": "python-requirements",
@@ -4484,7 +4504,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -4513,8 +4533,8 @@
        "min_orch": "2.0.0",
        "package_sha256": "sha256:e01c40f5af30a1718f4741bf9239a93d75aed97fd93605dc602c1c34ed7eec8b",
        "publisher": {
-        "key": "BDB_vAKjtqUFH6M6cQwZtO1DoKGNvTkrEno-OTaYmLgEQgSOzz17V3D9gKD3aM-eKIEEkCQVZv5-8OYgyYwofFA",
-        "sig": "cIHKNelkk-FNvYG1wczOchb2QKpudXn63oD8GupdsyWJvzBd3DS9IXfWDuHLHT04hCcTM4zosFS30ZGMjYgnfA"
+        "key": "BI3gPK8aINxSLI1O0uz8W9HLTdaZ5MlFHPotWZwIJgdBa8wz_uBba5qObTSH9e4dDQ0hsoVuOlnzZZpOn6GBNxg",
+        "sig": "7-L-u7lNxln6N3kB3L-jH0lhSp6BAfD7bB_groDsOL044F958A-m1mQu5iVM4ON63I0ECoQwad4AG3xHvNY_xw"
        },
        "runtime": {
         "kind": "python-requirements",
@@ -4568,7 +4588,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -4899,7 +4919,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -4965,7 +4985,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -5037,7 +5057,7 @@
      "market_repo": "https://git.acme.example/acme/market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -5666,13 +5686,13 @@
      "installed": {},
      "isolation": true,
      "known_keys": {
-      "https://github.com/acme/orch-market|jira": "BDB_vAKjtqUFH6M6cQwZtO1DoKGNvTkrEno-OTaYmLgEQgSOzz17V3D9gKD3aM-eKIEEkCQVZv5-8OYgyYwofFA"
+      "https://github.com/acme/orch-market|jira": "BI3gPK8aINxSLI1O0uz8W9HLTdaZ5MlFHPotWZwIJgdBa8wz_uBba5qObTSH9e4dDQ0hsoVuOlnzZZpOn6GBNxg"
      },
      "last_version": null,
      "market_repo": "https://github.com/acme/orch-market.git",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -5699,8 +5719,8 @@
        "min_orch": "2.0.0",
        "package_sha256": "sha256:50383dc9e008e3a6cde3a80b1d772cd30a53a1d9de466893af42d8fb7b9ad0ac",
        "publisher": {
-        "key": "BGGeLvhoJ4OG_Vjfjby0fpvwadY3feqrMHasnV4IblWs7O2k5tBt21l-M6dKmKDX_sL-kqDhTjnyUTnUWTNyesw",
-        "sig": "8SIo_H4WdumAeLcTkSBAJUsKuR25nXFViSHBo2kuSxerpMmBYp4sHVWmt5f4pUKvJfhH8NkZFA29PMNC5BiNsg"
+        "key": "BJw_mWkMjQpiESXcQJ6P77wfBFAqfTB15M94AMeYG0MMCLA9d1GhvxjKEpQmWEWrMIuSLDkz-ADTXUsCu7SiMqo",
+        "sig": "L8MC-MjHYBvtF0hbTmxt1SPI6PIpsKZpvrUanwD_g_nU0HdLcL76me8OyCmIq-BBuObeqoDb4V6qPDNG7RheAw"
        },
        "runtime": {
         "kind": "python-requirements",
@@ -5749,7 +5769,7 @@
      "market_repo": "https://github.com/acme/orch-market.git",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -5816,7 +5836,7 @@
      "market_repo": "https://github.com/ACME/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -5883,7 +5903,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -5950,7 +5970,7 @@
      "market_repo": "https://github.com/acme/orch-market",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -6017,7 +6037,7 @@
      "market_repo": "https://github.com/severinlindenmann/orch-marketplace",
      "moved": [],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -6040,8 +6060,8 @@
        "min_orch": "2.0.0",
        "package_sha256": "sha256:ce652f9f74c46406f9d67e918066286533cdd75347322d35845c844244172e9e",
        "publisher": {
-        "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
-        "sig": "L901Bwi9J--m-toc26nSMzaQmimDoqAk0KD3TVEcMnCbOq2dSpyzDoH_hmVm61HWdy50IrIVbcDX3rVRIfeW1A"
+        "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
+        "sig": "HgAW7wJ4qHK3iLLvcD8fCUL6B3WDfg1ySE1hBjPhmKMY401ek-SGSjH1Y2lNLubTODqKfvntCPVVDaTp1psmzQ"
        },
        "source": {
         "git": "https://github.com/acme/dashboard",
@@ -6050,8 +6070,13 @@
        "version": "1.0.0"
       }
      ],
+     "expires_at": 1800000000,
      "format": "orch.market/1",
      "name": "orch-marketplace",
+     "signature": {
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
+      "sig": "10iSD9TDQdT9rjOKS2_exAw4RBVqE1quXrJmDUzqhedFN9uQPVnZ-fpHaPskHNfqvRAEvdoTI2Rhvd_IcMAlsw"
+     },
      "source": {
       "git": "https://github.com/severinlindenmann/orch-marketplace"
      },
@@ -6088,7 +6113,7 @@
       "dashboard"
      ],
      "official": {
-      "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
       "repo": "https://github.com/severinlindenmann/orch-marketplace"
      },
      "official_ids": [
@@ -6111,8 +6136,8 @@
        "min_orch": "2.0.0",
        "package_sha256": "sha256:ce652f9f74c46406f9d67e918066286533cdd75347322d35845c844244172e9e",
        "publisher": {
-        "key": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY",
-        "sig": "L901Bwi9J--m-toc26nSMzaQmimDoqAk0KD3TVEcMnCbOq2dSpyzDoH_hmVm61HWdy50IrIVbcDX3rVRIfeW1A"
+        "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
+        "sig": "HgAW7wJ4qHK3iLLvcD8fCUL6B3WDfg1ySE1hBjPhmKMY401ek-SGSjH1Y2lNLubTODqKfvntCPVVDaTp1psmzQ"
        },
        "source": {
         "git": "https://github.com/acme/dashboard",
@@ -6121,8 +6146,13 @@
        "version": "1.0.0"
       }
      ],
+     "expires_at": 1800000000,
      "format": "orch.market/1",
      "name": "orch-marketplace",
+     "signature": {
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
+      "sig": "SS7OBj4awzgQpdPI6QD0rZJGL-KhQgaSEBbp4OSMTbT9FgLOu8mpHt36f-sN55IOk5HzJOofrLDGaDJfVMyScw"
+     },
      "source": {
       "git": "https://github.com/severinlindenmann/orch-marketplace"
      },
@@ -6140,12 +6170,855 @@
     }
    },
    "name": "install_official_entry_with_a_moved_builtin_id_ok"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "git_hosts": [
+      "github.com",
+      "gitlab.com"
+     ],
+     "hub": null,
+     "installed": {},
+     "isolation": false,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/severinlindenmann/orch-marketplace",
+     "moved": [],
+     "official": {
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     },
+     "official_ids": [
+      "github",
+      "landing"
+     ],
+     "seen": {}
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"git_push\", \"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"github\", \"schema\": \"orch.addon/3\", \"title\": \"Github\", \"version\": \"1.0.0\"}"
+    },
+    "id": "github",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "git_push",
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "github",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:5f0c958d357a741a15bbfb9af573ac2152e5b8d60c0a1b44f16d84ed82d53699",
+       "publisher": {
+        "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
+        "sig": "Mnb6sBcMsyFbHlJR4fiO8SGkzSL4sOOsLI8QGeVcwSvbjsWlFnzQagsdhgOZHUdJqqj7Dfgxw2oYUr6yXDzJVQ"
+       },
+       "source": {
+        "git": "https://github.com/acme/github",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "orch-marketplace",
+     "source": {
+      "git": "https://github.com/severinlindenmann/orch-marketplace"
+     },
+     "version": 9007199254740991
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.index_unsigned"
+   },
+   "name": "install_official_index_unsigned_max_version"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "git_hosts": [
+      "github.com",
+      "gitlab.com"
+     ],
+     "hub": null,
+     "installed": {},
+     "isolation": false,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/severinlindenmann/orch-marketplace",
+     "moved": [],
+     "official": {
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     },
+     "official_ids": [
+      "github",
+      "landing"
+     ],
+     "seen": {}
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"git_push\", \"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"github\", \"schema\": \"orch.addon/3\", \"title\": \"Github\", \"version\": \"1.0.0\"}"
+    },
+    "id": "github",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "git_push",
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "github",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:5f0c958d357a741a15bbfb9af573ac2152e5b8d60c0a1b44f16d84ed82d53699",
+       "publisher": {
+        "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
+        "sig": "Mnb6sBcMsyFbHlJR4fiO8SGkzSL4sOOsLI8QGeVcwSvbjsWlFnzQagsdhgOZHUdJqqj7Dfgxw2oYUr6yXDzJVQ"
+       },
+       "source": {
+        "git": "https://github.com/acme/github",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "orch-marketplace",
+     "source": {
+      "git": "https://github.com/severinlindenmann/orch-marketplace"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.index_unsigned"
+   },
+   "name": "install_official_index_unsigned"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "git_hosts": [
+      "github.com",
+      "gitlab.com"
+     ],
+     "hub": null,
+     "installed": {},
+     "isolation": false,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/severinlindenmann/orch-marketplace",
+     "moved": [],
+     "official": {
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     },
+     "official_ids": [
+      "github",
+      "landing"
+     ],
+     "seen": {}
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"git_push\", \"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"github\", \"schema\": \"orch.addon/3\", \"title\": \"Github\", \"version\": \"1.0.0\"}"
+    },
+    "id": "github",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "git_push",
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "github",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:5f0c958d357a741a15bbfb9af573ac2152e5b8d60c0a1b44f16d84ed82d53699",
+       "publisher": {
+        "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
+        "sig": "Mnb6sBcMsyFbHlJR4fiO8SGkzSL4sOOsLI8QGeVcwSvbjsWlFnzQagsdhgOZHUdJqqj7Dfgxw2oYUr6yXDzJVQ"
+       },
+       "source": {
+        "git": "https://github.com/acme/github",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "expires_at": 1800000000,
+     "format": "orch.market/1",
+     "name": "orch-marketplace",
+     "signature": {
+      "key": "BJw_mWkMjQpiESXcQJ6P77wfBFAqfTB15M94AMeYG0MMCLA9d1GhvxjKEpQmWEWrMIuSLDkz-ADTXUsCu7SiMqo",
+      "sig": "OFtgFn_0_QqjQ6lZvud4lqYRSHU9wU-SBd-HmjKuFwO2KJSH9ZsXLPKcf0_iEhZ9kaG8shDSjt_LbJ-R_WERDA"
+     },
+     "source": {
+      "git": "https://github.com/severinlindenmann/orch-marketplace"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.index_unsigned"
+   },
+   "name": "install_official_index_signed_by_another_key"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "git_hosts": [
+      "github.com",
+      "gitlab.com"
+     ],
+     "hub": null,
+     "installed": {},
+     "isolation": false,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/severinlindenmann/orch-marketplace",
+     "moved": [],
+     "official": {
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     },
+     "official_ids": [
+      "github",
+      "landing"
+     ],
+     "seen": {}
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"git_push\", \"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"github\", \"schema\": \"orch.addon/3\", \"title\": \"Github\", \"version\": \"1.0.0\"}"
+    },
+    "id": "github",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "git_push",
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "github",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:5f0c958d357a741a15bbfb9af573ac2152e5b8d60c0a1b44f16d84ed82d53699",
+       "publisher": {
+        "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
+        "sig": "Mnb6sBcMsyFbHlJR4fiO8SGkzSL4sOOsLI8QGeVcwSvbjsWlFnzQagsdhgOZHUdJqqj7Dfgxw2oYUr6yXDzJVQ"
+       },
+       "source": {
+        "git": "https://github.com/acme/github",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "expires_at": 1800000000,
+     "format": "orch.market/1",
+     "name": "orch-marketplace",
+     "signature": {
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
+      "sig": "1QdoG4gK2GQvIZVL38LszMnJNDPAUPvEShSJ8DrsHcjoGxpk8t9fGpJQoG8Qsc9NbjpsgZQvJBbgDNgzf_XXPQ"
+     },
+     "source": {
+      "git": "https://github.com/severinlindenmann/orch-marketplace"
+     },
+     "version": 9007199254740991
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.index_unsigned"
+   },
+   "name": "install_official_index_version_changed_after_signing"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "git_hosts": [
+      "github.com",
+      "gitlab.com"
+     ],
+     "hub": null,
+     "installed": {},
+     "isolation": false,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/severinlindenmann/orch-marketplace",
+     "moved": [],
+     "official": {
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     },
+     "official_ids": [
+      "github",
+      "landing"
+     ],
+     "seen": {}
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"git_push\", \"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"github\", \"schema\": \"orch.addon/3\", \"title\": \"Github\", \"version\": \"1.0.0\"}"
+    },
+    "id": "github",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "git_push",
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "github",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+       "publisher": {
+        "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
+        "sig": "Mnb6sBcMsyFbHlJR4fiO8SGkzSL4sOOsLI8QGeVcwSvbjsWlFnzQagsdhgOZHUdJqqj7Dfgxw2oYUr6yXDzJVQ"
+       },
+       "source": {
+        "git": "https://github.com/acme/github",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "expires_at": 1800000000,
+     "format": "orch.market/1",
+     "name": "orch-marketplace",
+     "signature": {
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
+      "sig": "wBi7HBFt1ZC4AXgC-e8qc-5Np288x--aAOafuKc3GsJMb_MJoDv3tFyQPc7ItdvVGlJmwqNvYX_mHD2xWdRZmQ"
+     },
+     "source": {
+      "git": "https://github.com/severinlindenmann/orch-marketplace"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.index_unsigned"
+   },
+   "name": "install_official_index_entry_changed_after_signing"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "git_hosts": [
+      "github.com",
+      "gitlab.com"
+     ],
+     "hub": null,
+     "installed": {},
+     "isolation": false,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/severinlindenmann/orch-marketplace",
+     "moved": [],
+     "official": {
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     },
+     "official_ids": [
+      "github",
+      "landing"
+     ],
+     "seen": {}
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"git_push\", \"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"github\", \"schema\": \"orch.addon/3\", \"title\": \"Github\", \"version\": \"1.0.0\"}"
+    },
+    "id": "github",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "git_push",
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "github",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:5f0c958d357a741a15bbfb9af573ac2152e5b8d60c0a1b44f16d84ed82d53699",
+       "publisher": {
+        "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
+        "sig": "Mnb6sBcMsyFbHlJR4fiO8SGkzSL4sOOsLI8QGeVcwSvbjsWlFnzQagsdhgOZHUdJqqj7Dfgxw2oYUr6yXDzJVQ"
+       },
+       "source": {
+        "git": "https://github.com/acme/github",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "expires_at": 1800000001,
+     "format": "orch.market/1",
+     "name": "orch-marketplace",
+     "revoked": [],
+     "signature": {
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
+      "sig": "RDFZvpW3YakqkSZNm4VuNY_Cnz5f0EeTZoXMQUJ3vAzXg_Ia1DCA9CdvJtX-8TGmypfxxqxjyZ7EClXbz4glXw"
+     },
+     "source": {
+      "git": "https://github.com/severinlindenmann/orch-marketplace"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.index_unsigned"
+   },
+   "name": "install_official_index_expiry_changed_after_signing"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "git_hosts": [
+      "github.com",
+      "gitlab.com"
+     ],
+     "hub": null,
+     "installed": {},
+     "isolation": false,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/severinlindenmann/orch-marketplace",
+     "moved": [],
+     "official": {
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     },
+     "official_ids": [
+      "github",
+      "landing"
+     ],
+     "seen": {}
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"git_push\", \"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"github\", \"schema\": \"orch.addon/3\", \"title\": \"Github\", \"version\": \"1.0.0\"}"
+    },
+    "id": "github",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "git_push",
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "github",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:5f0c958d357a741a15bbfb9af573ac2152e5b8d60c0a1b44f16d84ed82d53699",
+       "publisher": {
+        "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
+        "sig": "Mnb6sBcMsyFbHlJR4fiO8SGkzSL4sOOsLI8QGeVcwSvbjsWlFnzQagsdhgOZHUdJqqj7Dfgxw2oYUr6yXDzJVQ"
+       },
+       "source": {
+        "git": "https://github.com/acme/github",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "orch-marketplace",
+     "signature": {
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
+      "sig": "DYtFohFD7zBMtLJv1W2g4E6ZUfpd4rSqFDjbyw8970JiYCXSGtFKl_GaB_lBwcvSrTXVSxZL1JKEnrPmtg9UVQ"
+     },
+     "source": {
+      "git": "https://github.com/severinlindenmann/orch-marketplace"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.index_unsigned"
+   },
+   "name": "install_official_index_signed_without_expiry"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "git_hosts": [
+      "github.com",
+      "gitlab.com"
+     ],
+     "hub": null,
+     "installed": {},
+     "isolation": false,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/severinlindenmann/orch-marketplace",
+     "moved": [],
+     "official": {
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     },
+     "official_ids": [
+      "github",
+      "landing"
+     ],
+     "seen": {}
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"git_push\", \"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"github\", \"schema\": \"orch.addon/3\", \"title\": \"Github\", \"version\": \"1.0.0\"}"
+    },
+    "id": "github",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "git_push",
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "github",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:5f0c958d357a741a15bbfb9af573ac2152e5b8d60c0a1b44f16d84ed82d53699",
+       "publisher": {
+        "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
+        "sig": "Mnb6sBcMsyFbHlJR4fiO8SGkzSL4sOOsLI8QGeVcwSvbjsWlFnzQagsdhgOZHUdJqqj7Dfgxw2oYUr6yXDzJVQ"
+       },
+       "source": {
+        "git": "https://github.com/acme/github",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "expires_at": 1800000000,
+     "format": "orch.market/1",
+     "name": "orch-marketplace",
+     "revoked": [
+      "github@1.0.0"
+     ],
+     "signature": {
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
+      "sig": "lYjNUeqd7nOhJpHDS0ASibYjbbUWwO7K1ggdwFgcHdCvzL0y1DUevJTaPba4gXVVoFDIi_evkLrjAgnj3TGMsQ"
+     },
+     "source": {
+      "git": "https://github.com/severinlindenmann/orch-marketplace"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.revoked"
+   },
+   "name": "install_official_index_revoked_entry"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "git_hosts": [
+      "github.com",
+      "gitlab.com"
+     ],
+     "hub": null,
+     "installed": {},
+     "isolation": false,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/severinlindenmann/orch-marketplace",
+     "moved": [],
+     "official": {
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     },
+     "official_ids": [
+      "github",
+      "landing"
+     ],
+     "seen": {}
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"git_push\", \"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"github\", \"schema\": \"orch.addon/3\", \"title\": \"Github\", \"version\": \"1.0.0\"}"
+    },
+    "id": "github",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "git_push",
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "github",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:5f0c958d357a741a15bbfb9af573ac2152e5b8d60c0a1b44f16d84ed82d53699",
+       "publisher": {
+        "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
+        "sig": "Mnb6sBcMsyFbHlJR4fiO8SGkzSL4sOOsLI8QGeVcwSvbjsWlFnzQagsdhgOZHUdJqqj7Dfgxw2oYUr6yXDzJVQ"
+       },
+       "source": {
+        "git": "https://github.com/acme/github",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "expires_at": 1800000000,
+     "format": "orch.market/1",
+     "name": "orch-marketplace",
+     "revoked": [
+      "github@0.9.0"
+     ],
+     "signature": {
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
+      "sig": "-gjSMQW79EVtpOj1Zw2BTPINjSGs4PAYaBZi_MRvbYPx5mjAtf4FsIFF3V8iiAi2FZHNY6qgSdiFGMoolt5qfQ"
+     },
+     "source": {
+      "git": "https://github.com/severinlindenmann/orch-marketplace"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "ok": {
+     "class": "official",
+     "id": "github",
+     "package_sha256": "sha256:5f0c958d357a741a15bbfb9af573ac2152e5b8d60c0a1b44f16d84ed82d53699",
+     "tofu": "new",
+     "version": "1.0.0"
+    }
+   },
+   "name": "install_official_index_revoked_other_version_ok"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "git_hosts": [
+      "github.com",
+      "gitlab.com"
+     ],
+     "hub": null,
+     "installed": {},
+     "isolation": true,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/acme/orch-market",
+     "moved": [],
+     "official": {
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     },
+     "official_ids": [
+      "github",
+      "landing"
+     ],
+     "seen": {}
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"standup\", \"schema\": \"orch.addon/3\", \"title\": \"Standup\", \"version\": \"1.0.0\"}"
+    },
+    "id": "standup",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595",
+       "source": {
+        "git": "https://github.com/acme/standup",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "signature": {
+      "key": "BI3gPK8aINxSLI1O0uz8W9HLTdaZ5MlFHPotWZwIJgdBa8wz_uBba5qObTSH9e4dDQ0hsoVuOlnzZZpOn6GBNxg",
+      "sig": "bvnkx_IP7-MrAbu-80xXiwik_hXCwH3vFbfvVQzICO7iA5uw5dw7PO12vZcIiYzEUyZ8M2payF_GlFWY85Dztw"
+     },
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 7
+    }
+   },
+   "check": "install",
+   "expect": {
+    "ok": {
+     "class": "other",
+     "id": "standup",
+     "package_sha256": "sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595",
+     "tofu": "unsigned",
+     "version": "1.0.0"
+    }
+   },
+   "name": "install_ok_other_index_with_valid_signature"
+  },
+  {
+   "args": {
+    "ctx": {
+     "actor": "human",
+     "builtin": [
+      "wiki",
+      "terminals",
+      "dashboard"
+     ],
+     "core_version": "2.0.1",
+     "git_hosts": [
+      "github.com",
+      "gitlab.com"
+     ],
+     "hub": null,
+     "installed": {},
+     "isolation": true,
+     "known_keys": {},
+     "last_version": null,
+     "market_repo": "https://github.com/acme/orch-market",
+     "moved": [],
+     "official": {
+      "key": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ",
+      "repo": "https://github.com/severinlindenmann/orch-marketplace"
+     },
+     "official_ids": [
+      "github",
+      "landing"
+     ],
+     "seen": {}
+    },
+    "files": {
+     "main.py": "print('hello')\n",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"standup\", \"schema\": \"orch.addon/3\", \"title\": \"Standup\", \"version\": \"1.0.0\"}"
+    },
+    "id": "standup",
+    "index": {
+     "addons": [
+      {
+       "capabilities": [
+        "network"
+       ],
+       "commit": "0123456789abcdef0123456789abcdef01234567",
+       "id": "standup",
+       "min_orch": "2.0.0",
+       "package_sha256": "sha256:d2c8be3f4051ae57c32bb2c2ff6b46bff268f1e2626217d565bed43acc123595",
+       "source": {
+        "git": "https://github.com/acme/standup",
+        "subdir": "pkg"
+       },
+       "version": "1.0.0"
+      }
+     ],
+     "format": "orch.market/1",
+     "name": "acme-market",
+     "signature": {
+      "key": "BI3gPK8aINxSLI1O0uz8W9HLTdaZ5MlFHPotWZwIJgdBa8wz_uBba5qObTSH9e4dDQ0hsoVuOlnzZZpOn6GBNxg",
+      "sig": "bvnkx_IP7-MrAbu-80xXiwik_hXCwH3vFbfvVQzICO7iA5uw5dw7PO12vZcIiYzEUyZ8M2payF_GlFWY85Dztw"
+     },
+     "source": {
+      "git": "https://github.com/acme/orch-market"
+     },
+     "version": 8
+    }
+   },
+   "check": "install",
+   "expect": {
+    "refuse": "market.index_unsigned"
+   },
+   "name": "install_other_index_with_bad_signature"
   }
  ],
  "format": "orch.market.vectors/1",
  "keys": {
-  "jane": "BDB_vAKjtqUFH6M6cQwZtO1DoKGNvTkrEno-OTaYmLgEQgSOzz17V3D9gKD3aM-eKIEEkCQVZv5-8OYgyYwofFA",
-  "mallory": "BGGeLvhoJ4OG_Vjfjby0fpvwadY3feqrMHasnV4IblWs7O2k5tBt21l-M6dKmKDX_sL-kqDhTjnyUTnUWTNyesw",
-  "official": "BLJkc-fIYQdnmShaJoz1UdEbJUo1A7fMthjsJf21F4x_ATDXvHmIBTi3FxsRqGYO1ZNHIYz9qdYQGyujItzJZHY"
+  "jane": "BI3gPK8aINxSLI1O0uz8W9HLTdaZ5MlFHPotWZwIJgdBa8wz_uBba5qObTSH9e4dDQ0hsoVuOlnzZZpOn6GBNxg",
+  "mallory": "BJw_mWkMjQpiESXcQJ6P77wfBFAqfTB15M94AMeYG0MMCLA9d1GhvxjKEpQmWEWrMIuSLDkz-ADTXUsCu7SiMqo",
+  "official": "BHvwxodGJYH9IV93iDswhZYyCu9N-TgrDFIMsx0Xdt_usWkz0lUoaswO1XOwXdII9dAtgNpGN2aM3gsRMw_61IQ"
  }
 }

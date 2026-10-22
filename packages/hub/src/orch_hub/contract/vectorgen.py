@@ -251,6 +251,9 @@ def build() -> dict[str, Any]:
     rev = signed("hk_root", "sig_hub_op_revoked", {**hdr("hub.op_revoked"), "hub_id": HUB_ID, "cert_id": OP_CERT_ID,
                                                    "revoked_ms": NOW - 1000, "dev": True})
     case("op_revoked_valid", "op_revoked", {**base, "signed": rev, "hk_root_pub": root}, {"ok": {"cert_id": OP_CERT_ID}}, 2)
+    case("op_revoked_dev_mismatch_still_accepted", "op_revoked",
+         {**base, "signed": resign("hk_root", "sig_hub_op_revoked", rev, dev=False), "hk_root_pub": root},
+         {"ok": {"cert_id": OP_CERT_ID}}, 2, "L2-8: a root-signed revocation is never refused for its dev marker")
     case("op_revoked_by_op_key", "op_revoked",
          {**base, "signed": signed("hk_op", "sig_hub_op_revoked", rev["o"]), "hk_root_pub": root},
          {"error": "bad_signature"}, 2, "only HK_root revokes an HK_op")
@@ -629,6 +632,8 @@ def build() -> dict[str, Any]:
     case("publish_dev_hub_at_real", "publish",
          {**pb, "dev_mode": False, "request": publish_request()}, {"error": "dev_refused"}, 2,
          "a real orch-publish refuses a dev hub card")
+    case("publish_non_ascii_host", "publish", {**pb, "request": {**publish_request(), "host": "pub.dev.sev\u00e9rin.io"}},
+         {"error": "malformed"}, 2, "L2-10: refused, never an uncaught encoding error")
     case("publish_approval_bad_header", "publish",
          {**pb, "request": {**publish_request(), "headers": {**publish_request()["headers"],
                                                              "Orch-Owner-Approval": "%%"}}},

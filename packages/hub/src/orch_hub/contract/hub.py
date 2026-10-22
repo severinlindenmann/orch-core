@@ -260,12 +260,12 @@ def verify_op_cert(signed: Any, hk_root_pub: bytes, *, now_ms: int, dev_mode: bo
 
 
 def verify_op_revoked(signed: Any, hk_root_pub: bytes, *, dev_mode: bool) -> dict[str, Any]:
+    """No dev-marker check (L2-8): a revocation only removes authority, so refusing one would fail open."""
     o = _envelope(signed, "hub.op_revoked")
     _signature(signed, L["sig_hub_op_revoked"], hk_root_pub)
     _fields(o, "hub.op_revoked")
     if o["hub_id"] != hub_id(hk_root_pub):
         raise Refused("other_hub")
-    _dev(o, dev_mode)
     return o
 
 
@@ -843,6 +843,11 @@ def check_hub_publish(req: Mapping[str, Any], st: Mapping[str, Any], *, now_ms: 
         approval = None
         if "orch-owner-approval" in h:
             approval = parse(unb64u(h["orch-owner-approval"]))
+        for part in (req["method"], req["host"], req["target"]):
+            if type(part) is not str or not part.isascii():
+                raise CanonError("method, host and target are ASCII (L2-10)")
+        if type(req["body"]) is not bytes:
+            raise CanonError("body")
     except (KeyError, CanonError, Refused):
         raise Refused("malformed") from None
     wsx = ws.hex()
@@ -859,8 +864,8 @@ def check_hub_publish(req: Mapping[str, Any], st: Mapping[str, Any], *, now_ms: 
         raise Refused("bad_signature")
     # 5. a live binding of this workspace to this hub
     b = st["bindings"].get(wsx)
-    if b is None or b["status"] != "bound":
-        raise Refused("not_bound")
+    if b is None or b["status"] != "bound" or b["binding"]["wsk_pub"] != card["wsk_pub"]:
+        raise Refused("not_bound")  # L2-10: only a binding under the card's current WSK counts
     if b["binding"]["hub_id"] != hub:
         raise Refused("other_hub")
     # 6. the hub's card, under the root the binding names

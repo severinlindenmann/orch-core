@@ -191,7 +191,8 @@ an implicit revocation of every older `HK_op`, so a withheld `hub.op_revoked` ca
 ### 4.2 `hub.op_revoked`
 
 Signed by `HK_root` under `orch/v2/hub-op-revoked|`. Fields `{v, suite, kind: "hub.op_revoked", hv, hub_id, cert_id,
-revoked_ms, dev}`. Verification: §2.2 steps 1–3 under the pinned root; `hub_id` → `other_hub`; dev marker. The host then
+revoked_ms, dev}`. Verification: §2.2 steps 1–3 under the pinned root; `hub_id` → `other_hub`. **No dev-marker
+check** (L2-8): a revocation only removes authority, so refusing one for its marker would fail open. The host then
 adds `cert_id` to its revoked set for this hub, permanently. Every `UK` and channel certificate under that op cert dies
 with it (spec §5). Sources (spec §5): every sync from the hub, `orch hub revoke-op <file>` at the host terminal, and
 (phase 4) the relay by hub card. A revocation can only be added, never removed.

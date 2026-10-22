@@ -188,6 +188,35 @@
     "signed": {
      "o": {
       "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "dev": false,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "kind": "hub.op_revoked",
+      "revoked_ms": 1789999999000,
+      "suite": 2,
+      "v": 2
+     },
+     "sig": "3MMbPVp5QClEYyor8LpaSXJn1AhShFcXoMYPurOv1yajvOFpgmHMEX0_Q4xnCcmn7K-TyJman67oU6dHDx2Q_g"
+    }
+   },
+   "check": "op_revoked",
+   "expect": {
+    "ok": {
+     "cert_id": "dd963f7365b19dba347a4ba580cc7c2b"
+    }
+   },
+   "name": "op_revoked_dev_mismatch_still_accepted",
+   "note": "L2-8: a root-signed revocation is never refused for its dev marker",
+   "phase": 2
+  },
+  {
+   "args": {
+    "dev_mode": true,
+    "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+    "now_ms": 1790000000000,
+    "signed": {
+     "o": {
+      "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
       "dev": true,
       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
       "hv": 0,
@@ -10439,6 +10468,98 @@
    },
    "name": "publish_dev_hub_at_real",
    "note": "a real orch-publish refuses a dev hub card",
+   "phase": 2
+  },
+  {
+   "args": {
+    "bindings": {
+     "336afd0fd4c349f575c2ec155d7258ad": [
+      {
+       "binding": {
+        "o": {
+         "binding_seq": 1,
+         "dev": true,
+         "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+         "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+         "hv": 0,
+         "kind": "hub.binding",
+         "mode": "selective",
+         "suite": 2,
+         "v": 2,
+         "valid_from_ms": 1789913600000,
+         "workspace_id": "336afd0fd4c349f575c2ec155d7258ad",
+         "wsk_pub": "BDzZgQT_t0MMh_OvV3sfGP8o3PTzrNfF4qCqUIITRQsBQDFDvyR4h_aSd6FS2ZWjBnsUIQmQQJDCE7FNYJOf9Fc"
+        },
+        "sig": "dMoCoNrcyDVNI8AabC8BKszQYH6NJYKix0pr_bAx-4EwtAcxR4H7YELLqSSPcpEKtialKVH7XNJVK6hNai_giA"
+       }
+      }
+     ]
+    },
+    "cards": {
+     "336afd0fd4c349f575c2ec155d7258ad": {
+      "owner_person_id": "4cfef66f1dc7bee794e9d949f2a216c3",
+      "wsk_pub": "BDzZgQT_t0MMh_OvV3sfGP8o3PTzrNfF4qCqUIITRQsBQDFDvyR4h_aSd6FS2ZWjBnsUIQmQQJDCE7FNYJOf9Fc"
+     }
+    },
+    "dev_mode": true,
+    "hub_card": {
+     "o": {
+      "card_seq": 1,
+      "dev": true,
+      "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "hxk_pub": "BPL5BSYzK4pViSYlGYnw-Ow5FIY3-D1et4PP74_LVjLF1s_FvTIh8KJq3syjmkJN6B2VQoHH14tnC7fsxzTtuX0",
+      "issued_ms": 1789913600000,
+      "kind": "hub.card",
+      "relay_url": null,
+      "suite": 2,
+      "tls_spki_sha256": "19dzV-BWnXf27oDtjqrK-6FGcfYbFEPuMUYMTzOrlY4",
+      "v": 2
+     },
+     "op_cert": {
+      "o": {
+       "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "dev": true,
+       "expires_ms": 1821536000000,
+       "hk_op_pub": "BGKyaYh6M5-PTj4pcMYwjvcmBflbTMCaHcCtr8J0vV4knajypjV15SXhIGpnZO404RAfMhkTi9R1g6_7JxV96s4",
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "kind": "hub.op_cert",
+       "op_seq": 1,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "IkiDO7ivIMFh9v4YZOITIZ4S2fsRo8hL5q7RBkafUZ5q3ZMpIXjeXU-g16p8YbpDLpjxC4N0eCWK-IRhCkW1bg"
+     },
+     "sig": "YxOSEHHCj0u5x8_T_UD2foB8QYYPEwzBTLTrI7Dtxg31_nxiqxlsCCjsmcMzhUSSQB_LJGmmgvRWpGLrzdXpZQ"
+    },
+    "now_ms": 1790000000000,
+    "request": {
+     "access": "public",
+     "body_hex": "7b22616363657373223a227075626c6963222c2266696c6573223a317d",
+     "headers": {
+      "Orch-Hub": "38d8abed52ccfb538da401fd54e64bdc",
+      "Orch-Hub-Signature": "s3wamsaZz5NiZUpo71rR--KVfFLUN-f7fxFqJOVy_ZhIkclxK198cDOrNxHoczvbiUp_cZ3m13OGHqfmjwkjDA",
+      "Orch-Nonce": "c989e30474ac55b97416eb21bc42f183",
+      "Orch-Owner-Approval": "eyJkZXZpY2VfY2VydCI6eyJvIjp7ImNyZWF0ZWRfbXMiOjE3ODkxMzYwMDAwMDAsImRldmljZV9pZCI6IjBjN2E5ZWYyZjE1ZTAzODAxZDU1N2NkOGE5YzA2MGVlIiwiZGtfa3hfcHViIjoiQkFpOVBwN0dJMXlILUMwUzBKRUpoZk5DVmIwQkE4V2dQOF81Z0MwR1pDWnFhYjhWdUZZN1ZZRm8wcGRPbVcySGxfWFMtR01MTFNtMUZRSTRsLUl3OFFFIiwiZGtfc2lnX3B1YiI6IkJPM0pCMnVQRk4wMFg1d0xhVklrdlZIVzdHQ1FUSVN0bVYxdVFWQmtJSUhpdjVfNDk4ZzNBYm9kWEl5d05DLTF4RVNUUVRiZlFGQzNSWERsRnRWTmZXQSIsImV4cGlyZXNfbXMiOm51bGwsImtpbmQiOiJkZXZpY2VfY2VydCIsImxhYmVsX3NlYWxlZCI6IjBFSmVJLVRGdWF4aFpVTEpBWWluMmNNbENJTk5sOHhiZEQyTk9rbk5BVFkiLCJwZXJzb25faWQiOiI0Y2ZlZjY2ZjFkYzdiZWU3OTRlOWQ5NDlmMmEyMTZjMyIsInNjb3Blc19tYXgiOlsibG9vayIsImRlY2lkZSIsIm9wZXJhdGUiXSwic3VpdGUiOjIsInYiOjJ9LCJzaWciOiIwSE1EUGVTLW05QVFGeDBKalVmaDNoc3VCZmpSXzRjeWpHeGY1d3V0TkhxajZ2eXdTZ2VrS0RkWjNfQnRzaFZ1Z0RsU0Y3YUlFYlBVNUM5YzdOWGJ0ZyJ9LCJvIjp7ImFjY2VzcyI6InB1YmxpYyIsImRldmljZV9pZCI6IjBjN2E5ZWYyZjE1ZTAzODAxZDU1N2NkOGE5YzA2MGVlIiwiaHViX2lkIjoiMzhkOGFiZWQ1MmNjZmI1MzhkYTQwMWZkNTRlNjRiZGMiLCJodiI6MCwia2luZCI6Imh1Yi5wdWJsaXNoX2FwcHJvdmFsIiwicmVxdWVzdF9oYXNoIjoiQ3JrZ0JWMThDeHFzQ1I0RzBIN3hBQlRnTVhxVjNpVzkyRlhBUUpzY2RPdyIsInN1aXRlIjoyLCJ2IjoyLCJ3b3Jrc3BhY2VfaWQiOiIzMzZhZmQwZmQ0YzM0OWY1NzVjMmVjMTU1ZDcyNThhZCJ9LCJwa19wdWIiOiJCSnYzemNIbEMtbGU0R2hRemJ4SmdCZndsTEVLWVhHUkxkdDlTcGdyN1dmeEdGSFZEQVZ3ZkhadmptX0tncVFXUmV2R3FNQzd0cUd0MmUzdjRjN1o5Z1kiLCJzaWciOiJ6eVl0NDlsZ2xuTGx5RmtOTVQ2NGp3Tmp5ZGZ2V3IzZGFMV0NPQ0x4NVhhQWRLYkxCQkVCc0lEYTdwRW0xQjhyd3NXWlJhSnR2dExkeTY0ZDd2MXFXZyJ9",
+      "Orch-Signature": "8Oo3ZoK8-ajZzyKaEAlW5jjsDsAuVdYqqe9mC2jsn2S2isbYNkqmiaFI3_RrXjF2j52KththF9lo_-ciZCQ4bg",
+      "Orch-Ts": "1790000000000",
+      "Orch-Workspace": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "host": "pub.dev.sev\u00e9rin.io",
+     "method": "PUT",
+     "target": "/v1/ws/336afd0fd4c349f575c2ec155d7258ad/shares/s1"
+    },
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "check": "publish",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "publish_non_ascii_host",
+   "note": "L2-10: refused, never an uncaught encoding error",
    "phase": 2
   },
   {

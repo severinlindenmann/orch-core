@@ -255,8 +255,14 @@ def _declaration_bytes(data: bytes) -> tuple[bytes, str | None]:
     ``None`` when the file is not exactly one JSON object ``{o, sig}`` with a signature of the exact shape."""
     import json
 
+    def unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        keys = [k for k, _ in pairs]
+        if len(set(keys)) != len(keys):  # last-wins parsing would hide the earlier text: scan the raw bytes instead
+            raise ValueError("duplicate key")
+        return dict(pairs)
+
     try:
-        doc = json.loads(data)
+        doc = json.loads(data, object_pairs_hook=unique)
     except (ValueError, RecursionError):
         return data, None
     if (
@@ -347,18 +353,22 @@ class Redactor:
             text = GITHUB_TOKEN_SHAPE.sub(REDACTED, text)
         return _PEM.sub(REDACTED, text)
 
-    def _kept(self, path: tuple[str, ...], value: str) -> bool:
-        """Is ``value`` at ``path`` (``*`` for a list index) a signature this op returns as stored: exact path, and
-        canonical base64url of exactly 64 bytes?"""
-        return any(
-            len(p) == len(path) and all(a in (b, "*") for a, b in zip(p, path, strict=True)) for p in self.keep
-        ) and (_is_signature(value))
+    def _kept(self, path: tuple[str | int, ...], value: str) -> bool:
+        """Is ``value`` at ``path`` a signature this op returns as stored: exact path (``*`` matches a list index
+        only, never a mapping key), and canonical base64url of exactly 64 bytes?"""
 
-    def obj(self, value: Any, _path: tuple[str, ...] = ()) -> Any:
+        def at(pattern: tuple[str, ...]) -> bool:
+            return len(pattern) == len(path) and all(
+                type(b) is int if a == "*" else (type(b) is str and a == b) for a, b in zip(pattern, path, strict=True)
+            )
+
+        return any(at(p) for p in self.keep) and _is_signature(value)
+
+    def obj(self, value: Any, _path: tuple[str | int, ...] = ()) -> Any:
         if isinstance(value, str):
             return self.text(value, signature=bool(self.keep) and self._kept(_path, value))
         if isinstance(value, list | tuple):
-            return [self.obj(v, (*_path, "*")) for v in value]
+            return [self.obj(v, (*_path, i)) for i, v in enumerate(value)]
         if isinstance(value, Mapping):
             # a null value carries nothing (a prepared grant.issued has "secret_hash": null, F1): kept, so the
             # signer sees exactly the event it signs

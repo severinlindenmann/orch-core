@@ -22,8 +22,8 @@ def declare(sig, **extra):
     return {"op": "reader.declare", "args": {"reader_decl": {"o": {"v": 1}, "sig": sig, **extra}}}
 
 
-def file_frame(decl, name="decl.json", op="member.add", args_name=None, token_in_o=None):
-    raw = json.dumps(decl).encode()
+def file_frame(decl, name="decl.json", op="member.add", args_name=None, raw=None):
+    raw = json.dumps(decl).encode() if raw is None else raw
     return {
         "op": op,
         "args": {"reader_decl": args_name or name},
@@ -158,3 +158,22 @@ def test_the_read_side_exemption_still_redacts_the_grant_and_its_secret():
     sig = sig[:85] + "A"
     assert len(crypto.unb64u(sig, crypto.SIG_LEN)) == 64
     assert "S3cretS3cretS3cret" not in r.obj(listing(sig))["data"]["readers"][0]["decl"]["sig"]
+
+
+def test_a_duplicate_key_in_the_declaration_file_is_never_exempt():
+    """Parsers keep the last duplicate key: text under an earlier one must still be scanned (no exemption)."""
+    clean_o = '{"v": 1}'
+    for raw in (
+        f'{{"o": {{"who": "{TOKEN}"}}, "o": {clean_o}, "sig": "{SIG}"}}',  # token under an earlier duplicate `o`
+        f'{{"o": {clean_o}, "sig": "{TOKEN}", "sig": "{SIG}"}}',  # token under an earlier duplicate `sig`
+        f'{{"o": {clean_o}, "sig": "{SIG}", "sig": "{SIG}"}}',  # even a repeated valid signature
+    ):
+        assert secret_in_request(file_frame(None, raw=raw.encode())), raw
+    assert not secret_in_request(file_frame(None, raw=f'{{"o": {clean_o}, "sig": "{SIG}"}}'.encode()))
+
+
+def test_the_star_in_a_read_path_matches_list_indexes_only():
+    r = Redactor(None, "reader.list")
+    body = {"data": {"readers": {"*": {"decl": {"sig": SIG}}}}}  # a mapping with the key "*", not a list
+    assert r.obj(body)["data"]["readers"]["*"]["decl"]["sig"] == "[redacted]"
+    assert r.obj(listing(SIG))["data"]["readers"][0]["decl"]["sig"] == SIG

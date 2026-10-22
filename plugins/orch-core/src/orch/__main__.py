@@ -1,5 +1,5 @@
 import sys
 
-from orch.cli.main import main
+from orch.cli.main import entry
 
-sys.exit(main())
+sys.exit(entry())

@@ -414,6 +414,11 @@ def main(
         if exc.landed:
             text += "; what was signed stays in the ticket as a draft"
         return _fail(out, args.json, HostError("human.request_mismatch", text))
+    except signer.Cancelled:  # Ctrl-C before the signature existed: the request is cancelled
+        return _fail(out, args.json, HostError("invalid.input", "Cancelled, nothing was signed."))
+    except KeyboardInterrupt:  # Ctrl-C after the signature: it may have landed, so no claim either way
+        text = "Interrupted; what was signed may have landed: check the ticket with orch show"
+        return _fail(out, args.json, HostError("invalid.input", text))
     except signer.SignerRefused as exc:
         return _fail(out, args.json, HostError("invalid.input", f"{exc}; nothing was signed"))
     except HostError as exc:

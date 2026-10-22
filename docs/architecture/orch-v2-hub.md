@@ -4,7 +4,8 @@ Status: **draft for the owner's review**, 22 Oct 2026. Numbers continue after D6
 on 22 Oct 2026; the visual draft is `~/orch-dev/mockups/hub-vision/index.html` (v3). Nothing here is built yet.
 
 This amends, in hub mode only: D2 and D3 (a second holder of `WK_e`), D6, D11, D41, D49, D66 (a new factor), §4
-(threat model: a hub row), §5.4 (epochs: `WK_e` goes to the hub over the hub link, and removing a person no longer
+(threat model: a hub row), orch-v2-ticket-format (the delegation check and `member.added`: aliases and member kind
+`hub`), §5.4 (epochs: `WK_e` goes to the hub over the hub link, and removing a person no longer
 rotates), §6.1 (directory), §9 (linked workspaces) and §10 (publish acceptance), as noted per decision. Direct mode, a
 workspace with no hub, keeps the current spec unchanged.
 
@@ -42,7 +43,7 @@ people sign in to it once, and admins work in it.
 | D73 | Channels | People reach orch through channels that end at the hub: the iPhone app now, the browser, later Slack and others. The phone pairs **once with the hub** by QR; it never pairs with a workspace. Amends D6 in hub mode. |
 | D74 | Trusted hub | The hub is a member of every workspace it serves: each workspace seals its `WK_e` to the hub, so the hub can render content for channels and act for users. The hub is a **trusted operator**, like an identity provider; the edge relay stays blind. |
 | D75 | Shared spaces | Shared spaces live on the hub, keyed `SK_e`, held by the hub. Workspaces put filtered slices into them under their share rules (option B of the draft). |
-| D76 | Relay and publish behind the hub | The relay's accounts are hubs, not workspaces. It carries hub↔phone push and hub↔hub traffic, ciphertext only. Publish accepts a hub-signed request for a workspace only while it holds that workspace's `WSK`-signed `hub.binding` (§8); namespaces stay per workspace. Amends §6.1 and §10. |
+| D76 | Relay and publish behind the hub | The relay's accounts are hubs, not workspaces. It carries hub↔phone push and hub↔hub traffic, ciphertext only. Publish requests stay `WSK`-signed by the workspace and are forwarded by the hub; orch-publish accepts them through a hub only while it holds that workspace's `WSK`-signed `hub.binding` (§8). Namespaces stay per workspace. Amends §6.1 and §10. |
 | D77 | Hub to hub | One hub per company. Companies, and subsidiaries of one group, link hub to hub through a relay. Only hub-to-hub objects cross (handoffs, shared spaces); nobody gets direct access to another hub's workspaces. |
 | D78 | Hub down | Workspaces keep working locally (agents, tickets, local reads). Channels, publish and handoffs wait and drain when the hub is back. No human-only verb works while the hub is down, except the break-glass operations (§8). No second hub instance for now. |
 
@@ -81,6 +82,9 @@ then); Slack and other channels after the phone and browser.
   offline. `HK_root` certifies an online `HK_op`. Workspaces pin `HK_root`. Rotating `HK_op` (routine, or after a
   suspected compromise of the online host) needs no re-pin. Only a compromise of `HK_root` forces every workspace to
   re-pin. The hub card is `{hub_id, hk_root_pub, hk_op_cert, hxk_pub, relay_url, dev}`. The relay registers hubs by card.
+- **Revoking `HK_op`.** `HK_root` signs `hk_op.revoked {cert_id}`. Every `UK` and channel certificate issued under that
+  `HK_op` dies with it, because the `UK`s sit in the same key store. The hub creates new `UK`s and certifies them
+  under the new `HK_op`. Workspaces pull revocations on every sync and refuse events under a revoked `HK_op`.
 - **Signing domains.** `HK_op` signs with a separate domain per object: `orch/v2/hub-card`, `hub-uk-cert`,
   `hub-snapshot`, `hub-route`, `hub-publish`, `hub-audit`. `UK` signs only in `orch/v2/hub-custodial|<verb>`.
 - **Users.** A user is `{user_id, display, groups, status}` on the hub. `user_id` is pseudonymous and names live
@@ -88,9 +92,13 @@ then); Slack and other channels after the phone and browser.
   `{user_id, uk_pub, hub_id, dev}` with `HK_op`. In hub mode `Actor("human", user_id, via=<channel>)` takes the place of a
   device actor.
 - **Identity aliases.** A person who already has a `p_` identity in a workspace gets a signed alias
-  `{person_id, user_id}` at join. The alias is signed by the person's current key, or by the owner for others. Every
+  `{person_id, user_id}` at join. An alias needs the person's own key, or that user's `UK` with a channel proof plus the
+  owner's signature. An alias is never re-pointed. Every
   identity check (D59 "never the assignee", gate quorums, the ticket-format delegation check `actor.id ==
   "p_"+owner_person_id`) compares canonical identities, so `p_x` and `u_x` count as one person.
+- **Every workspace has an owner `PK`.** A workspace created by a hub user who has no `p_` identity still gets one:
+  `orch init` shows the recovery code to the creator, as today. `PK` signs the delegation (§5.3) and is aliased to the
+  creator's `user_id`. It is the break-glass key (§8).
 - **The hub signs only what it builds (prepare → recompute → sign).** Only a channel can start a signature. The hub
   builds the event from its own `WK_e` view of the workspace: the ticket, the gate hash material, the host-chain head.
   The channel signs the digest with its channel key. The hub checks that proof, then signs with `UK_user`. The
@@ -99,10 +107,16 @@ then); Slack and other channels after the phone and browser.
 - **Custodial event.** These fields are added to the event: `auth: "hub"`, `channel_factor` (`se-unlocked`, `passkey`,
   `password+totp`, signed), `channel`, `hub_id`, `workspace_id`, `snapshot_version`, and the channel proof. All of
   them sit inside the signed material, so an event cannot be replayed in another workspace.
-- **Verification in the workspace.** The host checks the chain `UK_user` → `HK_op` cert → pinned `HK_root`. It checks
-  the channel proof over the digest and the role, both against the newest snapshot it holds when the event arrives
-  (§6). Then it records the event. D66 workspace policy maps onto `channel_factor`: a policy that requires
-  `secure-enclave` is met by `se-unlocked` or `passkey`, never by `password+totp`.
+- **Channel certificates.** `HK_op` certifies each channel key as `{channel_id, user_id, key_pub, factor}`. Revoked
+  channels are listed in the snapshot (§6). The event carries its channel certificate.
+- **Verification in the workspace.** The host checks:
+  - the chain `UK_user` → `HK_op` cert → pinned `HK_root`, with no revoked `HK_op` along it;
+  - the channel proof over the digest, against the channel certificate;
+  - the role and channel revocations, both against the newest snapshot it holds when the event arrives (§6).
+
+  Then it records the event. D66 workspace policy maps onto `channel_factor`. A policy that requires
+  `secure-enclave` (presence per signature, D41) is met only by `passkey` with user verification. `se-unlocked`
+  meets a D49-level policy, and `password+totp` meets neither.
 - **Audit.** Every custodial signature and every grant or membership change is in a hash-chained hub audit log.
   Workspaces acknowledge its head on every sync, so a compromised hub cannot silently drop entries. The workspace also
   keeps each signed event.
@@ -115,6 +129,7 @@ then); Slack and other channels after the phone and browser.
   roles: {user_id: role}}`, signed by `HK_op`.
   - The host refuses an older `(generation, version)`, so a replayed snapshot cannot bring back a removed user.
   - A hub restored from backup starts a new `generation`, signed under `HK_root`, so it is not locked out for good.
+    A `generation` is accepted only if it is strictly higher than the pinned one and signed by `HK_root`.
   - Each snapshot is stored in the workspace ledger, so readers and restores can verify old events.
 - Every grant and membership change is signed by the acting admin's `UK`, with a channel proof as in §5.
 - **Removing a user** from every group that reaches a workspace makes the hub drop their channel sessions for it;
@@ -155,12 +170,13 @@ then); Slack and other channels after the phone and browser.
 4. The host signs `hub.binding {workspace_id, hub_id, hk_root_pub, valid_from}` with `WSK`. The hub hands it to
    orch-publish and the relay (D76).
 5. The workspace switches to hub mode, but **only from step H5 on** (§10). Before H5, `hub join` is a dev and test step
-   on dev workspaces. From H5 on, the host stops dialling the relay and publish, refuses any direct-relay envelope,
-   and removes its direct-mode device memberships (phones paired per D6) with an epoch rotation.
+   on dev workspaces. From H5 on, the host stops dialling the relay, refuses any direct-relay envelope, and removes its
+   direct-mode phone memberships (paired per D6) with an epoch rotation. The owner's break-glass key is kept. Direct
+   publish stops at H6, when publish through the hub exists.
 
 **The host↔hub link** has a closed operation list: `snapshot_get`, `event_deliver` (custodial events in), `route_out`
-and `route_in` (ws→ws envelopes), `wk_seal` (epoch wraps to `HXK`), `audit_ack`. It has no signing request from the
-host.
+and `route_in` (ws→ws envelopes), `wk_seal` (epoch wraps to `HXK`), `publish_out` (a `WSK`-signed publish request,
+forwarded as is), `audit_ack`. None of them asks the hub to sign anything.
 
 **Linked workspaces through the router (§9).**
 - Envelopes keep the sender's `WSK` signature and `WXK` sealing end to end. The receiver checks its pin of the
@@ -169,19 +185,23 @@ host.
   envelopes with its own key. D28 "from-peer" applies. A human co-signature verifies as `UK` → foreign `HK_op` cert →
   the pinned foreign hub card.
 
-**Break-glass.** The workspace owner keeps a local key (`PK` from the recovery code, or a passphrase device key, D65).
-It has exactly three powers, all from the host terminal, none needing the hub:
-- `orch hub leave` signs `hub.unbound` with `WSK`, removes the hub member and rotates the epoch;
-- `orch hub repin` pins a new `HK_root` after a hub rebuild;
-- `orch keys rotate`.
+**Break-glass.** The workspace owner keeps a local key: `PK` from the recovery code, or a passphrase device key (D65).
+Break-glass has exactly three powers. Each is a human-only verb from the host terminal, signed by the owner key (not
+only by `WSK`), and none needs the hub:
+- `orch hub leave` (`PK` or the device key) signs `hub.unbound` with `WSK`, removes the hub member and rotates the
+  epoch;
+- `orch hub repin` (**`PK` only**, so a stolen device key cannot point the workspace at a hostile hub) pins a new
+  `HK_root` after a hub rebuild;
+- `orch keys rotate` (`PK` or the device key).
 
 This is no veto on hub admins (D71). It is how a workspace gets away from a lost or compromised hub. Hub compromise
 means: break-glass leave, then rotate, then rejoin a rebuilt hub.
 
 **Publish (D76).** orch-publish accepts a hub request for a workspace only while it holds that workspace's
-`hub.binding` and no later `hub.unbound`. It evicts the binding like a card. The agent `publish(...)` path (§5.5) stays:
-a charter rule lets the hub sign as the workspace, under `hub-publish`, without a human. Public access still needs a
-custodial human signature.
+`hub.binding` and no later `hub.unbound`. It evicts the binding like a card. The host still signs every publish request
+with `WSK`, as in §10 today, and sends it over `publish_out`. orch-publish verifies `WSK` and `hub.binding`; the hub adds
+only a transport signature (`hub-publish`). The agent `publish(...)` path (§5.5) is unchanged: the host evaluates the
+charter. Public access still needs a custodial human signature, carried in the request.
 
 ## 9. Threat model in hub mode
 
@@ -213,8 +233,8 @@ at step H5, so daily use keeps working.
 | H2 | Workspace join/leave (§8), group snapshot pinning, `auth: hub` verification in core | orch-core, orch-hub |
 | H3 | Router: ws→ws through the hub; shared spaces on the hub | orch-hub, orch-core |
 | H4 | Browser channel: person home, needs-you across workspaces, custodial signing | orch-hub |
-| H5 | Relay with hub accounts; iPhone pairs with the hub; push from the hub. Remove the direct relay path from core | orch-relay, orch-mobile, orch-core |
-| H6 | Publish through the hub (D76) | orch-publish, orch-hub |
+| H5 | Relay with hub accounts; iPhone pairs with the hub; push from the hub. Remove the direct relay path from core (direct publish stays) | orch-relay, orch-mobile, orch-core |
+| H6 | Publish through the hub (D76, `publish_out`); then remove direct publish from core | orch-publish, orch-hub, orch-core |
 | H7 | Hub to hub through the relay (D77) | orch-hub, orch-relay |
 | Later | Entra ID / OIDC and group sync; Slack channel | orch-hub |
 

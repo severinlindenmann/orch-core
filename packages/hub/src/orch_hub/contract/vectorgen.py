@@ -541,6 +541,11 @@ def put_body(
 
 # --- D4 audit chain, admin read (§10.5, §10.6) -------------------------------------------------------------------------
 
+
+def nonce16(label: str) -> str:
+    return b64u(S.fake_seed("hub/scope_nonce/" + label)[:16])
+
+
 AUDIT_EVENTS: list[tuple[str, dict[str, Any]]] = [
     (
         "custodial",
@@ -551,13 +556,30 @@ AUDIT_EVENTS: list[tuple[str, dict[str, Any]]] = [
             "user_id": U_ALICE,
             "channel_id": CH_ALICE,
             "digest": b64u(S.fake_seed("hub/audit_digest")),
+            "scope_nonce": nonce16("custodial"),
         },
     ),
-    ("grant", {"group": "ops", "workspace_id": WS_A, "role": "edit", "actor_user_id": U_ALICE}),
+    (
+        "grant",
+        {
+            "group": "ops",
+            "workspace_id": WS_A,
+            "role": "edit",
+            "actor_user_id": U_ALICE,
+            "scope_nonce": nonce16("grant"),
+        },
+    ),
     ("membership", {"group": "ops", "user_id": U_BOB, "added": True, "actor_user_id": U_ALICE}),
     (
         "space",
-        {"space_id": SPACE, "epoch": 2, "change": "remove", "workspace_id": WS_B, "actor_user_id": U_ALICE},
+        {
+            "space_id": SPACE,
+            "epoch": 2,
+            "change": "remove",
+            "workspace_id": WS_B,
+            "actor_user_id": U_ALICE,
+            "scope_nonce": nonce16("space"),
+        },
     ),
 ]
 
@@ -565,6 +587,8 @@ AUDIT_EVENTS: list[tuple[str, dict[str, Any]]] = [
 def audit_rec(
     seq: int, prev: str, typ: str, event: dict[str, Any], *, scope: Any = "auto", signer: str = "hk_op", **kw: Any
 ) -> dict[str, Any]:
+    if "scope_nonce" not in event and typ in ("custodial", "grant", "space"):
+        event = {**event, "scope_nonce": nonce16(typ)}
     o = {
         **hdr("hub.audit"),
         "hub_id": HUB_ID,
@@ -573,7 +597,7 @@ def audit_rec(
         "prev": prev,
         "ts_ms": NOW - 1000 * (10 - seq),
         "type": typ,
-        "scope": AU.scope_of(event) if scope == "auto" else scope,
+        "scope_tag": AU.scope_tag_of(event) if scope == "auto" else scope,
         "event_hash": AU.event_hash(event),
         "dev": True,
         **kw,
@@ -2252,16 +2276,58 @@ def build() -> dict[str, Any]:
         3,
     )
     case(
-        "audit_scope_not_the_events",
+        "audit_scope_tag_mismatch",
         "audit",
         {
             **au,
-            "signed": audit_rec(1, AU.GENESIS_PREV, "grant", AUDIT_EVENTS[1][1], scope=WS_B),
+            "signed": audit_rec(
+                1,
+                AU.GENESIS_PREV,
+                "grant",
+                AUDIT_EVENTS[1][1],
+                scope=AU.scope_tag_of({**AUDIT_EVENTS[1][1], "workspace_id": WS_B}),
+            ),
             "event": AUDIT_EVENTS[1][1],
         },
         {"error": "audit_mismatch"},
         3,
-        "a record cannot be filed under another workspace",
+        "a record cannot be filed under another workspace's tag",
+    )
+    case(
+        "audit_scope_tag_other_nonce",
+        "audit",
+        {
+            **au,
+            "signed": audit_rec(1, AU.GENESIS_PREV, "grant", AUDIT_EVENTS[1][1]),
+            "event": {**AUDIT_EVENTS[1][1], "scope_nonce": nonce16("other")},
+        },
+        {"error": "audit_mismatch"},
+        3,
+        "the event does not hash to the record's event_hash",
+    )
+    case(
+        "audit_event_without_nonce",
+        "audit",
+        {
+            **au,
+            "signed": audit_rec(
+                1,
+                AU.GENESIS_PREV,
+                "grant",
+                AUDIT_EVENTS[1][1],
+                event_hash=AU.event_hash({k: v for k, v in AUDIT_EVENTS[1][1].items() if k != "scope_nonce"}),
+            ),
+            "event": {k: v for k, v in AUDIT_EVENTS[1][1].items() if k != "scope_nonce"},
+        },
+        {"error": "malformed"},
+        3,
+    )
+    case(
+        "audit_hub_wide_event_has_no_tag",
+        "audit",
+        {**au, "signed": audit_rec(1, AU.GENESIS_PREV, *AUDIT_EVENTS[2]), "event": AUDIT_EVENTS[2][1]},
+        {"ok": {"seq": 1, "hash": AU.chain_hash(audit_rec(1, AU.GENESIS_PREV, *AUDIT_EVENTS[2]))}},
+        3,
     )
     case(
         "audit_type_not_the_events",

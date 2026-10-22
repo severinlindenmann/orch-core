@@ -133,6 +133,7 @@ literal `orch/v2/hub-…|` names.
 | `sig_hub_audit` | `orch/v2/hub-audit\|` | `HK_op` | `cj(o)` of `hub.audit` | 10.5 |
 | `sig_hub_admin_read` | `orch/v2/hub-admin-read\|` | `HK_op` | the bytes of a hub admin read request | 10.6 |
 | `h_hub_audit_chain` | `orch/v2/hub-audit-chain\|` | hash | one signed audit record (the chain link) | 10.5 |
+| `h_hub_audit_scope` | `orch/v2/hub-audit-scope\|` | hash | the blinded workspace tag of an audit record | 10.5 |
 | `h_hub_audit_event` | `orch/v2/hub-audit-event\|` | hash | an audit event, signed into its record | 10.5 |
 | custodial family | `orch/v2/hub-custodial\|<type>\|` | `UK` | a custodial event (`type` is the event type) | 8 |
 | `sig_hub_channel_proof` | `orch/v2/hub-channel-proof\|` | channel key | the event digest | 8 |
@@ -716,7 +717,7 @@ workspaces verify and acknowledge it (`audit_ack`), admins read it in full.
 
 ```
 hub.audit {v, suite, kind: "hub.audit", hv, hub_id, op_cert_id, seq ≥ 1, prev: b64u(32), ts_ms,
-           type: "custodial" | "grant" | "membership" | "space", scope: workspace_id | null,
+           type: "custodial" | "grant" | "membership" | "space", scope_tag: b64u(32) | null,
            event_hash: b64u(32), dev}                       signed by HK_op, label sig_hub_audit
 ```
 
@@ -725,11 +726,17 @@ hub.audit {v, suite, kind: "hub.audit", hv, hub_id, op_cert_id, seq ≥ 1, prev:
   `prev = chain_hash(record n)`. Rewriting, removing or reordering any record breaks every later `prev`.
 - **The record signs the event's hash, not the event** (`event_hash = b64u(H("orch/v2/hub-audit-event|" || cj(event)))`),
   so a workspace can verify the whole chain, including records about others, and sees the events only of its own
-  `scope`. `scope` is the event's `workspace_id`, or `null` (hub-wide: memberships, space creation).
-- **Events** (closed types, exact fields): `custodial` `{workspace_id, log, verb, user_id, channel_id, digest}` (the
-  custodial event digest of §8.2); `grant` `{group, workspace_id, role | null, actor_user_id}`; `membership`
+  scope. **The scope is blinded (L2P-4):** `scope_tag = b64u(H("orch/v2/hub-audit-scope|" || workspace_id (16) ||
+  scope_nonce (16)))`, where the 16 random bytes `scope_nonce` are a field **inside the event**. Only the workspace the
+  event is about receives the event, so only it can compute and check the tag; every other tenant sees an opaque value
+  and learns neither the `workspace_id` (also the TOFU key of §9.5) nor which records are the same workspace's.
+  `scope_tag` is `null` for hub-wide events (memberships). `audit_mismatch` when the tag does not match. **What stays
+  visible to every workspace:** `type`, `ts_ms`, `seq` (so the hub-wide volume of custodial signatures, grants,
+  memberships and space changes and when they happened, not whose).
+- **Events** (closed types, exact fields): `custodial` `{workspace_id, log, verb, user_id, channel_id, digest, scope_nonce}` (the
+  custodial event digest of §8.2); `grant` `{group, workspace_id, role | null, actor_user_id, scope_nonce}`; `membership`
   `{group, user_id, added, actor_user_id}`; `space` `{space_id, epoch, change: create | add | remove | unbind | delete,
-  workspace_id | null, actor_user_id | null}`. The acting admin's `UK` signature on a grant or membership change is
+  workspace_id | null, actor_user_id | null, scope_nonce}`. The acting admin's `UK` signature on a grant or membership change is
   the custodial event it came from (spec §10); the audit record points at it, it does not replace it.
 
 **Verification by a workspace** (reference `verify_record_ex` + `apply_record`). **Key rotation (L2P-3):** a record
@@ -748,10 +755,10 @@ then, with its head `{seq, hash}` (or none: it expects genesis, or starts from a
 | `seq > head.seq + 1`, or no head and `seq > 1` | `audit_gap` (a record was dropped, or the hub withholds it) |
 | `seq = head.seq + 1` and another `prev`; or `seq = head.seq` with other bytes | `audit_fork` (the hub signed two histories) |
 | the same bytes at `seq = head.seq`, or any record older than the head | ignored: the head stays (L2P-10: overlapping `audit_get` pages re-deliver records, and a host that keeps only its head cannot compare an older one; it keeps any two valid records with one `seq` and different bytes as fork evidence) |
-| an event it holds does not hash to `event_hash`, is no valid event of that `type`, or its workspace is not the record's `scope` | `audit_mismatch` |
+| an event it holds does not hash to `event_hash`, is no valid event of that `type`, or its tag is not the record's `scope_tag` | `audit_mismatch` |
 
 **`audit_get {since}`** (w2h, added so the ack has something to refer to): returns up to 100 records after `since`
-in order, each with its `event` only if it concerns the caller (`scope` equals its workspace), the hub's `head`
+in order, each with its `event` only if it concerns the caller (`scope_tag` is the tag of its workspace), the hub's `head`
 `{seq, hash}`, and the root-signed `op_certs` the page's records name (reply `{"records", "head", "op_certs"}`). **`audit_ack {seq, head}`**: the workspace says "I verified the chain up to `seq`, whose chain hash is
 `head`". The hub checks `head` against its own record `seq` (`seq` beyond its chain, or another hash: `audit_fork`: the
 workspace holds a chain the hub did not sign there) and stores the highest acked `seq` per workspace; an older ack

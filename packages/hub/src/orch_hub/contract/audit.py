@@ -12,7 +12,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from . import suite as S
-from .canon import CanonError, b64u, cj, unb64u
+from .canon import CanonError, b64u, cj, unb64u, unhex
 from .hub import (
     Refused,
     _b64u_n,
@@ -40,8 +40,9 @@ def _opt_hex16(x: Any) -> bool:
     return x is None or _hex16(x)
 
 
-#: Exact event fields per record type. ``scope`` of the record is the event's ``workspace_id`` (None when it has none or
-#: it is None).
+#: Exact event fields per record type. The record's ``scope_tag`` blinds the event's ``workspace_id`` with the event's
+#: own ``scope_nonce`` (L2P-4): only the workspace the event is about receives the event and can check the tag; every
+#: other workspace sees an opaque tag. ``None`` for hub-wide events.
 EVENT_FIELDS: dict[str, dict[str, Any]] = {
     # every custodial signature (§8): who signed what, over which digest
     "custodial": {
@@ -51,6 +52,7 @@ EVENT_FIELDS: dict[str, dict[str, Any]] = {
         "user_id": _hex16,
         "channel_id": _hex16,
         "digest": _b64u_n(32),
+        "scope_nonce": _b64u_n(16),
     },
     # a group's role in a workspace changed (role None = removed); the acting admin
     "grant": {
@@ -58,6 +60,7 @@ EVENT_FIELDS: dict[str, dict[str, Any]] = {
         "workspace_id": _hex16,
         "role": lambda x: x in ROLES_OR_NONE,
         "actor_user_id": _hex16,
+        "scope_nonce": _b64u_n(16),
     },
     # a user joined or left a group; the acting admin
     "membership": {"group": _text, "user_id": _hex16, "added": _bool, "actor_user_id": _hex16},
@@ -68,6 +71,7 @@ EVENT_FIELDS: dict[str, dict[str, Any]] = {
         "change": _enum("create", "add", "remove", "unbind", "delete"),
         "workspace_id": _opt_hex16,
         "actor_user_id": _opt_hex16,
+        "scope_nonce": _b64u_n(16),
     },
 }
 
@@ -98,6 +102,19 @@ def check_event(typ: str, event: Any) -> dict[str, Any]:
 
 def scope_of(event: Mapping[str, Any]) -> str | None:
     return event.get("workspace_id")
+
+
+def scope_tag_of(event: Mapping[str, Any]) -> str | None:
+    """``b64u(H("orch/v2/hub-audit-scope|" || workspace_id (16) || scope_nonce (16)))``, or None for a hub-wide event.
+    The nonce is inside the event, which only the scope's workspace receives, so a co-tenant cannot test a guessed
+    ``workspace_id`` against the tag."""
+    ws = scope_of(event)
+    if ws is None:
+        return None
+    try:
+        return b64u(S.sha256(L["h_hub_audit_scope"] + unhex(ws, 16) + unb64u(event["scope_nonce"], 16)))
+    except CanonError, KeyError:
+        raise Refused("malformed") from None
 
 
 def _record_key(
@@ -141,7 +158,7 @@ def verify_record_ex(
 ) -> tuple[dict[str, Any], int]:
     """The record under the op cert it names (see :func:`_record_key`), then fields, hub, dev marker and genesis rule.
     If the host has the event (it concerns the host), it must hash to ``event_hash``, be a valid event of the record's
-    ``type`` and match its ``scope``: ``audit_mismatch`` otherwise. Returns ``(record object, op_seq)``."""
+    ``type`` and match its ``scope_tag``: ``audit_mismatch`` otherwise. Returns ``(record object, op_seq)``."""
     o = _envelope(signed, "hub.audit")
     pub, op_seq = _record_key(o, held, op_certs, dev_mode, revoked_op_certs, trusted_seq)
     _signature(signed, L["sig_hub_audit"], pub)
@@ -155,7 +172,7 @@ def verify_record_ex(
         if event_hash(event) != o["event_hash"]:
             raise Refused("audit_mismatch")
         check_event(o["type"], event)
-        if scope_of(event) != o["scope"]:
+        if scope_tag_of(event) != o["scope_tag"]:
             raise Refused("audit_mismatch")
     return o, op_seq
 

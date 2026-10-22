@@ -221,7 +221,7 @@ FIELDS: dict[str, dict[str, Check]] = {
         "prev": _b64u_n(32),
         "ts_ms": _int_min(0),
         "type": _enum("custodial", "grant", "membership", "space"),
-        "scope": lambda x: x is None or _hex16(x),
+        "scope_tag": lambda x: x is None or _b64u_n(32)(x),
         "event_hash": _b64u_n(32),
         "dev": _bool,
     },

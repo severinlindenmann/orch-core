@@ -153,3 +153,44 @@ def test_route_refusal_goes_back_through_the_outbox() -> None:
     assert [o.action for o in drain(a)] == ["deliver"]
     st = a.svc.sent_status(sent["envelope_id"])
     assert st["peer_result"]["refusal"] == "depth_exceeded"
+
+
+def test_route_in_after_the_binding_is_gone_is_not_stored_nor_acked() -> None:
+    hub, a, b = world()
+    a.svc.send_ticket(B, {"title": "x"}, deadline_ms=NOW + 3_600_000)
+    open_gate = [True]
+    b.svc._gate = lambda: open_gate[0]
+    open_gate[0] = False  # unbound / rebound between the push and the store
+    with pytest.raises(OSError):
+        b.svc.pump(0)
+    assert not b.side.mb.inbox and not b.side.mb.seen and hub.acks == [] and len(hub.queues[B]) == 1
+    open_gate[0] = True
+    assert [o.action for o in drain(b)] == ["inbox"]  # a later, valid binding still gets it (the hub kept it)
+
+
+def test_route_a_failed_save_is_not_acked_and_the_redelivery_is_stored() -> None:
+    hub, a, b = world()
+    a.svc.send_ticket(B, {"title": "x"}, deadline_ms=NOW + 3_600_000)
+    real, fail = b.svc._save, [True]
+
+    def flaky(mb):
+        if fail[0]:
+            raise OSError("disk full")
+        real(mb)
+
+    b.svc._save = flaky
+    with pytest.raises(OSError):
+        b.svc.pump(0)
+    assert hub.acks == [] and not b.side.mb.inbox and not b.side.mb.seen  # nothing recorded, hub keeps the entry
+    fail[0] = False
+    assert [o.action for o in drain(b)] == ["inbox"]  # stored, not dropped as a duplicate
+    assert hub.acks == [(B, None)]
+
+
+def test_status_of_a_stored_odd_result_cannot_crash() -> None:
+    _, a, _ = world()
+    a.side.mb.sent["ab" * 16] = {
+        "to": B, "consumed": ["result"], "state": "answered",
+        "reply": {"kind": "result", "from_ws": B, "late": False, "result": "just text"},
+    }  # fmt: skip
+    assert a.svc.sent_status("ab" * 16)["peer_result"]["summary"] is None

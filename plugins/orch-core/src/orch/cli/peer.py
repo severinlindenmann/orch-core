@@ -1,7 +1,7 @@
 """``orch peer``: send tickets to other workspaces through the hub, and take what arrives (V3 C12).
 
     orch peer card                                 a person: print this workspace's card (give it to the other side)
-    orch peer add --card FILE [--owner-pk B64U]    a person: pin another workspace from its card
+    orch peer add --card FILE [--owner-pk B64U] [--replace]    a person: pin another workspace from its card
     orch peer list                                 a person or agent: the pinned workspaces
     orch peer send WSID --title T [--body B]       a person: send a ticket envelope  -> {envelope_id, envelope_sha256}
     orch peer inbox                                a person or agent: received tickets  -> {items: [{id, from_ws, ...}]}
@@ -48,6 +48,7 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--card")
     p.add_argument("--owner-pk")
     p.add_argument("--via-hub", action="store_true")
+    p.add_argument("--replace", action="store_true")
     p.add_argument("--title")
     p.add_argument("--body")
     p.add_argument("--summary")
@@ -102,6 +103,8 @@ def _request(a: argparse.Namespace) -> tuple[str, dict[str, Any]]:
         args: dict[str, Any] = {"card": _read_card(a.card)}
         if a.owner_pk:
             args["owner_pk"] = a.owner_pk
+        if a.replace:
+            args["replace"] = True
         return "peer.add", args
     if a.cmd == "send":
         if not a.title:

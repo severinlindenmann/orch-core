@@ -17,6 +17,7 @@ Nothing here logs envelope bytes, keys or ticket text."""
 
 from __future__ import annotations
 
+import copy
 import threading
 import time
 from collections.abc import Callable
@@ -52,12 +53,14 @@ class PeerService:
         save: Callable[[W.Mailbox], None],
         connect: Callable[[], RouteLink],
         now_ms: Callable[[], int] = lambda: int(time.time() * 1000),
+        gate: Callable[[], bool] = lambda: True,
     ) -> None:
         self.me, self._sign, self._wxk_for, self._wxk_current = me, sign, wxk_for, wxk_current
         self.mb, self._save, self._connect, self._now = mailbox, save, connect, now_ms
         self._route_mu = threading.Lock()
         self._mu = threading.RLock()  # the mailbox; never held across a blocking read
         self._link: RouteLink | None = None
+        self._gate = gate  # False: the binding this service was built for is gone; nothing more is taken or stored
 
     # --- link -----------------------------------------------------------------------------------------------------
 
@@ -175,14 +178,23 @@ class PeerService:
             raw = link.next_route_in(wait)
             if raw is None:
                 return None
+            if not self._gate():  # unbound or rebound meanwhile: not stored, not acknowledged (the hub keeps it)
+                self.drop_link()
+                raise OSError("unbound")
             with self._mu:
+                before = self._snapshot()
                 out = W.receive(
                     raw, mailbox=self.mb, me=self.me, wxk_for=self._wxk_for, wxk_current=self._wxk_current,
                     sign=self._sign, now_ms=self._now(),
                 )  # fmt: skip
                 if out.action == "refuse" and out.reply is not None:
                     self.mb.outbox["r-" + raw[24:40].hex() + "-" + raw[8:24].hex()] = b64u(out.reply)
-                self._save(self.mb)  # stored BEFORE the acknowledgement
+                try:
+                    self._save(self.mb)  # stored BEFORE the acknowledgement
+                except Exception:
+                    self._restore(before)  # not stored: not seen either, so the redelivery is stored, not a duplicate
+                    self.drop_link()
+                    raise OSError("save_failed") from None
             link.ack_route_in(out.code if out.action in ("drop", "refuse") else None)
         except LinkError as exc:
             self.drop_link()
@@ -191,6 +203,27 @@ class PeerService:
             self.drop_link()
             raise
         return out
+
+    def _snapshot(self) -> dict[str, dict[str, Any]]:
+        return {f: copy.deepcopy(getattr(self.mb, f)) for f in _FIELDS}
+
+    def _restore(self, snap: dict[str, dict[str, Any]]) -> None:
+        for f in _FIELDS:
+            cur = getattr(self.mb, f)
+            cur.clear()
+            cur.update(snap[f])
+
+    def pin(self, workspace_id: str, wsk_pub: bytes, wxk_pub: bytes, wxk_version: int, **kw: Any) -> str:
+        """Pin under the mailbox lock and save; on a refused pin or a failed save nothing changes."""
+        with self._mu:
+            before = self._snapshot()
+            try:
+                got = self.mb.pin_peer(workspace_id, wsk_pub, wxk_pub, wxk_version, **kw)
+                self._save(self.mb)
+            except BaseException:
+                self._restore(before)
+                raise
+            return got
 
     # --- reads / inbox verbs --------------------------------------------------------------------------------------
 
@@ -234,13 +267,19 @@ class PeerService:
             }
             r = s.get("reply")
             if r is not None:
-                res = r.get("result") or {}
-                out["peer_result"] = {"from_ws": r["from_ws"], "summary": res.get("summary"), "late": r["late"]}
+                res = r.get("result")
+                summary = res.get("summary") if type(res) is dict else None
+                out["peer_result"] = {
+                    "from_ws": r["from_ws"],
+                    "summary": summary if type(summary) is str else None,
+                    "late": r["late"],
+                }
                 if "code" in r:
                     out["peer_result"]["refusal"] = r["code"]
             return out
 
 
+_FIELDS = ("peers", "seen", "sent", "inbox", "outbox")
 #: hub refusals after which the hub provably holds nothing of this envelope
 _NOT_DELIVERED = frozenset({"not_allowed", "queue_full", "too_large", "replay", "malformed", "other_workspace",
                             "bad_signature", "not_bound", "unknown_workspace", "wrong_mode"})  # fmt: skip

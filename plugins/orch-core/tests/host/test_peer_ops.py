@@ -22,22 +22,22 @@ PEER_WS = IDS["workspace_b"]
 PEER_OWNER_PK = crypto.b64u(pub("person_alice.sig"))
 
 
-def _peer_card() -> dict:
+def _peer_card(wsk_name: str = "wsk_b.sig", wxk_name: str = "wxk_b_1.kx", seq: int = 1) -> dict:
     """Workspace B's v2 card, delegated and signed by the vector keys (owner: person alice)."""
     from orch.crypto import suite
     from orch.hubclient import localcard
     from orch.identity import certs
     from orch.relay.r6.firstcard import default_part
 
-    alice, wsk = priv("person_alice.sig"), priv("wsk_b.sig")
+    alice, wsk = priv("person_alice.sig"), priv(wsk_name)
     sign_w = lambda m: suite.sign(wsk, m)  # noqa: E731
     deleg = certs.make_delegation(
         pub("person_alice.sig"), lambda m: suite.sign(alice, m), workspace_id=PEER_WS,
-        wsk_pub=pub("wsk_b.sig"), client_hosted=False, issued_ms=1_790_000_000_000,
+        wsk_pub=pub(wsk_name), client_hosted=False, issued_ms=1_790_000_000_000,
     )  # fmt: skip
     return localcard.build_card(
-        delegation=deleg, owner_pk_pub=pub("person_alice.sig"), workspace_id=PEER_WS, wsk_pub=pub("wsk_b.sig"),
-        sign_wsk=sign_w, wxk_pub=suite.public_bytes(priv("wxk_b_1.kx")), wxk_version=1, ck=b"\x01" * 32, card_seq=1,
+        delegation=deleg, owner_pk_pub=pub("person_alice.sig"), workspace_id=PEER_WS, wsk_pub=pub(wsk_name),
+        sign_wsk=sign_w, wxk_pub=suite.public_bytes(priv(wxk_name)), wxk_version=seq, ck=b"\x01" * 32, card_seq=seq,
         issued_ms=1_790_000_000_000, part=default_part("peer"),
     )  # fmt: skip
 
@@ -123,3 +123,84 @@ def test_a_pinned_peer_survives_a_restart_of_the_runtime(served, joined):
         peerops.stop(svc)
     time.sleep(0.1)
     assert len(ok(req(served, "peer.list"))["data"]["peers"]) == 1  # reloaded from hub/mailbox.json (0600)
+
+
+def _rt(served):
+    return peerops._RUNTIMES.get((str(served.service.state_dir), str(served.service.workspace_id)))
+
+
+def test_after_unbind_the_runtime_and_thread_are_gone_and_sends_are_refused(served, joined, human):
+    ok(req(served, "peer.add", {"card": PEER_CARD, "owner_pk": PEER_OWNER_PK}))
+    rt = _rt(served)
+    assert rt is not None and rt.thread.is_alive()
+    human.run("hub.leave", {})
+    ok(req(served, "hub.unbind"))
+    assert _rt(served) is None and not rt.thread.is_alive() and rt.svc._link is None
+    assert err(req(served, "peer.send", {"to": PEER_WS, "title": "x"})) == "hub.not_joined"
+    assert err(req(served, "peer.inbox")) == "hub.not_joined"
+    assert [r for r in joined.requests if r["o"]["op"] == "route_out"] == []
+
+
+def test_a_rebinding_builds_a_new_runtime_and_closes_the_old_link(served, joined, monkeypatch):
+    ok(req(served, "peer.list"))
+    old = _rt(served)
+    for _ in range(100):  # the receive thread opens the host's one link
+        if old.svc._link is not None:
+            break
+        time.sleep(0.05)
+    assert old.svc._link is not None
+    real = peerops._hub_state
+
+    def other_hub(service):
+        st = real(service)
+        st.binding_seq += 1
+        return st
+
+    monkeypatch.setattr(peerops, "_hub_state", other_hub)
+    ok(req(served, "peer.list"))
+    new = _rt(served)
+    assert new is not old and new.binding_seq == old.binding_seq + 1
+    old.thread.join(5)  # the old thread may be the one that retires itself
+    assert old.stop.is_set() and not old.thread.is_alive() and old.svc._link is None
+
+
+def _add(served, card, **kw):
+    return req(served, "peer.add", {"card": card, "owner_pk": PEER_OWNER_PK, **kw})
+
+
+def _pin(served):
+    from orch.host import peerops as P
+
+    return dict(_rt(served).svc.mb.peers[PEER_WS]) if _rt(served) else {}, P
+
+
+def test_a_pin_is_never_replaced_silently(served, joined):
+    assert ok(_add(served, PEER_CARD))["data"]["how"] == "new"
+    first = dict(_rt(served).svc.mb.peers[PEER_WS])
+    assert ok(_add(served, PEER_CARD))["data"]["how"] == "same"  # the identical card again is a no-op
+    other_wsk = _peer_card(wsk_name="wsk_intruder.sig", seq=2)
+    res = _add(served, other_wsk)  # same owner, another WSK, even with a newer card: conflict
+    assert err(res) == "invalid.input" and "--replace" in res["error"]["message"]
+    assert _rt(served).svc.mb.peers[PEER_WS] == first
+    assert err(_add(served, _peer_card(wxk_name="wxk_a_2.kx", seq=1))) == "invalid.input"  # same seq, other WXK
+    assert _rt(served).svc.mb.peers[PEER_WS] == first
+    # a newer card of the same keys' owner and WSK rotates the WXK
+    assert ok(_add(served, _peer_card(wxk_name="wxk_a_2.kx", seq=2)))["data"]["how"] == "updated"
+    assert _rt(served).svc.mb.peers[PEER_WS]["card_seq"] == 2
+    assert err(_add(served, PEER_CARD)) == "invalid.input"  # an older card is refused
+    assert _rt(served).svc.mb.peers[PEER_WS]["card_seq"] == 2
+
+
+def test_replace_is_explicit_and_human_only(served, joined):
+    ok(_add(served, PEER_CARD))
+    changed = _peer_card(wsk_name="wsk_intruder.sig", seq=2)
+    assert ok(_add(served, changed, replace=True))["data"]["how"] == "replaced"
+    assert _rt(served).svc.mb.peers[PEER_WS]["card_seq"] == 2
+    res = served.client().req(
+        "peer.add",
+        {"card": PEER_CARD, "owner_pk": PEER_OWNER_PK, "replace": True},
+        grant=served.grant,
+        session=SESSION,
+        idem=True,
+    )
+    assert err(res) == "op.not_allowed"

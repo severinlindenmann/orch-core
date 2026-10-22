@@ -192,3 +192,53 @@ def test_same_envelope_id_from_two_senders_makes_two_items_and_one_from_one() ->
     assert len(b.mb.inbox) == 2
     titles = {v["from_ws"]: v["ticket"]["title"] for v in b.mb.inbox.values()}
     assert titles == {A: "from-a", c.ws: "from-c"}
+
+
+def test_pin_conflicts_and_rotation() -> None:
+    mb = W.Mailbox()
+    k1, k2, x1, x2 = (suite.public_bytes(suite.generate_private_key()) for _ in range(4))
+    o1, o2 = b"o1", b"o2"
+    assert mb.pin_peer(A, k1, x1, 1, owner_pk=o1, card_seq=1) == "new"
+    assert mb.pin_peer(A, k1, x1, 1, owner_pk=o1, card_seq=1) == "same"
+    for bad in (
+        dict(wsk=k2, wxk=x1, o=o1, seq=2),  # other WSK
+        dict(wsk=k1, wxk=x1, o=o2, seq=2),  # other owner
+        dict(wsk=k1, wxk=x2, o=o1, seq=1),  # same card sequence, other WXK
+    ):
+        with pytest.raises(W.EnvelopeError) as e:
+            mb.pin_peer(A, bad["wsk"], bad["wxk"], 2, owner_pk=bad["o"], card_seq=bad["seq"])
+        assert e.value.code == "pin_conflict"
+    assert mb.pin_peer(A, k1, x2, 2, owner_pk=o1, card_seq=2) == "updated"
+    with pytest.raises(W.EnvelopeError):
+        mb.pin_peer(A, k1, x1, 1, owner_pk=o1, card_seq=1)  # older card
+    assert mb.pin_peer(A, k2, x1, 1, owner_pk=o2, card_seq=1, replace=True) == "replaced"
+
+
+def test_result_of_the_wrong_shape_is_refused_malformed() -> None:
+    a, b = pair()
+    t = ticket(a)
+    a.mb.sent[t.envelope_id] = {"to": B, "consumed": [], "state": "waiting"}
+    b.recv(t.envelope)
+    for bad in ("a string", ["x"], {"summary": 5}):
+        r = W.build_envelope(
+            mailbox=b.mb,
+            sign=b.sign,
+            from_ws=B,
+            to_ws=A,
+            body=W.new_result_body(t.envelope_id, bad, deadline_ms=NOW),  # type: ignore[arg-type]
+        )
+        o = a.recv(r.envelope)
+        assert (o.action, o.code) == ("refuse", "malformed")
+    assert a.mb.sent[t.envelope_id]["consumed"] == [] and "reply" not in a.mb.sent[t.envelope_id]
+
+
+def test_mailbox_caps_refuse_with_an_error_and_are_not_recorded_as_seen(monkeypatch) -> None:
+    a, b = pair()
+    monkeypatch.setattr(W, "MAX_INBOX_PER_PEER", 2)
+    envs = [ticket(a) for _ in range(3)]
+    assert [b.recv(e.envelope).action for e in envs] == ["inbox", "inbox", "drop"]
+    assert len(b.mb.inbox) == 2 and f"{A}/{envs[2].envelope_id}" not in b.mb.seen
+    monkeypatch.setattr(W, "MAX_INBOX_PER_PEER", 99)
+    monkeypatch.setattr(W, "MAX_MAILBOX_BYTES", b.mb.size() + 10)
+    o = b.recv(ticket(a).envelope)
+    assert (o.action, o.code) == ("drop", "mailbox_full")

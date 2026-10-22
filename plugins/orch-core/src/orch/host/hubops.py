@@ -454,12 +454,21 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
                 r = _join(state, plan, model, service, wsk_pub, sign, now, save, transport, aliases)
             finally:
                 getattr(transport, "close", lambda: None)()
+            _stop_peers(service)  # a (re)binding: ws->ws restarts on the new binding at its next use
             _audit(call, "hub.connect", hub_id=r.state.hub_id, binding_seq=r.state.binding_seq)
             return ok_result({"hub_id": r.state.hub_id, "status": r.state.status, "binding_seq": r.state.binding_seq})
-        return ok_result(_unbind(call, plan, state, sign, wsk_pub, now, save, leave, flush_outbox))
+        out = _unbind(call, plan, state, sign, wsk_pub, now, save, leave, flush_outbox)
+        _stop_peers(service)  # unbound: the ws->ws link and receive thread end here
+        return ok_result(out)
     except HubRefused as exc:
         _audit(call, "hub.refused", op=plan["op"], code=exc.code)
         raise _refused(exc.code) from None
+
+
+def _stop_peers(service: Any) -> None:
+    from . import peerops
+
+    peerops.stop(service)
 
 
 def _transport_for(service: Any, wsk_pub: bytes, sign: Any) -> Any:

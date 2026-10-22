@@ -50,7 +50,9 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
     "peer.inbox": {"type": "object", "properties": {}, "additionalProperties": False},
     "peer.add": {
         "type": "object",
-        "properties": {"card": {"type": "object"}, "owner_pk": {"type": "string", "maxLength": 200}},
+        "properties": {"card": {"type": "object"}, "owner_pk": {"type": "string", "maxLength": 200},
+            "replace": {"type": "boolean"},
+        },
         "required": ["card"],
         "additionalProperties": False,
     },
@@ -85,8 +87,9 @@ _RUNTIMES: dict[tuple[str, str], _Runtime] = {}
 
 
 class _Runtime:
-    def __init__(self, svc: Any) -> None:
+    def __init__(self, svc: Any, hub_id: str, binding_seq: int) -> None:
         self.svc = svc
+        self.hub_id, self.binding_seq = hub_id, binding_seq
         self.stop = threading.Event()
         self.thread: threading.Thread | None = None
 
@@ -186,36 +189,63 @@ def _wxk(service: WorkspaceService) -> Any:
     return crypto.private_key_from_scalar(int.from_bytes(crypto.unb64u(keys["wxk"], 32), "big"))
 
 
+def _bound_to(service: WorkspaceService, rt: _Runtime) -> bool:
+    """Is the workspace still bound to the hub and binding this runtime was built for? Any doubt is no."""
+    try:
+        st = _hub_state(service)
+    except Exception:  # noqa: BLE001 - unreadable, unbound, left: not bound
+        return False
+    return st.hub_id == rt.hub_id and st.binding_seq == rt.binding_seq
+
+
+def _retire(service: WorkspaceService, rt: _Runtime) -> None:
+    """Forget ``rt`` (if it is still the registered one), stop its thread and close its link."""
+    with _MU:
+        if _RUNTIMES.get(_key(service)) is rt:
+            del _RUNTIMES[_key(service)]
+    rt.stop.set()
+    if rt.thread is not None and rt.thread is not threading.current_thread():
+        rt.thread.join(5)
+    rt.svc.close()
+
+
 def _runtime(service: WorkspaceService, *, start: bool = True) -> _Runtime:
     from orch.hubclient.peerservice import PeerService
 
     from . import hubops
 
     k = _key(service)
+    state = _hub_state(service)  # every call: not bound -> hub.not_joined, and the old runtime goes
     with _MU:
         rt = _RUNTIMES.get(k)
-        if rt is not None and rt.svc is not None:
+    if rt is not None:
+        if (rt.hub_id, rt.binding_seq) == (state.hub_id, state.binding_seq):
             return rt
-    _hub_state(service)
+        _retire(service, rt)  # rebound (another hub or a newer binding): a new runtime, the old link closed
     wxk = _wxk(service)
     _, sign = hubops._wsk_sign(service)  # noqa: SLF001
+    holder: list[_Runtime] = []
     svc = PeerService(
         me=service.workspace_id, sign=sign, wxk_for=lambda v: (wxk, None) if v == 1 else None, wxk_current=1,
         mailbox=_load_box(service), save=_saver(service), connect=lambda: _open_link(service),
-        now_ms=lambda: int(service.clock() * 1000),
+        now_ms=lambda: int(service.clock() * 1000), gate=lambda: bool(holder) and _bound_to(service, holder[0]),
     )  # fmt: skip
-    rt = _Runtime(svc)
+    rt = _Runtime(svc, state.hub_id, state.binding_seq)
+    holder.append(rt)
     with _MU:
         rt = _RUNTIMES.setdefault(k, rt)
         if start and rt.thread is None:
-            rt.thread = threading.Thread(target=_loop, args=(rt,), name=f"orch-peer-{k[1][:8]}", daemon=True)
+            rt.thread = threading.Thread(target=_loop, args=(service, rt), name=f"orch-peer-{k[1][:8]}", daemon=True)
             rt.thread.start()
     return rt
 
 
-def _loop(rt: _Runtime) -> None:
+def _loop(service: WorkspaceService, rt: _Runtime) -> None:
     wait = 0.5
     while not rt.stop.is_set():
+        if not _bound_to(service, rt):  # left, unbound or rebound: this runtime ends (nothing more is taken)
+            _retire(service, rt)
+            return
         try:
             if rt.svc.mb.outbox:
                 rt.svc.flush()
@@ -240,11 +270,9 @@ def maybe_start(service: WorkspaceService) -> None:
 
 def stop(service: WorkspaceService) -> None:
     with _MU:
-        rt = _RUNTIMES.pop(_key(service), None)
+        rt = _RUNTIMES.get(_key(service))
     if rt is not None:
-        rt.stop.set()
-        if rt.thread is not None:
-            rt.thread.join(5)
+        _retire(service, rt)
 
 
 # -- checks --------------------------------------------------------------------------------------------------------
@@ -291,13 +319,9 @@ def _env_error(exc: Any) -> HostError:
 
 
 def serve(call: Call) -> dict[str, Any]:
-    from orch import crypto
-    from orch.crypto.encoding import EncodingError
     from orch.hubclient import wsenvelope as W
-    from orch.identity import wscard
-    from orch.identity.errors import Refused
 
-    from . import hubops, relayr3
+    from . import hubops
     from .workspace import ok_result
 
     op, args = _check(call)
@@ -325,24 +349,68 @@ def serve(call: Call) -> dict[str, Any]:
             {"id": args["id"], "from_ws": item["from_ws"], "ticket": item["ticket"], "state": item["state"]}
         )
     if op == "peer.add":
-        try:
-            pk = (
-                crypto.unb64u(args["owner_pk"], crypto.PUB_LEN) if "owner_pk" in args else relayr3.owner_pk_pub(service)
-            )
-            vc = wscard.verify_card(args["card"], pk)
-            o = vc.o
-            wxk_pub = crypto.unb64u(o["wxk_pub"], crypto.PUB_LEN)
-            wxk_version = o["wxk_version"]
-        except (Refused, EncodingError, KeyError, TypeError, ValueError):
-            raise HostError("invalid.input", "peer.add: the card does not verify under that owner key") from None
-        if vc.workspace_id == service.workspace_id:
-            raise HostError("invalid.input", "peer.add: that is this workspace")
-        if type(wxk_version) is not int or wxk_version < 0:
-            raise HostError("invalid.input", "peer.add: the card has no usable exchange key")
-        svc.mb.pin_peer(vc.workspace_id, vc.wsk_pub, wxk_pub, wxk_version)
-        svc._save(svc.mb)  # noqa: SLF001 - the pin is durable before the answer
-        return ok_result({"workspace_id": vc.workspace_id, "pinned": True})
+        return _add(call, svc, args)
     return {"plan": {"op": op, "args": args}}  # peer.send / peer.reply: the network half
+
+
+def _fp(b64: str) -> str:
+    """A short fingerprint of a pinned key, for the owner to compare (not a secret)."""
+    from orch.crypto import suite
+    from orch.crypto.encoding import unb64u
+
+    try:
+        return suite.sha256(unb64u(b64, 65)).hex()[:16]
+    except Exception:  # noqa: BLE001
+        return "?"
+
+
+def _add(call: Call, svc: Any, args: dict[str, Any]) -> dict[str, Any]:
+    """Pin a peer from its card. An existing pin is never replaced silently (``pin_conflict``): only the same owner
+    key with a newer card may rotate the WXK; anything else needs the owner's explicit ``replace``, and the old and the
+    new fingerprints are shown. Every call is audited."""
+    from orch import crypto
+    from orch.crypto.encoding import EncodingError
+    from orch.hubclient import wsenvelope as W
+    from orch.identity import wscard
+    from orch.identity.errors import Refused
+
+    from . import hubops, relayr3
+    from .workspace import ok_result
+
+    service = call.service
+    try:
+        pk = crypto.unb64u(args["owner_pk"], crypto.PUB_LEN) if "owner_pk" in args else relayr3.owner_pk_pub(service)
+        vc = wscard.verify_card(args["card"], pk)
+        o = vc.o
+        wxk_pub = crypto.unb64u(o["wxk_pub"], crypto.PUB_LEN)
+        wxk_version = o["wxk_version"]
+    except (Refused, EncodingError, KeyError, TypeError, ValueError):
+        hubops._audit(call, "peer.add.refused", why="card")  # noqa: SLF001
+        raise HostError("invalid.input", "peer.add: the card does not verify under that owner key") from None
+    if vc.workspace_id == service.workspace_id:
+        raise HostError("invalid.input", "peer.add: that is this workspace")
+    if type(wxk_version) is not int or wxk_version < 0:
+        raise HostError("invalid.input", "peer.add: the card has no usable exchange key")
+    old = svc.mb.peers.get(vc.workspace_id)
+    new_fp = _fp(crypto.b64u(vc.wsk_pub))
+    try:
+        how = svc.pin(
+            vc.workspace_id, vc.wsk_pub, wxk_pub, wxk_version, owner_pk=pk, card_seq=vc.card_seq,
+            replace=bool(args.get("replace")),
+        )  # fmt: skip
+    except W.EnvelopeError:
+        hubops._audit(  # noqa: SLF001
+            call, "peer.add.refused", why="pin_conflict", peer=vc.workspace_id, old=_fp(old["wsk_pub"]), new=new_fp
+        )
+        raise HostError(
+            "invalid.input",
+            f"peer.add: {vc.workspace_id} is already pinned to a different key (pinned {_fp(old['wsk_pub'])}, "
+            f"this card {new_fp}) or an older card; to replace it on purpose add --replace",
+        ) from None
+    hubops._audit(  # noqa: SLF001
+        call, "peer.add", how=how, peer=vc.workspace_id, old=None if old is None else _fp(old["wsk_pub"]), new=new_fp
+    )
+    return ok_result({"workspace_id": vc.workspace_id, "pinned": True, "how": how})
 
 
 # -- the network half ----------------------------------------------------------------------------------------------

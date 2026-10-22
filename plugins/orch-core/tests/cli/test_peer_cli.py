@@ -78,3 +78,13 @@ def test_shape_errors(host):
     assert run(["send", WS], {})[0] == 2  # no --title
     assert run(["inbox", "x"], {})[0] == 2
     assert run(["frobnicate"], {})[0] == 2
+
+
+def test_add_replace_flag_is_passed_and_an_agent_cannot_use_it(host, tmp_path):
+    card = tmp_path / "c.json"
+    card.write_text("{}")
+    host.reply["peer.add"] = {"workspace_id": WS, "pinned": True, "how": "replaced"}
+    code, _ = run(["add", "--card", str(card), "--replace"], {})
+    assert code == 0 and host.called[-1] == ("peer.add", {"card": {}, "replace": True})
+    code, out = run(["add", "--card", str(card), "--replace"], {"ORCH_GRANT": "g"})
+    assert json.loads(out)["code"] == "op.not_allowed"

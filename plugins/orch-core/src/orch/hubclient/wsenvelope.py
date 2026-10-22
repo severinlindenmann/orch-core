@@ -53,6 +53,8 @@ MAX_DEADLINE_MS = 30 * 24 * 3600 * 1000
 SKEW_MS = 300_000
 WXK_OVERLAP_MS = 14 * 24 * 3600 * 1000
 SEEN_RETENTION_MS = 7 * 24 * 3600 * 1000
+MAX_INBOX_PER_PEER = 64
+MAX_MAILBOX_BYTES = 8 << 20  # well under the host's 16 MiB read limit
 KINDS = ("ticket", "result", "refusal", "question.closed")
 FINAL = ("result", "refusal")
 REFUSALS = ("stale_wxk", "depth_exceeded", "deadline_passed", "bad_cosignature", "unknown_reply", "malformed")
@@ -92,6 +94,10 @@ class Mailbox:
     def to_json(self) -> dict[str, Any]:
         return {"peers": self.peers, "seen": self.seen, "sent": self.sent, "inbox": self.inbox, "outbox": self.outbox}
 
+    def size(self) -> int:
+        """The bytes the saved mailbox takes (the cap in :data:`MAX_MAILBOX_BYTES` is on this)."""
+        return len(cj(self.to_json()))
+
     @classmethod
     def from_json(cls, d: Any) -> Mailbox:
         keys = {"peers", "seen", "sent", "inbox", "outbox"}
@@ -99,9 +105,43 @@ class Mailbox:
             raise EnvelopeError("malformed")
         return cls(**{k: dict(d[k]) for k in sorted(keys)})
 
-    def pin_peer(self, workspace_id: str, wsk_pub: bytes, wxk_pub: bytes, wxk_version: int) -> None:
+    def pin_peer(
+        self,
+        workspace_id: str,
+        wsk_pub: bytes,
+        wxk_pub: bytes,
+        wxk_version: int,
+        *,
+        owner_pk: bytes = b"",
+        card_seq: int = 0,
+        replace: bool = False,
+    ) -> str:
+        """Pin a peer. A pin is never replaced silently: another ``WSK`` or owner key, an older card, or the same
+        card sequence with other keys is ``pin_conflict`` unless ``replace`` (the owner's explicit, audited choice). The
+        same owner key with a newer ``card_seq`` may rotate the ``WXK``. Returns ``new`` | ``same`` | ``updated`` |
+        ``replaced``."""
         unhex(workspace_id, 16)
-        self.peers[workspace_id] = {"wsk_pub": b64u(wsk_pub), "wxk_pub": b64u(wxk_pub), "wxk_version": wxk_version}
+        new = {
+            "wsk_pub": b64u(wsk_pub), "wxk_pub": b64u(wxk_pub), "wxk_version": wxk_version,
+            "owner_pk": b64u(owner_pk), "card_seq": card_seq,
+        }  # fmt: skip
+        old = self.peers.get(workspace_id)
+        if old is None:
+            self.peers[workspace_id] = new
+            return "new"
+        if replace:
+            self.peers[workspace_id] = new
+            return "replaced"
+        same_keys = old["wsk_pub"] == new["wsk_pub"] and old.get("owner_pk", "") == new["owner_pk"]
+        if not same_keys:
+            raise EnvelopeError("pin_conflict")
+        seq = old.get("card_seq", 0)
+        if card_seq < seq or (card_seq == seq and old != new):
+            raise EnvelopeError("pin_conflict")
+        if old == new:
+            return "same"
+        self.peers[workspace_id] = new
+        return "updated"
 
 
 @dataclass(frozen=True)
@@ -121,6 +161,11 @@ class Outcome:
     code: str | None = None
     item: dict[str, Any] | None = None
     reply: bytes | None = None
+
+
+def _result_ok(r: Any) -> bool:
+    """A peer's ``result`` is data we later render: a dict whose ``summary``, if present, is a string."""
+    return type(r) is dict and ("summary" not in r or type(r["summary"]) is str)
 
 
 def _header(flags: int, env_id: bytes, from_ws: bytes, to_ws: bytes, wxk_version: int) -> bytes:
@@ -277,6 +322,8 @@ def receive(
     except (InvalidTag, ValueError, JcsError, UnicodeDecodeError, suite.CryptoError):
         return refuse("malformed")
     sha = envelope_sha256(env)
+    if p["kind"] == "result" and not _result_ok(p["result"]):
+        return refuse("malformed")
     if p["kind"] == "ticket":
         if p["ticket"] is None or type(p["ticket"]) is not dict or p["depth"] < 0 or p["in_reply_to"] is not None:
             return refuse("malformed")
@@ -286,6 +333,9 @@ def receive(
             return refuse("malformed")
         if p["deadline_ms"] + SKEW_MS < now_ms:
             return refuse("deadline_passed")
+        mine = sum(1 for v in mailbox.inbox.values() if v["from_ws"] == from_ws)
+        if mine >= MAX_INBOX_PER_PEER or mailbox.size() + len(env) > MAX_MAILBOX_BYTES:
+            return Outcome("drop", "mailbox_full")  # acked with an error: the hub deletes it; not recorded as seen
         item = {
             "envelope_id": env_id.hex(),
             "from_ws": from_ws,

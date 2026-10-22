@@ -76,7 +76,7 @@ def test_join_against_the_fake_hub_with_no_relay_and_no_stub(human, served, monk
     assert hub.workspaces[served.wid].binding["status"] == "unbound"
 
 
-def make_card(hub: TlsHub, now: int) -> dict:
+def make_card(hub: TlsHub, now: int, hxk=None) -> dict:
     """A hub card for the TLS test hub (dev, pinned to its certificate); the hub takes the card's identity."""
     from orch.canon.jcs import dumps as cj
     from orch.crypto import suite
@@ -91,7 +91,7 @@ def make_card(hub: TlsHub, now: int) -> dict:
     }  # fmt: skip
     o = {
         "v": 2, "suite": 2, "kind": "hub.card", "hv": 0, "hub_id": hub.hub_id, "hk_root_pub": crypto.b64u(root_pub),
-        "hxk_pub": crypto.b64u(suite.public_bytes(suite.generate_private_key())), "relay_url": None,
+        "hxk_pub": crypto.b64u(suite.public_bytes(hxk or suite.generate_private_key())), "relay_url": None,
         "tls_spki_sha256": hub.spki, "card_seq": 1, "issued_ms": now - 1000, "dev": True,
     }  # fmt: skip
     return {

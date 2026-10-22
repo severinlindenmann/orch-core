@@ -1,31 +1,45 @@
 """V3 C6: the host's share ops on a SELECTIVE workspace joined to a TLS test hub that records ``share_put`` /
 ``share_revoke``: owner-only edits, evaluation on the real tickets, revoke on rule removal, full mode refused, and the
-default (needs-you summaries only). The sealed bytes are not in the contract yet: those tests are xfail."""
+default (needs-you summaries only). Every put is opened with the test-side port of the hub's 10.2b check."""
 
 from __future__ import annotations
 
 import pytest
 
 from orch import crypto
-from orch.hubclient import shares as S
 from tests.host import human_helpers
 from tests.host.dispatch_helpers import SESSION, ok
 from tests.host.human_helpers import err
 from tests.host.test_hub_join_real import genesis, make_card, now_ms
 from tests.host.test_hub_ops import keystore  # noqa: F401
+from tests.hub import share_open as SO
 from tests.hub.tlshub import TlsHub
 
 lab, served, human = human_helpers.lab, human_helpers.served, human_helpers.human
-SEALED_GAP = "the contract does not specify the sealed share item yet (V3-D23): build_sealed_item refuses"
+HXK = crypto.generate_private_key()  # the test hub's exchange key: the card carries its public half
 
 
 class ShareHub:
-    def __init__(self):
+    def __init__(self, wsk_pub):
         self.ops: list[tuple[str, dict]] = []
+        self.opened: list[dict] = []  # every put, opened and checked like the hub does (contract 10.2b)
+        self.wsk_pub = wsk_pub
+        self.workspace_id = ""
 
     def handle(self, h, o):
         if o["op"] in ("share_put", "share_revoke"):
             self.ops.append((o["op"], o["body"]))
+        if o["op"] == "share_put":
+            self.opened.append(
+                SO.open_share_item(
+                    o["body"],
+                    hub_id=h.hub_id,
+                    workspace_id=self.workspace_id,
+                    hxk_priv=HXK,
+                    wsk_pub=self.wsk_pub,
+                    dev_mode=True,
+                )["item"]  # fmt: skip
+            )
         return h.reply(o, body={}, ts_ms=o["ts_ms"])
 
     def count(self, op):
@@ -33,12 +47,13 @@ class ShareHub:
 
 
 def _join(served, human, mode):
-    sh = ShareHub()
     wsk = crypto.unb64u(genesis(served)["wsk_pub"], 65)
+    sh = ShareHub(wsk)
+    sh.workspace_id = served.wid
     hub = TlsHub(wsk_pub=wsk, on_request=sh.handle)
     hub.workspace_id = served.wid
     hub.start()
-    card = make_card(hub, now_ms(served))
+    card = make_card(hub, now_ms(served), HXK)
     human.run("hub.join", {"hub_card": card, "mode": mode})
     args = {"invite": "invite-1", "hub_card": card, "addr": f"127.0.0.1:{hub.port}"}
     assert ok(served.client().req("hub.connect", args, idem=True))["data"]["status"] == "bound"
@@ -86,10 +101,6 @@ def labelled(served, title, label):
     uid, key = served.ticket(title)
     ok(agent(served, "set", {"ref": key, "pairs": [f"labels={label}"]}))
     return uid, key
-
-
-def fake_builder(monkeypatch):
-    monkeypatch.setattr(S, "build_sealed_item", lambda item_id, item: f"sealed:{item.logical}")
 
 
 def test_the_ops_are_declared():
@@ -141,7 +152,6 @@ def test_preview_shows_what_a_rule_would_add_without_changing_anything(served, s
 
 
 def test_a_rule_change_needs_the_plan_the_owner_was_shown(served, selective, monkeypatch):
-    fake_builder(monkeypatch)
     labelled(served, "Public note", "public")
     rule = {"kind": "tag", "tag": "public"}
     shown = ok(req(served, "share.preview", {"add": rule}))["data"]["plan"]
@@ -152,8 +162,7 @@ def test_a_rule_change_needs_the_plan_the_owner_was_shown(served, selective, mon
 
 
 def test_rule_add_puts_exactly_the_matching_ticket_then_remove_revokes_once(served, selective, monkeypatch):
-    fake_builder(monkeypatch)
-    labelled(served, "Public note", "public")
+    uid, _ = labelled(served, "Public note", "public")
     labelled(served, "Private review", "private")
     served.ticket("Plain list")
     rule = {"kind": "tag", "tag": "public"}
@@ -161,7 +170,10 @@ def test_rule_add_puts_exactly_the_matching_ticket_then_remove_revokes_once(serv
     assert got["synced"] is True and got["put"] == 1
     assert selective.count("share_put") == 1
     ((_, body),) = selective.ops
-    assert body["sealed"].startswith("sealed:ticket:")  # the isolated builder produced the bytes
+    (item,) = selective.opened  # the hub opened it: HXK-sealed, WSK-signed, exact content
+    assert item["item_kind"] == "ticket" and item["item_version"] == 1 and item["dev"] is True
+    assert item["content"]["title"] == "Public note" and item["content"]["labels"] == ["public"]
+    assert item["chain"]["log"] == uid and item["chain"]["seq"] >= 1
     again = ok(req(served, "share.sync"))["data"]
     assert (again["put"], again["revoke"]) == (0, 0) and selective.count("share_put") == 1
     got = ok(req(served, "share.rule_remove", {"rule": rule}))["data"]
@@ -171,7 +183,6 @@ def test_rule_add_puts_exactly_the_matching_ticket_then_remove_revokes_once(serv
 
 
 def test_revoke_withdraws_one_item_and_it_stays_withdrawn(served, selective, monkeypatch):
-    fake_builder(monkeypatch)
     _, key = labelled(served, "Public note", "public")
     ok(req(served, "share.rule_add", {"rule": {"kind": "tag", "tag": "public"}}))
     got = ok(req(served, "share.revoke", {"ref": key}))["data"]
@@ -181,23 +192,25 @@ def test_revoke_withdraws_one_item_and_it_stays_withdrawn(served, selective, mon
 
 
 def test_a_question_to_the_owner_is_a_summary_and_with_a_rule_the_full_question(served, selective, monkeypatch):
-    fake_builder(monkeypatch)
     _, key = served.ticket("Savings")
     ok(agent(served, "ask", {"ref": key, "text": "which bank?"}))
     got = ok(req(served, "share.sync"))["data"]
-    assert got["put"] == 1 and selective.ops[0][1]["sealed"].startswith("sealed:summary:")
+    assert got["put"] == 1 and selective.opened[0]["item_kind"] == "needs_you"
+    assert (
+        selective.opened[0]["content"]["type"] == "question"
+        and selective.opened[0]["content"]["title"] == "which bank?"
+    )
     ok(req(served, "share.rule_add", {"rule": {"kind": "questions"}}))
-    assert any(b["sealed"].startswith("sealed:question:") for _, b in selective.ops)
+    (q,) = [i for i in selective.opened if i["item_kind"] == "question"]
+    assert q["content"]["text"] == "which bank?" and q["content"]["id"] == "Q1"
 
 
 def test_a_rule_survives_an_unreachable_hub_and_the_next_sync_finishes(served, selective, monkeypatch):
-    fake_builder(monkeypatch)
     labelled(served, "Public note", "public")
     monkeypatch.setattr("orch.host.shareops._link", lambda service: _Down())
     got = ok(req(served, "share.rule_add", {"rule": {"kind": "tag", "tag": "public"}}))["data"]
     assert got["synced"] is False and got["pending"] == "hub_unreachable" and selective.ops == []
     monkeypatch.undo()
-    fake_builder(monkeypatch)
     from orch.host import hubops
 
     monkeypatch.setattr(hubops, "workspace_dev", lambda service: True)
@@ -212,15 +225,14 @@ class _Down:
         pass
 
 
-def test_the_sealed_format_gap_is_reported_and_nothing_is_sent(served, selective):
-    labelled(served, "Public note", "public")
-    got = ok(req(served, "share.rule_add", {"rule": {"kind": "tag", "tag": "public"}}))["data"]
-    assert got["synced"] is False and got["pending"] == "sealed_format_pending" and selective.ops == []
-
-
-@pytest.mark.xfail(reason=SEALED_GAP, strict=True)
-def test_contract_sealed_item_is_hxk_sealed_and_wsk_signed(served, selective):
-    """Needs the phase-4 contract extension (V3-D23): the hub opens ``sealed`` and checks WSK state + chain head."""
-    labelled(served, "Public note", "public")
+def test_the_item_version_grows_with_every_change_and_revoke_twice_is_the_same_answer(served, selective):
+    uid, key = labelled(served, "Public note", "public")
     ok(req(served, "share.rule_add", {"rule": {"kind": "tag", "tag": "public"}}))
-    assert selective.count("share_put") == 1
+    ok(agent(served, "set", {"ref": key, "pairs": ["title=Renamed note"]}))
+    assert ok(req(served, "share.sync"))["data"]["put"] == 1
+    assert [i["item_version"] for i in selective.opened] == [1, 2]
+    assert selective.opened[1]["content"]["title"] == "Renamed note"
+    assert selective.opened[0]["item_id"] == selective.opened[1]["item_id"]
+    first = ok(req(served, "share.revoke", {"ref": key}))["data"]
+    again = ok(req(served, "share.revoke", {"ref": key}))["data"]  # idempotent: same answer, no error
+    assert first["revoke"] == 1 and again["revoke"] == 0 and selective.count("share_revoke") == 1

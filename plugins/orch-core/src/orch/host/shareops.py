@@ -16,15 +16,15 @@ Selective workspaces only: in full mode every op is refused (``hub.refused: wron
 operations there. A rule change is saved before the hub is asked; if the hub cannot be reached the answer says
 ``synced: false`` and the next ``share.sync`` finishes the job (a removed rule is never forgotten).
 
-The state is ``hub/shares.json`` (0600, host-owned). What goes into
-``sealed`` is :func:`orch.hubclient.shares.build_sealed_item` (not yet specified by the contract: until it is, a sync
-that has something to send reports ``sealed_format_pending``)."""
+The state is ``hub/shares.json`` (0600, host-owned). What goes into ``sealed`` is the hub contract's 10.2b format
+(:func:`orch.hubclient.shares.make_builder`); ``share.revoke`` is idempotent."""
 
 from __future__ import annotations
 
 import hashlib
 import json
 import threading
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from jsonschema import Draft202012Validator
@@ -186,7 +186,7 @@ def tickets_for(service: WorkspaceService) -> list[Any]:
         seen.update(state.visible_to(o))
     out = []
     for uid, t in sorted(seen.items()):
-        texts = {q["id"]: str(q.get("text", "")) for q in t.fields.get("questions", ()) if isinstance(q, dict)}
+        texts = {q["id"]: str(q.get("text", "")) for q in t.fields.get("questions", ()) if isinstance(q, Mapping)}
         qs = tuple(
             QuestionFact(q.id, texts.get(q.id, ""), (not q.answered) and bool(set(q.addressees) & set(owners)))
             for q in t.questions
@@ -255,10 +255,44 @@ def _link(service: WorkspaceService) -> Any:
     return _Transient(service)
 
 
-def _builder(service: WorkspaceService) -> Any:
+def _make_builder(service: WorkspaceService) -> Any:
+    """The contract 10.2b builder for the workspace's bound hub: its ``HXK`` (from the verified card), the ``WSK`` in
+    custody, the dev marker of the binding and the ticket log's head. Refuses (``hub.not_joined``) without a hub."""
+    from orch.crypto.encoding import unb64u
     from orch.hubclient import shares as S
+    from orch.hubclient.errors import HubRefused
 
-    return S.build_sealed_item
+    from . import hubops, peerops
+
+    state = peerops._hub_state(service, full=False)  # noqa: SLF001
+    if state.mode != "selective":
+        raise HubRefused("wrong_mode")  # shares exist only in selective mode (full mode: the hub holds the logs)
+    if state.hxk_pub is None:
+        raise HubRefused("malformed")
+    _pub, sign = hubops._wsk_sign(service)  # noqa: SLF001
+    store = service.store
+
+    def chain_of(ticket_uid: str) -> tuple[int, str] | None:
+        seq = store.log_seq(ticket_uid)
+        head = store.head_at(ticket_uid, seq) if seq else None
+        return (seq, head) if seq and head else None
+
+    return S.make_builder(
+        hub_id=state.hub_id, workspace_id=service.workspace_id, hxk_pub=unb64u(state.hxk_pub, 65), sign=sign,
+        dev=bool(state.binding["o"]["dev"]), now_ms=lambda: int(service.clock() * 1000), chain_of=chain_of,
+    )  # fmt: skip
+
+
+def _builder(service: WorkspaceService) -> Any:
+    """:func:`_make_builder`, built on the first put: a sync that only revokes needs no key and no card."""
+    held: list[Any] = []
+
+    def build(item_id: str, item: Any, version: int) -> str:
+        if not held:
+            held.append(_make_builder(service))
+        return str(held[0](item_id, item, version))
+
+    return build
 
 
 def sync_now(service: WorkspaceService) -> dict[str, Any]:
@@ -287,10 +321,11 @@ def sync_now(service: WorkspaceService) -> dict[str, Any]:
 
 def _find(st: Any, ref: str, facts: list[Any]) -> str:
     """The ``logical`` id a ``revoke`` ref names: a logical id itself or a ticket key (its ticket item)."""
-    if ref in st.sent:
+    known = set(st.sent) | set(st.withdrawn)  # a second revoke of a withdrawn item is the same answer, not an error
+    if ref in known:
         return ref
     for t in facts:
-        if ref in (t.key, t.uid) and f"ticket:{t.uid}" in st.sent:
+        if ref in (t.key, t.uid) and f"ticket:{t.uid}" in known:
             return f"ticket:{t.uid}"
     raise HostError("not_found", "nothing is shared under that name: orch hub share rule list")
 

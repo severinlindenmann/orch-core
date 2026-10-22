@@ -38,12 +38,20 @@ RUN_CHECKS = frozenset(
         "space_wrap",
         "space_item",
         "host_put",
+        "share_item",  # V3 C6 (phase 4): replayed through the test-side opener (share_open.py)
+        "share_revoke",
     }
 )
 SKIPPED_CHECKS = {
     "custodial": "phase 4: custodial events are verified by C3, not before",
     "publish": "orch-publish verifies section 11.2; core only builds the request",
     "space_flow": "the hub's put / revoke / get rules over a space: hub side (orch_hub), core sees only the replies",
+    "action": "phase 4: what a channel may ask the hub to build; hub side (C3 custodial)",
+    "log_sync": "phase 4: the hub's WK-sealed view of a workspace log (C3/D6), not part of the share format",
+    "channel_register": "phase 4: channel registration at the hub, hub side",
+    "relay_request": "phase 4: hub -> relay requests, orch-relay (E1)",
+    "space_proposal": "phase 4: HK_op-signed space proposals (C13 follow-up), not part of the share format",
+    "prepared": "phase 4: what a channel shows and signs, hub side (C3)",
     "audit": "hub audit chain (D4): hub side",
     "audit_ack": "hub audit chain (D4): hub side",
     "admin_read": "hub admin reads (D3/D4): hub side",
@@ -168,7 +176,25 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
         return {"workspace_id": H.verify_v2_card(a["card"], unb64u(a["pk_pub"], 65), now_ms=now)["workspace_id"]}
     if check in ("space", "space_wrap", "space_item", "host_put"):
         return _run_space(check, a)
+    if check in ("share_item", "share_revoke"):
+        return _run_share(check, a)
     raise ValueError(f"check {check} is not replayed by core")
+
+
+def _run_share(check: str, a: dict[str, Any]) -> dict[str, Any]:
+    from . import share_open as SO
+
+    if check == "share_revoke":
+        SO.check_share_revoke(a["body"])
+        return {}
+    seed = bytes.fromhex(a["hxk_seed"])
+    o = SO.open_share_item(
+        a["body"], hub_id=a["hub_id"], workspace_id=a["workspace_id"],
+        hxk_priv=S.private_key_from_scalar(int.from_bytes(seed, "big") % (S.P256_N - 1) + 1),
+        wsk_pub=unb64u(a["wsk_pub"], 65), held=a.get("held"), live_items=a.get("live_items", 0),
+        dev_mode=a.get("dev_mode", True),
+    )  # fmt: skip
+    return {"hash": o["hash"], "item_version": o["item"]["item_version"], "new": o["new"]}
 
 
 def _held_prod(a: dict[str, Any]) -> dict[str, Any]:

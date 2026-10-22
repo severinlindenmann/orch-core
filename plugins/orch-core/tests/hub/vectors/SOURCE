@@ -1,3 +1,3 @@
 hub_repo: orch-hub
-hub_commit: b36acfdaa8a24c52a159aa85b73b295cec0d45e6
-vectors_hub_sha256: 45d56fb07530bb5794d758f3d7cc456e4bbe7af67cfccf1b92cfad010e9104ed
+hub_commit: 5c04a8e64cdea6955d78b2e06732d58a16f588a8
+vectors_hub_sha256: b7a37f0de46b9b0a08113cf36f54d34f03cb74a65a8f47bfd917e3003424c643

@@ -9,17 +9,27 @@ from orch.hubclient.errors import HubRefused
 
 
 def T(uid, *, labels=(), type="feature", title="A title", due=None, questions=(), needs=(), key=None):
-    return S.TicketFact(uid, key or f"K-{uid}", type, title, "open", tuple(labels), due, tuple(questions), tuple(needs))
+    return S.TicketFact(
+        uid,
+        key or "K-" + {"a": "1", "b": "2", "c": "3", "d": "4", "e": "5"}.get(uid, uid),
+        type,
+        title,
+        "open",
+        tuple(labels),
+        due,
+        tuple(questions),
+        tuple(needs),
+    )
 
 
-Q_OWNER = S.QuestionFact("q1", "which bank?", True)
-Q_OTHER = S.QuestionFact("q2", "for someone else", False)
+Q_OWNER = S.QuestionFact("Q1", "which bank?", True)
+Q_OTHER = S.QuestionFact("Q2", "for someone else", False)
 TICKETS = [
     T("a", labels=["public"], title="Public note"),
     T("b", labels=["private"], title="Private review"),
     T("c", type="bug", title="Bug"),
     T("d", title="Asks", due="2026-11-01", questions=[Q_OWNER, Q_OTHER],
-      needs=[S.NeedFact("question", "q1", True), S.NeedFact("question", "q2", False)]),
+      needs=[S.NeedFact("question", "Q1", True), S.NeedFact("question", "Q2", False)]),
 ]  # fmt: skip
 
 
@@ -33,14 +43,14 @@ def test_default_is_needs_you_summaries_only():
     items = S.select(st.rules, TICKETS)
     assert [i.kind for i in items] == ["summary"]
     (s,) = items
-    assert s.payload == {"kind": "summary", "type": "question", "title": "which bank?", "deadline": "2026-11-01"}
+    assert s.payload == {"type": "question", "title": "which bank?", "deadline": "2026-11-01"}
     assert "Public note" not in repr(items)  # no ticket content leaves by default
 
 
 def test_rules_select_exactly_their_tickets():
-    assert kinds(S.select([{"kind": "tag", "tag": "public"}], TICKETS)) == [("ticket", "K-a")]
-    assert kinds(S.select([{"kind": "type", "type": "bug"}], TICKETS)) == [("ticket", "K-c")]
-    assert kinds(S.select([{"kind": "ticket", "ticket": "K-b"}], TICKETS)) == [("ticket", "K-b")]
+    assert kinds(S.select([{"kind": "tag", "tag": "public"}], TICKETS)) == [("ticket", "K-1")]
+    assert kinds(S.select([{"kind": "type", "type": "bug"}], TICKETS)) == [("ticket", "K-3")]
+    assert kinds(S.select([{"kind": "ticket", "ticket": "K-2"}], TICKETS)) == [("ticket", "K-2")]
     assert S.select([], TICKETS) == []
     qs = S.select([{"kind": "questions"}], TICKETS)
     assert [(i.kind, i.payload["text"]) for i in qs] == [("question", "which bank?")]  # only the one to the owner
@@ -48,7 +58,7 @@ def test_rules_select_exactly_their_tickets():
 
 def test_a_summary_never_carries_more_than_type_title_deadline():
     (s,) = S.select([{"kind": "needs_you"}], TICKETS)
-    assert set(s.payload) == {"kind", "type", "title", "deadline"}
+    assert set(s.payload) == {"type", "title", "deadline"}
 
 
 def test_titles_are_one_clean_line():
@@ -71,7 +81,7 @@ def test_state_round_trips_and_a_damaged_file_is_refused():
     st = S.ShareState()
     st.add_rule({"kind": "tag", "tag": "public"})
     assert not st.add_rule({"kind": "tag", "tag": "public"})
-    st.sent["ticket:a"] = {"item_id": "11" * 16, "digest": "d"}
+    st.sent["ticket:a"] = {"item_id": "11" * 16, "digest": "d", "version": 3}
     assert S.ShareState.from_json(st.to_json()).to_json() == st.to_json()
     for bad in (
         None,
@@ -94,8 +104,8 @@ class FakeLink:
         return {}
 
 
-def fake_build(item_id, item):
-    return f"sealed:{item_id}:{item.logical}"
+def fake_build(item_id, item, version):
+    return f"sealed:{item_id}:{item.logical}:{version}"
 
 
 def run(st, tickets, link, **kw):
@@ -147,13 +157,6 @@ def test_withdrawn_stays_withdrawn_while_it_matches_and_is_forgotten_after():
     assert st.withdrawn == ["ticket:a"]
     run(st, [T("a", labels=[]), *TICKETS[1:]], link)  # stops matching: forgotten
     assert st.withdrawn == []
-
-
-def test_the_sealed_format_gap_refuses_and_sends_nothing():
-    st, link = S.ShareState(rules=[{"kind": "tag", "tag": "public"}]), FakeLink()
-    with pytest.raises(HubRefused) as e:
-        S.sync(st, S.select(st.rules, TICKETS), link=link, save=lambda s: None)
-    assert e.value.code == "sealed_format_pending" and link.calls == [] and st.sent == {}
 
 
 def test_an_unreachable_hub_keeps_the_id_so_the_retry_does_not_duplicate():

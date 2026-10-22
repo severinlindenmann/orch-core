@@ -34,6 +34,7 @@ from .errors import HubRefused
 
 __all__ = [
     "GET_PAGE",
+    "MAX_FILE",
     "MAX_MEMBERS",
     "MAX_SEALED",
     "build_accept",
@@ -52,6 +53,7 @@ __all__ = [
 MAX_MEMBERS = 64
 MAX_SEALED = 256 * 1024
 GET_PAGE = 100
+MAX_FILE = 190 * 1024  # bytes of one shared file: its sealed item stays under MAX_SEALED
 SIG_SPACE = b"orch/v2/hub-space|"
 SIG_SPACE_WRAP = b"orch/v2/hub-space-wrap|"
 _KDF_ITEM = b"orch/v2/space-item"

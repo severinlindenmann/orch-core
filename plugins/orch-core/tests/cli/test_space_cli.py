@@ -110,3 +110,24 @@ def test_get_passes_from(host, tmp_path):
     host.reply["space.get"] = {"data": "aGk", "author": WS1, "item_id": "x", "name": "n", "size": 2}
     assert run(["get", SID, "n", "--out", str(tmp_path / "o"), "--from", WS1])[0] == 0
     assert host.called[-1] == ("space.get", {"space_id": SID, "name": "n", "from": WS1})
+
+
+def test_share_with_members_still_asks_and_the_list_must_be_the_hubs_current_one(host):
+    host.reply["space.list"] = {"spaces": [{"space_id": SID, "epoch": 3, "members": [WS1, WS2]}]}
+    host.reply["space.share"] = {"space_id": SID, "members": [WS1, WS2]}
+    assert run(["share", SID, "--members", f"{WS1},{WS2}"])[0] == 0
+    assert host.asked and host.asked[-1][1] == "share" and WS1 in host.asked[-1][0]  # asked even with --members
+    n, asked = len(host.called), len(host.asked)
+    code, out = run(["share", SID, "--members", WS1])  # not what the hub lists now: refused before any prompt
+    assert code == 5 and len(host.asked) == asked and [c[0] for c in host.called[n:]] == ["space.list"]
+    host.yes = False
+    assert run(["share", SID, "--members", f"{WS1},{WS2}"])[0] == 5 and host.called[-1][0] == "space.list"
+
+
+def test_accept_prompt_shows_the_signed_hashes(host):
+    run(["accept", SID, "--epoch", "2", "--prev-members", WS1, "--members", f"{WS1},{WS2}"])
+    from orch.hubclient.spaces import members_hash
+
+    prompt = host.asked[-1][0]
+    assert members_hash([WS1])[:16] in prompt and members_hash(sorted([WS1, WS2]))[:16] in prompt
+    assert "hub admin" in prompt

@@ -144,33 +144,42 @@ def main(
             got = _call(target, "space.revoke", {"space_id": a.rest[0], "item_id": a.rest[1]}, env)
             emit(got, "ok revoked (what was already read stays read)")
         elif a.cmd == "share":
-            members = _ids(a.members)
-            if not members:  # show what the hub says now and take the owner's word for exactly that list
-                row = next(
-                    (s for s in _call(target, "space.list", {}, env).get("spaces", []) if s["space_id"] == a.rest[0]),
-                    None,
+            # always: look at the hub's verified member list, show it, and take the owner's typed word for it
+            row = next(
+                (s for s in _call(target, "space.list", {}, env).get("spaces", []) if s["space_id"] == a.rest[0]), None
+            )
+            if row is None:
+                raise PubError("not_found", "you are not a member of that space", 3)
+            members = list(row["members"])
+            if a.members and sorted(_ids(a.members)) != sorted(members):
+                raise PubError(
+                    "invalid.input", "those are not the members the hub lists now; look again: orch space list", 5
                 )
-                if row is None:
-                    raise PubError("not_found", "you are not a member of that space", 3)
-                members = list(row["members"])
-                if not _confirm(
-                    f"Share files into space {a.rest[0]} (epoch {row['epoch']}) with exactly these workspaces:\n"
-                    + "".join(f"  {m}\n" for m in members) + "Type 'share' to approve: ",
-                    "share",
-                ):  # fmt: skip
-                    raise PubError("invalid.input", "not approved; nothing changed", 5)
+            if not _confirm(
+                f"Share files into space {a.rest[0]} (epoch {row['epoch']}) with exactly these workspaces:\n"
+                + "".join(f"  {m}\n" for m in members) + "Type 'share' to approve: ",
+                "share",
+            ):  # fmt: skip
+                raise PubError("invalid.input", "not approved; nothing changed", 5)
             got = _call(target, "space.share", {"space_id": a.rest[0], "members": members}, env)
             emit(got, f"ok approved {len(got['members'])} members for space {a.rest[0]}")
         else:  # accept: always on the owner's terminal, never skippable
             if a.epoch is None or not a.members:
                 raise PubError("invalid.input", _USAGE, 2)
             prev, now_members = _ids(a.prev_members), _ids(a.members)
+            from orch.hubclient.spaces import members_hash
+
+            before, after = members_hash(sorted(prev))[:16], members_hash(sorted(now_members))[:16]
             prompt = (
                 f"This workspace agrees to join space {a.rest[0]} at epoch {a.epoch}.\n"
-                + _show("members now", prev) + _show("members after", now_members)
-                + "Everyone in the space can read what this workspace puts there, and the hub holds the key.\n"
+                + _show("members now", prev)
+                + _show("members after", now_members)
+                + f"  hashes signed: before {before}..., after {after}...\n"
+                + "Compare the epoch and hashes with what the hub admin showed you: a workspace that is not a member\n"
+                "cannot see the space, so these come from the admin, not from the hub's signed record.\n"
+                "Everyone in the space can read what this workspace puts there, and the hub holds the key.\n"
                 "Type 'accept' to agree: "
-            )  # fmt: skip
+            )
             if not _confirm(prompt, "accept"):
                 raise PubError("invalid.input", "not accepted; nothing was sent", 5)
             got = _call(

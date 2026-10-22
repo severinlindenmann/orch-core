@@ -100,6 +100,7 @@ _LOCAL = {
     "members_changed": "the member set is not the one you approved; nothing was sent: orch space share SPACE",
     "no_key": "this workspace holds no key for the space's current epoch",
     "too_large": "the file is too large for one space item (about 190 KB)",
+    "already_member": "this workspace is already a member of that space: nothing to accept",
 }
 
 

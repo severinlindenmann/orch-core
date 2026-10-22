@@ -244,6 +244,8 @@ class SpaceClient:
         """Share one named file. Refused locally, before anything is sent: ``not_shared`` (no rule), ``members_changed``
         (a member the owner did not approve), ``no_key``, ``too_large``. A ``stale_epoch`` is refreshed and retried
         once (re-sealed under the new key)."""
+        if len(data) > SP.MAX_FILE:
+            raise HubRefused("too_large")  # before anything is signed or sealed
         if sid not in self.st.rules:
             raise HubRefused("not_shared")
         for attempt in (0, 1):
@@ -280,14 +282,26 @@ class SpaceClient:
             raise HubRefused("malformed")
         return {"seq": self._call("space_revoke", {"space_id": sid, "item_id": item_id})["seq"]}
 
-    def accept(
-        self, sid: str, *, epoch: int, prev_members: list[str], members: list[str]
-    ) -> dict[str, Any]:  # fmt: skip
-        """The owner's ``space.accept`` for exactly one transition, sent to the hub. The caller has shown the owner
-        the space, both member sets and the epoch (WYSIWYS) and holds their decision."""
+    def accept(self, sid: str, *, epoch: int, prev_members: list[str], members: list[str]) -> dict[str, Any]:
+        """The owner's ``space.accept`` for exactly one transition: THIS workspace is added to ``prev_members`` at
+        ``epoch``. Refused locally unless the lists really are that transition (``members`` = ``prev_members`` plus this
+        workspace and nobody else, this workspace not already in it, and not already a member of the space). A workspace
+        that is not a member cannot see the space, so the lists come from the hub admin (their ``need``); what is signed
+        is exactly these lists' hashes. The caller has shown the owner the space, both lists and the epoch."""
+        prev, now = sorted(prev_members), sorted(members)
+        if (
+            self.me in prev
+            or len(set(prev)) != len(prev)
+            or now != sorted({*prev, self.me})
+            or epoch < 1
+            or any(not wire.hex16(w) for w in now)
+        ):
+            raise HubRefused("malformed")
+        if any(x["space_id"] == sid and self.me in x["members"] for x in self.list_spaces()):
+            raise HubRefused("already_member")
         acc = SP.build_accept(
-            hub_id=self.hub_id, space_id=sid, workspace_id=self.me, epoch=epoch, prev_members=sorted(prev_members),
-            members=sorted(members), dev=self._dev, sign=self._sign,
+            hub_id=self.hub_id, space_id=sid, workspace_id=self.me, epoch=epoch, prev_members=prev, members=now,
+            dev=self._dev, sign=self._sign,
         )  # fmt: skip
         self._call("space_accept", {"accept": acc})
         return {"space_id": sid, "epoch": epoch}

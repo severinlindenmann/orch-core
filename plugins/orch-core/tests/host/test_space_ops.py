@@ -200,16 +200,40 @@ def test_a_grown_member_set_stops_the_put_before_anything_is_sent(served, full):
 
 
 def test_selective_accept_signs_exactly_one_transition(served, selective):
-    args = {"space_id": selective.space_id, "epoch": 2, "prev_members": [PEER_WS], "members": selective.members}
+    both = sorted([served.wid, PEER_WS])
+    selective.members = [PEER_WS]  # not a member yet: the hub does not list the space for us
+    args = {"space_id": selective.space_id, "epoch": 2, "prev_members": [PEER_WS], "members": both}
     ok(req(served, "space.accept", args))
     (acc,) = selective.accepts
     o = acc["o"]
     assert (o["space_id"], o["workspace_id"], o["epoch"]) == (selective.space_id, served.wid, 2)
-    assert o["prev_members_hash"] == SP.members_hash([PEER_WS]) and o["members_hash"] == SP.members_hash(
-        selective.members
-    )
+    assert o["prev_members_hash"] == SP.members_hash([PEER_WS]) and o["members_hash"] == SP.members_hash(both)
     pub = crypto.unb64u(genesis(served)["wsk_pub"], 65)
     assert suite.verify(pub, crypto.unb64u(acc["sig"], 64), b"orch/v2/sig/space-accept|" + cj(o))
+
+
+def test_accept_refuses_what_is_not_the_transition_of_adding_this_workspace(served, selective):
+    both = sorted([served.wid, PEER_WS])
+    selective.members = [PEER_WS]
+    base = {"space_id": selective.space_id, "epoch": 2}
+    for prev, now in (
+        ([PEER_WS], both + ["cc" * 16]),  # someone else is added in the same breath
+        ([PEER_WS], [PEER_WS]),  # not even us
+        ([PEER_WS, served.wid], both),  # we are already in the "before"
+    ):
+        res = req(served, "space.accept", {**base, "prev_members": prev, "members": sorted(now)})
+        assert err(res) == "hub.refused" or err(res) == "invalid.input"
+    assert selective.accepts == []
+    selective.members = both  # a member already: nothing to accept
+    res = req(served, "space.accept", {**base, "prev_members": [PEER_WS], "members": both})
+    assert err(res) == "invalid.input" and "already a member" in res["error"]["message"] and selective.accepts == []
+
+
+def test_an_oversize_file_is_refused_before_anything_is_signed(served, full):
+    ok(req(served, "space.share", {"space_id": full.space_id, "members": full.members}))
+    big = crypto.b64u(b"x" * (190 * 1024 + 1))
+    res = req(served, "space.put", {"space_id": full.space_id, "name": "big", "data": big})
+    assert err(res) == "invalid.input" and "too large" in res["error"]["message"] and full.puts == []
 
 
 def test_an_agent_reads_but_never_shares_puts_revokes_or_accepts(served, full):

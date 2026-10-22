@@ -8,6 +8,9 @@ dependencies = [
     "pyopenssl>=24.3",
 ]
 
+[project.scripts]
+orch-hub = "orch_hub.cli:main"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

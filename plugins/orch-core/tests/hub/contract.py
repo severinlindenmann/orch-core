@@ -739,6 +739,19 @@ LINK_OPS: dict[str, tuple[str, str | None, dict[str, Check]]] = {
     "card_put": ("w2h", None, {"card": lambda x: type(x) is dict, "pk_pub": _pub}),
     "binding_put": ("w2h", None, {"object": lambda x: type(x) is dict}),
     "audit_ack": ("w2h", None, {"seq": _int_min(1), "head": _b64u_n(32)}),
+    "log_sync": (
+        "w2h",
+        "full",
+        {
+            "epoch": _int_min(1),
+            "log": lambda x: type(x) is str,
+            "from_seq": _int_min(1),
+            "count": _int_min(1),
+            "head": lambda x: type(x) is str,
+            "reset": _bool,
+            "sealed": _b64u_any,
+        },
+    ),
     "share_put": ("w2h", "selective", {"item_id": _hex16, "sealed": _b64u_any}),
     "share_revoke": ("w2h", "selective", {"item_id": _hex16}),
 }

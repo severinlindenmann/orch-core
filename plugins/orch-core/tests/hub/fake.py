@@ -5,7 +5,8 @@ exactly the signed ``hub.link`` objects of the contract (orch-hub ``docs/protoco
   w2h message as the contract says (section 10.2 steps 1-6, the receiver's key being the workspace's pinned ``WSK``),
   and answers with h2w messages signed by the vector ``HK_op``. Ops: ``join`` (section 9.5, first come per
   ``workspace_id``), ``card_put``, ``binding_put`` (binding and unbound, never resurrect), ``snapshot_get``,
-  ``publish_out`` (records the forwarded request, pluggable responder), ``wk_seal`` (full mode only), ``audit_ack``,
+  ``publish_out`` (records the forwarded request, pluggable responder), ``wk_seal`` and ``log_sync`` (full mode
+  only; the view rules: ``logview.py``), ``audit_ack``,
   ``share_put`` / ``share_revoke`` (selective only), ``route_out``. Anything else is ``unknown_op``.
 * :class:`HostLink` is the workspace end for tests: it signs requests with a ``WSK`` and verifies the replies the way
   the host must (the held card's ``HK_op``, label ``orch/v2/hub-route|``).
@@ -86,6 +87,8 @@ class _Ws:
     audit: list[Json] = field(default_factory=list)
     shares: dict[str, str] = field(default_factory=dict)
     routed: list[str] = field(default_factory=list)
+    view: Any = field(default_factory=lambda: __import__("tests.hub.logview", fromlist=["View"]).View())
+    log_pages: list[Json] = field(default_factory=list)  # every log_sync body the hub accepted, in order
 
 
 class FakeHub:
@@ -406,6 +409,14 @@ class FakeHub:
         ws.wk_seals.append(body)
         ws.wk[body["epoch"]] = wk
         return {}
+
+    def _op_log_sync(self, body: Json, ws_id: str, ws: _Ws | None) -> Json:
+        assert ws is not None
+        from . import logview
+
+        out = logview.apply_page(ws.view, body, workspace_id=ws_id, wsk_pub=ws.wsk_pub, wk=ws.wk)
+        ws.log_pages.append(body)
+        return out
 
     def _op_audit_ack(self, body: Json, ws_id: str, ws: _Ws | None) -> Json:
         assert ws is not None

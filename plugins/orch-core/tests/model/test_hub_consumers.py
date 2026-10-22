@@ -373,3 +373,62 @@ def test_hub_is_not_a_custody_auth_value():
     from orch.custody.base import AUTH_VALUES
 
     assert "hub" not in AUTH_VALUES  # hub is custody metadata of a hub-signed line, never a backend a host signs with
+
+
+# --- u_ references are found from the schema, not from a list (security review of the first push) -------------------
+
+
+def _put(node: dict, path: tuple[str, ...], value: str) -> None:
+    """Set ``value`` at the key path (``"*"`` is a list item) in a fresh nested document."""
+    for i, k in enumerate(path[:-1]):
+        nxt = [] if path[i + 1] == "*" else {}
+        node = node.setdefault(k, nxt)
+    if path[-1] == "*":
+        node.append(value)  # type: ignore[attr-defined]
+    else:
+        node[path[-1]] = value
+
+
+def test_every_person_ref_field_of_every_schema_is_covered_by_u_refs():
+    """The personRef places come from the schemas themselves. This table is the guard: a new personRef field changes
+    it, and ``u_refs`` (and so ``record_users``) already covers it, because it walks the same paths."""
+    from orch.model import identity
+    from orch.schema import event_types, person_ref_paths
+
+    found = {t: person_ref_paths("event." + t) for t in event_types() if person_ref_paths("event." + t)}
+    assert found == {
+        "people.changed": (("add", "*"), ("remove", "*")),
+        "question.asked": (("question", "to"),),
+        "ticket.created": (("owner",),),
+        "visibility.changed": (("visibility", "restricted", "*"),),
+    }
+    # every custodial type that has a personRef field is one the model lets a hub actor sign
+    assert set(found) & authz.HUB_TYPES == set(found)
+    # and u_refs reads exactly those places, one distinct id each
+    for typ, paths in found.items():
+        ids = [f"{i:032x}" for i in range(len(paths))]
+        e: dict = {"type": typ, "actor": {"kind": "person", "id": "u_" + "e" * 32, "via": CHAN}}
+        for path, uid in zip(paths, ids, strict=True):
+            _put(e, path, "u_" + uid)
+        assert set(identity.u_refs(e)) == {"e" * 32, *ids}, typ
+
+
+def test_a_foreign_owner_on_ticket_created_is_foreign_user(w):
+    """Hub A used u_X; hub B then names u_X as the owner of a new ticket: refused, though X is not the actor."""
+    u = w.ticket()
+    assert hub(w, u, "people.changed", role="watchers", add=["u_" + U1], remove=[]) is None
+    w.wev("hub.left", "sev", hub_id=HUB, binding_seq=1)
+    hub_joined(w, [], hub=HUB_B, root=ROOT_B, seq=2)
+    pin(w, card(1, HUB_B), HUB_B)
+    pin(w, snapx(1, {U3: "admin", U1: "admin"}, hub=HUB_B), HUB_B)
+    ev = {"hub_id": HUB_B, "snapshot_version": 1}
+    base = {"key": "DEMO-0099", "ticket_type": "feature", "title": "t"}
+    uid2 = "01J9ZK4Q7M3R8T2V6X0B000099"
+    _, r = w.try_(
+        uid2, "ticket.created", hub_actor(U3), roster_v=w.roster_v, owner="u_" + U1, **base, **hub_fields(**ev)
+    )
+    assert r.code == Code.HUB_FOREIGN_USER
+    _, r = w.try_(
+        uid2, "ticket.created", hub_actor(U3), roster_v=w.roster_v, owner="u_" + U3, **base, **hub_fields(**ev)
+    )
+    assert getattr(r, "code", None) != Code.HUB_FOREIGN_USER

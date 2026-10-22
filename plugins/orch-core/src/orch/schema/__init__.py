@@ -148,6 +148,48 @@ def _raw(name: str) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _deref(ref: str) -> tuple[str, Any] | None:
+    for prefix in _INLINE_PREFIXES:
+        if ref.startswith(prefix):
+            doc = _raw(prefix[len(BASE) : prefix.index("#")])
+            return ref[len(prefix) :], doc["$defs"][ref[len(prefix) :]]
+    return None
+
+
+@cache
+def person_ref_paths(name: str) -> tuple[tuple[str, ...], ...]:
+    """Every place the schema ``name`` (for example ``event.people.changed``) allows a ``personRef`` (a ``p_`` person or
+    a ``u_`` hub user), as key paths from the document root; ``"*"`` is an array item. Derived from the schema
+    itself, through every ``$ref``, ``oneOf``/``anyOf``/``allOf`` and conditional branch, so a personRef field added
+    to a schema is found without anyone remembering to list it (ticket-format 15.1, user_hub recording)."""
+    found: set[tuple[str, ...]] = set()
+
+    def walk(node: Any, path: tuple[str, ...], seen: frozenset[str]) -> None:
+        if not isinstance(node, dict):
+            return
+        ref = node.get("$ref")
+        if isinstance(ref, str):
+            hit = _deref(ref)
+            if hit is not None:
+                if hit[0] == "personRef":
+                    found.add(path)
+                elif hit[0] not in seen:
+                    walk(hit[1], path, seen | {hit[0]})
+        for key in ("properties", "patternProperties"):
+            for k, v in (node.get(key) or {}).items():
+                walk(v, (*path, k if key == "properties" else "*"), seen)
+        for key in ("items", "additionalProperties", "contains"):
+            walk(node.get(key), (*path, "*") if key == "items" else path, seen)
+        for key in ("oneOf", "anyOf", "allOf"):
+            for v in node.get(key) or ():
+                walk(v, path, seen)
+        for key in ("if", "then", "else", "not"):
+            walk(node.get(key), path, seen)
+
+    walk(_raw(name), (), frozenset())
+    return tuple(sorted(found))
+
+
 def preload() -> None:
     """Read every schema file and build every validator now. The host calls this before its audit hook, which refuses
     the package data (it lies outside the roots)."""

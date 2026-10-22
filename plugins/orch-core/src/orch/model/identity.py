@@ -139,17 +139,25 @@ def ref_refusal(ws: WsCore, idents: Iterable[str]) -> Refusal | None:
     return None
 
 
+def _at(node: Any, path: tuple[str, ...]) -> Iterable[Any]:
+    if not path:
+        yield node
+    elif path[0] == "*":
+        for v in node if isinstance(node, list) else ():
+            yield from _at(v, path[1:])
+    elif isinstance(node, Mapping) and path[0] in node:
+        yield from _at(node[path[0]], path[1:])
+
+
 def u_refs(e: Mapping[str, Any]) -> list[str]:
-    """Every bare 32-hex hub user id an event uses: its actor and the ``u_`` person references of its payload
-    (``people.changed`` add/remove, ``visibility.changed`` restricted, ``question.asked`` ``to``)."""
-    out = [e["actor"]["id"]] if "via" in e["actor"] else []
-    out += [*e.get("add", ()), *e.get("remove", ())]
-    v = e.get("visibility")
-    if isinstance(v, Mapping):
-        out += v.get("restricted", ())
-    q = e.get("question")
-    if isinstance(q, Mapping):
-        out.append(q.get("to", ""))
+    """Every bare 32-hex hub user id an event uses: its actor and every ``u_`` person reference in its payload. The
+    payload fields are not listed by hand: they are the ``personRef`` places of the event's own schema
+    (``orch.schema.person_ref_paths``), so a new field is covered the day it is added to the schema."""
+    from orch.schema import person_ref_paths  # local: the schema package is data, the model stays importable alone
+
+    out: list[Any] = [e["actor"]["id"]] if "via" in e["actor"] else []
+    for path in person_ref_paths("event." + str(e["type"])):
+        out += _at(e, path)
     return sorted({i[2:] for i in out if type(i) is str and i.startswith("u_")})
 
 

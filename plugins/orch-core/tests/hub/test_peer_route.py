@@ -194,3 +194,34 @@ def test_status_of_a_stored_odd_result_cannot_crash() -> None:
         "reply": {"kind": "result", "from_ws": B, "late": False, "result": "just text"},
     }  # fmt: skip
     assert a.svc.sent_status("ab" * 16)["peer_result"]["summary"] is None
+
+
+def test_concurrent_senders_and_the_receive_thread_share_one_link() -> None:
+    """The flake class of develop CI (#998): the sender and the receive thread both found no link and both dialed; a
+    hub that serves one link at a time then left one of them waiting until its timeout. One link per workspace."""
+    import threading
+    import time as _time
+
+    _, a, _ = world()
+    dials, gate = [], threading.Barrier(3)
+    real = a.svc._connect
+
+    def slow_connect():
+        dials.append(1)
+        _time.sleep(0.2)  # a handshake takes a while: the other callers arrive meanwhile
+        return real()
+
+    a.svc._connect = slow_connect
+    links = []
+
+    def go():
+        gate.wait()
+        links.append(a.svc._ensure())
+
+    ts = [threading.Thread(target=go) for _ in range(2)]
+    for t in ts:
+        t.start()
+    gate.wait()
+    for t in ts:
+        t.join(5)
+    assert len(dials) == 1 and links[0] is links[1]

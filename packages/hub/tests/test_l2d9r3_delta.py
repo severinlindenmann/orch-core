@@ -1,9 +1,8 @@
 # ruff: noqa: F811  (the `shub` fixture is imported then named as an argument)
-"""L2 delta review of the D9 round-3 fix (orch-hub#23 @ 69d54f2), l2-d13. Strict xfail = finding still open."""
+"""L2 delta review of the D9 round-3 fix (orch-hub#23 @ 69d54f2), l2-d13."""
 
 from __future__ import annotations
 
-import pytest
 from shares_helpers import body, shub  # noqa: F401
 
 from orch_hub.contract import vectorgen as G

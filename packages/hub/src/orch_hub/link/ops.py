@@ -137,7 +137,10 @@ def _sync_wk_seals(c: OpContext, state: dict[str, Any]) -> None:
         return
     b = state.get("binding")
     if state.get("status") != "bound" or type(b) is not dict or b.get("mode") != "full":
-        c.wk_seals.retire(c.workspace_id)
+        try:
+            c.wk_seals.retire(c.workspace_id)
+        except Exception:
+            logging.getLogger("orch_hub.link").exception("wk_seal retire failed; the other steps go on")
 
 
 def _sync_shares(c: OpContext, state: dict[str, Any]) -> None:
@@ -216,10 +219,9 @@ def card_put(c: OpContext) -> dict[str, Any]:
 
 
 def binding_put(c: OpContext) -> dict[str, Any]:
-    # INVARIANT: once the registry has committed a binding state, the binding-side steps (downstream.binding,
-    # spaces.on_unbind) run whatever the share store does. The share step is _sync_shares, which cannot raise, and
-    # the post-lock steps below sit in try/finally as a second guard. A share failure only leaves the workspace
-    # pending (refused by the share store) until a purge succeeds.
+    # INVARIANT: once the registry has committed a binding state, the post-commit steps below are independent: each
+    # runs whatever any other step does (own try/except, error logged). A share failure leaves the workspace pending
+    # (refused by the share store, retried by retry_pending) until a purge succeeds.
     obj = c.body["object"]
     o = obj.get("o") if type(obj) is dict else None
     kind = o.get("kind") if type(o) is dict else None
@@ -241,15 +243,31 @@ def binding_put(c: OpContext) -> dict[str, Any]:
         else:
             raise Refused("malformed")
         c.registry.set_binding_state(c.workspace_id, state, obj)
-        _sync_wk_seals(c, state)
-        _sync_shares(c, state)
-    try:
-        c.downstream.binding(c.workspace_id, obj)
-    finally:
+
+    def locked(step: Callable[[], None]) -> Callable[[], None]:
+        def run() -> None:
+            with c.registry.lock:  # re-entrant: the lock is held only for the step itself
+                step()
+
+        return run
+
+    def leave_spaces() -> None:
         if c.spaces is not None and (
             kind == "hub.unbound" or (old_mode == "full" and c.registry.mode(c.workspace_id) != "full")
         ):
             c.spaces.on_unbind(c.workspace_id)  # leaves every space in the same step (protocol.md §10.4)
+
+    steps: list[tuple[str, Callable[[], None]]] = [
+        ("wk_seal retire", locked(lambda: _sync_wk_seals(c, state))),
+        ("share sync", locked(lambda: _sync_shares(c, state))),
+        ("downstream binding", lambda: c.downstream.binding(c.workspace_id, obj)),
+        ("spaces on_unbind", leave_spaces),
+    ]
+    for name, step in steps:
+        try:
+            step()
+        except Exception:
+            logging.getLogger("orch_hub.link").exception("binding_put: %s failed; the other steps go on", name)
     return {}
 
 

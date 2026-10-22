@@ -91,6 +91,7 @@ class LinkServer:
         self._audit = audit
         self._wk_seals = wk_seals
         self._shares = shares
+        self._retry_at = float("-inf")
         self._dev, self._now = dev_mode, now_ms
         self._max, self._t_hs, self._t_rd, self._t_idle = max_frame, handshake_timeout, read_timeout, idle_timeout
         self._t_unjoined = unjoined_idle_timeout
@@ -316,7 +317,8 @@ class LinkServer:
             if o["op"] not in ("join", "binding_put"):
                 st = self._reg.binding_state(ws)
                 if st is not None and st["status"] != "bound":
-                    if self._shares is not None:
+                    if self._shares is not None and time.monotonic() - self._retry_at >= 30.0:
+                        self._retry_at = time.monotonic()  # at most once per 30 s, globally (registry lock held by it)
                         with contextlib.suppress(
                             Exception
                         ):  # D9-1: best effort; purge stale share items if the sink is back

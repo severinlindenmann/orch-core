@@ -13,6 +13,8 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from ..channels.cli import add_channels_parsers, add_users_parsers
+from ..channels.cli import dispatch as channels_dispatch
 from ..keys import HubKeys, KeysError, default_state_dir
 from .store import Access, AccessError, check_name, require_state_owner, role_rank
 
@@ -76,12 +78,9 @@ def add_parsers(sub: argparse._SubParsersAction) -> None:  # type: ignore[type-a
     k.add_argument("--workspace", required=True)
     k.add_argument("--action", required=True, choices=("read", "route"))
     k.add_argument("--space", help="accepted; shared-space rules arrive with the router (D8)")
-    _, c = grp("channels", "dev: channel revocation (goes into every snapshot)")
-    s = c.add_parser("revoke", parents=[J])
-    s.add_argument("channel_id")
-    s = c.add_parser("unrevoke", parents=[J])
-    s.add_argument("channel_id")
-    c.add_parser("list", parents=[J])
+    _, c = grp("channels", "dev: channels, pairing codes and revocation (revocations go into every snapshot)")
+    add_channels_parsers(c, J)
+    add_users_parsers(u, J)
 
 
 def run(args: argparse.Namespace, out=None) -> int:
@@ -140,6 +139,8 @@ def _dispatch(args: argparse.Namespace, state: Path, acc: Access):
     if g == "access":
         return check(acc, state, args.user, args.workspace, args.action)
     if g == "users":
+        if c in ("set-password", "totp"):
+            return channels_dispatch(args, state, acc)
         if c == "add":
             name = check_name(_name(args))  # before a UK is issued
             user_id = HubKeys.open(state).issue_uk(None)["o"]["user_id"]
@@ -173,13 +174,7 @@ def _dispatch(args: argparse.Namespace, state: Path, acc: Access):
         else:
             return acc.roles(args.workspace_id)
         return {}
-    if c == "revoke":
-        acc.revoke_channel(args.channel_id)
-    elif c == "unrevoke":
-        acc.unrevoke_channel(args.channel_id)
-    else:
-        return acc.revoked_channels()
-    return {}
+    return channels_dispatch(args, state, acc)
 
 
 def main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - convenience for tests

@@ -1,0 +1,506 @@
+"""The channel service (V3-D7). A Python service for D13's web layer and the dev CLI; no HTTP here.
+
+Flow, browser: ``sign_in`` (user id + password + TOTP; rate limited) -> short-lived session token ->
+``begin_registration(token, key_pub)`` -> the channel signs the returned digest -> ``complete_registration`` issues a
+``hub.channel_cert`` with factor ``password+totp`` (protocol.md §6.2, SHORTCUT #908).
+Flow, phone: the operator creates a one-time pairing code (``create_pairing_code``, a state-dir-owner action) and the
+user enters it on the phone; ``begin_phone_registration`` / ``complete_registration`` issue factor ``se-unlocked``.
+A password session can never mint ``se-unlocked``: the hub has no Secure Enclave attestation, so the factor is gated by
+a code that only the state-dir owner can create (enforce by who can act, not by a label the caller picks).
+
+**Proof of possession is NOT in the contract (gap, proposal in the D7 report).** Until it is, it reuses the existing
+domains and invents no label: the channel signs ``channel_proof_bytes(registration_digest(challenge))`` where the
+digest is ``H(h_hub_event_digest || cj(challenge))`` and the challenge is a hub-local object (``kind:
+"hub.channel_register"``) that cannot be a custodial signed context, so a registration proof is never a valid event
+proof and vice versa. Nothing outside this module depends on the object.
+
+``active_channel(user_id, channel_id)`` is the read interface of D6: the channel's current, unrevoked, unexpired
+certificate, or ``None`` (fail closed on any error).
+"""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import hmac
+import os
+import re
+import secrets
+import struct
+import time
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
+from ..access import Access, AccessError
+from ..contract import hub as H
+from ..contract import suite as S
+from ..contract.canon import CanonError, b64u, cj, unb64u
+from ..contract.labels import L
+from ..keys import HubKeys, KeysError
+from .store import ChannelsDB, StoreError
+
+CHANNELS_FILE = "channels.db"
+SESSION_TTL_MS = 15 * 60_000
+CHALLENGE_TTL_MS = 120_000
+PAIRING_TTL_MS = 10 * 60_000
+MAX_CHANNELS = 5
+MAX_FAILURES = 5
+FAIL_WINDOW_MS = 15 * 60_000
+MIN_PASSWORD = 10
+KINDS = {"browser": "password+totp", "phone": "se-unlocked"}  # the factor follows the kind, never the caller's choice
+_HEX32 = re.compile(r"[0-9a-f]{32}")
+_SCRYPT = {"n": 2**14, "r": 8, "p": 1, "maxmem": 64 * 1024 * 1024, "dklen": 32}
+_DUMMY_SALT = b"\0" * 16
+
+
+class ChannelError(Exception):
+    """Every refusal; ``code`` is stable, ``str(e)`` never contains a secret."""
+
+    def __init__(self, code: str, detail: str = "") -> None:
+        super().__init__(code if not detail else f"{code}: {detail}")
+        self.code = code
+
+
+def registration_challenge(hub_id: str, user_id: str, kind: str, key_pub: str, nonce: str, expires_ms: int) -> dict:
+    return {
+        "contract": 1,
+        "suite": S.SUITE_ID,
+        "kind": "hub.channel_register",
+        "hub_id": hub_id,
+        "user_id": user_id,
+        "channel_kind": kind,
+        "key_pub": key_pub,
+        "nonce": nonce,
+        "expires_ms": expires_ms,
+    }
+
+
+def registration_digest(challenge: dict) -> bytes:
+    """What the channel key signs (via ``channel_proof_bytes``) to prove it holds the private key."""
+    return S.sha256(L["h_hub_event_digest"] + cj(challenge))
+
+
+def _sha(x: str) -> str:
+    return hashlib.sha256(x.encode()).hexdigest()
+
+
+def _pw_hash(password: str, salt: bytes) -> bytes:
+    return hashlib.scrypt(password.encode(), salt=salt, **_SCRYPT)
+
+
+def totp_code(secret: bytes, counter: int) -> str:
+    mac = hmac.new(secret, struct.pack(">Q", counter), hashlib.sha1).digest()
+    off = mac[-1] & 15
+    return f"{(struct.unpack('>I', mac[off : off + 4])[0] & 0x7FFFFFFF) % 10**6:06d}"
+
+
+class Channels:
+    def __init__(
+        self,
+        keys: HubKeys,
+        access: Access,
+        path: str | Path,
+        *,
+        now_ms: Callable[[], int] | None = None,
+        max_channels: int = MAX_CHANNELS,
+    ) -> None:
+        self.keys, self.acc = keys, access
+        self._now = now_ms or (lambda: int(time.time() * 1000))
+        self.max_channels = max_channels
+        try:
+            self.db = ChannelsDB(str(path))
+        except StoreError as e:
+            raise ChannelError("store_error", str(e)) from None
+
+    def close(self) -> None:
+        self.db.close()
+
+    # --- plumbing --------------------------------------------------------------------------------------------------
+
+    def _user(self, user_id: object) -> str:
+        if type(user_id) is not str or not _HEX32.fullmatch(user_id):
+            raise ChannelError("malformed", "user_id")
+        return user_id
+
+    def _known_user(self, user_id: object) -> str:
+        u = self._user(user_id)
+        try:
+            if not self.acc.has_user(u):
+                raise ChannelError("unknown_user")
+        except AccessError as e:
+            raise ChannelError("store_error", e.code) from None
+        return u
+
+    def _guard(self, fn: Callable[[], Any]) -> Any:
+        try:
+            return fn()
+        except StoreError as e:
+            raise ChannelError("store_error", str(e)) from None
+
+    def _event(self, action: str, user_id: str, channel_id: str | None, actor: str) -> None:
+        self.db.w(
+            "INSERT INTO events(ts_ms, action, user_id, channel_id, actor) VALUES (?,?,?,?,?)",
+            (self._now(), action, user_id, channel_id, actor),
+        )
+
+    def events(self) -> list[dict[str, Any]]:
+        """The channel event log (register / revoke / unrevoke / pair / sign-in-lockout). Hub-local: the contract's
+        audit chain has no channel event type yet (gap, proposal in the D7 report)."""
+        rows = self._guard(
+            lambda: self.db.q("SELECT ts_ms, action, user_id, channel_id, actor FROM events ORDER BY id")
+        )
+        return [dict(zip(("ts_ms", "action", "user_id", "channel_id", "actor"), r, strict=True)) for r in rows]
+
+    # --- credentials (operator, dev) -------------------------------------------------------------------------------
+
+    def set_password(self, user_id: str, password: str) -> None:
+        u = self._known_user(user_id)
+        if type(password) is not str or len(password) < MIN_PASSWORD:
+            raise ChannelError("weak_password", f"at least {MIN_PASSWORD} characters")
+        salt = os.urandom(16)
+        h = _pw_hash(password, salt)
+        now = self._now()
+
+        def go() -> None:
+            self.db.w(
+                "INSERT INTO credentials(user_id, pw_salt, pw_hash, updated_ms) VALUES (?,?,?,?) "
+                "ON CONFLICT(user_id) DO UPDATE SET pw_salt=excluded.pw_salt, pw_hash=excluded.pw_hash, "
+                "updated_ms=excluded.updated_ms",
+                (u, salt, h, now),
+            )
+            self.db.w("DELETE FROM sessions WHERE user_id=?", (u,))  # a changed password ends every session
+
+        self._guard(go)
+
+    def new_totp(self, user_id: str) -> dict[str, str]:
+        """Generate (replace) the user's TOTP secret. Returned once, for the operator to hand over; never logged."""
+        u = self._known_user(user_id)
+        secret = os.urandom(20)
+        now = self._now()
+
+        def go() -> None:
+            self.db.w(
+                "INSERT INTO credentials(user_id, totp_secret, totp_last, updated_ms) VALUES (?,?,0,?) "
+                "ON CONFLICT(user_id) DO UPDATE SET totp_secret=excluded.totp_secret, totp_last=0, "
+                "updated_ms=excluded.updated_ms",
+                (u, secret, now),
+            )
+            self.db.w("DELETE FROM sessions WHERE user_id=?", (u,))
+
+        self._guard(go)
+        b32 = base64.b32encode(secret).decode().rstrip("=")
+        return {"secret": b32, "uri": f"otpauth://totp/orch-hub:{u}?secret={b32}&issuer=orch-hub"}
+
+    # --- rate limiting ---------------------------------------------------------------------------------------------
+
+    def _limited(self, kind: str, subject: str) -> bool:
+        now = self._now()
+        self.db.w("DELETE FROM failures WHERE ts_ms < ?", (now - FAIL_WINDOW_MS,))
+        (n,) = self.db.q("SELECT COUNT(*) FROM failures WHERE kind=? AND subject=?", (kind, subject))[0]
+        return n >= MAX_FAILURES
+
+    def _fail(self, kind: str, subject: str) -> None:
+        self.db.w("INSERT INTO failures(kind, subject, ts_ms) VALUES (?,?,?)", (kind, subject, self._now()))
+
+    # --- sessions --------------------------------------------------------------------------------------------------
+
+    def sign_in(self, user_id: str, password: str, totp: str) -> dict[str, Any]:
+        """Password and TOTP together; any mismatch is one generic ``bad_credentials`` (no hint which part, none whether
+        the user exists). After :data:`MAX_FAILURES` failures in :data:`FAIL_WINDOW_MS` the user is ``rate_limited``
+        even with correct credentials, until the window passes."""
+        u = self._user(user_id)
+        if type(password) is not str or type(totp) is not str or len(password) > 1024:
+            raise ChannelError("bad_credentials")
+        if self._guard(lambda: self._limited("login", u)):
+            raise ChannelError("rate_limited")
+        row = self._guard(
+            lambda: self.db.q("SELECT pw_salt, pw_hash, totp_secret, totp_last FROM credentials WHERE user_id=?", (u,))
+        )
+        salt, ph, secret, last = row[0] if row else (None, None, None, 0)
+        ok = bool(row) and ph is not None and secret is not None
+        try:
+            ok = ok and self.acc.has_user(u)
+        except AccessError:
+            ok = False
+        h = _pw_hash(password, salt or _DUMMY_SALT)  # always spend the hashing time
+        ok_pw = ok and hmac.compare_digest(h, ph or b"")
+        counter = self._now() // 30_000
+        match = 0
+        if secret is not None and totp.isascii() and totp.isdigit() and len(totp) == 6:
+            for c in (counter - 1, counter, counter + 1):
+                if hmac.compare_digest(totp_code(secret, c), totp) and c > last:
+                    match = c
+        if not (ok_pw and match):
+            self._guard(lambda: self._fail("login", u))
+            raise ChannelError("bad_credentials")
+        token = secrets.token_urlsafe(32)
+        now = self._now()
+
+        def go() -> None:
+            self.db.w("UPDATE credentials SET totp_last=? WHERE user_id=? AND totp_last<?", (match, u, match))
+            self.db.w("DELETE FROM failures WHERE kind='login' AND subject=?", (u,))
+            self.db.w("DELETE FROM sessions WHERE expires_ms <= ?", (now,))
+            self.db.w(
+                "INSERT INTO sessions(token_hash, user_id, created_ms, expires_ms) VALUES (?,?,?,?)",
+                (_sha(token), u, now, now + SESSION_TTL_MS),
+            )
+
+        self._guard(go)
+        return {"token": token, "user_id": u, "expires_ms": now + SESSION_TTL_MS}
+
+    def session_user(self, token: str) -> str:
+        if type(token) is not str or not token or len(token) > 200:
+            raise ChannelError("no_session")
+        rows = self._guard(
+            lambda: self.db.q("SELECT user_id, expires_ms FROM sessions WHERE token_hash=?", (_sha(token),))
+        )
+        if not rows or rows[0][1] <= self._now():
+            raise ChannelError("no_session")
+        try:
+            if not self.acc.has_user(rows[0][0]):  # a removed user's sessions are dead
+                raise ChannelError("no_session")
+        except AccessError:
+            raise ChannelError("no_session") from None
+        return rows[0][0]
+
+    def sign_out(self, token: str) -> None:
+        self._guard(lambda: self.db.w("DELETE FROM sessions WHERE token_hash=?", (_sha(str(token)),)))
+
+    # --- registration ----------------------------------------------------------------------------------------------
+
+    def create_pairing_code(self, user_id: str) -> dict[str, Any]:
+        """Operator-only (the dev CLI, tied to the state dir owner): a one-time code for a phone to pair once."""
+        u = self._known_user(user_id)
+        code = "-".join(secrets.token_hex(2) for _ in range(3))
+        now = self._now()
+        self._guard(lambda: self.db.w("INSERT INTO pairing VALUES (?,?,?)", (_sha(code), u, now + PAIRING_TTL_MS)))
+        self._guard(lambda: self._event("pairing_code", u, None, "operator"))
+        return {"code": code, "expires_ms": now + PAIRING_TTL_MS}
+
+    def begin_registration(self, token: str, key_pub: bytes, label: str = "") -> dict[str, Any]:
+        """Browser channel, inside a session."""
+        u = self.session_user(token)
+        return self._begin(u, "browser", key_pub, _sha(token), label)
+
+    def begin_phone_registration(
+        self, user_id: str, pairing_code: str, key_pub: bytes, label: str = ""
+    ) -> dict[str, Any]:
+        u = self._user(user_id)
+        if type(pairing_code) is not str or len(pairing_code) > 64:
+            raise ChannelError("bad_pairing_code")
+        if self._guard(lambda: self._limited("pair", u)):
+            raise ChannelError("rate_limited")
+        if not self._pairing_valid(u, _sha(pairing_code)):
+            self._guard(lambda: self._fail("pair", u))
+            raise ChannelError("bad_pairing_code")
+        return self._begin(u, "phone", key_pub, _sha(pairing_code), label)
+
+    def _pairing_valid(self, u: str, code_hash: str) -> bool:
+        rows = self._guard(lambda: self.db.q("SELECT user_id, expires_ms FROM pairing WHERE code_hash=?", (code_hash,)))
+        return bool(rows) and rows[0][0] == u and rows[0][1] > self._now()
+
+    def _begin(self, u: str, kind: str, key_pub: bytes, binding: str, label: str) -> dict[str, Any]:
+        if not S.valid_public_key(key_pub):
+            raise ChannelError("malformed", "key_pub is not a valid P-256 public key")
+        if type(label) is not str or len(label) > 60 or any(ord(c) < 32 or ord(c) == 127 for c in label):
+            raise ChannelError("malformed", "label")
+        self._known_user(u)
+        now = self._now()
+        nonce = b64u(os.urandom(32))
+        ch = registration_challenge(self.keys.hub_id, u, kind, b64u(key_pub), nonce, now + CHALLENGE_TTL_MS)
+
+        def go() -> None:
+            self.db.w("DELETE FROM challenges WHERE expires_ms <= ?", (now,))
+            self.db.w(
+                "INSERT INTO challenges VALUES (?,?,?,?,?,?,?)",
+                (nonce, u, kind, b64u(key_pub), binding, label, now + CHALLENGE_TTL_MS),
+            )
+
+        self._guard(go)
+        return {"challenge_id": nonce, "challenge": ch, "digest": b64u(registration_digest(ch))}
+
+    def complete_registration(self, challenge_id: str, proof: str) -> dict[str, Any]:
+        """Check the proof of possession and issue the certificate. The challenge is single use: any attempt, good
+        or bad, consumes it. Returns the signed ``hub.channel_cert``."""
+        if type(challenge_id) is not str or len(challenge_id) > 64:
+            raise ChannelError("challenge_invalid")
+        now = self._now()
+        with self._tx() as db:  # consumed and committed before any check, so a refused attempt cannot be retried
+            rows = db.execute(
+                "SELECT user_id, kind, key_pub, binding, label, expires_ms FROM challenges WHERE challenge_id=?",
+                (challenge_id,),
+            ).fetchall()
+            db.execute("DELETE FROM challenges WHERE challenge_id=?", (challenge_id,))
+        if not rows or rows[0][5] <= now:
+            raise ChannelError("challenge_invalid")
+        u, kind, key_b64, binding, label, exp = rows[0]
+        with self._tx() as db:
+            self._binding_alive(db, u, kind, binding, now)
+            try:
+                key_pub = unb64u(key_b64, 65)
+                sig = unb64u(proof, 64) if type(proof) is str else b""
+            except CanonError:
+                raise ChannelError("bad_proof") from None
+            digest = registration_digest(registration_challenge(self.keys.hub_id, u, kind, key_b64, challenge_id, exp))
+            if len(sig) != 64 or not S.verify(key_pub, sig, H.channel_proof_bytes(digest)):
+                raise ChannelError("bad_proof")
+            cid = H.channel_id(key_pub)
+            old = db.execute("SELECT revoked_ms FROM channels WHERE channel_id=?", (cid,)).fetchall()
+            if old:
+                raise ChannelError("channel_revoked" if old[0][0] is not None else "channel_exists")
+            (n,) = db.execute("SELECT COUNT(*) FROM channels WHERE user_id=? AND revoked_ms IS NULL", (u,)).fetchone()
+            if n >= self.max_channels:
+                raise ChannelError("too_many_channels")
+            try:
+                cert = self.keys.issue_channel(u, key_pub, KINDS[kind])
+            except KeysError as e:
+                raise ChannelError("issue_failed", e.code) from None
+            db.execute(
+                "INSERT INTO channels(channel_id, user_id, kind, label, factor, created_ms) VALUES (?,?,?,?,?,?)",
+                (cid, u, kind, label, KINDS[kind], now),
+            )
+            if kind == "phone":
+                db.execute("DELETE FROM pairing WHERE code_hash=?", (binding,))  # pair once
+            db.execute(
+                "INSERT INTO events(ts_ms, action, user_id, channel_id, actor) VALUES (?,?,?,?,?)",
+                (now, "register", u, cid, f"u_{u}" if kind == "browser" else "pairing"),
+            )
+        return cert
+
+    def _tx(self):
+        return self.db.tx()
+
+    def _binding_alive(self, db: Any, u: str, kind: str, binding: str, now: int) -> None:
+        if kind == "browser":
+            r = db.execute("SELECT expires_ms FROM sessions WHERE token_hash=? AND user_id=?", (binding, u)).fetchall()
+        else:
+            r = db.execute("SELECT expires_ms FROM pairing WHERE code_hash=? AND user_id=?", (binding, u)).fetchall()
+        if not r or r[0][0] <= now:
+            raise ChannelError("no_session" if kind == "browser" else "bad_pairing_code")
+        try:
+            if not self.acc.has_user(u):
+                raise ChannelError("unknown_user")
+        except AccessError:
+            raise ChannelError("unknown_user") from None
+
+    # --- list / revoke ---------------------------------------------------------------------------------------------
+
+    def channels(self, user_id: str | None = None) -> list[dict[str, Any]]:
+        sql = "SELECT channel_id, user_id, kind, label, factor, created_ms, revoked_ms, revoked_by FROM channels"
+        rows = self._guard(
+            lambda: self.db.q(
+                sql + (" WHERE user_id=?" if user_id else "") + " ORDER BY created_ms, channel_id",
+                (self._user(user_id),) if user_id else (),
+            )
+        )
+        out = []
+        for cid, u, kind, label, factor, created, revoked, by in rows:
+            cert = self._cert_of(u, cid)
+            expires = cert["o"]["expires_ms"] if cert else None
+            status = (
+                "revoked"
+                if revoked is not None
+                else ("expired" if expires is not None and expires <= self._now() else "active")
+            )
+            out.append(
+                {
+                    "channel_id": cid,
+                    "user_id": u,
+                    "kind": kind,
+                    "label": label,
+                    "factor": factor,
+                    "created_ms": created,
+                    "expires_ms": expires,
+                    "status": status,
+                    "revoked_by": by,
+                }
+            )
+        return out
+
+    def channels_for_session(self, token: str) -> list[dict[str, Any]]:
+        return self.channels(self.session_user(token))
+
+    def _cert_of(self, user_id: str, channel_id: str) -> dict[str, Any] | None:
+        try:
+            for c in self.keys.channel_certs(user_id):
+                if c["o"]["channel_id"] == channel_id:
+                    return c
+        except KeysError, OSError, KeyError, TypeError:
+            return None
+        return None
+
+    def revoke(self, channel_id: str, *, actor: str | None = None) -> None:
+        """``actor`` None = the operator at the hub's terminal (the CLI, tied to the state dir owner). Otherwise a user
+        id the caller has already authenticated: the owner of the channel or a hub-admin may revoke. Anyone else gets
+        ``forbidden`` (the same code for a channel that does not exist, so ids cannot be probed)."""
+        cid = self._user(channel_id)
+        if actor is not None:
+            self._known_user(actor)
+        rows = self._guard(lambda: self.db.q("SELECT user_id, revoked_ms FROM channels WHERE channel_id=?", (cid,)))
+        try:
+            allowed = actor is None or (bool(rows) and (rows[0][0] == actor or self.acc.is_hub_admin(actor)))
+        except AccessError as e:
+            raise ChannelError("store_error", e.code) from None
+        if not allowed:
+            raise ChannelError("forbidden")
+        now = self._now()
+        try:
+            self.acc.revoke_channel(cid)  # first: the snapshot source and active_channel's check; the operator may
+            # revoke an id this hub never registered (a key known to be compromised)
+        except AccessError as e:
+            raise ChannelError("store_error", e.code) from None
+        if rows and rows[0][1] is None:
+            self._guard(
+                lambda: self.db.w(
+                    "UPDATE channels SET revoked_ms=?, revoked_by=? WHERE channel_id=?",
+                    (now, f"u_{actor}" if actor else "operator", cid),
+                )
+            )
+            self._guard(lambda: self._event("revoke", rows[0][0], cid, f"u_{actor}" if actor else "operator"))
+
+    def revoke_as(self, token: str, channel_id: str) -> None:
+        self.revoke(channel_id, actor=self.session_user(token))
+
+    def unrevoke(self, channel_id: str) -> None:
+        """Operator only (CLI): lift a revocation again."""
+        cid = self._user(channel_id)
+        rows = self._guard(lambda: self.db.q("SELECT user_id FROM channels WHERE channel_id=?", (cid,)))
+        try:
+            self.acc.unrevoke_channel(cid)
+        except AccessError as e:
+            raise ChannelError("store_error", e.code) from None
+        self._guard(
+            lambda: self.db.w("UPDATE channels SET revoked_ms=NULL, revoked_by=NULL WHERE channel_id=?", (cid,))
+        )
+        self._guard(lambda: self._event("unrevoke", rows[0][0], cid, "operator"))
+
+    # --- the read interface of the custodial engine (D6) -----------------------------------------------------------
+
+    def active_channel(self, user_id: str, channel_id: str) -> dict[str, Any] | None:
+        """The signed ``hub.channel_cert`` of this user's channel if it is registered here, not revoked, not expired,
+        issued under the newest op cert and names this user and key; otherwise ``None``. Reads the revocation list on
+        every call, so a revocation takes effect at once. Any error is ``None`` (fail closed)."""
+        try:
+            if type(user_id) is not str or type(channel_id) is not str:
+                return None
+            if not (_HEX32.fullmatch(user_id) and _HEX32.fullmatch(channel_id)):
+                return None
+            if not self.acc.has_user(user_id) or channel_id in self.acc.revoked_channels():
+                return None
+            reg = self.db.q("SELECT revoked_ms FROM channels WHERE channel_id=? AND user_id=?", (channel_id, user_id))
+            if not reg or reg[0][0] is not None:
+                return None
+            cert = self._cert_of(user_id, channel_id)
+            if cert is None:
+                return None
+            now = self.keys._now()
+            held = H.verify_card(self.keys.card(), now_ms=now, dev_mode=True, pinned_root=self.keys.hk_root_pub)
+            o = H.verify_channel_cert(
+                cert, held, now_ms=now, dev_mode=True, revoked_op_certs=self.keys.revoked_op_certs()
+            )
+            if o["user_id"] != user_id or o["channel_id"] != channel_id:
+                return None
+            return cert
+        except Exception:  # noqa: BLE001 - fail closed on anything (Refused, KeysError, StoreError, AccessError, OSError)
+            return None

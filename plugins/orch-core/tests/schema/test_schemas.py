@@ -1613,6 +1613,9 @@ def test_event_types_match_doc_tables():
 
 # Names in the doc that look like event types but are not: error codes, ticket.json paths, config paths.
 DOC_NON_EVENTS = {
+    # §15 (C3b): signed hub objects pinned by hub.pinned, and the model refusal codes
+    "hub.card", "hub.op_revoked", "hub.snapshot", "hub.cert_invalid", "hub.unknown_snapshot", "hub.foreign_user",
+    "hub.denied", "hub.invalid", "hub.channel_cert", "hub.uk_cert",
     "status.transition",
     "artifact.search",
     "ticket.discard",
@@ -1674,6 +1677,8 @@ def test_payload_fields_match_the_doc(t):
     s = schema.load("event." + t)
     env = set(cov.ENVELOPE_FIELDS)
     props = {k for k in s["properties"] if k not in env}
+    if "channel_proof" in props:  # custodial type (C3b, section 15.1): the hub fields are not payload
+        props -= cov.HUB_FIELDS
     required = set(s["required"]) - env
     if t in cov.IRREGULAR_PAYLOAD_CELLS:
         doc_required, doc_optional = cov.ARTIFACT_FIELDS[t]

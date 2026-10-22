@@ -59,6 +59,7 @@ WORKSPACE_ONLY = {
     "addon.purged",
     "hub.joined",
     "hub.left",
+    "hub.pinned",
 }
 
 
@@ -491,6 +492,17 @@ _SPEC = {
         5,
     ),
     "hub.left": (PERSON, {"hub_id": "38d8abed52ccfb538da401fd54e64bdc", "binding_seq": 1}, 5),
+    "hub.pinned": (
+        HOST,
+        {
+            "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+            "object": {
+                "o": {"kind": "hub.op_revoked", "cert_id": "dd963f7365b19dba347a4ba580cc7c2b", "hv": 0},
+                "sig": SIG,
+            },
+        },
+        5,
+    ),
 }
 
 EVENTS = {t: _env(t, a, s, **p) for t, (a, p, s) in _SPEC.items()}

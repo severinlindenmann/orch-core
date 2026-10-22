@@ -89,6 +89,7 @@ _WORKSPACE_ONLY = frozenset(
         "addon.purged",
         "hub.joined",
         "hub.left",
+        "hub.pinned",
     }
 )
 _BOTH_LOGS = frozenset({"policy.changed", "projection.repaired", "restore", "invalid.acknowledged"})

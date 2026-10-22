@@ -17,6 +17,8 @@ import urllib.parse
 from pathlib import Path
 from typing import TextIO
 
+from .access import Access, AccessSnapshots
+from .access.cli import ACCESS_FILE
 from .contract.hub import Refused
 from .keys import HubKeys
 from .link import LinkServer, Registry
@@ -72,10 +74,18 @@ def serve(
     reg_path = state / REGISTRY_FILE
     registry = Registry(str(reg_path))
     os.chmod(reg_path, 0o600)
+    access = Access(str(state / ACCESS_FILE))
     fw = HubPublish(keys, HttpPublishSync(publish_url), PublishConfig(publish_url, api_host))
     stop = stop or threading.Event()
     server = LinkServer.from_keys(
-        keys, registry=registry, invites=FixedInvites(invites), publish=fw, downstream=fw, host=host, port=port
+        keys,
+        snapshots=AccessSnapshots(access, keys),
+        registry=registry,
+        invites=FixedInvites(invites),
+        publish=fw,
+        downstream=fw,
+        host=host,
+        port=port,
     )
     try:
         fw.restore(registry.binding_objects())
@@ -93,4 +103,5 @@ def serve(
     finally:
         server.close()
         registry.close()
+        access.close()
     return 0

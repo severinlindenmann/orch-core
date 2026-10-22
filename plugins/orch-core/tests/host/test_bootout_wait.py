@@ -159,15 +159,26 @@ def _same(text, limit=None):
     return text if limit is None else text[:limit]
 
 
-def test_setup_runner_reason_never_shows_a_secret():
+def _creator(code: str) -> Creator:
     c = Creator.__new__(Creator)
     c.secrets, c._passphrase = Secrets(show_passphrase=True), None
     c.secrets.confirmed = True
-    code = c.secrets.code()
-    text = _runner_failure(OSError("bootstrap failed " + code), c._safe)
-    assert code not in text and HIDDEN_REASON in text and "orch runner enable" in text
-    split = "\n".join(code.split())
-    assert all(w not in _runner_failure(OSError(split), c._safe) for w in code.split() if len(w) > 4)
+    c.secrets._code = bytearray(code.encode("ascii"))  # fixed, not random: the test must not depend on the draw
+    return c
+
+
+@pytest.mark.parametrize(
+    "code",
+    ["orchid vessel marble zenith quartz harbor", "enable runner vessel marble zenith quartz"],  # 2nd: wording words
+)
+def test_setup_runner_reason_never_shows_a_secret(code):
+    c = _creator(code)
+    words = code.split()
+    for shown in (code, "\n".join(words), "\t".join(words).upper(), f"bootstrap failed ({words[2]}) x"):
+        text = _runner_failure(OSError(shown), c._safe)
+        assert HIDDEN_REASON in text and "orch runner enable" in text, text
+        assert not any(w in text for w in words if w not in ("enable", "runner")), text  # those two are our wording
+    assert "vessel" not in _runner_failure(OSError("a\nves\nsel"), c._safe).replace("\n", "")  # split inside a word
 
 
 def test_setup_shows_why_the_runner_failed_and_the_next_command():

@@ -25,6 +25,7 @@ from .channels.service import CHANNELS_FILE
 from .config import HubConfig
 from .contract.hub import Refused
 from .custodial import CustodialEngine
+from .custodial.deliver import build_delivery
 from .keys import HubKeys
 from .link import LinkServer, Registry
 from .link.wkseal import WkSeals
@@ -163,6 +164,7 @@ def serve(
     if client is not None:
         notifier = PushNotifier(client, channels)
         channels.on_revoke = notifier.channel_revoked_async  # D10: a revoked channel's push target and mailbox go
+    deliveries = build_delivery(str(state), sender=router.send_event)  # §8.7: persisted, acked, resent
     engine = CustodialEngine(
         keys=keys,
         snapshots=AccessSnapshots(access, keys),
@@ -171,7 +173,8 @@ def serve(
         channels=channels,
         sessions=SessionBridge(channels),
         audit=audit,
-        deliver=router.send_event,
+        deliver=deliveries,
+        shares=shares,  # selective mode builds from one shared item (§8.6)
         mode_of=registry.mode,
         dev_mode=cfg.dev,
         notify=notifier.notify_async if notifier else None,
@@ -213,6 +216,7 @@ def serve(
         wk_seals=wk_seals,
         views=views.service,
         shares=shares,
+        deliveries=deliveries,
         host=host,
         port=port,
         dev_mode=cfg.dev,
@@ -231,6 +235,7 @@ def serve(
                 reconcile_full_only(registry, wk_seals, views.store)
 
         threading.Thread(target=_retry, name="state-retry", daemon=True).start()
+        deliveries.start()
         server.start()
         if web is not None:
             web.start()
@@ -250,6 +255,7 @@ def serve(
         if web is not None:
             web.close()
         server.close()
+        deliveries.close()
         channels.close()
         views.close()
         queue.close()

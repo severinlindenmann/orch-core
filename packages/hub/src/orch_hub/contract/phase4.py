@@ -651,7 +651,7 @@ def open_share_item(
 ) -> dict[str, Any]:
     """The hub's check of a selective ``share_put`` (§10.2b), in order. ``held`` is ``{item_version, hash, revoked}``
     of what it holds under this ``item_id`` (a revoked item stays as a tombstone; None if never seen); ``live_items``
-    the workspace's live item count. Returns ``{"item": o, "hash": item_hash, "new": bool}``; a higher
+    the workspace's live item count. Returns ``{"item": o, "signed": the signed item, "hash": item_hash, "new": bool}``; a higher
     ``item_version`` replaces the held item (or re-shares a revoked id)."""
     from cryptography.hazmat.primitives.asymmetric import ec
 
@@ -707,10 +707,10 @@ def open_share_item(
         if version == held["item_version"]:
             if h != held["hash"] or held.get("revoked"):
                 raise Refused("stale_version")
-            return {"item": o, "hash": h, "new": False}
+            return {"item": o, "signed": signed, "hash": h, "new": False}
     if (held is None or held.get("revoked")) and live_items >= SHARE_MAX_ITEMS:
         raise Refused("too_many_items")
-    return {"item": o, "hash": h, "new": True}
+    return {"item": o, "signed": signed, "hash": h, "new": True}
 
 
 def check_share_revoke(body: Any) -> None:

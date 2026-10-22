@@ -60,6 +60,7 @@ RESERVED = frozenset(
         "sig",
         "host_sig",
         "actor",
+        "item_hash",  # selective mode only, and only from the shared item (§8.6)
         *H.CUSTODIAL_FIELDS,
     }
 )
@@ -147,7 +148,10 @@ class CustodialEngine:
         ttl_ms: int = TTL_MS,
         dev_mode: bool,
         notify: Callable[[str, str, str | None], None] | None = None,
+        shares: Any = None,
     ) -> None:
+        #: selective mode's item source: ``shared_item(user_id, workspace_id, item_id)`` (:class:`ShareService`)
+        self._shares = shares
         #: ``notify(user_id, "prepare", prepared_id)`` after a prepare is stored (push to the user's phones, D10)
         self._notify = notify
         self._keys, self._snaps, self._seals, self._view = keys, snapshots, seals, view
@@ -165,8 +169,11 @@ class CustodialEngine:
     ) -> tuple[str, dict[str, Any], dict[str, Any]]:
         """Builds E (without ``channel_proof``) from the hub's own state. Returns ``(log, E, snapshot_object)``.
         Every refusal is a :class:`Refused`; nothing unreadable is skipped."""
-        if self._mode_of(workspace_id) != "full":  # selective: the hub holds no WK_e, so it builds nothing (D80)
+        mode = self._mode_of(workspace_id)
+        if mode not in ("full", "selective"):
             raise Refused("wrong_mode")
+        if mode == "selective" and self._shares is None:
+            raise Refused("wrong_mode")  # no item source wired: a selective hub builds nothing (D80)
         try:
             card = self._keys.card()
             held = self._keys.verify_card(card)
@@ -194,9 +201,47 @@ class CustodialEngine:
         )
         if channel_id in snap["revoked_channels"]:
             raise Refused("channel_revoked")
-        role = snap["roles"].get(user_id)
-        if role not in H.ROLES:
-            raise Refused("forbidden_role")
+        if mode == "selective":
+            log, core = self._core_selective(workspace_id, user_id, action)
+            role = "edit"  # the decisions' floor; no hub role exists here and the host checks the real member role
+        else:
+            role = snap["roles"].get(user_id)
+            if role not in H.ROLES:
+                raise Refused("forbidden_role")
+            log, core = self._core_full(workspace_id, user_id, event_id, action, role)
+        typ = core["type"]
+        if type(typ) is not str or not EVENT_TYPE.fullmatch(typ):
+            raise Refused("malformed")
+        # the builder may not turn the action into another type or log, and a decision carries the hash the person
+        # reviewed (contract check_built, always runs: missing hash = malformed, another = event_changed)
+        P4.check_built(self._plain_action(action), log, core)
+        if action["type"] == "ticket.created" and not _ULID_LOG.fullmatch(log):
+            raise Refused("malformed")  # ticket.created: the hub makes the new ticket's uid
+        H.check_custodial_role(typ, log, role)
+        event = {
+            **core,
+            "v": 2,
+            "id": event_id,
+            "actor": {"kind": "person", "id": "u_" + user_id, "via": channel_id},
+            "auth": "hub",
+            "channel": channel_id,
+            "channel_factor": ch["factor"],
+            "hub_id": self._keys.hub_id,
+            "snapshot_version": snap["version"],
+            "channel_cert": ch_cert,
+            "uk_cert": uk_cert,
+        }
+        return log, event, snap
+
+    @staticmethod
+    def _plain_action(action: Mapping[str, Any]) -> dict[str, Any]:
+        """The action without ``item`` (§8.6): what ``check_built`` compares the built event with."""
+        return {k: v for k, v in action.items() if k != "item"}
+
+    def _core_full(
+        self, workspace_id: str, user_id: str, event_id: str, action: Mapping[str, Any], role: str
+    ) -> tuple[str, dict[str, Any]]:
+        """Full mode: the event core from the hub's ``WK_e`` view (§8.4)."""
         # §8.5: exact action schema, `(type, log)` in the closed custodial table, role reaches its floor. The only place
         # that decides what a channel may start; the engine has no role table of its own. Raises not_custodial /
         # forbidden_role / malformed in the contract's order.
@@ -216,29 +261,24 @@ class CustodialEngine:
             or any(k not in core for k in REQUIRED_CORE)
         ):
             raise Refused("malformed")
-        typ = core["type"]
-        if type(typ) is not str or not EVENT_TYPE.fullmatch(typ):
+        return built.log, core
+
+    def _core_selective(self, workspace_id: str, user_id: str, action: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
+        """Selective mode (§8.6): the event core from ONE shared item. Only the owner alias reads items (``not_granted``
+        otherwise); the contract's ``build_selective`` derives every value (nothing in this engine does)."""
+        item_id = action.get("item") if type(action) is dict else None
+        if type(item_id) is not str or len(item_id) != 32 or item_id != item_id.lower() or not _is_hex(item_id):
             raise Refused("malformed")
-        # the view may not turn the action into another type or log, and a decision carries the hash the person
-        # reviewed (contract check_built, always runs: missing hash = malformed, another = event_changed)
-        P4.check_built(action, built.log, core)
-        if action["type"] == "ticket.created" and not _ULID_LOG.fullmatch(built.log):
-            raise Refused("malformed")  # ticket.created: the hub makes the new ticket's uid
-        H.check_custodial_role(typ, built.log, role)
-        event = {
-            **core,
-            "v": 2,
-            "id": event_id,
-            "actor": {"kind": "person", "id": "u_" + user_id, "via": channel_id},
-            "auth": "hub",
-            "channel": channel_id,
-            "channel_factor": ch["factor"],
-            "hub_id": self._keys.hub_id,
-            "snapshot_version": snap["version"],
-            "channel_cert": ch_cert,
-            "uk_cert": uk_cert,
-        }
-        return built.log, event, snap
+        try:
+            got = self._shares.shared_item(user_id, workspace_id, item_id)
+        except Refused:
+            raise
+        except Exception:  # noqa: BLE001 (an unreadable item store is not a view: fail closed, detail stays out)
+            raise Refused("unavailable") from None
+        log, core = P4.build_selective(dict(action), got["signed"])
+        if core["item_hash"] != got["hash"]:
+            raise Refused("event_changed")  # the held hash and the signed item disagree: never build on it
+        return log, core
 
     def _digest(self, workspace_id: str, log: str, event: Mapping[str, Any]) -> bytes:
         try:
@@ -326,7 +366,7 @@ class CustodialEngine:
             raise Refused("other_user") from None
         signed = {**e_signed, "sig": b64u(sig)}
         # 4. our own output through the host's checks, before anything leaves the hub
-        self._self_check(signed, ws, log, now)
+        self._self_check(signed, ws, log, now, p.action.get("item"))
         # 5. audit first (fail closed: no record, no delivery), then deliver
         try:
             self._audit.custodial(
@@ -339,32 +379,71 @@ class CustodialEngine:
             )
         except Exception:  # noqa: BLE001 (any audit failure refuses; detail stays out of the error)
             raise Refused("unavailable") from None
-        self._deliver(ws, log, signed)
+        try:
+            self._deliver(ws, log, signed)
+        except Exception:  # noqa: BLE001 (not queued = not sent: the person can sign again; detail stays out)
+            _log.exception("could not hand the signed event over for delivery")
+            raise Refused("unavailable") from None
         return signed
 
-    def _self_check(self, signed: dict[str, Any], ws: str, log: str, now: int) -> None:
+    def _self_check(self, signed: dict[str, Any], ws: str, log: str, now: int, item_id: Any = None) -> None:
+        selective = "item_hash" in signed  # the one marker of selective mode in an event (§8.1)
         try:
             held = self._keys.verify_card(self._keys.card())
             snap = H.verify_snapshot(
-                self._snaps.snapshot(ws, "full"),
+                self._snaps.snapshot(ws, "selective" if selective else "full"),
                 held,
                 workspace_id=ws,
                 dev_mode=self._dev,
                 pinned=None,
                 revoked_op_certs=self._keys.revoked_op_certs(),
             )
-            H.verify_custodial(
-                signed,
-                workspace_id=ws,
-                log=log,
-                held=held,
-                snapshot=snap,
-                now_ms=now,
-                dev_mode=self._dev,
-                revoked_op_certs=self._keys.revoked_op_certs(),
-            )
+            extra = self._selective_admission(signed, ws, log, item_id) if selective else {}
+            self._verify_signed(signed, ws, log, held, snap, now, **extra)
         except KeysError, Refused:
             raise Refused("unavailable") from None
+
+    def _selective_admission(self, signed: Mapping[str, Any], ws: str, log: str, item_id: Any) -> dict[str, Any]:
+        """What the host will hold when it admits ``signed`` (core §15.7), as far as the hub can see it: the owner alias
+        is the granted user and an owner, the live item is the one the hub shows. The chain head of the item stands in
+        for the host's log (the hub cannot read it): this proves the event's own consistency with the item (every value
+        of §8.3 step 7), not the host's log, which only the host can check."""
+        user = signed["actor"]["id"][2:]
+        got = self._shares.shared_item(user, ws, item_id)
+        o = got["item"]
+        chain = o["chain"]
+        heads = [chain["head"]] * chain["seq"]
+        return {
+            "mode": "selective",
+            "granted_users": frozenset({user}),
+            "member_roles": {user: "owner"},
+            "live_items": {got["hash"]: {"chain": chain, "f1": o["f1"]}},
+            "log_heads": {log: heads},
+        }
+
+    def _verify_signed(
+        self,
+        signed: Mapping[str, Any],
+        ws: str,
+        log: str,
+        held: Mapping[str, Any],
+        snap: Mapping[str, Any],
+        now: int,
+        **admission: Any,
+    ) -> dict[str, Any]:
+        """The host's checks of a finished event (``verify_custodial``) with this engine's dev mode and op-cert
+        revocations. Selective mode passes ``mode``, ``granted_users``, ``live_items``, ... (the vectors do the same)."""
+        return H.verify_custodial(
+            signed,
+            workspace_id=ws,
+            log=log,
+            held=held,
+            snapshot=snap,
+            now_ms=now,
+            dev_mode=self._dev,
+            revoked_op_certs=self._keys.revoked_op_certs(),
+            **admission,
+        )
 
 
 def _is_hex(x: str) -> bool:

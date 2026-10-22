@@ -79,7 +79,8 @@ class Sessions:
 
 
 class Env:
-    def __init__(self, tmp_path, *, role: str | None = "edit", mode: str = "full") -> None:
+    def __init__(self, tmp_path, *, role: str | None = "edit", mode: str = "full", ws: str = WS, shares=None) -> None:
+        self.ws = ws
         self.keys = HubKeys.init(tmp_path / "hub")
         self.access = Access()
         self.snaps = AccessSnapshots(self.access, self.keys)
@@ -88,13 +89,13 @@ class Env:
         self.access.add_group("team")
         self.access.add_member("team", self.user)
         if role:
-            self.access.grant(WS, "team", role)
+            self.access.grant(ws, "team", role)
         d = tmp_path / "seal"
         d.mkdir(mode=0o700)
         self.seals = WkSeals(
             str(d / "wk-seal.db"), hub_id=self.keys.hub_id, hxk_pub=self.keys.hxk_pub, exchange=self.keys.hxk_exchange
         )
-        self.seals.accept(WS, 1, core_seal(WK, self.keys.hub_id, WS, 1, self.keys.hxk_pub))
+        self.seals.accept(ws, 1, core_seal(WK, self.keys.hub_id, ws, 1, self.keys.hxk_pub))
         self.audit = AuditLog(
             AuditStore(),
             self.keys.op_signer,
@@ -121,6 +122,7 @@ class Env:
             mode_of=lambda ws: self.mode,
             now_ms=lambda: self.clock[0],
             dev_mode=True,
+            shares=shares,
         )
 
     def new_channel(self, priv, factor: str = "se-unlocked", user: str | None = None) -> str:
@@ -137,7 +139,7 @@ class Env:
         return b64u(_S(priv or self.ch_priv).proof(digest))
 
     def prepare(self, action=None):
-        return self.engine.prepare("sess", WS, self.user, self.channel, action or dict(ACTION))
+        return self.engine.prepare("sess", self.ws, self.user, self.channel, action or dict(ACTION))
 
     def close(self) -> None:
         self.seals.close()

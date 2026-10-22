@@ -58,6 +58,11 @@ class HubState:
     outbox: dict[str, dict[str, Any]] = field(default_factory=dict)
     addr: str | None = None  # host:port the host dials (not signed: the TLS pin of the card is the trust)
     tls_spki: str | None = None  # b64u SPKI hash from the verified hub card: the pin of that dial
+    card: dict[str, Any] | None = (
+        None  # the signed hub card (with its op cert) verified at join; snapshots verify under it
+    )
+    revoked_op_certs: list[str] = field(default_factory=list)  # cert_ids of root-signed hub.op_revoked, never removed
+    snapshot: dict[str, Any] | None = None  # the pinned signed hub.snapshot (section 7); its version only grows
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -72,13 +77,19 @@ class HubState:
             "outbox": self.outbox,
             "addr": self.addr,
             "tls_spki": self.tls_spki,
+            "card": self.card,
+            "revoked_op_certs": sorted(self.revoked_op_certs),
+            "snapshot": self.snapshot,
         }
 
     @classmethod
     def from_json(cls, d: Any) -> HubState:
         """Strict: anything unreadable is ``malformed`` (fail closed)."""
         keys = {"hub_id", "hk_root_pub", "hk_op_pub", "mode", "binding_seq", "status", "binding", "aliases"}
-        if type(d) is not dict or set(d) - {"outbox", "addr", "tls_spki"} != keys:
+        if (
+            type(d) is not dict
+            or set(d) - {"outbox", "addr", "tls_spki", "card", "revoked_op_certs", "snapshot"} != keys
+        ):
             raise HubRefused("malformed")
         ok = (
             wire.hex16(d["hub_id"])
@@ -94,6 +105,10 @@ class HubState:
             and _outbox_ok(d.get("outbox", {}))
             and (d.get("addr") is None or (type(d["addr"]) is str and len(d["addr"]) <= 300))
             and (d.get("tls_spki") is None or type(d["tls_spki"]) is str)
+            and (d.get("card") is None or type(d["card"]) is dict)
+            and type(d.get("revoked_op_certs", [])) is list
+            and all(wire.hex16(c) for c in d.get("revoked_op_certs", []))
+            and (d.get("snapshot") is None or (type(d["snapshot"]) is dict and type(d["snapshot"].get("o")) is dict))
             and d["hub_id"] == wire.hub_id(unb64u(d["hk_root_pub"], 65))
         )
         if not ok:
@@ -110,6 +125,9 @@ class HubState:
             outbox=dict(d.get("outbox", {})),
             addr=d.get("addr"),
             tls_spki=d.get("tls_spki"),
+            card=d.get("card"),
+            revoked_op_certs=list(d.get("revoked_op_certs", [])),
+            snapshot=d.get("snapshot"),
         )
 
 
@@ -160,7 +178,10 @@ def join_selective(
         state.status = "unbound"
         save(state)
     pinned = None if state is None or state.status == "unbound" else unb64u(state.hk_root_pub, 65)
-    verified = wire.verify_card(hub_card, now_ms=now_ms(), dev_mode=dev_mode, pinned_root=pinned)
+    revoked = frozenset() if state is None else frozenset(state.revoked_op_certs)  # random ids: never collide
+    verified = wire.verify_card(
+        hub_card, now_ms=now_ms(), dev_mode=dev_mode, pinned_root=pinned, revoked_op_certs=revoked
+    )
     root, hk_op = verified["hk_root_pub"], verified["hk_op_pub"]
     if state is not None and state.outbox:
         # every owed unbound gets ONE try over its own hub's transport, then the new join goes on regardless
@@ -176,6 +197,7 @@ def join_selective(
         binding, payload = state.binding, {}
         new = state
         new.addr = addr or new.addr  # a retry may name the address the first try did not have
+        new.card = hub_card
     else:
         prior = {} if state is None else state.aliases
         seq = binding_seq or (1 if state is None else state.binding_seq + 1)  # strictly increasing (9.2)
@@ -208,6 +230,8 @@ def join_selective(
             addr=addr,
             tls_spki=verified["card"]["tls_spki_sha256"],
             outbox={} if state is None else state.outbox,
+            card=hub_card,
+            revoked_op_certs=[] if state is None else list(state.revoked_op_certs),  # only ever grows
         )
         record_joined(payload)  # the owner's signature first: nothing leaves the host before it
         save(new)

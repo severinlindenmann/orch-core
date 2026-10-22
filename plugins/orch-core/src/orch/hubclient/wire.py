@@ -23,6 +23,8 @@ _CanonError = (JcsError, EncodingError)
 
 SIG_OP_CERT = b"orch/v2/hub-op-cert|"
 SIG_CARD = b"orch/v2/hub-card|"
+SIG_OP_REVOKED = b"orch/v2/hub-op-revoked|"
+SIG_SNAPSHOT = b"orch/v2/hub-snapshot|"
 SIG_BINDING = b"orch/v2/sig/hub-binding|"
 SIG_UNBOUND = b"orch/v2/sig/hub-unbound|"
 SIG_LINK = b"orch/v2/sig/hub-link|"
@@ -94,6 +96,23 @@ _FIELDS: dict[str, dict[str, Callable[[Any], bool]]] = {
         "expires_ms": _int_min(1),
         "dev": lambda x: type(x) is bool,
     },
+    "hub.op_revoked": {
+        "hub_id": hex16,
+        "cert_id": hex16,
+        "revoked_ms": _int_min(0),
+        "dev": lambda x: type(x) is bool,
+    },
+    "hub.snapshot": {
+        "hub_id": hex16,
+        "op_cert_id": hex16,
+        "workspace_id": hex16,
+        "generation": lambda x: type(x) is int and x == 0,
+        "version": _int_min(1),
+        "issued_ms": _int_min(0),
+        "roles": lambda x: type(x) is dict,
+        "revoked_channels": lambda x: type(x) is list,
+        "dev": lambda x: type(x) is bool,
+    },
     "hub.card": {
         "hub_id": hex16,
         "hk_root_pub": is_pub,
@@ -162,9 +181,20 @@ def check_dev(o_dev: bool, dev_mode: bool) -> None:
 # --- the hub card -------------------------------------------------------------------------------------------------
 
 
-def verify_card(card: Any, *, now_ms: int, dev_mode: bool, pinned_root: bytes | None = None) -> dict[str, Any]:
+def verify_card(
+    card: Any,
+    *,
+    now_ms: int,
+    dev_mode: bool,
+    pinned_root: bytes | None = None,
+    revoked_op_certs: frozenset[str] = frozenset(),
+    held: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     """Section 5 steps 1-6 (the card a host takes from the invite's hub). Returns ``{"card", "op_cert", "hk_op_pub",
-    "hk_root_pub"}``. ``pinned_root`` is the pin the host already holds, if any (``other_hub``)."""
+    "hk_root_pub", "signed"}``. ``pinned_root`` is the pin the host already holds, if any (``other_hub``).
+    ``revoked_op_certs`` is the host's revoked set (``revoked``). ``held`` is the result of an earlier call (the card
+    the host holds): the root-signed ``op_seq`` orders op certs first, ``card_seq`` only within one op cert (L2-1;
+    ``stale_op_cert``, ``stale_card``)."""
     o = _envelope(card, "hub.card", ("op_cert",))
     if not is_pub(o.get("hk_root_pub")):
         raise HubRefused("malformed")
@@ -183,13 +213,36 @@ def verify_card(card: Any, *, now_ms: int, dev_mode: bool, pinned_root: bytes | 
         raise HubRefused("cert_invalid")
     if now_ms >= op["expires_ms"]:
         raise HubRefused("cert_expired")
+    if op["cert_id"] in revoked_op_certs:
+        raise HubRefused("revoked")
     hk_op = unb64u(op["hk_op_pub"], 65)
     _signature(card, SIG_CARD, hk_op)
     _fields(o, "hub.card")
     check_dev(o["dev"], dev_mode)
     if o["issued_ms"] > now_ms + CLOCK_SKEW_MS:
         raise HubRefused("cert_invalid")
-    return {"card": o, "op_cert": op, "hk_op_pub": hk_op, "hk_root_pub": root}
+    if held is not None:
+        if root != held["hk_root_pub"]:
+            raise HubRefused("other_hub")
+        hop = held["op_cert"]
+        if op["op_seq"] < hop["op_seq"] or (op["op_seq"] == hop["op_seq"] and op["cert_id"] != hop["cert_id"]):
+            raise HubRefused("stale_op_cert")
+        if op["op_seq"] == hop["op_seq"]:
+            if o["card_seq"] < held["card"]["card_seq"]:
+                raise HubRefused("stale_card")
+            if o["card_seq"] == held["card"]["card_seq"] and cj(card) != cj(held["signed"]):
+                raise HubRefused("stale_card")
+    return {"card": o, "op_cert": op, "hk_op_pub": hk_op, "hk_root_pub": root, "signed": card}
+
+
+def verify_op_revoked(signed: Any, hk_root_pub: bytes) -> dict[str, Any]:
+    """Section 4.2. No dev-marker check (L2-8): a revocation only removes authority, so refusing one would fail open."""
+    o = _envelope(signed, "hub.op_revoked")
+    _signature(signed, SIG_OP_REVOKED, hk_root_pub)
+    _fields(o, "hub.op_revoked")
+    if o["hub_id"] != hub_id(hk_root_pub):
+        raise HubRefused("other_hub")
+    return o
 
 
 # --- binding and unbound (signed by WSK) --------------------------------------------------------------------------

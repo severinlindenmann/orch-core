@@ -120,7 +120,7 @@ def test_join_and_leave_over_the_real_tls_link(human, served, tls_hub):
     got = ok(served.client().req("hub.connect", args, idem=True))["data"]
     assert got["status"] == "bound" and got["hub_id"] == tls_hub.hub_id
     assert tls_hub.auth_verified.is_set() and "wsk_pub" in tls_hub.auth_frames[0]  # the first link of a join
-    assert [r["o"]["op"] for r in tls_hub.requests] == ["join"]
+    assert [r["o"]["op"] for r in tls_hub.requests] == ["join", "snapshot_get"]  # then the first snapshot
     body = tls_hub.requests[0]["o"]["body"]
     assert body["binding"]["o"]["mode"] == "selective" and body["card"]["o"]["workspace_id"] == served.wid
     status = ok(served.client().req("hub.status", {}, idem=False))["data"]
@@ -179,3 +179,55 @@ def test_a_bad_address_is_malformed(bad):
         parse_addr(bad)
     assert parse_addr("hub.dev.example:8443") == ("hub.dev.example", 8443)
     assert parse_addr("[::1]:9") == ("::1", 9)
+
+
+# --- C3: the group snapshot is fetched, pinned and readable on the host ---------------------------------------------
+
+
+def _service(served):
+    return next(iter(served.h.host.services.values()))
+
+
+def test_snapshot_is_fetched_on_connect_refreshed_on_demand_and_roles_are_readable(human, served, monkeypatch):
+    hub = fake_for(served)
+    monkeypatch.setattr(hubops, "TRANSPORT", lambda service, hub_id: hub)
+    card = copy.deepcopy(V["objects"]["card"])
+    human.run("hub.join", {"hub_card": card, "mode": "selective"})
+    got = ok(served.client().req("hub.connect", {"invite": "invite-1", "hub_card": card}, idem=True))["data"]
+    assert got["snapshot_version"] == 1
+    status = ok(served.client().req("hub.status", {}, idem=False))["data"]
+    assert status["snapshot"] == {"version": 1, "roles": {}}
+    admin, reader = "11" * 16, "22" * 16
+    hub.set_snapshot(served.wid, {admin: "admin", reader: "read"})
+    r = ok(served.client().req("hub.refresh", {}, idem=True))["data"]
+    assert r["changed"] is True and r["snapshot"]["version"] == 2
+    status = ok(served.client().req("hub.status", {}, idem=False))["data"]
+    assert status["snapshot"] == {"version": 2, "roles": {admin: "admin", reader: "read"}}
+    service = _service(served)
+    assert [hubops.hub_role(service, u) for u in (admin, reader, "33" * 16)] == ["admin", "read", None]
+    # a replay of the older snapshot is refused and the pin stays
+    hub.workspaces[served.wid].snapshot = hub._snapshot(served.wid, 1, {reader: "admin"}, [])  # noqa: SLF001
+    assert err(served.client().req("hub.refresh", {}, idem=True)) == "hub.refused"
+    assert ok(served.client().req("hub.status", {}, idem=False))["data"]["snapshot"]["version"] == 2
+    assert hubops.hub_role(service, reader) == "read"
+
+
+def test_refresh_before_a_connect_is_refused(human, served, monkeypatch):
+    hub = fake_for(served)
+    monkeypatch.setattr(hubops, "TRANSPORT", lambda service, hub_id: hub)
+    assert err(served.client().req("hub.refresh", {}, idem=True)) == "hub.not_joined"
+    assert ok(served.client().req("hub.status", {}, idem=False))["data"]["snapshot"] is None
+
+
+def test_a_snapshot_that_does_not_verify_does_not_undo_the_connect(human, served, monkeypatch):
+    hub = fake_for(served)
+    monkeypatch.setattr(hubops, "TRANSPORT", lambda service, hub_id: hub)
+    real = hub._op_snapshot_get  # noqa: SLF001
+    monkeypatch.setattr(hub, "_op_snapshot_get", lambda body, ws_id, ws: {"snapshot": {"o": {}, "sig": ""}})
+    card = copy.deepcopy(V["objects"]["card"])
+    human.run("hub.join", {"hub_card": card, "mode": "selective"})
+    got = ok(served.client().req("hub.connect", {"invite": "invite-1", "hub_card": card}, idem=True))["data"]
+    assert got["status"] == "bound" and got["snapshot_version"] is None
+    assert ok(served.client().req("hub.status", {}, idem=False))["data"]["snapshot"] is None
+    monkeypatch.setattr(hub, "_op_snapshot_get", real)
+    assert ok(served.client().req("hub.refresh", {}, idem=True))["data"]["snapshot"]["version"] == 1

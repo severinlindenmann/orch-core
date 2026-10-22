@@ -217,6 +217,19 @@ def _visibility(x: Any) -> bool:
     )
 
 
+def visible(visibility: Any, me: Any) -> bool:
+    """§10.7 "Visibility": core's ``can_see`` minus the membership test (the hub role / snapshot gates cover that).
+    ``workspace`` is visible to everyone; ``{restricted: [...]}`` only to a person on the list. Being the ticket owner
+    does not count, nor does any role. Anything else is invisible (fail closed). ``me`` = the canonical person ids
+    the hub user answers to."""
+    if visibility == "workspace":
+        return True
+    if type(visibility) is dict and type(visibility.get("restricted")) is list:
+        lst = visibility["restricted"]
+        return any(m in lst for m in me)  # list membership: an unhashable entry cannot raise
+    return False
+
+
 #: type -> (required fields, optional fields). ``type`` and ``log`` are always present (``ticket.created`` has no
 #: ``log``: the hub makes the new ticket's uid). Decisions carry the ``hash`` the person reviewed: the hub refuses with
 #: ``event_changed`` when its view no longer has that hash. Every other envelope or custodial field is the hub's.
@@ -949,4 +962,5 @@ __all__ = [
     "verify_space_proposal",
     "view_aad",
     "view_key",
+    "visible",
 ]

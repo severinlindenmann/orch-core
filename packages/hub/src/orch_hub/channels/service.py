@@ -24,6 +24,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import logging
 import os
 import re
 import secrets
@@ -40,6 +41,8 @@ from ..contract import suite as S
 from ..contract.canon import b64u, unb64u
 from ..keys import HubKeys, KeysError
 from .store import ChannelsDB, StoreError
+
+log = logging.getLogger(__name__)
 
 CHANNELS_FILE = "channels.db"
 SESSION_TTL_MS = 15 * 60_000
@@ -106,8 +109,11 @@ class Channels:
         now_ms: Callable[[], int] | None = None,
         max_channels: int = MAX_CHANNELS,
         audit: Any = None,
+        on_revoke: Callable[[str], None] | None = None,
     ) -> None:
         self.keys, self.acc = keys, access
+        #: called with the channel id after a revocation is final (the relay cleanup, orch_hub.relay); never raises out
+        self.on_revoke = on_revoke
         self.audit = audit  # orch_hub.audit.AuditLog; None = no chain (tests of other things)
         self._now = now_ms or (lambda: int(time.time() * 1000))
         self.max_channels = max_channels
@@ -521,6 +527,11 @@ class Channels:
             self._guard(lambda: self._event("revoke", rows[0][0], cid, by))
             (factor,) = self._guard(lambda: self.db.q("SELECT factor FROM channels WHERE channel_id=?", (cid,)))[0]
             self._audit(cid, rows[0][0], "revoke", factor, actor)
+            if self.on_revoke is not None:
+                try:
+                    self.on_revoke(cid)
+                except Exception:  # noqa: BLE001 - the revocation is done; a failing hook must not undo or hide it
+                    log.warning("on_revoke hook failed")
 
     def revoke_as(self, token: str, channel_id: str) -> None:
         self.revoke(channel_id, actor=self.session_user(token))

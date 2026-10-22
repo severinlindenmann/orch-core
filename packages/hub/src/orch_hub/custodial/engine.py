@@ -18,6 +18,7 @@ Invariants (spec §5, protocol.md §8, L2 review L2-4/L2-5):
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import secrets
@@ -37,6 +38,8 @@ from ..contract.hub import Refused
 from ..contract.keystore import KeyUseError
 from ..contract.labels import EVENT_TYPE
 from ..keys import HubKeys, KeysError
+
+_log = logging.getLogger(__name__)
 
 TTL_MS = 120_000  # a prepared request lives two minutes: long enough to look at it, short enough to be a prompt
 MAX_PER_USER = 4  # outstanding prepared requests per user; over the cap the user's OLDEST is evicted
@@ -143,7 +146,10 @@ class CustodialEngine:
         now_ms: Callable[[], int] | None = None,
         ttl_ms: int = TTL_MS,
         dev_mode: bool = True,
+        notify: Callable[[str, str, str | None], None] | None = None,
     ) -> None:
+        #: ``notify(user_id, "prepare", prepared_id)`` after a prepare is stored (push to the user's phones, D10)
+        self._notify = notify
         self._keys, self._snaps, self._seals, self._view = keys, snapshots, seals, view
         self._channels, self._sessions = channels, sessions
         self._audit, self._deliver, self._mode_of = audit, deliver, mode_of
@@ -272,6 +278,11 @@ class CustodialEngine:
             if len(self._pending) >= MAX_PENDING:
                 raise Refused("unavailable")
             self._pending[prepared.prepared_id] = _Pending(prepared, user_id, channel_id, dict(action), event_id)
+        if self._notify is not None:
+            try:
+                self._notify(user_id, "prepare", prepared.prepared_id)
+            except Exception:  # noqa: BLE001 - a push hint must never fail or slow the signing flow
+                _log.warning("prepare notify hook failed")
         return prepared
 
     def _gc(self, now: int) -> None:

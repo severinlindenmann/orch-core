@@ -13,6 +13,7 @@ from typing import Any
 from . import audit as AU
 from . import hub as H
 from . import phase4 as P4
+from . import relayroutes as RR
 from . import spaces as SP
 from . import suite as S
 from .canon import b64u, unb64u
@@ -319,6 +320,8 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
     if check == "action":
         o = P4.check_action(a["action"], role=a["role"])
         return {"type": o["type"]}
+    if check == "visible":
+        return {"visible": P4.visible(a["visibility"], a["me"])}
     if check == "built":
         P4.check_built(a["action"], a["log"], a["event"])
         return {"built": True}
@@ -388,6 +391,8 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
             "body": bytes.fromhex(r["body_hex"]),
         }
         return P4.check_relay_request(req, st, now_ms=now, dev_mode=dev)
+    if check == "relay_route":
+        return RR.route(a["method"], a["target"], a["hub_id"], bytes.fromhex(a["body_hex"]))
     raise ValueError(f"unknown check {check}")
 
 

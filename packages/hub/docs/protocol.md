@@ -572,6 +572,13 @@ ticket's uid). `log` is `"workspace"` or a ticket ULID. The fields are exactly (
 | `verdict.given` | `outcome`, `hash`, `text?` (required on `fail`) |
 | `addon.disabled`, `addon.purged` | `name` (addon name) |
 
+**A new ticket's uid and key (L2-D15-4).** For `ticket.created` the hub proposes the `key` and the new uid. The uid is
+any fresh ULID (its derivation is not normative). The host accepts only `key == next_key` (its own allocator, which may
+have seen numbers the hub's view does not hold) and an unused uid; otherwise it refuses with `ticket.exists` or
+`ticket.key_not_next`. On `ticket.key_not_next` the channel prepares again (a new digest) and the person sees the new
+key. The key number counts restricted tickets too, as on the host (restricted is not secret), so this leaks nothing.
+A hub that cannot read every ticket log answers `unavailable` to `ticket.created`.
+
 **No free-form object anywhere in an action** (security review of 28e767d, field smuggling): every nested value has
 an exact schema, so no action can carry a reserved field or a field owned by another type at any depth (vectors
 `action_smuggle_*`: `set` of `ticket.visibility`, `ticket.tasks` with a `verify.cmd`, `ticket.acceptance`, `ticket.type`,
@@ -1224,6 +1231,19 @@ hardening ties `reset` to the `restore` event (its `abandoned` head must be on t
 **A reset of the workspace log drops every ticket view** (L2P4-9): held ticket lines may name a `ws_seq` beyond the
 shorter new workspace log; the host resends the ticket logs.
 
+**Visibility (L2-D15-1).** One rule for needs-you and for every build, the same as the host's (orch-core
+`model/visibility.can_see`) minus the membership test (covered by the hub role and the snapshot gates): a ticket whose
+`visibility` is `"workspace"` is visible to every member; a `{"restricted": [...]}` ticket only to a person on that
+list; any other value is invisible. Who owns the ticket, assigns or reviews it, or what role the user has does not
+count: an owner who restricts a ticket without its ticket owner hides it from that owner too. The persons a hub user
+answers to are their `u_` id and, when the hub aliased the workspace owner to them, the owner's person id (both
+canonical, §9.1). A ticket that is not visible reads as `unknown_item` in a build and as nothing in needs-you. Vectors
+`visible_*` (check `visible`, args `{visibility, me}`) are run by hub and host alike.
+
+**Size cap.** At most 64 MiB sealed per workspace on the hub; a workspace whose log exceeds it answers `too_large` on
+every page, and a `reset` refills to the same cap, so the host must keep its synced logs under it (hardening: a
+rate-limited, cached projection and a global cap).
+
 **Not here:** the hub's projection code (F1 replay on the view) is the hub's; body text and artifact bytes are not
 synced in hv 0 (custodial `ticket.updated` is `set` only, §8.5), so the channel shows section hashes, not text, for
 anything bound to them.
@@ -1269,7 +1289,7 @@ sent, a message queued), so a replay inside the window must not repeat them.
 `%`, `+`, `#`, `;`, `//` or trailing `/`); an optional query of `&`-separated `key=value` pairs of unreserved characters
 with unique keys; a target ending in a bare `?` (or an empty pair) is `malformed`. Anything else is `malformed`; a
 target for another hub's account is `other_hub`. The route table
-under `/v2/hubs/{hub_id}/` is orch-relay's (E1+); every route **below** it needs this signature. **Unsigned
+under `/v2/hubs/{hub_id}/` is §10.8.1; every route **below** it needs this signature. **Unsigned
 exceptions:** the self-authenticating registration `POST /v2/hubs`, the revocation route, and the **public card read
 `GET /v2/hubs/{hub_id}`**, which stays unsigned although it sits under the signed prefix (it returns only the public,
 root-signed card and the revoked flag).
@@ -1278,6 +1298,94 @@ root-signed card and the revoked flag).
 or is unknown is `400 malformed` / `404 unknown_hub`, and a lower op cert is `409 stale_op_cert` (§5 step 7, a state
 conflict); on a **signed request** (the table above) `unknown_hub` and `stale_op_cert` are `401` (authentication of the
 request failed).
+
+### 10.8.1 The relay routes of a hub account (phase 4, D10 / relay E2)
+
+**Purpose.** What a hub does at its relay account: register it, own the push target of each of its channels, send a push,
+and leave a message for a channel. The routes mirror the per-workspace push routes of v2 §19.10 (same APNs
+configuration, tokens sealed at rest, same `outer` size cap), with the hub as the account and `channel_id` where v2 has a
+device. Reference `orch_hub.contract.relayroutes.route` (vectors `relay_route_*`, section `phase4.relay_routes`); the relay
+implements exactly this (relay task E2).
+
+Below `/v2/hubs/{hub_id}/` every request is signed by `HK_op` and checked in the order of the §10.8 table **before** the
+route and its body are looked at. `{ch}` and `{id}` are 32 lower-case hex. Bodies are `cj` objects with exactly the listed
+members and `"v": 2` (an extra or missing member, another `v`, a non-canonical value is `400 malformed`); `GET` and `DELETE`
+have an **empty body** (`H("")` is signed). No route takes a query (`400 malformed`). **Order of refusals** (the reference
+`route()`, vectors `relay_route_*`; the relay answers the first that applies): (1) the §10.8 target checks, and a query
+(`400 malformed`); (2) under `mailbox/` with one or two further segments, a `{ch}` that is not 32 lower-case hex is `400 malformed`, whatever the method;
+(3) a path shape or method not in the table is `404 not_found`: this includes any other first segment or segment count,
+`mailbox/{ch}/{id}` with an `{id}` that is not 32 hex, and, under `push/`, a bad `{ch}` with a method or shape the table
+does not have; (4) the body, then (under `push/`, for a path and method that are in the table) `{ch}`: `400 malformed`
+(`413 too_large` for an oversize `outer` or mailbox message, found only when `{ch}` is valid). A relay without a complete push configuration answers `404 not_found` on every route
+of this subsection, as for v2 push (after authentication).
+
+| Route | Signed | Body | Answer |
+|---|---|---|---|
+| `POST /v2/hubs` | no (the card) | the hub card (§5) | `200 {hub_id, op_cert_id, op_seq, card_seq, created}`; `403 not_allowed` (operator allowlist), `429 quota_exceeded`; the rest per §10.8 |
+| `PUT /v2/hubs/{hub}/push/{ch}` | yes | `{v, env, topic, token}` | `200 {channel_id, registered: true}` |
+| `DELETE /v2/hubs/{hub}/push/{ch}` | yes | empty | `200 {channel_id, registered: false}` (also when none was held) |
+| `POST /v2/hubs/{hub}/push/{ch}/send` | yes | `{v, outer, priority, ttl_s}` | `200 {accepted: 0 or 1}` |
+| `PUT /v2/hubs/{hub}/mailbox/{ch}/{id}` | yes | `{v, c, ttl_s}` | `200 {id, stored: true, expires_ms}` |
+| `GET /v2/hubs/{hub}/mailbox/{ch}/{id}` | yes | empty | `200 {id, c, expires_ms}`; `404 not_found` |
+| `DELETE /v2/hubs/{hub}/mailbox/{ch}/{id}` | yes | empty | `200 {id, deleted: true}` (also when absent) |
+| `DELETE /v2/hubs/{hub}/mailbox/{ch}` | yes | empty | `200 {channel_id, deleted: n}` (all messages of the channel) |
+
+**Push target** (`PUT .../push/{ch}`). `env` is `sandbox` or `production`; `topic` is the relay's configured APNs topic
+(`[A-Za-z0-9.-]{1,155}`, anything else is `malformed`; a topic or env the relay is not configured for is `malformed`, as
+v2); `token` is the b64u APNs device token, 32 to 100 bytes. **One target per `(hub, channel)`**: a `PUT` replaces the held
+one (a phone that gets a new token re-registers), an exact repeat is a no-op. The relay stores the token sealed (v2
+§19.10) and never returns it. The relay does not know the channel's key or certificate: *which* channels exist and are
+live is the hub's business (§6.2, §7); the relay holds at most `max_push_targets_per_hub` targets per hub (`429 quota_exceeded`). That is a relay
+configuration value, **default 4096**; the hub does not rely on a number. The per-channel mailbox caps below stay fixed.
+
+**Send** (`POST .../push/{ch}/send`). `priority` is `high` or `normal`, `ttl_s` an integer 0 to 86 400. `outer` is exactly
+`{v: 2, hub, ch, id, c}` with `hub` and `ch` equal to the path's, `id` 32 hex (the hub's message id), `c` canonical b64u
+(the seal of §10.8.2); `len(cj(outer)) ≤ 3072` else `413 too_large`. The relay puts `cj(outer)` into the APNs payload as
+v2 §19.10 does and sends nothing else derived from content. `accepted` is `1` when a send was queued for the channel's
+target, `0` when there is no target, the same `(hub, ch, id)` was already accepted in the last 24 h (**a retry with the same
+`id` reaches the phone once**, which is what makes the hub's retry safe), or the channel is over its send budget; none of
+these is an error. `429 quota_exceeded` / `503 overloaded` carry `Retry-After`. Budgets are per hub and per channel and are
+the relay's (the hub does not rely on a number).
+
+**Mailbox** (`PUT .../mailbox/{ch}/{id}`). `c` is the b64u of a sealed message, 1 to 16 384 bytes decoded (`413 too_large`
+above), `ttl_s` 60 to 604 800. The relay holds the bytes and cannot read them. **Idempotent by `id`:** the same `c` under
+the same `id` again is `200` and changes nothing (the expiry stays); another `c` under a held `id` is
+`409 message_conflict`. At most 256 held messages and 4 MiB per `(hub, channel)` (`429 quota_exceeded`). An expired message
+is gone (`404 not_found`). **Open point O1 (not decided here):** the *channel's* own read of its mailbox (the phone fetching
+what the hub left) is a channel-authenticated request that belongs to the orch-mobile contract; nothing in this subsection
+gives a channel, or anyone but the signing hub, a read. Until it exists the mailbox is written and read by the hub only,
+and a push carries what the phone needs.
+
+**Revocation.** When the hub revokes a channel (§6.3, §7) it sends `DELETE .../push/{ch}` and
+`DELETE .../mailbox/{ch}` for that channel. Both are idempotent, so the hub repeats them until the relay answers `200`.
+The hub also stops sending to the channel at once (it asks its own revocation list, not the relay).
+
+**Retry rules for the hub.** Every attempt is a new request: new `ts_ms`, new nonce (a replay is `401 replay`). It retries
+on a network error, `429`, `503` and `5xx` with a bounded backoff that honours `Retry-After`, and on
+`401 stale_timestamp` once, after correcting its clock by `server_ms`; every other `4xx` is final. All routes are
+idempotent (`PUT`/`DELETE` by state, `send` and mailbox `PUT` by `id`).
+
+### 10.8.2 The sealed push payload
+
+**Purpose.** The relay and APNs see ciphertext only; the phone's notification service extension opens the payload with the
+channel key. Construction: v2 §5.3 unchanged (`orch/v2/seal|`, `orch/v2/seal-aad|`) with
+
+| Part | Value |
+|---|---|
+| purpose | `hub-push` |
+| recipient | the channel key `key_pub` of the channel's certificate (§6.2); recipient id = `channel_id` |
+| object id | the message id `id` (16 bytes, the same as in `outer` and the mailbox path) |
+| epoch | `0` |
+| extra | `hub_id` (16 bytes) |
+| plaintext | `cj({v: 2, hv: 0, kind: "hub.push", type, ts_ms, ref})` |
+
+`sealed = b64u(eph_pub || AES-256-GCM(K, 0-nonce, plaintext, AAD))` with a fresh ephemeral key per seal (vector
+`phase4.relay_routes.push_seal`; `open_push` is the reference for the extension). `type` is one of `prepare` (a custodial
+prepare is waiting for this user, §8.4) and `needs_you` (a change the user has to look at); `ref` is a 32-hex opaque id
+(the prepared id or ticket uid, so the app can open the right item) or `null`. **The payload is a hint, not an authority:**
+the seal is anonymous (anyone who knows a channel's public key can make one), so the extension shows generic text at most
+and the app acts only on what it fetches from the hub over its authenticated channel, never on this payload. The `id`,
+`ch` and `hub` in `outer` are not secret; the `type` and `ref` are.
 
 ## 11. Publish through the hub (phase 2, D76, V3-D4)
 
@@ -1462,6 +1570,7 @@ v2 codes keep their meaning (v2 §14). New in H0:
 | `challenge_invalid` (p4) | channel registration | §6.3: not the challenge the hub issued, or expired. Reused there: `factor_mismatch` (the attestation is not the gate the hub checked), `other_user`, `other_hub` |
 | `bad_invite`, `unavailable`, `internal` | link reply | `join` with an unknown, used or expired invite; an op whose backend (e.g. publish forwarder) is not available; an unexpected hub-side failure (no detail) |
 | `not_bound` (403), `unknown_hub` (401), `bad_hub_signature` (401) | publish, admin read, relay request | §11.2, §10.6, §10.8 (with `stale_op_cert`, `replay`, `other_hub`). Statuses are per path: on relay registration and the public card read `unknown_hub` is 404 and `stale_op_cert` 409 (§10.8) |
+| `not_found` (404), `message_conflict` (409) (p4) | relay routes | §10.8.1: an unknown route, method or message; another body under a held mailbox `id`. Reused there: `malformed`, `too_large` (413), `quota_exceeded` (429), `overloaded` (503), `not_allowed` (403, registration) |
 | `approval_required`, `bad_approval` (403) | publish | §11.3 |
 
 Hub web API (local, `/api/v1`, V3-D13; answers are `{"error": code}`; none of these travel on the link):
@@ -1499,8 +1608,8 @@ link errors travel as `{"error": code}` reply bodies; host-side refusals are loc
 | `link_auth` | challenge, exporter, signed bytes, signature |
 | `audit`, `admin_read` | V3-D4 / F3: a 4-record chain with its events and hashes; the admin read signed bytes, a request and a row |
 | `spaces` | V3-D8: the space key per epoch, `sk_commit`, one sealed item (salt, derived key, AAD, plaintext object) and one wrap (ephemeral seed, AAD) |
-| `phase4` | p4: the `log_sync` lines, heads, view key, AAD and one sealed page; a prepared context and digest; a relay request and its bytes; the custodial type table; the `space.accept` built from the vector proposal |
-| `cases` | 584 cases (120 positive, 464 negative): `check`, `args`, `expect` (`{"ok": …}` or `{"error": code}`), `phase` |
+| `phase4` | p4: the `log_sync` lines, heads, view key, AAD and one sealed page; a prepared context and digest; a relay request and its bytes; the relay routes' request bytes and one sealed push payload (`relay_routes`); the custodial type table; the `space.accept` built from the vector proposal |
+| `cases` | 609 cases (127 positive, 482 negative): `check`, `args`, `expect` (`{"ok": …}` or `{"error": code}`), `phase` |
 
 The negative cases cover, per object where it applies: wrong domain, wrong signer, expired, binding for another
 workspace, unbound after leave, missing dev marker, dev at a real verifier, extra or unknown field, non-canonical
@@ -1509,7 +1618,7 @@ encoding (b64u padding, upper-case hex, duplicate key, float), wrong suite, futu
 Every implementation runs the cases of the checks it implements: the hub all of them; orch-core `card`, `op_*`,
 `snapshot`, `uk_cert`, `channel_cert`, `custodial`, `joined_payload`, `link` (h2w), and from phase 4 `space_proposal`
 and the host side of `log_sync` (it builds the pages the vectors open); orch-publish `binding_store`,
-`publish`, `card`, `v2_card`; orch-relay (p4) `card`, `op_*`, `relay_request`; orch-mobile and the browser home (p4)
+`publish`, `card`, `v2_card`; orch-relay (p4) `card`, `op_*`, `relay_request`, `relay_route`; orch-mobile and the browser home (p4)
 `prepared`, `channel_register` (the object they sign). The hub also runs `hub_join`. Each case carries its `phase`; the L2 cases name their finding in `note`. The cross-repo contract job (V3-D8) runs from phase 2.
 
 ## 16. Decided here, and open points for L2

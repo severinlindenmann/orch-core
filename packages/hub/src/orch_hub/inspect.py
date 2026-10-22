@@ -12,6 +12,7 @@ Output (``--json``)::
         "binding": {"state": "bound" | "unbound", "binding_seq": N},
         "snapshot": {"version": N, "roles": {"<user_id>": "read"|"edit"|"admin"}},   # last issued (0, {} if none yet)
         "ops": {"<op>": {"accepted": N, "refused": N}, ...},  # always includes "wk_seal", "route_out", "route_in"
+        "shares": {"items": N, "bytes": M},   # selective: shared items held (counts only, no ids, no content)
         "wk_epochs": [N, ...]         # epochs of wk_seal wraps held for the live full binding (no key bytes)
         "routes": [{"id": "<envelope id hex16>", "from": "<ws>", "to": "<ws>", "sha256": "<hex of the envelope bytes>"}]
                                       # envelopes the router took where this workspace is sender or recipient
@@ -41,6 +42,7 @@ ROUTE_QUEUE_FILE = "route-queue.db"
 SPACES_FILE = "spaces.db"
 AUDIT_FILE = "audit.db"
 WK_SEAL_FILE = "wk-seal.db"
+SHARES_FILE = "shares.db"
 ALWAYS_COUNTED = ("wk_seal", "route_out", "route_in")
 
 
@@ -177,6 +179,22 @@ def _wk_epochs(state: Path) -> dict[str, list[int]]:
     return out
 
 
+def _shares(state: Path) -> dict[str, dict[str, int]]:
+    """``{workspace_id: {"items": N, "bytes": M}}``: counts only, never an id, a digest or the sealed column."""
+    path = state / SHARES_FILE
+    if not path.is_file():
+        return {}
+    db = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True, timeout=5)
+    try:
+        db.execute("PRAGMA query_only=ON")
+        rows = db.execute("SELECT ws, COUNT(*), SUM(size) FROM share_item WHERE revoked=0 GROUP BY ws").fetchall()
+    except sqlite3.OperationalError:
+        rows = []
+    finally:
+        db.close()
+    return {ws: {"items": n, "bytes": z} for ws, n, z in rows}
+
+
 def inspect(state: Path, workspace: str | None = None) -> dict[str, Any]:
     card = _hub_card(state)
     if card.get("dev") is not True:
@@ -197,6 +215,7 @@ def inspect(state: Path, workspace: str | None = None) -> dict[str, Any]:
     snaps = _snapshots(state)
     routes = _routes(state)
     wk_epochs = _wk_epochs(state)
+    shares = _shares(state)
     out: dict[str, Any] = {}
     for ws, owner, wsk_pub, bstate in rows:
         if workspace is not None and ws != workspace:
@@ -221,6 +240,7 @@ def inspect(state: Path, workspace: str | None = None) -> dict[str, Any]:
             "ops": ops,
             "snapshot": snaps.get(ws, {"version": 0, "roles": {}}),
             "wk_epochs": wk_epochs.get(ws, []),
+            "shares": shares.get(ws, {"items": 0, "bytes": 0}),
             "routes": [r for r in routes if ws in (r["from"], r["to"])],
         }
     unjoined = {op: {"accepted": 0, "refused": 0} for op in ALWAYS_COUNTED}

@@ -119,6 +119,20 @@ class AuditLog:
             },
         )
 
+    def share_change(self, ev: dict[str, Any]) -> dict[str, Any]:
+        """The ``on_change`` hook of the share service (§10.2b, §10.5): ``put``, ``revoke`` or ``purge``."""
+        return self.append(
+            "share",
+            {
+                "workspace_id": ev["workspace_id"],
+                "item_id": ev.get("item_id"),
+                "change": ev["change"],
+                "item_version": ev.get("item_version"),
+                "item_hash": ev.get("item_hash"),
+                "count": ev.get("count"),
+            },
+        )
+
     def channel_change(
         self, *, channel_id: str, user_id: str, change: str, factor: str, actor_user_id: str | None
     ) -> dict[str, Any]:

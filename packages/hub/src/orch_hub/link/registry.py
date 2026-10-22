@@ -17,6 +17,10 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS workspace (
   workspace_id TEXT PRIMARY KEY, owner_person_id TEXT NOT NULL, wsk_pub TEXT NOT NULL, pk_pub TEXT NOT NULL,
   card TEXT NOT NULL, binding_state TEXT NOT NULL, binding_obj TEXT
+);
+CREATE TABLE IF NOT EXISTS op_counts (
+  ws TEXT NOT NULL, op TEXT NOT NULL, outcome TEXT NOT NULL CHECK (outcome IN ('accepted','refused')),
+  count INTEGER NOT NULL, PRIMARY KEY (ws, op, outcome)
 )
 """
 
@@ -25,7 +29,7 @@ class Registry:
     def __init__(self, path: str = ":memory:") -> None:
         self.lock = threading.RLock()
         self._db = sqlite3.connect(path, check_same_thread=False)
-        self._db.execute(_SCHEMA)
+        self._db.executescript(_SCHEMA)
         if "binding_obj" not in {r[1] for r in self._db.execute("PRAGMA table_info(workspace)")}:
             self._db.execute("ALTER TABLE workspace ADD COLUMN binding_obj TEXT")  # registry from before D11
         self._db.commit()
@@ -33,6 +37,20 @@ class Registry:
     def close(self) -> None:
         with self.lock:
             self._db.close()
+
+    def count_op(self, ws: str, op: str, accepted: bool) -> None:
+        """Aggregate counter (one row per ws/op/outcome, never per op) read by ``orch-hub inspect`` (dev). The caller
+        passes only a pinned ``ws`` (or ``""`` for unjoined links) and an op from the closed list (or ``other``), so
+        the table cannot grow with attacker input. Never raises into the link."""
+        try:
+            with self.lock, self._db:
+                self._db.execute(
+                    "INSERT INTO op_counts(ws, op, outcome, count) VALUES (?,?,?,1) "
+                    "ON CONFLICT(ws, op, outcome) DO UPDATE SET count = count + 1",
+                    (ws, op, "accepted" if accepted else "refused"),
+                )
+        except sqlite3.Error:
+            pass
 
     def _row(self, ws: str) -> sqlite3.Row | tuple | None:
         return self._db.execute(

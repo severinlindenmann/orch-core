@@ -40,6 +40,12 @@ def _parser() -> argparse.ArgumentParser:
     sv.add_argument("--publish-url", required=True, help="orch-publish base URL (https, or http on loopback)")
     sv.add_argument("--api-host", help="host the workspaces sign (default: the host:port of --publish-url)")
     sv.add_argument("--invite", action="append", default=[], help="invite code accepted once (repeatable)")
+    ins = sub.add_parser(
+        "inspect", help="dev only: read-only JSON view of the registry (pins, mode, binding, op counts)"
+    )
+    ins.add_argument("--state", help="hub state dir (default: $ORCH_HUB_STATE)")
+    ins.add_argument("--workspace", help="only this workspace id")
+    ins.add_argument("--json", action="store_true", required=True, help="print JSON (the only format)")
     return p
 
 
@@ -59,6 +65,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         except (ValueError, KeysError) as e:
             print(f"orch-hub: refused: {e}", file=sys.stderr)
             return 1
+    if args.group == "inspect":
+        from .inspect import InspectError, inspect
+
+        try:
+            print(dumps(inspect(Path(args.state) if args.state else default_state_dir(), args.workspace)))
+        except InspectError as e:
+            print(f"orch-hub: {e}", file=sys.stderr)
+            return 1
+        return 0
     try:
         state = Path(args.state) if args.state else default_state_dir()
         if args.cmd == "init":

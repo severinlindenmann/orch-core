@@ -58,6 +58,7 @@ _MSG_VIEW = b"orch/v2/hub-view-msg"
 _EVENT = b"orch/v2/event|"
 _ULID = re.compile(r"[0-7][0-9A-HJKMNP-TV-Z]{25}")  # a ticket log is its ULID
 Call = Callable[[str, dict[str, Any]], dict[str, Any]]
+Sealer = Callable[[bytes, bytes, bytes, bytes], bytes]  # (k_base, msg_label, aad, plaintext) -> salt || ct
 
 
 class LogSource(Protocol):
@@ -116,21 +117,17 @@ def page_aad(workspace_id: str, epoch: int, log: str, from_seq: int, count: int,
 
 def seal_page(
     k_view: bytes, workspace_id: str, epoch: int, log: str, from_seq: int, head: str, reset: bool,
-    lines: list[dict[str, Any]], *, salt: bytes | None = None,
+    lines: list[dict[str, Any]], *, seal: Sealer = suite.salted_seal,
 ) -> str:  # fmt: skip
-    """The ``sealed`` field: SALTED-AEAD of ``cj({"lines": [...]})``, fresh salt (``salt`` is the vectors' seam)."""
+    """The ``sealed`` field: SALTED-AEAD of ``cj({"lines": [...]})`` (``seal`` draws a fresh salt; tests inject one)."""
     aad = page_aad(workspace_id, epoch, log, from_seq, len(lines), head, reset)
     pt = wire.cj({"lines": lines})
-    if salt is None:
-        blob = suite.salted_seal(k_view, _MSG_VIEW, aad, pt)
-    else:
-        blob = suite._salted_seal(k_view, _MSG_VIEW, aad, pt, salt)  # noqa: SLF001 - test seam
-    return b64u(blob)
+    return b64u(seal(k_view, _MSG_VIEW, aad, pt))
 
 
 def build_page(
     k_view: bytes, workspace_id: str, epoch: int, log: str, lines: list[dict[str, Any]], *, reset: bool = False,
-    salt: bytes | None = None,
+    seal: Sealer = suite.salted_seal,
 ) -> dict[str, Any]:  # fmt: skip
     """The request body for ``lines`` (consecutive, the first one's ``seq`` is ``from_seq``)."""
     if not 1 <= len(lines) <= MAX_LINES or (reset and lines[0].get("seq") != 1):
@@ -141,7 +138,7 @@ def build_page(
     head = event_head(lines[-1])
     return {
         "epoch": epoch, "log": log, "from_seq": from_seq, "count": len(lines), "head": head, "reset": reset,
-        "sealed": seal_page(k_view, workspace_id, epoch, log, from_seq, head, reset, lines, salt=salt),
+        "sealed": seal_page(k_view, workspace_id, epoch, log, from_seq, head, reset, lines, seal=seal),
     }  # fmt: skip
 
 

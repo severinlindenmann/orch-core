@@ -410,15 +410,16 @@ class _Epochs:
             raise HubRefused("no_epoch") from None
 
     def view_key(self, epoch: int) -> bytes:
-        """``K_view(epoch)`` for ``log_sync`` (hub contract 10.7): derived from ``WK_epoch`` here, so only the derived
-        key leaves the key store. Any epoch the store still holds (an older one stays readable for pages already
-        sent); a missing or unreadable key is ``no_epoch``."""
-        from orch.hubclient import HubRefused, derive_view_key
+        """``K_view(epoch)`` for ``log_sync`` (hub contract 10.7): derived inside the key store, so only the derived
+        key leaves it. Any epoch the store still holds (an older one stays readable for pages already sent); a missing,
+        burned or unreadable key is ``no_epoch``."""
+        from orch.hubclient import HubRefused
+        from orch.relay.r6.keystore import CustodyRefused, MembershipUnsafe
 
-        wk = self._mk.wk(epoch)
-        if wk is None:
-            raise HubRefused("no_epoch")
-        return derive_view_key(bytes(wk), str(self._mk.workspace_id), epoch)
+        try:
+            return bytes(self._mk.view_key(epoch))
+        except (CustodyRefused, MembershipUnsafe):
+            raise HubRefused("no_epoch") from None
 
     def rotate(self) -> None:
         if self._local_owner is not None:

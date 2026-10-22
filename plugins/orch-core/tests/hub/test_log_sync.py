@@ -38,7 +38,14 @@ def test_view_key_aad_heads_and_sealed_bytes_match_the_vectors():
     assert LS.event_head(lines[-1]) == P4["heads"]["workspace"] == page["head"]
     assert LS.event_head(P4["ticket_lines"][-1]) == P4["heads"][TKT]
     salt = unb64u(page["sealed"])[:16]  # the vector fixes the salt; the production path draws a fresh one
-    built = LS.build_page(k, P4["workspace_id"], 1, "workspace", lines, salt=salt)
+    built = LS.build_page(
+        k,
+        P4["workspace_id"],
+        1,
+        "workspace",
+        lines,
+        seal=lambda kb, label, aad, pt: S._salted_seal(kb, label, aad, pt, salt),
+    )  # the vector fixes the salt: the seam is the test's, production draws a fresh one
     assert built == page  # every field, the sealed text byte for byte
 
 
@@ -48,6 +55,17 @@ def test_a_production_page_opens_with_the_vector_key_and_a_fresh_salt_each_time(
     b = LS.build_page(k, P4["workspace_id"], 1, "workspace", P4["workspace_lines"])
     assert a["sealed"] != b["sealed"] and {**a, "sealed": ""} == {**b, "sealed": ""}
     assert {**a, "sealed": ""} == {**P4["page_workspace"], "sealed": ""}
+
+
+def test_the_key_stores_view_key_is_the_contract_derivation(mk):  # noqa: F811
+    for e in (1,):
+        assert mk.view_key(e) == derive_view_key(mk.wk(e), WS, e)
+    from orch.relay.r6.keystore import CustodyRefused
+
+    with pytest.raises(CustodyRefused):
+        mk.view_key(7)  # never held
+    with pytest.raises(CustodyRefused):
+        mk.view_key(0)
 
 
 def test_the_view_key_is_bound_to_the_workspace_and_the_epoch():

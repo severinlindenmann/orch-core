@@ -146,7 +146,9 @@ def cutover_view(row: Mapping[str, Any] | None) -> dict[str, Any]:
     return {"state": "direct"} if row is None else {"state": row["state"], "hub_id": row["hub_id"]}
 
 
-def cutover_workspace(row: Mapping[str, Any] | None, method: str, body: bytes) -> dict[str, Any] | None:
+def cutover_workspace(
+    row: Mapping[str, Any] | None, method: str, body: bytes, registered_hubs: frozenset[str] = frozenset()
+) -> dict[str, Any] | None:
     """The workspace's own request (its session, WSK): the new row (None = direct). ``PUT {v: 2, hub_id, state}``
     names a hub (``pending``) or cuts over at once (``cut_over``); naming a hub never weakens a cut-over
     (``cut_over``, 403: DELETE first); ``DELETE`` always returns to the direct path."""
@@ -160,6 +162,8 @@ def cutover_workspace(row: Mapping[str, Any] | None, method: str, body: bytes) -
         raise Refused("malformed")
     if o["state"] not in CUTOVER_STATES:
         raise Refused("malformed")
+    if o["hub_id"] not in registered_hubs:
+        raise Refused("unknown_hub")  # 403, to the workspace only: it may name only a hub with an account here
     if row is not None and row["state"] == "cut_over" and o["state"] == "pending":
         raise Refused("cut_over")
     return {"state": o["state"], "hub_id": o["hub_id"]}

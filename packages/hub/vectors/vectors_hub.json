@@ -42930,6 +42930,10 @@
     "body_hex": "7b226875625f6964223a223338643861626564353263636662353338646134303166643534653634626463222c227374617465223a2270656e64696e67222c2276223a327d",
     "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
     "method": "PUT",
+    "registered_hubs": [
+     "1a1e74a4711c38a3afca85825ad0e610",
+     "38d8abed52ccfb538da401fd54e64bdc"
+    ],
     "row": null,
     "side": "workspace",
     "target": ""
@@ -42951,6 +42955,10 @@
     "body_hex": "7b226875625f6964223a223338643861626564353263636662353338646134303166643534653634626463222c227374617465223a226375745f6f766572222c2276223a327d",
     "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
     "method": "PUT",
+    "registered_hubs": [
+     "1a1e74a4711c38a3afca85825ad0e610",
+     "38d8abed52ccfb538da401fd54e64bdc"
+    ],
     "row": null,
     "side": "workspace",
     "target": ""
@@ -42972,6 +42980,10 @@
     "body_hex": "7b226875625f6964223a223161316537346134373131633338613361666361383538323561643065363130222c227374617465223a2270656e64696e67222c2276223a327d",
     "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
     "method": "PUT",
+    "registered_hubs": [
+     "1a1e74a4711c38a3afca85825ad0e610",
+     "38d8abed52ccfb538da401fd54e64bdc"
+    ],
     "row": {
      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
      "state": "pending"
@@ -42996,6 +43008,10 @@
     "body_hex": "7b226875625f6964223a223338643861626564353263636662353338646134303166643534653634626463222c227374617465223a2270656e64696e67222c2276223a327d",
     "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
     "method": "PUT",
+    "registered_hubs": [
+     "1a1e74a4711c38a3afca85825ad0e610",
+     "38d8abed52ccfb538da401fd54e64bdc"
+    ],
     "row": {
      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
      "state": "cut_over"
@@ -43016,6 +43032,10 @@
     "body_hex": "",
     "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
     "method": "DELETE",
+    "registered_hubs": [
+     "1a1e74a4711c38a3afca85825ad0e610",
+     "38d8abed52ccfb538da401fd54e64bdc"
+    ],
     "row": {
      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
      "state": "cut_over"
@@ -43037,6 +43057,10 @@
     "body_hex": "7b226875625f6964223a223338643861626564353263636662353338646134303166643534653634626463222c227374617465223a22646972656374222c2276223a327d",
     "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
     "method": "PUT",
+    "registered_hubs": [
+     "1a1e74a4711c38a3afca85825ad0e610",
+     "38d8abed52ccfb538da401fd54e64bdc"
+    ],
     "row": null,
     "side": "workspace",
     "target": ""
@@ -43046,6 +43070,49 @@
     "error": "malformed"
    },
    "name": "cutover_workspace_bad_state",
+   "phase": 4
+  },
+  {
+   "args": {
+    "body_hex": "7b226875625f6964223a226339386334643666346332616135306535326637303730613637613937383034222c227374617465223a2270656e64696e67222c2276223a327d",
+    "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+    "method": "PUT",
+    "registered_hubs": [
+     "1a1e74a4711c38a3afca85825ad0e610",
+     "38d8abed52ccfb538da401fd54e64bdc"
+    ],
+    "row": null,
+    "side": "workspace",
+    "target": ""
+   },
+   "check": "cutover",
+   "expect": {
+    "error": "unknown_hub"
+   },
+   "name": "cutover_workspace_unregistered_hub",
+   "note": "a workspace names only a hub registered at this relay (403, L2-ADD-2)",
+   "phase": 4
+  },
+  {
+   "args": {
+    "body_hex": "7b226875625f6964223a223161316537346134373131633338613361666361383538323561643065363130222c227374617465223a2270656e64696e67222c2276223a327d",
+    "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+    "method": "PUT",
+    "registered_hubs": [
+     "38d8abed52ccfb538da401fd54e64bdc"
+    ],
+    "row": {
+     "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+     "state": "pending"
+    },
+    "side": "workspace",
+    "target": ""
+   },
+   "check": "cutover",
+   "expect": {
+    "error": "unknown_hub"
+   },
+   "name": "cutover_workspace_renames_to_unregistered_hub",
    "phase": 4
   },
   {

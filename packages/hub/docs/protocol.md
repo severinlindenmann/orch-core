@@ -1547,7 +1547,8 @@ confirms**: a hub alone can never close (DoS) someone's direct path, redirect it
 **Workspace side** (v2 relay session of the workspace itself, i.e. its `WSK`; a device or any other session is
 `403 not_eligible`, a `GET` also from a member device). **`PUT` and `DELETE` are fenced like every durable workspace
 write: they require the current `Orch-Holder` generation, else `409 fenced`; `GET` is unfenced** (L2-E3-1). A `PUT`
-naming a `hub_id` that has no account at this relay is `404 unknown_hub` (to the workspace only). A `pending` row
+naming a `hub_id` that has no account at this relay is `403 unknown_hub` (to the workspace only; reference input
+`registered_hubs`, vectors `cutover_workspace_unregistered_hub`, `…_renames_to_unregistered_hub`). A `pending` row
 expires 24 h after it was written (it reads as `direct`; the hub then gets `other_hub`), so a hub cannot confirm at a
 moment of its choosing long after the owner's act (L2-E3-4).
 
@@ -1769,6 +1770,7 @@ v2 codes keep their meaning (v2 §14). New in H0:
 | `challenge_invalid` (p4) | channel registration | §6.3: not the challenge the hub issued, or expired. Reused there: `factor_mismatch` (the attestation is not the gate the hub checked), `other_user`, `other_hub` |
 | `bad_invite`, `unavailable`, `internal` | link reply | `join` with an unknown, used or expired invite; an op whose backend (e.g. publish forwarder) is not available; an unexpected hub-side failure (no detail) |
 | `not_bound` (403), `unknown_hub` (401), `bad_hub_signature` (401) | publish, admin read, relay request | §11.2, §10.6, §10.8 (with `stale_op_cert`, `replay`, `other_hub`). Statuses are per path: on relay registration and the public card read `unknown_hub` is 404 and `stale_op_cert` 409 (§10.8) |
+| `unknown_hub` (403) (p4) | relay, §10.8.3 | a workspace cut-over `PUT` names a hub with no account at this relay (to the workspace only) |
 | `cut_over` (403) (p4) | relay, §10.8.3 | the workspace's direct relay path is closed (cut over to a hub); also a workspace `pending` over a `cut_over` |
 | `not_found` (404), `message_conflict` (409) (p4) | relay routes | §10.8.1: an unknown route, method or message; another body under a held mailbox `id`. Reused there: `malformed`, `too_large` (413), `quota_exceeded` (429), `overloaded` (503), `not_allowed` (403, registration) |
 | `approval_required`, `bad_approval` (403) | publish | §11.3 |
@@ -1795,7 +1797,7 @@ link errors travel as `{"error": code}` reply bodies; host-side refusals are loc
 | `spaces` | V3-D8: the space key per epoch, `sk_commit`, one sealed item (salt, derived key, AAD, plaintext object) and one wrap (ephemeral seed, AAD) |
 | `phase4` | p4: the `log_sync` lines, heads, view key, AAD and one sealed page; a prepared context and digest; a relay request and its bytes; the relay routes' request bytes and one sealed push payload (`relay_routes`); the custodial type table; the `space.accept` built from the vector proposal |
 | `share_item_f1` | C3b addendum: a ticket item with an `f1` block and its `item_hash` (§10.2b, §8.6) |
-| `cases` | 744 cases (196 positive, 548 negative): `check`, `args`, `expect` (`{"ok": …}` or `{"error": code}`), `phase` |
+| `cases` | 746 cases (196 positive, 550 negative): `check`, `args`, `expect` (`{"ok": …}` or `{"error": code}`), `phase` |
 
 The negative cases cover, per object where it applies: wrong domain, wrong signer, expired, binding for another
 workspace, unbound after leave, missing dev marker, dev at a real verifier, extra or unknown field, non-canonical

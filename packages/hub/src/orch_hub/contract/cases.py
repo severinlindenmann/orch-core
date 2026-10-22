@@ -407,7 +407,8 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
         return P4.check_relay_request(req, st, now_ms=now, dev_mode=dev)
     if check == "cutover":
         if a["side"] == "workspace":
-            return {"row": RR.cutover_workspace(a["row"], a["method"], bytes.fromhex(a["body_hex"]))}
+            regs = frozenset(a.get("registered_hubs", []))
+            return {"row": RR.cutover_workspace(a["row"], a["method"], bytes.fromhex(a["body_hex"]), regs)}
         r = RR.route(a["method"], a["target"], a["hub_id"], bytes.fromhex(a["body_hex"]))
         return RR.cutover_hub(a["row"], a["hub_id"], r["route"])
     if check == "relay_route":

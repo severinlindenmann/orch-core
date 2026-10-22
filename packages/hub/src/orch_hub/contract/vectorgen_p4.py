@@ -1282,9 +1282,12 @@ def build_p4(
     hub_b = fake16("hub_b")
     pend, cut = {"state": "pending", "hub_id": HUB_ID}, {"state": "cut_over", "hub_id": HUB_ID}
 
-    def co(name: str, side: str, row: Any, req: tuple[str, str, bytes], expect: dict[str, Any], note: str = "") -> None:
+    def co(name: str, side: str, row: Any, req: tuple[str, str, bytes], expect: dict[str, Any], note: str = "",
+           regs: list[str] | None = None) -> None:  # fmt: skip
         m_, t_, b_ = req
         a = {"side": side, "row": row, "method": m_, "target": t_, "hub_id": HUB_ID, "body_hex": b_.hex()}
+        if side == "workspace":
+            a["registered_hubs"] = sorted(regs if regs is not None else [HUB_ID, hub_b])
         case(name, "cutover", a, expect, 4, note)
 
     co("cutover_hub_confirms_pending", "hub", pend, co_put, {"ok": cut})
@@ -1303,6 +1306,10 @@ def build_p4(
        "naming a hub never weakens a cut-over: DELETE first")  # fmt: skip
     co("cutover_workspace_reverses", "workspace", cut, ("DELETE", "", b""), {"ok": {"row": None}})
     co("cutover_workspace_bad_state", "workspace", None, ws_req("direct"), {"error": "malformed"})
+    co("cutover_workspace_unregistered_hub", "workspace", None, ws_req("pending", fake16("hub_never_registered")),
+       {"error": "unknown_hub"}, "a workspace names only a hub registered at this relay (403, L2-ADD-2)")  # fmt: skip
+    co("cutover_workspace_renames_to_unregistered_hub", "workspace", pend, ws_req("pending", hub_b),
+       {"error": "unknown_hub"}, regs=[HUB_ID])  # fmt: skip
 
     m, t, b = put_req
     rt(

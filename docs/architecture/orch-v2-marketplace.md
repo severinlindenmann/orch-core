@@ -265,19 +265,55 @@ URL in it, so the target is restricted three ways:
    address it carries. Anything that is not an address is refused. HTTP redirects are refused; the same checks apply to
    the marketplace's own URL when an index is added or refreshed, and to every dependency download (§8.2).
 
-**How git is run.**
+#### 5.1.1 Git transport: closed operations in `orch.gitsafe`
 
-- `git` is run with a private empty config (`GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM` and `GIT_CONFIG_NOSYSTEM` set so
-  the person's config, hooks, credential helpers and `url.<x>.insteadOf` rewrites do not apply), no terminal prompt,
-  protocols limited to https, no submodule recursion, no LFS, and a size and time cap.
-- Fetch the commit by its full id (`git fetch --depth 1 <url> <commit>`). Then `git rev-parse FETCH_HEAD` MUST equal
-  `commit`.
-- Build the package directory with plumbing only: `git ls-tree -r -z <commit>:<subdir>` and `git cat-file blob`, writing
-  regular files with the modes 0644 or 0755. No checkout, no archive, so no `.gitattributes` filter, `export-subst`,
-  `export-ignore`, line-ending conversion or hook can change a byte. Entries of mode `120000` (symbolic link) or
-  `160000` (submodule) are `market.package_invalid`. No `.git` ever exists inside the package.
-- The result is a plain directory that `read_package` reads with `O_NOFOLLOW` once; after that it is only compared.
-  A SHA-1 object id is a pin for fetching, not a security claim: **the digest is** (§12, I1).
+Fetching and exporting are **not** done by calling `git` from the marketplace code. Per the rule "the class of config
+that runs a program is open-ended" (#541, #565, #584), they are two closed operations in `orch.gitsafe`, the one durable
+place that builds git environments and arguments, and G2 MUST implement them as such. The marketplace code calls them
+with a URL, a commit and a subdirectory, and cannot pass an option.
+
+**`fetch_commit(url, commit, staging)`**
+
+- *Environment:* `gitsafe.isolated_env`: nothing inherited from the caller (no `GIT_*`, no `HTTP_PROXY`/`HTTPS_PROXY`/
+  `ALL_PROXY`/`NO_PROXY`, no `GIT_SSH*`, no `GIT_ASKPASS`), a throw-away `HOME`, `GIT_CONFIG_GLOBAL` and
+  `GIT_CONFIG_SYSTEM` pointing at an empty file, `GIT_CONFIG_NOSYSTEM=1`, `GIT_TERMINAL_PROMPT=0`, `GIT_NO_LAZY_FETCH=1`.
+  So no proxy can resolve names for us, and no `url.<x>.insteadOf` can redirect.
+- *Repository:* `git init --template= --object-format=<sha1|sha256>`, chosen by the length of `commit` (40 or 64).
+- *Settings, all given with `-c` on the command:* `protocol.allow=never`, `protocol.https.allow=always`,
+  `http.followRedirects=false`, `http.proxy=` (empty), `transfer.fsckObjects=true`, `fetch.fsckObjects=true`,
+  `core.hooksPath=/dev/null`, `core.symlinks=false`, `submodule.recurse=false`, and
+  **`http.curloptResolve=<host>:443:<checked address>`**, so libcurl connects to exactly the address that passed
+  §5.1 and does not resolve again (this is what makes "no second resolution" true; it needs git ≥ 2.37, and a git
+  without it is refused: `market.fetch_failed`). A redirect is a refusal (`market.address_refused`).
+- *Command:* `git fetch --depth 1 --no-tags --no-recurse-submodules <url> <commit>`, with a wall-clock limit and a
+  byte limit on the pack (the §8.1 total plus a margin). Then `git rev-parse FETCH_HEAD` MUST equal `commit`
+  (`market.commit_mismatch`).
+- *Cross-fork note:* GitHub serves a commit that exists only in a fork under the parent's URL. The digest still binds
+  the bytes, but the source line in the review reads "source as claimed by the marketplace", never "from <repo>".
+
+**`export_package(staging, commit, subdir)`** returns a `Package` **in memory**; nothing from the repository is
+written to disk.
+
+1. `git ls-tree -r -z -l <commit>:<subdir>` (plumbing: no checkout, so no `.gitattributes` filter, `export-subst`,
+   `export-ignore`, end-of-line conversion, LFS smudge or hook can touch a byte).
+2. **Judge the listing before reading any blob** (`market.package_invalid`, vectors `tree_*`): every mode is `100644`
+   or `100755` (so no symbolic link `120000`, no submodule `160000`); every path passes the §8.1 `check_path` (so no
+   `..`, no absolute path, no empty or `.`-leading segment, therefore no `.git`, no non-ASCII, no `.so`/`.pyc`);
+   names are unique after NFC and case folding, and no name is both a file and a directory; the entry count, each
+   size and the total from `-l` are within the §8.1 caps; `orch-addon.json` is at the top.
+3. `git cat-file blob <id>` for each listed entry, with the size checked against the listing, building the
+   `{path: bytes}` map. A blob is never written to a path derived from the tree.
+4. `package_digest` of that map is what steps 13 to 15 compare. The staging directory holds orch's own writes only
+   (the temporary repository), and a hostile tree never reaches the disk.
+
+Tests G2 MUST add (a local https server and a local repository): a redirect gives `address_refused`; a name that
+resolves to a public address and then to `127.0.0.1` connects to the first only; a tree with `..`, `.git`,
+`A` and `a`, an oversized blob or 10^5 entries gives `package_invalid` with nothing written; an environment with
+`GIT_CONFIG_*`, `HTTPS_PROXY` or a repository-local config set by the caller changes nothing.
+
+**Digest of the author's working tree.** `orch addon pack/dev` (G5) MUST compute `package_sha256` with the same
+`export_package` on a commit, not from the author's working tree: `autocrlf`, LFS smudge and `export-ignore` change
+working-tree bytes, and authors would meet a systematic `market.digest_mismatch`.
 
 ### 5.2 The review
 

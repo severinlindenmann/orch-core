@@ -283,6 +283,46 @@ def check_lock(kind: str, text: str) -> None:
         raise Refuse("market.malformed")
 
 
+# ------------------------------------------------------------------------------------------------ the tree listing
+
+
+def check_tree(entries: list[dict[str, Any]]) -> None:
+    """Section 5.1.1, before any blob is read or written: the ``git ls-tree -r -z -l`` listing of the package
+    directory must already satisfy every §8.1 rule, so a hostile tree never reaches the disk. Raises ``package_invalid``."""
+    import unicodedata
+
+    from orch.addons.package import MAX_FILE_BYTES, MAX_FILES, MAX_TOTAL_BYTES, MANIFEST_FILE, PackageError, check_path
+
+    seen: dict[str, str] = {}
+    dirs: set[str] = set()
+    total = 0
+    try:
+        for e in entries:
+            if e["mode"] not in ("100644", "100755"):  # links (120000), submodules (160000), anything else
+                raise PackageError("mode")
+            path = e["path"]
+            check_path(path)
+            if not isinstance(e["size"], int) or isinstance(e["size"], bool) or not 0 <= e["size"] <= MAX_FILE_BYTES:
+                raise PackageError("size")
+            total += e["size"]
+            key = unicodedata.normalize("NFC", path).casefold()
+            if key in seen:
+                raise PackageError("two names equal when case is ignored")
+            seen[key] = path
+            parts = path.split("/")
+            dirs.update("/".join(parts[:i]).casefold() for i in range(1, len(parts)))
+        if dirs & set(seen):  # a name that is both a file and a directory
+            raise PackageError("file and directory")
+        if (
+            len(seen) + len(dirs) > MAX_FILES
+            or total > MAX_TOTAL_BYTES
+            or MANIFEST_FILE not in {p for p in seen.values()}
+        ):
+            raise PackageError("limits")
+    except (PackageError, KeyError, TypeError):
+        raise Refuse("market.package_invalid") from None
+
+
 # ------------------------------------------------------------------------------------------------ environments
 
 _AUTO_RUN = re.compile(r"(?:sitecustomize|usercustomize)(?:\..*)?|.*\.pth", re.I)
@@ -473,6 +513,9 @@ def run_case(case: dict[str, Any]) -> dict[str, Any]:
             return {"ok": {"addons": [e["id"] for e in doc["addons"]]}}
         if case["check"] == "install":
             return {"ok": install(case["args"])}
+        if case["check"] == "tree":
+            check_tree(case["args"]["entries"])
+            return {"ok": {}}
         if case["check"] == "env_paths":
             check_env_paths(case["args"]["paths"])
             return {"ok": {}}

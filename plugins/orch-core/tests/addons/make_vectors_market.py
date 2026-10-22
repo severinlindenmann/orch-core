@@ -1159,6 +1159,50 @@ def build() -> None:
         refuse("env_changed"),
     )
 
+    # ---- L2M-4: the tree listing is judged before a single blob is read
+    def t(path: str, mode: str = "100644", size: int = 10) -> dict[str, Any]:
+        return {"mode": mode, "path": path, "size": size}
+
+    base = [t("orch-addon.json"), t("main.py"), t("lib/util.py", "100755")]
+    add("tree_ok", "tree", {"entries": base}, ok())
+    for nm, bad_entry in (
+        ("dot_dot", t("lib/../../escape.py")),
+        ("leading_dot_dot", t("../escape.py")),
+        ("absolute", t("/etc/passwd")),
+        ("dot_git", t(".git/config")),
+        ("dot_git_nested", t("lib/.git/hooks/post-checkout")),
+        ("hidden_file", t(".env")),
+        ("empty_segment", t("lib//x.py")),
+        ("backslash", t("lib\\x.py")),
+        ("non_ascii", t("l\u00efb.py")),
+        ("nfd_name", t("e\u0301.py")),
+        ("compiled_object", t("lib/x.so")),
+        ("pycache", t("__pycache__/x.py")),
+        ("symlink", t("link", "120000")),
+        ("submodule", t("vendor", "160000")),
+        ("executable_group_mode", t("x.py", "100664")),
+        ("oversized_blob", t("big.bin", size=(4 << 20) + 1)),
+        ("negative_size", t("x.py", size=-1)),
+        ("case_duplicate", t("Main.py")),
+        ("file_and_directory", t("lib")),
+        ("too_deep", t("a/b/c/d/e/f/g.py")),
+    ):
+        add("tree_" + nm, "tree", {"entries": [*base, bad_entry]}, refuse("package_invalid"))
+    add(
+        "tree_too_many_entries",
+        "tree",
+        {"entries": [t("orch-addon.json"), *[t(f"f{i}.py") for i in range(300)]]},
+        refuse("package_invalid"),
+    )
+    add(
+        "tree_total_too_large",
+        "tree",
+        {"entries": [t("orch-addon.json"), *[t(f"f{i}.bin", size=4 << 20) for i in range(5)]]},
+        refuse("package_invalid"),
+    )
+    add("tree_no_manifest", "tree", {"entries": [t("main.py")]}, refuse("package_invalid"))
+    add("tree_empty", "tree", {"entries": []}, refuse("package_invalid"))
+
 
 if __name__ == "__main__":
     build()

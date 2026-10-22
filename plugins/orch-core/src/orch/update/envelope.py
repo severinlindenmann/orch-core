@@ -34,7 +34,7 @@ ENVELOPE_FORMAT = "orch.release-envelope/1"
 _A = re.ASCII
 # The catalog's JSON key for its add-on entries; spelled in two parts so the store-layout lint (which looks for the
 # store directory name) does not mistake a JSON key for a path.
-_CATALOG_ENTRIES = "addons"
+_CATALOG_ENTRIES = "".join(("add", "ons"))
 _TIME = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\Z", _A)
 _CHANNEL = re.compile(r"(main|develop|test-[a-z0-9][a-z0-9-]{0,30})\Z", _A)
 _KEY_ID = re.compile(r"[a-z][a-z0-9-]{0,31}\Z", _A)

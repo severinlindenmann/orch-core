@@ -97,13 +97,25 @@ The hub runs on Linux only. Workspaces keep every platform the core supports (D6
   hardware or OS key store where one exists;
 - each workspace host keeps its own `orch-host-<ws>` user (§5.5). Agents never run as `orch-hub` or as a host user,
   and the hub's directory is not readable by them;
-- the host↔hub link uses a local socket with a peer-UID check, or TLS when the two are on different machines;
+- **co-location with a hub requires the server custody profile** (§5.5 "Linux server / VPS": a separate host user,
+  agents under their own UID). A Linux desktop or P2-style host, where agents run as the person (D-P2-17), may not
+  share a machine with a hub; `orch hub doctor` refuses it;
 - relay and publish keep their own system users (`DynamicUser`, §10), as today;
 - `orch hub doctor` reports the layout. A co-located hub is shown on the hub's front page as "shares a machine with
   workspaces: weaker isolation".
 
+**The host↔hub link.** Both sides authenticate, on one machine and across machines:
+- **Local socket.** The hub accepts only registered `orch-host-<ws>` UIDs (peer-UID check), maps each UID to exactly one
+  `workspace_id`, and refuses agent UIDs. The `WSK` challenge below is still required.
+- **Across machines: TLS with pinned keys, not WebPKI.** The hub card carries an `HK_op`-signed SPKI of the hub's TLS
+  key, and the host pins it. The host proves `WSK` by signing a hub challenge bound to the TLS exporter.
+- **Every link message is signed as well**, `WSK` from the host and `hub-route` from the hub, with sequence numbers and
+  a replay store. Link security does not rest on TLS alone.
+
 Co-location is weaker than the split layout. Any local privilege escalation from an agent reaches the hub's keys,
-and with them every full-mode workspace. That is why the split layout is the recommendation for companies.
+and with them every full-mode workspace. In the one-VPS layout the internet-facing relay and publish share that
+machine too, so an exploit in an edge service plus a local escalation reaches the same keys. `orch hub doctor` and the
+front-page warning name both. That is why the split layout is the recommendation for companies.
 
 ## 5. Identity and signatures in hub mode
 
@@ -294,11 +306,13 @@ at step H5, so daily use keeps working.
 
 Every step touching keys, custody, signatures or the protocol goes through the security reviewer (Opus) before its PR.
 Every step keeps the standalone suite and the standalone e2e scenario green (D79).
+The hub is Linux-only and the dev machine is macOS: e2e runs the hub on the dev edge host or VPS, or in a Linux
+container.
 
 ## 11. Open questions
 
 Decided 22 Oct 2026: local Mission Control hands signing to a channel (D81); personal workspaces may join
 selectively (D80); hub agents later; the review additions (channel proof, break-glass, `repin` needs `PK`) kept.
 
-1. **Workspace-side veto on admin grants** (D71): an optional per-workspace setting "granting `admin` here needs the
+1. **Workspace-side veto on admin grants** (D71), **not decided**: an optional per-workspace setting "granting `admin` here needs the
    owner's signature", with hub admins still able to remove access. To decide before the first real company.

@@ -25,7 +25,7 @@ def test_browser_sign_in_sets_http_only_strict_cookie_and_no_token_in_body(w):
     s, o, h = w.call("POST", "/session", sign_in_body(w, w.ann))
     assert s == 200 and "token" not in o and o["user_id"] == w.ann
     c = h["Set-Cookie"]
-    assert c.startswith("orch_hub_session=") and "HttpOnly" in c and "SameSite=Strict" in c and "Secure" in c
+    assert c.startswith("__Host-orch_hub_session=") and "HttpOnly" in c and "SameSite=Strict" in c and "Secure" in c
     token = c.split(";")[0].split("=", 1)[1]
     s, me, _ = w.call("GET", "/session", token=token, cookie=True)
     assert s == 200 and me == {"user_id": w.ann, "name": "ann", "is_admin": False}
@@ -78,7 +78,7 @@ def test_state_changing_routes_refuse_forged_requests(w, kw):
 
 
 def test_cookie_auth_without_origin_is_refused_but_get_is_fine(w):
-    tok = w.login(w.admin)
+    tok = w.login(w.admin, "browser")
     s, o, _ = w.call("POST", "/admin/groups", {"name": "x"}, token=tok, cookie=True, origin=None)
     assert (s, o) == (403, {"error": "not_allowed"})
     assert w.call("GET", "/admin/groups", token=tok, cookie=True, origin=None)[0] == 200

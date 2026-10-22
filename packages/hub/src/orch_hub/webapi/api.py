@@ -24,6 +24,7 @@ Nothing secret is logged: this module does not log at all.
 
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import json
 import re
@@ -309,6 +310,7 @@ class WebApi:
         self._limit = _Limiter(deps.now_ms)
         self._prepared: dict[str, tuple[str, str, str, str, int]] = {}  # id -> user, channel, workspace, log, expires
         self._plock = threading.Lock()
+        self._kinds: dict[str, tuple[str, int]] = {}  # sha256(token) -> (client kind, expires_ms), this process only
         self._hashing = threading.BoundedSemaphore(SIGNIN_CONCURRENCY)
         self._hosts = frozenset(urllib.parse.urlsplit(o).netloc for o in deps.allowed_origins)
 
@@ -369,7 +371,7 @@ class WebApi:
             raise ApiError("unknown_op")
         if self._hosts and headers.get("host", "") not in self._hosts:
             raise ApiError("not_allowed")
-        cookie_token = self._cookie(headers.get("cookie", ""))
+        cookie_token = self._cookie(headers.get("cookie", ""), self._cookie_name)
         auth = headers.get("authorization", "")
         bearer = auth[7:].strip() if auth[:7].lower() == "bearer " else ""
         if method != "GET":
@@ -380,6 +382,12 @@ class WebApi:
             if not ctx.token:
                 raise ApiError("no_session")
             ctx.user_id = self.d.channels.session_user(ctx.token)
+            # a session is for the carrier it was issued for (cookie = browser, bearer = app); one this process did not
+            # issue (e.g. from before a restart) is refused and the person signs in again
+            if self._kinds.get(hashlib.sha256(ctx.token.encode()).hexdigest(), ("", 0))[0] != (
+                "browser" if ctx.cookie else "app"
+            ):
+                raise ApiError("no_session")
             if route.auth == "admin" and not self.d.access.is_hub_admin(ctx.user_id):
                 raise ApiError("forbidden_role")
         body = self._body(raw)
@@ -390,11 +398,17 @@ class WebApi:
         status, obj, *extra = getattr(self, "_h_" + route.handler)(ctx, params, {k: v[-1] for k, v in q.items()}, body)
         return self._out(status, obj, extra[0] if extra else [])
 
+    @property
+    def _cookie_name(self) -> str:
+        """``__Host-`` (Secure, Path=/, no Domain) whenever the cookie is Secure: a sibling subdomain cannot set or shadow
+        it. Only the loopback dev server over plain http uses the bare name."""
+        return ("__Host-" if self.d.secure_cookies else "") + COOKIE
+
     @staticmethod
-    def _cookie(header: str) -> str:
+    def _cookie(header: str, name: str) -> str:
         for part in header.split(";"):
             k, _, v = part.strip().partition("=")
-            if k == COOKIE:
+            if k == name:
                 return v
         return ""
 
@@ -485,11 +499,16 @@ class WebApi:
         finally:
             self._hashing.release()
         out: dict[str, Any] = {"user_id": s["user_id"], "expires_ms": s["expires_ms"]}
+        with self._plock:
+            now = self.d.now_ms()
+            if len(self._kinds) > 4096:
+                self._kinds = {k: v for k, v in self._kinds.items() if v[1] > now}
+            self._kinds[hashlib.sha256(s["token"].encode()).hexdigest()] = (client, s["expires_ms"])
         if client == "app":  # the phone keeps the token itself and sends it as a bearer
             out["token"] = s["token"]
             return 200, out, []
         ttl = max(0, (s["expires_ms"] - self.d.now_ms()) // 1000)
-        attrs = f"{COOKIE}={s['token']}; Path=/api; HttpOnly; SameSite=Strict; Max-Age={ttl}"
+        attrs = f"{self._cookie_name}={s['token']}; Path=/; HttpOnly; SameSite=Strict; Max-Age={ttl}"
         return 200, out, [("Set-Cookie", attrs + ("; Secure" if self.d.secure_cookies else ""))]
 
     def _h_whoami(self, c: Ctx, p: dict, q: dict, b: dict | None):
@@ -498,7 +517,7 @@ class WebApi:
 
     def _h_sign_out(self, c: Ctx, p: dict, q: dict, b: dict | None):
         self.d.channels.sign_out(c.token)
-        clear = f"{COOKIE}=; Path=/api; HttpOnly; SameSite=Strict; Max-Age=0"
+        clear = f"{self._cookie_name}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0"
         return 200, {"ok": True}, [("Set-Cookie", clear + ("; Secure" if self.d.secure_cookies else ""))]
 
     # --- (b) person home ---------------------------------------------------------------------------------------------

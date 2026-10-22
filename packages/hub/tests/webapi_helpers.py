@@ -150,7 +150,7 @@ class Web:
         if host or self.api._hosts:
             h["host"] = host or "127.0.0.1:9000"
         if token and cookie:
-            h["cookie"] = f"orch_hub_session={token}"
+            h["cookie"] = f"{self.api._cookie_name}={token}"
         elif token:
             h["authorization"] = f"Bearer {token}"
         if origin:
@@ -163,15 +163,16 @@ class Web:
         status, hdrs, out = self.api.handle(method, "/api/v1" + path, h, raw, peer)
         return status, json.loads(out), dict(hdrs)
 
-    def login(self, user: str) -> str:
-        s, o, _ = self.call(
+    def login(self, user: str, client: str = "app") -> str:
+        """A session token; ``client="browser"`` signs in as the browser does and returns the cookie's token."""
+        s, o, h = self.call(
             "POST",
             "/session",
-            {"user_id": user, "password": "correct horse battery", "totp": self.env.next_code(user), "client": "app"},
-            origin=None,
+            {"user_id": user, "password": "correct horse battery", "totp": self.env.next_code(user), "client": client},
+            origin=None if client == "app" else ORIGIN,
         )
         assert s == 200, o
-        return o["token"]
+        return o["token"] if client == "app" else h["Set-Cookie"].split(";")[0].split("=", 1)[1]
 
     def register_channel(self, token: str, user: str | None = None):
         """A browser channel registered through the HTTP API. Returns (signer, channel_id)."""

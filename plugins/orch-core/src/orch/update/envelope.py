@@ -77,16 +77,19 @@ def _strict_json(data: bytes) -> Any:
         raise Malformed from e
 
 
-def _in_domain(v: Any) -> bool:
+MAX_DEPTH = 32  # signed documents are shallow; deeper nesting is refused as malformed
+
+
+def _in_domain(v: Any, depth: int = 0) -> bool:
     """Objects with ASCII keys, strings, integers 0..2^53-1, booleans, lists: nothing else (no null, no floats)."""
     if isinstance(v, bool | str):
         return True
     if isinstance(v, int):
         return 0 <= v <= MAX_INT
     if isinstance(v, list):
-        return all(_in_domain(x) for x in v)
+        return depth < MAX_DEPTH and all(_in_domain(x, depth + 1) for x in v)
     if isinstance(v, dict):
-        return all(k.isascii() and _in_domain(x) for k, x in v.items())
+        return depth < MAX_DEPTH and all(k.isascii() and _in_domain(x, depth + 1) for k, x in v.items())
     return False
 
 
@@ -222,7 +225,7 @@ def check_manifest(m: dict[str, Any]) -> None:
         url = _str(f["url"])
         _need(url.startswith("https://") and len(url) <= 512 and url.isprintable() and " " not in url)
     _need(sorted(str(f["role"]) for f in fs) == ["constraints", "core", "dashboard"])
-    _need(len({f["name"] for f in fs}) == 3)
+    _need(len({f["name"].lower() for f in fs}) == 3)  # case-insensitive file systems
 
 
 def check_catalog(m: dict[str, Any]) -> None:

@@ -12,7 +12,7 @@ import base64
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 
-__all__ = ["PRODUCTION_ROOTS", "TEST_ROOTS", "embedded_roots", "enable_test_root_for_tests"]
+__all__ = ["PRODUCTION_ROOTS", "TEST_ROOTS", "embedded_roots", "test_hook_active", "enable_test_root_for_tests"]
 
 # key id -> raw 32-byte Ed25519 public key. Filled by U3b.
 PRODUCTION_ROOTS: Mapping[str, bytes] = {}
@@ -29,11 +29,18 @@ _test_hook_depth = 0
 def enable_test_root_for_tests() -> Iterator[None]:
     """Make :func:`embedded_roots` include the TEST root. For tests only; nothing in ``src`` may call this."""
     global _test_hook_depth
+    clash = set(TEST_ROOTS) & set(PRODUCTION_ROOTS)
+    if clash:  # the TEST root must never shadow (or be mistaken for) a production root
+        raise RuntimeError(f"test root id collides with a production root: {sorted(clash)}")
     _test_hook_depth += 1
     try:
         yield
     finally:
         _test_hook_depth -= 1
+
+
+def test_hook_active() -> bool:
+    return _test_hook_depth > 0
 
 
 def embedded_roots() -> Mapping[str, bytes]:

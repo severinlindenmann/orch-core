@@ -28,7 +28,7 @@ from .envelope import (
     parse_envelope,
     parse_time,
 )
-from .keys import embedded_roots
+from .keys import embedded_roots, test_hook_active
 
 __all__ = ["Reason", "UpdateRefused", "Verified", "verify_envelope"]
 
@@ -131,7 +131,7 @@ def verify_envelope(
         return _verify(
             envelope, purpose, channel, now, seq_seen, revocations_issued_at, files, trusted, allow_expired_manifest
         )
-    except Malformed:
+    except (Malformed, RecursionError):
         raise _refuse(Reason.MALFORMED) from None
 
 
@@ -172,7 +172,7 @@ def _verify(
     # 4 certificate rules
     if cert["purpose"] != purpose:
         raise _refuse(Reason.WRONG_PURPOSE)
-    if not channel_allowed(cert["channels"], channel):
+    if not channel_allowed(cert["channels"], channel) or (channel.startswith("test-") and not test_hook_active()):
         raise _refuse(Reason.CHANNEL_NOT_ALLOWED)
     if now < parse_time(cert["not_before"]):
         raise _refuse(Reason.CERT_NOT_YET_VALID)

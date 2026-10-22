@@ -1,3 +1,4 @@
 
 # per-test HOME/run dirs created at the checkout root by T2 runs
 /.h[0-9a-z][0-9a-z][0-9a-z][0-9a-z]/
+__pycache__/

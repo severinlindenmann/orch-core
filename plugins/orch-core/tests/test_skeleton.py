@@ -35,14 +35,14 @@ def test_version():
 
 def test_module_version():
     r = subprocess.run([sys.executable, "-m", "orch", "--version"], capture_output=True, text=True)
-    assert (r.returncode, r.stdout.strip()) == (0, "orch v2 (in development)")
+    assert (r.returncode, r.stdout.strip()) == (0, "orch 2.0.0.dev0 (development build)")
 
 
 def test_entry_point_version():
     exe = shutil.which("orch", path=str(Path(sys.executable).parent))
     assert exe, "orch entry point not installed"
     r = subprocess.run([exe, "--version"], capture_output=True, text=True)
-    assert (r.returncode, r.stdout.strip()) == (0, "orch v2 (in development)")
+    assert (r.returncode, r.stdout.strip()) == (0, "orch 2.0.0.dev0 (development build)")
 
 
 def test_unimplemented_exits_1_with_the_error_envelope(monkeypatch):

@@ -24,6 +24,8 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/orch"]
+# written by scripts/release/stamp.py at build time and gitignored, so named here or hatchling leaves it out
+artifacts = ["src/orch/_build.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

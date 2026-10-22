@@ -236,3 +236,92 @@ def test_hub_rotation_pushes_the_new_card(env):
     env.fw.forward(WS, req(env))
     cards = [c for c in env.sync.calls if c[0] == "card"]
     assert len(cards) == 2 and cards[1][1] == env.hub.card()
+
+
+def test_binding_for_another_workspace_is_rejected_and_not_stored(env):
+    other = "22" * 16
+    with pytest.raises(Refused) as x:
+        env.fw.binding(other, binding(env.wsk, env.hub, WS))  # an object of WS filed under another key
+    assert x.value.code == "other_workspace"
+    with pytest.raises(Refused) as x:
+        env.fw.binding(WS, binding(env.wsk, env.hub, other))
+    assert x.value.code == "other_workspace"
+    assert other not in env.fw._bindings and env.fw._bindings[WS] == env.b
+
+
+def test_late_lower_or_equal_binding_cannot_undo_an_unbound(env):
+    env.fw.binding(WS, unbound(env.wsk, env.hub, WS, seq=2))
+    for seq in (1, 2):
+        with pytest.raises(Refused) as x:
+            env.fw.binding(WS, binding(env.wsk, env.hub, WS, seq=seq))
+        assert x.value.code == "unbound"
+    with pytest.raises(Refused) as x:
+        env.fw.forward(WS, req(env))
+    assert x.value.code == "not_bound" and env.up.requests == []
+    env.fw.binding(WS, binding(env.wsk, env.hub, WS, seq=3))  # a later binding is a new one
+    assert env.fw.forward(WS, req(env))["status"] == 200
+
+
+def test_lower_seq_binding_is_stale(env):
+    env.fw.binding(WS, binding(env.wsk, env.hub, WS, seq=5))
+    with pytest.raises(Refused) as x:
+        env.fw.binding(WS, binding(env.wsk, env.hub, WS, seq=4))
+    assert x.value.code == "stale_binding"
+
+
+def test_unknown_sync_code_is_unavailable(env):
+    env.fw._synced.clear()
+    env.sync.fail = PublishSyncError("secret internal detail")
+    with pytest.raises(Refused) as x:
+        env.fw.forward(WS, req(env))
+    assert x.value.code == "unavailable"
+
+
+def test_keys_are_read_once_per_forward(tmp_path, up):
+    hub = make_hub(tmp_path)
+    calls = []
+
+    def keys():
+        calls.append(1)
+        return hub.op_signer, hub.card(), hub.hub_id
+
+    fw = HubPublish(keys, RecordingSync(), PublishConfig(up.url, HOST))
+    wsk = new_wsk()
+    fw.binding(WS, binding(wsk, hub, WS))
+    calls.clear()
+    fw.forward(WS, host_request(wsk, hub.hub_id, WS))
+    assert len(calls) == 1
+
+
+def test_overall_deadline_applies_to_a_slow_drip(tmp_path):
+    import socket
+    import threading
+    import time
+
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+
+    def drip():
+        c, _ = srv.accept()
+        c.recv(65536)
+        c.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n")
+        for _ in range(100):
+            try:
+                c.sendall(b"x")
+            except OSError:
+                break
+            time.sleep(0.2)
+        c.close()
+
+    threading.Thread(target=drip, daemon=True).start()
+    hub = make_hub(tmp_path)
+    cfg = PublishConfig(f"http://127.0.0.1:{srv.getsockname()[1]}", HOST, timeout_s=5, deadline_s=1.0)
+    fw = HubPublish(hub, RecordingSync(), cfg)
+    wsk = new_wsk()
+    fw.binding(WS, binding(wsk, hub, WS))
+    t = time.monotonic()
+    with pytest.raises(Refused) as x:
+        fw.forward(WS, host_request(wsk, hub.hub_id, WS))
+    assert x.value.code == "unavailable" and time.monotonic() - t < 3
+    srv.close()

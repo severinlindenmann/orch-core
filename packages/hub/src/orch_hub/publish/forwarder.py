@@ -10,6 +10,7 @@ from __future__ import annotations
 import http.client
 import ipaddress
 import threading
+import time
 import urllib.parse
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -25,6 +26,33 @@ from .sync import PublishSync, PublishSyncError
 MAX_REQUEST_BODY = 8 * 1024 * 1024
 MAX_RESPONSE_BODY = 16 * 1024 * 1024
 #: orch-publish answers with these when the hub's card or the binding is not (or no longer) held: forget what we synced
+#: refusal codes of docs/protocol.md §14 / v2 that orch-publish's store can answer a card or binding with; any
+#: other code from the sync is reported as ``unavailable``
+SYNC_CODES = frozenset(
+    [
+        "malformed",
+        "wrong_suite",
+        "other_hub",
+        "other_workspace",
+        "hub_id_mismatch",
+        "wsk_mismatch",
+        "not_yet_valid",
+        "binding_conflict",
+        "stale_binding",
+        "unbound",
+        "stale_card",
+        "stale_op_cert",
+        "dev_refused",
+        "dev_mismatch",
+        "cert_invalid",
+        "cert_expired",
+        "revoked",
+        "unknown_workspace",
+        "unknown_hub",
+        "bad_signature",
+        "not_bound",
+    ]
+)
 _RESYNC_CODES = (b"not_bound", b"unknown_hub")
 
 
@@ -34,7 +62,8 @@ class PublishConfig:
     api_host: (
         str  # the host the workspaces sign (orch-publish's configured api_host): requests naming another are refused
     )
-    timeout_s: float = 15.0
+    timeout_s: float = 15.0  # per socket operation
+    deadline_s: float = 30.0  # for the whole forward, sync included
     max_request_body: int = MAX_REQUEST_BODY
     max_response_body: int = MAX_RESPONSE_BODY
 
@@ -74,6 +103,7 @@ class HubPublish:
         else:
             self._keys = keys
         self._lock = threading.Lock()
+        self._ws_locks: dict[str, threading.Lock] = {}
         self._bindings: dict[str, dict[str, Any]] = {}  # workspace -> latest binding / unbound object, as accepted
         self._synced: dict[str, bytes] = {}  # workspace -> cj of the object orch-publish holds
         self._card_synced: bytes | None = None
@@ -84,23 +114,48 @@ class HubPublish:
         pass  # the workspace's v2 card reaches orch-publish through its own register flow, not through the hub
 
     def binding(self, workspace_id: str, obj: Mapping[str, Any]) -> None:
+        """Remember the workspace's newest binding / unbound. An unbound is final: a binding at or below the unbound
+        sequence never replaces it, and a lower sequence never replaces anything (docs/protocol.md §9.4)."""
+        o = obj.get("o") if isinstance(obj, Mapping) else None
+        if (
+            not isinstance(o, Mapping)
+            or o.get("kind") not in ("hub.binding", "hub.unbound")
+            or type(o.get("binding_seq")) is not int
+        ):
+            raise Refused("malformed")
+        if o.get("workspace_id") != workspace_id:
+            raise Refused("other_workspace")
         with self._lock:
+            held = self._bindings.get(workspace_id)
+            if held is not None:
+                ho = held["o"]
+                if cj(dict(obj)) == cj(held):
+                    return
+                if ho["kind"] == "hub.unbound" and o["binding_seq"] <= ho["binding_seq"]:
+                    raise Refused("unbound")
+                if o["binding_seq"] < ho["binding_seq"]:
+                    raise Refused("stale_binding")
+                if o["binding_seq"] == ho["binding_seq"] and o["kind"] != "hub.unbound":
+                    raise Refused("binding_conflict")
             self._bindings[workspace_id] = dict(obj)
         try:
-            self._ensure(workspace_id, need_bound=False)
+            self._ensure(
+                workspace_id, self._keys()[1], need_bound=False, deadline=time.monotonic() + self._cfg.deadline_s
+            )
         except Refused:
             pass  # not reachable now: the next forward syncs again, and refuses if it cannot
 
     # --- PublishForwarder ------------------------------------------------------------------------------------------
 
     def forward(self, workspace_id: str, request: dict[str, Any]) -> dict[str, Any]:
+        deadline = time.monotonic() + self._cfg.deadline_s
         p = R.parse(request, max_body=self._cfg.max_request_body)
         if p.workspace_id != workspace_id:
             raise Refused("other_workspace")
         if p.host != self._cfg.api_host:
             raise Refused("malformed")
-        signer, _, hub_id = self._keys()
-        self._ensure(workspace_id, need_bound=True)
+        signer, card, hub_id = self._keys()  # read once: card, signer and hub id belong to the same generation
+        self._ensure(workspace_id, card, need_bound=True, deadline=deadline)
         pbytes = hub_path_signed_bytes(
             bytes.fromhex(p.workspace_id), p.ts_ms, p.nonce, p.method, p.host, p.target, p.body, hub_id, p.approval
         )
@@ -111,7 +166,7 @@ class HubPublish:
         headers = dict(p.headers)
         headers["Orch-Hub"] = hub_id
         headers["Orch-Hub-Signature"] = b64u(hsig)
-        status, body = self._send(p, headers)
+        status, body = self._send(p, headers, deadline)
         if status in (401, 403) and any(c in body for c in _RESYNC_CODES):
             with self._lock:
                 self._synced.pop(workspace_id, None)
@@ -120,39 +175,57 @@ class HubPublish:
 
     # --- internals -------------------------------------------------------------------------------------------------
 
-    def _ensure(self, workspace_id: str, *, need_bound: bool) -> None:
-        """Push the hub's card and the workspace's latest binding object when orch-publish does not hold them yet."""
-        _, card, _ = self._keys()
+    def _ws_lock(self, workspace_id: str) -> threading.Lock:
         with self._lock:
-            obj = self._bindings.get(workspace_id)
-            if need_bound and (obj is None or obj.get("o", {}).get("kind") != "hub.binding"):
+            return self._ws_locks.setdefault(workspace_id, threading.Lock())
+
+    def _ensure(self, workspace_id: str, card: dict[str, Any], *, need_bound: bool, deadline: float) -> None:
+        """Push the hub's card and the workspace's latest binding object when orch-publish does not hold them yet.
+        The state lock is never held across a sync call; syncs of one workspace are serialised by its own lock."""
+        with self._ws_lock(workspace_id):
+            with self._lock:
+                obj = self._bindings.get(workspace_id)
+                card_synced, synced = self._card_synced, self._synced.get(workspace_id)
+            if need_bound and (obj is None or obj["o"]["kind"] != "hub.binding"):
                 raise Refused("not_bound")
             try:
                 c = cj(card)
-                if self._card_synced != c:
+                if card_synced != c:
                     self._sync.put_hub_card(card)
-                    self._card_synced = c
+                    with self._lock:
+                        self._card_synced = c
                 if obj is not None:
                     b = cj(obj)
-                    if self._synced.get(workspace_id) != b:
+                    if synced != b:
                         self._sync.put_binding(workspace_id, obj)
-                        self._synced[workspace_id] = b
+                        with self._lock:
+                            self._synced[workspace_id] = b
             except PublishSyncError as e:
-                if e.code == "unavailable":
-                    raise Refused("unavailable") from None
-                raise Refused(e.code) from None
+                raise Refused(e.code if e.code in SYNC_CODES else "unavailable") from None
+            if time.monotonic() > deadline:
+                raise Refused("unavailable")
 
-    def _send(self, p: R.Parsed, headers: Mapping[str, str]) -> tuple[int, bytes]:
+    def _send(self, p: R.Parsed, headers: Mapping[str, str], deadline: float) -> tuple[int, bytes]:
         cls = http.client.HTTPSConnection if self._scheme == "https" else http.client.HTTPConnection
-        conn = cls(self._host, self._port, timeout=self._cfg.timeout_s)
+        left = deadline - time.monotonic()
+        if left <= 0:
+            raise Refused("unavailable")
+        conn = cls(self._host, self._port, timeout=min(self._cfg.timeout_s, left))
         try:
             conn.request(p.method, p.target, body=p.body or None, headers=dict(headers))
             resp = conn.getresponse()  # a 3xx is returned as is: nothing here follows a redirect
-            limit = self._cfg.max_response_body
-            body = resp.read(limit + 1)
-            if len(body) > limit:
-                raise Refused("unavailable")
-            return resp.status, body
+            limit, chunks, n = self._cfg.max_response_body, [], 0
+            while True:
+                if time.monotonic() > deadline:
+                    raise Refused("unavailable")
+                chunk = resp.read1(min(65536, limit + 1 - n))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                n += len(chunk)
+                if n > limit:
+                    raise Refused("unavailable")
+            return resp.status, b"".join(chunks)
         except OSError, http.client.HTTPException:
             raise Refused("unavailable") from None
         finally:

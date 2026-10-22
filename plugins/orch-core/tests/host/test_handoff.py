@@ -668,3 +668,22 @@ def test_ctrl_c_at_the_passphrase_prompt_is_a_calm_cancel_and_cancels_the_reques
     assert doc["error"]["message"] == "Cancelled, nothing was signed."
     assert by_id(human.c, p["request"]["id"])["state"] == "cancelled"
     assert backend.payloads == [] and logged(served, key)[-1].get("text") != "x"
+
+
+def test_ctrl_c_after_the_signature_does_not_claim_that_nothing_was_signed(human, served, monkeypatch):
+    cli = Cli(human, served, monkeypatch)
+    _, key = human.ticket()
+    p = human.prepare("log", {"ref": key, "text": "x"}, handoff=True)
+    real = Connection.call
+
+    def call(self, op, args, **kw):
+        if op == "human.submit":
+            raise KeyboardInterrupt  # the signature exists; whether the host committed is unknown
+        return real(self, op, args, **kw)
+
+    monkeypatch.setattr(Connection, "call", call)
+    rc, doc, _ = cli(p["request"]["code"])
+    assert rc != 0 and doc["error"]["code"] == "invalid.input", doc
+    assert "nothing was signed" not in doc["error"]["message"]
+    assert doc["error"]["message"].startswith("Interrupted;")
+    assert cli.backend.payloads  # it was signed

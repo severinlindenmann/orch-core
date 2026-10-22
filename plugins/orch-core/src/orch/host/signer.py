@@ -73,6 +73,23 @@ class SignerRefused(Exception):
     """The prepared request is refused before any prompt; nothing is signed."""
 
 
+class Cancelled(SignerRefused):
+    """The person pressed Ctrl-C before the signature existed (at the review or the passphrase prompt): the request
+    is cancelled and nothing is signed. A Ctrl-C after :func:`sign` returned is NOT this (it stays a
+    KeyboardInterrupt)."""
+
+
+def cancel_request(call: Callable[..., Any], request_id: str, exc: BaseException) -> None:
+    """Before any signature exists: cancel the request (it expires in 10 minutes anyway); a Ctrl-C becomes
+    :class:`Cancelled`, which is the only interrupt reported as "nothing was signed"."""
+    try:
+        call("human.cancel", {"request_id": request_id})
+    except Exception:  # noqa: BLE001
+        pass
+    if isinstance(exc, KeyboardInterrupt):
+        raise Cancelled("cancelled") from None
+
+
 def _refuse(why: str) -> None:
     raise SignerRefused(f"refusing to sign: {why}")
 
@@ -1061,11 +1078,8 @@ def finish(
         if not confirm(text, confirm_word(prepared, workspace)):
             _refuse("not confirmed")
         signed = sign(prepared, backend=backend, key_id=key_id, workspace_id=workspace_id)
-    except BaseException:
-        try:
-            call("human.cancel", {"request_id": request_id})
-        except Exception:  # noqa: BLE001 - it expires in 10 minutes anyway
-            pass
+    except BaseException as exc:
+        cancel_request(call, request_id, exc)
         raise
     result = call("human.submit", {"request_id": request_id, "events": signed.events}, idem=idem)
     if signed.secret is not None:

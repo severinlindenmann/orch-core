@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from typing import Any
 
 from orch import canon
@@ -119,11 +119,8 @@ def sign_sequence(
             review = _prefixed(review, note)
         if not confirm(review, signer.confirm_word(prepared, workspace)):
             signer._refuse("not confirmed")
-    except BaseException:
-        try:
-            call("human.cancel", {"request_id": request_id})
-        except Exception:  # noqa: BLE001 - it expires in 10 minutes anyway
-            pass
+    except BaseException as exc:
+        signer.cancel_request(call, request_id, exc)
         raise
     box: dict[str, Any] = {}
     fields = (
@@ -131,14 +128,21 @@ def sign_sequence(
         ("add-on" if intent["kind"] == sequence.ADDON else "ticket title", sequence.label_of(intent)),
         ("workspace", workspace_id),
     )
-    with unlocked_backend(
-        backend,
-        key_id,
-        digest=driver.digest,
-        fields=fields,
-        action=f"orch: {driver.total} signatures, one review",
-        labels=labels_for(intent),
-    ) as be:
+    with ExitStack() as stack:
+        try:  # the one passphrase prompt of the batch: an interrupt or refusal here is still before any signature
+            be = stack.enter_context(
+                unlocked_backend(
+                    backend,
+                    key_id,
+                    digest=driver.digest,
+                    fields=fields,
+                    action=f"orch: {driver.total} signatures, one review",
+                    labels=labels_for(intent),
+                )
+            )
+        except BaseException as exc:
+            signer.cancel_request(call, request_id, exc)
+            raise
         box["backend"] = be
         port = _port(call, be, key_id, workspace_id, person, device, auth, workspace, new_idem, box)
         driver.port = port

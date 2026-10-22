@@ -225,3 +225,19 @@ def test_concurrent_senders_and_the_receive_thread_share_one_link() -> None:
     for t in ts:
         t.join(5)
     assert len(dials) == 1 and links[0] is links[1]
+
+
+def test_a_second_user_of_the_link_can_peek_without_dialing_and_drop_only_its_own_link() -> None:
+    """V3 C14b: the log_sync sender shares the one link; it peeks (never dials) and drops only the link that failed."""
+    _, a, _b = world()
+    assert a.svc.current_link() is None  # peeking opens nothing
+    first = a.svc._ensure()  # noqa: SLF001
+    assert a.svc.current_link() is first
+    a.svc.drop_link(only=object())  # not the current link: nothing happens
+    assert a.svc.current_link() is first
+    a.svc.drop_link(only=first)
+    assert a.svc.current_link() is None
+    second = a.svc._ensure()  # noqa: SLF001
+    assert second is not first
+    a.svc.drop_link(only=first)  # a stale handle must not drop the newer link
+    assert a.svc.current_link() is second

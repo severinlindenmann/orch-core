@@ -688,6 +688,20 @@ def build_p4(
         4,
     )
 
+    # ---- §10.7 visibility (L2-D15-1): core's can_see without membership
+    pa, pc = "p_" + "a" * 32, "u_" + U_BOB
+
+    def vis(name: str, visibility: Any, me: list[str], expect: bool, note: str = "") -> None:
+        case(name, "visible", {"visibility": visibility, "me": me}, {"ok": {"visible": expect}}, 4, note)
+
+    vis("visible_workspace_to_anyone", "workspace", [pc], True)
+    vis("visible_restricted_listed", {"restricted": [pa, pc]}, [pc], True)
+    vis("visible_restricted_alias_listed", {"restricted": [pa]}, [pc, pa], True, "the owner alias is one of `me`")
+    vis("visible_restricted_not_listed", {"restricted": [pa]}, [pc], False, "the ticket owner has no standing")
+    vis("visible_restricted_empty_list", {"restricted": []}, [pc, pa], False)
+    vis("visible_unknown_value", {"restricted": pa}, [pa], False, "any other shape: invisible")
+    vis("visible_unknown_string", "private", [pa], False)
+
     # ---- §10.7 log_sync
     wk1 = {"1": WK[1].hex()}
     wk12 = {"1": WK[1].hex(), "2": WK[2].hex()}

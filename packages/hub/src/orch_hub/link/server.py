@@ -68,6 +68,7 @@ class LinkServer:
         spaces: Any = None,
         audit: Any = None,
         wk_seals: WkSeals | None = None,
+        views: Any = None,
         shares: Any = None,
         host: str = "127.0.0.1",
         port: int = 0,
@@ -90,6 +91,7 @@ class LinkServer:
         self._spaces = spaces
         self._audit = audit
         self._wk_seals = wk_seals
+        self._views = views
         self._shares = shares
         self._retry_at = float("-inf")
         self._dev, self._now = dev_mode, now_ms
@@ -341,6 +343,7 @@ class LinkServer:
                 spaces=self._spaces,
                 audit=self._audit,
                 wk_seals=self._wk_seals,
+                views=self._views,
                 shares=self._shares,
             )
             return handler(ctx)

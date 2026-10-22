@@ -572,6 +572,13 @@ ticket's uid). `log` is `"workspace"` or a ticket ULID. The fields are exactly (
 | `verdict.given` | `outcome`, `hash`, `text?` (required on `fail`) |
 | `addon.disabled`, `addon.purged` | `name` (addon name) |
 
+**A new ticket's uid and key (L2-D15-4).** For `ticket.created` the hub proposes the `key` and the new uid. The uid is
+any fresh ULID (its derivation is not normative). The host accepts only `key == next_key` (its own allocator, which may
+have seen numbers the hub's view does not hold) and an unused uid; otherwise it refuses with `ticket.exists` or
+`ticket.key_not_next`. On `ticket.key_not_next` the channel prepares again (a new digest) and the person sees the new
+key. The key number counts restricted tickets too, as on the host (restricted is not secret), so this leaks nothing.
+A hub that cannot read every ticket log answers `unavailable` to `ticket.created`.
+
 **No free-form object anywhere in an action** (security review of 28e767d, field smuggling): every nested value has
 an exact schema, so no action can carry a reserved field or a field owned by another type at any depth (vectors
 `action_smuggle_*`: `set` of `ticket.visibility`, `ticket.tasks` with a `verify.cmd`, `ticket.acceptance`, `ticket.type`,
@@ -1223,6 +1230,19 @@ host then resends the log from `seq` 1 with `reset: true`, which replaces the hu
 hardening ties `reset` to the `restore` event (its `abandoned` head must be on the hub's held chain) and audits it.
 **A reset of the workspace log drops every ticket view** (L2P4-9): held ticket lines may name a `ws_seq` beyond the
 shorter new workspace log; the host resends the ticket logs.
+
+**Visibility (L2-D15-1).** One rule for needs-you and for every build, the same as the host's (orch-core
+`model/visibility.can_see`) minus the membership test (covered by the hub role and the snapshot gates): a ticket whose
+`visibility` is `"workspace"` is visible to every member; a `{"restricted": [...]}` ticket only to a person on that
+list; any other value is invisible. Who owns the ticket, assigns or reviews it, or what role the user has does not
+count: an owner who restricts a ticket without its ticket owner hides it from that owner too. The persons a hub user
+answers to are their `u_` id and, when the hub aliased the workspace owner to them, the owner's person id (both
+canonical, §9.1). A ticket that is not visible reads as `unknown_item` in a build and as nothing in needs-you. Vectors
+`visible_*` (check `visible`, args `{visibility, me}`) are run by hub and host alike.
+
+**Size cap.** At most 64 MiB sealed per workspace on the hub; a workspace whose log exceeds it answers `too_large` on
+every page, and a `reset` refills to the same cap, so the host must keep its synced logs under it (hardening: a
+rate-limited, cached projection and a global cap).
 
 **Not here:** the hub's projection code (F1 replay on the view) is the hub's; body text and artifact bytes are not
 synced in hv 0 (custodial `ticket.updated` is `set` only, §8.5), so the channel shows section hashes, not text, for

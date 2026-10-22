@@ -31355,6 +31355,140 @@
   },
   {
    "args": {
+    "me": [
+     "u_9124812ba8533a024bee116af55a7da0"
+    ],
+    "visibility": "workspace"
+   },
+   "check": "visible",
+   "expect": {
+    "ok": {
+     "visible": true
+    }
+   },
+   "name": "visible_workspace_to_anyone",
+   "phase": 4
+  },
+  {
+   "args": {
+    "me": [
+     "u_9124812ba8533a024bee116af55a7da0"
+    ],
+    "visibility": {
+     "restricted": [
+      "p_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "u_9124812ba8533a024bee116af55a7da0"
+     ]
+    }
+   },
+   "check": "visible",
+   "expect": {
+    "ok": {
+     "visible": true
+    }
+   },
+   "name": "visible_restricted_listed",
+   "phase": 4
+  },
+  {
+   "args": {
+    "me": [
+     "u_9124812ba8533a024bee116af55a7da0",
+     "p_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    ],
+    "visibility": {
+     "restricted": [
+      "p_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     ]
+    }
+   },
+   "check": "visible",
+   "expect": {
+    "ok": {
+     "visible": true
+    }
+   },
+   "name": "visible_restricted_alias_listed",
+   "note": "the owner alias is one of `me`",
+   "phase": 4
+  },
+  {
+   "args": {
+    "me": [
+     "u_9124812ba8533a024bee116af55a7da0"
+    ],
+    "visibility": {
+     "restricted": [
+      "p_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+     ]
+    }
+   },
+   "check": "visible",
+   "expect": {
+    "ok": {
+     "visible": false
+    }
+   },
+   "name": "visible_restricted_not_listed",
+   "note": "the ticket owner has no standing",
+   "phase": 4
+  },
+  {
+   "args": {
+    "me": [
+     "u_9124812ba8533a024bee116af55a7da0",
+     "p_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    ],
+    "visibility": {
+     "restricted": []
+    }
+   },
+   "check": "visible",
+   "expect": {
+    "ok": {
+     "visible": false
+    }
+   },
+   "name": "visible_restricted_empty_list",
+   "phase": 4
+  },
+  {
+   "args": {
+    "me": [
+     "p_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    ],
+    "visibility": {
+     "restricted": "p_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+   },
+   "check": "visible",
+   "expect": {
+    "ok": {
+     "visible": false
+    }
+   },
+   "name": "visible_unknown_value",
+   "note": "any other shape: invisible",
+   "phase": 4
+  },
+  {
+   "args": {
+    "me": [
+     "p_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    ],
+    "visibility": "private"
+   },
+   "check": "visible",
+   "expect": {
+    "ok": {
+     "visible": false
+    }
+   },
+   "name": "visible_unknown_string",
+   "phase": 4
+  },
+  {
+   "args": {
     "pages": [
      {
       "count": 2,

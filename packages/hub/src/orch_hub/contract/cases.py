@@ -320,6 +320,8 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
     if check == "action":
         o = P4.check_action(a["action"], role=a["role"])
         return {"type": o["type"]}
+    if check == "visible":
+        return {"visible": P4.visible(a["visibility"], a["me"])}
     if check == "built":
         P4.check_built(a["action"], a["log"], a["event"])
         return {"built": True}

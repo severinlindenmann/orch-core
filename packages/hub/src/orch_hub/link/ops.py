@@ -22,6 +22,7 @@ from .registry import Registry
 
 if TYPE_CHECKING:
     from ..router import Router
+    from ..view import ViewService
     from .wkseal import WkSeals
 
 
@@ -113,6 +114,7 @@ class OpContext:
     spaces: Any = None  # orch_hub.spaces.SpaceService; None = shared spaces not served (unknown_op)
     access: Any = None  # D3's orch_hub.access.Access (the serve() instance); None until wired
     wk_seals: WkSeals | None = None  # the wk_seal store; None: the op is `unavailable`
+    views: ViewService | None = None  # D15's log_sync receiver; None: the op is `unavailable`
     shares: Any = None  # orch_hub.shares.ShareService; None = share ops not served (unknown_op)
 
 
@@ -141,6 +143,14 @@ def _sync_wk_seals(c: OpContext, state: dict[str, Any]) -> None:
             c.wk_seals.retire(c.workspace_id)
         except Exception:
             logging.getLogger("orch_hub.link").exception("wk_seal retire failed; the other steps go on")
+
+
+def _drop_view(c: OpContext, state: dict[str, Any]) -> None:
+    """D15's synced view belongs to a live FULL binding only: any other state forgets it (its own post-commit step, so
+    a failed wk_seal retire cannot skip it; caller holds the lock)."""
+    b = state.get("binding")
+    if c.views is not None and (state.get("status") != "bound" or type(b) is not dict or b.get("mode") != "full"):
+        c.views.store.drop(c.workspace_id)
 
 
 def _sync_shares(c: OpContext, state: dict[str, Any]) -> None:
@@ -191,6 +201,10 @@ def join(c: OpContext) -> dict[str, Any]:
         c.invites.consume(invite, c.workspace_id)
         _sync_wk_seals(c, state)
         _sync_shares(c, state)
+        try:
+            _drop_view(c, state)
+        except Exception:
+            logging.getLogger("orch_hub.link").exception("view drop failed")
     c.downstream.card(c.workspace_id, join_msg["card"], join_msg["pk_pub"])
     c.downstream.binding(c.workspace_id, join_msg["binding"])
     return {}
@@ -260,6 +274,7 @@ def binding_put(c: OpContext) -> dict[str, Any]:
     steps: list[tuple[str, Callable[[], None]]] = [
         ("wk_seal retire", locked(lambda: _sync_wk_seals(c, state))),
         ("share sync", locked(lambda: _sync_shares(c, state))),
+        ("view drop", locked(lambda: _drop_view(c, state))),
         ("downstream binding", lambda: c.downstream.binding(c.workspace_id, obj)),
         ("spaces on_unbind", leave_spaces),
     ]
@@ -375,6 +390,19 @@ def wk_seal(c: OpContext) -> dict[str, Any]:
     return {}
 
 
+def log_sync(c: OpContext) -> dict[str, Any]:
+    """A sealed page of the workspace's own log lines (§10.7, full mode only). Mode check, the contract's page check
+    and the store write are one step inside the registry lock, so they cannot be separated from an unbind."""
+    if c.views is None:
+        raise Refused("unavailable")
+    with c.registry.lock:
+        pin = _require_pin(c)
+        _require_bound(c)
+        if c.registry.mode(c.workspace_id) != "full":
+            raise Refused("wrong_mode")
+        return c.views.accept(c.workspace_id, unb64u(pin["wsk_pub"], 65), c.body)
+
+
 HANDLERS: dict[str, Callable[[OpContext], dict[str, Any]]] = {
     "join": join,
     "card_put": card_put,
@@ -390,6 +418,7 @@ HANDLERS: dict[str, Callable[[OpContext], dict[str, Any]]] = {
     "space_get": space_get,
     "space_accept": space_accept,
     "wk_seal": wk_seal,
+    "log_sync": log_sync,
     "share_put": share_put,
     "share_revoke": share_revoke,
 }

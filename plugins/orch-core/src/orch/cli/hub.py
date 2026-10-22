@@ -297,6 +297,12 @@ def _refused_lines(d: Mapping[str, Any]) -> str:
     return "".join(f"\n{x}" for x in out)
 
 
+def _confirm_word(prev: Mapping[str, Any]) -> str:
+    """What the owner types to confirm: 'share', or 'all N' when the list above was cut off (they confirm what they
+    did not see, so they must say how many)."""
+    return f"all {prev['count']}" if prev.get("more") else "share"
+
+
 def _sync_line(d: Mapping[str, Any]) -> str:
     if d.get("synced"):
         text = f"sent to the hub: {d['put']} shared, {d['revoke']} withdrawn, {d['kept']} unchanged"
@@ -328,11 +334,12 @@ def _share(a: argparse.Namespace, env: Mapping[str, str], out: TextIO, as_json: 
             lines = "".join(f"  {i['line']}\n" for i in prev["items"]) + (
                 f"  ... and {prev['more']} more\n" if prev["more"] else ""
             )
+            word = _confirm_word(prev)
             if not _confirm(
                 f"The hub will see {prev['count']} item(s) ({prev['new']} new, {prev['revoked']} withdrawn):\n"
                 f"{lines}{_CANNOT_UNREAD}\nLater changes to these items are sent automatically.\n"
-                "Type 'share' to confirm: ",
-                "share",
+                f"Type '{word}' to confirm: ",
+                word,
             ):
                 raise PubError("invalid.input", "not confirmed; nothing changed", 5)
             args["expect"] = prev["plan"]
@@ -354,11 +361,13 @@ def _share(a: argparse.Namespace, env: Mapping[str, str], out: TextIO, as_json: 
         f"  ... and {prev['more']} more\n" if prev["more"] else ""
     )
     verb = "will also share" if key == "add" else "will stop sharing"
+    word = _confirm_word(prev)
     if not _confirm(
         f"The hub {verb}: {describe(rule)}.\nAfter this change the hub sees {prev['count']} item(s) "
         f"({prev['new']} new, {prev['revoked']} withdrawn):\n{lines}{_CANNOT_UNREAD}\n"
-        "Later changes to these items are sent automatically.\nType 'share' to confirm: ",
-        "share",
+        "Later changes to these items are sent automatically.\n"
+        f"Type '{word}' to confirm: ",
+        word,
     ):
         raise PubError("invalid.input", "not confirmed; nothing changed", 5)
     d = _call(target, op, {"rule": rule, "expect": prev["plan"]}, env)

@@ -27,6 +27,7 @@ Fail closed: unreadable state, an unknown rule or a malformed stored value is ``
 
 from __future__ import annotations
 
+import hashlib
 import os
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
@@ -275,6 +276,15 @@ def make_builder(
 # --- state ----------------------------------------------------------------------------------------------------------
 
 
+def plan_of(items: Iterable[ShareItem]) -> str:
+    """The digest of a selection (logical id and content digest of every item): what ``share.preview`` hands the owner
+    and what a confirming op must present back."""
+    h = hashlib.sha256()
+    for i in items:
+        h.update(f"{i.logical}\0{i.digest}\n".encode())
+    return b64u(h.digest())
+
+
 _STATE_KEYS = frozenset({"rules", "sent", "withdrawn", "refused", "confirmed"})
 
 
@@ -298,9 +308,16 @@ class ShareState:
     #: only items an automatic pass may send or update. ``None``: a state from before this field: its ``sent`` items.
     confirmed: list[str] | None = None
 
-    def confirm(self, selected: Iterable[ShareItem]) -> None:
-        """The owner confirmed (or explicitly synced) this selection: remember it for the automatic passes."""
-        self.confirmed = sorted({i.logical for i in selected})
+    def confirm(self, selected: Iterable[ShareItem], expect: str) -> None:
+        """The owner confirmed this selection: remember it for the automatic passes.
+
+        Invariant (C6fud-1): a selection is confirmed only against the plan the owner was shown (``expect``, see
+        :func:`plan_of`); no other path may widen what an automatic pass sends. Withdrawn items are not part of what
+        was shown. A different selection raises :class:`HubRefused` (``plan_changed``) and changes nothing."""
+        items = [i for i in selected if i.logical not in self.withdrawn]
+        if not isinstance(expect, str) or plan_of(items) != expect:
+            raise HubRefused("plan_changed")
+        self.confirmed = sorted({i.logical for i in items})
 
     def auto_wanted(self, selected: Iterable[ShareItem]) -> list[ShareItem]:
         """What an automatic pass may send: the confirmed items that still match, with their CURRENT content.

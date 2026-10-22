@@ -306,3 +306,10 @@ def test_sync_shows_what_is_new_and_binds_the_plan(share_host):
     share_host.called.clear()
     share_host.yes = False
     assert run(["share", "sync"], {}, as_json=True)[0] == 5 and [op for op, _ in share_host.called] == ["share.preview"]
+
+
+def test_a_cut_off_list_needs_the_typed_count(share_host, monkeypatch):
+    from orch.cli import hub as H
+
+    prev = {"count": 250, "new": 250, "revoked": 0, "more": 150, "plan": "p" * 43, "items": []}
+    assert H._confirm_word(prev) == "all 250" and H._confirm_word({**prev, "more": 0}) == "share"  # noqa: SLF001

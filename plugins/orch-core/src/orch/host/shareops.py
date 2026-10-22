@@ -5,8 +5,8 @@ Ops (all column P, owner role; an agent is refused, and no op here is reachable 
 * ``share.rules {}``: the owner's rules and how many items each selects now.
 * ``share.preview {add?, remove?}``: what the rule set would share if ``add`` / ``remove`` were applied: one line per
   item, counts, and ``plan`` (a digest of the exact item set). Nothing changes.
-* ``share.rule_add {rule, expect?}`` / ``share.rule_remove {rule, expect?}``: change the rules, then sync. ``expect`` is
-  the ``plan`` the owner was shown: if the selection is different now, nothing changes (WYSIWYS).
+* ``share.rule_add {rule, expect}`` / ``share.rule_remove {rule, expect}``: change the rules, then sync. ``expect`` is
+  required: the ``plan`` the owner was shown: if the selection is different now, nothing changes (WYSIWYS).
 * ``share.revoke {ref}``: withdraw one item now (a ticket key or a ``logical`` id from ``share.preview``); it stays
   withdrawn while it still matches a rule.
 * ``share.sync {expect?}``: make the hub's copy equal the selection (``share_put`` / ``share_revoke``). With ``expect``
@@ -22,7 +22,6 @@ The state is ``hub/shares.json`` (0600, host-owned). What goes into ``sealed`` i
 
 from __future__ import annotations
 
-import hashlib
 import json
 import threading
 from collections.abc import Mapping
@@ -59,13 +58,13 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
     "share.rule_add": {
         "type": "object",
         "properties": {"rule": _RULE, "expect": _PLAN},
-        "required": ["rule"],
+        "required": ["rule", "expect"],
         "additionalProperties": False,
     },  # fmt: skip
     "share.rule_remove": {
         "type": "object",
         "properties": {"rule": _RULE, "expect": _PLAN},
-        "required": ["rule"],
+        "required": ["rule", "expect"],
         "additionalProperties": False,
     },  # fmt: skip
     "share.revoke": {
@@ -217,12 +216,9 @@ def tickets_for(service: WorkspaceService, viewer: str | None = None) -> list[An
 
 
 def _plan(items: list[Any]) -> str:
-    from orch.crypto.encoding import b64u
+    from orch.hubclient.shares import plan_of
 
-    h = hashlib.sha256()
-    for i in items:
-        h.update(f"{i.logical}\0{i.digest}\n".encode())
-    return b64u(h.digest())
+    return plan_of(items)
 
 
 def _rows(items: list[Any], limit: int = 100) -> dict[str, Any]:
@@ -339,6 +335,18 @@ def _sync_locked(service: WorkspaceService, st: Any, wanted: list[Any]) -> dict[
         closer.close()
 
 
+def _confirm(st: Any, selection: list[Any], expect: str) -> None:
+    """The one place a selection is confirmed: against the plan the owner was shown (C6fud-1)."""
+    from orch.hubclient.errors import HubRefused
+
+    try:
+        st.confirm(selection, expect)
+    except HubRefused:
+        raise HostError(
+            "invalid.input", "share: what would be shared is not what you were shown; nothing changed"
+        ) from None
+
+
 def sync_now(service: WorkspaceService, viewer: str | None = None, expect: str | None = None) -> dict[str, Any]:
     """Evaluate and sync (the caller holds no lock). ``{"synced": True, put, revoke, kept}`` or
     ``{"synced": False, "pending": code}``: the rules stay saved and the next sync repeats only what is missing.
@@ -356,11 +364,7 @@ def sync_now(service: WorkspaceService, viewer: str | None = None, expect: str |
             wanted = st.auto_wanted(S.select(st.rules, facts))
         else:
             wanted = _after(st, facts)[2]
-            if _plan(wanted) != expect:
-                raise HostError(
-                    "invalid.input", "share: what would be shared is not what you were shown; nothing changed"
-                )
-            st.confirm(wanted)
+            _confirm(st, wanted, expect)
         return _sync_locked(service, st, wanted)
 
 
@@ -389,16 +393,18 @@ def auto_sync(service: WorkspaceService) -> dict[str, Any] | None:
 
 def _audit_auto(service: WorkspaceService, before: dict[str, Any], st: Any) -> None:
     """C6fu2-2: one host audit entry (the channel of the manual share ops) per pass that changed the hub's copy:
-    logical ids only, never content."""
+    logical ids only, never content. ``unknown``: a put whose reply never came (the hub may or may not hold it)."""
     from . import securitylog
 
     after = {lg: v.get("digest") for lg, v in st.sent.items()}
     revoked = sorted(set(before) - set(after))
-    put = sorted(lg for lg, d in after.items() if before.get(lg) != d)
-    if revoked or put:
+    changed = {lg for lg, d in after.items() if before.get(lg) != d}
+    put = sorted(lg for lg in changed if after[lg] is not None)
+    unknown = sorted(lg for lg in changed if after[lg] is None)  # a put sent without a reply: the hub may hold it
+    if revoked or put or unknown:
         securitylog.record(
             service.state_dir, service.host_uid, service.clock(), "share.auto",
-            workspace_id=service.workspace_id, principal="host:auto", put=put, revoked=revoked,
+            workspace_id=service.workspace_id, principal="host:auto", put=put, revoked=revoked, unknown=unknown,
         )  # fmt: skip
 
 
@@ -440,7 +446,7 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
                 after, withdrawn, shown = _after(st, facts, add=rule if op == "share.rule_add" else None,
                                                  remove=rule if op == "share.rule_remove" else None)  # fmt: skip
                 changed = after != st.rules
-                if "expect" in args and _plan(shown) != args["expect"]:
+                if _plan(shown) != args["expect"]:
                     raise HostError(
                         "invalid.input", "share: what would be shared is not what you were shown; nothing changed"
                     )
@@ -449,9 +455,13 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
                     _save(service, st)
                 note = "changed" if changed else "unchanged"
             # C6-2: the sync sends exactly the selection that was confirmed above, under the same lock (never a
-            # second selection that a ticket change in between could have altered)
+            # second selection that a ticket change in between could have altered). Only a rule change confirms
+            # (against the shown plan); a revoke narrows and sends nothing the owner has not confirmed (C6fud-1).
             selected = S.select(st.rules, facts)
-            st.confirm(selected)
+            if op == "share.revoke":
+                selected = st.auto_wanted(selected)
+            else:
+                _confirm(st, [i for i in selected if i.logical not in st.withdrawn], args["expect"])
             got = _sync_locked(service, st, selected)
         hubops._audit(call, op, kind=args["rule"]["kind"] if "rule" in args else "item")  # noqa: SLF001
         return ok_result({"note": note} | got)

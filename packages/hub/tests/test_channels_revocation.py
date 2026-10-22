@@ -184,7 +184,7 @@ def test_cli_password_totp_list_revoke_and_pairing(tmp_path, capsys, monkeypatch
     from orch_hub.channels import Channels
 
     acc = Access(str(st / "access.db"))
-    svc = Channels(keys, acc, st / "channels.db")
+    svc = Channels(keys, acc, st / "channels.db", dev_mode=True)
     s = new_channel()
     begun = svc.begin_phone_registration(
         u,

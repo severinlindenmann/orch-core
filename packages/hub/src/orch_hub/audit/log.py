@@ -31,7 +31,7 @@ class AuditLog:
         *,
         op_cert_by_id: Callable[[str], dict[str, Any] | None] | None = None,
         now_ms: Callable[[], int] | None = None,
-        dev_mode: bool = True,
+        dev_mode: bool,
     ) -> None:
         self.store, self._signer, self.hub_id, self._cert = store, op_signer, hub_id, op_cert_id
         self._certs = op_cert_by_id or (lambda _i: None)
@@ -203,7 +203,7 @@ class _Chain:
 AUDIT_FILE = "audit.db"
 
 
-def open_log(state: Any, keys: Any, **kw: Any) -> AuditLog:
+def open_log(state: Any, keys: Any, *, dev_mode: bool, **kw: Any) -> AuditLog:
     """The audit log of a hub state dir (``<state>/audit.db``), signing with the key store's current ``HK_op``."""
     return AuditLog(
         AuditStore(str(state / AUDIT_FILE)),
@@ -211,5 +211,6 @@ def open_log(state: Any, keys: Any, **kw: Any) -> AuditLog:
         keys.hub_id,
         lambda: keys.op_cert()["o"]["cert_id"],
         op_cert_by_id=keys.op_cert_by_id,
+        dev_mode=dev_mode,
         **kw,
     )

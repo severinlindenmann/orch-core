@@ -36,6 +36,7 @@ class SHub(Hub):
             lambda: G.OP_CERT_ID,
             op_cert_by_id=lambda i: G.op_cert() if i == G.OP_CERT_ID else None,
             now_ms=lambda: NOW,
+            dev_mode=True,
         )
         self.svc = SpaceService(
             self.store,
@@ -45,6 +46,7 @@ class SHub(Hub):
             G.HUB_ID,
             lambda: G.OP_CERT_ID,
             now_ms=lambda: NOW,
+            dev_mode=True,
             on_change=self.audit.space_change,
         )
         super().__init__(registry=reg, spaces=self.svc, audit=self.audit)

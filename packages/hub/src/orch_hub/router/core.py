@@ -128,6 +128,21 @@ class Router:
 
     # --- h2w route_in -------------------------------------------------------------------------------------------
 
+    def send_event(self, ws: str, log: str, event: dict[str, Any]) -> int:
+        """h2w ``event_deliver`` (protocol.md §10.2) to the workspace's live link: the custodial engine's sink. Written
+        once, not queued: no live link, or a failed write, is ``unavailable`` and the caller (the engine) refuses.
+        The host's answer is not awaited here; the host deduplicates on the event id. Returns the h2w ``seq`` of the
+        write: the delivery queue matches the host's reply on it (§8.7)."""
+        with self._lock:
+            live = self._live.get(ws)
+        if live is None or live.dead:
+            raise Refused("unavailable")
+        try:
+            return live.port.send_request("event_deliver", {"log": log, "event": event})
+        except Exception:  # noqa: BLE001  # the link is gone
+            self._kill(live)
+            raise Refused("unavailable") from None
+
     def attach(self, ws: str, port: LinkPort) -> _Live:
         """A recipient's link is up (authenticated, pinned): deliver what is queued. A newer link replaces an older."""
         live = _Live(port)

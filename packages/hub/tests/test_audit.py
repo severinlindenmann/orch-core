@@ -181,7 +181,9 @@ def test_the_chain_continues_after_a_restart(tmp_path):
     path = str(tmp_path / "audit.db")
 
     def log(store):
-        return AuditLog(store, KS.OpSigner(G.K.priv["hk_op"]), G.HUB_ID, lambda: G.OP_CERT_ID, now_ms=lambda: NOW)
+        return AuditLog(
+            store, KS.OpSigner(G.K.priv["hk_op"]), G.HUB_ID, lambda: G.OP_CERT_ID, now_ms=lambda: NOW, dev_mode=True
+        )
 
     s1 = AuditStore(path)
     l1 = log(s1)
@@ -195,7 +197,9 @@ def test_the_chain_continues_after_a_restart(tmp_path):
 
 def test_concurrent_appends_stay_contiguous_and_linked():
     store = AuditStore()
-    log = AuditLog(store, KS.OpSigner(G.K.priv["hk_op"]), G.HUB_ID, lambda: G.OP_CERT_ID, now_ms=lambda: NOW)
+    log = AuditLog(
+        store, KS.OpSigner(G.K.priv["hk_op"]), G.HUB_ID, lambda: G.OP_CERT_ID, now_ms=lambda: NOW, dev_mode=True
+    )
     ev = {"group": "g", "user_id": G.U_BOB, "added": True, "actor_user_id": OPERATOR}
 
     def work():
@@ -213,14 +217,18 @@ def test_concurrent_appends_stay_contiguous_and_linked():
 def test_timestamps_never_go_back_even_if_the_clock_does():
     clock = iter([NOW, NOW - 5000, NOW + 10])
     store = AuditStore()
-    log = AuditLog(store, KS.OpSigner(G.K.priv["hk_op"]), G.HUB_ID, lambda: G.OP_CERT_ID, now_ms=lambda: next(clock))
+    log = AuditLog(
+        store, KS.OpSigner(G.K.priv["hk_op"]), G.HUB_ID, lambda: G.OP_CERT_ID, now_ms=lambda: next(clock), dev_mode=True
+    )
     ev = {"group": "g", "user_id": G.U_BOB, "added": True, "actor_user_id": OPERATOR}
     ts = [log.append("membership", ev)["o"]["ts_ms"] for _ in range(3)]
     assert ts == [NOW, NOW, NOW + 10]
 
 
 def test_events_are_checked_against_the_contract_before_signing():
-    log = AuditLog(AuditStore(), KS.OpSigner(G.K.priv["hk_op"]), G.HUB_ID, lambda: G.OP_CERT_ID, now_ms=lambda: NOW)
+    log = AuditLog(
+        AuditStore(), KS.OpSigner(G.K.priv["hk_op"]), G.HUB_ID, lambda: G.OP_CERT_ID, now_ms=lambda: NOW, dev_mode=True
+    )
     from orch_hub.contract.hub import Refused
 
     for typ, ev in (("grant", {"group": "g"}), ("login", {}), ("membership", {"group": "g", "x": 1})):
@@ -240,7 +248,9 @@ def test_events_are_checked_against_the_contract_before_signing():
 
 def test_every_event_type_carries_a_fresh_32_byte_nonce_so_hashes_are_not_guessable():
     store = AuditStore()
-    log = AuditLog(store, KS.OpSigner(G.K.priv["hk_op"]), G.HUB_ID, lambda: G.OP_CERT_ID, now_ms=lambda: NOW)
+    log = AuditLog(
+        store, KS.OpSigner(G.K.priv["hk_op"]), G.HUB_ID, lambda: G.OP_CERT_ID, now_ms=lambda: NOW, dev_mode=True
+    )
     ev = {"group": "ops", "user_id": G.U_BOB, "added": True, "actor_user_id": OPERATOR}
     r1, r2 = log.append("membership", ev), log.append("membership", ev)  # the very same change twice
     assert r1["o"]["event_hash"] != r2["o"]["event_hash"]

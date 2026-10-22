@@ -1,0 +1,51 @@
+"""``HubConfig``: the one frozen set of runtime switches of a hub process (orch-hub#30).
+
+Built once, in ``serve`` (or a CLI command), from the hub card and the command-line flags; every service takes
+``config.dev`` (or the field it needs) as a REQUIRED argument. There is no service default for the dev flag anywhere in
+``orch_hub``: a construction that forgets it fails with a ``TypeError`` instead of running in dev mode (guard test:
+``tests/test_hubconfig_guard.py``). The flag comes from the card the hub holds, never from a flag a caller can drop.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from dataclasses import dataclass
+from typing import Any
+
+
+@dataclass(frozen=True)
+class HubConfig:
+    dev: bool  # the held card's dev marker: True accepts dev certificates and cards, False refuses them (spec §6)
+    listen: str  # link listener, loopback host:port
+    web_listen: str | None = None  # web API listener (loopback, the edge fronts it); None = no web API
+    relay_url: str | None = None  # --relay-url, else the card's
+    trusted_peers: frozenset[str] = frozenset()  # edge addresses that may state the client address (X-Forwarded-For)
+    behind_edge: bool = False
+    allowed_origins: frozenset[str] = frozenset()
+
+    def __post_init__(self) -> None:
+        if type(self.dev) is not bool:
+            raise ValueError("HubConfig.dev must be a bool")
+        if self.behind_edge and not self.trusted_peers:
+            raise ValueError("behind_edge needs --trusted-peer (else every request has the edge as its source)")
+        if self.behind_edge and not self.allowed_origins:
+            raise ValueError("behind_edge needs --web-origin (the exact origin the edge serves the console from)")
+        if (self.behind_edge or self.trusted_peers or self.allowed_origins) and self.web_listen is None:
+            raise ValueError("--trusted-peer / --behind-edge / --web-origin need --web-listen")
+
+    @classmethod
+    def from_card(cls, card: Mapping[str, Any], **flags: Any) -> HubConfig:
+        """``card`` is the signed card object (``keys.card()``); its ``o.dev`` is the dev flag (fail closed: anything
+        but a real bool is refused). ``relay_url`` falls back to the card's."""
+        o = card["o"]
+        dev = o.get("dev")
+        if type(dev) is not bool:
+            raise ValueError("the hub card carries no dev marker")
+        if flags.get("relay_url") is None:
+            flags["relay_url"] = o.get("relay_url")
+        return cls(dev=dev, **flags)
+
+
+def dev_of(keys: Any) -> bool:
+    """The dev flag of the card ``keys`` holds, for the operator CLI commands that build a single service."""
+    return HubConfig.from_card(keys.card(), listen="127.0.0.1:0").dev

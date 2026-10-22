@@ -35,7 +35,7 @@ class ShareService:
         *,
         hub_id: str,
         hxk: Any,
-        dev_mode: bool = False,
+        dev_mode: bool,
         now_ms: Callable[[], int] | None = None,
         on_change: Callable[[dict[str, Any]], Any] | None = None,
     ) -> None:
@@ -200,8 +200,8 @@ class ShareService:
     def list_shared(self, user_id: str, workspace_id: str) -> list[dict[str, Any]]:
         """The shared items of a selective workspace that ``user_id`` may see: the owner alias only. Every other user,
         hub-admins and role holders included, gets ``[]`` (spec §8a). Each entry is ``{item_id, sealed (bytes), digest,
-        size, stored_ms, item_version, item (the verified share.item), hash}``; an item that no longer opens and
-        verifies (bad wrap, signature or content) is left out (fail closed)."""
+        size, stored_ms, item_version, item (the verified share.item), signed (the signed item), hash}``; an item that
+        no longer opens and verifies (bad wrap, signature or content) is left out (fail closed)."""
         with self._reg.lock:
             try:
                 self._selective(workspace_id)
@@ -209,21 +209,41 @@ class ShareService:
                 return []
             if type(user_id) is not str or self._reg.owner_alias(workspace_id) != user_id:
                 return []
-            wsk = self._wsk(workspace_id)
-            out = []
-            for it in self.store.items(workspace_id):
-                try:
-                    o = open_shared_item(
-                        it["sealed"],
-                        hub_id=self._hub,
-                        workspace_id=workspace_id,
-                        item_id=it["item_id"],
-                        hxk=self._hxk,
-                        wsk_pub=wsk,
-                        dev_mode=self._dev,
-                    )
-                except Refused:
-                    _log.warning("a stored shared item no longer verifies; left out")
-                    continue
-                out.append({**it, "item": o["item"], "hash": o["hash"]})
-            return out
+            return self._open_all(workspace_id, self.store.items(workspace_id))
+
+    def shared_item(self, user_id: str, workspace_id: str, item_id: str) -> dict[str, Any]:
+        """One live shared item for the custodial build (protocol.md §8.6): the same entry as :meth:`list_shared`.
+        ``not_granted`` for anyone but the owner alias (and for a workspace that is not a bound selective one),
+        ``unknown_item`` when the item is not held, revoked, or no longer opens and verifies."""
+        with self._reg.lock:
+            try:
+                self._selective(workspace_id)
+            except Refused:
+                raise Refused("not_granted") from None
+            if type(user_id) is not str or self._reg.owner_alias(workspace_id) != user_id:
+                raise Refused("not_granted")
+            rows = [it for it in self.store.items(workspace_id) if it["item_id"] == item_id]
+            opened = self._open_all(workspace_id, rows)
+            if not opened:
+                raise Refused("unknown_item")
+            return opened[0]
+
+    def _open_all(self, workspace_id: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        wsk = self._wsk(workspace_id)
+        out = []
+        for it in rows:
+            try:
+                o = open_shared_item(
+                    it["sealed"],
+                    hub_id=self._hub,
+                    workspace_id=workspace_id,
+                    item_id=it["item_id"],
+                    hxk=self._hxk,
+                    wsk_pub=wsk,
+                    dev_mode=self._dev,
+                )
+            except Refused:
+                _log.warning("a stored shared item no longer verifies; left out")
+                continue
+            out.append({**it, "item": o["item"], "signed": o["signed"], "hash": o["hash"]})
+        return out

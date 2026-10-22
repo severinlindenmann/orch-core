@@ -76,7 +76,7 @@ def open_shared_item(
 ) -> dict[str, Any]:
     """Open and verify one stored item for a reader (the web view, the phone): the wrap under ``HXK``, the content
     under ``IK``, the WSK signature, the exact content per kind and the text rule. Returns ``{"item": <share.item o>,
-    "hash": "sha256:..."}``; raises ``Refused`` with the §10.2b code (``bad_wrap``, ``bad_signature``, ``malformed``,
+    "signed": <the signed item, what ``item_hash`` and ``build_selective`` take>, "hash": "sha256:..."}``; raises ``Refused`` with the §10.2b code (``bad_wrap``, ``bad_signature``, ``malformed``,
     ``other_hub``, ``other_workspace``, ``too_large``, ``dev_refused``). The version rule and the cap are not applied."""
     r = check_put(
         {"item_id": item_id, "sealed": b64u(sealed)},
@@ -88,4 +88,4 @@ def open_shared_item(
         held=None,
         live_items=0,
     )
-    return {"item": r["item"], "hash": r["hash"]}
+    return {"item": r["item"], "signed": r["signed"], "hash": r["hash"]}

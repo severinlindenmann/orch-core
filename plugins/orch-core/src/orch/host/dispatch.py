@@ -96,6 +96,8 @@ from .errors import HostError
 from .hubops import HUB_OPS
 from .hubops import NETWORK_OPS as HUB_NETWORK_OPS
 from .outcomes import BUILDERS, Planned, request_idem
+from .peerops import NETWORK_OPS as PEER_NETWORK_OPS
+from .peerops import PEER_OPS, PEER_READS
 from .publishing import NETWORK_OPS as PUBLISH_NETWORK_OPS
 from .publishing import PUBLISH_CAPS, PUBLISH_OPS
 from .reads import CAPS as READ_CAPS
@@ -225,6 +227,7 @@ def served_ops() -> dict[str, int]:
     out.update(WORKTREE_OPS)  # H11d: worktree.list, worktree.create, worktree.remove
     out.update(PUBLISH_OPS)  # P5: publish.prepare, .send, .revoke, .list, .discard, .register
     out.update(HUB_OPS)  # V3 C2a: hub.connect, hub.unbind, hub.status
+    out.update(PEER_OPS)  # V3 C12: peer.* (ws->ws through the hub)
     out.update(GRANT_OPS)  # H11c: grant.deposit, grant.deposit_status, grant.forget (cap run/1)
     out.update(AGENT_OPS)  # H11c: agent.preview, agent.start (cap run/1)
     return out
@@ -278,6 +281,8 @@ def op_kind(name: str) -> tuple[OpKind, Phase] | None:
         return ("pg_write", "write") if name in ("publish.prepare", "publish.discard") else ("person_write", "write")
     if name in HUB_OPS:  # V3 C2a: column P only (the op checks the owner role)
         return ("person_read", "read") if name == "hub.status" else ("person_write", "write")
+    if name in PEER_OPS:  # V3 C12: reads for P and G (an agent reads its inbox); writes P only, owner role
+        return ("pg_read", "read") if name in PEER_READS else ("person_write", "write")
     if name in READ_OPS:  # H6b: session.list and grant.list are P and G only (§0.5)
         return ("pg_read" if name in PERSON_GRANT_READS else "read", "read")
     if name in HOST_PERSON_OPS:  # move, policy.set, settings.set: through human.* only; a plain req is human_only
@@ -472,6 +477,10 @@ class RegistryBackend:
             from . import hubops
 
             return await hubops.execute(call, result)
+        if op in PEER_NETWORK_OPS:  # V3 C12: peer.send / peer.reply, the hub link off the worker
+            from . import peerops
+
+            return await peerops.execute(call, result)
         if op == "sub.close":
             bus = call.service.bus
             closed = bus is not None and bus.close(call.session, call.frame["args"]["sub"])
@@ -664,6 +673,10 @@ class RegistryBackend:
                 from . import hubops
 
                 result = hubops.serve(call)
+            elif op in PEER_OPS:
+                from . import peerops
+
+                result = peerops.serve(call)
             elif op in FILE_OPS or op in GIT_OPS or op in QUICK_OPS:
                 result = self._file_op(call)
             elif op in self.human.ops:

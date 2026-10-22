@@ -269,6 +269,9 @@ class WorkspaceService:
         if self.state != "unavailable":
             self._build_journal(audit=False)
         self._relay_open()
+        from . import peerops
+
+        peerops.maybe_start(self)  # V3 C12: the receive thread of a workspace that uses peers (never fails the open)
 
     # -- the relay worker (§11A.4 "The hook", R5)
     def _relay_open(self) -> None:
@@ -797,6 +800,9 @@ class WorkspaceService:
         return name
 
     def close(self) -> None:
+        from . import peerops
+
+        peerops.stop(self)  # V3 C12: the ws->ws receive thread, before the store goes
         # §11A.7 shutdown: the relay worker stops first and its threads are waited for (bounded by 120 s) before the
         # job that closes the store is queued; jobs it queued before stopping run first (the worker FIFO)
         with self.relay_cond:

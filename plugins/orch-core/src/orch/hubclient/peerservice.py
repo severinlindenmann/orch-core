@@ -55,6 +55,7 @@ class PeerService:
     ) -> None:
         self.me, self._sign, self._wxk_for, self._wxk_current = me, sign, wxk_for, wxk_current
         self.mb, self._save, self._connect, self._now = mailbox, save, connect, now_ms
+        self._route_mu = threading.Lock()
         self._mu = threading.RLock()  # the mailbox; never held across a blocking read
         self._link: RouteLink | None = None
 
@@ -126,19 +127,22 @@ class PeerService:
     def _route(self, envelope_id: str) -> str:
         """One ``route_out`` of an outbox entry. Maps hub refusals to :class:`HubRefused`; on success the entry
         leaves the outbox. Transport errors propagate as ``OSError`` (the entry stays)."""
-        with self._mu:
-            raw = unb64u(self.mb.outbox[envelope_id])
-        try:
-            state = self._ensure().route_out(raw)
-        except LinkError as exc:
-            self.drop_link()
-            if exc.code in _NOT_DELIVERED:
-                raise HubRefused(exc.code) from None
-            raise OSError(exc.code) from None  # an unverifiable hub or link-level failure: keep it, try again later
-        with self._mu:
-            self.mb.outbox.pop(envelope_id, None)
-            self._save(self.mb)
-        return state
+        with self._route_mu:  # the sender and the background flush never send the same entry twice
+            with self._mu:
+                held = self.mb.outbox.get(envelope_id)
+            if held is None:
+                return "queued"  # the other path already handed it to the hub
+            try:
+                state = self._ensure().route_out(unb64u(held))
+            except LinkError as exc:
+                self.drop_link()
+                if exc.code in _NOT_DELIVERED:
+                    raise HubRefused(exc.code) from None
+                raise OSError(exc.code) from None  # an unverifiable hub or link-level failure: keep it, try later
+            with self._mu:
+                self.mb.outbox.pop(envelope_id, None)
+                self._save(self.mb)
+            return state
 
     def flush(self) -> list[str]:
         """Resend every unsent envelope unchanged. A hub refusal drops that entry (and its ``sent`` record: nothing

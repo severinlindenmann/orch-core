@@ -227,6 +227,14 @@ SRC = [
     {"repo": "https://github.com/demo/api", "ref": "refs/heads/t-43", "sha": S.fake_seed("hub/src_api").hex()[:40]},
     {"repo": "https://github.com/demo/web", "ref": "refs/heads/t-43", "sha": S.fake_seed("hub/src_web").hex()[:40]},
 ]
+TICKET_CONTENT = {
+    "key": "DEMO-0043",
+    "type": "feature",
+    "title": "Load tariff tables",
+    "status": "testing",
+    "labels": ["dbt", "tariffs"],
+    "deadline": None,
+}
 #: C3b addendum (§10.2b): the F1 values the host puts into a ticket item so a selective hub can build decisions
 F1 = {
     "roster_v": 4,
@@ -255,6 +263,11 @@ def share_item(version: int = 1, wsk: str = "wsk_a", label: str = "sig_share_ite
         **kw,
     }
     return signed(wsk, label, o)
+
+
+def f1_item(**kw: Any) -> dict[str, Any]:
+    """The ticket item with the vector ``f1`` block (§10.2b), signed by ``wsk_a``."""
+    return share_item(item_kind="ticket", content=TICKET_CONTENT, **{"f1": F1, **kw})
 
 
 def share_body(item: dict[str, Any] | None = None, hxk: str = "hxk", item_id: str | None = None) -> dict[str, Any]:
@@ -1360,14 +1373,7 @@ def build_p4(
         return {"ok": {"item_version": it["o"]["item_version"], "hash": P4.item_hash(it), "new": new}}
 
     shr("share_item_needs_you", share_body(), okv(it1))
-    tk = {
-        "key": "DEMO-0043",
-        "type": "feature",
-        "title": "Load tariff tables",
-        "status": "testing",
-        "labels": ["dbt", "tariffs"],
-        "deadline": None,
-    }
+    tk = TICKET_CONTENT
     it_t = share_item(item_kind="ticket", content=tk)
     shr("share_item_ticket", share_body(it_t), okv(it_t))
     qn = {
@@ -1583,7 +1589,7 @@ def build_p4(
         )
 
     # ---- C3b addendum: share.item f1 (§10.2b), selective build (§8.6), delivery acks (§8.7), user ids (§9.1)
-    it_f1 = share_item(item_kind="ticket", content=tk, f1=F1)
+    it_f1 = f1_item()
     h_f1 = P4.item_hash(it_f1)
     shr("share_item_with_f1", share_body(it_f1), okv(it_f1), "additive: an item may carry the F1 values of its ticket")
     for nm, f1, why in (

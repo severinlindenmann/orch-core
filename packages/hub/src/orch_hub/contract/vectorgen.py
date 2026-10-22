@@ -259,8 +259,6 @@ EVENT_PAYLOADS: dict[str, tuple[str, dict[str, Any] | None]] = {
     "addon.purged": ("workspace", {"name": "wiki"}),
 }  # fmt: skip
 
-ITEM_HASH_SEL = "sha256:" + S.fake_seed("hub/selective_item_hash").hex()
-
 
 def custodial(
     user_key: str = "uk_alice",
@@ -1219,90 +1217,75 @@ def build() -> dict[str, Any]:
         {"error": "unknown_snapshot"},
         4,
     )
-    ev_sel = custodial(item_hash=ITEM_HASH_SEL)
-    LIVE = {ITEM_HASH_SEL: TICKET}
+    # selective mode (§8.3 step 7, §8.6): the real f1 item of the vectors, a decision on a gate it carries
+    from . import phase4 as P4
+    from .vectorgen_p4 import CHAIN, F1, HASH_P, HASH_Q, f1_item
+
+    item = f1_item()
+    h_item = P4.item_hash(item)
+    plan = F1["gates"]["plan"]
+    on_plan = {"gate": "plan", "gate_gen": plan["gen"], "hash": plan["hash"], "policy_hash": plan["policy_hash"]}
+    ev_sel = custodial(item_hash=h_item, payload=on_plan)
+    LIVE = {h_item: {"chain": CHAIN, "f1": F1}}
+    HEADS = {TICKET: ["sha256:" + S.fake_seed("hub/ev/head1").hex(), CHAIN["head"]]}
     sel_ok = {
         **cus,
         "mode": "selective",
         "live_items": LIVE,
+        "log_heads": HEADS,
         "granted_users": [U_ALICE],
         "member_roles": {U_ALICE: "owner"},
     }
+    q_only = f1_item(f1={**F1, "gates": {}}, item_id=fake16("share_item_q"))
+    h_q = P4.item_hash(q_only)
     for nm, args, exp, why in (
         ("custodial_selective_item_not_live", {**sel_ok, "event": ev_sel, "live_items": {}}, "not_granted",
          "the item check at admission: the event's item_hash is a live shared item"),
-        ("custodial_selective_item_of_other_log", {**sel_ok, "event": ev_sel, "live_items": {ITEM_HASH_SEL: "01J9ZP0000000000000000TKT2"}},
+        ("custodial_selective_item_superseded", {**sel_ok, "event": ev_sel, "live_items": {},
+         "superseded_items": [h_item]}, "event_changed",
+         "an earlier version of a live item (a re-put raced the decision): the person may sign again (L2-ADD-3)"),
+        ("custodial_selective_item_of_other_log", {**sel_ok, "event": ev_sel,
+         "live_items": {h_item: {"chain": {**CHAIN, "log": "01J9ZP0000000000000000TKT2"}, "f1": F1}}},
          "not_granted", "the item's chain.log is the event's log"),
-        ("custodial_selective_log_added", {**sel_ok, "event": custodial(typ="log.added", item_hash=ITEM_HASH_SEL)},
+        ("custodial_selective_gate_not_in_item_f1", {**sel_ok, "event": custodial(item_hash=h_item)}, "not_granted",
+         "L2-ADD-1: the decision's gate is in the f1 of the item the person was shown"),
+        ("custodial_selective_question_not_in_item_f1", {**sel_ok, "event": custodial(typ="question.answered",
+         item_hash=h_item, payload={"question": "Q7", "hash": HASH_Q, "text": "yes"})}, "not_granted",
+         "L2-ADD-1: the question is in the item's f1"),
+        ("custodial_selective_question_item_gate_decision", {**sel_ok,
+         "live_items": {h_q: {"chain": CHAIN, "f1": q_only["o"]["f1"]}},
+         "event": custodial(item_hash=h_q, payload=on_plan)}, "not_granted",
+         "a question item's hash never admits a gate decision"),
+        ("custodial_selective_head_fork", {**sel_ok, "event": ev_sel,
+         "log_heads": {TICKET: [HEADS[TICKET][0], HASH_P]}}, "view_fork",
+         "the item's chain.head is not on the host's log at chain.seq"),
+        ("custodial_selective_log_added", {**sel_ok, "event": custodial(typ="log.added", item_hash=h_item)},
          "not_custodial", "only the four decisions in selective mode"),
         ("custodial_selective_workspace_log", {**sel_ok, "log": "workspace",
-         "event": custodial(typ="addon.disabled", item_hash=ITEM_HASH_SEL)}, "not_custodial", "no selective workspace-log types"),
+         "event": custodial(typ="addon.disabled", item_hash=h_item)}, "not_custodial",
+         "no selective workspace-log types"),
         ("custodial_selective_answer_with_option",
-         {**sel_ok, "event": custodial(typ="question.answered", item_hash=ITEM_HASH_SEL)}, "malformed",
+         {**sel_ok, "event": custodial(typ="question.answered", item_hash=h_item)}, "malformed",
          "text-only answers in selective mode (options are not shared)"),
+        ("custodial_selective_without_item_hash", {**sel_ok, "event": custodial(payload=on_plan)}, "malformed",
+         "C3b addendum: a selective custodial event names the shared item it was built on (item_hash)"),
+        ("custodial_full_with_item_hash", {**cus, "event": ev_sel}, "malformed", "item_hash exists only in selective mode"),
+        ("custodial_selective_not_granted", {**sel_ok, "event": ev_sel, "granted_users": [U_BOB]}, "not_granted",
+         "D80: hub roles do not reach a selective workspace"),
+        ("custodial_selective_people_changed_not_selective", {**sel_ok, "member_roles": {U_ALICE: "member"},
+         "event": custodial(typ="people.changed", item_hash=h_item)}, "not_custodial",
+         "selective mode builds only the four decision types (§8.6)"),
     ):  # fmt: skip
         case(nm, "custodial", args, {"error": exp}, 4, why)
+    case("custodial_selective_granted_owner", "custodial", {**sel_ok, "event": ev_sel}, ok_cus, 4)
     case(
-        "custodial_selective_without_item_hash",
+        "custodial_selective_answer_in_item",
         "custodial",
-        {
-            **cus,
-            "event": ev,
-            "mode": "selective",
-            "live_items": LIVE,
-            "granted_users": [U_ALICE],
-            "member_roles": {U_ALICE: "owner"},
-        },
-        {"error": "malformed"},
-        4,
-        "C3b addendum: a selective custodial event names the shared item it was built on (item_hash)",
-    )
-    case(
-        "custodial_full_with_item_hash",
-        "custodial",
-        {**cus, "event": ev_sel},
-        {"error": "malformed"},
-        4,
-        "item_hash exists only in selective mode",
-    )
-    case(
-        "custodial_selective_not_granted",
-        "custodial",
-        {**cus, "event": ev_sel, "mode": "selective", "live_items": LIVE, "granted_users": [U_BOB]},
-        {"error": "not_granted"},
-        4,
-        "D80: hub roles do not reach a selective workspace",
-    )
-    case(
-        "custodial_selective_granted_owner",
-        "custodial",
-        {
-            **cus,
-            "event": ev_sel,
-            "mode": "selective",
-            "live_items": LIVE,
-            "granted_users": [U_ALICE],
-            "member_roles": {U_ALICE: "owner"},
-        },
+        {**sel_ok, "event": custodial(typ="question.answered", item_hash=h_item,
+                                      payload={"question": "Q1", "hash": HASH_Q, "text": "CSV"})},
         ok_cus,
         4,
-    )
-    # L2P4-1: selective mode floors on the canonical person's F1 member role, not a fixed admin
-    case(
-        "custodial_selective_granted_member_cannot_people_changed",
-        "custodial",
-        {
-            **cus,
-            "event": custodial(typ="people.changed", item_hash=ITEM_HASH_SEL),
-            "mode": "selective",
-            "live_items": LIVE,
-            "granted_users": [U_ALICE],
-            "member_roles": {U_ALICE: "member"},
-        },
-        {"error": "not_custodial"},
-        4,
-        "selective mode builds only the four decision types (§8.6); people.changed is never selective",
-    )
+    )  # fmt: skip
     case(
         "custodial_selective_granted_member_decides",
         "custodial",
@@ -1311,6 +1294,7 @@ def build() -> dict[str, Any]:
             "event": ev_sel,
             "mode": "selective",
             "live_items": LIVE,
+            "log_heads": HEADS,
             "granted_users": [U_ALICE],
             "member_roles": {U_ALICE: "member"},
         },
@@ -1320,7 +1304,14 @@ def build() -> dict[str, Any]:
     case(
         "custodial_selective_granted_unaliased_is_viewer",
         "custodial",
-        {**cus, "event": ev_sel, "mode": "selective", "live_items": LIVE, "granted_users": [U_ALICE]},
+        {
+            **cus,
+            "event": ev_sel,
+            "mode": "selective",
+            "live_items": LIVE,
+            "log_heads": HEADS,
+            "granted_users": [U_ALICE],
+        },
         {"error": "forbidden_role"},
         4,
         "a granted user without an alias to a member is a viewer and signs nothing",

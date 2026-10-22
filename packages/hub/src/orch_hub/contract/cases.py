@@ -199,6 +199,8 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
             revoked_op_certs=_later(a),
             member_roles=a.get("member_roles", {}),
             live_items=a.get("live_items", {}),
+            superseded_items=frozenset(a.get("superseded_items", [])),
+            log_heads=a.get("log_heads", {}),
         )
     if check == "binding_store":
         s = _apply_store(a["steps"], a["workspace_id"], unb64u(a["wsk_pub"], 65), now, dev)

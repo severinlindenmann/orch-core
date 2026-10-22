@@ -139,6 +139,7 @@ class TlsHub:
             return
         # the pin check happens in the client right after the handshake; record anything it sends afterwards
         try:
+            self._stop.wait(self.challenge_delay)
             framing.write_frame(
                 conn,
                 {

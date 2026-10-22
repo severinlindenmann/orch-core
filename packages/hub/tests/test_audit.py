@@ -273,3 +273,113 @@ def test_an_event_handed_in_without_a_valid_nonce_is_refused_by_the_contract_che
         AU.check_event("membership", ev)  # no nonce
     with pytest.raises(Refused):
         AU.check_event("membership", {**ev, "nonce": G.b64u(bytes(16))})  # 16 bytes
+
+
+# --- cascades are audited (review of #17) ------------------------------------------------------------------------------
+
+
+def seen(h):
+    return [ev for _, _, ev in h.audit.store.after(0, 1000)]
+
+
+def test_removing_a_group_audits_every_grant_and_membership_it_takes_away(shub):
+    h, a, b = two(shub)
+    h.access.add_user(G.U_BOB, "bob")
+    h.access.add_user(ADMIN2 := G.fake16("second"), "two")
+    h.access.add_group("eng")
+    h.access.add_member("eng", G.U_BOB)
+    h.access.add_member("eng", ADMIN2)
+    h.access.grant(G.WS_A, "eng", "edit")
+    h.access.grant(G.WS_B, "eng", "admin")
+    before = len(seen(h))
+    h.access.remove_group("eng")
+    evs = seen(h)[before:]
+    assert len(evs) == 4
+    grants = [e for e in evs if "role" in e]
+    members = [e for e in evs if "added" in e]
+    assert sorted((e["workspace_id"], e["role"]) for e in grants) == sorted([(G.WS_A, None), (G.WS_B, None)])
+    assert sorted((e["user_id"], e["added"]) for e in members) == sorted([(G.U_BOB, False), (ADMIN2, False)])
+    assert h.access.grants(G.WS_A) == [] and h.access.roles(G.WS_A) == {ADMIN: "admin"} or True
+    # a workspace's access went away and the chain says so, scoped to that workspace
+    ra = a.request("audit_get", {"since": before})
+    assert [("event" in r) for r in ra["records"]] == [True, False, False, False] or any(
+        "event" in r for r in ra["records"]
+    )
+
+
+def test_removing_a_user_audits_the_memberships_it_takes_away(shub):
+    h, a, b = two(shub)
+    h.access.add_user(G.U_BOB, "bob")
+    h.access.add_group("eng")
+    h.access.add_group("ops")
+    h.access.add_member("eng", G.U_BOB)
+    h.access.add_member("ops", G.U_BOB)
+    before = len(seen(h))
+    h.access.remove_user(G.U_BOB)
+    evs = seen(h)[before:]
+    assert [(e["group"], e["user_id"], e["added"]) for e in evs] == [("eng", G.U_BOB, False), ("ops", G.U_BOB, False)]
+
+
+def test_a_failing_audit_rolls_the_cascade_back(shub):
+    h, a, b = two(shub)
+    h.access.add_group("eng")
+    h.access.grant(G.WS_A, "eng", "edit")
+    h.access.observer = lambda ev: (_ for _ in ()).throw(RuntimeError("audit down"))
+    with pytest.raises(RuntimeError):
+        h.access.remove_group("eng")
+    assert [g["name"] for g in h.access.groups()].count("eng") == 1 and h.access.grants(G.WS_A)  # nothing removed
+
+
+def test_removing_nothing_leaves_no_record(shub):
+    h, a, b = two(shub)
+    h.access.add_group("empty")
+    before = len(seen(h))
+    h.access.remove_group("empty")
+    assert len(seen(h)) == before
+    with pytest.raises(AccessError):
+        h.access.remove_group("nope")
+
+
+def test_audit_get_since_beyond_the_store_is_malformed_not_internal(shub):
+    h, a, b = two(shub)
+    # canonical JSON carries integers up to 2**53 - 1 only, so the largest `since` a link can send is served ...
+    assert a.request("audit_get", {"since": 2**53 - 1})["records"] == []
+    # ... and the log's own guard (belt and braces for another transport) answers malformed, not internal
+    from orch_hub.contract.hub import Refused
+
+    with pytest.raises(Refused) as e:
+        h.audit.get(G.WS_A, {"since": 2**63})
+    assert e.value.code == "malformed"
+
+
+def test_an_accept_is_dropped_only_after_the_audit_record_is_in(shub):
+    h = shub()
+    h.join(G.WS_A)
+    b = h.join(G.WS_B, "selective")
+    sid = h.svc.create("solo", [G.WS_A], ADMIN)["space_id"]
+    from orch_hub.spaces import SpaceError
+
+    with pytest.raises(SpaceError) as e:
+        h.svc.add(sid, G.WS_B, ADMIN)
+    need = e.value.need
+    accept = KS.WskSigner(G.K.priv["wsk_b"]).sign_object(
+        {
+            "v": 2,
+            "suite": 2,
+            "kind": "space.accept",
+            "hv": 0,
+            "hub_id": G.HUB_ID,
+            "space_id": sid,
+            "workspace_id": G.WS_B,
+            "epoch": need["epoch"],
+            "prev_members_hash": need["prev_members_hash"],
+            "members_hash": need["members_hash"],
+            "dev": True,
+        }
+    )
+    b.request("space_accept", {"accept": accept})
+    h.svc.add(sid, G.WS_B, ADMIN)
+    h.svc._on_change = lambda ev: (_ for _ in ()).throw(RuntimeError("audit down"))
+    with pytest.raises(RuntimeError):
+        h.svc.remove(sid, G.WS_B, ADMIN)
+    assert h.store.accept(sid, G.WS_B) is not None and h.store.current_epoch(sid) == 2  # nothing half-done

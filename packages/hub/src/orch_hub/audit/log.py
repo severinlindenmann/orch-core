@@ -125,6 +125,8 @@ class AuditLog:
         """``audit_get``: up to :data:`PAGE` records after ``since``; the event only when it concerns the caller (its
         blinded tag is of this workspace), the hashes of all others stay in the records; the head; the root-signed op
         certs the page names."""
+        if body["since"] >= 1 << 63:  # beyond what the store can hold: a malformed request, not an internal error
+            raise Refused("malformed")
         rows = self.store.after(body["since"], PAGE)
         records, certs, seen = [], [], set()
         for _seq, signed, ev in rows:

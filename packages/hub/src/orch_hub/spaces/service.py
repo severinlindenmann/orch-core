@@ -248,7 +248,6 @@ class SpaceService:
             if actor is not None:
                 self._authorize(actor, members)
             rest = [m for m in members if m != ws]
-            self.store.drop_accept(space_id, ws)
             change = "remove" if actor is not None else "unbind"
             if not rest:
                 self._changed(
@@ -256,7 +255,9 @@ class SpaceService:
                 )
                 self.store.delete_space(space_id)
                 return None
-            return self._new_epoch(space_id, e + 1, members, rest, change=change, workspace_id=ws, actor=actor)
+            rec = self._new_epoch(space_id, e + 1, members, rest, change=change, workspace_id=ws, actor=actor)
+            self.store.drop_accept(space_id, ws)  # only after the audit record and the new epoch are in
+            return rec
 
     def on_unbind(self, ws: str) -> None:
         """``hub.unbound`` of ``ws`` was accepted: it leaves every space it is in, one new epoch each, in the same

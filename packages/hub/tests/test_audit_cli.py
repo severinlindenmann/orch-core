@@ -50,3 +50,23 @@ def test_a_refused_command_leaves_no_record(state, capsys):  # noqa: F811
     capsys.readouterr()
     assert rc == 1
     assert inspect(st)["audit"]["records"] == []
+
+
+def test_groups_remove_and_users_remove_through_the_cli_are_audited(state, capsys):  # noqa: F811
+    st, _ = state
+    uid = run(st, capsys, "users", "add", "ann")["user_id"]
+    run(st, capsys, "groups", "add", "devs")
+    run(st, capsys, "groups", "add-member", "devs", uid)
+    run(st, capsys, "grants", "set", G.WS_A, "devs", "edit")
+    n = len(inspect(st)["audit"]["records"])
+    assert cli.main(["groups", "--state", str(st), "remove", "devs"]) == 0
+    capsys.readouterr()
+    evs = [r["event"] for r in inspect(st)["audit"]["records"][n:]]
+    assert sorted((e["workspace_id"] if "role" in e else e["user_id"]) for e in evs) == sorted([G.WS_A, uid])
+    run(st, capsys, "groups", "add", "ops")
+    run(st, capsys, "groups", "add-member", "ops", uid)
+    n = len(inspect(st)["audit"]["records"])
+    assert cli.main(["users", "--state", str(st), "remove", uid]) == 0
+    capsys.readouterr()
+    (e,) = [r["event"] for r in inspect(st)["audit"]["records"][n:]]
+    assert (e["group"], e["user_id"], e["added"]) == ("ops", uid, False)

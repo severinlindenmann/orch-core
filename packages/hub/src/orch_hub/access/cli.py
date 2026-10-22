@@ -92,7 +92,7 @@ def run(args: argparse.Namespace, out=None) -> int:
         acc = Access(str(state / ACCESS_FILE))
         log = None
         try:
-            if args.group in ("groups", "grants"):  # D4: grant and membership changes go into the audit chain
+            if args.group in ("users", "groups", "grants"):  # D4: grant and membership changes go into the audit chain
                 from ..audit import open_log
 
                 log = open_log(state, HubKeys.open(state))

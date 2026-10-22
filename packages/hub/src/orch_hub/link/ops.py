@@ -31,6 +31,9 @@ class InviteGate(Protocol):
 
     def consume(self, invite: str, workspace_id: str) -> None: ...
 
+    # Optional: ``owner_user(invite) -> str | None``, the hub user the admin aliased to the joining workspace's owner
+    # (V3-D19). A gate without it gives no alias.
+
 
 class SnapshotProvider(Protocol):
     def snapshot(self, workspace_id: str, mode: str) -> dict[str, Any]:
@@ -146,6 +149,8 @@ def join(c: OpContext) -> dict[str, Any]:
             join_msg["binding"], workspace_id=c.workspace_id, wsk_pub=wsk, now_ms=c.now_ms, dev_mode=c.dev_mode
         )
         state = H.apply_binding(c.registry.binding_state(c.workspace_id), b)
+        owner_user = getattr(c.invites, "owner_user", None)
+        alias = owner_user(invite) if owner_user is not None else None
         c.registry.commit_join(
             c.workspace_id,
             pin["owner_person_id"],
@@ -154,6 +159,7 @@ def join(c: OpContext) -> dict[str, Any]:
             join_msg["card"],
             state,
             join_msg["binding"],
+            owner_alias=alias,
         )
         c.invites.consume(invite, c.workspace_id)
     c.downstream.card(c.workspace_id, join_msg["card"], join_msg["pk_pub"])

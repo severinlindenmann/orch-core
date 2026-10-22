@@ -43,6 +43,27 @@ class BoundOnly:
         return self._reg.mode(sender_ws) is not None and self._reg.mode(recipient_ws) is not None
 
 
+class AccessAuthz:
+    """V3-D19: a route A->B is authorized as A's owner, the hub user the admin aliased to A's owner at join. It needs
+    that alias, the sender currently bound, and a role of ``edit`` or better for that user in B (D3's ``Access.role_of``), and B in full mode (in a
+    selective workspace hub roles grant nothing, protocol.md §7). Read live on every route, so a revoked grant stops
+    the next one. Anything missing, unknown or failing is a refusal."""
+
+    def __init__(self, registry: Registry, access: Any) -> None:
+        self._reg, self._acc = registry, access
+
+    def may_route(self, sender_ws: str, recipient_ws: str) -> bool:
+        from ..access import role_rank
+
+        try:
+            alias = self._reg.owner_alias(sender_ws)
+            if alias is None or self._reg.mode(sender_ws) is None or self._reg.mode(recipient_ws) != "full":
+                return False
+            return role_rank(self._acc.role_of(alias, recipient_ws)) >= role_rank("edit")
+        except Exception:  # noqa: BLE001  # fail closed
+            return False
+
+
 class LinkPort(Protocol):
     """One live link, as the router sees it. ``send_request`` signs and writes an h2w request, returns its ``seq``;
     raises ``OSError``-like link errors (any ``Exception``) when the link is gone."""
@@ -183,4 +204,4 @@ class Router:
                     live.cv.notify_all()
 
 
-__all__ = ["Authz", "BoundOnly", "LinkPort", "Router"]
+__all__ = ["AccessAuthz", "Authz", "BoundOnly", "LinkPort", "Router"]

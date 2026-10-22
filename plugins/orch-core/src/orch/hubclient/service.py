@@ -152,9 +152,6 @@ def join_selective(
         raise HubRefused("full_mode_later")
     if type(invite) is not str or not invite or len(invite) > 512:
         raise HubRefused("malformed")
-    pinned = None if state is None or state.status == "unbound" else unb64u(state.hk_root_pub, 65)
-    verified = wire.verify_card(hub_card, now_ms=now_ms(), dev_mode=dev_mode, pinned_root=pinned)
-    root, hk_op = verified["hk_root_pub"], verified["hk_op_pub"]
     if state is not None and state.status == "bound":
         if binding_seq is None or binding_seq <= state.binding_seq:
             raise HubRefused("already_joined")
@@ -162,6 +159,9 @@ def join_selective(
         _owe(state, workspace_id, sign_wsk, now_ms, dev=bool(state.binding["o"]["dev"]))
         state.status = "unbound"
         save(state)
+    pinned = None if state is None or state.status == "unbound" else unb64u(state.hk_root_pub, 65)
+    verified = wire.verify_card(hub_card, now_ms=now_ms(), dev_mode=dev_mode, pinned_root=pinned)
+    root, hk_op = verified["hk_root_pub"], verified["hk_op_pub"]
     if state is not None and state.outbox:
         # every owed unbound gets ONE try over its own hub's transport, then the new join goes on regardless
         flush_outbox(state=state, workspace_id=workspace_id, sign_wsk=sign_wsk, now_ms=now_ms,
@@ -257,7 +257,10 @@ def flush_outbox(
                 t, hub_id=hub_id, workspace_id=workspace_id, hk_op_pub=unb64u(entry["hk_op_pub"], 65),
                 sign=sign_wsk, mode=entry["mode"], now_ms=now_ms,
             ).call("binding_put", {"object": entry["unbound"]})  # fmt: skip
-        except (HubRefused, OSError):
+        except HubRefused as exc:
+            if exc.code != "stale_binding":  # the hub holds a newer binding: there is nothing left to unbind
+                continue
+        except OSError:
             continue
         finally:
             getattr(t, "close", lambda: None)()

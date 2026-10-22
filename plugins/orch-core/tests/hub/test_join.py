@@ -358,3 +358,51 @@ def test_an_old_hub_that_refuses_keeps_its_entry_and_the_join_proceeds(host: Hos
     host.routes[old_id] = Wire(FakeHub())  # a hub that does not know the workspace: it refuses
     host.join(binding_seq=2)
     assert host.state.status == "bound" and old_id in host.state.outbox
+
+
+def card_of_another_hub() -> dict:
+    from orch.canon.jcs import dumps as cj
+
+    root, op = S.generate_private_key(), S.generate_private_key()
+    root_pub, op_pub = S.public_bytes(root), S.public_bytes(op)
+    hid = wire.hub_id(root_pub)
+    from orch.crypto.encoding import b64u
+
+    opo = {"v": 2, "suite": 2, "kind": "hub.op_cert", "hv": 0, "hub_id": hid, "cert_id": "11" * 16, "op_seq": 1,
+           "hk_op_pub": b64u(op_pub), "issued_ms": NOW - 1000, "expires_ms": NOW + 10**9, "dev": True}  # fmt: skip
+    o = {"v": 2, "suite": 2, "kind": "hub.card", "hv": 0, "hub_id": hid, "hk_root_pub": b64u(root_pub),
+         "hxk_pub": b64u(op_pub), "relay_url": None, "tls_spki_sha256": b64u(b"\x02" * 32), "card_seq": 1,
+         "issued_ms": NOW - 1000, "dev": True}  # fmt: skip
+    return {"o": o, "op_cert": {"o": opo, "sig": b64u(S.sign(root, wire.SIG_OP_CERT + cj(opo)))},
+            "sig": b64u(S.sign(op, wire.SIG_CARD + cj(o)))}  # fmt: skip
+
+
+def test_state_bound_to_hub_a_then_the_log_joins_hub_b_without_an_unbind(host: Host, hub: FakeHub) -> None:
+    """Left on the log, never unbound, then joined with ANOTHER hub's card: A's unbound is owed first and B's pin is
+    not taken from A's state (no other_hub); B being down is only unreachable."""
+    host.join()
+    a_id = host.state.hub_id
+    b_card = card_of_another_hub()
+    dead = Dead()
+    host.routes[a_id] = Wire(hub)
+    host.wire = dead  # the new hub B is down
+    with pytest.raises(HubRefused) as e:
+        host.join(hub_card=b_card, binding_seq=2)
+    assert e.value.code == "hub_unreachable"
+    assert host.state.hub_id == b_card["o"]["hub_id"] and host.state.status == "joining"
+    assert hub.workspaces[WS].binding["status"] == "unbound"  # A heard its unbound, over A's own transport
+    assert dead.sent and all(m["o"]["op"] == "join" for m in dead.sent)  # B saw only its join
+
+
+def test_a_stale_lower_seq_entry_is_sent_once_and_never_resurrects(host: Host, hub: FakeHub) -> None:
+    host.join()
+    host.leave()
+    host.join(binding_seq=3)
+    host.state.outbox = {hub.hub_id: {**_owed(host), "hk_op_pub": host.state.hk_op_pub}}
+    host.state.outbox[hub.hub_id]["unbound"] = wire.build_unbound(
+        workspace_id=WS, hub_id_=hub.hub_id, binding_seq=1, unbound_ms=NOW, dev=True, sign=sign_wsk
+    )
+    done = flush_outbox(state=host.state, workspace_id=WS, sign_wsk=sign_wsk, now_ms=lambda: NOW,
+                        transport_for=host.tf, save=host._save)  # fmt: skip
+    assert done == [hub.hub_id] and host.state.outbox == {}
+    assert hub.workspaces[WS].binding["status"] == "bound"  # a lower unbound cannot end binding 3

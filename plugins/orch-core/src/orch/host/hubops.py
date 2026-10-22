@@ -403,8 +403,8 @@ def _transport_for(service: Any, wsk_pub: bytes, sign: Any) -> Any:
     from orch.crypto.encoding import unb64u
 
     def make(hub_id: str, e: dict[str, Any]) -> Any:
-        dev = bool(e["unbound"]["o"]["dev"])
-        link = {"addr": _addr({}, type("S", (), {"addr": e["addr"]})(), dev), "spki": e["tls_spki"],
+        link = {"addr": e["addr"],  # the entry's own address wins: ORCH_HUB_ADDR is for the hub being joined only
+                 "spki": e["tls_spki"],
                 "hk_op": unb64u(e["hk_op_pub"], 65), "wsk_pub": wsk_pub, "sign": sign}  # fmt: skip
         return _transport(service, hub_id, link)
 

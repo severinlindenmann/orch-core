@@ -675,7 +675,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'W16',
         title: 'Extend agent access wording',
         text: 'Open Extend next to agent access.',
-        see: 'The review is titled "Extend agent access", says "Running agents will stop." (it appears three times today, known), and shows when the new access ends (your local time). It tells you to type GRANT. Today the headline and body show raw access ids ("takes back gr_…", "It replaces the access gr_…", "Access taken back: gr_…", "New access: gr_…"): known, filed as an issue; do not report it again. It says to choose r in Terminal for this Mac\'s agent runner with a one-line explanation. In the Terminal you are asked for the passphrase twice (old access taken back, new one issued). After signing, choose r: agents start again with the new access.',
+        see: 'The review is titled "Extend agent access", says "Running agents will stop." (it appears three times today, known), and shows when the new access ends (your local time). It tells you to type GRANT. Today the headline and body show raw access ids ("takes back gr_…", "It replaces the access gr_…", "Access taken back: gr_…", "New access: gr_…"): known, issue #788; do not report it again. It says to choose r in Terminal for this Mac\'s agent runner with a one-line explanation. In the Terminal you are asked for the passphrase twice (old access taken back, new one issued). After signing, choose r: agents start again with the new access.',
       },
       {
         id: 'W17',

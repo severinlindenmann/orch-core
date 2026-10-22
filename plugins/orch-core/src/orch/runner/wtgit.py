@@ -16,9 +16,9 @@ Defence in depth on every command: ``-c
 core.hooksPath=/dev/null`` (no hook), ``-c core.fsmonitor=false``, ``-c protocol.allow=never`` and an empty
 ``GIT_ALLOW_PROTOCOL`` (no network), ``-c submodule.recurse=false``, no terminal prompt, no pager, no editor, and an
 environment built from scratch (``HOME``, ``PATH``, ``LANG=C``, ``TMPDIR``): no ``GIT_DIR``, ``GIT_WORK_TREE``,
-``GIT_CONFIG_*`` or other ``GIT_*`` variable of the runner reaches it. What can still run: a driver the **person**
-configured globally or system-wide (e.g. ``filter=lfs`` after ``git lfs install``) when an attribute selects it, as
-the person, exactly as when they run git: :func:`run_git` is the one documented exception to
+``GIT_CONFIG_*`` or other ``GIT_*`` variable of the runner reaches it. ``worktree add`` is ``--no-checkout`` (#584) and :func:`orch.gitread.checkout.populate` writes the tree: the repo's
+config names no filter that runs; only the allow-listed ``lfs`` the **person** configured globally or system-wide
+is applied, when an attribute selects it, as the person. :func:`run_git` is the one documented exception to
 :data:`orch.gitsafe.ISOLATION` (the site table of :mod:`orch.gitsafe`), with a race note at its spawn (#565). The
 direct-mode tool's reads (revisions, ``HEAD``, cleanliness) use :data:`orch.gitread.local.READER`, never git.
 
@@ -105,10 +105,10 @@ def git_argv(args: Mapping[str, Any], repo: str, *, present: bool | None = None)
             raise SpawnError("invalid.input", "git: invalid branch")
         start = args.get("base")
         if start is None:
-            return [*base, "add", "--", path, branch]
+            return [*base, "add", "--no-checkout", "--", path, branch]
         if not isinstance(start, str) or not _SHA.fullmatch(start):
             raise SpawnError("invalid.input", "git: base must be a commit id")
-        return [*base, "add", "-b", branch, "--", path, start]
+        return [*base, "add", "--no-checkout", "-b", branch, "--", path, start]
     if op == "worktree.remove":
         if not (os.path.lexists(path) if present is None else present):
             return [*base, "prune"]  # the directory is gone: only git's own record of it is left
@@ -327,19 +327,80 @@ def run_git(
         #   The cost: git's own second clean check at remove time is gone (it was that same filter-running status);
         #   a file written between orch's check and this remove is deleted with the worktree (data, not code).
         # * prune: reads only <repo>/.git/worktrees; no checkout, no status, no filter.
-        # * add: NOT closed (residual, #565). TIER-A NOTE: an agent that commits a repo config in its worktree,
-        #   then a column-G worktree.create runs its smudge filter (once per checked-out file it selects, on every add
-        #   that hits the window); the UID is the boundary in tier A (D-P2-31); fix
-        #   tracked in #584. (A checkout runs the smudge filters configuration names when git reads it, by design:
-        #   the person's LFS, selected by the tree's own .gitattributes; filters cannot be disabled by command-scope
-        #   config. A linked worktree's commondir is the declared repo's .git, so its config is the agent's to write,
-        #   and the gate's approval does not bind what git reads later.)
+        # * add: `--no-checkout` (#584): git checks nothing out, so no smudge/process filter and no hook can run,
+        #   whatever the repo's config says when git reads it. The tree is then written by orch's own writer
+        #   (orch.gitread.checkout.populate), which never reads a filter from the repo's config and applies only the
+        #   allow-listed filters the PERSON's system/global config defines (git-lfs); anything it cannot write exactly
+        #   fails closed and the half-populated worktree is removed (_undo_add).
         out = _spawn(argv, own, timeout, log, op)
         if conf.fd >= 0:
             conf.after(op)
+        if op == "worktree.add":
+            _populate(args, repo, conf, own, timeout, log)
         return out
     finally:
         conf.close()
+
+
+def _populate(
+    args: Mapping[str, Any],
+    repo: str,
+    conf: _Confined,
+    own: Mapping[str, str],
+    timeout: float,
+    log: Callable[[str], None] | None,
+) -> None:
+    """Fill the ``--no-checkout`` worktree (#584). Any failure removes it again (and the branch ``-b`` created) and is
+    ``worktree.checkout_unsupported``: nothing half-populated is left behind."""
+    from orch.gitread.checkout import populate
+    from orch.gitread.errors import Unavailable
+
+    try:
+        populate(conf.path, own, log=log)
+    except (Unavailable, OSError, SpawnError, ValueError) as exc:
+        reason = exc.reason if isinstance(exc, Unavailable) else getattr(exc, "message", type(exc).__name__)
+        if log is not None:
+            log(f"worktree.add checkout failed: {reason}")
+        _undo_add(args, repo, conf, own, timeout, log)
+        raise SpawnError(
+            "worktree.checkout_unsupported", f"git: the worktree could not be populated: {reason}"[:300]
+        ) from None
+    conf.after("worktree.add")
+
+
+def _undo_add(
+    args: Mapping[str, Any],
+    repo: str,
+    conf: _Confined,
+    own: Mapping[str, str],
+    timeout: float,
+    log: Callable[[str], None] | None,
+) -> None:
+    """Remove a half-populated worktree: ``worktree remove --force`` (checks nothing out, runs no filter), then the
+    branch this add created (``-b``). Best effort, every failure only logged: the caller reports the original error."""
+    try:
+        _spawn(
+            [*git_argv({"op": "worktree.remove", "path": conf.path}, repo, present=True)],
+            own,
+            timeout,
+            log,
+            "worktree.remove",
+        )
+    except SpawnError as exc:
+        if log is not None:
+            log(f"worktree.add cleanup: remove failed ({exc.code})")
+    if args.get("base") is not None:
+        try:
+            _spawn(
+                ["git", *NEUTRAL, "-C", repo, "branch", "-D", "--", str(args.get("branch"))],
+                own,
+                timeout,
+                log,
+                "branch.delete",
+            )
+        except SpawnError as exc:
+            if log is not None:
+                log(f"worktree.add cleanup: branch delete failed ({exc.code})")
 
 
 def _spawn(

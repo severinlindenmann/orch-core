@@ -169,8 +169,9 @@ def test_a_global_driver_still_works_in_run_git(world):  # noqa: F811
     script = root / "smudge.sh"
     script.write_text(f"#!/bin/sh\ntouch {marker}\ncat\n")
     os.chmod(script, 0o755)
-    (root / ".gitconfig").write_text(f'[filter "g"]\n\tsmudge = {script}\n\tclean = cat\n')
-    (repo / ".gitattributes").write_text("* filter=g\n")
+    # #584: the checkout is orch's own; only the allow-listed filter name (lfs) from the PERSON's config is applied
+    (root / ".gitconfig").write_text(f'[filter "lfs"]\n\tsmudge = {script}\n\tclean = cat\n')
+    (repo / ".gitattributes").write_text("* filter=lfs\n")
     _git(repo, "add", ".gitattributes")
     _git(repo, "commit", "-qm", "attrs")
     a = args("worktree.add")

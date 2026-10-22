@@ -95,6 +95,7 @@ HOST_CODES: dict[str, tuple[int, bool]] = {
     "worktree.in_use": (3, False),
     "worktree.unpinned": (3, False),
     "worktree.git_failed": (1, False),
+    "worktree.checkout_unsupported": (3, False),
     "unsupported.platform": (3, False),
     # P5, the Publish add-on (design-publish-addon)
     "publish.not_configured": (3, False),

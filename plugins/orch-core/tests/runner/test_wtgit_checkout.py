@@ -1,0 +1,292 @@
+"""#584: ``worktree add`` runs no repo-config filter. The runner adds with ``--no-checkout`` and writes the tree itself
+(``orch.gitread.checkout``); only the allow-listed filter (lfs) from the PERSON's config is applied; anything it cannot
+write exactly removes the worktree again with ``worktree.checkout_unsupported``."""
+
+from __future__ import annotations
+
+import contextlib
+import os
+import stat
+import subprocess
+import threading
+from pathlib import Path
+
+import pytest
+from test_wtgit_confine import GIT_ENV, NAME, _git, world  # noqa: F401
+
+from orch.gitread.checkout import populate
+from orch.gitread.errors import Unavailable
+from orch.runner import wtgit
+from orch.runner.supervise import SpawnError
+
+
+def _wt(repo: Path) -> Path:
+    return Path(f"{repo}.worktrees") / NAME
+
+
+def _pgit(root: Path, cwd: Path, *a: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    """Plain git as the person (HOME = root, so its global config applies), no system config."""
+    env = {"PATH": os.environ["PATH"], "HOME": str(root), **GIT_ENV, "GIT_CONFIG_NOSYSTEM": "1"}
+    return subprocess.run(["git", *a], cwd=cwd, env=env, check=check, capture_output=True, text=True)
+
+
+def _commit(repo: Path, files: dict[str, str], msg: str = "m") -> None:
+    for name, text in files.items():
+        p = repo / name
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text)
+        _git(repo, "add", name)
+    _git(repo, "commit", "-qm", msg)
+
+
+def _snapshot(top: Path) -> dict[str, tuple]:
+    out: dict[str, tuple] = {}
+    for dp, dn, fn in os.walk(top):
+        dn[:] = [d for d in dn if d != ".git"]
+        for name in [*dn, *(f for f in fn if f != ".git")]:
+            p = Path(dp) / name
+            rel = str(p.relative_to(top))
+            st = p.lstat()
+            if stat.S_ISLNK(st.st_mode):
+                out[rel] = ("link", os.readlink(p))
+            elif stat.S_ISDIR(st.st_mode):
+                out[rel] = ("dir",)
+            else:
+                out[rel] = ("file", bool(st.st_mode & 0o100), p.read_bytes())
+    return out
+
+
+def _add(world_, base: str | None = None) -> None:
+    root, repo, own, args = world_
+    a = args("worktree.add")
+    if base:
+        a["base"] = base
+    assert wtgit.run_git(a, own) == {"ok": True}
+
+
+def test_populated_tree_equals_a_plain_checkout(world, tmp_path):  # noqa: F811
+    root, repo, own, args = world
+    (repo / "bin").mkdir()
+    _commit(repo, {"a/b/c.txt": "deep\n", "a/.gitattributes": "*.dat -text\n", "ünï/ç.txt": "u\n", "sp ace": "s"})
+    script = repo / "bin" / "run.sh"
+    script.write_text("#!/bin/sh\n")
+    script.chmod(0o755)
+    (repo / "link").symlink_to("a/b/c.txt")
+    (repo / "dangling").symlink_to("nowhere")
+    _git(repo, "add", "bin/run.sh", "link", "dangling")
+    _git(repo, "commit", "-qm", "more")
+    head = _git(repo, "rev-parse", "HEAD")
+    _add(world, head)
+    ours = _wt(repo)
+    ref = Path(f"{repo}.worktrees") / "plain"
+    _pgit(root, repo, "worktree", "add", "-q", "-b", "plain", str(ref), head)
+    assert _snapshot(ours) == _snapshot(ref)
+    assert _pgit(root, ours, "status", "--porcelain").stdout == ""
+    assert _pgit(root, ours, "ls-files", "-s").stdout == _pgit(root, ref, "ls-files", "-s").stdout
+    assert _pgit(root, ours, "diff-index", "HEAD", "--").stdout == ""
+    assert _pgit(root, ours, "fsck", "--no-dangling", check=False).returncode == 0
+    assert wtgit.run_git(args("worktree.remove"), own) == {"ok": True}  # and it can be removed like any worktree
+
+
+def test_a_gitlink_is_an_empty_directory(world):  # noqa: F811
+    root, repo, own, args = world
+    sub = "1" * 40
+    _git(repo, "update-index", "--add", "--cacheinfo", f"160000,{sub},mod")
+    _git(repo, "commit", "-qm", "gitlink")
+    _add(world, _git(repo, "rev-parse", "HEAD"))
+    assert (_wt(repo) / "mod").is_dir() and os.listdir(_wt(repo) / "mod") == []
+    assert _pgit(root, _wt(repo), "status", "--porcelain").stdout == ""
+
+
+def test_the_config_flipper_race_never_runs_the_marker(world):  # noqa: F811
+    """#565's probe against ``worktree.create``: a thread flips .git/config between benign and a smudge filter that
+    touches a marker, with ``* filter=x`` committed. The gate may pass while git would read the evil config: the
+    marker must still fire 0 times."""
+    root, repo, own, args = world
+    marker = root / "marker"
+    _commit(repo, {".gitattributes": "* filter=x\n"})
+    cfg = repo / ".git" / "config"
+    benign = cfg.read_text()
+    evil = benign + f'[filter "x"]\n\tsmudge = sh -c "touch {marker}; cat"\n\tclean = cat\n'
+    stop = threading.Event()
+
+    def flip() -> None:
+        while not stop.is_set():
+            for text in (evil, benign):
+                tmp = cfg.with_suffix(".tmp")
+                tmp.write_text(text)
+                os.replace(tmp, cfg)
+
+    t = threading.Thread(target=flip, daemon=True)
+    t.start()
+    passed = 0
+    try:
+        for i in range(25):
+            name = f"{i:08x}-ORCH-{i + 1}"
+            a = args("worktree.add", name)
+            a["branch"] = f"b{i}"
+            try:
+                wtgit.run_git(a, own)
+                passed += 1
+            except SpawnError:
+                continue  # the gate saw the evil config (or the worktree could not be made): also fine
+            finally:
+                with contextlib.suppress(SpawnError):
+                    wtgit.run_git(args("worktree.remove", name), own)
+    finally:
+        stop.set()
+        t.join()
+    assert not marker.exists(), "a repo-config smudge filter ran during worktree.add"
+    assert passed, "the race never let an add through: the test proves nothing"
+
+
+def test_control_plain_git_checkout_does_run_the_repo_filter(world):  # noqa: F811
+    root, repo, own, args = world
+    marker = root / "marker"
+    _commit(repo, {".gitattributes": "* filter=x\n"})
+    _git(repo, "config", "filter.x.smudge", f"sh -c 'touch {marker}; cat'")
+    _pgit(root, repo, "worktree", "add", "-q", "-b", "ctl", str(Path(f"{repo}.worktrees") / "ctl"))
+    assert marker.exists()
+
+
+def test_populate_never_reads_a_filter_from_the_repo_config(world):  # noqa: F811
+    """Bypass the gate: a plain ``--no-checkout`` add of a repo whose config names a smudge filter. ``populate`` writes
+    the raw blob and the program never runs."""
+    root, repo, own, args = world
+    marker = root / "marker"
+    _commit(repo, {".gitattributes": "* filter=x\n", "p.bin": "POINTER\n"})
+    _git(repo, "config", "filter.x.smudge", f"sh -c 'touch {marker}; echo SMUDGED'")
+    _git(repo, "config", "filter.lfs.smudge", f"sh -c 'touch {marker}; echo SMUDGED'")
+    wt = _wt(repo)
+    Path(f"{repo}.worktrees").mkdir()
+    _pgit(root, repo, "worktree", "add", "-q", "--no-checkout", "-b", "n", str(wt))
+    populate(str(wt), own)
+    assert (wt / "p.bin").read_text() == "POINTER\n"
+    assert not marker.exists()
+
+
+def _fake_lfs(root: Path) -> None:
+    (root / "smudge.sh").write_text('#!/bin/sh\nsed "s/^POINTER:/CONTENT:/"\n')
+    (root / "clean.sh").write_text('#!/bin/sh\nsed "s/^CONTENT:/POINTER:/"\n')
+    for n in ("smudge.sh", "clean.sh"):
+        (root / n).chmod(0o755)
+    (root / ".gitconfig").write_text(
+        f'[filter "lfs"]\n\tsmudge = {root}/smudge.sh %f\n\tclean = {root}/clean.sh %f\n\trequired = true\n'
+    )
+
+
+def test_lfs_pointers_are_smudged_with_the_persons_filter_only(world):  # noqa: F811
+    root, repo, own, args = world
+    _fake_lfs(root)
+    _commit(repo, {".gitattributes": "*.bin filter=lfs\n", "big.bin": "POINTER:abc\n", "keep.txt": "POINTER:xyz\n"})
+    _add(world, _git(repo, "rev-parse", "HEAD"))
+    wt = _wt(repo)
+    assert (wt / "big.bin").read_text() == "CONTENT:abc\n"  # the person's filter ran
+    assert (wt / "keep.txt").read_text() == "POINTER:xyz\n"  # not selected by an attribute
+    # the index holds the pointer's id: git (with the same clean filter) sees no change
+    assert _pgit(root, wt, "status", "--porcelain").stdout == ""
+
+
+def test_without_a_person_filter_the_pointer_is_written_as_is(world):  # noqa: F811
+    root, repo, own, args = world
+    _commit(repo, {".gitattributes": "*.bin filter=lfs\n", "big.bin": "POINTER:abc\n"})
+    _add(world, _git(repo, "rev-parse", "HEAD"))
+    assert (_wt(repo) / "big.bin").read_text() == "POINTER:abc\n"
+
+
+def _refused(world_, code: str = "worktree.checkout_unsupported") -> None:
+    root, repo, own, args = world_
+    a = args("worktree.add")
+    a["base"] = _git(repo, "rev-parse", "HEAD")
+    with pytest.raises(SpawnError) as e:
+        wtgit.run_git(a, own)
+    assert e.value.code == code
+    assert not _wt(repo).exists(), "a half-populated worktree was left behind"
+    assert "feat-x" not in _git(repo, "branch", "--list"), "the branch the failed add created is still there"
+    assert str(_wt(repo)) not in _git(repo, "worktree", "list", "--porcelain")
+
+
+def test_a_non_allow_listed_person_filter_fails_closed(world):  # noqa: F811
+    root, repo, own, args = world
+    (root / ".gitconfig").write_text('[filter "other"]\n\tsmudge = cat\n\tclean = cat\n')
+    _commit(repo, {".gitattributes": "* filter=other\n"})
+    _refused(world)
+    # a retry after the person fixes their config works: nothing was left behind
+    (root / ".gitconfig").write_text("")
+    _add(world, _git(repo, "rev-parse", "HEAD"))
+
+
+def test_a_failing_person_filter_fails_closed(world):  # noqa: F811
+    root, repo, own, args = world
+    (root / ".gitconfig").write_text('[filter "lfs"]\n\tsmudge = false\n\trequired = true\n')
+    _commit(repo, {".gitattributes": "* filter=lfs\n"})
+    _refused(world)
+
+
+def test_an_uncertain_person_config_with_a_selected_filter_fails_closed(world):  # noqa: F811
+    root, repo, own, args = world
+    (root / ".gitconfig").write_text("[include]\n\tpath = /elsewhere\n")
+    _commit(repo, {".gitattributes": "* filter=lfs\n"})
+    _refused(world)
+
+
+@pytest.mark.parametrize("attr", ["* ident", "* working-tree-encoding=latin1", "* eol=crlf"])
+def test_conversions_it_does_not_do_fail_closed(world, attr):  # noqa: F811
+    root, repo, own, args = world
+    _commit(repo, {".gitattributes": attr + "\n"})
+    _refused(world)
+
+
+def test_autocrlf_in_the_persons_config_fails_closed(world):  # noqa: F811
+    root, repo, own, args = world
+    (root / ".gitconfig").write_text("[core]\n\tautocrlf = true\n")
+    _refused(world)
+
+
+def _evil_tree(repo: Path, entries: list[tuple[str, str, str]]) -> None:
+    """Commit a tree git's own commands would refuse to build (mktree does not verify paths)."""
+    oid = subprocess.run(
+        ["git", "hash-object", "-w", "--stdin"], cwd=repo, input="x", capture_output=True, text=True, check=True,
+        env={"PATH": os.environ["PATH"], "HOME": str(repo)},
+    ).stdout.strip()  # fmt: skip
+    lines = "".join(f"{mode} blob {oid}\t{name}\n" for mode, _t, name in entries)
+    tree = subprocess.run(
+        ["git", "mktree"], cwd=repo, input=lines, capture_output=True, text=True, check=True,
+        env={"PATH": os.environ["PATH"], "HOME": str(repo)},
+    ).stdout.strip()  # fmt: skip
+    commit = _git(repo, "commit-tree", tree, "-m", "evil")
+    _git(repo, "update-ref", "refs/heads/main", commit)
+
+
+@pytest.mark.parametrize("name", [".git", ".GIT", ".Git", "git~1", ".git ", ".g‌it"])
+def test_a_dot_git_path_fails_closed(world, name):  # noqa: F811
+    root, repo, own, args = world
+    _evil_tree(repo, [("100644", "blob", name)])
+    _refused(world)
+
+
+def test_a_gitmodules_symlink_fails_closed(world):  # noqa: F811
+    root, repo, own, args = world
+    _evil_tree(repo, [("120000", "blob", ".gitmodules")])
+    _refused(world)
+
+
+def test_the_error_names_the_reason_but_no_file_content(world):  # noqa: F811
+    root, repo, own, args = world
+    (root / ".gitconfig").write_text('[filter "other"]\n\tsmudge = SECRETCMD\n')
+    _commit(repo, {".gitattributes": "* filter=other\n"})
+    a = args("worktree.add")
+    a["base"] = _git(repo, "rev-parse", "HEAD")
+    with pytest.raises(SpawnError) as e:
+        wtgit.run_git(a, own)
+    assert "other" in e.value.message and "SECRETCMD" not in e.value.message
+
+
+def test_populate_refuses_a_non_empty_worktree(world):  # noqa: F811
+    root, repo, own, args = world
+    wt = _wt(repo)
+    Path(f"{repo}.worktrees").mkdir()
+    _pgit(root, repo, "worktree", "add", "-q", "--no-checkout", "-b", "n", str(wt))
+    (wt / "stray").write_text("x")
+    with pytest.raises(Unavailable):
+        populate(str(wt), own)

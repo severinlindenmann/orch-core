@@ -63,6 +63,9 @@ class Capture:
     #: P5: ``publish.share``'s facts from the host (:class:`orch.publishclient.approval.ApprovalFacts`), built from the
     #: staged copy before the handler runs; the words that are signed come from them, never from the request
     publish: Any = None
+    #: V3 C2a: ``hub.join``'s facts from the host (:class:`orch.host.hubops.HubFacts`: the host's own clock and whether
+    #: this workspace is a dev workspace), never from the request: the hub card is checked against them
+    hub: Any = None
     #: batch 11 (finding 9): the checked ``sequence`` meta of ``human.prepare`` (one step of a signer's sequence)
     sequence: dict[str, Any] | None = None
 

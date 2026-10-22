@@ -83,6 +83,12 @@ PLANNED_LABELS: dict[str, str] = {
     # corpus, so kept apart from LABELS (which mirrors it); tests/crypto/test_h13_labels.py keeps them prefix-free.
     "kdf_host_drop_recovery": "orch/v2/host-drop-recovery|",  # the host-only Drop recovery envelope (D7, Q4)
     "sig_drop_handoff": "orch/v2/sig/drop-handoff|",  # the terminal hand-off (O1); signable from H13b-4 only
+    # V3 C2a (orch-hub contract H0, section 3): what the WSK signs for a hub. Hub-side labels (op cert, card, snapshot,
+    # route ...) are signed by the hub's keys and never by core, so they are not here.
+    "sig_hub_binding": "orch/v2/sig/hub-binding|",
+    "sig_hub_unbound": "orch/v2/sig/hub-unbound|",
+    "sig_hub_link": "orch/v2/sig/hub-link|",
+    "sig_hub_link_auth": "orch/v2/sig/hub-link-auth|",
 }
 
 L: dict[str, bytes] = {k: v.encode("ascii") for k, v in {**LABELS, **PLANNED_LABELS}.items()}

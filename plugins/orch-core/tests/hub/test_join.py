@@ -280,3 +280,15 @@ def test_built_objects_match_vectors() -> None:
         sign=sign_wsk,
     )
     assert u["o"] == V["objects"]["unbound_a_1"]["o"]
+
+
+def test_the_wire_labels_are_the_custody_labels_of_the_workspace_key():
+    from orch.crypto.labels import L
+    from orch.custody.base import HOST_LABELS, PERSON_LABELS
+
+    for const, key in (
+        (wire.SIG_BINDING, "sig_hub_binding"),
+        (wire.SIG_UNBOUND, "sig_hub_unbound"),
+        (wire.SIG_LINK, "sig_hub_link"),
+    ):
+        assert const == L[key] and const in HOST_LABELS and const not in PERSON_LABELS  # WSK only, never a person key

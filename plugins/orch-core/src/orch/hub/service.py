@@ -117,6 +117,7 @@ def join_selective(
     save: Callable[[HubState], None],
     aliases: list[dict[str, str]] | None = None,
     mode: str = "selective",
+    binding_seq: int | None = None,
 ) -> JoinResult:
     if mode != "selective":
         raise HubRefused("full_mode_later")
@@ -132,11 +133,15 @@ def join_selective(
         assert state is not None
         if state.hub_id != verified["card"]["hub_id"]:
             raise HubRefused("other_hub")
+        if binding_seq is not None and binding_seq != state.binding_seq:
+            raise HubRefused("binding_conflict")
         binding, payload = state.binding, {}
         new = state
     else:
         prior = {} if state is None else state.aliases
-        seq = 1 if state is None else state.binding_seq + 1  # strictly increasing across rejoins (9.2)
+        seq = binding_seq or (1 if state is None else state.binding_seq + 1)  # strictly increasing (9.2)
+        if state is not None and seq <= state.binding_seq:
+            raise HubRefused("stale_binding")
         binding = wire.build_binding(
             workspace_id=workspace_id,
             wsk_pub=wsk_pub,

@@ -57,6 +57,8 @@ WORKSPACE_ONLY = {
     "addon.granted",
     "addon.disabled",
     "addon.purged",
+    "hub.joined",
+    "hub.left",
 }
 
 
@@ -475,6 +477,20 @@ _SPEC = {
     ),
     "addon.disabled": (PERSON, {"name": "estimate"}, 5),
     "addon.purged": (PERSON, {"name": "estimate"}, 5),
+    "hub.joined": (
+        PERSON,
+        {
+            "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+            "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+            "mode": "selective",
+            "binding_seq": 1,
+            "aliases": [
+                {"person_id": "4cfef66f1dc7bee794e9d949f2a216c3", "user_id": "a368bd380588e5dabee62a516031e21f"}
+            ],
+        },
+        5,
+    ),
+    "hub.left": (PERSON, {"hub_id": "38d8abed52ccfb538da401fd54e64bdc", "binding_seq": 1}, 5),
 }
 
 EVENTS = {t: _env(t, a, s, **p) for t, (a, p, s) in _SPEC.items()}

@@ -71,10 +71,20 @@ describe('pictures: an <img> from digest-checked bytes, never markup', () => {
 })
 
 describe('text-like files', () => {
-  it('JSON is pretty-printed', async () => {
+  it('JSON shows the file\'s own text, never re-parsed (a short file is not reformatted)', async () => {
     show('r.json', { text: '{"a":1,"b":[2,3]}' })
     const pre = await screen.findByLabelText('JSON of r.json')
-    expect(pre.textContent).toContain('{\n  "a": 1,')
+    expect(pre.textContent).toBe('{"a":1,"b":[2,3]}')
+  })
+  it('JSON with a duplicate key shows both keys; a minified file offers a labelled reformatted view, Raw is the file as it is', async () => {
+    const long = '{"a":1,"a":2,"pad":"' + 'x'.repeat(220) + '"}'
+    show('m.json', { text: long })
+    const pre = await screen.findByLabelText('JSON of m.json')
+    expect(screen.getByText(/Reformatted view for reading/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Raw' })).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Raw' }))
+    expect((await screen.findByLabelText('JSON of m.json')).textContent).toBe(long)
+    expect(pre).toBeDefined()
   })
   it('a small CSV is a table', async () => {
     show('t.csv', { text: 'name,kwh\nA,1\nB,2\n' })

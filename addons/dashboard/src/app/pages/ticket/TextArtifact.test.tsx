@@ -45,10 +45,10 @@ describe('text artifact preview', () => {
   it('shows the text as plain text, with control and bidi characters escaped, never as markup', async () => {
     show(art(), content({ text: 'line1\r\nESC\u001b[31m red ‮evil <b>x</b> <script>alert(1)</script>\n' }))
     const pre = await screen.findByLabelText('Text of T1.receipt.log')
-    expect(pre.textContent).toContain('line1\nESC\\u{1b}[31m red \\u{202e}evil <b>x</b> <script>alert(1)</script>')
+    expect(pre.textContent).toContain('line1ESC\\u{1b}[31m red \\u{202e}evil <b>x</b> <script>alert(1)</script>')
     expect(pre.textContent).not.toContain('‮')
     expect(pre.querySelector('b, script')).toBeNull()
-    expect(screen.getByText(/Shown as plain text/)).toBeInTheDocument()
+    expect(screen.getByText(/Shown as text. Nothing in the file is run/)).toBeInTheDocument()
     expect(screen.queryByText(/No inline preview/)).toBeNull()
   })
   it('says it shows the first 64 KiB of a bigger file', async () => {

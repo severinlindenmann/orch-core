@@ -86,7 +86,7 @@ export async function highlight(code: string, language: string): Promise<Token[]
   if (code.split('\n').length > MAX_HIGHLIGHT_LINES) return null
   if (!h.getLoadedLanguages().includes(lang) && LAZY[lang]) await h.loadLanguage(LAZY[lang]() as never)
   if (!h.getLoadedLanguages().includes(lang)) return null
-  // The token API only (never codeToHtml): the page draws the tokens as React text.
+  // The token API only (never an HTML-producing call): the page draws the tokens as React text.
   return h
     .codeToTokensBase(code, { lang, theme: THEME, tokenizeMaxLineLength: MAX_LINE, tokenizeTimeLimit: TIME_LIMIT_MS })
     .map((line) => line.map((t) => ({ content: t.content, color: t.color })))

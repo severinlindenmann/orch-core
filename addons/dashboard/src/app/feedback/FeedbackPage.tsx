@@ -55,11 +55,11 @@ function Field(props: { item: FeedbackItem; path: string; tail: boolean; onChang
   }
   return (
     <div className={cn('rounded-[10px] border p-3 focus-within:border-brand', tail ? 'border-dashed border-border bg-transparent' : 'border-border bg-surface')} data-testid={`fb-${path}`}>
-      <div className="mb-1.5 flex items-center gap-2">
+      <div className="mb-1.5 flex min-w-0 flex-wrap items-center gap-2">
         <span className="font-mono text-xs font-semibold text-brand">Feedback {path}:</span>
         <span className="flex-1" />
-        {props.onSub && !tail && <Button type="button" variant="ghost" size="xs" onClick={props.onSub}><Plus /> sub-feedback</Button>}
-        {!tail && <Button type="button" variant="ghost" size="xs" aria-label={`Delete feedback ${path}`} onClick={props.onDelete}><Trash2 /> Delete</Button>}
+        {props.onSub && !tail && <Button type="button" variant="outline" size="xs" className="min-h-11 sm:min-h-6" onClick={props.onSub}><Plus /> sub-feedback</Button>}
+        {!tail && <Button type="button" variant="ghost" size="xs" className="min-h-11 sm:min-h-6" aria-label={`Delete feedback ${path}`} onClick={props.onDelete}><Trash2 /> Delete</Button>}
       </div>
       <Textarea
         ref={ref}
@@ -67,7 +67,7 @@ function Field(props: { item: FeedbackItem; path: string; tail: boolean; onChang
         value={item.text}
         aria-label={`Feedback ${path}`}
         placeholder={tail ? 'Next feedback… (paste a screenshot with Cmd+V)' : 'What did you notice?'}
-        className="min-h-6 resize-none overflow-hidden border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
+        className="min-h-16 w-full min-w-0 max-w-full resize-none overflow-hidden border border-border bg-bg px-3 py-2 shadow-none [field-sizing:fixed] [overflow-wrap:anywhere] dark:bg-bg focus-visible:border-brand focus-visible:ring-1 focus-visible:ring-brand"
         onChange={(e) => props.onChange((it) => void (it.text = e.target.value))}
         onKeyDown={(e) => {
           if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && props.onSub && !tail) props.onSub()
@@ -79,7 +79,7 @@ function Field(props: { item: FeedbackItem; path: string; tail: boolean; onChang
           {item.shots.map((src, k) => (
             <li key={k} className="relative">
               <img src={src} alt={`Screenshot ${k + 1} of feedback ${path}`} className="max-h-32 max-w-56 rounded-md border border-border-strong" />
-              <button type="button" aria-label={`Remove screenshot ${k + 1} of feedback ${path}`} className="absolute right-1 top-1 grid size-5 place-items-center rounded-full bg-black/70 text-white" onClick={() => props.onChange((it) => void it.shots.splice(k, 1))}>
+              <button type="button" aria-label={`Remove screenshot ${k + 1} of feedback ${path}`} className="absolute right-1 top-1 grid size-11 place-items-center rounded-full bg-black/70 text-white focus-visible:ring-2 focus-visible:ring-brand sm:size-6" onClick={() => props.onChange((it) => void it.shots.splice(k, 1))}>
                 <X className="size-3" />
               </button>
             </li>
@@ -198,27 +198,27 @@ export function FeedbackPage() {
       return (
         <li key={it.id} className="space-y-2">
           <Field item={it} path={path} tail={tail} autoFocus={focus === it.id} say={say} onChange={(fn) => change(it.id, fn)} onDelete={() => remove(it.id)} onSub={prefix ? undefined : () => addSub(it.id)} />
-          {it.kids.length > 0 && <ul className="ml-5 space-y-2 border-l-2 border-border pl-3">{render(it.kids, path)}</ul>}
+          {it.kids.length > 0 && <ul className="ml-3 space-y-2 border-l-2 border-border-strong pl-3 sm:ml-5">{render(it.kids, path)}</ul>}
         </li>
       )
     })
   }
 
   return (
-    <div className="h-full overflow-y-auto bg-bg">
-      <div className="mx-auto max-w-3xl px-4 py-4 sm:py-6">
+    <div className="h-full w-full min-w-0 max-w-full overflow-y-auto bg-bg">
+      <div className="mx-auto w-full min-w-0 max-w-3xl px-4 py-4 sm:py-6">
         {/* A full page load, like the checklist: this page sits outside the shell. */}
         <a href="/" className="inline-flex items-center gap-1.5 text-sm text-text-muted hover:text-text"><ArrowLeft className="size-4" /> Back to the dashboard</a>
         <h1 className="mt-3 text-xl font-semibold text-text">Feedback</h1>
-        <p className="mt-1 text-sm text-text-muted">Write what you noticed and paste screenshots with Cmd+V. The next field opens by itself. Add sub-points (1.1, 1.2) with “sub-feedback”, then copy the report or export a ZIP for the agent. Saved in this browser only.</p>
+        <p className="mt-1 text-sm text-text-muted">Write what you noticed and paste screenshots with Cmd+V. The next field opens by itself. Add sub-points (1.1, 1.2) with “sub-feedback”, then export a ZIP (text and images) or copy the report (text and image file names only) for the agent. Saved in this browser only.</p>
 
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <span className="rounded-full bg-surface-2 px-2 py-0.5 font-mono text-[11px] text-text-muted" data-testid="fb-round">{state.round ? `round ${state.round}` : 'no round yet'}</span>
           <span className="rounded-full bg-surface-2 px-2 py-0.5 font-mono text-[11px] text-text-muted" data-testid="fb-count">{count} item{count === 1 ? '' : 's'} · {shots} screenshot{shots === 1 ? '' : 's'}</span>
           <span className="flex-1" />
           <Button type="button" variant="outline" size="sm" onClick={newRound}>Start new round</Button>
-          <Button type="button" variant="outline" size="sm" onClick={exportZip}><Download /> Export ZIP</Button>
-          <Button type="button" size="sm" onClick={copyReport}><Copy /> Copy report</Button>
+          <Button type="button" variant="outline" size="sm" disabled={count === 0} onClick={exportZip}><Download /> Export ZIP</Button>
+          <Button type="button" size="sm" disabled={count === 0} onClick={copyReport}><Copy /> Copy report</Button>
         </div>
         {unsaved && <p role="alert" className="mt-2 text-sm text-warning">Not saved in this browser (storage is full or blocked). Copy the report or export the ZIP now, a reload would lose this round.</p>}
         {note && <p role="status" className="mt-2 flex items-center gap-1.5 text-sm text-brand"><Check className="size-4" /> {note}</p>}
@@ -230,14 +230,14 @@ export function FeedbackPage() {
             <div className="mb-2 flex flex-wrap items-center gap-2">
               <b className="text-sm text-text">Report preview</b>
               <span className="flex-1" />
-              <label className="flex items-center gap-1.5 text-xs text-text-muted">
+              <label className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-text-muted">
                 Images saved in
-                <input value={dir} onChange={(e) => setDir(e.target.value)} placeholder="~/Downloads" className="w-48 rounded-md border border-border bg-surface px-2 py-1 text-text" />
+                <input value={dir} onChange={(e) => setDir(e.target.value)} placeholder="~/Downloads" className="w-48 min-w-0 max-w-full rounded-md border border-border bg-surface px-2 py-1 text-text" />
               </label>
               <Button type="button" variant="outline" size="xs" onClick={downloadImages}><Download /> Download images</Button>
               <Button type="button" variant="outline" size="xs" onClick={copyReport}><Copy /> Copy again</Button>
             </div>
-            <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-[10px] border border-border bg-surface p-3 font-mono text-xs text-text">{report}</pre>
+            <pre className="max-h-96 min-w-0 max-w-full overflow-auto whitespace-pre-wrap [overflow-wrap:anywhere] rounded-[10px] border border-border bg-surface p-3 font-mono text-xs text-text">{report}</pre>
           </section>
         )}
       </div>

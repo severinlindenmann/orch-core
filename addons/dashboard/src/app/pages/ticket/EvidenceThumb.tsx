@@ -37,7 +37,7 @@ const ext = (name: string) => /\.([A-Za-z0-9]+)$/.exec(name)?.[1].toLowerCase() 
 export function typeBadge(a: Pick<Artifact, 'name' | 'kind'>): { label: string; tone: string } {
   const e = ext(a.name)
   const by: Record<string, [string, string]> = {
-    json: ['JSON', 'text-warning'], jsonl: ['JSON', 'text-warning'], py: ['PY', 'text-info'], md: ['MD', 'text-addon'], markdown: ['MD', 'text-addon'],
+    json: ['JSON', 'text-warning'], jsonl: ['JSON', 'text-warning'], py: ['PY', 'text-info'], md: ['MD', 'text-info'], markdown: ['MD', 'text-info'],
     log: ['LOG', 'text-text-muted'], txt: ['TXT', 'text-text-muted'], html: ['HTML', 'text-warning'], htm: ['HTML', 'text-warning'],
     png: ['PNG', 'text-brand'], jpg: ['JPG', 'text-brand'], jpeg: ['JPG', 'text-brand'], webp: ['WEBP', 'text-brand'], gif: ['GIF', 'text-brand'], svg: ['SVG', 'text-brand'],
     csv: ['CSV', 'text-success'], pdf: ['PDF', 'text-danger'], ts: ['TS', 'text-info'], js: ['JS', 'text-info'], sh: ['SH', 'text-info'], yaml: ['YAML', 'text-info'], yml: ['YAML', 'text-info'], toml: ['TOML', 'text-info'], diff: ['DIFF', 'text-info'], patch: ['DIFF', 'text-info'],

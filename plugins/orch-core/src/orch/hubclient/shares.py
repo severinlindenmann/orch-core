@@ -230,6 +230,17 @@ def decision_data(f1: Mapping[str, Any] | None) -> list[str]:
     )  # fmt: skip
 
 
+def decision_raw(f1: Mapping[str, Any] | None) -> list[list[str]]:
+    """The exact ``[gate, repo, ref]`` entries of each ``source_sha`` list behind :func:`decision_data`, uncleaned: what
+    the plan hashes. The commit sha stays out: it is not shown; a moved sha changes the digest, not the plan."""
+    if f1 is None:
+        return []
+    return sorted(
+        [g, e["repo"], e["ref"]]
+        for g, v in f1["gates"].items() for e in v.get("source_sha", ())
+    )  # fmt: skip
+
+
 def _item(
     logical: str, kind: str, t: TicketFact, payload: dict[str, Any], f1: dict[str, Any] | None = None
 ) -> ShareItem | None:
@@ -243,7 +254,10 @@ def _item(
     except HubRefused:
         return None
     data = decision_data(f1)
-    shown = b64u(suite.sha256(wire.cj(payload if not data else {"payload": payload, "decision_data": data})))
+    # the plan covers the RAW repo and ref of each source_sha entry, not the cleaned preview lines: repo strings that
+    # differ only in whitespace look alike once cleaned (C6bd-1, core#1040)
+    raw = decision_raw(f1)
+    shown = b64u(suite.sha256(wire.cj(payload if not raw else {"payload": payload, "decision_data": raw})))
     digest = shown if f1 is None else b64u(suite.sha256(wire.cj({"payload": payload, "f1": f1})))
     return ShareItem(logical, kind, t.uid, t.key, payload, digest, f1, shown, tuple(data), t.chain)
 

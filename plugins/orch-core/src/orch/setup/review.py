@@ -78,10 +78,7 @@ class Item:
 
 
 #: what the review says about the records step (the consent): plain words, one place
-RECORDS_TEXT = (
-    "Keep a private history of this workspace's records in their own git repository (orch records init), and save "
-    "it on this computer automatically every 15 minutes. Nothing is ever sent anywhere."
-)
+RECORDS_TEXT = "Keep a history of your tickets on this computer, saved automatically (never uploaded)."
 
 
 @dataclass

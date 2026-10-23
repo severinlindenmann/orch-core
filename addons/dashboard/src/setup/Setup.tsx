@@ -894,11 +894,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                     />
                   </label>
                   {profile.method === 'click' && (
-                    <p>
-                      Relay is unavailable with One click:{' '}
-                      {state.click_reason ||
-                        'Phone approvals are not available with One click yet. Choose Terminal to use them.'}
-                    </p>
+                    <p>Phone approvals are not available with One click yet. Choose Terminal to use them.</p>
                   )}
                 </>
               )}
@@ -906,7 +902,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                 <label className="toggle">
                   <span>
                     Keep a history of this workspace
-                    <small>Saved on this computer every 15 minutes in its own git repository. Nothing is sent anywhere.</small>
+                    <small>Saved on this computer automatically. Nothing is uploaded.</small>
                   </span>
                   <input
                     type="checkbox"

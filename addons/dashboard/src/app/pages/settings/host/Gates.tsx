@@ -171,7 +171,7 @@ function ApprovalStep({ gate, current, members, viewer, mayChange, why, ask }: {
         className="mt-2 h-9 w-full rounded-md border border-border bg-bg px-2 text-[13px] disabled:cursor-not-allowed disabled:opacity-60"
         aria-describedby={why ? `${id}-why` : undefined}
       >
-        {preset === null && <option value="custom" disabled>Custom rule (set under Custom rules)</option>}
+        {preset === null && <option value="custom" disabled>Custom approval rule</option>}
         {APPROVAL_PRESETS.map((k) => (
           <option key={k} value={k} disabled={k === 'two' && canApprove < 2 && preset !== 'two'}>{labelOf(k)}</option>
         ))}
@@ -181,7 +181,7 @@ function ApprovalStep({ gate, current, members, viewer, mayChange, why, ask }: {
       {unmet && (
         <div role="alert" data-testid={`approval-${gate}-unmet`} className="mt-3 space-y-1 rounded-md border border-warning/50 px-3 py-2 text-[13px]">
           <p className="font-medium text-warning">{plural(unmet.needs, 'approval')} required; only {unmet.has} {unmet.has === 1 ? 'person qualifies' : 'people qualify'}.</p>
-          <p className="text-text-muted">Tickets would wait here for ever.</p>
+          <p className="text-text-muted">Tickets cannot move past this step until it is fixed.</p>
           <Button type="button" size="sm" variant="outline" onClick={() => document.getElementById(id)?.focus()}>Change rule</Button>
         </div>
       )}

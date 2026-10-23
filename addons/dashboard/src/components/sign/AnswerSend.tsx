@@ -210,7 +210,7 @@ function Presented({ click, showWorkspace }: { click: ReturnType<typeof useClick
   return (
     <section data-testid="answer-strip" aria-label="You are sending" className="space-y-3 rounded-md border border-border bg-bg p-3">
       <p role="status" className="sr-only" data-testid="strip-live">
-        {click.phase !== 'ready' ? 'Sending your answer.' : armed ? 'Send answer is ready.' : 'Review loaded. Send answer turns on in a moment.'}
+        <Said text={liveText(click.phase, armed)} />
       </p>
       <h3 className="text-[12px] font-medium text-text-muted">You are sending</h3>
       {showWorkspace && view.workspace?.name && (
@@ -249,4 +249,22 @@ function Presented({ click, showWorkspace }: { click: ReturnType<typeof useClick
       </div>
     </section>
   )
+}
+
+/** What the live region says for a phase of the strip (nothing for a refusal: its own message is on screen). */
+export function liveText(phase: string, armed: boolean): string {
+  if (phase === 'signing' || phase === 'settling') return 'Sending your answer.'
+  if (phase === 'done') return 'Answer sent.'
+  if (phase !== 'ready') return ''
+  return armed ? 'Send answer is ready.' : 'Review loaded. Send answer turns on in a moment.'
+}
+
+/** The region starts empty and is filled one tick later, so the first announcement is read by screen readers. */
+function Said({ text }: { text: string }) {
+  const [said, setSaid] = useState('')
+  useEffect(() => {
+    const t = setTimeout(() => setSaid(text), 0)
+    return () => clearTimeout(t)
+  }, [text])
+  return <>{said}</>
 }

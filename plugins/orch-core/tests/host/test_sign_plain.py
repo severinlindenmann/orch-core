@@ -953,6 +953,11 @@ def test_f7_the_note_is_titled_your_note_and_a_label_equal_to_the_key_is_not_rep
     assert [s["title"] for s in c["sections"] if s["id"] == "answer"] == ["Your note"]
     c = build(_answer({"options": [{"key": "Hello", "label": "Hello"}]}, option="Hello"))
     assert {r["field"]: r["after"] for r in c["fields_changed"]}["your choice"] == "Hello"
+    # label == key stays suffixed when another option carries that label: {a: "b"} next to {b: "b"}
+    dup = {"options": [{"key": "a", "label": "b"}, {"key": "b", "label": "b"}], "recommended": "a"}
+    for key in ("a", "b"):
+        c = build(_answer(dup, option=key))
+        assert {r["field"]: r["after"] for r in c["fields_changed"]}["your choice"] == f"b (option {key})"
     # a free-text answer (no option) keeps "Your answer" for its text
     c = build(_answer(option=None, text="my words"))
     assert [s["title"] for s in c["sections"] if s["id"] == "answer"] == ["Your answer"]

@@ -9,7 +9,7 @@ import { setFeatures } from '@/api/features'
 import { ApiError, type QuestionStatus, type TicketDocument } from '@/api/types'
 import { Questions } from '@/app/pages/ticket/Questions'
 import { useViewer } from '@/app/pages/ticket/shared'
-import { AnswerSend } from './AnswerSend'
+import { AnswerSend, liveText } from './AnswerSend'
 
 const T = { timeout: 5000 }
 const WS_FEATURES = ['identity', 'today', 'tickets', 'board', 'ticket', 'actions']
@@ -298,10 +298,20 @@ describe('answer follow-ups (fake timers)', () => {
     fireEvent.click(await openQ2())
     await screen.findByTestId('answer-strip', {}, T)
     const form = screen.getByTestId('answer-strip').closest('form')!
-    fireEvent.submit(form) // implicit submission: no submitter
+    form.dispatchEvent(new SubmitEvent('submit', { submitter: null, bubbles: true, cancelable: true })) // implicit submission
     await vi.advanceTimersByTimeAsync(600)
     expect(sign).not.toHaveBeenCalled()
     expect(prepare).toHaveBeenCalledTimes(1)
+  })
+
+  it('a browser that reports no submitter (undefined) still submits in non-one-click mode', async () => {
+    flag(false)
+    const sign = await mountQuestions()
+    fireEvent.click(await openQ2())
+    const button = await screen.findByRole('button', { name: 'Send answer' })
+    await waitFor(() => expect(button).toBeEnabled())
+    fireEvent.submit(button.closest('form')!) // a plain Event: submitter is undefined
+    expect(sign).toHaveBeenCalledTimes(1)
   })
 
   it('without one click the plain Send answer button still submits the form', async () => {
@@ -332,13 +342,27 @@ describe('answer follow-ups (fake timers)', () => {
     expect(screen.getByTestId('answer-strip')).toBeInTheDocument() // the strip does not vanish under the person
   })
 
+  it('the live region maps each phase and starts empty', async () => {
+    expect(liveText('signing', true)).toBe('Sending your answer.')
+    expect(liveText('settling', true)).toBe('Sending your answer.')
+    expect(liveText('done', true)).toBe('Answer sent.')
+    expect(liveText('failed', true)).toBe('')
+    expect(liveText('ready', false)).toMatch(/^Review loaded/)
+    expect(liveText('ready', true)).toBe('Send answer is ready.')
+    flag(true)
+    await mountHost()
+    fireEvent.click(screen.getByText('pick a'))
+    const live = await screen.findByTestId('strip-live', {}, T)
+    await waitFor(() => expect(live).toHaveTextContent('Review loaded')) // filled one tick after mount
+  })
+
   it('announces the strip and the moment Send answer turns on', async () => {
     flag(true)
     await mountHost()
     fireEvent.click(screen.getByText('pick a'))
     const live = await screen.findByTestId('strip-live', {}, T)
     expect(live).toHaveAttribute('role', 'status')
-    expect(live).toHaveTextContent('Review loaded')
+    await waitFor(() => expect(live).toHaveTextContent('Review loaded'))
     await vi.advanceTimersByTimeAsync(ARM_MS + 100)
     await waitFor(() => expect(live).toHaveTextContent('Send answer is ready.'))
   })

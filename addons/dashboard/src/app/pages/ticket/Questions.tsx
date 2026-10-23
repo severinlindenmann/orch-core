@@ -28,7 +28,8 @@ function AnswerForm({ q, sign, ticketKey, onViewQuestion }: { q: QuestionStatus;
         e.preventDefault()
         // Only the plain Send answer button submits. In one-click mode there is no such button: an Enter on a radio
         // would otherwise open the two-step dialog behind the strip that already holds a prepared request.
-        if (!(e.nativeEvent as SubmitEvent).submitter) return
+        // `null`: an implicit submission. (A browser without `submitter` says undefined: that still submits.)
+        if ((e.nativeEvent as SubmitEvent).submitter === null) return
         if (ready) sign({ kind: 'answer', question: q.id, option, text: text.trim() || undefined })
       }}
     >

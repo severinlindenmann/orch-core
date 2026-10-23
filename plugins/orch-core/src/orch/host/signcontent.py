@@ -1014,7 +1014,13 @@ def _question(material: Mapping[str, Any], events: list[Mapping[str, Any]], tick
         _row(
             out,
             "your choice",
-            (answer if answer == _s(picked) else f"{answer} (option {_s(picked)})")
+            # The suffix goes only when the label IS the key and no other option carries that label: {a: "b"} next to
+            # {b: "b"} must keep it, or the row would not tell the two apart.
+            (
+                answer
+                if answer == _s(picked) and list(opts.values()).count(answer) == 1
+                else f"{answer} (option {_s(picked)})"
+            )
             if _s(picked) in opts
             else f"{answer} (not one of the options)",
         )

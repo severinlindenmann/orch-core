@@ -117,7 +117,8 @@ def test_the_setting_is_refused_while_the_add_on_is_off_and_signed_with_the_word
     assert herr(human.prepare_res("settings.set", {"set": {"models": {"codex": {}}}})) == "invalid.input"
     prepared, _, signed = human.run("settings.set", args)
     assert signed.events[0]["set"] == args["set"]
-    assert protocol.op_class("settings.set", args=args) == "click"  # a pick from a closed list, no authority change (run 8, 1.6)
+    # a pick from a closed list, no authority change (run 8, 1.6)
+    assert protocol.op_class("settings.set", args=args) == "click"
     got = ok(served.client().req("workspace.settings"))["data"]
     assert got["models"] == {"claude-code": {"work": "sonnet"}}
 

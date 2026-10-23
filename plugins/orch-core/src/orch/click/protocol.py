@@ -165,9 +165,9 @@ def _settings_class(changes: list[Any]) -> str:
 
 
 def _grant_class(events: list[dict[str, Any]] | None, args: dict[str, Any] | None) -> str:
-    """``addon.grant``: ``publish`` decides where files go, so it is terminal only, however it is asked (args at prepare,
-    the signed event at sign time, which wins). Otherwise the class comes from the SIGNED capability list: empty
-    (usage, wiki, estimate, explorer, model-routing, worktrees ...) is a click; any capability (network, pty,
+    """``addon.grant``: ``publish`` decides where files go, so it is terminal only, however it is asked (args at
+    prepare, the signed event at sign time, which wins). Otherwise the class comes from the SIGNED capability list:
+    empty (usage, wiki, estimate, explorer, model-routing, worktrees ...) is a click; any capability (network, pty,
     spawn_agent, serve_http: code, network or a server as you) keeps the typed word. A missing or malformed list fails
     closed to the word. From ``args`` alone (the early check, before the host has built the event) the capabilities are
     not known: the word, the ceiling. That early class is only used to refuse terminal-only ops; the signed event

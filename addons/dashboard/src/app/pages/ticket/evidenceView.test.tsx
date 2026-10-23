@@ -87,6 +87,17 @@ describe('evidence under a criterion and in the verdict dialog', () => {
   })
 })
 
+describe('a criterion proved by a task receipt (run 8, 7.3)', () => {
+  it('is not reported as missing evidence', () => {
+    const t = ticket([art()], [ac(), ac({ id: 'AC2', text: 'Second', state: 'proven', evidence: [{ kind: 'task', ref: 'T1' }] })])
+    wrap(<VerdictEvidence ticket={t} />)
+    const region = screen.getByRole('region', { name: 'Evidence' })
+    expect(region).toHaveTextContent('for 2 of 2 criteria')
+    expect(region).not.toHaveTextContent('No evidence file yet')
+    expect(region).toHaveTextContent('AC2 is proved by a check the agent ran')
+  })
+})
+
 describe('Opus review fixes (provenance, folding, inert links)', () => {
   it('every preview says who added the file; an agent file says it is not part of the dialog', () => {
     const t = ticket([art({ added_by: 'claude-code:s_1:p_sev' })], [ac()])

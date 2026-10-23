@@ -3,6 +3,7 @@
 // neutrally (an empty list) where a page needs an answer to draw, and with `op.unsupported` everywhere else. Nothing
 // here imports the mock.
 import { clearSession, getToken } from './bootstrap'
+import { refreshFeatures } from './features'
 import { createFetchTransport } from './fetchTransport'
 import type { MandatesPreviewState } from './mandatesPreview'
 import type { Api, ListTicketsParams } from './apiFactory'
@@ -156,7 +157,11 @@ function workspace(s: ServerWorkspace): Workspace {
 }
 
 /** Every workspace the server knows, running or not (the switcher shows the others as "host not running"). */
-const listWorkspaces = async () => (await call<ServerWorkspace[]>('/api/workspaces')).map(workspace)
+const listWorkspaces = async () => {
+  const rows = await call<ServerWorkspace[]>('/api/workspaces')
+  refreshFeatures(rows)
+  return rows.map(workspace)
+}
 
 export async function logout() {
   const result = await createFetchTransport('', getToken).request('POST', '/auth/logout')

@@ -81,10 +81,11 @@ def ask(env: Env, uid: str, qn: str = "Q1", text: str = "Which tariff export?", 
     """An agent's ``question.asked`` (to the ticket owner); returns the question hash."""
     assert env.store is not None
     q: dict[str, Any] = {"id": qn, "to": "ticket_owner", "text": text, "blocking": True}
+    q["kind"] = "choice" if options is not None else "text"
     if options is not None:
         q["options"] = options
     qid = canon.question_id(WS, uid, qn)
-    h = canon.question_hash(qid, uid, text, options)
+    h = canon.question_hash(qid, uid, q)
     env.store.append({"type": "question.asked", "actor": env.agent, "question": q, "qid": qid, "hash": h}, log=uid)
     return h
 

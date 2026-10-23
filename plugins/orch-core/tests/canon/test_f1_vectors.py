@@ -121,10 +121,10 @@ def test_value_hash_refused(v):
         canon.value_hash(v)
 
 
-@pytest.mark.parametrize("v", H["question_hash_refused"], ids=range(len(H["question_hash_refused"])))
+@pytest.mark.parametrize("v", H["question_hash_refused"], ids=lambda v: v["name"])
 def test_question_hash_refused(v):
     with pytest.raises(canon.HashError):
-        canon.question_hash("a" * 32, oracle.UID, v["text"], v["options"])
+        canon.question_hash("a" * 32, oracle.UID, v["question"])
 
 
 @pytest.mark.parametrize("secret_hex", H["grant_secret_hash_refused"])
@@ -159,9 +159,9 @@ def test_question_id(v):
     assert canon.question_id(v["workspace_id"], v["ticket"], v["question"]) == v["qid"]
 
 
-@pytest.mark.parametrize("v", H["question_hash"], ids=range(len(H["question_hash"])))
+@pytest.mark.parametrize("v", H["question_hash"], ids=lambda v: v["name"])
 def test_question_hash(v):
-    assert canon.question_hash(v["qid"], v["ticket"], v["text"], v["options"]) == v["hash"]
+    assert canon.question_hash(v["qid"], v["ticket"], v["question"]) == v["hash"]
 
 
 @pytest.mark.parametrize("v", H["grant_secret_hash"], ids=range(len(H["grant_secret_hash"])))
@@ -329,7 +329,8 @@ def test_phone_event_signing_bytes_digest_sig_and_head(v):
         q = v["question"]
         h = q["hashed"]
         assert canon.question_id(PH["workspace_id"], h["ticket"], sub["question"]) == q["qid"] == h["question_id"]
-        assert canon.question_hash(q["qid"], h["ticket"], h["text"], h["options"] or None) == q["hash"] == sub["hash"]
+        assert canon.question_hash(q["qid"], h["ticket"], q["raw"]) == q["hash"] == sub["hash"]
+        assert canon.question_spec(q["raw"]) == h["spec"] and h["options"] == q["raw"].get("options", [])
 
 
 def test_phone_events_cover_the_vector_list_of_11a14():

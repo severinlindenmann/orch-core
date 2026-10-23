@@ -13,7 +13,6 @@ import pytest
 
 from orch.cli import publish
 from orch.cli.main import main as orch_main
-from orch.host import publishing
 from orch.ops import human
 from tests.host import human_helpers
 from tests.host.test_publishing import ADDON, REPORT, SERVER, SHARE, World
@@ -211,7 +210,7 @@ def test_prepare_list_and_discard_through_the_real_host(served, human_fx):
         assert code == 2 and out.startswith("error not_found")
         assert w.server.requests == []
     finally:
-        publishing.TRANSPORT = None
+        w.close()
 
 
 def test_the_cli_reaches_the_host_only_through_orch_main(served, human_fx, capsys):
@@ -226,7 +225,7 @@ def test_the_cli_reaches_the_host_only_through_orch_main(served, human_fx, capsy
                          stderr=err)  # fmt: skip
         assert code == 3 and "op.not_allowed" in out.getvalue()
     finally:
-        publishing.TRANSPORT = None
+        w.close()
 
 
 def test_without_a_host_the_command_says_so(tmp_path):
@@ -253,6 +252,18 @@ def test_an_unknown_workspace_prints_what_the_admin_must_run(monkeypatch):
     assert f"orch-publish admin --data DATA_DIR ws allow {'1' * 32} {'2' * 32}" in out
     assert "Then run: orch publish register" in out
     assert f"--owner {'2' * 32} --workspace {'1' * 32}={'2' * 32}" in out
+
+
+def test_register_without_a_hub_says_join_a_hub(monkeypatch):
+    from orch.ops.errors import OrchError
+
+    def call(target, op, args, env):
+        raise OrchError("hub.not_joined", "publishing needs a hub: join a hub first (orch hub join)")
+
+    monkeypatch.setattr(publish, "_target", lambda env: SimpleNamespace())
+    monkeypatch.setattr(publish, "_call", call)
+    code, out = run(["register"], {})
+    assert code == 3 and "Join a hub (orch hub join)" in out
 
 
 def test_list_shows_local_end_times_and_json_keeps_utc(monkeypatch):

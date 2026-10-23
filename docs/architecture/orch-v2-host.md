@@ -13141,7 +13141,7 @@ The add-on `publish` ships inside orch-core (capability `network`); `addon.grant
 | `publish.revoke {share_id}` | P only | `DELETE` on the server, then the record says `revoked` |
 | `publish.list {ref?, live?}` | P, G (own claimed ticket) | staged copies and shares (never a link or token); `live` (P) adds the server's state and view counts |
 | `publish.discard {staged_id}` | P; G only copies an agent prepared on its claimed ticket | drops a stage |
-| `publish.register` | P only | registers the workspace card-free: the genesis delegation and owner key, in a request signed with the publish label |
+| `publish.register` | P only | hands the workspace's v2 card and the owner key to the hub (`card_put`); the hub forwards them to orch-publish, which verifies the card and admits the workspace (V3-D36: no direct request) |
 
 * **Server setting** is signed state: `settings.set {set: {publish: {server, share}}}` (owner only; `null` removes it). Both
   are origins (`https://host[:port]`, or `http://127.0.0.1`/`localhost` for this computer), different from each other.
@@ -13150,13 +13150,16 @@ The add-on `publish` ships inside orch-core (capability `network`); `addon.grant
   `sha256(token)`. It is held in a 0600 file of the stage until the server commits (so a retry sends the same
   `token_hash`), then wiped with the stage; never in the log, the outcome store, the audit file or an error. The link is
   `<share origin>/s/<share id>#t=<token>` (the token is in the fragment).
-* **Registration is card-free** (design §2.6b). `publish.register` sends exactly `{delegation, owner_pk}`, copied from the
-  pinned genesis (`workspace.created.delegation`, `owner.pk_pub`), in a request signed with the publish label; no relay
-  card, WXK or CK exists for publishing and the request is useless at the relay. The binding is permanent: an identical
-  delegation is `unchanged`, any other is 409 `delegation_changed` (reason `conflict`). The server admin pre-binds the
-  workspace: `orch-publish admin --data DIR owners add OWNER` and `ws allow WS OWNER`; `publish.list` carries `workspace`
-  and `owner` so `orch publish setup` can print exactly that when the server answers `unknown_workspace`.
-* **No `SignLedger`** is given to the `PublishSigner`: the server's nonce store refuses a replay, and a file ledger that is
+* **Registration goes through the hub** (V3-D36, D69). Publishing needs a hub: a workspace without one is local only and
+  every `publish.*` network op is refused `hub.not_joined` ("join a hub"); there is no direct path to orch-publish.
+  `publish.register` sends `card_put {card, pk_pub}` (the workspace's v2 card and the owner `PK` from the pinned genesis)
+  over the hub link; the hub forwards it to orch-publish (`PUT /v2/hub/cards/{ws}`, hub protocol §11), which verifies the
+  card itself and applies the admin's pre-bind. The delegation is permanent: the same one is `unchanged`, another is
+  `delegation_changed` (reason `conflict`); a card older than the highest admitted is `stale_card` (reason `rejected`).
+  The server admin pre-binds the workspace: `orch-publish admin --data DIR owners add OWNER` and `ws allow WS OWNER`;
+  `publish.list` carries `workspace` and `owner` so `orch publish setup` can print exactly that when the server answers
+  `unknown_workspace`. A join already hands the card to orch-publish, so a pre-bound workspace is admitted at join.
+* **No `SignLedger`** is given to the hub-path signer: the server's nonce store refuses a replay, and a file ledger that is
   rewritten on every request and never pruned would only grow.
 * **Codes.** `publish.not_configured`, `publish.not_approved`, `publish.changed`, `publish.server_refused`
   (`detail.reason`: `unknown_workspace`, `blocked`, `owner_not_allowed`, `limit`, `conflict`, `clock`, `delegation`,

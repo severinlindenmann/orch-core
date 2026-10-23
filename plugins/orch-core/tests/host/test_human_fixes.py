@@ -369,7 +369,7 @@ def test_the_answer_header_shows_the_chosen_option(human, served):
     p = human.prepare("answer", {"ref": key, "question": "Q1", "option": "no"})
     head = signer.header(p, REG)
     assert head[1].endswith("with option no")
-    assert "question Q1:" in signer.render(p, REG) and "option yes: yes" in signer.render(p, REG)
+    assert "question Q1 (kind choice):" in signer.render(p, REG) and "option yes: yes" in signer.render(p, REG)
 
 
 # --- Sonnet: device checks, quotas, retention, expiry, question.stale, redactor ---------------------------------------

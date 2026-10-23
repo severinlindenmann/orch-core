@@ -757,6 +757,50 @@ UNSEEN = "signed commitment: orch sign has not seen these bytes; compare with th
 SEEN = "checked against your local file"
 
 
+_QUESTION_KEYS = frozenset({"id", "to", "text", "kind", "why", "details", "options", "recommended", "allow_other",
+                            "blocking"})  # fmt: skip
+_OPTION_KEYS = frozenset({"key", "label", "text", "facts", "cost"})
+
+
+def _lines(label: str, text: Any) -> list[str]:
+    return [f"{label}:", *("| " + _clean(line) for line in str(text).split("\n"))]
+
+
+def _question_content(q: Any) -> list[str]:
+    """The full review of a question (#1123): EVERY key of the shown question, so the fallback view (when the plain
+    view is unavailable) still shows each hash-bound byte. A key outside the one question shape is refused, never
+    skipped: an unknown key could be bound and unseen."""
+    if not isinstance(q, dict) or set(q) - _QUESTION_KEYS:
+        _refuse("the question carries a key the review does not show")
+    opts = q.get("options", [])
+    if not isinstance(opts, list) or not all(isinstance(o, dict) and not set(o) - _OPTION_KEYS for o in opts):
+        _refuse("an option carries a key the review does not show")
+    out = [f"question {_clean(q.get('id'))} (kind {_clean(q.get('kind'))}):"]
+    out += ["| " + _clean(line) for line in str(q.get("text", "")).split("\n")]
+    if "why" in q:
+        out += _lines("why it was asked (signed)", q["why"])
+    if "details" in q:
+        out += _lines("details (signed)", q["details"])
+    for o in opts:
+        out.append(f"option {_clean(o.get('key'))}: {_clean(o.get('label'))}")
+        if "text" in o:
+            out.append(f"  text: {_clean(o['text'])}")
+        if "cost" in o:
+            out.append(f"  cost: {_clean(o['cost'])}")
+        facts = o.get("facts", [])
+        if not isinstance(facts, list) or not all(isinstance(f, list) and len(f) == 2 for f in facts):
+            _refuse("an option's facts are not [label, value] pairs")
+        out += [f"  {_clean(f[0])}: {_clean(f[1])}" for f in facts]
+    if "recommended" in q:
+        out.append(f"recommended option (signed): {_clean(q['recommended'])}")
+    if "allow_other" in q:
+        out.append(f"an answer in your own words is allowed (signed): {_clean(q['allow_other'])}")
+    for k, label in (("to", "addressed to"), ("blocking", "blocks the ticket")):
+        if k in q:
+            out.append(f"{label} (routing, not signed): {_clean(q[k])}")
+    return out
+
+
 def render(
     prepared: Mapping[str, Any],
     workspace: Callable[[str], tuple[str, str] | None],
@@ -819,10 +863,7 @@ def render(
     if material.get("kind") == pairdevice.MATERIAL_KIND:
         out += _pair_content(material)
     if material.get("kind") == "question":
-        q = material["question"]
-        out.append(f"question {_clean(q['id'])}:")
-        out += ["| " + _clean(line) for line in str(q.get("text", "")).split("\n")]
-        out += [f"option {_clean(o.get('key'))}: {_clean(o.get('label'))}" for o in q.get("options") or []]
+        out += _question_content(material["question"])
     for gid, info in sorted((material.get("grants") or {}).items()):  # the host's word on each access taken back
         out.append(
             f"access {_clean(gid)} taken back (per host, not signed): label {_clean(info['label']) or '(none)'}, "

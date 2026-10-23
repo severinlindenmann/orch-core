@@ -109,6 +109,10 @@ def test_a_read_view_is_not_a_question():
         ("\U0001f4c8 up", True, True),
         ("", True, False),
         ("\u00a0\u3000", False, False),
+        (" a", True, False),
+        ("a\u00a0", True, False),
+        (" a ", False, True),
+        ("a\n\u0301b", False, False),
     ],
 )
 def test_check_plain(s, one_line, ok):

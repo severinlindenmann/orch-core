@@ -60,3 +60,62 @@ def test_an_invalid_question_cannot_be_signed(bad):
     q = {**bad["question"], "id": "Q1"}
     with pytest.raises(SignerRefused, match="cannot be hashed"):
         _question({"question": q}, {"question": "Q1", "hash": "sha256:" + "0" * 64}, WS, UID)
+
+
+# --- the full review shows every bound byte (Opus delta B1) ------------------------------------------------------
+
+from orch.host import signer  # noqa: E402
+from tests.host import human_helpers  # noqa: E402
+
+lab, served, human = human_helpers.lab, human_helpers.served, human_helpers.human
+QS = json.loads((Path(__file__).parent.parent / "vectors" / "f1" / "questions.json").read_text(encoding="utf-8"))
+SHOWN_WS = lambda w: ("Acme", "DEMO")  # noqa: E731
+
+
+def _leaves(o):
+    if isinstance(o, str):
+        yield o
+    elif isinstance(o, dict):
+        for v in o.values():
+            yield from _leaves(v)
+    elif isinstance(o, list):
+        for v in o:
+            yield from _leaves(v)
+
+
+def _prepared_with(human, q):
+    _, key = human.ticket()
+    human.agent("ask", {"ref": key, "text": "q?", "options": ["a", "b"]})
+    p = copy.deepcopy(human.prepare("answer", {"ref": key, "question": "Q1", "option": "a"}))
+    p["material"]["question"] = copy.deepcopy(q)
+    return p
+
+
+@pytest.mark.parametrize("form", QS["forms"], ids=lambda f: f["name"])
+def test_every_leaf_of_the_question_is_in_the_full_review_and_the_click_lines(human, served, form):
+    from orch.click import view
+
+    q = form["raw_event"]["question"]
+    p = _prepared_with(human, q)
+    full = signer.plain(p, SHOWN_WS)
+    text = str(full) + "\n" + (full.details or "")
+    v = view.build(p, SHOWN_WS, kind="click", device=p["events"][0]["actor"]["device"],
+                   expires_at="2026-01-01T00:00:00Z", artifacts=None)  # fmt: skip
+    lines = "\n".join(v["lines"])
+    for leaf in _leaves({k: val for k, val in q.items() if k != "id"}):
+        for part in leaf.split("\n"):
+            assert signer._clean(part) in text, part
+            assert signer._clean(part) in lines, part
+    assert f"kind {q['kind']}" in lines
+    if "allow_other" in q:
+        assert "own words is allowed (signed): true" in lines
+
+
+def test_a_question_key_the_review_does_not_know_is_refused(human, served):
+    q = {**QS["forms"][0]["raw_event"]["question"], "future": "x"}
+    with pytest.raises(signer.SignerRefused, match="does not show"):
+        signer.render(_prepared_with(human, q), SHOWN_WS)
+    q = copy.deepcopy(QS["forms"][0]["raw_event"]["question"])
+    q["options"][0]["future"] = "x"
+    with pytest.raises(signer.SignerRefused, match="does not show"):
+        signer.render(_prepared_with(human, q), SHOWN_WS)

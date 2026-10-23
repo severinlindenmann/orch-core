@@ -409,11 +409,12 @@ def is_blank(text: str) -> bool:
 def check_plain(text: object, *, one_line: bool, limit: int, what: str = "text", max_bytes: int = MAX_BYTES) -> str:
     """Verify (never mutate) one plain field of a structured question or of its answer. Returns ``text``.
 
-    :func:`check_text` (NFC, LF only, no controls, no bidi controls, assigned in 16.0), plus: not empty and not
-    only :data:`WHITE_SPACE`; no
-    :func:`suspicious` character (zero-width, other Cf, private use, a leading mark, F1's invisible look-alikes); a
-    one-line field also has no LF and no TAB; at most ``limit`` code points and ``max_bytes`` UTF-8 bytes. Used at
-    hashing, signing and replay; authoring runs :func:`normalize_text` first.
+    :func:`check_text` (NFC, LF only, no controls, no bidi controls, assigned in 16.0), plus: not empty and not only
+    :data:`WHITE_SPACE`; no :func:`suspicious` character (zero-width, other Cf, private use, a leading mark, F1's
+    invisible look-alikes); no line starts with a combining mark; a one-line field also has no LF, no TAB and no
+    leading or trailing :data:`WHITE_SPACE` (so two titles that differ only there cannot look the same); at most
+    ``limit`` code points and ``max_bytes`` UTF-8 bytes. Used at hashing, signing and replay; authoring runs
+    :func:`normalize_text` first.
     """
     if not isinstance(text, str):
         raise TextError(f"{what} must be text")
@@ -422,9 +423,16 @@ def check_plain(text: object, *, one_line: bool, limit: int, what: str = "text",
         raise TextError(f"{what} is empty or only whitespace")
     if one_line and "\t" in text:
         raise TextError(f"{what}: tab at index {text.index(chr(9))} in a one-line field")
+    if one_line and (text[0] in WHITE_SPACE or text[-1] in WHITE_SPACE):
+        raise TextError(f"{what} starts or ends with a space")
     bad = suspicious(text)
     if bad:
         raise TextError(f"{what}: invisible character U+{bad[0].codepoint:04X} at index {bad[0].index}")
+    at = 0
+    for line in text.split("\n"):  # a combining mark at the start of any line, not only of the whole text
+        if line and _in_ranges(_MARK_STARTS, _MARKS, ord(line[0])):
+            raise TextError(f"{what}: a line starts with a combining mark (U+{ord(line[0]):04X} at index {at})")
+        at += len(line) + 1
     if len(text) > limit:
         raise TextError(f"{what} is longer than {limit} characters")
     if len(text.encode("utf-8")) > max_bytes:

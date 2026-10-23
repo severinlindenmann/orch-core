@@ -18,7 +18,8 @@ import unicodedata
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from orch.canon.question import QuestionError, validate_question
+from orch.canon.question import ANSWER_MAX, QuestionError, validate_question
+from orch.canon.text import TextError, check_plain
 
 from .errors import HubRefused
 
@@ -143,6 +144,16 @@ def _question(x: Any) -> bool:
     return bool(_re(_PERSON)(x["to"]) or x["to"] in TICKET_ROLES)
 
 
+def _answer_text(x: Any) -> bool:
+    """An answer's text: the answer rule of ticket-format §5.6.1 (1..1000 code points, check_plain, not blank). Which
+    kind takes a text alone is the model's check (it holds the question)."""
+    try:
+        check_plain(x, one_line=False, limit=ANSWER_MAX, what="the answer text")
+    except TextError:
+        return False
+    return True
+
+
 def _visibility(x: Any) -> bool:
     return x == "workspace" or (
         type(x) is dict and set(x) == {"restricted"} and _sorted_unique(_re(_PERSON), 1, 64)(x["restricted"])
@@ -249,7 +260,7 @@ PAYLOAD: dict[str, tuple[dict[str, Check], dict[str, Check]]] = {
     "question.asked": ({"question": _question, "qid": _re(_HEX32), "hash": _hash}, {}),
     "question.answered": (
         {"question": _re(_QID), "hash": _hash},
-        {"option": _re(_TOKEN), "text": _text(4096, multiline=True)},
+        {"option": _re(_TOKEN), "text": _answer_text},
     ),
     "gate.approved": ({"gate": _enum(*GATES), "hash": _hash, **_DECISION_DERIVED}, {"source_sha": _source_sha}),
     "gate.changes_requested": (

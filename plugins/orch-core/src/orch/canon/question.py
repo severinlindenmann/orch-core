@@ -158,7 +158,7 @@ def _choice_answer(q: Mapping[str, Any], option: object, text: object) -> None:
         if q.get("allow_other") is not True:
             raise QuestionError("this question takes one of its options, not a text of your own")
         return
-    if option not in {o["key"] for o in q["options"]}:
+    if type(option) is not str or option not in {o["key"] for o in q["options"]}:
         raise QuestionError(f"{option!r} is not an option")
 
 

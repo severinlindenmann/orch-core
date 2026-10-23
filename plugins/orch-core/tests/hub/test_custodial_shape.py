@@ -352,3 +352,11 @@ def test_the_replay_covers_the_hub_vectors_that_matter():
         "action_smuggle_visibility_extra_key",
         "action_text_rlo_u202e",
     } <= names
+
+
+@pytest.mark.parametrize("text,ok", [("fine", True), ("a" * 1000, True), ("a" * 1001, False), ("\u3000", False),
+                                     ("zero\u200bwidth", False)])  # fmt: skip
+def test_an_answer_text_follows_the_answer_rule(text, ok):
+    """#1123: the custodial answer text is checked like the model's (1..1000 code points, check_plain, not blank)."""
+    got = refused("question.answered", event("question.answered", option=..., text=text))
+    assert (got is None) is ok

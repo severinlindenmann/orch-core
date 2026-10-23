@@ -462,8 +462,8 @@ function RemotePreview({ a, ticket, unavailable, holdPictures = false }: { a: Ar
   const safe = prose(shown)
   const lang = langForFile(a.name)
   if (ext === 'json' && !cut) {
-    // The file's own text, coloured. Never re-parsed (that would hide duplicate keys and rounded numbers). Only a minified
-    // file (one very long line) is also offered reformatted, and says so.
+    // The file's own text, coloured. Values are never parsed (that would hide duplicate keys and rounded numbers). Only a
+    // minified file (one very long line) is also offered re-indented (tokens byte for byte), and says so.
     return (
       <div className="space-y-2">
         {note}

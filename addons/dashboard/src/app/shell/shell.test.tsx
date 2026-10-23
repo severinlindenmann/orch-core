@@ -18,6 +18,12 @@ describe('app shell', () => {
     expect(await screen.findByText('agents granted until 18:00')).toBeInTheDocument()
   })
 
+  it('links to the feedback page with a full page load, like the checklist', async () => {
+    renderApp('/')
+    const link = await screen.findByRole('link', { name: 'Feedback' })
+    expect(link).toHaveAttribute('href', '/feedback')
+  })
+
   it('opens the test checklist with a full page load (no in-app move that renders the old page outside its shell)', async () => {
     renderApp('/')
     const link = await screen.findByRole('link', { name: 'Test checklist' })

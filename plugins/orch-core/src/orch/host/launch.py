@@ -39,6 +39,8 @@ __all__ = [
     "PROGRAMS",
     "TERM_HARNESSES",
     "CLAUDE_AGENT_FLAGS",
+    "RULES_FLAG",
+    "RULES_PLACEHOLDER",
     "check_model",
     "display",
     "launch_argv",
@@ -61,6 +63,9 @@ LOGIN_NOTICE = (
 )
 #: flags of every Claude Code agent launch (see :func:`launch_argv`)
 CLAUDE_AGENT_FLAGS = ("--setting-sources", "user", "--strict-mcp-config")
+#: the runner replaces the placeholder with the path of the rules file it writes for the run (orch.runner.rules)
+RULES_FLAG = "--append-system-prompt-file"
+RULES_PLACEHOLDER = "@orch-rules"
 KEY = re.compile(r"(?:[A-Z][A-Z0-9]{0,15}-)?[0-9]{1,9}")
 
 
@@ -114,6 +119,7 @@ def launch_argv(
     key: str | None,
     config: RunnerConfig,
     instructions: str | None = None,
+    workdir: bool = False,
 ) -> tuple[list[str], bool, str | None]:
     """``(argv, login_shell, program)``. ``shell`` is ``["$SHELL", "-l"]`` (the runner substitutes its own ``SHELL``);
     a harness is ``[$SHELL, "-l", "-c", LOGIN_EXEC, program, …]``, or with ``login_shell: false`` the absolute program
@@ -130,12 +136,17 @@ def launch_argv(
     rest: list[str] = []
     if model is not None:
         rest += ["--model", model]
-    if harness == "claude-code" and mode is not None:
-        # An agent run reads no project or local settings and no .mcp.json of the folder it works in (hooks,
-        # permissions, env and MCP servers a collaborator could commit there); the user's own settings and
-        # the installed plugins (orch-core's SessionStart hook) still load. Checked against Claude Code 2.1.309:
-        # a project hook is skipped, a plugin hook runs. After --model, which the runner expects first.
-        rest += list(CLAUDE_AGENT_FLAGS)
+    if harness == "claude-code" and mode is not None and workdir:
+        # ONLY an agent in a ticket work folder (<project>/.orch-work/<KEY>, `workdir`: the folders the runner
+        # pre-trusts in Claude Code) reads no project or local settings and no .mcp.json (hooks, permissions, env and
+        # MCP servers a collaborator could commit there). The user's own settings and the installed plugins (orch-core's
+        # SessionStart hook) still load. Side effects, checked against Claude Code 2.1.309: the project's and its
+        # ancestors' CLAUDE.md files, project skills, commands and subagents, project permission allowlists and every
+        # MCP server are not loaded either. So orch's rules arrive as an appended system prompt file that the runner
+        # writes (`@orch-rules`, see orch.runner.rules), and these agents have no MCP servers. Worktree, repo and
+        # workspace-root launches keep Claude Code's normal behaviour (their project config is the person's own) and
+        # get no pre-trust, so Claude Code's own prompts stay. After --model, which the runner expects first.
+        rest += [*CLAUDE_AGENT_FLAGS, RULES_FLAG, RULES_PLACEHOLDER]
     text = prompt(mode, key, instructions)
     if text is not None:
         rest.append(text)

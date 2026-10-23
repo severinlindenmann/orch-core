@@ -19,7 +19,14 @@ def test_codex_and_claude_argv_through_the_login_shell():
     assert argv == ["$SHELL", "-l", "-c", LOGIN_EXEC, "codex",
                     "Run orch status, then work on ticket ORC-7. Follow AGENTS.orch.md."]  # fmt: skip
     assert login is True and program is None
-    argv, _, _ = launch_argv("claude-code", "refine", "opus", "ORC-7", LOGIN)
+    argv, _, _ = launch_argv("claude-code", "refine", "opus", "ORC-7", LOGIN)  # not in a work folder: no extra flags
+    assert argv[4:] == [
+        "claude",
+        "--model",
+        "opus",
+        "Run orch status, then refine ticket ORC-7. Follow AGENTS.orch.md.",
+    ]
+    argv, _, _ = launch_argv("claude-code", "refine", "opus", "ORC-7", LOGIN, workdir=True)
     assert argv[4:] == [
         "claude",
         "--model",
@@ -27,15 +34,21 @@ def test_codex_and_claude_argv_through_the_login_shell():
         "--setting-sources",
         "user",
         "--strict-mcp-config",
+        "--append-system-prompt-file",
+        "@orch-rules",
         "Run orch status, then refine ticket ORC-7. Follow AGENTS.orch.md.",
     ]
     assert LOGIN_EXEC == 'exec "$0" "$@"'
 
 
-def test_a_claude_agent_ignores_project_settings_and_mcp_files_but_a_person_run_one_does_not():
-    argv, _, _ = launch_argv("claude-code", "work", None, "ORC-7", LOGIN)
-    assert argv[4:7] == ["claude", "--setting-sources", "user"] and "--strict-mcp-config" in argv
-    assert "--setting-sources" not in launch_argv("codex", "work", None, "ORC-7", LOGIN)[0]
+def test_only_a_work_folder_agent_ignores_project_settings_and_mcp_files():
+    flags = {"--setting-sources", "--strict-mcp-config", "--append-system-prompt-file"}
+    argv, _, _ = launch_argv("claude-code", "work", None, "ORC-7", LOGIN, workdir=True)
+    assert argv[4:8] == ["claude", "--setting-sources", "user", "--strict-mcp-config"] and flags <= set(argv)
+    # a repo, worktree or root launch (workdir False), a person-run harness and codex: Claude Code's normal behaviour
+    assert not flags & set(launch_argv("claude-code", "work", None, "ORC-7", LOGIN)[0])
+    assert not flags & set(launch_argv("claude-code", None, None, None, LOGIN, workdir=True)[0])
+    assert not flags & set(launch_argv("codex", "work", None, "ORC-7", LOGIN, workdir=True)[0])
     assert launch_argv("claude-code", None, None, None, LOGIN)[0][4:] == ["claude"]
 
 

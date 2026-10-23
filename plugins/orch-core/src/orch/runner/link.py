@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import contextlib
+import dataclasses
 import logging
 import os
 import re
@@ -48,6 +49,7 @@ from orch.host import frames
 from orch.host._socket import recv
 from orch.host.client import Pin, handshake_pinned
 
+from . import rules
 from .config import ConfigError, RunnerConfig
 from .grants import GrantError, GrantStore
 from .supervise import SpawnError, SpawnSpec, Supervisor
@@ -171,6 +173,7 @@ def spawn_spec(args: Mapping[str, Any], own: Mapping[str, str], config: RunnerCo
     (allow-list, ``pass_env``, host-chosen fixed values) and, for an agent, ``ORCH_GRANT`` from the grant store and
     ``ORCH_SESSION``. Raises :class:`SpawnError`."""
     kind = args.get("kind")
+    trusted = None
     argv = registry_argv(args.get("argv"), own, config)
     env = build_env(args, own, config.pass_env)
     grant, session = args.get("grant"), args.get("session")
@@ -187,16 +190,19 @@ def spawn_spec(args: Mapping[str, Any], own: Mapping[str, str], config: RunnerCo
         except GrantError as exc:
             raise SpawnError(exc.code, exc.message) from None
         env["ORCH_SESSION"] = session
-        if _is_claude(argv):  # run 6, #1066: no first-run trust or import prompt in the workspace and its work folders
+        # run 6, #1066: no first-run trust prompt in a ticket work folder, and only for a launch that carries the
+        # settings-isolation flags (a worktree, repo or root launch keeps Claude Code's own prompts)
+        if _is_claude(argv) and "--setting-sources" in argv and "--strict-mcp-config" in argv:
             from .claude_trust import pretrust
 
             pin = args.get("cwd") or {}
-            pretrust(own, env.get("ORCH_WORKSPACE"), pin.get("path"), pin)
+            if pretrust(own, env.get("ORCH_WORKSPACE"), pin.get("path"), pin):
+                trusted = (str(env.get("ORCH_WORKSPACE")), str(pin.get("path")))
     elif grant is not None or session is not None:
         raise SpawnError("invalid.input", "spawn: a shell acts as the person: no grant, no session")
     return SpawnSpec(
         str(args.get("run")), str(args.get("workspace_id")), str(kind), argv, env, dict(args.get("cwd") or {}),
-        int(args.get("cols") or 120), int(args.get("rows") or 40),
+        int(args.get("cols") or 120), int(args.get("rows") or 40), trusted,
     )  # fmt: skip
 
 
@@ -251,6 +257,8 @@ class HostLink:
         self._answers: dict[str, dict[str, Any]] = {}
         self._waiting: dict[str, threading.Event] = {}
         self._repo_locks: dict[str, threading.Lock] = {}
+        #: run -> (workspace root, work folder) a Claude Code trust entry was recorded for
+        self._trusted: dict[str, tuple[str, str]] = {}
         #: tests: drop the report of these commands (a lost ack)
         self.drop_reports: set[str] = set()
         sup.on_event = self._on_event
@@ -478,6 +486,10 @@ class HostLink:
     def _run(self, cmd: str, args: dict[str, Any], tag: int) -> dict[str, Any]:
         if cmd == "spawn":
             spec = spawn_spec(args, self.env, self.config(), self.grants)
+            spec.check()
+            spec = dataclasses.replace(spec, argv=rules.prepare(self._rules_base(), spec.run, spec.argv, spec.env))
+            if spec.trusted is not None:
+                self._trusted[spec.run] = spec.trusted
             with self.sup._spawn_lock:  # the epoch check and the spawn are one step against a reconnect's snapshot
                 if not self._current(tag):
                     raise _Stale()
@@ -526,7 +538,23 @@ class HostLink:
             self._send_req("runner.term", args)
 
     # -- supervisor events
+    def _rules_base(self) -> Path:
+        return Path(self.sup.table.directory)
+
+    def _after_exit(self, run: str) -> None:
+        """The run is over: its rules file goes, and its Claude Code trust is checked again (somebody may have put
+        settings or a tracked file in the folder meanwhile)."""
+        rules.remove(self._rules_base(), run)
+        got = self._trusted.pop(run, None)
+        if got is not None:
+            from .claude_trust import refresh
+
+            refresh(self.env, *got)
+
     def _on_event(self, kind: str, run: str, payload: dict[str, Any]) -> None:
+        if kind == "exit":
+            with contextlib.suppress(Exception):
+                self._after_exit(run)
         if not self.ready.is_set() or kind != "cleanup":
             return  # the next hello carries the state; runner.exit is sent once the clean-up has a result
         rec = self.sup.table.get(run) or {}

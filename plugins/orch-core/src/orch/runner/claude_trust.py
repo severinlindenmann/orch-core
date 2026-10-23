@@ -17,11 +17,17 @@ entry is that single folder, whose only external import is the workspace's ``AGE
 ``<root>/.orch/claude-trust`` (:func:`record_consent`). Without it (an older workspace, or a folder that merely
 looks like one) nothing is written.
 
+**Only for isolated launches.** The runner calls this only for a launch that carries ``--setting-sources user
+--strict-mcp-config`` (a ticket work folder, see :func:`orch.host.launch.launch_argv`); worktree, repo and root launches
+get no entry and keep Claude Code's own prompts. When the run exits the runner calls :func:`refresh`, which can
+only take trust back. Entries of work folders that no longer exist are swept at the next :func:`pretrust`; the host
+never removes them (it does not touch a person's home).
+
 **Guards (fail closed).** The root must hold a real ``.orch`` store folder with the marker, must not equal or
 contain the home folder or the Claude config folder, and must be at least two levels deep. The work folder is resolved
 (links followed) and must lie under the resolved root's ``.orch-work``; if it resolves anywhere else both spellings are
-rejected. It must also be the folder the spawn pinned (``dev``/``ino``). A missing, unparseable, linked or oddly shaped
-config file is left alone (the prompts then appear, as before); an error here never stops a launch.
+rejected. It must also be the folder the spawn pinned (``dev``/``ino``). A missing, unparseable, linked or oddly
+shaped config file is left alone (the prompts then appear, as before); an error here never stops a launch.
 """
 
 from __future__ import annotations
@@ -39,7 +45,7 @@ from pathlib import Path
 
 from orch.layout import STORE_DIR
 
-__all__ = ["FOREIGN", "MARKER", "TRUST_KEYS", "forget", "pretrust", "record_consent", "trust_paths"]
+__all__ = ["FOREIGN", "MARKER", "TRUST_KEYS", "pretrust", "record_consent", "refresh", "trust_paths"]
 
 TRUST_KEYS = (
     "hasTrustDialogAccepted",
@@ -153,9 +159,24 @@ def _git_tracks_work_files(root: str) -> bool:
     return b"not a git repository" not in r.stderr
 
 
+def _imports_in(path: str) -> bool | None:
+    """True if the file has an ``@path`` import line, None if it is a link or unreadable, False if clean or absent."""
+    try:
+        if not os.path.lexists(path):
+            return False
+        if stat.S_ISLNK(os.lstat(path).st_mode):
+            return None
+        with open(path, encoding="utf-8") as f:
+            return any(_IMPORT.search(line) for line in f.read(LIMIT).splitlines())
+    except (OSError, ValueError):
+        return None
+
+
 def _includes_safe(root: str) -> bool:
     """The include approval is safe only if the root's ``CLAUDE.md`` is exactly what orch writes (``@AGENTS.md``) and
-    neither ``AGENTS.md`` nor ``AGENTS.orch.md`` imports anything (``@path`` lines) of its own."""
+    every other file Claude Code could load as memory there has no import (``@path``) line: ``AGENTS.md``, the store's
+    ``AGENTS.orch.md``, ``CLAUDE.local.md``, ``.claude/CLAUDE.md``, ``.claude/rules/**/*.md`` and the
+    ``.orch-work/CLAUDE.md`` above the ticket folders (each may be missing)."""
     from orch.instructions.harness import AGENTS_FILE, _claude_md_text
 
     try:
@@ -164,18 +185,25 @@ def _includes_safe(root: str) -> bool:
                 return False
         if stat.S_ISLNK(os.lstat(os.path.join(root, "CLAUDE.md")).st_mode):
             return False
-        for rel in ("AGENTS.md", os.path.join(STORE_DIR, AGENTS_FILE)):
-            path = os.path.join(root, rel)
-            if not os.path.lexists(path):
-                continue
-            if stat.S_ISLNK(os.lstat(path).st_mode):
-                return False
-            with open(path, encoding="utf-8") as f:
-                if any(_IMPORT.search(line) for line in f.read(LIMIT).splitlines()):
-                    return False
     except (OSError, ValueError):
         return False
-    return True
+    files = [
+        "AGENTS.md",
+        os.path.join(STORE_DIR, AGENTS_FILE),
+        "CLAUDE.local.md",
+        os.path.join(".claude", "CLAUDE.md"),
+        os.path.join(WORK_DIR, "CLAUDE.md"),
+    ]
+    rules = os.path.join(root, ".claude", "rules")
+    if os.path.lexists(rules):
+        if os.path.islink(rules):
+            return False
+        for here, dirs, names in os.walk(rules):
+            dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(here, d))]
+            files += [os.path.relpath(os.path.join(here, n), root) for n in names if n.endswith(".md")]
+            if len(files) > 500:
+                return False
+    return all(_imports_in(os.path.join(root, rel)) is False for rel in files)
 
 
 def _config_path(env: Mapping[str, str]) -> Path | None:
@@ -191,7 +219,8 @@ def pretrust(
     """Record the trust for a ``claude`` run in ``cwd`` of the workspace ``root``; returns the paths written (empty
     when nothing was needed or allowed). Never raises. A work folder that holds settings, MCP or memory files of
     somebody else, or that git tracks, gets no trust (and loses an earlier one); the include approval is added only
-    when the root's instruction files are orch's own."""
+    when the root's instruction files are orch's own, and withdrawn when they are not. Entries for work folders of this
+    root that no longer exist are swept away (the host never touches a person's config; nothing else removes them)."""
     try:
         if not root or not cwd or not _consented(root) or not _root_ok(root, env):
             return []
@@ -199,23 +228,35 @@ def pretrust(
         cfg = _config_path(env)
         if not paths or cfg is None:
             return []
+        sweep = _bases(root)
         if _holds_foreign_config(paths[0]) or _git_tracks_work_files(root):
-            _write(cfg, paths, remove=True)
+            _write(cfg, paths, remove=True, sweep=sweep)
             return []
-        return _write(cfg, paths, includes=_includes_safe(root))
+        return _write(cfg, paths, includes=_includes_safe(root), sweep=sweep)
     except Exception:  # noqa: BLE001 - a launch never fails over a convenience
         return []
 
 
-def forget(env: Mapping[str, str], root: str, cwd: str) -> None:
-    """Remove the entries of a work folder that is being deleted. Best effort, never raises."""
+def _bases(root: str) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(os.path.join(os.path.normpath(r), WORK_DIR) for r in (root, os.path.realpath(root))))
+
+
+def refresh(env: Mapping[str, str], root: str, cwd: str) -> None:
+    """When a run exits: check the folder again and only take trust back, never give any. Foreign config or a
+    tracked file now: the entry goes; else an include approval goes if the instruction files no longer qualify.
+    Never raises."""
     try:
         cfg = _config_path(env)
-        paths = {os.path.normpath(cwd), os.path.normpath(os.path.realpath(cwd))}
-        paths = {p for p in paths if os.path.dirname(p) == os.path.join(os.path.normpath(root), WORK_DIR)
-                 or os.path.dirname(p) == os.path.join(os.path.realpath(root), WORK_DIR)}  # fmt: skip
-        if cfg is not None and paths:
-            _write(cfg, sorted(paths), remove=True)
+        if cfg is None or not _consented(root) or not _root_ok(root, env):
+            return
+        paths = trust_paths(root, cwd)
+        if not paths:
+            return
+        sweep = _bases(root)
+        if _holds_foreign_config(paths[0]) or _git_tracks_work_files(root):
+            _write(cfg, paths, remove=True, sweep=sweep)
+        elif not _includes_safe(root):
+            _write(cfg, paths, includes=False, add=False, sweep=sweep)
     except Exception:  # noqa: BLE001
         pass
 
@@ -255,18 +296,31 @@ def _fsync_dir(path: Path) -> None:
         os.close(fd)
 
 
-def _write(cfg: Path, paths: list[str], *, includes: bool = False, remove: bool = False) -> list[str]:
-    """Merge the entries of ``paths`` into ``cfg`` (or, with ``remove``, drop them), under the lock, from a re-read;
-    only our entries change. The file is written beside, fsynced, and replaced only if it is still the file that was
-    read; the directory is fsynced after. Anything unexpected: give up quietly (the prompts then appear)."""
-    keys = TRUST_KEYS if includes else TRUST_KEYS[:1]
+def _write(
+    cfg: Path,
+    paths: list[str],
+    *,
+    includes: bool = False,
+    remove: bool = False,
+    add: bool = True,
+    sweep: tuple[str, ...] = (),
+) -> list[str]:
+    """Merge the entries of ``paths`` into ``cfg`` under the lock, from a re-read; only our entries change.
+
+    * default: set the trust key, and the two include keys when ``includes`` (else take any include key away);
+    * ``add=False``: only take include keys away (never give trust);
+    * ``remove``: drop the three keys;
+    * ``sweep``: folders whose children are ours: an entry of a child that no longer exists loses its keys.
+
+    The file is written beside, fsynced, and replaced only if it is still the file that was read; the directory is
+    fsynced after. Anything unexpected: give up quietly (the prompts then appear)."""
     with _locked(cfg) as ok:
         if not ok:
             return []
         try:
             st = os.lstat(cfg)
         except FileNotFoundError:
-            if remove:
+            if remove or not add:
                 return []
             data: dict = {}
             mode, before = 0o600, None
@@ -282,27 +336,43 @@ def _write(cfg: Path, paths: list[str], *, includes: bool = False, remove: bool 
                 return []
         projects = data.get("projects")
         if projects is None:
-            if remove:
+            if remove or not add:
                 return []
             projects = data["projects"] = {}
         if not isinstance(projects, dict):
             return []
         changed: list[str] = []
+
+        def drop(key: str, names: tuple[str, ...]) -> bool:
+            entry = projects.get(key)
+            if not isinstance(entry, dict) or not any(k in entry for k in names):
+                return False
+            for k in names:
+                entry.pop(k, None)
+            if not entry:
+                del projects[key]
+            return True
+
+        for key in list(projects):
+            if sweep and os.path.dirname(key) in sweep and not os.path.lexists(key) and drop(key, TRUST_KEYS):
+                changed.append(key)
         for p in paths:
             if remove:
-                if projects.get(p) is not None and isinstance(projects[p], dict):
-                    entry = projects[p]
-                    if any(k in entry for k in TRUST_KEYS):
-                        for k in TRUST_KEYS:
-                            entry.pop(k, None)
-                        changed.append(p)
+                if drop(p, TRUST_KEYS):
+                    changed.append(p)
+                continue
+            if not includes and drop(p, TRUST_KEYS[1:]):
+                changed.append(p)
+            if not add:
                 continue
             entry = projects.setdefault(p, {})
             if not isinstance(entry, dict):
                 continue
+            keys = TRUST_KEYS if includes else TRUST_KEYS[:1]
             if any(entry.get(k) is not True for k in keys):
                 entry.update({k: True for k in keys})
-                changed.append(p)
+                if p not in changed:
+                    changed.append(p)
         if not changed:
             return []
         fd, tmp = tempfile.mkstemp(prefix=".claude-", suffix=".tmp", dir=cfg.parent)

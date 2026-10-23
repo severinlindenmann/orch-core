@@ -374,8 +374,11 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
 
             lay = service.store.layout
             at = os.path.join(str(service.entry.root), agents_rel(lay.project, lay.store))
-            if at.isascii() and at.isprintable():
-                argv, login, program = launch_argv(harness, mode, argv_model, key, config, instructions=at)
+            argv, login, program = launch_argv(
+                harness, mode, argv_model, key, config,
+                instructions=at if at.isascii() and at.isprintable() else None,
+                workdir=where["cwd"]["kind"] == "workdir",
+            )  # fmt: skip
         except HostError:
             pass  # the first launch_argv already blocked with the same reason
     grant = None

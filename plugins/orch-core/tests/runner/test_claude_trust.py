@@ -12,12 +12,13 @@ from pathlib import Path
 import pytest
 
 from orch.host.launch import LOGIN_EXEC
-from orch.runner.claude_trust import TRUST_KEYS, forget, pretrust, record_consent, trust_paths
+from orch.runner.claude_trust import TRUST_KEYS, pretrust, record_consent, refresh, trust_paths
 from orch.runner.config import RunnerConfig
 from orch.runner.link import spawn_spec
 from tests.runner.test_spawn_grants import GID, ME, SECRET, WS, agent, store_with
 
-CLAUDE = ["$SHELL", "-l", "-c", LOGIN_EXEC, "claude", "Run orch status, then work on ticket K-1."]
+ISOLATED = ["--setting-sources", "user", "--strict-mcp-config", "--append-system-prompt-file", "@orch-rules"]
+CLAUDE = ["$SHELL", "-l", "-c", LOGIN_EXEC, "claude", *ISOLATED, "Run orch status, then work on ticket K-1."]
 
 
 @pytest.fixture
@@ -197,7 +198,7 @@ def test_a_trust_given_earlier_is_revoked_when_the_folder_gains_a_settings_file(
     assert pretrust({"HOME": str(home)}, str(root), str(work), pin(work)) == [str(work)]
     (work / ".claude").mkdir()
     assert pretrust({"HOME": str(home)}, str(root), str(work), pin(work)) == []
-    assert "hasTrustDialogAccepted" not in entries(home)[str(work)]
+    assert str(work) not in entries(home)
 
 
 def _git(root, *args):
@@ -277,9 +278,116 @@ def test_a_held_lock_is_never_stolen(ws, monkeypatch):
     assert (home / ".claude.json.lock").is_dir() and not (home / ".claude.json").exists()
 
 
-def test_forget_removes_the_entry_of_a_deleted_work_folder(ws):
+# -- review 2 of #1078 -------------------------------------------------------------------------------------------------
+
+
+def test_an_include_approval_given_earlier_is_withdrawn_when_agents_md_gains_an_import(ws):
     home, root, work = ws
     pretrust({"HOME": str(home)}, str(root), str(work), pin(work))
-    forget({"HOME": str(home)}, str(root), str(work))
-    assert not any(k in entries(home).get(str(work), {}) for k in TRUST_KEYS)
-    forget({"HOME": str(home)}, str(root), str(root))  # not a work folder: nothing
+    assert set(entries(home)[str(work)]) == set(TRUST_KEYS)
+    (root / "AGENTS.md").write_text("# rules\n@~/.ssh/id_rsa\n")
+    pretrust({"HOME": str(home)}, str(root), str(work), pin(work))
+    assert entries(home)[str(work)] == {"hasTrustDialogAccepted": True}  # both include keys gone, trust stays
+
+
+@pytest.mark.parametrize(
+    "rel",
+    ["CLAUDE.local.md", ".claude/CLAUDE.md", ".claude/rules/a.md", ".claude/rules/deep/b.md", ".orch-work/CLAUDE.md"],
+)
+def test_an_import_in_any_other_memory_file_withholds_the_include_approval(ws, rel):
+    home, root, work = ws
+    f = root / rel
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text("notes\n")  # no import line: fine
+    pretrust({"HOME": str(home)}, str(root), str(work), pin(work))
+    assert set(entries(home)[str(work)]) == set(TRUST_KEYS)
+    f.write_text("notes\n@/etc/hosts\n")
+    pretrust({"HOME": str(home)}, str(root), str(work), pin(work))
+    assert entries(home)[str(work)] == {"hasTrustDialogAccepted": True}
+
+
+def test_a_linked_memory_file_withholds_the_include_approval(ws, tmp_path):
+    home, root, work = ws
+    (tmp_path / "x.md").write_text("fine\n")
+    os.symlink(tmp_path / "x.md", root / "CLAUDE.local.md")
+    pretrust({"HOME": str(home)}, str(root), str(work), pin(work))
+    assert entries(home)[str(work)] == {"hasTrustDialogAccepted": True}
+
+
+def test_when_the_run_exits_foreign_content_that_appeared_takes_the_trust_back(ws):
+    home, root, work = ws
+    env = {"HOME": str(home)}
+    pretrust(env, str(root), str(work), pin(work))
+    refresh(env, str(root), str(work))  # nothing changed: nothing changes
+    assert set(entries(home)[str(work)]) == set(TRUST_KEYS)
+    (work / ".claude").mkdir()
+    (work / ".claude" / "settings.json").write_text('{"hooks": {}}')
+    refresh(env, str(root), str(work))
+    assert str(work) not in entries(home)
+
+
+def test_when_the_run_exits_a_new_import_takes_only_the_include_approval_back(ws):
+    home, root, work = ws
+    env = {"HOME": str(home)}
+    pretrust(env, str(root), str(work), pin(work))
+    (root / "AGENTS.md").write_text("@/etc/hosts\n")
+    refresh(env, str(root), str(work))
+    assert entries(home)[str(work)] == {"hasTrustDialogAccepted": True}
+    refresh(env, str(root), str(work))  # never gives anything
+    assert entries(home)[str(work)] == {"hasTrustDialogAccepted": True}
+
+
+def test_refresh_never_creates_a_config(ws):
+    home, root, work = ws
+    refresh({"HOME": str(home)}, str(root), str(work))
+    assert not (home / ".claude.json").exists()
+
+
+def test_the_next_pretrust_sweeps_entries_of_deleted_work_folders_of_this_root_only(ws, tmp_path):
+    home, root, work = ws
+    env = {"HOME": str(home)}
+    gone = root / ".orch-work" / "K-9"
+    gone.mkdir()
+    pretrust(env, str(root), str(gone), pin(gone))
+    other = tmp_path / "ws2" / ".orch-work" / "K-1"  # another workspace's entry, folder missing: not ours to touch
+    cfg = json.loads((home / ".claude.json").read_text())
+    cfg["projects"][str(other)] = {"hasTrustDialogAccepted": True}
+    cfg["projects"]["/somewhere/else"] = {"hasTrustDialogAccepted": True}
+    (home / ".claude.json").write_text(json.dumps(cfg))
+    gone.rmdir()
+    pretrust(env, str(root), str(work), pin(work))
+    got = entries(home)
+    assert str(gone) not in got and str(work) in got
+    assert str(other) in got and "/somewhere/else" in got
+
+
+def test_the_exit_of_a_run_removes_its_rules_file_and_rechecks_the_trust(ws, tmp_path):
+    from orch.runner import rules
+    from orch.runner.link import HostLink
+
+    home, root, work = ws
+    base = tmp_path / "state" / "runner"
+    argv = ["claude", *ISOLATED, "go"]
+    run = "r_01J0000000000000000000000E"
+    out = rules.prepare(base, run, argv, {"ORCH_WORKSPACE": str(root)})
+    assert (base / "agent-rules" / f"{run}.md").is_file()
+
+    class Sup:  # just what _after_exit uses
+        table = type("T", (), {"directory": base})()
+
+    link = HostLink.__new__(HostLink)
+    link.sup, link.env, link._trusted = Sup(), {"HOME": str(home)}, {}
+    pretrust(link.env, str(root), str(work), pin(work))
+    link._trusted[run] = (str(root), str(work))
+    (work / ".mcp.json").write_text("{}")
+    link._after_exit(run)
+    assert not (base / "agent-rules" / f"{run}.md").exists() and out[1] != "@orch-rules"
+    assert str(work) not in entries(home) and run not in link._trusted
+
+
+def test_pretrust_needs_the_isolation_flags_in_the_launch(ws, tmp_path):
+    home, root, work = ws
+    launch(ws, [*CLAUDE[:5], "go"])  # claude without the flags (a worktree or root launch)
+    assert not (home / ".claude.json").exists()
+    launch(ws, CLAUDE)
+    assert set(entries(home)) == {str(work)}

@@ -1,3 +1,4 @@
+import { HubBanner } from '../../shell/HubBanner'
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useQueries, useQuery } from '@tanstack/react-query'
 import { ChevronDown, Eye } from 'lucide-react'
@@ -128,6 +129,8 @@ export function TodayPage() {
   }
   // A new workspace or person starts a new queue (its own accepted order and open row).
   return (
+    <>
+    <HubBanner key={ws} ws={ws} />
     <TodayInbox
       key={`${ws}:${me.data.person}:${readOnly}:${ds}:${generation}`}
       generation={`${ds}:${generation}`}
@@ -139,6 +142,7 @@ export function TodayPage() {
       viewer={me.data.person}
       attention={attention}
     />
+    </>
   )
 }
 

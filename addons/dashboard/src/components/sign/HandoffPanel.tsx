@@ -171,19 +171,24 @@ function useRemaining(expiresAt: string): number {
 
 /** The command to run, with a copy button. The code names a request; it is not a secret and authorises nothing. */
 export function CommandLine({ code }: { code: string }) {
+  return <ExactCommandLine command={signCommand(code)} />
+}
+
+/** Copy the server's exact command without constructing or signing anything in the browser. */
+export function ExactCommandLine({ command, testId = 'handoff-command' }: { command: string; testId?: string }) {
   const [copied, setCopied] = useState(false)
-  const command = signCommand(code)
   return (
     <div className="flex items-center gap-2 rounded-md border border-border bg-bg px-3 py-2">
       <Terminal className="size-4 shrink-0 text-text-muted" aria-hidden />
-      <code data-testid="handoff-command" className="min-w-0 flex-1 break-all font-mono text-[14px] text-text">
-        {command}
+      <code data-testid={testId} className="min-w-0 flex-1 break-all font-mono text-[14px] text-text">
+        <Raw>{command}</Raw>
       </code>
       <Button
         type="button"
         variant="ghost"
         size="icon-sm"
         aria-label="Copy command"
+        data-testid={testId + '-copy'}
         onClick={() => {
           void navigator.clipboard?.writeText(command).then(
             () => {

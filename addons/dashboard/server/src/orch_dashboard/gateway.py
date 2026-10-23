@@ -309,6 +309,10 @@ class Gateway:
                 ("grant.forget", "run/1"),
                 ("whoami", "ops/1"),
             ],
+            # V3 A7: the Hub tab, the top-bar chip and the Tickets column (reads; every change is a Terminal command).
+            "hub": [
+                ("hub.status", "hub/1")
+            ],  # share.* is checked by its own routes: an older host degrades in the page
         }
         for feature, ops in requirements.items():
             if all(link.supports(op, cap) for op, cap in ops):

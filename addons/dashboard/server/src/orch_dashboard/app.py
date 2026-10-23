@@ -17,6 +17,7 @@ from . import (
     agents,
     click,
     handoff,
+    hub,
     hubapprove,
     phone,
     reads,
@@ -58,6 +59,7 @@ SETTINGS_TABS = (
     "addons",
     "records",
     "devices",
+    "hub",
 )  # HOST_TABS (settings/tabs.ts)
 SPA_ROUTES = (
     "",  # Today
@@ -233,6 +235,7 @@ def create_app(port: int, gateway=None, auth=None, static=None, setup_proxy=None
     handoff.register(app, gateway)
     click.register(app, gateway)
     hubapprove.register(app, gateway)
+    hub.register(app, gateway)
     settings.register(app, gateway)
     addon_switches.register(app, gateway)
     signprefs.register(app, gateway)

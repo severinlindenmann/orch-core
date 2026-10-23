@@ -14,6 +14,7 @@ import type { MandatesPreviewRequest } from '@/api/mandatesPreview'
 import { listArtifacts } from './artifacts'
 import { relayEpoch, relayRequest, relaySim, relayState } from './relay'
 import { changesOf } from './changes'
+import { registerHubRoutes } from './hub'
 import { createLatency, readLatencySettings, type LatencySettings } from './latency'
 
 export interface RouteContext {
@@ -624,6 +625,7 @@ export function buildRouter(): MockRouter {
     s.setViewer(person)
     return ok({ ok: true })
   })
+  registerHubRoutes(r) // V3 A7: the hub pages' reads and Terminal commands
   return r
 }
 

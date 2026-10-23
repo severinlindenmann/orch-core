@@ -827,6 +827,9 @@ an agent grant, exclude a lost device or change policy; agents would stop within
   `owner`, `maintainer`, `member`, `ticket_owner`, `assignees`, `reviewers`, `watchers`; `count` 1–16; `not` 0–7 of the
   same tokens; `applies` `"all"`, `"off"` or 1–5 sorted unique ticket types; `independent` boolean. `code` additionally
   has `assignees` in `not` and `independent: true` (D59). **No `factor` key** (D66 floors stay off the channel in V3).
+  **A channel never changes a factor floor:** the host applies each named gate as the five keys above and keeps the
+  gate's effective `factor` (the stored one, else the inherited workspace floor; a ticket override inherits the
+  workspace floor and can never lower it). Core vector `policy_changed_channel_keeps_factor`.
 - **Off the channel in V3 (V3-D29)** (`malformed` inside `set` or a gate, `not_custodial` as types): `sign_methods`
   (how signatures are made), `repos` (host file system paths), `models`, the D66 `factor` key; `grant.issued` itself,
   including a terminal-printed grant for a hand-started agent (the owner's local act, standalone or after a leave);
@@ -842,7 +845,10 @@ an agent grant, exclude a lost device or change policy; agents would stop within
   binding instead). The secret never travels on the link and is never shown or logged.
   **The host gives the secret only to its runner, and only for a pending local hand-off (V3-D29):** a Mission Control
   "Start agent" that a person started **on that host**, recorded host-locally as a hand-off of kind `grant` for the
-  same canonical person and exact terms, at most 10 min old, used once. Otherwise the host still appends `grant.issued`
+  same canonical person and exact terms, at most 10 min old, used once. The record is bound to the workspace id and
+  the current hub binding (`hub_id`, `binding_seq`), is matched and consumed inside the same store-lock hold that
+  appends `grant.issued`, and is dropped when the person cancels it, at `hub.left` and at any new `hub.joined`.
+  Otherwise the host still appends `grant.issued`
   (the log stays honest) and destroys the secret at once: the grant is inert, shown as "requested from the hub, not
   started here". So **a phone (or any channel) alone cannot start an agent**, and a hub (the channel CA) cannot mint
   usable grants nobody asked for (L2-P5-3). The hand-off record is not a log line and makes no link call.
@@ -866,8 +872,9 @@ comes up. The relay keeps no binding: a `pending` cut-over row (§10.8.3) is del
 `cut_over` row stays closed. On `unbound` an honest hub also fails its open prepares and queued `event_deliver`s for
 the workspace with `not_bound` and drops the workspace from its users' channel lists. **Every leave voids the open
 hub-signed decisions (V3-D29):** `hub.left` has no reason field in hv 0, so each leave is treated as a compromise of the
-hub; at the `hub.left` position core voids every counting decision signed `hub:<hub_id>/*` in a still-open generation
-(consumed generations stay and are listed for the owner, design-c8 M5). **Hub-requested grants end at `hub.left`** too
+hub; at the `hub.left` position core voids every decision signed `hub:<hub_id>/*` in a still-open generation, whether
+it counts today or not, and a later policy change or a rejoin never revives it (consumed generations stay and are
+listed for the owner, design-c8 M5). **Hub-requested grants end at `hub.left`** too
 (every grant whose `request` is a line of that hub is revoked at that position and its secret dropped; design-c8
 M2.2). The one break-glass set (`hub.leave`, `hub.repin` PK only, `keys.rotate`) is defined in core (C8) and imported
 by C11.
@@ -879,6 +886,14 @@ automatically **only** when the workspace is marked dev in the host state dir, t
 the cut-over preflight passes (link authenticated, card verified, a pinned snapshot with an `admin`); every other such
 workspace keeps its direct path (`direct: open`) until the owner runs `orch hub mode full` again and signs the new
 text. `orch hub status` says which applies.
+
+**Host-side conformance (core vectors, required for C8/C10).** The hub vectors above fix only the channel action and
+the event a host admits. The host guarantees of this section are core's own vectors and tests and must exist before
+C8/C10 merge: `host_grant_issued_{needs_request,request_reused,other_terms,late}`, `hub_grant_without_handoff_inert`,
+`hub_grant_with_handoff_once`, `handoff_other_workspace_or_binding_refused`, `grant_revoked_own_via_alias`,
+`device_excluded_owner_device_refused`, `policy_changed_channel_keeps_factor`, `left_hub_events_refused_after_leave`,
+`leave_voids_open_hub_decisions_only` (incl. non-counting, no revival after rejoin), `leave_ends_hub_requested_grants`,
+`rejoin_refuses_pre_leave_custodial`, `pre_c10_non_dev_full_join_not_cut_over` (design-c8 Tests, design-c10 Tests).
 
 ## 9. Join, binding, leave
 

@@ -26,3 +26,17 @@ def test_repos_and_refs_in_f1_are_in_the_preview_and_the_plan():
     moved = _ticket(gates=(_gate("plan"), _gate("code", "2", sources=[{**SRC[0], "ref": "refs/heads/other"}])))
     (item2,) = [i for i in SH.select(rule, [moved]) if i.logical.endswith("approve:code")]
     assert item.shown != item2.shown  # a changed repo or ref changes the plan the owner confirms
+
+
+def test_repo_strings_that_differ_only_in_whitespace_give_different_plans():
+    """C6bd-1 (core#1040): the plan hashes the raw (repo, ref, sha) tuples, not the cleaned preview lines."""
+    rule = [{"kind": "needs_you"}]
+    plans = set()
+    lines = set()
+    for repo in ("a b", "a  b", "a   b"):
+        t = _ticket(gates=(_gate("plan"), _gate("code", "2", sources=[{**SRC[0], "repo": repo}])))
+        (item,) = [i for i in SH.select(rule, [t]) if i.logical.endswith("approve:code")]
+        plans.add(SH.plan_of([item]))
+        lines.add(item.line())
+    assert len(plans) == 3
+    assert len(lines) == 1  # the preview text stays cleaned (the lines may collide, the plans must not)

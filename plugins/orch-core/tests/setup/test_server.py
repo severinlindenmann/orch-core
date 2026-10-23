@@ -166,7 +166,7 @@ def test_oversized_body_refused(srv):
     path, token, _ = claimed(srv)
     try:
         st, out, _ = call(path, "POST", "/api/setup/cancel", {"x": "a" * 70000}, token=token)
-    except (BrokenPipeError, ConnectionResetError):  # the server answers and closes before the body is sent
+    except OSError:  # the server answers and closes before the body is sent: reset, broken pipe or (macOS) ENOTCONN
         return
     assert st == 413
 
@@ -471,6 +471,11 @@ def test_stop_waits_for_the_request_that_ended_the_session_to_be_answered(srv):
     import threading
 
     path, _tok, _ = claimed(srv)
+    # The handler thread of a request the client already has the answer to may still be on its way to
+    # ``request_done`` (it runs after the response is written). Let those finish before the test counts, or their
+    # late "request done" lands in ``order`` (#1047).
+    with srv._idle:
+        assert srv._idle.wait_for(lambda: srv._inflight == 0, timeout=10), "an earlier request never finished"
     real_die = srv.die
     in_die, release, stop_blocked = threading.Event(), threading.Event(), threading.Event()
     order: list[str] = []

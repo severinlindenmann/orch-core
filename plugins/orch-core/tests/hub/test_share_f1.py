@@ -152,7 +152,7 @@ def test_each_item_kind_gets_its_own_f1():
     items = _select(_ticket())
     assert set(items[f"summary:{UID}:approve:code"].f1["gates"]) == {"code"}
     assert items[f"summary:{UID}:approve:code"].f1["questions"] == {}
-    assert items[f"summary:{UID}:question:Q1"].f1["questions"] == {"Q1": {"hash": H}}
+    assert items[f"summary:{UID}:question:Q1"].f1 is None  # V3-D31: a one-line question summary is never answerable
     assert (
         items[f"question:{UID}:Q1"].f1["questions"] == {"Q1": {"hash": H}}
         and items[f"question:{UID}:Q1"].f1["gates"] == {}
@@ -218,7 +218,7 @@ def test_sync_re_puts_under_a_higher_version_only_when_f1_changed():
     again, none = run(_ticket())
     assert (again["put"], again["kept"]) == (0, 4) and none == []  # nothing changed: nothing sent
     bumped, news = run(_ticket(roster_v=4))  # a member change raises roster_v: every item is put again
-    assert (bumped["put"], bumped["kept"]) == (3, 1)  # the ticket item carries no f1
+    assert (bumped["put"], bumped["kept"]) == (2, 2)  # the ticket item and the question summary carry no f1
     assert {v for _, r, v in news} == {2} and {r for _, r, _v in news} == {4}
     gate, news = run(_ticket(roster_v=4, gates=(_gate("plan"), _gate("code", "7", sources=SRC), _gate("verify", "3"))))
     assert gate["put"] == 1 and {lg for lg, _r, _v in news} == {f"summary:{UID}:approve:code"}

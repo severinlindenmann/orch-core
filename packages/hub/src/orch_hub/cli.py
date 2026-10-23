@@ -84,6 +84,11 @@ def _parser() -> argparse.ArgumentParser:
     dr.add_argument("--link-listen", help="the running hub's network link IP:port (split dev layout): pin + bind rules")
     dr.add_argument("--dev-shared-machine", action="store_true", help="the hub runs with this dev exception (WARN)")
     dr.add_argument(
+        "--skip-link-dial",
+        action="store_true",
+        help="on the hub machine: compare the stored key with the card, do not dial",
+    )
+    dr.add_argument(
         "--hub-user", default="orch-hub", help="the hub's OS user (default orch-hub; split hub: orch-hub-split)"
     )
     dr.add_argument("--fw-dump", help="dump of the loaded hub table (default /run/orch/hub-fw.loaded.json)")
@@ -176,6 +181,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 dev_shared_machine=args.dev_shared_machine,
                 hub_user=args.hub_user,
                 link_iface=args.link_iface,
+                skip_link_dial=args.skip_link_dial,
                 publish_url=args.publish_url,
                 out=sys.stdout,
                 layout_flag=args.layout,

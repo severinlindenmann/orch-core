@@ -362,6 +362,17 @@ def check_tls_pin(listen: str, pin: str, *, link: bool = False) -> None:
         raise Check("nothing answers TLS on the listen address") from None
 
 
+def check_stored_tls(state: Path, pin: str) -> None:
+    try:
+        ident = HubKeys.open(state, prune=False).tls_identity()
+    except KeysError as e:
+        raise Check(f"key store refused: {e.code}") from None
+    if ident is None:
+        raise Check("the key store has no TLS key (keys rotate-tls)")
+    if ident.spki_sha256 != pin:
+        raise Check("the stored TLS key does not match the card pin")
+
+
 def check_publish(url: str) -> None:
     try:
         scheme, host, port = _endpoint(url)
@@ -402,7 +413,8 @@ def run(
     host_users: Iterable[str] = (),
     agent_users: Iterable[str] = (),
     state_uid: int | None = None,
-    unit_user: Callable[[], str | None] = unit_user_of,
+    unit_user: Callable[[], str | None] | None = None,
+    skip_link_dial: bool = False,
 ) -> int:
     fails = 0
 
@@ -436,7 +448,14 @@ def run(
         fail("listen addresses", "--listen and --link-listen are exclusive")
     elif listen is not None or link_listen is not None:
         addr, is_link = (link_listen, True) if link_listen is not None else (listen, False)
-        if isinstance(card, dict):
+        if isinstance(card, dict) and is_link and skip_link_dial:
+            # on the hub machine the surface rule drops local dials to the link address by design (lo is not wt0): compare the
+            # stored key with the card instead; the dial itself is the S12 scenario's job, from the overlay
+            step(
+                "stored TLS key matches the card pin (link not dialled)",
+                lambda: check_stored_tls(state, card["tls_spki_sha256"]),
+            )
+        elif isinstance(card, dict):
             step("TLS pin matches the served key", lambda: check_tls_pin(addr, card["tls_spki_sha256"], link=is_link))
         else:
             fail("TLS pin matches the served key", "no verified card")
@@ -488,7 +507,10 @@ def run(
                 f"INFO layout: one machine (hub + {what or 'nothing found, forced by --layout'}): weaker isolation (D82, §4a)",
                 file=out,
             )
-            step("hub runs as its own OS user", lambda: check_hub_user(acc, hub_user, suid, unit_user()))
+            step(
+                "hub runs as its own OS user",
+                lambda: check_hub_user(acc, hub_user, suid, (unit_user or (lambda: unit_user_of(hub_user)))()),
+            )
             step("host and agent users are separate from the hub", lambda: check_separation(acc, hub_user))
             if hosts:
                 step("hosts use the server custody profile", lambda: check_server_profile(acc))

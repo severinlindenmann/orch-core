@@ -314,6 +314,31 @@ def _render(x: Any) -> Any:
     return x
 
 
+def _short(h: Any) -> str:
+    """``sha256:193bf2f3...`` as ``193B F2F3`` (the same short form as the browser's ``shortHash``)."""
+    m = re.match(r"(?:sha256:)?([0-9a-f]{8})", h) if type(h) is str else None
+    return (m.group(1)[:4] + " " + m.group(1)[4:]).upper() if m else ""
+
+
+def _facts(ev: dict[str, Any]) -> list[list[str]]:
+    """D15b-2 (protocol 8.4 step 3): the projection-derived values of a decision or a status move, for ``shown`` (the
+    channel recomputes them from ``ctx``). Gate, short hash, ``gate_gen``, each source ``repo`` with its short ``sha``;
+    "from -> to" for a move."""
+    typ = ev.get("type")
+    if typ in ("gate.approved", "gate.changes_requested", "verdict.given"):
+        out = [
+            ["Gate", "verify" if typ == "verdict.given" else str(ev.get("gate"))],
+            ["Content reference", _short(ev.get("hash")) or str(ev.get("hash"))],
+            ["Generation", str(ev.get("gate_gen"))],
+        ]
+        for e in ev.get("source_sha") or []:
+            out.append(["Code", f"{e.get('repo')} {str(e.get('sha'))[:8]}" if type(e) is dict else str(e)])
+        return out
+    if typ in ("status.changed", "ticket.moved"):
+        return [["Status", f"{ev.get('from')} \u2192 {ev.get('to')}"]]
+    return []
+
+
 def _need(body: dict[str, Any] | None, **types: type) -> dict[str, Any]:
     if body is None:
         raise ApiError("malformed")
@@ -684,7 +709,15 @@ class WebApi:
         """What to show next to the signature prompt: every field of the event (WYSIWYS), strings escaped. The two
         certificates are not shown as text (the channel verifies the digest over the whole ``ctx``)."""
         ev = {k: v for k, v in ctx["event"].items() if k not in ("channel_cert", "uk_cert")}
-        return _render({"type": ev.get("type"), "workspace_id": ctx["workspace_id"], "log": ctx["log"], "fields": ev})
+        return _render(
+            {
+                "type": ev.get("type"),
+                "workspace_id": ctx["workspace_id"],
+                "log": ctx["log"],
+                "fields": ev,
+                "facts": _facts(ev),
+            }
+        )
 
     def _h_prepare(self, c: Ctx, p: dict, q: dict, b: dict | None):
         b = _need(b, workspace_id=str, channel_id=str, action=dict)

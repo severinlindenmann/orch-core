@@ -266,3 +266,19 @@ def test_run_sub_runner_items_are_passed_as_the_grant_only():
         ]
     )
     assert items == [{"t": "runner", "grant": RUNNER_GRANT}, {"t": "runner", "grant": None}]
+
+
+def test_runner_card_passes_the_hosts_startable_rule_when_well_formed(client, token, stub, host):
+    until = "2026-10-24T10:00:00Z"
+    host.answers["whoami"] = {
+        "person": "p_x",
+        "runner": {"connected": True, "enabled": True, "terminals": False,
+                   "grant": {**RUNNER_GRANT, "startable": True, "startable_until": until, "secret": SECRET}},
+    }  # fmt: skip
+    got = client.get(url(stub, "/runner"), headers=hdr(token)).json()["runner"]["grant"]
+    assert got == {**RUNNER_GRANT, "startable": True, "startable_until": until}
+    host.answers["whoami"]["runner"]["grant"] = {**RUNNER_GRANT, "startable": False, "startable_until": "soon"}
+    got = client.get(url(stub, "/runner"), headers=hdr(token)).json()["runner"]["grant"]
+    assert got == {**RUNNER_GRANT, "startable": False, "startable_until": None}
+    host.answers["whoami"]["runner"]["grant"] = {**RUNNER_GRANT, "startable": "yes"}  # not a bool: dropped
+    assert client.get(url(stub, "/runner"), headers=hdr(token)).json()["runner"]["grant"] == RUNNER_GRANT

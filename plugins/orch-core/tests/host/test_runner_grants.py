@@ -566,3 +566,49 @@ def test_a_g_subscriber_whose_grant_is_revoked_gets_no_runner_item(ready):
     ok(deposit(p, issue(w)))
     frame = c.evt(sub)
     assert frame["items"] == [] and frame.get("end")  # revalidated before delivery: ended, not served
+
+
+def test_whoami_says_whether_the_grant_can_start_agents_now_and_until_when(ready):
+    """Run 8 (owner 3): the host's own launch rule, host-side, so the dashboard never re-derives it."""
+    from orch.host.runnergrants import MIN_LEFT, _epoch, _iso
+
+    w = ready
+    c = w.conn()
+    ok(deposit(c, issue(w)))
+    grant = ok(c.call("whoami", {}))["data"]["runner"]["grant"]
+    assert grant["startable"] is True
+    assert grant["startable_until"] == _iso(_epoch(grant["until"]) - MIN_LEFT)
+
+
+def _service(entry, *, role="owner", person_ok=True, now=1000.0):
+    from types import SimpleNamespace as NS
+
+    auth = NS(grants={"gr_1": entry} if entry else {}, person_ok=lambda p, t: person_ok, roles={"p_1": role})
+    return NS(auth=auth, clock=lambda: now)
+
+
+@pytest.mark.parametrize(
+    ("entry", "role", "scope", "person_ok", "want"),
+    [
+        ({"expires_s": 1000.0 + 3600}, "owner", "workable", True, None),
+        ({"expires_s": 1000.0 + 3600}, "member", "workable", True, None),
+        ({"expires_s": 1000.0 + 3600}, "member", "all", True, "scope"),
+        ({"expires_s": 1000.0 + 3600}, "owner", "all", True, None),
+        ({"expires_s": 1000.0 + 600}, "owner", "workable", True, "expiring"),  # under the 15-minute floor
+        ({"expires_s": 1000.0 + 900}, "owner", "workable", True, None),  # exactly the floor still starts
+        ({"expires_s": 1000.0 - 1}, "owner", "workable", True, "revoked"),
+        ({"expires_s": 1000.0 + 3600, "revoked": True}, "owner", "workable", True, "revoked"),
+        ({"expires_s": 1000.0 + 3600}, "viewer", "workable", True, "revoked"),  # a role change
+        ({"expires_s": 1000.0 + 3600}, "owner", "workable", False, "revoked"),  # the person left
+        (None, "owner", "workable", True, "revoked"),
+    ],
+)
+def test_launch_reason_is_the_one_rule(entry, role, scope, person_ok, want):
+    from types import SimpleNamespace as NS
+
+    from orch.host.runnergrants import RunnerGrants
+
+    e = NS(**{"person": "p_1", "revoked": False, **entry}) if entry else None
+    svc = _service(e, role=role, person_ok=person_ok)
+    rg = RunnerGrants.__new__(RunnerGrants)
+    assert rg.launch_reason(svc, "p_1", {"grant": "gr_1", "scope": scope}) == want

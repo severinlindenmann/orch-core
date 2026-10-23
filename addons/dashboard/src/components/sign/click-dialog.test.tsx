@@ -116,6 +116,21 @@ describe('the action dialog with click-to-sign', () => {
     expect(bad).toEqual([])
   })
 
+  it('#1161: a sign_methods change goes the click path (core classes it click + word), not the terminal hand-off', async () => {
+    flag(true)
+    const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query')
+    const { HandoffDialog } = await import('./HandoffDialog')
+    const { render } = await import('@testing-library/react')
+    vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods: null } as Awaited<ReturnType<typeof api.getHostSettings>>)
+    vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'click', is_default: false, allowed: ['terminal', 'click', 'phone'] })
+    const ws = (await api.getWorkspaces())[0]!.id
+    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><HandoffDialog ws={ws} title="Change allowed ways to approve" action={{ action: 'settings_set', sign_methods: ['terminal', 'click'] }} autoStart onClose={() => {}} /></QueryClientProvider>)
+    await screen.findByTestId('click-panel', {}, T)
+    expect(c.prepare).toHaveBeenCalledTimes(1)
+    expect(c.prepare.mock.calls[0]?.[1]).toMatchObject({ action: 'settings_set', sign_methods: ['terminal', 'click'] })
+    expect(s.prepare).not.toHaveBeenCalled()
+  })
+
   it('with a phone request possible, nothing is prepared until the phone query has answered', async () => {
     flag(true)
     const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query')

@@ -29,6 +29,10 @@ export interface RunnerGrant {
   id: string
   until: string
   scope: 'all' | 'workable'
+  /** `whoami.runner.grant` only: the host's own launch rule (15-minute floor, member scope, revoked grant, role change). */
+  startable?: boolean
+  /** When the 15-minute floor is reached and the grant stops being startable; null when it is not startable now. */
+  startable_until?: string | null
 }
 
 export interface AgentBlocked {

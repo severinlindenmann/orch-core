@@ -148,7 +148,25 @@ def runner_info(service: WorkspaceService, person: str | None = None) -> dict[st
     hub = getattr(service, "runners", None)
     if hub is None:
         return {"connected": False, "enabled": False, "terminals": False, "gen": None, "grant": None}
-    return hub.runner_state(service.workspace_id, person)
+    info = hub.runner_state(service.workspace_id, person)
+    if info["grant"] is not None and person:
+        # the host's own launch rule, computed host-side so no client re-derives it (15-minute floor, member scope,
+        # revoked grant, role change); `startable_until` is when the floor
+        # is reached (clients compare it to their clock)
+        from .runnergrants import MIN_LEFT, _epoch, _iso
+
+        cur = hub.grants.current(service.workspace_id, person)
+        reason = hub.grants.launch_reason(service, person, cur) if cur else "revoked"
+        until = _epoch(info["grant"]["until"])
+        info = {
+            **info,
+            "grant": {
+                **info["grant"],
+                "startable": reason is None,
+                "startable_until": _iso(until - MIN_LEFT) if reason is None and until is not None else None,
+            },
+        }
+    return info
 
 
 def _require_ready(service: WorkspaceService, hub: RunnerHub | None) -> RunnerHub:

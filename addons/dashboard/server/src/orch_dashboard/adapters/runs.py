@@ -47,8 +47,8 @@ def runner(info):
 
 
 def runner_grant(grant):
-    """The caller person's runner grant as `{id, until, scope}`, or None (none, or not one this page can show). Never a
-    secret: the host sends none here, and only these three checked fields are passed on."""
+    """The caller person's runner grant as `{id, until, scope[, startable, startable_until]}`, or None (none, or not
+    one this page can show). Never a secret: the host sends none here, and only these checked fields are passed on."""
     if (
         not isinstance(grant, dict)
         or not isinstance(grant.get("id"), str)
@@ -58,7 +58,14 @@ def runner_grant(grant):
         or grant.get("scope") not in ("all", "workable")
     ):
         return None
-    return {"id": grant["id"], "until": grant["until"], "scope": grant["scope"]}
+    out = {"id": grant["id"], "until": grant["until"], "scope": grant["scope"]}
+    # run 8: the host's own launch rule (`whoami.runner.grant` only): may this grant start an agent now, and until when.
+    # Passed on only when well formed; core stays the authority and refuses a launch it does not allow.
+    if type(grant.get("startable")) is bool:
+        out["startable"] = grant["startable"]
+        until = grant.get("startable_until")
+        out["startable_until"] = until if isinstance(until, str) and TIME.fullmatch(until) else None
+    return out
 
 
 def items(frame_items):

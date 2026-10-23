@@ -47,8 +47,8 @@ def runner(info):
 
 
 def runner_grant(grant):
-    """The caller person's runner grant as `{id, until, scope[, startable, startable_until]}`, or None (none, or not one this page can show). Never a
-    secret: the host sends none here, and only these three checked fields are passed on."""
+    """The caller person's runner grant as `{id, until, scope[, startable, startable_until]}`, or None (none, or not
+    one this page can show). Never a secret: the host sends none here, and only these checked fields are passed on."""
     if (
         not isinstance(grant, dict)
         or not isinstance(grant.get("id"), str)

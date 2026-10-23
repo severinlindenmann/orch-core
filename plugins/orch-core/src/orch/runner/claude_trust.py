@@ -10,7 +10,7 @@ home), just before it starts a ``claude`` agent.
 **Only workspace paths.** An entry is made for the workspace root and for the run's folder, and only when that folder
 is the root itself or lies below ``<root>/.orch-work/`` (the ticket work folders). Anything else, including a git
 worktree of a linked repository (outside the workspace), gets nothing, so the owner is still asked there. ``root``
-comes from the host-chosen ``ORCH_WORKSPACE``. Nothing is ever written for a parent of the root, the home folder or ``/``.
+comes from the host-chosen ``ORCH_WORKSPACE``. Nothing is ever written for a parent of the root or for ``/``.
 
 **Fail soft, never fail open.** A missing, unparseable, linked or oddly shaped config file is left alone (the prompts
 then appear, as before); an error here never stops a launch. Other keys and projects are kept as they are.
@@ -28,7 +28,11 @@ from pathlib import Path
 
 __all__ = ["TRUST_KEYS", "pretrust", "trust_paths"]
 
-TRUST_KEYS = ("hasTrustDialogAccepted", "hasClaudeMdExternalIncludesApproved", "hasClaudeMdExternalIncludesWarningShown")
+TRUST_KEYS = (
+    "hasTrustDialogAccepted",
+    "hasClaudeMdExternalIncludesApproved",
+    "hasClaudeMdExternalIncludesWarningShown",
+)
 WORK_DIR = ".orch-work"
 LIMIT = 8 << 20
 

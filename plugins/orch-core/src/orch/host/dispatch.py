@@ -23,7 +23,8 @@ a drain answers it ``host.restarting``, and ``opts.timeout_ms`` does not apply (
 event loop then registers it with the host's :class:`~orch.host.bus.Bus` before its ``res`` is sent.
 
 Each op has a matrix category (:data:`orch.host.columns.OpKind`) from its registry ``who``: ``read`` (``doctor`` and
-``instructions.sync`` are ``person_read``, ``instructions.hook`` is ``pg_read``), ``agent``, ``unattended``, ``human``. The gate
+``instructions.sync`` are ``person_read``, ``instructions.hook`` is ``pg_read``), ``agent``, ``unattended``,
+``human``. The gate
 (:class:`orch.host.workspace.WorkspaceGate`) applies the column with it (§0.6 steps 3 to 7); this module does steps 8
 to 11.
 

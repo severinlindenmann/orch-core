@@ -3,7 +3,7 @@
 // Terminal command for a change (`POST /hub/command`). Values that come from the hub are labelled "from the hub, not
 // signed" wherever they are shown.
 import { queryOptions } from '@tanstack/react-query'
-import { api } from './client'
+import { api } from '@/api/client'
 import { hasFeature } from './features'
 
 export type HubMode = 'standalone' | 'selective' | 'full' | 'unknown'

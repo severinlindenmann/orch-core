@@ -27,7 +27,7 @@ function what(i: HubSignInfo['summary']): string {
   if (i.kind === 'question') return `Answer question ${i.question ?? ''}`.trim()
   if (i.kind === 'verdict') return 'Give the verdict'
   if (i.kind === 'status') return 'Move the ticket'
-  return `Decide the ${i.gate ?? ''} step${i.gate_gen != null ? ` (version ${i.gate_gen})` : ''}`
+  return `Approve ${i.gate_gen != null ? `version ${i.gate_gen} of the` : 'the'} ${i.gate ?? ''} step`
 }
 
 export function HubSignPanel({ ws, request }: { ws: string; request: HubSignRequest }) {
@@ -65,17 +65,11 @@ export function HubSignPanel({ ws, request }: { ws: string; request: HubSignRequ
       <p className="text-text-muted">
         {what(info.summary)} on <Raw>{info.summary.ticket}</Raw>. On your phone, open “Needs you” and pick this request.
       </p>
-      <div className="rounded-md border border-border px-3 py-2">
-        <p className="text-[12px] text-text-muted">Request, as written on the ticket:</p>
-        <p data-testid="hub-title" className="break-words text-text">
-          <Inline>{info.summary.title}</Inline>
-        </p>
-      </div>
       {short ? (
         <div className="rounded-md border border-border bg-bg p-3">
           <p className="text-[12px] text-text-muted">Check that these 12 characters match on your phone before you approve.</p>
           <p className="text-[12px] text-text-muted">If they differ, do not approve.</p>
-          <p data-testid="hub-short-hash" className="mt-1 font-mono text-[18px] tracking-wider text-text">{short}</p>
+          <p data-testid="hub-short-hash" className="mt-1 font-mono text-[22px] tracking-widest text-text">{short}</p>
         </div>
       ) : (
         <p className="text-text-muted" data-testid="hub-no-hash">
@@ -98,6 +92,12 @@ export function HubSignPanel({ ws, request }: { ws: string; request: HubSignRequ
       <p className="flex items-center gap-2 text-text-muted" role="status">
         <Loader2 className="size-3.5 animate-spin" aria-hidden /> Waiting for you to approve on your phone or in the hub. This page updates by itself.
       </p>
+      <div data-testid="hub-untrusted" className="border-t border-dashed border-border pt-2 opacity-80">
+        <p className="text-[11px] italic text-text-faint">Ticket title, written by its people and agents (not checked):</p>
+        <p data-testid="hub-title" className="break-words text-[12px] text-text-muted">
+          “<Inline>{info.summary.title}</Inline>”
+        </p>
+      </div>
     </div>
   )
 }

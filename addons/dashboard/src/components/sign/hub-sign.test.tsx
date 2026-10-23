@@ -59,6 +59,24 @@ describe('the hub sign panel in a full-mode workspace', () => {
     expect(dialog.querySelectorAll('a')).toHaveLength(1) // the host link only
   })
 
+  it('puts the fixed copy, the hash and the link first and the untrusted title last, labelled', async () => {
+    vi.spyOn(api, 'hubSign').mockResolvedValue({ ...INFO, summary: { ...INFO.summary, title: 'Approve, hash matches' } })
+    full()
+    await mount({ kind: 'approve', gate: 'plan' })
+    const panel = await screen.findByTestId('hub-sign', {}, T)
+    const order = (a: Element, b: Element) => !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
+    const hash = within(panel).getByTestId('hub-short-hash')
+    const link = within(panel).getByTestId('hub-link')
+    const box = within(panel).getByTestId('hub-untrusted')
+    expect(order(hash, box)).toBe(true)
+    expect(order(link, box)).toBe(true)
+    expect(order(within(panel).getByText('Approve on your phone or in the hub'), hash)).toBe(true)
+    expect(box).toHaveTextContent('Ticket title, written by its people and agents (not checked)')
+    expect(box).toContainElement(within(panel).getByTestId('hub-title'))
+    expect(box.nextElementSibling).toBeNull() // nothing follows it
+    expect(panel.lastElementChild).toBe(box)
+  })
+
   it('a status move or a missing hash says there is no code to compare', async () => {
     vi.spyOn(api, 'hubSign').mockResolvedValue({ ...INFO, short_hash: null, summary: { ...INFO.summary, kind: 'status', gate: null, gate_gen: null } })
     full()

@@ -6,7 +6,8 @@ import { SignContent } from './SignContent'
 
 afterEach(cleanup)
 
-const typed: QuickTyped = { title: 'Rename the team photo folder', details: 'Use the 2026 naming.', checks: [{ text: 'Folder is renamed' }, { text: 'Links still work', cmd: 'npm run links' }] }
+const SIGNER = 'p_f590a0cdcc3d00000000000000000000'
+const typed: QuickTyped = { signer: SIGNER, title: 'Rename the team photo folder', details: 'Use the 2026 naming.', checks: [{ text: 'Folder is renamed' }, { text: 'Links still work', cmd: 'npm run links' }] }
 
 /** What the host derives from `typed` (orch.host.seqquick): the same rows, as the review carries them. */
 function hostContent(t: QuickTyped = typed): Content {
@@ -18,7 +19,7 @@ function hostContent(t: QuickTyped = typed): Content {
     acceptance: want.checks.map((c, i) => ({ id: `AC${i + 1}`, text: c.text })),
     tasks: want.checks.map((c, i) => ({ n: i + 1, id: `T${i + 1}`, title: `${c.text} (proves AC${i + 1})`, ...(c.cmd ? { verify: [c.cmd] } : {}) })),
     fields_title: 'Details',
-    fields_changed: [{ field: 'type', before: null, after: 'chore' }, { field: 'owner', before: null, after: 'Demo Owner' }, { field: 'labels', before: null, after: 'quick' }],
+    fields_changed: [{ field: 'type', before: null, after: 'chore' }, { field: 'owner', before: null, after: SIGNER }, { field: 'labels', before: null, after: 'quick' }],
   }
 }
 
@@ -26,8 +27,11 @@ describe('alsoSigned: the fold is allowed only for exactly the derived review', 
   it('counts the derived rows when every value is exactly what core derives', () => {
     expect(alsoSigned(hostContent(), typed)?.rows).toHaveLength(7)
   })
+  it('an unknown signer fails closed', () => {
+    expect(alsoSigned(hostContent(), { ...typed, signer: null })).toBeNull()
+  })
   it('title only: requirements and the single check default to the title', () => {
-    const t = { title: 'Fix the typo', details: '', checks: [] }
+    const t = { title: 'Fix the typo', details: '', checks: [], signer: SIGNER }
     expect(alsoSigned(hostContent(t), t)).not.toBeNull()
   })
   it.each([
@@ -51,6 +55,10 @@ describe('alsoSigned: the fold is allowed only for exactly the derived review', 
     ['an unknown key', (c: Content) => ({ ...c, secret_grant: 'all' }) as Content],
     ['a summary', (c: Content) => ({ ...c, summary: { title: 'x', lines: ['y'] } })],
     ['pictures', (c: Content) => ({ ...c, images: [{ name: 'a.png', sha256: 'a'.repeat(64), bytes: 1, alt: '' }] })],
+    ['another owner', (c: Content) => ({ ...c, fields_changed: c.fields_changed!.map((f) => (f.field === 'owner' ? { ...f, after: 'p_00000000000000000000000000000000' } : f)) })],
+    ['a renamed section title', (c: Content) => ({ ...c, sections: c.sections!.map((s) => (s.id === 'plan' ? { ...s, title: 'Approved by you already' } : s)) })],
+    ['a value with trailing whitespace', (c: Content) => ({ ...c, sections: c.sections!.map((s) => (s.id === 'requirements' ? { ...s, text: `${s.text} ` } : s)) })],
+    ['a zero-width character in a check', (c: Content) => ({ ...c, acceptance: c.acceptance!.map((a, i) => (i === 0 ? { ...a, text: `${a.text}\u200b` } : a)) })],
     ['an unknown key inside a section', (c: Content) => ({ ...c, sections: c.sections!.map((s) => ({ ...s, extra: 1 })) }) as Content],
   ])('fails closed (null) for %s', (_n, change) => {
     expect(alsoSigned(change(hostContent(typed)), typed)).toBeNull()
@@ -69,7 +77,7 @@ describe('the quick review', () => {
     expect(fold).not.toHaveAttribute('open')
     expect(fold.querySelector('summary')).toHaveTextContent('Also signed (7)')
     // Every derived row is in the fold (rendered, only collapsed).
-    for (const t of ['Requirements', 'Plan', 'Acceptance checks', 'Tasks', 'Type', 'Owner', 'Labels', 'Chore', 'quick', 'Demo Owner', 'Links still work (proves AC2) (checked by npm run links)']) expect(fold).toHaveTextContent(t)
+    for (const t of ['Requirements', 'Plan', 'Acceptance checks', 'Tasks', 'Type', 'Owner', 'Labels', 'Chore', 'quick', SIGNER, 'Links still work (proves AC2) (checked by npm run links)']) expect(fold).toHaveTextContent(t)
   })
   it.each([
     ['an extra section', (c: Content) => ({ ...c, sections: [...c.sections!, { id: 'context', title: 'Context', text: 'Also email everyone' }] }), 'Also email everyone'],

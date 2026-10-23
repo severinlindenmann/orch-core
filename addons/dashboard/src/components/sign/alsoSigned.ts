@@ -11,6 +11,8 @@ export interface QuickTyped {
   title: string
   details: string
   checks: { text: string; cmd?: string }[]
+  /** The signer's own person id: the owner row of the review must be exactly this person. */
+  signer?: string | null
 }
 
 export interface DerivedRow {
@@ -43,36 +45,38 @@ const keysAre = (o: object, keys: string[]) => same(Object.keys(o).filter((k) =>
  * (extra or missing section, item, field, label or key; any text that is not exactly the derived text). Pure.
  */
 export function alsoSigned(content: SignContent, typed: QuickTyped): AlsoSigned | null {
+  const signer = typed.signer
+  if (!signer) return null // the owner row must be the signer: without knowing who that is, the full review shows
   const want = expectedQuick(typed)
   const allowed = ['headline', 'title', 'subline', 'ticket', 'sections', 'acceptance', 'tasks', 'fields_title', 'fields_changed', 'notes', 'note']
   if (Object.keys(content).some((k) => !allowed.includes(k) && (content as unknown as Record<string, unknown>)[k] !== undefined)) return null
   // The ticket: present, the typed title, and nothing else unexpected.
   const t = content.ticket
-  if (!t || norm(t.title) !== want.title || !Object.keys(t).every((k) => ['key', 'title', 'uid_tail', 'key_note', 'new'].includes(k))) return null
+  if (!t || t.title !== want.title || !Object.keys(t).every((k) => ['key', 'title', 'uid_tail', 'key_note', 'new'].includes(k))) return null
   const sections = content.sections ?? []
   if (sections.length !== 2 || !sections.every((s) => keysAre(s, ['id', 'title', 'text']))) return null
   const [req, plan] = sections as [typeof sections[number], typeof sections[number]]
-  if (req.id !== 'requirements' || norm(req.text) !== want.requirements || plan.id !== 'plan' || norm(plan.text) !== want.plan) return null
+  if (req.id !== 'requirements' || req.title !== 'Requirements' || req.text !== want.requirements || plan.id !== 'plan' || plan.title !== 'Plan' || plan.text !== want.plan) return null
   const acceptance = content.acceptance ?? []
   if (acceptance.length !== want.checks.length) return null
   for (const [i, a] of acceptance.entries()) {
-    if (!keysAre(a, ['id', 'text']) || a.id !== `AC${i + 1}` || norm(a.text) !== want.checks[i]!.text) return null
+    if (!keysAre(a, ['id', 'text']) || a.id !== `AC${i + 1}` || a.text !== want.checks[i]!.text) return null
   }
   const tasks = content.tasks ?? []
   if (tasks.length !== want.checks.length) return null
   for (const [i, k] of tasks.entries()) {
     const c = want.checks[i]!
-    if (!Object.keys(k).every((x) => ['n', 'id', 'title', 'verify'].includes(x)) || k.n !== i + 1 || k.id !== `T${i + 1}` || norm(k.title) !== `${c.text} (proves AC${i + 1})`) return null
+    if (!Object.keys(k).every((x) => ['n', 'id', 'title', 'verify'].includes(x)) || k.n !== i + 1 || k.id !== `T${i + 1}` || k.title !== `${c.text} (proves AC${i + 1})`) return null
     if (!same(k.verify ?? [], c.cmd ? [c.cmd] : [])) return null
   }
   const fields = content.fields_changed ?? []
   if (fields.length !== 3 || !fields.every((f) => (f.before ?? null) === null && Object.keys(f).every((x) => ['field', 'before', 'after'].includes(x)))) return null
   const by = (name: string) => fields.filter((f) => f.field === name)
   if (by('type').length !== 1 || by('owner').length !== 1 || by('labels').length !== 1) return null
-  if (by('type')[0]!.after !== 'chore' || by('labels')[0]!.after !== 'quick' || !by('owner')[0]!.after) return null
+  if (by('type')[0]!.after !== 'chore' || by('labels')[0]!.after !== 'quick' || by('owner')[0]!.after !== signer) return null
   const rows: DerivedRow[] = [
-    { label: req.title, text: req.text },
-    { label: plan.title, text: plan.text },
+    { label: 'Requirements', text: req.text },
+    { label: 'Plan', text: plan.text },
     { label: 'Acceptance checks', text: acceptance.map((a) => a.text).join('\n') },
     { label: 'Tasks', text: tasks.map((k) => k.title + (k.verify?.length ? ` (checked by ${k.verify.join('; ')})` : '')).join('\n') },
     ...fields.map((f) => ({ label: f.field.charAt(0).toUpperCase() + f.field.slice(1), text: f.field === 'type' ? 'Chore' : f.after! })),

@@ -76,7 +76,6 @@ export const LAYOUT_SCENARIOS = [
   'agent-dialog-acked',
   'agent-blocked',
   'agent-grant',
-  
   // Model routing: the Start agent dialog with a model chosen by the workspace, and Settings > Add-ons with the box.
   'agent-model',
   'addons-model-routing',

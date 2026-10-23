@@ -26,6 +26,8 @@ export const AGENT_MAY = 'Agents (Claude Code) may read and change files in the 
 export interface StoryContext {
   /** An agent is started by the page after this signature (the caller's own start plan), with access given now or already there. */
   startsAgent?: boolean
+  /** The signer's own person id (a quick task's owner row must be this person to fold). */
+  person?: string | null
 }
 
 export function storyOf(action: ClickAction | null | undefined, ctx: StoryContext = {}): SignStory | null {
@@ -44,7 +46,7 @@ export function storyOf(action: ClickAction | null | undefined, ctx: StoryContex
       return {
         signLabel: ctx.startsAgent ? 'Sign and start agent' : 'Sign and create task',
         access,
-        quick: { title: action.title, details: action.description ?? '', checks: action.checks ?? [] },
+        quick: { title: action.title, details: action.description ?? '', checks: action.checks ?? [], signer: ctx.person },
         steps: ['You sign.', 'The task is created, with the requirements and the plan you see here approved.', ...(hours ? [`Access is given for ${accessLength(hours)}.`] : []), ...(ctx.startsAgent ? ['An agent starts and does the work.'] : ['Nothing starts yet: an agent starts only when you press Start agent.'])],
       }
     }

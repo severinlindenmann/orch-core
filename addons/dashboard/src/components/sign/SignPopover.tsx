@@ -17,6 +17,7 @@ import { lastTrigger, SignShell, STICKY_FOOTER } from './SignShell'
 import { queries } from '@/api/queries'
 import { sharesPrefix, uuid8 } from '@/api/workspaces'
 import { useWorkspace } from '@/app/workspace'
+import { useMe } from '@/app/useMe'
 import { alreadyDetails, alreadySigned, clickEligible, clickReady } from '@/api/click'
 import { refusalOf, refusalSentence } from '@/api/refusals'
 import { addFirst, missingOf } from '@/api/gates'
@@ -129,8 +130,9 @@ export function SignPopover(p: SignPopoverProps) {
     p.onSettled?.('done', state, request)
   })
   const methods = useSignMethods(p.ws)
+  const me = useMe(p.ws).data
   const router = useRouter({ warn: false }) as ReturnType<typeof useRouter> | null | undefined
-  const story = storyOf(p.action, { startsAgent: p.startsAgent })
+  const story = storyOf(p.action, { startsAgent: p.startsAgent, person: me?.person })
   // One sign button. The terminal is only the forced fallback: an op the browser cannot sign, or a workspace where
   // One click is off or not allowed.
   const canClick = clickReady(here) && clickEligible(p.action) && (!methods.allowed || methods.allowed.includes('click'))

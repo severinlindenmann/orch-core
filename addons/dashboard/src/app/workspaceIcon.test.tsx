@@ -53,6 +53,19 @@ describe('workspace icon lists', () => {
 })
 
 describe('workspace icon in the app', () => {
+  it('two workspaces with the same symbol: the collapsed trigger shows the prefix and the id tail', async () => {
+    localStorage.setItem('orch.sidebar.p_sev', 'narrow')
+    renderApp('/', {
+      setup: (s) => {
+        s.workspaces[0].icon = { icon: 'star', colour: 'blue' }
+        s.workspaces[1].icon = { icon: 'star', colour: 'pink' }
+      },
+    })
+    const trigger = await screen.findByRole('button', { name: 'Switch workspace' })
+    await waitFor(() => expect(trigger.querySelector('[data-ws-uuid-current]')).not.toBeNull())
+    expect(trigger.querySelector('[data-ws-prefix]')?.textContent).toMatch(/DEMO/)
+    localStorage.removeItem('orch.sidebar.p_sev')
+  })
   it('the collapsed trigger still shows the prefix', async () => {
     localStorage.setItem(`orch.sidebar.p_sev`, 'narrow')
     renderApp('/')

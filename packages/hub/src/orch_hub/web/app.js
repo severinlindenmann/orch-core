@@ -191,22 +191,27 @@ async function reviewItem(it) {
 // D15b-3: a gate or verdict row. The action sends the hash the row was LISTED with (it.hash), never one re-read now; if the
 // content moved since, the hub answers event_changed and the person reviews again. The prompt shows what is signed.
 function reviewDecision(it, c) {
-  const note = h("textarea", { rows: 3, placeholder: "Your reason (needed to ask for changes or fail)" });
+  const note = h("textarea", { id: "reason", rows: 3 });
   const act = (action) => startSign(it.workspace_id, { log: it.log, hash: it.hash, ...action });
   const withText = (action) => { const text = note.value.trim(); if (!text) { note.focus(); return; } return act({ ...action, text }); };
   const sources = Array.isArray(c.sources) ? c.sources : [];
+  const verdict = it.kind === "verdict";
   show(
+    h("p", { class: "small" }, h("a", { href: "#", text: "\u2190 Back to your list", onclick: (e) => { e.preventDefault(); home(); } })),
     h("h1", { text: renderText(c.ticket_title ?? it.title ?? "Review") }),
-    h("p", { class: "sentence", text: it.kind === "verdict" ? "Give your verdict on this ticket." : "Review the " + renderText(c.gate ?? "") + " gate." }),
-    h("dl", { class: "facts" },
+    it.key ? h("p", { class: "small muted", text: renderText(it.key) }) : null,
+    h("p", { class: "sentence", text: verdict ? "Give your verdict on this ticket." : "Review the " + renderText(c.gate ?? "") + " gate." }),
+    h("p", { class: "small muted", text: "The content itself is not shown here. Check it where it lives; the reference below is what you are deciding on." }),
+    h("details", { open: true }, h("summary", { text: "Review details" }), h("dl", { class: "facts" },
       h("dt", { text: "Content reference" }), h("dd", { class: "fp", text: renderText((it.hash ?? "").slice(7, 15).toUpperCase().replace(/(.{4})/, "$1 ")) }),
       h("dt", { text: "Generation" }), h("dd", { text: renderText(String(c.gate_gen ?? "")) }),
-      sources.flatMap((e) => [h("dt", { text: "Code" }), h("dd", { text: renderText(e.repo) + " " + renderText(e.sha) })])),
+      sources.flatMap((e) => [h("dt", { text: "Code to check" }), h("dd", { text: renderText(e.repo) + " " + renderText(e.sha) })]))),
+    h("label", { for: "reason", text: "Reason" }),
     note,
-    it.kind === "verdict"
+    h("p", { class: "small muted", text: verdict ? "Needed only if you choose Fail." : "Needed only if you ask for changes." }),
+    verdict
       ? h("div", { class: "row" }, h("button", { class: "pri", text: "Pass", onclick: () => act({ type: "verdict.given", outcome: "pass" }) }), h("button", { text: "Fail", onclick: () => withText({ type: "verdict.given", outcome: "fail" }) }))
       : h("div", { class: "row" }, h("button", { class: "pri", text: "Approve", onclick: () => act({ type: "gate.approved", gate: c.gate }) }), h("button", { text: "Ask for changes", onclick: () => withText({ type: "gate.changes_requested", gate: c.gate }) })),
-    h("button", { text: "Back", onclick: home }),
   );
 }
 
@@ -247,7 +252,7 @@ async function startSign(workspaceId, action) {
   try {
     digest = await checkPrepared(p.ctx, p.digest); // one parse: ctx is rendered below and was hashed here
     checkBindings(p.ctx, me, sent);
-    d = describe(p.ctx, digest);
+    d = describe(p.ctx, digest, sent);
   } catch (e) {
     return nothingSigned(e instanceof Refusal ? e.code : "malformed");
   }

@@ -8,7 +8,8 @@ h1 { font-size:22px; margin:0 0 4px; } h2 { font-size:17px; margin:22px 0 8px; }
 .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px 14px; margin:10px 0; }
 .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; } .row .grow { flex:1 1 200px; }
 label { display:block; font-size:14px; color:var(--muted); margin:10px 0 4px; }
-input, select { width:100%; padding:9px 10px; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--fg); font:inherit; }
+input, select, textarea { width:100%; padding:9px 10px; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--fg); font:inherit; }
+textarea { resize:vertical; min-height:4.5em; margin:6px 0; box-sizing:border-box; }
 button { padding:9px 14px; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--fg); font:inherit; cursor:pointer; }
 button.pri { background:var(--pri); color:var(--priText); border-color:var(--pri); }
 button:disabled { opacity:.5; cursor:not-allowed; }
@@ -22,3 +23,4 @@ details { margin:8px 0; } summary { cursor:pointer; }
 .dialog > .card { background:var(--bg); width:100%; max-width:600px; margin-top:6vh; }
 .top { margin-top:12px; }
 @media (max-width: 520px) { dl.facts { grid-template-columns:1fr; gap:0; } dl.facts dd { margin:0 0 10px; min-width:0; } .sentence { font-size:17px; } }
+a { color:var(--fg); }

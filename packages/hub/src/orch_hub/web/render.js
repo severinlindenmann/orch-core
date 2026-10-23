@@ -94,7 +94,7 @@ export function facts(type, ev) {
     if ("source_sha" in ev) {
       const list = Array.isArray(ev.source_sha) ? ev.source_sha : [ev.source_sha];
       for (const e of list) {
-        const ok = e !== null && typeof e === "object" && typeof e.repo === "string" && typeof e.sha === "string";
+        const ok = e !== null && typeof e === "object" && Object.keys(e).sort().join() === "ref,repo,sha" && typeof e.repo === "string" && typeof e.sha === "string";
         out.push(["Code", ok ? renderText(e.repo) + " " + renderText(e.sha.slice(0, 8)) : r(e)]);
       }
     }
@@ -103,6 +103,8 @@ export function facts(type, ev) {
   }
   return out;
 }
+
+const SENTENCE_STRINGS = ["from", "to", "reason", "gate", "outcome", "text", "option", "question", "hash"];
 
 function sentence(type, log, ev) {
   const on = "ticket " + renderText(log);
@@ -125,7 +127,7 @@ function sentence(type, log, ev) {
 /** What the prompt shows, from ctx only. `signable` is true only for the four decision types with no field we do not
  *  know; otherwise `sentence` is null and the prompt lists every field and offers no Sign button. Never throws on
  *  content (a surprise is a reason not to sign, not a crash). */
-export function describe(ctx, digest) {
+export function describe(ctx, digest, sent = null) {
   const ev = ctx.event;
   const type = typeof ev.type === "string" ? ev.type : "";
   const known = Object.hasOwn(DECISIONS, type) ? DECISIONS[type] : Object.hasOwn(MOVES, type) ? MOVES[type] : undefined;
@@ -134,7 +136,12 @@ export function describe(ctx, digest) {
     .sort()
     .map((k) => [renderText(k), typeof ev[k] === "string" ? renderText(ev[k]) : renderText(cj(ev[k]))]);
   const extra = known ? Object.keys(ev).filter((k) => !known.includes(k) && !ENVELOPE.includes(k)) : [];
-  const signable = Boolean(known) && extra.length === 0 && typeof ctx.log === "string" && ctx.log !== "workspace";
+  // D15bH-2: every field the sentence names must be a real string (nothing is flattened by String())
+  const stringsOk = SENTENCE_STRINGS.every((k) => !(k in ev) || typeof ev[k] === "string");
+  // D15bH-1: a status move is signable only against the action THIS page sent, and it must match that action exactly;
+  // a pushed prepare (no `sent`) never makes a move signable. The phone stays at the four decision types.
+  const moveOk = !Object.hasOwn(MOVES, type) || (sent?.action?.type === type && sent.action.to === ev.to && sent.action.reason === ev.reason);
+  const signable = Boolean(known) && extra.length === 0 && stringsOk && moveOk && typeof ctx.log === "string" && ctx.log !== "workspace";
   return {
     type: renderText(type),
     signable,

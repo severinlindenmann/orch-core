@@ -51,7 +51,6 @@ def _raw(b):
     return len(json.dumps(b, sort_keys=True, separators=(",", ":")))
 
 
-@pytest.mark.xfail(strict=True, reason="D15bH-4: a line page does not count its own log's projection row")
 def test_cap_counts_the_projection_row_of_the_page_log(svc, monkeypatch):
     from orch_hub.view import store as ST
 

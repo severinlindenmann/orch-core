@@ -114,7 +114,7 @@ class ViewStore:
                     used = self._db.execute(
                         "SELECT (SELECT COALESCE(SUM(LENGTH(body)),0) FROM view_pages WHERE ws=?)"
                         " + (SELECT COALESCE(SUM(LENGTH(body)),0) FROM view_proj WHERE ws=? AND log<>?)",
-                        (ws, ws, log),
+                        (ws, ws, log if proj is not None else ""),  # only a replaced row stops counting
                     ).fetchone()[0]
                     if used + len(raw) * (int(add_page) + int(proj is not None)) > MAX_WS_BYTES:
                         raise Refused("too_large")

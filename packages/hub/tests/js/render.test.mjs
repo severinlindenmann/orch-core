@@ -119,15 +119,17 @@ test("D15b-2: status moves show from -> to, are signable, and an unknown field m
   for (const t of Object.keys(MOVES)) {
     const ev = { auth: "hub", type: t, from: "testing", to: "backlog", reason: "later" };
     const ctx = { ...ctxOf(t), event: ev };
-    const d = describe(ctx, D);
+    const sent = { action: { type: t, to: "backlog", reason: "later" } };
+    const d = describe(ctx, D, sent);
     assert.equal(d.signable, true, t);
+    assert.equal(describe(ctx, D).signable, false, t + " without a sent action");
     assert.deepEqual(d.facts, [["Status", "testing \u2192 backlog"]]);
     assert.match(d.sentence, /testing.*backlog/);
-    assert.equal(describe({ ...ctx, event: { ...ev, extra: 1 } }, D).signable, false);
+    assert.equal(describe({ ...ctx, event: { ...ev, extra: 1 } }, D, sent).signable, false);
   }
 });
 
 test("D15b-2: facts escape workspace text and show a surprise shape as JSON", () => {
-  const d = describe(ctxOf("gate.approved", { gate: "code", source_sha: [{ repo: "a\u202eb", sha: "12345678abcd" }, 7] }), D);
-  assert.deepEqual(d.facts.slice(-2), [["Code", "a<U+202E>b 12345678"], ["Code", "7"]]);
+  const d = describe(ctxOf("gate.approved", { gate: "code", source_sha: [{ repo: "a\u202eb", ref: "refs/heads/x", sha: "12345678abcd" }, { repo: "r", sha: "12345678" }, 7] }), D);
+  assert.deepEqual(d.facts.slice(-3), [["Code", "a<U+202E>b 12345678"], ["Code", '{"repo":"r","sha":"12345678"}'], ["Code", "7"]]);
 });

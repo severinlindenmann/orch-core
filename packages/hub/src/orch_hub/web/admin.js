@@ -82,7 +82,7 @@ export function adminView(d) {
   function remove(label, method, path, body) {
     let armed = false;
     const button = h("button", { type: "button", class: "danger", text: label, onclick: () => {
-      if (!armed) { armed = true; button.textContent = label === "Revoke" ? "Really revoke?" : "Really remove?"; return; }
+      if (!armed) { armed = true; button.textContent = "Really? " + label; return; }
       armed = false;
       void change(button, method, path, body);
     }, onblur: () => { armed = false; button.textContent = label; } });
@@ -94,7 +94,7 @@ export function adminView(d) {
       h("div", { class: "form-grid" }, fields, button));
   }
   const enc = encodeURIComponent;
-  const workspaceName = (id) => txt(data.workspaces.find((w) => w.workspace_id === id)?.name ?? id);
+  const workspaceName = (id) => txt(data.workspaces.find((w) => w.workspace_id === id)?.name ?? "Workspace " + String(id).slice(0, 8));
   const personName = (id) => txt(data.users.find((u) => u.user_id === id)?.name ?? id);
   const groupMembers = (group) => (data.groups.find((g) => g.name === group)?.members ?? []).map(personName).join(", ") || "No members";
   function people() {
@@ -121,14 +121,14 @@ export function adminView(d) {
       h("section", { class: "card" }, h("h3", { text: "People" }), data.users.length ? data.users.map((u) => h("article", { class: "list-row row" },
         h("div", { class: "grow" }, h("b", { text: txt(u.name) }), p(txt(u.user_id)),
           h("div", { class: "row" }, data.groups.filter((g) => g.members.includes(u.user_id)).map((g) => chip(txt(g.name)))),
-          p(data.channels.filter((c) => c.user_id === u.user_id).map((c) => txt(c.label || c.kind) + " · " + txt(c.status)).join(", ") || "No signing channels")),
-        remove("Remove", "DELETE", "/admin/users/" + enc(u.user_id)))) : p("No people yet.")),
+          p(data.channels.filter((c) => c.user_id === u.user_id).map((c) => txt(c.label || c.kind) + " · " + txt(c.status)).join(", ") || "No approval device set up")),
+        remove("Remove person", "DELETE", "/admin/users/" + enc(u.user_id)))) : p("No people yet.")),
       h("section", { class: "card" }, h("h3", { text: "Groups" }),
         form("Create group", [field("Group name", groupName)], "POST", "/admin/groups", () => ({ name: groupName.value.trim() })),
         data.groups.map((g) => h("article", { class: "list-row" }, h("div", { class: "row" }, h("b", { class: "grow", text: txt(g.name) }),
-          g.name !== "hub-admin" ? remove("Remove", "DELETE", "/admin/groups/" + enc(g.name)) : chip("Hub administrators")),
+          g.name !== "hub-admin" ? remove("Remove group", "DELETE", "/admin/groups/" + enc(g.name)) : chip("Hub administrators")),
           g.members.length ? g.members.map((id) => h("div", { class: "row top" }, h("span", { class: "grow", text: personName(id) }),
-            remove("Remove", "DELETE", "/admin/groups/" + enc(g.name) + "/members/" + enc(id)))) : p("No members"))))];
+            remove("Remove from group", "DELETE", "/admin/groups/" + enc(g.name) + "/members/" + enc(id)))) : p("No members"))))];
   }
   function access() {
     const workspace = select(data.workspaces.filter((w) => w.mode === "full").map((w) => [w.workspace_id, w.name ?? w.workspace_id]));

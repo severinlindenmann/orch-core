@@ -26,12 +26,13 @@ export function homeView(d) {
   const mode = (it) => it.mode ?? byId.get(it.workspace_id)?.mode;
   const summary = (it) => it.summary_only || (!it.signable && mode(it) === "selective");
   const items = (d.items ?? []).filter((it) => !offline.has(it.workspace_id) && it.online !== false && (it.signable || summary(it)));
-  const workspaceName = (id) => text(byId.get(id)?.name ?? id);
+  const shortName = (w, id) => text(w?.name ?? "Workspace " + String(id).slice(0, 8));
+  const workspaceName = (id) => shortName(byId.get(id), id);
   const needs = h("section", { class: "card needs-you", "aria-labelledby": "needs-heading" },
     h("div", { class: "section-head row" }, h("h2", { id: "needs-heading", class: "grow", text: "Needs you" }), chip(String(items.length))),
     items.length ? items.map((it) => h("article", { class: "list-row row" },
       h("div", { class: "grow" }, h("h3", { text: text(it.title ?? it.kind) }),
-        note([text(it.key), text(it.workspace_name ?? byId.get(it.workspace_id)?.name ?? it.workspace_id)].filter(Boolean).join(" · ")),
+        note([text(it.key), workspaceName(it.workspace_id)].filter(Boolean).join(" · ")),
         note(summary(it) ? "Summary only, answer on your Mac" : "Shared with the hub, you can sign here")),
       !summary(it) ? h("button", { text: "Review", onclick: () => d.actions.review(it) }) : null))
       : h("p", { class: "empty", text: "Nothing is waiting for you." }),
@@ -40,7 +41,7 @@ export function homeView(d) {
   const spaces = h("section", { class: "card", "aria-labelledby": "workspaces-heading" },
     h("h2", { id: "workspaces-heading", text: "My workspaces" }),
     workspaces.length ? workspaces.map((w) => h("article", { class: "list-row" },
-      h("div", { class: "row" }, h("h3", { class: "grow", text: text(w.name ?? w.workspace_id) }),
+      h("div", { class: "row" }, h("h3", { class: "grow", text: shortName(w, w.workspace_id) }),
         chip(w.mode === "full" ? "Full" : "Selective", w.mode === "full" ? "full" : "sel")),
       note(readLine(w)), chip(offline.has(w.workspace_id) ? "Offline" : "Online", offline.has(w.workspace_id) ? "warn" : "ok")))
       : note("No workspaces yet."));

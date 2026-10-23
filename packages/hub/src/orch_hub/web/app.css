@@ -120,3 +120,7 @@ h1, h2, h3, p, b, span, td, th, dd, button, summary { overflow-wrap:anywhere; }
   dl.facts dd { margin-bottom:10px; }
   main > form { padding:18px; }
 }
+.navtabs a.nav { display:inline-flex; align-items:center; min-height:44px; padding:0 14px; border:1px solid transparent; border-radius:8px; text-decoration:none; color:var(--fg); }
+.navtabs a.nav.on { background:var(--card); border-color:var(--line); color:var(--pri); font-weight:600; }
+.navtabs a.nav:hover { background:var(--card); }
+@media (max-width: 520px) { button, select, input { min-height:44px; } }

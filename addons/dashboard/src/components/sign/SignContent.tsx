@@ -5,6 +5,7 @@ import type { SignContent as Content } from '@/api/signing'
 import { GATE_LABEL } from '@/api/settings'
 import { Pictures } from './Pictures'
 import { Inline, Prose, Raw } from './visible'
+import { SignedTextView } from './SignedTextView'
 
 export function SignDetails({ children }: { children: ReactNode }) {
   return <details className="space-y-3 text-[12px] text-text-muted"><summary className="cursor-pointer">Technical details</summary>{children}</details>
@@ -153,6 +154,46 @@ export function compactAnswer(content: Content | null | undefined) {
   return { ticket: content.ticket, choice, question, notes: content.sections?.filter(s => s.id === 'answer') ?? [] }
 }
 
+/** The sections of a gate decision are the ticket's own text, written by the agent (core: material.texts, ids = the ticket's section keys). */
+const GATE_SECTIONS = ['summary', 'context', 'requirements', 'out_of_scope', 'plan', 'decisions', 'verification', 'current_state']
+/** orch's own words for the known section ids (renaming is presentation); an unknown id shows core's title. */
+const PLAIN_TITLES: Record<string, string> = { context: 'What it is about', requirements: 'What will be built', out_of_scope: 'Out of scope', plan: 'Steps' }
+const SHOW_RAW_KEY = 'orch.sign.showRaw'
+let showRawNow = false
+try { showRawNow = sessionStorage.getItem(SHOW_RAW_KEY) === '1' } catch { /* no storage: the default */ }
+
+/**
+ * Requirements and plan, easier to read and still exactly what is signed: one labelled frame "Written by the agent" holds
+ * every agent-written section, each line restyled by its leading marker only (SignedTextView); "Show exactly as written"
+ * swaps in core's own text per section. The frame label, section titles and "What happens when you sign" are orch's words.
+ */
+function GateText({ sections, acceptance, tasks, approving }: { sections: NonNullable<Content['sections']>; acceptance?: ReactNode; tasks?: ReactNode; approving: boolean }) {
+  const [raw, setRaw] = useState(showRawNow)
+  const toggle = (v: boolean) => { showRawNow = v; setRaw(v); try { sessionStorage.setItem(SHOW_RAW_KEY, v ? '1' : '0') } catch { /* no storage */ } }
+  return <div className="space-y-3">
+    <section role="group" aria-label="Written by the agent" data-testid="agent-frame" className="space-y-4 rounded-md border border-border-strong bg-surface p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-[12px] font-medium text-text-muted">Written by the agent: this is what you approve</p>
+        <label className="flex cursor-pointer items-center gap-1.5 text-[12px] text-text-muted"><input type="checkbox" checked={raw} onChange={e => toggle(e.target.checked)} />Show exactly as written</label>
+      </div>
+      {sections.map(s => <section key={s.id} data-section={s.id}>
+        <h3 className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-text-muted">{PLAIN_TITLES[s.id] ?? <Inline>{s.title}</Inline>}</h3>
+        {raw ? <Prose className="rounded-md bg-surface-2 p-2 font-mono text-[12px] leading-relaxed text-text">{s.text}</Prose> : <SignedTextView text={s.text} />}
+      </section>)}
+      {acceptance}
+      {tasks}
+    </section>
+    {approving && <section aria-label="What happens when you sign" className="space-y-1 text-[12px] text-text-muted">
+      <h3 className="font-medium text-text">What happens when you sign</h3>
+      <ul className="list-disc space-y-0.5 pl-5">
+        <li>Your signature is tied to exactly the text above.</li>
+        <li>If the agent changes it later, this approval no longer counts and you are asked again.</li>
+        <li>Only you can sign. The agent cannot sign for you.</li>
+      </ul>
+    </section>}
+  </div>
+}
+
 /** `technical`: more facts for the ONE "Technical details" expander of the review (the panel's own: action, fingerprint, device). */
 export function SignContent({ content, ws, technical, compact = false }: { content: Content; ws?: string; technical?: ReactNode; compact?: boolean }) {
   const members = useWorkspaceMembers(ws)
@@ -163,12 +204,17 @@ export function SignContent({ content, ws, technical, compact = false }: { conte
   // A request on an EXISTING ticket keeps its key (the host's word) and the end of the signed id in the main view; a creation
   // (it signs the key and the title) has them under Technical details only.
   const ticketLine = content.ticket && content.ticket.new !== true
+  const gate = /^(Approve|Ask for changes to|Give the verdict)/.test(content.headline ?? '') && !!content.sections?.some(s => GATE_SECTIONS.includes(s.id))
+  const gateSections = content.sections?.filter(s => GATE_SECTIONS.includes(s.id)) ?? []
+  const acceptanceEl = !!content.acceptance?.length && <section><h3 className="mb-2 text-[13px] font-medium text-text">{gate ? 'How we know it is done' : 'Acceptance criteria'}</h3><ul className="space-y-2 leading-relaxed">{content.acceptance.map(a => <li key={a.id}><span aria-label={a.checked ? 'Checked' : 'Unchecked'}>{a.checked ? '☑' : '☐'}</span> <Inline>{a.text}</Inline> <span className="text-[12px] text-text-muted [&_bdi]:text-text-muted"><Raw>{a.id}</Raw></span>{a.manual && <p className="text-[12px] text-text-muted"><Inline>{a.manual}</Inline></p>}</li>)}</ul></section>
+  const tasksEl = !!content.tasks?.length && <section><h3 className="mb-2 text-[13px] font-medium text-text">{gate ? 'Steps' : 'Plan tasks'}</h3><ol className="list-decimal space-y-3 pl-5 leading-relaxed">{content.tasks.map(t => <li key={t.n} value={t.n}><Inline>{t.title}</Inline> <span className="text-[12px] text-text-muted [&_bdi]:text-text-muted"><Raw>{t.id}</Raw></span>{t.verify?.map((v,i) => <p key={i} className="mt-1 font-mono text-[12px] leading-relaxed text-text-muted [&_bdi]:text-text-muted">Verify: <Value>{v}</Value></p>)}</li>)}</ol></section>
   const rest = <>
     {ticketLine && content.ticket && <p data-testid="sign-ticket" className="text-[12px] text-text-muted"><Raw>{content.ticket.key}</Raw> (key per host) · signed id …<Raw>{content.ticket.uid_tail}</Raw></p>}
-    {content.sections?.map(s => <section key={s.id}><h3 className="mb-2 text-[13px] font-medium text-text"><Inline>{s.title}</Inline></h3><Prose className="font-sans leading-relaxed text-text">{s.text}</Prose></section>)}
+    {gate ? <GateText sections={gateSections} approving={/^Approve /.test(content.headline ?? '')} acceptance={acceptanceEl} tasks={tasksEl} /> : null}
+    {content.sections?.filter(s => !gate || !GATE_SECTIONS.includes(s.id)).map(s => <section key={s.id}><h3 className="mb-2 text-[13px] font-medium text-text"><Inline>{s.title}</Inline></h3><Prose className="font-sans leading-relaxed text-text">{s.text}</Prose></section>)}
     <Pictures images={content.images} />
-    {!!content.acceptance?.length && <section><h3 className="mb-2 text-[13px] font-medium text-text">Acceptance criteria</h3><ul className="space-y-2 leading-relaxed">{content.acceptance.map(a => <li key={a.id}><span aria-label={a.checked ? 'Checked' : 'Unchecked'}>{a.checked ? '☑' : '☐'}</span> <Inline>{a.text}</Inline> <span className="text-[12px] text-text-muted [&_bdi]:text-text-muted"><Raw>{a.id}</Raw></span>{a.manual && <p className="text-[12px] text-text-muted"><Inline>{a.manual}</Inline></p>}</li>)}</ul></section>}
-    {!!content.tasks?.length && <section><h3 className="mb-2 text-[13px] font-medium text-text">Plan tasks</h3><ol className="list-decimal space-y-3 pl-5 leading-relaxed">{content.tasks.map(t => <li key={t.n} value={t.n}><Inline>{t.title}</Inline> <span className="text-[12px] text-text-muted [&_bdi]:text-text-muted"><Raw>{t.id}</Raw></span>{t.verify?.map((v,i) => <p key={i} className="mt-1 font-mono text-[12px] leading-relaxed text-text-muted [&_bdi]:text-text-muted">Verify: <Value>{v}</Value></p>)}</li>)}</ol></section>}
+    {!gate && acceptanceEl}
+    {!gate && tasksEl}
     {!!content.fields_changed?.length && <section><h3 className="mb-2 text-[13px] font-medium text-text"><Inline>{content.fields_title ?? 'Changed fields'}</Inline></h3><dl className="space-y-3">{content.fields_changed.map(f => <div key={f.field} className="grid min-w-0 grid-cols-1 gap-x-4 gap-y-1 sm:grid-cols-[7rem_minmax(0,1fr)]"><dt className="text-text-muted"><Inline>{`${cap(f.field)}:`}</Inline></dt> <dd className="min-w-0 text-text [&_bdi]:font-sans [&_bdi]:text-[13px]">{(content.fields_title || /: (add|remove)$/.test(f.field) || / \(unchanged, per host\)$/.test(f.field)) && f.before == null ? null : <><Shown plain value={f.before} members={members} />{f.before_note && <span className="text-text-muted"> (<Raw>{f.before_note}</Raw>)</span>} → </>}<Shown plain value={f.field === 'type' && f.after ? (TYPE_WORDS[f.after] ?? f.after) : f.after} members={members} empty="(not set)" /></dd></div>)}</dl></section>}
     {cancels.length > 0 && <section aria-label="Signing cancels">
       <h3 className="text-[13px] font-medium">Signing cancels:</h3>

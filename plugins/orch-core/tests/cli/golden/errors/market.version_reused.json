@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "market.version_reused",
+    "message": "the version number is installed with other bytes",
+    "hint": "raise the version",
+    "fix": {
+      "argv": [
+        "orch",
+        "market",
+        "list"
+      ]
+    },
+    "retryable": false
+  }
+}

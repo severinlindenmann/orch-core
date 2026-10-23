@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "market.address_refused",
+    "message": "the marketplace host resolves to an address orch does not connect to",
+    "hint": "only public addresses are used",
+    "fix": {
+      "argv": [
+        "orch",
+        "market",
+        "list"
+      ]
+    },
+    "retryable": false
+  }
+}

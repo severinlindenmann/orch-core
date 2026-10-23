@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "market.capability_ceiling",
+    "message": "the add-on asks for more than the hub allows",
+    "hint": "ask the hub admin",
+    "fix": {
+      "argv": [
+        "orch",
+        "market",
+        "list"
+      ]
+    },
+    "retryable": false
+  }
+}

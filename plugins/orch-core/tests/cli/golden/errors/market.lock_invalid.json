@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "market.lock_invalid",
+    "message": "the lockfile breaks the lockfile rules",
+    "hint": "fix the package",
+    "fix": {
+      "argv": [
+        "orch",
+        "market",
+        "list"
+      ]
+    },
+    "retryable": false
+  }
+}

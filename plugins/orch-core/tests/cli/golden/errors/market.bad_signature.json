@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "market.bad_signature",
+    "message": "a signature does not verify",
+    "hint": "the entry is refused",
+    "fix": {
+      "argv": [
+        "orch",
+        "market",
+        "list"
+      ]
+    },
+    "retryable": false
+  }
+}

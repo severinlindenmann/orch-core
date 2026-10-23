@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "market.host_not_allowed",
+    "message": "the add-on repository host is not allowed",
+    "hint": "orch market list",
+    "fix": {
+      "argv": [
+        "orch",
+        "market",
+        "list"
+      ]
+    },
+    "retryable": false
+  }
+}

@@ -5,7 +5,8 @@ signed: it only chooses which button is primary in a sign dialog. What may be us
 ``sign_methods`` (the host's ``workspace.settings``); a default that names a way the workspace does not allow is
 refused here, and one that stopped being allowed later is not used (the dialog falls back to ``terminal``, which is
 always allowed). With no stored default, the effective one is ``click`` while the workspace has one-click signing
-switched on (else ``terminal``), so every dialog and the Settings form agree. Nothing here signs, reads a key or changes the workspace.
+switched on (else ``terminal``), so every dialog and the Settings form agree. Nothing here signs, reads a key or
+changes the workspace.
 """
 
 import json

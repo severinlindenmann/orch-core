@@ -94,9 +94,15 @@ def rotate(
     old = device_ref(old_pub)
     ws = _model(entry)
     dev = ws.devices.get(old)
+    stage = keys.parent / STAGE
+    if dev is not None and dev.person == person and dev.removed and (stage / human.KEY_FILE).is_file():
+        # a run that died after device.rotated landed, before the new key was installed: finish installing it
+        staged_pub = opener(stage).public_key(KEY_ID)
+        fresh = ws.devices.get(device_ref(staged_pub))
+        if fresh is not None and fresh.person == person and not fresh.removed and not fresh.revoked:
+            return _install(state_dir, wid, keys, stage, sel, old, device_ref(staged_pub))
     if dev is None or dev.person != person or dev.removed or dev.revoked:
         raise CustodyError("the device key on this machine is not a valid device of yours in this workspace")
-    stage = keys.parent / STAGE
     clock = now_ms or (lambda: int(time.time() * 1000))
 
     staged = opener(stage)
@@ -162,8 +168,16 @@ def rotate(
         finally:
             if link:
                 link[0].close()
-    # the event is in the log: the new key becomes THE key here; the old copy and any convenience leftovers go
-    if sel is not None:  # a selection of an earlier move (back to passphrase custody): it names the old device
+    return _install(state_dir, wid, keys, stage, sel, old, new)
+
+
+def _install(state_dir: Path, wid: str, keys: Path, stage: Path, sel: Any, old: str, new: str) -> dict[str, Any]:
+    """The event is in the log: the staged key becomes THE key here; the old copy and any selection go."""
+    from orch.ops import human
+
+    from . import select
+
+    if sel is not None:  # a selection of an earlier move (back to passphrase custody) names the old device
         select.forget(state_dir, wid)
     os.replace(stage / human.KEY_FILE, keys / human.KEY_FILE)
     try:

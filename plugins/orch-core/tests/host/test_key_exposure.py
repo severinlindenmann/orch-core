@@ -85,12 +85,11 @@ def test_the_headline_forgery_a_copied_exposed_key_cannot_forge_a_passphrase_lab
     assert hub["status"] == "joined"
 
 
-def test_keys_rotate_is_refused_for_an_exposed_key(human, served, stub, keystore, monkeypatch):
-    from orch.custody import select
-
-    owner = served.lab.ws.owner
-    monkeypatch.setattr(select, "status", lambda *_a, **_k: {"custody": "passphrase", "device": owner.device, "gen": 0})
+def test_keys_rotate_is_refused_for_an_exposed_key_read_from_the_roster(human, served, stub, keystore):
+    assert hubsign.local_key_exposed(served.service, None) is True  # unknown person: fail closed
+    assert hubsign.local_key_exposed(served.service, served.lab.ws.owner.ref) is False
     human.run("device.mark_exposed", {})
+    assert hubsign.local_key_exposed(served.service, served.lab.ws.owner.ref) is True
     assert err(served.client().req("keys.rotate", {}, idem=True)) == "sign.key_exposed"
 
 

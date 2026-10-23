@@ -144,17 +144,16 @@ def refusal(
     return None
 
 
-def local_key_exposed(service: Any) -> bool:
-    """#1097: does the signed log say the device key held on this machine for the workspace was ever in convenience
-    custody? For the acts that write no event (``keys.rotate``); the same model flag as :func:`signer_kind`."""
-    from orch.custody import select
-
+def local_key_exposed(service: Any, person: str | None) -> bool:
+    """#1097: does the signed log mark a live device of ``person`` as exposed? Read from the roster, not from custody
+    files; fails closed (an unreadable roster or an unknown person counts as exposed). For ``keys.rotate``."""
     try:
-        device = select.status(service.state_dir, service.workspace_id).get("device")
-    except Exception:  # noqa: BLE001 - fail closed on an unreadable custody state
+        if person is None:
+            return True
+        devs = service.store.state.workspace.devices.values()
+        return any(d.person == person and not d.removed and not d.revoked and d.exposed for d in devs)
+    except Exception:  # noqa: BLE001 - fail closed
         return True
-    dev = service.store.state.workspace.devices.get(device) if device else None
-    return bool(dev is not None and dev.exposed)
 
 
 def _click_custody(service: Any) -> bool:

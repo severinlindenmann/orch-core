@@ -57,7 +57,7 @@ class _MarkBackend:
 
 
 def marked(entry: Mapping[str, Any], device: str) -> bool:
-    """Does the signed log say ``device`` was in convenience custody (a mark, or a convenience-labelled line)?
+    """Does the signed log say ``device`` was in convenience custody (a signed ``device.exposed`` mark)?
     Read-only. Fails closed: an unreadable log counts as not marked (so the mark is attempted and fails visibly)."""
     from orch.store import Store, StoreError
 
@@ -85,8 +85,8 @@ def mark_before_move(
     call: Callable[..., Any] | None = None,
 ) -> None:
     """Sign and admit ``device.exposed`` for ``device`` (the host serving ``workspace_id`` appends it), unless the log
-    already says so. A workspace this host does not serve has no log to mark and nothing signs for it: a no-op, like
-    :func:`orch.custody.select.refuse_full_mode`. Raises on any failure; the caller has written nothing yet.
+    already says so. A workspace this host does not serve has no log to mark: refused, nothing moves.
+    Raises on any failure; the caller has written nothing yet.
     ``entry`` and ``call`` are seams for tests (the registry entry, and the host call of the signer composite)."""
     from orch import hostclient
     from orch.host import convenience as host_convenience
@@ -95,7 +95,12 @@ def mark_before_move(
 
     uid = os.getuid()
     entry = entry if entry is not None else host_convenience.registered_entry(state_dir, workspace_id, uid)
-    if entry is None or marked(entry, device):
+    if entry is None:  # (#1138 review) an unregistered workspace has no log to mark: nothing may move
+        raise CustodyError(
+            "this workspace is not registered with the orch host here, so the exposure mark cannot be written; "
+            "the key was not moved"
+        )
+    if marked(entry, device):
         return
     person = ((entry.get("peers") or {}).get(str(uid)) or {}).get("person")
     host_uid = entry.get("host_uid")

@@ -106,6 +106,46 @@ class RecordingStore:
         self.log.append("put")
 
 
+def test_mark_before_move_refuses_a_workspace_without_a_registry_entry(served):
+    owner = served.lab.ws.owner
+    with pytest.raises(CustodyError, match="not registered"):
+        exposure.mark_before_move(
+            served.lab.state, "ab" * 16, owner.device, crypto.private_scalar(owner.dk_sig), owner.sig_pub
+        )
+
+
+def test_stage_convenience_moves_nothing_for_an_unregistered_workspace(tmp_path, monkeypatch):
+    class Owner:
+        dk_sig = crypto.generate_private_key()
+        sig_pub = crypto.public_bytes(dk_sig)
+
+    order = []
+    monkeypatch.setattr(select, "_legacy_backend", lambda *a, **k: FakeLegacy(Owner))
+    monkeypatch.setattr(select, "_write_selection", lambda *a, **k: order.append("selection"))
+    with pytest.raises(CustodyError, match="not registered"):
+        select.stage_convenience(tmp_path, "cd" * 16, store=RecordingStore(order))
+    assert order == []
+
+
+def test_stage_convenience_unpatched_writes_the_mark_through_the_host_socket_before_the_key_store(
+    served, old_key_on_disk, monkeypatch
+):
+    """The real path: registry entry, ``peers[uid]``, the workspace socket, prepare/sign/submit, then ``store.put``."""
+    from orch.ops import human as ops_human
+
+    owner = served.lab.ws.owner
+    monkeypatch.setattr(ops_human, "open_backend", backend_over)
+    monkeypatch.setenv("ORCH_HOST_RUN_DIR", str(served.lab.run))
+    seen = []
+
+    class Store(RecordingStore):
+        def put(self, *a, **k):
+            seen.append(device_of(served, owner.device).exposed)  # the mark is in the log when the copy is made
+
+    select.stage_convenience(served.lab.state, served.wid, store=Store([]))
+    assert seen == [True]
+
+
 def test_stage_convenience_marks_before_the_first_key_store_write(served, monkeypatch):
     owner = served.lab.ws.owner
     order = []
@@ -229,3 +269,24 @@ def test_rotate_refuses_while_the_key_is_in_convenience_custody(served, old_key_
     monkeypatch.setattr(convenience, "enabled", lambda *a, **k: True)
     with pytest.raises(CustodyError, match="one-click"):
         run_rotate(served)
+
+
+def test_rotate_resumes_after_a_crash_between_the_event_and_the_install(served, old_key_on_disk, monkeypatch):
+    owner = served.lab.ws.owner
+
+    class Crash(Exception):
+        pass
+
+    def die(*a, **k):
+        raise Crash
+
+    monkeypatch.setattr(rotate, "_install", die)
+    with pytest.raises(Crash):
+        run_rotate(served)  # device.rotated landed, the new key was not installed
+    assert device_of(served, owner.device).removed
+    assert backend_over(old_key_on_disk).public_key("dk") == owner.sig_pub  # still the old (dead) key on disk
+    monkeypatch.undo()
+    out = run_rotate(served, pk_factory=None)  # the rerun needs no recovery code and signs nothing
+    installed = backend_over(old_key_on_disk).public_key("dk")
+    assert installed != owner.sig_pub and out["device"] != owner.device
+    assert not device_of(served, out["device"]).removed

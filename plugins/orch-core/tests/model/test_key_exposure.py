@@ -1,6 +1,6 @@
 """#1097 (design-1097-key-exposure v2): a device key with positive evidence of convenience custody (a signed
-``device.exposed`` mark, or an admitted line of that device with ``auth: "convenience"``) may not enter full hub mode
-or sign break-glass, whatever ``auth`` label it writes. A key with no such evidence counts as clean. Only a new key
+``device.exposed`` mark) may not enter full hub mode or sign break-glass, whatever ``auth`` label it writes. A key
+with no mark counts as clean. Only a new key
 (``device.rotated``) clears the exposure."""
 
 from __future__ import annotations
@@ -116,9 +116,9 @@ def test_the_hub_mode_reaffirmation_is_refused_for_an_exposed_key_and_allowed_fo
     assert admit(strict(w), reaffirm(w, "sev"), log="workspace").code == Code.SIGN_KEY_EXPOSED
 
 
-def test_clean_keys_are_unaffected_a_legacy_key_leaves_and_reaffirms(w):
+def test_clean_keys_are_unaffected_an_unmarked_key_leaves_and_reaffirms(w):
     assert not hasattr(admit(strict(w), leave(w, w.b), log="workspace"), "code")
-    assert not hasattr(admit(strict(w), leave(w, "sev"), log="workspace"), "code")  # A has no evidence: clean
+    assert not hasattr(admit(strict(w), leave(w, "sev"), log="workspace"), "code")  # A has no mark: clean
     assert not hasattr(admit(strict(w), reaffirm(w, "sev"), log="workspace"), "code")
 
 

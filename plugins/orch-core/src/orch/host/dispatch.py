@@ -96,6 +96,8 @@ from .columns import OpKind
 from .errors import HostError
 from .hubops import HUB_OPS
 from .hubops import NETWORK_OPS as HUB_NETWORK_OPS
+from .marketops import MARKET_OPS, MARKET_READS
+from .marketops import NETWORK_OPS as MARKET_NETWORK_OPS
 from .outcomes import BUILDERS, Planned, request_idem
 from .peerops import NETWORK_OPS as PEER_NETWORK_OPS
 from .peerops import PEER_OPS, PEER_READS
@@ -239,6 +241,7 @@ def served_ops() -> dict[str, int]:
     out.update(HUB_OPS)  # V3 C2a: hub.connect, hub.unbind, hub.status
     out.update(PEER_OPS)  # V3 C12: peer.* (ws->ws through the hub)
     out.update(SPACE_OPS)  # V3 C13: space.* (shared spaces through the hub)
+    out.update(MARKET_OPS)  # V3 G2: market.* (the add-on marketplace)
     out.update(SHARE_OPS)  # V3 C6: share.* (selective-mode share rules)
     out.update(GRANT_OPS)  # H11c: grant.deposit, grant.deposit_status, grant.forget (cap run/1)
     out.update(AGENT_OPS)  # H11c: agent.preview, agent.start (cap run/1)
@@ -299,6 +302,8 @@ def op_kind(name: str) -> tuple[OpKind, Phase] | None:
         return ("person_read", "read") if name in SHARE_READS else ("person_write", "write")
     if name in SPACE_OPS:  # V3 C13: list and get for P and G (untrusted data), the rest P only (owner role)
         return ("pg_read", "read") if name in SPACE_READS else ("person_write", "write")
+    if name in MARKET_OPS:  # V3 G2: P and G; the op itself refuses an agent's add and --commit (market.actor_refused)
+        return ("pg_read", "read") if name in MARKET_READS else ("pg_write", "write")
     if name in READ_OPS:  # H6b: session.list and grant.list are P and G only (§0.5)
         return ("pg_read" if name in PERSON_GRANT_READS else "read", "read")
     if name in HOST_PERSON_OPS:  # move, policy.set, settings.set: through human.* only; a plain req is human_only
@@ -499,6 +504,10 @@ class RegistryBackend:
             from . import shareops
 
             return await shareops.execute(call, result)
+        if op in MARKET_NETWORK_OPS:  # V3 G2: DNS and git, off the workspace worker, no lock held
+            from . import marketops
+
+            return await marketops.execute(call, result)
         if op in SPACE_NETWORK_OPS:  # V3 C13: the hub link, off the workspace worker
             from . import spaceops
 
@@ -707,6 +716,10 @@ class RegistryBackend:
                 from . import spaceops
 
                 result = spaceops.serve(call)
+            elif op in MARKET_OPS:
+                from . import marketops
+
+                result = marketops.serve(call)
             elif op in PEER_OPS:
                 from . import peerops
 

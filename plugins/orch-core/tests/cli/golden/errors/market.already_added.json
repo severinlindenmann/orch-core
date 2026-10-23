@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "market.already_added",
+    "message": "this marketplace is already added",
+    "hint": "orch market refresh",
+    "fix": {
+      "argv": [
+        "orch",
+        "market",
+        "list"
+      ]
+    },
+    "retryable": false
+  }
+}

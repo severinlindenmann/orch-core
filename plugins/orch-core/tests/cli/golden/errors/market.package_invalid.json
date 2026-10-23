@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "market.package_invalid",
+    "message": "the package breaks the package rules",
+    "hint": "fix the package",
+    "fix": {
+      "argv": [
+        "orch",
+        "market",
+        "list"
+      ]
+    },
+    "retryable": false
+  }
+}

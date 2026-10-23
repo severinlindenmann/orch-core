@@ -86,6 +86,10 @@ transport)
 ``store/observe``, ``ops/caps.Git`` (direct mode),      **no git process** (#565): :data:`orch.gitread.local.READER`
 ``hostclient``, ``worktree_cli`` reads, D58 direct,     in-process, config read as data (three keys)
 dashboard dev host ``devhost/reads.diff``
+``gitsafe.market_fetch`` / ``market_read_blob``          V3 G2, the first **https** operation: its own env builder
+(``orch market``: the index of a marketplace)           (:func:`_market_env`, not :func:`_net_env`), closed ``-c``
+                                                        settings, a checked address pinned with ``curloptResolve``,
+                                                        no checkout (plumbing reads one blob into memory)
 ``gitread/*`` (host mode)                               no git process (a pure-Python reader in a sandbox child)
 ======================================================  ===========================================================
 
@@ -123,6 +127,8 @@ __all__ = [
     "ALLOWED", "ALLOWED_SUB", "HARDEN", "INVARIANT", "ISOLATION", "KNOWN_EXEC", "LAND_OPS", "NEUTRAL", "OPS", "PINNED",
     "NetSpec", "Op", "Unsafe", "command", "pinned", "config_env", "config_files", "exec_risk", "gate", "isolated_env",
     "land_check", "land_init", "local_config", "target_tracking_ref",
+    "MARKET_FETCH_SECONDS", "MARKET_MAX_PACK", "MarketGitError", "market_fetch", "market_fetch_argv",
+    "market_read_blob",
 ]  # fmt: skip
 
 INVARIANT = (
@@ -1043,3 +1049,164 @@ def gate(repo: str, own: Mapping[str, str], *, timeout: float = GATE_SECONDS) ->
                      "(a key that could make git run a program or read config elsewhere); orch does not run git there "
                      "(remove it, or configure it globally)")  # fmt: skip
     return entries
+
+
+# ------------------------------------------------------------------------------------------------ marketplace (G2)
+#: wall-clock limit of one marketplace fetch, and the byte cap of everything it may write into the staging directory
+MARKET_FETCH_SECONDS = 60.0
+MARKET_MAX_PACK = 4 << 20
+MARKET_MIN_GIT = (2, 37)  # http.curloptResolve (the address that passed the checks is the address git connects to)
+_OBJECT_ID = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})(?![\s\S])")
+_MARKET_URL = re.compile(r"https://[a-z0-9.-]{1,253}(?:/[A-Za-z0-9][A-Za-z0-9._~-]{0,99}){1,6}(?![\s\S])")
+_IPV4 = re.compile(r"\d{1,3}(?:\.\d{1,3}){3}(?![\s\S])")
+_IPV6 = re.compile(r"[0-9a-f:]{2,39}(?![\s\S])")
+
+
+class MarketGitError(Exception):
+    """A marketplace git operation failed; ``kind`` is ``redirect``, ``failed`` or ``too_big``."""
+
+    def __init__(self, kind: str) -> None:
+        super().__init__(kind)
+        self.kind = kind
+
+
+def _market_env(home: str) -> dict[str, str]:
+    """The environment of a marketplace git command, built from scratch: nothing of the caller (no ``GIT_*``, proxy,
+    ``SSL_CERT_FILE``/``CURL_CA_BUNDLE``, ssh or askpass variable), a throw-away ``HOME``, no system or global
+    configuration, https as the only protocol. A separate builder: :func:`_net_env` (ssh only) is not widened."""
+    env = isolated_env({"HOME": home, "PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin", "TMPDIR": home})
+    env.update(GIT_ALLOW_PROTOCOL="https", GIT_CONFIG_GLOBAL=os.devnull, XDG_CONFIG_HOME=home)
+    return env
+
+
+_MARKET_C = (
+    "-c", "protocol.allow=never", "-c", "protocol.https.allow=always", "-c", "http.followRedirects=false",
+    "-c", "http.proxy=", "-c", "http.sslVerify=true", "-c", "http.sslCAInfo=", "-c", "http.sslCAPath=",
+    "-c", "http.extraHeader=", "-c", "http.cookieFile=", "-c", "credential.helper=", "-c", "core.askPass=",
+    "-c", "transfer.fsckObjects=true", "-c", "fetch.fsckObjects=true", "-c", "core.hooksPath=/dev/null",
+    "-c", "core.fsmonitor=false", "-c", "core.symlinks=false", "-c", "submodule.recurse=false",
+    "-c", "http.lowSpeedLimit=1000", "-c", "http.lowSpeedTime=20", "-c", "core.attributesFile=/dev/null",
+)  # fmt: skip
+
+
+def market_fetch_argv(url: str, commit: str | None, host: str, address: str, staging: str) -> list[str]:
+    """The argv of the one marketplace fetch: ``commit`` (a full object id) or, with ``None``, the remote's ``HEAD``.
+    ``address`` (already judged by ``orch.market.address``) is what ``http.curloptResolve`` pins for ``host``, so git
+    does not look the name up again. Callers pass a URL, a commit and an address and cannot add an option."""
+    if _MARKET_URL.fullmatch(url) is None or url.split("/")[2] != host:
+        raise Unsafe("invalid marketplace url")
+    if commit is not None and _OBJECT_ID.fullmatch(commit) is None:
+        raise Unsafe("invalid commit")
+    if not (_IPV4.fullmatch(address) or (_IPV6.fullmatch(address) and ":" in address)):
+        raise Unsafe("invalid address")
+    resolved = f"{host}:443:[{address}]" if ":" in address else f"{host}:443:{address}"
+    return [
+        _git_exe(), "-C", staging, *_MARKET_C, "-c", f"http.curloptResolve={resolved}",
+        "fetch", "--depth", "1", "--no-tags", "--no-recurse-submodules", "--quiet", "--", url, commit or "HEAD",
+    ]  # fmt: skip
+
+
+def _market_run(
+    argv: list[str], home: str, staging: str, *, timeout: float, cap: int, stdout_cap: int = 1 << 20
+) -> bytes:
+    """Run one marketplace git command in its own process group with a wall-clock limit, ``RLIMIT_FSIZE`` in the child
+    and a watchdog on the staging directory's size (the cap is a mechanism, not a hope)."""
+    import resource
+    import threading
+    import time
+
+    def limits() -> None:
+        resource.setrlimit(resource.RLIMIT_FSIZE, (cap, cap))
+        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+
+    try:
+        proc = subprocess.Popen(  # noqa: S603 - fixed argv built above
+            argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=_market_env(home),
+            cwd="/", start_new_session=True, preexec_fn=limits,  # noqa: PLW1509
+        )  # fmt: skip
+    except OSError:
+        raise MarketGitError("failed") from None
+    done = threading.Event()
+    killed: list[str] = []
+
+    def kill(why: str) -> None:
+        killed.append(why)
+        with contextlib.suppress(OSError):
+            os.killpg(proc.pid, signal.SIGKILL)
+
+    def watch() -> None:
+        deadline = time.monotonic() + timeout
+        while not done.wait(0.1):
+            if time.monotonic() > deadline:
+                return kill("failed")
+            total = 0
+            for root, _dirs, files in os.walk(staging):
+                for f in files:
+                    with contextlib.suppress(OSError):
+                        total += os.lstat(os.path.join(root, f)).st_size
+            if total > cap:
+                return kill("too_big")
+
+    t = threading.Thread(target=watch, daemon=True)
+    t.start()
+    try:
+        out, err = proc.communicate()
+    finally:
+        done.set()
+        with contextlib.suppress(OSError):
+            os.killpg(proc.pid, signal.SIGKILL)  # nothing of the group outlives the call
+    t.join(1)
+    if killed:
+        raise MarketGitError(killed[0])
+    if proc.returncode != 0:
+        low = err[:4000].lower()
+        raise MarketGitError("redirect" if b"redirect" in low else "failed")
+    if len(out) > stdout_cap:
+        raise MarketGitError("too_big")
+    return out
+
+
+def market_fetch(url: str, commit: str | None, host: str, address: str, staging: str) -> str:
+    """Fetch ``commit`` (or the remote ``HEAD``) of a marketplace into the empty private directory ``staging`` (a
+    fresh ``git init --template=``, object format by the length of ``commit``; sha1 for ``HEAD``). Returns the full
+    object id fetched, which equals ``commit`` when one was given. A git older than 2.37 is refused."""
+    if not staging.startswith("/") or "\0" in staging:
+        raise Unsafe("invalid staging directory")
+    if git_version({"PATH": _market_env(staging)["PATH"]}) < MARKET_MIN_GIT:
+        raise MarketGitError("failed")
+    fmt = "sha256" if commit is not None and len(commit) == 64 else "sha1"
+    argv = market_fetch_argv(url, commit, host, address, staging)  # validates every operand before anything runs
+    _market_run([_git_exe(), "init", "--quiet", "--template=", f"--object-format={fmt}", staging], staging, staging,
+                timeout=10, cap=MARKET_MAX_PACK)  # fmt: skip
+    _market_run(argv, staging, staging, timeout=MARKET_FETCH_SECONDS, cap=MARKET_MAX_PACK)
+    got = _market_run([_git_exe(), "-C", staging, "rev-parse", "--verify", "FETCH_HEAD^{commit}"], staging, staging,
+                      timeout=10, cap=MARKET_MAX_PACK).decode("ascii", "replace").strip()  # fmt: skip
+    if _OBJECT_ID.fullmatch(got) is None or (commit is not None and got != commit):
+        raise MarketGitError("failed" if _OBJECT_ID.fullmatch(got) is None else "mismatch")
+    return got
+
+
+def market_read_blob(staging: str, commit: str, path: str, limit: int) -> bytes:
+    """The bytes of the single file ``path`` (top level, no ``/``) at ``commit``, read through plumbing only: no
+    checkout, so no filter, ``.gitattributes``, ``export-ignore`` or hook can touch a byte. ``ls-tree`` is asked for
+    that one path (never ``-r``: a huge tree is not listed) and judged before the blob is read: a regular file
+    (``100644``/``100755``), not larger than ``limit``. Raises ``MarketGitError('failed')`` otherwise."""
+    if (
+        _OBJECT_ID.fullmatch(commit) is None
+        or "/" in path
+        or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", path)
+    ):
+        raise Unsafe("invalid operand")
+    home = staging
+    listing = _market_run([_git_exe(), "-C", staging, "ls-tree", "-z", "-l", commit, "--", path], home, staging,
+                          timeout=10, cap=MARKET_MAX_PACK)  # fmt: skip
+    rows = [r for r in listing.split(b"\0") if r]
+    m = re.fullmatch(rb"(\d{6}) blob ([0-9a-f]{40,64}) +(\d+)\t(.+)", rows[0], re.S) if len(rows) == 1 else None
+    if m is None or m.group(4) != path.encode() or m.group(1) not in (b"100644", b"100755") or int(m.group(3)) > limit:
+        raise MarketGitError("failed")
+    oid = m.group(2).decode("ascii")
+    data = _market_run([_git_exe(), "-C", staging, "cat-file", "blob", oid], home, staging, timeout=10,
+                       cap=MARKET_MAX_PACK, stdout_cap=limit)  # fmt: skip
+    if len(data) != int(m.group(3)):
+        raise MarketGitError("failed")
+    return data

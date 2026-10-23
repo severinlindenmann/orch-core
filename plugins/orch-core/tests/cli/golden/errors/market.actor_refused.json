@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "market.actor_refused",
+    "message": "a person does this at their own terminal; an agent cannot",
+    "hint": "ask the person",
+    "fix": {
+      "argv": [
+        "orch",
+        "market",
+        "list"
+      ]
+    },
+    "retryable": false
+  }
+}

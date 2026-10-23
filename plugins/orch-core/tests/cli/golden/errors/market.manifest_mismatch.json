@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "market.manifest_mismatch",
+    "message": "the manifest and the index entry disagree",
+    "hint": "the entry is refused",
+    "fix": {
+      "argv": [
+        "orch",
+        "market",
+        "list"
+      ]
+    },
+    "retryable": false
+  }
+}

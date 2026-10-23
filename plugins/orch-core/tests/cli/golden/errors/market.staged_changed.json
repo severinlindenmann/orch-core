@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "market.staged_changed",
+    "message": "the staged package changed after review",
+    "hint": "start again",
+    "fix": {
+      "argv": [
+        "orch",
+        "market",
+        "list"
+      ]
+    },
+    "retryable": false
+  }
+}

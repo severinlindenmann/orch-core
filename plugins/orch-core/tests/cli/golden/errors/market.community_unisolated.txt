@@ -1,0 +1,1 @@
+err market.community_unisolated only the official marketplace can be added for now · retry:false · next: other marketplaces need per-add-on user isolation · fix: orch market list

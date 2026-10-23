@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "market.rollback",
+    "message": "this is older than what was already seen",
+    "hint": "an older index or entry is refused",
+    "fix": {
+      "argv": [
+        "orch",
+        "market",
+        "list"
+      ]
+    },
+    "retryable": false
+  }
+}

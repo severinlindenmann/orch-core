@@ -6,6 +6,8 @@
     orch hub leave                                                                       a person: leave (signed)
     orch hub connect INVITE --hub-card FILE   a person: finish a join the hub could not take yet
     orch hub unbind                           a person: tell the hub about a leave it has not heard yet
+    orch keys rotate                          a person: break-glass, a new workspace key epoch now (owner, terminal)
+    orch hub history [--hub ID] [--since TS]  a person: what a hub did here, hub-made policy and grants first
     orch hub status [--refresh]               a person: the joined hub, the link state and the pinned snapshot
     orch hub share rule list                  a person: what a selective workspace shares (rules and counts)
     orch hub share rule add|remove (--tag T | --type T | --ticket KEY | --questions | --needs-you)
@@ -54,7 +56,9 @@ def _parser() -> argparse.ArgumentParser:
             raise PubError("invalid.input", f"{message}\n{_USAGE}", 2)
 
     p = Quiet(prog="orch hub", add_help=False)
-    p.add_argument("cmd", choices=("join", "mode", "leave", "connect", "unbind", "status", "share"))
+    p.add_argument(
+        "cmd", choices=("join", "mode", "leave", "connect", "unbind", "status", "share", "rotate", "history")
+    )
     p.add_argument("--tag")
     p.add_argument("--type", dest="ttype")
     p.add_argument("--ticket")
@@ -68,6 +72,8 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--refresh", action="store_true")
     p.add_argument("--json", action="store_true")
     p.add_argument("--workspace")
+    p.add_argument("--hub")
+    p.add_argument("--since")
     return p
 
 
@@ -104,7 +110,7 @@ def _read_card(path: str) -> dict[str, Any]:
 
 
 def _check_shape(a: argparse.Namespace) -> None:
-    n = {"join": 1, "mode": 1, "connect": 1, "leave": 0, "unbind": 0, "status": 0}[a.cmd]
+    n = {"join": 1, "mode": 1, "connect": 1, "leave": 0, "unbind": 0, "status": 0, "rotate": 0, "history": 0}[a.cmd]
     if len(a.rest) != n and not (a.cmd == "connect" and not a.rest):  # connect: the invite is for a new join only
         raise PubError("invalid.input", _USAGE, 2)
     if (a.refresh and a.cmd != "status") or (a.cmd == "status" and a.hub_card and not a.refresh):
@@ -175,8 +181,47 @@ def _connect(target: Any, env: Mapping[str, str], a: argparse.Namespace, out: Te
     return 0
 
 
+def _rotate_text(d: Mapping[str, Any]) -> str:
+    if d.get("rotated"):
+        return f"ok new workspace key: epoch {d.get('epoch')} (made here; nothing was sent to any hub)"
+    return "ok a new workspace key is requested; it is made with the next membership update (orch hub status)"
+
+
+def review_text(d: Mapping[str, Any]) -> str:
+    """M5, in the order the owner must read it: hub-made policy, settings, device and grant lines first (each with the
+    local command that undoes it), then tickets stuck without the hub, then everything else the hub did."""
+    lines = [f"What hub {clean_line(str(d.get('hub_id')))} did in this workspace:"]
+    for x in d.get("first") or ():
+        what = ", ".join(map(clean_line, map(str, x.get("gates") or x.get("keys") or ()))) or clean_line(
+            str(x.get("device", ""))
+        )
+        lines.append(f"  [{x['type']}] {what} at {x.get('at')} by {x.get('user')} via {x.get('channel')}")
+        rev = x.get("revert")
+        lines.append(
+            "    undo here: orch " + clean_line(json.dumps(rev, sort_keys=True))
+            if rev
+            else f"    {clean_line(str(x.get('note', '')))}"
+        )
+    for s in d.get("stuck") or ():
+        un = s.get("unblock")
+        lines.append(
+            f"  stuck: {clean_line(str(s['ticket']))} {s['gate']} needs {s['needed']}, "
+            f"{s['can_still_give']} can give it here"
+            + (f"; unblock: orch {clean_line(json.dumps(un, sort_keys=True))}" if un else "")
+        )
+    for x in d.get("other") or ():
+        lines.append(
+            f"  {x['type']} {x.get('ticket') or 'workspace'} at {x.get('at')} by {x.get('user')} "
+            f"via {x.get('channel')} ({x.get('factor')})"
+        )
+    lines.append("What the hub has already read stays with it: the new workspace key only protects what comes next.")
+    return "\n".join(lines)
+
+
 def _unbind(target: Any, env: Mapping[str, str], a: argparse.Namespace, out: TextIO) -> int:
     got = _call(target, "hub.unbind", {}, env)
+    if got.get("review"):
+        out.write(review_text(got["review"]) + "\n")
     if got.get("rotation") == "pending":
         _emit(
             out, a.json, got,
@@ -236,6 +281,15 @@ def main(
             return 0
         if a.cmd == "unbind":
             return _unbind(target, env, a, out)
+        if a.cmd == "rotate":
+            got = _call(target, "keys.rotate", {}, env)
+            _emit(out, as_json, got, _rotate_text(got))
+            return 0
+        if a.cmd == "history":
+            args = {k: v for k, v in (("hub_id", a.hub), ("since", a.since)) if v}
+            got = _call(target, "hub.history", args, env)
+            _emit(out, as_json, got, review_text(got))
+            return 0
         if a.cmd == "connect":
             return _connect(target, env, a, out)
         if not _tty_ok():

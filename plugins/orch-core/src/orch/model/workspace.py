@@ -536,14 +536,20 @@ def hub_joined(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
         "alias_book": {**book, e["hub_id"]: dict(aliases)},
         "ledger": ledger,
         "user_hub": user_hub,
+        **({"joined_at": e["at"]} if "at" in e else {}),  # C8 P2-b: nothing made before this binding lands under it
         **({"member": {"kind": "hub", "hub_id": e["hub_id"]}} if e["mode"] == "full" else {}),
     }
     return None
 
 
-def hub_left(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
+def hub_left(ws: WsCore, e: dict[str, Any], core: Core | None = None) -> Refusal | None:
     """``hub.left`` (owner only): ends the binding it names. It must name the hub and binding that are joined;
-    ``binding_seq`` stays as the high-water mark, so no earlier binding can come back."""
+    ``binding_seq`` stays as the high-water mark, so no earlier binding can come back.
+
+    C8 (design-c8 M2.2): from this line the hub's power is gone. Hub contract hv 0 has no reason field, so every leave
+    is treated as a compromise: the counting decisions signed by ``hub:<hub_id>/*`` in a generation that is still open
+    are voided on every unsettled ticket (``void_hub``; consumed generations stay, as for a device), and every grant
+    whose request was a line of this hub ends (``Grant.hub_id``; state, not a new line, L2-P5-1)."""
     if (r := _owner_only(ws, e)) is not None:
         return r
     h = ws.hub
@@ -551,5 +557,19 @@ def hub_left(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
         return Refusal(Code.HUB_INVALID, "this workspace is not joined to a hub")
     if e["hub_id"] != h["hub_id"] or e["binding_seq"] != h["binding_seq"]:
         return Refusal(Code.HUB_INVALID, "hub.left must name the hub and binding that are joined")
-    ws.hub = {**{k: v for k, v in h.items() if k != "member"}, "status": "left"}  # the hub member goes with the leave
+    hub_id = e["hub_id"]
+
+    def change() -> None:
+        ws.hub = {
+            **{k: v for k, v in h.items() if k != "member"},
+            "status": "left",
+        }  # the hub member goes with the leave
+        for grant in ws.grants.values():
+            if grant.hub_id == hub_id:
+                grant.revoked = True
+
+    if core is None:
+        change()
+    else:
+        cross(core, change, lambda t: generations.void_hub(ws, t, hub_id))
     return None

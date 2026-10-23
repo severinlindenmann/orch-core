@@ -105,7 +105,7 @@ export function EvidenceThumb({ a, ticket }: { a: Artifact; ticket: string }) {
   const eligible = a.bytes != null && a.bytes <= AUTO_OPEN_BYTES && !a.addon && !a.url && !NO_THUMB.test(e)
   const opts = artifactTextQuery(home?.id ?? '', ticket, a.name, a.sha256)
   const q = useQuery({ ...opts, queryFn: (c) => limited(() => (opts.queryFn as (c: unknown) => Promise<never>)(c)), enabled: seen && eligible && !!home })
-  const d = q.data
+  const d = eligible ? q.data : undefined
   let body: React.ReactNode = null
   if (d && sameDigest(d.digest, a.sha256) && d.verified && !d.truncated) {
     const m = d.media ?? d.image

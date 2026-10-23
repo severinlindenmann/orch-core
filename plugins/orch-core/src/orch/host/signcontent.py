@@ -1377,14 +1377,8 @@ EXPLORER_ROW = (
 
 def _is_builtin_explorer(ev: Mapping[str, Any]) -> bool:
     from orch.addons import builtin
-    from orch.addons.package import MANIFEST_FILE, package_digest
 
-    try:
-        return ev.get("name") == "explorer" and ev.get("package_sha256") == package_digest(
-            {MANIFEST_FILE: builtin.manifest_bytes("explorer")}
-        )
-    except (ValueError, OSError):
-        return False
+    return builtin.is_builtin_package(ev, "explorer")
 
 
 def _addon(typ: str, ev: Mapping[str, Any], out: dict[str, Any]) -> str:

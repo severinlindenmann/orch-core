@@ -414,8 +414,9 @@ def test_the_mailbox_purge_is_reachable_only_from_on_revoke_and_restart_pass():
     # the only caller of the relay's DELETE of a whole mailbox
     assert {c for c in _calls("mailbox_delete") if c[0] != "client.py"} == {("notify.py", "channel_revoked")}
     # channel_revoked is called by its async hook (the one wired to Channels.on_revoke) and by flush (the retry of
-    # pending_cleanup), and by nothing else
-    assert sorted(set(_calls("channel_revoked"))) == [("notify.py", "flush")]
+    # pending_cleanup) and by purge_pending (the reconcile tick: channels the STORE lists as revoked and not yet marked
+    # purged, #52), and by nothing else
+    assert sorted(set(_calls("channel_revoked"))) == [("notify.py", "flush"), ("notify.py", "purge_pending")]
     assert (Path(orch_hub.__file__).parent / "relay" / "notify.py").read_text().count(
         "target=self.channel_revoked,"
     ) == 1

@@ -74,6 +74,7 @@ class PushNotifier:
         self._push_keys: Any = push_keys if push_keys is not None else MemoryPushKeys()
         self._lock = threading.Lock()
         self.pending_cleanup: set[str] = set()
+        self._purging = threading.Lock()
         self._q: queue.Queue[tuple[str, str, str | None]] = queue.Queue(QUEUE_MAX)
         self._worker: threading.Thread | None = None
 
@@ -206,6 +207,10 @@ class PushNotifier:
         with self._lock:
             self.pending_cleanup.discard(channel_id)
             self._push_keys.pop(channel_id, None)
+        try:
+            self._channels.mark_relay_purged(channel_id)  # persisted: the periodic pass skips it from now on
+        except Exception:  # noqa: BLE001 - at worst the next tick repeats an idempotent purge
+            log.warning("purge mark of %s not stored", channel_id[:8])
         return True
 
     def channel_revoked_async(self, channel_id: str) -> None:
@@ -219,6 +224,31 @@ class PushNotifier:
         with self._lock:
             self.pending_cleanup |= {c["channel_id"] for c in self._channels.channels() if c["status"] == "revoked"}
         self.flush()
+
+    def purge_pending(self) -> None:
+        """The periodic pass (``reconcile``, #52): every revoked channel in the store whose purge is not marked done gets
+        it now. This is how a revoke made by ANOTHER process (``orch-hub channels revoke``) reaches the relay while the
+        hub runs. A failure leaves it unmarked, so the next tick retries; a success marks it, so it runs once."""
+        try:
+            todo = self._channels.unpurged_revoked()
+        except Exception:  # noqa: BLE001 - the store is unreadable: nothing to do this tick
+            log.warning("revoked channels not readable; relay purge retried at the next tick")
+            return
+        for cid in todo:
+            self.channel_revoked(cid)
+
+    def purge_pending_async(self) -> None:
+        """Like :meth:`purge_pending` on a daemon thread, one at a time (a dead relay must not stall the tick or pile up)."""
+        if not self._purging.acquire(blocking=False):
+            return
+
+        def run() -> None:
+            try:
+                self.purge_pending()
+            finally:
+                self._purging.release()
+
+        threading.Thread(target=run, name="relay-purge", daemon=True).start()
 
     def restart_pass_async(self) -> None:
         threading.Thread(target=self.restart_pass, daemon=True).start()

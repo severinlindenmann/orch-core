@@ -718,6 +718,25 @@ class Channels:
             return None
         return None
 
+    def unpurged_revoked(self) -> list[str]:
+        """Channels the store lists as revoked whose relay cleanup is not marked done (#52): a revoke made by another
+        process (the CLI) is only visible here. Sorted, so a tick is deterministic."""
+        rows = self._guard(
+            lambda: self.db.q(
+                "SELECT channel_id FROM channels WHERE revoked_ms IS NOT NULL "
+                "AND channel_id NOT IN (SELECT channel_id FROM relay_purged) ORDER BY channel_id"
+            )
+        )
+        return [r[0] for r in rows]
+
+    def mark_relay_purged(self, channel_id: str) -> None:
+        """The relay confirmed the purge of this revoked channel: never repeated by the periodic pass."""
+        self._guard(
+            lambda: self.db.w(
+                "INSERT OR IGNORE INTO relay_purged (channel_id, ts_ms) VALUES (?,?)", (channel_id, self._now())
+            )
+        )
+
     def revoke(self, channel_id: str, *, actor: str | None = None) -> None:
         """``actor`` None = the operator at the hub's terminal (the CLI, tied to the state dir owner). Otherwise a user
         id the caller has already authenticated: the owner of the channel or a hub-admin may revoke. Anyone else gets

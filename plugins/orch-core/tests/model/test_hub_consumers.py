@@ -307,7 +307,7 @@ def test_a_restricted_ticket_is_visible_to_the_listed_person_through_the_alias(w
 def test_a_hub_actor_releases_a_claim_by_the_ticket_owner_or_manager_rule(w):
     u = w.ticket()
     w.fill(u)
-    a = w.claim(u, "sev")
+    a = w.claim(u, "mara")  # mara is aliased: in full mode an unaliased member's agents hold no live claim (#1133)
     assert hub(w, u, "claim.released", session=a["session"], reason="released") is None
 
 

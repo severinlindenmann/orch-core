@@ -23,3 +23,11 @@ def reconcile_full_only(registry: Any, wk_seals: Any, view_store: Any) -> None:
                     step(ws)
                 except Exception:  # noqa: BLE001 - logged by type only; the next tick retries
                     log.warning("%s of %s failed; retried at the next tick", what, ws[:8])
+
+
+def reconcile_relay_purge(notifier: Any) -> None:
+    """The relay's copy of a revoked channel (#52): channels the store lists as revoked whose purge is not marked done
+    are purged at the relay, retried every tick until it succeeds. Covers a revoke made by another process (the CLI),
+    whose hook never ran in this one. No relay configured (``notifier`` None): nothing to do."""
+    if notifier is not None:
+        notifier.purge_pending_async()

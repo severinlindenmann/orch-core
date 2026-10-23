@@ -117,9 +117,51 @@ def test_a_stale_link_is_detached_at_the_next_dispatch(rig, monkeypatch):
 
 def test_a_rebind_detaches_the_link_then_it_attaches_afresh(rig, monkeypatch):
     q, h, c = rig
-    old = q._links[G.WS_A]
+    old = q._links[G.WS_A][0]
     real = h.registry.binding_state
     seq = real(G.WS_A)["binding_seq"]
     monkeypatch.setattr(h.registry, "binding_state", lambda ws: {**real(ws), "binding_seq": seq + 1})
     c.request("snapshot_get", {})  # the next dispatch sees binding_seq moved: detach, attach to the new binding
-    assert old.dead and q._links[G.WS_A] is not old
+    assert old.dead and q._links[G.WS_A] and q._links[G.WS_A][0] is not old
+
+
+def test_a_short_second_link_does_not_strand_the_main_links_queue(rig):
+    """#51: the host's snapshot_get opens a second link while an event_deliver is in flight on the main one."""
+    q, h, c = rig
+    q(G.WS_A, LOG, ev())
+    o = c.recv_reply()  # in flight on the main link; the host is busy fetching a snapshot on a second link
+    assert o["op"] == "event_deliver"
+    c2 = h.open()
+    c2.request("snapshot_get", {})
+    c2.close()
+    assert until(lambda: len(q._links[G.WS_A]) == 1)  # the second link is gone, the main one is still attached
+    c.send_raw(c.build("event_deliver", {}, re=o["seq"]))  # the host's ack arrives on the main link
+    assert until(lambda: q.outcomes() and q.outcomes()[0]["state"] == "done")
+    q(G.WS_A, LOG, ev(2))  # and later events flow
+    assert answer(c, {})["event"]["id"] == ev(2)["id"]
+    assert until(lambda: len(q.outcomes()) == 2)
+
+
+def test_the_event_in_flight_on_a_closed_link_is_retried_on_the_remaining_link(rig):
+    q, h, c = rig
+    c2 = h.open()
+    c2.request("snapshot_get", {})
+    assert until(lambda: len(q._links[G.WS_A]) == 2)
+    q._links[G.WS_A][0].strikes = 5  # the main link has been silent: the second one is tried first
+    q(G.WS_A, LOG, ev())
+    assert c2.recv_reply()["op"] == "event_deliver"
+    c2.close()  # no reply, the link ends
+    assert answer(c, {})["event"]["id"] == ev()["id"]  # after the 1 s backoff, on the remaining link
+    assert until(lambda: q.outcomes() and q.outcomes()[0]["state"] == "done")
+
+
+def test_a_reply_on_another_link_than_the_send_never_ends_the_event(rig):
+    q, h, c = rig
+    c2 = h.open()
+    c2.request("snapshot_get", {})
+    assert until(lambda: len(q._links[G.WS_A]) == 2)
+    q(G.WS_A, LOG, ev())
+    o = c.recv_reply()
+    c2.send_raw(c2.build("event_deliver", {}, re=o["seq"]))  # same seq number, wrong link
+    time.sleep(0.3)
+    assert not q.outcomes() and len(q.pending()) == 1

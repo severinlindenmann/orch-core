@@ -66,6 +66,7 @@ class _Link:
         self.lock = threading.Lock()
         self.inflight: tuple[int, int, int] | None = None  # (row id, h2w seq, sent_ms)
         self.dead = False
+        self.strikes = 0  # consecutive sends on this link that got no reply (a silent link is tried last)
 
 
 class DeliveryQueue:
@@ -95,7 +96,7 @@ class DeliveryQueue:
         self._db = open_private_db(path, check_same_thread=False)
         self._db.executescript(_SCHEMA)
         self._db.commit()
-        self._links: dict[str, _Link] = {}
+        self._links: dict[str, list[_Link]] = {}  # per workspace, in attach order
         self._links_lock = threading.Lock()
         self._wake = threading.Event()
         self._stop = threading.Event()
@@ -126,21 +127,24 @@ class DeliveryQueue:
     # --- links -------------------------------------------------------------------------------------------------------
 
     def attach(self, ws: str, port: LinkPort) -> _Link:
-        """A workspace's link is up (authenticated, bound): its pending events go out. A newer link replaces an older."""
+        """A workspace's link is up (authenticated, bound): its pending events go out. Links never replace each other:
+        a short-lived second link (the host's ``snapshot_get``) must not take the queue from the main one (#51). A
+        delivery is bound to the link it was sent on; when that link closes, the event is retried on a remaining one."""
         link = _Link(port)
         with self._links_lock:
-            old = self._links.get(ws)
-            self._links[ws] = link
-        if old is not None:
-            self._kill(old)
+            self._links.setdefault(ws, []).append(link)
         self._wake.set()
         return link
 
     def detach(self, ws: str, link: _Link) -> None:
         self._kill(link)
         with self._links_lock:
-            if self._links.get(ws) is link:
-                del self._links[ws]
+            ls = self._links.get(ws, [])
+            if link in ls:
+                ls.remove(link)
+            if not ls:
+                self._links.pop(ws, None)
+        self._wake.set()  # the event that was in flight on it goes out again on a remaining link, after its backoff
 
     def _kill(self, link: _Link) -> None:
         """The link is over. An event in flight on it got no reply: it waits out its backoff (§8.7) before any new link
@@ -162,6 +166,7 @@ class DeliveryQueue:
                 return
             row_id, _seq, _sent = link.inflight
             link.inflight = None
+            link.strikes = 0
             self._settle(row_id, o.get("body"))
         self._wake.set()
 
@@ -171,19 +176,29 @@ class DeliveryQueue:
         """One pass over every attached link (also what the thread runs): settle a timed-out send, send the next due
         event. Safe to call from tests with a fake clock."""
         with self._links_lock:
-            links = list(self._links.items())
-        for ws, link in links:
+            by_ws = {ws: list(ls) for ws, ls in self._links.items()}
+        for ws, links in by_ws.items():
+            self._pump_ws(ws, links)
+
+    def _pump_ws(self, ws: str, links: list[_Link]) -> None:
+        """One event in flight per workspace, whatever the number of links. A timed-out send is settled and its link
+        struck; the next send goes to the live link with the fewest strikes (the oldest on a tie: the main link)."""
+        for link in links:
+            with link.lock:
+                if link.dead or link.inflight is None:
+                    continue
+                row_id, _seq, sent = link.inflight
+                if self._now() - sent < self._timeout:
+                    return  # still waiting for its reply
+                link.inflight = None
+                link.strikes += 1
+                self._settle(row_id, None)  # no reply in time: resend later (same bytes)
+        for link in sorted((x for x in links if not x.dead), key=lambda x: x.strikes):  # stable: attach order
             with link.lock:
                 if link.dead:
                     continue
-                now = self._now()
-                if link.inflight is not None:
-                    row_id, _seq, sent = link.inflight
-                    if now - sent < self._timeout:
-                        continue
-                    link.inflight = None
-                    self._settle(row_id, None)  # no reply in time: resend later (same bytes)
                 self._send_head(ws, link)
+            return
 
     def _send_head(self, ws: str, link: _Link) -> None:
         now = self._now()

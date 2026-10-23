@@ -31,7 +31,7 @@ from .keys import HubKeys
 from .link import LinkServer, Registry
 from .link.wkseal import WkSeals
 from .publish import HttpPublishSync, HubPublish, PublishConfig
-from .reconcile import reconcile_full_only
+from .reconcile import reconcile_full_only, reconcile_relay_purge
 from .relay import PushNotifier, RelayClient, RelayError
 from .relay.client import Transport
 from .router import AccessAuthz, RouteQueue, Router
@@ -167,7 +167,7 @@ def serve(
     if client is not None:
         notifier = PushNotifier(client, channels, PushKeyStore(channels.db))  # keys survive a restart
         channels.on_revoke = notifier.channel_revoked_async  # D10: a revoked channel's push target and mailbox go
-    deliveries = build_delivery(str(state), sender=router.send_event)  # §8.7: persisted, acked, resent
+    deliveries = build_delivery(str(state))  # §8.7: persisted, acked, resent; writes on its own attached links (#51)
     engine = CustodialEngine(
         keys=keys,
         snapshots=AccessSnapshots(access, keys),
@@ -238,6 +238,7 @@ def serve(
             while not stop.wait(30):
                 shares.retry_pending()
                 reconcile_full_only(registry, wk_seals, views.store)
+                reconcile_relay_purge(notifier)  # a CLI revoke (another process) reaches the relay within a tick
 
         threading.Thread(target=_retry, name="state-retry", daemon=True).start()
         deliveries.start()

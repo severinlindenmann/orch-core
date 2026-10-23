@@ -4,6 +4,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { artifactTextQuery, looksBinary, sameDigest } from '@/api/artifactText'
+import { isRealHost } from '@/api/features'
 import { verifiedMedia } from '@/api/evidenceMedia'
 import { queries } from '@/api/queries'
 import { workspaceOfTicket } from '@/api/workspaces'
@@ -115,6 +116,8 @@ export function EvidenceThumb({ a, ticket }: { a: Artifact; ticket: string }) {
       if (url) body = <img src={url} alt={`Picture ${visible(a.name)}`} referrerPolicy="no-referrer" className="size-full object-cover" />
     } else if (!d.binary && d.text != null && !looksBinary(d.text)) body = <TextThumb text={d.text} name={a.name} />
   }
+  // The demo (no host) carries the text inline; a real host's file is only ever shown from the digest-checked read above.
+  if (!body && !isRealHost() && a.preview && !NO_THUMB.test(e)) body = <TextThumb text={a.preview} name={a.name} />
   return (
     <div ref={ref} data-testid="evidence-thumb" className="relative h-[120px] overflow-hidden rounded-md border border-border bg-bg p-2">
       {body ?? <TypeTile a={a} />}

@@ -196,7 +196,7 @@ def _mark_dashboard_rekey(state_dir: Path, workspace_id: str, gen: int) -> None:
 
 
 def _dashboard_rekeyed(state_dir: Path, workspace_id: str, sel: Selection | None) -> bool:
-    """True while the selection is still the one a dashboard turn-off created. Fails closed: an unreadable mark counts."""
+    """True while the selection is still the one a dashboard turn-off created. Fails closed (unreadable counts)."""
     from .convenience import read_private, secure_dir
 
     if sel is None:

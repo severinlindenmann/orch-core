@@ -346,8 +346,11 @@ def _pass(service: WorkspaceService, rt: _Runtime) -> None:
         raise
     probe = link is not rt.link
 
-    def proj_due(log: str, digest: str) -> bool:
-        """D15b-7: the debounce of a projection-only refresh (see ``PROJ_QUIET_S``)."""
+    def proj_due(log: str, digest: str | None) -> bool:
+        """D15b-7: the debounce of a projection-only refresh (see ``PROJ_QUIET_S``). ``None``: settled, forget."""
+        if digest is None:
+            rt.proj_seen.pop(log, None)
+            return False
         now = MONOTONIC()
         seen = rt.proj_seen.get(log)
         if seen is None or seen[0] != digest:

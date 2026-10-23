@@ -323,7 +323,7 @@ def sync_logs(
     live: Callable[[], bool] | None = None,
     allow_resend: Callable[[str], bool] | None = None,
     probe: bool = False,
-    proj_due: Callable[[str, str], bool] | None = None,
+    proj_due: Callable[[str, str | None], bool] | None = None,
 ) -> SyncReport:
     """One pass: send every log from the hub's acknowledged position to the local head. ``call`` is a link's ``call``
     (``HubLink.call`` or ``LinkClient.call``). Returns what was sent; raises :class:`HubRefused` on a gate or a refusal
@@ -340,7 +340,8 @@ def sync_logs(
     D15b (needs ``source.proj``): a page that ends at a ticket log's head carries its projection ``P`` (when it is
     provably consistent: ``P`` describes that last line and a workspace position the hub already holds). When ``P`` has
     changed without a new line (sender rule 7) the last line is sent again as a one-line page carrying it, after
-    ``proj_due(log, digest)`` (the debounce) says yes; ``report.proj_waiting`` says a refresh was held back."""
+    ``proj_due(log, digest)`` (the debounce) says yes (``digest`` None: the projection settled, forget);
+    ``report.proj_waiting`` says a refresh was held back."""
     epoch = gate(state)
     if position.hub_id != state.hub_id or position.binding_seq != state.binding_seq:
         raise HubRefused("not_joined")
@@ -369,7 +370,7 @@ class _Pass:
         self.live: Callable[[], bool] | None = None
         self.allow_resend: Callable[[str], bool] | None = None
         self.probe = False
-        self.proj_due: Callable[[str, str], bool] | None = None
+        self.proj_due: Callable[[str, str | None], bool] | None = None
         self.ceiling: dict[str, int | None] = {}
 
     def _may_send(self) -> None:
@@ -409,7 +410,11 @@ class _Pass:
         as a one-line page that carries the new one. Idempotent at the hub (an overlap)."""
         seq = acked[0]
         p = self._proj(log, seq, seq, seq)
-        if p is None or self.pos.proj.get(log) == proj_digest(p):
+        if p is not None and self.pos.proj.get(log) == proj_digest(p):
+            if self.proj_due is not None:
+                self.proj_due(log, None)  # settled: the debounce forgets the change (D15bC-3)
+            return
+        if p is None:
             return
         if self.proj_due is not None and not self.proj_due(log, proj_digest(p)):
             self.report.proj_waiting = True
@@ -428,6 +433,7 @@ class _Pass:
         except Exception as exc:  # noqa: BLE001 - HubRefused and LinkError both carry a contract code
             code = _code(exc)
             if code in ("view_gap", "view_fork"):  # the hub's view is not what we believed: the next pass repairs it
+                self._may_resend(log)  # that repair is a forced resend from seq 1: the per-log limit applies (L2-C14-3)
                 self.pos.logs.pop(log, None)
                 self.pos.proj.pop(log, None)
                 self.save(self.pos)

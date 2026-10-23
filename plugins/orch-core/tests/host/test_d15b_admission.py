@@ -4,7 +4,7 @@ its own log, so ``P`` itself authorizes nothing).
 
 The model-level tests run the production engine (``admit``) on events whose F1 fields come ONLY from ``P`` (made by the
 same code as the sender: ``shareops.ticket_fact`` + ``make_f1``). The end-to-end part (the hub actor and its channel
-proof through C3b's admission path) waits for orch-core#1038 and is xfail until then."""
+proof) goes through C3b's admission path (merged, #1038): the end_to_end tests."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from orch.hubclient.sharefmt import F1_GATES
 from orch.hubclient.shares import make_f1
 from orch.model.codes import Code
 from tests.model.test_gates import w  # noqa: F401 - fixture
-from tests.model.test_hub_replay import hub_actor, hub_fields
+from tests.model.test_hub_replay import U2, hub_actor, hub_fields
 from tests.model.test_hubledger import card, join, pin, snap
 from tests.model.world import World
 
@@ -118,19 +118,54 @@ def test_a_false_p_authorizes_nothing(w):  # noqa: F811
     assert r.code == Code.GATE_STALE
 
 
-@pytest.mark.xfail(
-    reason="orch-core#1038 (C3b admission of a hub actor) is not on develop: the engine stops at consumers_not_ready",
-    strict=False,
-)
-def test_end_to_end_a_hub_built_gate_approved_from_p_is_admitted_through_the_hub_actor_path():
+@pytest.fixture
+def hubw() -> World:
+    """A full-mode world with a joined, pinned hub (C3b); U2 is mara (maintainer) through the hub."""
     world = World(validate=False).bootstrap({"mara": "maintainer"})
-    from tests.model.test_hub_replay import U2
-
     join(world, aliases=[{"person_id": world.people["mara"][2:], "user_id": U2}])
     pin(world, card())
     pin(world, snap(1))
-    uid = world.ticket()
-    world.fill(uid)
-    e = hub_built(projection(world, uid), "requirements")
-    _, r = world.try_(uid, "gate.approved", hub_actor(), roster_v=world.roster_v, **hub_fields(), **e)
+    return world
+
+
+def _hub(world: World, uid: str, typ: str, **payload):
+    _, r = world.try_(uid, typ, hub_actor(), roster_v=world.roster_v, **hub_fields(), **payload)
+    return r
+
+
+def test_end_to_end_a_hub_built_gate_approved_from_p_is_admitted_through_the_hub_actor_path(hubw):
+    uid = hubw.ticket()
+    hubw.fill(uid)
+    e = hub_built(projection(hubw, uid), "requirements")
+    r = _hub(hubw, uid, "gate.approved", **e)
     assert not hasattr(r, "code"), r
+    assert hubw.view(uid).gates["requirements"].approved
+
+
+def test_end_to_end_a_hub_decision_from_a_stale_p_is_refused_through_the_hub_actor_path(hubw):
+    uid = hubw.ticket()
+    hubw.fill(uid)
+    p = projection(hubw, uid)
+    hubw.edit(uid, "sev", sections={"requirements": "changed text"})
+    assert _hub(hubw, uid, "gate.approved", **hub_built(p, "requirements")).code == Code.GATE_STALE
+
+
+@pytest.mark.parametrize("typ", ["ticket.moved", "status.changed"])
+def test_end_to_end_a_status_move_with_from_taken_from_p_is_admitted(hubw, typ):
+    uid = hubw.ticket()
+    p = projection(hubw, uid)
+    assert p["status"] in ("open", "backlog")
+    to = "backlog" if p["status"] == "open" else "open"
+    r = _hub(hubw, uid, typ, **{"from": p["status"], "to": to})
+    assert not hasattr(r, "code"), r
+    assert hubw.view(uid).status == to
+
+
+@pytest.mark.parametrize("typ", ["ticket.moved", "status.changed"])
+def test_end_to_end_a_status_move_from_a_stale_p_is_refused(hubw, typ):
+    uid = hubw.ticket()
+    p = projection(hubw, uid)
+    other = "backlog" if p["status"] == "open" else "open"
+    assert not hasattr(hubw.try_(uid, "ticket.moved", "sev", **{"from": p["status"], "to": other})[1], "code")
+    r = _hub(hubw, uid, typ, **{"from": p["status"], "to": p["status"]})  # P says the old status: the move happened
+    assert r.code == Code.STATUS_TRANSITION

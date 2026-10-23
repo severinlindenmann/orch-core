@@ -51,8 +51,8 @@ def ask_event(w: World, uid: str, qid_n: str, text: str, to: str = "ticket_owner
     """A ``question.asked`` for an existing question id (a re-ask), appended through the host's store."""
     options = [{"key": "a", "label": "a"}, {"key": "b", "label": "b"}]
     qid = canon.question_id(w.wid, uid, qid_n)
-    q = {"id": qid_n, "to": to, "text": text, "blocking": blocking, "options": options}
-    h = canon.question_hash(qid, uid, text, options)
+    q = {"id": qid_n, "to": to, "text": text, "blocking": blocking, "kind": "choice", "options": options}
+    h = canon.question_hash(qid, uid, q)
     return on_store(w, lambda ws: ws.store.append(
         {"type": "question.asked", "actor": ws.agent, "question": q, "qid": qid, "hash": h}, log=uid
     ).event)  # fmt: skip
@@ -112,11 +112,12 @@ def test_a_question_item_has_text_payload_status_and_since(w):
     }  # fmt: skip
 
 
-def test_a_questions_text_is_a_snip_with_text_cut(w):
+def test_a_questions_text_is_never_cut_at_its_longest(w):
+    """#1123: a question is at most 140 code points (560 bytes), always under the 1 024-byte snip."""
     uid, key = mk(w, "long")
-    agent(w, "ask", {"ref": key, "text": "é" * 1500})  # 3 000 bytes
+    agent(w, "ask", {"ref": key, "text": "\U0001f600" * 140})
     (item,) = needs(w)["items"]
-    assert len(item["text"].encode()) == 1024 and item["text_cut"] is True and set(item["text"]) == {"é"}
+    assert item["text"] == "\U0001f600" * 140 and "text_cut" not in item
     agent(w, "ask", {"ref": key, "text": "short"})
     short = needs(w)["items"][1]
     assert short["text"] == "short" and "text_cut" not in short

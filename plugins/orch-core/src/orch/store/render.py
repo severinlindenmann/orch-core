@@ -76,8 +76,8 @@ _ITEM_ORDER = {
     "prs": ("repo", "url"),
     "acceptance": ("id", "text"),
     "tasks": ("id", "text", "verify", "proves", "assignee"),
-    "questions": ("id", "to", "text", "why", "options", "recommended", "blocking"),
-    "options": ("key", "label", "cost"),
+    "questions": ("id", "to", "text", "kind", "why", "details", "options", "recommended", "allow_other", "blocking"),
+    "options": ("key", "label", "text", "facts", "cost"),
     "policy": ("approvers", "count", "not", "applies", "independent"),
 }
 _REFS = re.compile(r"\(artifact:([A-Za-z0-9][A-Za-z0-9._-]{0,127})\)")

@@ -928,8 +928,8 @@ def test_f7_an_answer_to_a_question_with_why_and_a_recommendation_is_plain():
     rows = {r["field"]: r["after"] for r in c["fields_changed"]}
     assert rows["your choice"] == "Hello (option hello)"
     assert rows["option hello"] == "Hello" and rows["option hi"] == "Hi"
-    assert rows["recommended option (per host)"] == "Hello"
-    assert any(s["title"].endswith("(per host, not signed)") and "before I write" in s["text"] for s in c["sections"])
+    assert rows["recommended option"] == "Hello"  # bound by the question hash since #1123
+    assert any(s["title"] == "Why it was asked" and "before I write" in s["text"] for s in c["sections"])
     assert c["ticket"]["key"] == "RA-0001"
     view = "\n".join(signcontent.text(c, signer._clean))
     assert "{" not in view and "options" not in view.replace("option ", "")

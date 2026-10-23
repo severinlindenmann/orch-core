@@ -1027,7 +1027,11 @@ def _question(material: Mapping[str, Any], events: list[Mapping[str, Any]], tick
     ev = events[0]
     _check_keys("question.answered", ev, SHOWN["question.answered"], TECHNICAL_KEYS)
     q = material.get("question") or {}
-    _check_keys("question keys", q, frozenset({"id", "text", "why", "options", "recommended", "to", "blocking"}))
+    # #1123 A: `kind` is the one new key rendered here (choice/text read as before); details, allow_other and the new
+    # option keys stay unknown, so they fall back to the full review until B2 renders them.
+    _check_keys(
+        "question keys", q, frozenset({"id", "text", "kind", "why", "options", "recommended", "to", "blocking"})
+    )
     for o in q.get("options") or []:
         _check_keys("question option keys", o, frozenset({"key", "label", "cost"}))
     keys = [_s(o.get("key")) for o in q.get("options") or []]
@@ -1038,8 +1042,8 @@ def _question(material: Mapping[str, Any], events: list[Mapping[str, Any]], tick
     answer = opts.get(_s(picked), _s(picked)) if picked else "your own words"
     out["headline"] = f"Answer “{_line1(q.get('text'), 60)}” on {_ref(ticket)} with {answer}"
     out["sections"] = [{"id": "question", "title": "Question", "text": _s(q.get("text", ""))}]
-    if q.get("why"):  # the question hash binds the text and the options, not this: the host's word
-        out["sections"].append({"id": "why", "title": "Why it was asked (per host, not signed)", "text": _s(q["why"])})
+    if q.get("why"):  # bound by the question hash (#1123, spec)
+        out["sections"].append({"id": "why", "title": "Why it was asked", "text": _s(q["why"])})
     if ev.get("text"):
         out["sections"].append(
             {"id": "answer", "title": "Your note" if picked else "Your answer", "text": _s(ev["text"])}
@@ -1067,8 +1071,8 @@ def _question(material: Mapping[str, Any], events: list[Mapping[str, Any]], tick
             f"option {_s(o.get('key'))}",
             _s(o.get("label")) + (f" (cost {_s(o['cost'])})" if o.get("cost") else ""),
         )
-    # who it is addressed to, whether it blocks and which option is recommended are the host's word: the question hash
-    # binds none of them. Said in plain words, each row labelled "(per host)" and listed after the signed rows.
+    # who it is addressed to and whether it blocks are routing, the host's word: the question hash does not bind them
+    # (labelled "(per host)"). The recommended option IS bound (#1123, spec), so its row has no such label.
     out["fields_title"] = "About this question"  # facts of the question, not changes: no "- ->" before values
     for k, label in (("to", "addressed to"), ("blocking", "blocks the ticket"), ("recommended", "recommended option")):
         if k in q:
@@ -1081,7 +1085,7 @@ def _question(material: Mapping[str, Any], events: list[Mapping[str, Any]], tick
                 words = opts.get(_s(value), _s(value))
             else:
                 words = _s(value)
-            _row(out, f"{label} (per host)", words)  # the host's word: the question hash binds none of these
+            _row(out, label if k == "recommended" else f"{label} (per host)", words)
 
 
 # --- everything else ------------------------------------------------------------------------------------------------

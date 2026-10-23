@@ -1313,20 +1313,23 @@ def effective_policy_scenarios() -> list[dict[str, Any]]:
     return [s.scenario()]
 
 
-def question_ids(ticket: str, qn: str, text: str, options: list[dict[str, str]]) -> tuple[str, str]:
-    """``qid`` and the question hash (§5.6), independently."""
+def question_ids(ticket: str, question: dict[str, Any]) -> tuple[str, str]:
+    """``qid`` and the question hash (§5.6, §5.6.1), independently: ``spec`` is every key but id, to, blocking, text
+    and options; ``options`` is ``[]`` when the kind has none."""
     qid = hashlib.sha256(
-        b"orch/v2/question-id|" + ow.cj({"workspace_id": ow.W, "ticket": ticket, "question": qn})
+        b"orch/v2/question-id|" + ow.cj({"workspace_id": ow.W, "ticket": ticket, "question": question["id"]})
     ).hexdigest()[:32]
-    body = {"question_id": qid, "ticket": ticket, "text": text, "options": options}
+    spec = {k: v for k, v in question.items() if k not in ("id", "to", "blocking", "text", "options")}
+    body = {"question_id": qid, "ticket": ticket, "text": question["text"], "options": question.get("options", []),
+            "spec": spec}  # fmt: skip
     return qid, "sha256:" + hashlib.sha256(b"orch/v2/question|" + ow.cj(body)).hexdigest()
 
 
 def question_scenarios() -> list[dict[str, Any]]:
     text = "Which tariff export is the source of truth?"
     opts = [{"key": "csv", "label": "Monthly CSV"}, {"key": "api", "label": "Tariff API"}]
-    qid, qh = question_ids(TICKET, "Q1", text, opts)
-    question = {"id": "Q1", "to": "ticket_owner", "text": text, "options": opts, "blocking": True}
+    question = {"id": "Q1", "to": "ticket_owner", "text": text, "kind": "choice", "options": opts, "blocking": True}
+    qid, qh = question_ids(TICKET, question)
 
     def base(name: str, pins: str) -> tuple[Sim, dict[str, Any]]:
         s = Sim(name, pins)
@@ -1530,10 +1533,10 @@ def approval_scenarios() -> list[dict[str, Any]]:
            "pk_pub": ow.key("pk_eve").pub_b64u, "device_cert": ow.make_cert("eve", "eve1")},
            expect="event.bad_actor", note="a host-actor member.added", schema_refused=True)  # fmt: skip
     text = "Which tariff export is the source of truth?"
-    opts = [{"key": "csv", "label": "Monthly CSV"}]
-    qid, qh = question_ids(TICKET, "Q1", text, opts)
-    s._t("question.asked", s.agent, {"question": {"id": "Q1", "to": "ticket_owner", "text": text, "options": opts,
-         "blocking": True}, "qid": qid, "hash": qh}, note="the agent asks Q1")  # fmt: skip
+    opts = [{"key": "csv", "label": "Monthly CSV"}, {"key": "api", "label": "Tariff API"}]
+    q1 = {"id": "Q1", "to": "ticket_owner", "text": text, "kind": "choice", "options": opts, "blocking": True}
+    qid, qh = question_ids(TICKET, q1)
+    s._t("question.asked", s.agent, {"question": q1, "qid": qid, "hash": qh}, note="the agent asks Q1")
     s._t("question.answered", host, {"question": "Q1", "hash": qh, "option": "csv"}, expect="event.bad_actor",
          note="a host-actor answer", schema_refused=True)  # fmt: skip
     s.decide("approve", R, note="and the owner's signed approval is accepted")

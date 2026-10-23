@@ -111,6 +111,7 @@ QUESTION = {
     "id": "Q1",
     "to": "p_" + PID2,
     "text": "Which tariff export is the source of truth, the monthly CSV or the API?",
+    "kind": "choice",
     "why": "The two differ for 3 of 40 tariffs; the seed must pick one.",
     "options": [{"key": "csv", "label": "Monthly CSV"}, {"key": "api", "label": "Tariff API", "cost": "+1 day"}],
     "recommended": "csv",

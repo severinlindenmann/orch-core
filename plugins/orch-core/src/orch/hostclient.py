@@ -458,7 +458,12 @@ def _checked_cmd(cmd: Any, tid: str) -> str:
     """``verify.cmd`` as the host's view of the signed ticket gives it, in the shape F1 allows (a non-empty string of
     at most 4096 UTF-8 bytes) and without a NUL, which no argv holds. Anything else: nothing is run."""
     if cmd is None:
-        raise OrchError("invalid.input", f"{tid} has no verify command; add one with task add --verify")
+        raise OrchError(
+            "invalid.input",
+            f"{tid} has no verify command, so --run has nothing to run; close it without --run",
+            hint=f"orch task done {tid}",
+            retryable=True,
+        )
     if not isinstance(cmd, str) or not cmd.strip() or "\x00" in cmd or len(cmd.encode("utf-8", "replace")) > VERIFY_MAX:
         raise OrchError("invalid.input", f"the host sent a verify command for {tid} that is not valid: nothing was run")
     return cmd

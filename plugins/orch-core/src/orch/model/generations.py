@@ -245,6 +245,16 @@ def void_signer(ws: WsCore, t: TCore, key: str) -> None:
 void_device = void_signer  # the device case (ticket-format 5.7)
 
 
+def void_hub(ws: WsCore, t: TCore, hub_id: str) -> None:
+    """``hub.left`` (C8 M2.2): hub contract hv 0 has no reason, so every leave is treated as a compromise. Voids the
+    counting decisions signed by ANY channel of ``hub:<hub_id>/*`` on this ticket, exactly as ``void_signer`` does for
+    one key (an open generation loses them; a settled ticket keeps its state and lists them as revoked)."""
+    prefix = f"hub:{hub_id}/"
+    keys = sorted({d.signer for g in GATES for d in live(t, g) if d.signer.startswith(prefix)})
+    for key in keys:
+        void_signer(ws, t, key)
+
+
 def on_unsettle(ws: WsCore, t: TCore, before_status: str) -> None:
     """A settled ticket that becomes unsettled other than by ``ticket.reopened`` (a push after ``done``): the voids it
     was exempt from apply now, and ``settle`` raises each gate that loses a counting approval. A reopen raises every

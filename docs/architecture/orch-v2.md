@@ -483,7 +483,13 @@ blobs per device and epoch), `drop_spaces`, `revocations`.
   | `spool:<path>` | Same machine, through the filesystem; tests and two local workspaces |
   | `relay:<url>` | Internal or public relay |
 
+  **V3 (D69, V3-D36):** a workspace never reaches a relay itself. `relay:` here means the hub's relay account (D76);
+  a workspace without a hub has only `spool:` and no phone. See `orch-v2-hub.md`.
+
 ## 10. orch-publish
+
+> **V3 (D68, D69, V3-D36):** a workspace does not publish directly. Requests go through its hub (`publish_out`); a
+> workspace without a hub cannot publish. The workspace-signed direct API below is superseded; see `orch-v2-hub.md` §10.
 
 - **API:** `https://pub.<domain>/v1/...`.
   - Every request is signed by the workspace's `WSK` (domain `orch/v2/publish`). The signature covers the method,

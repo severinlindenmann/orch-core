@@ -19,14 +19,11 @@ host/dispatch.py 2
 host/handoff.py 2
 host/human.py 18
 host/journal.py 6
-host/pairdevice.py 1
 host/reads.py 1
 host/reads_feed.py 1
 host/reads_ticket.py 2
 host/reads_ws.py 1
 host/records.py 4
-host/relaybuild.py 1
-host/relayentry.py 1
 host/review.py 1
 host/signcontent.py 3
 host/signer.py 14
@@ -52,11 +49,10 @@ ops/runtime.py 13
 ops/workspace_init.py 6
 records/__init__.py 15
 records/tool.py 3
-relay/publish.py 1
-relay/submit.py 3
 rootclaim.py 1
 setup/facts.py 2
 setup/flow.py 4
 setup/protocol.py 6
 setup/review.py 6
 setup/steps.py 2
+market/__init__.py 1

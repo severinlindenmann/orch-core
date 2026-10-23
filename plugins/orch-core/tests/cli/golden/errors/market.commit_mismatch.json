@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "market.commit_mismatch",
+    "message": "the fetched commit is not the pinned one",
+    "hint": "the pin is refused",
+    "fix": {
+      "argv": [
+        "orch",
+        "market",
+        "list"
+      ]
+    },
+    "retryable": false
+  }
+}

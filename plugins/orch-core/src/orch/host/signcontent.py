@@ -53,6 +53,8 @@ TECHNICAL_KEYS = frozenset(
         "host_sig",
         # hashes and attestations the details carry
         "gate_gen", "hash", "policy_hash", "base_rev", "secret_hash",
+        # C10: the id of the grant.requested a host-actor grant.issued answers; a person never signs it
+        "request",
     }
 )  # fmt: skip
 
@@ -66,6 +68,8 @@ SHOWN: dict[str, frozenset[str]] = {
     "artifact.added": frozenset({"name", "kind", "label", "ac", "task", "ref", "addon", "bytes", "sha256"}),
     "artifact.replaced": frozenset({"name", "kind", "label", "ac", "task", "replaces", "bytes", "sha256"}),
     "device.added": frozenset({"device", "cert"}),
+    "device.exposed": frozenset({"device", "reason"}),
+    "device.rotated": frozenset({"old", "device", "cert", "rotation"}),
     "gate.approved": frozenset({"gate", "source_sha"}),
     "gate.changes_requested": frozenset({"gate", "text"}),
     "verdict.given": frozenset({"outcome", "text", "source_sha"}),
@@ -505,6 +509,38 @@ def _models_rows(out: dict[str, Any], value: Any, before: Any, ctx: Any) -> bool
             _row(out, f"{hword}: {mword}", _model_word(after), _model_word(was), ctx.note(False))
     out.setdefault("notes", []).append(
         "Start agent uses these models for new agents. You still see the model before each start."
+    )
+    return True
+
+
+def _icon_word(v: Any) -> str | None:
+    """``Rocket, Pink`` for a plain pair of the closed lists, else ``None``."""
+    from orch.wsicons import COLOUR_LABELS, ICON_LABELS
+
+    if (
+        not isinstance(v, Mapping)
+        or set(v) != {"icon", "colour"}
+        or not isinstance(v["icon"], str)
+        or not isinstance(v["colour"], str)
+        or v["icon"] not in ICON_LABELS
+        or v["colour"] not in COLOUR_LABELS
+    ):
+        return None
+    return f"{ICON_LABELS[v['icon']]}, {COLOUR_LABELS[v['colour']]}"
+
+
+def _icon_rows(out: dict[str, Any], value: Any, before: Any, ctx: Any) -> bool:
+    """``settings.changed`` ``set.icon``: the workspace icon in words (``Rocket, Pink``); ``None`` removes it. ``False``
+    (the generic row, every byte) when the value, or the host's current one, is not a plain pair of the closed lists."""
+    new = "(removed: default icon)" if value is None else _icon_word(value)
+    if new is None:
+        return False
+    old = "(default icon)" if before is None else _icon_word(before)
+    if old is None:
+        return False
+    _row(out, "Workspace icon", new, old, ctx.note(False))
+    out.setdefault("notes", []).append(
+        "The icon is shown beside the workspace name in menus. It never replaces the prefix."
     )
     return True
 
@@ -990,7 +1026,11 @@ def _question(material: Mapping[str, Any], events: list[Mapping[str, Any]], tick
     ev = events[0]
     _check_keys("question.answered", ev, SHOWN["question.answered"], TECHNICAL_KEYS)
     q = material.get("question") or {}
-    _check_keys("question keys", q, frozenset({"id", "text", "why", "options", "recommended", "to", "blocking"}))
+    # #1123 A: `kind` is the one new key rendered here (choice/text read as before); details, allow_other and the new
+    # option keys stay unknown, so they fall back to the full review until B2 renders them.
+    _check_keys(
+        "question keys", q, frozenset({"id", "text", "kind", "why", "options", "recommended", "to", "blocking"})
+    )
     for o in q.get("options") or []:
         _check_keys("question option keys", o, frozenset({"key", "label", "cost"}))
     keys = [_s(o.get("key")) for o in q.get("options") or []]
@@ -1001,22 +1041,37 @@ def _question(material: Mapping[str, Any], events: list[Mapping[str, Any]], tick
     answer = opts.get(_s(picked), _s(picked)) if picked else "your own words"
     out["headline"] = f"Answer “{_line1(q.get('text'), 60)}” on {_ref(ticket)} with {answer}"
     out["sections"] = [{"id": "question", "title": "Question", "text": _s(q.get("text", ""))}]
-    if q.get("why"):  # the question hash binds the text and the options, not this: the host's word
-        out["sections"].append({"id": "why", "title": "Why it was asked (per host, not signed)", "text": _s(q["why"])})
+    if q.get("why"):  # bound by the question hash (#1123, spec)
+        out["sections"].append({"id": "why", "title": "Why it was asked", "text": _s(q["why"])})
     if ev.get("text"):
-        out["sections"].append({"id": "answer", "title": "Your answer", "text": _s(ev["text"])})
+        out["sections"].append(
+            {"id": "answer", "title": "Your note" if picked else "Your answer", "text": _s(ev["text"])}
+        )
     if ev.get("question") != q.get("id"):
         raise PlainUnavailable("the event and the material name different questions")
     if picked:
-        _row(out, "your choice", answer if _s(picked) in opts else f"{answer} (not one of the options)")
+        # The key too: two options may carry the same label, and the row is what the strip shows and the person signs.
+        _row(
+            out,
+            "your choice",
+            # The suffix goes only when the label IS the key and no other option carries that label: {a: "b"} next to
+            # {b: "b"} must keep it, or the row would not tell the two apart.
+            (
+                answer
+                if answer == _s(picked) and list(opts.values()).count(answer) == 1
+                else f"{answer} (option {_s(picked)})"
+            )
+            if _s(picked) in opts
+            else f"{answer} (not one of the options)",
+        )
     for o in q.get("options") or []:
         _row(
             out,
             f"option {_s(o.get('key'))}",
             _s(o.get("label")) + (f" (cost {_s(o['cost'])})" if o.get("cost") else ""),
         )
-    # who it is addressed to, whether it blocks and which option is recommended are the host's word: the question hash
-    # binds none of them. Said in plain words, each row labelled "(per host)" and listed after the signed rows.
+    # who it is addressed to and whether it blocks are routing, the host's word: the question hash does not bind them
+    # (labelled "(per host)"). The recommended option IS bound (#1123, spec), so its row has no such label.
     out["fields_title"] = "About this question"  # facts of the question, not changes: no "- ->" before values
     for k, label in (("to", "addressed to"), ("blocking", "blocks the ticket"), ("recommended", "recommended option")):
         if k in q:
@@ -1029,7 +1084,7 @@ def _question(material: Mapping[str, Any], events: list[Mapping[str, Any]], tick
                 words = opts.get(_s(value), _s(value))
             else:
                 words = _s(value)
-            _row(out, f"{label} (per host)", words)  # the host's word: the question hash binds none of these
+            _row(out, label if k == "recommended" else f"{label} (per host)", words)
 
 
 # --- everything else ------------------------------------------------------------------------------------------------
@@ -1162,6 +1217,8 @@ def _event(
                 continue
             if key == "models" and _models_rows(out, value, before.get(key), ctx):
                 continue
+            if key == "icon" and _icon_rows(out, value, before.get(key), ctx):
+                continue
             _row(out, key, value, before.get(key), ctx.note(False))
         if "grant_hours" in (ev.get("set") or {}):  # B8: the longest agent access, in days/hours
             out.setdefault("notes", []).append(
@@ -1188,6 +1245,7 @@ def _event(
                 "a member of the workspace and gets the workspace key (sealed to the hub's own key). Leaving later "
                 "starts a new key the hub never gets, but it cannot take back what the hub already read. Only you can"
                 " sign this, with your own key at this terminal."
+                " The hub is the only path to this workspace for phones and publishing."
             )
             return f"Join hub {hub} in full mode: the hub will be able to read everything in this workspace"
         out.setdefault("notes", []).append(
@@ -1256,6 +1314,25 @@ def _event(
         _row(out, "device", ev.get("device"))
         _cert_rows(out, "certificate", ev.get("cert"))
         return "Add a paired device to your devices"
+    if typ == "device.exposed":  # #1097: the mark written before a key enters one-click custody
+        _row(out, "device", ev.get("device"))
+        _row(out, "reason", ev.get("reason"))
+        out.setdefault("notes", []).append(
+            "This is recorded in the workspace log for good: a program running as you may keep a copy of this key. "
+            "From now on it cannot start full hub mode or leave a hub on its own; a new key (your recovery code) "
+            "clears that. This only takes authority away from the key."
+        )
+        return "Record that your device key was in one-click custody"
+    if typ == "device.rotated":  # #1097: the guided rotation, signed by the new key
+        _row(out, "old device", ev.get("old"))
+        _row(out, "new device", ev.get("device"))
+        _cert_rows(out, "certificate", ev.get("cert"))
+        _row(out, "recovery key statement", _fp(ev.get("rotation")))
+        out.setdefault("notes", []).append(
+            "The old key stops signing in every mode, also while a hub is down. The new key is signed by your "
+            "recovery key for this workspace only. Nothing is re-shared with a hub."
+        )
+        return "Replace your device key with a new one"
     if typ == "question.asked":
         out.setdefault("sections", []).append({"id": "question", "title": "Question", "text": _s(ev.get("question"))})
         _row(out, "question id", ev.get("qid"))
@@ -1300,14 +1377,8 @@ EXPLORER_ROW = (
 
 def _is_builtin_explorer(ev: Mapping[str, Any]) -> bool:
     from orch.addons import builtin
-    from orch.addons.package import MANIFEST_FILE, package_digest
 
-    try:
-        return ev.get("name") == "explorer" and ev.get("package_sha256") == package_digest(
-            {MANIFEST_FILE: builtin.manifest_bytes("explorer")}
-        )
-    except (ValueError, OSError):
-        return False
+    return builtin.is_builtin_package(ev, "explorer")
 
 
 def _addon(typ: str, ev: Mapping[str, Any], out: dict[str, Any]) -> str:

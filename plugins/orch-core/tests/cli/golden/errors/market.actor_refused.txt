@@ -1,0 +1,1 @@
+err market.actor_refused a person does this at their own terminal; an agent cannot · retry:false · next: ask the person · fix: orch market list

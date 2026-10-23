@@ -91,7 +91,7 @@ export function summarize(review: Review): { lines: string[]; unknown: boolean }
     } else odd(item.title)
   }
   for (const flag of review.flags) {
-    if (flag.id === 'custody' || flag.id === 'terminal') lines.push(flag.text)
+    if (flag.id === 'custody' || flag.id === 'terminal' || flag.id === 'records') lines.push(flag.text)
     else if (flag.id !== 'runner' && flag.id !== 'terminals') odd(flag.text) // a flag this page does not know is shown
   }
   if (addons.length) lines.push(`Add-ons: ${addons.join(', ')}`)
@@ -307,6 +307,7 @@ export function Setup({ api }: { api: SetupAPI }) {
     agent_hours: 8,
     agent_grant: false,
     relay: false,
+    records: true,
   })
   const [step, setStep] = useState(0)
   const [secrets, setSecrets] = useState<Secrets | null>(null)
@@ -537,7 +538,7 @@ export function Setup({ api }: { api: SetupAPI }) {
     setStep(5)
   }
   async function approveProfile() {
-    await api.call('profile', { ...profile, git_init: offersGit && profile.git_init === true })
+    await api.call('profile', { ...profile, git_init: offersGit && profile.git_init === true, records: state?.mode !== 'finish' && profile.records !== false })
     if (state?.mode === 'finish' || confirmed.current) await getReview()
     else {
       const revealed = await api.call<Secrets>('secrets/reveal', {})
@@ -843,6 +844,11 @@ export function Setup({ api }: { api: SetupAPI }) {
                   </span>
                 </label>
               ))}
+              {profile.method === 'click' && state.click_available && (
+                <p className="notice" data-testid="click-risk">
+                  <Inline>{state.click_risk}</Inline>
+                </p>
+              )}
               <h2>Let agents work for you for:</h2>
               <div className="segments">
                 <button aria-pressed={access === 'none'} onClick={() => chooseAccess('none')}>
@@ -888,13 +894,23 @@ export function Setup({ api }: { api: SetupAPI }) {
                     />
                   </label>
                   {profile.method === 'click' && (
-                    <p>
-                      Relay is unavailable with One click:{' '}
-                      {state.click_reason ||
-                        'One click and phone approvals cannot be used together yet (click_relay_unsupported).'}
-                    </p>
+                    <p>Phone approvals are not available with One click yet. Choose Terminal to use them.</p>
                   )}
                 </>
+              )}
+              {state.mode !== 'finish' && (
+                <label className="toggle">
+                  <span>
+                    Keep a history of this workspace
+                    <small>Saved on this computer automatically. Nothing is uploaded.</small>
+                  </span>
+                  <input
+                    type="checkbox"
+                    role="switch"
+                    checked={profile.records !== false}
+                    onChange={(e) => update({ records: e.target.checked })}
+                  />
+                </label>
               )}
               <footer>
                 <button onClick={() => setStep(2)}>Back</button>

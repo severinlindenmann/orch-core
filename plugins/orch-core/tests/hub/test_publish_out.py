@@ -20,8 +20,8 @@ from orch.crypto import suite as S
 from orch.crypto.encoding import b64u, unb64u
 from orch.hubclient import HubLink, HubRefused
 from orch.hubclient import publish as hp
-from orch.relay.pubsign import PublishContext, publish_signed_bytes
-from orch.relay.sign import SignerRefused
+from orch.wsproto.pubsign import PublishContext, publish_signed_bytes
+from orch.wsproto.sign import SignerRefused
 
 from . import contract as H
 from .fake import FakeHub, vector_join_body

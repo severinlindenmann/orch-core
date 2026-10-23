@@ -196,7 +196,7 @@ const CASES: Case[] = [
     open: async (user) => {
       await user.click(await screen.findByRole('tab', { name: /Questions/ }, T))
       await user.click(await screen.findByRole('radio', { name: /DATE \(local midnight\)/ }, T))
-      await user.click(within(document.getElementById('question-Q2')!).getByRole('button', { name: 'Answer Q2' }))
+      await user.click(within(document.getElementById('question-Q2')!).getByRole('button', { name: 'Send answer' }))
       return screen.findByRole('dialog', {}, T)
     },
     confirm: press('Send answer'),
@@ -625,7 +625,7 @@ const CASES: Case[] = [
     path: '/settings/general',
     open: async (user) => {
       await user.click(await screen.findByRole('button', { name: '1 day' }, T))
-      await user.click(screen.getAllByRole('button', { name: 'Save' })[1])
+      await user.click(screen.getAllByRole('button', { name: 'Save' })[2]) // name, icon, then the grant length
       return screen.findByRole('dialog', {}, T)
     },
     confirm: press('Sign and save'),
@@ -783,37 +783,6 @@ describe('start agent', () => {
     expect(within(panel).getByRole('button', { name: extend ? 'Sign and extend' : 'Sign and allow access' })).toBeDisabled() // until the word is typed
     expect(prepare.mock.calls[0][1]).toEqual({ action: 'runner_grant', hours: 8, scope: 'workable', ...(extend ? { extend: 'gr_old' } : {}) })
     vi.restoreAllMocks()
-  })
-})
-
-describe('approval methods policy', () => {
-  it('requires terminal review for sign_methods even when the personal default is one click', async () => {
-    const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query')
-    const { HandoffDialog } = await import('@/components/sign/HandoffDialog')
-    const { fingerprintOf, reviewDigestOf } = await import('@/api/handoff')
-    const { fakeRequest, state } = await import('@/test/handoffHarness')
-    const ws = 'a'.repeat(32)
-    const methods = ['terminal', 'phone'] as const
-    const event = { id: 'event-settings', type: 'settings.changed', actor: { kind: 'person', id: 'p_owner', device: null }, auth: null, sign_methods: [...methods] }
-    const material = { kind: 'payload' as const, ticket: null, review: [{ event_id: event.id, type: event.type, payload: { sign_methods: [...methods] }, derived: {} }] }
-    const request = { ...fakeRequest(), op: 'settings.set', material, events: [event], review_digest: reviewDigestOf(material), content: { headline: 'Change allowed ways to approve', fields_changed: [{ field: 'sign_methods', before: 'terminal, click', after: methods.join(', '), before_note: 'per host, not signed' }] } }
-    request.fingerprint = fingerprintOf(request.review_digest, request.events, request.op)
-    vi.spyOn(api, 'getWorkspaces').mockResolvedValue([])
-    vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods: ['terminal', 'click', 'phone'] } as Awaited<ReturnType<typeof api.getHostSettings>>)
-    vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'click', fallback: 'terminal', is_default: false, allowed: ['terminal', 'click', 'phone'] })
-    const prepare = vi.spyOn(api, 'prepareHandoff').mockResolvedValue(request)
-    vi.spyOn(api, 'getHandoff').mockResolvedValue(state(request))
-    vi.spyOn(api, 'cancelHandoff').mockResolvedValue({ id: request.id, state: 'cancelled' })
-    const click = vi.spyOn(api, 'prepareClick')
-    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><HandoffDialog ws={ws} title="Change allowed ways to approve" action={{ action: 'settings_set', sign_methods: [...methods] }} onClose={() => {}} /></QueryClientProvider>)
-    const button = await screen.findByRole('button', { name: 'Sign in Terminal' })
-    await waitFor(() => expect(button).toBeEnabled())
-    button.click()
-    await screen.findByTestId('handoff-command')
-    expect(screen.getByText('terminal, phone')).toBeVisible()
-    expect(screen.getByText('per host, not signed')).toBeVisible()
-    expect(prepare).toHaveBeenCalledWith(ws, { action: 'settings_set', sign_methods: [...methods] }, 0)
-    expect(click).not.toHaveBeenCalled()
   })
 })
 

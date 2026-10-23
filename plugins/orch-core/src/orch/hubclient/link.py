@@ -74,8 +74,29 @@ class HubLink:
             raise HubRefused("unknown_op")
         if W2H_OPS[op] is not None and W2H_OPS[op] != self.mode:
             raise HubRefused("wrong_mode")
-        self._seq += 1
-        o = {
+        sent: dict[str, Any] = {}
+
+        def build(seq: int) -> dict[str, Any]:
+            sent["o"] = o = self._request(op, body, seq)
+            return {"o": o, "sig": b64u(self._sign(wire.SIG_LINK + wire.cj(o)))}
+
+        try:
+            send_next = getattr(self._t, "send_next", None)
+            if send_next is not None:  # a real link: ITS counter numbers every frame (calls and acks alike)
+                reply = send_next(op, build)
+            else:  # a bare transport (fakes): this link object's own counter
+                self._seq += 1
+                reply = self._t.send(build(self._seq))
+        except OSError:
+            raise HubRefused("hub_unreachable") from None
+        r = self._open(reply, sent["o"])
+        if "error" in r["body"]:
+            code = r["body"]["error"]
+            raise HubRefused(code if type(code) is str and 0 < len(code) <= 40 else "malformed")
+        return r["body"]
+
+    def _request(self, op: str, body: dict[str, Any], seq: int) -> dict[str, Any]:
+        return {
             "v": 2,
             "suite": wire.SUITE_ID,
             "kind": "hub.link",
@@ -83,22 +104,12 @@ class HubLink:
             "hub_id": self.hub_id,
             "workspace_id": self.workspace_id,
             "dir": "w2h",
-            "seq": self._seq,
+            "seq": seq,
             "ts_ms": self._now(),
             "op": op,
             "re": None,
             "body": body,
         }
-        msg = {"o": o, "sig": b64u(self._sign(wire.SIG_LINK + wire.cj(o)))}
-        try:
-            reply = self._t.send(msg)
-        except OSError:
-            raise HubRefused("hub_unreachable") from None
-        r = self._open(reply, o)
-        if "error" in r["body"]:
-            code = r["body"]["error"]
-            raise HubRefused(code if type(code) is str and 0 < len(code) <= 40 else "malformed")
-        return r["body"]
 
     def _open(self, reply: Any, want: dict[str, Any]) -> dict[str, Any]:
         r = wire._envelope(reply, "hub.link")

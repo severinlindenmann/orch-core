@@ -10,7 +10,7 @@ sends it to the hub over the link (``publish_out``); the hub forwards it unchang
       "orch/v2/publish-hub|" || suite || ws(16) || u64(ts) || nonce(16) || lp16(METHOD) || lp16(host) || lp16(target)
           || H(body) || hub_id(16) || approval_hash          (approval_hash = H(cj(approval)) or 32 zero bytes)
 
-* :class:`HubPublishSigner`: the purpose-built ``WSK`` signer. Same rules as :class:`orch.relay.pubsign.PublishSigner`
+* :class:`HubPublishSigner`: the purpose-built ``WSK`` signer. Same rules as :class:`orch.wsproto.pubsign.PublishSigner`
   (host derived from the signed publish setting, target pinned to the workspace's routes, a fresh nonce and clock per
   call) plus the hub: the signature commits to the hub that forwards it. The request content is whatever the host's
   publish op passes in; nothing here takes a blob to sign.
@@ -37,8 +37,8 @@ from orch.canon.jcs import dumps as cj
 from orch.crypto import suite as _suite
 from orch.crypto.encoding import b64u, unhex
 from orch.crypto.labels import L
-from orch.relay.pubsign import METHODS, PublishContext, SignedPublish, _target_ok
-from orch.relay.sign import SignerRefused
+from orch.wsproto.pubsign import METHODS, PublishContext, SignedPublish, _target_ok
+from orch.wsproto.sign import SignerRefused
 
 from .errors import HubRefused
 
@@ -47,6 +47,7 @@ __all__ = [
     "HubPublishTransport",
     "PUBLIC_ROUTES",
     "approval_hash",
+    "card_put",
     "hub_path_signed_bytes",
     "request_access",
     "request_hash",
@@ -139,7 +140,7 @@ def request_access(method: str, target: str) -> str | None:
 
 class HubPublishSigner:
     """Purpose-specific ``WSK`` signatures of publish requests that go through ``hub_id``. Duck-types
-    :class:`~orch.relay.pubsign.PublishSigner` for :class:`~orch.publishclient.client.PublishClient`."""
+    :class:`~orch.wsproto.pubsign.PublishSigner` for :class:`~orch.publishclient.client.PublishClient`."""
 
     __slots__ = ("_approver", "_clock", "_lock", "_pub", "_rand", "_seen", "_sign", "ctx", "hub_id")
 
@@ -202,6 +203,14 @@ class HubPublishSigner:
         if approval is not None:
             headers["Orch-Owner-Approval"] = b64u(cj(dict(approval)))
         return SignedPublish(method, self.ctx.host, target, headers)
+
+
+def card_put(link: Any, card: Mapping[str, Any], owner_pk_pub: str) -> dict[str, Any]:
+    """Hand the workspace's v2 card to the hub (``card_put``, contract section 10); the hub forwards it to orch-publish,
+    which verifies it and admits the workspace (R5a, V3-D36). A refusal of the hub or of orch-publish raises
+    :class:`HubRefused` with its code; an unreachable hub is ``hub_unreachable``. Idempotent."""
+    link.call("card_put", {"card": dict(card), "pk_pub": owner_pk_pub})
+    return {"result": "registered"}
 
 
 class HubPublishTransport:

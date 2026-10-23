@@ -129,6 +129,11 @@ class FakePorts:
     def git_init(self, root: Path) -> None:
         self.log.append(("git_init", str(root)))
 
+    def records_setup(self, wid: str, root: Path) -> None:
+        self.log.append(("records_setup", wid, str(root)))
+        if getattr(self, "fail_records", False):
+            raise RuntimeError("no git")
+
     def runner_enable(self, wid: str, prefix: str, terminals: bool) -> None:
         self.log.append(("runner_enable", terminals))
         if self.fail_runner:

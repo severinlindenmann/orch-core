@@ -309,6 +309,10 @@ class Gateway:
                 ("grant.forget", "run/1"),
                 ("whoami", "ops/1"),
             ],
+            # V3 A7: the Hub tab, the top-bar chip and the Tickets column (reads; every change is a Terminal command).
+            "hub": [
+                ("hub.status", "hub/1")
+            ],  # share.* is checked by its own routes: an older host degrades in the page
         }
         for feature, ops in requirements.items():
             if all(link.supports(op, cap) for op, cap in ops):
@@ -390,8 +394,17 @@ class Gateway:
                 ):
                     # Not repaired, not shown: invisible or bidi characters could make a name pass for another.
                     raise fail("workspace.name_invalid", "The workspace name has invisible characters.", exit=3)
+                icon, icon_known = None, False
+                if link.supports("workspace.settings", "settings/1"):
+                    try:  # the first page is enough: the icon is not a repo; a failed read only means "no icon"
+                        shown = link.call("workspace.settings", {})
+                        icon, icon_known = adapters.shell.workspace_icon(shown), "icon" in shown
+                    except HostError:
+                        pass
                 result.append(
                     adapters.Workspace(
+                        icon=icon,
+                        icon_known=icon_known,
                         id=ws,
                         prefix=show["prefix"],
                         name=show["name"],

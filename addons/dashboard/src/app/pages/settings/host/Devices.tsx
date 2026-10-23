@@ -1,3 +1,5 @@
+import { Link } from '@tanstack/react-router'
+import { useHub } from '../hub/shared'
 // Settings → Devices on a real host: pair a phone and list the paired devices (PROPOSED ops, cap `pair/1`, behind the
 // feature gate; src/api/pairing.ts). The dashboard never signs: adding the phone (`relay.pair_device`) and removing a
 // device (`device.remove`) are hand-offs; the primary's certificate step stays in the terminal.
@@ -53,8 +55,10 @@ function ErrorLine({ error, ws }: { error: unknown; ws: string }) {
 
 /** Settings → Devices: the reader levels (H12d-2), then pairing. Without the pairing gate: one calm line, no pairing call. */
 export function HostDevices({ workspace }: { workspace: Workspace }) {
+  const hub = useHub(workspace.id)
   return (
     <div className="space-y-6">
+      {hub.data?.mode === 'standalone' && <p data-testid="devices-needs-hub" className="text-sm text-text-muted">Needs a hub · Phone access needs a hub. <Link data-testid="devices-connect-hub" to="/settings/$tab" params={{ tab: 'hub' }} className="text-chart-4 underline">Connect a hub</Link></p>}
       {!pairServed(workspace.id) ? (
         <div className="space-y-3">
           <h2 className="text-base font-semibold">Devices</h2>

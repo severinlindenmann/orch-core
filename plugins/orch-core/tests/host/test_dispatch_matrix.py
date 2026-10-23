@@ -14,10 +14,20 @@ import orch.ops as ops
 from orch.host import frames
 from orch.host.agents import AGENT_OPS
 from orch.host.columns import Column, refusal, resolve
-from orch.host.dispatch import FILE_OPS, GIT_OPS, HOST_OPS, NOT_SERVED, PERSON_READS, op_kind, served_ops
+from orch.host.dispatch import (
+    FILE_OPS,
+    GIT_OPS,
+    HOST_OPS,
+    NOT_SERVED,
+    PERSON_GRANT_REGISTRY_READS,
+    PERSON_READS,
+    op_kind,
+    served_ops,
+)
 from orch.host.errors import HostError, disposition
 from orch.host.hubops import HUB_OPS
 from orch.host.human import HUMAN_OPS
+from orch.host.marketops import MARKET_OPS, MARKET_READS
 from orch.host.peerops import PEER_OPS, PEER_READS
 from orch.host.publishing import PUBLISH_OPS
 from orch.host.reads import READ_OPS
@@ -87,6 +97,7 @@ def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
     host |= set(HUB_OPS)  # V3 C2a
     host |= set(PEER_OPS)  # V3 C12
     host |= set(SPACE_OPS)  # V3 C13
+    host |= set(MARKET_OPS)  # V3 G2
     host |= set(SHARE_OPS)  # V3 C6
     host |= set(GRANT_OPS) | set(AGENT_OPS)  # H11c
     host |= {"reader.declare"}  # H12d-2
@@ -103,7 +114,6 @@ def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
         "policy.set",
         "settings.set",
         "people.set",
-        "relay.pair_device",
         "publish.share",
         "ac.accept",
         "ac.unaccept",
@@ -111,7 +121,9 @@ def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
         "hub.join",
         "hub.mode",
         "hub.leave",
-    }  # H12c-e, B12D, P5, R3, V3 C2a, C2b
+        "device.mark_exposed",
+        "device.rotate",
+    }  # H12c-e, B12D, P5, R3, V3 C2a, C2b, #1097
     assert set(HUMAN_OPS) == {"human.prepare", "human.get", "human.submit", "human.cancel", "human.pending"}
     assert set(NOT_SERVED) == {"init", "import.v1"}
     assert {"wait", "sub.open", "sub.close"} <= set(welcome["ops"])  # H6a: served on the bus
@@ -224,6 +236,8 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
             )
         elif op in SHARE_OPS:  # V3 C6: column P only (owner role)
             assert kind == (("person_read", "read") if op in SHARE_READS else ("person_write", "write"))
+        elif op in MARKET_OPS:  # V3 G2: P and G; the op refuses an agent's add and --commit itself
+            assert kind == (("pg_read", "read") if op in MARKET_READS else ("pg_write", "write"))
         elif op in SPACE_OPS:  # V3 C13: list and get for P and G, the rest P only (owner role)
             assert kind == (("pg_read", "read") if op in SPACE_READS else ("person_write", "write"))
         elif op in PEER_OPS:  # V3 C12: reads for P and G, writes P only (owner role)
@@ -235,7 +249,9 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
                             "grant.forget": ("person_write", "write")}[op]  # fmt: skip
         else:
             who = ops.get(op).who
-            assert kind[0] == ("person_read" if op in PERSON_READS else who)
+            assert kind[0] == (
+                "person_read" if op in PERSON_READS else "pg_read" if op in PERSON_GRANT_REGISTRY_READS else who
+            )
             assert kind[1] == ("wait" if op == "wait" else "read" if who == "read" else "write")
         for row, (peer, grant, valid) in ROWS.items():
             assert refusal(resolve(peer, grant, valid), kind[0]) == expected(row, kind[0]), (op, row)
@@ -427,7 +443,8 @@ def _catalog_rows() -> list[tuple[str, int, bool, str]]:
     # H11d: the worktree.* rows sit in a later table of the section, after a prose paragraph
     rest = "\n".join(lines[start + 2 + len(table) :]).split("\n### ", 1)[0]
     for line in rest.splitlines():
-        m = re.match(r"\| `((?:worktree\.|publish\.|unsupported\.|hub\.)[a-z_]+)` \| (\d) \| (yes|no) \| (\w+)", line)
+        pre = r"(?:worktree\.|publish\.|unsupported\.|hub\.|keys\.|relay\.cut|relay\.not_cut)"
+        m = re.match(rf"\| `({pre}[a-z_]+)` \| (\d) \| (yes|no) \| (\w+)", line)
         if m and m.group(1) not in {r[0] for r in rows}:
             rows.append((m.group(1), int(m.group(2)), m.group(3) == "yes", m.group(4)))
     return rows
@@ -492,3 +509,16 @@ def test_grant_deposit_is_a_person_with_their_own_verified_grant():
             assert got is not None, row
     for name in ("W", "C"):
         assert refusal(Column(name, "none"), "deposit") == "op.not_allowed"
+
+
+def test_the_session_start_hook_runs_for_an_agent_with_a_verified_grant_and_for_the_person():
+    """Run 6, #1067: a Start-agent session (peer class agent, verified grant: column G) got
+    ``op.not_allowed instructions.hook is not allowed here`` at SessionStart. The hook is a P and G read; the
+    person-only reads stay refused to an agent, and no-grant callers still get nothing."""
+    kind = op_kind("instructions.hook")
+    assert kind == ("pg_read", "read")
+    assert refusal(resolve("agent", "verified", False), kind[0]) is None  # the agent's own hook
+    assert refusal(resolve("person", "absent", True), kind[0]) is None
+    assert refusal(resolve("agent", "absent", False), kind[0]) == "op.not_allowed"
+    assert refusal(resolve("agent", "unverified", False), kind[0]) == "op.not_allowed"
+    assert refusal(resolve("agent", "verified", False), op_kind("instructions.sync")[0]) == "op.not_allowed"

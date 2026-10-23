@@ -52,7 +52,13 @@ from .host_link import TRUST_PROMPT, resolve
 from .person import RunLog, run_lock
 from .tool import Link, ValidatedTips, commit, init_repo, push, push_url
 
-__all__ = ["CHILD_SCHEMA", "main"]
+__all__ = ["CHILD_SCHEMA", "NOT_SET_UP", "main"]
+
+#: what a person reads when the workspace has no records history yet (``orch records status``, text output)
+NOT_SET_UP = (
+    "The records history is not set up on this computer yet. Run orch records init once to start it "
+    "(orch setup does this for a new workspace); nothing is sent anywhere."
+)
 
 _SHA = {"type": "string", "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"}
 #: the records child's one JSON line (§12.11)
@@ -536,7 +542,11 @@ def _dispatch(run: _Run, r: Any) -> tuple[dict[str, Any], str]:
         return res, (f"pushed {res['commit'][:12]} to {res['url']}" if res["pushed"] else "up to date")
     if a.cmd == "status":
         res = _do_status(run, r)
-        return {"status": res}, json.dumps(res, sort_keys=True)
+        text = json.dumps(res, sort_keys=True)
+        if res.get("configured") is False:
+            # plain words first (run 8): the state is "not set up yet", the way out is one command (the setup does it)
+            text = f"{NOT_SET_UP}\n{text}"
+        return {"status": res}, text
     if a.cmd == "sync-index":
         res = _do_sync_index(run, r)
         return res, f"index synced to {res['commit'][:12]}"

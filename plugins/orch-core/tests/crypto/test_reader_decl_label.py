@@ -15,8 +15,8 @@ LABEL = "orch/v2/sig/reader-decl|"
 
 
 def _corpus_labels() -> dict[str, str]:
-    """The vendored relay corpus (``tests/relay/vectors/vectors_v2.json.xz``, checked against SOURCE)."""
-    from tests.relay.corpus import VECTORS as RELAY_VECTORS
+    """The vendored relay corpus (``tests/wsproto/vectors/vectors_v2.json.xz``, checked against SOURCE)."""
+    from tests.wsproto.corpus import VECTORS as RELAY_VECTORS
 
     return RELAY_VECTORS["labels"]
 

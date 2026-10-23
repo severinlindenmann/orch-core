@@ -78,6 +78,24 @@ def test_route_sender_hub_down_keeps_outbox_and_resends_same_bytes() -> None:
     assert [o.action for o in drain(b)] == ["inbox"]
 
 
+def test_route_outbox_survives_a_host_restart_and_is_delivered_once() -> None:
+    """V3 D78 (#1103): the unsent envelope is in the saved mailbox; a new process flushes the same bytes."""
+    hub, a, b = world()
+    hub.down.add(A)
+    sent = a.svc.send_ticket(B, {"title": "survive"}, deadline_ms=NOW + 3_600_000)
+    assert sent["state"] == "outbox"
+    held = dict(a.side.mb.outbox)
+    a.svc.close()
+    a.side.mb = W.Mailbox.from_json(a.side.mb.to_json())  # the host restarted: only the saved file is left
+    a2 = Node(a.side, hub)
+    assert a2.side.mb.outbox == held
+    hub.down.discard(A)
+    assert a2.svc.flush() == [sent["envelope_id"]] and not a2.side.mb.outbox
+    assert [o.action for o in drain(b)] == ["inbox"]
+    assert a2.svc.flush() == []  # nothing left to resend: a second pass sends nothing
+    assert len(b.svc.inbox()) == 1
+
+
 def test_route_unpinned_sender_refused_and_acked_with_error() -> None:
     hub, a, b = world()
     a.svc.send_ticket(B, {"title": "x"}, deadline_ms=NOW + 3_600_000)

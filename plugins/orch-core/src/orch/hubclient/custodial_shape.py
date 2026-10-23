@@ -18,6 +18,9 @@ import unicodedata
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from orch.canon.question import ANSWER_MAX, QuestionError, validate_question
+from orch.canon.text import TextError, check_plain
+
 from .errors import HubRefused
 
 __all__ = ["UNICODE_VERSION", "check_custodial_payload", "text_ok"]
@@ -40,6 +43,12 @@ SIZES = ("xs", "s", "m", "l", "xl")
 STATUSES = ("backlog", "open", "in_progress", "testing", "done", "closed")
 TICKET_ROLES = ("ticket_owner", "assignees", "reviewers", "watchers")
 MAX_LIST = 32
+#: phase 5 (hub protocol 8.8): value grammars of the grant, device, policy and settings actions
+_OPNAME = re.compile(r"[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)?")
+_GRANT = re.compile(r"gr_[0-7][0-9A-HJKMNP-TV-Z]{25}")
+_DEVICE = re.compile(r"d_[0-9a-f]{32}")
+APPROVER_TOKENS = ("owner", "maintainer", "member", "ticket_owner", "assignees", "reviewers", "watchers")
+POLICY_GATES = ("requirements", "plan", "verify", "code")
 
 #: The Unicode version the text rule is evaluated under (contract 2.1, L2P4-3). Another table would judge text
 #: differently from the hub and the channels, so a runtime on another version refuses (fail closed) instead.
@@ -124,37 +133,25 @@ def _base_rev(x: Any) -> bool:
     return type(x) is dict and 0 < len(x) <= len(SET_PATHS) and all(k in SET_PATHS and _hash(v) for k, v in x.items())
 
 
-def _option(x: Any) -> bool:
-    return (
-        type(x) is dict
-        and {"key", "label"} <= set(x) <= {"key", "label", "cost"}
-        and _re(_TOKEN)(x["key"])
-        and _text(200)(x["label"])
-        and ("cost" not in x or _text(64)(x["cost"]))
-    )
-
-
 def _question(x: Any) -> bool:
-    """The question a person asks: exactly `{id, to, text, why?, options?, recommended?, blocking}` (the id is the
-    hub's next free `Q<n>`, derived like `qid`); no `sig`."""
-    if type(x) is not dict or not {"id", "to", "text", "blocking"} <= set(x) <= {
-        "id", "to", "text", "why", "options", "recommended", "blocking",
-    }:  # fmt: skip
+    """The question a person asks through the hub: the one question shape (ticket-format §5.6.1), checked by the one
+    validator, plus the routing the hub may set: the id is the hub's next free `Q<n>` (derived like `qid`), `to` a
+    person or a ticket role; no `sig`."""
+    try:
+        validate_question(x)
+    except QuestionError:
         return False
-    opts = x.get("options", [])
-    keys = [o["key"] for o in opts] if type(opts) is list and all(_option(o) for o in opts) else None
-    return (
-        _re(_QID)(x["id"])
-        and (_re(_PERSON)(x["to"]) or x["to"] in TICKET_ROLES)
-        and _text(2000, multiline=True)(x["text"])
-        and ("why" not in x or _text(1000, multiline=True)(x["why"]))
-        and keys is not None
-        and len(opts) <= 8
-        and len(keys) == len(set(keys))
-        and ("options" not in x or len(opts) > 0)
-        and ("recommended" not in x or x["recommended"] in keys)
-        and type(x["blocking"]) is bool
-    )
+    return bool(_re(_PERSON)(x["to"]) or x["to"] in TICKET_ROLES)
+
+
+def _answer_text(x: Any) -> bool:
+    """An answer's text: the answer rule of ticket-format §5.6.1 (1..1000 code points, check_plain, not blank). Which
+    kind takes a text alone is the model's check (it holds the question)."""
+    try:
+        check_plain(x, one_line=False, limit=ANSWER_MAX, what="the answer text")
+    except TextError:
+        return False
+    return True
 
 
 def _visibility(x: Any) -> bool:
@@ -176,6 +173,49 @@ def _source_sha(x: Any) -> bool:
         )
         and [i["repo"] for i in x] == sorted({i["repo"] for i in x})
     )  # fmt: skip
+
+
+def _int_in(lo: int, hi: int) -> Check:
+    return lambda x: type(x) is int and lo <= x <= hi
+
+
+def _gate_policy(gate: str) -> Check:
+    """core's ``gatePolicy`` exactly (the five keys, no ``factor``: a channel never changes a factor floor, 8.8), lists
+    sorted and unique; ``code`` per D59 (``not`` names assignees, independent)."""
+    tok = _sorted_unique(_enum(*APPROVER_TOKENS), 0, len(APPROVER_TOKENS))
+    types = _sorted_unique(_enum(*TICKET_TYPES), 1, len(TICKET_TYPES))
+
+    def ok(x: Any) -> bool:
+        if type(x) is not dict or set(x) != {"approvers", "count", "not", "applies", "independent"}:
+            return False
+        good = (
+            tok(x["approvers"])
+            and len(x["approvers"]) >= 1
+            and _int_in(1, 16)(x["count"])
+            and tok(x["not"])
+            and (x["applies"] in ("all", "off") or types(x["applies"]))
+            and type(x["independent"]) is bool
+        )
+        return bool(good and (gate != "code" or ("assignees" in x["not"] and x["independent"] is True)))
+
+    return ok
+
+
+def _gates(x: Any) -> bool:
+    return type(x) is dict and len(x) >= 1 and all(g in POLICY_GATES and _gate_policy(g)(v) for g, v in x.items())
+
+
+#: ``settings.changed`` ``set``: only these three keys (``sign_methods``, ``repos``, ``models`` and the rest stay off
+#: the channel, V3-D29)
+SETTINGS_SET: dict[str, Check] = {
+    "grant_hours": _int_in(1, 168),
+    "claim_ttl_min": _int_in(15, 1440),
+    "lease_ttl_min": _int_in(5, 1440),
+}
+
+
+def _settings(x: Any) -> bool:
+    return type(x) is dict and len(x) >= 1 and all(k in SETTINGS_SET and SETTINGS_SET[k](v) for k, v in x.items())
 
 
 #: Fields every custodial event carries besides the hub fields (8.1): the envelope the hub derives.
@@ -220,7 +260,7 @@ PAYLOAD: dict[str, tuple[dict[str, Check], dict[str, Check]]] = {
     "question.asked": ({"question": _question, "qid": _re(_HEX32), "hash": _hash}, {}),
     "question.answered": (
         {"question": _re(_QID), "hash": _hash},
-        {"option": _re(_TOKEN), "text": _text(4096, multiline=True)},
+        {"option": _re(_TOKEN), "text": _answer_text},
     ),
     "gate.approved": ({"gate": _enum(*GATES), "hash": _hash, **_DECISION_DERIVED}, {"source_sha": _source_sha}),
     "gate.changes_requested": (
@@ -233,6 +273,19 @@ PAYLOAD: dict[str, tuple[dict[str, Check], dict[str, Check]]] = {
     ),
     "addon.disabled": ({"name": _re(_ADDON)}, {}),
     "addon.purged": ({"name": _re(_ADDON)}, {}),
+    # phase 5 (8.8, V3-D29): the event carries no grant id, secret hash or times; the host derives them
+    "grant.requested": (
+        {
+            "scope": _enum("all", "workable"),
+            "verbs": lambda x: x == "agent" or _sorted_unique(_re(_OPNAME), 1, 32)(x),
+            "hours": _int_in(1, 168),
+        },
+        {"label": _text(200)},
+    ),
+    "grant.revoked": ({"grant": _re(_GRANT)}, {"reason": _text(500)}),
+    "device.excluded": ({"device": _re(_DEVICE), "reason": _enum("lost", "retired", "compromised")}, {}),
+    "policy.changed": ({"gates": _gates}, {}),
+    "settings.changed": ({"set": _settings}, {}),
 }
 
 

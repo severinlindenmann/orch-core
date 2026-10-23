@@ -28,6 +28,7 @@ def test_ask_writes_a_blocking_question_with_options(ws, cli):
         "id": "Q1",
         "to": "assignees",
         "text": "Which source?",
+        "kind": "choice",
         "why": "they differ",
         "options": [{"key": "csv", "label": "csv"}, {"key": "api", "label": "api"}],
         "recommended": "csv",

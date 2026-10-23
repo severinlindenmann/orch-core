@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "market.community_unisolated",
+    "message": "only the official marketplace can be added for now",
+    "hint": "other marketplaces need per-add-on user isolation",
+    "fix": {
+      "argv": [
+        "orch",
+        "market",
+        "list"
+      ]
+    },
+    "retryable": false
+  }
+}

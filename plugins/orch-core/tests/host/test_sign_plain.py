@@ -295,6 +295,7 @@ VALUES = {
     "duplicate_of": "DEMO-0007", "resolution": "duplicate", "key": "DEMO-0002", "ticket_type": "chore", "title": "Marker Title",
     "owner": "p_" + "4" * 32, "add": ["p_" + "7" * 32], "remove": ["p_" + "8" * 32], "from": "open", "to": "backlog", "gate": "plan",
     "gates": {"plan": POLICY}, "set": {"grant_hours": 5},
+    "old": "d_" + "5" * 32, "rotation": {"o": {"kind": "device_rotation", "marker": "rot"}, "sig": "s"},
     "hub_id": "38d8abed52ccfb538da401fd54e64bdc", "hk_root_pub": "marker-hubroot", "mode": "selective", "binding_seq": 3,
     "aliases": [{"person_id": "9" * 32, "user_id": "a" * 32}], "sections": {"summary": {"hash": "sha256:" + "ee" * 32, "refs": ["marker-art"]}},
 }  # fmt: skip
@@ -364,7 +365,7 @@ def test_the_plain_view_shows_every_key_it_claims_to_show(typ):
         needles = []
         if isinstance(value, str) and value.startswith("sha256:"):
             needles.append(value[7:19])  # a digest is shown short
-        elif key in ("pk_pub", "cert", "device_cert", "hk_root_pub"):
+        elif key in ("pk_pub", "cert", "device_cert", "hk_root_pub", "rotation"):
             needles.append(signcontent._fp(value))  # a key or certificate is shown by its fingerprint
         elif key in ("sections", "set", "gates", "source_sha"):
             needles.append(
@@ -925,10 +926,10 @@ def test_f7_an_answer_to_a_question_with_why_and_a_recommendation_is_plain():
         "with Hello"
     )
     rows = {r["field"]: r["after"] for r in c["fields_changed"]}
-    assert rows["your choice"] == "Hello"
+    assert rows["your choice"] == "Hello (option hello)"
     assert rows["option hello"] == "Hello" and rows["option hi"] == "Hi"
-    assert rows["recommended option (per host)"] == "Hello"
-    assert any(s["title"].endswith("(per host, not signed)") and "before I write" in s["text"] for s in c["sections"])
+    assert rows["recommended option"] == "Hello"  # bound by the question hash since #1123
+    assert any(s["title"] == "Why it was asked" and "before I write" in s["text"] for s in c["sections"])
     assert c["ticket"]["key"] == "RA-0001"
     view = "\n".join(signcontent.text(c, signer._clean))
     assert "{" not in view and "options" not in view.replace("option ", "")
@@ -939,6 +940,28 @@ def test_f7_an_answer_outside_the_options_says_so_and_a_new_question_key_still_f
     assert {r["field"]: r["after"] for r in c["fields_changed"]}["your choice"] == "nope (not one of the options)"
     with pytest.raises(signcontent.PlainUnavailable):
         build(_answer({"surprise": 1}))
+
+
+def test_f7_two_options_with_the_same_label_are_told_apart_in_the_choice_row():
+    opts = {"options": [{"key": "a", "label": "Yes"}, {"key": "b", "label": "Yes"}], "recommended": "a"}
+    for key in ("a", "b"):
+        c = build(_answer(opts, option=key))
+        assert {r["field"]: r["after"] for r in c["fields_changed"]}["your choice"] == f"Yes (option {key})"
+
+
+def test_f7_the_note_is_titled_your_note_and_a_label_equal_to_the_key_is_not_repeated():
+    c = build(_answer(text="because"))
+    assert [s["title"] for s in c["sections"] if s["id"] == "answer"] == ["Your note"]
+    c = build(_answer({"options": [{"key": "Hello", "label": "Hello"}]}, option="Hello"))
+    assert {r["field"]: r["after"] for r in c["fields_changed"]}["your choice"] == "Hello"
+    # label == key stays suffixed when another option carries that label: {a: "b"} next to {b: "b"}
+    dup = {"options": [{"key": "a", "label": "b"}, {"key": "b", "label": "b"}], "recommended": "a"}
+    for key in ("a", "b"):
+        c = build(_answer(dup, option=key))
+        assert {r["field"]: r["after"] for r in c["fields_changed"]}["your choice"] == f"b (option {key})"
+    # a free-text answer (no option) keeps "Your answer" for its text
+    c = build(_answer(option=None, text="my words"))
+    assert [s["title"] for s in c["sections"] if s["id"] == "answer"] == ["Your answer"]
 
 
 _ME = "p_42e1c38e0488b742" + "0" * 14

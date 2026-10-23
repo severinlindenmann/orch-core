@@ -80,7 +80,10 @@ SKIPPED_CHECKS = {
 }
 #: cases of a check core runs whose rules core has not implemented yet (orch-core#1036): non-strict xfail, so CI shows
 #: them and a fix turns them into XPASS
-PENDING_VECTORS = frozenset({})
+#: phase 5 (hub protocol 8.8, owner V3-D29): the five new custodial types; core C10 (#878) admits them
+#: #1123 A: the one question shape (`kind`, ticket-format 5.6.1) is a breaking change; the vendored hub vectors still
+#: carry kind-less custodial questions until D-hub regenerates them (orch-hub vectorgen), then this set is empty again
+PENDING_VECTORS: frozenset[str] = frozenset({"action_question_asked_by_edit", "custodial_event_question_asked"})
 
 
 def private_key(name: str):

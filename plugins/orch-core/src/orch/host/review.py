@@ -48,7 +48,9 @@ ENVELOPE = frozenset({"v", "id", "type", "actor", "auth", "hash_v", "roster_v", 
 #: attestation (v1.5 "Bound hashes"); on any other type an unexpected ``gate_gen`` stays in the payload, so it is shown
 GATE_TYPES = frozenset({"gate.approved", "gate.changes_requested", "verdict.given"})
 _DECISIONS = frozenset({"gate.approved", "gate.changes_requested", "verdict.given", "question.answered"})
-_CERTS = {"member.added": "device_cert", "workspace.created": "device_cert", "device.added": "cert"}
+_CERTS = {
+    "member.added": "device_cert", "workspace.created": "device_cert", "device.added": "cert", "device.rotated": "cert",
+}  # fmt: skip
 _SECTIONS = frozenset({"ticket.updated", "ticket.created", "question.asked"})
 
 
@@ -82,13 +84,14 @@ HOST_PERSON_OPS: dict[str, frozenset[str]] = {
     # B12D: one role's people of a ticket (the sequence engine's last steps; also a plain person op)
     "people.set": frozenset({"people.changed"}),
     # H12c-e (11A.15.10 item 12): the paired phone's device.added, with its own material kind
-    "relay.pair_device": frozenset({"device.added"}),
     # P5: a person's signature over the exact words of one staged share (a log.added note on its ticket)
     "publish.share": frozenset({"log.added"}),
     # V3 C2a (hub contract 9.1): the owner's record that the workspace joined a hub selectively, or left it
     "hub.join": frozenset({"hub.joined"}),
     "hub.mode": frozenset({"hub.joined"}),  # V3 C2b: selective to full, the owner's own signature
     "hub.leave": frozenset({"hub.left"}),
+    "device.mark_exposed": frozenset({"device.exposed"}),  # #1097: written before a key enters convenience custody
+    "device.rotate": frozenset({"device.rotated"}),  # #1097: the new device replaces the old (recovery code)
 }
 _NOT_PERSON = frozenset({"init", "import.v1"})  # init is host.wsk_create + host.bootstrap; import v1 is direct mode
 

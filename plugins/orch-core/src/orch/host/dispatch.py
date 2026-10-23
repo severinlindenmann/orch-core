@@ -22,8 +22,9 @@ a drain answers it ``host.restarting``, and ``opts.timeout_ms`` does not apply (
 ``ticket:<ref>`` through :meth:`Viewer.ticket`, the cursor against the journal) and fixes the live boundary there; the
 event loop then registers it with the host's :class:`~orch.host.bus.Bus` before its ``res`` is sent.
 
-Each op has a matrix category (:data:`orch.host.columns.OpKind`) from its registry ``who``: ``read`` (``doctor``,
-``instructions.sync`` and ``instructions.hook`` are ``person_read``), ``agent``, ``unattended``, ``human``. The gate
+Each op has a matrix category (:data:`orch.host.columns.OpKind`) from its registry ``who``: ``read`` (``doctor`` and
+``instructions.sync`` are ``person_read``, ``instructions.hook`` is ``pg_read``), ``agent``, ``unattended``,
+``human``. The gate
 (:class:`orch.host.workspace.WorkspaceGate`) applies the column with it (§0.6 steps 3 to 7); this module does steps 8
 to 11.
 
@@ -95,6 +96,8 @@ from .columns import OpKind
 from .errors import HostError
 from .hubops import HUB_OPS
 from .hubops import NETWORK_OPS as HUB_NETWORK_OPS
+from .marketops import MARKET_OPS, MARKET_READS
+from .marketops import NETWORK_OPS as MARKET_NETWORK_OPS
 from .outcomes import BUILDERS, Planned, request_idem
 from .peerops import NETWORK_OPS as PEER_NETWORK_OPS
 from .peerops import PEER_OPS, PEER_READS
@@ -142,7 +145,12 @@ NOT_SERVED: dict[str, str] = {
     "init": "init is host.wsk_create and host.bootstrap (D-P2-9)",
     "import.v1": "import v1 runs in direct mode before registration (D-P2-9)",
 }
-PERSON_READS = frozenset({"doctor", "instructions.sync", "instructions.hook"})
+PERSON_READS = frozenset({"doctor", "instructions.sync"})
+#: registry reads for P and G: the session-start hook runs in the agent's own session (column G, a verified grant), so
+#: it must not be a person-only read (run 6, #1067: ``instructions.hook is not allowed here`` at every agent start)
+#: Column N (an agent with no verified grant) is excluded on purpose: the hook shows the person, claim and unread
+#: decisions of a session, which an unverified caller has no right to see.
+PERSON_GRANT_REGISTRY_READS = frozenset({"instructions.hook"})
 #: arguments the host refuses (``op.not_allowed``) on an op it otherwise serves
 HOST_REFUSED_ARGS: dict[str, dict[str, str]] = {
     "task.done": {
@@ -233,6 +241,7 @@ def served_ops() -> dict[str, int]:
     out.update(HUB_OPS)  # V3 C2a: hub.connect, hub.unbind, hub.status
     out.update(PEER_OPS)  # V3 C12: peer.* (ws->ws through the hub)
     out.update(SPACE_OPS)  # V3 C13: space.* (shared spaces through the hub)
+    out.update(MARKET_OPS)  # V3 G2: market.* (the add-on marketplace)
     out.update(SHARE_OPS)  # V3 C6: share.* (selective-mode share rules)
     out.update(GRANT_OPS)  # H11c: grant.deposit, grant.deposit_status, grant.forget (cap run/1)
     out.update(AGENT_OPS)  # H11c: agent.preview, agent.start (cap run/1)
@@ -293,6 +302,8 @@ def op_kind(name: str) -> tuple[OpKind, Phase] | None:
         return ("person_read", "read") if name in SHARE_READS else ("person_write", "write")
     if name in SPACE_OPS:  # V3 C13: list and get for P and G (untrusted data), the rest P only (owner role)
         return ("pg_read", "read") if name in SPACE_READS else ("person_write", "write")
+    if name in MARKET_OPS:  # V3 G2: P and G; the op itself refuses an agent's add and --commit (market.actor_refused)
+        return ("pg_read", "read") if name in MARKET_READS else ("pg_write", "write")
     if name in READ_OPS:  # H6b: session.list and grant.list are P and G only (§0.5)
         return ("pg_read" if name in PERSON_GRANT_READS else "read", "read")
     if name in HOST_PERSON_OPS:  # move, policy.set, settings.set: through human.* only; a plain req is human_only
@@ -308,6 +319,8 @@ def op_kind(name: str) -> tuple[OpKind, Phase] | None:
     except KeyError:
         return None
     if who == "read":
+        if name in PERSON_GRANT_REGISTRY_READS:
+            return ("pg_read", "read")
         return ("person_read" if name in PERSON_READS else "read", "read")
     return (who, "write")  # type: ignore[return-value]
 
@@ -491,6 +504,10 @@ class RegistryBackend:
             from . import shareops
 
             return await shareops.execute(call, result)
+        if op in MARKET_NETWORK_OPS:  # V3 G2: DNS and git, off the workspace worker, no lock held
+            from . import marketops
+
+            return await marketops.execute(call, result)
         if op in SPACE_NETWORK_OPS:  # V3 C13: the hub link, off the workspace worker
             from . import spaceops
 
@@ -699,6 +716,10 @@ class RegistryBackend:
                 from . import spaceops
 
                 result = spaceops.serve(call)
+            elif op in MARKET_OPS:
+                from . import marketops
+
+                result = marketops.serve(call)
             elif op in PEER_OPS:
                 from . import peerops
 
@@ -825,27 +846,7 @@ class RegistryBackend:
             },
             "session": session,
             **({"runner": terms.runner_info(call.service, call.viewer)} if call.column.name in ("P", "G") else {}),
-            **({"relay": self._relay_caps(call.service)} if call.column.name == "R" else {}),
         }
-
-    @staticmethod
-    def _relay_caps(service: Any) -> dict[str, Any]:
-        """``whoami.relay`` (column R only): the person-event writes this host serves on R (the framing table's write
-        kinds) and the live R6 gate, read now (the same source as ``host.status.relay.gate``). §11A.17.2: ``dev``
-        only while :func:`orch.host.devmode.dev_gate` passes for this workspace now (fresh, never cached); absent
-        everywhere else. Nothing else."""
-        from orch.relay import worker as relay_worker
-        from orch.relay.framing import WRITE_OP_VERSIONS
-
-        from .devmode import dev_gate
-
-        out: dict[str, Any] = {"ops": dict(WRITE_OP_VERSIONS), "r6_ready": relay_worker.r6_ready()}
-        gate = dev_gate(service)
-        if getattr(service, "dev", None) is not None:
-            service.dev_ok = gate is not None  # the phone reads whoami before every review: P5's cache follows it
-        if gate is not None:
-            out["dev"] = {"sim_convenience": True, "sandbox": gate.sandbox_id[:8]}
-        return out
 
     def status(self, call: Call) -> dict[str, Any]:
         from orch.cli.main import VERSION_LINE
@@ -855,14 +856,6 @@ class RegistryBackend:
             data["state"] = call.service.state
             if self.started is not None:
                 data["uptime_s"] = int(time.monotonic() - self.started())
-            from .relayhook import status as relay_status
-
-            try:  # R5: host.status.relay (§11A.4), for a workspace with a relay directory; never fails the status
-                relay = relay_status(call.service)
-            except Exception as exc:  # noqa: BLE001 - reported, by class only
-                relay = {"error": type(exc).__name__}
-            if relay is not None:
-                data["relay"] = relay
             dev = getattr(call.service, "dev", None)
             if dev is not None:  # §11A.17.2: only on a dev host (absent, not false, elsewhere)
                 data["dev"] = {"sim_convenience": True, "sandbox": dev.id8}

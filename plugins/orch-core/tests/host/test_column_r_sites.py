@@ -37,7 +37,7 @@ SITES: dict[tuple[str, str], tuple[int, str]] = {
     ("dispatch.py", "RegistryBackend._context"): (2, "R carries no grant: the context's grant is None"),
     ("dispatch.py", "RegistryBackend._register"): (3, "unreachable (sub.open is not an R op)"),
     ("dispatch.py", "RegistryBackend.status"): (2, "unreachable (host.status is not an R op); would be N's answer"),
-    ("dispatch.py", "RegistryBackend.whoami"): (4, "R gets no runner info (P and G only) and the relay caps (R only)"),
+    ("dispatch.py", "RegistryBackend.whoami"): (2, "R gets no runner info (P and G only)"),
     ("outcomes.py", "principal_of"): (2, "raises for R (the principal is r:<device>, never derived from a uid)"),
     ("reads_ws.py", "_person_reader"): (1, "unreachable (session.list, grant.list are not R ops); refuses R"),
     ("reads_ws.py", "reader_list"): (
@@ -96,6 +96,8 @@ SITES: dict[tuple[str, str], tuple[int, str]] = {
     ("peerops.py", "_owner"): (2, "unreachable (peer.* are not R ops); R is not P, so it would be refused"),
     ("peerops.py", "_check"): (2, "unreachable (peer.* are not R ops); a relay peer is not column P or G"),
     ("shareops.py", "_owner"): (2, "unreachable (share.* are not R ops); R is not P, so it would be refused"),
+    ("marketops.py", "_check"): (4, "unreachable (market.* are not R ops); R is not P or G, so it would be refused"),
+    ("marketops.py", "serve"): (2, "unreachable (market.* are not R ops); after _check, which refused R"),
     ("spaceops.py", "_owner"): (2, "unreachable (space.* are not R ops); R is not P, so it would be refused"),
     ("spaceops.py", "_check"): (2, "unreachable (space.* are not R ops); a relay peer is not column P or G"),
     ("worktrees.py", "_claim_ok"): (4, "unreachable (worktree.* are not R ops)"),

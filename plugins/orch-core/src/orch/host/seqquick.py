@@ -141,11 +141,15 @@ def validate(intent: Any, bad: type[Exception]) -> dict[str, Any]:
     checks = intent["checks"]
     if not isinstance(checks, list) or not 1 <= len(checks) <= MAX_CHECKS:
         raise bad(f"a quick task has 1 to {MAX_CHECKS} checks")
+    from orch.model.tasks import verify_cmd_problem
+
     out_checks = []
     for c in checks:
         if not isinstance(c, Mapping) or set(c) != {"text", "cmd"}:
             raise bad("a check is {text, cmd}")
         cmd = c["cmd"]
+        if isinstance(cmd, str) and (problem := verify_cmd_problem(cmd)):
+            raise bad(f"a command: {problem}")
         out_checks.append(
             {"text": line(c["text"], "a check", 200), "cmd": None if cmd is None else line(cmd, "a command", 300)}
         )

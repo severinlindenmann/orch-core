@@ -122,6 +122,18 @@ it('offers a workspace the click card only when the server lists the click featu
   expect((await api.getWorkspaces())[0].click).toEqual({ custody: 'convenience', enabled: true, available: false })
 })
 
+it('a workspace list read refreshes the features: a newly enabled add-on shows in the menu without a reload (run 8, 1.7)', async () => {
+  const { setFeatures, hasFeature } = await import('./features')
+  const row = (features: string[]) => ({ id: ws, prefix: 'DEMO', name: 'b', members: [], needs_you: 0, host_state: 'ok', features })
+  setFeatures({ features: ['actions'], workspaces: { [ws]: ['actions'] } })
+  expect(hasFeature('usage', ws)).toBe(false)
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json([row(['actions', 'usage'])])))
+  await api.getWorkspaces()
+  expect(hasFeature('usage', ws)).toBe(true)
+  expect(hasFeature('usage')).toBe(true)
+  setFeatures(null)
+})
+
 it('asks the server where a click request stands (the answer to an unknown outcome)', async () => {
   const answers = vi.fn(async (_url: string) => Response.json({ id: 'hr_1', state: 'bound' }))
   vi.stubGlobal('fetch', answers)

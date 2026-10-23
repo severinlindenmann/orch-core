@@ -107,7 +107,8 @@ def test_refuses_non_normalised_everywhere():
     with pytest.raises(HashError):
         canon.value_hash("a\r\nb")
     with pytest.raises(HashError):
-        canon.question_hash("a" * 32, oracle.UID, nfd, [])
+        canon.question_hash("a" * 32, oracle.UID, {"id": "Q1", "to": "ticket_owner", "text": nfd, "kind": "text",
+                                                   "blocking": True})  # fmt: skip
     g = oracle.gate_inputs()["requirements"]
     g["fields"]["acceptance"][0]["text"] = nfd
     with pytest.raises(HashError):
@@ -216,12 +217,14 @@ def test_question_forms():
     ]:
         with pytest.raises(HashError):
             canon.question_id(*args)
-    assert canon.question_hash(qid, oracle.UID, "t", None) == canon.question_hash(qid, oracle.UID, "t", [])
+    q = {"id": "Q1", "to": "ticket_owner", "text": "t", "kind": "choice", "blocking": True}
     for opts in ([{"key": "a"}], [{"key": "a", "label": "b", "extra": "c"}], [{"key": "a", "label": 1}], [1], "x"):
         with pytest.raises(HashError):
-            canon.question_hash(qid, oracle.UID, "t", opts)  # type: ignore[arg-type]
+            canon.question_hash(qid, oracle.UID, {**q, "options": [opts, {"key": "z", "label": "Z"}]})
     with pytest.raises(HashError):
-        canon.question_hash("abc", oracle.UID, "t", [])
+        canon.question_hash("abc", oracle.UID, {**q, "kind": "text"})
+    with pytest.raises(HashError):
+        canon.question_hash(qid, "uid", {**q, "kind": "text"})
 
 
 # --- gate hash validation -----------------------------------------------------------------------------------

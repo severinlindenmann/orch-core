@@ -25,6 +25,8 @@ const QuickPage = lazyPage(() => import('./pages/quick'), 'QuickPage')
 const DropPage = lazyPage(() => import('./pages/drop'), 'DropPage')
 // The tester's checklist: its own page without the shell, so it works before any workspace exists (orch setup).
 const ChecklistPage = lazyPage(() => import('./checklist/ChecklistPage'), 'ChecklistPage')
+// The feedback page: also its own page without the shell (saved in the browser, asks the host for nothing).
+const FeedbackPage = lazyPage(() => import('./feedback/FeedbackPage'), 'FeedbackPage')
 const GuidePage = lazyPage(() => import('./pages/guide'), 'GuidePage')
 const SharesPage = lazyPage(() => import('./pages/shares'), 'SharesPage')
 const WorktreesPage = lazyPage(() => import('./pages/worktrees'), 'WorktreesPage')
@@ -46,6 +48,9 @@ export const PENDING_MIN_MS = 300
 
 /** The tester's checklist (not in the nav; opened with `orch dashboard open /checklist`). */
 export const CHECKLIST_PATH = '/checklist'
+/** The feedback page (sidebar link under the test checklist). */
+export const FEEDBACK_PATH = '/feedback'
+const isBarePage = (path: string) => path === CHECKLIST_PATH || path === FEEDBACK_PATH
 
 /** A page this build or host does not serve (the read-only production app) goes to the board; the mock serves all. */
 const serves = (feature: string) => () => {
@@ -61,12 +66,12 @@ export interface RouterContext extends LoaderContext {
 // The shell's data loads before its first paint (nothing to keep on screen yet: the document's own background).
 function Root() {
   const path = useRouterState({ select: (s) => s.location.pathname })
-  return path === CHECKLIST_PATH ? <Outlet /> : <Shell />
+  return isBarePage(path) ? <Outlet /> : <Shell />
 }
 const rootRoute = createRootRouteWithContext<RouterContext>()({
   component: Root,
-  // The checklist opens before any workspace exists: it asks the host for nothing (no 503s in the console).
-  loader: ({ context, location }) => (location.pathname === CHECKLIST_PATH ? undefined : loadShell(context)),
+  // The checklist and feedback open before any workspace exists: they ask the host for nothing (no 503s in the console).
+  loader: ({ context, location }) => (isBarePage(location.pathname) ? undefined : loadShell(context)),
   pendingComponent: () => null,
   pendingMinMs: 0,
 })
@@ -137,6 +142,7 @@ const dropRoute = createRoute({
   loader: pageLoader(() => [], [DropPage.preload]),
   component: DropPage,
 })
+const feedbackRoute = createRoute({ getParentRoute: () => rootRoute, path: 'feedback', loader: pageLoader(() => [], [FeedbackPage.preload]), component: FeedbackPage })
 const checklistRoute = createRoute({ getParentRoute: () => rootRoute, path: 'checklist', loader: pageLoader(() => [], [ChecklistPage.preload]), component: ChecklistPage })
 /** The guide of a real host (fixed pages in the bundle). The mock keeps its guide addon page. */
 const guideRoute = createRoute({
@@ -302,7 +308,7 @@ const addonRoute = createRoute({
   },
 })
 
-const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, newTicketRoute, ticketRoute, artifactsRoute, agentsRoute, quickRoute, dropRoute, checklistRoute, worktreesRoute, terminalsRoute, explorerRoute, sharesRoute, activityRoute, usageRoute, guideRoute, layoutPreviewRoute, settingsRoute, settingsTabRoute, settingsAddonRoute, settingsAddonsAliasRoute, addonRoute])
+const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, newTicketRoute, ticketRoute, artifactsRoute, agentsRoute, quickRoute, dropRoute, checklistRoute, feedbackRoute, worktreesRoute, terminalsRoute, explorerRoute, sharesRoute, activityRoute, usageRoute, guideRoute, layoutPreviewRoute, settingsRoute, settingsTabRoute, settingsAddonRoute, settingsAddonsAliasRoute, addonRoute])
 
 /**
  * The app's router. Without `initialPath` it owns the address bar (browser history); tests pass an in-app or

@@ -17,6 +17,7 @@ from . import (
     agents,
     click,
     handoff,
+    hub,
     hubapprove,
     phone,
     reads,
@@ -58,6 +59,7 @@ SETTINGS_TABS = (
     "addons",
     "records",
     "devices",
+    "hub",
 )  # HOST_TABS (settings/tabs.ts)
 SPA_ROUTES = (
     "",  # Today
@@ -71,6 +73,7 @@ SPA_ROUTES = (
     "quick",
     "drop",
     "checklist",
+    "feedback",
     "worktrees",
     "terminals",
     "explorer",
@@ -85,9 +88,9 @@ SPA_ROUTES = (
     "addon/$name/$page",
 )
 # Routes that also open without a workspace in the address (the ticket key names its own workspace) ...
-SPA_BARE = ("ticket/$key", "checklist")
+SPA_BARE = ("ticket/$key", "checklist", "feedback")
 # ... and the ones that open ONLY without one (urls.ts isWorkspacePath: the checklist is not a workspace page).
-SPA_BARE_ONLY = ("checklist",)
+SPA_BARE_ONLY = ("checklist", "feedback")
 _PARAM = {
     "key": r"[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,9}",
     "tab": "(?:" + "|".join(SETTINGS_TABS) + ")",
@@ -232,6 +235,7 @@ def create_app(port: int, gateway=None, auth=None, static=None, setup_proxy=None
     handoff.register(app, gateway)
     click.register(app, gateway)
     hubapprove.register(app, gateway)
+    hub.register(app, gateway)
     settings.register(app, gateway)
     addon_switches.register(app, gateway)
     signprefs.register(app, gateway)

@@ -34,7 +34,7 @@ describe('Settings', () => {
   it('the owner sets the agent grant length in General (signed, 1 to 168 h)', async () => {
     const { user } = renderApp('/settings/general')
     expect(await screen.findByRole('button', { name: '8 h' })).toHaveAttribute('aria-pressed', 'true')
-    const save = screen.getAllByRole('button', { name: 'Save' })[1]
+    const save = screen.getAllByRole('button', { name: 'Save' })[2] // name, icon, then the grant length
     expect(save).toBeDisabled()
     await user.click(screen.getByRole('button', { name: '1 day' }))
     await user.click(save)
@@ -54,10 +54,10 @@ describe('Settings', () => {
     expect(await screen.findByText(/Not connected yet/)).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Open Relay & devices' })).toHaveAttribute('href', '/w/DEMO/settings/relay')
   })
-  it('the nav shows General, Members, Gates, Relay & devices (Preview), Addons, Skills and Connections only: no entry per addon', async () => {
+  it('the nav shows General, Members, Gates, Relay & devices (Preview), Addons, Skills, Connections and Hub only: no entry per addon', async () => {
     renderApp('/settings/general')
     const nav = await screen.findByRole('navigation', { name: 'Settings' })
-    expect(within(nav).getAllByRole('link').map((l) => l.textContent)).toEqual(['General', 'Members', 'Gates', 'Relay & devicesPreview', 'Addons', 'Skills', 'Connections'])
+    expect(within(nav).getAllByRole('link').map((l) => l.textContent)).toEqual(['General', 'Members', 'Gates', 'Relay & devicesPreview', 'Addons', 'Skills', 'Connections', 'Hub'])
     expect(within(nav).queryByRole('img', { name: /From addon/ })).toBeNull()
   })
   it("an addon's settings expand as an accordion beneath its row, one at a time, with Addons marked as the current section", async () => {
@@ -273,7 +273,7 @@ describe('Settings', () => {
   })
   it('a maintainer sees why controls are disabled', async () => {
     renderApp('/settings/general', { viewer: 'p_mara' })
-    expect((await screen.findAllByText('Only owners can save.')).length).toBe(2) // the name and the agent grant length
+    expect((await screen.findAllByText('Only owners can save.')).length).toBe(3) // the name, the icon and the agent grant length
     expect(screen.getByRole('button', { name: /Export workspace/ })).toBeDisabled()
     expect(screen.getByText('Only owners can export.')).toBeInTheDocument()
   })

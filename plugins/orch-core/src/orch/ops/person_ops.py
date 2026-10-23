@@ -1,4 +1,4 @@
-"""The host person operations (§0.8 "move", "policy.set and settings.set", H6b; ``relay.pair_device``, H12c-e).
+"""The host person operations (§0.8 "move", "policy.set and settings.set", H6b).
 
 ``move``, ``policy.set`` and ``settings.set`` are person operations the host serves **only** through ``human.prepare``
 and ``human.submit``; a plain request of one is ``human_only`` (the column). They are declared here as
@@ -16,8 +16,6 @@ exactly as it judges a signed one (``lifecycle.moved``, ``lifecycle.policy_chang
 * ``settings.set {set}`` -> ``settings.changed {set}``: workspace owners only.
 * ``people.set {ref, role, add, remove}`` -> ``people.changed {role, add, remove}`` (B12D): who owns, works on or
   reviews a ticket; whoever ``claims.may_manage``; an owner is exactly one person.
-* ``relay.pair_device {offer_id}`` -> ``device.added {device, cert}`` (H12c-e, 11A.15.10 item 12): the phone R6 paired,
-  from R6's verified facts (never from the request); its own material kind (:mod:`orch.identity.pairdevice`).
 
 :func:`get` is what ``human.prepare`` calls for a name in :data:`orch.host.review.HOST_PERSON_OPS`.
 """
@@ -36,6 +34,7 @@ from orch.ops.base import Context, Operation, Result
 from orch.ops.errors import GLOBAL_ERRORS, OrchError
 from orch.ops.human import Human
 from orch.ops.runtime import Call, Workspace
+from orch.wsicons import COLOUR_LABELS, ICON_LABELS
 
 __all__ = ["OPS", "get"]
 
@@ -73,6 +72,17 @@ _ORIGIN = {
     "maxLength": 300,
     "pattern": r"^(?:https://[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[1-9][0-9]{0,4})?"
     r"|http://(?:localhost|127\.0\.0\.1)(?::[1-9][0-9]{0,4})?)(?![\s\S])",
+}
+_ICON = {  # the workspace icon: an icon and a colour of the closed lists, or null to clear it
+    "oneOf": [
+        {
+            "type": "object",
+            "properties": {"icon": {"enum": list(ICON_LABELS)}, "colour": {"enum": list(COLOUR_LABELS)}},
+            "required": ["icon", "colour"],
+            "additionalProperties": False,
+        },
+        {"type": "null"},
+    ]
 }
 _MODELS = {  # Model routing: harness -> Start agent mode -> a model of that harness's closed list; null clears all
     "oneOf": [
@@ -118,6 +128,7 @@ _SET = {
             ]
         },
         "models": _MODELS,
+        "icon": _ICON,
         "repos": {
             "type": "object",
             "minProperties": 1,
@@ -323,35 +334,6 @@ def handle_people(ctx: Context, args: dict[str, Any]) -> Result:
     return h.ticket_result(view, done, {"role": role, "add": add, "remove": remove}, "orch show")
 
 
-def handle_pair_device(ctx: Context, args: dict[str, Any]) -> Result:
-    """``relay.pair_device {offer_id}`` (H12c-e, 11A.15.6 step 9): ``device.added {device, cert}`` of the phone R6
-    paired. The facts are R6's, handed to this handler by the host (``Capture.pair``, :mod:`orch.host.pairdevice`):
-    nothing in the request names the device, the certificate, the label or the code. The phone's pair declaration
-    (if any) is admitted as its reader (``source:"pair"``); the append checks it again under the store lock."""
-    from orch.identity import pairdevice
-    from orch.identity.reader import DeclInvalid
-    from orch.ops.readers import pair_entry
-
-    h = _Human(ctx, pairdevice.OP)
-    facts = getattr(ctx.prepare, "pair", None)
-    if not isinstance(facts, pairdevice.PairDeviceFacts) or facts.offer_id != args["offer_id"]:
-        raise OrchError("human_only", "relay.pair_device is prepared only by the host's relay pairing (R6)")
-    if facts.workspace_id != h.workspace_id:
-        raise OrchError("invalid.input", "the pairing is for another workspace")
-    if facts.person != h.person:
-        raise OrchError("role.denied", "the paired device's certificate is of another person")
-    try:
-        entry = pair_entry(facts, h.workspace_id)
-    except DeclInvalid as exc:
-        raise OrchError("reader.decl_invalid", exc.detail) from None
-    if entry is not None:
-        h.admit_reader(entry)
-    event = pairdevice.device_added(facts)
-    done = h.run(event, "workspace", f"add the paired device {facts.device}", review=[])
-    data = {"device": facts.device, "offer_id": facts.offer_id, "attempt": facts.attempt}
-    return h.workspace_result(done, data, "the relay pairing continues: orch host relay pair list")
-
-
 def handle_publish_share(ctx: Context, args: dict[str, Any]) -> Result:
     """``publish.share {staged_id}`` (P5): the person's signature over the exact words of one staged share, as a
     ``log.added`` note on its ticket. The words come from the host's facts about the staged copy (ticket, kind, days,
@@ -377,11 +359,12 @@ def _prior_aliases(hub: dict[str, Any], hk_root_pub: bytes) -> dict[str, str]:
 
 
 def handle_hub_join(ctx: Context, args: dict[str, Any]) -> Result:
-    """``hub.join {hub_card, mode, aliases?}`` (V3 C2a/C2b, hub contract 9.1, spec 8 and 8a): ``hub.joined`` on the
-    workspace log, signed by the owner at the host terminal. The hub card is verified here against the host's own
-    clock and dev state (``ctx.prepare.hub``). A selective join carries no key material beyond the hub's public root;
-    a full join says in its review that the hub will read everything, and the host then adds the ``hub`` member and
-    seals ``WK_e`` to the hub's ``HXK`` (``hub.connect``, never in this op)."""
+    """``hub.join {hub_card, hub_id, mode, aliases?}`` (V3 C2a/C2b, D12c, hub contract 9.1, spec 8 and 8a):
+    ``hub.joined`` on the workspace log, signed by the owner at the host terminal. The hub card is verified here
+    against the host's own clock and dev state (``ctx.prepare.hub``) and must name the ``hub_id`` the invite carried
+    (D12c). A selective join carries no key material beyond the hub's public root; a full join says in its review
+    that the hub will read everything, and the host then adds the ``hub`` member and seals ``WK_e`` to the hub's
+    ``HXK`` (``hub.connect``, never in this op)."""
     from orch.hubclient import wire
     from orch.hubclient.errors import HubRefused
 
@@ -396,6 +379,10 @@ def handle_hub_join(ctx: Context, args: dict[str, Any]) -> Result:
         raise OrchError("hub.already_joined", "this workspace is already joined to a hub; leave it first")
     try:
         verified = wire.verify_card(args["hub_card"], now_ms=facts.now_ms, dev_mode=facts.dev_mode)
+        if (
+            verified["card"]["hub_id"] != args["hub_id"]
+        ):  # D12c/G5: the hub the owner was told, not the one the file names
+            raise HubRefused("other_hub")
         me = h.person.removeprefix("p_")  # the owner is the only person a join may alias (spec 8a)
         aliases = list(args.get("aliases") or [])
         if any(a["person_id"] != me for a in aliases) or len(aliases) > 1:
@@ -433,7 +420,7 @@ def handle_hub_mode(ctx: Context, args: dict[str, Any]) -> Result:
     if not current or current.get("status") != "joined":
         raise OrchError("hub.not_joined", "this workspace is not joined to a hub")
     if current.get("mode") != "selective":
-        raise OrchError("hub.already_joined", "this workspace is already in full mode with this hub")
+        raise OrchError("hub.already_joined", "only a selective workspace can switch to full")
     try:
         verified = wire.verify_card(
             args["hub_card"], now_ms=facts.now_ms, dev_mode=facts.dev_mode,
@@ -467,7 +454,65 @@ def handle_hub_leave(ctx: Context, args: dict[str, Any]) -> Result:
     return h.workspace_result(done, data, "the host now tells the hub that this workspace is unbound")
 
 
+def handle_device_mark_exposed(ctx: Context, args: dict[str, Any]) -> Result:
+    """``device.mark_exposed {}`` (#1097): this device key signs ``device.exposed`` for itself, the signed mark that it
+    was in convenience custody. Written by :func:`orch.custody.exposure.mark_before_move` before a key enters
+    convenience custody. It only removes authority, so any member's device may sign one (never the hub)."""
+    h = _Human(ctx, "device.mark_exposed")
+    _, device = h.who()
+    done = h.run({"type": "device.exposed", "device": device, "reason": "convenience"}, "workspace",
+                 "mark this device key as exposed (it moves to one-click custody)", review=[])  # fmt: skip
+    return h.workspace_result(done, {"device": device}, None)
+
+
+def handle_device_rotate(ctx: Context, args: dict[str, Any]) -> Result:
+    """``device.rotate {old, cert, rotation}`` (#1097, ``orch keys custody passphrase --rotate``): the NEW device (the
+    signer, unknown to the roster) replaces ``old`` in one ``device.rotated`` event. The certificate and the rotation
+    are made with the recovery code by the CLI; the model checks both under the person key, the workspace, both
+    devices and the roster version (``workspace.device_rotated``)."""
+    h = _Human(ctx, "device.rotate")
+    _, device = h.who()
+    cert = args["cert"]
+    if not isinstance(cert, dict) or device != "d_" + str((cert.get("o") or {}).get("device_id")):
+        raise OrchError("invalid.input", "the new device must be the signer of the rotation")
+    event = {"type": "device.rotated", "old": args["old"], "device": device, "cert": cert, "rotation": args["rotation"]}
+    done = h.run(event, "workspace", "replace your device key", review=[])
+    return h.workspace_result(done, {"old": args["old"], "device": device}, "your old device key no longer signs")
+
+
 _HEX32 = {"type": "string", "pattern": "^[0-9a-f]{32}$"}
+DEVICE_MARK_EXPOSED = operation(
+    "device.mark_exposed",
+    "Human only",
+    "Record in the workspace log that this device key was in one-click custody. Done by orch before the key moves; it "
+    "only takes authority away from the key.",
+    who="human",
+    props={},
+    required=(),
+    emits=("device.exposed",),
+    text="ok device.exposed {device} seq={seq}",
+    data=obj({"device": STR}),
+    errors=(err("role.denied"),),
+    handler=handle_device_mark_exposed,
+)
+DEVICE_ROTATE = operation(
+    "device.rotate",
+    "Human only",
+    "Replace your device key with a new one made with your recovery code: the old key stops signing in every mode, "
+    "also while the hub is down.",
+    who="human",
+    props={
+        "old": {"type": "string", "pattern": "^d_[0-9a-f]{32}$", "description": "the device key this replaces"},
+        "cert": {"type": "object", "description": "the new device's certificate, signed by your recovery key"},
+        "rotation": {"type": "object", "description": "your recovery key's signed statement for this workspace"},
+    },
+    required=("old", "cert", "rotation"),
+    emits=("device.rotated",),
+    text="ok device.rotated {device} seq={seq}\nnext: {next}",
+    data=obj({"old": STR, "device": STR}),
+    errors=(err("role.denied"),),
+    handler=handle_device_rotate,
+)
 HUB_JOIN = operation(
     "hub.join",
     "Human only",
@@ -476,6 +521,11 @@ HUB_JOIN = operation(
     who="human",
     props={
         "hub_card": {"type": "object", "description": "the hub card (hub contract 5), verified by the host"},
+        "hub_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{32}$",
+            "description": "the hub id from the invite (<hub_id>:<code>); the card must name this hub (D12c)",
+        },
         "mode": E("the join mode", "selective", "full"),
         "aliases": {
             "type": "array",
@@ -489,7 +539,7 @@ HUB_JOIN = operation(
             },
         },
     },
-    required=("hub_card", "mode"),
+    required=("hub_card", "hub_id", "mode"),
     emits=("hub.joined",),
     text="ok hub.joined {hub_id} seq={seq}\nnext: {next}",
     data=obj({"hub_id": STR, "mode": STR, "binding_seq": {"type": "integer"}}),
@@ -545,24 +595,6 @@ PEOPLE_SET = operation(
     data=obj({"role": STR, "add": {"type": "array", "items": STR}, "remove": {"type": "array", "items": STR}}),
     errors=(err("role.denied"), err("not_found")),
     handler=handle_people,
-)
-PAIR_DEVICE = operation(
-    "relay.pair_device",
-    "Human only",
-    "Sign the device.added of a phone the relay pairing verified (R6, step 9); prepared by the host only.",
-    who="human",
-    props={"offer_id": S("the pairing offer id (32 hex)", pattern="^[0-9a-f]{32}$")},
-    required=("offer_id",),
-    emits=("device.added",),
-    text="ok device.added {device} seq={seq}\nnext: {next}",
-    data=obj({"device": STR, "offer_id": STR, "attempt": STR}),
-    errors=(
-        err("role.denied"),
-        err("reader.decl_invalid"),
-        err("sign.convenience_readers"),
-        err("relay.pair_closed"),  # R6c: the offer is not at step 9, the phone's deadline is near, no publisher
-    ),
-    handler=handle_pair_device,
 )
 PUBLISH_SHARE = operation(
     "publish.share",
@@ -727,11 +759,12 @@ OPS: dict[str, Operation] = {
         POLICY_SET,
         SETTINGS_SET,
         PEOPLE_SET,
-        PAIR_DEVICE,
         PUBLISH_SHARE,
         HUB_JOIN,
         HUB_MODE,
         HUB_LEAVE,
+        DEVICE_MARK_EXPOSED,
+        DEVICE_ROTATE,
         AC_ACCEPT,
         AC_UNACCEPT,
         TASK_MARK_DONE,

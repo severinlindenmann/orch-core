@@ -9,7 +9,7 @@ then signs ``publish.share {staged_id}``: a ``log.added`` note on the ticket who
 hash**). ``publish.send {staged_id}`` (column P only) builds the same words again from the stage it is about to upload
 and refuses unless a person's signed note with exactly those words is in the ticket log, so the signature covers the
 bytes that go. Only then does the host sign the requests to the server with the workspace key
-(:class:`orch.relay.pubsign.PublishSigner`) and upload.
+(:class:`orch.wsproto.pubsign.PublishSigner`) and upload.
 
 **The link.** The token is made in ``publish.send`` (``secrets.token_bytes(32)``, base64url, no padding) and returned
 to that one call only. It is kept in a 0600 file of the stage until the server has committed, then wiped; the server
@@ -606,6 +606,8 @@ def _plan(call: Call, op: str, args: dict[str, Any]) -> dict[str, Any]:
     if op == "publish.register":
         _rate(call, "register")
         plan["reg"] = _delegation(call)
+        plan["hub"] = _hub_route(service)
+        _plan_card(call, plan)
         return plan
     if op == "publish.revoke":
         rec = next((r for r in _records(service) if r.get("id") == args["share_id"]), None)
@@ -632,14 +634,34 @@ def _plan(call: Call, op: str, args: dict[str, Any]) -> dict[str, Any]:
     plan.update(meta=meta, text_hash=hashlib.sha256(text.encode()).hexdigest(), hub=_hub_route(service))
     if _registered(service, cfg) is None:
         plan["reg"] = _delegation(call)
+        _plan_card(call, plan)
     return plan
 
 
-def _hub_route(service: WorkspaceService) -> dict[str, Any] | None:
-    """The hub this workspace publishes through, or ``None`` (not in hub mode: the direct path). Worker thread."""
+def _plan_card(call: Call, plan: dict[str, Any]) -> None:
+    """In hub mode the workspace reaches orch-publish as its v2 card through the hub (``card_put``, V3-D36): read it
+    here, on the worker, for the network half."""
     from . import hubops
 
-    return hubops.publish_route(service)
+    card = hubops.workspace_card(call.service)
+    if card is None:
+        raise HostError("hub.no_card", "this workspace's directory card could not be had")
+    plan["card"] = card
+
+
+def _hub_route(service: WorkspaceService, *, required: bool = True) -> dict[str, Any] | None:
+    """The hub this workspace publishes through. A workspace without a hub is local only (D69, V3-D36): there is no
+    direct path, so a standalone workspace is refused here (``required``) or gets ``None`` (``required=False``, a read
+    that degrades). Worker thread."""
+    from . import hubops
+
+    route = hubops.publish_route(service)
+    if route is None and required:
+        raise HostError(
+            "hub.not_joined",
+            "publishing needs a hub: join a hub first (orch hub join); a workspace alone is local only",
+        )
+    return route
 
 
 def _discard(call: Call, args: dict[str, Any]) -> dict[str, Any]:
@@ -719,7 +741,10 @@ def _list(call: Call, args: dict[str, Any]) -> dict[str, Any]:
             # No server is set up yet: there is nothing to ask. The local answer says so (`configured` false, `live`
             # false) instead of failing, so a page can tell the person what to do next.
             return ok_result({**out, "live": False})
-        return {"plan": {"op": "publish.list", "cfg": _config(service), "out": out, "hub": _hub_route(service)}}
+        hub = _hub_route(service, required=False)
+        if hub is None:  # local only: there is no server to ask
+            return ok_result({**out, "live": False})
+        return {"plan": {"op": "publish.list", "cfg": _config(service), "out": out, "hub": hub}}
     return ok_result(out)
 
 
@@ -755,48 +780,44 @@ def _delegation(call: Call) -> dict[str, Any]:
     }
 
 
-def _client(service: WorkspaceService, origin: str, transport: Any = None, hub: dict[str, Any] | None = None) -> Any:
-    """A :class:`PublishClient` signing with the workspace key for ``origin`` (the signed server setting). No ledger:
-    the server's nonce store already refuses a replay, and a file ledger that is rewritten on every request and never
-    pruned would only grow (lead decision, #684 review).
-
-    ``hub`` (from ``hubops.publish_route``, decided in the plan) sends every request through the hub link instead
-    (``publish_out``, hub contract 11): signed under the hub-path label, and **never** by any other path."""
+def _client(service: WorkspaceService, origin: str, hub: dict[str, Any]) -> Any:
+    """A :class:`PublishClient` for ``origin`` (the signed server setting) that sends every request through the hub link
+    (``publish_out``, hub contract 11), signed with ``WSK`` under the hub-path label. There is no other path (V3-D36).
+    No ledger: the server's nonce store already refuses a replay."""
     from orch.custody import FileBackend
-    from orch.publishclient import PublishClient
-    from orch.relay.pubsign import PublishContext, PublishSigner
-    from orch.relay.sign import SignerRefused
-    from orch.store import BackendSigner
+    from orch.wsproto.pubsign import PublishContext
+    from orch.wsproto.sign import SignerRefused
 
     keys_dir = Path(os.path.realpath(service.state_dir)) / "hosts" / service.workspace_id / "keys"
     backend = FileBackend(keys_dir) if keys_dir.is_dir() else None
     if backend is None or not backend.exists("wsk"):
         raise HostError("workspace.unavailable", "the workspace signing key is not in the host's custody")
     try:
-        if hub is not None:
-            return _hub_client(service, PublishContext(service.workspace_id, origin), hub)
-        signer = PublishSigner(BackendSigner(backend, "wsk"), PublishContext(service.workspace_id, origin))
+        return _hub_client(service, PublishContext(service.workspace_id, origin), hub)
     except SignerRefused:
         raise HostError(
             "publish.server_refused", "the server address is not allowed", detail={"reason": "rejected"}
         ) from None
-    return PublishClient(signer, transport=transport)
 
 
 #: the hub links this worker thread opened for one network op (one link per hub, so its message numbers count up)
 _LINKS = threading.local()
 
 
-def _hub_client(service: WorkspaceService, ctx: Any, route: dict[str, Any]) -> Any:
-    from orch.hubclient.publish import HubPublishSigner, HubPublishTransport
-    from orch.publishclient import PublishClient
-
+def _open_link(service: WorkspaceService, route: dict[str, Any]) -> tuple[Any, Any, bytes, Any]:
     from . import hubops
 
     links = _LINKS.__dict__.setdefault("open", {})
     if route["hub_id"] not in links:
         links[route["hub_id"]] = hubops.publish_link(service, route)
-    hub_link, _transport, wsk_pub, sign = links[route["hub_id"]]
+    return links[route["hub_id"]]  # type: ignore[no-any-return]
+
+
+def _hub_client(service: WorkspaceService, ctx: Any, route: dict[str, Any]) -> Any:
+    from orch.hubclient.publish import HubPublishSigner, HubPublishTransport
+    from orch.publishclient import PublishClient
+
+    hub_link, _transport, wsk_pub, sign = _open_link(service, route)
     signer = HubPublishSigner(public_key=wsk_pub, sign=sign, ctx=ctx, hub_id=route["hub_id"])
     return PublishClient(signer, transport=HubPublishTransport(hub_link))
 
@@ -813,6 +834,30 @@ def _hub_error(exc: Any) -> HostError:
     sent any other way."""
     from . import hubops
 
+    reasons = {  # hub code -> (closed detail reason, text); the reasons are the same set as a direct refusal's
+        "unknown_workspace": (
+            "unknown_workspace",
+            "the server only knows this workspace after its admin allowed it: ask its admin, then run "
+            "orch publish register",
+        ),
+        "owner_not_allowed": ("owner_not_allowed", "the server's admin has not allowed this owner"),
+        "workspace_blocked": ("blocked", "the server's admin blocked this workspace"),
+        "delegation_changed": (
+            "conflict",
+            "the server holds another delegation for this workspace: its admin must unbind it",
+        ),
+        "stale_card": ("rejected", "the server holds a newer card of this workspace than this one"),
+    }
+    for bad in ("other_person", "other_workspace", "delegation_mismatch", "delegation_refused", "bad_signature",
+                "malformed", "wrong_suite"):  # fmt: skip
+        reasons[bad] = ("rejected", f"the server refused this workspace's card ({bad})")
+    if exc.code in reasons:
+        reason, text = reasons[exc.code]
+        return HostError("publish.server_refused", text, detail={"reason": reason})
+    if exc.code == "unavailable":  # the hub could not reach orch-publish (or its answer was lost)
+        return HostError(
+            "publish.unreachable", "the publish server could not be reached; nothing was shared", retry_after_ms=2000
+        )
     if exc.code == "too_large":
         return HostError(
             "publish.server_refused",
@@ -820,10 +865,6 @@ def _hub_error(exc: Any) -> HostError:
             detail={"reason": "limit"},
         )
     return hubops._refused(exc.code)  # noqa: SLF001 - the one mapping of hub codes
-
-
-#: set by tests: a transport for :class:`PublishClient` instead of the network
-TRANSPORT: Any = None
 
 
 def _refused(exc: Any) -> HostError:
@@ -905,13 +946,13 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
 
 
 def _register(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
-    from orch.publishclient import flow
-
     service = call.service
     cfg = plan["cfg"]
-    client = _client(service, cfg["server"], TRANSPORT)
     reg = plan["reg"]
-    got = flow.register(client, service.workspace_id, reg["delegation"], reg["owner_pk"])
+    from orch.hubclient.publish import card_put
+
+    # the card goes to the hub, which hands it to orch-publish (V3-D36: never a direct call)
+    got = card_put(_open_link(service, plan["hub"])[0], plan["card"], reg["owner_pk"])
     with _MU:
         _private(service)
         _put_json(
@@ -957,7 +998,7 @@ def _send(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
             }
             _write(token_path, token.encode())
             _put_json(send_path, send)
-        client = _client(service, cfg["server"], TRANSPORT, plan.get("hub"))
+        client = _client(service, cfg["server"], plan["hub"])
         body = flow.meta_bytes(
             ticket=meta["ticket"]["key"],
             kind=meta["kind"],
@@ -1011,7 +1052,7 @@ def _send(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
             files=len(meta["files"]),
             server=cfg["server"],
             origin=meta["origin"],
-            via="direct" if plan.get("hub") is None else "hub",
+            via="hub",
         )
         shutil.rmtree(sdir, ignore_errors=True)  # the token goes with the stage: nothing keeps the link
         return {
@@ -1049,7 +1090,7 @@ def _revoke(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
 
     service = call.service
     rec = plan["record"]
-    client = _client(service, rec.get("server") or plan["cfg"]["server"], TRANSPORT, plan.get("hub"))
+    client = _client(service, rec.get("server") or plan["cfg"]["server"], plan["hub"])
     try:
         flow.revoke(client, service.workspace_id, rec["id"])
     except PublishError as exc:
@@ -1073,9 +1114,7 @@ def _live(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
     try:
         remote = {
             r.get("id"): r
-            for r in flow.list_shares(
-                _client(service, plan["cfg"]["server"], TRANSPORT, plan.get("hub")), service.workspace_id
-            )
+            for r in flow.list_shares(_client(service, plan["cfg"]["server"], plan["hub"]), service.workspace_id)
         }
     except (PublishError, HubRefused):  # a hub that is down is a server that is down: the local rows, said plainly
         return {**out, "live": False}

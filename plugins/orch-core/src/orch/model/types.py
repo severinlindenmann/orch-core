@@ -95,7 +95,11 @@ class Device:
     person: str
     cert: dict[str, Any]
     removed: bool = False
+    excluded: str | None = None  # C10: the reason of a hub-signed device.excluded (lost | retired | compromised)
     revoked: str | None = None
+    #: #1097: positive evidence that this key was in convenience custody (a signed ``device.exposed`` mark, the only
+    #: evidence). Monotonic: nothing clears it, only a new key (``device.rotated``) does.
+    exposed: bool = False
 
 
 @dataclass
@@ -109,6 +113,9 @@ class Grant:
     label: str | None = None
     revoked: bool = False
     device: str = ""  # the device that signed grant.issued
+    #: C8 (L2-P5-1): the hub whose ``auth: "hub"`` request line this grant answers, else ``None``. Such a grant ends at
+    #: that hub's ``hub.left`` (state, no new line). Set by the C10 host-actor ``grant.issued`` that names its request.
+    hub_id: str | None = None
 
 
 @dataclass
@@ -162,6 +169,9 @@ class WsCore:
     # hub.joined. ``binding_seq`` only grows. ``member`` exists only in full mode and only while joined (C2b).
     hub: dict[str, Any] = field(default_factory=dict)
     unattended: list[tuple[int, str, int]] = field(default_factory=list)  # (at seconds, session, artifact bytes)
+    #: C10 (hub protocol 8.8): the admitted ``grant.requested`` lines by event id: ``{person, role, scope, verbs, hours,
+    #: label?, at, hub_id, used}``. A host-actor ``grant.issued`` consumes one (``used``), once.
+    requests: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 @dataclass

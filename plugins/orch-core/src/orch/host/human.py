@@ -47,7 +47,7 @@ from jsonschema import Draft202012Validator
 
 from orch import canon
 
-from . import convenience, hubsign, pairdevice, review
+from . import convenience, hubsign, review
 from .errors import HostError
 from .outcomes import Planned, request_idem
 from .requests import (
@@ -233,6 +233,11 @@ def probe_device(store: Any, person: str, now: float) -> str:
     raise HostError("device.invalid", f"{person} has no valid device")
 
 
+#: #1097: the one op whose signer is a device the roster does not know yet (the NEW device signs its own
+#: ``device.rotated``); the model judges that shape (``breakglass.is_rotation``), not the roster check below.
+ROTATE_OP = "device.rotate"
+
+
 def _operate(types: list[str]) -> bool:
     from orch.model.authz import OPERATE
 
@@ -400,13 +405,13 @@ class HumanOps:
         assert person is not None  # column P only
         now = service.clock()
         store.refresh()
-        if name not in ("member.add", pairdevice.OP):  # after the handler, with the reader's declaration (H12d-2)
+        if name != "member.add":  # after the handler, with the reader's declaration (H12d-2)
             convenience.refuse_reader_op(service, name)  # §0.8.6: no new reader while convenience signing is on
         if signer is not None:
             convenience.refuse_hub_op(name, signer["auth"])  # V3 C2a: a hub op is never click-to-sign
         if signer is not None and signer["auth"] == "convenience":
             convenience.check(service, person, signer["device"])  # the owner's condition, at prepare
-        if signer is not None:
+        if signer is not None and name != ROTATE_OP:
             check_device(store, person, signer["device"], now, operate=_operate(sorted(types)))
         operation = _person_operation(name)
         inner = dict(args["args"])
@@ -431,8 +436,6 @@ class HumanOps:
             self._check_pasted_image(inner, files)
         meta = self._sequence(call, name, inner, args, person, store, dry_run)
         capture.sequence = meta
-        if name == pairdevice.OP:  # H12c-e: R6's verified facts, never the request's (the args name only the offer)
-            capture.pair = pairdevice.facts_for(service, inner)
         if name == "publish.share":  # P5: the staged copy's own words (the args name only the staged id)
             from . import publishing
 
@@ -461,7 +464,7 @@ class HumanOps:
         if len(logs) != 1:
             raise HostError("internal", f"{name} prepared events for more than one log")
         log = logs.pop()
-        if signer is not None:
+        if signer is not None and name != ROTATE_OP:
             check_device(
                 store, person, signer["device"], now, operate=_operate([c.event["type"] for c in capture.events])
             )
@@ -718,10 +721,6 @@ class HumanOps:
     def _material(store: Any, log: str, events: list[dict[str, Any]], capture: Any, extras: list) -> dict[str, Any]:
         from orch.store.render import thaw
 
-        if capture.pair is not None:  # H12c-e: the relay.pair_device kind (orch.identity.pairdevice)
-            from orch.identity.pairdevice import material as pair_material
-
-            return pair_material(capture.pair)
         view = store.ticket(log) if log != "workspace" else None
         ticket = {"key": view.key, "uid": view.uid} if view is not None else None
         if view is None and log != "workspace":  # a person's new: the ticket its ticket.created makes
@@ -822,8 +821,6 @@ class HumanOps:
         if state in ("submitted", "cancelled"):
             raise HostError("human.request_state", f"the request is {state}")
         call.service.store.refresh()
-        if record["op"] == pairdevice.OP:  # H12c-e: the pair readers are bound to the reviewed offer and attempt
-            pairdevice.check_entries(record["prepared"], record.get("readers") or [])
         convenience.refuse_reader_op(  # §0.8.6: fails early, before binding (H12d-2: the declaration, rechecked)
             call.service,
             record["op"],
@@ -852,13 +849,14 @@ class HumanOps:
         store = call.service.store
         store.refresh()
         events = record["prepared"]["events"]
-        check_device(
-            store,
-            record["person"],
-            signer["device"],
-            call.service.clock(),
-            operate=_operate([e["type"] for e in events]),
-        )
+        if record["op"] != ROTATE_OP:
+            check_device(
+                store,
+                record["person"],
+                signer["device"],
+                call.service.clock(),
+                operate=_operate([e["type"] for e in events]),
+            )
         if _binds_commits(record["prepared"]):  # N3: a tree dirtied since prepare is refused here, nothing bound
             check_bindings(call, record)
             record = recheck_trees(call, record)
@@ -1046,8 +1044,6 @@ class HumanOps:
             if record["state"] == "expired":
                 raise HostError("human.request_expired", _expired(record, "before it was appended"))
             store.refresh()  # unconditionally: the history and roster checks below read what is on disk now
-            if record["op"] == pairdevice.OP:
-                pairdevice.check_entries(record["prepared"], record.get("readers") or [])
             from . import sequence
 
             meta = record.get("sequence")
@@ -1465,7 +1461,6 @@ def append_signed(
     *,
     signed_by: tuple[str, str] | None,
     readers: list[dict[str, Any]] | None = None,
-    hooks: Any = None,
     dev_gate: Any = None,
 ) -> tuple[list[int], HostError | None]:
     """**The single choke point for appending signed person events** (§0.8.1, §11A.4): ``human.finish`` and the relay
@@ -1503,11 +1498,7 @@ def append_signed(
     request's admitted readers) and ``required_reader`` recomputed. Their records are written before the append
     (``custody.unsafe_mode`` if that fails, nothing appended). Whichever of a convenience event and a reader event
     appends first, the other refuses.
-
-    ``hooks`` (H12c-e, only ``relay.pair_device`` through :func:`finish`; :class:`orch.host.pairdevice.Hooks`): R6's
-    step 9 in the same critical section. ``before(new events)`` runs first (the allocation intent; a refusal appends
-    nothing), ``after(seqs)`` once every event is in the log, ``failed(error)`` when nothing landed after ``before``
-    accepted."""
+    """
     from orch.store import StoreError
 
     if signed_by is not None:
@@ -1530,8 +1521,6 @@ def append_signed(
 
         store.append_check = check
         try:
-            if hooks is not None:  # H12c-e: R6's (i) and (ii) first (11A.15.6 step 9), under this lock
-                error = hooks.before([e for e in events if store.logged_event(log, e.get("id")) is None])
             if error is None:  # V3 C11 (D78/D81): full hub mode takes no local signature, whoever the signer is
                 error = hubsign.refusal(service, [e for e in events if store.logged_event(log, e.get("id")) is None],
                                         signed_by)  # fmt: skip
@@ -1560,11 +1549,6 @@ def append_signed(
                     error = _store_error(exc)
                     break
                 landed.append(int(done.event["seq"]))
-            if hooks is not None:
-                if error is None:
-                    hooks.after(landed)
-                elif not landed:
-                    hooks.failed(error)
         finally:
             store.append_check = old_check
     return landed, error
@@ -1596,7 +1580,6 @@ def finish(service: WorkspaceService, requests: RequestStore, record: dict[str, 
     ``seq`` s that landed; it is never ``partial``. Returns the result; raises the stored error for a failed one."""
     store = service.store
     log = record["prepared"]["log"]
-    hooks = pairdevice.hooks(service, record) if record["op"] == pairdevice.OP else None  # H12c-e: R6's step 9
     landed, error = append_signed(
         service,
         log,
@@ -1604,7 +1587,6 @@ def finish(service: WorkspaceService, requests: RequestStore, record: dict[str, 
         record["extras"],
         signed_by=None,
         readers=record.get("readers") or [],
-        hooks=hooks,
     )
     now = service.clock()
     if error is not None:

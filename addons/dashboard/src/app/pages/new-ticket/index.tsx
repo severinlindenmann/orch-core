@@ -436,6 +436,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
       titleRef.current?.focus()
     } else if (overlay) {
       setDraft(EMPTY)
+      setAttempted(false)
       onCreated?.(ticket)
     } else {
       leaving.current = true
@@ -450,6 +451,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
     writeDraft(key, null)
     setShowRestored(false)
     setDraft(EMPTY)
+    setAttempted(false) // the emptied form must not keep the red errors of the filled one (#1127)
     onDirtyChange?.(false)
   }
   /** The signer's event is in the log: the ticket exists. */
@@ -604,7 +606,8 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
           <PeoplePicker members={workspace.members} creator={me.person} people={draft.people} onPeople={(people) => patch({ people })} visibility={draft.visibility} onVisibility={(visibility) => patch({ visibility })} />
         </aside>
       </div>
-      <div className={overlay ? 'sticky bottom-0 -mx-6 border-t border-border bg-surface px-6 py-3' : 'sticky bottom-0 -mx-4 mt-8 border-t border-border bg-bg px-4 py-3 @[60rem]/page:-mx-6 @[60rem]/page:px-6'}>
+      {/* <main> pads the page: a sticky bar at bottom-0 would stop that padding short of the edge and let the form show beneath it */}
+      <div className={overlay ? 'sticky bottom-0 -mx-6 border-t border-border bg-surface px-6 py-3' : 'sticky -bottom-4 -mx-4 mt-8 border-t border-border bg-bg px-4 py-3 @[60rem]/page:-bottom-6 @[60rem]/page:-mx-6 @[60rem]/page:px-6'}>
         {(summary || serverError) && (
           <div role="alert" className="mb-2 flex items-start gap-2 text-[13px] text-danger">
             <TriangleAlert className="mt-0.5 size-4 shrink-0" />

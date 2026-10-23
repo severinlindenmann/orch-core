@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "market.unknown_addon",
+    "message": "the marketplace has no add-on with this id",
+    "hint": "orch market list --entries",
+    "fix": {
+      "argv": [
+        "orch",
+        "market",
+        "list"
+      ]
+    },
+    "retryable": false
+  }
+}

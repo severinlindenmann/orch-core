@@ -65,8 +65,12 @@ export function compareStart(preview: AgentPreview, reviewed: Reviewed, args: Ag
   if ((args.model ?? '') !== reviewed.choice.model) return no('the model changed')
   if ((preview.model ?? null) !== reviewed.model.model || (preview.model_source ?? 'default') !== reviewed.model.source) return no('the model differs from the one shown')
   if (preview.will_create_worktree) return no('a new project folder would be created')
-  // The review says "in the project folder": that is the workspace's own folder, not a repository's shared copy or a worktree.
-  if (preview.cwd.kind !== 'workspace') return no('it would not run in the project folder')
+  // The review says "in the project folder": the workspace's own folder, or the ticket's own work folder inside it
+  // (.orch-work/<KEY>, a ticket without a codebase: run 6, #1071). Not a repository's shared copy or a worktree.
+  const inProject = preview.cwd.kind === 'workspace' || (preview.cwd.kind === 'workdir' && preview.cwd.ticket === args.ticket)
+  if (!inProject) return no('it would not run in the project folder')
+  // A new ticket's work folder must be new or empty: something already in it (settings, notes) was not made for this ticket.
+  if (preview.cwd.kind === 'workdir' && !(preview.workdir && (!preview.workdir.exists || preview.workdir.empty))) return no('the ticket folder already has files in it')
   if (preview.display === null || preview.display_hidden || preview.cwd_path === null || preview.cwd_path_hidden) return no('the command or the folder cannot be shown')
   if (!preview.grant) return no('there is no agent access')
   if (reviewed.grantId !== null ? preview.grant.id !== reviewed.grantId : priorGrantIds.includes(preview.grant.id)) return no('the agent access differs from the one shown')

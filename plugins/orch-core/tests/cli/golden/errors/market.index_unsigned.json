@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "market.index_unsigned",
+    "message": "the index has no valid signature by the pinned key",
+    "hint": "wait for a signed index",
+    "fix": {
+      "argv": [
+        "orch",
+        "market",
+        "list"
+      ]
+    },
+    "retryable": false
+  }
+}

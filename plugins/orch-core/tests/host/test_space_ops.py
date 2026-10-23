@@ -20,7 +20,7 @@ from tests.host.test_hub_join_real import genesis, make_card, now_ms
 from tests.host.test_hub_ops import keystore  # noqa: F401  (the epoch key store a full join seals)
 from tests.host.test_peer_ops import PEER_CARD, PEER_OWNER_PK, PEER_WS
 from tests.hub.tlshub import TlsHub
-from tests.relay.corpus import priv
+from tests.wsproto.corpus import priv
 
 lab, served, human = human_helpers.lab, human_helpers.served, human_helpers.human
 

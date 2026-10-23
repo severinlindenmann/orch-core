@@ -237,7 +237,7 @@ function StartAgent({ ws, ticket, onClose, onStarted, grantStep, initial }: { ws
       </div>
       {loading && !data && <Skeleton className="h-6" />}
 
-      <RiskNotice startFull={startFull} loginFull={loginFull} loginNotice={loginNotice} onAcknowledge={() => void acknowledge(shownFull)}>
+      <RiskNotice startFull={startFull} loginFull={loginFull} loginNotice={loginNotice} onAcknowledge={() => void acknowledge(shownFull)} single={!!initial}>
         {data && <PreviewLines ws={ws} data={data} ticket={ticket} harness={shown?.args.harness ?? harness} />}
       </RiskNotice>
 
@@ -260,7 +260,7 @@ const isLoginNotice = (w: string) => w === LOGIN_NOTICE
  * The "runs as you" disclosure (D-P2-31). First time: the full notice, with the login-shell notice, until the person
  * says they read it. After that: one small line, and the same words under Details. Never removed, only folded.
  */
-function RiskNotice({ startFull, loginFull, loginNotice, onAcknowledge, children }: { startFull: boolean; loginFull: boolean; loginNotice: string[]; onAcknowledge: () => void; children: ReactNode }) {
+function RiskNotice({ startFull, loginFull, loginNotice, onAcknowledge, single, children }: { /** Opened right after "Create and start agent": Start is the one button, and starting counts as reading the notice (as it always did). */ single?: boolean; startFull: boolean; loginFull: boolean; loginNotice: string[]; onAcknowledge: () => void; children: ReactNode }) {
   const full = startFull || loginFull
   const start = <p data-testid="execution-line">{EXECUTION_LINE}</p>
   const login = <>{loginNotice.map((x, i) => <p key={i} role="note" className="text-warning" data-testid="agent-login-notice"><Prose inline>{x}</Prose></p>)}</>
@@ -270,7 +270,9 @@ function RiskNotice({ startFull, loginFull, loginNotice, onAcknowledge, children
         <div role="note" className="grid gap-2 rounded-md border border-warning/40 bg-warning-soft px-3 py-2 font-normal text-warning sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:[&>p]:col-start-1" data-testid="agent-risk-full">
           {startFull && start}
           {loginFull && login}
-          <Button size="xs" variant="outline" className="justify-self-end font-normal sm:col-start-2 sm:row-start-1" onClick={onAcknowledge} data-testid="agent-risk-ack">I understand</Button>
+          {single
+            ? <p className="font-normal" data-testid="agent-risk-single">Starting the agent confirms you have read this.</p>
+            : <Button size="xs" variant="outline" className="justify-self-end font-normal sm:col-start-2 sm:row-start-1" onClick={onAcknowledge} data-testid="agent-risk-ack">I understand</Button>}
         </div>
       )}
       <details className="group/risk" data-testid="agent-details">

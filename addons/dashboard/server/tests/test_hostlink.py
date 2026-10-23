@@ -191,3 +191,120 @@ def test_human_v13_shapes_and_dry_run_opts():
     finally:
         link.close()
         t.join(2)
+
+
+def test_hub_reads_are_plain_reads_decided_by_the_listed_op():
+    """V3 A7: the host lists hub.status in `ops` but not `hub/1` in `caps`; reads need no idem."""
+    a, b = socket.socketpair()
+    requests = []
+
+    def host():
+        with b:
+            receive(b)
+            b.sendall(encode(welcome(ops={"hub.status": 1, "share.rules": 1})))
+            req = receive(b)
+            requests.append(req)
+            b.sendall(encode({"t": "res", "id": req["id"], "ok": True, "result": {"data": {"signing": "full"}}}))
+
+    t = threading.Thread(target=host)
+    t.start()
+    link = HostLink(a, os.getuid(), WS)
+    try:
+        assert link.supports("hub.status", "hub/1") and link.supports("share.rules", "hub/1")
+        assert not link.supports("share.preview", "hub/1")  # not listed by the host
+        assert link.call("hub.status") == {"signing": "full"}
+        assert "opts" not in requests[0]  # a read: no idem
+    finally:
+        link.close()
+        t.join(2)
+
+
+def test_idle_event_reader_does_not_block_calls():
+    """The live stream's reader waits for an event on the same link the REST calls use: an idle reader must not hold the
+    link's lock while it waits (run-8 B2: every call waited out the reader's 100 ms select, twice per request)."""
+    import time
+
+    a, b = socket.socketpair()
+    requests = []
+    stop = threading.Event()
+
+    def host():
+        with b:
+            receive(b)
+            b.sendall(encode(welcome()))
+            while not stop.is_set():
+                b.settimeout(0.05)
+                try:
+                    req = receive(b)
+                except (TimeoutError, OSError):
+                    continue
+                requests.append(req)
+                b.sendall(encode({"t": "res", "id": req["id"], "ok": True, "result": {"data": {"person": "p_test"}}}))
+
+    t = threading.Thread(target=host)
+    t.start()
+    link = HostLink(a, os.getuid(), WS)
+    reading = threading.Event()
+
+    def reader():
+        reading.set()
+        while not stop.is_set():
+            try:
+                link.next_event(timeout=0.5)
+            except HostError:
+                return
+
+    r = threading.Thread(target=reader)
+    r.start()
+    reading.wait()
+    time.sleep(0.1)
+    worst = 0.0
+    for _ in range(10):
+        began = time.perf_counter()
+        assert link.call("whoami") == {"person": "p_test"}
+        worst = max(worst, time.perf_counter() - began)
+    stop.set()
+    r.join()
+    t.join()
+    link.close()
+    assert worst < 0.2, f"a call waited {worst:.3f}s behind the idle event reader"
+
+
+def test_event_reader_still_gets_events_and_nothing_is_lost():
+    import time
+
+    a, b = socket.socketpair()
+    stop = threading.Event()
+
+    def host():
+        with b:
+            receive(b)
+            b.sendall(encode(welcome()))
+            time.sleep(0.2)
+            b.sendall(encode({"t": "evt", "sub": "s", "items": [{"id": "1"}]}))
+            req = receive(b)
+            b.sendall(encode({"t": "evt", "sub": "s", "items": [{"id": "2"}]}))
+            b.sendall(encode({"t": "res", "id": req["id"], "ok": True, "result": {"data": {"person": "p_test"}}}))
+            stop.wait(5)
+
+    t = threading.Thread(target=host)
+    t.start()
+    link = HostLink(a, os.getuid(), WS)
+    got = []
+    deadline = time.monotonic() + 3
+
+    def reader():
+        while time.monotonic() < deadline and len(got) < 2:
+            frame = link.next_event(timeout=0.1)
+            if frame:
+                got.append(frame["items"][0]["id"])
+
+    r = threading.Thread(target=reader)
+    r.start()
+    time.sleep(0.5)
+    assert link.call("whoami") == {"person": "p_test"}
+    r.join()
+    stop.set()
+    t.join()
+    link.close()
+    assert got == ["1", "2"]

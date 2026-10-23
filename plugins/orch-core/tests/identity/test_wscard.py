@@ -7,9 +7,9 @@ import pytest
 
 from orch import canon, crypto
 from orch.identity import Refused, wscard
-from orch.relay import card as relay_card
+from orch.wsproto import card as relay_card
 
-from ..relay import corpus
+from ..wsproto import corpus
 
 S2 = corpus.S2
 CARD = S2["card"]
@@ -126,7 +126,7 @@ def test_card_o_refuses(kw):
 
 @pytest.mark.parametrize("case", CASES, ids=[c["name"] for c in CASES])
 def test_verify_card_matches_relay_verify_card(case):
-    """The typed card exists only for a card that passes ``orch.relay.card.verify_card`` (checks 1 to 6); its
+    """The typed card exists only for a card that passes ``orch.wsproto.card.verify_card`` (checks 1 to 6); its
     refusals keep the relay's codes. Rollback (``accept_card``) stays the caller's."""
     pk = bytes.fromhex(case["owner_pk_pub"])
     try:

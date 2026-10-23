@@ -119,7 +119,7 @@ function TocColumn({ items }: { items: Heading[] }) {
  * links are only http(s) and open in a new tab, and images are never loaded (an alt-text placeholder instead).
  * With `toc`, headings get core-made ids and "On this page" links to them.
  */
-export function SafeMarkdownView({ text, toc = false }: { text: string; toc?: boolean }) {
+export function SafeMarkdownView({ text, toc = false, inertLinks = false }: { text: string; toc?: boolean; /** Evidence: a link is its text plus its address as plain text, never an anchor (an agent's "Approve here" cannot be clicked). */ inertLinks?: boolean }) {
   const found = useRef<Heading[]>([])
   const held = useContext(ArtifactImagesContext)
   const [headings, setHeadings] = useState<Heading[]>([])
@@ -153,7 +153,12 @@ export function SafeMarkdownView({ text, toc = false }: { text: string; toc?: bo
         urlTransform={(url) => (isHttp(url) || ARTIFACT_SRC.test(url) ? url : '')}
         components={{
           a: ({ href, children }) =>
-            isHttp(href) ? (
+            inertLinks ? (
+              <span>
+                {children}
+                {isHttp(href) && <span className="text-text-muted"> ({href})</span>}
+              </span>
+            ) : isHttp(href) ? (
               <a href={href} target="_blank" rel="noopener noreferrer nofollow" className="text-brand underline-offset-2 hover:underline">
                 {children}
               </a>

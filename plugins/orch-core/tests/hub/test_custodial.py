@@ -195,7 +195,7 @@ def test_the_workspace_log_types_are_admin_only_and_a_ticket_type_is_not_custodi
 
 @pytest.mark.parametrize(
     "typ",
-    ["policy.changed", "settings.changed", "member.added", "role.changed", "device.added", "hub.joined", "hub.left",
+    ["member.added", "role.changed", "device.added", "hub.joined", "hub.left",
      "grant.issued", "addon.granted", "restore", "invalid.acknowledged", "artifact.added", "claim.taken",
      "task.done", "workspace.created", "gate.invalidated", "branch.pushed"],
 )  # fmt: skip
@@ -207,9 +207,8 @@ def test_the_types_the_contract_excludes_are_not_custodial_whatever_the_role(typ
 
 
 def test_the_table_is_exactly_the_contract_table():
-    assert len(C.CUSTODIAL_TYPES) == len(V["phase4"]["custodial_types"])
-    for row in V["phase4"]["custodial_types"]:
-        assert C.CUSTODIAL_TYPES[(row["type"], row["log"])] == row["min_role"]
+    rows = {(r["type"], r["log"]): r["min_role"] for r in V["phase4"]["custodial_types"]}
+    assert C.CUSTODIAL_TYPES == rows  # incl. the six phase-5 rows (hub protocol 8.8, C10)
 
 
 def test_a_read_role_signs_nothing_and_an_edit_role_cannot_start_an_admin_type():

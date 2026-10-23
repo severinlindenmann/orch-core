@@ -1,0 +1,1 @@
+err market.fetch_failed the marketplace could not be fetched · retry:true · next: check the network and try again · fix: orch market list

@@ -62,7 +62,7 @@ class EpochKeys(Protocol):
 _ENTRY = {"unbound", "addr", "tls_spki", "hk_op_pub", "mode"}
 _OPTIONAL = {
     "outbox", "addr", "tls_spki", "hxk_pub", "sealed", "rotate_after", "card", "revoked_op_certs", "snapshot",
-    "revoked_op_objs",
+    "revoked_op_objs", "publish_owed",
 }  # fmt: skip
 
 
@@ -117,6 +117,9 @@ class HubState:
     snapshot: dict[str, Any] | None = None  # the pinned signed hub.snapshot (section 7); its version only grows
     #: cert_id -> the root-signed ``hub.op_revoked`` object itself: what a ``hub.pinned`` line carries (15.2)
     revoked_op_objs: dict[str, dict[str, Any]] = field(default_factory=dict)
+    #: C8 (design-c8 M2.4): hub_id -> the signed ``hub.unbound`` that orch-publish has not acknowledged yet. A leave
+    #: tells publish directly (never through the hub); the entry is deleted once publish took it.
+    publish_owed: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -138,6 +141,7 @@ class HubState:
             "revoked_op_certs": sorted(self.revoked_op_certs),
             "snapshot": self.snapshot,
             "revoked_op_objs": {k: self.revoked_op_objs[k] for k in sorted(self.revoked_op_objs)},
+            "publish_owed": {k: self.publish_owed[k] for k in sorted(self.publish_owed)},
         }
 
     @classmethod
@@ -169,6 +173,8 @@ class HubState:
             and (d.get("snapshot") is None or (type(d["snapshot"]) is dict and type(d["snapshot"].get("o")) is dict))
             and type(d.get("revoked_op_objs", {})) is dict
             and all(wire.hex16(k) and type(v) is dict for k, v in d.get("revoked_op_objs", {}).items())
+            and type(d.get("publish_owed", {})) is dict
+            and all(wire.hex16(k) and type(v) is dict for k, v in d.get("publish_owed", {}).items())
             and d["hub_id"] == wire.hub_id(unb64u(d["hk_root_pub"], 65))
         )
         if not ok:
@@ -192,6 +198,7 @@ class HubState:
             revoked_op_certs=list(d.get("revoked_op_certs", [])),
             snapshot=d.get("snapshot"),
             revoked_op_objs=dict(d.get("revoked_op_objs", {})),
+            publish_owed=dict(d.get("publish_owed", {})),
         )
 
 
@@ -207,6 +214,7 @@ class LeaveResult:
     payload: dict[str, Any]  # the hub.left payload
     unbound: dict[str, Any]
     delivered: bool  # False: the hub did not take the unbound yet (queued in the state)
+    publish_told: bool = False  # C8: orch-publish holds the unbound (False: still owed in state.publish_owed)
     rotation_done: bool = True  # False: a full hub left and the newer epoch is not committed yet (state.rotate_after)
 
 
@@ -478,6 +486,7 @@ def _owe(state: HubState, workspace_id: str, sign_wsk: wire.Sign, now_ms: Callab
         workspace_id=workspace_id, hub_id_=state.hub_id, binding_seq=state.binding_seq,
         unbound_ms=now_ms(), dev=dev, sign=sign_wsk,
     )  # fmt: skip
+    state.publish_owed[state.hub_id] = unbound  # publish is told directly too (C8 M2.4)
     held = state.outbox.get(state.hub_id)
     if held is None or held["unbound"]["o"]["binding_seq"] <= state.binding_seq:
         state.outbox[state.hub_id] = {
@@ -522,6 +531,26 @@ def flush_outbox(
     return done
 
 
+def flush_publish(
+    *, state: HubState, put: Callable[[dict[str, Any]], bool] | None, save: Callable[[HubState], None]
+) -> bool:
+    """Tell orch-publish directly (C8 M2.4): ``put(unbound)`` is True when publish took it (2xx, or it already holds a
+    newer binding). Each owed unbound is tried once here (the caller's client retries a 5xx or a lost answer); what
+    publish has not taken stays in ``publish_owed`` and is offered again by the next ``orch hub unbind``. Returns True
+    when nothing is owed to publish. ``put=None`` (no publish server set up): nothing can be told, still owed."""
+    if put is None:
+        return not state.publish_owed
+    for hub_id, unbound in sorted(state.publish_owed.items()):
+        try:
+            took = put(unbound)
+        except (OSError, HubRefused):
+            took = False
+        if took:
+            state.publish_owed.pop(hub_id, None)
+    save(state)
+    return not state.publish_owed
+
+
 def settle_rotation(
     *, state: HubState, epochs: EpochKeys | None, save: Callable[[HubState], None], request: bool
 ) -> bool:
@@ -553,6 +582,7 @@ def leave(
     record_left: Callable[[dict[str, Any]], None],
     save: Callable[[HubState], None],
     epochs: EpochKeys | None = None,
+    publish_put: Callable[[dict[str, Any]], bool] | None = None,
 ) -> LeaveResult:
     """Break-glass leave: ``hub.left`` is logged, ``hub.unbound`` is signed with ``WSK``, stored in the outbox and
     offered to its hub once; an unreachable hub does not stop it. Works from ``joining`` too. From full mode the hub
@@ -569,6 +599,14 @@ def leave(
     state.status = "unbound"
     save(state)
     done = settle_rotation(state=state, epochs=epochs, save=save, request=False)  # the retire already asked
+    told = flush_publish(state=state, put=publish_put, save=save)  # publish first: it ends hub-forwarded publish
     flush_outbox(state=state, workspace_id=workspace_id, sign_wsk=sign_wsk, now_ms=now_ms,
                  transport_for=transport_for, save=save)  # fmt: skip
-    return LeaveResult(state, payload, unbound, state.hub_id not in state.outbox, done)
+    return LeaveResult(
+        state,
+        payload,
+        unbound,
+        state.hub_id not in state.outbox,
+        rotation_done=done,
+        publish_told=told,
+    )

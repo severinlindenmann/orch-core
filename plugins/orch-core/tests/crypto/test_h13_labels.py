@@ -33,13 +33,14 @@ PLANNED = {
     "h_sk_commit": "orch/v2/hub-sk-commit|",
     "aad_space": "orch/v2/space-aad|",
     "sig_share_item": "orch/v2/sig/share-item|",  # V3 C6: selective share_put (hub contract 10.2b)
+    "sig_device_rotate": "orch/v2/sig/device-rotate|",  # #1097: the person key's device rotation
     "aad_hub_share": "orch/v2/hub-share-aad|",
     "h_share_item": "orch/v2/hub-share-item|",
 }
 
 
 def _every() -> dict[str, str]:
-    from tests.relay.corpus import VECTORS
+    from tests.wsproto.corpus import VECTORS
 
     f1 = json.loads(F1.read_text(encoding="utf-8"))["labels"]
     out: dict[str, str] = {}
@@ -62,7 +63,7 @@ def test_the_planned_labels_and_their_literals():
 
 
 def test_planned_labels_are_not_relay_labels():
-    from tests.relay.corpus import VECTORS
+    from tests.wsproto.corpus import VECTORS
 
     assert not set(PLANNED) & set(labels.LABELS)
     assert not set(PLANNED) & set(VECTORS["labels"])

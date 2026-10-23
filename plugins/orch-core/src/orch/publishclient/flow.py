@@ -18,7 +18,7 @@ from typing import Any
 
 from .client import PublishClient, PublishError, share_target
 
-__all__ = ["commit", "list_shares", "meta_bytes", "put_file", "put_meta", "register", "revoke", "token_hash"]
+__all__ = ["commit", "list_shares", "meta_bytes", "put_file", "put_meta", "revoke", "token_hash"]
 
 
 def token_hash(token: str) -> str:
@@ -39,19 +39,6 @@ def meta_bytes(
         "files": [{"path": f["name"], "size": f["size"], "sha256": f["sha256"]} for f in files],
     }
     return json.dumps(doc, sort_keys=True, separators=(",", ":")).encode()
-
-
-def register(
-    client: PublishClient, workspace_id: str, delegation: Mapping[str, Any], owner_pk_b64u: str
-) -> dict[str, Any]:
-    """``POST register {delegation, owner_pk}`` (design §2.6b): binds the workspace, or confirms it (``unchanged``).
-    Exactly these two keys, copied from the genesis. A 401 ``unknown_workspace`` means the server's admin has not
-    allowed this workspace yet; 409 ``delegation_changed`` that another delegation is bound."""
-    body = json.dumps(
-        {"delegation": dict(delegation), "owner_pk": owner_pk_b64u}, sort_keys=True, separators=(",", ":")
-    ).encode()
-    got = client.request("POST", share_target(workspace_id, "register"), body, idempotent=True).json()
-    return got if isinstance(got, dict) else {}
 
 
 def put_meta(client: PublishClient, workspace_id: str, share_id: str, meta: bytes) -> dict[str, Any]:

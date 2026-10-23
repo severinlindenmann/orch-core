@@ -8,6 +8,7 @@ export const TABS = [
   { id: 'addons', label: 'Addons' },
   { id: 'skills', label: 'Skills' },
   { id: 'connections', label: 'Connections' },
+  { id: 'hub', label: 'Hub' },
 ] as const
 
 /** The reduced settings of a real host (M4, #306): the rest of the mockup's tabs have no host operation behind them yet. */
@@ -22,6 +23,7 @@ export const HOST_TABS = [
   { id: 'records', label: 'Records', feature: 'records' },
   /** Pair a phone and the paired devices (proposed `pair/1`). Always listed: without the ops it says "not available". */
   { id: 'devices', label: 'Devices' },
+  { id: 'hub', label: 'Hub', feature: 'hub' },
 ] as const
 
 /** The tabs this build shows: the mockup's, or the reduced ones on a real host. */

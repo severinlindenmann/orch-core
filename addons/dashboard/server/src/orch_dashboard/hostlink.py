@@ -108,6 +108,12 @@ OPS = {
         "publish.revoke",
         "publish.discard",
         "publish.register",
+        # V3 A7 hub pages: reads only (the host's own state of the hub and of the share rules). Every hub change is a
+        # command the person runs in their Terminal (hub.py); this process never sends hub.join/mode/leave/connect.
+        "hub.status",
+        "hub.handoff",
+        "share.rules",
+        "share.preview",
     )
 }
 RUN_OPS = {"run.sub", "run.list", "run.stop", "agent.preview", "agent.start", "grant.deposit_status", "grant.forget"}
@@ -282,7 +288,8 @@ class HostLink:
         listed = self.welcome.get("ops", {}).get(op) == OPS.get(op, 1)
         # Real-host finding (core H6b, stream A item RH-1): the host serves the human.* ops and lists them in `ops`, but
         # `welcome.caps` has no `human/1`. `ops` decides per op (contract section 0.3), so a listed human op counts.
-        return listed and (cap in self.welcome.get("caps", []) or cap == "human/1")
+        # `hub/1` is likewise decided by the listed op (the host lists hub.* and share.* in `ops`, with no `hub/1` cap).
+        return listed and (cap in self.welcome.get("caps", []) or cap in ("human/1", "hub/1"))
 
     def send(self, frame):
         with self.send_lock:
@@ -396,14 +403,29 @@ class HostLink:
                 raise
 
     def next_event(self, timeout=0.1):
-        """One reader at a time; calls can still consume and queue interleaved events."""
+        """One reader at a time; calls can still consume and queue interleaved events.
+
+        The wait for the next frame happens WITHOUT the link's lock: this link is shared with every REST call of the
+        workspace, and a reader that held the lock for its whole `select` made each call wait for it (about 100 ms,
+        twice per request: `addon.list` and the op itself). Only taking a frame off the socket holds the lock."""
         with self.lock:
             if self.events:
                 return self.events.popleft()
+            if self.sock.fileno() < 0:
+                raise fail("host.unavailable")
+        try:
+            if not select.select([self.sock], [], [], timeout)[0]:
+                return None
+        except (OSError, ValueError):  # closed while waiting
+            raise fail("host.unavailable") from None
+        with self.lock:
             try:
+                if self.events:
+                    return self.events.popleft()
+                # A call may have read the frame while this reader waited: only read what is still there.
                 if self.sock.fileno() < 0:
                     raise fail("host.unavailable")
-                if not select.select([self.sock], [], [], timeout)[0]:
+                if not select.select([self.sock], [], [], 0)[0]:
                     return None
                 frame = receive(self.sock)
                 if frame.get("t") == "fatal":

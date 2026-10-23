@@ -358,7 +358,6 @@ def create(service: Any, viewer: Viewer, args: dict[str, Any]) -> dict[str, Any]
             replace=replace,
         )  # fmt: skip
         out = {**_row(service, hint, "open", None), "duplicate": False, "phones": phones}
-    _wake(service)
     return out
 
 
@@ -374,14 +373,6 @@ def cancel(service: Any, viewer: Viewer, hint_id: str) -> dict[str, Any]:
             service.phone_hints.cancel(hint_id)
             state = "cancelled"
         return {"id": hint_id, "state": state}
-
-
-def _wake(service: Any) -> None:
-    """Wake the relay companions (the push planner runs on its wake); a wake is a hint and never raises."""
-    try:
-        service._relay_wake(None)
-    except Exception:  # noqa: BLE001
-        LOG.exception("phone hint wake failed")
 
 
 def serve(call: Call) -> dict[str, Any]:

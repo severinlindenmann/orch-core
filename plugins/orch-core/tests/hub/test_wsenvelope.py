@@ -8,7 +8,7 @@ import pytest
 from orch.crypto import suite
 from orch.crypto.encoding import b64u, unb64u
 from orch.hubclient import wsenvelope as W
-from tests.relay.corpus import S2
+from tests.wsproto.corpus import S2
 
 CASES = {c["name"]: c for c in S2["ws_envelopes"]["cases"]}
 COSIGNED_OK = {"cosigned_by_device_key", "cosigned_by_webauthn"}  # positives need the chain check: refused here

@@ -41,9 +41,9 @@ def test_open_blocking_question_makes_the_ticket_wait_for_its_addressee(w):
     from orch import canon
 
     uid = w.ticket()
-    q = {"id": "Q1", "to": w.people["tom"], "text": "which?", "blocking": True}
+    q = {"id": "Q1", "to": w.people["tom"], "text": "which?", "blocking": True, "kind": "text"}
     qid = canon.question_id(w.workspace_id, uid, "Q1")
-    w.tev(uid, "question.asked", "sev", question=q, qid=qid, hash=canon.question_hash(qid, uid, "which?", None))
+    w.tev(uid, "question.asked", "sev", question=q, qid=qid, hash=canon.question_hash(qid, uid, q))
     assert kinds(w, uid) == [("question", "Q1", (w.people["tom"],))] and w.view(uid).waiting
     assert not w.state().tickets[uid].status == "waiting"
 
@@ -52,9 +52,9 @@ def test_non_blocking_question_does_not_make_the_ticket_wait(w):
     from orch import canon
 
     uid = w.ticket()
-    q = {"id": "Q1", "to": w.people["tom"], "text": "fyi?", "blocking": False}
+    q = {"id": "Q1", "to": w.people["tom"], "text": "fyi?", "blocking": False, "kind": "text"}
     qid = canon.question_id(w.workspace_id, uid, "Q1")
-    w.tev(uid, "question.asked", "sev", question=q, qid=qid, hash=canon.question_hash(qid, uid, "fyi?", None))
+    w.tev(uid, "question.asked", "sev", question=q, qid=qid, hash=canon.question_hash(qid, uid, q))
     assert not w.view(uid).waiting and len(w.view(uid).needs) == 1
 
 

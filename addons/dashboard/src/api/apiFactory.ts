@@ -142,6 +142,12 @@ export function createApi(transport: Transport) {
       call<ClickSigned>('POST', `/api/w/${ws}/click/sign`, { request_id: requestId, view_digest: viewDigest, ...(word === undefined ? {} : { word }) }),
     stateClick: (ws: string, requestId: string) => call<ClickState>('POST', `/api/w/${ws}/click/state`, { request_id: requestId }),
     hubSign: (ws: string, body: import('./hubsign').HubSignRequest) => call<import('./hubsign').HubSignInfo>('POST', `/api/w/${ws}/hubsign`, body),
+    /** V3 A7: the hub pages' reads and the Terminal command of a change (the server signs nothing and sends no hub write). */
+    getHubStatus: (ws: string) => call<import('./hub').HubStatus>('GET', `/api/w/${ws}/hub`),
+    getHubShare: (ws: string) => call<import('./hub').HubShare>('GET', `/api/w/${ws}/hub/share`),
+    getHubPreview: (ws: string, body: { add?: import('./hub').HubRule; remove?: import('./hub').HubRule }) =>
+      call<import('./hub').HubPreview>('POST', `/api/w/${ws}/hub/share/preview`, body),
+    getHubCommand: (ws: string, body: import('./hub').HubCommandRequest) => call<import('./hub').HubCommand>('POST', `/api/w/${ws}/hub/command`, body),
     cancelClick: (ws: string, requestId: string) => call<{ id: string; state: string }>('POST', `/api/w/${ws}/click/cancel`, { request_id: requestId }),
     clickStatus: (ws: string) => call<ClickCard>('GET', `/api/w/${ws}/click/status`),
     switchClick: (ws: string, body: ClickSwitch) => call<ClickCard>('POST', `/api/w/${ws}/click/custody`, body),

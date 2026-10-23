@@ -354,6 +354,10 @@ def _task_verify(value: Any) -> str:
     cmd = _one_line(value, "verify command", 4096)
     if len(cmd.encode("utf-8")) > 4096:  # Call.text's byte limit
         raise SequenceInvalid("verify command is longer than 4096 bytes")
+    from orch.model.tasks import verify_cmd_problem
+
+    if problem := verify_cmd_problem(cmd):
+        raise SequenceInvalid(f"verify command: {problem}")
     return cmd
 
 
@@ -762,6 +766,8 @@ def confirm_kind(intent: Mapping[str, Any], person: str | None = None) -> str:
             and all(who == person for who in s["args"]["add"])
         ):
             return "click"
+        if s["op"] == "addon.grant" and intent["kind"] == ADDON:
+            return op_class(s["op"], events=[intent["grant"]])  # the signed capability list decides (click or word)
         # AE3: the class of a step is that of its op WITH its args (``settings.set`` of Publish is terminal-only)
         return op_class(s["op"], args=s["args"])
 

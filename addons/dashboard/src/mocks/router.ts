@@ -6,6 +6,7 @@ import type { MockStore } from './store'
 import { atLeast, can } from '@/api/permissions'
 import { APPROVER_GROUPS, codeReviewWaits, unmeetablePolicy } from '@/api/gates'
 import { GRANT_MAX_HOURS } from '@/api/grants'
+import { validIcon } from '@/api/wsIcons'
 import { addonActive } from '@/api/addons'
 import peopleFixture from './fixtures/people.json'
 import type { RelayRequest, RelaySimRequest } from '@/api/types'
@@ -13,6 +14,7 @@ import type { MandatesPreviewRequest } from '@/api/mandatesPreview'
 import { listArtifacts } from './artifacts'
 import { relayEpoch, relayRequest, relaySim, relayState } from './relay'
 import { changesOf } from './changes'
+import { registerHubRoutes } from './hub'
 import { createLatency, readLatencySettings, type LatencySettings } from './latency'
 
 export interface RouteContext {
@@ -323,6 +325,12 @@ function postSettings(store: MockStore, ctx: RouteContext): TransportResponse {
       store.appendWs(wsId, { type: 'workspace.grant_hours_set', hours: b.hours })
       return done()
     }
+    case 'icon': {
+      const v = b.icon as { icon?: unknown; colour?: unknown } | null
+      if (v !== null && !(v && typeof v === 'object' && Object.keys(v).length === 2 && validIcon(v.icon, v.colour))) return fail(400, 'validation.icon', 'Pick an icon and a colour from the lists.')
+      store.appendWs(wsId, { type: 'settings.changed', actor: { kind: 'person', id: store.viewer }, set: { icon: v }, presence: 'touchid' })
+      return done()
+    }
     case 'repos': {
       const r = store.changeRepos(wsId, b.set, { kind: 'person', id: store.viewer })
       return r.ok ? done() : fail(r.status, r.code, r.message, r.hint)
@@ -617,6 +625,7 @@ export function buildRouter(): MockRouter {
     s.setViewer(person)
     return ok({ ok: true })
   })
+  registerHubRoutes(r) // V3 A7: the hub pages' reads and Terminal commands
   return r
 }
 

@@ -1,6 +1,6 @@
 """P5: the Publish add-on on the host (design-publish-addon §2.2, §3): ``publish.prepare`` / ``share`` / ``send`` /
 ``revoke`` / ``list`` / ``discard`` / ``register`` end to end on a real served workspace, against a fake server that
-speaks orch-publish's routes (the opt-in test against the real server is ``tests/host/test_publishing_real.py``).
+speaks orch-publish's routes (through a hub: there is no direct path, V3-D36).
 
 The invariants under test (I1, I2, I12 and the signing rules): nothing leaves without a person's signature over the
 exact words; an agent only prepares; the link is returned once and kept nowhere; the bytes sent are the staged bytes;
@@ -9,6 +9,7 @@ every request is signed with the workspace key for the configured host."""
 from __future__ import annotations
 
 import base64
+import copy
 import hashlib
 import json
 import os
@@ -19,15 +20,19 @@ from typing import Any
 import pytest
 
 from orch import crypto
-from orch.host import publishing, signcontent
+from orch.crypto import suite as S
+from orch.host import hubops, publishing, signcontent
 from orch.host.publishing import PUBLISH_OPS
 from orch.publishclient import approval, flow
-from orch.relay.pubsign import publish_signed_bytes
 from tests.host import human_helpers
 from tests.host.dispatch_helpers import SESSION, err, ok
 from tests.host.human_helpers import Human
 from tests.host.test_artifact_get import stored
 from tests.host.test_blobs import add, sha, upload
+from tests.host.test_hub_ops import HUB_ID, connect_args, join_args
+from tests.hub import contract as H
+from tests.hub.fake import sign_with
+from tests.hub.vec import private_key, pub
 
 lab, served, human = human_helpers.lab, human_helpers.served, human_helpers.human
 
@@ -55,18 +60,34 @@ class FakeServer:
         self.shares: dict[str, dict[str, Any]] = {}
         self.registered = False
         self.fail: list[tuple[str, str, int, str]] = []
+        self.lose: list[tuple[str, str]] = []  # (method, path-regex): the server does it, the answer never arrives
         self.bad_signatures: list[str] = []
 
     def _authentic(self, headers, method, netloc, target, body) -> bool:
-        """The direct v2 12.1 signature (the hub path overrides this: tests/hub/test_publish_out_host.py)."""
-        sig = crypto.unb64u(headers["Orch-Signature"])
-        signed = publish_signed_bytes(
-            bytes.fromhex(headers["Orch-Workspace"]), int(headers["Orch-Ts"]), bytes.fromhex(headers["Orch-Nonce"]),
-            method, netloc, target, body,
+        """The hub-path signature (contract 11.1): the host's own ``WSK`` signature over the hub-path bytes, and the
+        hub's transport signature under ``HK_op``. Nothing else counts: a direct request has no ``Orch-Hub``."""
+        h = {k.lower(): v for k, v in headers.items()}
+        if "orch-hub" not in h or "orch-hub-signature" not in h or "orch-owner-approval" in h:
+            return False
+        signed = H.hub_path_signed_bytes(
+            bytes.fromhex(h["orch-workspace"]), int(h["orch-ts"]), bytes.fromhex(h["orch-nonce"]), method, netloc,
+            target, body, h["orch-hub"], None,
         )  # fmt: skip
-        return bool(crypto.verify(self.wsk_pub, sig, signed))
+        return (
+            h["orch-hub"] == HUB_ID
+            and S.verify(self.wsk_pub, crypto.unb64u(h["orch-signature"], 64), signed)
+            and S.verify(pub("hk_op"), crypto.unb64u(h["orch-hub-signature"], 64), H.hub_publish_bytes(HUB_ID, signed))
+        )
 
     def __call__(self, scheme, netloc, method, target, headers, body, timeout):
+        got = self._serve(scheme, netloc, method, target, headers, body, timeout)
+        for i, (m, rx) in enumerate(self.lose):
+            if m == method and re.search(rx, target):
+                del self.lose[i]
+                raise OSError("answer lost")
+        return got
+
+    def _serve(self, scheme, netloc, method, target, headers, body, timeout):
         self.requests.append({"method": method, "target": target, "body": body, "netloc": netloc, "headers": headers})
         if netloc != self.host or not self._authentic(headers, method, netloc, target, body):
             self.bad_signatures.append(f"{method} {target}")
@@ -100,12 +121,78 @@ class FakeServer:
         return 404, b'{"error":"not_found"}'
 
 
+class PublishHub:
+    """The hub link as the host sees it: takes ``join`` and ``card_put`` (marking the fake server registered, or the
+    ``error`` set by a test), forwards ``publish_out`` to :class:`FakeServer` adding the hub's signature, as the
+    contract says, and answers every message signed by the vector HK_op."""
+
+    def __init__(self, server: FakeServer) -> None:
+        self.server, self.sent, self.error = server, [], None
+
+    def ops(self):
+        return [m["o"]["op"] for m in self.sent]
+
+    def send(self, message):
+        self.sent.append(copy.deepcopy(message))
+        m = message["o"]
+        body = {}
+        if m["op"] == "card_put":
+            body = {"error": self.error} if self.error else {}
+            if not self.error:
+                self.server.registered = True
+        elif m["op"] == "publish_out":
+            body = {"error": self.error} if self.error else self._forward(m["body"]["request"])
+            if "status" not in body and "error" not in body:  # orch-publish could not be reached
+                body = {"error": "unavailable"}
+        o = {
+            "v": 2, "suite": 2, "kind": "hub.link", "hv": 0, "hub_id": m["hub_id"], "workspace_id": m["workspace_id"],
+            "dir": "h2w", "seq": 1, "ts_ms": m["ts_ms"], "op": m["op"], "re": m["seq"], "body": body,
+        }  # fmt: skip
+        return sign_with(private_key("hk_op"), "sig_hub_route", o)
+
+    def _forward(self, req):
+        h = {k.lower(): v for k, v in req["headers"].items()}
+        assert set(h) == {"orch-workspace", "orch-ts", "orch-nonce", "orch-signature"}, "the host's header set (11.1)"
+        signed = H.hub_path_signed_bytes(
+            bytes.fromhex(h["orch-workspace"]), int(h["orch-ts"]), bytes.fromhex(h["orch-nonce"]), req["method"],
+            req["host"], req["target"], bytes.fromhex(req["body_hex"]), HUB_ID, None,
+        )  # fmt: skip
+        assert S.verify(self.server.wsk_pub, crypto.unb64u(h["orch-signature"], 64), signed), "host signature"
+        headers = dict(req["headers"]) | {"Orch-Hub": HUB_ID}
+        headers["Orch-Hub-Signature"] = crypto.b64u(S.sign(private_key("hk_op"), H.hub_publish_bytes(HUB_ID, signed)))
+        try:
+            status, data = self.server(
+                "https", req["host"], req["method"], req["target"], headers, bytes.fromhex(req["body_hex"]), 1.0
+            )
+        except OSError:
+            return {}  # the hub's forward failed: it answers `unavailable` (send() turns {} into that)
+        return {"status": status, "body_hex": data.hex()}
+
+
 class World:
-    def __init__(self, served, human: Human) -> None:
+    """A served workspace that has joined a hub (``join=False``: a workspace alone). ``server`` is orch-publish behind
+    the hub; ``hub`` is the link to it. ``close()`` puts the module seams back."""
+
+    def __init__(self, served, human: Human, *, join: bool = True) -> None:
         self.served, self.human, self.ws = served, human, served.lab.ws
         self.c = human.c
-        self.server = FakeServer(crypto.unb64u(self._genesis()["wsk_pub"]))
-        publishing.TRANSPORT = self.server
+        genesis = self._genesis()
+        self.server = FakeServer(crypto.unb64u(genesis["wsk_pub"]))
+        self.hub = PublishHub(self.server)
+        self._saved = (hubops.TRANSPORT, hubops.CARD_SOURCE, hubops.workspace_dev)
+        card = {"delegation": {"o": {"wsk_pub": genesis["wsk_pub"]}}, "o": {}, "sig": "", "sealed": ""}
+        hubops.TRANSPORT = lambda service, hub_id: self.hub
+        hubops.CARD_SOURCE = lambda service: card
+        hubops.workspace_dev = lambda service: True
+        if join:
+            self.join()
+
+    def join(self) -> None:
+        self.human.run("hub.join", join_args())
+        ok(self.served.client().req("hub.connect", connect_args(), idem=True))
+
+    def close(self) -> None:
+        hubops.TRANSPORT, hubops.CARD_SOURCE, hubops.workspace_dev = self._saved
 
     def _genesis(self) -> dict[str, Any]:
         store = self.ws.other()
@@ -174,14 +261,14 @@ def w(served, human):
     world.addon()
     world.configure()
     yield world
-    publishing.TRANSPORT = None
+    world.close()
 
 
 @pytest.fixture
 def bare(served, human):
     world = World(served, human)
     yield world
-    publishing.TRANSPORT = None
+    world.close()
 
 
 REPORT = b"# Report\nthe numbers are fine\n"
@@ -514,8 +601,8 @@ def test_the_whole_flow_prepare_sign_send_and_the_link_is_shown_once(w):
     srv = w.server
     assert srv.bad_signatures == [] and srv.registered
     kinds = [(r["method"], r["target"].split("/", 4)[4]) for r in srv.requests]
+    assert "card_put" in w.hub.ops()  # registered as the card through the hub, never a direct POST
     assert kinds == [
-        ("POST", "register"),
         ("PUT", f"shares/{share_id}"),
         ("PUT", f"shares/{share_id}/files/report.md"),
         ("PUT", f"shares/{share_id}/files/data.csv"),
@@ -621,9 +708,7 @@ def test_a_lost_answer_is_retried_with_the_same_manifest_and_one_token(w):
     uid, key = w.ticket_with(**{"report.md": REPORT})
     staged = w.prepare(key, "report.md")["staged_id"]
     w.approve(staged)
-    w.server.fail.append(("PUT", r"/files/report\.md$", 0, ""))
-    w.server.fail.append(("PUT", r"/files/report\.md$", 0, ""))
-    w.server.fail.append(("PUT", r"/files/report\.md$", 0, ""))  # three lost answers: the client gives up
+    w.server.fail.append(("PUT", r"/files/report\.md$", 0, ""))  # the hub's forward is lost: the hub says unavailable
     res = w.send(staged)
     assert err(res) == "publish.unreachable" and res["error"]["retryable"] is True
     assert (w.stage_dir(staged) / "token").exists()  # the token waits in the stage until the server committed
@@ -639,12 +724,13 @@ def test_an_unknown_workspace_says_what_the_admin_must_do_and_keeps_the_copy(w):
     uid, key = w.ticket_with(**{"report.md": REPORT})
     staged = w.prepare(key, "report.md")["staged_id"]
     w.approve(staged)
-    w.server.fail.append(("POST", r"/register$", 401, "unknown_workspace"))
+    w.hub.error = "unknown_workspace"  # publish refused the card at the hub
     res = w.send(staged)
     assert err(res) == "publish.server_refused" and res["error"]["detail"] == {"reason": "unknown_workspace"}
     info = ok(w.req("publish.list", {}))["data"]
     assert re.fullmatch(r"[0-9a-f]{32}", info["workspace"]) and re.fullmatch(r"[0-9a-f]{32}", info["owner"])
     assert (w.stage_dir(staged) / "meta.json").exists()
+    w.hub.error = None
     ok(w.send(staged))  # the admin allowed it; the same copy goes
 
 
@@ -675,27 +761,23 @@ def test_a_wrong_clock_is_said_in_words(w):
     assert "clock" in res["error"]["message"]
 
 
-def test_register_sends_exactly_the_genesis_delegation_and_owner_key_and_no_card(w):
+def test_register_sends_the_workspace_card_and_owner_key_to_the_hub_and_nothing_direct(w):
     res = ok(w.req("publish.register", {}))["data"]
     assert res["registered"] is True and res["server"] == SERVER
-    (req,) = w.server.requests
-    body = json.loads(req["body"])
+    assert w.server.requests == []  # V3-D36: nothing goes to orch-publish from the workspace
+    (msg,) = [m["o"] for m in w.hub.sent if m["o"]["op"] == "card_put"]
     genesis = w._genesis()
-    assert req["method"] == "POST" and set(body) == {"delegation", "owner_pk"}  # two keys, nothing else
-    assert body["delegation"] == genesis["delegation"] and body["owner_pk"] == genesis["owner"]["pk_pub"]
-    assert set(body["delegation"]) == {"o", "sig"} and body["delegation"]["o"]["kind"] == "ws_delegation"
-    text = req["body"].decode()
-    for word in ("card", "wxk", "ck_commit", "relay_url", "sealed"):
-        assert word not in text
-    # no relay-style key store is made for publishing, and the relay's own is untouched
+    assert set(msg["body"]) == {"card", "pk_pub"}  # two keys, nothing else
+    assert msg["body"]["pk_pub"] == genesis["owner"]["pk_pub"]
+    assert msg["body"]["card"] == hubops.CARD_SOURCE(None)
     assert not (w.base() / "card").exists()
-    assert not (Path(w.served.lab.state) / "hosts" / w.served.wid / "membership").exists()
     assert ok(w.req("publish.register", {}))["data"]["registered"] is True
-    assert w.server.requests[1]["body"] == req["body"]  # identical bytes again: the server answers unchanged
+    puts = [m["o"]["body"] for m in w.hub.sent if m["o"]["op"] == "card_put"]
+    assert len(puts) == 2 and puts[0] == puts[1]  # identical bytes again: publish answers unchanged
 
 
 def test_a_server_holding_another_delegation_is_a_conflict_in_words(w):
-    w.server.fail.append(("POST", r"/register$", 409, "delegation_changed"))
+    w.hub.error = "delegation_changed"
     res = w.req("publish.register", {})
     assert err(res) == "publish.server_refused" and res["error"]["detail"] == {"reason": "conflict"}
     assert "unbind" in res["error"]["message"]
@@ -844,18 +926,7 @@ def test_a_share_that_went_live_with_a_lost_commit_answer_can_be_revoked(w):
     uid, key = w.ticket_with(**{"report.md": REPORT})
     staged = w.prepare(key, "report.md")["staged_id"]
     w.approve(staged)
-    for _ in range(3):  # the commit goes through on the server but its answer never arrives
-        w.server.fail.append(("POST", r"/commit$", 0, ""))
-    real = w.server.__call__
-
-    def commit_lands(scheme, netloc, method, target, headers, body, timeout):
-        if method == "POST" and target.endswith("/commit"):
-            real(scheme, netloc, method, target, headers, body, timeout)  # the server commits
-            raise OSError("answer lost")
-        return real(scheme, netloc, method, target, headers, body, timeout)
-
-    w.server.fail.clear()
-    publishing.TRANSPORT = commit_lands
+    w.server.lose.append(("POST", r"/commit$"))  # the server commits, the answer never arrives
     res = w.send(staged)
     assert err(res) == "publish.unreachable"
     (row,) = ok(w.req("publish.list", {}))["data"]["shares"]
@@ -871,8 +942,7 @@ def test_a_copy_that_may_be_live_is_not_discarded(w):
     uid, key = w.ticket_with(**{"report.md": REPORT})
     staged = w.prepare(key, "report.md")["staged_id"]
     w.approve(staged)
-    for _ in range(3):
-        w.server.fail.append(("PUT", r"/files/report\.md$", 0, ""))
+    w.server.fail.append(("PUT", r"/files/report\.md$", 0, ""))
     assert err(w.send(staged)) == "publish.unreachable"
     res = w.req("publish.discard", {"staged_id": staged})
     assert err(res) == "publish.changed" and "revoke" in res["error"]["message"]
@@ -956,7 +1026,7 @@ def test_a_member_or_viewer_cannot_sign_a_share_through_the_real_path(tmp_path):
     wd = world(tmp_path, map_to="quinn")
     try:
         quinn = Human(wd, wd.quinn)
-        w = World(wd, quinn)  # quinn's own connection
+        w = World(wd, quinn, join=False)  # quinn's own connection (only an owner joins a hub)
         w.addon()
         w.configure()
         uid, key = w.ticket_with(**{"report.md": REPORT})  # made by the owner's agent: quinn does not own it
@@ -968,7 +1038,7 @@ def test_a_member_or_viewer_cannot_sign_a_share_through_the_real_path(tmp_path):
         wd.person_event("role.changed", person=wd.quinn.ref, role="maintainer")
         assert quinn.prepare("publish.share", {"staged_id": staged})["op"] == "publish.share"
     finally:
-        publishing.TRANSPORT = None
+        pass
         wd.close()
         wd.lab.close()
 

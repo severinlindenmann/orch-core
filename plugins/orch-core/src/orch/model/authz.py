@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections.abc import Collection, Mapping
 from typing import Any
 
-from . import hubledger, identity, policies, visibility
+from . import breakglass, hubledger, identity, policies, visibility
 from .codes import Code, Refusal
 from .emits import HUMAN_ONLY
 from .types import WORKSPACE, Core, Device, TCore, WsCore, ts
@@ -60,9 +60,13 @@ ACTOR_RULES: dict[str, str] = {
     "device.added": "P",
     "device.removed": "P",
     "device.revoked": "PH",
+    "device.exposed": "P",  # #1097: signed by the device itself (the model checks)
+    "device.rotated": "P",  # #1097: signed by the new device itself, with the person key's certificate and rotation
     "settings.changed": "P",
-    "grant.issued": "P",
+    "grant.issued": "PH",  # C10: a host actor only with `request` (hub protocol 8.8), checked by the type rule
+    "grant.requested": "P",  # C10: hub-signed only (HUB_ONLY)
     "grant.revoked": "P",
+    "device.excluded": "P",  # C10: hub-signed only (HUB_ONLY)
     "addon.granted": "P",
     "addon.disabled": "P",
     "addon.purged": "P",
@@ -96,10 +100,16 @@ HUB_TYPES = frozenset(
         "claim.released", "log.added", "handoff.written", "question.asked", "question.answered", "gate.approved",
         "gate.changes_requested", "verdict.given", "ticket.moved", "people.changed", "visibility.changed",
         "addon.disabled", "addon.purged",
+        # phase 5 (hub protocol 8.8, V3-D29)
+        "grant.requested", "grant.revoked", "device.excluded", "policy.changed", "settings.changed",
     }
 )  # fmt: skip
+#: C10: types that exist only as hub-signed requests; a device-signed one (no operation writes it) is refused
+HUB_ONLY = frozenset({"grant.requested", "device.excluded"})
 DECISIONS = frozenset({"gate.approved", "gate.changes_requested", "verdict.given", "question.answered"})
-VIEWER_MAY = frozenset({"question.answered", "device.added", "device.removed", "device.revoked"})
+VIEWER_MAY = frozenset(
+    {"question.answered", "device.added", "device.removed", "device.revoked", "device.exposed", "device.rotated"}
+)
 UNATTENDED_PER_SESSION = 30
 UNATTENDED_PER_WORKSPACE = 120
 BYTES_PER_SESSION = 20 * 1024 * 1024
@@ -163,18 +173,13 @@ def person_has_valid_device(ws: WsCore, person: str, at: int) -> bool:
     return any(d.person == person and device_valid(d, d.cert, at, False) is None for d in ws.devices.values())
 
 
-def authorize_person(core: Core, log: str, e: dict[str, Any], v: Verifier) -> Refusal | None:
+def authorize_person(core: Core, log: str, e: dict[str, Any], v: Verifier, *, hub_only: bool = True) -> Refusal | None:
     ws, a, typ, at = core.ws, e["actor"], e["type"], ts(e["at"])
     m = ws.members.get(a["id"])
     if m is None:
         return Refusal(Code.MEMBER_UNKNOWN, f"{a['id']} is not a member")
     dev = ws.devices.get(a["device"])
-    recovery = (
-        typ == "device.added"
-        and e["device"] == a["device"]
-        and dev is None
-        and not person_has_valid_device(ws, a["id"], at)
-    )
+    recovery = breakglass.is_recovery(ws, e) or breakglass.is_rotation(ws, e)
     if recovery:
         cert = e["cert"]
     elif dev is None or dev.person != a["id"]:
@@ -184,6 +189,10 @@ def authorize_person(core: Core, log: str, e: dict[str, Any], v: Verifier) -> Re
     if (r := device_valid(dev, cert, at, typ in OPERATE)) is not None:
         return r
     if (r := method_refusal(ws, e)) is not None:
+        return r
+    if (
+        hub_only and (r := breakglass.local_refusal(ws, e)) is not None
+    ):  # C8/D78: a joined full-mode position signs through the hub
         return r
     if m.role == "viewer" and typ not in VIEWER_MAY:
         return Refusal(Code.ROLE_DENIED, "a viewer cannot write")
@@ -221,6 +230,11 @@ def authorize_hub(core: Core, log: str, e: dict[str, Any], v: Verifier, *, dev: 
     led = hubledger.ledger_of(ws, hub_id)
     if led is None:
         return Refusal(Code.HUB_INVALID, "not_joined")
+    joined_at = h.get("joined_at")
+    if joined_at is not None and ts(e["at"]) < ts(joined_at):
+        # C8 P2-b: a line the hub signed before this binding began (for example one held back across a leave and a
+        # rejoin of the same hub id) is not a line of this binding. ``at`` is inside both hub signatures.
+        return Refusal(Code.HUB_INVALID, "before_binding")
     mode = h.get("mode")
     if (
         any(k not in e for k in _HUB_FIELDS)
@@ -304,12 +318,12 @@ def authorize_agent(
         return Refusal(Code.GRANT_INVALID, "an agent's `for` must be the person who issued the grant")
     if g.revoked or not (ts(g.issued_at) <= at < ts(g.expires_at)):
         return Refusal(Code.GRANT_INVALID, "the grant was revoked or not valid at this position")
-    m = ws.members.get(a["for"])
-    if m is None or m.role == "viewer":
+    role = identity.member_role(ws, a["for"])  # full mode: capped by the hub role (#1133)
+    if role is None or role == "viewer":
         return Refusal(Code.GRANT_INVALID, "the grant's person is not a member who may run agents")
     if not verb_covers(e["type"], g.verbs, verb_events):
         return Refusal(Code.GRANT_VERB, f"the grant does not cover {e['type']}")
-    if g.scope == "all" and m.role == "member":
+    if g.scope == "all" and role == "member":
         return Refusal(Code.GRANT_SCOPE, "a member's grant is `workable` only (D60), whatever it says")
     # An agent's permissions are the intersection of its grant and its person: it never reaches a ticket that its
     # `for` person can't see, whatever the grant scope (§9, §10.1 A3).

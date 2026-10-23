@@ -29,6 +29,8 @@ __all__ = [
     "log_hub_only",
     "hub_only_error",
     "refuse_full_while_click_on",
+    "key_exposed_error",
+    "local_key_exposed",
     "refusal",
 ]
 
@@ -47,13 +49,28 @@ def hub_only_error(reason: str = "hub") -> HostError:
     )
 
 
+def key_exposed_error() -> HostError:
+    """``sign.key_exposed`` (#1097): the device key has signed evidence of convenience custody, so it cannot enter full
+    hub mode or sign break-glass; a new key made with the recovery code clears it."""
+    return HostError(
+        "sign.key_exposed",
+        "this device key was in one-click custody, so a program running as you may hold a copy: make a new key first",
+        hint="orch keys custody passphrase --rotate --workspace W (needs your recovery code; works with the hub down)",
+        fix=["orch", "keys", "custody", "passphrase", "--rotate"],
+    )
+
+
+def _row(ws: Any, ev: dict[str, Any]) -> Any:
+    return next((r for r in BREAK_GLASS.values() if r.matches(ws, ev)), None)
+
+
 def break_glass_allowed(ws: Any, ev: dict[str, Any], signed_by: tuple[str, str] | None) -> bool:
     """May ``ev`` land although the workspace is hub-only? A thin host wrapper over the model's table: the event type
     is a :data:`BREAK_GLASS` event; it did not come over the relay (``signed_by``); the actor is a workspace owner; and
     :func:`orch.model.breakglass.signer_kind` (fail closed: only a passphrase or unlabelled event, never convenience,
     hub, agent or a phone's label) names a signer that row allows (the owner's own device key or the recovery key; the
     recovery key alone for a repin)."""
-    row = next((r for r in BREAK_GLASS.values() if r.event == ev.get("type")), None)
+    row = next((r for r in BREAK_GLASS.values() if r.matches(ws, ev)), None)
     actor = ev.get("actor")
     if row is None or signed_by is not None or not isinstance(actor, dict) or actor.get("kind") != "person":
         return False
@@ -81,6 +98,17 @@ def refusal(
         return None
     from . import hubops
 
+    ws = service.store.state.workspace
+    for ev in events:  # #1097 E2 (early and friendly; the model refuses the same line at append and on replay)
+        actor = ev.get("actor")
+        if (
+            ev.get("type") == "hub.joined"
+            and ev.get("mode") == "full"
+            and isinstance(actor, dict)
+            and actor.get("kind") == "person"
+            and signer_kind(ws, ev) in ("exposed", "convenience")
+        ):
+            return key_exposed_error()
     if any(e.get("type") == "hub.joined" and e.get("mode") == "full" for e in events) and _click_custody(service):
         # L2-C11d-2a: the prepare-time check can be stale (a custody conversion landed between prepare and submit)
         return HostError(
@@ -92,11 +120,21 @@ def refusal(
         )
     if hubops.signing_mode(service) not in HUB_ONLY:
         return None
-    ws = service.store.state.workspace
     for ev in events:
         if not break_glass_allowed(ws, ev, signed_by):
+            actor = ev.get("actor")
+            if isinstance(actor, dict) and actor.get("kind") == "person" and signer_kind(ws, ev) == "exposed":
+                return key_exposed_error()  # #1097: say why, and the way out
             return hub_only_error()
-        if _click_custody(service):  # custody decides, not the label: a convenience key signs any label (L2-C11i-1)
+        row = _row(ws, ev)
+        # custody decides, not the label, for rows the owner's device key signs (L2-C11i-1). Not for a pk row (a
+        # rotation works whatever the old key's custody is) and not for the mark, which only removes authority.
+        if (
+            row is not None
+            and "owner_device_key" in row.signers
+            and ev.get("type") != "device.exposed"
+            and _click_custody(service)
+        ):  # custody decides, not the label: a convenience key signs any label (L2-C11i-1)
             return HostError(
                 "sign.hub_only",
                 "break-glass is refused while your key is in convenience custody (any process of yours could sign it)",
@@ -104,6 +142,18 @@ def refusal(
                 detail={"reason": "hub"},
             )
     return None
+
+
+def local_key_exposed(service: Any, person: str | None) -> bool:
+    """#1097: does the signed log mark a live device of ``person`` as exposed? Read from the roster, not from custody
+    files; fails closed (an unreadable roster or an unknown person counts as exposed). For ``keys.rotate``."""
+    try:
+        if person is None:
+            return True
+        devs = service.store.state.workspace.devices.values()
+        return any(d.person == person and not d.removed and not d.revoked and d.exposed for d in devs)
+    except Exception:  # noqa: BLE001 - fail closed
+        return True
 
 
 def _click_custody(service: Any) -> bool:

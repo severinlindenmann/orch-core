@@ -126,7 +126,8 @@ def test_selective_to_full_is_only_the_owner_signed_mode_verb(human, served):
     )
     hub, _ = hub_state(served)
     assert hub["status"] == "joined" and hub["mode"] == "full" and hub["binding_seq"] == 2 and hub["member"]
-    assert err(human.prepare_res("hub.mode", {"hub_card": copy.deepcopy(CARD), "mode": "full"})) == "hub.already_joined"
+    # V3-D29 (C10): full mode may be signed again by the owner while the direct path is open (it only triggers the
+    # cut-over); a join is still refused
     assert err(human.prepare_res("hub.join", join_args(mode="full"))) == "hub.already_joined"
 
 
@@ -172,6 +173,28 @@ def test_a_bad_hub_card_is_refused(human, mutate):
     card = copy.deepcopy(CARD)
     mutate(card)
     assert err(human.prepare_res("hub.join", join_args(hub_card=card))) == "hub.refused"
+
+
+def test_a_card_of_another_hub_than_the_invite_names_is_refused_and_nothing_is_written(human, served):
+    """D12c/G5: a valid card of a different hub (whoever handed over the file) is not what the owner was told."""
+    res = human.prepare_res("hub.join", join_args(hub_id="0" * 32))
+    assert err(res) == "hub.refused" and "other_hub" in res["error"]["message"]
+    hub, _ = hub_state(served)
+    assert not hub  # no hub.joined, no pin
+    assert err(human.prepare_res("hub.join", join_args(hub_id=HUB_ID.upper()))) == "invalid.input"  # not lower-case hex
+
+
+def test_a_join_without_the_invites_hub_id_is_refused(human, served):
+    args = {"hub_card": copy.deepcopy(CARD), "mode": "selective"}
+    assert (
+        err(human.c.req("human.prepare", {"op": "hub.join", "args": args, "signer": human.signer})) == "invalid.input"
+    )
+    assert not hub_state(served)[0]
+
+
+def test_the_card_of_the_hub_the_invite_names_is_accepted(human):
+    _, _, signed = human.run("hub.join", join_args(hub_id=HUB_ID))
+    assert signed.events[0]["hub_id"] == HUB_ID
 
 
 def test_only_the_owner_may_be_aliased(human):
@@ -330,6 +353,30 @@ def test_join_then_connect_sends_the_selective_binding_and_never_a_key(human, se
     assert not any("hub" in m for m in members)  # still no hub member
 
 
+def test_status_reports_an_unreachable_hub_and_a_reachable_one(human, served, stub, monkeypatch):
+    """V3 D78 (#1102): `link` is not `bound` while the hub address does not answer; the binding stays visible."""
+    import socket
+
+    from orch.host import hublinkprobe
+    from tests.host.dispatch_helpers import ok
+
+    human.run("hub.join", join_args())
+    ok(served.client().req("hub.connect", connect_args(), idem=True))
+    hublinkprobe.clear()
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(4)
+    port = srv.getsockname()[1]
+    monkeypatch.setattr(hubops, "_addr", lambda args, state, dev: f"127.0.0.1:{port}")
+    up = ok(served.client().req("hub.status", {}, idem=False))["data"]
+    assert (up["link"], up["binding"], up["reachable"]) == ("bound", "bound", True)
+    srv.close()  # the hub process dies
+    hublinkprobe.clear()
+    down = ok(served.client().req("hub.status", {}, idem=False))["data"]
+    assert (down["link"], down["binding"], down["reachable"]) == ("unreachable", "bound", False)
+    assert down["peer_outbox"] == 0 and down["link_error"] is None
+
+
 def test_connect_with_the_hub_down_keeps_the_join_and_resumes(human, served, stub, monkeypatch):
     from tests.host.dispatch_helpers import ok
 
@@ -459,19 +506,25 @@ def test_a_crash_between_leave_and_unbind_still_lets_the_rejoin_through(human, s
 # --- C2b: the full join through the host ------------------------------------------------------------------------------
 
 
+class _DeferredEpochs(hubops._Epochs):
+    """A rotation is only requested through the gate: it stays owed until the key store makes the epoch."""
+
+    def rotate(self) -> None:
+        self._mk.raise_gate("", "rotate")
+
+
 @pytest.fixture
 def keystore(monkeypatch, served, tmp_path):
     """A membership key store for the served workspace with epoch 1 committed, standing in for the relay's."""
-    from orch.relay.r6.keystore import MembershipKeys, R6Gate
-    from tests.relay import r6kit
+    from orch.identity.epochs import MembershipKeys
+    from tests.wsproto import r6kit
 
     mk = MembershipKeys(tmp_path / "membership", served.wid, now_ms=lambda: 1_790_000_000_000)
-    R6Gate(mk).install(lambda: r6kit.KitStore())
     r6kit.rotate(mk)
     monkeypatch.setattr(
         hubops,
         "epochs_for",
-        lambda service, create=False: hubops._Epochs(mk, None, lambda: hubops._sealed_epoch(service)),
+        lambda service, create=False: _DeferredEpochs(mk, "a" * 32, lambda: hubops._sealed_epoch(service)),
     )
     yield mk
     mk.close()
@@ -546,7 +599,7 @@ def test_a_connect_without_an_invite_never_starts_a_join(human, served, stub, ke
 
 def test_leave_from_full_through_the_host_requests_the_rotation_and_keeps_it_owed(human, served, stub, keystore):
     from tests.host.dispatch_helpers import ok
-    from tests.relay import r6kit
+    from tests.wsproto import r6kit
 
     c = served.client()
     human.run("hub.join", join_args(mode="full"))
@@ -574,7 +627,7 @@ def test_leave_from_full_through_the_host_requests_the_rotation_and_keeps_it_owe
 def test_a_full_rejoin_over_an_unended_binding_still_owes_the_rotation(human, served, stub, keystore):
     """The leave is logged but `hub.unbind` never ran: the next connect must not re-seal the SAME epoch."""
     from tests.host.dispatch_helpers import ok
-    from tests.relay import r6kit
+    from tests.wsproto import r6kit
 
     c = served.client()
     human.run("hub.join", join_args(mode="full"))
@@ -593,7 +646,7 @@ def test_a_full_rejoin_over_an_unended_binding_still_owes_the_rotation(human, se
 
 def test_a_selective_rejoin_over_an_unended_full_binding_owes_the_rotation(human, served, stub, keystore):
     from tests.host.dispatch_helpers import ok
-    from tests.relay import r6kit
+    from tests.wsproto import r6kit
 
     c = served.client()
     human.run("hub.join", join_args(mode="full"))
@@ -610,7 +663,7 @@ def test_a_selective_rejoin_over_an_unended_full_binding_owes_the_rotation(human
 
 def test_status_warns_when_a_routine_rotation_was_not_resealed(human, served, stub, keystore):
     from tests.host.dispatch_helpers import ok
-    from tests.relay import r6kit
+    from tests.wsproto import r6kit
 
     c = served.client()
     human.run("hub.join", join_args(mode="full"))
@@ -621,36 +674,3 @@ def test_status_warns_when_a_routine_rotation_was_not_resealed(human, served, st
     ok(c.req("hub.connect", {"hub_card": copy.deepcopy(CARD)}, idem=True))
     assert ok(c.req("hub.status", {}, idem=False))["data"]["reseal_needed"] is False
     assert _unwrap([m for m in stub.sent if m["o"]["op"] == "wk_seal"][1], served.wid, 2) == keystore.wk(2)
-
-
-def test_epochs_for_sees_a_relay_linked_after_the_first_open(served, tmp_path, monkeypatch):
-    from orch.host import relayr6
-
-    linked = {"v": False}
-    monkeypatch.setattr(relayr6, "_previously_linked", lambda service: linked["v"])
-    monkeypatch.setattr(relayr6, "membership_path", lambda service: tmp_path / "membership")
-    from orch.crypto.encoding import unb64u
-    from orch.host import relayr3
-
-    monkeypatch.setattr(relayr3, "owner_pk_pub", lambda service: unb64u(V["keys"]["pk_alice"]["pub"], 65))
-    svc = served.service
-    first = hubops.epochs_for(svc, create=True)
-    assert first is not None and first._local_owner is not None  # relay-less: local epochs allowed
-    linked["v"] = True
-    second = hubops.epochs_for(svc, create=True)
-    assert second is not None and second._local_owner is None  # now the relay path's; never a local epoch
-    relayr6.close(svc)
-
-
-def test_linking_a_relay_is_refused_for_a_workspace_with_local_epochs(served):
-    from orch.host import relaylink
-    from orch.host.errors import HostError
-
-    svc = served.service
-    mark = relaylink.local_epochs_path(svc.state_dir, svc.workspace_id)
-    mark.parent.mkdir(parents=True, exist_ok=True)
-    mark.write_text("{}")
-    with pytest.raises(HostError) as e:
-        with relaylink.link_reservation(svc):
-            pass
-    assert e.value.code == "relay.local_epochs" and "H5" in str(e.value)

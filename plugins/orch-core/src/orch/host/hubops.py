@@ -53,7 +53,10 @@ __all__ = [
     "workspace_dev",
 ]
 
-HUB_OPS: dict[str, int] = {"hub.connect": 1, "hub.unbind": 1, "hub.status": 1, "hub.refresh": 1, "hub.handoff": 1}
+HUB_OPS: dict[str, int] = {
+    "hub.connect": 1, "hub.unbind": 1, "hub.status": 1, "hub.refresh": 1, "hub.handoff": 1, "hub.history": 1,
+    "keys.rotate": 1,
+}  # fmt: skip
 NETWORK_OPS = frozenset({"hub.connect", "hub.unbind", "hub.refresh"})
 HUB_CAPS = ["hub/1"]
 _MU = threading.Lock()
@@ -82,15 +85,30 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
     },
     "hub.unbind": {"type": "object", "properties": {}, "additionalProperties": False},
     "hub.status": {"type": "object", "properties": {}, "additionalProperties": False},
+    "keys.rotate": {"type": "object", "properties": {}, "additionalProperties": False},  # C8: owner, column P only
+    "hub.history": {  # C8 M5: what a hub did here; ``since`` starts the third list (default: the last 7 days)
+        "type": "object",
+        "properties": {
+            "hub_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+            "since": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
+        },
+        "additionalProperties": False,
+    },
     "hub.handoff": {  # V3 C11: a read; see host/hubhandoff.py
         "type": "object",
         "properties": {
-            "kind": {"enum": ["gate", "verdict", "question", "status"]},
+            "kind": {"enum": ["gate", "verdict", "question", "status", "grant"]},
             "ticket": {"type": "string", "minLength": 1, "maxLength": 64},
             "gate": {"enum": ["requirements", "plan", "code", "verify"]},
             "question": {"type": "string", "minLength": 1, "maxLength": 64},
+            # kind grant (C10): the exact terms Mission Control's "Start agent" waits for; cancel drops the wait
+            "scope": {"enum": ["all", "workable"]},
+            "verbs": {"const": "agent"},
+            "hours": {"type": "integer", "minimum": 1, "maximum": 168},
+            "label": {"type": "string", "minLength": 1, "maxLength": 200},
+            "cancel": {"const": True},
         },
-        "required": ["kind", "ticket"],
+        "required": ["kind"],
         "additionalProperties": False,
     },
 }
@@ -225,19 +243,10 @@ def _wsk_sign(service: WorkspaceService) -> Any:
 
 
 def workspace_card(service: WorkspaceService) -> dict[str, Any] | None:
-    """The workspace's v2 directory card (hub contract 9.5): the relay's card when the workspace is linked to one
-    (R3/R6), else its own relay-less card (:func:`local_card`). ``None`` only if neither can be had."""
+    """The workspace's v2 directory card (hub contract 9.5): its own card (:func:`local_card`). ``None`` only if it
+    cannot be had."""
     if CARD_SOURCE is not None:
         return CARD_SOURCE(service)  # type: ignore[no-any-return]
-    try:
-        from . import relayr6
-
-        mk = relayr6.keys_for(service)
-        seq = mk.head()["card"]["card_seq"]
-        if seq:
-            return mk._read_card(seq)  # type: ignore[no-any-return]  # noqa: SLF001 - the one reader of the stored card
-    except Exception:  # noqa: BLE001 - no relay state: build our own
-        pass
     try:
         return local_card(service)
     except (HostError, OSError, ValueError):
@@ -245,9 +254,9 @@ def workspace_card(service: WorkspaceService) -> dict[str, Any] | None:
 
 
 def local_card(service: WorkspaceService) -> dict[str, Any]:
-    """The relay-less card: built once with the relay path's own builder (``card_o``, signed by ``WSK``), kept in
-    ``hub/card.json`` with its ``WXK``/``CK`` in ``hub/card-keys.json`` (0600, the host's own directory), and returned
-    unchanged on every later call. The relay path never sees these files, so a later relay link is unaffected."""
+    """The workspace's card: built once with ``card_o`` (signed by ``WSK``), kept in ``hub/card.json`` with its
+    ``WXK``/``CK`` in ``hub/card-keys.json`` (0600, the host's own directory), and returned unchanged on every later
+    call."""
     import json
     import secrets
 
@@ -257,11 +266,11 @@ def local_card(service: WorkspaceService) -> dict[str, Any]:
     from orch.identity.errors import Refused
     from orch.store.fsio import write_atomic
 
-    from . import relayr3
+    from . import hubkeys
     from .custody import ensure_private_dir, read_json
 
     d = _dir(service)
-    pk = relayr3.owner_pk_pub(service)
+    pk = hubkeys.owner_pk_pub(service)
     with _MU:
         stored = read_json(d / "card.json", service.host_uid, limit=1 << 20)
         if stored is not None:
@@ -295,7 +304,7 @@ def local_card(service: WorkspaceService) -> dict[str, Any]:
 
 
 def wscard_part(service: WorkspaceService) -> dict[str, Any]:
-    from orch.relay.r6.firstcard import default_part
+    from orch.identity.epochs import default_part
 
     return default_part(str(service.workspace_id)[:8])
 
@@ -451,18 +460,20 @@ class _Epochs:
     """:class:`orch.hubclient.EpochKeys` over the workspace's membership key store (R6a). ``WK_e`` never leaves it."""
 
     def __init__(
-        self, mk: Any, local_owner: str | None = None, sealed_epoch: Callable[[], int | None] | None = None
+        self,
+        mk: Any,
+        local_owner: str,
+        sealed_epoch: Callable[[], int | None] | None = None,
     ) -> None:
         self._mk = mk
         #: the epoch now sealed to the bound full hub (re-read each call); ``view_key`` answers for that one only
         self._sealed_epoch = sealed_epoch
-        #: a relay-less workspace makes its own epochs (``MembershipKeys.advance_local``); ``None``: the relay path
-        #: (the publisher) makes them and a rotation is only requested through the gate
+        #: the owner whose list a new local epoch (``MembershipKeys.advance_local``) is made for
         self._local_owner = local_owner
 
     def ensure_epoch(self) -> None:
         """The genesis epoch of a relay-less workspace, at its first full join (no-op when one exists)."""
-        if self._local_owner is not None and self._mk.current_epoch() < 1:
+        if self._mk.current_epoch() < 1:
             self._mk.advance_local(self._local_owner)
 
     def current_epoch(self) -> int:
@@ -470,7 +481,7 @@ class _Epochs:
 
     def seal_to_hub(self, epoch: int, hxk_pub: bytes, hub_id: str) -> bytes:
         from orch.hubclient import HubRefused
-        from orch.relay.r6.keystore import CustodyRefused
+        from orch.identity.epochs import CustodyRefused
 
         if epoch != self.current_epoch() or epoch < 1:
             raise HubRefused("no_epoch")  # only the committed epoch is ever sealed
@@ -484,7 +495,7 @@ class _Epochs:
         key leaves it. Only the epoch now sealed to the bound full hub (L2-C14-2: never one the hub was not meant to
         open, such as the epoch a rotation after a leave made); a missing, burned or unreadable key is ``no_epoch``."""
         from orch.hubclient import HubRefused
-        from orch.relay.r6.keystore import CustodyRefused, MembershipUnsafe
+        from orch.identity.epochs import CustodyRefused, MembershipUnsafe
 
         try:
             sealed = None if self._sealed_epoch is None else self._sealed_epoch()
@@ -498,10 +509,7 @@ class _Epochs:
             raise HubRefused("no_epoch") from None
 
     def rotate(self) -> None:
-        if self._local_owner is not None:
-            self._mk.advance_local(self._local_owner)  # relay-less: the next epoch, now
-        else:
-            self._mk.raise_gate("", "rotate")  # v2 5.4 explicit rotation: the membership machinery makes the epoch
+        self._mk.advance_local(self._local_owner)
 
 
 def epochs_for(service: WorkspaceService, *, create: bool = False) -> Any:
@@ -510,16 +518,14 @@ def epochs_for(service: WorkspaceService, *, create: bool = False) -> Any:
     makes its own genesis epoch locally (:meth:`_Epochs.ensure_epoch`). A relay-linked workspace never does."""
     from orch import crypto
 
-    from . import relayr3, relayr6
+    from . import hubkeys
 
-    exists = (relayr6.membership_path(service) / "head.json").is_file()
+    exists = (hubkeys.membership_path(service) / "head.json").is_file()
     if not exists and not create:
         return None
     try:
-        mk = relayr6.keys_for(service)
-        owner = None
-        if not mk.previously_linked:  # fresh each call (the probe), never the answer cached at the first open
-            owner = crypto.person_id(relayr3.owner_pk_pub(service)).hex()
+        mk = hubkeys.keys_for(service)
+        owner = crypto.person_id(hubkeys.owner_pk_pub(service)).hex()
         return _Epochs(mk, owner, lambda: _sealed_epoch(service))
     except Exception:  # noqa: BLE001 - an unsafe or unreadable key store: no epochs (fail closed)
         return None
@@ -642,8 +648,21 @@ def serve(call: Call) -> dict[str, Any]:
         raise HostError("workspace.degraded", f"the workspace is read-only: {service.cause}")
     service.store.refresh()
     _owner(call)
+    if op == "keys.rotate":  # C8: no hub, no relay, no event: the owner asks the key store for a new epoch
+        from . import breakglass
+
+        out = breakglass.rotate(call, epochs_for(service))
+        _audit(call, "keys.rotate")
+        return out
     model = dict(service.store.state.workspace.hub)
     state = _load_state(service)
+    if op == "hub.history":
+        from . import breakglass
+
+        hub_id = args.get("hub_id") or model.get("hub_id")
+        if not isinstance(hub_id, str):
+            raise HostError("hub.not_joined", "this workspace never joined a hub")
+        return ok_result(breakglass.history(service, hub_id, args.get("since")))
     if op == "hub.handoff":
         from .hubhandoff import handoff
 
@@ -651,6 +670,14 @@ def serve(call: Call) -> dict[str, Any]:
     if op == "hub.status":
         from orch.hubclient import snapshot
 
+        from . import hublinkprobe
+
+        binding = None if state is None else state.status
+        up = None
+        if binding == "bound":
+            up = hublinkprobe.reachable(
+                f"{service.state_dir}:{service.workspace_id}", _addr({}, state, workspace_dev(service))
+            )
         return ok_result(
             {
                 "snapshot": snapshot.pinned_view(state),
@@ -665,7 +692,12 @@ def serve(call: Call) -> dict[str, Any]:
                 "sealed_epoch": None if state is None or not state.sealed else state.sealed["epoch"],
                 "rotation": _rotation(service, state),
                 "reseal_needed": _reseal_needed(service, state),
-                "link": None if state is None else state.status,
+                "link": hublinkprobe.link_view(
+                    binding, up
+                ),  # V3 D78: "unreachable" when bound but the hub does not answer
+                "binding": binding,
+                "reachable": up,
+                **hublinkprobe.peer_view(service),  # peer_outbox, link_error
                 "log_sync": _log_sync_status(service),
                 "unbound_pending": state is not None and bool(state.outbox),
                 "owed": [] if state is None else sorted(state.outbox),
@@ -683,7 +715,7 @@ def serve(call: Call) -> dict[str, Any]:
         plan.update(dev=workspace_dev(service), hub_card=args.get("hub_card"))
         return {"plan": plan}
     if op == "hub.unbind":
-        if state is not None and (state.outbox or state.rotate_after is not None):
+        if state is not None and (state.outbox or state.rotate_after is not None or state.publish_owed):
             return {"plan": plan}  # a signed unbound or a rotation is still owed, whatever the model says now
         if not model or model.get("status") != "left":
             raise HostError("hub.not_joined", "sign `orch hub leave` first: the log has no hub.left")
@@ -705,7 +737,7 @@ def serve(call: Call) -> dict[str, Any]:
     v2 = workspace_card(service)
     if v2 is None:
         raise HostError("hub.no_card", "this workspace's directory card could not be had")
-    from . import relayr3
+    from . import hubkeys
 
     kind = "join"
     if "invite" not in args:  # no invite: a mode switch, or a re-seal of a bound full hub (never a new join)
@@ -729,7 +761,7 @@ def serve(call: Call) -> dict[str, Any]:
         addr=_addr(args, state, dev),
         spki=verified["card"]["tls_spki_sha256"],
         hk_op=verified["hk_op_pub"],
-        pk_pub=b64u(relayr3.owner_pk_pub(service)),
+        pk_pub=b64u(hubkeys.owner_pk_pub(service)),
     )
     return {"plan": plan}
 
@@ -951,14 +983,22 @@ def _unbind(
         return {"hub_id": model["hub_id"], "unbound": False, "delivered": True, "reason": "never_connected", "owed": []}
     tf = _transport_for(service, wsk_pub, sign)
     epochs = epochs_for(service) if state.mode == "full" or state.rotate_after is not None else None
+    from orch.hubclient import flush_publish
+
+    from . import breakglass
+
+    put = breakglass.publish_put(service)
     if model.get("status") == "left" and state.status != "unbound":
         leave(
             state=state, workspace_id=service.workspace_id, sign_wsk=sign,
             dev_mode=bool(state.binding["o"]["dev"]),  # the unbound keeps the binding's own dev marker
             now_ms=now, transport_for=tf, record_left=lambda _p: None, save=save, epochs=epochs,
+            publish_put=put,
         )  # fmt: skip
     else:
         from orch.hubclient import retire_full_state, settle_rotation
+
+        flush_publish(state=state, put=put, save=save)  # publish first, then the hub
 
         if state.status == "bound" and state.mode == "full" and model.get("binding_seq", 0) > state.binding_seq:
             retire_full_state(state, epochs, save, "unbind")  # the log moved on to a newer binding: this one ended
@@ -970,6 +1010,9 @@ def _unbind(
         # not "unbound" while a key rotation is owed: the leave is not finished until the hub's key is replaced
         "hub_id": state.hub_id, "unbound": not owed, "binding_ended": True, "delivered": not state.outbox,
         "owed": sorted(state.outbox), "rotation": "pending" if owed else "none",
+        "publish_told": not state.publish_owed,
     }  # fmt: skip
+    if model.get("status") == "left":  # M5: the review comes with the leave, hub-made policy and grants first
+        out["review"] = breakglass.history(service, state.hub_id)
     _audit(call, "hub.unbind", hub_id=state.hub_id, delivered=out["delivered"])
     return out

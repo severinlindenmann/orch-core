@@ -12,6 +12,7 @@ Judgment rules. The loop itself is `orch help work`.
 - Never ask for an approval, a review or a verdict ("please approve", "review the gate"): submitting puts it in front of the person; `orch wait`. A question that only asks for a decision already due is noise.
 - Ask once, with options and a recommendation, then wait. If the question does not block you, work on another task meanwhile.
 - Evidence must fail if the work were wrong: a receipt of a check that exercises the criterion, not a note that says it is done.
+- The run option of task done runs a task's verify command and records its receipt; a task without one is closed plainly, with its evidence added as an artifact. That refusal is retryable: change the call, do not stop.
 - Never mark a task done to get past it. Block or skip it and give the reason.
 - Put results where the ticket says: in `$ORCH_WORKTREE` when there is one (commit there), otherwise in `$ORCH_WORKDIR`, and file each deliverable as a ticket artifact (add it with the artifact command, tied to its task and criterion). Never write into the project root or `.orch/`.
 - Stay inside the ticket. Something useful but unrequested becomes a note or a new ticket.

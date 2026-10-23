@@ -4,10 +4,6 @@
     orch keys custody convenience --workspace W        # one passphrase prompt; needs the workspace's flag on
     orch keys custody passphrase --workspace W --in-place
     orch keys forget --workspace W                     # removes local convenience custody (not revocation)
-    orch keys primary init                             # the person-level primary key pair (passphrase custody only)
-    orch keys primary init --workspace W --relay ORIGIN --invite-file F [--label TEXT]
-                                                       # + the primary's certificate and the relay account (B1b)
-    orch keys primary status                           # its public facts: device id, public keys, purposes
     orch keys reader declare --workspace W             # H12d-2: declare this machine's device a reader (one prompt)
     orch keys reader declare --enrol --workspace-id ID --cert PATH --out PATH   # an invitee's declaration
 
@@ -31,8 +27,9 @@ __all__ = ["main"]
 
 RISK = "Convenience signing: agents running as you, or anything that takes over this dashboard, could sign."
 DOWNGRADE_WARNING = (
-    "Later signatures will say passphrase, but anyone who copied the key can still sign with any label; "
-    "use --rotate for a clean break (not available yet: it needs device ops)."
+    "Later signatures will say passphrase, but anyone who copied the key can still sign with any label. The key stays "
+    "marked in the workspace log, so full hub mode and leaving a hub on your own need --rotate (a new key from your "
+    "recovery code)."
 )
 
 
@@ -65,14 +62,6 @@ def _parser() -> argparse.ArgumentParser:
     fg.add_argument("--workspace", required=True)
     fg.add_argument("--state", type=Path)
     fg.add_argument("--json", action="store_true")
-    pr = sub.add_parser("primary")
-    pr.add_argument("action", choices=("init", "status"))
-    pr.add_argument("--workspace")
-    pr.add_argument("--relay")
-    pr.add_argument("--invite-file", type=Path)
-    pr.add_argument("--label")
-    pr.add_argument("--state", type=Path)
-    pr.add_argument("--json", action="store_true")
     return p
 
 
@@ -123,8 +112,6 @@ def run(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, err: Text
     from orch.ops.runtime import state_dir
 
     state = args.state.resolve() if args.state is not None else state_dir(env)
-    if args.cmd == "primary":
-        return _primary(args, state, env, err)
     if args.cmd == "reader":
         return _reader_declare(args, state, env)
     if args.cmd == "forget":
@@ -161,8 +148,16 @@ def run(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, err: Text
         err.write(RISK + "\n")
         sel = select.convert_to_convenience(state, wid, prefix=str(entry.get("prefix") or ""))
         return {"workspace_id": wid, "custody": sel["custody"], "device": sel["device"], "gen": sel.gen}
-    if args.rotate:
-        raise _Fail("not_implemented", "--rotate needs device ops (designed in orch-v2-host §0.8.6, not built yet)", 2)
+    if args.rotate:  # #1097: a new device key from the recovery code; the old one stops signing in every mode
+        from orch.custody import rotate as rotation
+        from orch.custody.base import CustodyError
+
+        if args.in_place:
+            raise _Fail("invalid.input", "--rotate makes a new key; --in-place keeps the same one: pick one", 5)
+        try:
+            return rotation.rotate(state, entry, env, say=lambda t: err.write(t + "\n"), pk_factory=_pk_factory)
+        except CustodyError as exc:
+            raise _Fail(getattr(exc, "code", "custody.unavailable"), str(exc), 3) from None
     if not args.in_place:
         raise _Fail("invalid.input", "moving back needs --in-place (same key) or --rotate (a new device)", 5)
     err.write(DOWNGRADE_WARNING + "\n")
@@ -214,53 +209,10 @@ def owner_pk_from_workspace(state: Path, entry: Mapping[str, Any]) -> bytes:
         ) from None
 
 
-def _client_factory(origin: str, session: Any) -> Any:
-    from orch.relay_owner import OwnerClient
-
-    return OwnerClient(origin, session)
-
-
 def _pk_factory(**kw: Any) -> Any:
     from .personkey import RecoveryCodeSource
 
     return RecoveryCodeSource(**kw)
-
-
-def _primary(args: argparse.Namespace, state: Path, env: Mapping[str, str], err: TextIO) -> Any:
-    """``orch keys primary`` (orch-v2-host 11A.15.9): ``init`` makes the person-level primary key pair in passphrase
-    custody (never convenience); with ``--workspace W --relay ORIGIN --invite-file F`` it also makes the primary's
-    certificate and the relay account (:mod:`orch.custody.primary_register`, B1b); ``status`` shows public facts only
-    and never prompts."""
-    from orch.custody import primary, primary_register
-
-    if args.action == "status":
-        return primary.status(state)
-    _need_terminal(env)
-    if args.relay is None:
-        if args.workspace or args.invite_file or args.label:
-            raise _Fail("invalid.input", "--workspace, --invite-file and --label go with --relay", 5)
-        primary.init(state)
-        err.write(PRIMARY_NEXT + "\n")
-        return primary.status(state)
-    resuming = primary_register.read_cert(state) is not None
-    if not args.workspace or (args.invite_file is None and not resuming):
-        raise _Fail("invalid.input", "orch keys primary init --workspace W --relay ORIGIN --invite-file F", 5)
-    entry = _one(state, args.workspace)
-    owner_pk = owner_pk_from_workspace(state, entry)
-    try:
-        result = primary_register.register(
-            state, origin=args.relay, owner_pk=owner_pk, invite_file=args.invite_file, label=args.label,
-            pk_factory=_pk_factory, client_factory=_client_factory, say=lambda t: err.write(t + "\n"),
-        )  # fmt: skip
-    except primary_register.RegisterError as exc:
-        from orch.host.errors import disposition
-
-        raise _Fail(exc.code, str(exc) + (f" ({exc.hint})" if exc.hint else ""), disposition(exc.code)[0]) from None
-    err.write(
-        f"next: orch host relay link --workspace {entry['workspace_id']} --relay {result['origin']} "
-        f"--max-publication-bytes {LINK_MAX_PUBLICATION_BYTES}\n"
-    )
-    return {**result, **primary.status(state)}
 
 
 #: bytes of a device certificate file (``--cert``), refused before it is parsed

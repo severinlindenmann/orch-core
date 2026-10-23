@@ -1,7 +1,7 @@
 import { useSignMethods } from '@/components/sign/SignMethods'
 import { Link } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { Bot, Check, ChevronDown, Copy, Loader2, Lock, MessageSquareReply, Tag, Timer } from 'lucide-react'
+import { Bot, Check, ChevronDown, CircleHelp, Copy, Loader2, Lock, Tag, Timer } from 'lucide-react'
 import { useState } from 'react'
 import { api } from '@/api/client'
 import { addonActive } from '@/api/addons'
@@ -19,7 +19,7 @@ import { VIEWER_REASON } from '@/components/DisabledReason'
 import { CopyLinkButton } from '@/app/shell/CopyLinkButton'
 import { BlockedByConnection } from './Needs'
 import { availableActions, gateActionName, blockedApproval, primaryAction, primaryLabel } from './actions'
-import { agentName, ago, fmtClock, KeyRef, Mono, Pill, StatusChip, useIsVisibleKey, type Jump, type HumanAction, type Viewer } from './shared'
+import { agentName, ago, fmtClock, KeyRef, Mono, Pill, StatusChip, useIsVisibleKey, type HumanAction, type Jump, type Viewer } from './shared'
 
 export function CopyButton({ text, label }: { text: string; label: string }) {
   const [done, setDone] = useState(false)
@@ -40,8 +40,9 @@ export function CopyButton({ text, label }: { text: string; label: string }) {
 }
 
 /** Who is working on the ticket, in one line. Claiming is the agents' job, so people get no Claim/Release here. */
-function AgentStatus({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewer }) {
-  const c = ticket.claim
+export function AgentStatus({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewer }) {
+  // A claim the host marks not live (ended by Done or Close, lapsed, grant over) is history: nobody is working (run 8, 8).
+  const c = ticket.claim?.live === false ? null : ticket.claim
   const subagents = new Set(ticket.tasks_state.flatMap((t) => (t.lease && t.lease.session !== c?.session ? [t.lease.session] : []))).size
   return (
     <p className="flex min-w-0 items-center gap-2 text-[13px] text-text-muted" data-testid="agent-status">
@@ -114,9 +115,10 @@ export function ActionsMenu({ ticket, viewer, sign, jump, signing = false }: { t
   const av = availableActions(ticket, viewer)
   const primary = primaryAction(av)
   // The primary action is the header's button; the menu holds the rest.
-  const answer = av.answer.filter((q) => !(primary?.kind === 'answer' && primary.question === q.id))
   const approve = av.approve.filter((g) => !(primary?.kind === 'approve' && primary.gate === g))
   const verdict = av.verdict && primary?.kind !== 'verdict'
+  // A question is answered on its own card (Questions tab): the menu jumps there (it lists them even when the button does too).
+  const answer = av.answer
   const empty = !approve.length && !av.requestChanges.length && !verdict && !answer.length
   // Core's start dialog lives outside the menu, which closes when an item is chosen.
   const r = useRunAddonAction(ticket.key)
@@ -137,12 +139,6 @@ export function ActionsMenu({ ticket, viewer, sign, jump, signing = false }: { t
       <DropdownMenuContent align="end" className="w-72">
         <DropdownMenuLabel className="text-[11px] font-normal text-text-faint">Human actions{signedWith ? `, signed ${signedWith}` : ''}</DropdownMenuLabel>
         {empty && <p className="px-2 py-2 text-[13px] text-text-muted">{primary ? 'Nothing else needs you on this ticket.' : 'Nothing needs you on this ticket.'}</p>}
-        {answer.map((q) => (
-          <DropdownMenuItem key={q.id} onSelect={() => jump({ tab: 'questions', id: q.id })}>
-            <MessageSquareReply />
-            Answer {q.id}
-          </DropdownMenuItem>
-        ))}
         {approve.map((g) => (
           <DropdownMenuItem key={g} onSelect={() => sign({ kind: 'approve', gate: g })}>
             <Check />
@@ -155,6 +151,12 @@ export function ActionsMenu({ ticket, viewer, sign, jump, signing = false }: { t
             Give verdict
           </DropdownMenuItem>
         )}
+        {answer.map((q) => (
+          <DropdownMenuItem key={q.id} onSelect={() => jump({ tab: 'questions', id: `question-${q.id}` })}>
+            <CircleHelp />
+            Answer question{av.answer.length > 1 ? ` ${q.id}` : ''}
+          </DropdownMenuItem>
+        ))}
         {av.requestChanges.length > 0 && <DropdownMenuSeparator />}
         {av.requestChanges.map((g) => (
           <DropdownMenuItem key={g} onSelect={() => sign({ kind: 'request_changes', gate: g })}>
@@ -197,13 +199,13 @@ function PrimaryButton({ ticket, viewer, sign, jump, signing }: { ticket: Ticket
     )
   if (!p) return null
   const run = () => {
-    if (p.kind === 'answer') jump({ tab: 'questions', id: p.question })
-    else if (p.kind === 'verdict') sign({ kind: 'verdict' })
+    if (p.kind === 'verdict') sign({ kind: 'verdict' })
+    else if (p.kind === 'answer') jump({ tab: 'questions', id: `question-${p.question}` })
     else sign({ kind: 'approve', gate: p.gate })
   }
   return (
     <Button size="sm" onClick={run}>
-      {p.kind === 'answer' ? <MessageSquareReply /> : <Check />}
+      {p.kind === 'answer' ? <CircleHelp /> : <Check />}
       {primaryLabel(p)}
     </Button>
   )

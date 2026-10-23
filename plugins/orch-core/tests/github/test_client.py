@@ -17,7 +17,7 @@ import pytest
 
 from orch.github import ROUTES, GitHubClient, GitHubError, RateInfo, Token
 from orch.github import client as module
-from orch.relay.http import RelayConn, Response, TransportError
+from orch.net.http import RelayConn, Response, TransportError
 
 from .fake import FakeGitHub, busy_day, check_runs, issues, pulls, repo, reviews, user
 

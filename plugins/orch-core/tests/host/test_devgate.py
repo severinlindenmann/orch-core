@@ -20,8 +20,6 @@ from orch.host import devmode
 from orch.host.control import _genesis_view
 from orch.host.control_client import new_idem
 from orch.host.errors import DETAIL_KEYS, HostError
-from orch.relay import submit as relay_submit
-from orch.relay.framing import Identity, Refusal
 from tests.host.devgate_helpers import ORIGIN, SbxLab
 from tests.host.dispatch_helpers import Served, ok
 from tests.host.lifecycle_helpers import UID, Lab
@@ -261,7 +259,7 @@ def test_dev_host_bootstrap_of_non_sandbox_refused(sbx):
         assert os.listdir(root) == [] and len(h.host.registry.entries()) == 0
 
 
-@pytest.mark.parametrize("path", ["register", "bootstrap", "restore", "adopt", "relay.link", "records.push"])
+@pytest.mark.parametrize("path", ["register", "bootstrap", "restore", "adopt", "records.push"])
 def test_normal_host_refuses_sbx_on_every_admit_path(sbx, path):
     """Restore and adopt reach the registry only through host.register (a restored or adopted root is registered):
     both are the register row with the marker removed (the genesis alone refuses)."""
@@ -279,9 +277,6 @@ def test_normal_host_refuses_sbx_on_every_admit_path(sbx, path):
             with pytest.raises(HostError) as e:
                 devmode.check_admit(h.host.dev, "c" * 32, sbx.sroot / "new", _genesis_view(event))
             assert _reason(e) == "sandbox_workspace"
-        elif path == "relay.link":
-            svc = SimpleNamespace(dev=None, store=None, entry=SimpleNamespace(prefix="SBX", root=sbx.root))
-            assert _refused(lambda: devmode.refuse_link(svc, ORIGIN)) == "sandbox_workspace"
         else:
             svc = SimpleNamespace(dev=None, store=None, entry=SimpleNamespace(prefix="SBX", root=sbx.root))
             assert _refused(lambda: devmode.refuse_push(svc)) == "sandbox_workspace"
@@ -377,7 +372,7 @@ def test_registry_add_paths_table():
 
 def _view(sbx, **kw) -> devmode.View:
     genesis = {"prefix": "SBX", "owner": {"person": sbx.owner, "name": devsandbox.owner_name(sbx.sandbox_id)}}
-    base = {"genesis": genesis, "members": frozenset({sbx.owner}), "former": frozenset(), "link_origin": None}
+    base = {"genesis": genesis, "members": frozenset({sbx.owner}), "former": frozenset()}
     return devmode.View(**{**base, **kw})
 
 
@@ -441,12 +436,6 @@ def test_s5_missing_or_mismatched_marker(sbx):
     assert devmode.sandbox_reason(dev, WS, sbx.root, _view(sbx)).startswith("S5")
     devsandbox.write_marker(sbx.root, "0" * 32, WS)
     assert devmode.sandbox_reason(dev, WS, sbx.root, _view(sbx)).startswith("S5")
-
-
-def test_s6_link_origin_other_than_dev_json(sbx):
-    dev = sbx.dev()
-    assert devmode.sandbox_reason(dev, WS, sbx.root, _view(sbx, link_origin=ORIGIN)) is None
-    assert devmode.sandbox_reason(dev, WS, sbx.root, _view(sbx, link_origin="https://relay.example")).startswith("S6")
 
 
 def test_forged_manifest_naming_real_person_refused(tmp_path):
@@ -620,68 +609,6 @@ def test_host_bootstrap_reserved_prefix_on_a_dev_host(sbx):
 # --- P5 in the bridge's lock-free checks, the alarm (17.4, 17.7) ------------------------------------------------------
 
 
-def _p5(typ: str, gate: Any, *, bad_sig: bool = False, auth: str = "convenience") -> tuple[str | None, int]:
-    """The lock-free checks of one validly shaped event (P1 to P7) with ``gate`` as the host's dev gate; returns the
-    refusal code (``None``: passed) and how often ``dev_convenience_refused`` was counted."""
-    from orch import canon, crypto
-    from tests.relay.bridgekit import Phone, ulid
-
-    phone = Phone()
-    ident = Identity(WS, "d_" + phone.device, "p_" + phone.person, "sha256:" + "1" * 64, 2, "sha256:" + "4" * 64)
-    log = ulid()
-    if typ == "question.answered":
-        fields = {"question": "Q1", "hash": "sha256:" + "0" * 64, "option": "y", "based_on": "sha256:" + "5" * 64}
-    else:
-        fields = {"key": "SBX-0001", "ticket_type": "bug", "title": "t", "owner": ident.person_id}
-    ev = phone.event(log, typ, auth=auth, **fields)
-    if bad_sig:
-        other = Phone()
-        body = {k: v for k, v in ev.items() if k != "sig"}
-        ev = {**body, "sig": crypto.b64u(crypto.sign(other.dk, canon.person_signing_bytes(WS, log, body)))}
-    op = "answer" if typ == "question.answered" else "new_ticket"
-    count = [0]
-
-    def refused() -> None:
-        count[0] += 1
-
-    try:
-        relay_submit.check_events(
-            op, {"log": log, "events": [ev]}, ident, phone.dk_pub, idem=ev["id"], convenience_gate=gate,
-            convenience_refused=refused,
-        )  # fmt: skip
-    except Refusal as r:
-        return r.code, count[0]
-    return None, count[0]
-
-
-def test_p5_admits_a_gated_answer_only():
-    assert _p5("question.answered", lambda: True) == (None, 0)
-    assert _p5("question.answered", lambda: False) == ("op.not_allowed", 1)
-    assert _p5("question.answered", None) == ("op.not_allowed", 1)
-    assert _p5("question.answered", lambda: 1) == ("op.not_allowed", 1)  # only the literal True
-
-
-def test_ticket_created_convenience_refused_even_on_the_dev_gate():
-    assert _p5("ticket.created", lambda: True) == ("op.not_allowed", 1)
-
-
-def test_dev_convenience_refused_counts_only_verified():
-    assert _p5("question.answered", None, bad_sig=True) == ("op.not_allowed", 0)
-    assert _p5("question.answered", None) == ("op.not_allowed", 1)
-    assert _p5("question.answered", None, auth="passphrase") == (None, 0)
-    from orch.relay import worker as relay_worker
-    from orch.relay.bridge import Bridge
-
-    alarms = relay_worker.Alarms(now_ms=lambda: 5)
-    assert alarms.snapshot() == {"v": 1, "alarms": []}  # absent at zero
-    bridge = Bridge.__new__(Bridge)
-    bridge.alarm = alarms
-    bridge._convenience_refused()
-    bridge._convenience_refused()
-    (row,) = alarms.snapshot()["alarms"]
-    assert row["code"] == "dev_convenience_refused" and row["count"] == 2
-
-
 def test_no_convenience_env_refuses_dev_gate(sbx, monkeypatch):
     served = Served(sbx, dev=sbx.dev())
     try:
@@ -703,13 +630,6 @@ def test_the_new_code_is_in_both_catalogs_and_the_spec():
     spec = (SRC.parents[3] / "docs" / "architecture" / "orch-v2-host.md").read_text(encoding="utf-8")
     assert "| `host.dev_refused` |" in spec
     assert set(devmode.REASONS) == set(DETAIL_KEYS["host.dev_refused"]["reason"])
-
-
-def test_r2_vector_convenience_refused_on_a_normal_host():
-    """The R2 vector (core's, orch-f1 reads it): a convenience answer without the dev gate is op.not_allowed, D."""
-    doc = json.loads((SRC.parents[1] / "tests" / "relay" / "r2_vectors" / "r2_framing.json").read_text())
-    (case,) = [c for c in doc["cases"] if c["name"] == "answer_convenience_refused"]
-    assert case["answer"][0]["meta"]["refusal"] == "op.not_allowed" and case["retry_class"] == "D"
 
 
 def test_dev_host_logs_its_line_at_start(sbx, caplog):

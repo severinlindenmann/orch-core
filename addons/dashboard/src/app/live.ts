@@ -11,7 +11,7 @@ import { useLiveUpdates as useStream } from '@/api/useLiveUpdates'
 import { useWorkspace } from './workspace'
 
 const POLL_MS = 2000
-const LIVE_KEYS = ['today', 'tickets', 'ticket', 'agents', 'agent-activity', 'grants', 'addon-state', 'addon-decisions', 'workspaces', 'artifacts', 'relay', 'identity']
+const LIVE_KEYS = ['today', 'tickets', 'ticket', 'agents', 'agent-activity', 'grants', 'addon-state', 'addon-decisions', 'workspaces', 'add-ons', 'quick', 'artifacts', 'relay', 'identity']
 
 function usePollUpdates() {
   const qc = useQueryClient()

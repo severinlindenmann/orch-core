@@ -24,7 +24,7 @@ def test_question_id_and_hash_of_the_scenarios(sc):
     ask, uid = step["event"], step["log"]
     q = ask["question"]
     assert canon.question_id(sc["workspace_id"], uid, q["id"]) == sc["qid"] == ask["qid"]
-    assert canon.question_hash(ask["qid"], uid, q["text"], q["options"]) == sc["hash"] == ask["hash"]
+    assert canon.question_hash(ask["qid"], uid, q) == sc["hash"] == ask["hash"]
 
 
 def test_every_row_of_the_raise_table_has_a_scenario():

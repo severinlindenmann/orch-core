@@ -3,6 +3,7 @@
 // neutrally (an empty list) where a page needs an answer to draw, and with `op.unsupported` everywhere else. Nothing
 // here imports the mock.
 import { clearSession, getToken } from './bootstrap'
+import { refreshFeatures } from './features'
 import { createFetchTransport } from './fetchTransport'
 import type { MandatesPreviewState } from './mandatesPreview'
 import type { Api, ListTicketsParams } from './apiFactory'
@@ -41,6 +42,8 @@ interface ServerWorkspace {
   features: string[]
   click?: Workspace['click']
   runner?: Workspace['runner']
+  icon?: { icon: string; colour: string } | null
+  icon_known?: boolean
 }
 interface ServerMe {
   person: string
@@ -145,6 +148,8 @@ function workspace(s: ServerWorkspace): Workspace {
     needs_you: s.needs_you ?? 0,
     ...(s.host_state === 'ok' ? {} : { host_state: s.host_state }),
     ...(s.host_state !== 'ok' && s.host_message ? { host_message: s.host_message } : {}),
+    icon: s.icon ?? null,
+    icon_known: s.icon_known === true,
     // Offered only when the server lists the feature: the flag is on AND the signer can sign in this workspace.
     ...(s.runner !== undefined ? { runner: s.runner } : {}),
     ...(s.click ? { click: { ...s.click, available: s.click.available && s.features.includes('click') } } : {}),
@@ -152,7 +157,11 @@ function workspace(s: ServerWorkspace): Workspace {
 }
 
 /** Every workspace the server knows, running or not (the switcher shows the others as "host not running"). */
-const listWorkspaces = async () => (await call<ServerWorkspace[]>('/api/workspaces')).map(workspace)
+const listWorkspaces = async () => {
+  const rows = await call<ServerWorkspace[]>('/api/workspaces')
+  refreshFeatures(rows)
+  return rows.map(workspace)
+}
 
 export async function logout() {
   const result = await createFetchTransport('', getToken).request('POST', '/auth/logout')
@@ -280,6 +289,11 @@ const click = {
   stateClick: (ws: string, requestId: string) => call<ClickState>(`${w(ws)}/click/state`, 'POST', { request_id: requestId }),
   /** V3 C11: what the host says to check when the hub's channel signs (a read; nothing is prepared or signed here). */
   hubSign: (ws: string, body: import('./hubsign').HubSignRequest) => call<import('./hubsign').HubSignInfo>(`${w(ws)}/hubsign`, 'POST', body),
+  getHubStatus: (ws: string) => call<import('./hub').HubStatus>(`${w(ws)}/hub`),
+  getHubShare: (ws: string) => call<import('./hub').HubShare>(`${w(ws)}/hub/share`),
+  getHubPreview: (ws: string, body: { add?: import('./hub').HubRule; remove?: import('./hub').HubRule }) =>
+    call<import('./hub').HubPreview>(`${w(ws)}/hub/share/preview`, 'POST', body),
+  getHubCommand: (ws: string, body: import('./hub').HubCommandRequest) => call<import('./hub').HubCommand>(`${w(ws)}/hub/command`, 'POST', body),
   cancelClick: (ws: string, requestId: string) => call<{ id: string; state: string }>(`${w(ws)}/click/cancel`, 'POST', { request_id: requestId }),
   // How I approve (B6): the person's own default way to sign, and whether a phone is paired. Both were missing here, so
   // every real host looked as if it "does not provide personal approval preferences" (B11 10). An older server answers

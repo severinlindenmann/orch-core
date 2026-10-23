@@ -127,7 +127,13 @@ def test_a_user_the_snapshot_gives_no_role_is_denied(w, uid):
 
 def test_a_hub_event_of_a_type_outside_the_custodial_list_is_refused_by_the_model(w):
     e = w.build_unappended(
-        "workspace", "settings.changed", hub_actor(U2), roster_v=w.roster_v, set={"claim_ttl_min": 30}, **hub_fields()
+        "workspace",
+        "role.changed",
+        hub_actor(U2),
+        roster_v=w.roster_v,
+        person="p_" + "a" * 32,
+        role="member",
+        **hub_fields(),
     )
     r = admit(w.state(), e, log="workspace")
     assert (r.code, r.detail) == (Code.HUB_DENIED, "not_custodial")
@@ -234,12 +240,13 @@ def test_a_question_to_a_person_is_answered_through_the_alias(w):
         "text": "which?",
         "to": w.people["mara"],
         "blocking": False,
-        "options": [{"key": "a", "label": "A"}],
+        "kind": "choice",
+        "options": [{"key": "a", "label": "A"}, {"key": "b", "label": "B"}],
     }
     from orch.canon import question_hash, question_id
 
     qid = question_id(w.workspace_id, w.state()._core.tickets[u].uid, "Q1")
-    h = question_hash(qid, w.state()._core.tickets[u].uid, "which?", q["options"])
+    h = question_hash(qid, w.state()._core.tickets[u].uid, q)
     w.tev(u, "question.asked", "sev", question=q, qid=qid, hash=h)
     assert hub(w, u, "question.answered", question="Q1", hash=h, option="a") is None
     assert w.state()._core.tickets[u].questions["Q1"].answer["by"] == w.people["mara"]
@@ -255,11 +262,12 @@ def test_an_unaliased_member_level_hub_user_cannot_answer_a_question_to_someone_
         "text": "which?",
         "to": w.people["tom"],
         "blocking": False,
-        "options": [{"key": "a", "label": "A"}],
+        "kind": "choice",
+        "options": [{"key": "a", "label": "A"}, {"key": "b", "label": "B"}],
     }
     uidt = w.state()._core.tickets[u].uid
     qid = question_id(w.workspace_id, uidt, "Q1")
-    h = question_hash(qid, uidt, "which?", q["options"])
+    h = question_hash(qid, uidt, q)
     w.tev(u, "question.asked", "sev", question=q, qid=qid, hash=h)
     r = hub(w, u, "question.answered", user=U1, question="Q1", hash=h, option="a")
     assert r.code == Code.ANSWER_NOT_ALLOWED
@@ -301,7 +309,7 @@ def test_a_restricted_ticket_is_visible_to_the_listed_person_through_the_alias(w
 def test_a_hub_actor_releases_a_claim_by_the_ticket_owner_or_manager_rule(w):
     u = w.ticket()
     w.fill(u)
-    a = w.claim(u, "sev")
+    a = w.claim(u, "mara")  # mara is aliased: in full mode an unaliased member's agents hold no live claim (#1133)
     assert hub(w, u, "claim.released", session=a["session"], reason="released") is None
 
 
@@ -437,10 +445,11 @@ def test_a_foreign_owner_on_ticket_created_is_foreign_user(w):
 def _ask(w, u, to):
     from orch.canon import question_hash, question_id
 
-    q = {"id": "Q1", "text": "which?", "to": to, "blocking": False, "options": [{"key": "a", "label": "A"}]}
+    q = {"id": "Q1", "text": "which?", "to": to, "blocking": False, "kind": "choice",
+         "options": [{"key": "a", "label": "A"}, {"key": "b", "label": "B"}]}  # fmt: skip
     uidt = w.state()._core.tickets[u].uid
     qid = question_id(w.workspace_id, uidt, "Q1")
-    h = question_hash(qid, uidt, "which?", q["options"])
+    h = question_hash(qid, uidt, q)
     w.tev(u, "question.asked", "sev", question=q, qid=qid, hash=h)
     return h
 

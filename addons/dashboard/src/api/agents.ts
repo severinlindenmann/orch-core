@@ -29,6 +29,10 @@ export interface RunnerGrant {
   id: string
   until: string
   scope: 'all' | 'workable'
+  /** `whoami.runner.grant` only: the host's own launch rule (15-minute floor, member scope, revoked grant, role change). */
+  startable?: boolean
+  /** When the 15-minute floor is reached and the grant stops being startable; null when it is not startable now. */
+  startable_until?: string | null
 }
 
 export interface AgentBlocked {
@@ -47,6 +51,8 @@ export interface AgentPreview {
   display_hidden: boolean
   cwd: { kind: 'workspace' | 'repo' | 'worktree' | 'workdir' | null; repo?: string; ticket?: string }
   cwd_path: string | null
+  /** For a work folder: whether it already exists and whether it holds anything (an unattended start needs it new or empty). */
+  workdir?: { exists: boolean; empty: boolean }
   cwd_path_hidden: boolean
   will_create_worktree: boolean
   login_shell: boolean

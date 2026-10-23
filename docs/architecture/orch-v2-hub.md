@@ -8,8 +8,8 @@ on 22 Oct 2026; the visual draft is `~/orch-dev/mockups/hub-vision/index.html` (
 This amends, in hub mode only: D2 and D3 (a second holder of `WK_e`), D6, D11, D41, D49, D66 (a new factor), §4
 (threat model: a hub row), orch-v2-ticket-format (the delegation check and `member.added`: aliases and member kind
 `hub`), §5.4 (epochs: `WK_e` goes to the hub over the hub link, and removing a person no longer
-rotates), §6.1 (directory), §9 (linked workspaces) and §10 (publish acceptance), as noted per decision. Direct mode, a
-workspace with no hub, keeps the current spec unchanged.
+rotates), §6.1 (directory), §9 (linked workspaces) and §10 (publish acceptance), as noted per decision. A workspace with no hub
+is local only (D69, V3-D36): it has no direct relay and no direct phone path, and the spec does not keep one.
 
 Opus design check, 22 Oct 2026: "design OK with fixes". Findings B1–B5 and S1–S7 are folded in below (§5, §6, §7, §8,
 §9, §10, §11).
@@ -210,7 +210,9 @@ front-page warning name both. That is why the split layout is the recommendation
 ## 8. Workspaces joining and leaving
 
 1. A hub admin creates an invite code for a new or existing workspace.
-2. A person with access to the workspace's host runs `orch hub join <code>` on its terminal (human-only verb).
+2. A person with access to the workspace's host runs `orch hub join <hub_id>:<code> --hub-card FILE` on its terminal (human-only verb; or a bare code with `--hub-id`).
+   The host refuses (`hub.refused`, `other_hub`) a card whose `hub_id` is not the one the invite named, before anything is
+   signed (D12c); the hub only ever sees `<code>`.
 3. The owner's current key signs `hub.joined {hub_id, hk_root_pub, aliases}` into the ledger. The host pins
    `HK_root`, adds a member of the new kind `hub` to its `WSK`-signed member list (D39), and seals `WK_e` to `HXK`
    over the hub link. That link replaces the relay's `PUT membership` (§5.4) for this workspace.
@@ -304,8 +306,8 @@ at step H5, so daily use keeps working.
 | H2 | Workspace join/leave (§8), group snapshot pinning, `auth: hub` verification in core | orch-core, orch-hub |
 | H3 | Router: ws→ws through the hub; shared spaces on the hub | orch-hub, orch-core |
 | H4 | Browser channel: person home, needs-you across workspaces, custodial signing | orch-hub |
-| H5 | Relay with hub accounts; iPhone pairs with the hub; push from the hub. Remove the direct relay path from core (direct publish stays) | orch-relay, orch-mobile, orch-core |
-| H6 | Publish through the hub (D76, `publish_out`); then remove direct publish from core | orch-publish, orch-hub, orch-core |
+| H5 | Relay with hub accounts; iPhone pairs with the hub; push from the hub. Delete the direct relay and phone path from core (V3-D36, no compat) | orch-relay, orch-mobile, orch-core |
+| H6 | Publish through the hub (D76, `publish_out`); then delete direct publish from core (V3-D36) | orch-publish, orch-hub, orch-core |
 | H7 | Hub to hub through the relay (D77) | orch-hub, orch-relay |
 | Later | Entra ID / OIDC and group sync; Slack channel | orch-hub |
 

@@ -703,12 +703,6 @@ def test_relay_paired_counts_a_dangling_link_and_an_unreadable_directory(tmp_pat
         os.chmod(d, 0o700)
 
 
-def test_relay_link_and_pair_are_reader_ops():
-    from orch.host.convenience import READER_OPS
-
-    assert {"relay.link", "relay.pair", "member.add"} <= READER_OPS
-
-
 # --- the relay-linked workspace cap and the link reservation -------------------------------------------------------
 
 

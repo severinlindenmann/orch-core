@@ -13,6 +13,8 @@ export interface SignStory {
   scope?: string
   /** Agent access given by this signature: its length in words. */
   access?: { length: string }
+  /** The signed content is shown short (what is answered), the rest under Details; the dialog closes by itself when signed. */
+  compact?: boolean
 }
 
 /** What agents may do with the access, in the words of the review (the same for every grant the dashboard signs). */
@@ -31,7 +33,7 @@ export function storyOf(action: ClickAction | null | undefined, ctx: StoryContex
       const hours = action.action === 'new_sequence' ? action.agent?.hours : undefined
       if (hours) return agentCreate(hours)
       if (ctx.startsAgent) return { signLabel: 'Sign and create ticket', steps: ['You sign.', 'The ticket is created.', 'An agent starts, with the access you already gave, and writes the requirements and a plan.', 'It stops and waits: nothing is built until you approve the plan.'] }
-      return { signLabel: 'Sign and create ticket', steps: ['You sign.', 'The ticket is created.', 'Nothing starts yet: an agent starts only when you press Start agent.'] }
+      return { signLabel: 'Create ticket', steps: ['You sign.', 'The ticket is created.', 'Nothing starts yet: an agent starts only when you press Start agent.'] }
     }
     case 'quick_start': {
       const hours = action.agent?.hours
@@ -46,6 +48,8 @@ export function storyOf(action: ClickAction | null | undefined, ctx: StoryContex
       if (action.gate === 'requirements') return { signLabel: 'Sign requirements', scope: 'This signs the requirements only, not the plan.', steps: ['You sign.', 'The requirements are locked as shown.', 'The plan still needs your approval, separately.'] }
       if (action.gate === 'plan') return { signLabel: 'Sign and start building', steps: ['You sign.', 'The agent may start building the plan shown here.', 'You review the result and give the final verdict.'] }
       return { signLabel: 'Sign approval', steps: ['You sign.', 'Your approval of this step is recorded as shown.'] }
+    case 'answer':
+      return { signLabel: 'Send answer', steps: [], compact: true }
     case 'runner_grant': {
       const length = accessLength(action.hours)
       return action.extend

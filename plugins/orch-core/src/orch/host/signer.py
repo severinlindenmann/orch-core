@@ -242,7 +242,7 @@ _MOVE_TO = frozenset({"backlog", "open"})
 _GATES = frozenset({"requirements", "plan", "verify", "code"})
 _PEOPLE_ROLES = ("owner", "assignees", "reviewers")  # watchers: not offered by the dashboard yet
 _SETTINGS_KEYS = frozenset(
-    {"grant_hours", "claim_ttl_min", "lease_ttl_min", "sign_methods", "repos", "publish", "models"}
+    {"grant_hours", "claim_ttl_min", "lease_ttl_min", "sign_methods", "repos", "publish", "models", "icon"}
 )
 
 
@@ -331,6 +331,13 @@ def _person_op(prepared: Mapping[str, Any]) -> None:
                 and log == "workspace"
                 and e["type"] == "hub.left"
                 and set(e) - review.ENVELOPE == {"hub_id", "binding_seq"}
+            )
+        elif op == "relay.reopen":  # V3 C10 M4: one relay.reopened on the workspace log, naming the hub that was left
+            ok = (
+                len(events) == 1
+                and log == "workspace"
+                and e["type"] == "relay.reopened"
+                and set(e) - review.ENVELOPE == {"hub_id"}
             )
         elif op == "settings.set":
             sets = e.get("set")
@@ -636,6 +643,7 @@ _PLAIN = {
     "hub.join.full": "join hub {hub_id} in full mode: the hub will be able to read everything in this workspace",
     "hub.mode": "switch hub {hub_id} to {mode} mode: the hub will be able to read everything in this workspace",
     "hub.leave": "leave hub {hub_id} (binding {binding_seq}) and tell it that this workspace is no longer bound",
+    "relay.reopen": "open the direct relay path of this workspace again (phones must be paired again)",
 }
 
 

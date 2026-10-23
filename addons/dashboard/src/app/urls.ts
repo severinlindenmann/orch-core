@@ -45,7 +45,7 @@ export const prefixOfKey = (key: string): string | undefined => /^(.+)-\d+$/.exe
 
 /** Whether an in-app path takes the current workspace (everything but a ticket, whose key names its workspace). */
 export function isWorkspacePath(path: string): boolean {
-  return !path.startsWith('/ticket/') && path !== '/checklist' && !WS_PATH.test(path)
+  return !path.startsWith('/ticket/') && path !== '/checklist' && path !== '/feedback' && !WS_PATH.test(path)
 }
 
 /** The address-bar path of an in-app path in workspace `prefix` (a ticket's workspace is its key's, whatever `prefix` is). */

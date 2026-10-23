@@ -394,8 +394,17 @@ class Gateway:
                 ):
                     # Not repaired, not shown: invisible or bidi characters could make a name pass for another.
                     raise fail("workspace.name_invalid", "The workspace name has invisible characters.", exit=3)
+                icon, icon_known = None, False
+                if link.supports("workspace.settings", "settings/1"):
+                    try:  # the first page is enough: the icon is not a repo; a failed read only means "no icon"
+                        shown = link.call("workspace.settings", {})
+                        icon, icon_known = adapters.shell.workspace_icon(shown), "icon" in shown
+                    except HostError:
+                        pass
                 result.append(
                     adapters.Workspace(
+                        icon=icon,
+                        icon_known=icon_known,
                         id=ws,
                         prefix=show["prefix"],
                         name=show["name"],

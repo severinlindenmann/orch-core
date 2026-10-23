@@ -345,6 +345,15 @@ def start_thread(
     return thread
 
 
+def refuse_if_cut_over(service: Any) -> None:
+    """V3 C10 (design M3, I2): a workspace whose direct relay path is closing or closed takes no pairing, no relay link
+    and no direct input of any kind: ``relay.cut_over`` first, whatever the arguments."""
+    from . import directpath
+
+    if directpath.closed(service.state_dir, service.workspace_id, service.host_uid):
+        raise HostError("relay.cut_over", "the direct relay path of this workspace is closed: a hub serves it")
+
+
 def api(service: Any, name: str, *args: Any, **kw: Any) -> Any:
     """**The internal pairing API (11A.15.9A)** for the control ops and the dashboard wrappers: ``name`` is one of
     :data:`orch.relay.r6.pair.API_METHODS` and nothing else (the settlement paths stay the host's, Opus review of
@@ -353,6 +362,7 @@ def api(service: Any, name: str, *args: Any, **kw: Any) -> Any:
     from orch.relay.r6.pair import PairRefused, run_api
     from orch.relay.r6.pairstore import PairStoreError
 
+    refuse_if_cut_over(service)  # C10: before anything is parsed or any engine is opened
     thread = getattr(service, "pair_thread", None)
     try:
         if thread is not None and thread.alive:

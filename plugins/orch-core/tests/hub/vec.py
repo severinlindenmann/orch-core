@@ -80,7 +80,8 @@ SKIPPED_CHECKS = {
 }
 #: cases of a check core runs whose rules core has not implemented yet (orch-core#1036): non-strict xfail, so CI shows
 #: them and a fix turns them into XPASS
-PENDING_VECTORS = frozenset({})
+#: phase 5 (hub protocol 8.8, owner V3-D29): the five new custodial types; core C10 (#878) admits them
+PENDING_VECTORS: frozenset[str] = frozenset()  # phase 5 is admitted since C10 (#878)
 
 
 def private_key(name: str):

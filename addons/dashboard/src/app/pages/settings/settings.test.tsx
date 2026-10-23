@@ -34,7 +34,7 @@ describe('Settings', () => {
   it('the owner sets the agent grant length in General (signed, 1 to 168 h)', async () => {
     const { user } = renderApp('/settings/general')
     expect(await screen.findByRole('button', { name: '8 h' })).toHaveAttribute('aria-pressed', 'true')
-    const save = screen.getAllByRole('button', { name: 'Save' })[1]
+    const save = screen.getAllByRole('button', { name: 'Save' })[2] // name, icon, then the grant length
     expect(save).toBeDisabled()
     await user.click(screen.getByRole('button', { name: '1 day' }))
     await user.click(save)
@@ -273,7 +273,7 @@ describe('Settings', () => {
   })
   it('a maintainer sees why controls are disabled', async () => {
     renderApp('/settings/general', { viewer: 'p_mara' })
-    expect((await screen.findAllByText('Only owners can save.')).length).toBe(2) // the name and the agent grant length
+    expect((await screen.findAllByText('Only owners can save.')).length).toBe(3) // the name, the icon and the agent grant length
     expect(screen.getByRole('button', { name: /Export workspace/ })).toBeDisabled()
     expect(screen.getByText('Only owners can export.')).toBeInTheDocument()
   })

@@ -11,7 +11,7 @@ import json
 
 import pytest
 
-from orch.host.dispatch import op_kind, served_ops
+from orch.host.dispatch import PERSON_GRANT_REGISTRY_READS, op_kind, served_ops
 from tests.host.dispatch_helpers import SESSION, Served, ok
 from tests.host.lifecycle_helpers import Lab
 from tests.host.test_dispatch_matrix import as_agent_class
@@ -53,7 +53,8 @@ def world(tmp_path):
 READS = sorted(
     op
     for op in served_ops()
-    if op_kind(op)[0] in {"read", "person_read"} and op not in ("term.preview", "agent.preview")
+    if (op_kind(op)[0] in {"read", "person_read"} or op in PERSON_GRANT_REGISTRY_READS)
+    and op not in ("term.preview", "agent.preview")
 )  # agent.preview (H11c) is not a registry op either: tests/host/test_agents.py
 
 

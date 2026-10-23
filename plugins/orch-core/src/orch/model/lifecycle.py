@@ -6,7 +6,6 @@ events: the status stays unchanged and the event, which the host should not have
 
 from __future__ import annotations
 
-import copy
 import re
 from typing import Any
 
@@ -160,7 +159,7 @@ def policy_changed(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
         return Refusal(Code.ROLE_DENIED, "only the ticket owner, owners and maintainers set an override")
     if (r := policies.check_override(ws, t, e["gates"])) is not None:
         return r
-    t.overrides.update(copy.deepcopy(e["gates"]))
+    t.overrides.update(policies.channel_gates(e, e["gates"], t.overrides))
     generations.mark(t, *e["gates"])
     return None
 

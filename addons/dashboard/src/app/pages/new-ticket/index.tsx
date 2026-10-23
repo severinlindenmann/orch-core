@@ -436,6 +436,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
       titleRef.current?.focus()
     } else if (overlay) {
       setDraft(EMPTY)
+      setAttempted(false)
       onCreated?.(ticket)
     } else {
       leaving.current = true
@@ -450,6 +451,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
     writeDraft(key, null)
     setShowRestored(false)
     setDraft(EMPTY)
+    setAttempted(false) // the emptied form must not keep the red errors of the filled one (#1127)
     onDirtyChange?.(false)
   }
   /** The signer's event is in the log: the ticket exists. */
@@ -496,7 +498,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
     setAttempted(false)
   }
 
-  const primaryLabel = startFirst ? 'Create and start agent' : startPossible || tooMany ? 'Only create' : 'Create'
+  const primaryLabel = startFirst ? 'Create and start agent' : startPossible || tooMany ? 'Only create' : handoffOn ? 'Review ticket' : 'Create'
   const summary = attempted && check.count ? `${check.count === 1 ? 'One thing needs' : `${check.count} things need`} your attention before the ticket can be created.` : null
 
   return (

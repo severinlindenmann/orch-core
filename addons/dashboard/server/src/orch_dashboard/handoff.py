@@ -607,6 +607,30 @@ class ModelsSet(Action):
         return self
 
 
+class WorkspaceIcon(BaseModel):
+    """An icon and a colour of core's closed lists (`orch.wsicons`); nothing else is accepted."""
+
+    model_config = ConfigDict(extra="forbid")
+    icon: str
+    colour: str
+
+    @model_validator(mode="after")
+    def closed(self):
+        from orch.wsicons import COLOUR_LABELS, ICON_LABELS
+
+        if self.icon not in ICON_LABELS or self.colour not in COLOUR_LABELS:
+            raise ValueError("icon: an icon and a colour that orch offers")
+        return self
+
+
+class IconSet(Action):
+    """`settings.set {set:{icon}}`: the workspace icon (null: back to the automatic one). Signed with a click; the host
+    checks the closed lists again."""
+
+    action: Literal["icon_set"]
+    icon: WorkspaceIcon | None
+
+
 class RepoSet(Action):
     """`settings.set {set:{repos:{name: {path, remote?, default_branch?}}}}`: add a repo or change one (Repos add-on).
     The host checks the path again (absolute, an existing git folder, not the home folder, not the orch store)."""
@@ -905,6 +929,7 @@ PrepareBody = Annotated[
     | WriteSection
     | SettingsSet
     | ModelsSet
+    | IconSet
     | RepoSet
     | RepoRemove
     | PolicySet
@@ -1059,6 +1084,8 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
             return "settings.set", {"set": action.model_dump(include={*DURATIONS, "sign_methods"}, exclude_none=True)}
         case ModelsSet():
             return "settings.set", {"set": {"models": action.models or None}}
+        case IconSet():
+            return "settings.set", {"set": {"icon": action.icon.model_dump() if action.icon else None}}
         case AddonEnable():
             return "settings.set", {"set": action.settings()}
         case PublishSetup():
@@ -1162,7 +1189,7 @@ def expected(action: Action, person: str | None = None):
         return all(adapters.handoff.cj(events[0].get(k)) == adapters.handoff.cj(v) for k, v in fields.items())
 
     match action:
-        case SettingsSet() | ModelsSet() | RepoSet() | RepoRemove() | PublishSetup() | AddonEnable():
+        case SettingsSet() | ModelsSet() | IconSet() | RepoSet() | RepoRemove() | PublishSetup() | AddonEnable():
             _, args = host_call(action)
             return lambda ev: one(ev, "settings.changed", set=args["set"])
         case PublishShare():

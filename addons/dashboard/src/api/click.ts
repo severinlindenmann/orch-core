@@ -25,11 +25,11 @@ export interface ClickCard {
 }
 
 /**
- * The switch: `on` proves the person's CURRENT passphrase (the key must be in passphrase custody now); `off` carries
- * nothing and only turns the flag off. The dashboard never chooses a passphrase: moving the key back is a terminal
- * command (`orch keys custody passphrase --in-place`).
+ * The switch: `on` proves the person's CURRENT passphrase (the key must be in passphrase custody now); `off` turns the
+ * flag off and, with a NEW passphrase (V3-D31), moves the key back under it in the same step (core accepts it only
+ * while signing is on).
  */
-export type ClickSwitch = { on: true; passphrase: string } | { on: false }
+export type ClickSwitch = { on: true; passphrase: string } | { on: false; passphrase?: string }
 
 export interface ClickPrepared {
   request_id: string

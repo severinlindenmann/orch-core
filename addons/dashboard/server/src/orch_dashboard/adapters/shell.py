@@ -38,6 +38,26 @@ class Workspace(BaseModel):
     runner: dict | None = None
     # V3 C11: the host's signing mode (`full`/`unknown`: approvals go through the hub); null: not known.
     signing: str | None = None
+    # The signed workspace icon (`settings.icon`): an icon and a colour of core's closed lists, or null (none signed:
+    # the page shows the default from the id). `icon_known`: the host reports the setting (an older host does not).
+    icon: dict | None = None
+    icon_known: bool = False
+
+
+def workspace_icon(settings) -> dict | None:
+    """The host's `icon` from `workspace.settings`: only a plain pair of core's closed lists, else ``None`` (the
+    default shows; nothing the host sent outside the lists reaches the page)."""
+    from orch.wsicons import COLOUR_LABELS, ICON_LABELS
+
+    value = settings.get("icon") if isinstance(settings, dict) else None
+    if (
+        isinstance(value, dict)
+        and set(value) == {"icon", "colour"}
+        and value["icon"] in ICON_LABELS
+        and value["colour"] in COLOUR_LABELS
+    ):
+        return {"icon": value["icon"], "colour": value["colour"]}
+    return None
 
 
 _PREFIX = re.compile(r"[A-Z0-9]{1,16}")

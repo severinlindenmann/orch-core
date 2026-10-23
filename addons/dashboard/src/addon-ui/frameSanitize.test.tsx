@@ -111,4 +111,17 @@ describe('round 2 #6 wiring', () => {
     expect(screen.queryByTitle(/Sandboxed preview/)).toBeNull()
     expect(screen.getByText(/getElementById/)).toBeInTheDocument()
   })
+  it('#1069: a ticket-text widget page with agent HTML off is still gated: no frame, no source, a plain note (evidence HTML is not affected)', async () => {
+    const { WidgetBlock } = await import('@/app/pages/ticket/widgets/WidgetBlock')
+    const { sha256Hex } = await import('@/api/sha256')
+    for (const preview of ['<p>hello</p>', '<p>x</p><script>alert(1)</script>']) {
+      const block = { section: 'verification', line: 1, raw: '{}', spec: { layer: 'html', id: 'p', artifact: 'p.html', sha256: sha256Hex(preview) } }
+      const ticket = { key: 'DEMO-0041', artifacts: [{ name: 'p.html', kind: 'other', preview }] }
+      const { unmount } = render(<WidgetBlock block={block as never} ticket={ticket as never} agentHtml={false} sectionLabel="Verification" />)
+      expect(screen.getByText(/Agent HTML is off in this workspace, so this widget is not drawn/)).toBeInTheDocument()
+      expect(document.querySelector('iframe')).toBeNull()
+      expect(screen.queryByText(/alert\(1\)/)).toBeNull()
+      unmount()
+    }
+  })
 })

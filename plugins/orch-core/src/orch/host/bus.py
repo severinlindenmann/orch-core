@@ -68,6 +68,7 @@ PERSON_TYPES = frozenset(
         "device.added",
         "device.removed",
         "device.revoked",
+        "device.excluded",
         "policy.changed",
         "settings.changed",
         "addon.granted",
@@ -78,7 +79,7 @@ PERSON_TYPES = frozenset(
     }
 )
 #: only to a person-class owner and to the grant's own person (the ``grant.list`` rule)
-GRANT_TYPES = frozenset({"grant.issued", "grant.revoked"})
+GRANT_TYPES = frozenset({"grant.issued", "grant.requested", "grant.revoked"})
 #: ticket events that can answer a parked ``wait`` (``orch.ops.decisions.decision``) or end it (``not_found``)
 WAKE_TICKET = frozenset(
     {
@@ -93,7 +94,15 @@ WAKE_TICKET = frozenset(
 )
 #: workspace events after which a parked ``wait``'s next look may be refused (its grant or person no longer holds)
 WAKE_WORKSPACE = frozenset(
-    {"grant.revoked", "member.removed", "role.changed", "device.revoked", "device.removed", "restore"}
+    {
+        "grant.revoked",
+        "member.removed",
+        "role.changed",
+        "device.revoked",
+        "device.removed",
+        "device.excluded",
+        "restore",
+    }
 )
 
 MAX_ITEMS = 256

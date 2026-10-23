@@ -1792,17 +1792,24 @@ def test_switching_on_sends_the_passphrase_to_the_signer_only(client, token, stu
     assert PASSPHRASE not in caplog.text + out + err + res.text
 
 
-def test_switching_off_needs_no_passphrase_and_never_re_keys(client, token, stub, script):
-    """Opus H2 on #539: off only turns the flag off. A passphrase with `off` (a NEW one, which would re-key the device
-    key from the dashboard) is refused at the route before the signer is called, and never echoed."""
+def test_switching_off_needs_no_passphrase_but_may_carry_a_new_one(client, token, stub, script, caplog, capfd):
+    """V3-D31 (narrowing Opus H2 on #539): off without a passphrase is the flag only; a NEW passphrase is relayed to the
+    signer, which decides (only while the switch is on); an explicit null is invalid; never logged or echoed."""
     script.features = ["custody"]
     res = switch(client, token, stub, {"on": False})
     assert res.status_code == 200 and res.json()["enabled"] is False and res.json()["problem"] == "disabled"
-    bad = switch(client, token, stub, {"on": False, "passphrase": PASSPHRASE})
+    caplog.set_level(logging.DEBUG)
+    bad = switch(client, token, stub, {"on": False, "passphrase": None})
     assert bad.status_code == 400 and bad.json()["error"]["code"] == "invalid.input"
-    assert PASSPHRASE not in bad.text
+    moved = switch(client, token, stub, {"on": False, "passphrase": PASSPHRASE})
+    assert moved.status_code == 200 and PASSPHRASE not in moved.text
     calls = [c for c in script.clients[-1].calls if c[0].startswith("custody")]
-    assert calls == [("custody_off", {"workspace_id": stub.ws})]
+    assert calls == [
+        ("custody_off", {"workspace_id": stub.ws}),
+        ("custody_off", {"workspace_id": stub.ws, "passphrase": PASSPHRASE}),
+    ]
+    out, err = capfd.readouterr()
+    assert PASSPHRASE not in caplog.text + out + err
 
 
 @pytest.mark.parametrize(
@@ -1815,8 +1822,8 @@ def test_switching_off_needs_no_passphrase_and_never_re_keys(client, token, stub
         {},
         {"on": "yes", "passphrase": PASSPHRASE},
         {"on": True, "passphrase": PASSPHRASE, "new_passphrase": PASSPHRASE},
-        {"on": False, "passphrase": PASSPHRASE},
         {"on": False, "passphrase": None},
+        {"on": False, "passphrase": ""},
         {"on": True, "passphrase": [PASSPHRASE]},
     ],
 )
@@ -1973,6 +1980,14 @@ WITH_PIC = {
 }
 
 
+def _all_keys(node):
+    if isinstance(node, dict):
+        return set(node) | {k for v in node.values() for k in _all_keys(v)}
+    if isinstance(node, list | tuple):
+        return {k for v in node for k in _all_keys(v)}
+    return set()
+
+
 def test_a_new_ticket_with_a_picture_sends_the_intent_with_its_digest_and_never_the_bytes(client, token, stub, script):
     script.features = ["custody", "sequence", "images"]
     res = prepare(client, token, stub, WITH_PIC)
@@ -1981,7 +1996,8 @@ def test_a_new_ticket_with_a_picture_sends_the_intent_with_its_digest_and_never_
     meta = args["sequence"]
     assert meta["of"] == 5  # new, set, the picture, two sections
     assert meta["intent"]["images"] == [PIC]
-    assert "files" not in args and "b64" not in repr(args)
+    # Structural, not a repr substring: random ids/digests are hex and can contain "b64" (#1114).
+    assert "files" not in args and "b64" not in _all_keys(args)
 
 
 def test_a_signer_that_cannot_hold_pictures_is_never_asked_for_one(client, token, stub, script):

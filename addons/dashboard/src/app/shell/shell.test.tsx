@@ -18,6 +18,12 @@ describe('app shell', () => {
     expect(await screen.findByText('agents granted until 18:00')).toBeInTheDocument()
   })
 
+  it('links to the feedback page with a full page load, like the checklist', async () => {
+    renderApp('/')
+    const link = await screen.findByRole('link', { name: 'Feedback' })
+    expect(link).toHaveAttribute('href', '/feedback')
+  })
+
   it('opens the test checklist with a full page load (no in-app move that renders the old page outside its shell)', async () => {
     renderApp('/')
     const link = await screen.findByRole('link', { name: 'Test checklist' })
@@ -316,7 +322,7 @@ describe('app shell', () => {
       expect(within(list).getAllByRole('button').filter((b) => b.getAttribute('aria-current'))).toHaveLength(1)
       expect(demo.getAttribute('aria-label')).not.toMatch(/current/i)
       // The count is the same "needs you" number as the sidebar badge, shown only when there is something.
-      await waitFor(() => expect(demo).toHaveAccessibleName(/^DEMO · Acme energy data, \d+ need you$/))
+      await waitFor(() => expect(demo).toHaveAccessibleName(/^DEMO · Acme energy data( \([0-9a-f]{8}\))?, \d+ need you$/))
       for (const r of rows) {
         expect(within(r).queryAllByRole('link')).toHaveLength(0) // no recent tickets
         expect(within(r).queryByText(/^(owner|maintainer|member|viewer)$/)).toBeNull() // the role is in the tooltip

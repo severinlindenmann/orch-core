@@ -48,6 +48,11 @@ class Human:
         return {"device": self.person.device, "auth": "passphrase"}
 
     def prepare_res(self, op: str, args: dict[str, Any], *, handoff: bool = False, **kw: Any) -> dict[str, Any]:
+        if op == "hub.join" and "hub_id" not in args and isinstance(args.get("hub_card"), dict):
+            args = {
+                **args,
+                "hub_id": (args["hub_card"].get("o") or {}).get("hub_id"),
+            }  # D12c: tests that don't test it name the card's own
         body: dict[str, Any] = {"op": op, "args": args}
         if handoff:
             body["handoff"] = True

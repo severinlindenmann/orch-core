@@ -6,6 +6,7 @@ import type { MockStore } from './store'
 import { atLeast, can } from '@/api/permissions'
 import { APPROVER_GROUPS, codeReviewWaits, unmeetablePolicy } from '@/api/gates'
 import { GRANT_MAX_HOURS } from '@/api/grants'
+import { validIcon } from '@/api/wsIcons'
 import { addonActive } from '@/api/addons'
 import peopleFixture from './fixtures/people.json'
 import type { RelayRequest, RelaySimRequest } from '@/api/types'
@@ -322,6 +323,12 @@ function postSettings(store: MockStore, ctx: RouteContext): TransportResponse {
     case 'grant.hours': {
       if (!Number.isInteger(b.hours) || b.hours < 1 || b.hours > GRANT_MAX_HOURS) return fail(400, 'validation.hours', `The agent grant length is 1 to ${GRANT_MAX_HOURS} hours.`)
       store.appendWs(wsId, { type: 'workspace.grant_hours_set', hours: b.hours })
+      return done()
+    }
+    case 'icon': {
+      const v = b.icon as { icon?: unknown; colour?: unknown } | null
+      if (v !== null && !(v && typeof v === 'object' && Object.keys(v).length === 2 && validIcon(v.icon, v.colour))) return fail(400, 'validation.icon', 'Pick an icon and a colour from the lists.')
+      store.appendWs(wsId, { type: 'settings.changed', actor: { kind: 'person', id: store.viewer }, set: { icon: v }, presence: 'touchid' })
       return done()
     }
     case 'repos': {

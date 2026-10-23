@@ -11,18 +11,24 @@ table is fail closed: adding a verb is adding a row.
 not the event-type check below. ``hub.repin`` is listed so the set is complete; its op is not built yet, and it is
 ``pk`` only (the matrix test already refuses it by a device key).
 
-The model rule that applies it at append and replay (``local_refusal``, ``agent_refusal``) is C8's; C11's
-host enforces the same table at ``human.append_signed`` (``host/hubsign.py``). D79: no hub or host code here.
+Model rule (:func:`local_refusal`, called from ``authz.authorize_person`` at append and on replay): in a joined
+**full**-mode position every person event that is not ``auth: "hub"`` is refused with ``sign.hub_only``, except the
+event types of ``BREAK_GLASS``, which also need an owner actor and a signer that is allowed. Exclusion never applies:
+a ``device.excluded`` line never reaches this check (and core refuses excluding an owner's device, C10).
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
-from .types import WsCore
+from .codes import Code, Refusal
+from .types import WsCore, ts
 
-__all__ = ["BREAK_GLASS", "BreakGlass", "SIGNER_KINDS", "allowed", "event_types", "signer_kind"]
+__all__ = [
+    "BREAK_GLASS", "BreakGlass", "SIGNER_KINDS", "agent_refusal", "allowed", "event_types", "human_only_types",
+    "is_recovery", "local_refusal", "signer_kind",
+]  # fmt: skip
 
 SIGNER_KINDS = ("owner_device_key", "pk", "click", "convenience", "agent", "hub", "relay")
 
@@ -30,20 +36,48 @@ SIGNER_KINDS = ("owner_device_key", "pk", "click", "convenience", "agent", "hub"
 class BreakGlass:
     """One row: the event the verb writes (``None``: a key-store act without an event) and who may sign it."""
 
-    __slots__ = ("event", "signers")
+    __slots__ = ("event", "shape", "signers")
 
-    def __init__(self, event: str | None, signers: tuple[str, ...]) -> None:
-        self.event, self.signers = event, signers
+    def __init__(
+        self, event: str | None, signers: tuple[str, ...], shape: Callable[[Any, Mapping[str, Any]], bool] | None = None
+    ) -> None:
+        #: ``shape(ws, event)``: the row matches only an event of exactly this shape (``None``: any event of the type)
+        self.event, self.signers, self.shape = event, signers, shape
+
+    def matches(self, ws: Any, e: Mapping[str, Any]) -> bool:
+        return self.event == e.get("type") and (self.shape is None or bool(self.shape(ws, e)))
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"BreakGlass({self.event!r}, {self.signers!r})"
 
 
 #: verb -> row. Owner only in every row (checked separately: the actor must be a workspace owner).
+def reaffirms_full(ws: Any, e: Mapping[str, Any]) -> bool:
+    """The one ``hub.joined`` a joined full position takes from a local key: the same hub, root and binding, full mode,
+    no aliases (V3-D29, ``orch hub mode full`` again). Anything else is a new binding and goes through the hub."""
+    h = getattr(ws, "hub", None) or {}
+    return (
+        h.get("status") == "joined"
+        and h.get("mode") == "full"
+        and e.get("mode") == "full"
+        and e.get("hub_id") == h.get("hub_id")
+        and e.get("hk_root_pub") == h.get("hk_root_pub")
+        and e.get("binding_seq") == h.get("binding_seq")
+        and e.get("aliases") == []
+    )
+
+
 BREAK_GLASS: Mapping[str, BreakGlass] = {
-    "hub.leave": BreakGlass("hub.left", ("owner_device_key", "pk")),
+    "hub.leave": BreakGlass("hub.left", ("owner_device_key",)),
+    # L2-C8i-1: with no valid device left, the owner recovers one with the recovery key (D50 ``device.added``, only
+    # in the recovery shape: :func:`is_recovery`) and that device signs the leave. A plain ``device.added`` is not pk.
+    "device.recover": BreakGlass("device.added", ("pk",)),
     "hub.repin": BreakGlass("hub.repinned", ("pk",)),  # backlog (#876): listed so the set is complete, op refused
-    "keys.rotate": BreakGlass(None, ("owner_device_key", "pk")),
+    "keys.rotate": BreakGlass(None, ("owner_device_key",)),
+    # V3-D29 (C10): `orch hub mode full` again on a full workspace that was joined before C10 only re-affirms the
+    # binding and triggers the cut-over. The event is a hub.joined, but the model admits one in a joined position only
+    # in exactly that shape (same hub, root and binding_seq, no aliases): `workspace.hub_joined`.
+    "hub.mode": BreakGlass("hub.joined", ("owner_device_key",), reaffirms_full),
 }
 
 
@@ -57,10 +91,18 @@ def allowed(verb: str, signer: str) -> bool:
     return row is not None and signer in SIGNER_KINDS and signer in row.signers
 
 
-def _recovery_signature(ws: WsCore, e: Mapping[str, Any]) -> bool:
-    """The recovery key ``PK`` signed: the actor's device is not a device of the roster and the line carries the
-    recovery certificate (the shape ``authorize_person`` calls recovery). Same rule as C11's ``hubsign``."""
-    return e["actor"].get("device") not in ws.devices and isinstance(e.get("cert"), Mapping)
+def is_recovery(ws: WsCore, e: Mapping[str, Any]) -> bool:
+    """The D50 recovery shape, the ONE predicate (``authz.authorize_person`` and :func:`signer_kind` both use it): a
+    ``device.added`` signed by the new device itself, which the roster does not know, for a person with no valid device
+    at ``at``. The line then carries the recovery certificate (``PK``)."""
+    from .authz import person_has_valid_device
+
+    a = e.get("actor", {})
+    if e.get("type") != "device.added" or e.get("device") != a.get("device") or a.get("device") in ws.devices:
+        return False
+    if not isinstance(e.get("cert"), Mapping):
+        return False
+    return not person_has_valid_device(ws, a.get("id"), ts(e["at"]))
 
 
 def signer_kind(ws: WsCore, e: Mapping[str, Any]) -> str:
@@ -79,7 +121,53 @@ def signer_kind(ws: WsCore, e: Mapping[str, Any]) -> str:
         return "relay"
     if e.get("auth") not in (None, "passphrase"):
         return "other"  # a phone's label, webauthn, ...: not the terminal
-    if _recovery_signature(ws, e):
+    if is_recovery(ws, e):
         return "pk"
     dev = ws.devices.get(a.get("device"))
     return "owner_device_key" if dev is not None and dev.person == a.get("id") else "other"
+
+
+# ``other`` is deliberately not a member of SIGNER_KINDS: nothing allows it.
+_AGENT_ONLY_TYPES: frozenset[str] | None = None
+
+
+def human_only_types() -> frozenset[str]:
+    """Event types only a person's operation emits (``emits.HUMAN_ONLY`` minus what any agent operation emits)."""
+    global _AGENT_ONLY_TYPES
+    if _AGENT_ONLY_TYPES is None:
+        from .emits import EMITS_V1, HUMAN_ONLY
+
+        human = frozenset().union(*(EMITS_V1[o] for o in HUMAN_ONLY if o in EMITS_V1))
+        agent = frozenset().union(*(t for o, t in EMITS_V1.items() if o not in HUMAN_ONLY))
+        _AGENT_ONLY_TYPES = human - agent
+    return _AGENT_ONLY_TYPES
+
+
+def agent_refusal(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
+    """The same choke point for agents (C8, orchestrator note): in a joined full-mode position an agent line of a
+    human-only type (a decision, a close, a grant) is refused, however its grant reads.
+    Agents keep every other write."""
+    h = ws.hub
+    if not h or h.get("status") != "joined" or h.get("mode") != "full":
+        return None
+    if e["type"] in human_only_types():
+        return Refusal(Code.SIGN_HUB_ONLY, f"{e['type']} is signed through the hub in a full-mode workspace")
+    return None
+
+
+def local_refusal(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
+    """The model's D78 rule for one person event (see the module docstring). ``None``: not in a joined full-mode
+    position, or a break-glass event done as allowed."""
+    h = ws.hub
+    if not h or h.get("status") != "joined" or h.get("mode") != "full" or e.get("auth") == "hub":
+        return None
+    typ = e["type"]
+    row = next((r for r in BREAK_GLASS.values() if r.matches(ws, e)), None)
+    if row is None:
+        return Refusal(Code.SIGN_HUB_ONLY, f"{typ} is signed through the hub in a full-mode workspace")
+    m = ws.members.get(e["actor"]["id"])
+    if m is None or m.role != "owner":
+        return Refusal(Code.SIGN_HUB_ONLY, f"{typ} is break-glass: the owner only")
+    if signer_kind(ws, e) not in row.signers:
+        return Refusal(Code.SIGN_HUB_ONLY, f"{typ} is break-glass: not by this way of signing")
+    return None

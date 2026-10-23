@@ -35,6 +35,7 @@ __all__ = [
     "check_single_store",
     "delete_workdir",
     "ensure_workdir",
+    "workdir_state",
     "workdir_stat",
     "workdir_summary",
     "fresh",
@@ -469,6 +470,21 @@ def _same_disk(root: int) -> int:
     if os.stat("..", dir_fd=root).st_dev != dev:
         raise LayoutError("the work folder is another disk or mount; refusing to use it")
     return dev
+
+
+def workdir_state(layout: Layout, key: str) -> dict[str, bool]:
+    """``{exists, empty}`` of the ticket's work folder, read through descriptors (no link followed). Absent: not
+    existing and empty. :class:`LayoutError`: as :func:`workdir_stat`."""
+    got = _walk_workdir(layout, key, create=False)
+    if got is None:
+        return {"exists": False, "empty": True}
+    try:
+        with os.scandir(got[0]) as it:
+            return {"exists": True, "empty": next(it, None) is None}
+    except OSError:
+        return {"exists": True, "empty": False}  # unreadable counts as used
+    finally:
+        os.close(got[0])
 
 
 def workdir_summary(layout: Layout, key: str, *, limit: int = 20000) -> dict[str, int] | None:

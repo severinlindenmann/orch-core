@@ -291,6 +291,10 @@ def main(
         from orch.runner.cli import main as runner_main
 
         return runner_main(args[1:], env=env, out=out)
+    if args[:2] == ["keys", "rotate"]:  # C8 break-glass: a new workspace key epoch, owner at the terminal (host op)
+        from orch.cli.hub import main as hub_main
+
+        return hub_main(["rotate", *args[2:]], env=env, out=out, err=err, now=now)
     if args[:1] == ["keys"]:  # custody of the person's device key (H5c, orch-v2-host §0.8.6): not a registry op
         from orch.custody.cli import main as keys_main
 
@@ -303,6 +307,10 @@ def main(
         from orch.worktree_cli import main as worktree_main
 
         return worktree_main(args[1:], env=env, out=out, err=err, now=now)
+    if args[:2] == ["relay", "reopen"]:  # V3 C10 M4: the owner reopens the direct relay path after leaving the hub
+        from orch.cli.hub import main as hub_main
+
+        return hub_main(["reopen", *args[2:]], env=env, out=out, err=err, now=now)
     if args[:1] == ["hub"]:  # join and leave a hub, selective mode (V3 C2a): a host client, not a registry op
         from orch.cli.hub import main as hub_main
 

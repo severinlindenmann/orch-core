@@ -36,6 +36,7 @@ from orch.ops.base import Context, Operation, Result
 from orch.ops.errors import GLOBAL_ERRORS, OrchError
 from orch.ops.human import Human
 from orch.ops.runtime import Call, Workspace
+from orch.wsicons import COLOUR_LABELS, ICON_LABELS
 
 __all__ = ["OPS", "get"]
 
@@ -73,6 +74,17 @@ _ORIGIN = {
     "maxLength": 300,
     "pattern": r"^(?:https://[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[1-9][0-9]{0,4})?"
     r"|http://(?:localhost|127\.0\.0\.1)(?::[1-9][0-9]{0,4})?)(?![\s\S])",
+}
+_ICON = {  # the workspace icon: an icon and a colour of the closed lists, or null to clear it
+    "oneOf": [
+        {
+            "type": "object",
+            "properties": {"icon": {"enum": list(ICON_LABELS)}, "colour": {"enum": list(COLOUR_LABELS)}},
+            "required": ["icon", "colour"],
+            "additionalProperties": False,
+        },
+        {"type": "null"},
+    ]
 }
 _MODELS = {  # Model routing: harness -> Start agent mode -> a model of that harness's closed list; null clears all
     "oneOf": [
@@ -118,6 +130,7 @@ _SET = {
             ]
         },
         "models": _MODELS,
+        "icon": _ICON,
         "repos": {
             "type": "object",
             "minProperties": 1,
@@ -377,11 +390,12 @@ def _prior_aliases(hub: dict[str, Any], hk_root_pub: bytes) -> dict[str, str]:
 
 
 def handle_hub_join(ctx: Context, args: dict[str, Any]) -> Result:
-    """``hub.join {hub_card, mode, aliases?}`` (V3 C2a/C2b, hub contract 9.1, spec 8 and 8a): ``hub.joined`` on the
-    workspace log, signed by the owner at the host terminal. The hub card is verified here against the host's own
-    clock and dev state (``ctx.prepare.hub``). A selective join carries no key material beyond the hub's public root;
-    a full join says in its review that the hub will read everything, and the host then adds the ``hub`` member and
-    seals ``WK_e`` to the hub's ``HXK`` (``hub.connect``, never in this op)."""
+    """``hub.join {hub_card, hub_id, mode, aliases?}`` (V3 C2a/C2b, D12c, hub contract 9.1, spec 8 and 8a):
+    ``hub.joined`` on the workspace log, signed by the owner at the host terminal. The hub card is verified here
+    against the host's own clock and dev state (``ctx.prepare.hub``) and must name the ``hub_id`` the invite carried
+    (D12c). A selective join carries no key material beyond the hub's public root; a full join says in its review
+    that the hub will read everything, and the host then adds the ``hub`` member and seals ``WK_e`` to the hub's
+    ``HXK`` (``hub.connect``, never in this op)."""
     from orch.hubclient import wire
     from orch.hubclient.errors import HubRefused
 
@@ -396,6 +410,10 @@ def handle_hub_join(ctx: Context, args: dict[str, Any]) -> Result:
         raise OrchError("hub.already_joined", "this workspace is already joined to a hub; leave it first")
     try:
         verified = wire.verify_card(args["hub_card"], now_ms=facts.now_ms, dev_mode=facts.dev_mode)
+        if (
+            verified["card"]["hub_id"] != args["hub_id"]
+        ):  # D12c/G5: the hub the owner was told, not the one the file names
+            raise HubRefused("other_hub")
         me = h.person.removeprefix("p_")  # the owner is the only person a join may alias (spec 8a)
         aliases = list(args.get("aliases") or [])
         if any(a["person_id"] != me for a in aliases) or len(aliases) > 1:
@@ -432,8 +450,13 @@ def handle_hub_mode(ctx: Context, args: dict[str, Any]) -> Result:
     current = h.store.state.workspace.hub
     if not current or current.get("status") != "joined":
         raise OrchError("hub.not_joined", "this workspace is not joined to a hub")
-    if current.get("mode") != "selective":
-        raise OrchError("hub.already_joined", "this workspace is already in full mode with this hub")
+    again = current.get("mode") == "full"
+    if again and getattr(facts, "direct", "open") != "open":
+        # V3-D29: a full workspace that was NOT cut over yet (a join before C10) signs the new words once; one that
+        # is cut over has nothing left to trigger
+        raise OrchError("hub.already_joined", "this workspace is already in full mode and its direct path is closed")
+    if current.get("mode") not in ("selective", "full"):
+        raise OrchError("hub.already_joined", "this workspace is not in a mode that can be switched")
     try:
         verified = wire.verify_card(
             args["hub_card"], now_ms=facts.now_ms, dev_mode=facts.dev_mode,
@@ -442,7 +465,8 @@ def handle_hub_mode(ctx: Context, args: dict[str, Any]) -> Result:
         payload = wire.joined_payload(
             hk_root_pub=verified["hk_root_pub"],
             mode="full",
-            binding_seq=int(current["binding_seq"]) + 1,
+            # a re-signed full mode keeps its binding (it only triggers the cut-over); a switch is the next binding
+            binding_seq=int(current["binding_seq"]) + (0 if again else 1),
             aliases=[],
             prior_aliases=_prior_aliases(current, verified["hk_root_pub"]),
         )
@@ -467,6 +491,24 @@ def handle_hub_leave(ctx: Context, args: dict[str, Any]) -> Result:
     return h.workspace_result(done, data, "the host now tells the hub that this workspace is unbound")
 
 
+def handle_relay_reopen(ctx: Context, args: dict[str, Any]) -> Result:
+    """``relay.reopen {}`` (V3 C10 M4, L2-E3-3): the owner's signed record that the direct relay path opens again. Only
+    after the workspace left the hub that closed it (the model refuses it while a hub is joined); a human at the
+    terminal with the owner key. The host then deletes the cut-over at the relay and restarts the link."""
+    h = _Human(ctx, "relay.reopen")
+    _owner(h, "relay.reopen")
+    current = h.store.state.workspace.hub
+    if not current:
+        raise OrchError("hub.not_joined", "this workspace never joined a hub")
+    if current.get("status") != "left":
+        raise OrchError(
+            "hub.already_joined", "leave the hub first (orch hub leave): a joined hub keeps the path closed"
+        )
+    event = {"type": "relay.reopened", "hub_id": current["hub_id"]}
+    done = h.run(event, "workspace", "reopen the direct relay path", review=[])
+    return h.workspace_result(done, {"hub_id": current["hub_id"]}, "the host now reopens the direct relay path")
+
+
 _HEX32 = {"type": "string", "pattern": "^[0-9a-f]{32}$"}
 HUB_JOIN = operation(
     "hub.join",
@@ -476,6 +518,11 @@ HUB_JOIN = operation(
     who="human",
     props={
         "hub_card": {"type": "object", "description": "the hub card (hub contract 5), verified by the host"},
+        "hub_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{32}$",
+            "description": "the hub id from the invite (<hub_id>:<code>); the card must name this hub (D12c)",
+        },
         "mode": E("the join mode", "selective", "full"),
         "aliases": {
             "type": "array",
@@ -489,7 +536,7 @@ HUB_JOIN = operation(
             },
         },
     },
-    required=("hub_card", "mode"),
+    required=("hub_card", "hub_id", "mode"),
     emits=("hub.joined",),
     text="ok hub.joined {hub_id} seq={seq}\nnext: {next}",
     data=obj({"hub_id": STR, "mode": STR, "binding_seq": {"type": "integer"}}),
@@ -525,6 +572,20 @@ HUB_LEAVE = operation(
     data=obj({"hub_id": STR, "binding_seq": {"type": "integer"}}),
     errors=(err("role.denied"), err("hub.not_joined")),
     handler=handle_hub_leave,
+)
+
+RELAY_REOPEN = operation(
+    "relay.reopen",
+    "Human only",
+    "Open the direct relay path again after you left the hub that closed it (phones must be paired again).",
+    who="human",
+    props={},
+    required=(),
+    emits=("relay.reopened",),
+    text="ok relay.reopened {hub_id} seq={seq}\nnext: {next}",
+    data=obj({"hub_id": STR}),
+    errors=(err("role.denied"), err("hub.not_joined"), err("hub.already_joined")),
+    handler=handle_relay_reopen,
 )
 
 _PERSON = {"type": "string", "pattern": "^p_[0-9a-f]{32}$"}
@@ -732,6 +793,7 @@ OPS: dict[str, Operation] = {
         HUB_JOIN,
         HUB_MODE,
         HUB_LEAVE,
+        RELAY_REOPEN,
         AC_ACCEPT,
         AC_UNACCEPT,
         TASK_MARK_DONE,

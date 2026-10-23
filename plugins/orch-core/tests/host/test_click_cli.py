@@ -148,3 +148,26 @@ def test_the_on_hint_names_the_prefix_only_when_the_folder_is_not_reached_throug
     monkeypatch.setenv("PWD", os.getcwd())
     code, out, _ = run("host", "convenience", "on", "--state", state)
     assert f"convenience on --workspace {served.service.entry.prefix}" in out
+
+
+def test_convenience_off_asks_to_move_the_key_back_only_with_a_terminal(served, monkeypatch):
+    """V3-D31: `off` clears the flag under the lock (select.turn_off_convenience), then, with a terminal and a key in
+    convenience custody, moves the key back WITHOUT holding the lock during the prompt (L2-1075-4)."""
+    from orch.custody import cli as custody_cli
+    from orch.custody import select
+
+    monkeypatch.setattr(convenience, "_own_device", lambda state, wid: served.lab.ws.owner.device)
+    state = str(served.lab.state)
+    calls, moves = [], []
+    monkeypatch.setattr(select, "turn_off_convenience", lambda st, wid, uid, **kw: calls.append(kw))
+    monkeypatch.setattr(select, "status", lambda st, wid: {"custody": "convenience", "device": "d", "gen": 1})
+    monkeypatch.setattr(select, "downgrade_in_place", lambda st, wid, **kw: moves.append(wid) or select.Selection({}))
+    monkeypatch.setattr(custody_cli, "has_terminal", lambda: False)
+    code, out, _ = run("host", "convenience", "off", "--workspace", served.wid, "--state", state)
+    assert code == 0 and calls == [{"move_key": False}] and moves == [] and "back under your passphrase" not in out
+    monkeypatch.setattr(custody_cli, "has_terminal", lambda: True)
+    code, out, _ = run("host", "convenience", "off", "--workspace", served.wid, "--state", state)
+    assert code == 0 and moves == [served.wid] and "back under your passphrase" in out
+    monkeypatch.setattr(select, "downgrade_in_place", lambda *a, **k: (_ for _ in ()).throw(select.CustodyError("x")))
+    code, out, _ = run("host", "convenience", "off", "--workspace", served.wid, "--state", state)
+    assert code != 0 and "could not be moved back" in out and "orch keys custody passphrase" in out

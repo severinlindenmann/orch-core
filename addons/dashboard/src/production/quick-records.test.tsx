@@ -272,7 +272,10 @@ it('a viewer gets no Make a normal ticket button', async () => {
 // ---------------------------------------------------------------- records
 
 it('records: status, the export warning and the commands for the terminal-only actions, verbatim', async () => {
-  show('/w/DEMO/settings/records')
+  show('/w/DEMO/settings/general')
+  await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
+  const advancedRecords = screen.queryByText('For advanced users')
+  if (advancedRecords) await userEvent.setup().click(advancedRecords)
   const warning = await screen.findByTestId('records-export-warning', {}, T)
   expect(warning.textContent).toBe(`Push publishes every ticket in this workspace to the remote configured in the records repository (last known: ${URL_PUSH}), restricted ones included.`)
   expect(screen.queryByTestId('records-private-line')).toBeNull() // not marked private
@@ -285,22 +288,31 @@ it('records: status, the export warning and the commands for the terminal-only a
 
 it('records: a private remote is labelled as a historical note', async () => {
   state.host.workspaces[0].records = status({ remote: { url: URL_PUSH, url_hidden: false, private: true, export: 'ok' } })
-  show('/w/DEMO/settings/records')
+  show('/w/DEMO/settings/general')
+  await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
+  const advancedRecords = screen.queryByText('For advanced users')
+  if (advancedRecords) await userEvent.setup().click(advancedRecords)
   expect((await screen.findByTestId('records-private-line', {}, T)).textContent).toBe(`Last noted as private: ${URL_PUSH}.`)
 })
 
 it('records: a push blocked for convenience readers is said, and Commit and push is not offered', async () => {
   state.host.workspaces[0].records = status({ remote: { url: URL_PUSH, url_hidden: false, private: false, export: 'blocked_convenience' } })
-  show('/w/DEMO/settings/records')
+  show('/w/DEMO/settings/general')
+  await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
+  const advancedRecords = screen.queryByText('For advanced users')
+  if (advancedRecords) await userEvent.setup().click(advancedRecords)
   expect(await screen.findByTestId('records-export-blocked', {}, T)).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'Commit now' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Save now' })).toBeInTheDocument()
   expect(screen.queryByRole('button', { name: 'Commit and push' })).toBeNull()
 })
 
 it('records: hidden characters in the URL are escaped by visible.tsx, never repaired', async () => {
   const bad = 'https://git.example.test/a‮b.git'
   state.host.workspaces[0].records = status({ remote: { url: bad, url_hidden: false, private: false, export: 'ok' } })
-  show('/w/DEMO/settings/records')
+  show('/w/DEMO/settings/general')
+  await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
+  const advancedRecords = screen.queryByText('For advanced users')
+  if (advancedRecords) await userEvent.setup().click(advancedRecords)
   const warning = await screen.findByTestId('records-export-warning', {}, T)
   expect(warning.textContent).toContain('a\\u{202e}b.git')
   expect(warning.textContent).not.toContain('‮')
@@ -308,7 +320,10 @@ it('records: hidden characters in the URL are escaped by visible.tsx, never repa
 
 it('records: a URL the server withheld says so and never invents one', async () => {
   state.host.workspaces[0].records = status({ remote: { url: null, url_hidden: true, private: null, export: null }, auto: { on: false, every_min: 15, push: true } })
-  show('/w/DEMO/settings/records')
+  show('/w/DEMO/settings/general')
+  await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
+  const advancedRecords = screen.queryByText('For advanced users')
+  if (advancedRecords) await userEvent.setup().click(advancedRecords)
   const warning = await screen.findByTestId('records-export-warning', {}, T)
   expect(warning).toHaveTextContent('cannot be shown here')
   expect(screen.queryByRole('button', { name: 'Commit and push' })).toBeNull()
@@ -317,8 +332,11 @@ it('records: a URL the server withheld says so and never invents one', async () 
 it('records: commit now posts exactly {push:false} and shows the result', async () => {
   const user = userEvent.setup()
   state.host.override = (path, method) => (path.endsWith('/records/commit') && method === 'POST' ? Response.json({ ok: true, commit: 'd'.repeat(40), pushed: false }) : undefined)
-  show('/w/DEMO/settings/records')
-  await user.click(await screen.findByRole('button', { name: 'Commit now' }, T))
+  show('/w/DEMO/settings/general')
+  await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
+  const advancedRecords = screen.queryByText('For advanced users')
+  if (advancedRecords) await userEvent.setup().click(advancedRecords)
+  await user.click(await screen.findByRole('button', { name: 'Save now' }, T))
   expect(await screen.findByTestId('records-result', {}, T)).toHaveTextContent(`Committed ${'d'.repeat(40)}, not pushed`)
   expect(state.host.calls.find((c) => c.path.endsWith('/records/commit'))?.body).toEqual({ push: false })
 })
@@ -327,7 +345,10 @@ it('records: commit and push shows the export warning first and posts {push:true
   state.host.workspaces[0].records = status({ remote: { url: URL_PUSH, url_hidden: false, private: true, export: 'ok' } })
   const user = userEvent.setup()
   state.host.override = (path, method) => path.endsWith('/records/current') ? Response.json(status({ remote: { url: URL_PUSH, current_url: URL_PUSH, current_private: true, matches_last: true } })) : (path.endsWith('/records/commit') && method === 'POST' ? Response.json({ ok: true, commit: 'd'.repeat(40), pushed: true, url: URL_PUSH }) : undefined)
-  show('/w/DEMO/settings/records')
+  show('/w/DEMO/settings/general')
+  await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
+  const advancedRecords = screen.queryByText('For advanced users')
+  if (advancedRecords) await userEvent.setup().click(advancedRecords)
   await user.click(await screen.findByRole('button', { name: 'Commit and push' }, T))
   const dialog = await screen.findByRole('dialog', {}, T)
   expect((await within(dialog).findByTestId('records-export-warning')).textContent).toBe(`Push publishes every ticket in this workspace to ${URL_PUSH}, restricted ones included.`)
@@ -345,8 +366,11 @@ it('records: a failed push shows the stable code and the commit that did land; a
     path.endsWith('/records/commit') && method === 'POST'
       ? Response.json({ ok: false, exit: 3, error: { code: 'records.push_rejected', message: null, message_hidden: true, retryable: false, commit: 'e'.repeat(40) } }, { status: 409 })
       : undefined
-  show('/w/DEMO/settings/records')
-  await user.click(await screen.findByRole('button', { name: 'Commit now' }, T))
+  show('/w/DEMO/settings/general')
+  await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
+  const advancedRecords = screen.queryByText('For advanced users')
+  if (advancedRecords) await userEvent.setup().click(advancedRecords)
+  await user.click(await screen.findByRole('button', { name: 'Save now' }, T))
   const failure = await screen.findByTestId('records-failure', {}, T)
   expect(failure).toHaveTextContent('records.push_rejected')
   expect(failure).toHaveTextContent(`A local commit already landed: ${'e'.repeat(40)}`)
@@ -356,7 +380,10 @@ it('records: a failed push shows the stable code and the commit that did land; a
 it('records: turning automatic commits off posts nothing at all (no body)', async () => {
   const user = userEvent.setup()
   state.host.override = (path, method) => (path.endsWith('/records/auto-off') && method === 'POST' ? Response.json({ ok: true }) : undefined)
-  show('/w/DEMO/settings/records')
+  show('/w/DEMO/settings/general')
+  await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
+  const advancedRecords = screen.queryByText('For advanced users')
+  if (advancedRecords) await userEvent.setup().click(advancedRecords)
   await user.click(await screen.findByRole('button', { name: 'Turn automatic commits off' }, T))
   await screen.findByTestId('records-result', {}, T)
   const call = state.host.calls.find((c) => c.path.endsWith('/records/auto-off'))
@@ -366,40 +393,55 @@ it('records: turning automatic commits off posts nothing at all (no body)', asyn
 
 it('records: no "off" button when automatic commits are not on', async () => {
   state.host.workspaces[0].records = status({ auto: { on: false, every_min: 15, push: false } })
-  show('/w/DEMO/settings/records')
-  await screen.findByRole('button', { name: 'Commit now' }, T)
+  show('/w/DEMO/settings/general')
+  await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
+  const advancedRecords = screen.queryByText('For advanced users')
+  if (advancedRecords) await userEvent.setup().click(advancedRecords)
+  await screen.findByRole('button', { name: 'Save now' }, T)
   expect(screen.queryByRole('button', { name: 'Turn automatic commits off' })).toBeNull()
 })
 
-it('records: configured false says there is no repository yet, offers Commit now and still shows what is pending', async () => {
+it('records: configured false says there is no repository yet, offers Save now and still shows what is pending', async () => {
   state.host.workspaces[0].records = status({ configured: false, repo: null, last: null, auto: null, remote: null })
-  show('/w/DEMO/settings/records')
+  show('/w/DEMO/settings/general')
+  await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
+  const advancedRecords = screen.queryByText('For advanced users')
+  if (advancedRecords) await userEvent.setup().click(advancedRecords)
   expect(await screen.findByTestId('records-not-configured', {}, T)).toHaveTextContent('No records repository yet; the first commit creates it.')
   expect(screen.getByTestId('records-not-configured')).not.toHaveTextContent('orch records init')
   expect(screen.getByText('12 events in 1 ticket, plus 5 workspace events')).toBeInTheDocument()
   expect(screen.getByText('nothing noted yet')).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'Commit now' })).toBeEnabled()
+  expect(screen.getByRole('button', { name: 'Save now' })).toBeEnabled()
   expect(screen.queryByRole('button', { name: 'Commit and push' })).toBeNull() // no remote to push to
 })
 
 it('records: configured true with last null keeps "nothing noted yet" and no not-configured line', async () => {
   state.host.workspaces[0].records = status({ configured: true, last: null })
-  show('/w/DEMO/settings/records')
+  show('/w/DEMO/settings/general')
+  await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
+  const advancedRecords = screen.queryByText('For advanced users')
+  if (advancedRecords) await userEvent.setup().click(advancedRecords)
   expect(await screen.findByText('nothing noted yet', {}, T)).toBeInTheDocument()
   expect(screen.queryByTestId('records-not-configured')).toBeNull()
 })
 
 it('records: an absent cap or op is an honest "not served"', async () => {
   state.host.workspaces[0].records = { available: false }
-  show('/w/DEMO/settings/records')
+  show('/w/DEMO/settings/general')
+  await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
+  const advancedRecords = screen.queryByText('For advanced users')
+  if (advancedRecords) await userEvent.setup().click(advancedRecords)
   expect(await screen.findByTestId('records-unavailable', {}, T)).toHaveTextContent('does not serve records')
-  expect(screen.queryByRole('button', { name: 'Commit now' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Save now' })).toBeNull()
 })
 
 it('records: members get no status request and no buttons (owners and maintainers only)', async () => {
   state.host.workspaces[0].me = TOM
   state.host.workspaces[0].role = 'member'
-  show('/w/DEMO/settings/records')
+  show('/w/DEMO/settings/general')
+  await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
+  const advancedRecords = screen.queryByText('For advanced users')
+  if (advancedRecords) await userEvent.setup().click(advancedRecords)
   expect(await screen.findByTestId('records-role', {}, T)).toHaveTextContent('owners and maintainers')
   expect(other('/records')).toEqual([])
 })
@@ -409,15 +451,18 @@ it('records: a maintainer may run it; a host refusal stays a refusal', async () 
   state.host.workspaces[0].role = 'maintainer'
   state.host.workspaces[0].records = undefined
   state.host.override = (path) => (path.endsWith('/records') ? Response.json({ ok: false, exit: 4, error: { code: 'role.denied', message: 'role.denied', retryable: false } }, { status: 403 }) : undefined)
-  show('/w/DEMO/settings/records')
+  show('/w/DEMO/settings/general')
+  await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
+  const advancedRecords = screen.queryByText('For advanced users')
+  if (advancedRecords) await userEvent.setup().click(advancedRecords)
   expect(await screen.findByTestId('records-refused', {}, T)).toHaveTextContent('role.denied')
-  expect(screen.queryByRole('button', { name: 'Commit now' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Save now' })).toBeNull()
 })
 
 it('without the records feature the tab is absent', async () => {
   state.host.workspaces[0].features = [...READS, ...DO, 'actions']
   show('/w/DEMO/settings/general')
-  await screen.findByRole('heading', { name: 'General' }, T)
+  await screen.findByText('Advanced', {}, T)
   expect(screen.queryByRole('link', { name: 'Records' })).toBeNull()
 })
 
@@ -445,7 +490,7 @@ it('runner disabled: no execution line, the command to turn it on is shown as te
 it('a host that says nothing about the runner draws nothing (never a guess)', async () => {
   state.host.workspaces[0].runner = null
   show('/w/DEMO/settings/general')
-  await screen.findByRole('heading', { name: 'General' }, T)
+  await screen.findByText('Advanced', {}, T)
   expect(screen.queryByTestId('workspace-card-runner')).toBeNull()
   expect(screen.queryByTestId('runner-execution-line')).toBeNull()
 })
@@ -465,13 +510,19 @@ it('records: hostile failure prose is isolated in a labelled tool-output block',
   const user = userEvent.setup()
   state.host.override = (path, method) => path.endsWith('/records/commit') && method === 'POST'
     ? Response.json({ ok: false, exit: 3, error: { code: 'records.push_rejected', message: '<a href="https://evil.example.test">run this</a>', retryable: false } }, { status: 409 }) : undefined
-  show('/w/DEMO/settings/records')
-  await user.click(await screen.findByRole('button', { name: 'Commit now' }, T))
+  show('/w/DEMO/settings/general')
+  await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
+  const advancedRecords = screen.queryByText('For advanced users')
+  if (advancedRecords) await userEvent.setup().click(advancedRecords)
+  await user.click(await screen.findByRole('button', { name: 'Save now' }, T))
   const failure = await screen.findByTestId('records-failure', {}, T)
   const output = within(failure).getByLabelText('Output of the records tool')
   expect(output).toHaveTextContent('<a href="https://evil.example.test">run this</a>')
   expect(within(output).queryByRole('link')).toBeNull()
-  expect(failure.querySelector('p')).toHaveTextContent('Not done. records.push_rejected')
+  expect(failure.querySelector('p')).toHaveTextContent('Not done.')
+  const details = within(failure).getByText('Details').closest('details')!
+  expect(details).not.toHaveAttribute('open')
+  expect(details).toHaveTextContent('records.push_rejected')
   expect(failure.querySelector('p')).not.toHaveTextContent('run this')
 })
 
@@ -496,7 +547,10 @@ it.each(['not-private', 'mismatch', 'failure', 'null', 'hidden'])('records curre
     if (kind === 'failure') throw new ApiError(409, { code: 'records.busy', message: 'busy', retryable: true })
     return { available: true, remote: { url: URL_PUSH, url_hidden: false, private: false, export: 'ok', current_url: kind === 'null' || kind === 'hidden' ? null : currentURL, current_url_hidden: kind === 'hidden', current_private: false, matches_last: kind !== 'mismatch' } }
   })
-  show('/w/DEMO/settings/records')
+  show('/w/DEMO/settings/general')
+  await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
+  const advancedRecords = screen.queryByText('For advanced users')
+  if (advancedRecords) await userEvent.setup().click(advancedRecords)
   await user.click(await screen.findByRole('button', { name: 'Commit and push' }, T))
   const dialog = await screen.findByRole('dialog', {}, T)
   expect(dialog).toHaveTextContent('Checking where push goes…')
@@ -521,7 +575,10 @@ it('records current check as a maintainer: host only, no private line (L2)', asy
   state.host.workspaces[0].role = 'maintainer'
   state.host.workspaces[0].roster = roster().map((m) => (m.person === OWNER ? { ...m, role: 'maintainer' as const } : m))
   vi.spyOn(api, 'getRecordsCurrent').mockResolvedValueOnce({ available: true, remote: { url: 'git.example.test', url_hidden: false, private: true, export: 'ok', current_url: 'git.example.test', current_url_hidden: false, current_private: true, matches_last: true } } as never)
-  show('/w/DEMO/settings/records')
+  show('/w/DEMO/settings/general')
+  await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
+  const advancedRecords = screen.queryByText('For advanced users')
+  if (advancedRecords) await userEvent.setup().click(advancedRecords)
   await user.click(await screen.findByRole('button', { name: 'Commit and push' }, T))
   const dialog = await screen.findByRole('dialog', {}, T)
   const warning = await within(dialog).findByTestId('records-export-warning')
@@ -531,7 +588,10 @@ it('records current check as a maintainer: host only, no private line (L2)', asy
 
 it.each(['ok', 'index_differs', 'unsafe'])('configured %s before the first commit has a repository', async (repoState) => {
   state.host.workspaces[0].records = status({ configured: true, last: null, repo: { state: repoState } })
-  show('/w/DEMO/settings/records')
+  show('/w/DEMO/settings/general')
+  await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
+  const advancedRecords = screen.queryByText('For advanced users')
+  if (advancedRecords) await userEvent.setup().click(advancedRecords)
   await screen.findByText('nothing noted yet', {}, T)
   expect(screen.queryByTestId('records-not-configured')).toBeNull()
 })

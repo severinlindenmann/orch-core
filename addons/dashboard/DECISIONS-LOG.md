@@ -2036,3 +2036,9 @@ Revert: remove Wiki route registration and feature advertisement; repository pag
 - **Why:** Each command must describe exactly one supported change; generating the command is not proof it ran. Hub settings never sign, verify invites, or invent Terminal fingerprints.
 - **Revert:** Remove the Hub UI integrations and exact-command entry point; retain the supplied hub API and mocks.
 - **Validation:** TypeScript only for this task. No servers or test runners started. No browser layout verification performed.
+
+### 2026-10-23 — General settings and records (run-8 1.2 / 1.8)
+
+- **Decision:** Put workspace identity, approving, agent access and repositories on General; keep technical information, reservation times and Records in a closed Advanced fold. Records uses host status for its summary and preserves push confirmation and terminal-only operations in For advanced users.
+- **Why:** Keep everyday settings compact while retaining the existing signing and records operations. Save agent access independently from reservation times.
+- **Revert:** Restore the previous General layout and Records page, along with the navigation and interaction tests.

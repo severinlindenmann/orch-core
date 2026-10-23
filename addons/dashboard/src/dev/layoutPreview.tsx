@@ -12,7 +12,7 @@ import type { QuickRow, RecordsStatus } from '@/api/quickRecords'
 import { ApiError } from '@/api/types'
 import { SettingsFrame } from '@/app/pages/settings'
 import { HostGeneral } from '@/app/pages/settings/host/General'
-import { HostRecords } from '@/app/pages/settings/host/Records'
+import { RecordsBlock } from '@/app/pages/settings/host/Records'
 import { HostAddOns } from '@/app/pages/settings/host/AddOns'
 import { HostDevices } from '@/app/pages/settings/host/Devices'
 import { createPairFixture, installPairFixture, type PairFixture, type PairFixtureOptions } from './pairFixture'
@@ -929,7 +929,7 @@ export function LayoutPreview({ name }: { name: string }) {
   if (scenario.startsWith('records-'))
     return (
       <SettingsFrame current="records" addon={undefined} ws={workspace.id} tabs={HOST_TABS}>
-        <HostRecords workspace={workspace} />
+        <RecordsBlock workspace={workspace} />
       </SettingsFrame>
     )
   return (

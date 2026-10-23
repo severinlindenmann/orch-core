@@ -117,7 +117,7 @@ it('the workspace list keeps working when one host stops while the page is open'
 it('switching workspace with a hand-off panel open cancels that request at the host', async () => {
   const user = userEvent.setup()
   show(`/w/DEMO/settings/members?ws=${uuid8(B)}`)
-  await screen.findByRole('table', {}, T)
+  await screen.findByRole('list', { name: 'People' }, T)
   // Go to the other workspace through the switcher, so that Back leads to this one.
   await user.click(screen.getByRole('button', { name: 'Switch workspace' }))
   await user.click(await screen.findByRole('button', { name: new RegExp(`Billing \\(${uuid8(A)}\\)`) }))
@@ -138,7 +138,7 @@ it('switching workspace with a hand-off panel open cancels that request at the h
 it('the trigger and the hand-off dialog say which workspace when the prefix is shared', async () => {
   const user = userEvent.setup()
   show(`/w/DEMO/settings/members?ws=${uuid8(B)}`)
-  await screen.findByRole('table', {}, T)
+  await screen.findByRole('list', { name: 'People' }, T)
   expect(document.querySelector('[data-ws-uuid-current]')).toHaveTextContent(uuid8(B))
   await user.click(screen.getByRole('button', { name: 'Remove Tom' }))
   const dialog = await screen.findByRole('dialog', {}, T)
@@ -169,7 +169,7 @@ it('a name with a bidi override is shown escaped and cannot fake or reorder the 
   const user = userEvent.setup()
   state.host.workspaces[1].name = 'Main\u202e (a1b2c3d4)'
   show(`/w/DEMO/settings/members?ws=${uuid8(B)}`)
-  await screen.findByRole('table', {}, T)
+  await screen.findByRole('list', { name: 'People' }, T)
   await user.click(screen.getByRole('button', { name: 'Remove Tom' }))
   const dialog = await screen.findByRole('dialog', {}, T)
   const line = within(dialog).getByTestId('handoff-workspace')
@@ -190,7 +190,7 @@ it('a name that looks like an id comes after the real id, which sits in its own 
   const user = userEvent.setup()
   state.host.workspaces[1].name = `Main id ${uuid8(A)}`
   show(`/w/DEMO/settings/members?ws=${uuid8(B)}`)
-  await screen.findByRole('table', {}, T)
+  await screen.findByRole('list', { name: 'People' }, T)
   await user.click(screen.getByRole('button', { name: 'Remove Tom' }))
   const dialog = await screen.findByRole('dialog', {}, T)
   const line = within(dialog).getByTestId('handoff-workspace')

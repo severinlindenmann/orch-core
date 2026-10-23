@@ -138,8 +138,9 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
   }
 
   return (
-    <Section title="Sign in the dashboard">
-      <div data-testid="workspace-card-signing" className="space-y-3 text-[13px]">
+    <Section title="Approving">
+      <div data-testid="workspace-card-signing" className="relative space-y-3 text-[13px]">
+        <p className="min-h-8 pr-28 font-medium">One click</p>
         <ClickRisk />
         {card?.risk_ack && <p>Risk notice acknowledged on <time dateTime={card.risk_ack}>{fmtDateTime(card.risk_ack)}</time></p>}
         <p data-testid="signing-state">
@@ -174,7 +175,7 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
             <Command command={convenienceOnCommand(workspace.prefix)} what="orch host convenience on" />
           </p>
         ) : mode === 'idle' ? (
-          <div className="flex justify-end">
+          <div className="absolute right-0 top-0 !mt-0 flex justify-end">
             {on ? (
               <Button type="button" variant="outline" onClick={() => open('off')}>
                 Turn off

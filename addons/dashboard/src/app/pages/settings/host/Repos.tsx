@@ -127,7 +127,7 @@ export function ReposSection({ workspace, data, onSettled }: { workspace: Worksp
       ) : (
         <>
           {repos.length === 0 ? (
-            <p className="text-[13px] text-text-muted">No repositories are declared yet.{mayEdit ? ' Add the folder of each repository your tickets work in.' : ''}</p>
+            <p className="text-[13px] text-text-muted">No project folders yet.</p>
           ) : (
             <ul aria-label="Repositories" className="divide-y divide-border text-[13px]">
               {repos.map((r) => (
@@ -166,7 +166,7 @@ export function ReposSection({ workspace, data, onSettled }: { workspace: Worksp
             {mayEdit && (
               <Button size="sm" onClick={() => open()}>
                 <Plus />
-                Add repository
+                Add folder
               </Button>
             )}
             {why && <OwnerNote id="repos-why">{why}</OwnerNote>}

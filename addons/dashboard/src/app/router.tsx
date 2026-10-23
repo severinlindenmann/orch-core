@@ -43,7 +43,7 @@ const AddonPage = lazyPage(() => import('./pages/AddonPage'), 'AddonPage')
 const addonNodes = () => import('@/addon-ui/preloadNodes').then((m) => m.preloadAddonNodes())
 
 /** Under this a page simply replaces the old one; past it the page's skeleton shows, for at least PENDING_MIN_MS. */
-export const PENDING_MS = 200
+export const PENDING_MS = 120
 export const PENDING_MIN_MS = 300
 
 /** The tester's checklist (not in the nav; opened with `orch dashboard open /checklist`). */

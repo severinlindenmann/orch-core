@@ -36,9 +36,9 @@ it('a hand-off refused with sign.convenience_readers says the reason in plain wo
       : undefined
   const user = userEvent.setup()
   show('/w/DEMO/settings/general')
-  const input = await screen.findByRole('button', { name: '1 day' }, T)
-  await user.click(input)
-  await user.click(screen.getByRole('button', { name: 'Save settings' }))
+  const input = await screen.findByRole('combobox', { name: 'Longest agent access you can give' }, T)
+  await user.selectOptions(input, '24')
+  await user.click(screen.getByRole('button', { name: 'Save' }))
   const dialog = await screen.findByRole('dialog', {}, T)
   const end = await within(dialog).findByText(READERS_SENTENCE.reader_too_old, {}, T)
   const box = end.closest('[data-handoff-end]') as HTMLElement

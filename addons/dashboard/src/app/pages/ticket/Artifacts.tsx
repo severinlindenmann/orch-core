@@ -20,7 +20,7 @@ import { cn } from '@/lib/utils'
 import { agentName, ago, fmtBytes, Mono, Pill, shortHash, type Jump, type TabProps } from './shared'
 import { addonHairline, addonTile } from '@/addon-ui/addonClasses'
 import { queries } from '@/api/queries'
-import { artifactTextQuery, sameDigest, capText, isTextArtifact, looksBinary, TEXT_PREVIEW_BYTES } from '@/api/artifactText'
+import { artifactTextQuery, sameDigest, capText, isHtmlArtifact, isTextArtifact, looksBinary, TEXT_PREVIEW_BYTES } from '@/api/artifactText'
 import { prose } from '@/components/sign/visible'
 
 export const KIND_ICON: Record<Artifact['kind'], typeof FileText> = {
@@ -212,7 +212,7 @@ const NO_PREVIEW = <p className="text-[13px] text-text-muted">No inline preview 
  * (invisible, control and direction-changing characters become visible \u{...}), never as HTML, and only its first
  * 64 KiB. A file that is not text, or cannot be read, keeps the "no inline preview" line.
  */
-function RemoteText({ a, ticket }: { a: Artifact; ticket: string }) {
+function RemoteText({ a, ticket, html = false, agentHtml = false }: { a: Artifact; ticket: string; /** An HTML document: shown in HtmlViewer's inert frame, not as text. */ html?: boolean; agentHtml?: boolean }) {
   const workspaces = useQuery(queries.workspaces())
   const home = workspaceOfTicket(ticket, workspaces.data ?? [])
   const q = useQuery({ ...artifactTextQuery(home?.id ?? '', ticket, a.name, a.sha256), enabled: !!home })
@@ -224,6 +224,9 @@ function RemoteText({ a, ticket }: { a: Artifact; ticket: string }) {
   // A file read only in part cannot be checked against its digest: not shown.
   if (q.data.truncated || !q.data.verified) return <p className="text-[13px] text-text-muted">This file is too large to preview. The sha256 above is what an approval binds.</p>
   const { shown, cut, bytes } = capText(q.data.text.replace(/\r\n/g, '\n'))
+  // HTML evidence goes through the same viewer as an inline page (inert sandboxed frame, own switch). A page cut at 64 KiB
+  // would be a different document from the one the digest names: not previewed.
+  if (html) return cut ? <p className="text-[13px] text-text-muted">This page is too large to preview. The sha256 above is what an approval binds.</p> : <HtmlViewer a={{ ...a, preview: shown }} agentHtml={agentHtml} />
   return (
     <div className="space-y-2">
       <p className="text-[12px] text-text-muted">
@@ -244,7 +247,10 @@ export function Viewer({ a, agentHtml, ticket }: { a: Artifact; agentHtml: boole
         <p className="text-[12px] text-text-faint">Placeholder rendering. The real host serves the file; the sha256 above is what an approval binds.</p>
       </div>
     )
-  if (!a.preview) return ticket && isTextArtifact(a) ? <RemoteText a={a} ticket={ticket} /> : NO_PREVIEW
+  if (!a.preview) {
+    if (ticket && isHtmlArtifact(a) && DOCUMENT_KINDS.includes(a.kind)) return <RemoteText a={a} ticket={ticket} html agentHtml={agentHtml} />
+    return ticket && isTextArtifact(a) ? <RemoteText a={a} ticket={ticket} /> : NO_PREVIEW
+  }
   if (isHtmlDocument(a)) return <HtmlViewer a={a} agentHtml={agentHtml} />
   if (a.kind === 'log') return <TextViewer text={a.preview} label={`Log ${a.name}`} />
   if (a.kind === 'dataset' || /\.csv$/.test(a.name)) {

@@ -312,7 +312,7 @@ export function VerdictRow({ item, ticket, now, expanded, onToggle, sign, decide
         ) : (
           <>
             <Button asChild size="sm" variant="ghost">
-              <Link to="/ticket/$key" params={{ key: item.ticket }}>
+              <Link to="/ticket/$key" params={{ key: item.ticket }} search={{ tab: 'acceptance' }}>
                 Evidence
               </Link>
             </Button>

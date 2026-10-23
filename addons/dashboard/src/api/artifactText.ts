@@ -31,6 +31,11 @@ export function isTextArtifact(a: Pick<Artifact, 'name' | 'kind' | 'bytes' | 'ad
   return TEXT_NAME.test(a.name) || TEXT_KINDS.includes(a.kind)
 }
 
+/** An HTML file with a file of its own: read like text, then shown only by the sandboxed viewer (never as live markup here). */
+export function isHtmlArtifact(a: Pick<Artifact, 'name' | 'bytes' | 'addon' | 'url'>): boolean {
+  return !a.addon && !a.url && a.bytes != null && /\.html?$/i.test(a.name)
+}
+
 /** The first `TEXT_PREVIEW_BYTES` bytes of `text` as text (never ending in half a character), and whether it was cut. */
 export function capText(text: string, limit = TEXT_PREVIEW_BYTES): { shown: string; cut: boolean; bytes: number } {
   const bytes = new TextEncoder().encode(text)

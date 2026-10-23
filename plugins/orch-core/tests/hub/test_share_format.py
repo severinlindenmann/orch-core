@@ -318,7 +318,7 @@ def test_item_payloads_are_the_exact_contract_content():
     }
     assert items["ticket"].payload["labels"] == ["a", "b"] and items["ticket"].payload["status"] == "open"
     assert items["question"].payload["text"] == "line one\nline two"
-    summaries = sorted(i.payload["type"] for i in SH.select([{"kind": "needs_you"}], [t]))
+    summaries = sorted(i.payload["type"] for i in SH.select([{"kind": "needs_you"}], [t]) if i.kind == "summary")
     assert summaries == ["gate", "question"]  # the needs the contract has no type for are not shared
     for i in items.values():
         F.check_content(SH.ITEM_KIND[i.kind], i.payload)

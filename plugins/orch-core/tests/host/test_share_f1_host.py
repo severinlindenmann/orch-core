@@ -45,8 +45,8 @@ def test_the_put_carries_the_roster_version_and_the_question_hash(world, hub):
 
     _, key = world.ticket("Savings")
     ok(agent(world, "ask", {"ref": key, "text": "which bank?"}))
-    assert confirm_sync(world)["put"] == 1
-    (item,) = hub.opened
+    assert confirm_sync(world)["put"] == 2  # the needs-you summary (no f1) and the question item
+    (item,) = [i for i in hub.opened if i["item_kind"] == "question"]
     roster = world.service.store.state.workspace.roster_v
     q = world.service.store.state.tickets[item["chain"]["log"]].questions[0]
     assert item["f1"] == {"roster_v": roster, "gates": {}, "questions": {"Q1": {"hash": q.hash}}}
@@ -60,15 +60,16 @@ def test_a_member_change_re_puts_every_item_under_a_higher_version(world, hub):
     rule = {"kind": "questions"}
     plan = ok(req(world, "share.preview", {"add": rule}))["data"]["plan"]
     ok(req(world, "share.rule_add", {"rule": rule, "expect": plan}))
-    assert hub.count("share_put") == 2
+    assert hub.count("share_put") == 2  # the question item, the needs-you summary
     before = world.service.store.state.workspace.roster_v
     assert ok(req(world, "share.sync"))["data"]["put"] == 0  # nothing changed: nothing re-sent
     world.person_event("role.changed", person=world.quinn.ref, role="maintainer")  # a member change
     after = world.service.store.state.workspace.roster_v
     assert after == before + 1
     got = ok(req(world, "share.sync"))["data"]
-    assert got["put"] == 2 and hub.count("share_put") == 4
-    assert sorted(i["item_version"] for i in hub.opened[2:]) == [2, 2]
+    # only the question item has an f1 to refresh; the needs-you summary has none and stays as it is
+    assert got["put"] == 1 and hub.count("share_put") == 3
+    assert [i["item_version"] for i in hub.opened[2:]] == [2]
     assert {i["f1"]["roster_v"] for i in hub.opened[2:]} == {after}
 
 

@@ -26,6 +26,8 @@ _NO_TICKET_EFFECT = frozenset(
     {
         "device.added",
         "device.removed",
+        "device.exposed",
+        "device.rotated",
         "grant.issued",
         "grant.requested",
         "projection.repaired",

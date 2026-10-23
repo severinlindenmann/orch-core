@@ -276,13 +276,13 @@ def act(w, rnd, uids, grants, st_):
         w.clock += __import__("datetime").timedelta(minutes=rnd.choice([1, 30, 90, 200]))
         return uid, "log.added", agent, {"text": "tick"}
     if kind == 17:
-        q = {"id": "Q1", "to": w.people["tom"], "text": rnd.choice(TEXTS), "blocking": True}
+        q = {"id": "Q1", "to": w.people["tom"], "text": rnd.choice(TEXTS), "blocking": True, "kind": "text"}
         qid = canon.question_id(w.workspace_id, uid, "Q1")
         return (
             uid,
             "question.asked",
             agent,
-            {"question": q, "qid": qid, "hash": canon.question_hash(qid, uid, q["text"], None)},
+            {"question": q, "qid": qid, "hash": canon.question_hash(qid, uid, q)},
         )
     if kind == 18 and v.questions:
         return uid, "question.answered", person, {"question": "Q1", "hash": v.questions[0].hash, "text": "ok"}

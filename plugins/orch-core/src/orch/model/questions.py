@@ -1,12 +1,13 @@
-"""Questions (T6; ticket-format §5.4.1, §5.6): the last ``question.asked`` for an id defines it; the first valid
-signed answer for the current question hash wins. Phone ``evidence`` answers are not in P1 (§5.3)."""
+"""Questions (T6; ticket-format §5.4.1, §5.6, §5.6.1): the last ``question.asked`` for an id defines it; the first
+valid signed answer for the current question hash wins. Shape and answers follow the question's ``kind``
+(``orch.canon.question``). Phone ``evidence`` answers are not in P1 (§5.3)."""
 
 from __future__ import annotations
 
 import copy
 from typing import Any
 
-from orch.canon import HashError, question_hash, question_id
+from orch.canon import HashError, QuestionError, question_hash, question_id, validate_answer
 
 from . import identity
 from .codes import Code, Refusal
@@ -50,9 +51,12 @@ def asked(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
     q = e["question"]
     try:
         qid = question_id(ws.workspace_id, t.uid, q["id"])
-        h = question_hash(qid, t.uid, q["text"], q.get("options"))
     except HashError as err:
         return Refusal(Code.QUESTION_BAD_ID, str(err))
+    try:
+        h = question_hash(qid, t.uid, q)  # validates the whole question (kind, limits, text rules), replay too
+    except HashError as err:
+        return Refusal(Code.QUESTION_BAD_HASH, str(err))
     if e["qid"] != qid:
         return Refusal(Code.QUESTION_BAD_ID, "qid is not derived from the question id (§5.6)")
     if e["hash"] != h:
@@ -84,10 +88,10 @@ def answered(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
     person = sg.person
     if not may_answer(ws, t, cur.question, person, sg.role):
         return Refusal(Code.ANSWER_NOT_ALLOWED, f"{person} may not answer {e['question']}")
-    if "option" not in e and "text" not in e:
-        return Refusal(Code.ANSWER_BAD_OPTION, "an answer needs an option or a text")
-    if "option" in e and e["option"] not in {o["key"] for o in cur.question.get("options", [])}:
-        return Refusal(Code.ANSWER_BAD_OPTION, f"{e['option']!r} is not an option")
+    try:
+        validate_answer(cur.question, e.get("option"), e.get("text"))  # per kind: Other needs allow_other, bounds
+    except QuestionError as err:
+        return Refusal(Code.ANSWER_BAD_OPTION, str(err))
     cur.answer = {"event": e["id"], "by": person, "option": e.get("option"), "text": e.get("text")}
     return None
 

@@ -89,6 +89,10 @@ def test_orch_keys_converts_only_with_the_flag_and_moves_back_only_in_place(serv
     )
     store = FakeStore()
     monkeypatch.setattr(conv, "open_store", lambda s: store)
+    from orch.custody import exposure
+
+    marked = []  # #1097 E3: the signed exposure mark comes first (tests: test_key_exposure_custody)
+    monkeypatch.setattr(exposure, "mark_before_move", lambda *a, **k: marked.append(a[2]))
     from orch.custody import cli as keys_cli
 
     monkeypatch.setattr(keys_cli, "has_terminal", lambda: False)
@@ -107,14 +111,14 @@ def test_orch_keys_converts_only_with_the_flag_and_moves_back_only_in_place(serv
     assert code == 0, out
     assert "could sign" in err
     res = json.loads(out)["result"]
-    assert res["custody"] == "convenience"
+    assert res["custody"] == "convenience" and marked == [res["device"]]
     code, out, _ = run("keys", "custody", "status", "--state", str(state), "--json")
     (row,) = json.loads(out)["result"]["workspaces"]
     assert row["custody"] == "convenience" and row["enabled"] is True
     code, out, _ = run("keys", "custody", "passphrase", *base)
     assert code == 5 and "--in-place" in json.loads(out)["error"]["message"]
     code, out, _ = run("keys", "custody", "passphrase", "--rotate", *base)
-    assert json.loads(out)["error"]["code"] == "not_implemented"
+    assert "one-click" in json.loads(out)["error"]["message"]  # #1097: --rotate needs click-to-sign off first
     monkeypatch.setattr(PassphraseBackend, "create", _with_passphrase(PassphraseBackend.create, provider.passphrase))
     code, out, err = run("keys", "custody", "passphrase", "--in-place", *base)
     assert code == 0, out

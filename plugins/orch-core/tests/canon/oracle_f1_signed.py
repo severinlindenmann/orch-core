@@ -2493,14 +2493,22 @@ def phone_ulid(n: int, epoch_s: int) -> str:
     return "".join(ow.B32[(v >> (5 * (25 - i))) & 31] for i in range(26))
 
 
-def question_hash_input(uid: str, qn: str, text: str, options: list[dict[str, str]] | None) -> dict[str, Any]:
-    """14.5, independently: qid and the question hash over the uid, with ``[]`` for a question without options."""
+def question_hash_input(uid: str, question: dict[str, Any]) -> dict[str, Any]:
+    """14.5 and 5.6.1, independently: qid and the question hash over the uid. ``options`` is ``[]`` for a kind without
+    options; ``spec`` is every question key but the routing keys (id, to, blocking) and text/options."""
     import hashlib
 
     qid = hashlib.sha256(
-        b"orch/v2/question-id|" + ow.cj({"question": qn, "ticket": uid, "workspace_id": W})
+        b"orch/v2/question-id|" + ow.cj({"question": question["id"], "ticket": uid, "workspace_id": W})
     ).hexdigest()[:32]
-    body = {"options": list(options or []), "question_id": qid, "text": text, "ticket": uid}
+    spec = {k: v for k, v in question.items() if k not in ("id", "to", "blocking", "text", "options")}
+    body = {
+        "options": list(question.get("options", [])),
+        "question_id": qid,
+        "spec": spec,
+        "text": question["text"],
+        "ticket": uid,
+    }
     return {
         "qid": qid,
         "hash": "sha256:" + hashlib.sha256(b"orch/v2/question|" + ow.cj(body)).hexdigest(),
@@ -2545,13 +2553,14 @@ def phone_events_vector() -> dict[str, Any]:
 
     def ask(w: World, qn: str, text: str, options: list[dict[str, str]] | None, *, note: str, **extra: Any):
         q: dict[str, Any] = {"id": qn, "to": "ticket_owner", "text": text, "blocking": True, **extra}
+        q["kind"] = "choice" if options is not None else "text"
         if options is not None:
             q["options"] = options
-        hi = question_hash_input(TICKET, qn, text, options)
+        hi = question_hash_input(TICKET, q)
         w.ev(
             TICKET, "question.asked", w.actor("mara"), {"question": q, "qid": hi["qid"], "hash": hi["hash"]}, note=note
         )
-        return hi
+        return {**hi, "raw": q}
 
     accepted: list[dict[str, Any]] = []
 
@@ -2607,7 +2616,7 @@ def phone_events_vector() -> dict[str, Any]:
         q1,
     )
     q2_text = "Anything else we should know?"
-    q2 = ask(w, "Q2", q2_text, None, note="a question with no options: ticket.get omits options, the hash uses []")
+    q2 = ask(w, "Q2", q2_text, None, note="a text question (no options): the hash uses options []")
     e = w.ev(TICKET, "question.answered", phone(w), {"question": "Q2", "hash": q2["hash"], "text": "Keep\tthe old seeds"},
              auth="secure-enclave-unlocked", eid=pid_(w), note="a text answer with a TAB")  # fmt: skip
     pin(
@@ -2615,7 +2624,7 @@ def phone_events_vector() -> dict[str, Any]:
         s1,
         w,
         e,
-        "a text answer (with a TAB) to a question with options absent",
+        "a text answer (with a TAB) to a text question",
         q2,
     )
     q3_opts = [{"key": "yes", "label": "Yes"}, {"key": "no", "label": "No"}]
@@ -2651,7 +2660,7 @@ def phone_events_vector() -> dict[str, Any]:
         [{"key": "ch", "label": "Switzerland"}, {"key": "de", "label": "Germany"}],
         note="an open question",
     )
-    old = question_hash_input(TICKET, "Q5", "Which country?", q5["hashed"]["options"])
+    old = question_hash_input(TICKET, {**q5["raw"], "text": "Which country?"})
     w.ev(TICKET, "question.answered", phone(w), {"question": "Q5", "hash": old["hash"], "option": "ch"},
          auth="secure-enclave-unlocked", eid=pid_(w), expect="question.stale", note="the hash of content the phone saw before a re-ask")  # fmt: skip
     refuse("question_stale", s1, w, "the signed hash is not the question's current hash")
@@ -2691,23 +2700,18 @@ def phone_events_vector() -> dict[str, Any]:
     )
     scenarios.append(w.scenario())
 
-    # 2. semantics pins: a why-only re-ask keeps the answer; A -> B -> A, then a delayed A answer is accepted
+    # 2. semantics pins: a routing-only re-ask keeps the answer; A -> B -> A, then a delayed A answer is accepted
     s2 = "phone_answer_semantics"
-    w = setup(s2, "only text and options are bound: a why-only re-ask keeps the answer; A -> B -> A clears it, and a "
+    w = setup(s2, "everything but routing is bound: a blocking-only re-ask keeps the answer; A -> B -> A clears it, and a "
               "delayed answer to A (signed before B, based_on the head it reviewed) is then accepted")  # fmt: skip
     opts = [{"key": "a", "label": "Alpha"}, {"key": "b", "label": "Beta"}]
     qa = ask(w, "Q1", "Pick one", opts, note="Q1 asked (content A)", why="first reason")
     e = w.ev(TICKET, "question.answered", phone(w), {"question": "Q1", "hash": qa["hash"], "option": "a"},
              auth="secure-enclave-unlocked", eid=pid_(w), note="the phone answers A")  # fmt: skip
-    pin("answer_before_why_reask", s2, w, e, "an answer that survives a why-only re-ask", qa)
-    ask(
-        w,
-        "Q1",
-        "Pick one",
-        opts,
-        note="re-ask with only why changed: same hash, the answer stands",
-        why="second reason",
-    )
+    pin("answer_before_routing_reask", s2, w, e, "an answer that survives a blocking-only re-ask", qa)
+    q_re = {**qa["raw"], "blocking": False}
+    w.ev(TICKET, "question.asked", w.actor("mara"), {"question": q_re, **{k: qa[k] for k in ("qid", "hash")}},
+         note="re-ask with only blocking changed (routing): same hash, the answer stands")  # fmt: skip
     w.steps[-1]["after"] = {"tickets": {TICKET: {"answers": {"Q1": e["id"]}}}}
     qa2 = ask(
         w,
@@ -2769,7 +2773,7 @@ def phone_events_vector() -> dict[str, Any]:
         "pins": "phone person events over relay.submit (orch-v2-host 11A.14): question.answered and ticket.created "
         "signed by a phone (dk_sevp1, scopes look+decide) under signed-event contract 1; per accepted case the "
         "submitted form (no seq, at, prev, ws_seq, host_sig), the signing bytes, the signed-content digest, sig, the "
-        "appended event and its head; refusals; semantics pins (why-only re-ask, A -> B -> A)",
+        "appended event and its head; refusals; semantics pins (blocking-only re-ask, A -> B -> A)",
         "note": KEY_NOTE,
         "keys": {nm: {"scalar_hex": f"{key(nm).d:064x}", "pub_b64u": key(nm).pub_b64u} for nm in PHONE_KEYS}
         | {"id_of": {"p_sev": pid("sev"), "d_sev1": did("sev1"), "d_sevp1": did(sevp), "p_mara": pid("mara")}},

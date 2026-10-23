@@ -291,7 +291,7 @@ class Importer:
             wid = self.store.state.workspace.workspace_id
             qid = canon.question_id(wid, uid, q["id"])
             ev["qid"] = qid
-            ev["hash"] = canon.question_hash(qid, uid, q["text"], q.get("options", []))
+            ev["hash"] = canon.question_hash(qid, uid, q)
         return ev
 
     # -- doing

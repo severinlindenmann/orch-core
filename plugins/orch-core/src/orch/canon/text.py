@@ -38,12 +38,16 @@ from . import _unicode16 as _u
 __all__ = [
     "BIDI_CONTROLS",
     "UNICODE_VERSION",
+    "WHITE_SPACE",
     "Suspect",
     "TextError",
+    "check_plain",
     "check_text",
     "clean",
     "clean_line",
+    "fold",
     "is_assigned",
+    "is_blank",
     "is_clean_text",
     "is_format",
     "nfc",
@@ -85,6 +89,11 @@ for _line in _u.DECOMP.split("\n"):
     if _line:
         _cp, *_rest = (int(x, 16) for x in _line.split())
         _DECOMP[_cp] = tuple(_rest)
+_CASEFOLD: dict[int, str] = {}
+for _line in _u.CASEFOLD.split("\n"):
+    if _line:
+        _cp, *_rest = (int(x, 16) for x in _line.split())
+        _CASEFOLD[_cp] = "".join(map(chr, _rest))
 _COMPOSE: dict[tuple[int, ...], int] = {}
 for _line in _u.COMPOSABLE.split("\n"):
     if _line:
@@ -369,3 +378,63 @@ def clean(text: str) -> str:
 def clean_line(text: str) -> str:
     """:func:`clean`, on one line, with the ``\u00b7`` field separator of error lines made visible."""
     return clean(" ".join(text.split())).replace("\u00b7", "\u27e8U+00B7\u27e9")
+
+
+# --- plain text of structured questions (ticket-format §5.6.1) ------------------------------------------------
+
+WHITE_SPACE = frozenset(
+    "\t\n\x0b\x0c\r \x85\xa0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a"
+    "\u2028\u2029\u202f\u205f\u3000"
+)
+"""The Unicode ``White_Space`` property (PropList 16.0, 25 code points). Pinned so "whitespace-only" means the same
+in every port (Python ``str.strip`` and JS ``trim`` and Swift ``whitespacesAndNewlines`` all differ)."""
+
+MAX_BYTES = 4096
+"""The global event-string cap (``schema`` §11): every plain field is also at most this many UTF-8 bytes."""
+
+
+def fold(text: str) -> str:
+    """``NFC(full_case_fold(NFC(text)))`` with the bundled Unicode 16.0 CaseFolding C+F table: the one comparison form
+    for "the same title" and "the same fact label". Equal to ``nfc(nfc(text).casefold())`` on a Unicode 16.0 runtime;
+    the JS and Swift ports bundle the same table (ß/ẞ, ſ, K Kelvin, ﬁ, ς/Σ and İ have vectors)."""
+    n = nfc(text)
+    return nfc("".join(_CASEFOLD.get(ord(ch), ch) for ch in n))
+
+
+def is_blank(text: str) -> bool:
+    """True iff ``text`` is empty or every code point has the Unicode White_Space property (:data:`WHITE_SPACE`)."""
+    return all(ch in WHITE_SPACE for ch in text)
+
+
+def check_plain(text: object, *, one_line: bool, limit: int, what: str = "text", max_bytes: int = MAX_BYTES) -> str:
+    """Verify (never mutate) one plain field of a structured question or of its answer. Returns ``text``.
+
+    :func:`check_text` (NFC, LF only, no controls, no bidi controls, assigned in 16.0), plus: not empty and not only
+    :data:`WHITE_SPACE`; no :func:`suspicious` character (zero-width, other Cf, private use, a leading mark, F1's
+    invisible look-alikes); no line starts with a combining mark; a one-line field also has no LF, no TAB and no
+    leading or trailing :data:`WHITE_SPACE` (so two titles that differ only there cannot look the same); at most
+    ``limit`` code points and ``max_bytes`` UTF-8 bytes. Used at hashing, signing and replay; authoring runs
+    :func:`normalize_text` first.
+    """
+    if not isinstance(text, str):
+        raise TextError(f"{what} must be text")
+    _check(text, one_line, False)
+    if is_blank(text):
+        raise TextError(f"{what} is empty or only whitespace")
+    if one_line and "\t" in text:
+        raise TextError(f"{what}: tab at index {text.index(chr(9))} in a one-line field")
+    if one_line and (text[0] in WHITE_SPACE or text[-1] in WHITE_SPACE):
+        raise TextError(f"{what} starts or ends with a space")
+    bad = suspicious(text)
+    if bad:
+        raise TextError(f"{what}: invisible character U+{bad[0].codepoint:04X} at index {bad[0].index}")
+    at = 0
+    for line in text.split("\n"):  # a combining mark at the start of any line, not only of the whole text
+        if line and _in_ranges(_MARK_STARTS, _MARKS, ord(line[0])):
+            raise TextError(f"{what}: a line starts with a combining mark (U+{ord(line[0]):04X} at index {at})")
+        at += len(line) + 1
+    if len(text) > limit:
+        raise TextError(f"{what} is longer than {limit} characters")
+    if len(text.encode("utf-8")) > max_bytes:
+        raise TextError(f"{what} is longer than {max_bytes} bytes")
+    return text

@@ -51,6 +51,10 @@ def rotate(call: Call, epochs: Any) -> dict[str, Any]:
             hint="orch hub leave (it rotates the workspace key), then orch keys rotate if you need another",
             fix=["orch", "hub", "leave"],
         )
+    if hubsign.local_key_exposed(
+        call.service, call.viewer
+    ):  # #1097: signed evidence of convenience custody, even moved back
+        raise hubsign.key_exposed_error()
     if hubsign._click_custody(call.service):  # noqa: SLF001 - custody decides, not a label
         raise HostError(
             "sign.convenience_unavailable",

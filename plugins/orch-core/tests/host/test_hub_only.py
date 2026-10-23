@@ -105,9 +105,14 @@ def test_signing_mode_full_joined_with_hub_json_missing_or_unreadable_is_unknown
 def test_signing_mode_full_connected_is_full_and_a_foreign_hub_json_is_unknown(human, served, stub, keystore):
     full_joined(human, served, connect=True)
     assert hubops.signing_mode(served.service) == "full"
-    doc = json.loads(hub_json(served).read_text())
-    doc["binding_seq"] += 1  # a hub.json that names another binding can only make it stricter
-    hub_json(served).write_text(json.dumps(doc))
+    # the C10 cut-over thread rewrites hub.json (read-modify-write under these two locks): write under them too, or its
+    # stale copy can land after ours (seen on develop and in CI as 'full' == 'unknown'; the thread goes with R3/R4b)
+    from orch.host import cutover
+
+    with cutover._lock_for(served.service), hubops._MU:  # noqa: SLF001
+        doc = json.loads(hub_json(served).read_text())
+        doc["binding_seq"] += 1  # a hub.json that names another binding can only make it stricter
+        hub_json(served).write_text(json.dumps(doc))
     assert hubops.signing_mode(served.service) == "unknown"
 
 
@@ -249,8 +254,8 @@ def ws_model(*, owner_device="d_o", other=True):
             "p_m": SimpleNamespace(role="maintainer"),
         },
         devices={
-            owner_device: SimpleNamespace(person="p_o"),
-            "d_m": SimpleNamespace(person="p_m"),
+            owner_device: SimpleNamespace(person="p_o", exposed=False),
+            "d_m": SimpleNamespace(person="p_m", exposed=False),
         },
     )
 

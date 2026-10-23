@@ -74,7 +74,9 @@ def test_the_host_person_ops_are_not_registry_ops():
         "hub.mode",
         "hub.leave",
         "relay.reopen",
-    }  # V3 C2a, C2b, C10
+        "device.mark_exposed",
+        "device.rotate",
+    }  # V3 C2a, C2b, C10, #1097
     assert set(person_ops.OPS) == set(review.HOST_PERSON_OPS) == want
     for name in person_ops.OPS:
         assert name not in {op.name for op in ops.all()} and name not in EMITS_V1  # the frozen table is untouched

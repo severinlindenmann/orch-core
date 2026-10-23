@@ -141,6 +141,7 @@ export function createApi(transport: Transport) {
     signClick: (ws: string, requestId: string, viewDigest: string, word?: string) =>
       call<ClickSigned>('POST', `/api/w/${ws}/click/sign`, { request_id: requestId, view_digest: viewDigest, ...(word === undefined ? {} : { word }) }),
     stateClick: (ws: string, requestId: string) => call<ClickState>('POST', `/api/w/${ws}/click/state`, { request_id: requestId }),
+    hubSign: (ws: string, body: import('./hubsign').HubSignRequest) => call<import('./hubsign').HubSignInfo>('POST', `/api/w/${ws}/hubsign`, body),
     cancelClick: (ws: string, requestId: string) => call<{ id: string; state: string }>('POST', `/api/w/${ws}/click/cancel`, { request_id: requestId }),
     clickStatus: (ws: string) => call<ClickCard>('GET', `/api/w/${ws}/click/status`),
     switchClick: (ws: string, body: ClickSwitch) => call<ClickCard>('POST', `/api/w/${ws}/click/custody`, body),

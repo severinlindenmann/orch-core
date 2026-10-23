@@ -22,6 +22,8 @@ FILES: dict[str, tuple[str, str]] = {
     "/app.js": ("app.js", _JS),
     "/channel.js": ("channel.js", _JS),
     "/cj.js": ("cj.js", _JS),
+    "/home.js": ("home.js", _JS),
+    "/admin.js": ("admin.js", _JS),
     "/render.js": ("render.js", _JS),
 }
 

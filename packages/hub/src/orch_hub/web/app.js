@@ -3,6 +3,8 @@
 // every string from the workspace goes through renderText first, and nothing here calls a signer except the prompt.
 import { CanonError, parseStrict } from "./cj.js";
 import { ChannelError, deleteChannel, generateKey, loadChannel, saveChannel, signProof, signRegistration } from "./channel.js";
+import { homeView } from "./home.js";
+import { adminView } from "./admin.js";
 import { Refusal, checkBindings, checkPrepared, describe, renderText, shortHash, DECISIONS } from "./render.js";
 
 const root = document.getElementById("app");
@@ -84,30 +86,42 @@ async function refresh() {
   return true;
 }
 
+function shell(active, ...nodes) {
+  const tab = (id, label, go) => h("a", { href: "#", class: "nav" + (active === id ? " on" : ""), "aria-current": active === id ? "page" : null, text: label, onclick: (e) => { e.preventDefault(); go(); } });
+  show(
+    h("header", { class: "topbar" }, h("b", { class: "brand", text: "orch hub" }),
+      h("nav", { class: "navtabs", "aria-label": "Sections" }, tab("home", "Home", home), state.user?.is_admin ? tab("admin", "Admin", admin) : null),
+      h("span", { class: "grow" }), h("span", { class: "small muted", text: renderText(state.user?.name ?? "") }), h("button", { text: "Sign out", onclick: signOut })),
+    nodes.flat(2),
+  );
+}
+
+async function admin() {
+  if (!(await refresh())) return loginView();
+  if (!state.user.is_admin) return home();
+  const notice = state.notice;
+  state.notice = null;
+  shell("admin", adminView({ api, say, notice, refresh }));
+}
+
 async function home() {
   if (!(await refresh())) return loginView();
   const [ws, needs] = await Promise.all([api("GET", "/me/workspaces"), api("GET", "/me/needs-you")]);
   const mine = state.me && state.channels.find((c) => c.channel_id === state.me.channelId && c.status === "active");
-  const items = needs.status === 200 ? needs.body.items : [];
-  show(
-    h("div", { class: "row" }, h("h1", { class: "grow", text: "Hello, " + renderText(state.user.name ?? "you") }), h("button", { text: "Sign out", onclick: signOut })),
-    state.notice,
-    thisBrowserCard(mine),
-    h("h2", { text: "Needs you" }),
-    items.length ? items.map(itemCard) : h("p", { class: "muted", text: "Nothing is waiting for you." }),
-    advancedForm(ws.status === 200 ? ws.body.workspaces : []),
-    h("h2", { text: "Your devices" }),
-    state.channels.map((c) => h("div", { class: "card row" }, h("div", { class: "grow" }, h("b", { text: renderText(c.label || c.kind) }), h("div", { class: "small muted", text: c.kind + ", " + c.status + (state.me?.channelId === c.channel_id ? " (this browser)" : "") })), c.status === "active" ? h("button", { text: "Remove", onclick: () => removeChannel(c.channel_id) }) : null)),
-  );
+  const workspaces = ws.status === 200 ? ws.body.workspaces : [];
+  const dead = !mine && (state.me || state.channels.some((c) => c.status === "active" && c.kind === "browser"));
+  const view = homeView({
+    user: state.user,
+    items: needs.status === 200 ? needs.body.items : [],
+    offline: needs.status === 200 ? needs.body.offline : [],
+    workspaces,
+    channels: state.channels.map((c) => ({ ...c, status: c.status + (state.me?.channelId === c.channel_id ? " (this browser)" : "") })),
+    thisBrowser: mine ? { state: "active", label: state.me.label } : dead ? { state: "dead", label: state.me?.label } : { state: "unregistered" },
+    notice: state.notice,
+    actions: { review: reviewItem, register: () => registerView(), removeChannel, forgetLocal },
+  });
+  shell("home", view, advancedForm(workspaces));
   state.notice = null;
-}
-
-function thisBrowserCard(mine) {
-  if (!state.me && !state.channels.some((c) => c.status === "active" && c.kind === "browser")) {
-    return h("div", { class: "card" }, h("b", { text: "This browser cannot sign yet" }), h("p", { class: "small muted", text: "Registering gives this browser a signing key for you. Signing needs the key; being signed in only lets you look." }), h("button", { class: "pri", text: "Register this browser", onclick: () => registerView() }));
-  }
-  if (mine) return h("div", { class: "card" }, h("b", { text: "This browser holds a signing key for you" }), h("div", { class: "small muted", text: "Name: " + renderText(state.me.label || "this browser") }));
-  return h("div", { class: "card" }, banner("warn", "This browser cannot sign any more", "The key is missing here or was removed at the hub. Remove the old entry below, then register again."), state.me ? h("button", { text: "Forget the key in this browser", onclick: forgetLocal }) : null, h("button", { class: "pri", text: "Register this browser", onclick: () => registerView() }));
 }
 
 async function forgetLocal() {
@@ -167,10 +181,6 @@ async function registerBrowser(label, password, totp) {
   } catch (e) {
     return e instanceof ChannelError || e instanceof CanonError ? "This browser could not create or keep a key here." : "Something went wrong. Nothing was kept.";
   }
-}
-
-function itemCard(it) {
-  return h("div", { class: "card row" }, h("div", { class: "grow" }, h("b", { text: renderText(it.title ?? it.kind) }), h("div", { class: "small muted", text: renderText((it.key ?? "") + " " + (it.mode === "selective" ? "(summary, answer where it lives)" : "")) })), it.signable && it.log && it.hash ? h("button", { text: "Review", onclick: () => reviewItem(it) }) : h("span", { class: "small muted", text: "Handled where it lives" }));
 }
 
 async function reviewItem(it) {
@@ -291,8 +301,8 @@ function promptView(me, p, digest, d) {
     h("h1", { text: "Review your answer" }),
     h("p", { class: "sentence", text: d.sentence }),
     h("dl", { class: "facts" }, h("dt", { text: "On behalf of" }), h("dd", { text: renderText(state.user.name ?? "you") }), h("dt", { text: "Signature reference" }), h("dd", { class: "fp", text: d.fingerprint }), d.facts.length ? d.facts.flatMap(([k, v]) => [h("dt", { text: k }), h("dd", { class: k === "Content reference" ? "fp" : "", text: v })]) : d.contentHash ? [h("dt", { text: "Content reference" }), h("dd", { class: "fp", text: d.contentHash })] : null),
-    h("details", {}, h("summary", { text: "Technical details" }), factsList(d.fields)),
-    h("p", { class: "small muted", text: "Check the answer above. When you confirm, the hub signs and sends it on your behalf." }),
+    h("details", {}, h("summary", { text: "Signed details" }), factsList(d.fields)),
+    h("p", { class: "small muted who-signs", text: "You confirm with the key held by this browser. " + "The hub" + " signs this approval for you." }),
     h("div", { class: "row" }, h("button", { text: "Cancel", onclick: done }), sign),
   );
   arm();

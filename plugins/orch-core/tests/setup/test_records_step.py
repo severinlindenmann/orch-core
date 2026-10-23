@@ -3,7 +3,9 @@ auto-commit on (never push), consented in the review. A failure is a retry item,
 
 import pytest
 
+from orch.setup import steps
 from orch.setup.protocol import SetupError
+from tests.host.test_records_sync import home, w  # noqa: F401 - fixtures
 
 from .conftest import post
 from .fakes import FakePorts, names
@@ -81,3 +83,40 @@ def test_the_real_port_runs_records_init_then_auto_on_without_push(monkeypatch, 
     with pytest.raises(SetupError) as e:
         RealPorts({}, tmp_path).records_setup("w" * 32, tmp_path)
     assert "not dedicated" in str(e.value)
+
+
+def test_the_real_port_in_a_records_root_nested_in_the_project_repo_is_a_retry_item_without_a_timer(
+    monkeypatch, tmp_path, w, home
+):
+    """Opus F2: the records root (the store) sits inside the project's own git repository. ``init`` refuses it (the
+    repository must be dedicated), the step is a retry item, setup does not fail, and no auto-commit timer or
+    auto entry is written. Real RealPorts, real records tool and real git; only the host link and the timer seam
+    are the test's own."""
+    import functools
+
+    from orch.records import cli as records_cli
+    from tests.host.test_records_part2 import FakeTimer
+    from tests.host.test_records_sync import Env, git
+
+    r = Env(w, tmp_path, home)
+    git(r.root, "init", "-q")  # the project is a git repository: the store is nested inside it
+    r.store.mkdir(exist_ok=True)
+    (r.store / ".git").write_text("gitdir: ../.git\n")  # and its history would land in the PROJECT's repository
+    timer = FakeTimer()
+    monkeypatch.setattr(
+        records_cli,
+        "main",
+        functools.partial(
+            records_cli.main, link=r.link, root=r.root, workspace_id=r.w.wid, tips=r.tips, timer=timer,
+            state=r.tips.path.parent,
+        ),
+    )  # fmt: skip
+    ports = steps.RealPorts(r.env, tmp_path / "state")
+    with pytest.raises(SetupError) as e:
+        ports.records_setup(r.w.wid, r.store)
+    assert e.value.code == "records.setup_failed"
+    # the run turns that error into a retry item and finishes (the FakePorts test above pins that mapping)
+    assert timer.calls == [] and r.tips.autos() == {}
+    assert (r.store / ".git").read_text() == "gitdir: ../.git\n"  # untouched
+    for unit in (".config/systemd/user", "Library/LaunchAgents"):
+        assert not (r.home / unit).exists()

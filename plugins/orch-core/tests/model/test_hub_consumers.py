@@ -432,3 +432,38 @@ def test_a_foreign_owner_on_ticket_created_is_foreign_user(w):
         uid2, "ticket.created", hub_actor(U3), roster_v=w.roster_v, owner="u_" + U3, **base, **hub_fields(**ev)
     )
     assert getattr(r, "code", None) != Code.HUB_FOREIGN_USER
+
+
+def _ask(w, u, to):
+    from orch.canon import question_hash, question_id
+
+    q = {"id": "Q1", "text": "which?", "to": to, "blocking": False, "options": [{"key": "a", "label": "A"}]}
+    uidt = w.state()._core.tickets[u].uid
+    qid = question_id(w.workspace_id, uidt, "Q1")
+    h = question_hash(qid, uidt, "which?", q["options"])
+    w.tev(u, "question.asked", "sev", question=q, qid=qid, hash=h)
+    return h
+
+
+@pytest.mark.parametrize("hub_role", ["edit", "admin"])
+def test_a_member_addressee_with_hub_role_edit_can_answer_through_the_alias(hub_role):
+    w = World(validate=False).bootstrap({"mara": "maintainer", "tom": "member"})
+    hub_joined(w, [alias(w, "tom", U2)])
+    pin(w, card())
+    pin(w, snapx(1, {U1: "admin", U2: hub_role}))
+    u = w.ticket()
+    h = _ask(w, u, w.people["tom"])
+    r = hub(w, u, "question.answered", question="Q1", hash=h, option="a")
+    assert r is None, r
+    assert w.state()._core.tickets[u].questions["Q1"].answer["by"] == w.people["tom"]
+
+
+def test_a_member_via_hub_edit_cannot_answer_a_question_to_someone_else():
+    w = World(validate=False).bootstrap({"mara": "maintainer", "tom": "member"})
+    hub_joined(w, [alias(w, "tom", U2)])
+    pin(w, card())
+    pin(w, snapx(1, {U1: "admin", U2: "edit"}))
+    u = w.ticket()
+    h = _ask(w, u, w.people["mara"])
+    r = hub(w, u, "question.answered", question="Q1", hash=h, option="a")
+    assert r is not None and r.code == Code.ANSWER_NOT_ALLOWED

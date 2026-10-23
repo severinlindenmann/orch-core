@@ -89,6 +89,10 @@ def test_every_case_has_a_phase_and_negatives_cover_the_brief():
         "space_proposal_for_other_workspace",
         "relay_request_replayed_nonce",
         "relay_request_body_swapped",
+        "log_sync_proj_ws_head_other",
+        "log_sync_proj_refreshed_by_overlap",
+        "proj_build_stale_ticket_head",
+        "proj_build_hash_differs",
     ):
         assert must in names
 

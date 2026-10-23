@@ -97,10 +97,12 @@ def page(
     epoch: int = 1,
     reset: bool = False,
     wk: bytes | None = None,
+    proj: dict[str, Any] | None = None,
     **override: Any,
 ) -> dict[str, Any]:
-    salt = S.fake_seed(f"hub/view_salt/{log}/{from_seq}/{epoch}/{len(lines)}")[:16]
-    b = P4.seal_view_page(wk or WK[epoch], WS_A, epoch, log, from_seq, lines, salt, reset=reset)
+    tag = "" if proj is None else "/proj/" + cj(proj).hex()[:16]
+    salt = S.fake_seed(f"hub/view_salt/{log}/{from_seq}/{epoch}/{len(lines)}{tag}")[:16]
+    b = P4.seal_view_page(wk or WK[epoch], WS_A, epoch, log, from_seq, lines, salt, reset=reset, proj=proj)
     b.update(override)
     return b
 
@@ -1805,6 +1807,218 @@ def build_p4(
         "the host then resends every log from seq 1 (no reset)",
     )
 
+    # §10.7 the ticket projection (D15b): the host's own F1 values and status, inside the sealed page
+    src = [{"repo": "github.com/acme/app", "ref": "refs/heads/feat-x", "sha": "c0" * 20}]
+    pj = {
+        "seq": 2,
+        "head": ht,
+        "ws_seq": 2,
+        "ws_head": hw,
+        "status": "testing",
+        "roster_v": 3,
+        "gates": {
+            "requirements": {"gen": 1, "hash": "sha256:" + "a1" * 32, "policy_hash": "sha256:" + "b1" * 32},
+            "code": {"gen": 2, "hash": "sha256:" + "a3" * 32, "policy_hash": "sha256:" + "b3" * 32, "source_sha": src},
+            "verify": {
+                "gen": 4,
+                "hash": "sha256:" + "a4" * 32,
+                "policy_hash": "sha256:" + "b4" * 32,
+                "source_sha": src,
+            },
+        },
+    }
+    pj1 = {**pj, "seq": 1, "head": P4.event_head(TK_LINES[0]), "ws_seq": 1, "ws_head": P4.event_head(WS_LINES[0])}
+    tk_pj = page(TICKET, TK_LINES, proj=pj)
+    sync(
+        "log_sync_proj_held",
+        [ws_p, tk_pj],
+        {"ok": {"workspace": {"seq": 2, "head": hw}, TICKET: {"seq": 2, "head": ht}, "proj": {TICKET: pj}}},
+        "D15b: the host's projection of the page's last line, sealed with the lines",
+    )
+    sync("log_sync_proj_on_workspace_log", [page("workspace", WS_LINES, proj=pj)], {"error": "malformed"})
+    sync(
+        "log_sync_proj_not_of_last_line",
+        [ws_p, page(TICKET, TK_LINES, proj={**pj, "seq": 1})],
+        {"error": "malformed"},
+        "a projection describes the page's last line (seq and head)",
+    )
+    sync("log_sync_proj_head_other", [ws_p, page(TICKET, TK_LINES, proj={**pj, "head": hw})], {"error": "malformed"})
+    sync(
+        "log_sync_proj_ws_seq_before_line",
+        [ws_p, page(TICKET, TK_LINES, proj={**pj, "ws_seq": 1, "ws_head": P4.event_head(WS_LINES[0])})],
+        {"error": "malformed"},
+        "computed at a workspace position before the line it describes",
+    )
+    sync(
+        "log_sync_proj_ws_seq_not_held",
+        [ws_p, page(TICKET, TK_LINES, proj={**pj, "ws_seq": 3})],
+        {"error": "view_gap"},
+        "the workspace log is synced first",
+    )
+    sync(
+        "log_sync_proj_ws_head_other",
+        [ws_p, page(TICKET, TK_LINES, proj={**pj, "ws_head": ht})],
+        {"error": "view_fork"},
+    )
+    sync(
+        "log_sync_proj_extra_key", [ws_p, page(TICKET, TK_LINES, proj={**pj, "questions": {}})], {"error": "malformed"}
+    )
+    sync(
+        "log_sync_proj_bad_status",
+        [ws_p, page(TICKET, TK_LINES, proj={**pj, "status": "waiting"})],
+        {"error": "malformed"},
+    )
+    g_req_src = {**pj["gates"], "requirements": {**pj["gates"]["requirements"], "source_sha": src}}
+    sync(
+        "log_sync_proj_source_on_requirements",
+        [ws_p, page(TICKET, TK_LINES, proj={**pj, "gates": g_req_src})],
+        {"error": "malformed"},
+        "source_sha exactly on code and verify (the f1 gate schema)",
+    )
+    g_code_nosrc = {**pj["gates"], "code": {k: v for k, v in pj["gates"]["code"].items() if k != "source_sha"}}
+    sync(
+        "log_sync_proj_code_without_source",
+        [ws_p, page(TICKET, TK_LINES, proj={**pj, "gates": g_code_nosrc})],
+        {"error": "malformed"},
+    )
+    sync(
+        "log_sync_proj_unknown_gate",
+        [ws_p, page(TICKET, TK_LINES, proj={**pj, "gates": {**pj["gates"], "landing": pj["gates"]["requirements"]}})],
+        {"error": "malformed"},
+    )
+    pj_new = {**pj, "gates": {**pj["gates"], "requirements": {**pj["gates"]["requirements"], "gen": 2}}}
+    sync(
+        "log_sync_proj_refreshed_by_overlap",
+        [ws_p, tk_pj, page(TICKET, TK_LINES[1:], from_seq=2, proj=pj_new)],
+        {"ok": {"workspace": {"seq": 2, "head": hw}, TICKET: {"seq": 2, "head": ht}, "proj": {TICKET: pj_new}}},
+        "sender rule 7: a value changed without a new ticket line; the last line again, with the new projection",
+    )
+    sync(
+        "log_sync_proj_older_does_not_replace",
+        [ws_p, tk_pj, page(TICKET, TK_LINES[:1], proj=pj1)],
+        {"ok": {"workspace": {"seq": 2, "head": hw}, TICKET: {"seq": 2, "head": ht}, "proj": {TICKET: pj}}},
+        "the newer by (seq, ws_seq) is kept (two links interleaving)",
+    )
+    sync(
+        "log_sync_proj_stays_after_page_without_one",
+        [ws_p, page(TICKET, TK_LINES[:1], proj=pj1), page(TICKET, TK_LINES[1:], from_seq=2)],
+        {"ok": {"workspace": {"seq": 2, "head": hw}, TICKET: {"seq": 2, "head": ht}, "proj": {TICKET: pj1}}},
+        "kept but stale: a build refuses it (proj_build_stale_ticket_head)",
+    )
+    sync(
+        "log_sync_proj_dropped_by_workspace_reset",
+        [ws_p, tk_pj, page("workspace", WS_LINES, reset=True)],
+        {"ok": {"workspace": {"seq": 2, "head": hw}}},
+        "L2P4-9: a workspace reset drops every ticket view and its projection",
+    )
+    sync(
+        "log_sync_proj_dropped_by_ticket_reset",
+        [ws_p, tk_pj, page(TICKET, TK_LINES[:1], reset=True)],
+        {"ok": {"workspace": {"seq": 2, "head": hw}, TICKET: {"seq": 1, "head": P4.event_head(TK_LINES[0])}}},
+    )
+
+    pb = {"proj": pj, "ticket_seq": 2, "ticket_head": ht, "roster_v": 3}
+
+    def pbuild(name: str, action: dict[str, Any], expect: dict[str, Any], note: str = "", **kw: Any) -> None:
+        case(name, "proj_build", {**pb, **kw, "action": {"log": TICKET, **action}}, expect, 4, note)
+
+    g = pj["gates"]
+    ap = {"type": "gate.approved", "gate": "requirements", "hash": g["requirements"]["hash"]}
+    pbuild(
+        "proj_build_gate_approved",
+        ap,
+        {"ok": {"gate_gen": 1, "hash": g["requirements"]["hash"], "policy_hash": g["requirements"]["policy_hash"]}},
+        "D15b: the values are the host's, copied byte for byte",
+    )
+    pbuild(
+        "proj_build_code_approval_carries_source",
+        {"type": "gate.approved", "gate": "code", "hash": g["code"]["hash"]},
+        {"ok": {"gate_gen": 2, "hash": g["code"]["hash"], "policy_hash": g["code"]["policy_hash"], "source_sha": src}},
+    )
+    pbuild(
+        "proj_build_code_changes_requested_no_source",
+        {"type": "gate.changes_requested", "gate": "code", "hash": g["code"]["hash"], "text": "Fix the tests"},
+        {"ok": {"gate_gen": 2, "hash": g["code"]["hash"], "policy_hash": g["code"]["policy_hash"]}},
+    )
+    pbuild(
+        "proj_build_verdict_uses_verify_gate",
+        {"type": "verdict.given", "outcome": "pass", "hash": g["verify"]["hash"]},
+        {
+            "ok": {
+                "gate_gen": 4,
+                "hash": g["verify"]["hash"],
+                "policy_hash": g["verify"]["policy_hash"],
+                "source_sha": src,
+            }
+        },
+    )
+    pbuild(
+        "proj_build_status_changed_from",
+        {"type": "status.changed", "to": "open"},
+        {"ok": {"from": "testing"}},
+        "the hub copies; transitions are the host's (lifecycle): core refuses this from, the hub never checks it",
+    )
+    pbuild(
+        "proj_build_ticket_moved_from",
+        {"type": "ticket.moved", "to": "backlog", "reason": "Later"},
+        {"ok": {"from": "testing"}},
+        "the hub copies; transitions are the host's (lifecycle): core refuses this from, the hub never checks it",
+    )
+
+    # D15b-1: roster_v, counted the same by hub (project_workspace) and core (WsCore.roster_v)
+    def rl(*types: str) -> list[dict[str, Any]]:
+        return [{"type": t} for t in types]
+
+    case(
+        "workspace_roster_v",
+        "roster_v",
+        {
+            "lines": rl(
+                "workspace.created",
+                "member.added",
+                "device.added",
+                "role.changed",
+                "policy.changed",
+                "hub.joined",
+                "member.removed",
+                "settings.changed",
+            )
+        },
+        {"ok": {"roster_v": 4}},
+        4,
+        "genesis, add, role change, remove raise it; device, policy, hub, settings events do not",
+    )
+    case("workspace_roster_v_genesis_only", "roster_v", {"lines": rl("workspace.created")}, {"ok": {"roster_v": 1}}, 4)
+    pbuild(
+        "proj_build_stale_ticket_head",
+        ap,
+        {"error": "unavailable"},
+        "the ticket moved after the projection: wait for the host's next one, never guess",
+        proj=pj1,
+    )
+    pbuild(
+        "proj_build_roster_moved", ap, {"error": "unavailable"}, "a member change not yet in the projection", roster_v=4
+    )
+    pbuild("proj_build_without_projection", ap, {"error": "unavailable"}, proj=None)
+    pbuild(
+        "proj_build_gate_left_out",
+        {"type": "gate.approved", "gate": "plan", "hash": g["requirements"]["hash"]},
+        {"error": "unknown_item"},
+        "the host lists only gates whose hash it can build",
+    )
+    pbuild(
+        "proj_build_hash_differs",
+        {**ap, "hash": "sha256:" + "ee" * 32},
+        {"error": "event_changed"},
+        "the person reviewed other content",
+    )
+    pbuild(
+        "proj_build_not_a_projection_type",
+        {"type": "question.answered", "question": "Q1", "hash": g["requirements"]["hash"], "text": "Yes"},
+        {"error": "not_custodial"},
+        "questions come from the lines",
+    )
+
     # ---- signatures and objects
     reg_o, prop_o = register(), proposal()
     sig_entry("channel_register_alice_phone", "channel_alice_phone", "sig_hub_channel_register", reg_o)
@@ -1823,6 +2037,9 @@ def build_p4(
             "host_sig_signed_hex_ws1": P4.host_sig_bytes(WS_A, "workspace", WS_LINES[0]).hex(),
             "page_workspace": ws_p,
             "aad_hex_workspace": P4.view_aad(WS_A, 1, "workspace", 1, 2, hw, False).hex(),
+            "proj_ticket": pj,
+            "page_ticket_with_proj": tk_pj,
+            "plaintext_hex_ticket_with_proj": cj({"lines": TK_LINES, "proj": pj}).hex(),
         },
         "prepare": {"ctx": ctx, "digest_hex": dg},
         "relay_request": {

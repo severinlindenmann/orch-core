@@ -353,6 +353,30 @@ def test_join_then_connect_sends_the_selective_binding_and_never_a_key(human, se
     assert not any("hub" in m for m in members)  # still no hub member
 
 
+def test_status_reports_an_unreachable_hub_and_a_reachable_one(human, served, stub, monkeypatch):
+    """V3 D78 (#1102): `link` is not `bound` while the hub address does not answer; the binding stays visible."""
+    import socket
+
+    from orch.host import hublinkprobe
+    from tests.host.dispatch_helpers import ok
+
+    human.run("hub.join", join_args())
+    ok(served.client().req("hub.connect", connect_args(), idem=True))
+    hublinkprobe.clear()
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(4)
+    port = srv.getsockname()[1]
+    monkeypatch.setattr(hubops, "_addr", lambda args, state, dev: f"127.0.0.1:{port}")
+    up = ok(served.client().req("hub.status", {}, idem=False))["data"]
+    assert (up["link"], up["binding"], up["reachable"]) == ("bound", "bound", True)
+    srv.close()  # the hub process dies
+    hublinkprobe.clear()
+    down = ok(served.client().req("hub.status", {}, idem=False))["data"]
+    assert (down["link"], down["binding"], down["reachable"]) == ("unreachable", "bound", False)
+    assert down["peer_outbox"] == 0 and down["link_error"] is None
+
+
 def test_connect_with_the_hub_down_keeps_the_join_and_resumes(human, served, stub, monkeypatch):
     from tests.host.dispatch_helpers import ok
 

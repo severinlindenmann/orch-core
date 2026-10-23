@@ -719,8 +719,14 @@ def serve(call: Call) -> dict[str, Any]:
     if op == "hub.status":
         from orch.hubclient import snapshot
 
-        from . import cutover
+        from . import cutover, hublinkprobe
 
+        binding = None if state is None else state.status
+        up = None
+        if binding == "bound":
+            up = hublinkprobe.reachable(
+                f"{service.state_dir}:{service.workspace_id}", _addr({}, state, workspace_dev(service))
+            )
         return ok_result(
             {
                 "snapshot": snapshot.pinned_view(state),
@@ -735,7 +741,12 @@ def serve(call: Call) -> dict[str, Any]:
                 "sealed_epoch": None if state is None or not state.sealed else state.sealed["epoch"],
                 "rotation": _rotation(service, state),
                 "reseal_needed": _reseal_needed(service, state),
-                "link": None if state is None else state.status,
+                "link": hublinkprobe.link_view(
+                    binding, up
+                ),  # V3 D78: "unreachable" when bound but the hub does not answer
+                "binding": binding,
+                "reachable": up,
+                **hublinkprobe.peer_view(service),  # peer_outbox, link_error
                 **cutover.status_fields(service, state),  # V3 C10: direct, direct_note, direct_devices, cut_epoch
                 "log_sync": _log_sync_status(service),
                 "unbound_pending": state is not None and bool(state.outbox),

@@ -101,3 +101,9 @@ it('treats explicit null as unrestricted and lets the owner set a restriction', 
   fireEvent.click(screen.getByRole('button', { name: 'Save allowed methods' }))
   expect(ask).toHaveBeenCalledWith(expect.objectContaining({ action: { action: 'settings_set', sign_methods: ['terminal', 'phone'] } }))
 })
+it('#1115: with one click on and nothing stored, the form shows the effective default (One click), not Terminal', async () => {
+  mount(false)
+  vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'click', allowed: ['terminal', 'click', 'phone'], is_default: true })
+  await waitFor(() => expect(screen.getByLabelText('Default')).toBeEnabled())
+  await waitFor(() => expect((screen.getByLabelText('Default') as HTMLSelectElement).value).toBe('click'))
+})

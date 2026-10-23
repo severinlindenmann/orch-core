@@ -1,3 +1,4 @@
+import { VerdictEvidence } from './EvidenceView'
 import { ManualAcceptanceReview } from './ManualAcceptance'
 // A ticket's human action in hand-off mode (real host): approve, request changes, verdict, answer. The form holds only
 // what the person types or picks; once they press the verb, the host prepares the request and the dialog shows the
@@ -140,6 +141,7 @@ export function HandoffSignDialog({
               Open changes
             </Button>
           </p>
+          <VerdictEvidence ticket={ticket} />
           <ManualAcceptanceReview ticket={ticket} name={viewer.name} />
           <fieldset className="grid gap-2">
             <legend className="sr-only">Verdict</legend>

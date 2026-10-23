@@ -59,22 +59,22 @@ describe('text artifact preview', () => {
   })
   it('a file the server calls binary, or with NUL bytes, or that cannot be read, stays "no preview"', async () => {
     const a = show(art(), content({ binary: true, text: null }))
-    expect(await screen.findByText(/No inline preview/)).toBeInTheDocument()
+    expect(await screen.findByText(/Binary file/)).toBeInTheDocument()
     a.unmount()
     const b = show(art(), content({ text: 'ab\0cd' }))
-    expect(await screen.findByText(/No inline preview/)).toBeInTheDocument()
+    expect(await screen.findByText(/Binary file/)).toBeInTheDocument()
     b.unmount()
     show(art({ name: 'x.png', kind: 'other' }))
-    expect(await screen.findByText(/No inline preview/)).toBeInTheDocument()
+    expect(await screen.findByText(/could not read this file/)).toBeInTheDocument()
   })
   it('a file whose digest differs from the listed one is not previewed', async () => {
     show(art(), content({ digest: 'sha256:' + 'b'.repeat(64) }))
-    expect(await screen.findByText(/No inline preview/)).toBeInTheDocument()
+    expect(await screen.findByText(/does not match the digest/)).toBeInTheDocument()
     expect(screen.queryByLabelText('Text of T1.receipt.log')).toBeNull()
   })
   it('a file read only in part (unverified) is too large to preview', async () => {
     show(art(), content({ truncated: true, verified: false, text: 'partial' }))
-    expect(await screen.findByText(/too large to preview/)).toBeInTheDocument()
+    expect(await screen.findByText(/Too large to preview/)).toBeInTheDocument()
     expect(screen.queryByLabelText('Text of T1.receipt.log')).toBeNull()
   })
   it('without the ticket there is nothing to read, so no preview', () => {

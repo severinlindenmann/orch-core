@@ -281,7 +281,7 @@ def td():
     return m
 
 
-def test_a_verify_command_with_shell_metacharacters_runs_them_as_arguments(ws, cli, tmp_path):
+def test_a_quoted_verify_command_with_shell_metacharacters_runs_them_as_arguments(ws, cli, tmp_path):
     claimed(cli)
     victim = tmp_path / "pwned"
     code = "import sys; print(sys.argv[1:])"
@@ -290,7 +290,7 @@ def test_a_verify_command_with_shell_metacharacters_runs_them_as_arguments(ws, c
         "add",
         "meta",
         "--verify",
-        f"{shlex.quote(sys.executable)} -c {shlex.quote(code)} ; touch {victim} && $(id) `id` | cat",
+        f"{shlex.quote(sys.executable)} -c {shlex.quote(code)} ';' touch {victim} '&&' '$(id)' '`id`' '|' cat",
     )
     r = cli("task", "done", "T1", "--run")
     assert r.code == 0, r.err
@@ -441,3 +441,43 @@ def test_task_edit_voids_the_plan_and_the_gates_after_it(ws, cli):
     now = {g: ws.view("1").gates[g].gen for g in gens}
     assert now["requirements"] == gens["requirements"]
     assert all(now[g] == gens[g] + 1 for g in ("plan", "verify"))  # the code gate does not apply by default
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    [
+        "test -f index.html && grep -q x index.html",
+        "make test; make lint",
+        "npm test | tail -1",
+        "echo ok > out.txt",
+        "echo $(date)",
+        "echo `date`",
+    ],
+)
+def test_task_add_refuses_a_verify_command_that_needs_a_shell(ws, cli, cmd):
+    """Run 8: a shell-style verify crashed at run time (``test: unexpected operator``); it is refused when written."""
+    claimed(cli)
+    r = cli.j("task", "add", "write it", "--verify", cmd)
+    assert (r.code, r.err_code) == (5, "invalid.input")
+    assert "without a shell" in r.out and "sh -c" in r.out
+    assert cli.j("task", "add", "write it", "--verify", "true").code == 0
+    r = cli.j("task", "edit", "T1", "--verify", cmd)
+    assert (r.code, r.err_code) == (5, "invalid.input")
+
+
+@pytest.mark.parametrize(
+    "cmd",
+    ["sh -c 'test -f a && echo hi'", "pytest -k 'a and b' -x", "grep '|' f", 'echo "a;b"', "pytest a.py::t[1] -x"],
+)
+def test_task_add_accepts_plain_and_sh_c_verify_commands(ws, cli, cmd):
+    claimed(cli)
+    assert cli.j("task", "add", "write it", "--verify", cmd).code == 0
+
+
+def test_task_done_run_without_a_verify_command_says_how_to_close_it(ws, cli):
+    claimed(cli)
+    cli("task", "add", "no check")
+    r = cli.j("task", "done", "T1", "--run")
+    assert (r.code, r.err_code) == (5, "invalid.input")
+    assert r.out.count("orch task done T1") >= 1 and "without --run" in r.out
+    assert cli("task", "done", "T1").code == 0

@@ -31,7 +31,9 @@ WORKFLOWS: dict[str, tuple[str, list[tuple[str, str]]]] = {
             ("ac.add", "orch ac add 'text'"),
             # B11: the plan gate needs the plan section too (an approval of a gate that lacks it is refused)
             ("section.set", "orch section set plan --file -"),
-            ("task.add", "orch task add 'text' --verify 'cmd' --proves AC1"),
+            # the plan gate also needs decisions (feature, bug, spike): without them the person has nothing to approve
+            ("section.set", "orch section set decisions --file -"),
+            ("task.add", "orch task add 'text' --verify 'one-command, no shell operators' --proves AC1"),
             ("ask", "orch ask 'question' --options a,b --rec a"),
         ],
     ),

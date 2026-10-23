@@ -223,3 +223,49 @@ def artifact_event(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
         if name in gates.gate_refs(ws, t, g):
             generations.mark(t, g)
     return None
+
+
+_NO_SHELL = (
+    "a verify command runs without a shell, so {op} would be passed to the program as plain text. "
+    "Use one plain command, or wrap the whole thing: sh -c '...'"
+)
+_SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh"})
+
+
+def verify_cmd_problem(cmd: str) -> str | None:
+    """Why ``cmd`` cannot work as a verify command, or ``None``. A verify command runs WITHOUT a shell (``shlex``
+    split, then exec), so an unquoted ``&&``, ``|``, ``;``, ``>``, ``<``, ``&``, a backtick or ``$(`` would be handed
+    to the program as plain arguments and fail at run time. Refusing them when the command is written is clearer than
+    a crash later. ``sh -c '...'`` is the way to ask for a shell, and its script is not looked at."""
+    import shlex
+
+    try:
+        argv = shlex.split(cmd)
+    except ValueError:
+        return "it has an unbalanced quote"
+    if not argv:
+        return "it is empty"
+    if argv[0].rpartition("/")[2] in _SHELLS:
+        return None
+    quote = ""
+    i = 0
+    while i < len(cmd):
+        ch = cmd[i]
+        if quote == "'":
+            quote = "" if ch == "'" else quote
+        elif quote == '"':
+            if ch == "\\":
+                i += 1
+            elif ch == '"':
+                quote = ""
+            elif ch == "`" or cmd.startswith("$(", i):  # a substitution nobody performs: it would arrive as text
+                return _NO_SHELL.format(op="$(" if ch == "$" else ch)
+        elif ch == "\\":
+            i += 1
+        elif ch in "'\"":
+            quote = ch
+        elif ch in "&|;<>`" or cmd.startswith("$(", i):
+            op = ch if ch in "`" else cmd[i : i + 2] if cmd[i : i + 2] in ("&&", "||", ">>", "<<", "$(") else ch
+            return _NO_SHELL.format(op=op)
+        i += 1
+    return None

@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from orch import canon
+from orch.model.tasks import verify_cmd_problem
 from orch.ops import views
 from orch.ops.base import Context, Result
 from orch.ops.errors import OrchError
@@ -300,6 +301,14 @@ def ac_edit(c: Call, p: Projection, args: dict[str, Any]) -> Out:
     return Out({"ac": args["ac"]})
 
 
+def _verify_cmd(c: Call, raw: str) -> str:
+    """A verify command, refused now when it needs a shell (it is run without one)."""
+    cmd = c.text(raw, one_line=True, what="verify command")
+    if problem := verify_cmd_problem(cmd):
+        raise OrchError("invalid.input", f"verify command: {problem}")
+    return cmd
+
+
 def task_add(c: Call, p: Projection, args: dict[str, Any]) -> Out:
     text = c.text(args["text"], what="task")
     tasks = [dict(thaw(t)) for t in p.last_view.fields["tasks"]]
@@ -309,7 +318,7 @@ def task_add(c: Call, p: Projection, args: dict[str, Any]) -> Out:
         if ac not in known:
             raise OrchError("not_found", f"{p.view.key} has no criterion {ac}", hint="orch ac add TEXT")
     tid = _next_id("T", [t["id"] for t in tasks])
-    verify = {"cmd": c.text(args["verify"], one_line=True, what="verify command")} if args.get("verify") else None
+    verify = {"cmd": _verify_cmd(c, args["verify"])} if args.get("verify") else None
     task: dict[str, Any] = {"id": tid, "text": text, "verify": verify, "proves": proves}
     if args.get("assignee"):
         task["assignee"] = args["assignee"]
@@ -335,7 +344,7 @@ def task_edit(c: Call, p: Projection, args: dict[str, Any]) -> Out:
     if args.get("text") is not None:
         new["text"] = c.text(args["text"], what="task")
     if args.get("verify") is not None:
-        cmd = c.text(args["verify"], one_line=True, what="verify command") if args["verify"] != "" else None
+        cmd = _verify_cmd(c, args["verify"]) if args["verify"] != "" else None
         new["verify"] = {"cmd": cmd} if cmd else None
     if args.get("proves") is not None:
         proves = sorted(set(args["proves"]), key=lambda x: int(x[2:]))

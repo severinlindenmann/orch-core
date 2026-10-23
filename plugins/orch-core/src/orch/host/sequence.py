@@ -354,6 +354,10 @@ def _task_verify(value: Any) -> str:
     cmd = _one_line(value, "verify command", 4096)
     if len(cmd.encode("utf-8")) > 4096:  # Call.text's byte limit
         raise SequenceInvalid("verify command is longer than 4096 bytes")
+    from orch.model.tasks import verify_cmd_problem
+
+    if problem := verify_cmd_problem(cmd):
+        raise SequenceInvalid(f"verify command: {problem}")
     return cmd
 
 

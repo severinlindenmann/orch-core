@@ -56,7 +56,7 @@ def build(root: str) -> str:
     real = os.path.realpath(root)
     out = [HEADER]
     left = LIMIT - len(HEADER)
-    wanted = (("AGENTS.orch.md", (os.path.join(STORE_DIR, AGENTS_FILE), AGENTS_FILE)), ("AGENTS.md", ("AGENTS.md",)))
+    wanted = ((AGENTS_FILE, (os.path.join(STORE_DIR, AGENTS_FILE), AGENTS_FILE)), ("AGENTS.md", ("AGENTS.md",)))
     for title, rels in wanted:
         for rel in rels:
             text = _read(real, rel, max(left, 0))

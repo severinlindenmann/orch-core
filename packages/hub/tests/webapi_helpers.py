@@ -122,6 +122,7 @@ class Web:
             )
         )
         e.acc.observer = e.audit.access_change  # as serve wires it (D4)
+        self.browser_tokens: set[str] = set()  # sessions made by login(): sent as the cookie, as a browser does
         self.admin = e.user("admin")
         e.acc.add_member("hub-admin", self.admin)
         self.ann = e.user("ann")
@@ -140,7 +141,7 @@ class Web:
         body: Any = None,
         *,
         token: str | None = None,
-        cookie: bool = False,
+        cookie: bool | None = None,
         origin: str | None = ORIGIN,
         csrf: bool = True,
         ctype: str | None = "application/json",
@@ -150,6 +151,8 @@ class Web:
         h: dict[str, str] = {}
         if host or self.api._hosts:
             h["host"] = host or "127.0.0.1:9000"
+        if cookie is None:  # a browser session goes as the cookie unless the test says bearer (cookie=False)
+            cookie = token in self.browser_tokens
         if token and cookie:
             h["cookie"] = f"{self.api._cookie_name}={token}"
         elif token:
@@ -164,8 +167,9 @@ class Web:
         status, hdrs, out = self.api.handle(method, "/api/v1" + path, h, raw, peer)
         return status, json.loads(out), dict(hdrs)
 
-    def login(self, user: str, client: str = "app") -> str:
-        """A session token; ``client="browser"`` signs in as the browser does and returns the cookie's token."""
+    def login(self, user: str, client: str = "browser") -> str:
+        """A session token. The default is a browser (``full``) session, which ``call`` sends as the cookie; ``"app"``
+        is the phone's PAIRING session (bearer): it can only pair and bind (protocol §6.4)."""
         s, o, h = self.call(
             "POST",
             "/session",
@@ -173,7 +177,11 @@ class Web:
             origin=None if client == "app" else ORIGIN,
         )
         assert s == 200, o
-        return o["token"] if client == "app" else h["Set-Cookie"].split(";")[0].split("=", 1)[1]
+        if client == "app":
+            return o["token"]
+        tok = h["Set-Cookie"].split(";")[0].split("=", 1)[1]
+        self.browser_tokens.add(tok)
+        return tok
 
     def creds(self, user: str) -> dict[str, str]:
         """The password + a fresh TOTP step, as the browser re-enters them to register a key (A8-3)."""

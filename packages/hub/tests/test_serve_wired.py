@@ -17,6 +17,7 @@ import time
 
 import pytest
 from channels_helpers import PW, new_channel, prove
+from cryptography.hazmat.primitives.asymmetric import ec
 from custodial_helpers import LOG, WK, core_seal
 from publish_helpers import FakeUpstream, _signed, pub_b64
 from relay_helpers import FakeRelay
@@ -27,9 +28,12 @@ from orch_hub.access import Access
 from orch_hub.channels import Channels
 from orch_hub.channels.service import CHANNELS_FILE, totp_code
 from orch_hub.config import HubConfig
+from orch_hub.contract import channelapi as CA
 from orch_hub.contract import keystore as KS
+from orch_hub.contract import relayroutes as RR
+from orch_hub.contract import suite as S
 from orch_hub.contract import vectorgen as G
-from orch_hub.contract.canon import b64u
+from orch_hub.contract.canon import b64u, loads_strict
 from orch_hub.keys import HubKeys
 from orch_hub.link import LinkClient
 
@@ -155,7 +159,9 @@ def sign_in(h) -> str:
     return o["token"]
 
 
-def register_phone(h, token: str) -> str:
+def register_phone(h, token: str):
+    """Pair a phone through the pairing session and bind it (protocol §6.4). Returns (signer, channel_id, channel
+    session token)."""
     signer = new_channel()
     web = h["web"]
     s, begun = web.call(
@@ -168,7 +174,16 @@ def register_phone(h, token: str) -> str:
         {"challenge_id": begun["challenge_id"], "signed": prove(signer, begun)}, token,
     )  # fmt: skip
     assert s == 200, got
-    return got["channel_cert"]["o"]["channel_id"]
+    cid = got["channel_cert"]["o"]["channel_id"]
+    auth = signer.sign_object(
+        {
+            "v": 2, "suite": 2, "kind": "hub.channel_auth", "hv": 0, "hub_id": h["keys"].hub_id, "user_id": h["user"],
+            "channel_id": cid, "session_ref": CA.session_ref(token), "ts_ms": now_ms(), "dev": True,
+        }
+    )  # fmt: skip
+    s, bound = web.call("POST", "/session/channel", {"auth": auth}, token)
+    assert s == 200, bound
+    return signer, cid, bound["token"]
 
 
 def test_the_wired_hub_end_to_end(hub):
@@ -176,7 +191,13 @@ def test_the_wired_hub_end_to_end(hub):
     # 1. sign in over the web API; a wrong password is refused
     s, o = web.call("POST", "/session", {"user_id": hub["user"], "password": "x" * 16, "totp": "000000"})
     assert (s, o["error"]) == (401, "bad_credentials")
-    token = sign_in(hub)
+    pairing = sign_in(hub)
+    # the card is public; the pairing session may do nothing but pair and bind
+    s, o = web.call("GET", "/hub/card")
+    assert s == 200 and o["card"]["o"]["hub_id"] == hub["keys"].hub_id
+    assert o["api_origin"]["o"]["origin"] == web.origin  # the loopback address the web API signed from its config
+    assert web.call("GET", "/session", None, pairing) == (403, {"error": "forbidden_role"})
+    signer, cid, token = register_phone(hub, pairing)
     assert web.call("GET", "/session", None, token)[1]["user_id"] == hub["user"]
 
     # 2. a full-mode workspace's open question reaches GET /me/needs-you through log_sync
@@ -193,20 +214,29 @@ def test_the_wired_hub_end_to_end(hub):
     items = [i for ws in o.get("workspaces", []) for i in ws.get("items", [])] or o.get("items", [])
     assert any(i.get("title") == "CSV or API?" or i.get("hash") == qhash for i in items), o
 
-    # 3. a prepare: the phone has an APNs target but no push key yet (the route for it, PUT /channels/{id}/push, is
-    # H1), so no hint goes out at all (§10.8.2, L2B-4: never sealed to the signing key). H1 restores the push here.
-    cid = register_phone(hub, token)
-    relay.targets[cid] = {
-        "env": "sandbox",
-        "topic": "io.severin.orch",
-        "token": b"\x01" * 32,
-    }  # the phone's APNs target
+    # 3. a prepare: the phone registers its APNs target and push key (H1), the hub seals the hint to that key
+    priv = ec.generate_private_key(ec.SECP256R1())
+    push_obj = signer.sign_object(
+        {
+            "v": 2, "suite": 2, "kind": "hub.channel_push", "hv": 0, "hub_id": hub["keys"].hub_id, "channel_id": cid,
+            "push_pub": b64u(S.public_bytes(priv)), "issued_ms": now_ms(), "dev": True,
+        }
+    )  # fmt: skip
+    s, o = web.call(
+        "PUT", f"/channels/{cid}/push",
+        {"env": "sandbox", "topic": "io.severin.orch", "token": b64u(b"\x01" * 32), "push_key": push_obj}, token,
+    )  # fmt: skip
+    assert (s, o) == (200, {"registered": True})
+    assert cid in relay.targets
     act = {"type": "ticket.updated", "log": LOG, "set": {"ticket.priority": "high"}}
     s, p = web.call("POST", "/sign/prepare", {"workspace_id": WS, "channel_id": cid, "action": act}, token)
     assert s == 200, p
-    assert relay.sent == []
+    until(lambda: relay.sent, "the sealed hint")
+    outer = loads_strict(relay.sent[0]["outer"])
+    got = RR.open_push(outer["c"], hub_id=outer["hub"], channel_id=cid, msg_id=outer["id"], recipient_priv=priv)
+    assert got["type"] == "prepare" and got["ref"] == p["prepared_id"]
 
-    # 4. revoking the channel deletes the push target at the relay
+    # 4. revoking the channel deletes the push target at the relay (and the held push key)
     assert cid in relay.targets
     s, o = web.call("POST", f"/channels/{cid}/revoke", {}, token)
     assert s == 200, o

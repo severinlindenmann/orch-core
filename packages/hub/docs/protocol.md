@@ -468,8 +468,7 @@ dev marker; `push_pub` is not the channel key (`malformed`); `issued_ms` newer t
 | POST | `/session/channel` | pairing | `{auth: <signed hub.channel_auth>}` → `{token, user_id, channel_id, expires_ms, channel_cert, card}` |
 | PUT | `/channels/{channel_id}/push` | channel (that channel) | `{env, topic, token, push_key: <signed hub.channel_push> \| null}` → `{registered: true}`; `null` keeps the held push key (an APNs token change needs no new key; without a held key it is `malformed`). The hub then registers the target at the relay (§10.8.1) |
 
-**Not here.** App Attest (SHORTCUT of §6.3 stays). Renewing a channel certificate for the same key before it expires (a
-hub task; until then an expired certificate means pairing again). Admin-floor custodial types from a phone (spec §7 wants
+**Not here.** App Attest (SHORTCUT of §6.3 stays). Renewing a channel certificate for the same key (the `renew` audit change exists, §10.5, but no hub renews in V3: the certificate lasts 31 days, then the phone pairs again). Admin-floor custodial types from a phone (spec §7 wants
 a sign-in within 5 min for them; a V3 phone offers only the four decision types).
 
 ## 7. Group snapshot
@@ -1289,9 +1288,9 @@ hub.audit {v, suite, kind: "hub.audit", hv, hub_id, op_cert_id, seq ≥ 1, prev:
   `item_hash`; `revoke` names the item and the **tombstoned** `item_version`, `item_hash` null (a revoke of an unknown or
   already revoked id is the idempotent `{}` and writes **no** record); `purge` is one record per workspace at unbind or
   at a mode switch, `item_id`, `item_version`, `item_hash` null and `count` = the live items purged; `count` is null
-  otherwise (vectors `audit_share_*`); `channel` (p4) `{channel_id, user_id, change: register | revoke, factor,
+  otherwise (vectors `audit_share_*`); `channel` (p4) `{channel_id, user_id, change: register | revoke | renew, factor,
   actor_user_id | null, nonce}`, hub-wide (`scope_tag` null; `actor_user_id` null = the operator at the hub terminal,
-  there is no `unrevoke`, §6.2); `grant` `{group, workspace_id, role | null, actor_user_id, nonce}`; `membership`
+  there is no `unrevoke`, §6.2; `renew` = a new certificate for the same channel key, the factor unchanged, recorded BEFORE it is issued and refusing the renewal when the chain cannot be written. **Contract text only in V3: no hub renews**, the certificate lasts 31 days and then the phone pairs again); `grant` `{group, workspace_id, role | null, actor_user_id, nonce}`; `membership`
   `{group, user_id, added, actor_user_id, nonce}`; `space` `{space_id, epoch, change: create | add | remove | unbind | delete,
   workspace_id | null, actor_user_id | null, nonce}`. The acting admin's `UK` signature on a grant or membership change is
   the custodial event it came from (spec §10); the audit record points at it, it does not replace it. **Every event of every type carries `nonce`, 32 random bytes

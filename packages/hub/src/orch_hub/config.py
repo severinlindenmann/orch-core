@@ -33,6 +33,16 @@ class HubConfig:
     trusted_peers: frozenset[str] = frozenset()  # edge addresses that may state the client address (X-Forwarded-For)
     behind_edge: bool = False
     allowed_origins: frozenset[str] = frozenset()
+    #: the hub's public API origin, signed into ``hub.api_origin`` (protocol §6.4). One of ``allowed_origins`` (the same
+    #: configured value family, never a request's); None with exactly one allowed origin means that one
+    api_origin: str | None = None
+
+    def resolved_api_origin(self) -> str | None:
+        """The origin ``GET /hub/card`` signs: ``api_origin``, else the single allowed origin, else None (the route then
+        answers ``unavailable``; the loopback dev server learns its address only after it binds, see ``serve``)."""
+        if self.api_origin is not None:
+            return self.api_origin
+        return next(iter(self.allowed_origins)) if len(self.allowed_origins) == 1 else None
 
     def __post_init__(self) -> None:
         if type(self.dev) is not bool:
@@ -41,6 +51,14 @@ class HubConfig:
             raise ValueError("behind_edge needs --trusted-peer (else every request has the edge as its source)")
         if self.behind_edge and not self.allowed_origins:
             raise ValueError("behind_edge needs --web-origin (the exact origin the edge serves the console from)")
+        if self.api_origin is not None and self.api_origin not in self.allowed_origins:
+            raise ValueError(
+                "--api-origin must be one of the --web-origin values (one configured origin, signed as is)"
+            )
+        if not self.dev and any(o.startswith("http://") for o in self.allowed_origins):
+            raise ValueError("a non-dev hub signs and serves https origins only (D1)")
+        if self.behind_edge and self.resolved_api_origin() is None:
+            raise ValueError("behind_edge with several --web-origin values needs --api-origin (the one the phone uses)")
         if self.behind_edge and not all(_https_origin(o) for o in self.allowed_origins):
             # the cookie is Secure and the Host check derives from these (design-a8 A8-4): exactly https://<console host>
             raise ValueError("behind_edge needs --web-origin to be exactly https://<host>[:port] (no path, no http)")

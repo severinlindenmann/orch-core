@@ -38,12 +38,12 @@ export function workspaceIconOf(w: { id: string; icon?: { icon?: unknown; colour
 
 type Named = { id: string; name: string; icon?: { icon?: unknown; colour?: unknown } | null }
 
-/** Another workspace has the same name, or the same icon and colour: then the prefix and a short id tail are shown beside the icon. */
+/** Another workspace has the same name, or the same symbol (any colour): then the prefix and a short id tail are shown beside the icon. */
 export function lookAlike(w: Named, all: Named[]): boolean {
   const mine = workspaceIconOf(w)
   return all.some((o) => {
     if (o.id === w.id) return false
     const theirs = workspaceIconOf(o)
-    return o.name.trim().toLowerCase() === w.name.trim().toLowerCase() || (theirs.icon === mine.icon && theirs.colour === mine.colour)
+    return o.name.trim().toLowerCase() === w.name.trim().toLowerCase() || theirs.icon === mine.icon
   })
 }

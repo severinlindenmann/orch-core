@@ -2,8 +2,9 @@
 
 import pytest
 
+from orch.model import Code
 from orch.wsicons import COLOUR_LABELS, ICON_LABELS, default_icon, fnv1a
-from tests.model.world import World
+from tests.model.world import World, refused
 
 
 @pytest.fixture
@@ -32,6 +33,14 @@ def test_a_value_outside_the_closed_lists_is_refused(w, bad):
     e = w.build_unappended("workspace", "settings.changed", "sev", set={"icon": bad})
     got = admit(w.state(), e, log="workspace")
     assert getattr(got, "code", None) is not None
+
+
+def test_only_an_owner_sets_the_icon(w):
+    assert (
+        refused(w, "workspace", "settings.changed", "tom", set={"icon": {"icon": "star", "colour": "teal"}})
+        == Code.ROLE_DENIED
+    )
+    assert refused(w, "workspace", "settings.changed", "sev", set={"icon": {"icon": "star", "colour": "teal"}}) is None
 
 
 def test_the_default_comes_from_the_id_with_pinned_vectors():

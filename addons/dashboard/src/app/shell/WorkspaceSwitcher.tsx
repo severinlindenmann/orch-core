@@ -136,15 +136,20 @@ export function WorkspaceSwitcher({ collapsed, viewer }: { collapsed: boolean; v
       type="button"
       aria-label="Switch workspace"
       className={cn(
-        'flex w-full items-center gap-2 rounded-md border border-border bg-surface py-1.5 text-left text-[13px] hover:bg-surface-2',
-        collapsed ? 'justify-center px-0' : 'px-1.5',
+        'flex w-full items-center gap-2 rounded-md border border-border bg-surface text-left text-[13px] hover:bg-surface-2',
+        collapsed ? 'flex-col justify-center gap-0.5 px-0 py-1' : 'px-1.5 py-1.5',
       )}
     >
       {workspace ? <WorkspaceIconFor workspace={workspace} /> : <span aria-hidden className="size-7 shrink-0 rounded-md bg-surface-3" />}
-      {workspace && <span className={cn('rounded bg-surface-3 px-1 font-mono text-[10px] font-semibold text-text-muted', collapsed && 'hidden')}>{workspace.prefix}</span>}
+      {/* The prefix stays beside (expanded) or under (collapsed) the icon: it is what tells look-alike workspaces apart. */}
+      {workspace && (
+        <span data-ws-prefix className={cn('font-mono font-semibold text-text-muted', collapsed ? 'max-w-[48px] truncate text-[9px] leading-none' : 'rounded bg-surface-3 px-1 text-[10px]')}>
+          {workspace.prefix}
+        </span>
+      )}
       <span className={cn('min-w-0 flex-1 truncate', collapsed && 'hidden')}>{workspace ? visible(workspace.name) : null}</span>
       {currentShared && workspace && (
-        <span data-ws-uuid-current className={cn('font-mono text-[10px] text-text-faint', collapsed && 'hidden')}>
+        <span data-ws-uuid-current className={cn('font-mono text-text-faint', collapsed ? 'text-[9px] leading-none' : 'text-[10px]')}>
           {uuid8(workspace.id)}
         </span>
       )}

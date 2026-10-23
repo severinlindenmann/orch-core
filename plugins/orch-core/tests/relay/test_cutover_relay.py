@@ -257,3 +257,50 @@ def test_reopen_says_when_the_relay_did_not_start(env, relay, monkeypatch):
     env.service.relay_reason = "start_failed: SeamMissing"
     out = cutover.reopen(env.service)
     assert out["direct"] == "open" and out["relay_started"] is False and "start_failed" in out["relay"]
+
+
+def test_a_leave_between_the_seal_and_the_relay_put_sends_no_cut_over(env, relay, monkeypatch):
+    """The binding is gone when the run reaches the PUT: it aborts, the relay row never appears."""
+    pin_snapshot(env)
+    real = cutover._rotate_and_seal  # noqa: SLF001
+
+    def seal_then_leave(service, base, card):
+        real(service, base, card)
+        with hubops._MU:  # noqa: SLF001
+            st = hubops._load_state(service)  # noqa: SLF001
+            st.status = "unbound"  # what the leave's unbind saves
+            hubops._write_state(service, st)  # noqa: SLF001
+
+    monkeypatch.setattr(cutover, "_rotate_and_seal", seal_then_leave)
+    assert cutover.run(env.service, force_start=True) == "closing"
+    assert relay.row is None and not [c for c in relay.calls if c[0] == "PUT" and c[1].endswith("/cutover")]
+
+
+def test_the_leaves_delete_and_a_reopen_wait_for_a_running_cut_over(env, relay, monkeypatch):
+    import threading
+    import time
+
+    entered, release, done = threading.Event(), threading.Event(), []
+    real = cutover._rotate_and_seal  # noqa: SLF001
+
+    def slow(service, base, card):
+        entered.set()
+        release.wait(10)
+        real(service, base, card)
+
+    monkeypatch.setattr(cutover, "_rotate_and_seal", slow)
+    pin_snapshot(env)
+    t = threading.Thread(target=lambda: cutover.run(env.service, force_start=True))
+    t.start()
+    assert entered.wait(10)
+    d = threading.Thread(target=lambda: done.append(cutover.cutover_delete(env.service)))
+    d.start()
+    time.sleep(0.3)
+    assert done == []  # blocked on the run's lock
+    release.set()
+    t.join(20)
+    d.join(20)
+    assert done == [True] and relay.row == {
+        "state": "cut_over",
+        "hub_id": env.state.hub_id,
+    }  # delete never touches cut_over

@@ -210,7 +210,7 @@ def _run_locked(service: WorkspaceService, model: dict[str, Any] | None, hub_car
             _delta(service, base, lambda c: (setattr(c, "direct", "closing"), setattr(c, "direct_note", None)))
         _stop_relay(service)
         _rotate_and_seal(service, base, hub_card)
-        _relay_cut(service, h._load_state(service))  # noqa: SLF001
+        _relay_cut(service, base)
         _delta(service, base, lambda c: (setattr(c, "direct", "closed"), setattr(c, "direct_note", None)))
     except HostError as exc:
         LOG.warning("cut-over of %s stays closing: %s", service.workspace_id, exc.code)
@@ -279,7 +279,7 @@ def _rotate_and_seal(service: WorkspaceService, base: Any, hub_card: Any) -> Non
         getattr(transport, "close", lambda: None)()
 
 
-def _relay_cut(service: WorkspaceService, state: Any) -> None:
+def _relay_cut(service: WorkspaceService, state: Any) -> None:  # state: the binding the run started for
     """Step 4. ``unknown_hub`` and every other refusal leave the state ``closing``."""
     if not _relay_linked(service):
         return  # a relay-less workspace has no direct path at a relay to close
@@ -295,6 +295,9 @@ def _relay_cut(service: WorkspaceService, state: Any) -> None:
             held = session.call("GET", path, f"GET /v2/workspaces/{route}")
             if held.get("state") == "cut_over":
                 return  # a repeat after a crash between the relay's answer and ours
+            # a leave may have landed since the seal: the relay must never get a cut-over for a binding that is gone
+            # (the leave's own delete waits for this lock, so after this check it cannot slip in before the PUT)
+            _delta(service, state, lambda c: None)
             session.call(
                 "PUT", path, f"PUT /v2/workspaces/{route}",
                 body={"v": 2, "hub_id": state.hub_id, "state": "cut_over"}, holder=True,
@@ -319,7 +322,7 @@ def cutover_delete(service: WorkspaceService) -> bool:
     ws = service.workspace_id
     path = f"/v2/workspaces/{ws}/cutover"
     try:
-        with relayhook.cutover_session(service, transport=TRANSPORT) as session:
+        with _lock_for(service), relayhook.cutover_session(service, transport=TRANSPORT) as session:
             session.hold()
             held = session.call("GET", path, "GET /v2/workspaces/{ws}/cutover")
             if held.get("state") != "pending":
@@ -355,6 +358,11 @@ def _reopen_check(state: Any, model: dict[str, Any], rotation: str, publish_set:
 
 
 def reopen(service: WorkspaceService) -> dict[str, Any]:
+    with _lock_for(service):  # the same lock as run and cutover_delete: no cut-over runs beside a reopening
+        return _reopen_locked(service)
+
+
+def _reopen_locked(service: WorkspaceService) -> dict[str, Any]:
     """M4, the owner's reversal, only after leaving and only when the leave is finished (:func:`_reopen_ready`, checked
     before the relay is touched and again under the state lock right before the state changes): delete the cut-over at
     the relay (fenced), set ``direct`` to ``open``, and start the relay link again. Phones must be paired again."""

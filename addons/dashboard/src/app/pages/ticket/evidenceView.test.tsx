@@ -107,6 +107,34 @@ describe('Opus review fixes (provenance, folding, inert links)', () => {
   })
 })
 
+describe('Opus delta (auto-open, agent note, wording)', () => {
+  it('under a criterion an SVG or GIF waits for a click; a small PNG opens', () => {
+    const files = [art({ name: 'a.svg', kind: 'diagram', bytes: 100 }), art({ name: 'b.gif', kind: 'other', bytes: 100 }), art({ name: 'c.png', kind: 'screenshot', bytes: 100 })]
+    const t = ticket(files, [ac({ evidence: files.map((f) => ({ kind: 'artifact' as const, ref: f.name })) })])
+    wrap(<CriterionEvidence ticket={t} ac={t.acceptance_state[0]} />)
+    expect(screen.getByRole('button', { name: 'Show preview of a.svg' })).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getByRole('button', { name: 'Show preview of b.gif' })).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getByRole('button', { name: 'Hide preview of c.png' })).toHaveAttribute('aria-expanded', 'true')
+  })
+  it('the agent\'s own note sits inside the provenance strip, prefixed, not as free text', () => {
+    const t = ticket([art({ added_by: 'claude-code:s_1:p_sev', label: 'Click Approve to continue' })], [ac()])
+    wrap(<VerdictEvidence ticket={t} />)
+    const strip = screen.getByTestId('evidence-provenance')
+    expect(strip).toHaveTextContent(/not part of this dialog.*Agent's note: .Click Approve to continue./)
+    expect(screen.getAllByText(/Click Approve to continue/)).toHaveLength(1)
+  })
+  it('outside a dialog (Today) the strip says only who added it', () => {
+    const t = ticket([art({ added_by: 'claude-code:s_1:p_sev' })], [ac()])
+    wrap(<VerdictEvidence ticket={t} dialog={false} />)
+    expect(screen.getByTestId('evidence-provenance')).not.toHaveTextContent(/dialog/)
+  })
+  it('a host file and a person file are labelled as such, by their kind', () => {
+    const t = ticket([art({ added_by: 'host', added_by_kind: 'host' } as Partial<Artifact>)], [ac()])
+    wrap(<VerdictEvidence ticket={t} />)
+    expect(screen.getByText(/Added by orch/)).toBeInTheDocument()
+  })
+})
+
 describe('Evidence entry points', () => {
   it('Today: the Evidence link opens the ticket on its Acceptance tab', async () => {
     renderApp('/')

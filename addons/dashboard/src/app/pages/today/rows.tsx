@@ -335,7 +335,7 @@ export function VerdictRow({ item, ticket, now, expanded, onToggle, sign, decide
         {' · '}
         {receipts} receipts · {ticket?.artifacts.length ?? 0} artifacts
       </p>
-      {ticket && <VerdictEvidence ticket={ticket} />}
+      {ticket && <VerdictEvidence ticket={ticket} dialog={false} />}
     </RowShell>
   )
 }

@@ -140,16 +140,141 @@ def picture(data: bytes) -> dict | None:
 
 
 SVG_MAX = 512 * 1024
+GIF_FRAMES_MAX = 500
+SVG_ELEMENTS_MAX = 5000
+SVG_DEPTH_MAX = 32
+_BOM = b"\xef\xbb\xbf"
+_SVG_NS = "http://www.w3.org/2000/svg"
+_XLINK_NS = "http://www.w3.org/1999/xlink"
+#: the only elements an evidence SVG may use. No script, style, use, image, foreignObject, filter, a or animation.
+_SVG_ELEMENTS = frozenset(
+    "svg g path rect circle ellipse line polyline polygon text tspan defs "
+    "linearGradient radialGradient stop title desc clipPath".split()
+)
+_REF = re.compile(rb"&(?!(?:amp|lt|gt|quot|apos);)")
+_URL_FN = re.compile(r"url\(", re.IGNORECASE)
+_URL_LOCAL = re.compile(r"url\(\s*#[\w.\-]+\s*\)", re.IGNORECASE)
 
 
 def is_svg(data: bytes) -> bool:
     """The ONE rule for "these bytes are an SVG" (the page's `sniffImage` in pasteImage.ts uses the same one):
-    the first 512 bytes, trimmed and lower-cased, start with `<svg`, or with `<?xml` / `<!doctype svg` and an `<svg`
-    tag shows up in the first 4096 bytes."""
+    the first 512 bytes, without a UTF-8 BOM, trimmed and lower-cased, start with `<svg`, or with `<?xml` /
+    `<!doctype svg` and an `<svg` tag shows up in the first 4096 bytes."""
+    data = data.removeprefix(_BOM)
     lead = data[:512].lstrip().lower()
     return lead.startswith(b"<svg") or (
         lead.startswith((b"<?xml", b"<!doctype svg")) and b"<svg" in data[:4096].lower()
     )
+
+
+def safe_svg(data: bytes) -> bool:
+    """An ALLOWLIST, not a scan: the document parses as strict XML with no DTD, entity or processing instruction, every
+    element is in the SVG namespace and in `_SVG_ELEMENTS`, no attribute can load or run anything (`on*`, a reference
+    that is not `#fragment`, `data:`, `javascript:`, `url()` other than `url(#id)`), and element count and depth are
+    bounded. Anything else, including a parse error, is refused."""
+    from xml.parsers import expat
+
+    if len(data) > SVG_MAX or _REF.search(data):  # numeric and named references other than the five predefined
+        return False
+    state = {"n": 0, "depth": 0, "root": False}
+
+    class Refused(Exception):
+        pass
+
+    def no(*_a):
+        raise Refused
+
+    def start(name, attrs):
+        state["n"] += 1
+        state["depth"] += 1
+        if state["n"] > SVG_ELEMENTS_MAX or state["depth"] > SVG_DEPTH_MAX:
+            raise Refused
+        ns, _, local = name.rpartition(" ")
+        if ns != _SVG_NS or local not in _SVG_ELEMENTS or (not state["root"] and local != "svg"):
+            raise Refused
+        state["root"] = True
+        for key, value in attrs.items():
+            kns, _, klocal = key.rpartition(" ")
+            if kns not in ("", _XLINK_NS) or klocal.lower().startswith("on"):
+                raise Refused
+            low = value.lower()
+            if "data:" in low or "javascript:" in low or "&" in value:
+                raise Refused
+            if klocal == "href" and not value.startswith("#"):
+                raise Refused
+            if len(_URL_FN.findall(value)) != len(_URL_LOCAL.findall(value)):
+                raise Refused
+
+    def end(_name):
+        state["depth"] -= 1
+
+    def ns_decl(_prefix, uri):
+        if uri not in (_SVG_NS, _XLINK_NS):
+            raise Refused
+
+    parser = expat.ParserCreate("UTF-8", namespace_separator=" ")
+    parser.StartElementHandler = start
+    parser.EndElementHandler = end
+    parser.StartNamespaceDeclHandler = ns_decl
+    parser.StartDoctypeDeclHandler = no
+    parser.EntityDeclHandler = no
+    parser.ProcessingInstructionHandler = no
+    parser.ExternalEntityRefHandler = no
+    try:
+        parser.Parse(data.removeprefix(_BOM), True)
+    except (Refused, expat.ExpatError):
+        return False
+    return state["root"]
+
+
+def _gif_ok(data: bytes, side_max: int, pixels_max: int) -> bool:
+    """Walk the GIF's blocks, headers only: the screen and EVERY frame must lie inside the size limits and inside the
+    screen, the frame count is bounded, the walk ends exactly on the 0x3B trailer. A browser enlarges the canvas to a
+    frame that sticks out, so the logical screen alone proves nothing."""
+    n = len(data)
+    if n < 13:
+        return False
+    sw, sh, packed = int.from_bytes(data[6:8], "little"), int.from_bytes(data[8:10], "little"), data[10]
+    if not (1 <= sw <= side_max and 1 <= sh <= side_max) or sw * sh > pixels_max:
+        return False
+    i = 13 + (3 * 2 ** ((packed & 7) + 1) if packed & 0x80 else 0)
+    frames, area = 0, 0
+
+    def skip_blocks(pos: int) -> int:
+        while True:
+            if pos >= n:
+                return -1
+            size = data[pos]
+            pos += 1 + size
+            if size == 0:
+                return pos
+
+    while i < n:
+        block = data[i]
+        if block == 0x3B:
+            return frames >= 1
+        if block == 0x21:
+            i = skip_blocks(i + 2)
+        elif block == 0x2C:
+            if i + 10 > n:
+                return False
+            left, top, w, h = (int.from_bytes(data[i + 1 + k : i + 3 + k], "little") for k in (0, 2, 4, 6))
+            local = data[i + 9]
+            if not (1 <= w <= side_max and 1 <= h <= side_max) or left + w > sw or top + h > sh:
+                return False
+            frames += 1
+            area += w * h
+            if frames > GIF_FRAMES_MAX or area > 5 * pixels_max:
+                return False
+            i += 10 + (3 * 2 ** ((local & 7) + 1) if local & 0x80 else 0) + 1  # + LZW minimum code size
+            if i > n:
+                return False
+            i = skip_blocks(i)
+        else:
+            return False
+        if i < 0:
+            return False
+    return False  # no trailer
 
 
 def _jpeg_size(data: bytes) -> tuple[int, int] | None:
@@ -190,22 +315,18 @@ def media(data: bytes) -> dict | None:
             kind = "png" if imagecheck.check(data) == "image/png" else "webp"
         except imagecheck.ImageRefused:
             return None
-    elif data.startswith(b"\xff\xd8\xff") or data[:4] == b"GIF8":
-        if data[:2] == b"\xff\xd8":
-            kind, size = "jpeg", _jpeg_size(data)
-        else:
-            kind, size = "gif", (int.from_bytes(data[6:8], "little"), int.from_bytes(data[8:10], "little"))
+    elif data.startswith(b"\xff\xd8\xff"):
+        kind, size = "jpeg", _jpeg_size(data)
         if not size or not (1 <= size[0] <= imagecheck.SIDE_MAX and 1 <= size[1] <= imagecheck.SIDE_MAX):
             return None
         if size[0] * size[1] > imagecheck.PIXELS_MAX:
             return None
+    elif data[:6] in (b"GIF87a", b"GIF89a"):
+        if not _gif_ok(data, imagecheck.SIDE_MAX, imagecheck.PIXELS_MAX):
+            return None
+        kind = "gif"
     elif is_svg(data):
-        low = data.lower()
-        if (
-            len(data) > SVG_MAX
-            or b"<!entity" in low
-            or (b"<!doctype" in low and b"[" in low[low.index(b"<!doctype") :])
-        ):
+        if not safe_svg(data):
             return None
         kind = "svg"
     else:

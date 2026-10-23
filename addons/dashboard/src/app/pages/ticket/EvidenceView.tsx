@@ -27,22 +27,37 @@ function useAgentHtml(ticketKey: string): boolean {
 /** One proving artifact: its name, what it proves, and its preview (open at first, one click to fold). */
 /** Files up to this size open on their own; a bigger one waits for a click (nothing big is fetched just by opening a tab). */
 export const AUTO_OPEN_BYTES = 256 * 1024
-const openAtFirst = (a: Artifact) => a.bytes != null && a.bytes <= AUTO_OPEN_BYTES
+/** PNG, WebP and JPEG (and text, pages) open on their own; an SVG or GIF waits for a click, whatever size it has. */
+const openAtFirst = (a: Artifact) => a.bytes != null && a.bytes <= AUTO_OPEN_BYTES && !/\.(svg|gif)$/i.test(a.name)
 
-/** Who added the file, on its own background: an agent's evidence is not part of what a dialog asks the person to sign. */
+/**
+ * Who added the file, and (for an agent) its own note, on one distinct background: an agent's evidence and its words are
+ * not part of what a dialog asks the person to sign. Outside a dialog the same facts are a quiet line.
+ */
 function Provenance({ a, inDialog }: { a: Artifact; inDialog: boolean }) {
-  const agent = a.added_by_kind ? a.added_by_kind === 'agent' : a.added_by !== 'host'
-  if (!agent)
-    return <p className="mt-1 text-[11px] text-text-faint">Added by {a.added_by === 'host' ? 'orch' : 'a person'}.</p>
-  if (!inDialog) return <p data-testid="evidence-provenance" className="mt-1 text-[11px] text-text-faint">Added by agent {visible(agentName(a.added_by))}.</p>
+  const kind = a.added_by_kind ?? (a.added_by === 'host' ? 'host' : 'agent') // unknown reads as the stricter one
+  if (kind !== 'agent')
+    return (
+      <p className="mt-1 text-[11px] text-text-faint">
+        Added by {kind === 'host' ? 'orch' : 'a person'}.{a.label && <> {visible(a.label)}</>}
+      </p>
+    )
+  const who = visible(agentName(a.added_by))
+  const note = a.label ? <> Agent&apos;s note: &ldquo;{visible(a.label)}&rdquo;</> : null
+  if (!inDialog)
+    return (
+      <p data-testid="evidence-provenance" className="mt-1 text-[11px] text-text-faint">
+        Added by agent {who}.{note}
+      </p>
+    )
   return (
     <p data-testid="evidence-provenance" className="mt-1 rounded border border-warning/30 bg-warning-soft px-2 py-1 text-[11px] text-text">
-      Added by agent {visible(agentName(a.added_by))} · not part of this dialog, not what you sign
+      Added by agent {who} · not part of this dialog, not what you sign.{note}
     </p>
   )
 }
 
-export function EvidenceItem({ ticket, artifact, acId, compact = false, defaultOpen = openAtFirst(artifact) }: { ticket: TicketDocument; artifact: Artifact; acId: string; compact?: boolean; defaultOpen?: boolean }) {
+export function EvidenceItem({ ticket, artifact, acId, compact = false, dialog = compact, defaultOpen = openAtFirst(artifact) }: { ticket: TicketDocument; artifact: Artifact; acId: string; compact?: boolean; /** Inside a sign dialog (not Today's row): the "not part of this dialog" wording. */ dialog?: boolean; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen)
   const agentHtml = useAgentHtml(ticket.key)
   const body = `evidence-${acId}-${artifact.name}`
@@ -58,8 +73,7 @@ export function EvidenceItem({ ticket, artifact, acId, compact = false, defaultO
           {open ? 'Hide preview' : 'Show preview'}
         </Button>
       </div>
-      <Provenance a={artifact} inDialog={compact} />
-      {artifact.label && <p className="mt-0.5 text-[12px] text-text-muted">{visible(artifact.label)}</p>}
+      <Provenance a={artifact} inDialog={dialog} />
       {open && (
         <div id={body} className={cn('mt-2 overflow-auto', compact && 'max-h-64')}>
           <Viewer a={artifact} agentHtml={agentHtml} ticket={ticket.key} />
@@ -86,7 +100,7 @@ export function CriterionEvidence({ ticket, ac }: { ticket: TicketDocument; ac: 
  * The verdict dialog's evidence: a one-line summary, then each criterion with what proves it. Previews are folded at
  * first (a dialog is short) and open on a click, so Pass or Send back is decided on the evidence itself.
  */
-export function VerdictEvidence({ ticket }: { ticket: TicketDocument }) {
+export function VerdictEvidence({ ticket, dialog = true }: { ticket: TicketDocument; /** false: Today's row, not a dialog. */ dialog?: boolean }) {
   const withProof = ticket.acceptance_state.map((ac) => ({ ac, items: proofArtifacts(ticket, ac) }))
   const without = withProof.filter((x) => x.items.length === 0 && x.ac.proof !== 'accepted')
   const total = withProof.reduce((n, x) => n + x.items.length, 0)
@@ -105,7 +119,7 @@ export function VerdictEvidence({ ticket }: { ticket: TicketDocument }) {
             </p>
             <ul className="mt-1 space-y-1.5" aria-label={`Evidence for ${ac.id}`}>
               {items.map((a) => (
-                <EvidenceItem key={a.name} ticket={ticket} artifact={a} acId={ac.id} compact defaultOpen={false} />
+                <EvidenceItem key={a.name} ticket={ticket} artifact={a} acId={ac.id} compact dialog={dialog} defaultOpen={false} />
               ))}
             </ul>
           </div>

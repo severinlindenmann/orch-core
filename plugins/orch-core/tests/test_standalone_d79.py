@@ -181,7 +181,7 @@ def test_no_relay_client_module_exists():
     banned = [n for n in (*pkgs, *mods) if n.startswith(("orch/relay", "relay"))]
     assert banned == [], banned
     host = [p.name for p in (CORE / "src" / "orch" / "host").glob("relay*.py")]
-    assert host == [], host
+    assert host == ["relayid.py"], host  # column R identity: deleted with R4d (orch-core #1152)
     for p in python_files():
         for line, mod in [
             (n.lineno, a)

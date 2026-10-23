@@ -78,6 +78,7 @@ def mk(tmp_path):
 
     keys = MembershipKeys(tmp_path / "membership", WS, now_ms=lambda: NOW)
     from orch.identity.epochs import MembershipKeys
+
     r6kit.rotate(keys)  # epoch 1 committed
     yield keys
     keys.close()

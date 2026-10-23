@@ -18,12 +18,12 @@ it('the verdict is the header button and also in Actions, tagged next', async ()
 })
 
 it('Start agent in Actions is off while an agent works, with the reason', async () => {
-  const { user } = renderApp('/ticket/DEMO-0042')
+  const { user } = renderApp('/ticket/DEMO-0043')
   await screen.findByRole('heading', { level: 1 }, T)
   await user.click(screen.getByRole('button', { name: /Actions/ }))
-  const items = screen.queryAllByRole('menuitem', { name: /Start agent/ })
-  for (const i of items) {
-    expect(i).toHaveAttribute('aria-disabled', 'true')
-    expect(i).toHaveTextContent('An agent is already working on this ticket')
-  }
+  expect(screen.getByTestId('agent-status')).toHaveTextContent(/is working for/) // the premise: an agent works here
+  const items = await screen.findAllByRole('menuitem', { name: /Start agent/ }, T)
+  expect(items).toHaveLength(1) // present, so the checks below cannot pass on an empty list
+  expect(items[0]).toHaveAttribute('aria-disabled', 'true')
+  expect(items[0]).toHaveTextContent('An agent is already working on this ticket')
 })

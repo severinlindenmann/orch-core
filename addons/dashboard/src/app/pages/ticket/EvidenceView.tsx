@@ -52,17 +52,18 @@ function Provenance({ a, inDialog, grouped = false }: { a: Artifact; inDialog: b
         Added by {kind === 'host' ? 'orch' : 'a person'}.{a.label && <> {visible(a.label)}</>}
       </p>
     )
-  const who = visible(agentName(a.added_by))
+  const name = agentName(a.added_by)
+  const by = name === 'An agent' ? 'an agent' : `agent ${visible(name)}`
   const note = a.label ? <> Agent&apos;s note: &ldquo;{visible(a.label)}&rdquo;</> : null
   if (!inDialog)
     return (
       <p data-testid="evidence-provenance" className="mt-1 text-[11px] text-text-faint">
-        Added by agent {who}.{note}
+        Added by {by}.{note}
       </p>
     )
   return (
     <p data-testid="evidence-provenance" className="mt-1 rounded border border-warning/30 bg-warning-soft px-2 py-1 text-[11px] text-text">
-      Added by agent {who}.{note}
+      Added by {by}.{note}
     </p>
   )
 }

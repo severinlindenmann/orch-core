@@ -89,15 +89,21 @@
           "options": [
             {
               "key": "csv",
-              "label": "Monthly CSV"
+              "label": "Monthly CSV",
+              "text": "One file a month, checked by hand",
+              "facts": [["Effort", "½ day"], ["Risk", "low"]]
             },
             {
               "key": "api",
               "label": "Tariff API",
-              "cost": "+1 day"
+              "text": "Daily pull, no manual step",
+              "cost": "+1 day",
+              "facts": [["Effort", "2 days"], ["Risk", "medium"]]
             }
           ],
           "recommended": "csv",
+          "allow_other": true,
+          "details": "If you pick CSV, we import monthly.\nAPI means a daily pull and a retry job.",
           "blocking": true
         },
         {
@@ -108,15 +114,21 @@
           "options": [
             {
               "key": "date",
-              "label": "DATE (local midnight)"
+              "label": "DATE (local midnight)",
+              "text": "Simple joins, one rule for tariff changes",
+              "facts": [["Effort", "small"], ["Risk", "low"]]
             },
             {
               "key": "timestamp",
               "label": "TIMESTAMP (UTC)",
-              "cost": "+2 tests"
+              "text": "Avoids a cast in fct_billing",
+              "cost": "+2 tests",
+              "facts": [["Effort", "medium"], ["Risk", "medium"]]
             }
           ],
           "recommended": "date",
+          "allow_other": true,
+          "details": "Tariffs change at midnight local time.\nMeter readings join on UTC timestamps.",
           "blocking": true
         }
       ],

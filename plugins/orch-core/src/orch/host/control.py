@@ -565,7 +565,7 @@ class ControlOps:
         the workspace's worker thread), then the reservation as a worker job (``link.json``, state ``linking``; the
         permanent reader reservation of 11A.6). It starts nothing: the owner signs the genesis pin, then
         ``host.relay_start`` runs the first link."""
-        from orch.relay.http import TransportError
+        from orch.net.http import TransportError
         from orch.relay.retry import RelayRefused
         from orch.relay.session import SessionError
         from orch.store import StoreError

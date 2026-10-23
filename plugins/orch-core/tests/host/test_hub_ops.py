@@ -509,7 +509,7 @@ def test_a_crash_between_leave_and_unbind_still_lets_the_rejoin_through(human, s
 @pytest.fixture
 def keystore(monkeypatch, served, tmp_path):
     """A membership key store for the served workspace with epoch 1 committed, standing in for the relay's."""
-    from orch.relay.r6.keystore import MembershipKeys, R6Gate
+    from orch.identity.epochs import MembershipKeys, R6Gate
     from tests.relay import r6kit
 
     mk = MembershipKeys(tmp_path / "membership", served.wid, now_ms=lambda: 1_790_000_000_000)

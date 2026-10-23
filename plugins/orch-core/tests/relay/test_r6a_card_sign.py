@@ -10,12 +10,12 @@ import pytest
 
 from orch import canon, crypto
 from orch.identity import memberlist, wscard
+from orch.identity.epochs import CustodyRefused, default_part
 from orch.identity.memberlist import seal_wk, wk_grant_o
-from orch.relay import card as relay_card
-from orch.relay import sign
-from orch.relay.r6.firstcard import GenesisPathMissing, R6LinkSource, default_part
-from orch.relay.r6.keystore import CustodyRefused
-from orch.relay.sign import SignerRefused
+from orch.relay.r6.firstcard import GenesisPathMissing, R6LinkSource
+from orch.wsproto import card as relay_card
+from orch.wsproto import sign
+from orch.wsproto.sign import SignerRefused
 
 from . import corpus
 from .helpers import OWNER_PK, WS, WSK_PUB, Key, MemLedger

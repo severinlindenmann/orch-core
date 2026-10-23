@@ -68,15 +68,16 @@ from typing import Any, Protocol, TypeVar
 from orch import canon, crypto
 from orch.identity.certs import verify_cert
 from orch.identity.errors import Refused as CertRefused
+from orch.net.http import Transport, TransportError
+from orch.wsproto import wire
+from orch.wsproto.sign import RelaySigner, SignerRefused
 
-from . import framing, submit, wire
+from . import framing, submit
 from .framing import OPS, PROTO_CODES, PROTO_FIELDS, Identity, Refusal
-from .http import Transport, TransportError
 from .keys import BridgeKeys, KeyMissing, Member, R6View, SealRefused
 from .retry import RelayRefused
 from .rids import Rid, RidStore, seq_accept
 from .session import Fenced, LoginHeldOff, Session, SessionError
-from .sign import RelaySigner, SignerRefused
 
 __all__ = ["OPS", "PROTO_CODES", "Bridge", "BridgeLoop", "HostPort", "Item", "PostResult", "WorkerStop"]
 

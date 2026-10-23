@@ -218,7 +218,7 @@ def test_a_second_workspace_cannot_touch_the_first_ones_shares(real, tmp_path):
     """Namespace isolation (I3) through the host's own client: another workspace key gets 404 for a foreign id."""
     from orch import crypto
     from orch.publishclient import PublishClient, PublishError, flow
-    from orch.relay.pubsign import PublishContext, PublishSigner
+    from orch.wsproto.pubsign import PublishContext, PublishSigner
     from tests.relay.helpers import Key
 
     srv, w = real

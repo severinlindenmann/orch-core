@@ -3,15 +3,15 @@
 ``GET /v2/persons/{p}/cert-requests``, ``POST /v2/cert-requests/{id}/challenge`` and ``.../rejection``.
 
 Transport (11A.7, "as in 11A.7, in the owner client"): every call goes through one
-:class:`orch.relay.http.RelayConn`, the hardened stdlib connection R1 built (``http.client`` and ``ssl`` only;
+:class:`orch.net.http.RelayConn`, the hardened stdlib connection R1 built (``http.client`` and ``ssl`` only;
 ``ssl.create_default_context()`` or only the named ``ca_file``; ``CERT_REQUIRED``, hostname check, TLS >= 1.2; no
 proxy unless named, never for ``http``; no redirect followed; a total deadline per call; bodies read in bounded pieces
-against the route's cap). **JUDGEMENT CALL:** the connection is *imported* from ``orch.relay.http``, not copied. The
+against the route's cap). **JUDGEMENT CALL:** the connection is *imported* from ``orch.net.http``, not copied. The
 import ban (``tests/relay/test_import_ban.py``) restricts what ``orch.relay`` imports, not who imports it, and the
 connection carries ten rounds of review; a second copy would drift. Nothing here is added to ``orch.relay``: the
 owner's routes, its signer and its person-key work stay outside it (11A.15.10: "not in ``orch.relay``").
 
-Origin pinning: ``origin`` is checked by :func:`orch.relay.wire.check_origin` (``https``, or ``http`` only for
+Origin pinning: ``origin`` is checked by :func:`orch.wsproto.wire.check_origin` (``https``, or ``http`` only for
 loopback) and is the **only** origin the login signs; it is never derived from a response, a redirect or DNS. A test
 passes a separate ``transport`` (a loopback fixture relay) while the signed origin stays the fixtures' one.
 
@@ -50,8 +50,8 @@ from typing import Any, Protocol, runtime_checkable
 
 from orch import crypto
 from orch.identity import certs
-from orch.relay import http as rhttp
-from orch.relay import wire
+from orch.net import http as rhttp
+from orch.wsproto import wire
 
 __all__ = [
     "MAX_LISTED_REQUESTS",
@@ -216,7 +216,7 @@ class OwnerClient:
     is single-flight anyway).
 
     ``origin`` is the stored relay origin, the one the login signs. ``signer`` is the primary's device key
-    (:class:`DeviceSigner`). ``transport`` defaults to a :class:`orch.relay.http.RelayConn` to ``origin`` with
+    (:class:`DeviceSigner`). ``transport`` defaults to a :class:`orch.net.http.RelayConn` to ``origin`` with
     ``ca_file``/``proxy``; tests pass a loopback connection. The token lives in memory only."""
 
     def __init__(

@@ -144,8 +144,8 @@ class HostMembership:
         it waits for no job of the workspace's worker thread."""
         from orch.custody import FileBackend
         from orch.relay.r6.membership import MembershipPublisher
-        from orch.relay.sign import LinkContext, RelaySigner
         from orch.store import BackendSigner
+        from orch.wsproto.sign import LinkContext, RelaySigner
 
         from .relayr3 import owner_pk_pub
         from .relayr6 import keys_for

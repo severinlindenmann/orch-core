@@ -2,7 +2,7 @@
 pin, with orch-relay's check order (``directory.login``, ``bridge.hold``, ``directory.card_put``). It runs behind
 :class:`tests.relay.mock.MockRelay` as its fallback handler.
 
-Its login check is an **independent** copy of orch-relay's ``proto.auth_bytes`` (not ``orch.relay.wire``), so the
+Its login check is an **independent** copy of orch-relay's ``proto.auth_bytes`` (not ``orch.wsproto.wire``), so the
 origin-binding tests compare core against the relay's construction, not against itself."""
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import threading
 from typing import Any
 
 from orch import canon, crypto
-from orch.relay import card as cards
+from orch.wsproto import card as cards
 
 from .mock import Reply, Seen, json_reply
 

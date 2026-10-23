@@ -32,7 +32,7 @@ def test_an_option_answer_is_signed_and_reaches_the_waiting_agent(hws, agent, me
 
 def test_text_alone_or_with_an_option(hws, agent, me):
     key = make_ticket(agent)
-    ask(agent)
+    assert agent("ask", "Which export?").code == 0  # no options: a text question takes a text alone (#1123)
     ask(agent, "And the schema?")
     assert me("answer", "Q1", "-m", "use the API, it is complete", "--ref", key).code == 0
     assert me("answer", "Q2", "--option", "csv", "-m", "as discussed", "--ref", key).code == 0

@@ -12,7 +12,6 @@ from typing import Any
 from orch import canon, crypto
 from orch.crypto.labels import L
 from orch.identity import certs, pairing
-from orch.relay import sign, wire
 from orch.relay.r6.pair import (
     GateRefused,
     PairContext,
@@ -22,6 +21,7 @@ from orch.relay.r6.pair import (
     PrimaryInfo,
 )
 from orch.relay.r6.pairstore import PairStore
+from orch.wsproto import sign, wire
 
 from . import corpus
 from .helpers import WS, WSK_PUB, Key, MemLedger

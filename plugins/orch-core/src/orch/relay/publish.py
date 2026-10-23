@@ -31,7 +31,7 @@ appended (``published.jsonl``, plus ``published-restore-<n>.json`` or ``publishe
 
 **Size (P3-D37).** C = min(``link.json`` ``max_publication_bytes``, ``relay-info`` ``max_publication_bytes``, the
 relay's 64 MiB staging quota, any in-memory lowering); the host never stages more than C. The exact counter
-(:func:`orch.relay.wire.set_bytes`) is what ``mint_catchup`` measures. An unexpected ``too_large`` lowers C to
+(:func:`orch.wsproto.wire.set_bytes`) is what ``mint_catchup`` measures. An unexpected ``too_large`` lowers C to
 ``min(C, refused/2)`` (at most 4 times per hour, then ``relay_too_large`` until the operator corrects ``link.json``).
 
 **Threads.** :class:`Publisher` is R5's ``-pub-`` thread with its own connection: ``start()``, ``stop()``,
@@ -54,16 +54,16 @@ from dataclasses import dataclass, field
 from typing import Any, NoReturn, Protocol, TypeVar
 
 from orch import canon
+from orch.net.http import RedirectRefused, Transport, TransportError
 from orch.ops import readers
 from orch.store.errors import StoreError
 from orch.store.outbox import OutboxEntry, RelayPosition, Segment
+from orch.wsproto import wire
+from orch.wsproto.state import StateDir, StateError
 
-from . import wire
 from .directory import Directory, VerifiedCheckpoint
-from .http import RedirectRefused, Transport, TransportError
 from .retry import PERMANENT_QUOTAS, RelayRefused, delay
 from .session import Fenced, LoginHeldOff, NotHolder, RelayMisbehaving, Session, SessionError
-from .state import StateDir, StateError
 
 __all__ = [
     "CATCHUP_SHARE",

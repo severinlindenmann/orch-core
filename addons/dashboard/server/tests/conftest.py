@@ -185,7 +185,8 @@ def rich(p1, stub):
     options = [{"key": "csv", "label": "Monthly CSV"}, {"key": "api", "label": "Tariff API"}]
     for n, (text, blocking) in enumerate([("Which export is the source?", True), ("Any naming rule?", False)], 1):
         qid = hashing.question_id(WS, first, f"Q{n}")
-        question = {"id": f"Q{n}", "to": "ticket_owner", "text": text, "options": options, "blocking": blocking}
+        question = {"id": f"Q{n}", "to": "ticket_owner", "text": text, "kind": "choice", "options": options,
+                    "blocking": blocking}  # fmt: skip
         env.tick()
         s.append(
             {
@@ -193,7 +194,7 @@ def rich(p1, stub):
                 "actor": env.agent,
                 "question": question,
                 "qid": qid,
-                "hash": hashing.question_hash(qid, first, text, options),
+                "hash": hashing.question_hash(qid, first, question),
             },
             log=first,
         )
@@ -205,7 +206,7 @@ def rich(p1, stub):
                     first,
                     "question.answered",
                     question="Q1",
-                    hash=hashing.question_hash(qid, first, text, options),
+                    hash=hashing.question_hash(qid, first, question),
                     option="csv",
                 ),
                 log=first,

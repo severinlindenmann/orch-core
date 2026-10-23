@@ -320,7 +320,7 @@ def local_card(service: WorkspaceService) -> dict[str, Any]:
 
 
 def wscard_part(service: WorkspaceService) -> dict[str, Any]:
-    from orch.relay.r6.firstcard import default_part
+    from orch.identity.epochs import default_part
 
     return default_part(str(service.workspace_id)[:8])
 
@@ -502,7 +502,7 @@ class _Epochs:
 
     def seal_to_hub(self, epoch: int, hxk_pub: bytes, hub_id: str) -> bytes:
         from orch.hubclient import HubRefused
-        from orch.relay.r6.keystore import CustodyRefused
+        from orch.identity.epochs import CustodyRefused
 
         if epoch != self.current_epoch() or epoch < 1:
             raise HubRefused("no_epoch")  # only the committed epoch is ever sealed
@@ -516,7 +516,7 @@ class _Epochs:
         key leaves it. Only the epoch now sealed to the bound full hub (L2-C14-2: never one the hub was not meant to
         open, such as the epoch a rotation after a leave made); a missing, burned or unreadable key is ``no_epoch``."""
         from orch.hubclient import HubRefused
-        from orch.relay.r6.keystore import CustodyRefused, MembershipUnsafe
+        from orch.identity.epochs import CustodyRefused, MembershipUnsafe
 
         try:
             sealed = None if self._sealed_epoch is None else self._sealed_epoch()

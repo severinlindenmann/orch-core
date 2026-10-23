@@ -28,8 +28,8 @@ def push(service: Any, worker: Any, keys: Any, signer: Any, view: Any) -> Any:
     """R5's ``push`` seam (``SEAMS.push``)."""
     from orch.relay.outbound import OutboundStore, OutboxVersionError
     from orch.relay.push import PushThread
-    from orch.relay.state import FileHolderStore
     from orch.store.store import device_standing_ok
+    from orch.wsproto.state import FileHolderStore
 
     store = service.store
     if store is None:

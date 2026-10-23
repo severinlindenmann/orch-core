@@ -40,7 +40,7 @@ dynamic attribute access or ``orch.crypto`` signing entry points; but same-proce
 (closures included), and the key file is readable by the host UID.
 
 **Last-signed ledger** (review M2, 11A.2 "``card_seq`` > the last signed one"). ``card`` needs a durable
-:class:`orch.relay.state.SignLedger`. Each signed card is recorded as ``("card", card_seq) -> (sha256(cj(o)), sig)``
+:class:`orch.wsproto.state.SignLedger`. Each signed card is recorded as ``("card", card_seq) -> (sha256(cj(o)), sig)``
 **before** the signature is returned, so a crash cannot leave two different WSK-signed cards at one ``card_seq``. The
 same card at a recorded ``card_seq`` gets the recorded signature back (no re-sign: the WSK is ECDSA P-256 with
 randomised signatures, so a re-sign would give other bytes); a different card there, or any card below the highest
@@ -63,9 +63,8 @@ from typing import Any, Protocol
 
 from orch import canon, crypto
 from orch.crypto.labels import L
-
-from . import wire
-from .state import SignLedger
+from orch.wsproto import wire
+from orch.wsproto.state import SignLedger
 
 __all__ = [
     "CARD_FIELDS", "CERT_REQUEST_FIELDS", "GRANT_FIELDS", "MEMBER_LIST_FIELDS", "PAIR_ANSWER_MAX", "EpochKeys",
@@ -92,7 +91,7 @@ CARD_FIELDS = frozenset(
 
 
 # proto §7.2 / §7.3 (the same sets as ``orch.identity.memberlist``, pinned equal by a test; not imported from there:
-# ``orch.identity.wscard`` imports ``orch.relay.card``, which imports this module)
+# ``orch.identity.wscard`` imports ``orch.wsproto.card``, which imports this module)
 MEMBER_LIST_FIELDS = frozenset(
     {"v", "suite", "kind", "workspace_id", "epoch", "list_seq", "issued_ms", "wk_commit", "persons", "members"}
 )

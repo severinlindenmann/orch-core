@@ -21,6 +21,14 @@ STRONG = "violet harbour 7 kettles juggle quietly!"
 TERMINAL = "custody.terminal_needed"
 
 
+@pytest.fixture(autouse=True)
+def _no_exposure_mark(monkeypatch):
+    """#1097 E3 needs a registered workspace and a running host (tests: test_key_exposure_custody.py)."""
+    from orch.custody import exposure
+
+    monkeypatch.setattr(exposure, "mark_before_move", lambda *a, **k: None)
+
+
 class Mono:
     def __init__(self) -> None:
         self.t = 1_760_000_000.0  # the switch's rate limit runs on wall time (it outlives the process)

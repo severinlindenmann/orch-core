@@ -23,13 +23,13 @@ from types import ModuleType
 from typing import Any
 
 from orch import canon, crypto
-from orch.relay import http as rhttp
-from orch.relay import sign, wire
+from orch.net import http as rhttp
 from orch.relay.bridge import Bridge, BridgeLoop
 from orch.relay.keys import BridgeKeys
 from orch.relay.rids import RidStore
 from orch.relay.session import Session
-from orch.relay.state import StateDir
+from orch.wsproto import sign, wire
+from orch.wsproto.state import StateDir
 
 from .. import corpus
 from ..bridgekit import R6, Epochs, FakeHost, Phone

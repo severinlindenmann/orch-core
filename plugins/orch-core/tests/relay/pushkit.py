@@ -1,5 +1,5 @@
 """The H13a test kit: a real :class:`orch.store.Store` (``tests.store.helpers.Env``), a fake epoch-key source and
-member view, a real :class:`~orch.relay.keys.BridgeKeys` and :class:`~orch.relay.sign.RelaySigner`, an
+member view, a real :class:`~orch.relay.keys.BridgeKeys` and :class:`~orch.wsproto.sign.RelaySigner`, an
 :class:`~orch.relay.outbound.OutboundStore` over a fresh state directory, and a scripted fake relay behind a fake
 session (``call`` records every request and answers from a script)."""
 
@@ -13,14 +13,14 @@ from typing import Any
 
 from orch import canon, crypto
 from orch.crypto import push as cpush
-from orch.relay import http as rhttp
+from orch.net import http as rhttp
 from orch.relay.keys import BridgeKeys, Member, MemberList, SealState
 from orch.relay.outbound import OutboundStore
 from orch.relay.push import PushThread
 from orch.relay.retry import RelayRefused
-from orch.relay.sign import LinkContext, RelaySigner
-from orch.relay.state import StateDir
 from orch.store.store import device_standing_ok
+from orch.wsproto.sign import LinkContext, RelaySigner
+from orch.wsproto.state import StateDir
 from tests.store.helpers import T0, WS, Env
 
 from .helpers import Alarms
@@ -137,9 +137,9 @@ class Kit:
     # -- events --------------------------------------------------------------------------------------------------
     def ask(self, local: str = "Q1", text: str = "deploy now?", to: str = "ticket_owner") -> str:
         """An agent-asked question on the ticket; returns the question's qid."""
-        q = {"id": local, "to": to, "text": text, "blocking": True, "options": Q_OPTIONS}
+        q = {"id": local, "to": to, "text": text, "blocking": True, "kind": "choice", "options": Q_OPTIONS}
         qid = canon.question_id(WS, self.uid, local)
-        h = canon.question_hash(qid, self.uid, text, Q_OPTIONS)
+        h = canon.question_hash(qid, self.uid, q)
         self.store.append(
             {"type": "question.asked", "actor": self.env.agent, "question": q, "qid": qid, "hash": h}, log=self.uid
         )

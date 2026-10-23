@@ -72,7 +72,7 @@ def link_path(state_dir: Path, workspace_id: str) -> Path:
 
 def local_epochs_path(state_dir: Path, workspace_id: str) -> Path:
     """The mark ``MembershipKeys.advance_local`` writes (V3 C2b): epochs made for the hub, unknown to any relay."""
-    from orch.relay.r6.keystore import LOCAL_MARK
+    from orch.identity.epochs import LOCAL_MARK
 
     return Path(os.path.realpath(state_dir)) / "hosts" / workspace_id / "membership" / LOCAL_MARK
 

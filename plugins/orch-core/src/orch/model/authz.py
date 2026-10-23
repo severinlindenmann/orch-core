@@ -60,6 +60,8 @@ ACTOR_RULES: dict[str, str] = {
     "device.added": "P",
     "device.removed": "P",
     "device.revoked": "PH",
+    "device.exposed": "P",  # #1097: signed by the device itself (the model checks)
+    "device.rotated": "P",  # #1097: signed by the new device itself, with the person key's certificate and rotation
     "settings.changed": "P",
     "grant.issued": "PH",  # C10: a host actor only with `request` (hub protocol 8.8), checked by the type rule
     "grant.requested": "P",  # C10: hub-signed only (HUB_ONLY)
@@ -107,7 +109,9 @@ HUB_TYPES = frozenset(
 #: C10: types that exist only as hub-signed requests; a device-signed one (no operation writes it) is refused
 HUB_ONLY = frozenset({"grant.requested", "device.excluded"})
 DECISIONS = frozenset({"gate.approved", "gate.changes_requested", "verdict.given", "question.answered"})
-VIEWER_MAY = frozenset({"question.answered", "device.added", "device.removed", "device.revoked"})
+VIEWER_MAY = frozenset(
+    {"question.answered", "device.added", "device.removed", "device.revoked", "device.exposed", "device.rotated"}
+)
 UNATTENDED_PER_SESSION = 30
 UNATTENDED_PER_WORKSPACE = 120
 BYTES_PER_SESSION = 20 * 1024 * 1024
@@ -177,7 +181,7 @@ def authorize_person(core: Core, log: str, e: dict[str, Any], v: Verifier, *, hu
     if m is None:
         return Refusal(Code.MEMBER_UNKNOWN, f"{a['id']} is not a member")
     dev = ws.devices.get(a["device"])
-    recovery = breakglass.is_recovery(ws, e)
+    recovery = breakglass.is_recovery(ws, e) or breakglass.is_rotation(ws, e)
     if recovery:
         cert = e["cert"]
     elif dev is None or dev.person != a["id"]:
@@ -316,12 +320,12 @@ def authorize_agent(
         return Refusal(Code.GRANT_INVALID, "an agent's `for` must be the person who issued the grant")
     if g.revoked or not (ts(g.issued_at) <= at < ts(g.expires_at)):
         return Refusal(Code.GRANT_INVALID, "the grant was revoked or not valid at this position")
-    m = ws.members.get(a["for"])
-    if m is None or m.role == "viewer":
+    role = identity.member_role(ws, a["for"])  # full mode: capped by the hub role (#1133)
+    if role is None or role == "viewer":
         return Refusal(Code.GRANT_INVALID, "the grant's person is not a member who may run agents")
     if not verb_covers(e["type"], g.verbs, verb_events):
         return Refusal(Code.GRANT_VERB, f"the grant does not cover {e['type']}")
-    if g.scope == "all" and m.role == "member":
+    if g.scope == "all" and role == "member":
         return Refusal(Code.GRANT_SCOPE, "a member's grant is `workable` only (D60), whatever it says")
     # An agent's permissions are the intersection of its grant and its person: it never reaches a ticket that its
     # `for` person can't see, whatever the grant scope (§9, §10.1 A3).

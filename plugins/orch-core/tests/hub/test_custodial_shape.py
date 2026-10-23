@@ -16,7 +16,7 @@ from orch.hubclient import HubRefused
 from orch.hubclient import custodial as C
 from orch.hubclient.custodial_shape import COMMON_REQUIRED, PAYLOAD, check_custodial_payload
 
-from .vec import V
+from .vec import PENDING_VECTORS, V
 
 H1, H2 = "sha256:" + "1" * 64, "sha256:" + "2" * 64
 U1, U2 = "u_" + "a" * 32, "u_" + "b" * 32
@@ -40,7 +40,7 @@ VALID: dict[str, dict[str, Any]] = {
     "log.added": {"text": "line one\nline two"},
     "handoff.written": {"text": "handoff"},
     "question.asked": {
-        "question": {"id": "Q1", "to": "assignees", "text": "Ship?", "blocking": True, "options": [{"key": "a", "label": "A"}], "recommended": "a"},  # noqa: E501
+        "question": {"id": "Q1", "to": "assignees", "text": "Ship?", "blocking": True, "kind": "choice", "options": [{"key": "a", "label": "A"}, {"key": "b", "label": "B"}], "recommended": "a"},  # noqa: E501
         "qid": "c" * 32, "hash": H1,
     },
     "question.answered": {"question": "Q1", "hash": H1, "option": "a"},
@@ -312,7 +312,10 @@ def _action_cases():
             a.get("log") == "workspace" or isinstance(a.get("log"), str) and len(a["log"]) == 26
         ):
             continue  # a bad log is the hub's request framing, not an event field
-        yield pytest.param(c, id=c["name"])
+        marks = (
+            [pytest.mark.xfail(reason="#1123: hub vectors not yet regenerated")] if c["name"] in PENDING_VECTORS else []
+        )
+        yield pytest.param(c, id=c["name"], marks=marks)
 
 
 def _as_event(a: dict[str, Any]) -> dict[str, Any]:
@@ -349,3 +352,11 @@ def test_the_replay_covers_the_hub_vectors_that_matter():
         "action_smuggle_visibility_extra_key",
         "action_text_rlo_u202e",
     } <= names
+
+
+@pytest.mark.parametrize("text,ok", [("fine", True), ("a" * 1000, True), ("a" * 1001, False), ("\u3000", False),
+                                     ("zero\u200bwidth", False)])  # fmt: skip
+def test_an_answer_text_follows_the_answer_rule(text, ok):
+    """#1123: the custodial answer text is checked like the model's (1..1000 code points, check_plain, not blank)."""
+    got = refused("question.answered", event("question.answered", option=..., text=text))
+    assert (got is None) is ok

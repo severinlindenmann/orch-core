@@ -9,9 +9,9 @@ from pathlib import Path
 from typing import Any
 
 from orch import canon
+from orch.identity.epochs import MembershipKeys, R6Gate
 from orch.identity.memberlist import member_list_o
-from orch.relay import sign
-from orch.relay.r6.keystore import MembershipKeys, R6Gate
+from orch.wsproto import sign
 
 from . import corpus
 from .bridgekit import T0

@@ -15,8 +15,8 @@ from orch.host.custody import write_private
 from orch.host.errors import HostError
 from orch.host.relaylink import link_path
 from orch.identity import members, wscard
+from orch.identity.epochs import MembershipUnsafe
 from orch.relay.keys import BridgeKeys
-from orch.relay.r6.keystore import MembershipUnsafe
 from tests.host.lifecycle_helpers import UID, Lab
 
 ORIGIN = "https://relay.example"

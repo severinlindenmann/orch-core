@@ -40,6 +40,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from . import jcs
+from .question import QuestionError, question_spec, validate_question
 from .text import TextError, check_text
 
 __all__ = [
@@ -407,22 +408,25 @@ def question_id(workspace_id: str, ticket_uid: str, question: str) -> str:
     return full[:16].hex()
 
 
-def question_hash(qid: str, ticket_uid: str, text: str, options: list[dict[str, str]] | None = None) -> str:
-    """``H("orch/v2/question|" || cj({"question_id": qid, "ticket": uid, "text", "options"}))`` (§5.6).
+def question_hash(qid: str, ticket_uid: str, question: Mapping[str, Any]) -> str:
+    """``H("orch/v2/question|" || cj({"question_id": qid, "ticket": uid, "text", "options", "spec"}))`` (§5.6).
 
-    ``options`` is ``[]`` when there are none (``None`` is accepted as that); each option is ``{key, label}`` with an
-    optional ``cost``, all strings.
+    ``question`` is the RAW question object (as in ``question.asked``, never a read view). It is validated whole
+    first (:func:`orch.canon.question.validate_question`, refused as :class:`HashError`); ``options`` is ``[]`` for a
+    kind without options and ``spec`` is :func:`orch.canon.question.question_spec` (``kind``, ``why``, ``details``,
+    ``recommended``, ``allow_other``: everything but the routing keys ``id``/``to``/``blocking``). This is the only
+    entry, so no caller can forget a bound field.
     """
-    opts = [] if options is None else _list(options, "options")
-    for o in opts:
-        _obj(o, ("key", "label"), "option", ("cost",))
-        for v in o.values():
-            _text(v, "option field", one_line=True)
+    try:
+        validate_question(question)
+    except QuestionError as e:
+        raise HashError(f"invalid question: {e}") from None
     body = {
         "question_id": _match(_HEX32, qid, "question_id"),
         "ticket": _match(_ULID, ticket_uid, "ticket uid"),
-        "text": _text(text, "question text"),
-        "options": opts,
+        "text": question["text"],
+        "options": question.get("options", []),
+        "spec": question_spec(question),
     }
     return _labelled("question", cj_checked(body))
 

@@ -123,7 +123,9 @@ def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
         "hub.mode",
         "hub.leave",
         "relay.reopen",
-    }  # H12c-e, B12D, P5, R3, V3 C2a, C2b
+        "device.mark_exposed",
+        "device.rotate",
+    }  # H12c-e, B12D, P5, R3, V3 C2a, C2b, #1097
     assert set(HUMAN_OPS) == {"human.prepare", "human.get", "human.submit", "human.cancel", "human.pending"}
     assert set(NOT_SERVED) == {"init", "import.v1"}
     assert {"wait", "sub.open", "sub.close"} <= set(welcome["ops"])  # H6a: served on the bus

@@ -1642,6 +1642,23 @@ def build() -> dict[str, Any]:
         2,
     )
 
+    # ---- card admission at orch-publish (card_put forwarded; protocol 11.2)
+    adm = {**base, "workspace_id": WS_A, "prebound": True, "floor": None, "pk_pub": K.b("pk_alice")}
+    case("ws_card_admission_valid", "ws_card_admission", {**adm, "card": v2_card()},
+         {"ok": {"workspace_id": WS_A, "card_seq": 1}}, 2)  # fmt: skip
+    case("ws_card_admission_repush_same_seq", "ws_card_admission", {**adm, "card": v2_card(), "floor": 1},
+         {"ok": {"workspace_id": WS_A, "card_seq": 1}}, 2, "an identical re-push is a no-op")  # fmt: skip
+    case("ws_card_admission_newer_seq", "ws_card_admission", {**adm, "card": v2_card(card_seq=3), "floor": 2},
+         {"ok": {"workspace_id": WS_A, "card_seq": 3}}, 2)  # fmt: skip
+    case("ws_card_admission_lower_seq", "ws_card_admission", {**adm, "card": v2_card(card_seq=1), "floor": 2},
+         {"error": "stale_card"}, 2, "the highest card_seq ever admitted is kept across an unbind")  # fmt: skip
+    case("ws_card_admission_other_workspace", "ws_card_admission", {**adm, "card": v2_card(ws=WS_B)},
+         {"error": "other_workspace"}, 2, "the card names another workspace than the route")  # fmt: skip
+    case("ws_card_admission_not_prebound", "ws_card_admission", {**adm, "card": v2_card(), "prebound": False},
+         {"error": "unknown_workspace"}, 2, "the admin has not pre-bound the workspace to its owner")  # fmt: skip
+    case("ws_card_admission_wrong_owner_key", "ws_card_admission",
+         {**adm, "card": v2_card(), "pk_pub": K.b("pk_mallory")}, {"error": "other_person"}, 2)  # fmt: skip
+
     # ---- hub.joined payload, aliases
     pay = {
         "hub_id": HUB_ID,
@@ -3270,14 +3287,6 @@ def build() -> dict[str, Any]:
         {**pb, "request": publish_request(appr=None, wsk_signs_approval=approval())},
         {"error": "bad_signature"},
         2,
-    )
-    case(
-        "publish_hub_request_replayed_direct",
-        "publish",
-        {**pb, "path": "direct", "request": publish_request()},
-        {"error": "bad_signature"},
-        2,
-        "L2-2: a hub-path WSK signature never verifies on the direct path",
     )
     case(
         "publish_approval_for_other_hub",

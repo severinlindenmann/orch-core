@@ -331,7 +331,10 @@ def test_card_goes_to_orch_publish_and_a_refusal_comes_back(env):
     card = {"o": {"kind": "card"}}
     env.fw.card(WS, card, "pk")
     assert env.sync.calls[-1] == ("ws_card", WS, card, "pk")
-    for code in ("owner_not_allowed", "unknown_workspace", "delegation_changed", "workspace_blocked"):
+    for code in (
+        "owner_not_allowed", "unknown_workspace", "delegation_changed", "workspace_blocked", "delegation_refused",
+        "other_person", "delegation_mismatch",
+    ):  # fmt: skip
         env.sync.fail = PublishSyncError(code)
         with pytest.raises(Refused) as x:
             env.fw.card(WS, card, "pk")

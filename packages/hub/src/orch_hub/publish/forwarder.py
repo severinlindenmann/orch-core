@@ -56,6 +56,7 @@ SYNC_CODES = frozenset(
         "delegation_changed",
         "workspace_blocked",
         "owner_not_allowed",
+        "delegation_refused",
     ]
 )
 _RESYNC_CODES = (b"not_bound", b"unknown_hub")

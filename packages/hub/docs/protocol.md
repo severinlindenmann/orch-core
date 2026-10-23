@@ -1064,7 +1064,7 @@ unknown `op` is `unknown_op`.
 | `wk_seal` | w2h | full | `{"epoch", "wrap": b64u}`: `WK_e` sealed to `HXK` (v2 §5.3) | `{}` |
 | `publish_out` | w2h | both | `{"request": {method, host, target, headers, body_hex}}` (§11) | `{"status", "body_hex"}` |
 | `join` | w2h | both | `{"invite", "card", "pk_pub", "binding"}`: the v2 card, the owner's PK, the binding (§9.5) | `{}` |
-| `card_put` | w2h | both | `{"card", "pk_pub"}`: the workspace's v2 card, opaque to the hub, forwarded to publish and the relay (§16) | `{}` |
+| `card_put` | w2h | both | `{"card", "pk_pub"}`: the workspace's v2 card, checked against the join pin, forwarded to orch-publish (§11.2 "Admission through the hub"); refusals: `other_person`, `other_workspace`, `wsk_mismatch`, `stale_card`, `not_bound`, and orch-publish's (`unknown_workspace`, `owner_not_allowed`, `workspace_blocked`, `delegation_changed`, `delegation_refused`, `delegation_mismatch`, `bad_signature`, `unavailable`) | `{}` |
 | `binding_put` | w2h | both | `{"object"}`: a `hub.binding` or `hub.unbound`, forwarded as is | `{}` |
 | `audit_ack` | w2h | both | `{"seq", "head": b64u(32)}` | `{"acked": seq}` (§10.5) |
 | `audit_get` | w2h | both | `{"since"}` | `{"records": [{"record": <hub.audit>, "event"?}], "head", "op_certs": [<hub.op_cert>]}` (D4, §10.5; added) |
@@ -1948,17 +1948,29 @@ is orch-publish's route definition (`access: "public"` of a share or app); F1 fi
 needs step 9.
 
 **Direct requests (V3-D36).** There are none. orch-publish refuses a request without `Orch-Hub` and `Orch-Hub-Signature` as
-`403 hub_required`, and `POST /v1/ws/{ws}/register` no longer exists: a workspace is admitted only by `card_put` (below).
-A hub-path signature can therefore never be replayed "on the direct path" (the former vector
-`publish_hub_request_replayed_direct` is obsolete: it is dropped at the next regeneration of the vectors).
+`403 hub_required` (half a pair is `400 malformed`), and `POST /v1/ws/{ws}/register` no longer exists: a workspace is
+admitted only through its card (below).
 
-**Admission through the hub (R5a, V3-D36).** There is no direct `register`. A workspace reaches orch-publish only through
-`card_put` (§10): after the hub's own checks (pin, never-change rules, `card_seq`) it forwards `{card, pk_pub}` to
-`PUT /v2/hub/cards/{workspace_id}` at orch-publish. Publish verifies the card itself (owner `PK` delegation, `WSK` card
-signature), applies the admin's pre-bind, owner allowlist and block, and keeps the delegation unchanged forever. It keeps
-the highest `card_seq` ever admitted per workspace, across unbind: a lower one, or the same card after an unbind, is
-`stale_card`; a first admission needs `issued_ms` within 30 days. Refusals come back to the workspace as the hub's error
-(`unknown_workspace`, `owner_not_allowed`, `workspace_blocked`, `delegation_changed`, `stale_card`, ...).
+**orch-publish's hub routes** (no transport authentication, V3-D16: every object authenticates itself): `PUT /v2/hub/card`
+(`hub.card`), `PUT /v2/hub/op-revoked`, `PUT /v2/hub/bindings/{ws}` (`hub.binding` / `hub.unbound`, also sent by the host
+directly after a leave), `PUT /v2/hub/cards/{ws}` (below) and `GET|HEAD /v2/hub/releases` (§10.6).
+
+**Admission through the hub (R5a, V3-D36).** A workspace reaches orch-publish only through `card_put` (§10): after the
+hub's own checks (pin, never-change rules, `card_seq`) it forwards `{card, pk_pub}` to `PUT /v2/hub/cards/{workspace_id}`.
+Publish verifies the card itself (owner `PK` delegation, `WSK` card signature, owner = `pk_pub`, workspace = route) and applies
+the admin's pre-bind, the owner allowlist and the block, exactly as the former direct register did; what it keeps is the
+permanent delegation (`delegation_changed`, 409, if it ever differs). It also keeps the highest `card_seq` ever admitted per
+workspace (across an unbind) and refuses a lower one as `stale_card`; an equal or higher one, also the very same card after
+an admin re-pre-bind, is admitted. There is no age limit: the card carries nothing publish does not already hold. Refusals
+come back through the hub as the `card_put` error: `unknown_workspace`, `owner_not_allowed`, `workspace_blocked`,
+`delegation_changed`, `stale_card`, `other_person`, `other_workspace`, `delegation_mismatch`, `delegation_refused`,
+`bad_signature`, `malformed`, `wrong_suite`. Vectors `ws_card_admission_*`.
+
+**What the card route authenticates, and what it does not.** The card binds the workspace id, its owner (`PK` signed the
+delegation) and its `WSK` (the card is `WSK`-signed). Nothing binds a hub: any party holding the card (a hub, a former hub,
+anyone who saw it) can push it, and a hub the workspace never joined can push it. That admits only a workspace the admin
+already pre-bound to that owner, with its own genuine `WSK`, and grants **no publish capability**: publishing still needs a
+`WSK`-signed `hub.binding` naming the hub and the hub's transport signature (§11.2).
 
 ### 11.3 `hub.publish_approval` (V3-D4)
 

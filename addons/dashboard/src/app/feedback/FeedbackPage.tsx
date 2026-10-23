@@ -13,7 +13,13 @@ const IMAGE_MAX = 5 * 1024 * 1024
 function load(): FeedbackState {
   try {
     const s = JSON.parse(localStorage.getItem(KEY) ?? 'null') as FeedbackState | null
-    if (s && Array.isArray(s.items)) return { items: s.items, uid: s.uid ?? 0, round: s.round ?? null }
+    if (s && Array.isArray(s.items)) {
+      // A stored value of an older or odd shape is coerced, never trusted: a missing field must not crash the page.
+      const fix = (it: Partial<FeedbackItem>): FeedbackItem => ({ id: Number(it.id) || 0, text: typeof it.text === 'string' ? it.text : '', shots: Array.isArray(it.shots) ? it.shots.filter((x) => typeof x === 'string') : [], kids: Array.isArray(it.kids) ? it.kids.map(fix) : [] })
+      const items = s.items.map(fix)
+      const uid = Math.max(Number(s.uid) || 0, ...flatten(items).map((i) => i.id))
+      return { items, uid, round: typeof s.round === 'string' ? s.round : null }
+    }
   } catch {
     /* no storage or a broken value: start empty */
   }
@@ -27,7 +33,7 @@ const toData = (f: File) =>
     r.readAsDataURL(f)
   })
 
-function Field(props: { item: FeedbackItem; path: string; tail: boolean; onChange: (fn: (it: FeedbackItem) => void) => void; onDelete: () => void; onSub?: () => void; autoFocus: boolean }) {
+function Field(props: { item: FeedbackItem; path: string; tail: boolean; onChange: (fn: (it: FeedbackItem) => void) => void; onDelete: () => void; onSub?: () => void; autoFocus: boolean; say: (m: string) => void }) {
   const { item, path, tail } = props
   const ref = useRef<HTMLTextAreaElement>(null)
   useEffect(() => {
@@ -40,10 +46,12 @@ function Field(props: { item: FeedbackItem; path: string; tail: boolean; onChang
     if (props.autoFocus) ref.current?.focus()
   }, [props.autoFocus])
   const onPaste = (e: ClipboardEvent) => {
-    const files = Array.from(e.clipboardData.items).filter((x) => x.type.startsWith('image/')).map((x) => x.getAsFile()).filter((f): f is File => !!f && f.size <= IMAGE_MAX)
-    if (files.length === 0) return
+    const all = Array.from(e.clipboardData.items).filter((x) => x.type.startsWith('image/')).map((x) => x.getAsFile()).filter((f): f is File => !!f)
+    if (all.length === 0) return
     e.preventDefault()
-    void Promise.all(files.map(toData)).then((urls) => props.onChange((it) => void it.shots.push(...urls)))
+    const files = all.filter((f) => f.size <= IMAGE_MAX)
+    if (files.length < all.length) props.say('An image is larger than 5 MB and was not added.')
+    void Promise.all(files.map(toData)).then((urls) => props.onChange((it) => void it.shots.push(...urls)), () => props.say('Could not read the pasted image.'))
   }
   return (
     <div className={cn('rounded-[10px] border p-3 focus-within:border-brand', tail ? 'border-dashed border-border bg-transparent' : 'border-border bg-surface')} data-testid={`fb-${path}`}>
@@ -62,7 +70,7 @@ function Field(props: { item: FeedbackItem; path: string; tail: boolean; onChang
         className="min-h-6 resize-none overflow-hidden border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
         onChange={(e) => props.onChange((it) => void (it.text = e.target.value))}
         onKeyDown={(e) => {
-          if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && props.onSub) props.onSub()
+          if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && props.onSub && !tail) props.onSub()
         }}
         onPaste={onPaste}
       />
@@ -94,12 +102,14 @@ export function FeedbackPage() {
   const [report, setReport] = useState('')
   const [note, setNote] = useState<string | null>(null)
   const [focus, setFocus] = useState<number | null>(null)
+  const [unsaved, setUnsaved] = useState(false)
 
   useEffect(() => {
     try {
       localStorage.setItem(KEY, JSON.stringify(state))
+      setUnsaved(false)
     } catch {
-      /* storage full or blocked: the page still works for this visit */
+      setUnsaved(true) // storage full (screenshots are large) or blocked: say so, the page still works for this visit
     }
   }, [state])
   const say = (m: string) => {
@@ -179,12 +189,15 @@ export function FeedbackPage() {
   const render = (list: FeedbackItem[], prefix: string) => {
     let n = 0
     return list.map((it, i) => {
-      const tail = !isFilled(it) && i === list.length - 1
-      if (!tail) n += 1
-      const path = prefix ? `${prefix}.${tail ? n + 1 : n}` : `${tail ? n + 1 : n}`
+      const filled = isFilled(it)
+      const tail = !filled && i === list.length - 1
+      // Same numbering as the report: only items with content count; an emptied one in the middle shows a dash.
+      if (filled) n += 1
+      const num = filled ? n : tail ? n + 1 : '–'
+      const path = prefix ? `${prefix}.${num}` : `${num}`
       return (
         <li key={it.id} className="space-y-2">
-          <Field item={it} path={path} tail={tail} autoFocus={focus === it.id} onChange={(fn) => change(it.id, fn)} onDelete={() => remove(it.id)} onSub={prefix ? undefined : () => addSub(it.id)} />
+          <Field item={it} path={path} tail={tail} autoFocus={focus === it.id} say={say} onChange={(fn) => change(it.id, fn)} onDelete={() => remove(it.id)} onSub={prefix ? undefined : () => addSub(it.id)} />
           {it.kids.length > 0 && <ul className="ml-5 space-y-2 border-l-2 border-border pl-3">{render(it.kids, path)}</ul>}
         </li>
       )
@@ -207,6 +220,7 @@ export function FeedbackPage() {
           <Button type="button" variant="outline" size="sm" onClick={exportZip}><Download /> Export ZIP</Button>
           <Button type="button" size="sm" onClick={copyReport}><Copy /> Copy report</Button>
         </div>
+        {unsaved && <p role="alert" className="mt-2 text-sm text-warning">Not saved in this browser (storage is full or blocked). Copy the report or export the ZIP now, a reload would lose this round.</p>}
         {note && <p role="status" className="mt-2 flex items-center gap-1.5 text-sm text-brand"><Check className="size-4" /> {note}</p>}
 
         <ul className="mt-4 space-y-2">{render(state.items, '')}</ul>

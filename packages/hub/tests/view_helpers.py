@@ -101,11 +101,17 @@ class Host:
         self.append(uid, "ticket.created", key=key, title=title, ticket_type="feature", owner=OWNER, roster_v=1)
 
     def ask(self, uid: str = LOG, to: str = OWNER, text: str = "CSV or API?", qn: str = "Q1", options=None) -> str:
-        q: dict[str, Any] = {"id": qn, "to": to, "text": text, "blocking": True}
+        q: dict[str, Any] = {
+            "id": qn,
+            "to": to,
+            "text": text,
+            "blocking": True,
+            "kind": "choice" if options else "text",
+        }
         if options:
             q["options"] = options
         qid = PR.question_id(self.ws, uid, qn)
-        h = PR.question_hash(qid, uid, text, options)
+        h = PR.question_hash(qid, uid, q)
         self.append(uid, "question.asked", question=q, qid=qid, hash=h, roster_v=1)
         return h
 

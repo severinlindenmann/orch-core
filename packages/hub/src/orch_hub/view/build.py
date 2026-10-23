@@ -98,20 +98,22 @@ class StoreWorkspaceView:
             qn = t.next_question()
             q = {"id": qn, **action["question"]}
             qid = PR.question_id(ws, log, qn)
-            core.update(question=q, qid=qid, hash=PR.question_hash(qid, log, q["text"], q.get("options")))
+            if not PR.renderable(q):
+                raise Refused("malformed")  # the hub builds only questions it can itself show and verify
+            core.update(question=q, qid=qid, hash=PR.question_hash(qid, log, q))
         elif typ == "question.answered":
             q2 = t.questions.get(action["question"])
             if q2 is None:
                 raise Refused("unknown_item")
             if q2.hash != action["hash"]:
                 raise Refused("event_changed")  # the person answered an older version of the question
+            if not q2.verified:
+                raise Refused("unavailable")  # a question this hub cannot verify is never answered through it
             core.update(question=q2.id, hash=q2.hash)
             for k in ("option", "text"):
                 if k in action:
                     core[k] = action[k]
-            keys_ = {o.get("key") for o in (q2.obj.get("options") or []) if type(o) is dict}
-            if "option" in action and action["option"] not in keys_:
-                raise Refused("malformed")
+            _answer_fits(q2.obj, action)
         elif typ in P4.PROJ_TYPES:
             heads = self._svc.store.heads(ws, log)
             core.update(_copy(typ, action))
@@ -162,3 +164,18 @@ def _copy(typ: str, action: Mapping[str, Any]) -> dict[str, Any]:
     if typ not in COPY:
         raise Refused("not_custodial")
     return {k: action[k] for k in COPY[typ] if k in action}
+
+
+def _answer_fits(q: Mapping[str, Any], action: Mapping[str, Any]) -> None:
+    """The per-kind answer rule (core ``validate_answer``): a choice takes an ``option`` of its own, or ``text`` alone
+    (Other) only when ``allow_other``; a text question takes ``text`` only."""
+    kind = q.get("kind")
+    if kind == "text":
+        ok = "option" not in action and "text" in action
+    elif kind == "choice":
+        keys = {o.get("key") for o in q.get("options") or [] if type(o) is dict}
+        ok = action["option"] in keys if "option" in action else (q.get("allow_other") is True and "text" in action)
+    else:
+        ok = False
+    if not ok:
+        raise Refused("malformed")

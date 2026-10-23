@@ -100,17 +100,21 @@ def test_reasked_question_is_open_again_and_stale_answer_does_not_count(kit):
 
 
 def test_text_leaves_through_render_text(kit):
-    kit.host.ask(text=f"Pay{RLO} now{NEL}?\nsecond line", options=[{"key": "a", "label": f"Y{RLO}es"}])
+    # a question with characters the text rule refuses is not shown verbatim: unverifiable, only its escaped text
+    kit.host.ask(
+        text=f"Pay{RLO} now{NEL}?\nsecond line",
+        options=[{"key": "a", "label": f"Y{RLO}es"}, {"key": "b", "label": "No"}],
+    )
     kit.push()
     row = kit.r.needs_you(WS, USER)[0]
     assert row["title"] == "Pay<U+202E> now<U+0085>?"
     got = kit.r.item(WS, USER, row["item_id"])
     assert got["content"]["text"] == "Pay<U+202E> now<U+0085>?\nsecond line"
-    assert got["content"]["options"] == [{"key": "a", "label": "Y<U+202E>es"}]
+    assert got["content"]["unverifiable"] is True and "options" not in got["content"] and "spec" not in got["content"]
 
 
 def test_item_detail_and_unknown_item(kit):
-    kit.host.ask(options=[{"key": "csv", "label": "CSV"}])
+    kit.host.ask(options=[{"key": "csv", "label": "CSV"}, {"key": "api", "label": "API"}])
     kit.push()
     rid = kit.r.needs_you(WS, USER)[0]["item_id"]
     got = kit.r.item(WS, USER, rid)
@@ -152,36 +156,30 @@ def test_restricted_ticket_is_invisible_to_a_user_not_on_the_list(kit):
     assert [r["title"] for r in kit.r.needs_you(WS, USER)] == ["CSV or API?"]
 
 
-def test_a_corrupt_projection_reads_as_nothing(kit):
+def test_a_question_whose_hash_disagrees_is_listed_but_unverifiable(kit):
     kit.host.ask()
     kit.host.append(
         LOG,
         "question.asked",
-        question={"id": "Q2", "to": OWNER, "text": "x", "blocking": True},
+        question={"id": "Q2", "to": OWNER, "text": "x", "blocking": True, "kind": "text"},
         qid="0" * 32,
         hash="sha256:" + "0" * 64,
         roster_v=1,
     )
     kit.push()
-    assert kit.r.needs_you(WS, USER) == []  # the host's own qid/hash disagree with the derivation: fail closed
+    rows = kit.r.needs_you(
+        WS, USER
+    )  # the host's own qid/hash disagree with the derivation: that ONE question is marked
+    assert len(rows) == 2
+    flags = [kit.r.item(WS, USER, r["item_id"])["content"].get("unverifiable") for r in rows]
+    assert sorted(flags, key=str) == [None, True]
 
 
-def test_question_hash_vectors_from_orch_core():
-    # orch-core tests/vectors/f1/hashes.json (question_id / question_hash)
+def test_question_id_and_value_hash_vectors_from_orch_core():
+    # the question HASH vectors are tests/test_question_spec.py (frozen core fixtures, #1123)
     assert (
         PR.question_id("0123456789abcdef0123456789abcdef", "01J9ZK4Q7M3R8T2V6X0B5N1C9D", "Q1")
         == "d60478ec5ff8f6ff213cded9c0f8f243"
-    )
-    qid = "d60478ec5ff8f6ff213cded9c0f8f243"
-    t = "01J9ZK4Q7M3R8T2V6X0B5N1C9D"
-    opts = [{"key": "csv", "label": "Monthly CSV"}, {"cost": "+1 day", "key": "api", "label": "Tariff API"}]
-    assert (
-        PR.question_hash(qid, t, "Which tariff export is the source of truth?", opts)
-        == "sha256:5a46f6bb79a415be4493b18b1703c42d66b9be0e47e1ca5d99ac5b4158ee6ee6"
-    )
-    assert (
-        PR.question_hash(qid, t, "Ok?", None)
-        == "sha256:cc08eb5525f17f7f0d508fc4562e1175493fd8ce2030c903b8076144a36062db"
     )
     assert PR.value_hash(None) == "sha256:50fb42c5ddadf64924917d184566fcff987a5a2b6227cddc9d380e8baa8da223"
     assert (
@@ -208,24 +206,41 @@ def _strings(x):
             yield from _strings(v)
 
 
-def test_recommended_only_if_it_is_an_option_key(kit):
-    opts = [{"key": "csv", "label": "CSV"}]
-    for rec, want in (("csv", "csv"), ("api", None), (5, None), ({"x": 1}, None)):
-        q = {"id": "Q1", "to": OWNER, "text": "t", "blocking": True, "options": opts, "recommended": rec}
-        qid = PR.question_id(WS, LOG, "Q1")
-        h = PR.question_hash(qid, LOG, "t", opts)
-        kit.host.append(LOG, "question.asked", question=q, qid=qid, hash=h, roster_v=1)
+def test_recommended_must_be_one_of_the_option_keys(kit):
+    opts = [{"key": "csv", "label": "CSV"}, {"key": "api", "label": "API"}]
+    for n, (rec, ok) in enumerate((("csv", True), ("nope", False), (5, False), ({"x": 1}, False)), 1):
+        q = {
+            "id": f"Q{n}",
+            "to": OWNER,
+            "text": "t",
+            "blocking": True,
+            "kind": "choice",
+            "options": opts,
+            "recommended": rec,
+        }
+        qid = PR.question_id(WS, LOG, q["id"])
+        kit.host.append(LOG, "question.asked", question=q, qid=qid, hash=PR.question_hash(qid, LOG, q), roster_v=1)
         kit.push()
-        assert kit.r.item(WS, USER, qid)["content"]["recommended"] == want
+        c = kit.r.item(WS, USER, qid)["content"]
+        assert (c.get("spec", {}).get("recommended") == rec) is ok and c.get("unverifiable", False) is not ok
 
 
 def test_every_string_that_leaves_the_view_is_render_text_safe(kit):
     bad = f"a{RLO}b{NEL}c"
     kit.host.append(LOG, "ticket.updated", base_rev={}, set={"ticket.title": bad}, roster_v=1)
-    opts = [{"key": "k", "label": bad, "cost": bad}]
-    q = {"id": "Q1", "to": OWNER, "text": bad, "why": bad, "blocking": True, "options": opts, "recommended": "k"}
+    opts = [{"key": "k", "label": bad, "cost": bad}, {"key": "j", "label": "ok"}]
+    q = {
+        "id": "Q1",
+        "to": OWNER,
+        "text": bad,
+        "why": bad,
+        "blocking": True,
+        "kind": "choice",
+        "options": opts,
+        "recommended": "k",
+    }
     qid = PR.question_id(WS, LOG, "Q1")
-    kit.host.append(LOG, "question.asked", question=q, qid=qid, hash=PR.question_hash(qid, LOG, bad, opts), roster_v=1)
+    kit.host.append(LOG, "question.asked", question=q, qid=qid, hash=PR.question_hash(qid, LOG, q), roster_v=1)
     kit.push()
     from orch_hub.contract import phase4 as P4
 

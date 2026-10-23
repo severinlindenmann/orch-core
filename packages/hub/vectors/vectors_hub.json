@@ -35082,6 +35082,7 @@
      "question": {
       "blocking": true,
       "id": "Q9",
+      "kind": "text",
       "text": "x",
       "to": "assignees"
      },
@@ -35103,6 +35104,7 @@
      "log": "01J9ZP0000000000000000TKT1",
      "question": {
       "blocking": true,
+      "kind": "text",
       "sig": "AAAA",
       "text": "x",
       "to": "assignees"
@@ -35124,11 +35126,16 @@
      "log": "01J9ZP0000000000000000TKT1",
      "question": {
       "blocking": true,
+      "kind": "choice",
       "options": [
        {
         "actor": "u_x",
         "key": "a",
         "label": "A"
+       },
+       {
+        "key": "b",
+        "label": "B"
        }
       ],
       "text": "x",
@@ -35151,13 +35158,18 @@
      "log": "01J9ZP0000000000000000TKT1",
      "question": {
       "blocking": false,
+      "kind": "choice",
       "options": [
        {
         "key": "a",
         "label": "A"
+       },
+       {
+        "key": "b",
+        "label": "B"
        }
       ],
-      "recommended": "b",
+      "recommended": "c",
       "text": "x",
       "to": "assignees"
      },
@@ -35170,6 +35182,87 @@
     "error": "malformed"
    },
    "name": "action_smuggle_question_recommended_unknown",
+   "phase": 4
+  },
+  {
+   "args": {
+    "action": {
+     "log": "01J9ZP0000000000000000TKT1",
+     "question": {
+      "blocking": true,
+      "text": "x",
+      "to": "assignees"
+     },
+     "type": "question.asked"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_smuggle_question_without_kind",
+   "note": "the old label-only shape is gone: every question has a kind (#1123)",
+   "phase": 4
+  },
+  {
+   "args": {
+    "action": {
+     "log": "01J9ZP0000000000000000TKT1",
+     "question": {
+      "blocking": true,
+      "kind": "choice",
+      "options": [
+       {
+        "key": "a",
+        "label": "A"
+       }
+      ],
+      "text": "x",
+      "to": "assignees"
+     },
+     "type": "question.asked"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_smuggle_question_choice_with_one_option",
+   "note": "a choice has 2..6 options",
+   "phase": 4
+  },
+  {
+   "args": {
+    "action": {
+     "log": "01J9ZP0000000000000000TKT1",
+     "question": {
+      "blocking": true,
+      "kind": "text",
+      "options": [
+       {
+        "key": "a",
+        "label": "A"
+       },
+       {
+        "key": "b",
+        "label": "B"
+       }
+      ],
+      "text": "x",
+      "to": "assignees"
+     },
+     "type": "question.asked"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_smuggle_question_text_with_options",
+   "note": "a text question has no options",
    "phase": 4
   },
   {
@@ -35314,6 +35407,7 @@
      "log": "01J9ZP0000000000000000TKT1",
      "question": {
       "blocking": true,
+      "kind": "choice",
       "options": [
        {
         "key": "csv",
@@ -38060,7 +38154,7 @@
       "sig": "nqr1qA-e5yXPo9vSziaXYLCFqQPQxcr_Lzw73LtOVx8xFwrx8Cbi2NlvbF5Mb2Zqm8FY9xHPKxi7ubZJcx5Pbg"
      },
      "channel_factor": "se-unlocked",
-     "channel_proof": "khRploZx0hxkYJN-meguSwbH3m-fOcULI_8f9ihHCK6BUP48k0didFGmMp8kLz9pjl5dN8AJ3YDHs-D5Pm-EEw",
+     "channel_proof": "6TUqGb_BRFx9WkFtpm1dWklf8x7RwM7SA3quyFWeiANF7SeCvFWiPV9_lH00Gm0K9c8IT8L4ac-_UES3dJx5MQ",
      "hash": "sha256:3a97ad911f8fc87d2f2176b96af59db5e99180109650be380d353f8597abe70e",
      "hash_v": 1,
      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
@@ -38069,6 +38163,7 @@
      "question": {
       "blocking": true,
       "id": "Q2",
+      "kind": "choice",
       "options": [
        {
         "key": "api",
@@ -38084,7 +38179,7 @@
       "to": "ticket_owner"
      },
      "roster_v": 4,
-     "sig": "Bjf1CWoE7y3AYasPVVN0m05HrLivEUaPcVQdPVdDie76NsXi_--E5-yjvsoYnyfq4Q71l78D8-atQ0Am8JoCfA",
+     "sig": "bqNsnF9OjMFHKYkELklCYm5Zm8Ulf_GKivng4qQGLg3QLZV_0xecxPN6xV70jFe3z1VDlgUofoKYburVMm4EFg",
      "snapshot_version": 3,
      "type": "question.asked",
      "uk_cert": {
@@ -40237,7 +40332,7 @@
       "sig": "nqr1qA-e5yXPo9vSziaXYLCFqQPQxcr_Lzw73LtOVx8xFwrx8Cbi2NlvbF5Mb2Zqm8FY9xHPKxi7ubZJcx5Pbg"
      },
      "channel_factor": "se-unlocked",
-     "channel_proof": "-9I0yqtyVb3dhuH97ftRvYSOXGFeaw_iHamrzqbMnOTt8ktO3_P6rOcEFWKQf9BMxPafXI3rk9A48gv2NbHQfQ",
+     "channel_proof": "EMZFpaK03TKQ3GJ3tTKcPEtEWMedT93DZJgp6LgTxIZ9uBzqJt1Yku9qDWsIVRJXXcmq1DwY954UNQyBByxZEg",
      "hash": "sha256:3a97ad911f8fc87d2f2176b96af59db5e99180109650be380d353f8597abe70e",
      "hash_v": 1,
      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
@@ -40246,6 +40341,7 @@
      "question": {
       "blocking": true,
       "id": "Q2",
+      "kind": "choice",
       "options": [
        {
         "key": "api",
@@ -40262,7 +40358,7 @@
       "to": "ticket_owner"
      },
      "roster_v": 4,
-     "sig": "DVvZAHrC0cD64rIUgiPgd8Y6x4EXLhEWLVGHMHs0Ox3kbA0-ovGhISTlUzFFreodluqUdbcTpmfc3UcJLMC1Dg",
+     "sig": "3zdUyf9gs1WXjVqqlGtgFyq4fC3dH1x8Rcn9IdI9LWpvbuD17laQIOuJSG1OXncN3w-JibH7bK-TifN7Em51MA",
      "snapshot_version": 3,
      "type": "question.asked",
      "uk_cert": {
@@ -40376,7 +40472,7 @@
       "sig": "nqr1qA-e5yXPo9vSziaXYLCFqQPQxcr_Lzw73LtOVx8xFwrx8Cbi2NlvbF5Mb2Zqm8FY9xHPKxi7ubZJcx5Pbg"
      },
      "channel_factor": "se-unlocked",
-     "channel_proof": "zsxudV-fAxy306If_PUcnArIG35RLRYzY8GuDHjclZwG0CqES0bpa6oZW0dSfwvQX3xXGbwPVTZxXZeeGGmZZA",
+     "channel_proof": "PD2GVsvj1b8umEpd7VTkkWoBb-o8kLBGbWqLl3TT3d894jAiZozYE0WGg9wAghvIDPWO8dcIi7JYVRgD6PjEMQ",
      "hash": "sha256:3a97ad911f8fc87d2f2176b96af59db5e99180109650be380d353f8597abe70e",
      "hash_v": 1,
      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
@@ -40384,6 +40480,7 @@
      "qid": "4cc7f8b914ab3a9223c12f7cb2c3023c",
      "question": {
       "blocking": true,
+      "kind": "choice",
       "options": [
        {
         "key": "api",
@@ -40399,7 +40496,7 @@
       "to": "ticket_owner"
      },
      "roster_v": 4,
-     "sig": "3im8fuArJUus70CnXPbLDGL2ICP6jIN3UXg2dzc-YqbLfv3pmmqiaXr2fBMLmPDGWmEIUodmnv6AAjq2eB5yQg",
+     "sig": "CQWoWeqIGE6kRuW_gh75CzNXLXnkjwprIscVqrFYM8PdUKB9hqMvJwJSD8p5nQCkvKjqpdSvMxVxjr0_6XKLAA",
      "snapshot_version": 3,
      "type": "question.asked",
      "uk_cert": {

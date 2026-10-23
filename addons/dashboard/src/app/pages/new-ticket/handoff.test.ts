@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { SECTIONS_BY_TYPE, type SectionName } from '@/api/sections'
-import { accessTooMany, EMPTY, handoffNewTicket } from './index'
+import { accessTooMany, EMPTY, handoffNewTicket, sequencePeople } from './index'
 
 describe('a new ticket through the hand-off', () => {
   it('is one intent: title, type, fields and written text', () => {
@@ -49,5 +49,20 @@ describe('F-712-B: the step limit with and without the agent access', () => {
     expect('problem' in handoffNewTicket(edge, 'p', null)).toBe(false)
     expect(accessTooMany(edge, 'p', 24)).toBe(true)
     expect(accessTooMany(draft(sections, 14 - sections - 1), 'p', 24)).toBe(false)
+  })
+})
+
+describe('#1070 the real draft to sequence step', () => {
+  const me = 'p_' + '1'.repeat(32)
+  it('the creator as owner, assignee and reviewer signs no owner step', () => {
+    const people = { owner: me, assignees: [me], reviewers: [me] }
+    expect(sequencePeople(people as never, me)).toEqual({ assignees: [me], reviewers: [me] })
+    const d = { ...EMPTY, title: 'T', size: 1, people, sections: { requirements: 'It works.' } } as never
+    const made = handoffNewTicket(d, me)
+    expect('action' in made && (made.action as { people?: object }).people).toEqual({ assignees: [me], reviewers: [me] })
+  })
+  it('another person as owner keeps an owner step', () => {
+    const other = 'p_' + '2'.repeat(32)
+    expect(sequencePeople({ owner: other, assignees: [], reviewers: [] } as never, me)).toEqual({ owner: other })
   })
 })

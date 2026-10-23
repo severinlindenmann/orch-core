@@ -496,7 +496,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
     setAttempted(false)
   }
 
-  const primaryLabel = startFirst ? 'Create and start agent' : startPossible || tooMany ? 'Only create' : 'Create'
+  const primaryLabel = startFirst ? 'Create and start agent' : startPossible || tooMany ? 'Only create' : handoffOn ? 'Review ticket' : 'Create'
   const summary = attempted && check.count ? `${check.count === 1 ? 'One thing needs' : `${check.count} things need`} your attention before the ticket can be created.` : null
 
   return (

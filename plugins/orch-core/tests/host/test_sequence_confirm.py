@@ -82,3 +82,15 @@ def test_the_matrix_never_lowers_below_the_strongest_step():
         (("reviewers",), False),
     }
     assert set(kinds.values()) == {"click", "word"}
+
+
+def test_the_owners_draft_creator_as_assignee_and_reviewer_no_owner_step_is_a_click():
+    """#1070 exact case: the dashboard drops the owner step when the owner is the creator (`sequencePeople`), so the
+    host sees the creator as assignee and reviewer only, plus an estimate and requirements text."""
+    me = "p_" + "1" * 32
+    kind = new_kind(
+        people={"assignees": [me], "reviewers": [me]},
+        set={"size": "xs"},
+        sections={"requirements": "It works."},
+    )
+    assert kind == "click"

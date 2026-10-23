@@ -420,7 +420,7 @@ def refuse_reader_op(
     history (``history``) holds a convenience event or the flag is on; the handler's own check follows."""
     if op not in READER_OPS:
         return
-    if op in ("member.add", "relay.pair_device") and events is not None:
+    if op == "member.add" and events is not None:
         _check_new_readers(service, events, readers or [], history=history)
         return
     if op == "relay.pair":

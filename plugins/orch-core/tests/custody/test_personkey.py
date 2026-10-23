@@ -16,15 +16,13 @@ from pathlib import Path
 import pytest
 
 import orch
-from orch import canon, crypto, fdwait
+from orch import crypto, fdwait
 from orch.crypto.labels import L
 from orch.custody import personkey
 from orch.custody.base import PERSON_KEY_LABELS, CustodyError, NoPrompt
-from orch.identity import certreq, certs, wscard
+from orch.identity import certs
 from orch.identity import recovery as rec
 from orch.ops import workspace_init
-
-from ..wsproto import corpus
 
 FAST = 2**10
 SRC = Path(orch.__file__).resolve().parent
@@ -804,103 +802,6 @@ def test_the_label_key_opens_a_label_init_sealed(fast, no_grant, tty):
 
 def _hex() -> str:
     return os.urandom(16).hex()
-
-
-def _request_for(pk_pub: bytes, pk_sign):
-    """A real §8.4 request for ``pk_pub``'s person: a card under a fresh WSK with the person's delegation, a primary
-    with its own kx key, a phone's keys; checked and opened as the primary does."""
-    now = 1_760_000_000_000
-    ws, pid = _hex(), crypto.person_id(pk_pub).hex()
-    wsk, wxk = crypto.generate_private_key(), crypto.generate_private_key()
-    wsk_pub = crypto.public_bytes(wsk)
-    delegation = certs.make_delegation(
-        pk_pub, pk_sign, workspace_id=ws, wsk_pub=wsk_pub, client_hosted=False, issued_ms=now
-    )
-    o, sealed = wscard.card_o(
-        workspace_id=ws,
-        wsk_pub=wsk_pub,
-        wxk_pub=crypto.public_bytes(wxk),
-        wxk_version=1,
-        owner_person_id=pid,
-        relay_url="https://relay.example.org",
-        card_seq=1,
-        issued_ms=now,
-        ck=os.urandom(32),
-        part=corpus.S2["card"]["sealed_part_plaintext"],
-    )
-    card = {
-        "o": o,
-        "sig": crypto.b64u(crypto.sign(wsk, L["sig_card_wsk"] + canon.dumps(o))),
-        "delegation": delegation,
-        "sealed": crypto.b64u(sealed),
-    }
-    vcard = wscard.verify_card(card, pk_pub)
-    primary_sig, primary_kx = crypto.generate_private_key(), crypto.generate_private_key()
-    primary_dev = crypto.device_id(crypto.public_bytes(primary_sig))
-    phone_sig, phone_kx = crypto.generate_private_key(), crypto.generate_private_key()
-    req_o = certreq.cert_request_o(
-        request_id=_hex(),
-        workspace_id=ws,
-        person_id=pid,
-        primary_device_id=primary_dev.hex(),
-        primary_kx_pub=crypto.public_bytes(primary_kx),
-        offer_id=_hex(),
-        attempt=_hex(),
-        dk_sig_pub=crypto.public_bytes(phone_sig),
-        dk_kx_pub=crypto.public_bytes(phone_kx),
-        label="phone",
-        scopes_max=["look"],
-        created_ms=now,
-    )
-    signed = {"o": req_o, "sig": crypto.b64u(crypto.sign(wsk, L["sig_cert_request"] + canon.dumps(req_o)))}
-    req = certreq.check_cert_request(
-        signed, vcard, me_person_id=pid, me_device_id=primary_dev.hex(), journal=certreq.CertJournal(), now_ms=now
-    )
-
-    def unseal(object_id: bytes, blob: bytes) -> bytes:
-        return crypto.open_sealed(primary_kx, primary_dev, "cert-request", object_id, 0, blob)
-
-    return signed, req, certreq.open_cert_request(req, unseal)
-
-
-def test_end_to_end_a_typed_code_signs_a_challenge_the_host_accepts(fast, no_grant, tty):
-    code = rec.generate_recovery_code()
-    key = _fast_key(code)
-    pk_pub = crypto.public_bytes(key)
-    signed, req, inner = _request_for(pk_pub, lambda p: crypto.sign(key, p))
-    tty(code)
-    with personkey.RecoveryCodeSource(
-        labels=ALL, person_id=crypto.person_id(pk_pub), action="add the device phone"
-    ) as src:
-        challenge = certreq.make_cert_challenge(
-            src.pk_pub, src.signer("sig_cert_challenge"), req, inner, os.urandom(32)
-        )
-        rejection = certreq.make_cert_rejection(src.pk_pub, src.signer("sig_cert_rejection"), req)
-        cert = certs.make_device_cert(
-            src.pk_pub,
-            src.signer("sig_device_cert"),
-            dk_sig_pub=inner.dk_sig_pub,
-            dk_kx_pub=inner.dk_kx_pub,
-            label_sealed=certs.seal_device_label(
-                src.derive_label_key(), src.person_id, bytes.fromhex(inner.device_id), inner.label
-            ),
-            created_ms=req.created_ms,
-            expires_ms=None,
-            scopes_max=["look"],
-        )
-        revocation = certs.make_revocation(
-            src.pk_pub, src.signer("sig_revocation"), device_id_hex=inner.device_id, revoked_ms=1, reason="lost"
-        )
-        with pytest.raises(personkey.LabelRefused):  # the one-time delegation is init's, never this source's
-            certs.make_delegation(
-                src.pk_pub, src.signer("sig_device_cert"), workspace_id=_hex(), wsk_pub=src.pk_pub,
-                client_hosted=False, issued_ms=1,
-            )  # fmt: skip
-    got = certreq.check_cert_challenge(challenge, pk_pub, signed["o"])
-    assert got.device_id == inner.device_id and len(got.cert_code) > 0
-    certreq.check_cert_rejection(rejection, pk_pub, signed["o"])
-    certs.check_cert(cert, pk_pub)
-    certs.check_revocation(revocation, pk_pub)
 
 
 # --- the boundary: who may construct the source and touch the raw scalar ---------------------------------------------

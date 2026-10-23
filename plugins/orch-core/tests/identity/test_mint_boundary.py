@@ -23,7 +23,7 @@ import pytest
 import orch
 
 ROOT = Path(orch.__file__).resolve().parent
-MINTERS = frozenset({"identity/wscard.py", "identity/certreq.py"})
+MINTERS = frozenset({"identity/wscard.py"})
 NAME = "_mint"
 
 

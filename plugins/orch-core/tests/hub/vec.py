@@ -38,6 +38,8 @@ RUN_CHECKS = frozenset(
         "space_wrap",
         "space_item",
         "host_put",
+        "short_hash",  # orch-hub#55: replayed against the PRODUCTION module orch.hubclient.shorthash
+        "short_digest",
         "custodial",  # V3 C3 phase 4: replayed against the PRODUCTION module orch.hubclient.custodial
         "share_item",  # V3 C6 (phase 4): replayed through the test-side opener (share_open.py)
         "share_revoke",
@@ -197,6 +199,10 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
         return {"workspace_id": H.verify_v2_card(a["card"], unb64u(a["pk_pub"], 65), now_ms=now)["workspace_id"]}
     if check in ("space", "space_wrap", "space_item", "host_put"):
         return _run_space(check, a)
+    if check in ("short_hash", "short_digest"):
+        from orch.hubclient import shorthash
+
+        return {"shown": getattr(shorthash, check)(a["hash"] if check == "short_hash" else a["digest"])}
     if check == "custodial":
         return _run_custodial(a)
     if check in ("share_item", "share_revoke"):

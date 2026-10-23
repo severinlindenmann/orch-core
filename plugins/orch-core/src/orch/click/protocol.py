@@ -135,7 +135,6 @@ WORD_OPS = frozenset(
         "member.add",
         "member.role",
         "member.remove",
-        "addon.grant",
         "addon.purge",
         "policy.set",
         "people.set",  # B12D: who owns, works on or reviews a ticket decides who may act on it
@@ -146,9 +145,10 @@ WORD_OPS = frozenset(
 
 #: ``settings.set`` keys that need more than a click. ``publish`` decides where shared files go: terminal only (the
 #: dashboard signs it through ``orch sign CODE``). ``repos``, ``sign_methods`` and ``grant_hours`` need the typed word.
+#: ``models`` (a pick from a closed list, no authority change) is a click (run 8, owner item 1.6).
 #: ``icon`` (the workspace icon) is deliberately in none of the sets: a closed-list cosmetic choice, signed by a click.
 SETTINGS_TERMINAL_KEYS = frozenset({"publish"})
-SETTINGS_WORD_KEYS = frozenset({"repos", "sign_methods", "grant_hours", "models"})
+SETTINGS_WORD_KEYS = frozenset({"repos", "sign_methods", "grant_hours"})
 _RANK = {"click": 0, "word": 1, "terminal": 2}
 
 
@@ -164,16 +164,33 @@ def _settings_class(changes: list[Any]) -> str:
     return out
 
 
+def _grant_class(events: list[dict[str, Any]] | None, args: dict[str, Any] | None) -> str:
+    """``addon.grant``: ``publish`` decides where files go, so it is terminal only, however it is asked (args at prepare,
+    the signed event at sign time, which wins). Otherwise the class comes from the SIGNED capability list: empty
+    (usage, wiki, estimate, explorer, model-routing, worktrees ...) is a click; any capability (network, pty,
+    spawn_agent, serve_http: code, network or a server as you) keeps the typed word. A missing or malformed list fails
+    closed to the word. From ``args`` alone (the early check, before the host has built the event) the capabilities are
+    not known: the word, the ceiling. That early class is only used to refuse terminal-only ops; the signed event
+    decides click versus word."""
+    if events is None:
+        return "terminal" if (args or {}).get("name") == "publish" else "word"
+    out = "click"
+    for ev in events:
+        if ev.get("name") == "publish":
+            return "terminal"
+        caps = ev.get("capabilities")
+        if not isinstance(caps, list) or caps:
+            out = "word"
+    return out
+
+
 def op_class(op: str, events: list[dict[str, Any]] | None = None, args: dict[str, Any] | None = None) -> str:
     """``click``, ``word`` or ``terminal``. ``settings.set`` is classed by the keys it changes (see the key sets above),
     from the signed events when there are any (**the class at sign time, which wins**), else from the request's
     ``args["set"]`` (the early check, before prepare); with neither it counts as a click op. A class the early check
     gives can only be raised by the sign-time check, never lowered."""
     if op == "addon.grant":
-        # Publish decides where files go: turning it on is terminal only, however it is asked (args at prepare, the
-        # signed event at sign time, which wins)
-        names = [ev.get("name") for ev in events] if events is not None else [(args or {}).get("name")]
-        return "terminal" if "publish" in names else "word"
+        return _grant_class(events, args)
     if op in WORD_OPS:
         return "word"
     if op == "settings.set" and (events is not None or args is not None):

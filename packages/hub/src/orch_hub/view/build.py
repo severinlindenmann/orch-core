@@ -62,7 +62,6 @@ class StoreWorkspaceView:
     def build(
         self, wk_e: bytearray, epoch: int, workspace_id: str, user_id: str, event_id: str, action: Mapping[str, Any]
     ) -> BuiltEvent:
-        typ = action["type"]
         keys = Keyring(self._svc.seals, workspace_id, {epoch: wk_e})
         try:
             with self._svc.store.lock:  # one consistent read: heads and pages cannot move between the two

@@ -335,15 +335,25 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
         return {"digest_hex": P4.check_prepared(a["ctx"], a["digest_hex"]).hex()}
     if check == "log_sync":
         views: dict[str, list[str]] = {}
+        projs: dict[str, Any] = {}
         wk = {int(e): bytes.fromhex(k) for e, k in a["wk_epochs"].items()}
         for body in a["pages"]:
             if type(body) is dict and set(body) == {"wk_seal"}:  # a rotation between pages: the hub takes a new epoch
                 wk.update({int(e): bytes.fromhex(k) for e, k in body["wk_seal"].items()})
                 continue
-            views = P4.apply_view_page(
-                views, body, workspace_id=a["workspace_id"], wsk_pub=unb64u(a["wsk_pub"], 65), wk_epochs=wk
+            views, projs = P4.apply_view_page_proj(
+                views, projs, body, workspace_id=a["workspace_id"], wsk_pub=unb64u(a["wsk_pub"], 65), wk_epochs=wk
             )
-        return {log: {"seq": len(hs), "head": hs[-1]} for log, hs in sorted(views.items())}
+        out: dict[str, Any] = {log: {"seq": len(hs), "head": hs[-1]} for log, hs in sorted(views.items())}
+        if projs:  # D15b: the projection held per ticket log ("proj" is never a log name)
+            out["proj"] = {log: dict(p) for log, p in sorted(projs.items())}
+        return out
+    if check == "roster_v":
+        return {"roster_v": P4.roster_v(a["lines"])}
+    if check == "proj_build":
+        return P4.build_from_proj(
+            a["action"], a["proj"], ticket_seq=a["ticket_seq"], ticket_head=a["ticket_head"], roster_v=a["roster_v"]
+        )
     if check == "selective_build":
         log, core = P4.build_selective(a["action"], a["item"])
         return {"log": log, "event": core}

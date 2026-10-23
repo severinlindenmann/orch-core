@@ -39,6 +39,7 @@ __all__ = [
     "setup_backend",
     "stage_convenience",
     "status",
+    "turn_off_convenience",
     "undo_staged",
 ]
 
@@ -74,6 +75,10 @@ def refuse_full_mode(state_dir: Path, workspace_id: str) -> None:
     entry = host_convenience.registered_entry(state_dir, workspace_id, uid)
     if entry is not None:
         host_convenience.refuse_full_mode_entry(state_dir, entry, uid)
+
+
+class TerminalNeeded(CustodyError):
+    """The dashboard asked for a change only the terminal may make (``custody.terminal_needed``): nothing was changed."""
 
 
 class Selection(dict):
@@ -321,10 +326,15 @@ def undo_staged(
         _write_selection(state_dir, workspace_id, dict(before))
 
 
-def downgrade_in_place(state_dir: Path, workspace_id: str, *, store: Any = None) -> Selection:
-    """Move the same key back under a new passphrase, asked on the terminal by the key backend (no caller chooses it).
+def downgrade_in_place(
+    state_dir: Path, workspace_id: str, *, store: Any = None, passphrase: str | None = None
+) -> Selection:
+    """Move the same key back under a new passphrase. Without ``passphrase`` the key backend asks on the terminal
+    (``orch keys custody passphrase --in-place``). ``passphrase`` is given by exactly one caller, :func:`turn_off_convenience`
+    (V3-D31: the dashboard's "Turn off", in the locked step that takes a one-click authority away; an AST test pins it).
     The key was readable without a factor: anyone who copied it can still sign, with any ``auth`` label. Resumable at
-    step ``written``."""
+    step ``written`` (a resume never needs a passphrase). No full-mode or dev-host refusal: this goes toward passphrase
+    custody and must work in every mode."""
     from orch.ops import human
 
     from .convenience import ConvenienceBackend
@@ -353,7 +363,7 @@ def downgrade_in_place(state_dir: Path, workspace_id: str, *, store: Any = None)
         else:
             scalar = bytearray(store.get(workspace_id, sel["device"]))
             try:
-                created = legacy.create(KEY_ID, secret=bytes(scalar), role="device")
+                created = legacy.create(KEY_ID, secret=bytes(scalar), role="device", passphrase=passphrase)
             finally:
                 for i in range(len(scalar)):
                     scalar[i] = 0
@@ -370,6 +380,59 @@ def downgrade_in_place(state_dir: Path, workspace_id: str, *, store: Any = None)
     except KeyNotFound:
         pass
     return Selection(done)
+
+
+def turn_off_convenience(
+    state_dir: Path,
+    workspace_id: str,
+    host_uid: int,
+    *,
+    move_key: bool = True,
+    passphrase: str | None = None,
+    store: Any = None,
+) -> Selection | None:
+    """V3-D31, the one place "convenience off" happens: under ONE workspace lock the flag goes off and the key moves back
+    to passphrase custody (:func:`downgrade_in_place`). Returns the new selection, or ``None`` when the key was not moved
+    (``move_key`` false: the dashboard without a passphrase, which only takes authority away; or no convenience custody).
+
+    * ``passphrase`` (the dashboard's new factor) is accepted only while the flag is ON at this moment, under the lock:
+      the session then held one-click authority anyway. Flag already off, or a custody change pending: ``TerminalNeeded``,
+      nothing changed (Opus on #1062; H2 stays for every other case). Its strength is checked before anything changes.
+    * Without ``passphrase`` and with ``move_key`` the key backend asks on the terminal (``orch host convenience off``).
+    * A leftover convenience store key after a finished move (a crash between the selection write and the delete) is
+      removed again here, best effort and idempotent.
+    No ``refuse_full_mode`` / ``refuse_dev_host``: turning convenience off is allowed in every mode."""
+    from orch.host import convenience as host_convenience
+
+    from .strength import check_strength
+
+    if passphrase is not None:
+        check_strength(passphrase)  # before the flag changes: a weak text leaves the flag on and retryable
+    with host_convenience.workspace_lock(state_dir, workspace_id, host_uid):
+        was_on = host_convenience.enabled(state_dir, workspace_id, host_uid)
+        sel = read_selection(state_dir, workspace_id)
+        if passphrase is not None:
+            if sel is not None and sel["transition"] is not None:
+                raise TerminalNeeded(
+                    "a custody change of this workspace is unfinished; finish it in the terminal first"
+                )
+            if not was_on:
+                raise TerminalNeeded(
+                    "click-to-sign is already off, so the dashboard has no one-click authority to trade for a new "
+                    "passphrase; move the key back in the terminal: orch keys custody passphrase --in-place"
+                )
+        if was_on:
+            host_convenience.set_enabled(state_dir, workspace_id, False, host_uid)
+        if sel is None or not move_key:
+            return None
+        store = store if store is not None else _store(state_dir)
+        if sel["custody"] == "passphrase" and sel["transition"] is None:
+            try:
+                store.delete(workspace_id, sel["device"])  # Opus A: a scalar a crashed move left in the key store
+            except KeyNotFound:
+                pass
+            return None
+        return downgrade_in_place(state_dir, workspace_id, store=store, passphrase=passphrase)
 
 
 def forget(state_dir: Path, workspace_id: str, *, store: Any = None) -> list[str]:

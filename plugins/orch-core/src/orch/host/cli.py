@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
 import os
 import sys
@@ -851,7 +852,24 @@ def _convenience(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) 
             args.switch == "on"
         ):  # B10: before the lock (like custody_on): never leave the flag on with every click refused
             convenience.refuse_turn_on(state, match[0], uid)
-        with convenience.workspace_lock(state, wid, uid):  # against a hand-off prepare in the host (§0.8.6 item 8)
+        if args.switch == "off":
+            # V3-D31: off also moves a key in convenience custody back under a passphrase (typed on /dev/tty by the key
+            # backend), flag and move under one workspace lock; no terminal: the flag only, with the hint below
+            from orch.custody import cli as custody_cli
+            from orch.custody import select
+            from orch.custody.base import CustodyError
+
+            try:
+                moved = select.turn_off_convenience(state, wid, uid, move_key=custody_cli.has_terminal())
+            except CustodyError as exc:
+                return write_error(
+                    out,
+                    False,
+                    "custody.unavailable",
+                    f"click-to-sign is off, but the key could not be moved back: {exc}",
+                    hint=f"orch keys custody passphrase --workspace {match[0].get('prefix') or wid} --in-place",
+                )
+        with convenience.workspace_lock(state, wid, uid) if args.switch == "on" else contextlib.nullcontext():
             if args.switch == "on":
                 waiting = convenience.pending_handoffs(state, wid, uid, clock=_clock)
                 if waiting:
@@ -863,7 +881,8 @@ def _convenience(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) 
                         f"{len(waiting)} terminal hand-off request(s) are pending for this workspace: {lines}",
                         hint="let them expire (10 minutes), then switch convenience on",
                     )
-            convenience.set_enabled(state, wid, args.switch == "on", uid)
+            if args.switch == "on":
+                convenience.set_enabled(state, wid, True, uid)
     except HostError as exc:  # lock.busy (a lock is held), custody.unsafe_mode (a lock or flag file is not private)
         return write_error(out, False, exc.code, exc.message, hint=exc.hint)
     word = "on" if args.switch == "on" else "off"
@@ -872,7 +891,9 @@ def _convenience(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) 
         from orch.custody import select  # the same custody reading `orch sign` resolves its key from
 
         held = select.status(state, wid).get("custody")
-        if held == "convenience":
+        if moved is not None:
+            out.write("The key is back under your passphrase: sign in the Terminal with orch sign <code>\n")
+        elif held == "convenience":
             out.write(
                 "The key stays in one-click custody, so it cannot sign in the Terminal yet. To sign with a passphrase: "
                 f"orch keys custody passphrase --workspace {match[0].get('prefix') or wid} --in-place\n"

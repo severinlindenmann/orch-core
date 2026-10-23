@@ -37,7 +37,7 @@ from typing import Any, Protocol
 from orch.crypto import suite
 from orch.crypto.encoding import EncodingError, b64u, unhex
 
-from . import wire
+from . import sharefmt, wire
 from .errors import HubRefused
 
 __all__ = [
@@ -51,8 +51,10 @@ __all__ = [
     "build_page",
     "derive_view_key",
     "event_head",
+    "check_proj",
     "gate",
     "pending",
+    "proj_digest",
     "page_aad",
     "seal_page",
     "sync_logs",
@@ -91,10 +93,44 @@ class LogSource(Protocol):
         """The logged events with ``seq`` above ``after``, oldest first, at most ``limit``, exactly as logged."""
         ...
 
+    # Optional (D15b): ``proj(log) -> dict | None`` returns the ticket projection ``P`` of ``log`` (see
+    # :func:`check_proj`), read under one lock together with its ticket head and the workspace position; ``None``:
+    # none now. A source without it sends no projection.
+
 
 def event_head(event: dict[str, Any]) -> str:
     """ticket-format 5.5: ``"sha256:" + hex(H("orch/v2/event|" || cj(event)))``, ``host_sig`` included."""
     return "sha256:" + suite.sha256(_EVENT + wire.cj(event)).hex()
+
+
+_P_KEYS = {"seq", "head", "ws_seq", "ws_head", "status", "roster_v", "gates"}
+_HEADRX = re.compile(r"sha256:[0-9a-f]{64}")
+
+
+def check_proj(proj: Any) -> None:
+    """The ticket projection ``P`` (contract 10.7, D15b): exact keys, ``gates`` entries exactly the 10.2b ``f1`` gate
+    entries. Core refuses to send what the hub would refuse (``malformed``)."""
+
+    def _pos(x: Any) -> bool:
+        return type(x) is int and x >= 1
+
+    def _head(x: Any) -> bool:
+        return type(x) is str and _HEADRX.fullmatch(x) is not None
+
+    if not (
+        type(proj) is dict and set(proj) == _P_KEYS and _pos(proj["seq"]) and _pos(proj["ws_seq"])
+        and _head(proj["head"]) and _head(proj["ws_head"]) and proj["status"] in sharefmt.STATUSES
+        and type(proj["roster_v"]) is int and proj["roster_v"] >= 0 and type(proj["gates"]) is dict
+        and all(sharefmt.f1_gate_ok(k, v) for k, v in proj["gates"].items())
+    ):  # fmt: skip
+        raise HubRefused("malformed")
+
+
+def proj_digest(proj: dict[str, Any]) -> str:
+    """Sender rule 7: the digest of ``cj(P)`` without ``ws_seq`` / ``ws_head`` (a moved workspace position alone is not
+    a change)."""
+    body = {k: v for k, v in proj.items() if k not in ("ws_seq", "ws_head")}
+    return "sha256:" + suite.sha256(wire.cj(body)).hex()
 
 
 def derive_view_key(wk_e: bytes, workspace_id: str, epoch: int) -> bytes:
@@ -128,28 +164,36 @@ def page_aad(workspace_id: str, epoch: int, log: str, from_seq: int, count: int,
 
 def seal_page(
     k_view: bytes, workspace_id: str, epoch: int, log: str, from_seq: int, head: str, reset: bool,
-    lines: list[dict[str, Any]], *, seal: Sealer = suite.salted_seal,
+    lines: list[dict[str, Any]], *, seal: Sealer = suite.salted_seal, proj: dict[str, Any] | None = None,
 ) -> str:  # fmt: skip
-    """The ``sealed`` field: SALTED-AEAD of ``cj({"lines": [...]})`` (``seal`` draws a fresh salt; tests inject one)."""
+    """The ``sealed`` field: SALTED-AEAD of ``cj({"lines": [...]})`` or, with a projection, ``cj({"lines": [...],
+    "proj": P})`` (``seal`` draws a fresh salt; tests inject one)."""
     aad = page_aad(workspace_id, epoch, log, from_seq, len(lines), head, reset)
-    pt = wire.cj({"lines": lines})
+    if proj is not None:
+        check_proj(proj)
+    pt = wire.cj({"lines": lines} if proj is None else {"lines": lines, "proj": proj})
     return b64u(seal(k_view, _MSG_VIEW, aad, pt))
 
 
 def build_page(
     k_view: bytes, workspace_id: str, epoch: int, log: str, lines: list[dict[str, Any]], *, reset: bool = False,
-    seal: Sealer = suite.salted_seal,
+    seal: Sealer = suite.salted_seal, proj: dict[str, Any] | None = None,
 ) -> dict[str, Any]:  # fmt: skip
-    """The request body for ``lines`` (consecutive, the first one's ``seq`` is ``from_seq``)."""
+    """The request body for ``lines`` (consecutive, the first one's ``seq`` is ``from_seq``). ``proj``: the ticket
+    projection, only on a page of a ticket log that ends at its head."""
     if not 1 <= len(lines) <= MAX_LINES or (reset and lines[0].get("seq") != 1):
         raise HubRefused("malformed")
     from_seq = lines[0]["seq"]
     if type(from_seq) is not int or [e.get("seq") for e in lines] != list(range(from_seq, from_seq + len(lines))):
         raise HubRefused("malformed")
+    if proj is not None and (log == WORKSPACE or proj.get("seq") != lines[-1]["seq"]):
+        raise HubRefused("malformed")
     head = event_head(lines[-1])
+    if proj is not None and proj.get("head") != head:
+        raise HubRefused("malformed")
     return {
         "epoch": epoch, "log": log, "from_seq": from_seq, "count": len(lines), "head": head, "reset": reset,
-        "sealed": seal_page(k_view, workspace_id, epoch, log, from_seq, head, reset, lines, seal=seal),
+        "sealed": seal_page(k_view, workspace_id, epoch, log, from_seq, head, reset, lines, seal=seal, proj=proj),
     }  # fmt: skip
 
 
@@ -165,6 +209,8 @@ class Position:
     forced: dict[str, list[int]] = field(default_factory=dict)
     #: log -> seq of a line bigger than a page: that log is not synced any further (never skipped), see ``MAX_LINE``
     stuck: dict[str, int] = field(default_factory=dict)
+    #: ticket log -> digest (:func:`proj_digest`) of the last projection the hub acknowledged with a page (D15b)
+    proj: dict[str, str] = field(default_factory=dict)
 
     def to_json(self) -> dict[str, Any]:
         recent = sorted(self.forced.items(), key=lambda kv: max(kv[1], default=0))[-FORCED_KEEP:]
@@ -172,6 +218,7 @@ class Position:
             "hub_id": self.hub_id, "binding_seq": self.binding_seq,
             "forced": {k: list(v[-64:]) for k, v in sorted(recent) if v}, "stuck": dict(sorted(self.stuck.items())),
             "logs": {k: {"seq": s, "head": h} for k, (s, h) in sorted(self.logs.items())},
+            "proj": {k: v for k, v in sorted(self.proj.items()) if k in self.logs},
         }  # fmt: skip
 
     @classmethod
@@ -197,7 +244,13 @@ class Position:
             raw = d.get("stuck", {})
             if type(raw) is dict:
                 stuck = {k: v for k, v in raw.items() if (k == WORKSPACE or _ulid(k)) and type(v) is int and v >= 1}
-            return cls(hub_id, binding_seq, logs, forced, stuck)
+            proj: dict[str, str] = {}
+            raw = d.get("proj", {})
+            if type(raw) is dict:  # (an older file has none: every projection is then sent once)
+                proj = {
+                    k: v for k, v in raw.items() if k in logs and _ulid(k) and type(v) is str and _HEADRX.fullmatch(v)
+                }
+            return cls(hub_id, binding_seq, logs, forced, stuck, proj)
         except (KeyError, TypeError, AttributeError, HubRefused):
             return cls(hub_id, binding_seq)
 
@@ -213,6 +266,8 @@ class SyncReport:
     resets: int = 0
     logs: dict[str, int] = field(default_factory=dict)  # log -> acknowledged seq after the sync
     stuck: dict[str, int] = field(default_factory=dict)  # log -> seq of a line bigger than a page (not synced further)
+    proj_pages: int = 0  # pages that carried a projection
+    proj_waiting: bool = False  # a changed projection is held back by the debounce (ask again soon)
 
 
 def gate(state: Any) -> int:
@@ -234,12 +289,21 @@ def _code(exc: Exception) -> str:
 
 
 def _fit(
-    k_view: bytes, workspace_id: str, epoch: int, log: str, events: list[dict[str, Any]], reset: bool
+    k_view: bytes,
+    workspace_id: str,
+    epoch: int,
+    log: str,
+    events: list[dict[str, Any]],
+    reset: bool,
+    proj: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The largest page of the leading ``events`` whose sealed text stays within :data:`MAX_SEALED`."""
     n = min(len(events), MAX_LINES)
     while True:
-        page = build_page(k_view, workspace_id, epoch, log, events[:n], reset=reset)
+        # the projection describes the LAST line, so it rides only on a page that still holds it
+        page = build_page(
+            k_view, workspace_id, epoch, log, events[:n], reset=reset, proj=proj if n == len(events) else None
+        )
         if len(page["sealed"]) <= MAX_SEALED:
             return page
         if n == 1:
@@ -259,6 +323,7 @@ def sync_logs(
     live: Callable[[], bool] | None = None,
     allow_resend: Callable[[str], bool] | None = None,
     probe: bool = False,
+    proj_due: Callable[[str, str], bool] | None = None,
 ) -> SyncReport:
     """One pass: send every log from the hub's acknowledged position to the local head. ``call`` is a link's ``call``
     (``HubLink.call`` or ``LinkClient.call``). Returns what was sent; raises :class:`HubRefused` on a gate or a refusal
@@ -270,7 +335,12 @@ def sync_logs(
     answers. ``live()`` returns ``False`` for "stop, not joined" or raises its own :class:`HubRefused` (for example a
     retryable ``epoch_changed``: the pass ends, the caller tries again at its next tick). ``allow_resend(log)``
     (L2-C14-3, per log: core#1034) is asked before each resend of ``log`` from seq 1 the hub forced; ``False`` refuses.
-    ``probe=True`` (a link was just opened): first send the workspace log's last acknowledged line again."""
+    ``probe=True`` (a link was just opened): first send the workspace log's last acknowledged line again.
+
+    D15b (needs ``source.proj``): a page that ends at a ticket log's head carries its projection ``P`` (when it is
+    provably consistent: ``P`` describes that last line and a workspace position the hub already holds). When ``P`` has
+    changed without a new line (sender rule 7) the last line is sent again as a one-line page carrying it, after
+    ``proj_due(log, digest)`` (the debounce) says yes; ``report.proj_waiting`` says a refresh was held back."""
     epoch = gate(state)
     if position.hub_id != state.hub_id or position.binding_seq != state.binding_seq:
         raise HubRefused("not_joined")
@@ -282,7 +352,7 @@ def sync_logs(
     if not logs or logs[0] != WORKSPACE:
         raise HubRefused("malformed")
     ctx = _Pass(state, workspace_id, call, source, k_view, epoch, position, save, report)
-    ctx.live, ctx.allow_resend, ctx.probe = live, allow_resend, probe
+    ctx.live, ctx.allow_resend, ctx.probe, ctx.proj_due = live, allow_resend, probe, proj_due
     ctx.ceiling = {log: source.seq(log) for log in logs}  # nothing committed after this moment goes out in this pass
     ctx.log(WORKSPACE)  # a reset of it drops every ticket position (the hub dropped its ticket views)
     for log in logs[1:] if WORKSPACE not in position.stuck else []:  # a ticket line names a ws_seq the hub must hold
@@ -299,6 +369,7 @@ class _Pass:
         self.live: Callable[[], bool] | None = None
         self.allow_resend: Callable[[str], bool] | None = None
         self.probe = False
+        self.proj_due: Callable[[str, str], bool] | None = None
         self.ceiling: dict[str, int | None] = {}
 
     def _may_send(self) -> None:
@@ -310,6 +381,66 @@ class _Pass:
     def _may_resend(self, log: str) -> None:
         if self.allow_resend is not None and not self.allow_resend(log):
             raise HubRefused("resend_limited")
+
+    def _proj(self, log: str, last: int, cap: int, local: int) -> dict[str, Any] | None:
+        """The projection for a page of ``log`` ending at line ``last`` (its head), or ``None``: the source has none, it
+        does not describe exactly that line, or its workspace position is one the hub does not hold yet (it would be a
+        ``view_gap`` that refuses the whole page): the page then goes without, and a later pass refreshes it."""
+        fn = getattr(self.src, "proj", None)
+        if fn is None or log == WORKSPACE:
+            return None
+        try:
+            p = fn(log)
+            if p is None:
+                return None
+            check_proj(p)
+        except Exception:  # noqa: BLE001 - a projection that cannot be built or is not well formed is simply not sent
+            return None
+        ws = self.pos.logs.get(WORKSPACE)
+        if (
+            p["seq"] != last or p["seq"] != cap or p["head"] != self.src.head_at(log, last)
+            or ws is None or p["ws_seq"] > ws[0] or self.src.head_at(WORKSPACE, p["ws_seq"]) != p["ws_head"]
+        ):  # fmt: skip
+            return None
+        return p
+
+    def _refresh(self, log: str, acked: tuple[int, str]) -> None:
+        """Sender rule 7: the log is fully acknowledged; if its projection changed (digest) send the last line again
+        as a one-line page that carries the new one. Idempotent at the hub (an overlap)."""
+        seq = acked[0]
+        p = self._proj(log, seq, seq, seq)
+        if p is None or self.pos.proj.get(log) == proj_digest(p):
+            return
+        if self.proj_due is not None and not self.proj_due(log, proj_digest(p)):
+            self.report.proj_waiting = True
+            return
+        events = self.src.after(log, seq - 1, 1)
+        if len(events) != 1 or events[0].get("seq") != seq or event_head(events[0]) != acked[1]:
+            return  # the log moved under us: the next pass decides
+        if len(wire.cj(events[0])) > MAX_LINE:
+            return
+        self._may_send()
+        page = build_page(self.k, self.ws, self.epoch, log, events, proj=p)
+        if len(page["sealed"]) > MAX_SEALED:
+            return  # a projection that does not fit beside its line: keep the older one
+        try:
+            reply = self.call("log_sync", page)
+        except Exception as exc:  # noqa: BLE001 - HubRefused and LinkError both carry a contract code
+            code = _code(exc)
+            if code in ("view_gap", "view_fork"):  # the hub's view is not what we believed: the next pass repairs it
+                self.pos.logs.pop(log, None)
+                self.pos.proj.pop(log, None)
+                self.save(self.pos)
+                return
+            if isinstance(exc, HubRefused):
+                raise
+            raise HubRefused(code) from None
+        if type(reply) is not dict or (reply.get("seq"), reply.get("head")) != (seq, acked[1]):
+            raise HubRefused("view_fork" if type(reply) is dict and type(reply.get("seq")) is int else "malformed")
+        self.pos.proj[log] = proj_digest(p)
+        self.save(self.pos)
+        self.report.pages += 1
+        self.report.proj_pages += 1
 
     def log(self, log: str) -> bool:
         """Bring one log up to date. Returns True when a ``reset`` was sent for it."""
@@ -331,6 +462,8 @@ class _Pass:
         while True:
             start = 1 if acked is None else acked[0] + (0 if probing else 1)
             if start > min(local, cap):
+                if log != WORKSPACE and acked is not None and acked[0] == cap == local and not probing:
+                    self._refresh(log, acked)  # sender rule 7
                 return reset_sent
             events = [
                 e for e in self.src.after(log, start - 1, 1 if probing else MAX_LINES) if e.get("seq", cap + 1) <= cap
@@ -345,7 +478,9 @@ class _Pass:
             if big is not None:
                 events = events[:big]
             self._may_send()
-            page = _fit(self.k, self.ws, self.epoch, log, events, reset and start == 1)
+            last = events[-1]["seq"]
+            proj = self._proj(log, last, cap, local) if last == cap == local and not probing else None
+            page = _fit(self.k, self.ws, self.epoch, log, events, reset and start == 1, proj)
             try:
                 reply = self.call("log_sync", page)
             except Exception as exc:  # noqa: BLE001 - HubRefused and LinkError both carry a contract code
@@ -394,6 +529,12 @@ class _Pass:
             else:
                 raise HubRefused("view_fork")
             self.pos.logs[log] = acked
+            if log != WORKSPACE:
+                if page.get("sealed") and proj is not None and _carries(page, events, proj):
+                    self.pos.proj[log] = proj_digest(proj)
+                    self.report.proj_pages += 1
+                elif not probing:
+                    self.pos.proj.pop(log, None)  # a page without a projection: what the hub holds is older
             self.save(self.pos)
             self.report.pages += 1
             if probing:
@@ -408,6 +549,10 @@ class _Pass:
                         del self.pos.logs[t]
                     self.save(self.pos)
             reset = False
+
+
+def _carries(page: dict[str, Any], events: list[dict[str, Any]], proj: dict[str, Any]) -> bool:
+    return page["from_seq"] + page["count"] - 1 == proj["seq"] and events[page["count"] - 1]["seq"] == proj["seq"]
 
 
 def pending(source: LogSource, position: Position) -> bool:
@@ -431,4 +576,25 @@ def pending(source: LogSource, position: Position) -> bool:
                 return True
         elif local != acked[0] or source.head_at(log, acked[0]) != acked[1]:
             return True
+        elif log != WORKSPACE and _proj_owed(source, position, log, acked):
+            return True
     return False
+
+
+def _proj_owed(source: LogSource, position: Position, log: str, acked: tuple[int, str]) -> bool:
+    """D15b: is the log's projection different from the last one the hub acknowledged? (A projection that cannot be
+    sent yet, because the hub lacks its workspace position, is not owed: the workspace log's own lines are.)"""
+    fn = getattr(source, "proj", None)
+    ws = position.logs.get(WORKSPACE)
+    if fn is None or ws is None:
+        return False
+    try:
+        p = fn(log)
+        if p is None:
+            return False
+        check_proj(p)
+    except Exception:  # noqa: BLE001
+        return False
+    if p["seq"] != acked[0] or p["head"] != acked[1] or p["ws_seq"] > ws[0]:
+        return False
+    return position.proj.get(log) != proj_digest(p)

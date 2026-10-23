@@ -41,7 +41,8 @@ RUN_CHECKS = frozenset(
         "custodial",  # V3 C3 phase 4: replayed against the PRODUCTION module orch.hubclient.custodial
         "share_item",  # V3 C6 (phase 4): replayed through the test-side opener (share_open.py)
         "share_revoke",
-        "log_sync",  # V3 C14: the vector pages applied by the test-side hub port (tests/hub/logview.py)
+        "log_sync",  # V3 C14: the vector pages applied by the test-side hub port (tests/hub/logview.py); D15b: `proj`
+        "roster_v",  # D15b-1: core's own roster_v count (tests/hub/test_roster_v_vectors.py replays real events)
     }
 )
 SKIPPED_CHECKS = {
@@ -54,6 +55,14 @@ SKIPPED_CHECKS = {
     "render": "channels render view-derived text (protocol 8.4); not a host check",
     "relay_request": "hub to relay (protocol 10.8): orch-relay verifies",
     "space_proposal": "phase 4 space proposals (protocol 10.4): its own core task",
+    "proj_build": "hub side (build_from_proj, protocol 10.7 D15b): the hub builds the event from the host's P; core's "
+    "part is sending P (log_sync_proj_*) and admitting the result (tests/host/test_d15b_admission.py)",
+    "channel_auth": "hub/channel side (orch-hub channels, mobile): not a host check",
+    "channel_push": "hub to relay push (protocol 10.8): hub and relay side",
+    "channel_request": "hub/channel side: not a host check",
+    "channel_route": "hub to relay routing (protocol 10.8): hub and relay side",
+    "api_origin": "hub web API origin rules: hub side",
+    "pair_link": "phone pairing link (orch-mobile and hub): not a host check",
     "audit": "hub audit chain (D4): hub side",
     "audit_ack": "hub audit chain (D4): hub side",
     "admin_read": "hub admin reads (D3/D4): hub side",
@@ -227,6 +236,10 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
         return _run_share(check, a)
     if check == "log_sync":
         return _run_log_sync(a)
+    if check == "roster_v":
+        from .roster_replay import replay_roster_v
+
+        return {"roster_v": replay_roster_v(a["lines"])}
     raise ValueError(f"check {check} is not replayed by core")
 
 

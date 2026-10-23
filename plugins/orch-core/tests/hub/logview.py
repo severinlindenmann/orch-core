@@ -27,9 +27,13 @@ class View:
 
     def __init__(self) -> None:
         self.logs: dict[str, list[tuple[dict[str, Any], str]]] = {}
+        self.proj: dict[str, dict[str, Any]] = {}  # D15b: ticket log -> the newest P by (seq, ws_seq)
 
-    def summary(self) -> dict[str, dict[str, Any]]:
-        return {k: {"seq": len(v), "head": v[-1][1]} for k, v in sorted(self.logs.items()) if v}
+    def summary(self) -> dict[str, Any]:
+        out: dict[str, Any] = {k: {"seq": len(v), "head": v[-1][1]} for k, v in sorted(self.logs.items()) if v}
+        if self.proj:
+            out["proj"] = dict(sorted(self.proj.items()))
+        return out
 
 
 def head_of(event: dict[str, Any]) -> str:
@@ -54,6 +58,40 @@ def host_sig_bytes(workspace_id: str, log: str, event: dict[str, Any]) -> bytes:
     return b"orch/v2/sig/host-event|" + H.cj(
         {"contract": 1, "suite": 2, "workspace_id": workspace_id, "log": log, "event": body}
     )
+
+
+STATUSES = ("backlog", "open", "in_progress", "testing", "done", "closed")
+GATES = ("requirements", "plan", "code", "verify")
+SHA = re.compile(r"[0-9a-f]{40}")
+
+
+def _gate_entry_ok(name: str, g: Any) -> bool:
+    """One ``P.gates`` entry (contract 10.2b ``f1`` gate entry), written from the text."""
+    src = name in ("code", "verify")
+    if not (type(g) is dict and set(g) == {"gen", "hash", "policy_hash"} | ({"source_sha"} if src else set())):
+        return False
+    if not (_int(g["gen"], 0) and all(type(g[k]) is str and HEAD.fullmatch(g[k]) for k in ("hash", "policy_hash"))):
+        return False
+    if not src:
+        return True
+    s = g["source_sha"]
+    return (
+        type(s) is list and len(s) <= 32
+        and all(type(e) is dict and set(e) == {"repo", "ref", "sha"} and type(e["repo"]) is str
+                and type(e["ref"]) is str
+                and type(e["sha"]) is str and SHA.fullmatch(e["sha"]) for e in s)
+        and [e["repo"] for e in s] == sorted({e["repo"] for e in s})
+    )  # fmt: skip
+
+
+def _proj_shape_ok(p: Any) -> bool:
+    return (
+        type(p) is dict and set(p) == {"seq", "head", "ws_seq", "ws_head", "status", "roster_v", "gates"}
+        and _int(p["seq"], 1) and _int(p["ws_seq"], 1) and _int(p["roster_v"], 0)
+        and type(p["head"]) is str and HEAD.fullmatch(p["head"]) and type(p["ws_head"]) is str
+        and HEAD.fullmatch(p["ws_head"]) and p["status"] in STATUSES and type(p["gates"]) is dict
+        and all(k in GATES and _gate_entry_ok(k, g) for k, g in p["gates"].items())
+    )  # fmt: skip
 
 
 def _int(x: Any, lo: int, hi: int | None = None) -> bool:
@@ -97,7 +135,7 @@ def apply_page(view: View, body: Any, *, workspace_id: str, wsk_pub: bytes, wk: 
         raise H.Refused("bad_wrap") from None
     if (
         type(doc) is not dict
-        or set(doc) != {"lines"}
+        or set(doc) not in ({"lines"}, {"lines", "proj"})
         or type(doc["lines"]) is not list
         or len(doc["lines"]) != body["count"]
     ):
@@ -126,7 +164,28 @@ def apply_page(view: View, body: Any, *, workspace_id: str, wsk_pub: bytes, wk: 
         head = h
     if head != body["head"]:
         raise H.Refused("malformed")
+    new_proj = None
+    if "proj" in doc:  # step 7 (D15b): checked against the view after this page; a refusal refuses the whole page
+        p = doc["proj"]
+        last = doc["lines"][-1]
+        if log == "workspace" or not _proj_shape_ok(p):
+            raise H.Refused("malformed")
+        if p["seq"] != last["seq"] or p["head"] != body["head"] or p["ws_seq"] < last["ws_seq"]:
+            raise H.Refused("malformed")
+        ws_rows = [] if (body["reset"] and log == "workspace") else view.logs.get("workspace", [])
+        if p["ws_seq"] > len(ws_rows):
+            raise H.Refused("view_gap")
+        if ws_rows[p["ws_seq"] - 1][1] != p["ws_head"]:
+            raise H.Refused("view_fork")
+        new_proj = p
     if body["reset"] and log == "workspace":
         view.logs = {}  # a workspace reset drops every ticket view
+        view.proj = {}
+    if body["reset"]:
+        view.proj.pop(log, None)
+    if new_proj is not None:
+        old = view.proj.get(log)
+        if old is None or (new_proj["seq"], new_proj["ws_seq"]) >= (old["seq"], old["ws_seq"]):
+            view.proj[log] = new_proj
     view.logs[log] = out
     return {"seq": len(out), "head": out[-1][1]}

@@ -36,6 +36,26 @@ def test_stage_convenience_is_refused_in_full_mode_before_the_key_store_is_opene
         select.convert_to_convenience(served.lab.state, served.wid)
 
 
+def test_finish_convenience_is_refused_after_a_full_join_landed_since_stage(human, served, stub, keystore, monkeypatch):
+    """L2-C11e-3: stage_convenience passed in standalone; a full join then landed in the gap before the transition was
+    written. finish_convenience refuses before the store is opened and the selection stays passphrase custody."""
+    staged = select.Selection({"custody": "passphrase", "transition": {"to": "convenience", "step": "written"}})
+    full_joined(human, served)
+    monkeypatch.setattr(select, "read_selection", lambda state, wid: staged)
+    written = []
+    monkeypatch.setattr(select, "_write_selection", lambda *a, **k: written.append(a))
+
+    def boom(*a, **k):
+        raise AssertionError("the key store was opened")
+
+    with pytest.raises(HostError) as ei:
+        select.finish_convenience(
+            served.lab.state, served.wid, staged, store=type("S", (), {"get": boom, "put": boom})()
+        )
+    assert ei.value.code == "sign.hub_only"
+    assert written == []  # custody not changed
+
+
 def test_stage_convenience_passes_the_full_mode_gate_in_standalone_and_for_unregistered(human, served):
     select.refuse_full_mode(served.lab.state, served.wid)  # standalone: nothing to refuse
     select.refuse_full_mode(served.lab.state, "ws_not_registered")
@@ -86,6 +106,9 @@ def test_every_path_into_convenience_custody_goes_through_the_refusal():
     assert [name for _, name in sorted(order)][0] == "refuse_full_mode"
     conv = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "convert_to_convenience")
     assert "stage_convenience" in {name for name, _ in _calls(conv)}
+    fin = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "finish_convenience")
+    order = [(n.lineno, name) for name, n in _calls(fin) if name in ("refuse_full_mode", "_store", "read_selection")]
+    assert [name for _, name in sorted(order)][0] == "refuse_full_mode"
     steps = ast.parse((SRC / "setup/steps.py").read_text())
     port = next(n for n in ast.walk(steps) if isinstance(n, ast.FunctionDef) and n.name == "convenience_on" and n.body
                 and not isinstance(n.body[0], ast.Expr | ast.Pass))  # fmt: skip

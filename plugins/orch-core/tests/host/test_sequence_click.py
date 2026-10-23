@@ -219,3 +219,19 @@ def test_1070_naming_another_member_or_a_mix_keeps_the_word_and_a_stranger_abort
         assert v["view"]["confirm"]["kind"] == "word", people
         notes = str(v["view"]["content"].get("notes"))
         assert ("Reviewers may approve" in notes) or ("Assignees do the work" in notes)
+
+
+def test_1070_sign_time_classes_a_non_self_member_as_word_so_a_click_approval_is_refused(click, served, human):
+    """The class is re-asserted at sign time from the stored intent and the signer's own person: an approval that was
+    (wrongly) recorded as a click for an intent naming another member is refused and nothing is signed."""
+    other = "p_" + "9" * 32
+    _, p = prepare(click, intent_of(people={"reviewers": [other]}))
+    v = click.view(p["request_id"])
+    assert v["view"]["confirm"]["kind"] == "word"
+    approvals = [a for a in click.signer.approvals.values() if a.request_id == p["request_id"]]
+    assert len(approvals) == 1
+    approvals[0].kind = "click"  # as if the prepare had classed it a click
+    v = click.view(p["request_id"])  # a view the page could now have been shown
+    click.mono.t += 2
+    refused(lambda: click.sign(p["request_id"], v["view_digest"]), "human.click_refused", "terminal_only")
+    assert click.signatures == 0

@@ -116,3 +116,16 @@ def test_serve_without_keys_is_refused(tmp_path, capsys):
         ["serve", "--state", str(tmp_path / "none"), "--listen", "127.0.0.1:0", "--publish-url", "http://127.0.0.1:1"]
     )
     assert rc == 1 and "refused" in capsys.readouterr().err
+
+
+def test_serve_prints_invites_as_hub_id_colon_code(tmp_path, up):
+    """Protocol §5: every invite is shown as `invite <hub_id>:<code>`; the `=USER_ID` alias never appears."""
+    user = "ab" * 16
+    HubKeys.init(tmp_path / "hub")
+    p, _port, _pin, hub_id = start(tmp_path / "hub", up, "inv1", f"inv2={user}")
+    try:
+        assert p.stdout
+        lines = sorted(p.stdout.readline().rstrip("\n") for _ in range(2))
+        assert lines == [f"invite {hub_id}:inv1", f"invite {hub_id}:inv2"]
+    finally:
+        stop(p)

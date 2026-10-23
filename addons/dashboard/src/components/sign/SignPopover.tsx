@@ -86,6 +86,8 @@ export interface SignPopoverProps {
   hint?: string | null
   /** The form, before the request exists. */
   children?: ReactNode
+  /** Choices that are part of what is signed (agent access length): shown above the review in every state but signing. A change of `action` needs a new key on this component, which prepares again. */
+  controls?: ReactNode
   /** Exact action summary, kept visible while preparing and reviewing. */
   summary?: ReactNode
   /** Said above the panel while it is open: a warning that the page changed under it. */
@@ -313,6 +315,7 @@ export function SignPopover(p: SignPopoverProps) {
         ;(p.initialFocus?.() ?? cancelRef.current)?.focus()
       }}
     >
+      {p.controls && !signing && phase !== 'waiting' && <div data-testid="sign-controls">{p.controls}</div>}
       {(!(click.view?.view.content || run.request?.content) || isBareContent(click.view?.view.content ?? run.request?.content)) && p.summary}
       {phase === 'idle' && !clickOpen && p.children}
 

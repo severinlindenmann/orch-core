@@ -18,7 +18,7 @@ export interface AgentChoiceValue {
 export const DEFAULT_CHOICE: AgentChoiceValue = { harness: 'claude-code', mode: 'work', model: '' }
 
 /** A runner grant counts as usable for a start only with at least this long left. */
-export const MIN_GRANT_MS = 15 * 60_000
+export const MIN_GRANT_MS = 20 * 60_000
 
 /** Is there a grant the start can use (not expiring within 15 minutes)? Unknown counts as no grant. */
 export function usableGrant(runner: Pick<RunnerInfo, 'grant'> | null | undefined, now: number): { id: string; until: string } | null {

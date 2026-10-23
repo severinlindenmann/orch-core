@@ -40,6 +40,8 @@ class FakeRelay:
         self.log: list[tuple[str, str]] = []
         self.faults: list[Any] = []
         self.nonce_log: list[str] = []
+        self.push_configured = True  # False: a relay without a complete push configuration (§10.8.1, E5R-1)
+        self.revoked: set[str] = set()  # channels the hub's mailbox purge recorded as revoked (§10.8.4)
 
     def _json(self, status: int, o: Mapping[str, Any], headers: Mapping[str, str] | None = None):
         return status, dict(headers or {}), cj(dict(o))
@@ -71,7 +73,7 @@ class FakeRelay:
         self.nonces.setdefault(ok["hub"], {})[ok["nonce"]] = now
         self.nonce_log.append(ok["nonce"])
         try:
-            r = RR.route(method, target, ok["hub"], body)
+            r = RR.route(method, target, ok["hub"], body, push_configured=self.push_configured)
         except H.Refused as e:
             return self._json(STATUS[e.code], {"error": e.code})
         return self._run(ok["hub"], r, body)
@@ -109,7 +111,8 @@ class FakeRelay:
         if name == "mailbox_delete":
             self.mailbox.pop((ch, r["id"]), None)
             return self._json(200, {"id": r["id"], "deleted": True})
-        gone = [k for k in self.mailbox if k[0] == ch]  # mailbox_purge
+        self.revoked.add(ch)  # mailbox_purge: the revocation record (§10.8.4)
+        gone = [k for k in self.mailbox if k[0] == ch]
         for k in gone:
             del self.mailbox[k]
         return self._json(200, {"channel_id": ch, "deleted": len(gone)})

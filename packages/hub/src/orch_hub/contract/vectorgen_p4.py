@@ -1279,6 +1279,28 @@ def build_p4(
     rt("relay_route_mailbox_get", RR.mailbox_get_request(HUB_ID, CH_ALICE, mid2), ok_("mailbox_get", id=mid2))
     rt("relay_route_mailbox_delete", RR.mailbox_delete_request(HUB_ID, CH_ALICE, mid2), ok_("mailbox_delete", id=mid2))
     rt("relay_route_mailbox_purge", RR.mailbox_delete_request(HUB_ID, CH_ALICE), ok_("mailbox_purge"))
+    # ---- E5R-1: a relay without a complete push configuration still takes the purge (the revocation record)
+    purge = RR.mailbox_delete_request(HUB_ID, CH_ALICE)
+    nopush = "the relay has no complete push configuration"
+    rt("relay_route_nopush_mailbox_purge", purge, ok_("mailbox_purge"),
+       f"{nopush}; the purge is the revocation record and never depends on push", push_configured=False)  # fmt: skip
+    rt("relay_route_nopush_mailbox_purge_bad_channel", (purge[0], purge[1].replace(CH_ALICE, CH_ALICE.upper()), b""),
+       {"error": "malformed"}, f"{nopush}; the exempt purge keeps its order of refusals", push_configured=False)  # fmt: skip
+    rt("relay_route_nopush_mailbox_purge_with_body", (purge[0], purge[1], b"{}"), {"error": "malformed"},
+       nopush, push_configured=False)  # fmt: skip
+    rt("relay_route_nopush_mailbox_purge_with_query", (purge[0], purge[1] + "?x=1", b""), {"error": "malformed"},
+       nopush, push_configured=False)  # fmt: skip
+    for n_, req_ in (
+        ("push_put", put_req),
+        ("push_delete", RR.push_delete_request(HUB_ID, CH_ALICE)),
+        ("push_send", send_req),
+        ("mailbox_put", mb_put),
+        ("mailbox_get", RR.mailbox_get_request(HUB_ID, CH_ALICE, mid2)),
+        ("mailbox_delete", RR.mailbox_delete_request(HUB_ID, CH_ALICE, mid2)),
+    ):
+        rt(f"relay_route_nopush_{n_}", req_, {"error": "not_found"}, f"{nopush}: 404 after authentication",
+           push_configured=False)  # fmt: skip
+    rt("relay_route_nopush_mailbox_list", ("GET", purge[1], b""), {"error": "not_found"}, nopush, push_configured=False)
     # ---- §10.8.3 cut-over (relay E3): the hub's signed requests and the state rules on both sides
     co_put, co_get, co_del = (RR.cutover_request(HUB_ID, WS_A, m_) for m_ in ("PUT", "GET", "DELETE"))
     rt("relay_route_cutover_put", co_put, {"ok": {"route": "cutover_put", "workspace_id": WS_A}})

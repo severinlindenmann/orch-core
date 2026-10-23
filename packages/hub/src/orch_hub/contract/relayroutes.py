@@ -68,13 +68,26 @@ def outer_check(outer: Any, hub_id: str, channel_id: str) -> bytes:
     return raw
 
 
-def route(method: str, target: str, hub_id: str, body: bytes) -> dict[str, Any]:
+def push_exempt(method: str, segs: list[str]) -> bool:
+    """§10.8.1 (E5R-1): the requests a relay without a complete push configuration still routes. The mailbox purge is
+    the hub's revocation notice (§10.8.4), a security fact that never depends on APNs; the hub cut-over routes are
+    §10.8.3's. Decided by method and path shape only, before ``{ch}`` or the body is looked at."""
+    if method == "DELETE" and len(segs) == 2 and segs[0] == "mailbox":
+        return True
+    return len(segs) == 3 and segs[0] == "workspaces" and segs[2] == "cutover"
+
+
+def route(method: str, target: str, hub_id: str, body: bytes, push_configured: bool = True) -> dict[str, Any]:
     """Match a (canonical, §10.8) target and check the body. Returns ``{route, channel_id[, id]}``; an unknown path or
     method is ``not_found``, a body that is not exactly the route's shape ``malformed`` (``too_large`` for an oversize
-    message). The relay has authenticated the request (§10.8 steps 1-6) before it calls this."""
+    message). The relay has authenticated the request (§10.8 steps 1-6) before it calls this. ``push_configured``
+    False: every request that is not ``push_exempt`` is ``not_found`` (after the §10.8 target checks); the exempt
+    ones follow the ordinary order of refusals."""
     parse_relay_target(target, hub_id)
     path, _, query = target.partition("?")
     segs = path.split("/")[4:]  # after /v2/hubs/<hub_id>
+    if not push_configured and not push_exempt(method, segs):
+        raise Refused("not_found")
     if query:
         raise Refused("malformed")  # none of these routes takes a query
     kind = segs[0] if segs else ""
@@ -309,6 +322,7 @@ __all__ = [
     "open_push",
     "outer_check",
     "push_delete_request",
+    "push_exempt",
     "push_payload",
     "push_put_request",
     "push_send_request",

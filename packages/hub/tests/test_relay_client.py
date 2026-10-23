@@ -164,6 +164,23 @@ def test_revocation_deletes_target_and_mailbox_at_the_relay(w):
     assert n.notify_user(u, "prepare") == {}  # nothing for a revoked channel, and no relay call for it
 
 
+def test_revocation_reaches_a_relay_without_push_configuration(w):
+    """E5R-1: the purge (the relay's revocation record) does not depend on push; the push DELETE's 404 is done."""
+    w.client.register()
+    u = w.env.user("ann")
+    _, cid = w.phone(u)
+    n = PushNotifier(w.client, w.env.svc)
+    w.env.svc.on_revoke = n.channel_revoked
+    w.client.mailbox_put(cid, "ee" * 16, "AAAA")
+    w.relay.push_configured = False  # e.g. a restart without APNs keys, same database
+    with pytest.raises(RelayError) as e:
+        w.client.mailbox_put(cid, "ef" * 16, "AAAA")
+    assert (e.value.status, e.value.code) == (404, "not_found")
+    w.env.svc.revoke(cid)
+    assert w.relay.revoked == {cid} and w.relay.mailbox == {} and n.pending_cleanup == set()
+    assert [m for m, t in w.relay.log[-2:]] == ["DELETE", "DELETE"] and w.relay.log[-2][1].endswith(f"/mailbox/{cid}")
+
+
 def test_failed_cleanup_is_remembered_and_repeated(w):
     w.client.register()
     u = w.env.user("ann")

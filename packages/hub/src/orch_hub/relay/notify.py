@@ -188,10 +188,16 @@ class PushNotifier:
 
     def channel_revoked(self, channel_id: str) -> bool:
         """Delete the channel's push target and mailbox at the relay. False (and remembered) when the relay could not
-        be reached; :meth:`flush` repeats it. Idempotent at the relay."""
+        be reached; :meth:`flush` repeats it. Idempotent at the relay. The purge goes first: it is the relay's
+        revocation record and is answered with or without a push configuration; a relay without one answers the push
+        ``DELETE`` ``404 not_found``, which holds no target and counts as done (§10.8.1, E5R-1)."""
         try:
-            self._client.delete_push_target(channel_id)
             self._client.mailbox_delete(channel_id)
+            try:
+                self._client.delete_push_target(channel_id)
+            except RelayError as e:
+                if (e.status, e.code) != (404, "not_found"):
+                    raise
         except Exception as e:  # noqa: BLE001
             with self._lock:
                 self.pending_cleanup.add(channel_id)

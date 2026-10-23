@@ -1613,7 +1613,13 @@ have an **empty body** (`H("")` is signed). No route takes a query (`400 malform
 `mailbox/{ch}/{id}` with an `{id}` that is not 32 hex, and, under `push/`, a bad `{ch}` with a method or shape the table
 does not have; (4) the body, then (under `push/`, for a path and method that are in the table) `{ch}`: `400 malformed`
 (`413 too_large` for an oversize `outer` or mailbox message, found only when `{ch}` is valid). A relay without a complete push configuration answers `404 not_found` on every route
-of this subsection, as for v2 push (after authentication).
+of this subsection, as for v2 push (after authentication and the §10.8 target checks), **except the mailbox purge**
+`DELETE /v2/hubs/{hub}/mailbox/{ch}`, which is **not subject to the push-configuration `404`** (E5R-1, the same
+wording as the §10.8.3 hub cut-over routes): it is the hub's revocation notice (§10.8.4), and the revocation record never
+depends on push. The exemption is decided by method and path shape (`DELETE`, exactly `mailbox/<one segment>`); the
+purge then follows the ordinary order of refusals above (a bad `{ch}`, a body or a query is `400 malformed`), records
+the revocation and purges what is held. Reference `push_exempt` and `route(..., push_configured=False)`, vectors
+`relay_route_nopush_*`.
 
 | Route | Signed | Body | Answer |
 |---|---|---|---|
@@ -1652,10 +1658,12 @@ channel-signed request under its own prefix; nothing in this subsection gives a 
 there:** every hint it pushes (§10.8.2), under the same `id` and with the same `c`, so a phone without push (APNs down,
 the Simulator) catches up from the mailbox and handles each id once.
 
-**Revocation.** When the hub revokes a channel (§6.3, §7) it sends `DELETE .../push/{ch}` and
-`DELETE .../mailbox/{ch}` for that channel. The mailbox purge is the hub's signed revocation notice to the relay (B
+**Revocation.** When the hub revokes a channel (§6.3, §7) it sends `DELETE .../mailbox/{ch}`, then
+`DELETE .../push/{ch}` for that channel (the revocation record first, E5R-1). The mailbox purge is the hub's signed revocation notice to the relay (B
 stream): the relay records `(hub, ch)` as revoked, permanently (like §6.2, a revoked channel id never comes back), and
-refuses that channel's own requests from then on (§10.8.4). The hub sends the purge only on revocation. Both are idempotent, so the hub repeats them until the relay answers `200`.
+refuses that channel's own requests from then on (§10.8.4). The hub sends the purge only on revocation. Both are idempotent, so the hub repeats them until the relay answers `200`. The purge is answered and recorded
+whether or not the relay has a push configuration (above); the push `DELETE` is `404` on a relay without one, which
+the hub treats as done (no push target can be held there).
 The hub also stops sending to the channel at once (it asks its own revocation list, not the relay).
 
 **Retry rules for the hub.** Every attempt is a new request: new `ts_ms`, new nonce (a replay is `401 replay`). It retries
@@ -1723,8 +1731,11 @@ empty. Emptying the whole mailbox stays the hub's (`DELETE` of the list is `404 
 **Revocation (DECIDED HERE).** The relay keeps, per hub, the channel ids the hub revoked: the hub's `HK_op`-signed
 `DELETE /v2/hubs/{hub}/mailbox/{ch}` (§10.8.1), which it sends on every revocation and repeats until `200` (and again
 at start for every revoked channel, L2 D10-6), records `ch` permanently. Step 6 then refuses the channel at once, not
-when its certificate expires (31 days). The check comes after the signature, so only the key holder learns it (the phone
-wipes on it, B6). A relay may rate-limit reads per `(hub, channel)`.
+when its certificate expires (31 days). The check comes after the signature, so only the key holder learns it. **The relay's
+`channel_revoked` is unsigned and never wipes the phone** (L2B-2): on it the phone drops its cached mailbox data, stops
+using the channel and asks its hub over the authenticated channel (§6.4); it wipes the pairing only on the hub's
+answer (B6) or when the user chooses Leave. The record is kept whether or not the relay has a push configuration
+(§10.8.1, E5R-1). A relay may rate-limit reads per `(hub, channel)`.
 
 ### 10.8.3 Cut-over of a workspace's direct relay path (phase 4, relay E3, orch-core #896)
 

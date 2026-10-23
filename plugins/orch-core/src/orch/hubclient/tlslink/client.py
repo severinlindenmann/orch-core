@@ -239,21 +239,32 @@ class LinkClient:
             self.close()
             raise
 
-    def call(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
-        """Sign and send one request with the link's own next ``seq`` (allocated under the link lock, so concurrent
-        callers on a shared link never reuse or invert a number); return the reply body or raise :class:`LinkError`
-        (a signed ``{"error": code}`` keeps the link open)."""
-        if self._sign is None:
-            raise LinkClosed("closed")
+    def send_next(self, build: Callable[[int], dict[str, Any]]) -> dict[str, Any]:
+        """The one w2h seq allocator of this link: take ``seq`` = the link's highest + 1 under the link lock, let
+        ``build(seq)`` sign the request (inside the lock, so no other frame, call or ack, can take a number in
+        between or overtake it), send it and return the verified signed reply. Every request the host sends on
+        this link goes through here (``HubLink`` via ``TlsTransport``, and :meth:`call`); acks use the same counter."""
         with self._lock:
+            message = build(self._seq + 1)
+            o = self._check_request(message)
+            return self._exchange(message, o)
+
+    def call(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
+        """Sign and send one request with the link's own next ``seq`` (see :meth:`send_next`); return the reply body
+        or raise :class:`LinkError` (a signed ``{"error": code}`` keeps the link open)."""
+        sign = self._sign
+        if sign is None:
+            raise LinkClosed("closed")
+
+        def build(seq: int) -> dict[str, Any]:
             o = {
                 "v": 2, "suite": suite.SUITE_ID, "kind": "hub.link", "hv": HV, "hub_id": self.hub_id,
-                "workspace_id": self.workspace_id, "dir": "w2h", "seq": self._seq + 1, "ts_ms": self._now(),
+                "workspace_id": self.workspace_id, "dir": "w2h", "seq": seq, "ts_ms": self._now(),
                 "op": op, "re": None, "body": body,
             }  # fmt: skip
-            message = {"o": o, "sig": b64u(self._sign(SIG_LINK + cj(o)))}
-            self._check_request(message)
-            reply = self._exchange(message, o)
+            return {"o": o, "sig": b64u(sign(SIG_LINK + cj(o)))}
+
+        reply = self.send_next(build)
         rb = reply["o"]["body"]
         if set(rb) == {"error"}:
             raise LinkError(_code(rb["error"]))

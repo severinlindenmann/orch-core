@@ -59,14 +59,21 @@ class TlsTransport:
         self._lock = threading.Lock()
 
     def send(self, message: dict[str, Any]) -> dict[str, Any]:
+        return self._run(message.get("o", {}).get("op"), lambda c: c.send(message))
+
+    def send_next(self, op: str, build: Callable[[int], dict[str, Any]]) -> dict[str, Any]:
+        """Like :meth:`send`, but the link allocates the request's ``seq`` (one allocator per link, shared with the
+        acks; a new link starts again at 1): ``build(seq)`` returns the signed message."""
+        return self._run(op, lambda c: c.send_next(build))
+
+    def _run(self, op: object, go: Callable[[LinkClient], dict[str, Any]]) -> dict[str, Any]:
         with self._lock:
             try:
                 if self._client is None:
-                    first = message.get("o", {}).get("op") == "join"
                     self._client = LinkClient.open(
-                        self._host, self._port, wsk_pub=self._wsk_pub if first else None, **self._kw
+                        self._host, self._port, wsk_pub=self._wsk_pub if op == "join" else None, **self._kw
                     )
-                return self._client.send(message)
+                return go(self._client)
             except PinMismatch:
                 self._drop()
                 raise ConnectionError("the hub's certificate is not the card's pin") from None

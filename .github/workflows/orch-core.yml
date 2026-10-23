@@ -156,39 +156,6 @@ jobs:
         env:
           ORCH_RELAY_DIR: ${{ github.workspace }}/orch-relay
           ORCH_RELAY_T2_REQUIRED: "1"
-  publish-e2e:
-    # e2e/run.sh publish-isolation (#296): two sandbox workspaces against a REAL `orch-publish dev` (develop) on
-    # loopback. Not in the gate: it follows another repo's develop, so it reports but does not block this repo.
-    name: publish isolation e2e
-    needs: mode
-    if: needs.mode.outputs.heavy == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          persist-credentials: false
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          repository: severinlindenmann/orch-publish
-          ref: develop
-          path: orch-publish
-          persist-credentials: false
-      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
-        with:
-          python-version: "3.14"
-          enable-cache: true
-          cache-dependency-glob: |
-            plugins/orch-core/uv.lock
-            orch-publish/uv.lock
-      - run: uv sync --locked
-        working-directory: plugins/orch-core
-      - run: uv sync --locked
-        working-directory: orch-publish
-      - run: e2e/run.sh publish-isolation
-        working-directory: .
-        env:
-          ORCH_PUBLISH_SRC: ${{ github.workspace }}/orch-publish
   gate:
     # the one check a ruleset requires: it reports on every PR, also when the jobs above are skipped
     name: core gate

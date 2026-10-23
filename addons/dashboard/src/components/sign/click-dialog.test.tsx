@@ -670,3 +670,50 @@ describe('[rev818] adversarial: the switch moving never re-binds or signs an ope
     expect(s.postAction).not.toHaveBeenCalled()
   })
 })
+
+describe('answering a question in one-click mode', () => {
+  const ANSWER = { kind: 'answer', question: 'Q2', option: 'date' } as const
+  const content = {
+    headline: 'Answer “Which date?” on DEMO-0043 with DATE (local midnight)',
+    sections: [{ id: 'question', title: 'Question', text: 'Which date should the report use?' }],
+    ticket: { key: 'DEMO-0043', uid_tail: 'abcd1234' },
+    fields_changed: [
+      { field: 'your choice', before: null, after: 'DATE (local midnight)' },
+      { field: 'option b', before: null, after: 'TIMESTAMP' },
+    ],
+  }
+
+  it('opens straight on the compact review, signs with one press and closes itself with a toast, no Close step', async () => {
+    c.prepare.mockResolvedValue({ request_id: REQ, expires_at: new Date(Date.now() + 600_000).toISOString(), op: 'answer', confirm: 'click' })
+    c.view.mockResolvedValue(viewAnswer({ op: 'answer', content, lines: ['Answer Q2'] } as never))
+    const { dialog, onClose } = await open(ANSWER)
+    await within(dialog).findByTestId('click-panel', {}, T)
+    expect(within(dialog).getAllByRole('button', { name: 'Send answer' })).toHaveLength(1) // the review's own button, no first screen before it
+    // what is answered is in view; the question and the other options are under Details, closed
+    expect(within(dialog).getByTestId('sign-choice')).toHaveTextContent(/Your answer.*DATE \(local midnight\)/)
+    const compact = within(dialog).getByTestId('sign-compact')
+    const shown = within(compact).getAllByTestId('sign-ticket').find((e) => !e.closest('details'))! // outside Details
+    expect(shown).toHaveTextContent('DEMO-0043')
+    expect(shown).toHaveTextContent('abcd1234')
+    expect(compact).toHaveTextContent('Which date should the report use?')
+    const exact = within(dialog).getByTestId('sign-exact')
+    expect(exact).not.toHaveAttribute('open')
+    expect(within(exact).getByText('TIMESTAMP')).toBeInTheDocument() // the full signed values are still in the page
+    const b = within(dialog).getByRole('button', { name: 'Send answer' })
+    await waitFor(() => expect(b).toBeEnabled(), { timeout: ARM_MS + 2000 })
+    press(b)
+    await waitFor(() => expect(onClose).toHaveBeenCalled(), T) // the dialog's owner closes it; nothing says "Signed" to dismiss
+    expect(c.sign).toHaveBeenCalledTimes(1)
+    expect(c.sign.mock.calls[0][2]).toBe(DIGEST)
+  })
+
+  it('a review without the fields compact expects is shown in full, never compact', async () => {
+    c.prepare.mockResolvedValue({ request_id: REQ, expires_at: new Date(Date.now() + 600_000).toISOString(), op: 'answer', confirm: 'click' })
+    c.view.mockResolvedValue(viewAnswer({ op: 'answer', content: { headline: 'Answer', sections: [{ id: 'question', title: 'Question', text: 'Which date should the report use?' }], fields_changed: [{ field: 'option b', before: null, after: 'TIMESTAMP' }] }, lines: ['Answer Q2'] } as never))
+    const { dialog } = await open(ANSWER)
+    await within(dialog).findByTestId('click-panel', {}, T)
+    expect(within(dialog).queryByTestId('sign-compact')).toBeNull()
+    expect(within(dialog).getByText('Which date should the report use?')).toBeVisible()
+    expect(within(dialog).getByText('TIMESTAMP')).toBeVisible()
+  })
+})

@@ -116,7 +116,9 @@ export function HandoffSignDialog({
       title={title}
       ws={ws}
       action={request}
-      autoStart={action.kind === 'approve'}
+      autoStart={action.kind === 'approve' || action.kind === 'answer'}
+      closeWhenDone={action.kind === 'answer'}
+      doneToast={action.kind === 'answer' ? 'Answered' : undefined}
       confirmLabel={confirmLabel}
       hint={hint}
       warning={warning}

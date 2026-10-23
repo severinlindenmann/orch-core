@@ -316,12 +316,12 @@ def authorize_agent(
         return Refusal(Code.GRANT_INVALID, "an agent's `for` must be the person who issued the grant")
     if g.revoked or not (ts(g.issued_at) <= at < ts(g.expires_at)):
         return Refusal(Code.GRANT_INVALID, "the grant was revoked or not valid at this position")
-    m = ws.members.get(a["for"])
-    if m is None or m.role == "viewer":
+    role = identity.member_role(ws, a["for"])  # full mode: capped by the hub role (#1133)
+    if role is None or role == "viewer":
         return Refusal(Code.GRANT_INVALID, "the grant's person is not a member who may run agents")
     if not verb_covers(e["type"], g.verbs, verb_events):
         return Refusal(Code.GRANT_VERB, f"the grant does not cover {e['type']}")
-    if g.scope == "all" and m.role == "member":
+    if g.scope == "all" and role == "member":
         return Refusal(Code.GRANT_SCOPE, "a member's grant is `workable` only (D60), whatever it says")
     # An agent's permissions are the intersection of its grant and its person: it never reaches a ticket that its
     # `for` person can't see, whatever the grant scope (§9, §10.1 A3).

@@ -41,6 +41,7 @@ const state: SetupState = {
   methods: ['terminal', 'click'],
   click_available: true,
   click_reason: 'click_relay_unsupported: phone approvals need terminal signing',
+  click_risk: 'Convenience signing: demo risk sentence.',
   agent_hours: [8, 24, 72, 168],
   relay: { available: true, enabled: true },
   missing: [],
@@ -261,6 +262,20 @@ test('one click disables relay with its named reason and never shows a passphras
   await screen.findByRole('heading', { name: 'Your secret words' })
   expect(screen.queryByRole('heading', { name: 'Your passphrase' })).not.toBeInTheDocument()
   expect(f.calls.find((c) => c.path === 'profile')?.body).toMatchObject({ method: 'click', relay: false })
+})
+
+test('run 8: One click is the default where core suggests it, with the risk sentence before Continue; Terminal stays selectable', async () => {
+  const f = fake({ suggested: { method: 'click' } })
+  render(<Setup api={f.api} />)
+  await approval()
+  expect(screen.getByLabelText(/One click on this computer/)).toBeChecked()
+  expect(screen.getByTestId('click-risk')).toHaveTextContent('Convenience signing: demo risk sentence.')
+  fireEvent.click(screen.getByLabelText(/Terminal/))
+  expect(screen.queryByTestId('click-risk')).not.toBeInTheDocument()
+  fireEvent.click(screen.getByLabelText(/One click on this computer/))
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  await screen.findByRole('heading', { name: 'Your secret words' })
+  expect(f.calls.find((c) => c.path === 'profile')?.body).toMatchObject({ method: 'click' })
 })
 
 test('typed word gates long runner access; digest and fingerprint stay bound while waiting for terminal', async () => {

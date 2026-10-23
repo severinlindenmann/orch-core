@@ -843,6 +843,11 @@ export function Setup({ api }: { api: SetupAPI }) {
                   </span>
                 </label>
               ))}
+              {profile.method === 'click' && state.click_available && (
+                <p className="notice" data-testid="click-risk">
+                  <Raw>{state.click_risk}</Raw>
+                </p>
+              )}
               <h2>Let agents work for you for:</h2>
               <div className="segments">
                 <button aria-pressed={access === 'none'} onClick={() => chooseAccess('none')}>

@@ -59,6 +59,7 @@ SETTINGS_TABS = (
     "addons",
     "records",
     "devices",
+    "hub",
 )  # HOST_TABS (settings/tabs.ts)
 SPA_ROUTES = (
     "",  # Today

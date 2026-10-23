@@ -32,7 +32,7 @@ import os
 import re
 import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -379,6 +379,65 @@ def start_worker(
             state.close()
         release()
         raise
+
+
+@contextlib.contextmanager
+def cutover_session(
+    service: WorkspaceService,
+    seams: Seams | None = None,
+    *,
+    transport: Callable[[str, Mapping[str, Any]], Any] | None = None,
+) -> Iterator[Any]:
+    """The one relay session the cut-over (and its reversal) uses (V3 C10, design-c10 M2.4/M4): the workspace's own
+    ``WSK`` session over a :class:`~orch.relay.http.RelayConn` that carries the ``cut_over`` gate, so even while the
+    path is ``closing`` or ``closed`` it sends exactly the cut-over routes and the session mechanics (login, holder).
+    No worker, no thread, no bridge: the caller makes a few calls and leaves. The relay worker must not run (the
+    state directory has one owner: ``StateDir`` refuses a second). ``transport`` is for tests only."""
+    from orch.custody import FileBackend
+    from orch.relay import http
+    from orch.relay import worker as relay_worker
+    from orch.relay.keys import BridgeKeys
+    from orch.relay.session import Session
+    from orch.relay.sign import LinkContext, RelaySigner
+    from orch.relay.state import FileHolderStore, FileSignLedger, StateDir
+    from orch.store import BackendSigner
+
+    seams = seams if seams is not None else SEAMS
+    if seams.r6 is None:
+        raise HostError("relay.unavailable", "the relay key source is not set up on this host")
+    ws = service.workspace_id
+    state = StateDir(relay_state_path(service))
+    conn: Any = None
+    try:
+        link = _link_record(state, ws)
+        origin = link["origin"]
+        keys_dir = Path(service.state_dir) / "hosts" / ws / "keys"
+        backend_keys = FileBackend(keys_dir) if keys_dir.is_dir() else None
+        if backend_keys is None or not backend_keys.exists("wsk"):
+            raise HostError("workspace.unavailable", "the workspace signing key is not in the host's custody")
+        wsk = BackendSigner(backend_keys, "wsk")
+        epochs, _view = seams.r6(service)
+        card_seq = link.get("card_seq") if link.get("state") == "linked" else 0
+        signer = RelaySigner(
+            wsk, LinkContext(ws, origin), epochs=BridgeKeys(epochs, bytes.fromhex(ws)), ledger=FileSignLedger(state),
+            last_card_seq=card_seq if type(card_seq) is int and card_seq >= 0 else 0,
+        )  # fmt: skip
+        alarms = relay_worker.Alarms(
+            now_ms=lambda: int(service.clock() * 1000), persist=lambda snap: state.write_json("alarms.json", snap)
+        )
+        if transport is not None:
+            conn = transport(origin, link)
+        else:
+            conn = http.RelayConn(
+                origin, ca_file=link.get("ca_file"), proxy=link.get("proxy"),
+                allowed=directpath.gate(service.state_dir, ws, service.host_uid),
+            )  # fmt: skip
+        yield Session(conn, signer, holder=FileHolderStore(state), alarm=alarms, stop=threading.Event())
+    finally:
+        if conn is not None:
+            with contextlib.suppress(Exception):
+                conn.close()
+        state.close()
 
 
 class _LinkSteps:

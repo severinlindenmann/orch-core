@@ -258,10 +258,18 @@ def policy_changed(core: Core, e: dict[str, Any]) -> Refusal | None:
 SIGN_METHODS = ("terminal", "click", "phone", "hub")
 
 
+#: the only settings a hub-signed ``settings.changed`` may set (hub protocol 8.8)
+CHANNEL_SETTINGS = frozenset({"grant_hours", "claim_ttl_min", "lease_ttl_min"})
+
+
 def settings_changed(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
     if (r := _owner_only(ws, e)) is not None:
         return r
     s = e["set"]
+    if "via" in e["actor"] and (bad := sorted(set(s) - CHANNEL_SETTINGS)):
+        # hub protocol 8.8 (V3-D29): sign_methods, repos, publish, models, icon ... stay off the channel, whatever the
+        # hub signed; one place for append and replay
+        return Refusal(Code.SETTINGS_INVALID, f"a hub may not set {', '.join(bad)}")
     repos = dict(ws.repos)
     for name, v in s.get("repos", {}).items():
         if v is None:

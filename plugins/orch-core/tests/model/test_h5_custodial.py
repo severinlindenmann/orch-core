@@ -278,3 +278,26 @@ def test_replay_is_the_same_as_the_admission(w):
     hub(w, "settings.changed", U1, set={"lease_ttl_min": 60})
     st = replay(w.ws, w.tl, verifier=w.verifier, now=w.at(), expected_workspace_id=w.workspace_id)
     assert not st.chain_errors and "gr_01J9ZP0000000000000000GRT1" in st._core.ws.grants
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("sign_methods", ["terminal", "hub"]),
+        ("repos", {"x": {"path": "../x"}}),
+        ("models", None),
+        ("publish", None),
+        ("icon", None),
+    ],
+)
+def test_a_hub_settings_changed_refuses_every_off_channel_key_at_append_and_on_replay(w, key, value):
+    r = hub(w, "settings.changed", U1, set={key: value})
+    assert r.code == Code.SETTINGS_INVALID
+    # replay: the same line, forced into the log, is invalid there too
+    e = w.build_unappended("workspace", "settings.changed", hub_actor(U1, CHAN), roster_v=w.roster_v,
+                           set={key: value}, **hub_fields())  # fmt: skip
+    e["host_sig"] = sig("hostx")
+    w._append("workspace", e)
+    st = replay(w.ws, w.tl, verifier=w.verifier, now=w.at(), expected_workspace_id=w.workspace_id)
+    assert any(i.type == "settings.changed" for i in st._core.logs["workspace"].invalid)
+    assert key not in st._core.ws.settings

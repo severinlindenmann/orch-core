@@ -708,6 +708,8 @@ def serve(call: Call) -> dict[str, Any]:
     if op == "hub.status":
         from orch.hubclient import snapshot
 
+        from . import cutover
+
         return ok_result(
             {
                 "snapshot": snapshot.pinned_view(state),
@@ -723,6 +725,7 @@ def serve(call: Call) -> dict[str, Any]:
                 "rotation": _rotation(service, state),
                 "reseal_needed": _reseal_needed(service, state),
                 "link": None if state is None else state.status,
+                **cutover.status_fields(service, state),  # V3 C10: direct, direct_note, direct_devices, cut_epoch
                 "log_sync": _log_sync_status(service),
                 "unbound_pending": state is not None and bool(state.outbox),
                 "owed": [] if state is None else sorted(state.outbox),
@@ -834,6 +837,19 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
             out = {"hub_id": r.hub_id, "status": r.status, "binding_seq": r.binding_seq, "mode": r.mode,
                    "sealed_epoch": None if not r.sealed else r.sealed["epoch"]}  # fmt: skip
             out["snapshot_version"] = _first_snapshot(call, plan, r, wsk_pub, sign, now, save)
+            if (
+                model["mode"] == "full"
+            ):  # V3 C10: the owner's full join / switch / re-seal moves the workspace to hub-only
+                from . import cutover
+
+                before = _load_state(service)
+                fresh = plan["kind"] in (
+                    "join",
+                    "switch",
+                )  # the review text the owner signed says the phones' pairing ends
+                if fresh or (before is not None and before.direct in ("closing", "open")):
+                    out["direct"] = cutover.run(service, model, hub_card=plan["card"], force_start=fresh)
+                    _audit(call, "hub.cutover", hub_id=r.hub_id, direct=out["direct"])
             return ok_result(out)
         if plan["op"] == "hub.refresh":
             return ok_result(_refresh(call, plan, state, wsk_pub, sign, now, save))

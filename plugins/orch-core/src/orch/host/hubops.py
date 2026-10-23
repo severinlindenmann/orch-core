@@ -55,9 +55,9 @@ __all__ = [
 
 HUB_OPS: dict[str, int] = {
     "hub.connect": 1, "hub.unbind": 1, "hub.status": 1, "hub.refresh": 1, "hub.handoff": 1, "hub.history": 1,
-    "keys.rotate": 1,
+    "keys.rotate": 1, "hub.reopen": 1,
 }  # fmt: skip
-NETWORK_OPS = frozenset({"hub.connect", "hub.unbind", "hub.refresh"})
+NETWORK_OPS = frozenset({"hub.connect", "hub.unbind", "hub.refresh", "hub.reopen"})
 HUB_CAPS = ["hub/1"]
 _MU = threading.Lock()
 
@@ -86,6 +86,7 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
     "hub.unbind": {"type": "object", "properties": {}, "additionalProperties": False},
     "hub.status": {"type": "object", "properties": {}, "additionalProperties": False},
     "keys.rotate": {"type": "object", "properties": {}, "additionalProperties": False},  # C8: owner, column P only
+    "hub.reopen": {"type": "object", "properties": {}, "additionalProperties": False},  # C10 M4: owner, column P only
     "hub.history": {  # C8 M5: what a hub did here; ``since`` starts the third list (default: the last 7 days)
         "type": "object",
         "properties": {
@@ -694,6 +695,10 @@ def serve(call: Call) -> dict[str, Any]:
         return out
     model = dict(service.store.state.workspace.hub)
     state = _load_state(service)
+    if op == "hub.reopen":  # C10 M4: act on the owner's signed relay.reopened (the model refused it unless left)
+        if not model.get("reopened") or model.get("status") != "left":
+            raise HostError("hub.not_joined", "sign `orch relay reopen` first (after `orch hub leave`)")
+        return {"plan": {"op": op, "model": model, "state": state}}
     if op == "hub.history":
         from . import breakglass
 
@@ -853,6 +858,12 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
             return ok_result(out)
         if plan["op"] == "hub.refresh":
             return ok_result(_refresh(call, plan, state, wsk_pub, sign, now, save))
+        if plan["op"] == "hub.reopen":  # C10 M4: the owner signed relay.reopened; delete the cut-over, link again
+            from . import cutover
+
+            out = cutover.reopen(service)
+            _audit(call, "relay.reopen", hub_id=model.get("hub_id"))
+            return ok_result(out)
         out = _unbind(call, plan, state, sign, wsk_pub, now, save, leave, flush_outbox)
         _stop_peers(service)  # unbound: the ws->ws link and receive thread end here
         return ok_result(out)

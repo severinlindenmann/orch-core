@@ -665,6 +665,22 @@ def hub_joined(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
     return None
 
 
+def relay_reopened(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
+    """``relay.reopened`` (V3 C10 M4, owner only): the direct relay path opens again. Only after the workspace has
+    LEFT the hub whose full mode closed it: while a hub is joined in full mode it is refused (D68: full mode is
+    hub-only, and a reopened door would let a direct device bypass the hub's role gate). It names the hub that was
+    left. It changes no state of the model; the host acts on it (``cutover.reopen``)."""
+    if (r := _owner_only(ws, e)) is not None:
+        return r
+    h = ws.hub
+    if not h or h.get("status") != "left":
+        return Refusal(Code.HUB_INVALID, "relay.reopened needs a workspace that has left its hub")
+    if e["hub_id"] != h.get("hub_id"):
+        return Refusal(Code.HUB_INVALID, "relay.reopened must name the hub that was left")
+    ws.hub = {**h, "reopened": True}  # the host acts on it (cutover.reopen); a later hub.joined starts a fresh record
+    return None
+
+
 def hub_left(ws: WsCore, e: dict[str, Any], core: Core | None = None) -> Refusal | None:
     """``hub.left`` (owner only): ends the binding it names. It must name the hub and binding that are joined;
     ``binding_seq`` stays as the high-water mark, so no earlier binding can come back.

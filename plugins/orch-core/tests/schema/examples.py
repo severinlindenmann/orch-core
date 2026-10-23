@@ -62,6 +62,7 @@ WORKSPACE_ONLY = {
     "hub.joined",
     "hub.left",
     "hub.pinned",
+    "relay.reopened",
 }
 
 
@@ -496,6 +497,7 @@ _SPEC = {
         5,
     ),
     "hub.left": (PERSON, {"hub_id": "38d8abed52ccfb538da401fd54e64bdc", "binding_seq": 1}, 5),
+    "relay.reopened": (PERSON, {"hub_id": "38d8abed52ccfb538da401fd54e64bdc"}, 5),
     "hub.pinned": (
         HOST,
         {

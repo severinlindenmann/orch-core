@@ -298,7 +298,13 @@ def reopen(service: WorkspaceService) -> dict[str, Any]:
             session.call("DELETE", f"/v2/workspaces/{ws}/cutover", "DELETE /v2/workspaces/{ws}/cutover", holder=True)
     state.direct, state.direct_note, state.cut_epoch = "open", None, None
     h._save_state(service, state)  # noqa: SLF001
-    return {"direct": "open", "relay_linked": _relay_linked(service)}
+    started = "none"
+    if _relay_linked(service):
+        try:  # the stop marker the cut-over left is cleared; a link that cannot start now starts at the next open
+            started = service.relay_start()
+        except HostError as exc:
+            started = exc.code
+    return {"direct": "open", "relay_linked": _relay_linked(service), "relay": started}
 
 
 # -- at host start: resume ---------------------------------------------------------------------------------------------

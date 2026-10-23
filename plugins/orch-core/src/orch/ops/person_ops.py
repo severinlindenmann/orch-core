@@ -480,6 +480,24 @@ def handle_hub_leave(ctx: Context, args: dict[str, Any]) -> Result:
     return h.workspace_result(done, data, "the host now tells the hub that this workspace is unbound")
 
 
+def handle_relay_reopen(ctx: Context, args: dict[str, Any]) -> Result:
+    """``relay.reopen {}`` (V3 C10 M4, L2-E3-3): the owner's signed record that the direct relay path opens again. Only
+    after the workspace left the hub that closed it (the model refuses it while a hub is joined); a human at the
+    terminal with the owner key. The host then deletes the cut-over at the relay and restarts the link."""
+    h = _Human(ctx, "relay.reopen")
+    _owner(h, "relay.reopen")
+    current = h.store.state.workspace.hub
+    if not current:
+        raise OrchError("hub.not_joined", "this workspace never joined a hub")
+    if current.get("status") != "left":
+        raise OrchError(
+            "hub.already_joined", "leave the hub first (orch hub leave): a joined hub keeps the path closed"
+        )
+    event = {"type": "relay.reopened", "hub_id": current["hub_id"]}
+    done = h.run(event, "workspace", "reopen the direct relay path", review=[])
+    return h.workspace_result(done, {"hub_id": current["hub_id"]}, "the host now reopens the direct relay path")
+
+
 _HEX32 = {"type": "string", "pattern": "^[0-9a-f]{32}$"}
 HUB_JOIN = operation(
     "hub.join",
@@ -538,6 +556,20 @@ HUB_LEAVE = operation(
     data=obj({"hub_id": STR, "binding_seq": {"type": "integer"}}),
     errors=(err("role.denied"), err("hub.not_joined")),
     handler=handle_hub_leave,
+)
+
+RELAY_REOPEN = operation(
+    "relay.reopen",
+    "Human only",
+    "Open the direct relay path again after you left the hub that closed it (phones must be paired again).",
+    who="human",
+    props={},
+    required=(),
+    emits=("relay.reopened",),
+    text="ok relay.reopened {hub_id} seq={seq}\nnext: {next}",
+    data=obj({"hub_id": STR}),
+    errors=(err("role.denied"), err("hub.not_joined"), err("hub.already_joined")),
+    handler=handle_relay_reopen,
 )
 
 _PERSON = {"type": "string", "pattern": "^p_[0-9a-f]{32}$"}

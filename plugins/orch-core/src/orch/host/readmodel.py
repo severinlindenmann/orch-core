@@ -55,6 +55,7 @@ PERSON_TYPES = frozenset(
         "device.added",
         "device.removed",
         "device.revoked",
+        "device.excluded",
         "policy.changed",
         "settings.changed",
         "addon.granted",
@@ -66,7 +67,7 @@ PERSON_TYPES = frozenset(
     }
 )
 #: only to a person-class owner and to the grant's own person (the ``grant.list`` rule)
-GRANT_TYPES = frozenset({"grant.issued", "grant.revoked"})
+GRANT_TYPES = frozenset({"grant.issued", "grant.requested", "grant.revoked"})
 
 
 # --- Snip ---------------------------------------------------------------------------------------------------------
@@ -285,7 +286,7 @@ def ws_data(e: Mapping[str, Any], *, grant_person: str | None = None, devices: M
         return {"person": e.get("person")}
     if t == "role.changed":
         return {"person": e.get("person"), "role": e.get("role")}
-    if t in ("device.added", "device.removed", "device.revoked"):
+    if t in ("device.added", "device.removed", "device.revoked", "device.excluded"):
         return {"person": _device_person(e, devices), "device": e.get("device")}
     if t == "policy.changed":
         gates = e.get("gates") if isinstance(e.get("gates"), Mapping) else {}
@@ -307,7 +308,7 @@ def ws_data(e: Mapping[str, Any], *, grant_person: str | None = None, devices: M
         a = e.get("actor") if isinstance(e.get("actor"), Mapping) else {}
         return {
             "grant": e.get("grant"),
-            "person": a.get("id"),
+            "person": grant_person if a.get("kind") == "host" else a.get("id"),
             "scope": e.get("scope"),
             "expires_at": e.get("expires_at"),
         }

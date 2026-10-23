@@ -61,8 +61,10 @@ ACTOR_RULES: dict[str, str] = {
     "device.removed": "P",
     "device.revoked": "PH",
     "settings.changed": "P",
-    "grant.issued": "P",
+    "grant.issued": "PH",  # C10: a host actor only with `request` (hub protocol 8.8), checked by the type rule
+    "grant.requested": "P",  # C10: hub-signed only (HUB_ONLY)
     "grant.revoked": "P",
+    "device.excluded": "P",  # C10: hub-signed only (HUB_ONLY)
     "addon.granted": "P",
     "addon.disabled": "P",
     "addon.purged": "P",
@@ -96,8 +98,12 @@ HUB_TYPES = frozenset(
         "claim.released", "log.added", "handoff.written", "question.asked", "question.answered", "gate.approved",
         "gate.changes_requested", "verdict.given", "ticket.moved", "people.changed", "visibility.changed",
         "addon.disabled", "addon.purged",
+        # phase 5 (hub protocol 8.8, V3-D29)
+        "grant.requested", "grant.revoked", "device.excluded", "policy.changed", "settings.changed",
     }
 )  # fmt: skip
+#: C10: types that exist only as hub-signed requests; a device-signed one (no operation writes it) is refused
+HUB_ONLY = frozenset({"grant.requested", "device.excluded"})
 DECISIONS = frozenset({"gate.approved", "gate.changes_requested", "verdict.given", "question.answered"})
 VIEWER_MAY = frozenset({"question.answered", "device.added", "device.removed", "device.revoked"})
 UNATTENDED_PER_SESSION = 30

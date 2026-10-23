@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.orch.dev/v2/event.grant.issued",
   "title": "grant.issued event",
-  "description": "5.4.2, 10.1 A3/D60. expires_at == issued_at + 3600 * hours and |at - issued_at| <= 300 s (validate()).",
+  "description": "5.4.2, 10.1 A3/D60. expires_at == issued_at + 3600 * hours and |at - issued_at| <= 300 s (validate()). C10 (hub protocol 8.8): a host actor appends it only with `request`, the id of the grant.requested line it answers.",
   "type": "object",
   "properties": {
     "v": {
@@ -169,7 +169,8 @@
           "properties": {
             "kind": {
               "enum": [
-                "person"
+                "person",
+                "host"
               ]
             }
           },
@@ -251,6 +252,9 @@
     },
     "secret_hash": {
       "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+    },
+    "request": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/ulid"
     },
     "label": {
       "$ref": "https://schemas.orch.dev/v2/common#/$defs/line"
@@ -366,6 +370,37 @@
           },
           "based_on": {
             "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "actor": {
+            "properties": {
+              "kind": {
+                "const": "host"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          }
+        },
+        "required": [
+          "actor"
+        ]
+      },
+      "then": {
+        "required": [
+          "request"
+        ]
+      },
+      "else": {
+        "properties": {
+          "request": {
+            "not": {}
           }
         }
       }

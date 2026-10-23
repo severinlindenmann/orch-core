@@ -53,6 +53,8 @@ TECHNICAL_KEYS = frozenset(
         "host_sig",
         # hashes and attestations the details carry
         "gate_gen", "hash", "policy_hash", "base_rev", "secret_hash",
+        # C10: the id of the grant.requested a host-actor grant.issued answers; a person never signs it
+        "request",
     }
 )  # fmt: skip
 

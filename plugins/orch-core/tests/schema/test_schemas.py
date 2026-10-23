@@ -587,6 +587,8 @@ def _with_actor(t, kind, base=None):
         e.pop(k, None)
     if kind == "person":
         e.update(sig=ex.SIG, auth="passphrase", roster_v=0 if t == "workspace.created" else 7)
+    if t == "grant.issued" and kind == "host":  # C10: the host answers a grant.requested, and only then
+        e["request"] = ex.EID
     if t == "ticket.created":
         e["owner"] = actor["id"] if kind == "person" else actor.get("for", "p_" + ex.PID)
     if t == "claim.released":
@@ -622,7 +624,7 @@ def test_person_events_need_signature_auth_and_roster_version():
 
 
 def test_agent_and_host_never_stand_in_for_a_person():
-    for t in ("gate.approved", "verdict.given", "question.answered", "ticket.closed", "restore", "grant.issued",
+    for t in ("gate.approved", "verdict.given", "question.answered", "ticket.closed", "restore", "grant.requested",
               "member.added", "invalid.acknowledged", "addon.granted", "settings.changed"):  # fmt: skip
         e = ex.EVENTS[t]
         log = log_of(t)

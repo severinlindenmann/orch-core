@@ -37,6 +37,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from . import directpath
 from .devmode import gated as devmode_gated
 from .errors import HostError
 
@@ -272,6 +273,9 @@ def start_worker(
     from . import relaylink, relaypair
     from .relayentry import RelayEntry
 
+    if directpath.closed(service.state_dir, service.workspace_id, service.host_uid):
+        # C10 M3: a cut-over (or closing) workspace dials the direct relay with no thread at all, whoever asked
+        raise HostError("relay.cut_over", "the direct relay path of this workspace is closed (it is served by a hub)")
     if not relay_worker.r6_ready():  # the host checked it (start_blocker); checked again before anything is opened
         raise relay_worker.SeamMissing(relay_worker.R6_GATE_REASON)
     missing = seams.missing()
@@ -312,7 +316,10 @@ def start_worker(
         def conn() -> Any:
             if transport is not None:
                 return transport(origin, link)
-            return http.RelayConn(origin, ca_file=link.get("ca_file"), proxy=link.get("proxy"))
+            return http.RelayConn(
+                origin, ca_file=link.get("ca_file"), proxy=link.get("proxy"),
+                allowed=directpath.gate(service.state_dir, ws, service.host_uid),
+            )  # fmt: skip
 
         def observe(level: int) -> None:
             # H12d-3 9.8: every login re-reads the relay's reader level; stored only while link.json still names THIS

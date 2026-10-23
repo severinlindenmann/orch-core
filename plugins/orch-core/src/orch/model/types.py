@@ -165,6 +165,9 @@ class WsCore:
     # hub.joined. ``binding_seq`` only grows. ``member`` exists only in full mode and only while joined (C2b).
     hub: dict[str, Any] = field(default_factory=dict)
     unattended: list[tuple[int, str, int]] = field(default_factory=list)  # (at seconds, session, artifact bytes)
+    #: C10 (hub protocol 8.8): the admitted ``grant.requested`` lines by event id: ``{person, role, scope, verbs, hours,
+    #: label?, at, hub_id, used}``. A host-actor ``grant.issued`` consumes one (``used``), once.
+    requests: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 @dataclass

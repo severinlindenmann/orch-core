@@ -45,6 +45,7 @@ CROSS_TICKETS = frozenset(
         "member.removed",
         "role.changed",
         "device.revoked",
+        "device.excluded",  # compromised voids open decisions like a compromised device (C10)
         "policy.changed",
         "addon.granted",
         "addon.disabled",
@@ -243,7 +244,9 @@ def _workspace_handler(core: Core, lc: LogCore, e: dict[str, Any], ctx: Ctx) -> 
         "policy.changed": lambda: workspace.policy_changed(core, e),
         "settings.changed": lambda: workspace.settings_changed(ws, e),
         "grant.issued": lambda: workspace.grant_issued(ws, e),
+        "grant.requested": lambda: workspace.grant_requested(ws, e),
         "grant.revoked": lambda: workspace.grant_revoked(ws, e),
+        "device.excluded": lambda: workspace.device_excluded(core, e),
         "addon.granted": lambda: workspace.addon_event(core, e),
         "addon.disabled": lambda: workspace.addon_event(core, e),
         "addon.purged": lambda: workspace.addon_event(core, e),
@@ -277,6 +280,8 @@ def _authorize(core: Core, log: str, t: TCore | None, e: dict[str, Any], ctx: Ct
             return r
         return identity.record_users(ws, e)  # P1 (Opus, PR A): the ids this event uses now belong to its hub
     if a["kind"] == "person":
+        if e["type"] in authz.HUB_ONLY:  # C10: these two exist only as hub-signed requests (hub protocol 8.8)
+            return Refusal(Code.EVENT_BAD_ACTOR, f"{e['type']} is signed through a hub only")
         if (r := authz.authorize_person(core, log, e, ctx.verifier, hub_only=ctx.hub_only)) is not None:
             return r
     elif a["kind"] == "agent":

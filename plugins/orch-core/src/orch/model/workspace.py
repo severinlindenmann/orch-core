@@ -249,7 +249,8 @@ def policy_changed(core: Core, e: dict[str, Any]) -> Refusal | None:
     for g, p in e["gates"].items():
         if (r := policies.check_change(g, p)) is not None:
             return r
-    cross(core, lambda: ws.policies.update(copy.deepcopy(e["gates"])), lambda t: generations.mark(t, *e["gates"]))
+    gates = policies.channel_gates(e, e["gates"], ws.policies)
+    cross(core, lambda: ws.policies.update(gates), lambda t: generations.mark(t, *e["gates"]))
     return None
 
 
@@ -325,42 +326,156 @@ def settings_changed(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
     return None
 
 
-def grant_issued(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
-    """D60 terms: the role decides scope and length; always for the signer; times are checked on every read."""
-    role, hours = _role(ws, e), e["hours"]
+def _grant_terms(ws: WsCore, role: str | None, scope: Any, hours: int) -> Refusal | None:
+    """D60 terms for a grant by a signer of ``role`` (the person event and the C10 request share them)."""
     if role is None:
         return Refusal(Code.MEMBER_UNKNOWN, "the signer has no role")
     if role == "viewer":
         return Refusal(Code.GRANT_TERMS, "a viewer holds no grant")
-    if role == "member" and (e["scope"] != "workable" or hours > ws.settings["grant_hours"]):
+    if role == "member" and (scope != "workable" or hours > ws.settings["grant_hours"]):
         return Refusal(Code.GRANT_TERMS, f"a member's grant is workable and at most {ws.settings['grant_hours']} h")
+    return None
+
+
+def grant_requested(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
+    """``grant.requested`` (hub protocol 8.8, C10): a hub-signed ask for an agent grant. It changes no grant by itself;
+    it records the terms, the canonical signer and the role the host will use for the host-actor ``grant.issued`` that
+    answers it. The grant is for the signer, so the signer must be a member (an aliased hub user): a hub user with no
+    member behind the alias could never run an agent (``agent.for`` is a member), so the request is refused."""
+    sg = identity.signer(ws, e)
+    if isinstance(sg, Refusal):
+        return sg
+    if (r := _grant_terms(ws, sg.role, e["scope"], e["hours"])) is not None:
+        return r
+    if sg.person not in ws.members:
+        return Refusal(Code.MEMBER_UNKNOWN, "a grant is for a member: alias this hub user to a person first")
+    if e["id"] in ws.requests:
+        return Refusal(Code.GRANT_EXISTS, e["id"])
+    ws.requests[e["id"]] = {
+        "person": sg.person,
+        "role": sg.role,
+        "scope": e["scope"],
+        "verbs": copy.deepcopy(e["verbs"]),
+        "hours": e["hours"],
+        "label": e.get("label"),
+        "at": e["at"],
+        "hub_id": e["hub_id"],
+        "used": False,
+    }
+    return None
+
+
+def _host_grant(ws: WsCore, e: dict[str, Any]) -> tuple[dict[str, Any] | None, Refusal | None]:
+    """The host-actor ``grant.issued`` (C10): valid only when it names an admitted ``grant.requested`` of the same
+    terms, not answered yet, ``0 <= at - request.at <= 300 s``, ``issued_at = min(request.at, at)``.
+    Returns the request."""
+    req = ws.requests.get(e.get("request"))
+    if req is None:
+        return None, Refusal(Code.GRANT_TERMS, "a host-issued grant names an admitted grant.requested")
+    if req["used"]:
+        return None, Refusal(Code.GRANT_TERMS, "this request was answered already")
+    same = (
+        e["scope"] == req["scope"]
+        and e["verbs"] == req["verbs"]
+        and e["hours"] == req["hours"]
+        and e.get("label") == req["label"]
+    )
+    if not same:
+        return None, Refusal(Code.GRANT_TERMS, "the grant is not what was requested")
+    lag = ts(e["at"]) - ts(req["at"])
+    if not 0 <= lag <= 300 or ts(e["issued_at"]) != min(ts(req["at"]), ts(e["at"])):
+        return None, Refusal(Code.GRANT_TERMS, "the request is too old (300 s) or issued_at is not min(request, now)")
+    return req, None
+
+
+def grant_issued(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
+    """D60 terms: the role decides scope and length; always for the signer; times are checked on every read.
+
+    C10 (hub protocol 8.8, P2-c): a *host* actor appends it too, only answering a ``grant.requested``. Then the
+    person is the request's canonical signer, the role is that signer's at the request, there is no device (the
+    runner binds the secret instead), and the grant belongs to the request's hub (``Grant.hub_id``) so that leaving it
+    ends the grant."""
+    req = None
+    if e["actor"]["kind"] == "host":
+        req, r = _host_grant(ws, e)
+        if r is not None:
+            return r
+        role, person, device, hub_id = req["role"], req["person"], "", req["hub_id"]
+    else:
+        if "request" in e:
+            return Refusal(Code.GRANT_TERMS, "only the host answers a request")
+        role, person, device, hub_id = _role(ws, e), e["actor"]["id"], e["actor"]["device"], None
+    hours = e["hours"]
+    if (r := _grant_terms(ws, role, e["scope"], hours)) is not None:
+        return r
     issued, expires = ts(e["issued_at"]), ts(e["expires_at"])
     if expires != issued + 3600 * hours or abs(ts(e["at"]) - issued) > 300:
         return Refusal(Code.GRANT_TERMS, "issued_at/expires_at do not match at and hours")
     if e["grant"] in ws.grants:
         return Refusal(Code.GRANT_EXISTS, e["grant"])
+    if req is not None:
+        req["used"] = True
     ws.grants[e["grant"]] = Grant(
         e["grant"],
-        e["actor"]["id"],
+        person,
         e["scope"],
         copy.deepcopy(e["verbs"]),
         e["issued_at"],
         e["expires_at"],
         e.get("label"),
-        device=e["actor"]["device"],
+        device=device,
+        hub_id=hub_id,
     )
     return None
 
 
 def grant_revoked(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
+    """Owners revoke any grant; others their own. "Own" is the grant's person against the **canonical** person of the
+    signer (C10: a hub user aliased to the person revokes that person's grants)."""
     g = ws.grants.get(e["grant"])
     if g is None:
         return Refusal(Code.GRANT_UNKNOWN, e["grant"])
-    if _role(ws, e) != "owner" and g.person != e["actor"]["id"]:
+    sg = identity.signer(ws, e)
+    if isinstance(sg, Refusal):
+        return sg
+    if sg.role != "owner" and g.person != sg.person:
         return Refusal(Code.ROLE_DENIED, "owners revoke any grant; others their own")
     if g.revoked:
         return Refusal(Code.GRANT_INVALID, "already revoked")
     g.revoked = True
+    return None
+
+
+def device_excluded(core: Core, e: dict[str, Any]) -> Refusal | None:
+    """``device.excluded`` (hub protocol 8.8, C10): a workspace-local act of an ``admin`` of the hub. The device signs
+    nothing more in this workspace; ``compromised`` also ends its grants and voids its open decisions as a compromised
+    device does (ticket-format 5.7). **Refused for a device of a workspace owner** (L2-P5-2): owner devices go only
+    through the person's own PK-signed ``device.revoked``, so the hub cannot block the owner's break-glass."""
+    ws = core.ws
+    sg = identity.signer(ws, e)
+    if isinstance(sg, Refusal):
+        return sg
+    if sg.role != "owner":
+        return Refusal(Code.ROLE_DENIED, "device.excluded is for an admin of the hub")
+    dev = ws.devices.get(e["device"])
+    if dev is None:
+        return Refusal(Code.DEVICE_UNKNOWN, e["device"])
+    holder = ws.members.get(dev.person)
+    if holder is None or holder.role == "owner":
+        return Refusal(Code.ROLE_DENIED, "an owner's device is revoked by its person key, not excluded by a channel")
+    if dev.removed or dev.revoked:
+        return Refusal(Code.DEVICE_EXISTS, e["device"])
+
+    def change() -> None:
+        dev.removed = True
+        if e["reason"] == "compromised":
+            for grant in ws.grants.values():
+                grant.revoked = grant.revoked or grant.device == e["device"]
+
+    if e["reason"] == "compromised":
+        cross(core, change, lambda ticket: generations.void_device(ws, ticket, e["device"]))
+    else:
+        change()
     return None
 
 

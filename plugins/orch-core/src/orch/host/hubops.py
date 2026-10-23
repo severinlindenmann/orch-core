@@ -97,12 +97,18 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
     "hub.handoff": {  # V3 C11: a read; see host/hubhandoff.py
         "type": "object",
         "properties": {
-            "kind": {"enum": ["gate", "verdict", "question", "status"]},
+            "kind": {"enum": ["gate", "verdict", "question", "status", "grant"]},
             "ticket": {"type": "string", "minLength": 1, "maxLength": 64},
             "gate": {"enum": ["requirements", "plan", "code", "verify"]},
             "question": {"type": "string", "minLength": 1, "maxLength": 64},
+            # kind grant (C10): the exact terms Mission Control's "Start agent" waits for; cancel drops the wait
+            "scope": {"enum": ["all", "workable"]},
+            "verbs": {"const": "agent"},
+            "hours": {"type": "integer", "minimum": 1, "maximum": 168},
+            "label": {"type": "string", "minLength": 1, "maxLength": 200},
+            "cancel": {"const": True},
         },
-        "required": ["kind", "ticket"],
+        "required": ["kind"],
         "additionalProperties": False,
     },
 }
@@ -515,6 +521,12 @@ class _Epochs:
             return bytes(self._mk.view_key(epoch))
         except (CustodyRefused, MembershipUnsafe):
             raise HubRefused("no_epoch") from None
+
+    def rotate_cut_over(self) -> None:
+        """C10 M2.3: the epoch of the cut-over: the owner's local one, with NO device listed in it (I4)."""
+        if self._local_owner is None:
+            raise HostError("hub.no_epoch", "the cut-over needs the owner's own key store")
+        self._mk.advance_local(self._local_owner, cut_over=True, drop_members=True)
 
     def rotate(self) -> None:
         if self._local_owner is not None:

@@ -51,6 +51,7 @@ __all__ = [
     "refuse_reader_op",
     "refuse_full_mode_entry",
     "refuse_turn_on",
+    "registered_entry",
     "set_enabled",
     "unavailable",
     "why",
@@ -222,6 +223,17 @@ def _refuse_full_mode(store: Any, state_dir: Path, workspace_id: str, host_uid: 
     view = SimpleNamespace(store=store, state_dir=state_dir, workspace_id=workspace_id, host_uid=host_uid)
     if hubops.signing_mode(view) in hubsign.HUB_ONLY:
         raise hubsign.hub_only_error()
+
+
+def registered_entry(state_dir: Path, workspace_id: str, host_uid: int) -> dict[str, Any] | None:
+    """The host registry entry of a workspace, or None when it is not registered on this host."""
+    from .custody import read_json
+    from .registry import registry_path
+
+    for entry in (read_json(registry_path(state_dir), host_uid) or {}).get("workspaces") or []:
+        if entry.get("workspace_id") == workspace_id:
+            return entry
+    return None
 
 
 def refuse_full_mode_entry(state_dir: Path, entry: dict[str, Any], host_uid: int) -> None:

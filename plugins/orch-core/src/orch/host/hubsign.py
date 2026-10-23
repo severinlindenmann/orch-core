@@ -81,6 +81,15 @@ def refusal(
         return None
     from . import hubops
 
+    if any(e.get("type") == "hub.joined" and e.get("mode") == "full" for e in events) and _click_custody(service):
+        # L2-C11d-2a: the prepare-time check can be stale (a custody conversion landed between prepare and submit)
+        return HostError(
+            "sign.hub_only",
+            "full hub mode needs your key in passphrase custody: switch click-to-sign off and move the key back first",
+            hint="orch host convenience off --workspace W, then orch keys custody passphrase --workspace W --in-place",
+            fix=["orch", "host", "convenience", "off", "--workspace", str(service.workspace_id)],
+            detail={"reason": "hub"},
+        )
     if hubops.signing_mode(service) not in HUB_ONLY:
         return None
     ws = service.store.state.workspace

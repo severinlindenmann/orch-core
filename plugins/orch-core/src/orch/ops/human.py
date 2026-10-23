@@ -696,6 +696,8 @@ class Human:
             if hubsign.log_hub_only(ws):
                 from types import SimpleNamespace
 
+                # L2-C11d-2b: keep the selection read inside _click_custody. With host_uid=os.getuid() the flag read
+                # fails open (False) when the flag file belongs to another host UID; the selection read still decides.
                 held = SimpleNamespace(state_dir=state_dir, workspace_id=wid, host_uid=os.getuid())
                 if not hubsign.break_glass_allowed(ws, ev, None) or hubsign._click_custody(held):  # noqa: SLF001
                     err = hubsign.hub_only_error()

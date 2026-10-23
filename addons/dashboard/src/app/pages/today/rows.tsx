@@ -1,5 +1,6 @@
 // Today's compact rows: one per open item, 56 px, the ask on the first line, the ticket on the second and one inline
 // action on the right. A row expands in place for what the action needs; signing always happens in core's dialogs.
+import { VerdictEvidence } from '../ticket/EvidenceView'
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import { Link } from '@tanstack/react-router'
 import { useQueryClient } from '@tanstack/react-query'
@@ -334,6 +335,7 @@ export function VerdictRow({ item, ticket, now, expanded, onToggle, sign, decide
         {' · '}
         {receipts} receipts · {ticket?.artifacts.length ?? 0} artifacts
       </p>
+      {ticket && <VerdictEvidence ticket={ticket} />}
     </RowShell>
   )
 }

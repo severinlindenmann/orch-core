@@ -40,14 +40,22 @@ describe('HTML artifact preview', () => {
     expect(await screen.findByRole('button', { name: 'Show preview' })).toBeInTheDocument()
     expect(document.querySelector('iframe[sandbox*="allow-"]')).toBeNull()
   })
-  it('with agent HTML off it shows the source and no frame', async () => {
+  it('evidence HTML previews even with agent HTML off: same inert frame, no add-on badge or "off" note', async () => {
     wrap(<Viewer a={art()} agentHtml={false} ticket="DEMO-1" />, { widgets: false })
-    expect(await screen.findByText(/Agent HTML is off/)).toBeInTheDocument()
+    const frame = await screen.findByTitle('Sandboxed preview of elefanten.html')
+    expect(frame.getAttribute('sandbox')).toBe('')
+    expect(frame.hasAttribute('src')).toBe(false)
+    expect(screen.queryByText(/Agent HTML is off/)).toBeNull()
+    expect(document.querySelector('[data-addon="widgets"]')).toBeNull()
+  })
+  it('a scripted page with agent HTML off still opens on its source', async () => {
+    wrap(<Viewer a={art()} agentHtml={false} ticket="DEMO-1" />, { widgets: false, data: content({ text: '<h1>x</h1><script>alert(1)</script>' }) })
+    expect(await screen.findByRole('button', { name: 'Show preview' })).toBeInTheDocument()
     expect(document.querySelector('iframe')).toBeNull()
   })
   it('a page whose digest differs from the ticket, or that is cut, is not drawn', async () => {
     wrap(<Viewer a={art()} agentHtml ticket="DEMO-1" />, { data: content({ digest: 'sha256:' + 'c'.repeat(64) }) })
-    expect(await screen.findByText(/No inline preview/)).toBeInTheDocument()
+    expect(await screen.findByText(/does not match the digest/)).toBeInTheDocument()
     expect(document.querySelector('iframe')).toBeNull()
   })
 })
@@ -85,6 +93,12 @@ describe('Evidence entry points', () => {
     const rows = await screen.findAllByTestId(/^card-verdict:/, {}, T)
     const link = within(rows[0]).getByRole('link', { name: 'Evidence' })
     expect(link.getAttribute('href')).toMatch(/\/ticket\/DEMO-\d+\?tab=acceptance/)
+  })
+  it('Today: opening a verdict row shows its evidence beside the link', async () => {
+    const { user } = renderApp('/')
+    const rows = await screen.findAllByTestId(/^card-verdict:/, {}, T)
+    await user.click(within(rows[0]).getAllByRole('button', { expanded: false })[0])
+    expect(await within(rows[0]).findByRole('region', { name: 'Evidence' }, T)).toHaveTextContent(/Evidence · \d+ files? for/)
   })
   it('the verdict dialog shows the evidence, and "Open evidence" lands on the Acceptance tab', async () => {
     const { user } = renderApp('/ticket/DEMO-0041')

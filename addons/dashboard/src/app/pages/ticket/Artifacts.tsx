@@ -20,8 +20,11 @@ import { cn } from '@/lib/utils'
 import { agentName, ago, fmtBytes, Mono, Pill, shortHash, type Jump, type TabProps } from './shared'
 import { addonHairline, addonTile } from '@/addon-ui/addonClasses'
 import { queries } from '@/api/queries'
-import { artifactTextQuery, sameDigest, capText, isHtmlArtifact, isTextArtifact, looksBinary, TEXT_PREVIEW_BYTES } from '@/api/artifactText'
+import { artifactTextQuery, sameDigest, capText, looksBinary, TEXT_PREVIEW_BYTES } from '@/api/artifactText'
 import { prose } from '@/components/sign/visible'
+import { verifiedMedia } from '@/api/evidenceMedia'
+import { SafeMarkdownView } from '@/addon-ui/SafeMarkdownView'
+import { NoPreviewCard } from './EvidenceCard'
 
 export const KIND_ICON: Record<Artifact['kind'], typeof FileText> = {
   screenshot: ImageIcon,
@@ -171,11 +174,13 @@ const DOCUMENT_KINDS: Artifact['kind'][] = ['report', 'diagram', 'other']
 const isHtmlDocument = (a: Artifact) => DOCUMENT_KINDS.includes(a.kind) && /\.html?$/.test(a.name)
 
 /**
- * An HTML document runs in the same sandboxed frame as its widget, and only while agent HTML is on: the frame is
- * drawn from the live `agentHtml` value on every render, so turning the widgets addon off replaces it with source.
+ * An HTML document of a ticket (evidence) is drawn in the inert sandboxed frame always (`evidence`, set by Viewer only).
+ * Without `evidence` it would follow the live `agentHtml` value, so turning the widgets addon off replaces it with source.
  * "View source" shows the bytes instead, and then reads "Show preview".
  */
-function HtmlViewer({ a, agentHtml }: { a: Artifact; agentHtml: boolean }) {
+function HtmlViewer({ a, agentHtml: agentHtmlOn, evidence = false }: { a: Artifact; agentHtml: boolean; /** An HTML artifact of the ticket (evidence): always the inert frame, whatever the widgets switch says. Nothing else sets this. */ evidence?: boolean }) {
+  // Evidence HTML needs no add-on: the frame is inert (sandbox="", sanitized, no network), the same in both cases.
+  const agentHtml = agentHtmlOn || evidence
   // A page that relied on scripts opens on its source with core's notice (round 2 #6); its static preview stays one click away.
   const scripted = usesScripts(a.preview!)
   const [source, setSource] = useState(scripted)
@@ -183,9 +188,9 @@ function HtmlViewer({ a, agentHtml }: { a: Artifact; agentHtml: boolean }) {
   const node = frameNode.safeParse({ type: 'frame', title: `Sandboxed preview of ${a.name}`, html: a.preview!, height: 520 })
   const framed = agentHtml && !source && node.success
   return (
-    <div className={cn('space-y-2', agentHtml && 'rounded-lg border p-2', agentHtml && addonHairline)} data-addon={agentHtml ? 'widgets' : undefined}>
+    <div className={cn('space-y-2', agentHtml && 'rounded-lg border p-2', agentHtml && (evidence ? 'border-border' : addonHairline))} data-addon={agentHtml && !evidence ? 'widgets' : undefined}>
       <div className="flex items-center gap-2">
-        {agentHtml && <AddonBadge name="widgets" />}
+        {agentHtml && !evidence && <AddonBadge name="widgets" />}
         {framed && <Pill tone="neutral">Sandboxed preview</Pill>}
         {agentHtml && node.success && (
           <Button type="button" variant="outline" size="sm" onClick={() => setSource(!source)}>
@@ -207,39 +212,153 @@ function HtmlViewer({ a, agentHtml }: { a: Artifact; agentHtml: boolean }) {
 
 const NO_PREVIEW = <p className="text-[13px] text-text-muted">No inline preview for this kind of file. Its content is not shown here; the sha256 above is what an approval binds.</p>
 
+/** A small CSV as a table (the first 200 rows and 40 columns); a bigger one stays text. */
+function CsvTable({ text }: { text: string }) {
+  const rows = parseCsv(text)
+  const shown = rows.slice(0, 200).map((r) => r.slice(0, 40))
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow className="hover:bg-transparent">
+          {shown[0].map((c, i) => (
+            <TableHead key={i} className="font-mono text-[11px]">
+              {c}
+            </TableHead>
+          ))}
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {shown.slice(1).map((r, i) => (
+          <TableRow key={i} className="hover:bg-transparent">
+            {r.map((c, j) => (
+              <TableCell key={j} className="font-mono text-[12px]">
+                {c}
+              </TableCell>
+            ))}
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  )
+}
+
+/** A diff, coloured by line (added, removed, hunk header). Plain text lines: nothing is parsed as markup. */
+function DiffView({ text, label }: { text: string; label: string }) {
+  return (
+    <pre tabIndex={0} aria-label={label} className="max-h-[70vh] overflow-auto rounded-md border border-border bg-bg p-3 font-mono text-[12px] leading-5">
+      {text.split('\n').map((l, i) => (
+        <div key={i} data-diff={l.startsWith('+++') || l.startsWith('---') ? 'file' : l.startsWith('+') ? 'add' : l.startsWith('-') ? 'del' : l.startsWith('@@') ? 'hunk' : undefined} className={cn('whitespace-pre-wrap break-words', l.startsWith('+') && !l.startsWith('+++') && 'bg-success-soft text-success', l.startsWith('-') && !l.startsWith('---') && 'bg-danger-soft text-danger', l.startsWith('@@') && 'text-info')}>
+          {l || ' '}
+        </div>
+      ))}
+    </pre>
+  )
+}
+
+/** A picture from digest-checked bytes, shown only as an <img>: scaled to fit, one click to the real size. */
+function PictureView({ a, url }: { a: Artifact; url: string }) {
+  const [big, setBig] = useState(false)
+  return (
+    <div className="space-y-1.5">
+      <div className={cn('rounded-md border border-border bg-bg p-1', big ? 'max-h-[75vh] overflow-auto' : 'flex justify-center')}>
+        <button type="button" aria-label={big ? `Show ${a.name} scaled to fit` : `Enlarge ${a.name}`} aria-pressed={big} onClick={() => setBig(!big)} className={cn('block outline-none focus-visible:ring-2 focus-visible:ring-ring', big ? 'cursor-zoom-out' : 'cursor-zoom-in')}>
+          {/* The one place a file's bytes become a picture: a data: URL in an <img> (no script, no network, even for SVG). */}
+          <img src={url} alt={`Picture ${a.name}`} referrerPolicy="no-referrer" className={big ? 'max-w-none' : 'max-h-80 max-w-full object-contain'} />
+        </button>
+      </div>
+      <p className="text-[12px] text-text-muted">{big ? 'Full size. Click the picture to scale it to fit.' : 'Scaled to fit. Click the picture to enlarge.'}</p>
+    </div>
+  )
+}
+
+const extOf = (name: string) => /\.([A-Za-z0-9]+)$/.exec(name)?.[1].toLowerCase() ?? ''
+
 /**
- * The text of a receipt, log or notes file, read from the host through the dashboard server. Shown as escaped plain text
- * (invisible, control and direction-changing characters become visible \u{...}), never as HTML, and only its first
- * 64 KiB. A file that is not text, or cannot be read, keeps the "no inline preview" line.
+ * The ladder for an evidence FILE, read from the host through the dashboard server (reads.py) and previewed only from
+ * bytes whose sha256 is the ticket's (the server checks it, and the picture path checks it again here):
+ *   1 HTML    the inert sandboxed frame (no scripts, no network)           4 PDF   no preview: its viewer runs in the page
+ *   2 picture <img> from a data: URL, SVG included, never markup           5 else  a card that says why (never a blank panel)
+ *   3 text    plain text (hidden characters escaped); json, csv, md, diff get their own view
+ * A digest that differs from the ticket's, a file read only in part, or a binary file gets the card.
  */
-function RemoteText({ a, ticket, html = false, agentHtml = false }: { a: Artifact; ticket: string; /** An HTML document: shown in HtmlViewer's inert frame, not as text. */ html?: boolean; agentHtml?: boolean }) {
+function RemotePreview({ a, ticket, unavailable }: { a: Artifact; ticket: string; /** Shown when the host cannot read the file at all (a demo has no bytes). */ unavailable?: ReactNode }) {
   const workspaces = useQuery(queries.workspaces())
   const home = workspaceOfTicket(ticket, workspaces.data ?? [])
   const q = useQuery({ ...artifactTextQuery(home?.id ?? '', ticket, a.name, a.sha256), enabled: !!home })
-  if (!home && !workspaces.isPending) return NO_PREVIEW
+  if (!home && !workspaces.isPending) return unavailable ?? <NoPreviewCard a={a} why="This ticket's workspace is not available, so the file cannot be read." />
   if (q.isPending) return <Skeleton className="h-40 w-full" aria-label="Loading the file" />
-  if (q.isError || !q.data || q.data.binary || q.data.text == null || looksBinary(q.data.text)) return NO_PREVIEW
+  if (q.isError || !q.data) return unavailable ?? <NoPreviewCard a={a} why="The host could not read this file, so there is no preview." />
+  const d = q.data
   // Only the file the ticket lists: the digest the host read must be the one on the ticket.
-  if (!sameDigest(q.data.digest, a.sha256)) return NO_PREVIEW
-  // A file read only in part cannot be checked against its digest: not shown.
-  if (q.data.truncated || !q.data.verified) return <p className="text-[13px] text-text-muted">This file is too large to preview. The sha256 above is what an approval binds.</p>
-  const { shown, cut, bytes } = capText(q.data.text.replace(/\r\n/g, '\n'))
-  // HTML evidence goes through the same viewer as an inline page (inert sandboxed frame, own switch). A page cut at 64 KiB
+  if (!sameDigest(d.digest, a.sha256)) return <NoPreviewCard a={a} warn why="This file does not match the digest the ticket records, so it is not shown. Do not rely on it as evidence." />
+  if (d.truncated || !d.verified) return <NoPreviewCard a={a} why={`Too large to preview: ${fmtBytes(Math.max(d.size, a.bytes ?? 0))}, the limit is ${fmtBytes(5.25 * 1024 * 1024)}.`} />
+  if (d.media) {
+    const url = verifiedMedia(d.media, a.sha256)
+    return url ? <PictureView a={a} url={url} /> : <NoPreviewCard a={a} warn why="The picture does not match the digest the ticket records, so it is not shown." />
+  }
+  const ext = extOf(a.name)
+  if (d.binary || d.text == null || looksBinary(d.text)) {
+    return <NoPreviewCard a={a} why={ext === 'pdf' ? 'PDF documents are not previewed here: a PDF viewer would run inside this page. Open the file from the ticket on the host.' : `Binary file${ext ? ` (type .${ext})` : ''}: there is no text to show.`} />
+  }
+  const { shown, cut, bytes } = capText(d.text.replace(/\r\n/g, '\n'))
+  // HTML evidence goes through the same viewer as an inline page (inert sandboxed frame). A page cut at 64 KiB
   // would be a different document from the one the digest names: not previewed.
-  if (html) return cut ? <p className="text-[13px] text-text-muted">This page is too large to preview. The sha256 above is what an approval binds.</p> : <HtmlViewer a={{ ...a, preview: shown }} agentHtml={agentHtml} />
+  if (/^html?$/.test(ext))
+    return cut ? <NoPreviewCard a={a} why={`Too large to preview as a page: ${fmtBytes(bytes)}, the limit is 64 KiB.`} /> : <HtmlViewer a={{ ...a, preview: shown }} agentHtml={false} evidence />
+  const note = (
+    <p className="text-[12px] text-text-muted">
+      {cut ? `Showing the first ${TEXT_PREVIEW_BYTES / 1024} KiB of ${fmtBytes(Math.max(bytes, d.size))}. ` : ''}
+      Shown as plain text; hidden characters appear as {'\\u{...}'}.
+    </p>
+  )
+  const safe = prose(shown)
+  if (ext === 'json' && !cut) {
+    try {
+      return (
+        <div className="space-y-2">
+          {note}
+          <TextViewer text={prose(JSON.stringify(JSON.parse(d.text), null, 2))} label={`JSON of ${a.name}`} />
+        </div>
+      )
+    } catch {
+      /* not valid JSON: shown as the text it is */
+    }
+  }
+  if (ext === 'csv' && !cut && parseCsv(shown).length > 1 && parseCsv(shown).length <= 200) return <CsvTable text={safe} />
+  if (/^(md|markdown)$/.test(ext) && !cut)
+    return (
+      <div className="space-y-2">
+        <p className="text-[12px] text-text-muted">Notes shown with basic formatting. Links stay inert and pictures are not loaded.</p>
+        <div className="rounded-md border border-border bg-bg p-3 text-[13px]">
+          <SafeMarkdownView text={safe} />
+        </div>
+      </div>
+    )
+  if (/^(diff|patch)$/.test(ext)) return <div className="space-y-2">{note}<DiffView text={safe} label={`Diff ${a.name}`} /></div>
   return (
     <div className="space-y-2">
-      <p className="text-[12px] text-text-muted">
-        {cut ? `Showing the first ${TEXT_PREVIEW_BYTES / 1024} KiB of ${fmtBytes(Math.max(bytes, q.data.size))}. ` : ''}
-        Shown as plain text; hidden characters appear as {'\\u{...}'}.
-      </p>
-      <TextViewer text={prose(shown)} label={`Text of ${a.name}`} />
+      {note}
+      <TextViewer text={safe} label={`Text of ${a.name}`} />
     </div>
   )
 }
 
 /** The content of one artifact (also the Artifacts page's preview pane): same sandbox and agent-HTML rule everywhere. */
 export function Viewer({ a, agentHtml, ticket }: { a: Artifact; agentHtml: boolean; /** The ticket it is on: lets a file with no inline content be read as text. */ ticket?: string }) {
+  const hasFile = a.bytes != null && !a.addon && !a.url
+  if (a.kind === 'screenshot' && ticket && hasFile && !a.preview)
+    return (
+      <RemotePreview
+        a={a}
+        ticket={ticket}
+        unavailable={
+          <div className="space-y-2">
+            <Thumb a={a} large />
+            <p className="text-[12px] text-text-faint">Placeholder rendering: the host could not serve this file. The sha256 above is what an approval binds.</p>
+          </div>
+        }
+      />
+    )
   if (a.kind === 'screenshot')
     return (
       <div className="space-y-2">
@@ -247,38 +366,11 @@ export function Viewer({ a, agentHtml, ticket }: { a: Artifact; agentHtml: boole
         <p className="text-[12px] text-text-faint">Placeholder rendering. The real host serves the file; the sha256 above is what an approval binds.</p>
       </div>
     )
-  if (!a.preview) {
-    if (ticket && isHtmlArtifact(a) && DOCUMENT_KINDS.includes(a.kind)) return <RemoteText a={a} ticket={ticket} html agentHtml={agentHtml} />
-    return ticket && isTextArtifact(a) ? <RemoteText a={a} ticket={ticket} /> : NO_PREVIEW
-  }
-  if (isHtmlDocument(a)) return <HtmlViewer a={a} agentHtml={agentHtml} />
+  if (!a.preview) return ticket && hasFile ? <RemotePreview a={a} ticket={ticket} /> : NO_PREVIEW
+  if (isHtmlDocument(a)) return <HtmlViewer a={a} agentHtml={agentHtml} evidence />
   if (a.kind === 'log') return <TextViewer text={a.preview} label={`Log ${a.name}`} />
   if (a.kind === 'dataset' || /\.csv$/.test(a.name)) {
-    const rows = parseCsv(a.preview)
-    return (
-      <Table>
-        <TableHeader>
-          <TableRow className="hover:bg-transparent">
-            {rows[0].map((c) => (
-              <TableHead key={c} className="font-mono text-[11px]">
-                {c}
-              </TableHead>
-            ))}
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {rows.slice(1).map((r, i) => (
-            <TableRow key={i} className="hover:bg-transparent">
-              {r.map((c, j) => (
-                <TableCell key={j} className="font-mono text-[12px]">
-                  {c}
-                </TableCell>
-              ))}
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-    )
+    return <CsvTable text={a.preview} />
   }
   return <CodeBlock language={langOf(a)} text={a.preview} />
 }

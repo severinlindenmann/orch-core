@@ -139,6 +139,35 @@ def picture(data: bytes) -> dict | None:
     }
 
 
+def media(data: bytes) -> dict | None:
+    """The bytes of an evidence picture (PNG, JPEG, GIF, WebP, SVG), typed by its first bytes, never by the name.
+
+    Run only on a complete file whose sha256 matched the ticket's record. It is a read-only offer: no decoding here, and
+    the page hashes the bytes again and shows them only as an <img> from a data: URL (an image context runs no script,
+    loads nothing, and SVG is never drawn as markup).
+    """
+    head = data[:512]
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        kind = "png"
+    elif data.startswith(b"\xff\xd8\xff"):
+        kind = "jpeg"
+    elif data[:4] == b"GIF8":
+        kind = "gif"
+    elif data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        kind = "webp"
+    elif (lead := head.lstrip().lower()).startswith(b"<svg") or (
+        lead.startswith((b"<?xml", b"<!doctype svg")) and b"<svg" in data[:4096].lower()
+    ):
+        kind = "svg"
+    else:
+        return None
+    return {
+        "type": kind,
+        "b64": base64.b64encode(data).decode(),
+        "digest": "sha256:" + hashlib.sha256(data).hexdigest(),
+    }
+
+
 def register(app: FastAPI, gateway: Gateway):
     def viewer(ws):
         return gateway.link(ws).welcome["peer"]["person"]
@@ -239,4 +268,6 @@ def register(app: FastAPI, gateway: Gateway):
             # R3 part B: a screenshot pasted into the ticket. Only a complete, verified PNG/WebP that passes core's
             # header check is offered; the page hashes the bytes itself before showing them, and only ever as an <img>.
             "image": picture(data) if verified and pasted_by_person(gateway, ws, key, name, digest) else None,
+            # Evidence preview (#1069): any complete, digest-verified picture, whoever added it. The page re-hashes it.
+            "media": media(data) if verified else None,
         }

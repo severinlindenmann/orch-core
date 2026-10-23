@@ -172,6 +172,47 @@ def test_a_screenshot_is_offered_as_bytes_only_when_core_accepts_it(client, toke
         assert client.get(url(stub, f"DEMO-0001/artifacts/{name}"), headers=headers(token)).json()["image"] is None
 
 
+def test_evidence_pictures_are_offered_as_media_only_when_complete_and_verified(client, token, stub, rich):
+    """#1069: an agent's PNG/JPEG/GIF/SVG is offered as `media` (the page shows it as an <img> after re-hashing);
+    text and binary files are not; a file that no longer matches its digest is refused outright."""
+    import base64
+
+    env, ids = rich
+    files = {
+        "a.png": _png(),
+        "b.jpg": b"\xff\xd8\xff\xe0" + b"JFIF" + b"\x00" * 8,
+        "c.gif": b"GIF89a" + b"\x00" * 10,
+        "d.svg": b'<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>',
+        "e.txt": b"just text",
+        "f.bin": b"\x00\x01\x02\x03",
+    }
+    for name, data in files.items():
+        env.tick()
+        env.store.append(
+            {
+                "type": "artifact.added",
+                "actor": env.agent,
+                "name": name,
+                "kind": "other",
+                "sha256": "sha256:" + hashlib.sha256(data).hexdigest(),
+                "bytes": len(data),
+            },
+            log=ids["First"],
+            artifacts={name: data},
+        )
+    kinds = {}
+    for name, data in files.items():
+        got = client.get(url(stub, f"DEMO-0001/artifacts/{name}"), headers=headers(token)).json()
+        kinds[name] = got["media"]["type"] if got["media"] else None
+        if got["media"]:
+            assert got["media"]["b64"] == base64.b64encode(data).decode()
+            assert got["media"]["digest"] == "sha256:" + hashlib.sha256(data).hexdigest()
+        assert got["image"] is None  # the pasted-screenshot path is unchanged: an agent's picture is not `image`
+    assert kinds == {"a.png": "png", "b.jpg": "jpeg", "c.gif": "gif", "d.svg": "svg", "e.txt": None, "f.bin": None}
+    (env.store_dir / "tickets" / ids["First"] / "artifacts" / "a.png").write_bytes(b"tampered")
+    assert client.get(url(stub, "DEMO-0001/artifacts/a.png"), headers=headers(token)).status_code == 409
+
+
 def test_changes_are_bound_to_the_observed_source(client, token, stub, rich):
     env, ids = rich
     res = client.get(url(stub, "DEMO-0001/changes"), headers=headers(token))

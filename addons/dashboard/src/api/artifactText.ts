@@ -15,6 +15,8 @@ export interface ArtifactContent {
   truncated: boolean
   binary: boolean
   text: string | null
+  /** A picture, when the bytes are one (#1069). The page re-hashes it (`verifiedMedia`) before it is shown. */
+  media?: EvidenceMedia | null
 }
 
 /** How much of a text the page shows. */
@@ -29,11 +31,6 @@ export function isTextArtifact(a: Pick<Artifact, 'name' | 'kind' | 'bytes' | 'ad
   if (a.addon || a.url || a.bytes == null) return false
   if (/\.html?$/i.test(a.name)) return false
   return TEXT_NAME.test(a.name) || TEXT_KINDS.includes(a.kind)
-}
-
-/** An HTML file with a file of its own: read like text, then shown only by the sandboxed viewer (never as live markup here). */
-export function isHtmlArtifact(a: Pick<Artifact, 'name' | 'bytes' | 'addon' | 'url'>): boolean {
-  return !a.addon && !a.url && a.bytes != null && /\.html?$/i.test(a.name)
 }
 
 /** The first `TEXT_PREVIEW_BYTES` bytes of `text` as text (never ending in half a character), and whether it was cut. */
@@ -60,4 +57,11 @@ export const artifactTextQuery = (ws: string, ticket: string, name: string, sha2
 export const sameDigest = (read: string, listed: string): boolean => {
   const bare = (d: string) => d.replace(/^sha256:/i, '').toLowerCase()
   return bare(read) !== '' && bare(read) === bare(listed)
+}
+
+/** A picture the server offers for an evidence file (complete, digest-verified read). Shown only as an <img> (never markup). */
+export interface EvidenceMedia {
+  type: 'png' | 'jpeg' | 'gif' | 'webp' | 'svg'
+  b64: string
+  digest: string
 }

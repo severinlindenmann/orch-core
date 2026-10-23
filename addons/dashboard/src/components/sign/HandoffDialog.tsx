@@ -138,9 +138,8 @@ export function HandoffDialog(p: HandoffDialogProps) {
   const phones = useQuery({ queryKey: ['phone-available', p.ws], queryFn: () => api.phoneAvailable(p.ws!), enabled: !!p.ws && !!p.phoneRequest, retry: false })
   const canPhone = !!p.phoneRequest && (phones.data?.phones ?? 0) > 0
   const [switching, setSwitching] = useState(false)
-  const terminalRequired = p.action?.action === 'settings_set' && !!p.action.sign_methods
-  const canClick = !terminalRequired && clickReady(here) && clickEligible(p.action)
-  const allowed = methods.allowed?.filter(m => terminalRequired ? m === 'terminal' : m !== 'click' || canClick)
+  const canClick = clickReady(here) && clickEligible(p.action)
+  const allowed = methods.allowed?.filter(m => m !== 'click' || canClick)
   const preferred = methods.preference?.method
   const fallback = methods.preference?.fallback
   const available = (m: SignMethod) => (m !== 'phone' || canPhone) && (m !== 'click' || canClick)

@@ -177,12 +177,35 @@ async function reviewItem(it) {
   const r = await api("GET", "/workspaces/" + it.workspace_id + "/items/" + it.item_id);
   if (r.status !== 200) { state.notice = banner("bad", "Cannot open this", say(r.body.error)); return home(); }
   const c = r.body.content ?? {};
+  if (it.kind === "gate" || it.kind === "verdict") return reviewDecision(it, c);
   const opts = Array.isArray(c.options) ? c.options : [];
   show(
     h("h1", { text: renderText(c.ticket_title ?? it.title ?? "Question") }),
     h("p", { class: "sentence", text: renderText(c.text ?? it.title ?? "") }),
     c.why ? h("p", { class: "muted", text: renderText(c.why) }) : null,
     opts.map((o) => h("div", { class: "card row" }, h("div", { class: "grow", text: renderText(o.label ?? o.key) }), h("button", { text: "Answer", onclick: () => startSign(it.workspace_id, { type: "question.answered", log: it.log, question: c.question, hash: it.hash, option: o.key }) }))),
+    h("button", { text: "Back", onclick: home }),
+  );
+}
+
+// D15b-3: a gate or verdict row. The action sends the hash the row was LISTED with (it.hash), never one re-read now; if the
+// content moved since, the hub answers event_changed and the person reviews again. The prompt shows what is signed.
+function reviewDecision(it, c) {
+  const note = h("textarea", { rows: 3, placeholder: "Your reason (needed to ask for changes or fail)" });
+  const act = (action) => startSign(it.workspace_id, { log: it.log, hash: it.hash, ...action });
+  const withText = (action) => { const text = note.value.trim(); if (!text) { note.focus(); return; } return act({ ...action, text }); };
+  const sources = Array.isArray(c.sources) ? c.sources : [];
+  show(
+    h("h1", { text: renderText(c.ticket_title ?? it.title ?? "Review") }),
+    h("p", { class: "sentence", text: it.kind === "verdict" ? "Give your verdict on this ticket." : "Review the " + renderText(c.gate ?? "") + " gate." }),
+    h("dl", { class: "facts" },
+      h("dt", { text: "Content reference" }), h("dd", { class: "fp", text: renderText((it.hash ?? "").slice(7, 15).toUpperCase().replace(/(.{4})/, "$1 ")) }),
+      h("dt", { text: "Generation" }), h("dd", { text: renderText(String(c.gate_gen ?? "")) }),
+      sources.flatMap((e) => [h("dt", { text: "Code" }), h("dd", { text: renderText(e.repo) + " " + renderText(e.sha) })])),
+    note,
+    it.kind === "verdict"
+      ? h("div", { class: "row" }, h("button", { class: "pri", text: "Pass", onclick: () => act({ type: "verdict.given", outcome: "pass" }) }), h("button", { text: "Fail", onclick: () => withText({ type: "verdict.given", outcome: "fail" }) }))
+      : h("div", { class: "row" }, h("button", { class: "pri", text: "Approve", onclick: () => act({ type: "gate.approved", gate: c.gate }) }), h("button", { text: "Ask for changes", onclick: () => withText({ type: "gate.changes_requested", gate: c.gate }) })),
     h("button", { text: "Back", onclick: home }),
   );
 }

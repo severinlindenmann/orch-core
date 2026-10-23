@@ -76,7 +76,7 @@ export const LAYOUT_SCENARIOS = [
   'agent-dialog-acked',
   'agent-blocked',
   'agent-grant',
-  'agent-outcomes',
+  
   // Model routing: the Start agent dialog with a model chosen by the workspace, and Settings > Add-ons with the box.
   'agent-model',
   'addons-model-routing',
@@ -508,7 +508,7 @@ const agentPreview = (scenario: LayoutScenario): AgentPreview => {
   }
   if (scenario === 'agent-model') return { ...base, display: `claude --model sonnet 'Run orch status, then work on ticket DEMO-0043.'`, model: 'sonnet', model_source: 'workspace' }
   if (scenario === 'agent-blocked') return { ...base, grant: null, blocked: { code: 'runner.disabled', message: `dashboard execution is off for this workspace on this machine ${LONG_WORD}`, detail: { missing: 'machine' } } }
-  if (scenario === 'agent-grant' || scenario === 'agent-outcomes') return { ...base, grant: null, blocked: { code: 'launch.no_grant', message: 'no usable runner grant', detail: { reason: 'expiring' } } }
+  if (scenario === 'agent-grant') return { ...base, grant: null, blocked: { code: 'launch.no_grant', message: 'no usable runner grant', detail: { reason: 'expiring' } } }
   return base
 }
 /** What a shell with colours prints: ls, git status and diff, a failing test, all 16 ANSI colours (layout preview only). */

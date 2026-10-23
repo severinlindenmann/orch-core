@@ -768,19 +768,22 @@ describe('start agent', () => {
     vi.spyOn(api, 'cancelClick').mockResolvedValue({ id: 'x', state: 'cancelled' })
     render(<QueryClientProvider client={new QueryClient()}>{extend
       ? <RunnerGrantCard ws={WS} runner={{ enabled: true, connected: true, terminals: false, grant: null }} loading={false} blocked={null} extend={{ id: 'gr_old', scope: 'workable', until: new Date(nowMs() + 5 * 36e5).toISOString() }} onChanged={() => {}} />
-      : <StartAgentDialog ws={WS} ticket="DEMO-7" open onClose={() => {}} />}</QueryClientProvider>)
+      : <StartAgentDialog ws={WS} ticket="DEMO-7" open choose onClose={() => {}} />}</QueryClientProvider>)
     if (!extend) {
       const shown = await screen.findByTestId('agent-preview', {}, T)
       expect(shown.textContent).toContain("codex 'work on DEMO-7'\\u{202e}") // escaped, never repaired
+      await waitFor(() => expect(screen.getByTestId('agent-start')).toBeEnabled(), T)
+      screen.getByTestId('agent-start').click() // "Sign and start agent": the access is signed in the popover
+    } else {
+      await waitFor(() => expect(screen.getByTestId('runner-grant-issue')).toBeEnabled(), T)
+      screen.getByTestId('runner-grant-issue').click()
     }
-    await waitFor(() => expect(screen.getByTestId('runner-grant-issue')).toBeEnabled(), T)
-    screen.getByTestId('runner-grant-issue').click()
     const panel = await screen.findByTestId('click-panel', {}, T)
     expect(panel.textContent).toContain(DEPOSIT_LINE)
     expect(panel.textContent).toContain(DEPOSIT_RISK)
     expect(within(panel).getByTestId('typed-word')).toHaveTextContent('Type DEMO~bbbbbbbb/GRANT to confirm')
     expect(within(panel).getByTestId('access-length')).toHaveTextContent('Let agents work for you for 8 h.')
-    expect(within(panel).getByRole('button', { name: extend ? 'Sign and extend' : 'Sign and allow access' })).toBeDisabled() // until the word is typed
+    expect(within(panel).getByRole('button', { name: extend ? 'Sign and extend' : 'Sign and start agent' })).toBeDisabled() // until the word is typed
     expect(prepare.mock.calls[0][1]).toEqual({ action: 'runner_grant', hours: 8, scope: 'workable', ...(extend ? { extend: 'gr_old' } : {}) })
     vi.restoreAllMocks()
   })

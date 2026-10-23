@@ -1,4 +1,5 @@
 import { Link } from '@tanstack/react-router'
+import { AgentIcon } from '@/components/agents/AgentIcon'
 import { useState } from 'react'
 import { Bot, ChevronRight, CircleDot, Hourglass, Square, Terminal } from 'lucide-react'
 import type { AgentSession } from '@/api/types'
@@ -67,7 +68,7 @@ function Row({ s, ctx }: { s: AgentSession; ctx: SessionContext }) {
   return (
     <li aria-label={`${s.name} for ${ctx.name(s.for)}, ${state}`} className="rounded-md hover:bg-surface-2">
       <div className="flex h-10 items-center gap-3 px-2 text-[13px]">
-        <Icon className="size-3.5 shrink-0 text-text-muted" aria-hidden />
+        {s.harness === 'claude-code' || s.harness === 'codex' ? <AgentIcon harness={s.harness} size={16} /> : <Icon className="size-3.5 shrink-0 text-text-muted" aria-hidden />}
         <span className="shrink-0 font-medium text-text">{s.name}</span>
         <span className="shrink-0 text-text-muted">for {ctx.name(s.for)}</span>
         {key ? (

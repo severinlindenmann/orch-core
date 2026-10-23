@@ -108,7 +108,7 @@ describe('the form', () => {
     const { r, sheet } = await open()
     await r.user.click(await within(sheet).findByRole('button', { name: 'Change' }, T))
     const dlg = await screen.findByTestId('agent-change')
-    await r.user.selectOptions(within(dlg).getByLabelText('Agent'), 'codex')
+    await r.user.click(within(dlg).getByRole('radio', { name: 'Codex' }))
     await r.user.selectOptions(within(dlg).getByLabelText('What it does'), 'refine')
     await r.user.click(within(dlg).getByRole('button', { name: 'Done' }))
     expect(within(sheet).getByTestId('agent-line')).toHaveTextContent('Codex will draft a plan for you to approve.')

@@ -886,6 +886,10 @@ def _convenience(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) 
     except HostError as exc:  # lock.busy (a lock is held), custody.unsafe_mode (a lock or flag file is not private)
         return write_error(out, False, exc.code, exc.message, hint=exc.hint)
     word = "on" if args.switch == "on" else "off"
+    if args.switch == "off" and convenience.enabled(state, wid, uid):  # never claim "off" for a flag still on
+        return write_error(
+            out, False, "custody.unavailable", "the click-to-sign flag is still on; run the command again"
+        )
     out.write(f"click-to-sign is {word} for {match[0].get('prefix')} ({wid})\n")
     if args.switch == "off":
         from orch.custody import select  # the same custody reading `orch sign` resolves its key from

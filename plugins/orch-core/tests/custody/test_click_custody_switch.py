@@ -234,7 +234,7 @@ def test_h1_an_unfinished_change_is_refused(switch):
 
 
 def test_h2_off_with_a_passphrase_while_the_flag_is_already_off_is_terminal_only(switch):
-    """H2 narrowed (V3-D31): a dashboard-chosen passphrase is accepted only in the locked step that takes away a one-click
+    """H2 narrowed (V3-D31): a dashboard-chosen passphrase is accepted only in the locked step that ends a one-click
     authority the session held. Flag already off: refused, nothing changes."""
     signer, state, provider, store, _, _ = switch
     device = on(signer, provider.passphrase)["device"]
@@ -260,8 +260,7 @@ def test_off_with_a_new_passphrase_moves_the_key_back_under_it(switch):
     assert select.status(state, WS)["custody"] == "passphrase" and "problem" not in select.status(state, WS)
     text = repr(log.lines) + repr(row)
     assert STRONG not in text and provider.passphrase not in text  # G: never logged or echoed
-    # and the new passphrase really is the factor: the click-to-sign switch can come back on with it
-    assert on(signer, STRONG)["enabled"] is True
+    refused(lambda: on(signer, STRONG), TERMINAL)  # but the dashboard's own choice is no proof for the dashboard
 
 
 def test_off_with_a_weak_passphrase_changes_nothing_and_the_flag_stays_on(switch):
@@ -287,7 +286,46 @@ def test_off_with_a_passphrase_while_a_change_is_pending_is_terminal_only(switch
     sel = select.read_selection(state, WS)
     select._write_selection(state, WS, {**sel, "transition": {"to": "passphrase", "step": "written"}})
     refused(lambda: off(signer, passphrase=STRONG), TERMINAL)
-    assert flag(state)
+    assert not flag(state)  # authority is taken away first, whatever else is refused
+
+
+def test_a_corrupt_selection_still_leaves_the_flag_off(switch, monkeypatch):
+    """Review of #1062: the flag is cleared before any custody work; no error path may leave it on."""
+    signer, state, provider, *_ = switch
+    on(signer, provider.passphrase)
+
+    def broken(*a, **k):
+        raise select.CustodyError("the custody selection is corrupt")
+
+    monkeypatch.setattr(select, "read_selection", broken)
+    refused(lambda: off(signer, passphrase=STRONG), "custody.unavailable")
+    assert not flag(state)
+
+
+def test_a_dashboard_chosen_passphrase_cannot_turn_signing_back_on(switch):
+    """Review of #1062: the dashboard picks P in off(P); on(P) must not then "prove" it. Only the terminal converts
+    again (it bumps the generation, which ends the refusal)."""
+    signer, state, provider, store, _, _ = switch
+    on(signer, provider.passphrase)
+    off(signer, passphrase=STRONG)
+    err = refused(lambda: on(signer, STRONG), TERMINAL)
+    assert "orch keys custody convenience" in err.message
+    assert not flag(state) and select.status(state, WS)["custody"] == "passphrase" and legacy_file(state).exists()
+    # the person converts in the terminal (their own prompt), after which the dashboard works as before
+    backend = lambda d: PassphraseBackend(d, _passphrase_provider=lambda r: STRONG, _kdf=KDF)  # noqa: E731
+    import orch.ops.human as h
+
+    h.open_backend = backend  # the fixture's monkeypatch restores it
+    select.convert_to_convenience(state, WS, store=store)
+    assert select.status(state, WS)["custody"] == "convenience"
+
+
+def test_a_terminal_move_back_does_not_block_the_dashboard(switch):
+    signer, state, provider, store, _, _ = switch
+    on(signer, provider.passphrase)
+    off(signer)
+    select.downgrade_in_place(state, WS, store=store)  # the terminal prompt (the fixture's provider)
+    assert on(signer, provider.passphrase)["enabled"] is True
 
 
 def test_a_crash_after_the_selection_write_leaves_a_scalar_that_off_sweeps(switch, monkeypatch):
@@ -562,7 +600,7 @@ def test_f3_a_flag_write_failure_after_the_conversion_reports_the_host_error(swi
 
 
 def test_f4_only_turn_off_passes_the_downgrade_a_passphrase():
-    """V3-D31 (was: the move back takes no passphrase): the pin that only select.turn_off_convenience passes one lives in
+    """V3-D31 (was: no passphrase): the pin that only select.turn_off_convenience passes one lives in
     tests/custody/test_seams.py."""
     import inspect
 
@@ -583,3 +621,38 @@ def test_on_is_refused_up_front_while_a_reader_is_below_level_1_and_nothing_move
     info = refused(lambda: on(signer, provider.passphrase), "sign.convenience_unavailable")
     assert info.reason == "phone_device" and info.detail == {"reason": "phone_device", "devices": ["d_" + "ab" * 16]}
     assert not flag(state) and signer.status({})["workspaces"][0]["custody"] == "passphrase"
+
+
+def _hub_only(*a, **k):
+    from orch.host.errors import HostError
+
+    raise HostError("sign.hub_only", "this workspace is in full hub mode")
+
+
+def test_a_refused_finish_in_full_mode_puts_the_terminal_conversion_back(switch, monkeypatch):
+    """L2-C11f-2: finish refused with sign.hub_only after stage: no stored copy, no stuck transition."""
+    from orch.host.errors import HostError
+
+    _, state, _, store, _, _ = switch
+    before = select.read_selection(state, WS)
+    monkeypatch.setattr(select, "finish_convenience", _hub_only)
+    with pytest.raises(HostError):
+        select.convert_to_convenience(state, WS, store=store)
+    assert select.read_selection(state, WS) == before
+    st = select.status(state, WS)
+    assert st["custody"] == "passphrase" and "problem" not in st
+    assert not store.exists(WS, st["device"]) and legacy_file(state).exists()
+
+
+def test_turn_off_clears_a_stuck_convenience_transition_in_full_mode(switch, monkeypatch):
+    """L2-C11f-2: a transition left at step written (older build, or a crash) is abandoned by the way back, which never
+    calls the full-mode refusal."""
+    signer, state, provider, store, _, _ = switch
+    monkeypatch.setattr(select, "finish_convenience", _hub_only)
+    staged = select.stage_convenience(state, WS, store=store)  # what the stuck state looks like
+    assert select.status(state, WS)["problem"] == "unfinished change to convenience"
+    monkeypatch.setattr(select, "refuse_full_mode", _hub_only)
+    assert select.turn_off_convenience(state, WS, os.getuid(), store=store) is not None
+    st = select.status(state, WS)
+    assert st["custody"] == "passphrase" and "problem" not in st and not store.exists(WS, staged["device"])
+    assert legacy_file(state).exists()

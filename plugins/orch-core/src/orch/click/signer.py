@@ -1095,10 +1095,10 @@ class ClickSigner:
     #                convenience custody, flag off -> refused: custody.terminal_needed (nothing to prove against)
     #                an unfinished change          -> refused: custody.unavailable
     #   custody_off  the flag goes off (no factor: it only takes authority away). V3-D31 narrows H2 for this path only:
-    #                with a NEW passphrase, while the flag is ON at that moment (checked under the workspace lock, so the
+    #                with a NEW passphrase, while the flag is ON at that moment (checked under the workspace lock: the
     #                session held one-click authority anyway), the key moves back to passphrase custody in the same
-    #                locked step (select.turn_off_convenience). A passphrase with the flag already off, or with a custody
-    #                change pending, is refused: custody.terminal_needed, nothing changed. Without a passphrase: flag only.
+    #                locked step (select.turn_off_convenience). A passphrase with the flag already off or a custody
+    #                change pending: custody.terminal_needed, nothing changed. Without a passphrase: flag only.
     def _misses_dir(self) -> int:
         from orch.custody.convenience import person_root, secure_dir
 
@@ -1271,6 +1271,8 @@ class ClickSigner:
                 raise
         except HostError as exc:  # lock.busy, custody.unsafe_mode
             raise ClickError(exc.code, exc.message, retryable=exc.code == "lock.busy") from None
+        except select.TerminalNeeded as exc:  # V3-D31: the factor was chosen on the dashboard
+            raise ClickError("custody.terminal_needed", str(exc)) from None
         except KeyNotFound as exc:
             raise ClickError("custody.no_key", str(exc)) from None
         except (BackendUnavailable, CustodyError) as exc:

@@ -78,7 +78,7 @@ def refuse_full_mode(state_dir: Path, workspace_id: str) -> None:
 
 
 class TerminalNeeded(CustodyError):
-    """The dashboard asked for a change only the terminal may make (``custody.terminal_needed``): nothing was changed."""
+    """The dashboard asked for a change only the terminal may make (``custody.terminal_needed``); nothing changed."""
 
 
 class Selection(dict):
@@ -173,6 +173,57 @@ def _drop_selection(state_dir: Path, workspace_id: str) -> None:
         os.close(fd)
 
 
+REKEY_MARK = "dashboard-rekey.json"
+
+
+def _mark_dashboard_rekey(state_dir: Path, workspace_id: str, gen: int) -> None:
+    """Record that the key's current factor (generation ``gen``) was chosen from the dashboard (V3-D31)."""
+    from .convenience import secure_dir, write_private
+
+    fd = secure_dir(_person_root(state_dir), (workspace_id,), create=True)
+    try:
+        write_private(fd, REKEY_MARK, json.dumps({"v": 1, "gen": gen}).encode("ascii"), replace=True)
+    finally:
+        os.close(fd)
+
+
+def _dashboard_rekeyed(state_dir: Path, workspace_id: str, sel: Selection | None) -> bool:
+    """True while the selection is still the one a dashboard turn-off created. Fails closed: an unreadable mark counts."""
+    from .convenience import read_private, secure_dir
+
+    if sel is None:
+        return False
+    try:
+        fd = secure_dir(_person_root(state_dir), (workspace_id,), create=False)
+    except KeyNotFound:
+        return False
+    try:
+        raw = read_private(fd, REKEY_MARK)
+    except KeyNotFound:
+        return False
+    finally:
+        os.close(fd)
+    try:
+        return json.loads(raw)["gen"] == sel.gen
+    except (ValueError, KeyError, TypeError):
+        return True
+
+
+def _drop_mark(state_dir: Path, workspace_id: str) -> None:
+    from .convenience import secure_dir, unlink_private
+
+    try:
+        fd = secure_dir(_person_root(state_dir), (workspace_id,), create=False)
+    except KeyNotFound:
+        return
+    try:
+        unlink_private(fd, REKEY_MARK)
+    except KeyNotFound:
+        pass
+    finally:
+        os.close(fd)
+
+
 def _store(state_dir: Path) -> Any:
     from . import convenience
 
@@ -217,8 +268,17 @@ def convert_to_convenience(
     refuse_dev_host(state_dir)  # §11A.17.2: before the key store is opened
     refuse_full_mode(state_dir, workspace_id)  # V3 C11: also before this function opens the store
     store = store if store is not None else _store(state_dir)
+    before = read_selection(state_dir, workspace_id)
     staged = stage_convenience(state_dir, workspace_id, prefix=prefix, store=store, clock=clock)
-    return finish_convenience(state_dir, workspace_id, staged, store=store)
+    try:
+        return finish_convenience(state_dir, workspace_id, staged, store=store)
+    except Exception as exc:
+        if getattr(exc, "code", None) != "sign.hub_only" or before is not None and before["transition"] is not None:
+            raise
+        # L2-C11f-2: a full join landed between stage and finish. Put the staged move back (the stored copy goes, the
+        # selection is what it was) instead of leaving a stuck transition with no way out.
+        undo_staged(state_dir, workspace_id, staged, before, store=store)
+        raise
 
 
 def stage_convenience(
@@ -242,6 +302,12 @@ def stage_convenience(
     refuse_full_mode(state_dir, workspace_id)  # V3 C11: not in full hub mode, before the key store is opened
     store = store if store is not None else _store(state_dir)
     sel = read_selection(state_dir, workspace_id)
+    if passphrase is not None and _dashboard_rekeyed(state_dir, workspace_id, sel):
+        # V3-D31: a factor the dashboard chose proves nothing to the dashboard. Only the terminal converts again.
+        raise TerminalNeeded(
+            "this key's passphrase was set from the dashboard, so the dashboard cannot use it as proof; switch "
+            "signing on in the terminal: orch keys custody convenience, then orch host convenience on"
+        )
     if sel is not None and sel["custody"] == "convenience" and sel["transition"] is None:
         raise KeyExists("this workspace's device key is already in convenience custody")
     if sel is not None and sel["transition"] is not None:
@@ -330,7 +396,7 @@ def downgrade_in_place(
     state_dir: Path, workspace_id: str, *, store: Any = None, passphrase: str | None = None
 ) -> Selection:
     """Move the same key back under a new passphrase. Without ``passphrase`` the key backend asks on the terminal
-    (``orch keys custody passphrase --in-place``). ``passphrase`` is given by exactly one caller, :func:`turn_off_convenience`
+    (``orch keys custody passphrase --in-place``). ``passphrase`` comes only from :func:`turn_off_convenience`
     (V3-D31: the dashboard's "Turn off", in the locked step that takes a one-click authority away; an AST test pins it).
     The key was readable without a factor: anyone who copied it can still sign, with any ``auth`` label. Resumable at
     step ``written`` (a resume never needs a passphrase). No full-mode or dev-host refusal: this goes toward passphrase
@@ -343,8 +409,17 @@ def downgrade_in_place(
     sel = read_selection(state_dir, workspace_id)
     if sel is None or (sel["custody"] != "convenience" and sel["transition"] is None):
         raise KeyNotFound("this workspace's device key is not in convenience custody")
-    if sel["transition"] is not None and sel["transition"]["to"] != "passphrase":
-        raise CustodyError("another custody change is unfinished; finish it first (orch keys custody status)")
+    # (a convenience-direction transition passes this check and is abandoned below)
+    if sel["transition"] is not None and sel["transition"]["to"] == "convenience":
+        # L2-C11f-2: a conversion to convenience that never finished (in full hub mode its finish is refused for good).
+        # Going to passphrase custody abandons it: the stored copy goes, the passphrase file was never touched.
+        try:
+            store.delete(workspace_id, sel["device"])
+        except KeyNotFound:
+            pass
+        done = {**sel, "gen": sel.gen + 1, "transition": None}
+        _write_selection(state_dir, workspace_id, done)
+        return Selection(done)
     pub = crypto.unb64u(sel["pub"], crypto.PUB_LEN)
     directory = human.keys_dir(Path(state_dir), workspace_id)
     legacy = human.open_backend(directory)
@@ -391,12 +466,15 @@ def turn_off_convenience(
     passphrase: str | None = None,
     store: Any = None,
 ) -> Selection | None:
-    """V3-D31, the one place "convenience off" happens: under ONE workspace lock the flag goes off and the key moves back
-    to passphrase custody (:func:`downgrade_in_place`). Returns the new selection, or ``None`` when the key was not moved
-    (``move_key`` false: the dashboard without a passphrase, which only takes authority away; or no convenience custody).
+    """V3-D31, the one place "convenience off" happens: under ONE workspace lock the flag goes off and the key moves
+    back
+    to passphrase custody (:func:`downgrade_in_place`). Returns the new selection, or ``None`` when the key was not
+    moved
+    (``move_key`` false: the dashboard without a passphrase; or no convenience custody).
 
+    * The flag is cleared FIRST, unconditionally, once the lock is held; every error after that leaves it off.
     * ``passphrase`` (the dashboard's new factor) is accepted only while the flag is ON at this moment, under the lock:
-      the session then held one-click authority anyway. Flag already off, or a custody change pending: ``TerminalNeeded``,
+      the session then held one-click authority anyway. Flag already off, or a change pending: ``TerminalNeeded``,
       nothing changed (Opus on #1062; H2 stays for every other case). Its strength is checked before anything changes.
     * Without ``passphrase`` and with ``move_key`` the key backend asks on the terminal (``orch host convenience off``).
     * A leftover convenience store key after a finished move (a crash between the selection write and the delete) is
@@ -410,19 +488,17 @@ def turn_off_convenience(
         check_strength(passphrase)  # before the flag changes: a weak text leaves the flag on and retryable
     with host_convenience.workspace_lock(state_dir, workspace_id, host_uid):
         was_on = host_convenience.enabled(state_dir, workspace_id, host_uid)
-        sel = read_selection(state_dir, workspace_id)
-        if passphrase is not None:
-            if sel is not None and sel["transition"] is not None:
-                raise TerminalNeeded(
-                    "a custody change of this workspace is unfinished; finish it in the terminal first"
-                )
-            if not was_on:
-                raise TerminalNeeded(
-                    "click-to-sign is already off, so the dashboard has no one-click authority to trade for a new "
-                    "passphrase; move the key back in the terminal: orch keys custody passphrase --in-place"
-                )
         if was_on:
+            # first and unconditionally: taking authority away needs no factor, and no later error may leave it on
             host_convenience.set_enabled(state_dir, workspace_id, False, host_uid)
+        if passphrase is not None and not was_on:
+            raise TerminalNeeded(
+                "click-to-sign is already off, so the dashboard has no one-click authority to trade for a new "
+                "passphrase; move the key back in the terminal: orch keys custody passphrase --in-place"
+            )
+        sel = read_selection(state_dir, workspace_id)
+        if passphrase is not None and sel is not None and sel["transition"] is not None:
+            raise TerminalNeeded("a custody change of this workspace is unfinished; finish it in the terminal first")
         if sel is None or not move_key:
             return None
         store = store if store is not None else _store(state_dir)
@@ -432,7 +508,10 @@ def turn_off_convenience(
             except KeyNotFound:
                 pass
             return None
-        return downgrade_in_place(state_dir, workspace_id, store=store, passphrase=passphrase)
+        done = downgrade_in_place(state_dir, workspace_id, store=store, passphrase=passphrase)
+        if passphrase is not None:
+            _mark_dashboard_rekey(state_dir, workspace_id, done.gen)
+        return done
 
 
 def forget(state_dir: Path, workspace_id: str, *, store: Any = None) -> list[str]:
@@ -449,6 +528,7 @@ def forget(state_dir: Path, workspace_id: str, *, store: Any = None) -> list[str
         if sel["custody"] == "convenience" or sel["transition"] is not None:
             _drop_selection(state_dir, workspace_id)
             removed.append("selection")
+        _drop_mark(state_dir, workspace_id)
     return removed
 
 

@@ -37,7 +37,17 @@ def _parser() -> argparse.ArgumentParser:
     ch.add_argument("--factor", required=True, choices=FACTORS)
     sv = sub.add_parser("serve", help="run the dev hub: link server + publish forwarding (loopback only)")
     sv.add_argument("--state", help="hub state dir (default: $ORCH_HUB_STATE)")
-    sv.add_argument("--listen", required=True, help="loopback host:port, e.g. 127.0.0.1:0")
+    sv.add_argument("--listen", help="loopback host:port, e.g. 127.0.0.1:0 (or --link-listen, exactly one)")
+    sv.add_argument(
+        "--link-listen",
+        help="network link bind: one literal private IP assigned to this machine, IP:port (refused on a machine with "
+        "workspace host or agent users, see --dev-shared-machine)",
+    )
+    sv.add_argument(
+        "--dev-shared-machine",
+        action="store_true",
+        help="dev only: allow --link-listen on a machine that has host/agent users (needs a dev card; network link, not separation)",
+    )
     sv.add_argument("--publish-url", required=True, help="orch-publish base URL (https, or http on loopback)")
     sv.add_argument("--api-host", help="host the workspaces sign (default: the host:port of --publish-url)")
     sv.add_argument("--invite", action="append", default=[], help="invite code accepted once (repeatable)")
@@ -103,6 +113,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.listen,
                 args.publish_url,
                 args.invite,
+                link_listen=args.link_listen,
+                dev_shared_machine=args.dev_shared_machine,
                 api_host=args.api_host,
                 web_listen=args.web_listen,
                 relay_url=args.relay_url,

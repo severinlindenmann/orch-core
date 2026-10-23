@@ -309,6 +309,8 @@ class Gateway:
                 ("grant.forget", "run/1"),
                 ("whoami", "ops/1"),
             ],
+            # V3 A7: the Hub tab, the top-bar chip and the Tickets column (reads; every change is a Terminal command).
+            "hub": [("hub.status", "hub/1"), ("share.rules", "hub/1"), ("share.preview", "hub/1")],
         }
         for feature, ops in requirements.items():
             if all(link.supports(op, cap) for op, cap in ops):

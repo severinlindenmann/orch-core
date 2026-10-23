@@ -191,3 +191,29 @@ def test_human_v13_shapes_and_dry_run_opts():
     finally:
         link.close()
         t.join(2)
+
+
+def test_hub_reads_are_plain_reads_decided_by_the_listed_op():
+    """V3 A7: the host lists hub.status in `ops` but not `hub/1` in `caps`; reads need no idem."""
+    a, b = socket.socketpair()
+    requests = []
+
+    def host():
+        with b:
+            receive(b)
+            b.sendall(encode(welcome(ops={"hub.status": 1, "share.rules": 1})))
+            req = receive(b)
+            requests.append(req)
+            b.sendall(encode({"t": "res", "id": req["id"], "ok": True, "result": {"data": {"signing": "full"}}}))
+
+    t = threading.Thread(target=host)
+    t.start()
+    link = HostLink(a, os.getuid(), WS)
+    try:
+        assert link.supports("hub.status", "hub/1") and link.supports("share.rules", "hub/1")
+        assert not link.supports("share.preview", "hub/1")  # not listed by the host
+        assert link.call("hub.status") == {"signing": "full"}
+        assert "opts" not in requests[0]  # a read: no idem
+    finally:
+        link.close()
+        t.join(2)

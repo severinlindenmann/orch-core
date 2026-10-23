@@ -280,6 +280,11 @@ const click = {
   stateClick: (ws: string, requestId: string) => call<ClickState>(`${w(ws)}/click/state`, 'POST', { request_id: requestId }),
   /** V3 C11: what the host says to check when the hub's channel signs (a read; nothing is prepared or signed here). */
   hubSign: (ws: string, body: import('./hubsign').HubSignRequest) => call<import('./hubsign').HubSignInfo>(`${w(ws)}/hubsign`, 'POST', body),
+  hubStatus: (ws: string) => call<import('./hub').HubStatus>(`${w(ws)}/hub`),
+  hubShare: (ws: string) => call<import('./hub').HubShare>(`${w(ws)}/hub/share`),
+  hubPreview: (ws: string, body: { add?: import('./hub').HubRule; remove?: import('./hub').HubRule }) =>
+    call<import('./hub').HubPreview>(`${w(ws)}/hub/share/preview`, 'POST', body),
+  hubCommand: (ws: string, body: import('./hub').HubCommandRequest) => call<import('./hub').HubCommand>(`${w(ws)}/hub/command`, 'POST', body),
   cancelClick: (ws: string, requestId: string) => call<{ id: string; state: string }>(`${w(ws)}/click/cancel`, 'POST', { request_id: requestId }),
   // How I approve (B6): the person's own default way to sign, and whether a phone is paired. Both were missing here, so
   // every real host looked as if it "does not provide personal approval preferences" (B11 10). An older server answers

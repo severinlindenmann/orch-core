@@ -1,5 +1,6 @@
 // Today's compact rows: one per open item, 56 px, the ask on the first line, the ticket on the second and one inline
 // action on the right. A row expands in place for what the action needs; signing always happens in core's dialogs.
+import { VerdictEvidence } from '../ticket/EvidenceView'
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import { Link } from '@tanstack/react-router'
 import { useQueryClient } from '@tanstack/react-query'
@@ -19,7 +20,10 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { toastApiError } from '@/app/toast'
 import { useWorkspace } from '@/app/workspace'
-import { RecommendedTag, type HumanAction } from '../ticket/shared'
+import { visible } from '@/components/sign/visible'
+import { AnswerSend } from '@/components/sign/AnswerSend'
+import { QuestionOptions } from '../ticket/QuestionOptions'
+import { type HumanAction } from '../ticket/shared'
 import { ago } from './shared'
 import { fmtClock, nowMs, plural } from '@/lib/time'
 
@@ -76,8 +80,8 @@ export function RowShell({
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-2">
             {onToggle ? (
-              <button type="button" aria-expanded={!!expanded} onClick={onToggle} className={cn(toggleCls, expanded ? 'whitespace-normal' : 'truncate')} title={ask}>
-                {ask}
+              <button type="button" aria-expanded={!!expanded} onClick={onToggle} className={cn(toggleCls, expanded ? 'whitespace-normal' : 'truncate')} title={visible(ask)}>
+                {visible(ask)}
               </button>
             ) : (
               <p className="min-w-0 truncate text-[13px] font-medium leading-5 text-text" title={ask}>
@@ -151,13 +155,14 @@ const Locked = () => <span className="text-xs text-text-muted">Answer in your te
 export function QuestionRow({ item, ticket, now, expanded, onToggle, sign, askedBy, decider, locked }: CoreRowProps) {
   const q = ticket?.questions_state.find((x) => x.id === item.ref)
   const [choice, setChoice] = useState<string | null>(null)
+  const [viewText, setViewText] = useState<string | null>(null)
   const id = `question:${item.ticket}:${item.ref}`
   const readOnly = decider !== undefined
   return (
     <RowShell
       testId={`card-${id}`}
       icon={<HelpCircle className="size-4" aria-label="question" />}
-      ask={item.text}
+      ask={viewText ?? item.text}
       sub={
         <>
           <TicketLine ticket={item.ticket} title={item.title} />
@@ -183,33 +188,20 @@ export function QuestionRow({ item, ticket, now, expanded, onToggle, sign, asked
     >
       {q?.why && <p className="text-[13px] leading-relaxed text-text-muted">{q.why}</p>}
       {locked ? (
-        <ul aria-label={`Options for ${item.ref}`} className="space-y-1 text-[13px] text-text">
-          {q?.options?.map((o) => (
-            <li key={o.key}>
-              {o.label}
-              {o.cost && <span className="text-xs text-text-muted"> · {o.cost}</span>}
-              {q.recommended === o.key && <RecommendedTag />}
-            </li>
-          ))}
-        </ul>
+        q && <QuestionOptions q={q} name={`answer-${id}`} value={null} idPrefix={`answer-${id}`} readOnly />
       ) : q?.options?.length ? (
-        <div className="flex flex-wrap items-end gap-2">
-          <div role="radiogroup" aria-label={`Answer to ${item.ref}`} className="flex flex-wrap gap-2">
-            {q.options.map((o) => (
-              <label
-                key={o.key}
-                className="flex cursor-pointer items-center gap-2 rounded-md border border-border px-2.5 py-1.5 text-[13px] text-text has-[:checked]:border-brand has-[:checked]:bg-brand-soft"
-              >
-                <input type="radio" id={`answer-${id}-${o.key}`} name={`answer-${id}`} value={o.key} checked={choice === o.key} onChange={() => setChoice(o.key)} className="accent-[var(--brand)]" />
-                <span>{o.label}</span>
-                {o.cost && <span className="text-xs text-text-muted">· {o.cost}</span>}
-                {q.recommended === o.key && <RecommendedTag />}
-              </label>
-            ))}
+        <div className="space-y-3">
+          <QuestionOptions q={q} name={`answer-${id}`} value={choice} onChange={setChoice} idPrefix={`answer-${id}`} />
+          <div className="block">
+            <AnswerSend
+              ticket={item.ticket}
+              question={q}
+              option={choice}
+              canSend={!!choice && !!ticket}
+              fallback={() => choice && sign(item.ticket, { kind: 'answer', question: item.ref!, option: choice })}
+              onViewQuestion={setViewText}
+            />
           </div>
-          <Button size="sm" disabled={!choice || !ticket} onClick={() => choice && sign(item.ticket, { kind: 'answer', question: item.ref!, option: choice })}>
-            Send answer
-          </Button>
         </div>
       ) : (
         <Button asChild size="sm" variant="outline">
@@ -312,7 +304,7 @@ export function VerdictRow({ item, ticket, now, expanded, onToggle, sign, decide
         ) : (
           <>
             <Button asChild size="sm" variant="ghost">
-              <Link to="/ticket/$key" params={{ key: item.ticket }}>
+              <Link to="/ticket/$key" params={{ key: item.ticket }} search={{ tab: 'acceptance' }}>
                 Evidence
               </Link>
             </Button>
@@ -334,6 +326,7 @@ export function VerdictRow({ item, ticket, now, expanded, onToggle, sign, decide
         {' · '}
         {receipts} receipts · {ticket?.artifacts.length ?? 0} artifacts
       </p>
+      {ticket && <VerdictEvidence ticket={ticket} dialog={false} />}
     </RowShell>
   )
 }

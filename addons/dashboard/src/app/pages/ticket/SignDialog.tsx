@@ -18,6 +18,7 @@ import { gateActionName, policyText } from './actions'
 import type { HumanAction } from './shared'
 import { queries } from '@/api/queries'
 import { handoffMode } from '@/api/features'
+import { VerdictEvidence } from './EvidenceView'
 import { HandoffSignDialog } from './HandoffSignDialog'
 
 type Described = { title: string; gate?: GateName; hash: string; covers: string[]; policy?: string }
@@ -301,6 +302,7 @@ function SimulatedSignDialog({ ticket, action, onClose, onOpenEvidence, onOpenCh
               </Button>
               {changesLink}
             </p>
+            <VerdictEvidence ticket={opened} />
             <section aria-label="Commit" className="rounded-md border border-border bg-bg px-3 py-2 text-[13px]">
               <h3 className="mb-0.5 text-[12px] font-medium text-text-muted">The verdict signs this commit</h3>
               <p className="break-words font-mono text-[12px] text-text">{visible(commitCover(shownBranch))}</p>

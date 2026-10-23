@@ -91,8 +91,7 @@ export type Primary = { kind: 'answer'; question: string } | { kind: 'verdict' }
 
 /** Answer a question > give the verdict > approve requirements > approve the plan. A blocking question goes first. */
 export function primaryAction(av: Available): Primary | null {
-  const q = av.answer.find((x) => x.blocking) ?? av.answer[0]
-  if (q) return { kind: 'answer', question: q.id }
+  // A question is answered in one place, on the question itself (Today, Questions tab): not here.
   if (av.verdict) return { kind: 'verdict' }
   if (av.approve.length) return { kind: 'approve', gate: av.approve[0] }
   return null

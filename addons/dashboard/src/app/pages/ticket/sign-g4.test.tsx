@@ -66,7 +66,7 @@ describe('G4 signing dialogs say what you sign', () => {
     await screen.findByRole('heading', { level: 1, name: /Load tariff tables/ }, T)
     await user.click(screen.getByRole('tab', { name: /Questions/ }))
     await user.click(await screen.findByRole('radio', { name: /DATE \(local midnight\)/ }))
-    await user.click(within(document.getElementById('question-Q2')!).getByRole('button', { name: 'Answer Q2' }))
+    await user.click(within(document.getElementById('question-Q2')!).getByRole('button', { name: 'Send answer' }))
     const dialog = await screen.findByRole('dialog', {}, T)
     expect(within(dialog).getByRole('button', { name: 'Send answer' })).toBeInTheDocument()
     expect(dialog).toHaveTextContent(/Your answer: DATE/)
@@ -213,7 +213,7 @@ describe('G4 the dialog shows everything the gate hash covers', () => {
 })
 
 describe('G4 artifact drawer stays closed to stale state', () => {
-  it('turning agent HTML off while the drawer is open replaces the frame with source', async () => {
+  it('turning agent HTML off while the drawer is open replaces the frame with source (inline page content keeps the add-on gate)', async () => {
     const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query')
     const { render } = await import('@testing-library/react')
     const userEvent = (await import('@testing-library/user-event')).default

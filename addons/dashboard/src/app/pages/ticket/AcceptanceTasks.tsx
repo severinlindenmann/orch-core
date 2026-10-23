@@ -1,5 +1,6 @@
 import { ManualAcceptanceProvider, ManualButtons } from './ManualAcceptance'
 import { useTicketEdit } from './EditTicket'
+import { CriterionEvidence } from './EvidenceView'
 import { Button } from '@/components/ui/button'
 import { ChevronDown, ChevronRight, FileText, ListChecks, Pencil, UserCheck } from 'lucide-react'
 import { useState } from 'react'
@@ -144,6 +145,7 @@ function Criterion({ ac, ticket, jump, viewer }: { ac: AcceptanceStatus; ticket:
         </p>}
         <ManualButtons ac={ac} />
       </div>
+      <CriterionEvidence ticket={ticket} ac={ac} />
       {open && first && (
         <ul className="mt-2 space-y-1.5 pl-[3.75rem]" aria-label={`Proven by, ${ac.id}`}>
           {ac.evidence.map((ev) => {

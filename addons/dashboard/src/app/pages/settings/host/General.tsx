@@ -23,6 +23,7 @@ import { OwnerNote } from '../OwnerNote'
 import { useViewerRole } from './useViewerRole'
 import { useSettingsHandoff } from './useSettingsHandoff'
 import { ReposSection } from './Repos'
+import { WorkspaceIconPicker } from '../WorkspaceIconPicker'
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -66,6 +67,15 @@ export function HostGeneral({ workspace }: { workspace: Workspace }) {
     <div className="space-y-4">
       <h2 className="text-base font-semibold">General</h2>
       <HostAlarms alarms={hostInfo.data?.alarms ?? []} />
+      {workspace.icon_known && (
+        <Section title="Icon">
+          <WorkspaceIconPicker
+            workspace={workspace}
+            canEdit={canChangeSettings(role) && served}
+            onSave={(choice) => ask({ title: 'Change the workspace icon', action: { action: 'icon_set', icon: choice }, autoStart: true })}
+          />
+        </Section>
+      )}
       <Section title="Workspace">
         <dl className="divide-y divide-border">
           <Row label="Name">

@@ -3,6 +3,7 @@
     PUT /v2/hub/card                     signed hub.card (with its op_cert)
     PUT /v2/hub/op-revoked               root-signed hub.op_revoked
     PUT /v2/hub/bindings/{workspace_id}  WSK-signed hub.binding or hub.unbound
+    PUT /v2/hub/cards/{workspace_id}     {card, pk_pub}: the workspace's v2 card from ``card_put`` (admits the workspace)
 
 No transport authentication: every object authenticates itself. Success is ``200 {"ok": true}``; a refusal is
 ``{"error": code}`` and surfaces as that code if it is a known one. 413, 500, 503, an unreadable answer, a redirect, a
@@ -36,6 +37,11 @@ class HttpPublishSync:
 
     def put_op_revoked(self, revoked: Mapping[str, Any]) -> None:
         self._put("/v2/hub/op-revoked", revoked)
+
+    def put_card(self, workspace_id: str, card: Mapping[str, Any], pk_pub: str) -> None:
+        if type(workspace_id) is not str or _ID32.fullmatch(workspace_id) is None:
+            raise PublishSyncError("malformed")
+        self._put(f"/v2/hub/cards/{workspace_id}", {"card": dict(card), "pk_pub": pk_pub})
 
     def put_binding(self, workspace_id: str, obj: Mapping[str, Any]) -> None:
         if type(workspace_id) is not str or _ID32.fullmatch(workspace_id) is None:

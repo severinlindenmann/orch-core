@@ -25,5 +25,9 @@ class PublishSync(Protocol):
     def put_op_revoked(self, revoked: Mapping[str, Any]) -> None:
         """A root-signed ``hub.op_revoked`` of the hub, as ``accept_op_revoked``."""
 
+    def put_card(self, workspace_id: str, card: Mapping[str, Any], pk_pub: str) -> None:
+        """A workspace's v2 directory card with the owner's ``PK`` (b64u), as ``card_put`` carried it. orch-publish
+        verifies it itself and admits (or refuses) the workspace."""
+
     def put_binding(self, workspace_id: str, obj: Mapping[str, Any]) -> None:
         """A WSK-signed ``hub.binding`` or ``hub.unbound`` of the workspace, as ``accept_binding`` / ``accept_unbound``."""

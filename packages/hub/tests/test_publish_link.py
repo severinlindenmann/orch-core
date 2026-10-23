@@ -29,7 +29,8 @@ def test_publish_out_over_the_link_is_forwarded_with_the_transport_signature(mak
     h = make_hub(publish=fw, downstream=fw)
     c = h.open(first=True)
     assert c.request("join", h.join_body()) == {}
-    assert [x[0] for x in sync.calls] == ["card", "binding"]  # the join's binding reached the sync seam
+    # the join's card (admission) and binding reached the sync seam, the hub's own card first for the binding
+    assert [x[0] for x in sync.calls] == ["ws_card", "card", "binding"]
 
     up.status, up.body = 201, b"made"
     req = host_request(G.K.priv["wsk_a"], G.HUB_ID, G.WS_A, method="PUT", target="/v1/ws/x/files/a", body=b"data")
@@ -63,3 +64,15 @@ def test_publish_out_over_the_link_is_forwarded_with_the_transport_signature(mak
     with pytest.raises(LinkError) as e:
         c.request("publish_out", {"request": req})
     assert e.value.code == "not_bound" and len(up.requests) == 1
+
+
+def test_a_join_succeeds_even_when_publish_does_not_admit_the_workspace_yet(make_hub, up):
+    from orch_hub.publish import PublishSyncError
+
+    sync = RecordingSync()
+    sync.fail = PublishSyncError("unknown_workspace")
+    signer = OpSigner(G.K.priv["hk_op"])
+    fw = HubPublish(lambda: (signer, G.card(), G.HUB_ID), sync, PublishConfig(up.url, HOST, timeout_s=3))
+    h = make_hub(publish=fw, downstream=fw)
+    c = h.open(first=True)
+    assert c.request("join", h.join_body()) == {}  # the invite is consumed; publish.register tells the owner later

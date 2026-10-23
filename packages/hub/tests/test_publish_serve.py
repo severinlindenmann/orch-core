@@ -80,7 +80,8 @@ def test_serve_join_publish_restart(tmp_path, up):
         req = host_request(G.K.priv["wsk_a"], hub_id, G.WS_A)
         assert c.request("publish_out", {"request": req})["status"] == 200
         seen = [(r["method"], r["target"]) for r in up.requests]
-        assert seen[0] == ("PUT", "/v2/hub/card")
+        assert seen[0] == ("PUT", f"/v2/hub/cards/{G.WS_A}")  # the join's card goes to publish first (R5a)
+        assert ("PUT", "/v2/hub/card") in seen
         assert ("PUT", f"/v2/hub/bindings/{G.WS_A}") in seen and seen[-1][0] == "GET"
         c.close()
     finally:

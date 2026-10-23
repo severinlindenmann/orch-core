@@ -234,6 +234,17 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
         )
     if check == "v2_card":
         return {"workspace_id": H.verify_v2_card(a["card"], unb64u(a["pk_pub"], 65), now_ms=now)["workspace_id"]}
+    if check == "ws_card_admission":
+        # orch-publish's side of card_put (protocol 11.2 "Admission through the hub"): the card verifies under pk_pub,
+        # names the path workspace, the admin pre-bound it, and card_seq is not below the highest ever admitted
+        o = H.verify_v2_card(a["card"], unb64u(a["pk_pub"], 65), now_ms=now)
+        if o["workspace_id"] != a["workspace_id"]:
+            raise H.Refused("other_workspace")
+        if not a["prebound"]:
+            raise H.Refused("unknown_workspace")
+        if a.get("floor") is not None and o["card_seq"] < a["floor"]:
+            raise H.Refused("stale_card")
+        return {"workspace_id": o["workspace_id"], "card_seq": o["card_seq"]}
     if check == "publish":
         held = _held({**a, "card": a["hub_card"]})
         bindings = {

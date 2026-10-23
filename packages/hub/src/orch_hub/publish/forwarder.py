@@ -51,6 +51,12 @@ SYNC_CODES = frozenset(
         "unknown_hub",
         "bad_signature",
         "not_bound",
+        "other_person",
+        "delegation_mismatch",
+        "delegation_changed",
+        "workspace_blocked",
+        "owner_not_allowed",
+        "delegation_refused",
     ]
 )
 _RESYNC_CODES = (b"not_bound", b"unknown_hub")
@@ -118,7 +124,14 @@ class HubPublish:
     # --- Downstream (the link server calls these after it accepted the object) -------------------------------------
 
     def card(self, workspace_id: str, card: Mapping[str, Any], pk_pub: str) -> None:
-        pass  # the workspace's v2 card reaches orch-publish through its own register flow, not through the hub
+        """The workspace's v2 card (``card_put``, already checked against the pin) goes to orch-publish, which verifies it
+        itself and admits the workspace exactly as its pre-bind, allowlist and never-change rules say (V3-D36: this is
+        the only way a workspace reaches publish). A refusal goes back to the workspace as the hub's refusal."""
+        with self._ws_lock(workspace_id):
+            try:
+                self._sync.put_card(workspace_id, card, pk_pub)
+            except PublishSyncError as e:
+                raise Refused(e.code if e.code in SYNC_CODES else "unavailable") from None
 
     def binding(self, workspace_id: str, obj: Mapping[str, Any]) -> None:
         """Remember the workspace's newest binding / unbound. An unbound is final: a binding at or below the unbound

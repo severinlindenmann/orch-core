@@ -205,7 +205,10 @@ def join(c: OpContext) -> dict[str, Any]:
             _drop_view(c, state)
         except Exception:
             logging.getLogger("orch_hub.link").exception("view drop failed")
-    c.downstream.card(c.workspace_id, join_msg["card"], join_msg["pk_pub"])
+    try:  # the join is committed: a publish that cannot admit the workspace now is told again at `publish.register`
+        c.downstream.card(c.workspace_id, join_msg["card"], join_msg["pk_pub"])
+    except Refused as e:
+        logging.getLogger("orch_hub.link").info("card not admitted by publish at join: %s", e.code)
     c.downstream.binding(c.workspace_id, join_msg["binding"])
     return {}
 

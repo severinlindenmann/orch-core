@@ -481,7 +481,6 @@ Codes from P1 (`orch.ops.errors`, F1 §10.4a) keep their exit codes and retryabi
 | `relay.no_primary` | 3 | no | stays | a relay pairing offer without a verified `membership/primary.json` (R6c, 11A.15.1); `orch host relay primary set` | — |
 | `relay.local_epochs` | 3 | no | stays | `relay.link` on a workspace whose epoch keys were made locally for the hub: linking a relay comes with H5 (V3 C2b) | — |
 | `relay.quota` | 3 | no | stays | a relay pairing offer under the `membership_quota` alarm or with the relay-reachable device count at the member-list cap (R6c, 11A.15.6 step 1) | — |
-| `relay.pair_closed` | 3 | no | stays | a pairing step the offer's state does not allow: cancel of an allocated offer, an answer or certificate for an offer not waiting for it, `relay.pair_device` outside step 9 or within 2 minutes of the phone's deadline, or without a membership publisher (R6c, 11A.15.6, 11A.15.9A) | — |
 | `launch.claimed` | 3 | no | stays | `agent.start` on a ticket with a live claim | — |
 | `launch.no_grant` | 3 | no | stays | no usable runner grant; `detail.reason` `none`, `expiring`, `scope` or `revoked` (v1.9: on the `Error` only where the host knows the reason; a preview's `blocked.detail` always has it) | — |
 | `grant.forgotten` | 3 | no | stays | `grant.deposit` of a forgotten or replaced runner grant id | — |

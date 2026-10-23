@@ -20,8 +20,6 @@ from orch.host import devmode
 from orch.host.control import _genesis_view
 from orch.host.control_client import new_idem
 from orch.host.errors import DETAIL_KEYS, HostError
-from orch.relay import submit as relay_submit
-from orch.relay.framing import Identity, Refusal
 from tests.host.devgate_helpers import ORIGIN, SbxLab
 from tests.host.dispatch_helpers import Served, ok
 from tests.host.lifecycle_helpers import UID, Lab
@@ -609,41 +607,6 @@ def test_host_bootstrap_reserved_prefix_on_a_dev_host(sbx):
 
 
 # --- P5 in the bridge's lock-free checks, the alarm (17.4, 17.7) ------------------------------------------------------
-
-
-def _p5(typ: str, gate: Any, *, bad_sig: bool = False, auth: str = "convenience") -> tuple[str | None, int]:
-    """The lock-free checks of one validly shaped event (P1 to P7) with ``gate`` as the host's dev gate; returns the
-    refusal code (``None``: passed) and how often ``dev_convenience_refused`` was counted."""
-    from tests.relay.bridgekit import Phone, ulid
-
-    from orch import canon, crypto
-
-    phone = Phone()
-    ident = Identity(WS, "d_" + phone.device, "p_" + phone.person, "sha256:" + "1" * 64, 2, "sha256:" + "4" * 64)
-    log = ulid()
-    if typ == "question.answered":
-        fields = {"question": "Q1", "hash": "sha256:" + "0" * 64, "option": "y", "based_on": "sha256:" + "5" * 64}
-    else:
-        fields = {"key": "SBX-0001", "ticket_type": "bug", "title": "t", "owner": ident.person_id}
-    ev = phone.event(log, typ, auth=auth, **fields)
-    if bad_sig:
-        other = Phone()
-        body = {k: v for k, v in ev.items() if k != "sig"}
-        ev = {**body, "sig": crypto.b64u(crypto.sign(other.dk, canon.person_signing_bytes(WS, log, body)))}
-    op = "answer" if typ == "question.answered" else "new_ticket"
-    count = [0]
-
-    def refused() -> None:
-        count[0] += 1
-
-    try:
-        relay_submit.check_events(
-            op, {"log": log, "events": [ev]}, ident, phone.dk_pub, idem=ev["id"], convenience_gate=gate,
-            convenience_refused=refused,
-        )  # fmt: skip
-    except Refusal as r:
-        return r.code, count[0]
-    return None, count[0]
 
 
 def test_no_convenience_env_refuses_dev_gate(sbx, monkeypatch):

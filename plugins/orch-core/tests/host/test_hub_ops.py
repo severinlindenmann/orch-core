@@ -516,11 +516,10 @@ class _DeferredEpochs(hubops._Epochs):
 @pytest.fixture
 def keystore(monkeypatch, served, tmp_path):
     """A membership key store for the served workspace with epoch 1 committed, standing in for the relay's."""
-    from orch.identity.epochs import MembershipKeys, R6Gate
+    from orch.identity.epochs import MembershipKeys
     from tests.wsproto import r6kit
 
     mk = MembershipKeys(tmp_path / "membership", served.wid, now_ms=lambda: 1_790_000_000_000)
-    R6Gate(mk).install(lambda: r6kit.KitStore())
     r6kit.rotate(mk)
     monkeypatch.setattr(
         hubops,

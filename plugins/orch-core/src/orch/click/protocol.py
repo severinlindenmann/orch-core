@@ -131,7 +131,6 @@ CLICK_OPS = frozenset(
 #: §0.8.6 item 6: ops that change who or what may act: click plus the typed word
 WORD_OPS = frozenset(
     {
-        "relay.pair_device",
         "member.add",
         "member.role",
         "member.remove",

@@ -114,7 +114,6 @@ def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
         "policy.set",
         "settings.set",
         "people.set",
-        "relay.pair_device",
         "publish.share",
         "ac.accept",
         "ac.unaccept",

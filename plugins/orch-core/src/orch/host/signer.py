@@ -25,7 +25,6 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from orch import canon
-from orch.identity import pairdevice
 
 from . import review, signcontent
 
@@ -470,8 +469,6 @@ _MATERIAL_KEYS = {
         {"kind", "ticket", "review"},
         {"kind", "ticket", "review", "texts", "before", "sequence", "statement", "grants"},
     ),
-    # H12c-e (11A.15.10 item 12): exactly the bound fields and the review, nothing else
-    pairdevice.MATERIAL_KIND: (pairdevice.MATERIAL_FIELDS | {"review"}, pairdevice.MATERIAL_FIELDS | {"review"}),
 }
 
 
@@ -502,8 +499,6 @@ def _hashes(prepared: Mapping[str, Any], workspace_id: str) -> None:
     gate_event = len(events) == 1 and events[0]["type"] in _GATE_TYPES
     question_event = len(events) == 1 and events[0]["type"] == "question.answered"
     want = "gate" if gate_event else ("question" if question_event else "payload")
-    if op == pairdevice.OP:  # H12c-e: the op and its kind belong together, both ways (no cross-kind substitution)
-        want = pairdevice.MATERIAL_KIND
     if kind != want:
         _refuse(f"material of kind {kind!r} for {op}")
     if log == "workspace":
@@ -515,22 +510,8 @@ def _hashes(prepared: Mapping[str, Any], workspace_id: str) -> None:
         _gate(material, events[0], workspace_id, log)
     elif kind == "question":
         _question(material, events[0], workspace_id, log)
-    elif kind == pairdevice.MATERIAL_KIND:
-        _pair_device(material, events, workspace_id, log)
     _before(material, events)
     _grants(material, events)
-
-
-def _pair_device(material: Mapping[str, Any], events: list[Mapping[str, Any]], workspace_id: str, log: str) -> None:
-    """H12c-e: the binding of the ``relay.pair_device`` material (:func:`orch.identity.pairdevice.check_material`):
-    the workspace, the device id, the cleaned label, the scopes, the certificate digest and the SAS or ``cert_code``,
-    against the one ``device.added`` on the workspace log; any extra field is refused."""
-    if log != "workspace" or len(events) != 1:
-        _refuse("relay.pair_device signs one device.added on the workspace log")
-    try:
-        pairdevice.check_material(material, events[0], workspace_id=workspace_id, person=events[0]["actor"]["id"])
-    except pairdevice.PairDeviceInvalid as exc:
-        _refuse(f"relay.pair_device: {exc}")
 
 
 def _gate(material: Mapping[str, Any], ev: Mapping[str, Any], workspace_id: str, log: str) -> None:
@@ -648,7 +629,6 @@ _PLAIN = {
     "policy.set": "set the gate policies {gates} of {ticket}",
     "settings.set": "change the workspace settings {set}",
     "people.set": "change the {role} of {ticket}",
-    "relay.pair_device": "add the paired device {device} to your devices",
     "publish.share": "let the staged copy of files of {ticket} be shared outside this computer",
     "hub.join": "join hub {hub_id} in {mode} mode: the hub sees only what you share and never gets the workspace key",
     "hub.join.full": "join hub {hub_id} in full mode: the hub will be able to read everything in this workspace",
@@ -692,8 +672,6 @@ def confirm_word(prepared: Mapping[str, Any], workspace: Callable[[str], tuple[s
         return f"{_clean(ev.get('name'))}~{_clean(prepared['workspace_id'])[-8:]}"
     if op in _ADDON_OPS:
         return _clean(ev.get("name"))
-    if op == pairdevice.OP:  # H12c-e: the last eight hex of the device id being added (shown in the review)
-        return _clean(ev.get("device"))[-8:]
     if ticket is not None:
         return ticket_word(prepared)
     return op.upper()
@@ -872,8 +850,6 @@ def render(
                 out.append(f"{_clean(key)}: {_clean(value)}")
     if material.get("kind") == "gate":
         out += _gate_content(material)
-    if material.get("kind") == pairdevice.MATERIAL_KIND:
-        out += _pair_content(material)
     if material.get("kind") == "question":
         out += _question_content(material["question"])
     for gid, info in sorted((material.get("grants") or {}).items()):  # the host's word on each access taken back
@@ -931,13 +907,8 @@ def plain(
 ) -> Review:
     """B6 (owner decision E): the review in three layers. The plain view is :func:`signcontent.text` of the request's
     own events and material (so it is exactly what is signed); the details are today's full :func:`render`, which
-    also runs here, so every refusal of the full review still comes before any prompt. A relay pairing keeps the full
-    review as its only view (the code the person compared is part of what it binds)."""
+    also runs here, so every refusal of the full review still comes before any prompt."""
     full = render(prepared, workspace, artifacts=artifacts)
-    if prepared["material"].get("kind") == pairdevice.MATERIAL_KIND:
-        out = Review(prefix + full)
-        out.details = ""
-        return out
     known = workspace(prepared["workspace_id"])
     try:
         lines = signcontent.text(
@@ -963,24 +934,6 @@ def plain(
     out.details = prefix + full
     out.details_first = os.environ.get("ORCH_SIGN_DETAILS") == "1"  # `orch sign --details` sets it
     return out
-
-
-def _pair_content(material: Mapping[str, Any]) -> list[str]:
-    """H12c-e (11A.15.6 step 9): what the ``relay.pair_device`` review binds, every field on its own line. The label
-    is the cleaned label exactly as recorded, shown "named by the device": it is not signed (``device.added`` carries
-    none) and not authenticated."""
-    comparison = material["comparison"]
-    what = "the SAS you compared (path 7a)" if comparison["kind"] == "sas" else "cert_code you compared (path 7b)"
-    return [
-        "=== relay pairing: this signature adds a phone as your device ===",
-        f"workspace: {_clean(material['workspace_id'])} (bound)",
-        f"offer: {_clean(material['offer_id'])} attempt {_clean(material['attempt'])} (host attestation)",
-        f"device: {_clean(material['device'])} (you type its last eight: {_clean(material['device'])[-8:]})",
-        f"label: {_clean(material['label']) or '(none)'} (named by the device; not signed, not authenticated)",
-        f"scopes: {', '.join(_clean(s) for s in material['scopes'])} (the relay list scopes of this offer)",
-        f"certificate: {_clean(material['cert_digest'])} (the digest of the certificate this event embeds)",
-        f"{_clean(comparison['kind'])}: {_clean(comparison['code'])} ({what})",
-    ]
 
 
 def _gate_content(material: Mapping[str, Any]) -> list[str]:

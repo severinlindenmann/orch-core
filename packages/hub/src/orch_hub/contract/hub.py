@@ -614,6 +614,14 @@ CUSTODIAL_TYPES: dict[tuple[str, str], str] = {
     ("people.changed", "ticket"): "admin",
     ("addon.disabled", "workspace"): "admin",
     ("addon.purged", "workspace"): "admin",
+    # phase 5 (§8.8, C10 M6; owner V3-D29). The host makes the grant secret itself: it admits
+    # ``grant.requested`` and appends a host-actor ``grant.issued`` naming it (``grant.issued`` stays not custodial).
+    ("grant.requested", "workspace"): "edit",
+    ("grant.revoked", "workspace"): "edit",
+    ("device.excluded", "workspace"): "admin",
+    ("policy.changed", "workspace"): "admin",
+    ("policy.changed", "ticket"): "edit",
+    ("settings.changed", "workspace"): "admin",
 }
 ROLE_RANK = {"read": 1, "edit": 2, "admin": 3}
 #: Selective mode (L2P4-1): the F1 member role of the canonical person -> the role floor of step 7b; full mode maps the

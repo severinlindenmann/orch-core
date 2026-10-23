@@ -66,7 +66,7 @@ describe('G4 signing dialogs say what you sign', () => {
     await screen.findByRole('heading', { level: 1, name: /Load tariff tables/ }, T)
     await user.click(screen.getByRole('tab', { name: /Questions/ }))
     await user.click(await screen.findByRole('radio', { name: /DATE \(local midnight\)/ }))
-    await user.click(within(document.getElementById('question-Q2')!).getByRole('button', { name: 'Answer Q2' }))
+    await user.click(within(document.getElementById('question-Q2')!).getByRole('button', { name: 'Send answer' }))
     const dialog = await screen.findByRole('dialog', {}, T)
     expect(within(dialog).getByRole('button', { name: 'Send answer' })).toBeInTheDocument()
     expect(dialog).toHaveTextContent(/Your answer: DATE/)

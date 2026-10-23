@@ -925,7 +925,7 @@ def test_f7_an_answer_to_a_question_with_why_and_a_recommendation_is_plain():
         "with Hello"
     )
     rows = {r["field"]: r["after"] for r in c["fields_changed"]}
-    assert rows["your choice"] == "Hello"
+    assert rows["your choice"] == "Hello (option hello)"
     assert rows["option hello"] == "Hello" and rows["option hi"] == "Hi"
     assert rows["recommended option (per host)"] == "Hello"
     assert any(s["title"].endswith("(per host, not signed)") and "before I write" in s["text"] for s in c["sections"])
@@ -939,6 +939,13 @@ def test_f7_an_answer_outside_the_options_says_so_and_a_new_question_key_still_f
     assert {r["field"]: r["after"] for r in c["fields_changed"]}["your choice"] == "nope (not one of the options)"
     with pytest.raises(signcontent.PlainUnavailable):
         build(_answer({"surprise": 1}))
+
+
+def test_f7_two_options_with_the_same_label_are_told_apart_in_the_choice_row():
+    opts = {"options": [{"key": "a", "label": "Yes"}, {"key": "b", "label": "Yes"}], "recommended": "a"}
+    for key in ("a", "b"):
+        c = build(_answer(opts, option=key))
+        assert {r["field"]: r["after"] for r in c["fields_changed"]}["your choice"] == f"Yes (option {key})"
 
 
 _ME = "p_42e1c38e0488b742" + "0" * 14

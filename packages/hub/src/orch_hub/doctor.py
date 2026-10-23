@@ -149,6 +149,13 @@ def parse_fw_text(acc: Accounts, text: str, where: str) -> list[FwRule]:
 
 
 def parse_fw_dump(dump: object) -> list[FwRule]:
+    try:
+        return _parse_fw_dump(dump)
+    except TypeError, KeyError, AttributeError, ValueError:  # sets with ranges/prefixes, odd shapes: fail closed
+        raise Check("loaded-rule dump has an unsupported shape") from None
+
+
+def _parse_fw_dump(dump: object) -> list[FwRule]:
     """The rules of ``nft -j list table inet orch_hub``, in kernel order."""
     if type(dump) is not dict or type(dump.get("nftables")) is not list:
         raise Check("loaded-rule dump is not nft JSON")
@@ -224,20 +231,37 @@ def check_link_firewall(acc: Accounts, hub_user: str, fw_file: Path, fw_dump: Pa
         raise Check("the loaded ruleset differs from the firewall file (reload orch-hub-fw.service)")
 
 
-def check_link_surface(fw_dump: Path, port: int, iface: str) -> None:
-    """D12b (3): the network link port accepts only on ``iface`` (wt0) and is dropped otherwise, accept before drop.
-    Surface reduction, never authorization (that is the pinned TLS and the WSK proof)."""
-    rules = [r for r in _read_dump(fw_dump) if r.hook == "input" and r.port == port]
-    acc_i = next((i for i, r in enumerate(rules) if r.verdict == "accept" and r.iface == iface), None)
-    drop_i = next((i for i, r in enumerate(rules) if r.verdict == "drop" and r.iface is None), None)
+def _surface(rules: list[FwRule], port: int, iface: str, where: str) -> list[tuple[str | None, str]]:
+    mine = [
+        r
+        for r in rules
+        if r.hook in ("input", "") and r.ids is None and r.port == port and r.verdict in ("accept", "drop")
+    ]
+    acc_i = next((i for i, r in enumerate(mine) if r.verdict == "accept" and r.iface == iface), None)
+    drop_i = next((i for i, r in enumerate(mine) if r.verdict == "drop" and r.iface is None), None)
     if acc_i is None:
-        raise Check(f"no 'tcp dport {port} iifname {iface} accept' input rule in the loaded table")
+        raise Check(f"{where}: no 'tcp dport {port} iifname {iface} accept' input rule")
     if drop_i is None:
-        raise Check(f"no 'tcp dport {port} drop' input rule in the loaded table")
+        raise Check(f"{where}: no 'tcp dport {port} drop' input rule")
     if acc_i > drop_i:
-        raise Check(f"the drop rule for port {port} comes before the {iface} accept rule")
-    if any(r.verdict == "accept" and r.iface not in (iface,) for r in rules):
-        raise Check(f"port {port} is accepted on an interface other than {iface}")
+        raise Check(f"{where}: the drop rule for port {port} comes before the {iface} accept rule")
+    if any(r.verdict == "accept" and r.iface != iface for r in mine):
+        raise Check(f"{where}: port {port} is accepted on an interface other than {iface}")
+    return [(r.iface, r.verdict) for r in mine]
+
+
+def check_link_surface(acc: Accounts, fw_file: Path, fw_dump: Path, port: int, iface: str) -> None:
+    """D12b (3): the network link port accepts only on ``iface`` (wt0) and is dropped otherwise, accept before drop, in the
+    firewall FILE and in the LOADED table, and the two agree. Surface reduction, never authorization (that is the pinned
+    TLS and the WSK proof)."""
+    try:
+        text = fw_file.read_text()
+    except OSError:
+        raise Check(f"{fw_file} missing or unreadable") from None
+    want = _surface(parse_fw_text(acc, text, "firewall file"), port, iface, "firewall file")
+    got = _surface(_read_dump(fw_dump), port, iface, "loaded ruleset")
+    if want != got:
+        raise Check("the loaded input rules differ from the firewall file (reload orch-hub-fw.service)")
 
 
 def unit_user_of(unit: str = "orch-hub") -> str | None:
@@ -480,7 +504,7 @@ def run(
                 lport = int(link_listen.rpartition(":")[2])
                 step(
                     "network link port is limited to " + link_iface,
-                    lambda: check_link_surface(fw_dump, lport, link_iface),
+                    lambda: check_link_surface(acc, fw_file, fw_dump, lport, link_iface),
                 )
         else:
             print(

@@ -447,9 +447,18 @@ def _split_acc():
     return Accounts(users, {})
 
 
-def _split(state, tmp_path, rules=None, *, card_dev=True, **kw):
+SURFACE_FILE = (
+    "table inet orch_hub { chain in { type filter hook input priority 0; policy accept;\n"
+    '  tcp dport 8106 iifname "wt0" accept\n  tcp dport 8106 drop\n } }\n'
+)
+
+
+def _split(state, tmp_path, rules=None, *, card_dev=True, fw_text=SURFACE_FILE, **kw):
     out = io.StringIO()
     dump = _dump(tmp_path / "split.json", SURFACE if rules is None else rules)
+    fw = tmp_path / "split-fw.nft"
+    fw.write_text(fw_text)
+    kw.setdefault("fw_file", fw)
     run(
         state,
         link_listen=kw.pop("link_listen", "100.71.244.99:8106"),
@@ -515,3 +524,41 @@ def test_listen_and_link_listen_are_exclusive(state):
     out = io.StringIO()
     run(state, listen="127.0.0.1:1", link_listen="10.1.2.3:8106", out=out, accounts=Accounts({}, {}), state_uid=0)
     assert "FAIL listen addresses" in out.getvalue()
+
+
+def test_split_surface_file_and_loaded_table_must_agree(state, tmp_path):
+    out = _split(state, tmp_path)  # only --link-listen given: the surface check still compares file and dump
+    assert "PASS network link port is limited to wt0" in out
+    # the file says wt0, the kernel has eth0 (hand-loaded rule)
+    eth = [
+        _jrule("in", iface="eth0", iface_key="iifname", port=8106, verdict="accept"),
+        _jrule("in", port=8106, verdict="drop"),
+    ]
+    out = _split(state, tmp_path, rules=eth)
+    assert "FAIL network link port is limited to wt0: loaded ruleset: no 'tcp dport 8106 iifname wt0 accept'" in out
+    # the file drops the accept rule: the dump has it, the file does not
+    out = _split(state, tmp_path, fw_text="table inet orch_hub { chain in { tcp dport 8106 drop } }\n")
+    assert "firewall file: no 'tcp dport 8106 iifname wt0 accept'" in out
+    # same shape, but the loaded table has an extra accept for the port on a second rule order: drift is reported
+    swapped = [SURFACE[0], _jrule("in", iface="wt0", iface_key="iifname", port=8106, verdict="accept"), SURFACE[1]]
+    out = _split(state, tmp_path, rules=swapped)
+    assert "the loaded input rules differ from the firewall file" in out
+
+
+def test_split_missing_file_fails(state, tmp_path):
+    out = _split(state, tmp_path, fw_file=tmp_path / "nope.nft")
+    assert "FAIL network link port is limited to wt0: " in out and "missing or unreadable" in out
+
+
+def test_dump_with_range_set_is_a_fail_not_a_crash(state, tmp_path):
+    fw = _fw(tmp_path)
+    weird = _dump(tmp_path / "w.json", [_jrule("out", iface="lo", ids={0})])
+    data = json.loads(weird.read_text())
+    expr = data["nftables"][-1]["rule"]["expr"]
+    next(e for e in expr if "match" in e and e["match"]["op"] == "!=")["match"]["right"] = {
+        "set": [{"range": [0, 1000]}]
+    }
+    weird.write_text(json.dumps(data))
+    out = _run(state, _acc(), fw, dump=weird)
+    assert "FAIL link firewall allows only root, hub and host users: loaded-rule dump has an unsupported shape" in out
+    assert "unexpected TypeError" not in out

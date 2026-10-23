@@ -43,8 +43,9 @@ def test_default_is_needs_you_summaries_only():
     st = S.ShareState()
     assert st.rules == [{"kind": "needs_you"}]
     items = S.select(st.rules, TICKETS)
-    assert [i.kind for i in items] == ["summary"]
-    (s,) = items
+    assert sorted(i.kind for i in items) == ["question", "summary"]  # V3-D31: the full question is its own item
+    (s,) = [i for i in items if i.kind == "summary"]
+    assert s.f1 is None
     assert s.payload == {"type": "question", "title": "which bank?", "deadline": "2026-11-01"}
     assert "Public note" not in repr(items)  # no ticket content leaves by default
 
@@ -59,7 +60,7 @@ def test_rules_select_exactly_their_tickets():
 
 
 def test_a_summary_never_carries_more_than_type_title_deadline():
-    (s,) = S.select([{"kind": "needs_you"}], TICKETS)
+    (s,) = [i for i in S.select([{"kind": "needs_you"}], TICKETS) if i.kind == "summary"]
     assert set(s.payload) == {"type", "title", "deadline"}
 
 
@@ -121,16 +122,16 @@ def run(st, tickets, link, **kw):
 def test_put_then_nothing_again_then_revoke_when_the_rule_is_removed():
     st, link = S.ShareState(), FakeLink()
     st.add_rule({"kind": "tag", "tag": "public"})
-    assert run(st, TICKETS, link) == {"put": 2, "revoke": 0, "kept": 0}  # the summary and the public ticket
-    assert sorted(b["item_id"] for o, b in link.calls if o == "share_put") == [f"{1:032x}", f"{2:032x}"]
+    assert run(st, TICKETS, link) == {"put": 3, "revoke": 0, "kept": 0}  # question item, summary, public ticket
+    assert sorted(b["item_id"] for o, b in link.calls if o == "share_put") == [f"{n:032x}" for n in (1, 2, 3)]
     link.calls.clear()
-    assert run(st, TICKETS, link) == {"put": 0, "revoke": 0, "kept": 2} and link.calls == []  # idempotent
+    assert run(st, TICKETS, link) == {"put": 0, "revoke": 0, "kept": 3} and link.calls == []  # idempotent
     st.remove_rule({"kind": "tag", "tag": "public"})
     assert run(st, TICKETS, link)["revoke"] == 1
     ((op, body),) = link.calls
-    assert op == "share_revoke" and body["item_id"] in (f"{1:032x}", f"{2:032x}")
+    assert op == "share_revoke" and body["item_id"] in [f"{n:032x}" for n in (1, 2, 3)]
     link.calls.clear()
-    assert run(st, TICKETS, link) == {"put": 0, "revoke": 0, "kept": 1} and link.calls == []  # not revoked twice
+    assert run(st, TICKETS, link) == {"put": 0, "revoke": 0, "kept": 2} and link.calls == []  # not revoked twice
 
 
 def test_a_changed_item_is_resent_under_the_same_id():

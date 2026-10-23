@@ -151,8 +151,11 @@ def test_default_shares_only_needs_you_summaries(served, selective):
     uid, key = labelled(served, "Public note", "public")
     ok(agent(served, "ask", {"ref": key, "text": "which bank?"}))
     prev = ok(req(served, "share.preview"))["data"]
-    assert [i["kind"] for i in prev["items"]] == ["summary"] and "Public note" not in str(prev["items"])
-    assert prev["rules"] == ["needs-you summaries (type, a one-line title and the deadline)"]
+    assert sorted(i["kind"] for i in prev["items"]) == ["question", "summary"]
+    assert "Public note" not in str(prev["items"])
+    from orch.hubclient import shares as S
+
+    assert prev["rules"] == [S.describe({"kind": "needs_you"})] and "2000 bytes" in prev["rules"][0]
 
 
 def test_preview_shows_what_a_rule_would_add_without_changing_anything(served, selective):
@@ -234,13 +237,16 @@ def test_a_question_to_the_owner_is_a_summary_and_with_a_rule_the_full_question(
     _, key = served.ticket("Savings")
     ok(agent(served, "ask", {"ref": key, "text": "which bank?"}))
     got = sync_shown(served)
-    assert got["put"] == 1 and selective.opened[0]["item_kind"] == "needs_you"
+    # V3-D31: the needs-you summary has no f1 (never answerable); the question item carries the full text and the f1
+    assert got["put"] == 2
+    (summ,) = [i for i in selective.opened if i["item_kind"] == "needs_you"]
     assert (
-        selective.opened[0]["content"]["type"] == "question"
-        and selective.opened[0]["content"]["title"] == "which bank?"
+        summ["content"]["type"] == "question" and summ["content"]["title"] == "which bank?" and summ.get("f1") is None
     )
-    ok(rule_op(served, "share.rule_add", {"kind": "questions"}))
     (q,) = [i for i in selective.opened if i["item_kind"] == "question"]
+    assert set(q["f1"]["questions"]) == {"Q1"}
+    ok(rule_op(served, "share.rule_add", {"kind": "questions"}))
+    assert len([i for i in selective.opened if i["item_kind"] == "question"]) == 1  # the same item: nothing re-sent
     assert q["content"]["text"] == "which bank?" and q["content"]["id"] == "Q1"
 
 
@@ -438,7 +444,7 @@ def test_a_ticket_that_starts_matching_after_the_confirmation_is_not_auto_shared
     assert [i["content"]["title"] for i in selective.opened] == ["Public note", "Renamed"]
     assert selective.count("share_put") == 2
     got = sync_shown(served)  # the owner's next confirm shares what matches now
-    assert got["put"] == 3 and selective.count("share_put") == 5
+    assert got["put"] == 4 and selective.count("share_put") == 6  # plain: summary + its question item
     ok(agent(served, "set", {"ref": plain, "pairs": ["title=Plain, edited"]}))  # now confirmed: it follows
     settle(served, quick_auto)
     assert selective.opened[-1]["content"]["title"] == "Plain, edited"

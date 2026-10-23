@@ -1,9 +1,10 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ARM_MS, CLICK_RISK, type ClickViewAnswer } from '@/api/click'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ClickSignPanel } from './ClickSignPanel'
+import { storyOf } from './story'
 
 const WS = '705d40abbb8c1c90354a1acaa94c935c'
 const answer = (over: Partial<ClickViewAnswer['view']> = {}, digest = 'sha256:' + 'a'.repeat(64)): ClickViewAnswer => ({
@@ -259,6 +260,13 @@ describe('a word op', () => {
 })
 
 describe('the story around the review', () => {
+  it('#1070 the Create ticket button says in its first step that pressing it signs', () => {
+    const story = storyOf({ action: 'new_sequence', title: 'T', type: 'feature', sections: {} })!
+    mount(answer(), { story })
+    expect(screen.getByRole('button', { name: 'Create ticket' })).toBeInTheDocument()
+    expect(within(screen.getByTestId('what-next')).getAllByRole('listitem')[0]).toHaveTextContent('You sign.')
+  })
+
   it('shows What happens next, the button label from the story and no phone link without a paired phone', () => {
     mount(answer(), { story: { signLabel: 'Sign requirements', steps: ['You sign.', 'The requirements are locked as shown.'] } })
     expect(screen.getByTestId('what-next')).toHaveTextContent('The requirements are locked as shown.')

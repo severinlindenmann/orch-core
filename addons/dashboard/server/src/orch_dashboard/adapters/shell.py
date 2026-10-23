@@ -36,6 +36,8 @@ class Workspace(BaseModel):
     # What the signer says about this workspace (custody, enabled, available, problem); null: no signer answered.
     click: dict | None = None
     runner: dict | None = None
+    # V3 C11: the host's signing mode (`full`/`unknown`: approvals go through the hub); null: not known.
+    signing: str | None = None
 
 
 _PREFIX = re.compile(r"[A-Z0-9]{1,16}")

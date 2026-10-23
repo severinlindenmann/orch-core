@@ -212,6 +212,7 @@ DETAIL_KEYS: dict[str, dict[str, tuple[str, ...] | str | None]] = {
             "dev_host",
         ),
     },
+    "sign.hub_only": {"reason": ("hub",)},  # V3 C11
     "sign.convenience_readers": {
         "reason": ("no_declaration", "reader_too_old", "declaration_unknown", "relay_too_old", "unknown_readers"),
         "devices": DEVICES,

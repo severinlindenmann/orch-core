@@ -47,7 +47,7 @@ from jsonschema import Draft202012Validator
 
 from orch import canon
 
-from . import convenience, pairdevice, review
+from . import convenience, hubsign, pairdevice, review
 from .errors import HostError
 from .outcomes import Planned, request_idem
 from .requests import (
@@ -441,6 +441,8 @@ class HumanOps:
             from . import hubops
 
             capture.hub = hubops.facts_for(service)
+            if name == "hub.mode" or inner.get("mode") == "full":  # V3 C11: a full join leaves click-to-sign off
+                hubsign.refuse_full_while_click_on(service)
         ctx = self.backend._context(call, None, False, files, prepare=capture)
         try:
             res = operation.handler(ctx, inner)
@@ -465,8 +467,11 @@ class HumanOps:
             )
         prepared, extras = self._build(call, name, log, capture, store, now)
         # H12d-2 (§0.8.6 item 9.4): the new reader's declaration against required_reader, early, with a good message
-        convenience.refuse_reader_op(service, name, events=prepared["events"], readers=capture.readers)
-        convenience.refuse_click_removal(service, name, prepared["events"])  # B6: never lock the honest signer out
+        built = prepared["events"]
+        convenience.refuse_reader_op(service, name, events=built, readers=capture.readers)
+        convenience.refuse_click_removal(service, name, built)  # B6: never lock the honest signer out
+        if (refused := hubsign.refusal(service, built, None)) is not None:
+            raise refused  # V3 C11: early and friendly; append_signed is the enforcement (under the store lock)
         if capture.checks:  # N3: the clean-tree checks of a decision that binds a commit (not signed)
             prepared["checks"] = capture.checks
         from . import cancels as cancel_preview
@@ -1071,6 +1076,8 @@ class HumanOps:
                 if log not in ("workspace", view.uid) or (log == "workspace" and record["op"] != "grant"):
                     raise HostError("human.request_mismatch", "the ticket changed while signing, review again")
             self._recheck_needs(store, record, events)
+            if (refused := hubsign.refusal(service, events, None)) is not None:
+                raise refused  # V3 C11: before the journal write; a join after the prepare lands here
             for e in events:
                 convenience.refuse_hub_op(record["op"], e.get("auth"))  # V3 C2a, again at submit
             if any(e.get("auth") == "convenience" for e in events):  # §0.8.6: the condition, again at submit
@@ -1482,6 +1489,14 @@ def append_signed(
     relay path ``signed_by`` refuses convenience events except a dev-gated answer (§11A.17.4, ``dev_gate``), which
     writes the mark here like any other. On a dev host the person path refuses every convenience event (``dev_host``).
 
+    **Full hub mode (V3 C11, D78/D81)** is enforced here too, under the same lock and before the first append: in
+    ``full`` (and ``unknown``, which fails closed as full) every event not in the log yet is refused with
+    ``sign.hub_only`` whatever signs it (owner key, another member's device, a relay device, ``auth: convenience``),
+    except the break-glass events of :data:`orch.host.hubsign.BREAK_GLASS` (:func:`orch.host.hubsign.refusal`). The mode
+    is read from the signed log as this append sees it, so a request prepared before the join, a roll forward or a
+    recovery after a restart, the relay path and a race with ``hub.joined`` are all covered. ``hubdeliver.land``
+    (custodial events) does not pass here.
+
     **Invariant I (H12d-2, §0.8.6 item 9.4)** is checked here too, under the store lock and before the first append,
     for the events not in the log yet that add a reader (``member.added``, ``device.added``, ``restore``) or carry
     ``auth: "convenience"`` (:func:`_readers_refusal`): the current levels, the declarations of ``readers`` (the
@@ -1517,6 +1532,9 @@ def append_signed(
         try:
             if hooks is not None:  # H12c-e: R6's (i) and (ii) first (11A.15.6 step 9), under this lock
                 error = hooks.before([e for e in events if store.logged_event(log, e.get("id")) is None])
+            if error is None:  # V3 C11 (D78/D81): full hub mode takes no local signature, whoever the signer is
+                error = hubsign.refusal(service, [e for e in events if store.logged_event(log, e.get("id")) is None],
+                                        signed_by)  # fmt: skip
             if (
                 error is None and signed_by is None
             ):  # B6: by custody, not by the label; under the lock, on the re-read state

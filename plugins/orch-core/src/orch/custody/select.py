@@ -35,6 +35,7 @@ __all__ = [
     "finish_convenience",
     "forget",
     "read_selection",
+    "refuse_full_mode",
     "setup_backend",
     "stage_convenience",
     "status",
@@ -60,6 +61,19 @@ def refuse_dev_host(state_dir: Path) -> None:
         raise DevHostRefused(
             "dev_host: this is a Simulator dev host or a dev-pair sandbox; convenience custody is never used here"
         )
+
+
+def refuse_full_mode(state_dir: Path, workspace_id: str) -> None:
+    """V3 C11 (L2-C11d-1): the one custody choke point for entering convenience custody. In a workspace in full hub mode
+    (or ``unknown``) the device key stays in passphrase custody, whoever asks (``orch keys custody convenience``, the
+    dashboard switch, Finish setup): :func:`stage_convenience` calls this before the key store is opened. A workspace
+    that is not registered on this host has no hub log, so there is nothing to refuse."""
+    from orch.host import convenience as host_convenience
+
+    uid = os.getuid()
+    entry = host_convenience.registered_entry(state_dir, workspace_id, uid)
+    if entry is not None:
+        host_convenience.refuse_full_mode_entry(state_dir, entry, uid)
 
 
 class Selection(dict):
@@ -196,6 +210,7 @@ def convert_to_convenience(
     The dashboard's switch runs the same two steps itself (:func:`stage_convenience`, then :func:`finish_convenience`
     under the flag lock)."""
     refuse_dev_host(state_dir)  # §11A.17.2: before the key store is opened
+    refuse_full_mode(state_dir, workspace_id)  # V3 C11: also before this function opens the store
     store = store if store is not None else _store(state_dir)
     staged = stage_convenience(state_dir, workspace_id, prefix=prefix, store=store, clock=clock)
     return finish_convenience(state_dir, workspace_id, staged, store=store)
@@ -219,6 +234,7 @@ def stage_convenience(
     from orch.identity import device_ref
 
     refuse_dev_host(state_dir)  # §11A.17.2: before the key store or the selection is touched
+    refuse_full_mode(state_dir, workspace_id)  # V3 C11: not in full hub mode, before the key store is opened
     store = store if store is not None else _store(state_dir)
     sel = read_selection(state_dir, workspace_id)
     if sel is not None and sel["custody"] == "convenience" and sel["transition"] is None:

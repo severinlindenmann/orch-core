@@ -17,6 +17,7 @@ from . import (
     agents,
     click,
     handoff,
+    hubapprove,
     phone,
     reads,
     riskack,
@@ -230,6 +231,7 @@ def create_app(port: int, gateway=None, auth=None, static=None, setup_proxy=None
     reads.register(app, gateway)
     handoff.register(app, gateway)
     click.register(app, gateway)
+    hubapprove.register(app, gateway)
     settings.register(app, gateway)
     addon_switches.register(app, gateway)
     signprefs.register(app, gateway)

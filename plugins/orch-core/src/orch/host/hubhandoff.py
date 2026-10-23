@@ -1,0 +1,134 @@
+"""``hub.handoff {kind, ticket, gate?, question?}``: Mission Control hands a signature to a channel (V3 C11, D78/D81).
+
+A **read**. It writes no log line, makes no link operation and never calls the hub (no push, no QR: the list of link
+operations is closed, section 8). It returns what Mission Control shows beside "Approve on your phone or in the hub":
+
+* ``summary``: structured facts the host reads from the workspace (ticket key, kind, gate, generation, status). The
+  ticket ``title`` is agent-written text: it is a separate field, cleaned to one line, and shown as plain text, never
+  as a link or as host wording.
+* ``short_hash``: the 12 lower-case hex digits in groups of 4 (``abcd ef01 2345``, :mod:`orch.hubclient.shorthash`) of
+  the hash the person decides on: a gate or verdict uses the projection's gate ``hash``, a question its question
+  ``hash``; a status move has none (``None``) and is shown as "from -> to" only.
+* ``url``: built **only** from the hub address pinned in ``hub.json`` and a closed grammar,
+  ``https://<hub>/#/w/<workspace_id>/t/<ticket_id>[/g/<gate>]``: ids are checked against their shapes and encoded, the
+  gate is one of the four gate names, no ticket text enters it, and it is a fragment, so nothing reaches a server log
+  or a referrer. The hub's page only navigates and selects on load; it signs after a click.
+
+Owner session only (an agent is refused, as for ``hub.status``). Only a connected **full** workspace has a hub signing
+path from here; standalone, selective and ``unknown`` answer ``hub.not_joined`` (no link is built from a state the host
+does not trust).
+"""
+
+from __future__ import annotations
+
+import re
+from typing import TYPE_CHECKING, Any
+from urllib.parse import quote
+
+from .errors import HostError
+
+if TYPE_CHECKING:
+    from .workspace import Call
+
+__all__ = ["KINDS", "build_url", "handoff"]
+
+KINDS = ("gate", "verdict", "question", "status")
+_GATES = ("requirements", "plan", "code", "verify")
+_ULID = re.compile(r"[0-7][0-9A-HJKMNP-TV-Z]{25}")
+_WID = re.compile(r"[0-9a-f]{32}")
+_QID = re.compile(r"[A-Za-z0-9_.-]{1,64}")
+
+
+def build_url(addr: str, workspace_id: str, ticket_id: str, gate: str | None = None) -> str:
+    """The one link Mission Control may show. ``addr`` is the pinned ``host:port`` (``tlsadapter.parse_addr`` checks
+    it); the port 443 is dropped. Every part is validated, then percent-encoded; anything off is ``invalid.input``."""
+    from orch.hubclient import HubRefused
+    from orch.hubclient.tlsadapter import parse_addr
+
+    try:
+        host, port = parse_addr(addr)
+    except HubRefused:
+        raise HostError(
+            "hub.state_mismatch", "the pinned hub address is not usable: the host refuses to guess"
+        ) from None
+    if _WID.fullmatch(workspace_id) is None or _ULID.fullmatch(ticket_id) is None:
+        raise HostError("invalid.input", "hub.handoff: the ticket or workspace id is not in the expected shape")
+    if gate is not None and gate not in _GATES:
+        raise HostError("invalid.input", "hub.handoff: not a gate")
+    shown = f"[{host}]" if ":" in host else quote(host, safe=".-")
+    netloc = shown if port == 443 else f"{shown}:{port}"
+    path = f"/w/{quote(workspace_id, safe='')}/t/{quote(ticket_id, safe='')}"
+    if gate is not None:
+        path += f"/g/{quote(gate, safe='')}"
+    return f"https://{netloc}/#{path}"
+
+
+def _short(h: Any) -> str:
+    from orch.hubclient import HubRefused, shorthash
+
+    try:
+        return shorthash.short_hash(h)
+    except HubRefused:
+        raise HostError("hub.refused", "this item has no hash the hub can show yet") from None
+
+
+def handoff(call: Call, args: dict[str, Any], state: Any) -> dict[str, Any]:
+    """The read. ``state`` is the loaded ``hub.json`` (or ``None``), the caller has checked the owner and the schema."""
+    from orch.canon.text import clean_line
+
+    from . import hubops
+    from .workspace import ok_result
+
+    service, kind = call.service, args["kind"]
+    mode = hubops.signing_mode(service)
+    if mode != "full" or state is None or not state.addr or state.status != "bound":
+        # standalone and selective sign locally (D79, 8a); unknown is not trusted to name an address (fail closed)
+        raise HostError("hub.not_joined", "approvals go through the hub only in full hub mode, once connected")
+    gate = args.get("gate")
+    qid = args.get("question")
+    if kind in ("gate", "verdict") and gate not in _GATES:
+        raise HostError("invalid.input", f"hub.handoff: a {kind} needs gate: one of {', '.join(_GATES)}")
+    if kind == "question" and (type(qid) is not str or _QID.fullmatch(qid) is None):
+        raise HostError("invalid.input", "hub.handoff: a question needs question: its id")
+    if kind in ("question", "status") and gate is not None:
+        raise HostError("invalid.input", f"hub.handoff: a {kind} takes no gate")
+    if kind != "question" and qid is not None:
+        raise HostError("invalid.input", f"hub.handoff: a {kind} takes no question")
+    store = service.store
+    with store.locked():
+        store.refresh()
+        view = store.ticket(args["ticket"], heal=False)
+        if view is None or view.uid not in store.state.visible_to(call.viewer):
+            raise HostError("not_found", "no such ticket")
+        uid, key = view.uid, view.key
+        digest: str | None = None
+        gen: int | None = None
+        if kind in ("gate", "verdict"):
+            g = view.gates.get(gate)
+            if g is None or g.hash is None:
+                raise HostError("not_found", f"the {gate} gate has nothing to decide yet")
+            digest, gen = g.hash, g.gen
+        elif kind == "question":
+            q = next((q for q in view.questions if q.id == qid), None)
+            if q is None or q.hash is None:
+                raise HostError("not_found", "no such question")
+            digest = q.hash
+        status, title = view.status, view.title
+    summary = {
+        "kind": kind,
+        "ticket": key,
+        "gate": gate if kind in ("gate", "verdict") else None,
+        "gate_gen": gen,
+        "question": qid if kind == "question" else None,
+        "status": status,
+        "title": clean_line(str(title))[:200],  # agent-written: plain text, never a link, never host wording
+    }
+    return ok_result(
+        {
+            "mode": mode,
+            "where": "hub",
+            "summary": summary,
+            "short_hash": None if digest is None else _short(digest),
+            "url": build_url(state.addr, service.workspace_id, uid, gate if kind in ("gate", "verdict") else None),
+        }
+    )

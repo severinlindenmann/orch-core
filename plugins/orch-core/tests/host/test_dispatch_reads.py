@@ -108,6 +108,8 @@ def args_for(op: str, ref: str) -> dict:
 
     if op in {"whoami", "host.status", "hub.status", "share.rules", "share.preview"}:  # share.*: owner-only (C6)
         return {}
+    if op == "hub.handoff":  # V3 C11: a person read that names a ticket (standalone here: hub.not_joined)
+        return {"kind": "status", "ticket": ref}
     if op == "outcome.get":
         return {"idem": "a_01J9ZP0000000000000000000A"}
     if op == "sub.open":  # H6a: a ticket topic goes through Viewer.ticket

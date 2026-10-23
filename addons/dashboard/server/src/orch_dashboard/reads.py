@@ -156,7 +156,12 @@ def register(app: FastAPI, gateway: Gateway):
         closed = []
         if any(n.get("status") == "closed" for n in data["items"]):
             closed, _ = all_rows(gateway, ws, {"status": ["closed"], "sort": "updated"})
-        return adapters.today(data, rows, ws, last.get("as_of") or "", who, role, recent_activity(gateway, ws), closed)
+        from .hubapprove import HUB_ONLY, mode_of
+
+        sign = "hub" if mode_of(gateway, ws) in HUB_ONLY else None  # V3 C11: full hub mode, approved elsewhere
+        return adapters.today(
+            data, rows, ws, last.get("as_of") or "", who, role, recent_activity(gateway, ws), closed, sign
+        )
 
     def listing(ws: str, query: TicketsQuery):
         who = viewer(ws)

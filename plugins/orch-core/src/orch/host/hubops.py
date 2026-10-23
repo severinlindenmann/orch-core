@@ -8,6 +8,7 @@ The owner's signed record is a person op (``hub.join`` -> ``hub.joined``, ``hub.
 * ``hub.unbind {}``: after ``hub.left`` is on the log, sign ``hub.unbound`` with ``WSK`` and offer it to the hub; the
   hub being down is not an error (it stays queued in ``hub.json`` and is offered again).
 * ``hub.status {}``: the model's hub and the host's link state.
+* ``hub.handoff {kind, ticket, ...}``: a read for Mission Control's "approve in the hub" panel (:mod:`.hubhandoff`).
 
 Column P only. ``WK_e`` is touched only in full mode (:class:`_Epochs`: the key store seals it itself to the hub's
 ``HXK`` and hands out the wrap; a leave from full mode raises the key store's ``rotate`` gate, so the next epoch is
@@ -29,12 +30,15 @@ from typing import TYPE_CHECKING, Any
 
 from jsonschema import Draft202012Validator
 
+from . import hubsign
 from .errors import HostError
+from .hubsign import BREAK_GLASS
 
 if TYPE_CHECKING:
     from .workspace import Call, WorkspaceService
 
 __all__ = [
+    "BREAK_GLASS",
     "HUB_CAPS",
     "HUB_OPS",
     "NETWORK_OPS",
@@ -45,11 +49,13 @@ __all__ = [
     "publish_link",
     "publish_route",
     "serve",
+    "signing_mode",
     "workspace_dev",
 ]
 
 HUB_OPS: dict[str, int] = {
-    "hub.connect": 1, "hub.unbind": 1, "hub.status": 1, "hub.refresh": 1, "hub.history": 1, "keys.rotate": 1,
+    "hub.connect": 1, "hub.unbind": 1, "hub.status": 1, "hub.refresh": 1, "hub.handoff": 1, "hub.history": 1,
+    "keys.rotate": 1,
 }  # fmt: skip
 NETWORK_OPS = frozenset({"hub.connect", "hub.unbind", "hub.refresh"})
 HUB_CAPS = ["hub/1"]
@@ -86,6 +92,17 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
             "hub_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
             "since": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
         },
+        "additionalProperties": False,
+    },
+    "hub.handoff": {  # V3 C11: a read; see host/hubhandoff.py
+        "type": "object",
+        "properties": {
+            "kind": {"enum": ["gate", "verdict", "question", "status"]},
+            "ticket": {"type": "string", "minLength": 1, "maxLength": 64},
+            "gate": {"enum": ["requirements", "plan", "code", "verify"]},
+            "question": {"type": "string", "minLength": 1, "maxLength": 64},
+        },
+        "required": ["kind", "ticket"],
         "additionalProperties": False,
     },
 }
@@ -337,6 +354,52 @@ def hub_role(service: WorkspaceService, user_id: str) -> str | None:
         return None
     facts = facts_for(service)
     return snapshot.hub_role(state, user_id, now_ms=facts.now_ms, dev_mode=facts.dev_mode)
+
+
+# -- who may sign here (V3 C11, D78/D81) ---------------------------------------------------------------------------
+
+
+def signing_mode(service: WorkspaceService) -> str:
+    """``standalone`` | ``selective`` | ``full`` | ``unknown``: how this workspace may sign (V3 C11, L2-C11-2).
+
+    **The signed log decides.** The workspace model (a replay of the log) says whether a hub is joined and its mode;
+    no ``hub.joined``, or a later ``hub.left``, is ``standalone`` whatever ``hub.json`` says, so a corrupt cache never
+    bricks a workspace that never joined. ``hub.json`` can only make the answer **stricter**: a full join whose
+    ``hub.json`` is missing, unreadable, or names another hub, binding or mode is ``unknown``, and a selective join
+    whose ``hub.json`` cannot be read, or already says ``full`` (the file is ahead of the log), is ``unknown`` too.
+    ``unknown`` is treated as ``full`` by every caller (:data:`~orch.host.hubsign.HUB_ONLY`). A selective join that has
+    no ``hub.json`` yet (``hub.connect`` not run) stays ``selective``: nothing was handed to the hub.
+
+    Reads the log fresh (``store.refresh()``); safe under the store lock. Never touches the network."""
+    store = service.store
+    try:
+        store.refresh()
+        model = dict(store.state.workspace.hub)
+    except Exception:  # noqa: BLE001 - the log cannot be read just now: fail closed
+        return "unknown"
+    if not model or model.get("status") != "joined":
+        return "standalone"
+    mode = model.get("mode")
+    if mode not in ("selective", "full"):
+        return "unknown"
+    try:
+        state = _load_state(service)
+    except Exception:  # noqa: BLE001 - HostError (not readable) and any custody error: fail closed
+        return "unknown"
+    if state is None:
+        return "selective" if mode == "selective" else "unknown"
+    same = state.hub_id == model.get("hub_id") and state.binding_seq == model.get("binding_seq")
+    if mode == "full":
+        return (
+            "full" if same and state.mode == "full" and state.status in ("bound", "joining", "switching") else "unknown"
+        )
+    if (
+        state.mode == "full"
+        and state.status in ("bound", "joining", "switching")
+        and state.hub_id == model.get("hub_id")
+    ):
+        return "unknown"  # hub.json is ahead of the log (a rollback or a replay): never looser than the file
+    return "selective"
 
 
 # -- publish through the hub (V3 C7) ---------------------------------------------------------------------------------
@@ -626,6 +689,10 @@ def serve(call: Call) -> dict[str, Any]:
         if not isinstance(hub_id, str):
             raise HostError("hub.not_joined", "this workspace never joined a hub")
         return ok_result(breakglass.history(service, hub_id, args.get("since")))
+    if op == "hub.handoff":
+        from .hubhandoff import handoff
+
+        return handoff(call, args, state)
     if op == "hub.status":
         from orch.hubclient import snapshot
 
@@ -635,6 +702,9 @@ def serve(call: Call) -> dict[str, Any]:
                 "joined": bool(model) and model.get("status") == "joined",
                 "hub_id": model.get("hub_id"),
                 "mode": model.get("mode"),
+                "signing": signing_mode(
+                    service
+                ),  # V3 C11: standalone | selective | full | unknown (full takes no local key)
                 "binding_seq": model.get("binding_seq"),
                 "member": bool(model.get("member")),  # full mode: the hub is a member of kind hub
                 "sealed_epoch": None if state is None or not state.sealed else state.sealed["epoch"],
@@ -667,6 +737,8 @@ def serve(call: Call) -> dict[str, Any]:
         return {"plan": plan}
     if not model or model.get("status") != "joined":
         raise HostError("hub.not_joined", "sign `orch hub join` first: the log has no hub.joined")
+    if model.get("mode") == "full":
+        hubsign.refuse_full_while_click_on(service)  # V3 C11: a full hub never runs beside click-to-sign
     dev = workspace_dev(service)
     now = int(service.clock() * 1000)
     try:

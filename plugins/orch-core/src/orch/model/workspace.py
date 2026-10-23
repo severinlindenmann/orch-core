@@ -519,6 +519,7 @@ def hub_joined(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
         "alias_book": {**book, e["hub_id"]: dict(aliases)},
         "ledger": ledger,
         "user_hub": user_hub,
+        **({"joined_at": e["at"]} if "at" in e else {}),  # C8 P2-b: nothing made before this binding lands under it
         **({"member": {"kind": "hub", "hub_id": e["hub_id"]}} if e["mode"] == "full" else {}),
     }
     return None
@@ -542,7 +543,10 @@ def hub_left(ws: WsCore, e: dict[str, Any], core: Core | None = None) -> Refusal
     hub_id = e["hub_id"]
 
     def change() -> None:
-        ws.hub = {**{k: v for k, v in h.items() if k != "member"}, "status": "left"}  # the hub member goes with the leave
+        ws.hub = {
+            **{k: v for k, v in h.items() if k != "member"},
+            "status": "left",
+        }  # the hub member goes with the leave
         for grant in ws.grants.values():
             if grant.hub_id == hub_id:
                 grant.revoked = True

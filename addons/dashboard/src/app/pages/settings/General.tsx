@@ -16,6 +16,7 @@ import { DangerZone } from './DangerZone'
 import { OwnerNote } from './OwnerNote'
 import { toastApiError } from '@/app/toast'
 import { useSettingsSign } from './useSettingsSign'
+import { WorkspaceIconPicker } from './WorkspaceIconPicker'
 import { queries } from '@/api/queries'
 
 export function CopyButton({ value, label }: { value: string; label: string }) {
@@ -113,6 +114,10 @@ export function General({ workspace, canEdit }: { workspace: Workspace; canEdit:
           </Row>
           <Row label="Created">{id ? fmtTime(id.created_at) : '…'}</Row>
         </dl>
+      </Section>
+
+      <Section title="Icon">
+        <WorkspaceIconPicker workspace={workspace} />
       </Section>
 
       <Section title="Agent grants">

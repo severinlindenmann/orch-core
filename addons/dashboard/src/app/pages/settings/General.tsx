@@ -16,6 +16,7 @@ import { DangerZone } from './DangerZone'
 import { OwnerNote } from './OwnerNote'
 import { toastApiError } from '@/app/toast'
 import { useSettingsSign } from './useSettingsSign'
+import { WorkspaceIconPicker, iconWords } from './WorkspaceIconPicker'
 import { queries } from '@/api/queries'
 
 export function CopyButton({ value, label }: { value: string; label: string }) {
@@ -114,6 +115,22 @@ export function General({ workspace, canEdit }: { workspace: Workspace; canEdit:
           <Row label="Created">{id ? fmtTime(id.created_at) : '…'}</Row>
         </dl>
       </Section>
+
+      {workspace.icon_known !== false && (
+        <Section title="Icon">
+          <WorkspaceIconPicker
+            workspace={workspace}
+            canEdit={canEdit}
+            onSave={(choice) =>
+              ask({
+                title: 'Change the workspace icon',
+                covers: [choice ? `Workspace icon: ${iconWords(choice)}` : 'Workspace icon: back to the automatic one', 'Shown beside the prefix and name in menus; it never replaces them'],
+                req: { op: 'icon', icon: choice },
+              })
+            }
+          />
+        </Section>
+      )}
 
       <Section title="Agent grants">
         <div className="flex items-end gap-2">

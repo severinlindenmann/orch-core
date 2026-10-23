@@ -82,6 +82,13 @@ export interface Workspace {
   /** Default agent grant length in hours (absent: 8); also the longest grant a member may sign for themselves. */
   grant_hours?: number
   /**
+   * The workspace icon, owner-signed (`settings.changed` `set.icon`, core `wsicons`): an icon and a colour of the closed lists.
+   * Absent or null: none signed, the id-derived default is shown. Values outside the lists are ignored by the reader.
+   */
+  icon?: { icon: string; colour: string } | null
+  /** Whether the host reports the `icon` setting (the picker is offered only then); the mockup always does. */
+  icon_known?: boolean
+  /**
    * `config.json` → `settings.repos` (ticket format §2): repo name → working copy. Owner-signed (`settings.changed`,
    * §5.4.2); `links.repos` names must be in it. This is the one declared repo list (the Repos addon shows and edits it,
    * it keeps no second list).
@@ -742,6 +749,8 @@ export type SettingsRequest =
   | { op: 'member.remove'; person: string }
   | { op: 'gate.policy'; gate: GateName; approvers: string; count: number; not?: 'assignees' | null; applies?: CodeReviewApplies }
   | { op: 'grant.hours'; hours: number }
+  /** `settings.changed` `set.icon`: an icon and a colour of the closed lists (core `wsicons`), or null to go back to the automatic one. */
+  | { op: 'icon'; icon: { icon: string; colour: string } | null }
   /** Format §5.4.2 `settings.changed` `set.repos`: repo name → entry, or null to remove it (signed in the UI). */
   | { op: 'repos'; set: Record<string, WorkspaceRepo | null> }
   | { op: 'archive'; prefix: string }

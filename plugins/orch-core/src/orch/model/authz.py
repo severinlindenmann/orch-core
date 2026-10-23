@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections.abc import Collection, Mapping
 from typing import Any
 
-from . import hubledger, identity, policies, visibility
+from . import breakglass, hubledger, identity, policies, visibility
 from .codes import Code, Refusal
 from .emits import HUMAN_ONLY
 from .types import WORKSPACE, Core, Device, TCore, WsCore, ts
@@ -163,18 +163,13 @@ def person_has_valid_device(ws: WsCore, person: str, at: int) -> bool:
     return any(d.person == person and device_valid(d, d.cert, at, False) is None for d in ws.devices.values())
 
 
-def authorize_person(core: Core, log: str, e: dict[str, Any], v: Verifier) -> Refusal | None:
+def authorize_person(core: Core, log: str, e: dict[str, Any], v: Verifier, *, hub_only: bool = False) -> Refusal | None:
     ws, a, typ, at = core.ws, e["actor"], e["type"], ts(e["at"])
     m = ws.members.get(a["id"])
     if m is None:
         return Refusal(Code.MEMBER_UNKNOWN, f"{a['id']} is not a member")
     dev = ws.devices.get(a["device"])
-    recovery = (
-        typ == "device.added"
-        and e["device"] == a["device"]
-        and dev is None
-        and not person_has_valid_device(ws, a["id"], at)
-    )
+    recovery = breakglass.is_recovery(ws, e)
     if recovery:
         cert = e["cert"]
     elif dev is None or dev.person != a["id"]:
@@ -184,6 +179,10 @@ def authorize_person(core: Core, log: str, e: dict[str, Any], v: Verifier) -> Re
     if (r := device_valid(dev, cert, at, typ in OPERATE)) is not None:
         return r
     if (r := method_refusal(ws, e)) is not None:
+        return r
+    if (
+        hub_only and (r := breakglass.local_refusal(ws, e)) is not None
+    ):  # C8/D78: a joined full-mode position signs through the hub
         return r
     if m.role == "viewer" and typ not in VIEWER_MAY:
         return Refusal(Code.ROLE_DENIED, "a viewer cannot write")
@@ -221,6 +220,11 @@ def authorize_hub(core: Core, log: str, e: dict[str, Any], v: Verifier, *, dev: 
     led = hubledger.ledger_of(ws, hub_id)
     if led is None:
         return Refusal(Code.HUB_INVALID, "not_joined")
+    joined_at = h.get("joined_at")
+    if joined_at is not None and ts(e["at"]) < ts(joined_at):
+        # C8 P2-b: a line the hub signed before this binding began (for example one held back across a leave and a
+        # rejoin of the same hub id) is not a line of this binding. ``at`` is inside both hub signatures.
+        return Refusal(Code.HUB_INVALID, "before_binding")
     mode = h.get("mode")
     if (
         any(k not in e for k in _HUB_FIELDS)

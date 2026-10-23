@@ -102,6 +102,10 @@ export interface HandoffDialogProps {
   onPending?: (pending: boolean) => void
   /** A click signature was rejected or cancelled. */
   onInterrupted?: () => void
+  /** One-click mode: close by itself once signed (the toast says it); no second "Signed" screen to close. */
+  closeWhenDone?: boolean
+  /** The toast after a one-click signature (default: "<title>: signed"). */
+  doneToast?: string
   onClose: () => void
   initialFocus?: () => HTMLElement | null
 }
@@ -120,7 +124,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
   const viaHub = hubOnly(here)
   // Click-to-sign (H5c): offered where the signer says the flag is on and it can sign, for the actions it serves.
   const click = useClickSign(p.ws, (_phase, state, request) => {
-    toast.success(`${p.title}: signed`)
+    toast.success(p.doneToast ?? `${p.title}: signed`)
     p.onSettled?.('done', state, request)
   })
   const methods = useSignMethods(p.ws)
@@ -226,6 +230,11 @@ export function HandoffDialog(p: HandoffDialogProps) {
     p.onClose()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [click.leftUnsettled])
+
+  useEffect(() => {
+    if (p.closeWhenDone && click.phase === 'done') p.onClose()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [click.phase])
 
   const clickLive = ['preparing', 'viewing', 'ready', 'signing', 'settling'].includes(click.phase)
   const open = phase === 'preparing' || phase === 'waiting' || clickLive || phoneRun.busy || phoneRun.hint?.state === 'open'

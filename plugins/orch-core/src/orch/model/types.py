@@ -109,6 +109,9 @@ class Grant:
     label: str | None = None
     revoked: bool = False
     device: str = ""  # the device that signed grant.issued
+    #: C8 (L2-P5-1): the hub whose ``auth: "hub"`` request line this grant answers, else ``None``. Such a grant ends at
+    #: that hub's ``hub.left`` (state, no new line). Set by the C10 host-actor ``grant.issued`` that names its request.
+    hub_id: str | None = None
 
 
 @dataclass

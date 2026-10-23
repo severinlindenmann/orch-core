@@ -27,6 +27,8 @@ __all__ = [
     "EXPORTER_LEN",
     "LinkClosed",
     "LinkTimeout",
+    "PLACEHOLDER_PIN",
+    "NoPin",
     "PinMismatch",
     "TlsConn",
     "connect_pinned",
@@ -45,8 +47,17 @@ class LinkTimeout(TimeoutError):
     """A deadline passed."""
 
 
+#: What an orch-hub card carries before it has a TLS key (``b64u(SHA-256("orch-hub dev: no TLS key pinned yet"))``).
+#: It matches no real key; a host never dials on it (D12b G6).
+PLACEHOLDER_PIN = "l35Tp0Xpilo2yI3r8TVl3Q9_pQ9QB8neaBC5A3dNG6k"
+
+
 class PinMismatch(Exception):
     """The peer's certificate does not hash to the pinned SPKI (nothing was sent)."""
+
+
+class NoPin(PinMismatch):
+    """There is no usable pin to dial with (missing, malformed or the card's placeholder): nothing was dialled."""
 
 
 def spki_sha256(cert: x509.Certificate) -> str:
@@ -179,11 +190,14 @@ def _dial(host: str, port: int, deadline: float) -> socket.socket:
 def connect_pinned(host: str, port: int, pinned_spki_sha256: str, *, timeout: float = 10.0) -> TlsConn:
     """Dial, handshake TLS 1.3 and compare the peer certificate's SPKI hash with the pin. Raises
     :class:`PinMismatch` (connection closed, nothing sent) on any difference; a malformed pin is refused before
-    dialling."""
+    dialling. No pin, a malformed pin or the placeholder pin is :class:`NoPin`: the host never dials without a real
+    pin and never falls back to an unpinned or plaintext connection."""
+    if type(pinned_spki_sha256) is not str or pinned_spki_sha256 == PLACEHOLDER_PIN:
+        raise NoPin
     try:
         unb64u(pinned_spki_sha256, 32)
     except EncodingError:
-        raise PinMismatch from None
+        raise NoPin from None
     deadline = time.monotonic() + timeout
     sock = _dial(host, port, deadline)
     sock.setblocking(False)

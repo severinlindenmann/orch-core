@@ -110,14 +110,13 @@ export function turnReason(why: string): string {
   return text ? ` · ${text.charAt(0).toLowerCase()}${text.slice(1)}` : ''
 }
 
-export function ActionsMenu({ ticket, viewer, sign, jump, signing = false }: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void; signing?: boolean }) {
+export function ActionsMenu({ ticket, viewer, sign, signing = false }: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void; signing?: boolean }) {
   const av = availableActions(ticket, viewer)
   const primary = primaryAction(av)
   // The primary action is the header's button; the menu holds the rest.
-  const answer = av.answer.filter((q) => !(primary?.kind === 'answer' && primary.question === q.id))
   const approve = av.approve.filter((g) => !(primary?.kind === 'approve' && primary.gate === g))
   const verdict = av.verdict && primary?.kind !== 'verdict'
-  const empty = !approve.length && !av.requestChanges.length && !verdict && !answer.length
+  const empty = !approve.length && !av.requestChanges.length && !verdict
   // Core's start dialog lives outside the menu, which closes when an item is chosen.
   const r = useRunAddonAction(ticket.key)
   const { workspace } = useWorkspace()
@@ -137,12 +136,6 @@ export function ActionsMenu({ ticket, viewer, sign, jump, signing = false }: { t
       <DropdownMenuContent align="end" className="w-72">
         <DropdownMenuLabel className="text-[11px] font-normal text-text-faint">Human actions{signedWith ? `, signed ${signedWith}` : ''}</DropdownMenuLabel>
         {empty && <p className="px-2 py-2 text-[13px] text-text-muted">{primary ? 'Nothing else needs you on this ticket.' : 'Nothing needs you on this ticket.'}</p>}
-        {answer.map((q) => (
-          <DropdownMenuItem key={q.id} onSelect={() => jump({ tab: 'questions', id: q.id })}>
-            <MessageSquareReply />
-            Answer {q.id}
-          </DropdownMenuItem>
-        ))}
         {approve.map((g) => (
           <DropdownMenuItem key={g} onSelect={() => sign({ kind: 'approve', gate: g })}>
             <Check />

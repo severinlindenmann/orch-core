@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 
 __all__ = ["KINDS", "build_url", "handoff"]
 
-KINDS = ("gate", "verdict", "question", "status")
+KINDS = ("gate", "verdict", "question", "status", "grant")
 _GATES = ("requirements", "plan", "code", "verify")
 _ULID = re.compile(r"[0-7][0-9A-HJKMNP-TV-Z]{25}")
 _WID = re.compile(r"[0-9a-f]{32}")
@@ -72,6 +72,59 @@ def _short(h: Any) -> str:
         raise HostError("hub.refused", "this item has no hash the hub can show yet") from None
 
 
+def _grant(call: Call, args: dict[str, Any], state: Any, mode: str) -> dict[str, Any]:
+    """``kind: grant`` (V3 C10, V3-D29): Mission Control's "Start agent" in a full-mode workspace waits for a grant the
+    channel requests. This records the pending local hand-off (:mod:`.grantoff`) for the calling person, or drops it
+    (``cancel``). The secret of the grant reaches the runner only when a ``grant.requested`` of this canonical person
+    and these exact terms is admitted while the record is live. Still no log line and no link call."""
+    from . import grantoff
+    from .workspace import ok_result
+
+    service = call.service
+    if {"ticket", "gate", "question"} & set(args):
+        raise HostError("invalid.input", "hub.handoff: a grant takes no ticket, gate or question")
+    model = dict(service.store.state.workspace.hub)
+    handoffs = grantoff.GrantHandoffs(service)
+    person = str(call.viewer)
+    with service.store.locked():
+        if args.get("cancel"):
+            if {"scope", "verbs", "hours", "label"} & set(args):
+                raise HostError("invalid.input", "hub.handoff: cancel takes no terms")
+            return ok_result(
+                {"mode": mode, "where": "hub", "kind": "grant", "cancelled": handoffs.cancel(model, person)}
+            )
+        if args.get("scope") is None or args.get("verbs") != "agent" or args.get("hours") is None:
+            raise HostError("invalid.input", "hub.handoff: a grant needs scope, verbs agent and hours")
+        cap = service.store.state.workspace.settings["grant_hours"]
+        if args["hours"] > cap or (args["scope"] != "workable" and _role(service, person) == "member"):
+            raise HostError("invalid.input", f"hub.handoff: a grant lasts at most {cap} hours (the workspace setting)")
+        want = grantoff.terms(args["scope"], "agent", args["hours"], args.get("label"))
+        if want["label"] is None:
+            want.pop("label")
+        handoffs.add(model, person, want)
+    return ok_result(
+        {
+            "mode": mode,
+            "where": "hub",
+            "kind": "grant",
+            "pending": True,
+            "valid_for_s": grantoff.MAX_AGE,
+            "summary": {"kind": "grant", "person": person, **{k: v for k, v in want.items() if k != "label"}},
+            "url": build_root_url(state.addr, service.workspace_id),
+        }
+    )
+
+
+def _role(service: Any, person: str) -> str | None:
+    m = service.store.state.workspace.members.get(person)
+    return m.role if m is not None else None
+
+
+def build_root_url(addr: str, workspace_id: str) -> str:
+    """The hub page of this workspace (no ticket): ``https://<hub>/#/w/<workspace_id>``."""
+    return build_url(addr, workspace_id, "0" * 26).rsplit("/t/", 1)[0]
+
+
 def handoff(call: Call, args: dict[str, Any], state: Any) -> dict[str, Any]:
     """The read. ``state`` is the loaded ``hub.json`` (or ``None``), the caller has checked the owner and the schema."""
     from orch.canon.text import clean_line
@@ -84,6 +137,12 @@ def handoff(call: Call, args: dict[str, Any], state: Any) -> dict[str, Any]:
     if mode != "full" or state is None or not state.addr or state.status != "bound":
         # standalone and selective sign locally (D79, 8a); unknown is not trusted to name an address (fail closed)
         raise HostError("hub.not_joined", "approvals go through the hub only in full hub mode, once connected")
+    if kind == "grant":
+        return _grant(call, args, state, mode)
+    if "ticket" not in args:
+        raise HostError("invalid.input", f"hub.handoff: a {kind} needs a ticket")
+    if {"scope", "verbs", "hours", "label", "cancel"} & set(args):
+        raise HostError("invalid.input", f"hub.handoff: a {kind} takes no grant terms")
     gate = args.get("gate")
     qid = args.get("question")
     if kind in ("gate", "verdict") and gate not in _GATES:

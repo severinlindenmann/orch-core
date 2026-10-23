@@ -1,0 +1,483 @@
+"""The H5 switch on the host: hub mode stops the direct relay path (V3 C10, design-c10 M1 to M4, spec D68/D69/D81).
+
+**What it is.** The owner's signed full-mode ``hub.joined`` (C2b, whose review now says "your phones' direct pairing
+ends; the hub becomes the only path") authorizes the cut-over; this module is the host's resumable state machine
+(``HubState.direct``: ``open`` -> ``closing`` -> ``closed``), run by ``hub.connect`` after a full join or a mode switch
+and resumed at every host start. There is no new signed verb: the owner's own signature is the only authority, and
+neither an agent, the click signer, ``auth: "hub"`` nor the hub can start it or reverse it.
+
+1. **preflight**: the link is bound, the hub card is held and a snapshot with at least one ``admin`` is pinned (else
+   stay ``open`` with ``hub.not_ready``: never strand a workspace nobody can sign for).
+2. **closing** (saved first). From here the host behaves as ``closed`` (fail closed): no relay thread starts
+   (``relayhook``, ``relaylink.start_blocker``), every relay connection passes the :mod:`.directpath` gate, and the
+   direct ops refuse with ``relay.cut_over``. A running relay worker is stopped.
+3. **rotate**: one local epoch whose member list is EMPTY (``advance_local(cut_over=True, drop_members=True)``: no
+   direct device is in the epoch that is sealed to the hub alone, I4), then ``wk_seal`` of it to the hub. Resumable:
+   ``HubState.cut_epoch`` records the epoch made.
+4. **relay** (only if the workspace is relay-linked): ``PUT /v2/workspaces/{ws}/cutover {v: 2, hub_id, state:
+   "cut_over"}`` with the workspace's own session and ``Orch-Holder`` (design M2.4). ``unknown_hub`` leaves it
+   ``closing`` and says so. A relay-less workspace has nothing to cut at a relay and is done after step 3.
+5. **closed**. ``direct`` stays ``closed`` through a ``hub.left`` (C8 I6): only :func:`reopen` (the owner, after
+   leaving) opens it again.
+
+Deviation from design M2.3 (logged in the PR): no ``PUT membership`` is sent to the relay. The new epoch is local and
+its list is empty, and the relay stops serving the workspace's devices with the ``cut_over`` itself.
+
+Failures in steps 3 and 4 do not raise: the state stays ``closing`` with a short ``direct_note`` (``orch hub status``,
+``orch doctor``) and :func:`start` retries with backoff (first after 30 s, doubling to an hour)."""
+
+from __future__ import annotations
+
+import logging
+import os
+import threading
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
+
+from .errors import HostError
+
+if TYPE_CHECKING:
+    from .workspace import WorkspaceService
+
+__all__ = [
+    "TRANSPORT", "cutover_delete", "needs_run", "preflight", "reopen", "run", "start", "status_fields", "watch",
+]  # fmt: skip
+
+LOG = logging.getLogger("orch.host.cutover")
+
+#: tests only: ``(origin, link) -> transport`` for the relay session (as ``relayhook.make_starter(transport=)``)
+TRANSPORT: Callable[[str, Any], Any] | None = None
+_BACKOFF_FIRST_S, _BACKOFF_MAX_S = 30.0, 3600.0
+_THREADS: dict[tuple[str, str], threading.Thread] = {}
+_THREADS_MU = threading.Lock()
+_LOCKS: dict[tuple[str, str], threading.Lock] = {}
+
+
+# -- the facts ---------------------------------------------------------------------------------------------------------
+
+
+def _hubops() -> Any:
+    from . import hubops
+
+    return hubops
+
+
+def _model(service: WorkspaceService) -> dict[str, Any]:
+    """The model's hub record (worker thread's view; a copy)."""
+    return service.submit(lambda: dict(service.store.state.workspace.hub)).result(timeout=60)
+
+
+def _full_bound(model: dict[str, Any], state: Any) -> bool:
+    return (
+        state is not None
+        and model.get("status") == "joined"
+        and model.get("mode") == "full"
+        and state.status == "bound"
+        and state.mode == "full"
+        and state.hub_id == model.get("hub_id")
+        and state.binding_seq == model.get("binding_seq")
+    )
+
+
+def preflight(state: Any) -> str | None:
+    """Why the cut-over may not start, or ``None``. The link must be authenticated (``bound``), the hub's card held and
+    a snapshot pinned that names at least one ``admin``: without someone the hub can act for, the workspace would be
+    stranded (D78: no local human signature exists once the path is closed)."""
+    if state is None or state.status != "bound" or state.mode != "full":
+        return "the hub link is not bound in full mode"
+    if state.card is None:
+        return "the hub card is not held"
+    roles = ((state.snapshot or {}).get("o") or {}).get("roles")
+    if not isinstance(roles, dict) or "admin" not in roles.values():
+        return "no group snapshot with an admin is pinned yet: orch hub refresh"
+    return None
+
+
+def needs_run(service: WorkspaceService, model: dict[str, Any], state: Any) -> bool:
+    """Should the host run (or resume) the cut-over now? ``closing``: yes. ``open`` set by a C10 connect: yes (retry
+    the preflight). ``None`` (a join made before C10: its review never said the phones' pairing ends): only a dev
+    workspace holding a dev hub card, so the e2e and demo workspaces move over by themselves; every other one waits
+    for the owner (``orch hub status`` says so)."""
+    if not _full_bound(model, state):
+        return False
+    if state.direct in ("closing", "open"):
+        return True
+    if state.direct == "closed":
+        return False
+    dev_card = ((state.card or {}).get("o") or {}).get("dev") is True
+    return dev_card and _hubops().workspace_dev(service)
+
+
+def status_fields(service: WorkspaceService, state: Any) -> dict[str, Any]:
+    """The cut-over part of ``hub.status``: ``direct`` (``open`` | ``closing`` | ``closed``), the reason it is not done,
+    the epoch the rotation made and the direct devices still listed (none once ``closed``)."""
+    direct = "open" if state is None or state.direct is None else state.direct
+    devices: list[str] = []
+    try:
+        epochs = _hubops().epochs_for(service)
+        mk = getattr(epochs, "_mk", None)
+        if mk is not None:
+            devices = sorted({d for d, _p in mk.listed_devices() if d})
+    except Exception:  # noqa: BLE001 - an unreadable key store lists nothing here; hub.status stays an answer
+        devices = []
+    return {
+        "direct": direct,
+        "direct_note": None if state is None else state.direct_note,
+        "direct_devices": devices,
+        "cut_epoch": None if state is None else state.cut_epoch,
+        "direct_pre_c10": state is not None and state.direct is None and state.mode == "full",
+    }
+
+
+# -- the machine -------------------------------------------------------------------------------------------------------
+
+
+def _relay_linked(service: WorkspaceService) -> bool:
+    from .relaylink import link_path
+
+    return os.path.lexists(link_path(service.state_dir, service.workspace_id))
+
+
+def _lock_for(service: WorkspaceService) -> threading.Lock:
+    """One cut-over at a time per workspace (the connect thread and the background loop share it): two runs would rotate
+    twice. Lock order: this lock, then ``hubops._MU`` (inside :func:`_delta`)."""
+    with _THREADS_MU:
+        return _LOCKS.setdefault((str(service.state_dir), service.workspace_id), threading.Lock())
+
+
+def _delta(service: WorkspaceService, base: Any, mutate: Callable[[Any], None]) -> Any:
+    """Write ONLY the cut-over's own fields (L2-C10i-2): re-read ``hub.json`` under ``_MU``, require the same bound
+    full binding the run started for, apply ``mutate`` to that fresh copy, write it. A concurrent unbind, refresh or
+    pump keeps its fields (``status``, ``outbox``, ``rotate_after``, ``publish_owed``, a snapshot); a changed binding
+    aborts."""
+    h = _hubops()
+    with h._MU:  # noqa: SLF001
+        cur = h._load_state(service)  # noqa: SLF001
+        if (
+            cur is None
+            or cur.status != "bound"
+            or cur.mode != "full"
+            or cur.hub_id != base.hub_id
+            or cur.binding_seq != base.binding_seq
+        ):
+            raise HostError("hub.not_joined", "the hub binding changed while the cut-over ran: nothing was written")
+        mutate(cur)
+        h._write_state(service, cur)  # noqa: SLF001
+        return cur
+
+
+def _note(service: WorkspaceService, base: Any, text: str | None) -> None:
+    try:
+        _delta(service, base, lambda c: setattr(c, "direct_note", None if text is None else text[:300]))
+    except HostError:
+        pass  # the binding is gone: there is no cut-over left to annotate
+
+
+def run(
+    service: WorkspaceService,
+    model: dict[str, Any] | None = None,
+    *,
+    hub_card: Any = None,
+    force_start: bool = False,
+) -> str:
+    """Run or resume the cut-over; returns ``direct`` afterwards (``open`` | ``closing`` | ``closed``). Does not raise
+    for a hub or relay that is down: the state stays ``closing`` with ``direct_note``. ``hub_card``: the card the owner
+    just supplied (hub.connect), else the one held. ``force_start``: the caller (a C10 connect after a full join or
+    mode switch) has the owner's new review text behind it, so a state with ``direct`` unset starts too. One run at a
+    time per workspace; every write is a delta on a fresh read (:func:`_delta`)."""
+    with _lock_for(service):
+        return _run_locked(service, model, hub_card, force_start)
+
+
+def _run_locked(service: WorkspaceService, model: dict[str, Any] | None, hub_card: Any, force_start: bool) -> str:
+    h = _hubops()
+    model = _model(service)  # always fresh, the caller's copy may be older than the lock wait
+    base = h._load_state(service)  # noqa: SLF001
+    if not _full_bound(model, base):
+        return "open" if base is None or base.direct is None else str(base.direct)
+    if base.direct == "closed":
+        return "closed"
+    if base.direct is None and not force_start and not needs_run(service, model, base):
+        return "open"
+    try:
+        if base.direct in (None, "open"):
+            why = preflight(base)
+            if why is not None:
+                _delta(service, base, lambda c: (setattr(c, "direct", c.direct or "open"),
+                                                 setattr(c, "direct_note", f"hub.not_ready: {why}")))  # fmt: skip
+                return "open"
+            # saved before anything else: from here the host behaves as closed
+            _delta(service, base, lambda c: (setattr(c, "direct", "closing"), setattr(c, "direct_note", None)))
+        _stop_relay(service)
+        _rotate_and_seal(service, base, hub_card)
+        _relay_cut(service, base)
+        _delta(service, base, lambda c: (setattr(c, "direct", "closed"), setattr(c, "direct_note", None)))
+    except HostError as exc:
+        LOG.warning("cut-over of %s stays closing: %s", service.workspace_id, exc.code)
+        _note(service, base, f"{exc.code}: {exc.message}")
+        return _now_direct(service)
+    except Exception as exc:  # noqa: BLE001 - a hub or relay that is down is not an error of the owner
+        LOG.warning("cut-over of %s stays closing: %s", service.workspace_id, type(exc).__name__)
+        _note(service, base, f"{type(exc).__name__}: the hub or the relay did not answer")
+        return _now_direct(service)
+    LOG.info("the direct relay path of %s is closed", service.workspace_id)
+    return "closed"
+
+
+def _now_direct(service: WorkspaceService) -> str:
+    st = _hubops()._load_state(service)  # noqa: SLF001
+    return "open" if st is None or st.direct is None else str(st.direct)
+
+
+def _stop_relay(service: WorkspaceService) -> None:
+    """The relay worker ends (its threads: poll, publisher, pairing, push). The persistent stop marker stays: a restart
+    never brings a worker back, and ``relayhook`` refuses a start for a closed workspace anyway."""
+    if service.relay is None and not service._stuck_alive():  # noqa: SLF001
+        return
+    result = service.relay_stop()
+    if result == "stuck":
+        raise HostError("relay.cut_over", "a relay thread of this workspace has not ended yet: retrying")
+
+
+def _rotate_and_seal(service: WorkspaceService, base: Any, hub_card: Any) -> None:
+    """Step 3: the cut-over's own epoch (no device in it) and its seal to the hub. Every write is a delta."""
+    from orch.crypto.encoding import unb64u
+    from orch.hubclient import HubRefused, seal_to_hub
+
+    h = _hubops()
+    epochs = h.epochs_for(service, create=True)
+    if epochs is None or not hasattr(epochs, "rotate_cut_over"):
+        raise HostError("hub.no_epoch", "the workspace key store is not available for the cut-over")
+    state = h._load_state(service)  # noqa: SLF001
+    if state.cut_epoch is None:
+        epochs.ensure_epoch()
+        epochs.rotate_cut_over()
+        made = epochs.current_epoch()
+        state = _delta(service, base, lambda c: setattr(c, "cut_epoch", c.cut_epoch or made))
+    if state.sealed is not None and state.sealed["epoch"] >= state.cut_epoch:
+        return
+    wsk_pub, sign = h._wsk_sign(service)  # noqa: SLF001
+    dev = h.workspace_dev(service)
+    link = {
+        "addr": h._addr({}, state, dev), "spki": state.tls_spki, "hk_op": unb64u(state.hk_op_pub, 65),  # noqa: SLF001
+        "wsk_pub": wsk_pub, "sign": sign, "mode": "full",
+    }  # fmt: skip
+    transport = h._transport(service, state.hub_id, link)  # noqa: SLF001
+
+    def save(s: Any) -> None:  # seal_to_hub changed only the hub key and the sealed epoch of its copy
+        _delta(service, base, lambda c: (setattr(c, "sealed", s.sealed), setattr(c, "hxk_pub", s.hxk_pub)))
+
+    try:
+        seal_to_hub(
+            state=state, hub_card=hub_card if hub_card is not None else state.card,
+            workspace_id=service.workspace_id, sign_wsk=sign, dev_mode=dev,
+            now_ms=lambda: int(service.clock() * 1000), transport=transport, save=save, epochs=epochs,
+        )  # fmt: skip
+    except HubRefused as exc:
+        raise HostError("hub.unreachable", f"the new key could not be sealed to the hub ({exc.code})") from None
+    finally:
+        getattr(transport, "close", lambda: None)()
+
+
+def _relay_cut(service: WorkspaceService, state: Any) -> None:  # state: the binding the run started for
+    """Step 4. ``unknown_hub`` and every other refusal leave the state ``closing``."""
+    if not _relay_linked(service):
+        return  # a relay-less workspace has no direct path at a relay to close
+    from orch.relay.retry import RelayRefused
+
+    from . import relayhook
+
+    ws = service.workspace_id
+    path, route = f"/v2/workspaces/{ws}/cutover", "{ws}/cutover"
+    try:
+        with relayhook.cutover_session(service, transport=TRANSPORT) as session:
+            session.hold()
+            held = session.call("GET", path, f"GET /v2/workspaces/{route}")
+            if held.get("state") == "cut_over":
+                return  # a repeat after a crash between the relay's answer and ours
+            # a leave may have landed since the seal: the relay must never get a cut-over for a binding that is gone
+            # (the leave's own delete waits for this lock, so after this check it cannot slip in before the PUT)
+            _delta(service, state, lambda c: None)
+            session.call(
+                "PUT", path, f"PUT /v2/workspaces/{route}",
+                body={"v": 2, "hub_id": state.hub_id, "state": "cut_over"}, holder=True,
+            )  # fmt: skip
+    except RelayRefused as exc:
+        if exc.code == "unknown_hub":
+            raise HostError(
+                "hub.cutover_unknown_hub", "the relay has no account for this hub: ask its operator to register it"
+            ) from None
+        raise HostError("relay.cut_over", f"the relay refused the cut-over ({exc.code}): will retry") from None
+
+
+def cutover_delete(service: WorkspaceService) -> bool:
+    """C8's seam (``breakglass.CUTOVER_DELETE``): at a leave, delete a *pending* naming at the relay so the hub can
+    never confirm it. A row that is already ``cut_over`` is the owner's own closed door and stays closed (I6):
+    nothing to delete, answered ``True``. A relay-less workspace has no row. **Any relay failure answers ``False``**
+    (owed, tried again by the next ``orch hub unbind``): it never raises into ``hub.unbind`` (L2-C10i-1)."""
+    if not _relay_linked(service):
+        return True
+    from . import relayhook
+
+    ws = service.workspace_id
+    path = f"/v2/workspaces/{ws}/cutover"
+    try:
+        with _lock_for(service), relayhook.cutover_session(service, transport=TRANSPORT) as session:
+            session.hold()
+            held = session.call("GET", path, "GET /v2/workspaces/{ws}/cutover")
+            if held.get("state") != "pending":
+                return True
+            session.call("DELETE", path, "DELETE /v2/workspaces/{ws}/cutover", holder=True)
+    except Exception as exc:  # noqa: BLE001 - RelayRefused, TransportError, CutOver, HostError, StateError ...
+        LOG.warning("cut-over delete of %s owed: %s", service.workspace_id, type(exc).__name__)
+        return False
+    return True
+
+
+def _reopen_check(state: Any, model: dict[str, Any], rotation: str, publish_set: bool = False) -> None:
+    """Pure: every precondition of a reopening. Refuses unless the leave is FINISHED on this host: the model says
+    ``left`` and the owner signed ``relay.reopened`` for this very hub, the hub link is ``unbound``, the rotation a
+    full hub's leave owes is done (else the relay would restart on an epoch the hub knew), nothing is owed to the hub
+    or (when a publish server is set) to orch-publish, and no cut-over is half done."""
+    if state is None or state.direct not in ("closing", "closed"):
+        raise HostError("relay.not_cut_over", "the direct relay path is not closed")
+    if model.get("status") != "left" or not model.get("reopened"):
+        raise HostError("hub.not_joined", "sign `orch relay reopen` first (after `orch hub leave`)")
+    if state.hub_id != model.get("hub_id"):
+        raise HostError("hub.state_mismatch", "the hub state is for another hub than the one that was left")
+    if state.status != "unbound":
+        raise HostError("hub.not_ready", "finish the leave first: orch hub unbind")
+    if state.rotate_after is not None or rotation != "none":
+        raise HostError(
+            "hub.rotation_pending", "the new workspace key is not ready yet: orch hub unbind", retry_after_ms=2000
+        )
+    if state.outbox or (publish_set and state.publish_owed):
+        raise HostError("hub.not_ready", "the hub or orch-publish was not told about the leave yet: orch hub unbind")
+    if state.direct == "closing":
+        raise HostError("hub.not_ready", "a cut-over is still owed: let it finish first")
+
+
+def reopen(service: WorkspaceService) -> dict[str, Any]:
+    with _lock_for(service):  # the same lock as run and cutover_delete: no cut-over runs beside a reopening
+        return _reopen_locked(service)
+
+
+def _reopen_locked(service: WorkspaceService) -> dict[str, Any]:
+    """M4, the owner's reversal, only after leaving and only when the leave is finished (:func:`_reopen_ready`, checked
+    before the relay is touched and again under the state lock right before the state changes): delete the cut-over at
+    the relay (fenced), set ``direct`` to ``open``, and start the relay link again. Phones must be paired again."""
+    h = _hubops()
+    from . import breakglass
+
+    publish_set = breakglass.publish_put(service) is not None  # without a publish server nothing can be owed to it
+    model = _model(service)
+    state = h._load_state(service)  # noqa: SLF001
+    _reopen_check(state, model, h._rotation(service, state), publish_set)  # noqa: SLF001 - before the relay
+    if _relay_linked(service):
+        from . import relayhook
+
+        ws = service.workspace_id
+        path = f"/v2/workspaces/{ws}/cutover"
+        with relayhook.cutover_session(service, transport=TRANSPORT) as session:
+            session.hold()
+            held = session.call("GET", path, "GET /v2/workspaces/{ws}/cutover")
+            if held.get("state") != "direct":  # a retry after a crash between our DELETE and the save finds no row
+                session.call("DELETE", path, "DELETE /v2/workspaces/{ws}/cutover", holder=True)
+    # both are read outside the lock (they take it, or wait for the worker thread that may be waiting for it)
+    model = _model(service)
+    rotation = h._rotation(service, h._load_state(service))  # noqa: SLF001
+    with h._MU:  # noqa: SLF001 - the check and the save are one step
+        state = h._load_state(service)  # noqa: SLF001
+        _reopen_check(state, model, rotation, publish_set)
+        state.direct, state.direct_note, state.cut_epoch = "open", None, None
+        h._write_state(service, state)  # noqa: SLF001
+    started = "none"
+    if _relay_linked(service):
+        try:  # the stop marker the cut-over left is cleared
+            started = service.relay_start()
+        except HostError as exc:
+            started = exc.code
+        if started == "none":  # relay_start answers "none" when nothing started: say why
+            started = str(service.relay_reason or "not_started")
+    linked = _relay_linked(service)
+    return {
+        "direct": "open",
+        "relay_linked": linked,
+        "relay": started,
+        "relay_started": (not linked) or started == "started",
+    }
+
+
+# -- at host start: resume ---------------------------------------------------------------------------------------------
+
+
+def start(service: WorkspaceService) -> None:
+    """At the open of a served workspace (``workspace.open``, never fails it): when the cut-over is owed (``closing``,
+    an ``open`` a C10 connect left behind, or a dev pre-C10 full join), a background thread resumes it with backoff.
+    One thread per workspace; it ends when the state is ``closed``, nothing is owed, or the workspace closes."""
+    try:  # on the worker thread (the open): read the model directly, a submit() here would wait for itself
+        model = dict(service.store.state.workspace.hub)
+        state = _hubops()._load_state(service)  # noqa: SLF001
+        if not needs_run(service, model, state):
+            return
+    except Exception:  # noqa: BLE001 - never fail the open
+        return
+    watch(service)
+
+
+def watch(service: WorkspaceService) -> None:
+    """Make sure the background retry of the cut-over runs (one thread per workspace). Called at the open and after a
+    ``hub.connect`` that left the switch unfinished (for example no group snapshot with an admin yet)."""
+    key = (str(service.state_dir), service.workspace_id)
+    with _THREADS_MU:
+        old = _THREADS.get(key)
+        if old is not None and old.is_alive():
+            return
+        t = threading.Thread(
+            target=_loop, args=(service,), name=f"orch-cutover-{service.workspace_id[:8]}", daemon=True
+        )
+        _THREADS[key] = t
+    t.start()
+
+
+def _loop(service: WorkspaceService) -> None:
+    wait = _BACKOFF_FIRST_S
+    first = True
+    while not getattr(service, "closing", False):
+        try:
+            model = _model(service)
+            state = _hubops()._load_state(service)  # noqa: SLF001
+            if not needs_run(service, model, state):
+                return
+            if preflight(state) is not None and state.status == "bound":
+                _refresh_snapshot(service, state)  # an admin grant made on the hub since: pin it, then try again
+            if run(service, model) == "closed":
+                return
+        except Exception as exc:  # noqa: BLE001
+            LOG.warning("cut-over retry of %s: %s", service.workspace_id, type(exc).__name__)
+        if first:  # the first attempt right away; later ones back off
+            first = False
+        if _sleep(service, wait):
+            return
+        wait = min(wait * 2, _BACKOFF_MAX_S)
+
+
+def _refresh_snapshot(service: WorkspaceService, state: Any) -> None:
+    from . import hubdeliver
+
+    try:
+        hubdeliver._fetch_snapshot(service, state)  # noqa: SLF001 - the one snapshot fetch of the host
+    except Exception as exc:  # noqa: BLE001 - a hub that is down is tried again later
+        LOG.info("cut-over of %s: snapshot not refreshed (%s)", service.workspace_id, type(exc).__name__)
+
+
+def _sleep(service: WorkspaceService, seconds: float) -> bool:
+    """Wait ``seconds`` in one-second steps; True when the workspace is closing (stop the loop)."""
+    import time
+
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        if getattr(service, "closing", False):
+            return True
+        time.sleep(min(1.0, end - time.monotonic()))
+    return bool(getattr(service, "closing", False))

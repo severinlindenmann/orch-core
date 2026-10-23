@@ -61,13 +61,16 @@ ACTOR_RULES: dict[str, str] = {
     "device.removed": "P",
     "device.revoked": "PH",
     "settings.changed": "P",
-    "grant.issued": "P",
+    "grant.issued": "PH",  # C10: a host actor only with `request` (hub protocol 8.8), checked by the type rule
+    "grant.requested": "P",  # C10: hub-signed only (HUB_ONLY)
     "grant.revoked": "P",
+    "device.excluded": "P",  # C10: hub-signed only (HUB_ONLY)
     "addon.granted": "P",
     "addon.disabled": "P",
     "addon.purged": "P",
     "hub.joined": "P",
     "hub.left": "P",
+    "relay.reopened": "P",  # C10 M4: the owner reopens the direct path, after leaving the hub
     "hub.pinned": "H",
 }
 OPERATE = frozenset(
@@ -84,6 +87,7 @@ OPERATE = frozenset(
         "addon.purged",
         "hub.joined",
         "hub.left",
+        "relay.reopened",
         "restore",
         "invalid.acknowledged",
     }
@@ -96,8 +100,12 @@ HUB_TYPES = frozenset(
         "claim.released", "log.added", "handoff.written", "question.asked", "question.answered", "gate.approved",
         "gate.changes_requested", "verdict.given", "ticket.moved", "people.changed", "visibility.changed",
         "addon.disabled", "addon.purged",
+        # phase 5 (hub protocol 8.8, V3-D29)
+        "grant.requested", "grant.revoked", "device.excluded", "policy.changed", "settings.changed",
     }
 )  # fmt: skip
+#: C10: types that exist only as hub-signed requests; a device-signed one (no operation writes it) is refused
+HUB_ONLY = frozenset({"grant.requested", "device.excluded"})
 DECISIONS = frozenset({"gate.approved", "gate.changes_requested", "verdict.given", "question.answered"})
 VIEWER_MAY = frozenset({"question.answered", "device.added", "device.removed", "device.revoked"})
 UNATTENDED_PER_SESSION = 30
@@ -163,7 +171,7 @@ def person_has_valid_device(ws: WsCore, person: str, at: int) -> bool:
     return any(d.person == person and device_valid(d, d.cert, at, False) is None for d in ws.devices.values())
 
 
-def authorize_person(core: Core, log: str, e: dict[str, Any], v: Verifier, *, hub_only: bool = False) -> Refusal | None:
+def authorize_person(core: Core, log: str, e: dict[str, Any], v: Verifier, *, hub_only: bool = True) -> Refusal | None:
     ws, a, typ, at = core.ws, e["actor"], e["type"], ts(e["at"])
     m = ws.members.get(a["id"])
     if m is None:

@@ -381,6 +381,23 @@ def test_hub_history_golden(host):
         "  gate.approved ORCH-0001 at 2026-10-22T11:00:00Z by u_1 via c_1 (password+totp)",
         "What the hub has already read stays with it: the new workspace key only protects what comes next.",
     ]
-    assert out.splitlines()[2].startswith("    undo here: orch ")
+    assert out.splitlines()[2].startswith(
+        "    undo here: open the dashboard (Settings)"
+    )  # L2-C8i-6: no JSON pretending to be a command
     code, out = run(["history"], {}, as_json=True)
     assert code == 0 and json.loads(out)["data"] == HIST
+
+
+def test_reopen_reports_a_relay_link_that_did_not_start(host, monkeypatch):
+    """L2-C10i-4: the path is open but the relay did not come up: not `ok`, exit 3, the reason and the next step."""
+    host.reply["hub.reopen"] = {
+        "direct": "open",
+        "relay_linked": True,
+        "relay": "start_failed: SeamMissing",
+        "relay_started": False,
+    }
+    code, out = run(["reopen"], {})
+    assert code == 3 and "did not start (start_failed: SeamMissing)" in out and "orch host relay start" in out
+    host.reply["hub.reopen"] = {"direct": "open", "relay_linked": True, "relay": "started", "relay_started": True}
+    code, out = run(["reopen"], {})
+    assert code == 0 and "ok the direct relay path is open again" in out

@@ -578,6 +578,9 @@ class ControlOps:
         service = self.host.services.get(workspace_id)
         if service is None:
             raise HostError("workspace.unavailable", f"workspace {workspace_id} is not served")
+        from .relaypair import refuse_if_cut_over
+
+        refuse_if_cut_over(service)  # V3 C10
         try:
             link = link_step1(
                 service, origin=args["origin"], max_publication_bytes=args["max_publication_bytes"],
@@ -604,6 +607,7 @@ class ControlOps:
         service = self.host.services.get(workspace_id)
         if service is None:
             raise HostError("workspace.unavailable", f"workspace {workspace_id} is not served")
+        relaypair.refuse_if_cut_over(service)  # V3 C10
         data: dict[str, Any] = {"workspace_id": workspace_id}
         if op == "host.relay_primary_set":
             data["device_id"] = relaypair.primary_set(service, args["cert"], args["label"])
@@ -642,6 +646,9 @@ class ControlOps:
         service = self.host.services.get(workspace_id)
         if service is None:
             raise HostError("workspace.unavailable", f"workspace {workspace_id} is not served")
+        from .relaypair import refuse_if_cut_over
+
+        refuse_if_cut_over(service)  # V3 C10
         if op == "host.relay_genesis_pin_facts":
             return ok_result({"workspace_id": workspace_id, "facts": relaygenesis.facts(service)})
         return ok_result(relaygenesis.submit(service, args["pin"]))

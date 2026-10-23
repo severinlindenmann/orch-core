@@ -53,7 +53,7 @@ def break_glass_allowed(ws: Any, ev: dict[str, Any], signed_by: tuple[str, str] 
     :func:`orch.model.breakglass.signer_kind` (fail closed: only a passphrase or unlabelled event, never convenience,
     hub, agent or a phone's label) names a signer that row allows (the owner's own device key or the recovery key; the
     recovery key alone for a repin)."""
-    row = next((r for r in BREAK_GLASS.values() if r.event == ev.get("type")), None)
+    row = next((r for r in BREAK_GLASS.values() if r.matches(ws, ev)), None)
     actor = ev.get("actor")
     if row is None or signed_by is not None or not isinstance(actor, dict) or actor.get("kind") != "person":
         return False

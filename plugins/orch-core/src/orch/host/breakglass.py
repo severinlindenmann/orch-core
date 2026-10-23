@@ -112,8 +112,21 @@ def publish_put(service: WorkspaceService) -> Callable[[dict[str, Any]], bool] |
 
 
 def cutover_delete(service: WorkspaceService) -> Callable[[], bool] | None:
+    """The delete of a pending cut-over for ``leave`` (L2-C10i-1: wired for real). A test can replace the seam; by
+    default it is :func:`orch.host.cutover.cutover_delete`. Any exception is ``False`` (owed), never a failed unbind."""
     hook = CUTOVER_DELETE
-    return None if hook is None else (lambda: bool(hook(service)))
+    if hook is None:
+        from . import cutover
+
+        hook = cutover.cutover_delete
+
+    def delete() -> bool:
+        try:
+            return bool(hook(service))
+        except Exception:  # noqa: BLE001
+            return False
+
+    return delete
 
 
 def stuck_gates(service: WorkspaceService) -> list[dict[str, Any]]:

@@ -53,13 +53,16 @@ WORKSPACE_ONLY = {
     "device.revoked",
     "settings.changed",
     "grant.issued",
+    "grant.requested",
     "grant.revoked",
+    "device.excluded",
     "addon.granted",
     "addon.disabled",
     "addon.purged",
     "hub.joined",
     "hub.left",
     "hub.pinned",
+    "relay.reopened",
 }
 
 
@@ -458,6 +461,8 @@ _SPEC = {
         5,
     ),
     "grant.revoked": (PERSON, {"grant": "gr_" + U1, "reason": "done"}, 5),
+    "grant.requested": (PERSON, {"scope": "workable", "verbs": ["log", "task.done"], "hours": 8, "label": "runner"}, 5),
+    "device.excluded": (PERSON, {"device": "d_" + DID2, "reason": "lost"}, 5),
     "addon.granted": (
         PERSON,
         {
@@ -492,6 +497,7 @@ _SPEC = {
         5,
     ),
     "hub.left": (PERSON, {"hub_id": "38d8abed52ccfb538da401fd54e64bdc", "binding_seq": 1}, 5),
+    "relay.reopened": (PERSON, {"hub_id": "38d8abed52ccfb538da401fd54e64bdc"}, 5),
     "hub.pinned": (
         HOST,
         {

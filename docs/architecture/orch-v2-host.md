@@ -532,6 +532,10 @@ drops. The host never sends it.
 | `hub.rotation_pending` | 9 | yes | stays | `hub.connect` in full mode while the new workspace key a leave from full mode owes is not committed yet: nothing is sent (V3 C2b) | — |
 | `hub.state_mismatch` | 3 | no | stays | the host's `hub.json` cannot be read: the host refuses to guess (V3 C2a) | — |
 | `hub.not_joined` | 3 | no | stays | `hub.connect` or `hub.unbind` while the log has no `hub.joined` / no `hub.left` for them (V3 C2a) | — |
+| `relay.cut_over` | 3 | no | stays | a direct-relay input (`relay.link`, pairing, genesis pin, relay worker start) for a workspace whose direct relay path is `closing` or `closed` because a hub serves it; the owner's `relay.reopened` after a finished leave opens it again (V3 C10) | — |
+| `relay.not_cut_over` | 3 | no | stays | `hub.reopen` while the direct relay path is not closed (V3 C10) | — |
+| `hub.not_ready` | 3 | no | stays | the cut-over preflight (link not bound, no card, no pinned snapshot with an `admin`) or a `hub.reopen` before the leave is finished (rotation, hub or publish not told, cut-over owed) (V3 C10) | — |
+| `hub.cutover_unknown_hub` | 3 | no | stays | the relay has no account for the hub in a cut-over `PUT` (`unknown_hub`): the cut-over stays `closing` (V3 C10) | — |
 
 Other v1.6 refusals reuse existing codes: an unknown or invisible run (also `run.stop` on a run already gone),
 attachment or `deposit_id` is `not_found` (§0.5); the start rate (§0.11) is `rate.limited` with `retry_after_ms`;

@@ -50,6 +50,9 @@ class StoreLanding:
         self.store = service.store
         self._fetch = fetch if fetch is not None else (lambda st: _fetch_snapshot(service, st))
         self._state = state  # the HubState being served (refreshed in place by a snapshot fetch)
+        #: C10: the secret of a hub-requested grant that a pending local hand-off matched, with the runner plan. It
+        #: lives here from the append until ``deliver`` gives it to the runner (or drops it); never logged or stored.
+        self.deposits: list[tuple[dict[str, Any], str]] = []
 
     @contextlib.contextmanager
     def locked(self) -> Iterator[None]:
@@ -130,6 +133,14 @@ class StoreLanding:
             if isinstance(r, Refusal):
                 raise LandRefused(r)
             state = r
+        answer = None
+        if log == WORKSPACE and event.get("type") == "grant.requested":
+            answer = self._answer(state, event, at, seq, probes[-1][1])
+            if answer is not None:  # the host-actor grant.issued in the same lock hold; judged like every other line
+                r = preview(state, answer[0], log=WORKSPACE)
+                if isinstance(r, Refusal):
+                    raise LandRefused(r)
+                state = r
         old_check = store.append_check
 
         def check(
@@ -144,9 +155,111 @@ class StoreLanding:
         try:
             for pin in pins:  # host events: the store does not ask the check for them
                 store.append(dict(pin), log=WORKSPACE)
-            store.append(dict(event), log=log)
+            written = store.append(dict(event), log=log).event
+            if answer is not None:
+                # issued_at is the request line's own ``at`` (the store stamps at append, so a clock tick since the
+                # preview cannot make it differ): min(request.at, now) = request.at, and expires_at follows
+                grant = {k: v for k, v in answer[0].items() if k not in ("seq", "prev", "at", "based_on")}
+                grant["issued_at"] = written["at"]
+                grant["expires_at"] = _plus_hours(written["at"], grant["hours"])
+                store.append(grant, log=WORKSPACE)
+                if answer[2] is not None:  # a pending local hand-off matched: the runner gets the secret, only it
+                    self.deposits.append((answer[2], answer[1]))
         finally:
             store.append_check = old_check
+
+    def _answer(
+        self, state: Any, event: dict[str, Any], at: str, seq: int, request: dict[str, Any]
+    ) -> tuple[dict[str, Any], str, dict[str, Any] | None] | None:
+        """The host-actor ``grant.issued`` that answers an admitted ``grant.requested`` (hub protocol 8.8, C10): the
+        same terms, ``request`` = the request line's id, ``issued_at`` = ``min(request.at, now)`` (here both are
+        ``at``), a fresh ``secret_hash``. Returns ``(event with seq/prev/at, secret, runner plan or None)``.
+
+        The secret goes to the runner only if a pending local hand-off of kind ``grant`` for this canonical person,
+        hub binding and exact terms is live (consumed here, inside the lock). Without one, or without a connected
+        runner on a switched-on machine, the secret is destroyed when this returns: the grant is inert."""
+        from orch import canon
+        from orch.hubclient.custodial import LandRefused
+        from orch.identity import new_grant, new_ulid
+        from orch.model import Code, Refusal
+        from orch.model.types import ts
+
+        from . import grantoff
+
+        ws = state._core.ws  # noqa: SLF001 - the model's own state, read under the lock
+        req = ws.requests.get(event["id"])
+        if req is None:  # the model admitted the request and recorded it; anything else is a bug: refuse, write nothing
+            raise LandRefused(Refusal(Code.GRANT_TERMS, "the request was not recorded"))
+        _check_verbs(req["verbs"])
+        token, secret, secret_hash = new_grant(ts(at) * 1000)
+        issued = {
+            "v": 2,
+            "hash_v": 1,
+            "id": new_ulid(),
+            "type": "grant.issued",
+            "actor": {"kind": "host"},
+            "grant": token.grant_id,
+            "scope": req["scope"],
+            "verbs": req["verbs"],
+            "issued_at": at,
+            "hours": req["hours"],
+            "expires_at": _plus_hours(at, req["hours"]),
+            "secret_hash": secret_hash,
+            "request": event["id"],
+            **({"label": req["label"]} if req["label"] is not None else {}),
+        }
+        prev = canon.event_head(request)
+        probe = {**issued, "based_on": prev, "seq": seq + 1, "prev": prev, "at": at}
+        plan = None
+        runners = getattr(self.service, "runners", None)
+        want = grantoff.terms(req["scope"], req["verbs"], req["hours"], req["label"])
+        if runners is not None and _runner_ready(self.service, runners):
+            model = dict(ws.hub)
+            if grantoff.GrantHandoffs(self.service).take(model, person=req["person"], hub_id=req["hub_id"], want=want):
+                plan = {
+                    "deposit_id": new_ulid(),
+                    "grant": token.grant_id,
+                    "person": req["person"],
+                    "until": issued["expires_at"],
+                    "scope": req["scope"],
+                }
+        return probe, secret, plan
+
+
+def _plus_hours(stamp: str, hours: int) -> str:
+    from datetime import UTC, datetime
+
+    from orch.model.types import ts
+
+    return datetime.fromtimestamp(ts(stamp) + 3600 * hours, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _check_verbs(verbs: Any) -> None:
+    """A requested list names exact operations an agent may run (as ``orch grant --verbs``): refuse the request
+    otherwise, so no grant is made that covers nothing the requester meant."""
+    from orch.hubclient.custodial import LandRefused
+    from orch.model import Code, Refusal
+
+    if verbs == "agent":
+        return
+    import orch.ops as ops
+
+    known = {n for n in ops.names() if ops.get(n).who in ("agent", "unattended")}
+    if any(v not in known for v in verbs):
+        raise LandRefused(Refusal(Code.GRANT_VERB, "verbs must be operations an agent may run"))
+
+
+def _runner_ready(service: Any, runners: Any) -> bool:
+    """Can the host give a secret to its runner now? Connected, and dashboard execution switched on for this machine."""
+    from orch.runner import enablement
+
+    try:
+        return (
+            bool(runners.connected)
+            and enablement.state_of(runners.host.state_dir, service.workspace_id, runners.host.host_uid)["enabled"]
+        )
+    except Exception:  # noqa: BLE001 - any doubt: no secret leaves
+        return False
 
 
 def _fetch_snapshot(service: Any, state: Any) -> bool:
@@ -175,11 +288,13 @@ def deliver(service: WorkspaceService, state: Any, log: str, event: dict[str, An
 
     from . import hubops
 
+    landing = StoreLanding(service, fetch, state)
     try:
         accept_event_deliver(
-            state, {"log": log, "event": event}, land=StoreLanding(service, fetch, state),
+            state, {"log": log, "event": event}, land=landing,
             now_ms=int(service.clock() * 1000), dev_mode=hubops.workspace_dev(service),
         )  # fmt: skip
+        _warn_policy(event)
         return None
     except HubRefused as exc:
         return exc.code
@@ -189,6 +304,42 @@ def deliver(service: WorkspaceService, state: Any, log: str, event: dict[str, An
     except Exception:  # noqa: BLE001 - one bad delivery never stops the loop; it is answered
         _log.exception("event_deliver failed")
         return "internal"
+    finally:
+        _to_runner(service, landing)
+
+
+def _to_runner(service: WorkspaceService, landing: StoreLanding) -> None:
+    """Give the secret of a hub-requested grant to the runner (C10), once, and forget it. Outside the store lock; the
+    secret is in no log line and no error. A failure leaves an inert grant (nobody holds the secret)."""
+    import asyncio
+
+    deposits, landing.deposits = landing.deposits, []
+    runners = getattr(service, "runners", None)
+    loop = getattr(getattr(runners, "host", None), "loop", None)
+    for plan, secret in deposits:
+        if runners is None or loop is None:
+            continue
+        fut = asyncio.run_coroutine_threadsafe(runners.grants.deposit(service.workspace_id, plan, secret), loop)
+        fut.add_done_callback(
+            lambda f, g=plan["grant"]: _log.info("hub-requested grant %s: deposit %s", g, _outcome(f))
+        )
+
+
+def _outcome(fut: Any) -> str:
+    try:
+        return str(fut.result().get("deposit", "unknown"))
+    except Exception as exc:  # noqa: BLE001 - never the exception text: it could carry a request
+        return type(exc).__name__
+
+
+def _warn_policy(event: dict[str, Any]) -> None:
+    """P2-d: a policy that turns a gate off is admitted with a warning (the contract has no wire field for it yet: the
+    host log carries it)."""
+    if event.get("type") != "policy.changed":
+        return
+    for gate, pol in sorted((event.get("gates") or {}).items()):
+        if pol.get("applies") == "off":
+            _log.warning("policy.changed turns off the %s gate", gate)
 
 
 def pump(service: WorkspaceService, link: Any, state: Any, wait: float = 0.0) -> bool:

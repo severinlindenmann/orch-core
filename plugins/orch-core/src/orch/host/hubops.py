@@ -55,9 +55,9 @@ __all__ = [
 
 HUB_OPS: dict[str, int] = {
     "hub.connect": 1, "hub.unbind": 1, "hub.status": 1, "hub.refresh": 1, "hub.handoff": 1, "hub.history": 1,
-    "keys.rotate": 1,
+    "keys.rotate": 1, "hub.reopen": 1,
 }  # fmt: skip
-NETWORK_OPS = frozenset({"hub.connect", "hub.unbind", "hub.refresh"})
+NETWORK_OPS = frozenset({"hub.connect", "hub.unbind", "hub.refresh", "hub.reopen"})
 HUB_CAPS = ["hub/1"]
 _MU = threading.Lock()
 
@@ -86,6 +86,7 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
     "hub.unbind": {"type": "object", "properties": {}, "additionalProperties": False},
     "hub.status": {"type": "object", "properties": {}, "additionalProperties": False},
     "keys.rotate": {"type": "object", "properties": {}, "additionalProperties": False},  # C8: owner, column P only
+    "hub.reopen": {"type": "object", "properties": {}, "additionalProperties": False},  # C10 M4: owner, column P only
     "hub.history": {  # C8 M5: what a hub did here; ``since`` starts the third list (default: the last 7 days)
         "type": "object",
         "properties": {
@@ -97,12 +98,18 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
     "hub.handoff": {  # V3 C11: a read; see host/hubhandoff.py
         "type": "object",
         "properties": {
-            "kind": {"enum": ["gate", "verdict", "question", "status"]},
+            "kind": {"enum": ["gate", "verdict", "question", "status", "grant"]},
             "ticket": {"type": "string", "minLength": 1, "maxLength": 64},
             "gate": {"enum": ["requirements", "plan", "code", "verify"]},
             "question": {"type": "string", "minLength": 1, "maxLength": 64},
+            # kind grant (C10): the exact terms Mission Control's "Start agent" waits for; cancel drops the wait
+            "scope": {"enum": ["all", "workable"]},
+            "verbs": {"const": "agent"},
+            "hours": {"type": "integer", "minimum": 1, "maximum": 168},
+            "label": {"type": "string", "minLength": 1, "maxLength": 200},
+            "cancel": {"const": True},
         },
-        "required": ["kind", "ticket"],
+        "required": ["kind"],
         "additionalProperties": False,
     },
 }
@@ -115,6 +122,7 @@ class HubFacts:
 
     now_ms: int
     dev_mode: bool
+    direct: str = "open"  # V3 C10: the direct relay path (hub.mode full on a full workspace is refused once closed)
 
 
 def workspace_dev(service: WorkspaceService) -> bool:
@@ -137,7 +145,12 @@ def workspace_dev(service: WorkspaceService) -> bool:
 
 
 def facts_for(service: WorkspaceService) -> HubFacts:
-    return HubFacts(int(service.clock() * 1000), workspace_dev(service))
+    from . import directpath
+
+    return HubFacts(
+        int(service.clock() * 1000), workspace_dev(service),
+        directpath.direct_state(service.state_dir, service.workspace_id, service.host_uid),
+    )  # fmt: skip
 
 
 # -- files ---------------------------------------------------------------------------------------------------------
@@ -516,6 +529,12 @@ class _Epochs:
         except (CustodyRefused, MembershipUnsafe):
             raise HubRefused("no_epoch") from None
 
+    def rotate_cut_over(self) -> None:
+        """C10 M2.3: the epoch of the cut-over: the owner's local one, with NO device listed in it (I4)."""
+        if self._local_owner is None:
+            raise HostError("hub.no_epoch", "the cut-over needs the owner's own key store")
+        self._mk.advance_local(self._local_owner, cut_over=True, drop_members=True)
+
     def rotate(self) -> None:
         if self._local_owner is not None:
             self._mk.advance_local(self._local_owner, cut_over=self._cut_over)  # relay-less or cut over: now
@@ -682,6 +701,10 @@ def serve(call: Call) -> dict[str, Any]:
         return out
     model = dict(service.store.state.workspace.hub)
     state = _load_state(service)
+    if op == "hub.reopen":  # C10 M4: act on the owner's signed relay.reopened (the model refused it unless left)
+        if not model.get("reopened") or model.get("status") != "left":
+            raise HostError("hub.not_joined", "sign `orch relay reopen` first (after `orch hub leave`)")
+        return {"plan": {"op": op, "model": model, "state": state}}
     if op == "hub.history":
         from . import breakglass
 
@@ -695,6 +718,8 @@ def serve(call: Call) -> dict[str, Any]:
         return handoff(call, args, state)
     if op == "hub.status":
         from orch.hubclient import snapshot
+
+        from . import cutover
 
         return ok_result(
             {
@@ -711,6 +736,7 @@ def serve(call: Call) -> dict[str, Any]:
                 "rotation": _rotation(service, state),
                 "reseal_needed": _reseal_needed(service, state),
                 "link": None if state is None else state.status,
+                **cutover.status_fields(service, state),  # V3 C10: direct, direct_note, direct_devices, cut_epoch
                 "log_sync": _log_sync_status(service),
                 "unbound_pending": state is not None and bool(state.outbox),
                 "owed": [] if state is None else sorted(state.outbox),
@@ -822,9 +848,31 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
             out = {"hub_id": r.hub_id, "status": r.status, "binding_seq": r.binding_seq, "mode": r.mode,
                    "sealed_epoch": None if not r.sealed else r.sealed["epoch"]}  # fmt: skip
             out["snapshot_version"] = _first_snapshot(call, plan, r, wsk_pub, sign, now, save)
+            if (
+                model["mode"] == "full"
+            ):  # V3 C10: the owner's full join / switch / re-seal moves the workspace to hub-only
+                from . import cutover
+
+                before = _load_state(service)
+                # the review text the owner signed says the phones' pairing ends: a join, a switch, or the owner's
+                # re-signed full mode on a workspace joined before C10 (V3-D29)
+                fresh = plan["kind"] in ("join", "switch") or bool(
+                    plan["kind"] == "seal" and before is not None and before.direct is None and model.get("affirmed_at")
+                )
+                if fresh or (before is not None and before.direct in ("closing", "open")):
+                    out["direct"] = cutover.run(service, model, hub_card=plan["card"], force_start=fresh)
+                    if out["direct"] != "closed":
+                        cutover.watch(service)  # retry in the background (an admin grant may still come)
+                    _audit(call, "hub.cutover", hub_id=r.hub_id, direct=out["direct"])
             return ok_result(out)
         if plan["op"] == "hub.refresh":
             return ok_result(_refresh(call, plan, state, wsk_pub, sign, now, save))
+        if plan["op"] == "hub.reopen":  # C10 M4: the owner signed relay.reopened; delete the cut-over, link again
+            from . import cutover
+
+            out = cutover.reopen(service)
+            _audit(call, "relay.reopen", hub_id=model.get("hub_id"))
+            return ok_result(out)
         out = _unbind(call, plan, state, sign, wsk_pub, now, save, leave, flush_outbox)
         _stop_peers(service)  # unbound: the ws->ws link and receive thread end here
         return ok_result(out)

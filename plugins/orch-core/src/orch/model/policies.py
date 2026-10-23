@@ -127,8 +127,9 @@ def eligible(policy: dict[str, Any], tokens: set[str]) -> bool:
 
 
 def solo(ws: WsCore) -> bool:
-    """A workspace with exactly one member: separation of duties has nobody to separate (B5b)."""
-    return len(ws.members) == 1
+    """A workspace with exactly one person (a member; in full mode also a hub user with a role): separation of duties
+    has nobody to separate (B5b, #1134)."""
+    return len(identity.persons(ws)) == 1
 
 
 def may_decide(

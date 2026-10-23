@@ -1952,6 +1952,14 @@ v2 §12.1 until the H6 switch, binding or not (SHORTCUT `Direct relay / publish 
 hub-path signature presented there is `bad_signature` (vector `publish_hub_request_replayed_direct`). From H6 on,
 orch-publish refuses direct requests for a workspace with a live binding.
 
+**Admission through the hub (R5a, V3-D36).** There is no direct `register`. A workspace reaches orch-publish only through
+`card_put` (§10): after the hub's own checks (pin, never-change rules, `card_seq`) it forwards `{card, pk_pub}` to
+`PUT /v2/hub/cards/{workspace_id}` at orch-publish. Publish verifies the card itself (owner `PK` delegation, `WSK` card
+signature), applies the admin's pre-bind, owner allowlist and block, and keeps the delegation unchanged forever. It keeps
+the highest `card_seq` ever admitted per workspace, across unbind: a lower one, or the same card after an unbind, is
+`stale_card`; a first admission needs `issued_ms` within 30 days. Refusals come back to the workspace as the hub's error
+(`unknown_workspace`, `owner_not_allowed`, `workspace_blocked`, `delegation_changed`, `stale_card`, ...).
+
 ### 11.3 `hub.publish_approval` (V3-D4)
 
 The owner's local-key authorisation of **one exact request**, signed at the host terminal by the owner's device key

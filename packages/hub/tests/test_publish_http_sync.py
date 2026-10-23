@@ -77,3 +77,17 @@ def test_workspace_id_is_validated_before_it_reaches_the_path(up):
             HttpPublishSync(up.url).put_binding(bad, OBJ)
         assert x.value.code == "malformed"
     assert up.requests == []
+
+
+def test_card_is_put_to_the_workspace_route_and_ids_are_checked(up):
+    s = HttpPublishSync(up.url)
+    s.put_card(WS, OBJ, "pkb64")
+    (r,) = up.requests
+    assert (r["method"], r["target"]) == ("PUT", f"/v2/hub/cards/{WS}")
+    assert json.loads(r["body"]) == {"card": OBJ, "pk_pub": "pkb64"}
+    with pytest.raises(PublishSyncError):
+        s.put_card("../x", OBJ, "pkb64")
+    up.status, up.body = 401, b'{"error":"unknown_workspace"}'
+    with pytest.raises(PublishSyncError) as x:
+        s.put_card(WS, OBJ, "pkb64")
+    assert x.value.code == "unknown_workspace"

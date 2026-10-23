@@ -325,3 +325,18 @@ def test_overall_deadline_applies_to_a_slow_drip(tmp_path):
         fw.forward(WS, host_request(wsk, hub.hub_id, WS))
     assert x.value.code == "unavailable" and time.monotonic() - t < 3
     srv.close()
+
+
+def test_card_goes_to_orch_publish_and_a_refusal_comes_back(env):
+    card = {"o": {"kind": "card"}}
+    env.fw.card(WS, card, "pk")
+    assert env.sync.calls[-1] == ("ws_card", WS, card, "pk")
+    for code in ("owner_not_allowed", "unknown_workspace", "delegation_changed", "workspace_blocked"):
+        env.sync.fail = PublishSyncError(code)
+        with pytest.raises(Refused) as x:
+            env.fw.card(WS, card, "pk")
+        assert x.value.code == code
+    env.sync.fail = PublishSyncError("made_up")
+    with pytest.raises(Refused) as x:
+        env.fw.card(WS, card, "pk")
+    assert x.value.code == "unavailable"

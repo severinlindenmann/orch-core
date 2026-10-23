@@ -101,6 +101,11 @@ class RecordingSync:
             raise self.fail
         self.calls.append(("revoked", dict(revoked)))
 
+    def put_card(self, workspace_id, card, pk_pub):
+        if self.fail:
+            raise self.fail
+        self.calls.append(("ws_card", workspace_id, dict(card), pk_pub))
+
     def put_binding(self, workspace_id, obj):
         if self.fail:
             raise self.fail

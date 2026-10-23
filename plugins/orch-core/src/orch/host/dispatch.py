@@ -846,27 +846,7 @@ class RegistryBackend:
             },
             "session": session,
             **({"runner": terms.runner_info(call.service, call.viewer)} if call.column.name in ("P", "G") else {}),
-            **({"relay": self._relay_caps(call.service)} if call.column.name == "R" else {}),
         }
-
-    @staticmethod
-    def _relay_caps(service: Any) -> dict[str, Any]:
-        """``whoami.relay`` (column R only): the person-event writes this host serves on R (the framing table's write
-        kinds) and the live R6 gate, read now (the same source as ``host.status.relay.gate``). §11A.17.2: ``dev``
-        only while :func:`orch.host.devmode.dev_gate` passes for this workspace now (fresh, never cached); absent
-        everywhere else. Nothing else."""
-        from orch.relay import worker as relay_worker
-        from orch.relay.framing import WRITE_OP_VERSIONS
-
-        from .devmode import dev_gate
-
-        out: dict[str, Any] = {"ops": dict(WRITE_OP_VERSIONS), "r6_ready": relay_worker.r6_ready()}
-        gate = dev_gate(service)
-        if getattr(service, "dev", None) is not None:
-            service.dev_ok = gate is not None  # the phone reads whoami before every review: P5's cache follows it
-        if gate is not None:
-            out["dev"] = {"sim_convenience": True, "sandbox": gate.sandbox_id[:8]}
-        return out
 
     def status(self, call: Call) -> dict[str, Any]:
         from orch.cli.main import VERSION_LINE
@@ -876,14 +856,6 @@ class RegistryBackend:
             data["state"] = call.service.state
             if self.started is not None:
                 data["uptime_s"] = int(time.monotonic() - self.started())
-            from .relayhook import status as relay_status
-
-            try:  # R5: host.status.relay (§11A.4), for a workspace with a relay directory; never fails the status
-                relay = relay_status(call.service)
-            except Exception as exc:  # noqa: BLE001 - reported, by class only
-                relay = {"error": type(exc).__name__}
-            if relay is not None:
-                data["relay"] = relay
             dev = getattr(call.service, "dev", None)
             if dev is not None:  # §11A.17.2: only on a dev host (absent, not false, elsewhere)
                 data["dev"] = {"sim_convenience": True, "sandbox": dev.id8}

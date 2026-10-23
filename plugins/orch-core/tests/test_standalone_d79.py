@@ -153,8 +153,7 @@ def human(served):
 
 def test_a_fresh_workspace_works_with_no_hub_relay_or_publish(human: Human, served, offline):
     assert served.offline_when_started, "the network block must be active before the host starts"
-    wid, svc = served.wid, served.service
-    assert svc.relay is None and svc.relay_reason == "not_linked"  # no relay configured
+    assert not hasattr(served.service, "relay_starter")  # V3-D36: a workspace host has no relay client
     uid, key = human.ticket("standalone")
     for sid in ("context", "requirements", "out_of_scope"):
         human.run("section.set", {"ref": key, "section": sid, "message": f"the {sid}"})
@@ -165,14 +164,6 @@ def test_a_fresh_workspace_works_with_no_hub_relay_or_publish(human: Human, serv
     assert events[-1]["type"] == "gate.approved"
     shown = ok(human.c.req("show", {"ref": key}))
     assert key in repr(shown) and "standalone" in repr(shown)
-
-    # pairing fails closed: nothing is linked, so there is no relay to pair through
-    control = served.control
-    for op in ("host.relay_pair_offer", "host.relay_pair_list"):
-        res = control.call(op, {"workspace_id": wid})
-        assert res["ok"] is False and res["error"]["code"].startswith("relay."), (op, res)
-    res = control.call("host.relay_unlink", {"workspace_id": wid})
-    assert res["ok"] is False and res["error"]["code"] == "relay.not_linked"
 
     # publish is off (add-on not enabled) or unconfigured, and says so; no send is attempted
     res = human.c.req("publish.list", {})

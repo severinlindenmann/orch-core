@@ -14,7 +14,7 @@ not the event-type check below. ``hub.repin`` is listed so the set is complete; 
 **Key exposure (#1097).** A device key with *positive evidence* of convenience custody has the signer kind ``exposed``
 (:func:`signer_kind`): a signed ``device.exposed`` mark (the model sets ``Device.exposed``; nothing clears it, only a
 new key does). It is read from the roster before the ``auth`` label, so no label hides it. No row allows ``exposed``,
-so a copy of such a key cannot sign ``hub.left``, the ``hub.mode`` reaffirmation or a full ``hub.joined``, whatever
+so a copy of such a key cannot sign ``hub.left``, or a full ``hub.joined``, whatever
 ``auth`` label it writes: ``sign.key_exposed``. The one exception is the mark itself (``device.mark_exposed``), which
 only removes authority and so may land in full mode. Keys with no such evidence count as clean.
 
@@ -59,21 +59,6 @@ class BreakGlass:
 
 
 #: verb -> row. Owner only in every row (checked separately: the actor must be a workspace owner).
-def reaffirms_full(ws: Any, e: Mapping[str, Any]) -> bool:
-    """The one ``hub.joined`` a joined full position takes from a local key: the same hub, root and binding, full mode,
-    no aliases (V3-D29, ``orch hub mode full`` again). Anything else is a new binding and goes through the hub."""
-    h = getattr(ws, "hub", None) or {}
-    return (
-        h.get("status") == "joined"
-        and h.get("mode") == "full"
-        and e.get("mode") == "full"
-        and e.get("hub_id") == h.get("hub_id")
-        and e.get("hk_root_pub") == h.get("hk_root_pub")
-        and e.get("binding_seq") == h.get("binding_seq")
-        and e.get("aliases") == []
-    )
-
-
 BREAK_GLASS: Mapping[str, BreakGlass] = {
     "hub.leave": BreakGlass("hub.left", ("owner_device_key",)),
     # L2-C8i-1: with no valid device left, the owner recovers one with the recovery key (D50 ``device.added``, only
@@ -81,10 +66,6 @@ BREAK_GLASS: Mapping[str, BreakGlass] = {
     "device.recover": BreakGlass("device.added", ("pk",)),
     "hub.repin": BreakGlass("hub.repinned", ("pk",)),  # backlog (#876): listed so the set is complete, op refused
     "keys.rotate": BreakGlass(None, ("owner_device_key",)),
-    # V3-D29 (C10): `orch hub mode full` again on a full workspace that was joined before C10 only re-affirms the
-    # binding and triggers the cut-over. The event is a hub.joined, but the model admits one in a joined position only
-    # in exactly that shape (same hub, root and binding_seq, no aliases): `workspace.hub_joined`.
-    "hub.mode": BreakGlass("hub.joined", ("owner_device_key",), reaffirms_full),
     # #1097: the guided rotation: the NEW device signs its own ``device.rotated`` (cert and rotation by the person key),
     # and the old device goes in the same event. ``pk`` only, so a copied (exposed) key cannot reach it and it works
     # with the hub down; the model checks the shape (:func:`is_rotation`) and the rotation's bindings.
@@ -197,7 +178,7 @@ def local_refusal(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
         and e.get("auth") != "hub"
         and e["actor"].get("kind") == "person"
         and signer_kind(ws, e) in ("exposed", "convenience")
-    ):  # #1097 E2: full-mode entry (first join, selective -> full, reaffirmation) never from a convenience key
+    ):  # #1097 E2: full-mode entry (first join, selective -> full) never from a convenience key
         return Refusal(Code.SIGN_KEY_EXPOSED, "full hub mode needs a device key that was never in one-click custody")
     if not h or h.get("status") != "joined" or h.get("mode") != "full" or e.get("auth") == "hub":
         return None

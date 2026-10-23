@@ -537,7 +537,6 @@ agent; **D** an addon; **H** the host only. Types marked D58–D60 are new with 
 | `addon.purged` | P | `name` | Deletes the addon's data. |
 | `hub.joined` | P | `hub_id`: hex16; `hk_root_pub`: b64u; `mode`: `selective` (`full` is refused until C2b); `binding_seq`: int ≥ 1; `aliases`: [{`person_id`, `user_id`}] sorted by `person_id` | V3 (hub contract H0 §9.1). Owner only, signed by the owner's device key at the host terminal. `hub_id` is the hub id of `hk_root_pub`. Adds no member and seals no key: a selective hub never holds `WK_e` (spec §8a). `binding_seq` is higher than every earlier one; refused while a hub is joined; an alias is never re-pointed. |
 | `hub.left` | P | `hub_id`; `binding_seq` | V3 (hub contract H0 §9.1). Owner only (break-glass): ends the joined binding it names. |
-| `relay.reopened` | P | `hub_id` | V3 C10 (design M4). Owner only, signed at the terminal with the owner's own key. Opens the direct relay path again, which a full-mode join closed (H5) and a leave did not reopen. Refused unless the workspace has left a hub, and it names that hub. Phones must be paired again. |
 | `hub.pinned` | H | `hub_id`; `object`: one signed `hub.card` (with its `op_cert`), `hub.op_revoked` or `hub.snapshot`, verbatim | C3b (§15.2). The hub ledger: workspace log only, appended by the host together with the custodial event that needs it. Its authority is the embedded signatures under the `hk_root_pub` of `hub.joined`. |
 | `hub.pinned` | H | `hub_id`; `object`: a signed `hub.card`, `hub.op_revoked` or `hub.snapshot` | C3b (§15.2): the hub ledger; authority is the embedded signatures under the root pinned by `hub.joined`. |
 
@@ -561,7 +560,6 @@ with an old role.
 | `device.removed` | the device's own person; owners for any device |
 | `device.exposed` | the marked device itself (#1097) |
 | `device.rotated` | the new device, with the person key's certificate and rotation signature (#1097) |
-| `relay.reopened` | owners, at the terminal (C10) |
 | `device.excluded` | an `admin` of the hub (mapped to owner), never for an owner's device (C10) |
 | `grant.issued`, `grant.revoked` | §10.1 A3 (D60) |
 | `grant.requested` | any role with a grant (hub `edit` and `admin`), through the hub only (C10) |
@@ -3239,4 +3237,4 @@ is not `auth: "hub"` and not a break-glass event by an owner is refused (`sign.h
 * A hub-signed `settings.changed` sets only `grant_hours`, `claim_ttl_min`, `lease_ttl_min`; a hub-signed
   `policy.changed` never changes a stored `factor` floor; `device.excluded` is refused for an owner's device.
 * No direct relay path (V3-D36, D69): a workspace host never starts a relay thread; the former H5 cut-over state is gone. The
-  relay.reopened event rows stay in the tables above only until legacy removal R4b deletes its schema.
+  The relay.reopened event is deleted (legacy removal R4b).

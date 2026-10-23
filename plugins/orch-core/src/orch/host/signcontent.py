@@ -75,7 +75,6 @@ SHOWN: dict[str, frozenset[str]] = {
     "verdict.given": frozenset({"outcome", "text", "source_sha"}),
     "hub.joined": frozenset({"hub_id", "hk_root_pub", "mode", "binding_seq", "aliases"}),
     "hub.left": frozenset({"hub_id", "binding_seq"}),
-    "relay.reopened": frozenset({"hub_id"}),
     "grant.issued": frozenset({"grant", "scope", "verbs", "label", "hours", "issued_at", "expires_at"}),
     "grant.revoked": frozenset({"grant", "reason"}),
     "log.added": frozenset({"text"}),
@@ -1245,9 +1244,8 @@ def _event(
                 "Full: the hub will be able to read everything in this workspace, restricted tickets too. It becomes "
                 "a member of the workspace and gets the workspace key (sealed to the hub's own key). Leaving later "
                 "starts a new key the hub never gets, but it cannot take back what the hub already read. Only you can"
-                " sign this, with your own key at this terminal. Your phones' direct pairing ends: from then on the hub"
-                " is the only path to this workspace, and no direct connection is accepted. Leaving the hub does not"
-                " bring the direct path back; only orch relay reopen does, and phones must be paired again."
+                " sign this, with your own key at this terminal."
+                " The hub is the only path to this workspace for phones and publishing."
             )
             return f"Join hub {hub} in full mode: the hub will be able to read everything in this workspace"
         out.setdefault("notes", []).append(
@@ -1264,14 +1262,6 @@ def _event(
             "never gets."
         )
         return f"Leave hub {_short(ev.get('hub_id'))}"
-    if typ == "relay.reopened":  # V3 C10 M4
-        _row(out, "hub that was left", ev.get("hub_id"))
-        out.setdefault("notes", []).append(
-            "The direct relay path of this workspace opens again. Phones that were paired before are not members any "
-            "more: they must be paired again. Anyone who pairs through the relay again can reach this workspace "
-            "without the hub."
-        )
-        return "Open the direct relay path of this workspace again"
     if typ == "people.changed":
         role = _s(ev.get("role"))
         add, remove = ev.get("add") or [], ev.get("remove") or []

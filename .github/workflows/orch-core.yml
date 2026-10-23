@@ -58,8 +58,7 @@ jobs:
         run: uv run ruff check
       - if: matrix.shard == 1
         run: uv run ruff format --check
-      # the T2 real-relay tests run in their own job (relay-t2), never here
-      - run: uv run pytest -q -m "not slow and not relay_t2" -n auto
+      - run: uv run pytest -q -m "not slow" -n auto
         env:
           ORCH_TEST_SHARD: ${{ matrix.shard }}/3
           # The runtime must have Unicode 16.0, so the canon comparison tests can never skip silently.
@@ -114,53 +113,11 @@ jobs:
           cache-dependency-glob: plugins/orch-core/uv.lock
       - run: uv sync --locked
       - run: uv run pytest -q -m slow -p no:xdist tests/ops/test_perf.py tests/store/test_perf.py tests/model/test_perf.py
-  relay-t2:
-    # 11A.10 harness layer 2: core's relay client and bridge loop against the REAL orch-relay at the commit pinned in
-    # tests/relay/vectors/SOURCE, on loopback only (no deployed relay is ever contacted). Its own job, so the main
-    # matrix is not slowed; the tests fail (never skip) here if the relay checkout is missing.
-    name: relay T2 (real relay, py3.14)
-    needs: mode
-    if: needs.mode.outputs.heavy == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          persist-credentials: false
-      - name: read the pinned relay commit from SOURCE
-        id: source
-        run: |
-          test "$(grep -c '^relay_commit:' tests/relay/vectors/SOURCE)" = 1 || { echo "not exactly one relay_commit in SOURCE" >&2; exit 1; }
-          commit="$(sed -n 's/^relay_commit: *\([0-9a-f]\{40\}\)$/\1/p' tests/relay/vectors/SOURCE | head -1)"
-          test -n "$commit" || { echo "no 40-hex relay_commit in SOURCE" >&2; exit 1; }
-          echo "commit=$commit" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          repository: severinlindenmann/orch-relay
-          ref: ${{ steps.source.outputs.commit }}
-          path: orch-relay
-          persist-credentials: false
-      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
-        with:
-          python-version: "3.14"
-          enable-cache: true
-          cache-dependency-glob: |
-            plugins/orch-core/uv.lock
-            orch-relay/uv.lock
-      - run: uv sync --locked
-      - run: uv sync --locked
-        working-directory: orch-relay
-      # T2 (relay_t2 and the harness self-tests) and the drift guard's optional cross-check of the vendored corpus
-      - run: uv run pytest -q -p no:xdist -rs tests/relay/t2 tests/relay/test_corpus.py::test_corpus_equals_the_relay_at_the_pinned_commit
-        timeout-minutes: 8
-        env:
-          ORCH_RELAY_DIR: ${{ github.workspace }}/orch-relay
-          ORCH_RELAY_T2_REQUIRED: "1"
   gate:
     # the one check a ruleset requires: it reports on every PR, also when the jobs above are skipped
     name: core gate
     if: always()
-    needs: [mode, tests, perf-schema, perf-budgets, relay-t2]  # mode: a failed draft check fails the gate
+    needs: [mode, tests, perf-schema, perf-budgets]  # mode: a failed draft check fails the gate
     runs-on: ubuntu-latest
     timeout-minutes: 5
     defaults:

@@ -15,7 +15,7 @@ import pytest
 from orch import crypto
 from orch.identity import Refused, answers, certreq, wscard
 
-from ..relay import corpus
+from ..wsproto import corpus
 
 S2 = corpus.S2
 CR = S2["cert_request"]

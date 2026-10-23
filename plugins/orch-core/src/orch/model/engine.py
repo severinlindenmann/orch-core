@@ -254,7 +254,6 @@ def _workspace_handler(core: Core, lc: LogCore, e: dict[str, Any], ctx: Ctx) -> 
         "addon.purged": lambda: workspace.addon_event(core, e),
         "hub.joined": lambda: workspace.hub_joined(ws, e),
         "hub.left": lambda: workspace.hub_left(ws, e, core),
-        "relay.reopened": lambda: workspace.relay_reopened(ws, e),
         "hub.pinned": lambda: workspace.hub_pinned(core, e, v, dev=ctx.hub_dev),
         "restore": lambda: workspace.restore(core, lc, e, v),
         "invalid.acknowledged": lambda: _ack(ws, lc, e),

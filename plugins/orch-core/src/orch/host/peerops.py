@@ -460,12 +460,12 @@ def _add(call: Call, svc: Any, args: dict[str, Any]) -> dict[str, Any]:
     from orch.identity import wscard
     from orch.identity.errors import Refused
 
-    from . import hubops, relayr3
+    from . import hubkeys, hubops
     from .workspace import ok_result
 
     service = call.service
     try:
-        pk = crypto.unb64u(args["owner_pk"], crypto.PUB_LEN) if "owner_pk" in args else relayr3.owner_pk_pub(service)
+        pk = crypto.unb64u(args["owner_pk"], crypto.PUB_LEN) if "owner_pk" in args else hubkeys.owner_pk_pub(service)
         vc = wscard.verify_card(args["card"], pk)
         o = vc.o
         wxk_pub = crypto.unb64u(o["wxk_pub"], crypto.PUB_LEN)

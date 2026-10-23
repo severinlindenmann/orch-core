@@ -48,13 +48,6 @@ def leave(w: World, actor, **extra):
     return w.build_unappended("workspace", "hub.left", actor, roster_v=w.roster_v, hub_id=HUB, binding_seq=1, **extra)
 
 
-def reaffirm(w: World, actor):
-    return w.build_unappended(
-        "workspace", "hub.joined", actor, roster_v=w.roster_v, hub_id=HUB, hk_root_pub=ROOT, mode="full",
-        binding_seq=1, aliases=[],
-    )  # fmt: skip
-
-
 # --- the mark ------------------------------------------------------------------------------------------------------
 
 
@@ -110,16 +103,9 @@ def test_a_copied_exposed_key_cannot_forge_a_passphrase_labelled_hub_left(w):
     assert strict(w).workspace.hub["status"] == "joined"  # and the hub binding is untouched
 
 
-def test_the_hub_mode_reaffirmation_is_refused_for_an_exposed_key_and_allowed_for_a_clean_one(w):
-    assert not hasattr(admit(strict(w), reaffirm(w, w.b), log="workspace"), "code")  # B: clean
-    mark(w)
-    assert admit(strict(w), reaffirm(w, "sev"), log="workspace").code == Code.SIGN_KEY_EXPOSED
-
-
-def test_clean_keys_are_unaffected_an_unmarked_key_leaves_and_reaffirms(w):
+def test_clean_keys_are_unaffected_an_unmarked_key_leaves(w):
     assert not hasattr(admit(strict(w), leave(w, w.b), log="workspace"), "code")
     assert not hasattr(admit(strict(w), leave(w, "sev"), log="workspace"), "code")  # A has no mark: clean
-    assert not hasattr(admit(strict(w), reaffirm(w, "sev"), log="workspace"), "code")
 
 
 # --- full-mode entry -----------------------------------------------------------------------------------------------
@@ -226,10 +212,10 @@ LABELS = [None, "passphrase", "click", "convenience", "secure-enclave-unlocked",
 
 @pytest.mark.parametrize("label", LABELS)
 def test_an_exposed_device_is_refused_whatever_label_it_writes(w, label):
-    """The exposure is read from the roster before the auth label: no label hides it (full join, leave, reaffirm)."""
+    """The exposure is read from the roster before the auth label: no label hides it (full join, leave)."""
     mark(w)
     extra = {} if label is None else {"auth": label}
-    for build in (leave, reaffirm):
+    for build in (leave,):
         e = build(w, "sev")
         if label is None:
             e.pop("auth", None)

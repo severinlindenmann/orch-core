@@ -904,7 +904,7 @@ def pinned_path() -> tuple[str, str, str]:
 
 def relay_checkout() -> Path:
     """The orch-relay checkout named by ``ORCH_RELAY_DIR`` (this script's own environment: the one variable it reads
-    for that), which must be at the commit pinned in ``tests/relay/vectors/SOURCE``."""
+    for that), which must be at the commit pinned in ``tests/wsproto/vectors/SOURCE``."""
     val = os.environ.get("ORCH_RELAY_DIR", "")
     if not val:
         raise Refused("--relay local needs ORCH_RELAY_DIR: a checkout of orch-relay at the pinned commit")

@@ -94,7 +94,6 @@ _WORKSPACE_ONLY = frozenset(
         "hub.joined",
         "hub.left",
         "hub.pinned",
-        "relay.reopened",
     }
 )
 _BOTH_LOGS = frozenset({"policy.changed", "projection.repaired", "restore", "invalid.acknowledged"})

@@ -450,13 +450,8 @@ def handle_hub_mode(ctx: Context, args: dict[str, Any]) -> Result:
     current = h.store.state.workspace.hub
     if not current or current.get("status") != "joined":
         raise OrchError("hub.not_joined", "this workspace is not joined to a hub")
-    again = current.get("mode") == "full"
-    if again and getattr(facts, "direct", "open") != "open":
-        # V3-D29: a full workspace that was NOT cut over yet (a join before C10) signs the new words once; one that
-        # is cut over has nothing left to trigger
-        raise OrchError("hub.already_joined", "this workspace is already in full mode and its direct path is closed")
-    if current.get("mode") not in ("selective", "full"):
-        raise OrchError("hub.already_joined", "this workspace is not in a mode that can be switched")
+    if current.get("mode") != "selective":
+        raise OrchError("hub.already_joined", "only a selective workspace can switch to full")
     try:
         verified = wire.verify_card(
             args["hub_card"], now_ms=facts.now_ms, dev_mode=facts.dev_mode,
@@ -465,8 +460,7 @@ def handle_hub_mode(ctx: Context, args: dict[str, Any]) -> Result:
         payload = wire.joined_payload(
             hk_root_pub=verified["hk_root_pub"],
             mode="full",
-            # a re-signed full mode keeps its binding (it only triggers the cut-over); a switch is the next binding
-            binding_seq=int(current["binding_seq"]) + (0 if again else 1),
+            binding_seq=int(current["binding_seq"]) + 1,
             aliases=[],
             prior_aliases=_prior_aliases(current, verified["hk_root_pub"]),
         )
@@ -489,24 +483,6 @@ def handle_hub_leave(ctx: Context, args: dict[str, Any]) -> Result:
     done = h.run(event, "workspace", f"leave hub {current['hub_id']}", review=[])
     data = {"hub_id": current["hub_id"], "binding_seq": current["binding_seq"]}
     return h.workspace_result(done, data, "the host now tells the hub that this workspace is unbound")
-
-
-def handle_relay_reopen(ctx: Context, args: dict[str, Any]) -> Result:
-    """``relay.reopen {}`` (V3 C10 M4, L2-E3-3): the owner's signed record that the direct relay path opens again. Only
-    after the workspace left the hub that closed it (the model refuses it while a hub is joined); a human at the
-    terminal with the owner key. The host then deletes the cut-over at the relay and restarts the link."""
-    h = _Human(ctx, "relay.reopen")
-    _owner(h, "relay.reopen")
-    current = h.store.state.workspace.hub
-    if not current:
-        raise OrchError("hub.not_joined", "this workspace never joined a hub")
-    if current.get("status") != "left":
-        raise OrchError(
-            "hub.already_joined", "leave the hub first (orch hub leave): a joined hub keeps the path closed"
-        )
-    event = {"type": "relay.reopened", "hub_id": current["hub_id"]}
-    done = h.run(event, "workspace", "reopen the direct relay path", review=[])
-    return h.workspace_result(done, {"hub_id": current["hub_id"]}, "the host now reopens the direct relay path")
 
 
 def handle_device_mark_exposed(ctx: Context, args: dict[str, Any]) -> Result:
@@ -630,20 +606,6 @@ HUB_LEAVE = operation(
     data=obj({"hub_id": STR, "binding_seq": {"type": "integer"}}),
     errors=(err("role.denied"), err("hub.not_joined")),
     handler=handle_hub_leave,
-)
-
-RELAY_REOPEN = operation(
-    "relay.reopen",
-    "Human only",
-    "Open the direct relay path again after you left the hub that closed it (phones must be paired again).",
-    who="human",
-    props={},
-    required=(),
-    emits=("relay.reopened",),
-    text="ok relay.reopened {hub_id} seq={seq}\nnext: {next}",
-    data=obj({"hub_id": STR}),
-    errors=(err("role.denied"), err("hub.not_joined"), err("hub.already_joined")),
-    handler=handle_relay_reopen,
 )
 
 _PERSON = {"type": "string", "pattern": "^p_[0-9a-f]{32}$"}
@@ -851,7 +813,6 @@ OPS: dict[str, Operation] = {
         HUB_JOIN,
         HUB_MODE,
         HUB_LEAVE,
-        RELAY_REOPEN,
         DEVICE_MARK_EXPOSED,
         DEVICE_ROTATE,
         AC_ACCEPT,

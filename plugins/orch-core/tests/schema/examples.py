@@ -62,7 +62,6 @@ WORKSPACE_ONLY = {
     "hub.joined",
     "hub.left",
     "hub.pinned",
-    "relay.reopened",
     "device.exposed",
     "device.rotated",
 }
@@ -500,7 +499,6 @@ _SPEC = {
         5,
     ),
     "hub.left": (PERSON, {"hub_id": "38d8abed52ccfb538da401fd54e64bdc", "binding_seq": 1}, 5),
-    "relay.reopened": (PERSON, {"hub_id": "38d8abed52ccfb538da401fd54e64bdc"}, 5),
     "device.exposed": (PERSON, {"device": "d_" + DID, "reason": "convenience"}, 5),
     "device.rotated": (
         PERSON,

@@ -839,25 +839,15 @@ class MembershipKeys:
         except (CustodyRefused, MembershipUnsafe, crypto.EncodingError, KeyError, TypeError, ValueError):
             return False
 
-    def advance_local(self, owner_person_id: str, *, cut_over: bool = False, drop_members: bool = False) -> int:
-        """A relay-less workspace makes its own epoch (V3 C2b): the first one (the genesis epoch, an empty list) or the
-        next one (the committed list's members carried over), through the same write-ahead steps as a rotation:
-        ``new_epoch_key``, one ``expose``, one ``commit``. Same file formats, same custody, no new crypto; the list is
-        not signed or sent anywhere (no relay). Refused, fail closed, for a workspace that is or was linked to a relay
-        (checked fresh here, not at open): its epochs are the publisher's. ``cut_over`` (C8/C10, passed by the host only
-        when its own state says the direct relay path is ``closing``/``closed``): the relay no longer takes a membership
-        list, so the owner's local epochs are the only ones left and the linked refusal does not apply. The
-        ``local-epochs.json`` mark is written before any key, so a store with local epochs is always
-        marked (a relay link is refused for it). ``drop_members`` (C10, only with ``cut_over``): the new epoch's list is
-        empty, so no direct device is carried into the epoch that is sealed to the hub alone (design-c10 M2.3, I4).
+    def advance_local(self, owner_person_id: str) -> int:
+        """The workspace makes its own epoch (V3 C2b; there is no relay): the first one (the genesis epoch, an empty
+        list) or the next one (the committed list's members carried over), through the same write-ahead steps as a
+        rotation: ``new_epoch_key``, one ``expose``, one ``commit``. The list is not signed or sent anywhere. The
+        ``local-epochs.json`` mark is written before any key.
 
         A crash between ``expose`` and ``commit`` leaves an exposed body: it is committed when complete and valid
         (that epoch is the one returned), else abandoned (its ``list_seq`` and epoch burned), then a new one is made."""
         self._require_safe()
-        if self._linked_now() and not cut_over:
-            raise CustodyRefused("a relay-linked workspace gets its epochs from the relay path")
-        if drop_members and not cut_over:
-            raise CustodyRefused("only a cut-over drops the listed devices")
         with self._write():
             if self._dir.read_json(LOCAL_MARK) is None:
                 self._dir.write_json(LOCAL_MARK, {"v": 1, "created_ms": self._now_ms()})
@@ -869,7 +859,7 @@ class MembershipKeys:
             with self._seal:
                 ehw, lhw = self._ehw, self._lhw
             committed = self._head["committed"]
-            members = [] if drop_members else (committed["list"]["members"] if committed else [])
+            members = committed["list"]["members"] if committed else []
             epoch = ehw + 1
             commit = self.new_epoch_key(epoch)
             try:

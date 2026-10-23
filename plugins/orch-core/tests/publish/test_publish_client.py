@@ -2,7 +2,7 @@
 
 Vectors: ``tests/publish/vectors/publish_v2.json``, byte for byte orch-publish's ``tests/vectors/publish_v2.json`` (P1),
 which is the suite-2 subset of orch-relay ``tests/vectors_v2.json``. Pinned by sha256 in ``vectors/SOURCE`` and checked
-against the relay corpus vendored in ``tests/relay/vectors``, so a drift in either repo fails here."""
+against the relay corpus vendored in ``tests/wsproto/vectors``, so a drift in either repo fails here."""
 
 from __future__ import annotations
 
@@ -20,8 +20,8 @@ from orch import crypto
 from orch.publishclient import PublishClient, PublishError, share_target
 from orch.wsproto.pubsign import PublishContext, PublishSigner, publish_signed_bytes
 from orch.wsproto.sign import SignerRefused
-from tests.relay import corpus
-from tests.relay.helpers import Key, MemLedger
+from tests.wsproto import corpus
+from tests.wsproto.helpers import Key, MemLedger
 
 VEC_DIR = Path(__file__).resolve().parent / "vectors"
 VEC_BYTES = (VEC_DIR / "publish_v2.json").read_bytes()

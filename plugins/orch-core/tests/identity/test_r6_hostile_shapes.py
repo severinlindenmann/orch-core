@@ -11,7 +11,7 @@ import pytest
 from orch import canon, crypto
 from orch.identity import Refused, certreq, memberlist, wscard
 
-from ..relay import corpus
+from ..wsproto import corpus
 
 S2 = corpus.S2
 IDS = S2["ids"]

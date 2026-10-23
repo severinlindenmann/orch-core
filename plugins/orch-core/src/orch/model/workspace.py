@@ -659,14 +659,6 @@ def hub_joined(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
     h = ws.hub
     if e["mode"] not in HUB_MODES:
         return Refusal(Code.HUB_INVALID, "unknown hub mode")
-    if (
-        h and h["status"] == "joined" and h["mode"] == "full" and e["mode"] == "full" and e["hub_id"] == h["hub_id"]
-        and e["hk_root_pub"] == h["hk_root_pub"] and e["binding_seq"] == h["binding_seq"] and e["aliases"] == []
-    ):  # fmt: skip
-        # V3-D29 / C10: the owner signs full mode again, with the words that say the phones' pairing ends. Nothing
-        # about the binding changes; the host reads the mark and starts the cut-over (and refuses it once cut over).
-        ws.hub = {**h, "affirmed_at": e.get("at")}
-        return None
     if h and h["status"] == "joined":
         switch = h["mode"] == "selective" and e["mode"] == "full" and e["hub_id"] == h["hub_id"]
         if not switch or e["hk_root_pub"] != h["hk_root_pub"]:
@@ -715,22 +707,6 @@ def hub_joined(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
         **({"joined_at": e["at"]} if "at" in e else {}),  # C8 P2-b: nothing made before this binding lands under it
         **({"member": {"kind": "hub", "hub_id": e["hub_id"]}} if e["mode"] == "full" else {}),
     }
-    return None
-
-
-def relay_reopened(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
-    """``relay.reopened`` (V3 C10 M4, owner only): the direct relay path opens again. Only after the workspace has
-    LEFT the hub whose full mode closed it: while a hub is joined in full mode it is refused (D68: full mode is
-    hub-only, and a reopened door would let a direct device bypass the hub's role gate). It names the hub that was
-    left. It changes no state of the model; the host acts on it (``cutover.reopen``)."""
-    if (r := _owner_only(ws, e)) is not None:
-        return r
-    h = ws.hub
-    if not h or h.get("status") != "left":
-        return Refusal(Code.HUB_INVALID, "relay.reopened needs a workspace that has left its hub")
-    if e["hub_id"] != h.get("hub_id"):
-        return Refusal(Code.HUB_INVALID, "relay.reopened must name the hub that was left")
-    ws.hub = {**h, "reopened": True}  # the host acts on it (cutover.reopen); a later hub.joined starts a fresh record
     return None
 
 

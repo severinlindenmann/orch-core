@@ -436,10 +436,6 @@ class Host:
         service.runners = self.runners  # H11a: run.list / run.sub
         service.dev = self.dev  # §11A.17: the dev gate reads it; None on a normal host
         backend = self.backend_factory()
-        from .relayhook import install_seams, make_starter
-
-        install_seams()  # B1: the four relay seams (idempotent; the R6 gate is the separate switch)
-        service.relay_starter = make_starter(backend)  # R5: the open's hook starts the relay worker through it
         await service.call(service.open)
         if self.dev is not None:
             from .devmode import dev_gate

@@ -73,7 +73,6 @@ def test_the_host_person_ops_are_not_registry_ops():
         "hub.join",
         "hub.mode",
         "hub.leave",
-        "relay.reopen",
         "device.mark_exposed",
         "device.rotate",
     }  # V3 C2a, C2b, C10, #1097

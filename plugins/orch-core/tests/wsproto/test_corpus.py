@@ -28,9 +28,9 @@ def _render(manifest: dict) -> str:  # the relay's manifest.render
 PINNED_RELAY_COMMIT = "4a9f95474bdac8dc3ffae8be4099a9b4b2e6cdcc"
 UPDATE = (
     "the vendored relay corpus changed. To update it: run scripts/sync-vectors.sh <relay ref> (it writes "
-    "tests/relay/vectors/vectors_v2.json.xz, the http_fixtures/ files MANIFEST.json lists plus MANIFEST.json, and "
+    "tests/wsproto/vectors/vectors_v2.json.xz, the http_fixtures/ files MANIFEST.json lists plus MANIFEST.json, and "
     "SOURCE: relay_commit, http_fixtures_manifest_revision, vectors_v2_sha256 over the decompressed bytes), bump "
-    "PINNED_RELAY_COMMIT in tests/relay/test_corpus.py, and land it as one PR that changes nothing else"
+    "PINNED_RELAY_COMMIT in tests/wsproto/test_corpus.py, and land it as one PR that changes nothing else"
 )
 
 

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from orch import canon
-from orch.identity.epochs import MembershipKeys, R6Gate
+from orch.identity.epochs import MembershipKeys
 from orch.identity.memberlist import member_list_o
 from orch.wsproto import sign
 
@@ -34,22 +34,11 @@ def open_keys(
     *,
     fault: Callable[[str], None] | None = None,
     clock: Clock | None = None,
-    hooked: bool = True,
     previously_linked: bool = False,
 ) -> MembershipKeys:
-    """``hooked``: stand in for ``R6Gate.install`` (no store here); a test of the fail-closed default passes False."""
     mk = MembershipKeys(tmp / "membership", WS, now_ms=clock or Clock(), fault=fault,
                         previously_linked=previously_linked)  # fmt: skip
-    if hooked:
-        store = KitStore()
-        R6Gate(mk).install(lambda: store)
     return mk
-
-
-class KitStore:
-    """A store stand-in for ``R6Gate.install`` (only ``relay_gate``)."""
-
-    relay_gate = None
 
 
 def list_for(epoch: int, list_seq: int, commit: str, devices: list[str] | None = None) -> dict[str, Any]:

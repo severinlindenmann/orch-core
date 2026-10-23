@@ -77,9 +77,7 @@ def mk(tmp_path):
     from orch.identity.epochs import MembershipKeys
 
     keys = MembershipKeys(tmp_path / "membership", WS, now_ms=lambda: NOW)
-    from orch.identity.epochs import R6Gate
-
-    R6Gate(keys).install(lambda: r6kit.KitStore())
+    from orch.identity.epochs import MembershipKeys
     r6kit.rotate(keys)  # epoch 1 committed
     yield keys
     keys.close()
@@ -181,10 +179,9 @@ def test_a_replayed_wk_seal_is_refused_by_the_hub(host, mk):
 
 
 def test_no_epoch_means_nothing_is_sent(tmp_path):
-    from orch.identity.epochs import MembershipKeys, R6Gate
+    from orch.identity.epochs import MembershipKeys
 
     empty = MembershipKeys(tmp_path / "m2", WS, now_ms=lambda: NOW)
-    R6Gate(empty).install(lambda: r6kit.KitStore())
     h = Host(FakeHub(), empty)
     with pytest.raises(HubRefused) as e:
         h.join_full()
@@ -354,10 +351,9 @@ class _nothing:
 
 
 def test_a_relay_less_workspace_makes_its_own_genesis_epoch_and_rotates_locally(tmp_path):
-    from orch.identity.epochs import MembershipKeys, R6Gate
+    from orch.identity.epochs import MembershipKeys
 
     own = MembershipKeys(tmp_path / "m3", WS, now_ms=lambda: NOW)
-    R6Gate(own).install(lambda: r6kit.KitStore())
     owner = V["ids"]["person_alice"]
     h = Host(FakeHub(), own, local_owner=owner)
     with pytest.raises(HubRefused):  # without ensure_epoch there is nothing to seal
@@ -383,7 +379,7 @@ def test_a_relay_linked_key_store_never_makes_a_local_epoch(tmp_path):
 
 
 def test_a_crash_between_expose_and_commit_is_completed_by_the_next_advance(tmp_path):
-    from orch.identity.epochs import MembershipKeys, R6Gate
+    from orch.identity.epochs import MembershipKeys
 
     crash = {"on": True}
 
@@ -392,7 +388,6 @@ def test_a_crash_between_expose_and_commit_is_completed_by_the_next_advance(tmp_
             raise RuntimeError("crash")
 
     own = MembershipKeys(tmp_path / "m5", WS, now_ms=lambda: NOW, fault=fault)
-    R6Gate(own).install(lambda: r6kit.KitStore())
     owner = V["ids"]["person_alice"]
     with pytest.raises(RuntimeError):
         own.advance_local(owner)
@@ -405,7 +400,7 @@ def test_a_crash_between_expose_and_commit_is_completed_by_the_next_advance(tmp_
 
 
 def test_an_invalid_exposed_body_is_abandoned_and_a_new_epoch_follows(tmp_path):
-    from orch.identity.epochs import MembershipKeys, R6Gate
+    from orch.identity.epochs import MembershipKeys
 
     crash = {"on": True}
 
@@ -414,7 +409,6 @@ def test_an_invalid_exposed_body_is_abandoned_and_a_new_epoch_follows(tmp_path):
             raise RuntimeError("crash")
 
     own = MembershipKeys(tmp_path / "m6", WS, now_ms=lambda: NOW, fault=fault)
-    R6Gate(own).install(lambda: r6kit.KitStore())
     owner = V["ids"]["person_alice"]
     with pytest.raises(RuntimeError):
         own.advance_local(owner)

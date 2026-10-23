@@ -58,7 +58,6 @@ import re
 import secrets
 import threading
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -68,7 +67,6 @@ from orch.identity.errors import Refused
 from orch.wsproto.state import FileSignLedger, StateDir, StateError
 
 __all__ = [
-    "SealState",
     "default_part",
     "CLAMP",
     "FIRST_EPOCH_MAX",
@@ -78,7 +76,6 @@ __all__ = [
     "CustodyRefused",
     "MembershipKeys",
     "MembershipUnsafe",
-    "R6Gate",
 ]
 
 MAX_EPOCH = 2**32 - 1
@@ -281,17 +278,6 @@ class _SealLock:
         return self._holds.get(threading.get_ident(), 0) > 0
 
 
-@dataclass(frozen=True)
-class SealState:
-    """One seal-time snapshot (G1). ``current``: the committed epoch, the only one data is sealed under; ``gated``:
-    the rotation gate is up (proto §7.2 H5: no new sealing of data even under ``current``); ``stale_target``: the
-    epoch a ``stale_epoch`` names for a burned or gated request: the pending epoch, else ``EHW + 1``."""
-
-    current: int
-    gated: bool
-    stale_target: int
-
-
 def default_part(name: str) -> dict[str, Any]:
     """The first card's sealed part (11A.15.5): ``{name, description, capabilities, hosted_by: None}``: the workspace's
     display name, an empty description and no capabilities."""
@@ -302,7 +288,7 @@ def default_part(name: str) -> dict[str, Any]:
 
 class MembershipKeys:
     """R6's key custody and seal state for one workspace (11A.15.3): implements R2's ``EpochKeySource``
-    (``current_epoch``, ``wk``, ``refusal_key``, ``seal_state``, ``seal_snapshot``, ``serialised``).
+    (``current_epoch``, ``wk``, ``refusal_key``, ``serialised``).
 
     ``root`` is ``<state>/hosts/<ws>/membership`` (resolved; ``hosts/<ws>`` must exist). One live instance per
     directory (``StateDir``'s ``flock``); a forked child serves nothing (fail closed). ``fault(point)`` is the crash
@@ -329,10 +315,6 @@ class MembershipKeys:
         self._fault = fault or (lambda point: None)
         self._seal = _SealLock()  # the seal lock (11A.15.2)
         self._writer = threading.RLock()  # R6's one head.json writer (taken before the seal lock, never inside it)
-        # the store hook, bound to the LIVE store (round 3, R3): gated unless live() is a store whose relay_gate is
-        # exactly the callable R6Gate.install put there; checked at every seal_state, never a latch
-        self._live: Callable[[], Any] = lambda: None
-        self._hook: object = None
         self._dir = StateDir(root)
         try:
             self._keys = StateDir(Path(root) / "keys")
@@ -607,23 +589,6 @@ class MembershipKeys:
             t = min(t, self._ec + CLAMP)
         return min(t, MAX_EPOCH)
 
-    def seal_state(self) -> SealState:
-        """One snapshot: the committed epoch; ``gated`` when the gate is up, before the first commit, while unsafe
-        and until the store hook is installed (no data is sealed then); the epoch a ``stale_epoch`` names."""
-        if self._forked():
-            return SealState(0, True, 1)
-        with self._seal:
-            gated = self._gate_up or self._ec < 1 or self._unsafe is not None or not self._hooked()
-            return SealState(self._ec, gated, self._target())
-
-    @contextlib.contextmanager
-    def seal_snapshot(self) -> Iterator[SealState]:
-        """The seal lock for the duration of one seal, and ONE :meth:`seal_state` taken under it."""
-        if self._forked():
-            raise MembershipUnsafe("forked")
-        with self._seal:
-            yield self.seal_state()
-
     @contextlib.contextmanager
     def serialised(self) -> Iterator[None]:
         """The seal lock alone. Never call a writer method inside it (refused, F5)."""
@@ -667,23 +632,6 @@ class MembershipKeys:
             log.error(
                 "membership gate raise not yet durable (%s); it stays up in memory and queued", type(exc).__name__
             )
-
-    def bind_gate(self, live: Callable[[], Any], hook: object) -> None:
-        """Bind the gate to the live store (:meth:`R6Gate.install`): ``live()`` returns the store now in use (the
-        host's ``service.store``), ``hook`` is the exact callable installed as its ``relay_gate``."""
-        with self._seal:
-            self._live, self._hook = live, hook
-
-    def _hooked(self) -> bool:
-        """Data may be sealed only while the store now in use carries our hook (a reopened, replaced or closed store
-        does not: gated until :meth:`R6Gate.install` runs on it). Fail closed on any error."""
-        if self._hook is None:
-            return False
-        try:
-            store = self._live()
-            return store is not None and store.relay_gate is self._hook
-        except Exception:  # noqa: BLE001 - any doubt is "not hooked"
-            return False
 
     def gate_up(self) -> bool:
         if self._forked():
@@ -1242,33 +1190,3 @@ class MembershipKeys:
         if wk is None or not 1 <= epoch < 1 << 32:
             raise CustodyRefused("no view key for this epoch")
         return crypto.hkdf(wk, b"", b"orch/v2/hub-view|" + self.workspace_id.encode() + b"|" + str(epoch).encode())
-
-
-class R6Gate:
-    """The store's hook (11A.15.2): ``raise_for(device, reason)`` inside the store's critical section that appends
-    F1 ``device.removed``/``device.revoked`` or holds forwarded evidence, before the store lock is released. The
-    in-memory gate goes up under the seal lock (a seal that began first finishes first), then the raise is written
-    durably (writer lock) before it returns. It never takes the store lock. :meth:`install` sets ``Store.relay_gate``
-    (which the host's journal never replaces; the store calls it on every loss of F1 standing, whatever its cause)
-    and binds the key store to the live store, which is gated whenever that store does not carry this hook."""
-
-    __slots__ = ("_keys",)
-
-    def __init__(self, keys: MembershipKeys) -> None:
-        self._keys = keys
-
-    def raise_for(self, device: str, reason: str) -> None:
-        self._keys.raise_gate(device, reason)
-
-    def install(self, live: Callable[[], Any], *, rebuild: Callable[[], None] | None = None) -> None:
-        """``live()`` is the store now in use (re-read at every seal decision): set its ``relay_gate`` to this gate
-        (from now on no loss of standing is missed), run ``rebuild()`` (the start-up gate rebuild), and only then bind
-        the key store to it. A ``rebuild`` that raises leaves the key store unbound, so gated (round 3, R3)."""
-        store = live()
-        if store is None:
-            raise MembershipUnsafe("no store to hook")
-        hook = self.raise_for
-        store.relay_gate = hook
-        if rebuild is not None:
-            rebuild()
-        self._keys.bind_gate(live, hook)

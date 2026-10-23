@@ -9,10 +9,10 @@ import copy
 import dataclasses
 
 import pytest
+from orch.identity.pairdevice import PairGateRefused, pair_gate
 
 from orch import crypto
 from orch.identity import pairing, reader
-from orch.identity.pairdevice import PairGateRefused, pair_gate
 
 from ..crypto.vectors import S2
 from .helpers import NOW, WS, Person

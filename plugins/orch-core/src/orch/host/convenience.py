@@ -40,7 +40,6 @@ __all__ = [
     "REASONS",
     "check",
     "enabled",
-    "pair_gate",
     "flag_path",
     "pending_handoffs",
     "read",
@@ -468,44 +467,6 @@ def _required(service: Any, *, history: bool) -> int:
     if history and seen_or_history(service.store, service.state_dir, service.workspace_id, service.host_uid):
         return 1
     return 0
-
-
-def pair_gate(service: Any, meta: Any, *, offer_id: str, who: dict[str, str]) -> Any:
-    """**The step-4 hook for R6c** (11A.15.6 step 4, H12d-3): call it when the host opens a pair request, after step 3
-    (``check_pair_meta``, the meta signature, ±300 s, a presented cert) and **before** the offer is consumed, the SAS
-    is shown or the primary is asked. ``who`` is ``{"pk_pin": <the link's pk_pin>}`` on path 7b, or ``{"person_id":
-    <the presented cert's person, bare hex>}`` on path 7a. ``required_reader`` is computed here (the flag, the durable
-    mark, the merged history: a rare op), the clock is the host's.
-
-    Returns :class:`orch.identity.pairdevice.PairGate`: R6 stores ``decl`` and ``decl_who`` verbatim with the offer at
-    step 5 (the **first** stored declaration wins on a resend: ECDSA signatures differ per resend, and a resend of a
-    consumed offer never runs this again) and passes them as ``PairDeviceFacts(decl=, decl_who=)`` at step 9, where
-    the authoritative check runs in the allocation's append. Raises :class:`HostError`: ``sign.convenience_readers``
-    (``no_declaration``, ``reader_too_old``; ``detail`` names the device) or ``reader.decl_invalid`` (the reason
-    first in the message). R6 answers either with the short ``rejected``, moves the offer to ``rejected`` and shows the
-    message on the host screen ("This phone's orch app is too old for this workspace ...", §0.8.6 item 9.15 Q4)."""
-    from orch.identity.pairdevice import PairGateRefused
-    from orch.identity.pairdevice import pair_gate as gate
-
-    required = _required(service, history=True)
-    try:
-        return gate(
-            meta,
-            workspace_id=service.workspace_id,
-            offer_id=offer_id,
-            who=who,
-            required=required,
-            now_ms=int(service.clock() * 1000),
-        )
-    except PairGateRefused as exc:
-        if exc.code == "reader.decl_invalid":
-            raise HostError("reader.decl_invalid", exc.detail) from None
-        raise HostError(
-            exc.code,
-            exc.detail,
-            hint="This phone's orch app is too old for this workspace (convenience signing). Update it and scan again.",
-            detail={"reason": exc.reason, "devices": ["d_" + meta.device_id]},
-        ) from None
 
 
 def recheck_readers(service: Any, events: list[dict[str, Any]], readers: list[dict[str, Any]]) -> dict[str, int]:

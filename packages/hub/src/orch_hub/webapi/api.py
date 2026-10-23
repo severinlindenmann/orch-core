@@ -380,9 +380,11 @@ def _render(x: Any) -> Any:
 
 
 def _short(h: Any) -> str:
-    """``sha256:193bf2f3...`` as ``193B F2F3`` (the same short form as the browser's ``shortHash``)."""
-    m = re.match(r"(?:sha256:)?([0-9a-f]{8})", h) if type(h) is str else None
-    return (m.group(1)[:4] + " " + m.group(1)[4:]).upper() if m else ""
+    """``sha256:3d3f5e93357c...`` as ``3d3f 5e93 357c`` (protocol 8.4: the one form; "" when not a hash)."""
+    try:
+        return P4.short_hash(h)
+    except Refused:
+        return ""
 
 
 def _facts(ev: dict[str, Any]) -> list[list[str]]:

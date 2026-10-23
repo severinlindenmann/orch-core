@@ -333,6 +333,27 @@ def check_action(action: Any, *, role: Any) -> dict[str, Any]:
 DECISION_TYPES = ("gate.approved", "gate.changes_requested", "verdict.given", "question.answered")
 
 
+def short_hash(h: Any) -> str:
+    """The one display form of a content hash (§8.4 step 3, orch-hub#55): the first 12 lower-case hex digits after
+    ``sha256:`` in groups of 4, ``abcd ef01 2345``. Anything that is not ``sha256:`` plus 64 lower-case hex digits is
+    ``malformed`` (the channel then shows the full field). Same function on the phone, in the browser and in Mission
+    Control (vectors ``short_hash_*``)."""
+    if type(h) is not str or _HASH.fullmatch(h) is None:
+        raise Refused("malformed")
+    return _groups(h[7:19])
+
+
+def short_digest(d: Any) -> str:
+    """The same form for the "signature reference": a 64-digit lower-case hex digest (vectors ``short_digest_*``)."""
+    if type(d) is not str or re.fullmatch(r"[0-9a-f]{64}", d) is None:
+        raise Refused("malformed")
+    return _groups(d[:12])
+
+
+def _groups(x: str) -> str:
+    return " ".join(x[i : i + 4] for i in range(0, 12, 4))
+
+
 def check_built(action: Mapping[str, Any], log: str, event: Any) -> None:
     """The hub's contract check of the event it built, before it asks the channel for a proof (§8.4 step 2,
     L2P4-2b). Always runs: the type is the action's, the log is the action's (a new ticket's uid for

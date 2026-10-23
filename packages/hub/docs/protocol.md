@@ -634,6 +634,15 @@ The channel API itself (sessions, HTTP, push) is the hub's (D13); these rules ar
    content-bound decisions. **Projection-derived fields** (D15b-2): on the three decisions the channel shows the gate,
    the short hash, `gate_gen` and, on a `code` approval or a verdict, each `repo` with its short `sha`; on
    `status.changed` and `ticket.moved` it shows "`from` → `to`".
+   **Short hash form** (orch-hub#55, pinned): wherever a person compares a content hash between screens (the phone, the
+   browser home, the API `shown.facts` and needs-you `short_hash`, Mission Control), it is shown as the first **12
+   lower-case hex digits after `sha256:` in three groups of 4**, `abcd ef01 2345`, never upper case, never 8 or 10
+   digits. The input per kind is the hash the person decides on: `gate.approved` and `gate.changes_requested` use the
+   gate's projection `hash`, `verdict.given` the verify gate's `hash`, `question.answered` the question's `hash`; a
+   status move (`status.changed`, `ticket.moved`) has no hash and shows "`from` → `to`" only. Anything that is not
+   `sha256:` plus 64 lower-case hex digits is `malformed`; the channel then shows the full field (WYSIWYS), never a
+   shortened guess. Reference `short_hash` (phase4); vectors `short_hash_*`. The "signature reference" (the digest of
+   `ctx`) uses the same grouping over its first 12 hex digits (reference `short_digest`, vectors `short_digest_*`).
 4. The hub's `sign` consumes `prepared_id`, rebuilds `E` from its **current** view and refuses with `event_changed`
    unless it is byte-identical to the prepared one (the view moved, a role or certificate changed), checks the proof,
    signs with `UK`, verifies its own output with §8.3, writes the `custodial` audit record, and only then delivers it

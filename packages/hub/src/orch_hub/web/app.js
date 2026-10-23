@@ -3,7 +3,7 @@
 // every string from the workspace goes through renderText first, and nothing here calls a signer except the prompt.
 import { CanonError, parseStrict } from "./cj.js";
 import { ChannelError, deleteChannel, generateKey, loadChannel, saveChannel, signProof, signRegistration } from "./channel.js";
-import { Refusal, checkBindings, checkPrepared, describe, renderText, DECISIONS } from "./render.js";
+import { Refusal, checkBindings, checkPrepared, describe, renderText, shortHash, DECISIONS } from "./render.js";
 
 const root = document.getElementById("app");
 const state = { user: null, me: null, channels: [], notice: null };
@@ -203,7 +203,7 @@ function reviewDecision(it, c) {
     h("p", { class: "sentence", text: verdict ? "Give your verdict on this ticket." : "Review the " + renderText(c.gate ?? "") + " gate." }),
     h("p", { class: "small muted", text: "The content itself is not shown here. Check it where it lives; the reference below is what you are deciding on." }),
     h("details", { open: true }, h("summary", { text: "Review details" }), h("dl", { class: "facts" },
-      h("dt", { text: "Content reference" }), h("dd", { class: "fp", text: renderText((it.hash ?? "").slice(7, 15).toUpperCase().replace(/(.{4})/, "$1 ")) }),
+      h("dt", { text: "Content reference" }), h("dd", { class: "fp", text: renderText(shortHash(it.hash) || String(it.hash ?? "")) }),
       h("dt", { text: "Generation" }), h("dd", { text: renderText(String(c.gate_gen ?? "")) }),
       sources.flatMap((e) => [h("dt", { text: "Code to check" }), h("dd", { text: renderText(e.repo) + " " + renderText(e.sha) })]))),
     h("label", { for: "reason", text: "Reason" }),

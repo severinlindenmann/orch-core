@@ -73,10 +73,19 @@ export const MOVES = {
   "ticket.moved": ["to", "from", "reason"],
 };
 
-/** Short form of a fingerprint or hash for the person: "193B F2F3". */
+const groups4 = (x) => x.slice(0, 4) + " " + x.slice(4, 8) + " " + x.slice(8, 12);
+
+/** Protocol 8.4 (orch-hub#55): the one short form of a content hash, 12 lower-case hex digits in groups of 4,
+ *  "abcd ef01 2345". "" when it is not `sha256:` plus 64 lower-case hex digits (the caller then shows the full field). */
 export function shortHash(h) {
-  const m = /^(?:sha256:)?([0-9a-f]{8})/.exec(String(h));
-  return m ? m[1].slice(0, 4).toUpperCase() + " " + m[1].slice(4).toUpperCase() : "";
+  const m = /^sha256:([0-9a-f]{12})[0-9a-f]{52}$/.exec(typeof h === "string" ? h : "");
+  return m ? groups4(m[1]) : "";
+}
+
+/** The same form for a 64-digit lower-case hex digest (the "signature reference"). */
+export function shortDigest(d) {
+  const m = /^([0-9a-f]{12})[0-9a-f]{52}$/.exec(typeof d === "string" ? d : "");
+  return m ? groups4(m[1]) : "";
 }
 
 const q = (s) => "“" + renderText(s) + "”";
@@ -146,7 +155,7 @@ export function describe(ctx, digest, sent = null) {
     type: renderText(type),
     signable,
     sentence: signable ? sentence(type, ctx.log, ev) : null,
-    fingerprint: shortHash(hex(digest)),
+    fingerprint: shortDigest(hex(digest)),
     contentHash: typeof ev.hash === "string" ? shortHash(ev.hash) : "",
     facts: signable ? facts(type, ev) : [],
     fields,

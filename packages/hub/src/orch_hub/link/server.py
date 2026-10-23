@@ -94,6 +94,7 @@ class LinkServer:
         read_timeout: float = 10.0,
         idle_timeout: float = 300.0,
         unjoined_idle_timeout: float = 30.0,
+        unjoined_lifetime: float = 30.0,
         max_connections: int = 64,
         max_unauthenticated: int = 16,
     ) -> None:
@@ -114,6 +115,7 @@ class LinkServer:
         self._dev, self._now = dev_mode, now_ms
         self._max, self._t_hs, self._t_rd, self._t_idle = max_frame, handshake_timeout, read_timeout, idle_timeout
         self._t_unjoined = unjoined_idle_timeout
+        self._t_unjoined_life = unjoined_lifetime
         self._slots = threading.BoundedSemaphore(max_connections)
         # D12b G8: connections that have not finished auth (handshake included) hold one of these, so peers that stall
         # the handshake cannot take all the slots from bound hosts.
@@ -276,7 +278,6 @@ class LinkServer:
 
     def _link(self, conn: tls.TlsConn, pre: _PreAuth) -> None:
         who = self._auth(conn)
-        pre.release()  # authenticated (or refused): no longer counts against the unauthenticated cap
         if who is None:
             return
         ws, wsk = who
@@ -287,7 +288,7 @@ class LinkServer:
             and (port.attached_seq is None or self._bound_seq(ws, wsk) == port.attached_seq)
         )
         try:
-            self._serve_link(conn, port, ws, wsk)
+            self._serve_link(conn, port, ws, wsk, pre)
         finally:
             self._detach(ws, port)
 
@@ -328,13 +329,29 @@ class LinkServer:
         if port.live is not None or port.delivery is not None:
             port.attached_seq = seq
 
-    def _serve_link(self, conn: tls.TlsConn, port: _Port, ws: str, wsk: bytes) -> None:
+    def _pinned_to(self, ws: str, wsk: bytes) -> bool:
+        pin = self._reg.pin(ws)
+        return pin is not None and unb64u(pin["wsk_pub"], 65) == wsk
+
+    def _serve_link(self, conn: tls.TlsConn, port: _Port, ws: str, wsk: bytes, pre: _PreAuth) -> None:
+        # G8: a link counts as unauthenticated until the workspace is pinned to THIS link's key. A self-asserted key
+        # (first link of a join) proves nothing, so it keeps its slot until the join pins it; one that dies sooner
+        # than the lifetime below, or never joins, frees it at the end of the connection.
+        if self._pinned_to(ws, wsk):
+            pre.release()
+        started = time.monotonic()
         self._attach(ws, port)
         last_seq: int | None = None  # D12b G7: the w2h seq of the previous frame on THIS link
         while not self._stop.is_set():
             pin = self._reg.pin(ws)
+            first = self._t_idle
+            if pin is None:  # unjoined: a hard lifetime that no peer frame can reset, and the idle timeout inside it
+                left = self._t_unjoined_life - (time.monotonic() - started)
+                if left <= 0:
+                    return
+                first = min(self._t_unjoined, left)
             try:
-                signed = self._recv(conn, self._t_idle if pin is not None else self._t_unjoined)
+                signed = self._recv(conn, first)
             except LinkTimeout:
                 return
             # The link's key must be the CURRENT pinned key: a link opened before the pin (offering its own key)
@@ -369,10 +386,15 @@ class LinkServer:
                 if self._deliveries is not None and port.delivery is not None:
                     self._deliveries.on_reply(ws, port.delivery, o)
                 continue
+            was_unjoined = self._reg.pin(ws) is None
             body = self._dispatch(ws, wsk, o, now)
             port.send_signed(
                 o["op"] if o["op"] in H.LINK_OPS else "error", o["seq"], body
             )  # never sign a peer-chosen string
+            if self._pinned_to(ws, wsk):
+                pre.release()  # the join pinned this link's key: now it is authenticated
+            elif was_unjoined and o["op"] != "join":
+                return  # an unjoined link may send one join; anything else ends it (after the refusal above)
             self._attach(ws, port)  # a join on this link just made the workspace routable
 
     def _count(self, ws: str, op: object, accepted: bool) -> None:

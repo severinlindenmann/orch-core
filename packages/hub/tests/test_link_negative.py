@@ -110,10 +110,11 @@ def test_malformed_auth_frame(hub, bad):
 
 def test_unjoined_link_may_only_join(hub):
     c = hub.open(first=True)
-    for op, body in (("snapshot_get", {}), ("binding_put", {"object": G.binding()})):
-        with pytest.raises(LinkError) as e:
-            c.request(op, body)
-        assert e.value.code == "unknown_workspace"
+    with pytest.raises(LinkError) as e:
+        c.request("snapshot_get", {})
+    assert e.value.code == "unknown_workspace"
+    with pytest.raises((tls.LinkClosed, tls.LinkTimeout)):  # D12b G8: the first non-join op also ends the link
+        c.request("binding_put", {"object": G.binding()})
 
 
 # --- receiver verification, §10.2 steps 1-6 (each closes the link) --------------------------------------------------

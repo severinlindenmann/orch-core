@@ -101,3 +101,54 @@ def test_cap_is_released_after_auth(make_hub):
     others = [h.open(ws=G.WS_A, first=True) for _ in range(3)]  # more open authenticated links than the cap
     assert "snapshot" in first.request("snapshot_get", {})
     assert len(others) == 3
+
+
+def _opens(h, **kw):
+    """True when a new link authenticates; a refused one is closed before or during the handshake."""
+    try:
+        c = h.open(first=True, **kw)
+    except tls.LinkClosed, tls.LinkTimeout, OSError, LinkError:
+        return None
+    return c
+
+
+def test_self_asserted_links_keep_their_slot_until_the_join_pins_them(make_hub):
+    h = make_hub(max_connections=8, max_unauthenticated=2, unjoined_idle_timeout=30, unjoined_lifetime=30)
+    a, b = _opens(h), _opens(h)  # unpinned workspace: the key is self-asserted, nothing is proven yet
+    assert a is not None and b is not None
+    assert _opens(h) is None  # a third such link is over the cap, however many are opened
+    a.request("join", h.join_body())  # the join pins this link's key: authenticated, slot released
+    assert _opens(h) is not None
+
+
+def test_unjoined_link_has_a_lifetime_peer_frames_cannot_reset(make_hub):
+    h = make_hub(unjoined_idle_timeout=30, unjoined_lifetime=1.0)
+    c = h.open(first=True)
+    t0 = time.monotonic()
+    closed = False
+    while time.monotonic() - t0 < 4:
+        try:
+            c.request("join", h.join_body(invite="nope"))  # refused, the link stays unjoined; each frame is progress
+        except LinkError:
+            pass
+        except tls.LinkClosed, tls.LinkTimeout, OSError:
+            closed = True
+            break
+        time.sleep(0.2)
+    assert closed and time.monotonic() - t0 < 3
+
+
+def test_unjoined_link_ends_after_its_first_non_join_op(hub):
+    c = hub.open(first=True)
+    with pytest.raises(LinkError) as e:
+        c.request("snapshot_get", {})
+    assert e.value.code == "unknown_workspace"
+    with pytest.raises((tls.LinkClosed, tls.LinkTimeout, OSError)):
+        c.request("snapshot_get", {})
+
+
+def test_a_failed_join_may_be_retried_inside_the_lifetime(hub):
+    c = hub.open(first=True)
+    with pytest.raises(LinkError):
+        c.request("join", hub.join_body(invite="nope"))
+    c.request("join", hub.join_body())

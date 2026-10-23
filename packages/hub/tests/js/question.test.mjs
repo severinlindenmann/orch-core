@@ -46,7 +46,7 @@ test("the old label-only question has no spec: not verifiable, not renderable", 
 });
 
 // What only core checks (each: the host re-checks on admission, a question with it never reaches a ticket):
-const CORE_ONLY = new Set(["option_title_leading_mark"]); // needs Unicode Mn/Mc tables; the rest of the fold cases are approximated here
+const CORE_ONLY = new Set([]); // L2/L3 are ported (\p{M}); the rest of the fold cases are approximated here
 test("every shape core refuses is not renderable here, but for a short allowlist", () => {
   for (const v of HASHES.question_hash_refused) {
     if (CORE_ONLY.has(v.name)) continue;
@@ -82,6 +82,13 @@ test("the prompt shows the selected option (title, meaning, facts, cost, questio
   assert.match(rows.Recommended, /^yes/);
   assert.equal(rows.Question, f.raw_event.question.text);
   assert.match(rows.Details, /we import monthly/);
+});
+
+test("choosing another option names the recommended one by its title, not its key", async () => {
+  const f = form("choice_full");
+  const qv = await verifyQuestion(f.hub_needs.row, f.hub_needs.content);
+  const rows = Object.fromEntries(describe(ctxFor({ hash: qv.hash, option: "api" }), D, null, qv).facts);
+  assert.equal(rows.Recommended, "no, the asker recommends “Monthly CSV”");
 });
 
 test("an option answer is unsignable without the verified question that lists it", async () => {

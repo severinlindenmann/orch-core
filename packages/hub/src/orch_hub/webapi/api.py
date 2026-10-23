@@ -383,7 +383,7 @@ def _item_content(content: dict[str, Any]) -> dict[str, Any]:
     """Item content out through ``render_text``, except a verified question's ``text``, ``options`` and ``spec``: those go
     VERBATIM (a client hashes exactly what it receives; the hub only marks a question verified when it holds no character
     ``render_text`` would escape, apart from a tab in a multi-line field, which escaping would turn into ``<U+0009>``)."""
-    if "spec" not in content:
+    if "spec" not in content or content.get("unverifiable") is True:  # the explicit flag, never the content's shape
         return _render(content)
     raw = ("text", "options", "spec")
     return {

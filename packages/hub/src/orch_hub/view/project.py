@@ -87,10 +87,18 @@ def question_hash(qid: str, ticket_uid: str, question: Mapping[str, Any]) -> str
         raise _bad() from None
 
 
+# Unicode White_Space (PropList, 25 code points), pinned like core's WHITE_SPACE.
+_WHITE_SPACE = frozenset(
+    "\t\n\x0b\x0c\r \x85\xa0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a"
+    "\u2028\u2029\u202f\u205f\u3000"
+)
+
+
 def _field(x: Any, n: int, *, one_line: bool = False) -> bool:
     """One text field under the cheap core limits (core ``check_plain``): 1..``n`` code points and 4096 bytes, NFC, not blank
     (Unicode White_Space), no character ``render_text`` would escape, and no LF or tab in a one-line field. Exact fold tables
-    and the leading-mark rule stay core's (the host re-checks on admission)."""
+    stay core's (the host re-checks on admission). Also core L2 (no leading/trailing White_Space in a one-line field) and L3
+    (no combining mark, category M*, at the start of any line; the runtime's Unicode tables stand in for core's 16.0 ones)."""
     if type(x) is not str or not x or len(x) > n or not x.strip():
         return False
     try:
@@ -99,6 +107,12 @@ def _field(x: Any, n: int, *, one_line: bool = False) -> bool:
     except UnicodeEncodeError:
         return False
     if unicodedata.normalize("NFC", x) != x or (one_line and ("\n" in x or "\t" in x)):
+        return False
+    if one_line and (x[0] in _WHITE_SPACE or x[-1] in _WHITE_SPACE):  # core L2: leading/trailing White_Space
+        return False
+    if any(
+        ln and unicodedata.category(ln[0]).startswith("M") for ln in x.split("\n")
+    ):  # core L3: mark at any line start
         return False
     flat = x.replace("\t", " ")
     return P4.render_text(flat) == flat

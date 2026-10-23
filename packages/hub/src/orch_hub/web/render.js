@@ -101,11 +101,15 @@ const OPTION_KEYS = ["key", "label", "text", "facts", "cost"];
 const str1 = (x) => typeof x === "string" && x !== "";
 
 // The cheap core limits, mirrored (core check_plain): code points, bytes, NFC, not blank (White_Space), no refused character,
-// no LF or tab in a one-line field. Exact Unicode 16 fold tables and the leading-mark rule stay core's (the host re-checks).
+// no LF or tab in a one-line field, core L2 (no leading or trailing White_Space in a one-line field) and L3 (no combining mark,
+// \p{M}, at the start of any line; the engine's Unicode tables stand in for core's 16.0 ones). Exact fold tables stay core's.
+const WS = new Set("\t\n\v\f\r \u0085\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000");
 const cpLen = (s) => Array.from(s).length;
 function field(x, n, oneLine = false) {
   if (typeof x !== "string" || x === "" || cpLen(x) > n || x.trim() === "" || utf8(x).length > 4096) return false;
   if (x.normalize("NFC") !== x || (oneLine && /[\n\t]/.test(x))) return false;
+  if (oneLine && (WS.has(x[0]) || WS.has(x[x.length - 1]))) return false;
+  if (/(^|\n)\p{M}/u.test(x)) return false;
   return renderText(x.replaceAll("\t", " ")) === x.replaceAll("\t", " ");
 }
 // casefold(NFC(.)): toLowerCase plus the full-fold cases it lacks (ß ẞ ſ ς and the f-ligatures); approximate by design.
@@ -179,7 +183,10 @@ export function facts(type, ev, qv = null) {
       out.push(["You chose", renderText(o.label)]);
       out.push(["Option key", renderText(o.key)]);
       if (qv.spec.recommended === o.key) out.push(["Recommended", "yes, the asker recommends this"]);
-      else if (qv.spec.recommended) out.push(["Recommended", "no, the asker recommends “" + renderText(qv.spec.recommended) + "”"]);
+      else if (qv.spec.recommended) {
+        const rec = qv.options.find((x) => x.key === qv.spec.recommended);
+        out.push(["Recommended", "no, the asker recommends “" + renderText(rec ? rec.label : qv.spec.recommended) + "”"]);
+      }
       if (o.text) out.push(["What it means", renderText(o.text)]);
       for (const [l, v] of o.facts ?? []) out.push(["Fact: " + renderText(l), renderText(v)]);
       if (o.cost) out.push(["Cost", renderText(o.cost)]);

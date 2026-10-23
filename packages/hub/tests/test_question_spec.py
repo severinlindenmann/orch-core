@@ -47,9 +47,9 @@ def test_re_ask_changing_only_routing_keeps_the_hash():
 
 # What only core checks, each with the reason it is not mirrored here (the host re-checks on admission, so a question with
 # one of these never reaches a ticket; the hub only has to be no more permissive on what it can cheaply see).
-_CORE_ONLY = {
-    "option_title_leading_mark": "leading combining mark: needs the Unicode Mn/Mc tables beyond the text rule",
-}  # fmt: skip
+_CORE_ONLY: dict[
+    str, str
+] = {}  # L2/L3 are ported (unicodedata M* stands in for core's 16.0 tables); nothing is core-only
 
 
 @pytest.mark.parametrize("v", HASHES["question_hash_refused"], ids=lambda v: v["name"])
@@ -66,6 +66,11 @@ def test_everything_core_refuses_is_unverifiable_here(v):
             "question_crlf",
             "option_title_tab",
             "facts_object_form",
+            # the contract's early refusal (contract/phase4.py _question) has no combining-mark rule: only `renderable` (the
+            # reader) and core's admission do, so a question with a line-start mark is listed here as unverifiable
+            "option_title_leading_mark",
+            "details_line_starts_with_combining_mark",
+            "question_line_starts_with_combining_mark",
         ):
             assert not P4._question(ask) or v["name"].startswith(("titles_", "fact_labels_")), v["name"]
 

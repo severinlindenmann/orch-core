@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import json
 import re
+from pathlib import Path
 
 import pytest
 from webapi_helpers import ORIGIN, WS, WS_OTHER, WS_SEL, Web, shared_item
 
+from orch_hub.view import project as PR
 from orch_hub.webapi import ROUTES, WebApi
+from orch_hub.webapi.api import _render
+
+HASHES = json.loads((Path(__file__).parent / "data" / "core_f1" / "hashes.json").read_text())
 
 
 @pytest.fixture
@@ -207,6 +213,40 @@ def test_item_detail_full_selective_and_not_a_member(w):
         404,
         {"error": "unknown_workspace"},
     )
+
+
+def _choice_full():
+    v = next(v for v in HASHES["question_hash"] if v["name"] == "choice_full")
+    return v, v["hashed"]
+
+
+def test_verified_question_goes_out_verbatim_and_its_hash_recomputes(w):
+    """The route sends a verified question's text/options/spec untouched (the tab in `details` survives) and the hash
+    recomputes from the response; escaping through ``_render`` would turn the tab into ``<U+0009>`` and break it."""
+    v, h = _choice_full()
+    content = {
+        "text": h["text"],
+        "options": h["options"],
+        "spec": h["spec"],
+        "blocking": True,
+        "ticket_title": "T\u202e",
+    }
+    assert "\t" in h["spec"]["details"]
+    w.view.detail = {"item_id": "22" * 16, "kind": "question", "title": "T", "content": content}
+    s, o, _ = w.call("GET", f"/workspaces/{WS}/items/{'22' * 16}", token=w.login(w.ann))
+    c = o["content"]
+    assert s == 200 and "\t" in c["spec"]["details"] and c["ticket_title"] == "T<U+202E>"
+    got = {"text": c["text"], "options": c["options"], **c["spec"]}
+    assert PR.question_hash(h["question_id"], h["ticket"], got) == v["hash"]
+    assert _render(content)["spec"]["details"] != content["spec"]["details"]  # the old path would have failed the hash
+
+
+def test_unverifiable_question_with_a_spec_is_escaped_not_verbatim(w):
+    _, h = _choice_full()
+    content = {"text": "a\u202eb", "options": h["options"], "spec": h["spec"], "unverifiable": True}
+    w.view.detail = {"item_id": "22" * 16, "kind": "question", "title": "T", "content": content}
+    s, o, _ = w.call("GET", f"/workspaces/{WS}/items/{'22' * 16}", token=w.login(w.ann))
+    assert s == 200 and o["content"]["text"] == "a<U+202E>b" and "\t" not in o["content"]["spec"]["details"]
 
 
 def test_routes_table_is_complete():

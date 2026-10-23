@@ -21,8 +21,12 @@
         "call": "orch section set plan --file -"
       },
       {
+        "op": "section.set",
+        "call": "orch section set decisions --file -"
+      },
+      {
         "op": "task.add",
-        "call": "orch task add 'text' --verify 'cmd' --proves AC1"
+        "call": "orch task add 'text' --verify 'one-command, no shell operators' --proves AC1"
       },
       {
         "op": "ask",

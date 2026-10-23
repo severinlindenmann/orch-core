@@ -59,7 +59,9 @@ class PublishHub:
         self.sent.append(copy.deepcopy(message))
         m = message["o"]
         body = {}
-        if m["op"] == "publish_out":
+        if m["op"] == "card_put":
+            body = {"error": self.error} if self.error else {}
+        elif m["op"] == "publish_out":
             body = {"error": self.error} if self.error else self._forward(m["body"]["request"])
         o = {
             "v": 2, "suite": 2, "kind": "hub.link", "hv": 0, "hub_id": m["hub_id"], "workspace_id": m["workspace_id"],
@@ -139,7 +141,7 @@ def test_a_joined_workspace_publishes_through_the_hub(world, human, served):
     data = ok(res)["data"]
     share_id, token = LINK.fullmatch(data["link"]).groups()
     # the shares went over the hub link, each verified byte for byte by the hub-path bytes of the contract ...
-    assert w.hub.ops() == ["join", "snapshot_get", "publish_out", "publish_out", "publish_out"]
+    assert w.hub.ops() == ["join", "snapshot_get", "card_put", "publish_out", "publish_out", "publish_out"]
     assert w.hub_server.bad_signatures == []
     assert kinds(w.hub_server) == [
         ("PUT", f"shares/{share_id}"),
@@ -147,11 +149,42 @@ def test_a_joined_workspace_publishes_through_the_hub(world, human, served):
         ("POST", f"shares/{share_id}/commit"),
     ]
     assert w.hub_server.shares[share_id]["state"] == "live"
-    # ... and the direct server saw only the one-time registration (a hub never registers: orch-publish 404s it)
-    assert kinds(w.server) == [("POST", "register")]
+    # ... and the direct server saw nothing: the registration went as the card through the hub (R5a, V3-D36)
+    assert w.server.requests == []
+    (card_msg,) = [m["o"]["body"] for m in w.hub.sent if m["o"]["op"] == "card_put"]
+    assert card_msg["card"] == hubops.CARD_SOURCE(None) and set(card_msg) == {"card", "pk_pub"}
     assert all(token.encode() not in r["body"] and token not in r["target"] for r in w.hub_server.requests)
     audit = [json.loads(line) for line in (served.lab.state / "host" / "audit-security.jsonl").read_text().splitlines()]
     assert [a["via"] for a in audit if a["event"] == "publish.share"] == ["hub"]
+
+
+def test_register_goes_through_the_hub_as_card_put_and_never_direct(world, human, served):
+    w = world
+    joined(w, human, served)
+    out = ok(w.req("publish.register", {}))["data"]
+    assert out["registered"] is True
+    assert w.hub.ops()[-1] == "card_put" and w.server.requests == [] and w.hub_server.requests == []
+
+
+@pytest.mark.parametrize(
+    ("code", "reason"),
+    [
+        ("owner_not_allowed", "owner_not_allowed"),
+        ("unknown_workspace", "unknown_workspace"),
+        ("workspace_blocked", "blocked"),
+        ("delegation_changed", "conflict"),
+        ("stale_card", "rejected"),
+    ],
+)
+def test_register_refusals_of_publish_reach_the_owner_and_nothing_goes_direct(world, human, served, code, reason):
+    w = world
+    joined(w, human, served)
+    w.hub.error = code
+    res = w.req("publish.register", {})
+    assert err(res) == "publish.server_refused"
+    assert res["error"]["detail"]["reason"] == reason
+    assert w.server.requests == []
+    assert list(served.lab.state.rglob("registered.json")) == []  # a refused registration is not remembered
 
 
 def test_revoke_and_live_list_go_through_the_hub_too(world, human, served):

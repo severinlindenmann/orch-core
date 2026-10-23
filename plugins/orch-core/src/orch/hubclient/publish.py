@@ -47,6 +47,7 @@ __all__ = [
     "HubPublishTransport",
     "PUBLIC_ROUTES",
     "approval_hash",
+    "card_put",
     "hub_path_signed_bytes",
     "request_access",
     "request_hash",
@@ -202,6 +203,14 @@ class HubPublishSigner:
         if approval is not None:
             headers["Orch-Owner-Approval"] = b64u(cj(dict(approval)))
         return SignedPublish(method, self.ctx.host, target, headers)
+
+
+def card_put(link: Any, card: Mapping[str, Any], owner_pk_pub: str) -> dict[str, Any]:
+    """Hand the workspace's v2 card to the hub (``card_put``, contract section 10); the hub forwards it to orch-publish,
+    which verifies it and admits the workspace (R5a, V3-D36). A refusal of the hub or of orch-publish raises
+    :class:`HubRefused` with its code; an unreachable hub is ``hub_unreachable``. Idempotent."""
+    link.call("card_put", {"card": dict(card), "pk_pub": owner_pk_pub})
+    return {"result": "registered"}
 
 
 class HubPublishTransport:

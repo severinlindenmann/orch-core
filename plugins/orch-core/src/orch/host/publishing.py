@@ -606,6 +606,8 @@ def _plan(call: Call, op: str, args: dict[str, Any]) -> dict[str, Any]:
     if op == "publish.register":
         _rate(call, "register")
         plan["reg"] = _delegation(call)
+        plan["hub"] = _hub_route(service)
+        _plan_card(call, plan)
         return plan
     if op == "publish.revoke":
         rec = next((r for r in _records(service) if r.get("id") == args["share_id"]), None)
@@ -632,7 +634,21 @@ def _plan(call: Call, op: str, args: dict[str, Any]) -> dict[str, Any]:
     plan.update(meta=meta, text_hash=hashlib.sha256(text.encode()).hexdigest(), hub=_hub_route(service))
     if _registered(service, cfg) is None:
         plan["reg"] = _delegation(call)
+        _plan_card(call, plan)
     return plan
+
+
+def _plan_card(call: Call, plan: dict[str, Any]) -> None:
+    """In hub mode the workspace reaches orch-publish as its v2 card through the hub (``card_put``, V3-D36): read it
+    here, on the worker, for the network half."""
+    if plan.get("hub") is None:
+        return
+    from . import hubops
+
+    card = hubops.workspace_card(call.service)
+    if card is None:
+        raise HostError("hub.no_card", "this workspace's directory card could not be had")
+    plan["card"] = card
 
 
 def _hub_route(service: WorkspaceService) -> dict[str, Any] | None:
@@ -787,16 +803,20 @@ def _client(service: WorkspaceService, origin: str, transport: Any = None, hub: 
 _LINKS = threading.local()
 
 
-def _hub_client(service: WorkspaceService, ctx: Any, route: dict[str, Any]) -> Any:
-    from orch.hubclient.publish import HubPublishSigner, HubPublishTransport
-    from orch.publishclient import PublishClient
-
+def _open_link(service: WorkspaceService, route: dict[str, Any]) -> tuple[Any, Any, bytes, Any]:
     from . import hubops
 
     links = _LINKS.__dict__.setdefault("open", {})
     if route["hub_id"] not in links:
         links[route["hub_id"]] = hubops.publish_link(service, route)
-    hub_link, _transport, wsk_pub, sign = links[route["hub_id"]]
+    return links[route["hub_id"]]  # type: ignore[no-any-return]
+
+
+def _hub_client(service: WorkspaceService, ctx: Any, route: dict[str, Any]) -> Any:
+    from orch.hubclient.publish import HubPublishSigner, HubPublishTransport
+    from orch.publishclient import PublishClient
+
+    hub_link, _transport, wsk_pub, sign = _open_link(service, route)
     signer = HubPublishSigner(public_key=wsk_pub, sign=sign, ctx=ctx, hub_id=route["hub_id"])
     return PublishClient(signer, transport=HubPublishTransport(hub_link))
 
@@ -813,6 +833,22 @@ def _hub_error(exc: Any) -> HostError:
     sent any other way."""
     from . import hubops
 
+    reasons = {  # hub code -> (closed detail reason, text); the reasons are the same set as a direct refusal's
+        "unknown_workspace": (
+            "unknown_workspace",
+            "the server does not know this workspace: its admin must allow it, then run orch publish register",
+        ),
+        "owner_not_allowed": ("owner_not_allowed", "the server's admin has not allowed this owner"),
+        "workspace_blocked": ("blocked", "the server's admin blocked this workspace"),
+        "delegation_changed": (
+            "conflict",
+            "the server holds another delegation for this workspace: its admin must unbind it",
+        ),
+        "stale_card": ("rejected", "the server holds a newer card of this workspace, or this card is too old"),
+    }
+    if exc.code in reasons:
+        reason, text = reasons[exc.code]
+        return HostError("publish.server_refused", text, detail={"reason": reason})
     if exc.code == "too_large":
         return HostError(
             "publish.server_refused",
@@ -909,9 +945,15 @@ def _register(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
 
     service = call.service
     cfg = plan["cfg"]
-    client = _client(service, cfg["server"], TRANSPORT)
     reg = plan["reg"]
-    got = flow.register(client, service.workspace_id, reg["delegation"], reg["owner_pk"])
+    if plan.get("hub") is not None:  # the card goes to the hub, which hands it to orch-publish (never a direct call)
+        from orch.hubclient.publish import card_put
+
+        hub_link = _open_link(service, plan["hub"])[0]
+        got = card_put(hub_link, plan["card"], reg["owner_pk"])
+    else:
+        client = _client(service, cfg["server"], TRANSPORT)
+        got = flow.register(client, service.workspace_id, reg["delegation"], reg["owner_pk"])
     with _MU:
         _private(service)
         _put_json(

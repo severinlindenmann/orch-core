@@ -77,9 +77,9 @@ export function SignShell(p: SignShellProps) {
             collisionPadding={12}
             onOpenAutoFocus={p.onOpenAutoFocus}
             aria-label={typeof p.title === 'string' ? p.title : undefined}
-            className="z-50 w-[min(32rem,calc(100vw-1.5rem))] rounded-lg border border-border bg-surface p-4 text-text shadow-xl outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0"
+            className="z-50 w-[min(32rem,calc(100vw-1.5rem))] rounded-lg border border-border bg-surface p-0 text-text shadow-xl outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0"
           >
-            <div className={cn(BODY, 'max-h-[min(80dvh,var(--radix-popover-content-available-height))]')}>
+            <div className={cn(BODY, 'p-4 max-h-[min(80dvh,var(--radix-popover-content-available-height))]')}>
               <header className="space-y-1">
                 {heading}
                 <div className="text-[13px] text-text-muted">{p.description}</div>

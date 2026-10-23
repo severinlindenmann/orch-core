@@ -162,7 +162,7 @@ function SignedRow({ label, text }: { label: string; text: string }) {
 
 /**
  * The quick task: what was typed once, the sentence that more is approved, and the derived rows folded under a count.
- * The fold opens by itself when a derived row differs from what the typed values give.
+ * Only used when the whole review is exactly the derived one (alsoSigned); otherwise the caller shows the full review.
  */
 function QuickSigned({ typed, also }: { typed: QuickTyped; also: AlsoSigned }) {
   return <>
@@ -175,8 +175,8 @@ function QuickSigned({ typed, also }: { typed: QuickTyped; also: AlsoSigned }) {
       </dl>
     </section>
     <p data-testid="sign-also-sentence" className="text-[13px] text-text">This also approves its requirements and plan, made from these checks.</p>
-    <details key={String(also.differs)} data-testid="sign-also" open={also.differs} className="rounded-md border border-border p-3">
-      <summary className="cursor-pointer text-[12px] font-medium text-text-muted">Also signed ({also.rows.length}){also.differs ? ' · differs from what you typed' : ''}</summary>
+    <details data-testid="sign-also" className="rounded-md border border-border p-3">
+      <summary className="cursor-pointer text-[12px] font-medium text-text-muted">Also signed ({also.rows.length})</summary>
       <dl className="mt-2 space-y-2">{also.rows.map((r, i) => <SignedRow key={i} label={r.label} text={r.text} />)}</dl>
     </details>
   </>

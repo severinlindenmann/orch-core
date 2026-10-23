@@ -423,7 +423,8 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
         r = RR.route(a["method"], a["target"], a["hub_id"], bytes.fromhex(a["body_hex"]))
         return RR.cutover_hub(a["row"], a["hub_id"], r["route"])
     if check == "relay_route":
-        return RR.route(a["method"], a["target"], a["hub_id"], bytes.fromhex(a["body_hex"]))
+        push = a.get("push_configured", True)  # E5R-1: absent = a relay with a complete push configuration
+        return RR.route(a["method"], a["target"], a["hub_id"], bytes.fromhex(a["body_hex"]), push_configured=push)
     # ---- B stream (§6.4, §10.8.4): the phone's pairing link, channel sessions, push key, mailbox read
     if check == "pair_link":
         return CA.parse_pair_link(a["link"], dev_mode=dev)

@@ -54,8 +54,36 @@ class Host:
         lines = lines[:count] if count else lines
         salt = S.fake_seed(f"d15/salt/{log}/{from_seq}/{len(lines)}/{self.epoch}/{self.n}")[:16]
         return P4.seal_view_page(
-            kw.pop("wk", self.wk), self.ws, kw.pop("epoch", self.epoch), log, from_seq, lines, salt, reset=reset
+            kw.pop("wk", self.wk),
+            self.ws,
+            kw.pop("epoch", self.epoch),
+            log,
+            from_seq,
+            lines,
+            salt,
+            reset=reset,
+            proj=kw.pop("proj", None),
         )
+
+    def proj(self, log: str = LOG, status: str = "in_progress", gates: dict | None = None, roster_v: int | None = None):
+        """The host's projection P of ``log``'s last line at the workspace head (D15b, §10.7)."""
+        ws = self.logs["workspace"]
+        return {
+            "seq": len(self.logs[log]),
+            "head": P4.event_head(self.logs[log][-1]),
+            "ws_seq": len(ws),
+            "ws_head": P4.event_head(ws[-1]),
+            "status": status,
+            "roster_v": PR.project_workspace(ws).roster_v if roster_v is None else roster_v,
+            "gates": gates or {},
+        }
+
+    def gate(self, gen: int = 1, hash_: str | None = None, sources: list | None = None) -> dict:
+        """One §10.2b gate entry; ``sources`` (a list of ``{repo, ref, sha}``) only on code/verify."""
+        g: dict = {"gen": gen, "hash": hash_ or "sha256:" + "ab" * 32, "policy_hash": "sha256:" + "cd" * 32}
+        if sources is not None:
+            g["source_sha"] = sources
+        return g
 
     # --- a small realistic workspace ---------------------------------------------------------------------------------
 

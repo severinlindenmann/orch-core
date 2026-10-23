@@ -64,14 +64,24 @@ class ViewService:
                 views = {"workspace": self.store.heads(ws, "workspace")}
                 held = views["workspace"] if log == "workspace" else self.store.heads(ws, log)
                 views[log] = held
-                new = P4.apply_view_page(views, body, workspace_id=ws, wsk_pub=wsk_pub, wk_epochs={epoch: wk})
+                stub = self.store.proj_key(ws, log)
+                projs = {} if stub is None else {log: {"seq": stub[1], "ws_seq": stub[2]}}
+                # D15b-4: the lines and the projection pass together or the whole page is refused (nothing is stored)
+                new, new_projs = P4.apply_view_page_proj(
+                    views, projs, body, workspace_id=ws, wsk_pub=wsk_pub, wk_epochs={epoch: wk}
+                )
             finally:
                 for i in range(len(wk)):
                     wk[i] = 0
             out = new[log]
             reset = body["reset"]
-            if reset or len(out) > len(held):
-                self.store.commit(ws, log, out, len(held), body, reset=reset)
+            np = new_projs.get(log)
+            kept = projs.get(log)
+            newer = np is not None and np is not kept  # this page's projection replaced the held one (or none held)
+            if reset or newer or len(out) > len(held):
+                self.store.commit(
+                    ws, log, out, len(held), body, reset=reset, proj=(np["seq"], np["ws_seq"]) if newer else None
+                )
             return {"seq": len(out), "head": out[-1]}
 
     # --- reading for a build / the needs-you read ----------------------------------------------------------------------
@@ -92,6 +102,18 @@ class ViewService:
         except Refused, KeyError, TypeError, ValueError, CanonError:
             raise Refused("unavailable") from None
         return out
+
+    def proj(self, ws: str, log: str, keys: Keyring) -> dict[str, Any] | None:
+        """The held ticket projection of ``log`` (D15b), opened from the sealed page that carried it; None when the hub
+        holds none. A page that does not open reads as none (fail closed: the build says ``unavailable``)."""
+        body = self.store.proj_page(ws, log)
+        if body is None:
+            return None
+        try:
+            p = P4.open_view_doc(keys.get(body["epoch"]), ws, body)[1]
+        except Refused, KeyError, TypeError, ValueError, CanonError:
+            return None
+        return p if type(p) is dict else None
 
     def logs(self, ws: str) -> list[str]:
         return self.store.logs(ws)

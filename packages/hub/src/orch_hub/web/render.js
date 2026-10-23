@@ -67,6 +67,11 @@ export const DECISIONS = {
   "gate.changes_requested": ["gate", "hash", "text", "gate_gen", "policy_hash"],
   "verdict.given": ["outcome", "hash", "text", "gate_gen", "policy_hash", "source_sha"],
 };
+// D15b: the two status moves a prompt may offer; `from` is the host's own value, copied by the hub from P.
+export const MOVES = {
+  "status.changed": ["to", "from", "reason"],
+  "ticket.moved": ["to", "from", "reason"],
+};
 
 /** Short form of a fingerprint or hash for the person: "193B F2F3". */
 export function shortHash(h) {
@@ -76,6 +81,31 @@ export function shortHash(h) {
 
 const q = (s) => "“" + renderText(s) + "”";
 
+/** D15b-2 (protocol 8.4 step 3): the projection-derived values the person must see, from ctx only. A decision shows
+ *  the gate, the short hash, gate_gen and, with a source list (code approval, verdict), each repo with its short sha;
+ *  a move shows "from -> to". Unexpected shapes are shown as their JSON, never skipped. */
+export function facts(type, ev) {
+  const out = [];
+  const r = (v) => (typeof v === "string" ? renderText(v) : renderText(cj(v)));
+  if (type in DECISIONS && type !== "question.answered") {
+    out.push(["Gate", type === "verdict.given" ? "verify" : r(ev.gate)]);
+    out.push(["Content reference", typeof ev.hash === "string" && shortHash(ev.hash) ? shortHash(ev.hash) : r(ev.hash)]);
+    out.push(["Generation", r(ev.gate_gen)]);
+    if ("source_sha" in ev) {
+      const list = Array.isArray(ev.source_sha) ? ev.source_sha : [ev.source_sha];
+      for (const e of list) {
+        const ok = e !== null && typeof e === "object" && Object.keys(e).sort().join() === "ref,repo,sha" && typeof e.repo === "string" && typeof e.sha === "string";
+        out.push(["Code", ok ? renderText(e.repo) + " " + renderText(e.sha.slice(0, 8)) : r(e)]);
+      }
+    }
+  } else if (type in MOVES) {
+    out.push(["Status", r(ev.from) + " \u2192 " + r(ev.to)]);
+  }
+  return out;
+}
+
+const SENTENCE_STRINGS = ["from", "to", "reason", "gate", "outcome", "text", "option", "question", "hash"];
+
 function sentence(type, log, ev) {
   const on = "ticket " + renderText(log);
   switch (type) {
@@ -83,6 +113,10 @@ function sentence(type, log, ev) {
       return "I approve the " + q(ev.gate) + " gate of " + on + ".";
     case "gate.changes_requested":
       return "I ask for changes on the " + q(ev.gate) + " gate of " + on + ": " + q(ev.text) + ".";
+    case "status.changed":
+      return "I change the status of " + on + " from " + q(ev.from) + " to " + q(ev.to) + (ev.reason ? ": " + q(ev.reason) : "") + ".";
+    case "ticket.moved":
+      return "I move " + on + " from " + q(ev.from) + " to " + q(ev.to) + (ev.reason ? ": " + q(ev.reason) : "") + ".";
     case "verdict.given":
       return "I give the verdict " + q(ev.outcome) + " on " + on + (ev.text ? ": " + q(ev.text) : "") + ".";
     default:
@@ -93,22 +127,28 @@ function sentence(type, log, ev) {
 /** What the prompt shows, from ctx only. `signable` is true only for the four decision types with no field we do not
  *  know; otherwise `sentence` is null and the prompt lists every field and offers no Sign button. Never throws on
  *  content (a surprise is a reason not to sign, not a crash). */
-export function describe(ctx, digest) {
+export function describe(ctx, digest, sent = null) {
   const ev = ctx.event;
   const type = typeof ev.type === "string" ? ev.type : "";
-  const known = DECISIONS[type];
+  const known = Object.hasOwn(DECISIONS, type) ? DECISIONS[type] : Object.hasOwn(MOVES, type) ? MOVES[type] : undefined;
   const fields = Object.keys(ev)
     .filter((k) => k !== "channel_cert" && k !== "uk_cert")
     .sort()
     .map((k) => [renderText(k), typeof ev[k] === "string" ? renderText(ev[k]) : renderText(cj(ev[k]))]);
   const extra = known ? Object.keys(ev).filter((k) => !known.includes(k) && !ENVELOPE.includes(k)) : [];
-  const signable = Boolean(known) && extra.length === 0 && typeof ctx.log === "string" && ctx.log !== "workspace";
+  // D15bH-2: every field the sentence names must be a real string (nothing is flattened by String())
+  const stringsOk = SENTENCE_STRINGS.every((k) => !(k in ev) || typeof ev[k] === "string");
+  // D15bH-1: a status move is signable only against the action THIS page sent, and it must match that action exactly;
+  // a pushed prepare (no `sent`) never makes a move signable. The phone stays at the four decision types.
+  const moveOk = !Object.hasOwn(MOVES, type) || (sent?.action?.type === type && sent.action.to === ev.to && sent.action.reason === ev.reason);
+  const signable = Boolean(known) && extra.length === 0 && stringsOk && moveOk && typeof ctx.log === "string" && ctx.log !== "workspace";
   return {
     type: renderText(type),
     signable,
     sentence: signable ? sentence(type, ctx.log, ev) : null,
     fingerprint: shortHash(hex(digest)),
     contentHash: typeof ev.hash === "string" ? shortHash(ev.hash) : "",
+    facts: signable ? facts(type, ev) : [],
     fields,
   };
 }
@@ -127,7 +167,7 @@ export function checkBindings(ctx, me, sent) {
   if (ev.channel_factor !== "password+totp" || ev.channel_cert?.o?.factor !== "password+totp") bad();
   if (sent) {
     if (ctx.workspace_id !== sent.workspaceId || ctx.log !== sent.action.log || ev.type !== sent.action.type) bad();
-    for (const k of ["hash", "question", "gate", "option", "text", "outcome"]) {
+    for (const k of ["hash", "question", "gate", "option", "text", "outcome", "to", "reason"]) {
       if (k in sent.action && ev[k] !== sent.action[k]) bad();
     }
   }

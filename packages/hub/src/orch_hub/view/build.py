@@ -6,9 +6,10 @@ fields the hub owns (``based_on``, ``roster_v``, ``hash_v``, the derived ``key``
 the new ticket's uid); everything else is copied from the schema-checked action. The engine adds the custodial fields
 and refuses anything reserved.
 
-Types the hub cannot build yet (``unavailable``, fail closed; follow-up issue): the three gate decisions
-(``gate_gen``, ``policy_hash``, the gate hash and the source list need the gate projection and body text, which are
-not synced in hv 0) and the two that name the current status (``status.changed``, ``ticket.moved``: ``from``).
+The three gate decisions (``gate_gen``, ``policy_hash``, ``source_sha``) and the two status moves (``from``) are
+copied byte for byte from the host's ticket projection P (D15b, §10.7 "The ticket projection"), never computed here:
+a missing or stale P is ``unavailable``, a gate the host left out ``unknown_item``, another hash ``event_changed``.
+The ticket must be visible to the person first (the same answer as one that does not exist).
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from ..contract import phase4 as P4
 from ..contract import suite as S
 from ..contract.hub import Refused
 from ..custodial import BuiltEvent
@@ -34,8 +36,13 @@ COPY: dict[str, tuple[str, ...]] = {
     "handoff.written": ("text",),
     "addon.disabled": ("name",),
     "addon.purged": ("name",),
+    # D15b: the action's own fields; the derived ones (gate_gen, policy_hash, source_sha, from) come from P
+    "gate.approved": ("gate", "hash"),
+    "gate.changes_requested": ("gate", "hash", "text"),
+    "verdict.given": ("outcome", "hash", "text"),
+    "status.changed": ("to", "reason"),
+    "ticket.moved": ("to", "reason"),
 }
-UNBUILDABLE = ("gate.approved", "gate.changes_requested", "verdict.given", "status.changed", "ticket.moved")
 _CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
 
@@ -55,9 +62,6 @@ class StoreWorkspaceView:
     def build(
         self, wk_e: bytearray, epoch: int, workspace_id: str, user_id: str, event_id: str, action: Mapping[str, Any]
     ) -> BuiltEvent:
-        typ = action["type"]
-        if typ in UNBUILDABLE:
-            raise Refused("unavailable")
         keys = Keyring(self._svc.seals, workspace_id, {epoch: wk_e})
         try:
             with self._svc.store.lock:  # one consistent read: heads and pages cannot move between the two
@@ -108,6 +112,18 @@ class StoreWorkspaceView:
             keys_ = {o.get("key") for o in (q2.obj.get("options") or []) if type(o) is dict}
             if "option" in action and action["option"] not in keys_:
                 raise Refused("malformed")
+        elif typ in P4.PROJ_TYPES:
+            heads = self._svc.store.heads(ws, log)
+            core.update(_copy(typ, action))
+            core.update(
+                P4.build_from_proj(
+                    action,
+                    self._svc.proj(ws, log, keys),
+                    ticket_seq=len(heads),
+                    ticket_head=heads[-1],
+                    roster_v=w.roster_v,
+                )
+            )
         else:
             core.update(_copy(typ, action))
         return BuiltEvent(log, core)

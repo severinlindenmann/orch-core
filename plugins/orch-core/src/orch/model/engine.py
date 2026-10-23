@@ -25,7 +25,7 @@ from . import (
     edits,
     gates,
     generations,
-    hubledger,
+    identity,
     lifecycle,
     questions,
     source,
@@ -49,6 +49,7 @@ CROSS_TICKETS = frozenset(
         "addon.disabled",
         "addon.purged",
         "restore",
+        "hub.pinned",  # a channel revocation voids open decisions (C3b-2)
     }
 )
 
@@ -154,13 +155,19 @@ def _envelope_check(lc: LogCore, e: dict[str, Any]) -> Refusal | None:
     return None
 
 
+def _names_users(e: dict[str, Any]) -> bool:
+    """Does this event name a hub user (``u_``) in its payload? Then admitting it records the id (§15.6), so it gets
+    its own copy of the workspace state."""
+    return e.get("actor", {}).get("kind") != "host" and bool(identity.u_refs(e))
+
+
 def _scratch(core: Core, log: str, e: dict[str, Any]) -> Core:
     typ = e["type"]
     a = e["actor"]
     unattended = a["kind"] == "agent" and a.get("unattended") is True
     is_ws = log == WORKSPACE
     sc = Core(
-        ws=copy.deepcopy(core.ws) if (is_ws or unattended) else core.ws,
+        ws=copy.deepcopy(core.ws) if (is_ws or unattended or "via" in a or _names_users(e)) else core.ws,
         tickets=dict(core.tickets),
         keys=dict(core.keys) if typ == "ticket.created" else core.keys,
         created_at=dict(core.created_at) if typ == "ticket.created" else core.created_at,
@@ -210,7 +217,8 @@ def _ticket_handler(core: Core, t: TCore, lc: LogCore, e: dict[str, Any]) -> Ref
 
 
 def _ack(ws: WsCore, lc: LogCore, e: dict[str, Any]) -> Refusal | None:
-    if ws.members[e["actor"]["id"]].role != "owner":
+    sg = identity.signer(ws, e)
+    if isinstance(sg, Refusal) or sg.role != "owner":
         return Refusal(Code.ROLE_DENIED, "invalid.acknowledged is owner only")
     bad = next((i for i in lc.invalid if i.seq == e["invalid_seq"]), None)
     if bad is None or bad.head != e["invalid_head"]:
@@ -236,7 +244,7 @@ def _workspace_handler(core: Core, lc: LogCore, e: dict[str, Any], ctx: Ctx) -> 
         "addon.purged": lambda: workspace.addon_event(core, e),
         "hub.joined": lambda: workspace.hub_joined(ws, e),
         "hub.left": lambda: workspace.hub_left(ws, e),
-        "hub.pinned": lambda: hubledger.apply_pin(ws, e, v, dev=ctx.hub_dev),
+        "hub.pinned": lambda: workspace.hub_pinned(core, e, v, dev=ctx.hub_dev),
         "restore": lambda: workspace.restore(core, lc, e, v),
         "invalid.acknowledged": lambda: _ack(ws, lc, e),
         "projection.repaired": lambda: None,
@@ -256,9 +264,13 @@ def _authorize(core: Core, log: str, t: TCore | None, e: dict[str, Any], ctx: Ct
     if a["kind"] == "person" and "via" in a:
         if (r := authz.authorize_hub(core, log, e, ctx.verifier, dev=ctx.hub_dev)) is not None:
             return r
-        # C3b PR A: the type rules (gates, questions, lifecycle...) still read device actors. Until the consumers go
-        # through identity.signer (PR B, task 4) a verified hub line is refused rather than half-applied (fail closed).
-        return Refusal(Code.HUB_INVALID, "consumers_not_ready")
+        # 15.4: the type rules read the actor through identity.signer / role_of (authz.HUB_TYPES is the closed list of
+        # the types whose rules do); the viewer, roster_v and freeze checks run on the signer's role.
+        if (r := authz.freeze_check(core, log, e)) is not None:
+            return r
+        if (r := authz.visible_to_actor(core, t, e)) is not None:
+            return r
+        return identity.record_users(ws, e)  # P1 (Opus, PR A): the ids this event uses now belong to its hub
     if a["kind"] == "person":
         if (r := authz.authorize_person(core, log, e, ctx.verifier)) is not None:
             return r
@@ -270,7 +282,9 @@ def _authorize(core: Core, log: str, t: TCore | None, e: dict[str, Any], ctx: Ct
             return r
     if (r := authz.freeze_check(core, log, e)) is not None:
         return r
-    return authz.visible_to_actor(core, t, e)
+    if (r := authz.visible_to_actor(core, t, e)) is not None:
+        return r
+    return identity.record_users(ws, e)  # §15.6 case 2: a u_ id named by a local event belongs to the joined hub
 
 
 def _apply(core: Core, log: str, lc: LogCore, e: dict[str, Any], ctx: Ctx) -> Refusal | None:

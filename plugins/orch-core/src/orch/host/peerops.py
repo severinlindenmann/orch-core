@@ -275,12 +275,26 @@ def _loop(service: WorkspaceService, rt: _Runtime) -> None:
             if rt.svc.mb.outbox:
                 rt.svc.flush()
             rt.svc.pump(0.5)
+            _deliveries(service, rt)
             wait = 0.5
         except Exception:  # noqa: BLE001 - the hub is down or refused: back off, never die
             rt.svc.drop_link()
             rt.stop.wait(wait)
             wait = min(wait * 2, 10.0)
     rt.svc.close()
+
+
+def _deliveries(service: WorkspaceService, rt: _Runtime) -> None:
+    """Custodial events the hub delivered on the shared link (``event_deliver``, ticket-format 15.5): admit and answer
+    each one. The link hands them out one at a time; a link or state error ends the pass and the loop backs off."""
+    from . import hubdeliver
+
+    link = rt.svc.current_link()
+    if link is None:
+        return
+    state = _hub_state(service)
+    while hubdeliver.pump(service, link, state, 0.0):
+        pass
 
 
 def pins_service(service: WorkspaceService) -> Any:
@@ -305,12 +319,17 @@ def pins_service(service: WorkspaceService) -> Any:
     )  # fmt: skip
 
 
+def _joined_full(service: WorkspaceService) -> bool:
+    ws = service.store.state.workspace.hub if service.store is not None else {}
+    return bool(ws) and ws.get("status") == "joined" and ws.get("mode") == "full"
+
+
 def maybe_start(service: WorkspaceService) -> None:
     """At workspace open: start the receive thread when this workspace has a mailbox (it has used peers). Never fails
     the open."""
     try:
-        if (_dir(service) / "mailbox.json").exists():
-            _runtime(service)
+        if (_dir(service) / "mailbox.json").exists() or _joined_full(service):
+            _runtime(service)  # a full-mode workspace listens: the hub delivers custodial events on this link
     except Exception:  # noqa: BLE001
         return
 

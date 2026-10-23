@@ -158,7 +158,10 @@ def done_rule(ws: WsCore, t: TCore) -> bool:
 def decision(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
     """gate.approved, gate.changes_requested, verdict.given by a person (§5.7, §5.9). Validates, then mutates."""
     kind, gate = _kind_gate(e)
-    person, device = identity.canonical(ws, e["actor"]["id"]), e["actor"]["device"]
+    sg = identity.signer(ws, e)  # the ONE place a person actor's identity, role and key come from (L2P4-C2)
+    if isinstance(sg, Refusal):
+        return sg
+    person = sg.person
     pol = policies.effective(ws, t, gate)
     if not policies.applies_to(pol, t.ticket_type):
         return Refusal(Code.GATE_NOT_APPLICABLE, f"{gate} does not apply to {t.ticket_type}")
@@ -171,7 +174,7 @@ def decision(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
             return Refusal(Code.GATE_STATUS, f"{gate} decisions are accepted only in testing")
     elif kind == "changes" and t.status not in ("backlog", "open", "in_progress", "testing"):
         return Refusal(Code.GATE_STATUS, "wrong status")
-    if not policies.may_decide(ws, t, gate, person, pol):
+    if not policies.may_decide(ws, t, gate, person, pol, sg.role):
         return Refusal(Code.GATE_NOT_ELIGIBLE, f"{person} may not decide {gate}")
     if (
         kind in ("approve", "pass")
@@ -205,7 +208,7 @@ def decision(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
             gate,
             kind,
             person,
-            device,
+            sg.key,
             e["gate_gen"],
             e["hash"],
             e["policy_hash"],

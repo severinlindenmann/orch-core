@@ -222,23 +222,27 @@ def void_person(ws: WsCore, t: TCore, person: str) -> None:
 
 def _void_device_now(t: TCore, device: str) -> None:
     for g in GATES:
-        mine = [d for d in live(t, g) if d.device == device]
+        mine = [d for d in live(t, g) if d.signer == device]
         for d in mine:
             d.voided = True
         if mine:
             t.marks.add(g)
 
 
-def void_device(ws: WsCore, t: TCore, device: str) -> None:
-    """``device.revoked`` (compromised): voids what the device signed on every unsettled ticket, reached or not. A
-    settled ticket keeps its state; each gate lists the device's decisions that were counting (``revoked_flag``) and
-    the void waits in ``exempt_devices`` (§5.7)."""
+def void_signer(ws: WsCore, t: TCore, key: str) -> None:
+    """``device.revoked`` (compromised) or a channel revocation (C3b-2): voids what the signing key signed on every
+    unsettled ticket, reached or not. ``key`` is a :class:`identity.Signer` key: a ``d_`` device id, or
+    ``hub:<hub_id>/<channel>``. A settled ticket keeps its state; each gate lists the key's decisions that were counting
+    (``revoked_flag``) and the void waits in ``exempt_devices`` (§5.7). Decisions of other keys are never touched."""
     if t.status in SETTLED:
-        t.exempt_devices.add(device)
+        t.exempt_devices.add(key)
         for g in GATES:
-            t.gates[g].revoked_flag |= {d.id for d in live(t, g) if d.device == device}
+            t.gates[g].revoked_flag |= {d.id for d in live(t, g) if d.signer == key}
         return
-    _void_device_now(t, device)
+    _void_device_now(t, key)
+
+
+void_device = void_signer  # the device case (ticket-format 5.7)
 
 
 def on_unsettle(ws: WsCore, t: TCore, before_status: str) -> None:

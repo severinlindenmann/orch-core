@@ -167,6 +167,7 @@ _TASK = re.compile(r"T[1-9][0-9]*")
 _QUESTION = re.compile(r"Q[1-9][0-9]*")
 _TOKEN = re.compile(r"[a-z][a-z0-9_]*")
 _PERSON = re.compile(r"p_[0-9a-f]{32}")
+_PERSON_REF = re.compile(r"[pu]_[0-9a-f]{32}")  # a personRef: a person or a hub user (ticket-format 15.1)
 _COMMIT = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 _HOST_LABEL = re.compile(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?")
 _PORT = re.compile(r"[1-9][0-9]{0,4}")
@@ -385,9 +386,9 @@ def people_hash(people: Mapping[str, Any]) -> str:
     for role, value in people.items():
         _enum(role, TICKET_ROLES, "people role")
         if role == "ticket_owner":
-            out[role] = None if value is None else _match(_PERSON, value, "ticket_owner")
+            out[role] = None if value is None else _match(_PERSON_REF, value, "ticket_owner")
         else:
-            out[role] = sorted({_match(_PERSON, p, f"{role} item") for p in _list(value, f"people.{role}")})
+            out[role] = sorted({_match(_PERSON_REF, p, f"{role} item") for p in _list(value, f"people.{role}")})
     return _labelled("people", cj_checked(out))
 
 

@@ -122,6 +122,69 @@ def role_of(ws: WsCore, ident: str) -> str | None:
     return _snapshot_role(ws, ident[2:]) if h.get("mode") == "full" else None
 
 
+LOOKUP: Any = object()  # "look the role up with role_of" (the default of the role parameters of the type rules)
+
+
+def known(ws: WsCore, ident: str) -> bool:
+    """``ident`` has a role now: a member, or a hub user the pinned snapshot gives one (``role_of`` is not ``None``)."""
+    return role_of(ws, ident) is not None
+
+
+def ref_refusal(ws: WsCore, idents: Iterable[str]) -> Refusal | None:
+    """A ``u_`` person reference (``personRef``, ticket-format 15.1) is accepted only while a hub is joined at this
+    position: ``hub.invalid`` otherwise, so a standalone workspace (D79) never holds one."""
+    h = ws.hub
+    if any(i.startswith("u_") for i in idents) and not (h and h.get("status") == "joined"):
+        return Refusal(Code.HUB_INVALID, "not_joined")
+    return None
+
+
+def _at(node: Any, path: tuple[str, ...]) -> Iterable[Any]:
+    if not path:
+        yield node
+    elif path[0] == "*":
+        for v in node if isinstance(node, list) else ():
+            yield from _at(v, path[1:])
+    elif isinstance(node, Mapping) and path[0] in node:
+        yield from _at(node[path[0]], path[1:])
+
+
+def u_refs(e: Mapping[str, Any]) -> list[str]:
+    """Every bare 32-hex hub user id an event uses: its actor and every ``u_`` person reference in its payload. The
+    payload fields are not listed by hand: they are the ``personRef`` places of the event's own schema
+    (``orch.schema.person_ref_paths``), so a new field is covered the day it is added to the schema."""
+    from orch.schema import person_ref_paths  # local: the schema package is data, the model stays importable alone
+
+    out: list[Any] = [e["actor"]["id"]] if "via" in e["actor"] else []
+    for path in person_ref_paths("event." + str(e["type"])):
+        out += _at(e, path)
+    return sorted({i[2:] for i in out if type(i) is str and i.startswith("u_")})
+
+
+def record_users(ws: WsCore, e: Mapping[str, Any]) -> Refusal | None:
+    """An admitted event records every ``u_`` id it uses under a hub in ``ws.hub["user_hub"]`` (append-only, first
+    writer wins), so a later event of ANOTHER hub that presents one of them is ``hub.foreign_user`` (L2P4-C1, §15.6)
+    without any state injected by a join. The hub is the event's own ``hub_id`` for a hub-signed event (actor and
+    payload references), and the hub joined at this position for any other event's payload references (§15.6 case 2:
+    a member's device event naming a hub user). Every reference is checked first (``hub_actor``); an event with no
+    ``u_`` id, or a device event with no hub joined (the type rules refuse that), records nothing."""
+    ids = u_refs(e)
+    if not ids:
+        return None
+    h = ws.hub
+    hub_id = e["hub_id"] if "via" in e["actor"] else (h.get("hub_id") if h and h.get("status") == "joined" else None)
+    if hub_id is None:
+        return None
+    for uid in ids:
+        who = hub_actor(ws, hub_id, uid)
+        if isinstance(who, Refusal):
+            return who
+    book = ws.hub.setdefault("user_hub", {})
+    for uid in ids:
+        book.setdefault(uid, hub_id)
+    return None
+
+
 def signer(ws: WsCore, e: Mapping[str, Any]) -> Signer | Refusal:
     """The :class:`Signer` of a person event. The ONE place a person actor's identity, role and key are derived: no
     consumer reads ``actor.id``, ``actor.device`` or ``ws.members[...]`` for a person actor directly (L2P4-C2)."""
@@ -131,4 +194,4 @@ def signer(ws: WsCore, e: Mapping[str, Any]) -> Signer | Refusal:
         if isinstance(who, Refusal):
             return who
         return Signer(who, role_of(ws, a["id"]), f"hub:{e['hub_id']}/{e['channel']}")
-    return Signer(a["id"], role_of(ws, a["id"]), a["device"])
+    return Signer(canonical(ws, a["id"]), role_of(ws, a["id"]), a.get("device", ""))

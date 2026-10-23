@@ -27,6 +27,7 @@ Fail closed: unreadable state, an unknown rule or a malformed stored value is ``
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import os
 from collections.abc import Callable, Iterable, Mapping
@@ -449,17 +450,18 @@ class ShareState:
         for lg, v in d["sent"].items():
             ok = (
                 type(lg) is str and type(v) is dict
-                and {"item_id", "digest"} <= set(v) <= {"item_id", "digest", "version", "item_hash"}
+                and {"item_id", "digest"} <= set(v) <= {"item_id", "digest", "version", "item_hash", *_ADMISSION_KEYS}
                 and wire.hex16(v["item_id"]) and (v["digest"] is None or type(v["digest"]) is str)
                 and (type(v.get("version", 0)) is int and 0 <= v.get("version", 0) < 2**32 - 1)
                 and (v.get("item_hash") is None or sharefmt.HASH_RE.fullmatch(str(v["item_hash"])) is not None)
+                and _admission_ok(v)
             )  # fmt: skip
             if not ok:
                 raise HubRefused("malformed")
             sent[lg] = {
                 "item_id": v["item_id"], "digest": v["digest"], "version": v.get("version", 0),
                 "item_hash": v.get("item_hash"),
-            }  # fmt: skip
+            } | {k: copy.deepcopy(v[k]) for k in _ADMISSION_KEYS if k in v}  # fmt: skip
         if any(type(x) is not str for x in d["withdrawn"]):
             raise HubRefused("malformed")
         refused: dict[str, dict[str, str]] = {}
@@ -492,6 +494,25 @@ class ShareState:
             return False
         self.rules.remove(r)
         return True
+
+
+#: what a ``sent`` entry keeps for the admission of a selective custodial event (15.7), and how many earlier item
+#: hashes it remembers (a decision on an older version is ``event_changed``, not ``not_granted``)
+_ADMISSION_KEYS = ("chain", "f1", "superseded")
+MAX_SUPERSEDED = 16
+
+
+def _admission_ok(v: Mapping[str, Any]) -> bool:
+    chain, f1, old = v.get("chain"), v.get("f1"), v.get("superseded", [])
+    return (
+        (chain is None or (
+            type(chain) is dict and set(chain) == {"log", "seq", "head"} and type(chain["log"]) is str
+            and type(chain["seq"]) is int and chain["seq"] >= 1 and type(chain["head"]) is str
+        ))
+        and (f1 is None or type(f1) is dict)
+        and type(old) is list and len(old) <= MAX_SUPERSEDED
+        and all(type(h) is str and sharefmt.HASH_RE.fullmatch(h) is not None for h in old)
+    )  # fmt: skip
 
 
 class ShareLink(Protocol):
@@ -562,8 +583,21 @@ def sync(
             state.refused[lg] = {"code": exc.code, "line": item.line()}
             continue
         state.refused.pop(lg, None)
+        if have.get("item_hash") not in (
+            None,
+            ihash,
+        ):  # the hash of the version this put replaces (15.7: event_changed)
+            old = [h for h in have.get("superseded", []) if h != ihash]
+            have["superseded"] = [*old, have["item_hash"]][-MAX_SUPERSEDED:]
         have["digest"] = item.digest
         have["item_hash"] = ihash  # what a custodial event about this item binds (10.2b), for the return check
+        # what the person is shown, kept for the admission check of a selective custodial event (ticket-format 15.7):
+        # the chain claim and the f1 values the item was signed with. Without both the item grants no decision.
+        have.pop("chain", None)
+        have.pop("f1", None)
+        if item.chain is not None and item.f1 is not None:
+            have["chain"] = {"log": item.ticket_uid, "seq": item.chain[0], "head": item.chain[1]}
+            have["f1"] = copy.deepcopy(item.f1)
         counts["put"] += 1
         save(state)
     if refused:

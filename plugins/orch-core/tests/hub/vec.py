@@ -69,40 +69,7 @@ SKIPPED_CHECKS = {
 }
 #: cases of a check core runs whose rules core has not implemented yet (orch-core#1036): non-strict xfail, so CI shows
 #: them and a fix turns them into XPASS
-PENDING_VECTORS = frozenset(
-    {
-        "custodial_event_base_rev_single_hash",
-        "custodial_event_code_approval_without_source",
-        "custodial_event_created_with_based_on",
-        "custodial_event_plan_approval_with_source",
-        "custodial_event_question_asked",
-        "custodial_event_question_without_id",
-        "custodial_selective_answer_in_item",
-        "custodial_selective_code_approval_in_item",
-        "custodial_selective_gate_not_in_item_f1",
-        "custodial_selective_granted_member_decides",
-        "custodial_selective_granted_owner",
-        "custodial_selective_head_fork",
-        "custodial_selective_item_not_live",
-        "custodial_selective_item_of_other_log",
-        "custodial_selective_item_superseded",
-        "custodial_selective_log_added",
-        "custodial_selective_people_changed_not_selective",
-        "custodial_selective_question_item_gate_decision",
-        "custodial_selective_question_not_in_item_f1",
-        "custodial_selective_value_based_on_differs",
-        "custodial_selective_value_gate_gen_differs",
-        "custodial_selective_value_gate_hash_differs",
-        "custodial_selective_value_policy_hash_differs",
-        "custodial_selective_value_question_based_on_differs",
-        "custodial_selective_value_question_hash_differs",
-        "custodial_selective_value_roster_v_differs",
-        "custodial_selective_value_source_sha_differs",
-        "custodial_selective_verdict_in_item",
-        "custodial_selective_without_item_hash",
-        "custodial_selective_workspace_log",
-    }
-)
+PENDING_VECTORS = frozenset({})
 
 
 def private_key(name: str):
@@ -273,6 +240,9 @@ def _run_custodial(a: dict[str, Any]) -> dict[str, Any]:
         member_roles=a.get("member_roles", {}),
         min_factor=a.get("min_factor", "password+totp"),  # required by core; the weakest value is "no requirement"
         revoked_op_certs=frozenset(a.get("revoked_op_certs", [])),
+        live_items=a.get("live_items", {}),
+        superseded_items=frozenset(a.get("superseded_items", [])),
+        log_heads=a.get("log_heads", {}),
     )
     return {"channel": r["channel"], "role": r["role"], "user_id": r["user_id"]}
 

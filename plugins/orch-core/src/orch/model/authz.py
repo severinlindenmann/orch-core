@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections.abc import Collection, Mapping
 from typing import Any
 
-from . import hubledger, identity, visibility
+from . import hubledger, identity, policies, visibility
 from .codes import Code, Refusal
 from .emits import HUMAN_ONLY
 from .types import WORKSPACE, Core, Device, TCore, WsCore, ts
@@ -88,6 +88,16 @@ OPERATE = frozenset(
         "invalid.acknowledged",
     }
 )
+#: the event types a hub actor may append (hub contract 8.5, ticket-format 15.4): the type rules of exactly these go
+#: through ``identity.signer`` / ``role_of``. Anything else is refused here even when the injected verifier allows it.
+HUB_TYPES = frozenset(
+    {
+        "ticket.created", "ticket.updated", "status.changed", "ticket.submitted", "ticket.closed", "ticket.reopened",
+        "claim.released", "log.added", "handoff.written", "question.asked", "question.answered", "gate.approved",
+        "gate.changes_requested", "verdict.given", "ticket.moved", "people.changed", "visibility.changed",
+        "addon.disabled", "addon.purged",
+    }
+)  # fmt: skip
 DECISIONS = frozenset({"gate.approved", "gate.changes_requested", "verdict.given", "question.answered"})
 VIEWER_MAY = frozenset({"question.answered", "device.added", "device.removed", "device.revoked"})
 UNATTENDED_PER_SESSION = 30
@@ -135,7 +145,7 @@ def device_valid(dev: Device | None, cert: dict[str, Any], at: int, operate: boo
 #: B6: the ``auth`` labels the workspace setting ``sign_methods`` governs, and the method each one is: a convenience
 #: signature is "one click on this computer", the iPhone app's Secure Enclave signature is "the phone". The other labels
 #: (passphrase is the terminal, always allowed; the Mac and cross-platform ones are reserved) are not judged here.
-AUTH_METHOD = {"convenience": "click", "secure-enclave-unlocked": "phone"}
+AUTH_METHOD = {"convenience": "click", "secure-enclave-unlocked": "phone", "hub": "hub"}
 
 
 def method_refusal(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
@@ -193,6 +203,7 @@ _HUB_DENIED_CODES = frozenset(
     {"channel_revoked", "forbidden_role", "not_granted", "not_custodial", "factor_too_weak"}
 )  # step 5; everything else the verifier refuses is the certificate chain (step 2)
 _HUB_FACTORS = ("password+totp", "se-unlocked", "passkey")
+_FACTOR_RANK = {f: i for i, f in enumerate(_HUB_FACTORS)}  # D66, weakest first
 _HUB_FIELDS = ("channel", "channel_factor", "hub_id", "snapshot_version", "channel_cert", "uk_cert", "channel_proof")
 
 
@@ -228,7 +239,8 @@ def authorize_hub(core: Core, log: str, e: dict[str, Any], v: Verifier, *, dev: 
         "unavailable"
         if check is None
         else check(
-            e, workspace_id=ws.workspace_id, log=log, card=led["card"], revoked=frozenset(led["revoked_op_certs"]),
+            e, workspace_id=ws.workspace_id, log=log, root=led["root"], card=led["card"],
+            revoked=frozenset(led["revoked_op_certs"]),
             snapshot=led["snapshot"], revoked_channels=frozenset(led["revoked_channels"]), at_ms=ts(e["at"]) * 1000,
             dev=dev, mode=mode, member_role=member_role,
         )
@@ -243,9 +255,19 @@ def authorize_hub(core: Core, log: str, e: dict[str, Any], v: Verifier, *, dev: 
         return who
     if code is not None:
         return Refusal(Code.HUB_DENIED, code)
+    if typ not in HUB_TYPES:  # defence in depth beside the verifier: only the types whose rules read the signer
+        return Refusal(Code.HUB_DENIED, "not_custodial")
+    # D66: the factor floor of the ONE model function, at this position (the host passes the same function's result to
+    # the contract verifier at admission, never a literal)
+    t = None if log == WORKSPACE else core.tickets.get(log)
+    floor = policies.factor_floor(ws, t, typ, e.get("gate"))
+    if _FACTOR_RANK[e["channel_factor"]] < _FACTOR_RANK[floor]:
+        return Refusal(Code.HUB_DENIED, "factor_too_weak")
     sg = identity.signer(ws, e)
     if isinstance(sg, Refusal):
         return sg
+    if (r := method_refusal(ws, e)) is not None:  # C3b-6: sign_methods without `hub` refuses every hub event
+        return r
     if sg.role is None:  # aliased to a person who is no member now, or no role in the snapshot
         return Refusal(Code.HUB_DENIED, "forbidden_role")
     if sg.role == "viewer" and typ not in VIEWER_MAY:
@@ -338,6 +360,7 @@ def visible_to_actor(core: Core, t: TCore | None, e: dict[str, Any]) -> Refusal 
     a = e["actor"]
     if t is None or a["kind"] != "person" or e["type"] in visibility.MANAGEMENT:
         return None
-    if not visibility.can_see(core.ws, t, a["id"]):
+    sg = identity.signer(core.ws, e)
+    if isinstance(sg, Refusal) or not visibility.can_see(core.ws, t, sg.person):
         return Refusal(Code.TICKET_NOT_VISIBLE, "restricted ticket")
     return None

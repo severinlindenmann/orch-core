@@ -182,6 +182,9 @@ def _save_snapshot(service: WorkspaceService, fetched: Any) -> None:
         revoked = sorted({*cur.revoked_op_certs, *fetched.revoked_op_certs})
         if revoked != sorted(cur.revoked_op_certs):
             cur.revoked_op_certs, changed = revoked, True
+        for cid, obj in fetched.revoked_op_objs.items():  # the signed objects a hub.pinned line carries (15.2)
+            if cid not in cur.revoked_op_objs:
+                cur.revoked_op_objs[cid], changed = obj, True
         if fetched.card is not None and cur.card != fetched.card:
             on_disk, mine = cur.card, fetched.card
             order = lambda c: (c["op_cert"]["o"]["op_seq"], c["o"]["card_seq"])  # noqa: E731

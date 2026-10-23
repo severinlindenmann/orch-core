@@ -87,17 +87,19 @@ export function availableActions(t: TicketDocument, viewer: Viewer): Available {
 }
 
 /** The one thing the viewer should do next on this ticket, shown as the header's primary button (null: nothing). */
-export type Primary = { kind: 'verdict' } | { kind: 'approve'; gate: 'requirements' | 'plan' | 'code' }
+export type Primary = { kind: 'verdict' } | { kind: 'approve'; gate: 'requirements' | 'plan' | 'code' } | { kind: 'answer'; question: string }
 
-/** Give the verdict > approve requirements > approve the plan. (A question is answered on the question itself.) */
+/** Give the verdict > approve requirements > approve the plan > answer the question (that opens the question's form). */
 export function primaryAction(av: Available): Primary | null {
   if (av.verdict) return { kind: 'verdict' }
   if (av.approve.length) return { kind: 'approve', gate: av.approve[0] }
+  if (av.answer.length) return { kind: 'answer', question: av.answer[0].id }
   return null
 }
 
 export function primaryLabel(p: Primary): string {
   if (p.kind === 'verdict') return 'Give verdict'
+  if (p.kind === 'answer') return 'Answer question'
   return p.gate === 'requirements' ? 'Approve requirements' : p.gate === 'code' ? 'Approve code review' : 'Approve plan'
 }
 

@@ -56,8 +56,8 @@ export const artifactTextQuery = (ws: string, ticket: string, name: string, sha2
   })
 
 /** The digest the host read equals the one the ticket lists (either may carry the `sha256:` prefix). */
-export const sameDigest = (read: string, listed: string): boolean => {
-  const bare = (d: string) => d.replace(/^sha256:/i, '').toLowerCase()
+export const sameDigest = (read: string | undefined, listed: string | undefined): boolean => {
+  const bare = (d: string | undefined) => (d ?? '').replace(/^sha256:/i, '').toLowerCase()
   return bare(read) !== '' && bare(read) === bare(listed)
 }
 

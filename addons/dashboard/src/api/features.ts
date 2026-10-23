@@ -16,6 +16,16 @@ export function setFeatures(session: SessionFeatures | null) {
   perWorkspace = session?.workspaces ?? {}
 }
 
+/**
+ * The features follow the workspace list: a host serves some of them only while an add-on is ON (Usage, Terminals,
+ * Publish ...), so turning one on must show its menu entry at once, without a reload. A no-op on the mock (lists all).
+ */
+export function refreshFeatures(rows: readonly { id: string; features: readonly string[] }[]) {
+  if (enabled === null) return
+  perWorkspace = Object.fromEntries(rows.map((r) => [r.id, r.features]))
+  enabled = new Set(rows.flatMap((r) => r.features))
+}
+
 /** Is `name` on? With a workspace id, the features of that workspace's host (a host that is too old lacks some). */
 export function hasFeature(name: string, workspace?: string): boolean {
   if (enabled === null) return true

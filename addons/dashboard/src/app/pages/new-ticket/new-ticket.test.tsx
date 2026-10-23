@@ -8,6 +8,14 @@ import { api, mockStore } from '@/api/client'
 import { renderApp } from '@/test/renderApp'
 
 describe('new ticket page', () => {
+  it('the action bar sits flush at the bottom of the scroll area, not above the page padding (run 8, 5.1)', async () => {
+    renderApp('/tickets/new')
+    const create = await screen.findByRole('button', { name: 'Create' })
+    const bar = create.closest('.sticky')
+    // <main> pads the page by 1rem (1.5rem wide): the bar's offset cancels it, or the form shows beneath the bar.
+    expect(bar?.className).toContain('-bottom-4')
+    expect(bar?.className).toContain('@[60rem]/page:-bottom-6')
+  })
   it('shows the sections a bug needs and hides absent ones', async () => {
     const { user } = renderApp('/tickets/new')
     await user.click(await screen.findByRole('radio', { name: 'chore' }))

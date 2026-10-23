@@ -107,7 +107,9 @@ export function CriterionEvidence({ ticket, ac }: { ticket: TicketDocument; ac: 
  */
 export function VerdictEvidence({ ticket, dialog = true }: { ticket: TicketDocument; /** false: Today's row, not a dialog. */ dialog?: boolean }) {
   const withProof = ticket.acceptance_state.map((ac) => ({ ac, items: proofArtifacts(ticket, ac) }))
-  const without = withProof.filter((x) => x.items.length === 0 && x.ac.proof !== 'accepted')
+  // A criterion proved by a finished check (a task receipt) has evidence too, just no file: it is not "missing".
+  const byCheck = withProof.filter((x) => x.items.length === 0 && x.ac.evidence.some((ev) => ev.kind === 'task'))
+  const without = withProof.filter((x) => x.items.length === 0 && x.ac.proof !== 'accepted' && !byCheck.includes(x))
   const total = withProof.reduce((n, x) => n + x.items.length, 0)
   return (
     <section aria-label="Evidence" className="space-y-2 rounded-md border border-border bg-bg px-3 py-2">
@@ -131,6 +133,7 @@ export function VerdictEvidence({ ticket, dialog = true }: { ticket: TicketDocum
         ),
       )}
       </div>
+      {byCheck.length > 0 && <p className="text-[12px] text-text-muted">{byCheck.map((x) => x.ac.id).join(', ')} {byCheck.length === 1 ? 'is' : 'are'} proved by a check the agent ran (see the task receipts), not by a file.</p>}
       {without.length > 0 && <p className="text-[12px] text-warning">No evidence file yet for {without.map((x) => x.ac.id).join(', ')}.</p>}
     </section>
   )

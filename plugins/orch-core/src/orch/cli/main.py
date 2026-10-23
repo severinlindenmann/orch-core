@@ -291,6 +291,10 @@ def main(
         from orch.runner.cli import main as runner_main
 
         return runner_main(args[1:], env=env, out=out)
+    if args[:2] == ["keys", "rotate"]:  # C8 break-glass: a new workspace key epoch, owner at the terminal (host op)
+        from orch.cli.hub import main as hub_main
+
+        return hub_main(["rotate", *args[2:]], env=env, out=out, err=err, now=now)
     if args[:1] == ["keys"]:  # custody of the person's device key (H5c, orch-v2-host §0.8.6): not a registry op
         from orch.custody.cli import main as keys_main
 

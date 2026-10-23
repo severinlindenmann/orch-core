@@ -19,7 +19,8 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { toastApiError } from '@/app/toast'
 import { useWorkspace } from '@/app/workspace'
-import { RecommendedTag, type HumanAction } from '../ticket/shared'
+import { QuestionOptions } from '../ticket/QuestionOptions'
+import { type HumanAction } from '../ticket/shared'
 import { ago } from './shared'
 import { fmtClock, nowMs, plural } from '@/lib/time'
 
@@ -183,33 +184,15 @@ export function QuestionRow({ item, ticket, now, expanded, onToggle, sign, asked
     >
       {q?.why && <p className="text-[13px] leading-relaxed text-text-muted">{q.why}</p>}
       {locked ? (
-        <ul aria-label={`Options for ${item.ref}`} className="space-y-1 text-[13px] text-text">
-          {q?.options?.map((o) => (
-            <li key={o.key}>
-              {o.label}
-              {o.cost && <span className="text-xs text-text-muted"> · {o.cost}</span>}
-              {q.recommended === o.key && <RecommendedTag />}
-            </li>
-          ))}
-        </ul>
+        q && <QuestionOptions q={q} name={`answer-${id}`} value={null} idPrefix={`answer-${id}`} readOnly />
       ) : q?.options?.length ? (
-        <div className="flex flex-wrap items-end gap-2">
-          <div role="radiogroup" aria-label={`Answer to ${item.ref}`} className="flex flex-wrap gap-2">
-            {q.options.map((o) => (
-              <label
-                key={o.key}
-                className="flex cursor-pointer items-center gap-2 rounded-md border border-border px-2.5 py-1.5 text-[13px] text-text has-[:checked]:border-brand has-[:checked]:bg-brand-soft"
-              >
-                <input type="radio" id={`answer-${id}-${o.key}`} name={`answer-${id}`} value={o.key} checked={choice === o.key} onChange={() => setChoice(o.key)} className="accent-[var(--brand)]" />
-                <span>{o.label}</span>
-                {o.cost && <span className="text-xs text-text-muted">· {o.cost}</span>}
-                {q.recommended === o.key && <RecommendedTag />}
-              </label>
-            ))}
+        <div className="space-y-3">
+          <QuestionOptions q={q} name={`answer-${id}`} value={choice} onChange={setChoice} idPrefix={`answer-${id}`} />
+          <div className="flex justify-end">
+            <Button size="sm" disabled={!choice || !ticket} onClick={() => choice && sign(item.ticket, { kind: 'answer', question: item.ref!, option: choice })}>
+              Send answer
+            </Button>
           </div>
-          <Button size="sm" disabled={!choice || !ticket} onClick={() => choice && sign(item.ticket, { kind: 'answer', question: item.ref!, option: choice })}>
-            Send answer
-          </Button>
         </div>
       ) : (
         <Button asChild size="sm" variant="outline">

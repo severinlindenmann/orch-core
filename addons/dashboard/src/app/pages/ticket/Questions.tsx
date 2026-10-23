@@ -3,11 +3,11 @@ import { useState } from 'react'
 import type { QuestionStatus } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { canAnswer } from './actions'
-import { ago, Mono, Pill, presenceLabel, RecommendedTag, shortHash, type TabProps, type Viewer } from './shared'
+import { QuestionOptions } from './QuestionOptions'
+import { ago, Mono, Pill, presenceLabel, shortHash, type TabProps, type Viewer } from './shared'
 
 const VIA: Record<string, string> = { cli: 'CLI', dashboard: 'dashboard', phone: 'phone' }
 
@@ -23,22 +23,7 @@ function AnswerForm({ q, sign }: { q: QuestionStatus; sign: TabProps['sign'] }) 
         if (ready) sign({ kind: 'answer', question: q.id, option, text: text.trim() || undefined })
       }}
     >
-      {q.options && q.options.length > 0 && (
-        <RadioGroup value={option ?? ''} onValueChange={setOption} aria-label={`Options for ${q.id}`} className="gap-1.5">
-          {q.options.map((o) => (
-            <label
-              key={o.key}
-              htmlFor={`${q.id}-${o.key}`}
-              className="flex cursor-pointer items-center gap-2.5 rounded-md border border-border px-3 py-2 text-[13px] hover:bg-surface-2 has-[[data-state=checked]]:border-brand has-[[data-state=checked]]:bg-brand-soft"
-            >
-              <RadioGroupItem id={`${q.id}-${o.key}`} value={o.key} />
-              <span className="flex-1">{o.label}</span>
-              {o.cost && <span className="text-[11px] text-text-muted">{o.cost}</span>}
-              {q.recommended === o.key && <RecommendedTag />}
-            </label>
-          ))}
-        </RadioGroup>
-      )}
+      {q.options && q.options.length > 0 && <QuestionOptions q={q} name={`answer-${q.id}`} value={option} onChange={setOption} idPrefix={q.id} />}
       <div className="space-y-1.5">
         <Label htmlFor={`${q.id}-note`} className="text-[12px] text-text-muted">
           {q.options?.length ? 'Add a note (optional)' : 'Your answer'}
@@ -48,7 +33,7 @@ function AnswerForm({ q, sign }: { q: QuestionStatus; sign: TabProps['sign'] }) 
       <div className="flex items-center justify-end gap-2">
         <Button type="submit" size="sm" disabled={!ready}>
           <Fingerprint />
-          Answer {q.id}
+          Send answer
         </Button>
       </div>
     </form>
@@ -99,16 +84,9 @@ function QuestionCard({ q, viewer, sign }: { q: QuestionStatus; viewer: Viewer; 
       {q.why && <p className="mt-1 text-[13px] text-text-muted">{q.why}</p>}
 
       {!answered && q.options && q.options.length > 0 && !canAnswer(q, viewer) && (
-        <ul className="mt-3 space-y-1">
-          {q.options.map((o) => (
-            <li key={o.key} className="flex items-center gap-2 text-[13px] text-text-muted">
-              <span className="size-1.5 rounded-full bg-border-strong" aria-hidden />
-              {o.label}
-              {o.cost && <span className="text-[11px] text-text-faint">{o.cost}</span>}
-              {q.recommended === o.key && <RecommendedTag />}
-            </li>
-          ))}
-        </ul>
+        <div className="mt-3">
+          <QuestionOptions q={q} name={`view-${q.id}`} value={null} idPrefix={`view-${q.id}`} readOnly />
+        </div>
       )}
 
       {answered && (

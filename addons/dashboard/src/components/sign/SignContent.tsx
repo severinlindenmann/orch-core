@@ -131,7 +131,7 @@ function cancellationRows(value: unknown): NonNullable<Content['cancels']> {
 }
 
 /** `technical`: more facts for the ONE "Technical details" expander of the review (the panel's own: action, fingerprint, device). */
-export function SignContent({ content, ws, technical }: { content: Content; ws?: string; technical?: ReactNode }) {
+export function SignContent({ content, ws, technical, compact = false }: { content: Content; ws?: string; technical?: ReactNode; compact?: boolean }) {
   const members = useWorkspaceMembers(ws)
   // Every signed person id appears in full somewhere in the view: the plain view shows it short, this list in full.
   const ids = [...new Set((content.fields_changed ?? []).flatMap(f => [f.before, f.after]).filter((v): v is string => personLabel(v, members)?.full != null))]
@@ -166,6 +166,20 @@ export function SignContent({ content, ws, technical }: { content: Content; ws?:
       {technical}
     </details>}
   </>
+  // Compact (an answer): what is answered stays in view (the choice row and the typed note); the question, the other
+  // options and the host's facts are all still there, in full, under Details. Nothing is left out of the signed values.
+  if (compact && !summary) {
+    const mine = content.fields_changed?.filter(f => f.field === 'your choice') ?? []
+    const note = content.sections?.filter(s => s.id === 'answer') ?? []
+    return <div className="min-w-0 space-y-3 font-sans text-[13px] leading-relaxed text-text [overflow-wrap:anywhere]">
+      {mine.map(f => <p key={f.field} data-testid="sign-choice" className="text-text"><span className="text-text-muted">Your answer: </span><Shown plain value={f.after} members={members} /></p>)}
+      {note.map(s => <section key={s.id}><h3 className="mb-1 text-[12px] font-medium text-text-muted"><Inline>{s.title}</Inline></h3><Prose className="font-sans leading-relaxed text-text">{s.text}</Prose></section>)}
+      <details data-testid="sign-exact" className="space-y-3 rounded-md border border-border p-3">
+        <summary className="cursor-pointer text-[12px] font-medium text-text-muted">Details: everything you sign</summary>
+        <div className="mt-2 max-h-[38vh] min-w-0 space-y-5 overflow-auto pr-3">{rest}</div>
+      </details>
+    </div>
+  }
   return <div className="min-w-0 max-h-[38vh] space-y-5 overflow-auto pr-3 font-sans text-[13px] leading-relaxed text-text [overflow-wrap:anywhere]">
     {summary ? <>
       <section data-testid="sign-summary" aria-label={summary.title} className="space-y-2">

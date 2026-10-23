@@ -108,7 +108,12 @@ def test_hub_labels_prefix_free_with_live_core_table():
     live |= {v for v in core_labels.PLANNED_LABELS.values() if v.endswith("|")}
     live |= set(core_hash.LABELS.values())
     hub = set(HUB_LABELS.values()) | {"orch/v2/hub-custodial|gate.approved|"}
-    assert not hub & live
+    # core's C2a labels (what the WSK signs for a hub) are the same strings as the hub's: shared on purpose. Every shared
+    # string must carry the same NAME on both sides; the rest stays disjoint, and the union stays prefix-free.
+    core_names = {v: k for k, v in {**core_labels.LABELS, **core_labels.PLANNED_LABELS}.items() if v.endswith("|")}
+    hub_names = {v: k for k, v in HUB_LABELS.items()}
+    shared = (set(hub_names) | {"orch/v2/hub-custodial|gate.approved|"}) & set(core_names)
+    assert all(core_names[x] == hub_names[x] for x in shared), {x for x in shared if core_names[x] != hub_names.get(x)}
     for a, b in itertools.permutations(sorted(live | hub), 2):
         assert not b.startswith(a), (a, b)
 
@@ -130,3 +135,23 @@ def test_v2_card_check_accepts_the_relay_corpus_card():
         assert r.code == "other_person"
     else:
         raise AssertionError("card accepted under another owner key")
+
+
+def test_question_hash_and_refusals_agree_with_live_core():
+    """#1123: the hub's raw-question hash equals core's ``question_hash`` on every frozen fixture, and everything core
+    refuses is either unhashable there or not renderable here. Needs core code with the raw-question entry (core PR #1135
+    or later); skipped on an older checkout."""
+    import inspect
+
+    from orch_hub.view import project as PR
+
+    if list(inspect.signature(core_hash.question_hash).parameters)[:3] != ["qid", "ticket_uid", "question"]:
+        pytest.skip("core checkout predates the raw-question hash")
+    f = json.loads((Path(__file__).resolve().parent / "data" / "core_f1" / "hashes.json").read_text())
+    for v in f["question_hash"]:
+        assert PR.question_hash(v["qid"], v["ticket"], v["question"]) == core_hash.question_hash(
+            v["qid"], v["ticket"], v["question"]
+        ), v["name"]
+    for v in f["question_hash_refused"]:
+        with pytest.raises(core_hash.HashError):
+            core_hash.question_hash("a" * 32, "T", v["question"])

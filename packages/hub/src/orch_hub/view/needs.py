@@ -108,19 +108,22 @@ class StoreViewReader:
                     "log": log,
                     "hash": q.hash,
                 }
-                content = {
+                content: dict[str, Any] = {
                     "ticket_title": _one_line(t.title),
                     "question": q.id,
-                    "text": P4.render_text(q.obj.get("text", "")),
-                    "why": P4.render_text(q.obj.get("why", "")),
-                    "options": [
-                        {k: P4.render_text(o[k]) for k in ("key", "label") if type(o.get(k)) is str}
-                        for o in q.obj.get("options") or []
-                    ],
-                    "recommended": _recommended(q.obj),
                     "blocking": q.obj.get("blocking") is True,
                     "short_hash": _short(q.hash),
                 }
+                if q.verified:
+                    # VERBATIM: a client hashes exactly {question_id, ticket, text, options, spec} as given and escapes
+                    # for display itself (`renderText`); the hub never rebuilds or filters them (design #1123 rev 4 §2)
+                    content["text"] = q.obj["text"]
+                    content["spec"] = PR.question_spec(q.obj)
+                    if q.obj.get("options") is not None:
+                        content["options"] = q.obj["options"]
+                else:  # shown, never answerable: no options, no spec, only the escaped text
+                    content["text"] = P4.render_text(q.obj.get("text") if type(q.obj.get("text")) is str else "")
+                    content["unverifiable"] = True
                 out.append((row, content))
         out.sort(key=lambda rc: (rc[0]["key"], rc[0]["item_id"]))
         return out
@@ -186,10 +189,3 @@ def _addressed(t: PR.Ticket, to: Any, me: set[str]) -> bool:
     if to in PR.TICKET_ROLES:
         return bool(me & set(t.people[to]))
     return to in me
-
-
-def _recommended(q: dict[str, Any]) -> str | None:
-    """Only a string that is one of the question's own option keys (then rendered); anything else is None."""
-    r = q.get("recommended")
-    keys = {o.get("key") for o in q.get("options") or [] if type(o) is dict}
-    return P4.render_text(r) if type(r) is str and r in keys else None

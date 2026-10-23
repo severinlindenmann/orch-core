@@ -379,6 +379,19 @@ def _render(x: Any) -> Any:
     return x
 
 
+def _item_content(content: dict[str, Any]) -> dict[str, Any]:
+    """Item content out through ``render_text``, except a verified question's ``text``, ``options`` and ``spec``: those go
+    VERBATIM (a client hashes exactly what it receives; the hub only marks a question verified when it holds no character
+    ``render_text`` would escape, apart from a tab in a multi-line field, which escaping would turn into ``<U+0009>``)."""
+    if "spec" not in content:
+        return _render(content)
+    raw = ("text", "options", "spec")
+    return {
+        **_render({k: v for k, v in content.items() if k not in raw}),
+        **{k: content[k] for k in raw if k in content},
+    }
+
+
 def _short(h: Any) -> str:
     """``sha256:3d3f5e93357c...`` as ``3d3f 5e93 357c`` (protocol 8.4: the one form; "" when not a hash)."""
     try:
@@ -872,7 +885,7 @@ class WebApi:
         got = self.d.view.item(ws["workspace_id"], c.user_id, p["item_id"])
         if got is None:
             raise ApiError("unknown_item")
-        return 200, {**self._view_row(ws, got), "content": _render(got.get("content", {}))}
+        return 200, {**self._view_row(ws, got), "content": _item_content(got.get("content", {}))}
 
     # --- (c) signing -------------------------------------------------------------------------------------------------
 

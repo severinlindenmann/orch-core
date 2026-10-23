@@ -48,9 +48,11 @@ test("only the four decision types are signable, and an unknown field makes any 
   for (const t of Object.keys(DECISIONS)) {
     const ctx = ctxOf(t, { outcome: "pass", text: "ok", question: "Q1", option: "a", source_sha: [] });
     for (const k of Object.keys(ctx.event)) if (k !== "auth" && k !== "type" && !DECISIONS[t].includes(k)) delete ctx.event[k];
-    assert.equal(describe(ctx, D).signable, true, t);
-    assert.ok(describe(ctx, D).sentence.length > 10);
-    assert.equal(describe({ ...ctx, event: { ...ctx.event, smuggled: 1 } }, D).signable, false, t + " + unknown field");
+    // an answer that picks an option is signable only with the verified question that lists it (#1123)
+    const qv = { hash: ctx.event.hash, text: "Which?", options: [{ key: "a", label: "A" }, { key: "b", label: "B" }], spec: { kind: "choice" } };
+    assert.equal(describe(ctx, D, null, qv).signable, true, t);
+    assert.ok(describe(ctx, D, null, qv).sentence.length > 10);
+    assert.equal(describe({ ...ctx, event: { ...ctx.event, smuggled: 1 } }, D, null, qv).signable, false, t + " + unknown field");
   }
   for (const t of ["ticket.created", "ticket.closed", "policy.changed", "settings.changed", "addon.purged", "", "gate.approved "]) {
     const d = describe(ctxOf(t), D);

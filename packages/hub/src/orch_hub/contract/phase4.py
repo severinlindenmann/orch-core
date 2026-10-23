@@ -175,39 +175,66 @@ def _set(x: Any) -> bool:
     )
 
 
+def _cp(n: int, *, multiline: bool = False, tab: bool = False) -> Any:
+    """The question text rule: ``1..n`` code points (core counts code points) and the one text rule's 4096 bytes."""
+
+    def ok(x: Any) -> bool:
+        flat = x.replace("\t", " ") if tab and type(x) is str else x
+        return text_ok(flat, 4096, multiline=multiline) and len(x) <= n
+
+    return ok
+
+
+_OPTION_KEY = re.compile(r"[a-z][a-z0-9_]{0,31}")
+
+
+def _fact(x: Any) -> bool:
+    return type(x) is list and len(x) == 2 and _cp(24)(x[0]) and _cp(40)(x[1])
+
+
 def _option(x: Any) -> bool:
+    """A choice option (design #1123 rev 4 §2): key, title, and optional text, facts ([label, value] arrays), cost."""
+    f = x.get("facts") if type(x) is dict else None
     return (
         type(x) is dict
-        and {"key", "label"} <= set(x) <= {"key", "label", "cost"}
-        and _re(_TOKEN)(x["key"])
-        and _text(200)(x["label"])
-        and ("cost" not in x or _text(64)(x["cost"]))
+        and {"key", "label"} <= set(x) <= {"key", "label", "text", "facts", "cost"}
+        and _re(_OPTION_KEY)(x["key"])
+        and _cp(60)(x["label"])
+        and ("text" not in x or _cp(200)(x["text"]))
+        and ("cost" not in x or _cp(60)(x["cost"]))
+        and ("facts" not in x or (type(f) is list and 1 <= len(f) <= 3 and all(_fact(p) for p in f)))
+        and ("facts" not in x or len({p[0] for p in f}) == len(f))
     )
 
 
+_QUESTION_KEYS = {"to", "text", "blocking", "kind", "why", "details", "options", "recommended", "allow_other"}
+
+
 def _question(x: Any) -> bool:
-    """The question a person asks (the hub assigns its ``Q`` id from its view)."""
-    if type(x) is not dict or not {"to", "text", "blocking"} <= set(x) <= {
-        "to",
-        "text",
-        "why",
-        "options",
-        "recommended",
-        "blocking",
-    }:
+    """The question a person asks (the hub assigns its ``Q`` id from its view): ``kind`` is required. ``choice``: 2..6
+    options, optional ``recommended`` (an option key) and ``allow_other: true``; ``text``: none of those. The host
+    re-checks everything (core ``validate_question``) when the event arrives; this is the hub's early refusal."""
+    if type(x) is not dict or not {"to", "text", "blocking", "kind"} <= set(x) <= _QUESTION_KEYS:
         return False
-    opts = x.get("options", [])
-    keys = [o["key"] for o in opts] if type(opts) is list and all(_option(o) for o in opts) else None
-    return (
+    common = (
         (_re(_PERSON)(x["to"]) or x["to"] in TICKET_ROLES)
-        and _text(2000, multiline=True)(x["text"])
-        and ("why" not in x or _text(1000, multiline=True)(x["why"]))
-        and keys is not None
-        and len(opts) <= 8
-        and len(keys) == len(set(keys))
-        and ("options" not in x or len(opts) > 0)
-        and ("recommended" not in x or x["recommended"] in keys)
+        and _cp(140, multiline=True)(x["text"])
         and type(x["blocking"]) is bool
+        and ("why" not in x or _cp(4096, multiline=True)(x["why"]))
+        and ("details" not in x or _cp(1500, multiline=True, tab=True)(x["details"]))
+    )
+    if not common:
+        return False
+    if x["kind"] == "text":
+        return not {"options", "recommended", "allow_other"} & set(x)
+    opts = x.get("options")
+    if x["kind"] != "choice" or type(opts) is not list or not 2 <= len(opts) <= 6 or not all(_option(o) for o in opts):
+        return False
+    keys = [o["key"] for o in opts]
+    return (
+        len(keys) == len(set(keys))
+        and ("recommended" not in x or x["recommended"] in keys)
+        and ("allow_other" not in x or x["allow_other"] is True)
     )
 
 
@@ -300,7 +327,7 @@ ACTIONS: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {
     "question.asked": ({"question": _question}, {}),
     "question.answered": (
         {"question": _re(re.compile(r"Q[1-9][0-9]{0,5}")), "hash": _hash},
-        {"option": _re(_TOKEN), "text": _text(4096, multiline=True)},
+        {"option": _re(_OPTION_KEY), "text": _cp(1000, multiline=True)},
     ),
     "gate.approved": ({"gate": _enum(*GATES), "hash": _hash}, {}),
     "gate.changes_requested": ({"gate": _enum(*GATES), "hash": _hash, "text": _text(4096, multiline=True)}, {}),

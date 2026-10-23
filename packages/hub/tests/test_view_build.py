@@ -90,17 +90,27 @@ def test_ticket_updated_base_rev_is_the_value_hash_of_the_current_value(env):
 
 
 def test_question_asked_then_answered_with_the_hub_derived_hash(env):
-    p = env.prepare({"type": "question.asked", "log": LOG, "question": {"to": OWNER, "text": "CSV?", "blocking": True}})
+    p = env.prepare(
+        {
+            "type": "question.asked",
+            "log": LOG,
+            "question": {"to": OWNER, "text": "CSV?", "blocking": True, "kind": "text"},
+        }
+    )
     q = p.ctx["event"]
     assert q["question"]["id"] == "Q1" and q["qid"] == PR.question_id(WS, LOG, "Q1")
-    assert q["hash"] == PR.question_hash(q["qid"], LOG, "CSV?", None)
-    h = env.host.ask(text="Which?", options=[{"key": "csv", "label": "CSV"}])
+    assert q["hash"] == PR.question_hash(q["qid"], LOG, q["question"])
+    h = env.host.ask(text="Which?", options=[{"key": "csv", "label": "CSV"}, {"key": "api", "label": "API"}])
     env.vs.service.accept(WS, WSK_PUB, env.host.page(LOG, 2))
     p2, ev = sign(env, {"type": "question.answered", "log": LOG, "question": "Q1", "hash": h, "option": "csv"})
     assert p2.ctx["event"]["hash"] == h and ev["option"] == "csv"
     # a second asked question is Q2
     p3 = env.prepare(
-        {"type": "question.asked", "log": LOG, "question": {"to": OWNER, "text": "More?", "blocking": False}}
+        {
+            "type": "question.asked",
+            "log": LOG,
+            "question": {"to": OWNER, "text": "More?", "blocking": False, "kind": "text"},
+        }
     )
     assert p3.ctx["event"]["question"]["id"] == "Q2"
 
@@ -108,7 +118,7 @@ def test_question_asked_then_answered_with_the_hub_derived_hash(env):
 def test_answer_to_a_changed_question_is_event_changed(env):
     env.host.ask(text="Old?")
     env.vs.service.accept(WS, WSK_PUB, env.host.page(LOG, 2))
-    old = PR.question_hash(PR.question_id(WS, LOG, "Q1"), LOG, "Older text", None)
+    old = PR.question_hash(PR.question_id(WS, LOG, "Q1"), LOG, {"text": "Older text", "kind": "text"})
     a = {"type": "question.answered", "log": LOG, "question": "Q1", "hash": old, "text": "x"}
     assert code(env.prepare, a) == "event_changed"
     a2 = {**a, "question": "Q9"}
@@ -116,7 +126,7 @@ def test_answer_to_a_changed_question_is_event_changed(env):
 
 
 def test_answer_with_an_option_the_question_lacks_is_malformed(env):
-    h = env.host.ask(options=[{"key": "csv", "label": "CSV"}])
+    h = env.host.ask(options=[{"key": "csv", "label": "CSV"}, {"key": "pdf", "label": "PDF"}])
     env.vs.service.accept(WS, WSK_PUB, env.host.page(LOG, 2))
     a = {"type": "question.answered", "log": LOG, "question": "Q1", "hash": h, "option": "api"}
     assert code(env.prepare, a) == "malformed"

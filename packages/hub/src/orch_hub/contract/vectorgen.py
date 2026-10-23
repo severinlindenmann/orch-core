@@ -244,7 +244,7 @@ EVENT_PAYLOADS: dict[str, tuple[str, dict[str, Any] | None]] = {
     "log.added": (TICKET, {"text": "Checked with finance.\nOK to proceed."}),
     "handoff.written": (TICKET, {"text": "Importer done; API next."}),
     "question.asked": (TICKET, {"question": {"id": "Q2", "to": "ticket_owner", "text": "CSV or API?", "blocking": True,
-                                             "options": [{"key": "api", "label": "API"}, {"key": "csv", "label": "CSV"}],
+                                             "kind": "choice", "options": [{"key": "api", "label": "API"}, {"key": "csv", "label": "CSV"}],
                                              "recommended": "csv"},
                                 "qid": S.fake_seed("hub/ev/qid").hex()[:32], "hash": _h("question")}),
     "question.answered": (TICKET, {"question": "Q1", "hash": _h("q1"), "option": "csv"}),

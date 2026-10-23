@@ -53,10 +53,16 @@ describe('compareStart (fail closed)', () => {
     ['unknown warning', preview({ warnings: ['something new'] })],
   ])('refuses %s', (_n, p) => expect(compareStart(p, reviewed(), args, ACK).ok).toBe(false))
   it("accepts the ticket's own work folder (a ticket without a codebase), and no other ticket's", () => {
-    const own = preview({ cwd: { kind: 'workdir', ticket: args.ticket } })
+    const own = preview({ cwd: { kind: 'workdir', ticket: args.ticket }, workdir: { exists: false, empty: true } })
     expect(compareStart(own, reviewed(), args, ACK)).toEqual({ ok: true })
-    expect(compareStart(preview({ cwd: { kind: 'workdir', ticket: 'DEMO-9999' } }), reviewed(), args, ACK).ok).toBe(false)
+    expect(compareStart(preview({ cwd: { kind: 'workdir', ticket: 'DEMO-9999' }, workdir: { exists: false, empty: true } }), reviewed(), args, ACK).ok).toBe(false)
     expect(compareStart(preview({ cwd: { kind: 'workdir' } }), reviewed(), args, ACK).ok).toBe(false)
+  })
+  it('refuses a work folder that already holds files (a committed .claude/settings.json), or one the host did not describe', () => {
+    const at = (workdir?: { exists: boolean; empty: boolean }) => preview({ cwd: { kind: 'workdir', ticket: args.ticket }, workdir })
+    expect(compareStart(at({ exists: true, empty: false }), reviewed(), args, ACK).ok).toBe(false)
+    expect(compareStart(at(undefined), reviewed(), args, ACK).ok).toBe(false)
+    expect(compareStart(at({ exists: true, empty: true }), reviewed(), args, ACK)).toEqual({ ok: true })
   })
   it('refuses another agent or mode than the choice', () => {
     expect(compareStart(preview(), reviewed(), { ...args, harness: 'codex' }, ACK).ok).toBe(false)

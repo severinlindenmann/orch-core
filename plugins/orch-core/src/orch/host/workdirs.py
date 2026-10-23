@@ -14,6 +14,7 @@ the folder). Its files are the person's: they stay after the ticket closes, unti
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING, Any
 
 from jsonschema import Draft202012Validator
@@ -107,6 +108,10 @@ def serve(call: Call) -> dict[str, Any]:
             gone = delete_workdir(layout, view.key)
         except (LayoutError, OSError) as exc:
             raise HostError("invalid.input", f"the work folder could not be deleted: {exc}"[:300]) from None
+        if gone:  # the Claude Code trust recorded for the folder goes with it (best effort, the person's own config)
+            from orch.runner.claude_trust import forget
+
+            forget(os.environ, str(service.entry.root), os.fspath(layout.workdir(view.key)))
         return ok_result({"deleted": gone, "folder": f".orch-work/{view.key}"})
 
     return service.outcomes.execute(

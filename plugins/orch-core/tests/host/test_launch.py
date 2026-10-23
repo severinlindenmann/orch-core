@@ -24,9 +24,19 @@ def test_codex_and_claude_argv_through_the_login_shell():
         "claude",
         "--model",
         "opus",
+        "--setting-sources",
+        "user",
+        "--strict-mcp-config",
         "Run orch status, then refine ticket ORC-7. Follow AGENTS.orch.md.",
     ]
     assert LOGIN_EXEC == 'exec "$0" "$@"'
+
+
+def test_a_claude_agent_ignores_project_settings_and_mcp_files_but_a_person_run_one_does_not():
+    argv, _, _ = launch_argv("claude-code", "work", None, "ORC-7", LOGIN)
+    assert argv[4:7] == ["claude", "--setting-sources", "user"] and "--strict-mcp-config" in argv
+    assert "--setting-sources" not in launch_argv("codex", "work", None, "ORC-7", LOGIN)[0]
+    assert launch_argv("claude-code", None, None, None, LOGIN)[0][4:] == ["claude"]
 
 
 def test_the_prompt_is_one_element_and_context_mode():

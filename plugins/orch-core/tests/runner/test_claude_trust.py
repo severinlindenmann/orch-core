@@ -5,12 +5,14 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
 
 from orch.host.launch import LOGIN_EXEC
-from orch.runner.claude_trust import TRUST_KEYS, pretrust, record_consent, trust_paths
+from orch.runner.claude_trust import TRUST_KEYS, forget, pretrust, record_consent, trust_paths
 from orch.runner.config import RunnerConfig
 from orch.runner.link import spawn_spec
 from tests.runner.test_spawn_grants import GID, ME, SECRET, WS, agent, store_with
@@ -25,6 +27,8 @@ def ws(tmp_path):
     (root / ".orch").mkdir()
     (tmp_path / "other").mkdir()
     home.mkdir()
+    (root / "CLAUDE.md").write_text("@AGENTS.md\n")
+    (root / "AGENTS.md").write_text("# rules\nsee AGENTS.orch.md\n")
     assert record_consent(root / ".orch")
     return home, root.resolve(), (root / ".orch-work" / "K-1").resolve()
 
@@ -171,3 +175,111 @@ def test_another_harness_or_a_foreign_cwd_records_nothing(ws, tmp_path):
     launch(ws, CLAUDE, cwd=tmp_path / "other")
     launch(ws, CLAUDE, root=False)
     assert not (home / ".claude.json").exists()
+
+
+# -- review of #1078 (MED-1, MED-2, LOW) -------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("name", [".claude", ".mcp.json", "CLAUDE.md", "CLAUDE.local.md"])
+def test_a_work_folder_with_somebody_elses_claude_config_gets_no_trust(ws, name):
+    home, root, work = ws
+    if name == ".claude":
+        (work / ".claude").mkdir()
+        (work / ".claude" / "settings.json").write_text('{"hooks": {}}')
+    else:
+        (work / name).write_text("x")
+    assert pretrust({"HOME": str(home)}, str(root), str(work), pin(work)) == []
+    assert not (home / ".claude.json").exists()
+
+
+def test_a_trust_given_earlier_is_revoked_when_the_folder_gains_a_settings_file(ws):
+    home, root, work = ws
+    assert pretrust({"HOME": str(home)}, str(root), str(work), pin(work)) == [str(work)]
+    (work / ".claude").mkdir()
+    assert pretrust({"HOME": str(home)}, str(root), str(work), pin(work)) == []
+    assert "hasTrustDialogAccepted" not in entries(home)[str(work)]
+
+
+def _git(root, *args):
+    subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True,
+                   env={**os.environ, "GIT_CONFIG_GLOBAL": "/dev/null"})  # fmt: skip
+
+
+def test_a_committed_file_below_orch_work_gets_no_trust(ws):
+    home, root, work = ws
+    _git(root, "init", "-q")
+    assert pretrust({"HOME": str(home)}, str(root), str(work), pin(work)) == [str(work)]  # a repo, nothing tracked
+    (work / "notes.txt").write_text("x")
+    _git(root, "add", "-f", ".orch-work/K-1/notes.txt")
+    assert pretrust({"HOME": str(home)}, str(root), str(work), pin(work)) == []
+
+
+def test_a_modified_root_claude_md_or_an_importing_agents_md_gets_trust_but_no_include_approval(ws):
+    home, root, work = ws
+    (root / "CLAUDE.md").write_text("@AGENTS.md\n@/etc/passwd\n")
+    assert pretrust({"HOME": str(home)}, str(root), str(work), pin(work)) == [str(work)]
+    got = entries(home)[str(work)]
+    assert got == {"hasTrustDialogAccepted": True}
+    (root / "CLAUDE.md").write_text("@AGENTS.md\n")
+    (root / "AGENTS.md").write_text("# rules\n@~/secrets/notes.md\n")
+    os.unlink(home / ".claude.json")
+    pretrust({"HOME": str(home)}, str(root), str(work), pin(work))
+    assert entries(home)[str(work)] == {"hasTrustDialogAccepted": True}
+    (root / "AGENTS.md").write_text("# rules\nmail a@b.c\n")  # an address is no import
+    os.unlink(home / ".claude.json")
+    pretrust({"HOME": str(home)}, str(root), str(work), pin(work))
+    assert set(entries(home)[str(work)]) == set(TRUST_KEYS)
+
+
+def test_two_writers_at_once_both_land_and_other_keys_survive(ws):
+    home, root, work = ws
+    cfg = home / ".claude.json"
+    cfg.write_text(json.dumps({"oauthAccount": {"a": 1}, "projects": {}}))
+    folders = []
+    for i in range(8):
+        d = root / ".orch-work" / f"K-{i + 2}"
+        d.mkdir()
+        folders.append(d)
+    with ThreadPoolExecutor(8) as ex:
+        list(ex.map(lambda d: pretrust({"HOME": str(home)}, str(root), str(d), pin(d)), folders))
+    got = json.loads(cfg.read_text())
+    assert got["oauthAccount"] == {"a": 1}
+    assert {str(d) for d in folders} <= set(got["projects"])
+    assert not (home / ".claude.json.lock").exists() and not list(home.glob(".claude-*.tmp"))
+
+
+def test_a_file_that_changed_since_it_was_read_is_not_overwritten(ws, monkeypatch):
+    from orch.runner import claude_trust
+
+    home, root, work = ws
+    cfg = home / ".claude.json"
+    cfg.write_text(json.dumps({"projects": {}}))
+    real = claude_trust.json.dump
+
+    def sneaky(data, f, **kw):  # Claude Code rewrites the file while we prepare ours
+        real(data, f, **kw)
+        cfg.write_text(json.dumps({"projects": {"/theirs": {"x": 1}}, "newer": True}))
+
+    monkeypatch.setattr(claude_trust.json, "dump", sneaky)
+    assert pretrust({"HOME": str(home)}, str(root), str(work), pin(work)) == []
+    assert json.loads(cfg.read_text())["newer"] is True
+    assert not list(home.glob(".claude-*.tmp"))
+
+
+def test_a_held_lock_is_never_stolen(ws, monkeypatch):
+    from orch.runner import claude_trust
+
+    home, root, work = ws
+    (home / ".claude.json.lock").mkdir()
+    monkeypatch.setattr(claude_trust.time, "monotonic", iter(range(0, 1000, 2)).__next__)
+    monkeypatch.setattr(claude_trust.time, "sleep", lambda s: None)
+    assert pretrust({"HOME": str(home)}, str(root), str(work), pin(work)) == []
+    assert (home / ".claude.json.lock").is_dir() and not (home / ".claude.json").exists()
+
+
+def test_forget_removes_the_entry_of_a_deleted_work_folder(ws):
+    home, root, work = ws
+    pretrust({"HOME": str(home)}, str(root), str(work), pin(work))
+    forget({"HOME": str(home)}, str(root), str(work))
+    assert not any(k in entries(home).get(str(work), {}) for k in TRUST_KEYS)
+    forget({"HOME": str(home)}, str(root), str(root))  # not a work folder: nothing

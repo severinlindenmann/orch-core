@@ -146,6 +146,8 @@ NOT_SERVED: dict[str, str] = {
 PERSON_READS = frozenset({"doctor", "instructions.sync"})
 #: registry reads for P and G: the session-start hook runs in the agent's own session (column G, a verified grant), so
 #: it must not be a person-only read (run 6, #1067: ``instructions.hook is not allowed here`` at every agent start)
+#: Column N (an agent with no verified grant) is excluded on purpose: the hook shows the person, claim and unread
+#: decisions of a session, which an unverified caller has no right to see.
 PERSON_GRANT_REGISTRY_READS = frozenset({"instructions.hook"})
 #: arguments the host refuses (``op.not_allowed``) on an op it otherwise serves
 HOST_REFUSED_ARGS: dict[str, dict[str, str]] = {

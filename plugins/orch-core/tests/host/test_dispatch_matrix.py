@@ -14,7 +14,16 @@ import orch.ops as ops
 from orch.host import frames
 from orch.host.agents import AGENT_OPS
 from orch.host.columns import Column, refusal, resolve
-from orch.host.dispatch import FILE_OPS, GIT_OPS, HOST_OPS, NOT_SERVED, PERSON_READS, op_kind, served_ops
+from orch.host.dispatch import (
+    FILE_OPS,
+    GIT_OPS,
+    HOST_OPS,
+    NOT_SERVED,
+    PERSON_GRANT_REGISTRY_READS,
+    PERSON_READS,
+    op_kind,
+    served_ops,
+)
 from orch.host.errors import HostError, disposition
 from orch.host.hubops import HUB_OPS
 from orch.host.human import HUMAN_OPS
@@ -235,7 +244,9 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
                             "grant.forget": ("person_write", "write")}[op]  # fmt: skip
         else:
             who = ops.get(op).who
-            assert kind[0] == ("person_read" if op in PERSON_READS else "pg_read" if op == "instructions.hook" else who)
+            assert kind[0] == (
+                "person_read" if op in PERSON_READS else "pg_read" if op in PERSON_GRANT_REGISTRY_READS else who
+            )
             assert kind[1] == ("wait" if op == "wait" else "read" if who == "read" else "write")
         for row, (peer, grant, valid) in ROWS.items():
             assert refusal(resolve(peer, grant, valid), kind[0]) == expected(row, kind[0]), (op, row)

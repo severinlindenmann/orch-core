@@ -925,11 +925,12 @@ def _finish(root, sd, wid, key_line, prefix, owner_name, person, seq) -> Result:
         key_line,
     ]
     try:
-        # the owner agreed to this when creating the workspace: Claude Code agents start in its ticket folders unasked
+        written, kept = write_workspace_files(root, store=layout_mod.store_of(root))
+        # the owner agreed to this when creating the workspace: Claude Code agents start in its ticket folders unasked.
+        # Only after the instruction files are in place (the include approval compares them with what orch writes).
         from orch.runner.claude_trust import record_consent
 
         record_consent(layout_mod.store_of(root))
-        written, kept = write_workspace_files(root, store=layout_mod.store_of(root))
         lines.append("wrote " + ", ".join(written) if written else "instructions are current")
         lines += kept
     except (UnsafePath, OSError, UnicodeDecodeError, layout_mod.LayoutError) as e:

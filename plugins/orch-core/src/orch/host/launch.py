@@ -38,6 +38,7 @@ __all__ = [
     "ROUTE_MODES",
     "PROGRAMS",
     "TERM_HARNESSES",
+    "CLAUDE_AGENT_FLAGS",
     "check_model",
     "display",
     "launch_argv",
@@ -58,6 +59,8 @@ LOGIN_EXEC = 'exec "$0" "$@"'
 LOGIN_NOTICE = (
     "the program is found and started through your login shell; your shell profile runs first and can change what runs"
 )
+#: flags of every Claude Code agent launch (see :func:`launch_argv`)
+CLAUDE_AGENT_FLAGS = ("--setting-sources", "user", "--strict-mcp-config")
 KEY = re.compile(r"(?:[A-Z][A-Z0-9]{0,15}-)?[0-9]{1,9}")
 
 
@@ -127,6 +130,12 @@ def launch_argv(
     rest: list[str] = []
     if model is not None:
         rest += ["--model", model]
+    if harness == "claude-code" and mode is not None:
+        # An agent run reads no project or local settings and no .mcp.json of the folder it works in (hooks,
+        # permissions, env and MCP servers a collaborator could commit there); the user's own settings and
+        # the installed plugins (orch-core's SessionStart hook) still load. Checked against Claude Code 2.1.309:
+        # a project hook is skipped, a plugin hook runs. After --model, which the runner expects first.
+        rest += list(CLAUDE_AGENT_FLAGS)
     text = prompt(mode, key, instructions)
     if text is not None:
         rest.append(text)

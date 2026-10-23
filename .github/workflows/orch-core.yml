@@ -7,16 +7,39 @@ on:
     branches: [develop]
 permissions:
   contents: read
-concurrency:  # a newer push to the same PR cancels the run still going
-  group: orch-core-${{ github.ref }}
+  pull-requests: read  # the `mode` job reads the PR's live draft state
+concurrency:  # a newer push to the same PR cancels the run still going; draft-event and full runs never cancel each other
+  group: orch-core-${{ github.ref }}-${{ github.event.pull_request.draft && 'draft' || 'full' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 defaults:
   run:
     working-directory: plugins/orch-core
 jobs:
+  mode:
+    # Decides from the PR's LIVE draft state, not the event payload: a push and `gh pr ready` can race, and the payload
+    # then says draft for the head that is in fact ready (23 Oct: #1056 got a skipped run, gate green, no tests).
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    defaults:
+      run:
+        working-directory: .
+    outputs:
+      heavy: ${{ steps.m.outputs.heavy }}
+    steps:
+      - id: m
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          heavy=true
+          if [ "${{ github.event_name }}" = pull_request ]; then
+            d=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}" -q .draft)
+            [ "$d" = true ] && heavy=false
+          fi
+          echo "draft=${d:-n/a} heavy=$heavy"; echo "heavy=$heavy" >> "$GITHUB_OUTPUT"
   tests:
     name: core tests (${{ matrix.shard }}/3)
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    needs: mode
+    if: needs.mode.outputs.heavy == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -60,7 +83,8 @@ jobs:
     # the slow marker holds, among others, the check that all 52 operation declarations validate against the
     # operation schema (startup does not validate); xdist, so it is quick
     name: core slow tests
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    needs: mode
+    if: needs.mode.outputs.heavy == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -77,7 +101,8 @@ jobs:
   perf-budgets:
     # the latency budgets run alone, in their own job: nothing else on the machine while they measure
     name: core latency budgets
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    needs: mode
+    if: needs.mode.outputs.heavy == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -94,7 +119,8 @@ jobs:
     # tests/relay/vectors/SOURCE, on loopback only (no deployed relay is ever contacted). Its own job, so the main
     # matrix is not slowed; the tests fail (never skip) here if the relay checkout is missing.
     name: relay T2 (real relay, py3.14)
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    needs: mode
+    if: needs.mode.outputs.heavy == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -134,7 +160,8 @@ jobs:
     # e2e/run.sh publish-isolation (#296): two sandbox workspaces against a REAL `orch-publish dev` (develop) on
     # loopback. Not in the gate: it follows another repo's develop, so it reports but does not block this repo.
     name: publish isolation e2e
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    needs: mode
+    if: needs.mode.outputs.heavy == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -166,7 +193,7 @@ jobs:
     # the one check a ruleset requires: it reports on every PR, also when the jobs above are skipped
     name: core gate
     if: always()
-    needs: [tests, perf-schema, perf-budgets, relay-t2]
+    needs: [mode, tests, perf-schema, perf-budgets, relay-t2]  # mode: a failed draft check fails the gate
     runs-on: ubuntu-latest
     timeout-minutes: 5
     defaults:

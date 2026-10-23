@@ -331,6 +331,10 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
         return {"built": True}
     if check == "render":
         return {"shown": P4.render_text(a["text"])}
+    if check == "short_hash":
+        return {"shown": P4.short_hash(a["hash"])}
+    if check == "short_digest":
+        return {"shown": P4.short_digest(a["digest"])}
     if check == "prepared":
         return {"digest_hex": P4.check_prepared(a["ctx"], a["digest_hex"]).hex()}
     if check == "log_sync":

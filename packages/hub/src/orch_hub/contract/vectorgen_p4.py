@@ -851,6 +851,45 @@ def build_p4(
         {"ok": {"shown": "<U+3164><U+F8FF>"}},
         4,
     )
+    # orch-hub#55: one display form of a hash, 12 lower-case hex digits in groups of 4
+    case(
+        "short_hash_form",
+        "short_hash",
+        {"hash": "sha256:3d3f5e93357cf4b89511c728d2d7995ebc233f435574ef9b95de0259f3247987"},
+        {"ok": {"shown": "3d3f 5e93 357c"}},
+        4,
+        "gate and verdict: the projection gate hash; question: the question hash; a status move has no hash",
+    )
+    case(
+        "short_hash_upper_refused",
+        "short_hash",
+        {"hash": "sha256:3D3F5E93357CF4B89511C728D2D7995EBC233F435574EF9B95DE0259F3247987"},
+        {"error": "malformed"},
+        4,
+    )
+    case(
+        "short_hash_wrong_prefix",
+        "short_hash",
+        {"hash": "md5:3d3f5e93357cf4b89511c728d2d7995ebc233f435574ef9b95de0259f3247987"},
+        {"error": "malformed"},
+        4,
+    )
+    case("short_hash_too_short", "short_hash", {"hash": "sha256:3d3f"}, {"error": "malformed"}, 4)
+    case("short_hash_not_a_string", "short_hash", {"hash": None}, {"error": "malformed"}, 4)
+    case(
+        "short_digest_form",
+        "short_digest",
+        {"digest": "3d3f5e93357cf4b89511c728d2d7995ebc233f435574ef9b95de0259f3247987"},
+        {"ok": {"shown": "3d3f 5e93 357c"}},
+        4,
+    )
+    case(
+        "short_digest_upper_refused",
+        "short_digest",
+        {"digest": "3D3F5E93357CF4B89511C728D2D7995EBC233F435574EF9B95DE0259F3247987"},
+        {"error": "malformed"},
+        4,
+    )
     case(
         "prepared_digest_of_other_event",
         "prepared",

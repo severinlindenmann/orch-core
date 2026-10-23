@@ -101,6 +101,7 @@ def test_admin_workspaces_list(w):
     rows = {r["workspace_id"]: r for r in o["workspaces"]}
     assert rows[WS]["grants"] == [{"workspace_id": WS, "group": "team", "role": "edit"}]
     assert rows["cd" * 16]["mode"] == "selective" and rows["cd" * 16]["owner_alias"] == w.ann
+    assert all("name" in r for r in rows.values())  # the console shows names, not ids (A6); None when the card has none
 
 
 def test_real_http_server_round_trip(w):

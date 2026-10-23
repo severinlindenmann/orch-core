@@ -635,6 +635,15 @@ The channel API itself (sessions, HTTP, push) is the hub's (D13); these rules ar
    content-bound decisions. **Projection-derived fields** (D15b-2): on the three decisions the channel shows the gate,
    the short hash, `gate_gen` and, on a `code` approval or a verdict, each `repo` with its short `sha`; on
    `status.changed` and `ticket.moved` it shows "`from` → `to`".
+   **Short hash form** (orch-hub#55, pinned): wherever a person compares a content hash between screens (the phone, the
+   browser home, the API `shown.facts` and needs-you `short_hash`, Mission Control), it is shown as the first **12
+   lower-case hex digits after `sha256:` in three groups of 4**, `abcd ef01 2345`, never upper case, never 8 or 10
+   digits. The input per kind is the hash the person decides on: `gate.approved` and `gate.changes_requested` use the
+   gate's projection `hash`, `verdict.given` the verify gate's `hash`, `question.answered` the question's `hash`; a
+   status move (`status.changed`, `ticket.moved`) has no hash and shows "`from` → `to`" only. Anything that is not
+   `sha256:` plus 64 lower-case hex digits is `malformed`; the channel then shows the full field (WYSIWYS), never a
+   shortened guess. Reference `short_hash` (phase4); vectors `short_hash_*`. The "signature reference" (the digest of
+   `ctx`) uses the same grouping over its first 12 hex digits (reference `short_digest`, vectors `short_digest_*`).
 4. The hub's `sign` consumes `prepared_id`, rebuilds `E` from its **current** view and refuses with `event_changed`
    unless it is byte-identical to the prepared one (the view moved, a role or certificate changed), checks the proof,
    signs with `UK`, verifies its own output with §8.3, writes the `custodial` audit record, and only then delivers it
@@ -2048,6 +2057,15 @@ Hub web API (local, `/api/v1`, V3-D13; answers are `{"error": code}`; none of th
 | `unknown_user`, `unknown_group` | 404 | admin routes naming a user or group that does not exist |
 | `exists`, `channel_exists`, `reserved_group` | 409, 409, 400 | a user or group name taken; a channel key already registered; a built-in group name |
 | `bad_pairing_code` | 400 | phone registration: wrong, used or expired pairing code |
+
+Selective item answers (local, orch-hub#57; no new signed bytes, no new codes). `GET /me/needs-you` rows and
+`GET /workspaces/{ws}/items/{id}` of a selective workspace carry, besides `content` and `item_hash`, the verified
+`chain` (`{log, seq, head}`) and `f1` of the `share.item` (§10.2b) unchanged (`f1` is `null` when the item has none).
+Workspace text goes out through `render_text`. `signable` is `true` only for the owner alias (the only reader of a
+selective workspace's items) and only for a ticket-log item whose `f1` names exactly one target (one gate or one
+question), the one `build_selective` (§8.6) can build; a `needs_you` summary, an item without `f1`, or an empty `f1` is
+never signable. `chain` and `f1` are display data for the phone's comparison with the prepared event; the hub build
+and the host stay the authority.
 
 B stream (§6.4) reuses: `unknown_channel` (404, a bind naming no channel of the session's user), `not_allowed` (403, a
 bind of a non-phone channel), `challenge_invalid` (400, `session_ref` of another session), `channel_revoked` and

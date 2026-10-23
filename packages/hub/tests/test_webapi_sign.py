@@ -324,7 +324,7 @@ def test_facts_of_decisions_and_moves_in_shown():
     ev = {"type": "gate.approved", "gate": "code", "hash": "sha256:" + "ab" * 32, "gate_gen": 3, "source_sha": src}
     assert _facts(ev) == [
         ["Gate", "code"],
-        ["Content reference", "ABAB ABAB"],
+        ["Content reference", "abab abab abab"],
         ["Generation", "3"],
         ["Code", "github.com/acme/app c0c0c0c0"],
     ]

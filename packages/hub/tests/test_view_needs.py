@@ -60,6 +60,8 @@ def test_open_question_to_the_aliased_owner_is_listed(kit):
     assert row["item_id"] == PR.question_id(WS, LOG, "Q1") and row["kind"] == "question"
     assert row["key"] == "DEMO-0001" and row["title"] == "CSV or API?" and row["log"] == LOG and row["hash"] == h
     assert row["deadline"] is None and len(row["item_id"]) == 32
+    short = kit.r.item(WS, USER, row["item_id"])["content"]["short_hash"]  # orch-hub#55: the question's own hash
+    assert short == " ".join(h[7 + i : 11 + i] for i in (0, 4, 8))
 
 
 def test_question_to_someone_else_is_not_listed(kit):
@@ -253,7 +255,7 @@ def test_gate_row_from_P_keeps_the_hash_it_was_listed_with(kit):
     assert [(r["kind"], r["hash"]) for r in rows] == [("gate", H_PLAN)]  # verify only while testing
     got = kit.r.item(WS, USER, rows[0]["item_id"])
     assert got["content"]["gate"] == "plan" and got["content"]["gate_gen"] == 2
-    assert got["content"]["short_hash"] == "a2a2a2a2" and rows[0]["key"] == "DEMO-0001"
+    assert got["content"]["short_hash"] == "a2a2 a2a2 a2a2" and rows[0]["key"] == "DEMO-0001"
 
 
 def test_verdict_row_only_while_testing_with_sources(kit):

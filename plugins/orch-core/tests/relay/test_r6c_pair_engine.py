@@ -13,9 +13,9 @@ import pytest
 from orch import crypto
 from orch.identity import pairing
 from orch.identity.pairdevice import cert_digest
-from orch.relay import wire
 from orch.relay.r6 import pair as P
 from orch.relay.r6.pair import GateRefused, PairRefused, UnavailableMembership
+from orch.wsproto import wire
 
 from .helpers import WS, WSK_PUB
 from .pairkit import OWNER, T0, Kit, Phone, make_cert, make_challenge, make_rejection

@@ -193,7 +193,7 @@ def default_label() -> str:
 
 
 def check_origin(origin: str) -> str:
-    from orch.relay import wire
+    from orch.wsproto import wire
 
     try:
         return wire.check_origin(origin)

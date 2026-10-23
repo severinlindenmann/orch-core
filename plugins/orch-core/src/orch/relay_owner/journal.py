@@ -13,7 +13,7 @@ One state machine per cert request, each transition written **before** its effec
   §8.4 step 2.4 or later: burned, never judged fresh again; no relay bytes are kept for it).
 
 Storage: ``<state>/person/primary/requests/<request_id>.json`` (:func:`journal_dir`), a private directory opened
-through :class:`orch.relay.state.StateDir` (0700, files 0600, owned by this user, ``O_NOFOLLOW`` against the directory
+through :class:`orch.wsproto.state.StateDir` (0700, files 0600, owned by this user, ``O_NOFOLLOW`` against the directory
 fd, temp file + ``fsync`` + ``rename`` + directory ``fsync``; a symlink, a foreign owner or a wider mode is refused,
 never repaired). **Concurrency:** every transaction holds the directory's exclusive ``flock`` (``StateDir`` takes it
 for its lifetime) from the read of the current state to the durable write, so two owner clients can never both act on
@@ -53,7 +53,7 @@ from typing import Any
 
 from orch import canon
 from orch.identity import certreq
-from orch.relay.state import StateDir, StateError
+from orch.wsproto.state import StateDir, StateError
 
 __all__ = [
     "LIVE",

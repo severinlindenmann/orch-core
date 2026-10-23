@@ -12,11 +12,11 @@ from __future__ import annotations
 import pytest
 
 from orch import canon, crypto
+from orch.identity.epochs import MembershipKeys, R6Gate, default_part
 from orch.identity.memberlist import member_list_o, wk_grant_o
-from orch.relay import card as relay_card
-from orch.relay import sign
-from orch.relay.r6.firstcard import R6LinkSource, default_part
-from orch.relay.r6.keystore import MembershipKeys, R6Gate
+from orch.relay.r6.firstcard import R6LinkSource
+from orch.wsproto import card as relay_card
+from orch.wsproto import sign
 
 from ..helpers import OWNER_PK, WS, Key, directory
 from ..r6kit import DELEGATION, KitStore, ck_of, digest

@@ -21,7 +21,7 @@ from orch import canon, crypto
 from orch.crypto.labels import L
 from orch.relay import publish
 from orch.relay.publish import Publisher
-from orch.relay.state import StateDir
+from orch.wsproto.state import StateDir
 from tests.store.helpers import Env
 from tests.store.test_checkpoints import rollback
 
@@ -111,7 +111,7 @@ class Host:
 
     def make_publisher(self) -> Publisher:
         def conn():
-            from orch.relay import http as rhttp
+            from orch.net import http as rhttp
 
             c = rhttp.RelayConn(self.relay.origin)
             OPEN_CONNS.append(c)
@@ -278,7 +278,7 @@ def test_the_first_link_renews_the_lease_while_it_publishes(relay, host, monkeyp
 
 def test_publish_module_constants_match_the_relay(relay):
     """The relay's page cap, request cap and line cap as core builds against them."""
-    from orch.relay import wire
+    from orch.wsproto import wire
 
     src = (relay.dir / "src" / "orch_relay" / "checkpoints.py").read_text()
     assert "PAGE_CAP = 4 * 1024 * 1024" in src and wire.PAGE_CAP == 4 * 1024 * 1024

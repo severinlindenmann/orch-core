@@ -7,7 +7,7 @@ only way a relay thread reaches the store (a wrapper of ``service.submit`` that 
 
 It owns, per workspace:
 
-* ONE :class:`orch.relay.state.StateDir` and ONE :class:`orch.relay.session.Session` (11A.5 R7-4: the preflight pass
+* ONE :class:`orch.wsproto.state.StateDir` and ONE :class:`orch.relay.session.Session` (11A.5 R7-4: the preflight pass
   and the sticky refusal are per Session object), shared by every relay thread;
 * the R2 :class:`orch.relay.bridge.BridgeLoop` (threads ``orch-relay-{poll,resp,job0,job1,aux}-<id8>``);
 * the R3 publisher behind the :class:`Publisher` seam (:class:`NoPublisher` until R3 lands) and the R4 consumer behind
@@ -41,11 +41,12 @@ from collections.abc import Callable, Mapping
 from concurrent.futures import Future
 from typing import Any, Protocol, runtime_checkable
 
+from orch.wsproto.state import StateDir, StateError
+
 from .bridge import BridgeLoop
 from .directory import Directory
 from .rids import RidStore
 from .session import Session
-from .state import StateDir, StateError
 
 __all__ = [
     "R6_GATE_REASON",

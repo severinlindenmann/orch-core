@@ -11,9 +11,11 @@ import threading
 import pytest
 
 from orch import canon, crypto
-from orch.relay import http, retry, wire
+from orch.net import http
+from orch.relay import retry
 from orch.relay.link import LinkRefused, first_link
 from orch.relay.session import Fenced, LoginHeldOff, OriginMismatch, RelayMisbehaving
+from orch.wsproto import wire
 
 from . import corpus
 from .helpers import GENESIS, GENESIS_CERT, GENESIS_PIN, OWNER_PK, WS, Alarms, Clock, Holder, Key, directory, make_card
@@ -25,7 +27,7 @@ from .sim import SimRelay
 
 @pytest.fixture
 def env(tmp_path):
-    from orch.relay.state import StateDir
+    from orch.wsproto.state import StateDir
 
     m = MockRelay()
     m.store = StateDir(tmp_path / "relay")

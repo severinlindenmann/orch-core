@@ -12,7 +12,7 @@ from orch.host import relayhook, relayr4
 from orch.host import status as host_status
 from orch.host.custody import write_private
 from orch.relay import unpublished as up
-from orch.relay.state import StateDir
+from orch.wsproto.state import StateDir
 from tests.host.human_helpers import lab, served  # noqa: F401 - fixtures
 from tests.host.lifecycle_helpers import UID
 

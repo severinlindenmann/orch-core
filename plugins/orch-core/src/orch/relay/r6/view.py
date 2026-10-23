@@ -31,10 +31,10 @@ from typing import Any
 from orch import canon, crypto
 from orch.identity import certs, memberlist
 from orch.identity.certs import SCOPE_ORDER
+from orch.identity.epochs import MembershipKeys
 from orch.identity.errors import Refused
 
 from ..keys import Member, MemberList
-from .keystore import MembershipKeys
 
 __all__ = ["CommittedView", "list_hash_of"]
 

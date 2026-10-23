@@ -7,7 +7,7 @@ import pytest
 
 from orch import canon
 from orch.relay.session import Fenced, RelayMisbehaving, TakeoverRefused
-from orch.relay.state import FileHolderStore, HolderRecord, StateDir, regenerate_instance_id
+from orch.wsproto.state import FileHolderStore, HolderRecord, StateDir, regenerate_instance_id
 
 from .helpers import OWNER_PK, WS, Alarms, Clock, Holder, make_card
 from .helpers import session as make_session
@@ -329,7 +329,7 @@ def test_a_changed_dev_with_the_same_inode_is_not_an_alarm(env, tmp_path, caplog
     _rebind(st, dev=dev + 1)
     sim.holders[WS] = (3, sim.now + 40_000)
     s, _, alarms = new(m, sim, store)
-    with caplog.at_level("INFO", logger="orch.relay.state"):
+    with caplog.at_level("INFO", logger="orch.wsproto.state"):
         assert store.binding_problem() is None
         assert s.hold().gen == 3 and alarms == []
     assert any("device number changed" in r.getMessage() for r in caplog.records)
@@ -351,7 +351,7 @@ def test_a_changed_inode_is_an_alarm_before_any_network_call(env, tmp_path):
 
 def test_an_old_format_instance_record_names_the_operator_path(env, tmp_path):
     """A round-3 ``instance.json`` (``{instance_id}`` only) is a hard error naming the operator path, which fixes it."""
-    from orch.relay.state import StateError
+    from orch.wsproto.state import StateError
 
     m, sim = env
     st, store = _held_once(tmp_path / "relay")

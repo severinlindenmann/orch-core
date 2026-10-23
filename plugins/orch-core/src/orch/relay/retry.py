@@ -21,8 +21,8 @@ import threading
 from collections.abc import Callable
 from typing import TypeVar
 
-from . import wire
-from .http import RedirectRefused, Response, TransportError
+from orch.net.http import RedirectRefused, Response, TransportError
+from orch.wsproto import wire
 
 __all__ = [
     "PERMANENT",

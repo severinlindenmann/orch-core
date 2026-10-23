@@ -1,5 +1,5 @@
 """The H13a test kit: a real :class:`orch.store.Store` (``tests.store.helpers.Env``), a fake epoch-key source and
-member view, a real :class:`~orch.relay.keys.BridgeKeys` and :class:`~orch.relay.sign.RelaySigner`, an
+member view, a real :class:`~orch.relay.keys.BridgeKeys` and :class:`~orch.wsproto.sign.RelaySigner`, an
 :class:`~orch.relay.outbound.OutboundStore` over a fresh state directory, and a scripted fake relay behind a fake
 session (``call`` records every request and answers from a script)."""
 
@@ -13,14 +13,14 @@ from typing import Any
 
 from orch import canon, crypto
 from orch.crypto import push as cpush
-from orch.relay import http as rhttp
+from orch.net import http as rhttp
 from orch.relay.keys import BridgeKeys, Member, MemberList, SealState
 from orch.relay.outbound import OutboundStore
 from orch.relay.push import PushThread
 from orch.relay.retry import RelayRefused
-from orch.relay.sign import LinkContext, RelaySigner
-from orch.relay.state import StateDir
 from orch.store.store import device_standing_ok
+from orch.wsproto.sign import LinkContext, RelaySigner
+from orch.wsproto.state import StateDir
 from tests.store.helpers import T0, WS, Env
 
 from .helpers import Alarms

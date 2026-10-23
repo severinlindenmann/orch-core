@@ -13,12 +13,13 @@ from typing import Any
 
 from orch import canon, crypto
 from orch.identity import certs
-from orch.relay import framing, sign, wire
+from orch.relay import framing
 from orch.relay.bridge import Bridge, Item
 from orch.relay.framing import Identity, Refusal
 from orch.relay.keys import BridgeKeys, Member, MemberList, SealState
 from orch.relay.rids import RidStore
-from orch.relay.state import StateDir
+from orch.wsproto import sign, wire
+from orch.wsproto.state import StateDir
 
 from .helpers import WS, Key
 

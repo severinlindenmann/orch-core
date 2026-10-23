@@ -1,4 +1,4 @@
-"""``orch.relay.card``: the card checks of proto §7.1 in the relay's order and the relay's update rules (every
+"""``orch.wsproto.card``: the card checks of proto §7.1 in the relay's order and the relay's update rules (every
 ``card.cases`` vector), and the sealed part, ``sealed_hash`` and ``ck_commit`` against the ``card`` vectors."""
 
 from __future__ import annotations
@@ -6,7 +6,7 @@ from __future__ import annotations
 import pytest
 
 from orch import canon, crypto
-from orch.relay import card
+from orch.wsproto import card
 
 from . import corpus
 

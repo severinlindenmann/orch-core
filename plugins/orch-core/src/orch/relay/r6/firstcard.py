@@ -2,7 +2,7 @@
 ``WXK``/``CK`` custody, the owner's ``PK`` from the genesis delegation, and the genesis pin's person path (not built:
 refused until it is).
 
-The card comes from :meth:`orch.relay.r6.keystore.MembershipKeys.first_card` and is identical on every call (R1
+The card comes from :meth:`orch.identity.epochs.MembershipKeys.first_card` and is identical on every call (R1
 persists it again in ``link-card.json``; both copies are the same bytes). Before anything is drawn or signed the
 convenience check runs (11A.6, owner rule Q4 of 11A.11): a workspace with convenience history or the flag never gets
 a card, so nothing that exposes it to new readers exists.
@@ -15,25 +15,15 @@ from typing import Any
 
 from orch import crypto
 from orch.identity import certs, members
+from orch.identity.epochs import CustodyRefused, MembershipKeys
 from orch.identity.errors import Refused
+from orch.wsproto.sign import RelaySigner
 
-from ..sign import RelaySigner
-from .keystore import CustodyRefused, MembershipKeys
-
-__all__ = ["GenesisPathMissing", "R6LinkSource", "default_part"]
+__all__ = ["GenesisPathMissing", "R6LinkSource"]
 
 
 class GenesisPathMissing(Exception):  # noqa: N818 - a seam that is not built yet
     """The genesis pin's person path (``relay.genesis_pin``, 11A.2) is not built: no pin can be made."""
-
-
-def default_part(name: str) -> dict[str, Any]:
-    """The first card's sealed part (11A.15.5): ``{name, description, capabilities, hosted_by: None}``.
-    JUDGEMENT CALL (R6a): the workspace's display name, an empty description and no capabilities; R6d's rotation
-    can change them under a new ``card_seq``."""
-    if type(name) is not str:
-        raise CustodyRefused("card part name")
-    return {"name": name, "description": "", "capabilities": [], "hosted_by": None}
 
 
 class R6LinkSource:

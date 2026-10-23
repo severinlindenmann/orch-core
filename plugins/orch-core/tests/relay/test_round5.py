@@ -17,12 +17,13 @@ from pathlib import Path
 
 import pytest
 
+from orch.net.http import TransportError
 from orch.relay import bridge as B
-from orch.relay import rids, wire
+from orch.relay import rids
 from orch.relay.bridge import Bridge, BridgeLoop, Item, WorkerStop
-from orch.relay.http import TransportError
 from orch.relay.retry import RelayRefused
 from orch.relay.session import Fenced, RelayMisbehaving, SessionError
+from orch.wsproto import wire
 
 from .bridgekit import World, open_chunk
 from .helpers import WS

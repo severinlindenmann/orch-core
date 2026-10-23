@@ -193,7 +193,7 @@ def prove(state_dir: Path, env: Mapping[str, str]) -> DevHost:
     through the pinned root descriptor, ``<root>`` holds a valid manifest, ``dev.json`` (read through the pinned
     state directory) names the same sandbox and root, the manifest names the sandbox person, and no person custody
     selects convenience."""
-    from orch.relay import wire
+    from orch.wsproto import wire
 
     state = Path(os.path.abspath(state_dir))
     root = state.parent

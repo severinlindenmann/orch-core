@@ -1,7 +1,7 @@
 """R6a: membership key custody and the seal lock (contract 11A.15.1 to 11A.15.3, 11A.15.5 "the first card").
 
 State, under ``<state>/hosts/<ws>/membership/`` (0700, host UID; every file 0600, written and read relative to a
-locked directory fd through :class:`orch.relay.state.StateDir`, never through a symlink):
+locked directory fd through :class:`orch.wsproto.state.StateDir`, never through a symlink):
 
 * ``head.json``: the one atomic record of 11A.15.3 (``lhw``, ``ehw``, ``committed``, ``exposed``, ``burned``, the
   gate, the card numbers; ``holders``, ``excluded``, ``h8`` and ``unmatched_rotation_ms`` are R6b's and carried
@@ -58,17 +58,18 @@ import re
 import secrets
 import threading
 from collections.abc import Callable, Iterator, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from orch import canon, crypto
 from orch.identity import memberlist, pairing, wscard
 from orch.identity.errors import Refused
-
-from ..keys import SealState
-from ..state import FileSignLedger, StateDir, StateError
+from orch.wsproto.state import FileSignLedger, StateDir, StateError
 
 __all__ = [
+    "SealState",
+    "default_part",
     "CLAMP",
     "FIRST_EPOCH_MAX",
     "GATE_REASONS",
@@ -278,6 +279,25 @@ class _SealLock:
 
     def held(self) -> bool:
         return self._holds.get(threading.get_ident(), 0) > 0
+
+
+@dataclass(frozen=True)
+class SealState:
+    """One seal-time snapshot (G1). ``current``: the committed epoch, the only one data is sealed under; ``gated``:
+    the rotation gate is up (proto §7.2 H5: no new sealing of data even under ``current``); ``stale_target``: the
+    epoch a ``stale_epoch`` names for a burned or gated request: the pending epoch, else ``EHW + 1``."""
+
+    current: int
+    gated: bool
+    stale_target: int
+
+
+def default_part(name: str) -> dict[str, Any]:
+    """The first card's sealed part (11A.15.5): ``{name, description, capabilities, hosted_by: None}``: the workspace's
+    display name, an empty description and no capabilities."""
+    if type(name) is not str:
+        raise CustodyRefused("card part name")
+    return {"name": name, "description": "", "capabilities": [], "hosted_by": None}
 
 
 class MembershipKeys:

@@ -9,9 +9,9 @@ from typing import Any
 
 from orch import crypto
 from orch.crypto.labels import L
-from orch.relay import http as rhttp
-from orch.relay import wire
+from orch.net import http as rhttp
 from orch.relay_owner import OwnerClient
+from orch.wsproto import wire
 
 from ..relay import corpus
 from ..relay.helpers import V_ORIGIN

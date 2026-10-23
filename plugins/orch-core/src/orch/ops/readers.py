@@ -72,7 +72,7 @@ __all__ = [
 #: one set. ``relay.link`` (a relay link) and ``relay.pair`` (the host's ``approved`` answer to a pairing, and any
 #: member list that adds a device) are host ops of the relay bridge (orch-v2-host §11A.6); ``relay.pair_device`` is the
 #: person op that signs the paired phone's ``device.added`` (H12c-e, 11A.15.6 step 9)
-READER_OPS = frozenset({"member.add", "relay.link", "relay.pair", "relay.pair_device"})
+READER_OPS = frozenset({"member.add"})
 
 
 def has_convenience_events(store: Any) -> bool:

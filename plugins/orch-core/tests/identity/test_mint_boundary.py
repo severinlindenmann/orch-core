@@ -23,7 +23,7 @@ import pytest
 import orch
 
 ROOT = Path(orch.__file__).resolve().parent
-MINTERS = frozenset({"identity/wscard.py", "identity/certreq.py"})
+MINTERS = frozenset({"identity/wscard.py"})
 NAME = "_mint"
 
 
@@ -76,7 +76,7 @@ def test_both_checkers_still_mint():
 @pytest.mark.parametrize(
     ("source", "rel", "want"),
     [
-        ("from . import _mint\n_mint.make(X)\n", "identity/certreq.py", []),
+        ("from . import _mint\n_mint.make(X)\n", "identity/wscard.py", []),
         ("from . import _mint\n_mint.check(x, X)\n", "identity/answers.py", ["alias", "name"]),
         ("from . import _mint\n_mint.make(X)\n", "identity/answers.py", ["alias", "name"]),
         ("from ._mint import make\n", "identity/answers.py", ["from-path"]),
@@ -95,7 +95,7 @@ def test_both_checkers_still_mint():
         ("import importlib\nimportlib.import_module('orch.identity._mint')\n", "host/x.py", ["string"]),
         ("__import__('orch.identity._mint')\n", "host/x.py", ["string"]),
         ("from orch.identity import certreq\ngetattr(certreq, '_mint')\n", "host/x.py", ["string"]),
-        ("import importlib\nimportlib.import_module('orch.identity._mint')\n", "identity/certreq.py", ["string"]),
+        ("import importlib\nimportlib.import_module('orch.identity._mint')\n", "identity/wscard.py", ["string"]),
         # other identifiers are not ``_mint``
         ("self._mints = {}\ntake_mint(p)\n", "host/x.py", []),
     ],

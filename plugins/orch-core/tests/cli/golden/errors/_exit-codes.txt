@@ -27,7 +27,6 @@ sign.key_exposed 3 retry:false
 relay.pair_open 3 retry:false
 relay.no_primary 3 retry:false
 relay.quota 3 retry:false
-relay.pair_closed 3 retry:false
 host.dev_refused 3 retry:false
 reader.decl_invalid 3 retry:false
 custody.no_batch 3 retry:false

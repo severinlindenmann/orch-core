@@ -19,7 +19,6 @@ host/dispatch.py 2
 host/handoff.py 2
 host/human.py 18
 host/journal.py 6
-host/pairdevice.py 1
 host/reads.py 1
 host/reads_feed.py 1
 host/reads_ticket.py 2
@@ -50,7 +49,6 @@ ops/runtime.py 13
 ops/workspace_init.py 6
 records/__init__.py 15
 records/tool.py 3
-relay/submit.py 3
 rootclaim.py 1
 setup/facts.py 2
 setup/flow.py 4

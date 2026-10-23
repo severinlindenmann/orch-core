@@ -162,6 +162,8 @@ class SetupFlow:
         }
 
     def _state(self, _q: Any) -> dict[str, Any]:
+        from orch.custody.cli import RISK as CONVENIENCE_RISK
+
         click_ok, click_reason = self.e.click()
         relay = self.e.relay()
         assert self.root is not None or not self.dir
@@ -172,6 +174,9 @@ class SetupFlow:
             sug = {"name": self.facts.name, "prefix": self.facts.prefix}
         if self.mode != "finish":  # U1: a new workspace starts with "let agents work for you" ticked (3 days)
             sug = {**sug, "agent_hours": facts.DEFAULT_AGENT_HOURS, "agent_grant": True}
+            # run 8 (owner): One click is the default where this machine can hold the key; Terminal stays selectable.
+            # Only a suggestion: the profile is still validated, reviewed (with the risk sentence) and signed as before.
+            sug = {**sug, "method": "click" if click_ok else "terminal"}
         missing: list[str] = []
         current: dict[str, Any] | None = None
         if self.mode == "finish" and self.facts is not None:
@@ -191,6 +196,7 @@ class SetupFlow:
             "methods": list(METHODS),
             "click_available": bool(click_ok),
             "click_reason": click_reason,
+            "click_risk": CONVENIENCE_RISK,
             "agent_hours": list(AGENT_HOURS),
             "git": facts.git_state(Path(self.dir)) if self.dir else {"repo": True},
             "relay": {"available": bool(relay.get("available")), "enabled": bool(relay.get("enabled"))},
@@ -347,6 +353,8 @@ class SetupFlow:
             ids.append("runner_grant")
         if self.profile and self.profile["method"] == "click":
             ids += ["flags", "custody"]
+        if any(f["id"] == "records" for f in plan.flags):
+            ids.append("records")
         return ids
 
     def _work(self, creator: Creator) -> None:

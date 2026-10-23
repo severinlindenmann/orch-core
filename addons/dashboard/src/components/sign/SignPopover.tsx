@@ -131,8 +131,7 @@ export function SignPopover(p: SignPopoverProps) {
   const story = storyOf(p.action, { startsAgent: p.startsAgent })
   // One sign button. The terminal is only the forced fallback: an op the browser cannot sign, or a workspace where
   // One click is off or not allowed.
-  const terminalRequired = p.action?.action === 'settings_set' && !!p.action.sign_methods
-  const canClick = !terminalRequired && clickReady(here) && clickEligible(p.action) && (!methods.allowed || methods.allowed.includes('click'))
+  const canClick = clickReady(here) && clickEligible(p.action) && (!methods.allowed || methods.allowed.includes('click'))
   const method: 'click' | 'terminal' = canClick ? 'click' : 'terminal'
   const startMethod = (retryFloor = 0) => {
     if (!p.action) return

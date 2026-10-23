@@ -264,11 +264,11 @@ def test_the_signer_compares_each_step_byte_for_byte(human, tmp_path, k):
 # --- AE3: the strongest step decides the confirmation ---------------------------------------------
 
 
-def test_ae3_publish_is_terminal_only_and_model_routing_is_the_word(human):
+def test_ae3_publish_is_terminal_only_and_model_routing_is_a_click(human):
     pub = sequence.validate_intent(enable(human, "publish"))
     models = sequence.validate_intent(enable(human, "model-routing"))
     assert sequence.confirm_kind(pub) == "terminal"
-    assert sequence.confirm_kind(models) == "word"
+    assert sequence.confirm_kind(models) == "click"  # capability-free add-on and a model choice (run 8, 1.6)
     assert not sequence.has_grant(pub) and not sequence.has_grant(models)  # a runner grant only
     # the early check by args, as the click signer asks it before prepare
     assert protocol_class("settings.set", {"set": {"publish": PUBLISH}}) == "terminal"
@@ -344,31 +344,32 @@ def test_ae3_publish_is_refused_at_sign_when_the_stored_kind_is_forced_down(clic
     click.mono.t += 2
     monkeypatch.setattr(sequence, "confirm_kind", lambda i, person=None: "terminal")
     refused(
-        lambda: click.sign(p["request_id"], v["view_digest"], word=v["view"]["confirm"]["word"]),
+        lambda: click.sign(p["request_id"], v["view_digest"], word=v["view"]["confirm"].get("word")),
         "human.click_refused",
         "terminal_only",
     )
     assert click.signatures == 0 and not on(human, "model-routing")
 
 
-def test_model_routing_is_one_click_plus_the_add_on_word(click, served, human):
+def test_a_sequence_whose_signed_grant_has_capabilities_keeps_the_word(human):
+    """The grant step is classed from the intent's signed capability list (run 8, 1.6); no list fails closed."""
+    base = enable(human, "model-routing")
+    for caps, kind in ((["network"], "word"), ([], "click")):
+        intent = sequence.validate_intent({**base, "grant": {**base["grant"], "capabilities": caps}})
+        assert sequence.confirm_kind(intent) == kind
+
+
+def test_model_routing_is_one_plain_click(click, served, human):
+    """Run 8 (1.6): a capability-free add-on and a model choice need no typed word."""
     p = click_prepare(click, enable(human, "model-routing"))
     v = click.view(p["request_id"])
-    word = v["view"]["confirm"]
-    assert word["kind"] == "word" and word["word"] == f"model-routing~{served.wid[-8:]}"
+    assert v["view"]["confirm"] == {"kind": "click"}
     assert v["view"]["headline"] == "Turn on Model routing"
     click.mono.t += 2
-    refused(lambda: click.sign(p["request_id"], v["view_digest"]), "human.click_refused", "word")
-    refused(
-        lambda: click.sign(p["request_id"], v["view_digest"], word="DEMO~89abcdef/SETTINGS"),
-        "human.click_refused",
-        "word",
-    )
-    assert click.signatures == 0
-    out = click.sign(p["request_id"], v["view_digest"], word=word["word"])
+    out = click.sign(p["request_id"], v["view_digest"])
     assert click.signatures == 2 and out["duplicate"] is False
     assert on(human, "model-routing") and settings_of(human)["models"] == MODELS
-    again = click.sign(p["request_id"], v["view_digest"], word=word["word"])  # a repeat answers, never signs again
+    again = click.sign(p["request_id"], v["view_digest"])  # a repeat answers, never signs again
     assert again["duplicate"] is True and click.signatures == 2
 
 
@@ -679,7 +680,7 @@ def test_a_click_refuses_to_start_what_a_live_session_holds(click, served, human
     v = click.view(p["request_id"])
     click.mono.t += 2
     refused(
-        lambda: click.sign(p["request_id"], v["view_digest"], word=v["view"]["confirm"]["word"]),
+        lambda: click.sign(p["request_id"], v["view_digest"], word=v["view"]["confirm"].get("word")),
         "human.click_refused",
         "resumable",
     )
@@ -739,7 +740,7 @@ def test_low3_the_click_messages_do_not_say_ticket_for_an_add_on(click, served, 
     v = click.view(p["request_id"])
     click.mono.t += 2
     e = refused(
-        lambda: click.sign(p["request_id"], v["view_digest"], word=v["view"]["confirm"]["word"]),
+        lambda: click.sign(p["request_id"], v["view_digest"], word=v["view"]["confirm"].get("word")),
         "human.click_refused",
         "resumable",
     )

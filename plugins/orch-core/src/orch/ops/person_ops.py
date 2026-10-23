@@ -1,4 +1,4 @@
-"""The host person operations (§0.8 "move", "policy.set and settings.set", H6b; ``relay.pair_device``, H12c-e).
+"""The host person operations (§0.8 "move", "policy.set and settings.set", H6b).
 
 ``move``, ``policy.set`` and ``settings.set`` are person operations the host serves **only** through ``human.prepare``
 and ``human.submit``; a plain request of one is ``human_only`` (the column). They are declared here as
@@ -16,8 +16,6 @@ exactly as it judges a signed one (``lifecycle.moved``, ``lifecycle.policy_chang
 * ``settings.set {set}`` -> ``settings.changed {set}``: workspace owners only.
 * ``people.set {ref, role, add, remove}`` -> ``people.changed {role, add, remove}`` (B12D): who owns, works on or
   reviews a ticket; whoever ``claims.may_manage``; an owner is exactly one person.
-* ``relay.pair_device {offer_id}`` -> ``device.added {device, cert}`` (H12c-e, 11A.15.10 item 12): the phone R6 paired,
-  from R6's verified facts (never from the request); its own material kind (:mod:`orch.identity.pairdevice`).
 
 :func:`get` is what ``human.prepare`` calls for a name in :data:`orch.host.review.HOST_PERSON_OPS`.
 """
@@ -336,35 +334,6 @@ def handle_people(ctx: Context, args: dict[str, Any]) -> Result:
     return h.ticket_result(view, done, {"role": role, "add": add, "remove": remove}, "orch show")
 
 
-def handle_pair_device(ctx: Context, args: dict[str, Any]) -> Result:
-    """``relay.pair_device {offer_id}`` (H12c-e, 11A.15.6 step 9): ``device.added {device, cert}`` of the phone R6
-    paired. The facts are R6's, handed to this handler by the host (``Capture.pair``, :mod:`orch.host.pairdevice`):
-    nothing in the request names the device, the certificate, the label or the code. The phone's pair declaration
-    (if any) is admitted as its reader (``source:"pair"``); the append checks it again under the store lock."""
-    from orch.identity import pairdevice
-    from orch.identity.reader import DeclInvalid
-    from orch.ops.readers import pair_entry
-
-    h = _Human(ctx, pairdevice.OP)
-    facts = getattr(ctx.prepare, "pair", None)
-    if not isinstance(facts, pairdevice.PairDeviceFacts) or facts.offer_id != args["offer_id"]:
-        raise OrchError("human_only", "relay.pair_device is prepared only by the host's relay pairing (R6)")
-    if facts.workspace_id != h.workspace_id:
-        raise OrchError("invalid.input", "the pairing is for another workspace")
-    if facts.person != h.person:
-        raise OrchError("role.denied", "the paired device's certificate is of another person")
-    try:
-        entry = pair_entry(facts, h.workspace_id)
-    except DeclInvalid as exc:
-        raise OrchError("reader.decl_invalid", exc.detail) from None
-    if entry is not None:
-        h.admit_reader(entry)
-    event = pairdevice.device_added(facts)
-    done = h.run(event, "workspace", f"add the paired device {facts.device}", review=[])
-    data = {"device": facts.device, "offer_id": facts.offer_id, "attempt": facts.attempt}
-    return h.workspace_result(done, data, "the relay pairing continues: orch host relay pair list")
-
-
 def handle_publish_share(ctx: Context, args: dict[str, Any]) -> Result:
     """``publish.share {staged_id}`` (P5): the person's signature over the exact words of one staged share, as a
     ``log.added`` note on its ticket. The words come from the host's facts about the staged copy (ticket, kind, days,
@@ -627,24 +596,6 @@ PEOPLE_SET = operation(
     errors=(err("role.denied"), err("not_found")),
     handler=handle_people,
 )
-PAIR_DEVICE = operation(
-    "relay.pair_device",
-    "Human only",
-    "Sign the device.added of a phone the relay pairing verified (R6, step 9); prepared by the host only.",
-    who="human",
-    props={"offer_id": S("the pairing offer id (32 hex)", pattern="^[0-9a-f]{32}$")},
-    required=("offer_id",),
-    emits=("device.added",),
-    text="ok device.added {device} seq={seq}\nnext: {next}",
-    data=obj({"device": STR, "offer_id": STR, "attempt": STR}),
-    errors=(
-        err("role.denied"),
-        err("reader.decl_invalid"),
-        err("sign.convenience_readers"),
-        err("relay.pair_closed"),  # R6c: the offer is not at step 9, the phone's deadline is near, no publisher
-    ),
-    handler=handle_pair_device,
-)
 PUBLISH_SHARE = operation(
     "publish.share",
     "Human only",
@@ -808,7 +759,6 @@ OPS: dict[str, Operation] = {
         POLICY_SET,
         SETTINGS_SET,
         PEOPLE_SET,
-        PAIR_DEVICE,
         PUBLISH_SHARE,
         HUB_JOIN,
         HUB_MODE,

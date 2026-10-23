@@ -278,7 +278,6 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
     from orch.runner.config import ConfigError, RunnerConfig, read_config
     from orch.runner.link import ENV_FROM_RUNNER
 
-    from .runnergrants import MIN_LEFT
     from .terms import missing
 
     service = call.service
@@ -387,10 +386,7 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
         if cur is None:
             p.block("launch.no_grant", "no runner grant for you on this machine: issue one", reason="none")
         else:
-            reason = hub.grants.valid(service, person, cur["grant"], left=MIN_LEFT)  # type: ignore[union-attr]
-            auth = service.auth
-            if reason is None and cur.get("scope") == "all" and auth is not None and auth.roles.get(person) == "member":
-                reason = "scope"
+            reason = hub.grants.launch_reason(service, person, cur)  # type: ignore[union-attr]
             if reason is not None:
                 p.block("launch.no_grant", f"your runner grant cannot start agents now ({reason})", reason=reason)
             else:

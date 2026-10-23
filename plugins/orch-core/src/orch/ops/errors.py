@@ -219,17 +219,6 @@ _SPECS = [
         "(orch-v2-host 11A.15.6 step 1).",
     ),
     _e(
-        "relay.pair_closed",
-        3,
-        False,
-        "the pairing does not allow this step now",
-        "look at the offer's state; start a new pairing if it ended",
-        ["orch", "host", "relay", "pair", "list"],
-        "A pairing step its offer's state does not allow: cancel of an allocated offer, an answer or certificate "
-        "for an offer not waiting for it, relay.pair_device outside step 9 or near the phone's deadline, or "
-        "without a membership publisher (orch-v2-host 11A.15.6, 11A.15.9A).",
-    ),
-    _e(
         "host.dev_refused",
         3,
         False,

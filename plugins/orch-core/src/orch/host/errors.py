@@ -128,7 +128,6 @@ HOST_CODES: dict[str, tuple[int, bool]] = {
     "relay.pair_open": (3, False),
     "relay.no_primary": (3, False),
     "relay.quota": (3, False),
-    "relay.pair_closed": (3, False),
     # H12e, phone person events over relay.submit (§11A.14): admission refusals core owns, all definite (class C)
     "event.expired": (3, False),
     "event.abandoned": (3, False),

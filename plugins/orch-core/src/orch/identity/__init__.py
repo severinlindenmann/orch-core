@@ -4,7 +4,7 @@ Specs: orch-relay ``docs/protocol-v2.md`` §6 (certificates, revocation), §7.1 
 §5.11 (genesis), §10.1 (grants, D60); core §2. Pure functions over values; keys live in ``custody/``.
 """
 
-from . import answers, certreq, memberlist, pairing, wscard
+from . import memberlist, pairing, wscard
 from .certs import (
     REVOKE_REASONS,
     SCOPE_ORDER,
@@ -62,8 +62,6 @@ __all__ = [
     "GrantToken",
     "RecoveryCodeError",
     "Refused",
-    "answers",
-    "certreq",
     "memberlist",
     "pairing",
     "wscard",

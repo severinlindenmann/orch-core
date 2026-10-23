@@ -614,6 +614,14 @@ def hub_joined(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
     h = ws.hub
     if e["mode"] not in HUB_MODES:
         return Refusal(Code.HUB_INVALID, "unknown hub mode")
+    if (
+        h and h["status"] == "joined" and h["mode"] == "full" and e["mode"] == "full" and e["hub_id"] == h["hub_id"]
+        and e["hk_root_pub"] == h["hk_root_pub"] and e["binding_seq"] == h["binding_seq"] and e["aliases"] == []
+    ):  # fmt: skip
+        # V3-D29 / C10: the owner signs full mode again, with the words that say the phones' pairing ends. Nothing
+        # about the binding changes; the host reads the mark and starts the cut-over (and refuses it once cut over).
+        ws.hub = {**h, "affirmed_at": e.get("at")}
+        return None
     if h and h["status"] == "joined":
         switch = h["mode"] == "selective" and e["mode"] == "full" and e["hub_id"] == h["hub_id"]
         if not switch or e["hk_root_pub"] != h["hk_root_pub"]:

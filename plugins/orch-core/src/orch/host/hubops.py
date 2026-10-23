@@ -122,6 +122,7 @@ class HubFacts:
 
     now_ms: int
     dev_mode: bool
+    direct: str = "open"  # V3 C10: the direct relay path (hub.mode full on a full workspace is refused once closed)
 
 
 def workspace_dev(service: WorkspaceService) -> bool:
@@ -144,7 +145,12 @@ def workspace_dev(service: WorkspaceService) -> bool:
 
 
 def facts_for(service: WorkspaceService) -> HubFacts:
-    return HubFacts(int(service.clock() * 1000), workspace_dev(service))
+    from . import directpath
+
+    return HubFacts(
+        int(service.clock() * 1000), workspace_dev(service),
+        directpath.direct_state(service.state_dir, service.workspace_id, service.host_uid),
+    )  # fmt: skip
 
 
 # -- files ---------------------------------------------------------------------------------------------------------
@@ -848,10 +854,11 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
                 from . import cutover
 
                 before = _load_state(service)
-                fresh = plan["kind"] in (
-                    "join",
-                    "switch",
-                )  # the review text the owner signed says the phones' pairing ends
+                # the review text the owner signed says the phones' pairing ends: a join, a switch, or the owner's
+                # re-signed full mode on a workspace joined before C10 (V3-D29)
+                fresh = plan["kind"] in ("join", "switch") or bool(
+                    plan["kind"] == "seal" and before is not None and before.direct is None and model.get("affirmed_at")
+                )
                 if fresh or (before is not None and before.direct in ("closing", "open")):
                     out["direct"] = cutover.run(service, model, hub_card=plan["card"], force_start=fresh)
                     if out["direct"] != "closed":

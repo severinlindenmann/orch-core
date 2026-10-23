@@ -500,7 +500,7 @@ def _status_text(d: Mapping[str, Any]) -> str:
         queued += f", direct relay path {direct}" + (f" ({d['direct_note']})" if d.get("direct_note") else "")
     elif d.get("direct_pre_c10") and d.get("joined"):
         queued += (
-            ", the direct relay path is still open (this full join was made before the switch: leave and join again to "
-            "sign the new words)"
+            ", the direct relay path is still open (this full join was made before the switch: run orch hub mode full "
+            "again to sign the new words)"
         )
     return f"hub {d['hub_id']}: {state} ({d.get('mode')}){link}{roles}{queued}"

@@ -159,3 +159,47 @@ def test_hub_status_reports_the_switch(env):
     cutover.run(env.service, force_start=True)
     data = ok(env.served.client().req("hub.status", {}))["data"]
     assert data["direct"] == "closed" and data["direct_devices"] == [] and data["cut_epoch"]
+
+
+def test_orch_hub_mode_full_again_triggers_the_cut_over_of_a_pre_c10_full_join_and_is_refused_after(env):
+    import copy
+
+    from tests.host.test_hub_ops import CARD, connect_args
+
+    pin_snapshot(env)
+    st = state_of(env)
+    st.direct = None  # joined and connected before C10
+    env.service.submit(hubops._save_state, env.service, st).result()  # noqa: SLF001
+    binding = cutover._model(env.service)["binding_seq"]  # noqa: SLF001
+    _, _, signed = env.human.run("hub.mode", {"hub_card": copy.deepcopy(CARD), "mode": "full"})
+    assert signed.events[0]["binding_seq"] == binding and signed.events[0]["aliases"] == []  # same binding
+    assert cutover._model(env.service).get("affirmed_at")  # noqa: SLF001
+    assert state_of(env).direct is None  # signing alone starts nothing
+    ok(env.served.client().req("hub.connect", connect_args(invite=None) | {}, idem=True)) if False else None
+    args = connect_args()
+    args.pop("invite")
+    got = ok(env.served.client().req("hub.connect", args, idem=True))["data"]
+    assert got["direct"] == "closed" and state_of(env).direct == "closed"
+    from tests.host.human_helpers import err
+
+    assert (
+        err(env.human.prepare_res("hub.mode", {"hub_card": copy.deepcopy(CARD), "mode": "full"}))
+        == "hub.already_joined"
+    )
+
+
+def test_the_model_accepts_a_re_signed_full_mode_only_for_the_same_hub_binding_and_no_aliases():
+    from orch.model import Code
+    from tests.model.test_hub_consumers import HUB, alias, hub_joined
+    from tests.model.test_hubledger import ROOT
+    from tests.model.world import World
+
+    w = World(validate=False).bootstrap({"mara": "maintainer"})
+    hub_joined(w, [alias(w, "mara", "2" * 32)])
+    base = dict(hub_id=HUB, hk_root_pub=ROOT, mode="full", binding_seq=1, aliases=[])
+    _, r = w.try_("workspace", "hub.joined", "sev", roster_v=w.roster_v, **base)
+    assert not hasattr(r, "code")
+    for over, why in (({"binding_seq": 2}, "next binding"), ({"aliases": [alias(w, "mara", "3" * 32)]}, "alias"),
+                      ({"mode": "selective"}, "downgrade"), ({"binding_seq": 0}, "lower")):  # fmt: skip
+        _, r = w.try_("workspace", "hub.joined", "sev", roster_v=w.roster_v, **{**base, **over})
+        assert getattr(r, "code", None) == Code.HUB_INVALID, why

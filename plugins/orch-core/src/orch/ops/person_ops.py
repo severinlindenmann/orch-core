@@ -450,8 +450,13 @@ def handle_hub_mode(ctx: Context, args: dict[str, Any]) -> Result:
     current = h.store.state.workspace.hub
     if not current or current.get("status") != "joined":
         raise OrchError("hub.not_joined", "this workspace is not joined to a hub")
-    if current.get("mode") != "selective":
-        raise OrchError("hub.already_joined", "this workspace is already in full mode with this hub")
+    again = current.get("mode") == "full"
+    if again and getattr(facts, "direct", "open") != "open":
+        # V3-D29: a full workspace that was NOT cut over yet (a join before C10) signs the new words once; one that
+        # is cut over has nothing left to trigger
+        raise OrchError("hub.already_joined", "this workspace is already in full mode and its direct path is closed")
+    if current.get("mode") not in ("selective", "full"):
+        raise OrchError("hub.already_joined", "this workspace is not in a mode that can be switched")
     try:
         verified = wire.verify_card(
             args["hub_card"], now_ms=facts.now_ms, dev_mode=facts.dev_mode,
@@ -460,7 +465,8 @@ def handle_hub_mode(ctx: Context, args: dict[str, Any]) -> Result:
         payload = wire.joined_payload(
             hk_root_pub=verified["hk_root_pub"],
             mode="full",
-            binding_seq=int(current["binding_seq"]) + 1,
+            # a re-signed full mode keeps its binding (it only triggers the cut-over); a switch is the next binding
+            binding_seq=int(current["binding_seq"]) + (0 if again else 1),
             aliases=[],
             prior_aliases=_prior_aliases(current, verified["hk_root_pub"]),
         )

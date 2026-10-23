@@ -88,10 +88,11 @@ Passphrase = Annotated[str, StringConstraints(min_length=1, max_length=1024)]
 
 class CustodyBody(BaseModel):
     """The click-to-sign switch (section 0.8.6 item 3a). `on` needs the person's CURRENT passphrase: the proof the key
-    is theirs, checked by the signer against the key in passphrase custody (Opus H1 on #539). `off` carries nothing:
-    it only turns the flag off, and the dashboard never chooses a passphrase (Opus H2), so a `passphrase` with `off`
-    is invalid input, refused before the signer is called. Never logged or echoed (the validation handler answers a
-    bare `invalid.input`)."""
+    is theirs, checked by the signer against the key in passphrase custody (Opus H1 on #539). `off` may carry the NEW
+    passphrase the key moves back under (V3-D31, narrowing Opus H2): the signer takes it only while the switch is on
+    and trades that authority for it in one locked step, else it refuses (`custody.terminal_needed`). Without one it
+    only turns the flag off. This server is a relay: the text is never logged or echoed (the validation handler
+    answers a bare `invalid.input`), and an explicit `null` is invalid."""
 
     model_config = ConfigDict(extra="forbid", strict=True)
     on: bool
@@ -101,8 +102,8 @@ class CustodyBody(BaseModel):
     def _proof_only_to_switch_on(self):
         if self.on and self.passphrase is None:
             raise ValueError("on needs the passphrase")
-        if not self.on and "passphrase" in self.model_fields_set:
-            raise ValueError("off takes no passphrase")
+        if not self.on and "passphrase" in self.model_fields_set and self.passphrase is None:
+            raise ValueError("off takes a passphrase or none")
         return self
 
 
@@ -271,8 +272,11 @@ def register(app: FastAPI, gateway: Gateway):
             raise fail("click.contract", "Update orch-core: its signing helper cannot switch signing yet.", exit=9)
         if body.on:  # the proof goes to the signer only; nothing here reads, keeps or logs it
             row = signer.call("custody_on", {"workspace_id": ws, "passphrase": body.passphrase})
-        else:  # off: the flag only, never a re-key (moving the key back is `orch keys custody passphrase --in-place`)
-            row = signer.call("custody_off", {"workspace_id": ws})
+        else:  # off: the flag; with a NEW passphrase the signer also moves the key back (V3-D31), only while on
+            row = signer.call(
+                "custody_off",
+                {"workspace_id": ws, **({"passphrase": body.passphrase} if body.passphrase is not None else {})},
+            )
         return {**(adapters.click_card(row) or {}), "switchable": True}
 
     @app.post("/api/w/{ws}/click/images")

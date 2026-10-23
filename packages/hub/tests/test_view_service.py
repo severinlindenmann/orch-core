@@ -392,3 +392,28 @@ def test_ticket_reset_drops_its_proj_and_workspace_reset_drops_all(svc, seals):
     accept(svc, h.page(LOG, proj=h.proj()))
     accept(svc, h.page("workspace", reset=True))
     assert svc.store.proj_key(WS, LOG) is None
+
+
+def test_projection_only_pages_count_toward_the_cap(svc, monkeypatch):
+    from orch_hub.view import store as ST
+
+    h = _ticket_host()
+    accept(svc, h.page("workspace"))
+    accept(svc, h.page(LOG, proj=h.proj()))
+    one = len(json.dumps(svc.store.proj_page(WS, LOG), sort_keys=True, separators=(",", ":")))
+    used = sum(
+        len(json.dumps(b, sort_keys=True, separators=(",", ":")))
+        for lg in svc.store.logs(WS)
+        for b in svc.store.pages(WS, lg)
+    )
+    # room for the pages held plus one projection body (the one a refresh replaces) and a little
+    monkeypatch.setattr(ST, "MAX_WS_BYTES", used + one + one // 2)
+    accept(svc, h.page(LOG, 1, 1, proj=h.proj(status="testing")))  # replaces its own row: fits
+    # a second ticket's projection-only page would add a row that no longer fits
+    h.ticket(uid="01J9ZP0000000000000000TKT2", key="DEMO-0002")
+    accept(svc, h.page("workspace"))  # no-op resend
+    before = (svc.store.proj_key(WS, "01J9ZP0000000000000000TKT2"), svc.store.heads(WS, "01J9ZP0000000000000000TKT2"))
+    pg = h.page("01J9ZP0000000000000000TKT2", proj=h.proj("01J9ZP0000000000000000TKT2"))
+    assert code(accept, svc, pg) == "too_large"
+    assert before == (None, [])
+    assert svc.store.proj_key(WS, LOG) is not None

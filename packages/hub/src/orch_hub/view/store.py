@@ -107,10 +107,18 @@ class ViewStore:
                         self._db.execute("DELETE FROM view_pages WHERE ws=?", (ws,))
                         self._db.execute("DELETE FROM view_proj WHERE ws=?", (ws,))
                     held = 0
-                if len(out) > held:
-                    used = self._db.execute("SELECT COALESCE(SUM(LENGTH(body)),0) FROM view_pages WHERE ws=?", (ws,))
-                    if used.fetchone()[0] + len(raw) > MAX_WS_BYTES:
+                add_page = len(out) > held
+                if add_page or proj is not None:
+                    # the cap counts every sealed byte kept for the workspace: pages and projection bodies (the row
+                    # a projection replaces does not count), so projection-only pages cannot fill the disk
+                    used = self._db.execute(
+                        "SELECT (SELECT COALESCE(SUM(LENGTH(body)),0) FROM view_pages WHERE ws=?)"
+                        " + (SELECT COALESCE(SUM(LENGTH(body)),0) FROM view_proj WHERE ws=? AND log<>?)",
+                        (ws, ws, log),
+                    ).fetchone()[0]
+                    if used + len(raw) * (int(add_page) + int(proj is not None)) > MAX_WS_BYTES:
                         raise Refused("too_large")
+                if add_page:
                     self._db.executemany(
                         "INSERT INTO view_heads(ws, log, seq, head) VALUES (?,?,?,?)",
                         [(ws, log, i + 1, out[i]) for i in range(held, len(out))],

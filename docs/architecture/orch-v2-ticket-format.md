@@ -1846,6 +1846,7 @@ these codes; they are the stable `error.code` strings of §10.4 for these refusa
 | `device.invalid` | §5.3 the device was removed, revoked, or its certificate expired |
 | `device.scope` | §5.3 the certificate lacks `decide` (or `operate`), or has a `drop:` scope |
 | `sign.method` | B6: the person event's `auth` is a way (`convenience` is `click`, `secure-enclave-unlocked` is `phone`) that the workspace's `settings.sign_methods` leaves out, judged by the state at the event's own position; honest labels only |
+| `sign.hub_only` | C8/C11 (D78, D81): a person event that is not `auth: "hub"` at a position where the workspace is joined to a hub in **full** mode, and whose type is not a break-glass event (`hub.left`, signed by an owner without the click or convenience signer); judged by the state at the event's own position, append and replay alike. The break-glass set is `orch.model.breakglass.BREAK_GLASS` |
 | `device.cert` | §5.3 an embedded certificate or revocation is not signed by the person key, or is for another person |
 | `grant.invalid` | §10.1 the grant is unknown, expired, revoked, ended, another person's, or its person may not run agents |
 | `grant.scope` | §10.1 the grant's scope does not cover the ticket, or the person can't see it |
@@ -2797,6 +2798,7 @@ a rejoin, so it is in every checkpoint with `ws.hub`): `{root, card, revoked_op_
 **Rules**, the same at append and on replay. "now" is always the event's `at`, never a reader's clock:
 
 1. The workspace is joined to `hub_id` at this position → else `hub.invalid` (`not_joined`).
+   **C8 (P2-b):** and the line's `at` is not earlier than the `at` of the `hub.joined` of this binding (detail `before_binding`), so a line the hub signed before a leave and kept never lands after a rejoin of the same hub id.
 2. `hub.card`: hub contract §5 steps 1–7 with `pinned_root = root`, the ledger's revoked set and `held` = the ledger
    card (`stale_op_cert`, `stale_card`, `other_hub`, …). The identical card again → `hub.invalid` (`already_pinned`).
 3. `hub.op_revoked`: §4.2 under `root` (no dev-marker check, L2-8). A `cert_id` already in the set →
@@ -3161,3 +3163,14 @@ reference from then on.
    T0 the readmodel tests + CLI goldens.
 
 Tasks 4–7 = PR B; tasks 5 and 6 need the Opus security pass (custody, authority).
+
+
+### C8 break-glass (V3, design-c8)
+
+`hub.left` at its position also (a) voids the counting decisions signed by any `hub:<hub_id>/*` key in a generation that
+is still open, on every unsettled ticket (`generations.void_hub`; a settled ticket keeps its state and lists them as
+revoked, like a revoked device), and (b) ends every grant whose request was a line of that hub (`Grant.hub_id`, set by
+the C10 host-actor `grant.issued`; state, no new line). The break-glass set is `orch.model.breakglass.BREAK_GLASS`
+(`hub.leave`, `hub.repin` recovery key only, `keys.rotate`). In a joined **full**-mode position every person event that
+is not `auth: "hub"` and not a break-glass event by an owner is refused (`sign.hub_only`); the store turns this on
+(`Ctx.hub_only`), model-only tests opt in.

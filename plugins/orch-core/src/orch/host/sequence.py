@@ -736,15 +736,15 @@ def step_args(intent: Mapping[str, Any], k: int, ref: str | None) -> tuple[str, 
     return step["op"], args
 
 
-def confirm_kind(intent: Mapping[str, Any]) -> str:
+def confirm_kind(intent: Mapping[str, Any], person: str | None = None) -> str:
     """The strongest confirmation any step needs (``click`` < ``word`` < ``terminal``); the sequence's confirmation is
     that of its strongest step. A grant to the runner is a ``word`` (the GRANT word) in a sequence.
 
-    #1070 relaxes B12D for one case only, in this one place: a NEW ticket whose people are assignees and/or reviewers
-    (no ``owner`` step, so the creator stays owner) is a click. The View lists every person with role and full id, the
-    model refuses a person who is not a member when the event lands, and a viewer cannot act, so nothing here widens
-    who may act beyond what the creator, as owner, could do alone. An owner step (we cannot tell here whether it names
-    the creator: fail closed), agent access, and any people edit of an EXISTING ticket keep the word."""
+    #1070 relaxes B12D in one case only, in this one place: a NEW ticket whose assignees and reviewers are ALL the
+    signer's own id (``person``; the creator naming themselves) and which has no ``owner`` step is a click. Naming
+    anyone else gives that person approval rights (a reviewer may approve gates and accept checks) or the worker role
+    (not undoable), so it keeps the word, as does any owner step (agent access: the GRANT word) and every people edit
+    of an EXISTING ticket. Without a known signer (``person`` None) people steps are never lowered."""
     from orch.click.protocol import op_class
 
     rank = {"click": 0, "word": 1, "terminal": 2}
@@ -752,7 +752,15 @@ def confirm_kind(intent: Mapping[str, Any]) -> str:
     def step_class(s: Mapping[str, Any]) -> str:
         if s["kind"] == "grant":
             return "word"
-        if intent["kind"] == KIND and s["kind"] == "people" and s["args"].get("role") in ("assignees", "reviewers"):
+        if (
+            intent["kind"] == KIND
+            and s["kind"] == "people"
+            and s["args"].get("role") in ("assignees", "reviewers")
+            and person is not None
+            and not s["args"].get("remove")
+            and s["args"].get("add")
+            and all(who == person for who in s["args"]["add"])
+        ):
             return "click"
         # AE3: the class of a step is that of its op WITH its args (``settings.set`` of Publish is terminal-only)
         return op_class(s["op"], args=s["args"])
@@ -1186,6 +1194,17 @@ def expand(prepared: Mapping[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _people_notes(intent: Mapping[str, Any]) -> list[str]:
+    """What the people named in the review may do, said once per role (LOW-3 of the #1070 review)."""
+    ppl = intent.get("people") or {}
+    out = []
+    if "reviewers" in ppl:
+        out.append("Reviewers may approve the Verify step and accept acceptance checks.")
+    if "assignees" in ppl:
+        out.append("Assignees do the work on the ticket and count as its workers.")
+    return out
+
+
 def build_content(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, Any]:
     """The ``SignContent`` of a sequence's first request: the ticket and all its written text in one view. The same
     invariant as every plain view applies: a key that is neither shown nor technical raises ``PlainUnavailable`` and
@@ -1221,6 +1240,7 @@ def build_content(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, A
             notes.append("Repositories: the links shown below replace the repositories and branches now on the ticket.")
         if "owner" in intent.get("people", {}):
             notes.append("The owner is set last. After that you may no longer be able to change this ticket yourself.")
+        notes.extend(_people_notes(intent))
         notes.append(
             "Only the ticket as it was when you opened it is edited. If anyone changes it meanwhile, signing "
             "stops and nothing more is signed."
@@ -1245,6 +1265,7 @@ def build_content(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, A
             content.setdefault("notes", []).append(
                 "The owner is set last. After that you may no longer be able to change this ticket yourself."
             )
+        content.setdefault("notes", []).extend(_people_notes(intent))
     if intent.get("images"):
         # the browser compares the digest of the bytes IT holds with this one, and shows them only when they match
         content["images"] = [

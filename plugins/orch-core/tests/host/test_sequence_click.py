@@ -60,7 +60,7 @@ def test_a_click_re_asserts_the_confirmation_kind_of_the_stored_intent(click, se
     _, p = prepare(click)
     v = click.view(p["request_id"])
     click.mono.t += 2
-    monkeypatch.setattr(sequence, "confirm_kind", lambda intent: "word")
+    monkeypatch.setattr(sequence, "confirm_kind", lambda intent, person=None: "word")
     refused(lambda: click.sign(p["request_id"], v["view_digest"]), "human.click_refused", "terminal_only")
     assert click.signatures == 0
 
@@ -198,8 +198,24 @@ def test_1070_a_new_ticket_with_a_reviewer_is_one_click_and_lists_the_person(cli
     _, p = prepare(click, intent_of(people={"reviewers": [me]}))
     v = click.view(p["request_id"])
     assert v["view"]["confirm"] == {"kind": "click"}
-    assert f"reviewers: add {me}" in str(v["view"]) or me in str(v["view"])
+    rows = v["view"]["content"]["fields_changed"]
+    assert {"field": "reviewers: add", "before": None, "after": me} in [
+        {"field": r["field"], "before": r.get("before"), "after": r["after"]} for r in rows
+    ] or any(r["field"] == "reviewers: add" and r["after"] == me for r in rows)
     click.mono.t += 2
     out = click.sign(p["request_id"], v["view_digest"])
     got = ok(served.client().req("ticket.get", {"ref": out["result"]["key"]}))["data"]["doc"]
     assert got["people"]["reviewers"] == [me]
+
+
+def test_1070_naming_another_member_or_a_mix_keeps_the_word_and_a_stranger_aborts(click, served, human):
+    """MED-1/LOW-2: only the signer's own id lowers the confirmation; anyone else (a member, a mix, a non-member id)
+    stays a word, and a non-member id never lands."""
+    me = click.owner.ref
+    other = "p_" + "9" * 32  # not a member
+    for people in ({"reviewers": [other]}, {"assignees": [other]}, {"reviewers": sorted([me, other])}):
+        _, p = prepare(click, intent_of(people=people))
+        v = click.view(p["request_id"])
+        assert v["view"]["confirm"]["kind"] == "word", people
+        notes = str(v["view"]["content"].get("notes"))
+        assert ("Reviewers may approve" in notes) or ("Assignees do the work" in notes)

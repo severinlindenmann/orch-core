@@ -16,13 +16,13 @@ P1, P2 = "p_" + "1" * 32, "p_" + "2" * 32
 AGENT = {"hours": 8, "scope": "workable"}
 
 
-def new_kind(people=None, agent=None, **over):
+def new_kind(people=None, agent=None, person=P1, **over):
     extra = {}
     if people:
         extra["people"] = people
     if agent:
         extra["agent"] = agent
-    return sequence.confirm_kind(sequence.validate_intent(intent_of(**extra, **over)))
+    return sequence.confirm_kind(sequence.validate_intent(intent_of(**extra, **over)), person)
 
 
 def edit_intent(**over):
@@ -44,10 +44,25 @@ def test_a_plain_new_ticket_is_a_click():
 
 @pytest.mark.parametrize(
     "people",
-    [{"assignees": [P1]}, {"reviewers": [P1]}, {"assignees": [P1], "reviewers": [P1, P2]}],
+    [{"assignees": [P1]}, {"reviewers": [P1]}, {"assignees": [P1], "reviewers": [P1]}],
 )
-def test_a_new_ticket_with_assignees_or_reviewers_is_a_click(people):
+def test_a_new_ticket_naming_only_the_signer_is_a_click(people):
     assert new_kind(people=people) == "click"
+    assert new_kind(people=people, person=None) == "word"  # no known signer: never lowered
+
+
+@pytest.mark.parametrize(
+    "people",
+    [
+        {"reviewers": [P2]},
+        {"assignees": [P2]},
+        {"reviewers": [P1, P2]},
+        {"assignees": [P1], "reviewers": [P2]},
+        {"assignees": [P2], "reviewers": [P1]},
+    ],
+)
+def test_a_new_ticket_naming_another_member_or_a_mix_keeps_the_word(people):
+    assert new_kind(people=people) == "word"
 
 
 @pytest.mark.parametrize(
@@ -66,22 +81,16 @@ def test_agent_access_keeps_the_word_whatever_the_people(people):
 @pytest.mark.parametrize("role", ["assignees", "reviewers", "owner"])
 def test_a_people_edit_of_an_existing_ticket_keeps_the_word(role):
     intent = sequence.validate_intent(edit_intent(people={role: {"add": [P1], "remove": []}}))
-    assert sequence.confirm_kind(intent) == "word"
+    assert sequence.confirm_kind(intent, P1) == "word"  # even naming the signer: an edit of an existing ticket
 
 
-def test_the_matrix_never_lowers_below_the_strongest_step():
-    kinds = {}
-    for roles, agent in itertools.product(
-        [(), ("assignees",), ("reviewers",), ("owner",), ("assignees", "owner")], (False, True)
-    ):
-        people = {r: P1 if r == "owner" else [P1] for r in roles}
-        kinds[(roles, agent)] = new_kind(people=people, agent=AGENT if agent else None)
-    assert {k for k, v in kinds.items() if v == "click"} == {
-        ((), False),
-        (("assignees",), False),
-        (("reviewers",), False),
-    }
-    assert set(kinds.values()) == {"click", "word"}
+def test_the_matrix_op_x_people_role_x_who_x_agent():
+    who = {"self": [P1], "other": [P2], "mix": [P1, P2]}
+    click = set()
+    for role, w, agent in itertools.product(("assignees", "reviewers"), who, (False, True)):
+        if new_kind(people={role: who[w]}, agent=AGENT if agent else None) == "click":
+            click.add((role, w, agent))
+    assert click == {("assignees", "self", False), ("reviewers", "self", False)}
 
 
 def test_the_owners_draft_creator_as_assignee_and_reviewer_no_owner_step_is_a_click():

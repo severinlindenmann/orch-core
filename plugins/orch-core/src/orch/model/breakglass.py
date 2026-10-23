@@ -12,8 +12,8 @@ not the event-type check below. ``hub.repin`` is listed so the set is complete; 
 ``pk`` only (the matrix test already refuses it by a device key).
 
 **Key exposure (#1097).** A device key with *positive evidence* of convenience custody has the signer kind ``exposed``
-(:func:`signer_kind`): a signed ``device.exposed`` mark, or any admitted line of that device with ``auth:
-"convenience"`` (the model sets ``Device.exposed``; nothing clears it, only a new key does). No row allows ``exposed``,
+(:func:`signer_kind`): a signed ``device.exposed`` mark (the model sets ``Device.exposed``; nothing clears it, only a
+new key does). It is read from the roster before the ``auth`` label, so no label hides it. No row allows ``exposed``,
 so a copy of such a key cannot sign ``hub.left``, the ``hub.mode`` reaffirmation or a full ``hub.joined``, whatever
 ``auth`` label it writes: ``sign.key_exposed``. The one exception is the mark itself (``device.mark_exposed``), which
 only removes authority and so may land in full mode. Keys with no such evidence count as clean.
@@ -144,6 +144,9 @@ def signer_kind(ws: WsCore, e: Mapping[str, Any]) -> str:
         return "agent"
     if "via" in a or e.get("auth") == "hub":
         return "hub"
+    dev = ws.devices.get(a.get("device"))
+    if dev is not None and dev.person == a.get("id") and dev.exposed:
+        return "exposed"  # #1097: decided from the roster first, whatever the label says
     if e.get("auth") == "convenience":
         return "convenience"
     if e.get("signed_by"):
@@ -152,10 +155,7 @@ def signer_kind(ws: WsCore, e: Mapping[str, Any]) -> str:
         return "other"  # a phone's label, webauthn, ...: not the terminal
     if is_recovery(ws, e) or is_rotation(ws, e):
         return "pk"
-    dev = ws.devices.get(a.get("device"))
-    if dev is None or dev.person != a.get("id"):
-        return "other"
-    return "exposed" if dev.exposed else "owner_device_key"
+    return "owner_device_key" if dev is not None and dev.person == a.get("id") else "other"
 
 
 # ``other`` is deliberately not a member of SIGNER_KINDS: nothing allows it.

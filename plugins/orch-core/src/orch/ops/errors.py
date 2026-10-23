@@ -184,8 +184,8 @@ _SPECS = [
         "this device key was in one-click custody, so it cannot do this: make a new key with your recovery code",
         "orch keys custody passphrase --rotate --workspace W (needs your recovery code; works while the hub is down)",
         ["orch", "keys", "custody", "passphrase", "--rotate"],
-        "#1097: a device key with signed evidence of convenience custody (a device.exposed mark, or a line it signed "
-        "with auth convenience) cannot enter full hub mode, leave a hub on its own, re-affirm full mode or rotate "
+        "#1097: a device key with a signed device.exposed mark (written before it entered convenience custody)"
+        " cannot enter full hub mode, leave a hub on its own, re-affirm full mode or rotate "
         "the workspace key, because a process of yours may hold a copy. Only a new key (device.rotated) clears it.",
     ),
     _e(

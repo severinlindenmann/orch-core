@@ -85,18 +85,6 @@ def test_the_headline_forgery_a_copied_exposed_key_cannot_forge_a_passphrase_lab
     assert hub["status"] == "joined"
 
 
-def test_a_convenience_labelled_line_in_the_log_exposes_the_key_without_any_mark(served):
-    owner = served.lab.ws.owner
-    assert not device_of(served, owner.device).exposed
-    landed, error = append(
-        served, [owner_event(served, "settings.changed", auth="convenience", set={"claim_ttl_min": 30})]
-    )
-    assert error is None or error.code != "sign.key_exposed"
-    # (whatever the host said about the click flag, the model reads the label of an admitted line as evidence)
-    if landed:
-        assert device_of(served, owner.device).exposed
-
-
 def test_keys_rotate_is_refused_for_an_exposed_key(human, served, stub, keystore, monkeypatch):
     from orch.custody import select
 

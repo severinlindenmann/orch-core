@@ -8,7 +8,7 @@ from __future__ import annotations
 import pytest
 
 from orch.model import Code, admit, breakglass, replay
-from tests.model.test_hub_consumers import HUB, ROOT, hub_joined
+from tests.model.test_hub_consumers import HUB, ROOT
 from tests.model.world import World
 from tests.schema.examples import cert, hex32
 
@@ -110,30 +110,6 @@ def test_a_copied_exposed_key_cannot_forge_a_passphrase_labelled_hub_left(w):
     assert strict(w).workspace.hub["status"] == "joined"  # and the hub binding is untouched
 
 
-def test_a_convenience_labelled_line_is_evidence_without_any_mark():
-    s = World(validate=False).bootstrap({})
-    assert not strict(s)._core.ws.devices[s.dev["sev"]].exposed
-    s.wev("settings.changed", "sev", set={"claim_ttl_min": 30}, auth="convenience")
-    assert strict(s)._core.ws.devices[s.dev["sev"]].exposed
-
-
-def test_a_convenience_line_in_a_ticket_log_exposes_the_device_too():
-    s = World(validate=False).bootstrap({})
-    t = s.ticket()
-    assert not strict(s)._core.ws.devices[s.dev["sev"]].exposed
-    s.tev(t, "log.added", "sev", text="x", auth="convenience")
-    assert strict(s)._core.ws.devices[s.dev["sev"]].exposed
-
-
-def test_the_exposure_counts_from_the_next_line_not_the_convenience_line_itself():
-    """The check of a line sees the state before it: a clean key's first convenience line is judged as convenience."""
-    s = World(validate=False).bootstrap({})
-    hub_joined(s, [], mode="selective")
-    e = s.build_unappended("workspace", "settings.changed", "sev", roster_v=s.roster_v, set={"claim_ttl_min": 30},
-                           auth="convenience")  # fmt: skip
-    assert not hasattr(admit(strict(s), e, log="workspace"), "code")  # selective: signs locally
-
-
 def test_the_hub_mode_reaffirmation_is_refused_for_an_exposed_key_and_allowed_for_a_clean_one(w):
     assert not hasattr(admit(strict(w), reaffirm(w, w.b), log="workspace"), "code")  # B: clean
     mark(w)
@@ -150,9 +126,10 @@ def test_clean_keys_are_unaffected_a_legacy_key_leaves_and_reaffirms(w):
 
 
 @pytest.mark.parametrize("label", ["passphrase", "convenience"])
-def test_a_first_full_join_is_refused_for_an_exposed_key_and_for_a_convenience_line(label):
+def test_a_first_full_join_is_refused_for_an_exposed_key_and_for_a_convenience_label(label):
     s = World(validate=False).bootstrap({})
-    s.wev("settings.changed", "sev", set={"claim_ttl_min": 30}, auth="convenience")
+    if label == "passphrase":
+        s.wev("device.exposed", "sev", device=s.dev["sev"], reason="convenience")
     e = s.build_unappended("workspace", "hub.joined", "sev", roster_v=s.roster_v, hub_id=HUB, hk_root_pub=ROOT,
                            mode="full", binding_seq=1, aliases=[], auth=label)  # fmt: skip
     assert admit(strict(s), e, log="workspace").code == Code.SIGN_KEY_EXPOSED
@@ -242,3 +219,41 @@ def test_a_failed_verifier_refuses_the_rotation(w):
     w.verifier.bad_embedded.add("zz")
     e = rotated(w, id="zz")
     assert admit(strict(w), e, log="workspace").code == Code.DEVICE_CERT
+
+
+LABELS = [None, "passphrase", "click", "convenience", "secure-enclave-unlocked", "no-such-label"]
+
+
+@pytest.mark.parametrize("label", LABELS)
+def test_an_exposed_device_is_refused_whatever_label_it_writes(w, label):
+    """The exposure is read from the roster before the auth label: no label hides it (full join, leave, reaffirm)."""
+    mark(w)
+    extra = {} if label is None else {"auth": label}
+    for build in (leave, reaffirm):
+        e = build(w, "sev")
+        if label is None:
+            e.pop("auth", None)
+        else:
+            e["auth"] = label
+        assert breakglass.signer_kind(strict(w)._core.ws, e) == "exposed", (label, extra)
+        assert admit(strict(w), e, log="workspace").code == Code.SIGN_KEY_EXPOSED, (build.__name__, label)
+    full = w.build_unappended(
+        "workspace", "hub.joined", "sev", roster_v=w.roster_v, hub_id=HUB, hk_root_pub=ROOT, mode="full",
+        binding_seq=2, aliases=[],
+    )  # fmt: skip
+    full["auth"] = label
+    if label is None:
+        full.pop("auth")
+    assert admit(strict(w), full, log="workspace").code == Code.SIGN_KEY_EXPOSED
+
+
+@pytest.mark.parametrize("label", LABELS)
+def test_an_exposed_device_is_refused_a_first_full_join_whatever_label(label):
+    s = World(validate=False).bootstrap({})
+    s.wev("device.exposed", "sev", device=s.dev["sev"], reason="convenience")
+    e = s.build_unappended("workspace", "hub.joined", "sev", roster_v=s.roster_v, hub_id=HUB, hk_root_pub=ROOT,
+                           mode="full", binding_seq=1, aliases=[])  # fmt: skip
+    e.pop("auth", None)
+    if label is not None:
+        e["auth"] = label
+    assert admit(strict(s), e, log="workspace").code == Code.SIGN_KEY_EXPOSED

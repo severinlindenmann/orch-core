@@ -228,8 +228,7 @@ def _after(state: State, core: Core, event: dict[str, Any], log: str, now: str |
             return State(ws, state.tickets, _errors(core), now, core, state._ctx)
         tickets = {uid: ticket_view(core, t, n) for uid, t in sorted(core.tickets.items())}
     else:
-        # (a convenience line marks its device exposed in the workspace view too, #1097)
-        ws = state.workspace if now == state.now and event.get("auth") != "convenience" else workspace_view(core, n)
+        ws = state.workspace if now == state.now else workspace_view(core, n)
         tickets = dict(state.tickets)
         if log in core.tickets:
             tickets[log] = ticket_view(core, core.tickets[log], n)

@@ -490,6 +490,8 @@ function Meta({ a, jump }: { a: Artifact; jump: (j: Jump) => void }) {
 
 export function Artifacts({ ticket, viewer, jump, focus }: TabProps & { focus?: string }) {
   const [open, setOpen] = useState<Artifact | null>(null)
+  /** The drawer opened by a jump (a link), not by a click on Preview: an SVG or GIF waits for a click. */
+  const [byJump, setByJump] = useState(false)
   /** The Preview button that opened the drawer; closing returns focus to it. */
   const opener = useRef<HTMLElement | null>(null)
   const workspaces = useQuery(queries.workspaces())
@@ -500,6 +502,7 @@ export function Artifacts({ ticket, viewer, jump, focus }: TabProps & { focus?: 
     const a = ticket.artifacts.find((x) => `artifact-${x.name}` === focus)
     if (a && openMode(a) === 'preview') {
       opener.current = document.getElementById(focus)?.querySelector<HTMLElement>('[data-preview]') ?? null
+      setByJump(true)
       setOpen(a)
     }
   }, [focus, ticket.artifacts])
@@ -541,6 +544,7 @@ export function Artifacts({ ticket, viewer, jump, focus }: TabProps & { focus?: 
                     current={open?.name === a.name}
                     onPreview={(el) => {
                       opener.current = el
+                      setByJump(false)
                       setOpen(a)
                     }}
                   />
@@ -551,7 +555,7 @@ export function Artifacts({ ticket, viewer, jump, focus }: TabProps & { focus?: 
         </ul>
       </div>
 
-      <ArtifactDrawer artifact={open} ticket={ticket.key} agentHtml={agentHtml} onClose={() => setOpen(null)} opener={opener} />
+      <ArtifactDrawer artifact={open} ticket={ticket.key} agentHtml={agentHtml} holdPictures={byJump} onClose={() => setOpen(null)} opener={opener} />
     </>
   )
 }
@@ -585,6 +589,7 @@ export function ArtifactDrawer({
   body,
   denied = false,
   ticket,
+  holdPictures = false,
 }: {
   artifact: Artifact | null
   agentHtml: boolean
@@ -596,6 +601,8 @@ export function ArtifactDrawer({
   body?: ReactNode
   denied?: boolean
   ticket?: string
+  /** Opened by a link, not a click: an SVG or GIF waits for a click. */
+  holdPictures?: boolean
 }) {
   return (
     <Sheet open={!!open} onOpenChange={(o) => !o && onClose()}>
@@ -625,7 +632,7 @@ export function ArtifactDrawer({
                 </>
               )}
             </SheetHeader>
-            <div className="min-h-0 flex-1 overflow-auto p-4">{body ?? <Viewer key={open.name + open.sha256} a={open} agentHtml={agentHtml} ticket={ticket} />}</div>
+            <div className="min-h-0 flex-1 overflow-auto p-4">{body ?? <Viewer key={open.name + open.sha256} a={open} agentHtml={agentHtml} ticket={ticket} holdPictures={holdPictures} />}</div>
           </>
         )}
       </SheetContent>

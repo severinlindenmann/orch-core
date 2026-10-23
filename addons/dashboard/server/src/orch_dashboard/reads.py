@@ -161,6 +161,9 @@ _SVG_ATTRS = frozenset(
 )
 _XML_ENCODING = re.compile(rb"^\s*<\?xml[^>]*?encoding\s*=\s*[\"']([^\"']+)", re.IGNORECASE)
 _REF = re.compile(rb"&(?!(?:amp|lt|gt|quot|apos);)")
+_FUNC = re.compile(r"([A-Za-z0-9_-]*)\s*\(")
+#: the only functions an attribute value may call besides `url(#id)`: colours and transforms
+_SAFE_FUNCS = frozenset("url rgb rgba hsl hsla matrix translate scale rotate skewx skewy".split())
 _URL_FN = re.compile(r"url\(", re.IGNORECASE)
 _URL_LOCAL = re.compile(r"url\(\s*#[\w.\-]+\s*\)", re.IGNORECASE)
 
@@ -221,6 +224,8 @@ def safe_svg(data: bytes) -> bool:
             if klocal == "href" and not value.startswith("#"):
                 raise Refused
             if len(_URL_FN.findall(value)) != len(_URL_LOCAL.findall(value)):
+                raise Refused
+            if any(f.lower() not in _SAFE_FUNCS for f in _FUNC.findall(value)):  # any other "(": refuse
                 raise Refused
 
     def end(_name):

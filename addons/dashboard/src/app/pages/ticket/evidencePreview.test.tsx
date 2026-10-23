@@ -167,3 +167,22 @@ describe('an SVG or GIF is held by its server-read type, not its name', () => {
     expect((await screen.findByRole('img', { name: 'Picture shot.png' })).getAttribute('src')).toMatch(/^data:image\/svg\+xml/)
   })
 })
+
+describe('a drawer opened by a link holds SVG and GIF too', () => {
+  it('holdPictures on the drawer: a button, no picture, until a click', async () => {
+    const { ArtifactDrawer } = await import('./Artifacts')
+    const bytes = SVG
+    const sha = sha256HexBytes(bytes)
+    const a = { name: 'logo.svg', kind: 'diagram', bytes: bytes.length, sha256: sha, added_by: 'agent', at: '2026-10-23T10:00:00Z' } as Artifact
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } })
+    client.setQueryData(['workspaces'], [{ id: 'w1', prefix: 'DEMO', name: 'Demo', members: [], gates: {}, addons: {}, counts: {}, needs_you: 0 }])
+    client.setQueryData(['artifact-text', 'w1', 'DEMO-1', 'logo.svg', sha], { name: 'logo.svg', size: bytes.length, digest: 'sha256:' + sha, verified: true, truncated: false, binary: false, text: null, ...media('svg', bytes) })
+    render(
+      <QueryClientProvider client={client}>
+        <ArtifactDrawer artifact={a} agentHtml={false} ticket="DEMO-1" holdPictures onClose={() => {}} opener={{ current: null }} />
+      </QueryClientProvider>,
+    )
+    expect(await screen.findByRole('button', { name: 'Show SVG picture' })).toBeInTheDocument()
+    expect(screen.queryByRole('img', { name: /Picture/ })).toBeNull()
+  })
+})

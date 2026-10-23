@@ -300,7 +300,8 @@ def test_evidence_svg_is_an_allowlist_not_a_scan(client, token, stub, rich):
         "ok.svg": b"<svg "
         + SVG_NS
         + b' width="9" height="9" viewBox="0 0 9 9"><rect x="0" y="0" width="5" height="5" fill="#0a7"/>'
-        b'<circle cx="3" cy="3" r="2" fill="url(#g)"/><path d="M0 0L5 5"/><text x="1" y="9">hi</text></svg>',
+        b'<circle cx="3" cy="3" r="2" fill="url(#g)" transform="translate(1 1) rotate(5)"'
+        b' stroke="rgb(1,2,3)"/><path d="M0 0L5 5"/><text x="1" y="9">hi</text></svg>',
         "bom.svg": b"\xef\xbb\xbf<svg " + SVG_NS + b"><rect/></svg>",
         "data.svg": b"<svg " + SVG_NS + b'><image href="data:image/png;base64,AAAA"/></svg>',
         "charref.svg": b"<svg " + SVG_NS + b'><rect fill="&#100;ata:x"/></svg>',
@@ -328,6 +329,9 @@ def test_evidence_svg_is_an_allowlist_not_a_scan(client, token, stub, rich):
         "esc_fill.svg": b"<svg " + SVG_NS + rb' ><rect fill="u\72l(d\61ta:image/png;base64,AAAA)"/></svg>',
         "plain_style.svg": b"<svg " + SVG_NS + b'><rect style="fill:red"/></svg>',
         "backslash.svg": b"<svg " + SVG_NS + rb' ><rect fill="re\64"/></svg>',
+        "calc.svg": b"<svg " + SVG_NS + b'><rect width="calc(1px + 2px)"/></svg>',
+        "image_set_fn.svg": b"<svg " + SVG_NS + b'><rect fill="image-set(x)"/></svg>',
+        "bare_paren.svg": b"<svg " + SVG_NS + b'><rect fill="(1)"/></svg>',
         "class.svg": b"<svg " + SVG_NS + b'><rect class="a"/></svg>',
         "latin1.svg": b'<?xml version="1.0" encoding="ISO-8859-1"?><svg ' + SVG_NS + b"><rect/></svg>",
     }

@@ -8,8 +8,8 @@ on:
 permissions:
   contents: read
   pull-requests: read  # the changed files of the PR, for the `changes` job
-concurrency:
-  group: dashboard-${{ github.ref }}
+concurrency:  # draft-event and full runs never cancel each other
+  group: dashboard-${{ github.ref }}-${{ github.event.pull_request.draft && 'draft' || 'full' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   changes:
@@ -20,6 +20,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       relevant: ${{ steps.files.outputs.relevant }}
+      heavy: ${{ steps.files.outputs.heavy }}
     steps:
       - id: files
         env:
@@ -41,10 +42,13 @@ jobs:
             relevant=false
           fi
           echo "relevant=$relevant" >> "$GITHUB_OUTPUT"
+          heavy=true  # the PR's LIVE draft state, not the payload (push and `gh pr ready` can race)
+          if [ "$EVENT" = pull_request ] && [ "$(gh api "repos/$REPO/pulls/$PR" --jq .draft)" = true ]; then heavy=false; fi
+          echo "heavy=$heavy" >> "$GITHUB_OUTPUT"
   vitest:
     name: vitest (shard ${{ matrix.shard }}/3)
     needs: changes
-    if: needs.changes.outputs.relevant == 'true' && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
+    if: needs.changes.outputs.relevant == 'true' && needs.changes.outputs.heavy == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -68,7 +72,7 @@ jobs:
   node:
     name: node (layout check, typecheck, build)
     needs: changes
-    if: needs.changes.outputs.relevant == 'true' && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
+    if: needs.changes.outputs.relevant == 'true' && needs.changes.outputs.heavy == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     defaults:
@@ -90,7 +94,7 @@ jobs:
   python:
     name: dashboard tests
     needs: changes
-    if: needs.changes.outputs.relevant == 'true' && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
+    if: needs.changes.outputs.relevant == 'true' && needs.changes.outputs.heavy == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:

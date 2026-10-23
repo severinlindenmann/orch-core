@@ -2015,3 +2015,17 @@ Revert: remove Wiki route registration and feature advertisement; repository pag
 **Revert:** Remove the dashboard `addon_enable` action and setup dialog together; restore the previous switching flow only with a compatible core settings policy.
 
 **Integration note:** needs core #737: the host read `addon.preview` and the top-level `publish` of `workspace.settings` (the Publish addresses, for a person only).
+
+## 2026-10-23 Hub pages (V3 A7, #859): read-only pages, every change is a Terminal command
+
+- **Decision:** The Hub tab, the top-bar chip, the offline banner and the Tickets "Hub" column read the host (`hub.status`, `share.rules`, `share.preview` through `server/src/orch_dashboard/hub.py`, closed shapes). A change (join, switch to full, leave, share rule, stop sharing, stop telling) is a command the server builds (`POST /hub/command`, every value checked and shell-quoted) and the owner runs in their Terminal. The dashboard sends no hub write, signs nothing and shows no invented fingerprints; group counts and the hub id are labelled "from the hub, not signed". Selective mode shares needs-you notes and questions always (no switch).
+- **Why:** README of the A3/A5 mockups: Mission Control explains, the Terminal signs. `orch hub join|mode|leave|share ...` already sign and finish the hub step; a dashboard prepare hand-off would need new hand-off actions in handoff.py (follow-up).
+- **Also:** `hostlink.supports()` now treats `hub/1` like `human/1` (the host lists hub ops in `ops` but has no `hub/1` cap) and the four hub reads are in the client's `OPS`; before, C11's `hub.status` read could never succeed on a real host.
+- **Revert:** Remove `hub.py`, its route registration and the `hub` feature in `gateway.py`; drop the Hub tab, chip, banner and column.
+
+## 2026-10-23 Hub UI first pass: one rule per review
+
+- **Decision:** Preview and hand off one rule addition/removal at a time, matching the supplied API. Reuse the existing command-copy control with an exact-command entry point. Use the existing chart violet token for hub surfaces. Narrow ticket tables fold metadata into labelled lines.
+- **Why:** Each command must describe exactly one supported change; generating the command is not proof it ran. Hub settings never sign, verify invites, or invent Terminal fingerprints.
+- **Revert:** Remove the Hub UI integrations and exact-command entry point; retain the supplied hub API and mocks.
+- **Validation:** TypeScript only for this task. No servers or test runners started. No browser layout verification performed.

@@ -239,3 +239,13 @@
 @container (max-width: 1500px) {
   .agent-access-reminder { display: none; }
 }
+
+/* Hub chip follows the available top-bar width beside the dock. */
+@container (max-width: 639px) {
+  .hub-chip-long { display: none; }
+  .hub-chip-short { display: inline; }
+}
+@media (max-width: 639px) {
+  .hub-chip-long { display: none; }
+  .hub-chip-short { display: inline; }
+}

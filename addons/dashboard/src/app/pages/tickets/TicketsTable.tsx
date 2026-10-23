@@ -1,3 +1,7 @@
+import { useQuery } from '@tanstack/react-query'
+import { hubQueries, hubServed } from '@/api/hub'
+import { Badge } from '@/components/ui/badge'
+import { useHub } from '../settings/hub/shared'
 import { useEffect, useRef } from 'react'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Lock } from 'lucide-react'
@@ -96,6 +100,10 @@ export function TicketsTable({
 }) {
   const navigate = useNavigate()
   const { workspace } = useWorkspace()
+  const hub = useHub(workspace?.id)
+  const hubShare = useQuery({ ...hubQueries.share(workspace?.id ?? ''), enabled: !!workspace && hubServed(workspace.id) && hub.data?.mode === 'selective' })
+  const showHub = hub.data?.mode === 'selective' && hubShare.data?.tickets_complete === true
+  const hubMark = (key: string) => <Badge variant="outline" data-testid={'ticket-hub-' + key} className={hubShare.data?.tickets.includes(key) ? 'border-chart-4/40 bg-chart-4/10 text-chart-4' : 'border-border bg-surface-2 text-text-muted'}>{hubShare.data?.tickets.includes(key) ? 'Shared' : 'Only here'}</Badge>
   // With Estimate on the list has its own Points column (the chip is not repeated in the add-on column).
   const hasPoints = estimateOn(workspace)
   const body = useRef<HTMLTableSectionElement>(null)
@@ -116,7 +124,8 @@ export function TicketsTable({
   )
   const show = (c: Foldable) => !folded.has(c)
   const hasAddon = addonColumns.length > 0
-  const colSpan = (canSelect ? 1 : 0) + 9 + (hasPoints ? 1 : 0) + (hasAddon ? 1 : 0) - FOLDABLE.filter((c) => folded.has(c) && (c !== 'addon' || hasAddon)).length
+  const compact = width > 0 && width < 520
+  const colSpan = (showHub ? 1 : 0) - (compact ? 4 : 0) + (canSelect ? 1 : 0) + 9 + (hasPoints ? 1 : 0) + (hasAddon ? 1 : 0) - FOLDABLE.filter((c) => folded.has(c) && (c !== 'addon' || hasAddon)).length
   const renderRow = (t: TicketSummary, indent = false) => {
     const isSel = selected.has(t.key)
     const turn = turnLabel(t, me, people)
@@ -146,6 +155,7 @@ export function TicketsTable({
           <div className="truncate text-[13px] text-text" title={t.title}>
             {t.title}
           </div>
+          {compact && <div className="flex flex-wrap items-center gap-1 text-xs text-text-muted"><span>Type:</span><TypeIcon type={t.type} /><span>Priority:</span><PriorityMarker priority={t.priority} /><span>Status: {statusLabel(t.status, t.landing)} · Updated: {ago(t.updated_at)}</span></div>}
           {(t.labels.length > 0 || t.match) && (
             <div className="mt-0.5 flex min-w-0 items-center gap-1 overflow-hidden">
               {t.labels.slice(0, 3).map((l) => (
@@ -187,13 +197,13 @@ export function TicketsTable({
             </div>
           )}
         </TableCell>
-        <TableCell className="px-1.5 py-1.5">
+        {!compact && <><TableCell className="px-1.5 py-1.5">
           <TypeIcon type={t.type} />
         </TableCell>
         <TableCell className="px-1.5 py-1.5">
           <PriorityMarker priority={t.priority} />
         </TableCell>
-        <TableCell className="truncate px-1.5 py-1.5 text-[12px] text-text-muted">{statusLabel(t.status, t.landing)}</TableCell>
+        <TableCell className="truncate px-1.5 py-1.5 text-[12px] text-text-muted">{statusLabel(t.status, t.landing)}</TableCell></>}
         {show('people') && (
           <TableCell className="px-1.5 py-1.5">
             <People ticket={t} people={people} />
@@ -214,9 +224,10 @@ export function TicketsTable({
             {t.type === 'epic' ? '' : (pointsOf(t.size) ?? '–')}
           </TableCell>
         )}
-        <TableCell className="truncate px-1.5 py-1.5 font-mono text-[11px] text-text-faint" title={t.updated_at}>
+        {!compact && <TableCell className="truncate px-1.5 py-1.5 font-mono text-[11px] text-text-faint" title={t.updated_at}>
           {ago(t.updated_at)}
-        </TableCell>
+        </TableCell>}
+        {showHub && <TableCell className="px-1.5 py-1.5">{hubMark(t.key)}</TableCell>}
         {hasAddon && show('addon') && (
           <TableCell className="px-1.5 py-1.5">
             <span className="flex flex-wrap gap-1">
@@ -230,20 +241,22 @@ export function TicketsTable({
 
   return (
     <div ref={frame} className="min-h-0 flex-1 overflow-auto rounded-lg border border-border bg-surface">
+      {hub.data?.mode === 'full' && <p data-testid="hub-all-tickets" className="border-b border-chart-4/40 bg-chart-4/10 p-3 text-sm text-chart-4">The hub can read every ticket here</p>}
       <Table aria-label="Tickets" className={cn('table-fixed', folded.size === 0 && 'min-w-[800px]')}>
         <TableHeader className="sticky top-0 z-10 bg-surface-2">
           <TableRow>
             {canSelect && <TableHead className="h-8 w-8 px-2"><span className="sr-only">Select</span></TableHead>}
             <SortHeader label="Key" id="key" sort={sort} onSort={onSort} className="w-[92px]" />
             <SortHeader label="Title" sort={sort} onSort={onSort} />
-            <SortHeader label="Type" sort={sort} onSort={onSort} className="w-[44px]" />
+            {!compact && <><SortHeader label="Type" sort={sort} onSort={onSort} className="w-[44px]" />
             <SortHeader label="Pri" sr="ority" id="priority" sort={sort} onSort={onSort} className="w-[40px]" />
-            <SortHeader label="Status" id="status" sort={sort} onSort={onSort} className="w-[84px]" />
+            <SortHeader label="Status" id="status" sort={sort} onSort={onSort} className="w-[84px]" /></>}
             {show('people') && <SortHeader label="People" sort={sort} onSort={onSort} className="w-[52px]" />}
             {show('turn') && <SortHeader label="Turn" sort={sort} onSort={onSort} className="w-[60px]" />}
             {show('progress') && <SortHeader label="Progress" sort={sort} onSort={onSort} className="w-[72px]" />}
             {hasPoints && <SortHeader label="Points" sort={sort} onSort={onSort} className="w-[56px]" />}
-            <SortHeader label="Updated" id="updated" sort={sort} onSort={onSort} className="w-[80px]" />
+            {!compact && <SortHeader label="Updated" id="updated" sort={sort} onSort={onSort} className="w-[80px]" />}
+            {showHub && <TableHead className="h-8 w-[86px] px-1.5 text-xs text-text-muted">Hub</TableHead>}
             {hasAddon && show('addon') && (
               <TableHead className="h-8 w-[132px] px-1.5 text-[12px] font-medium text-text-muted">
                 <span className="inline-flex items-center gap-1">

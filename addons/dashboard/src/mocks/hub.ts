@@ -44,8 +44,8 @@ export function mockHubStatus(s: HubScenario = scenario()): HubStatus {
 }
 
 const SHARED = [
-  { key: 'DEMO-0012', title: 'Export report as PDF' },
-  { key: 'DEMO-0014', title: 'Pricing page copy' },
+  { key: 'DEMO-0043', title: 'Export report as PDF' },
+  { key: 'DEMO-0045', title: 'Pricing page copy' },
 ]
 
 function mockShare(): HubShare {
@@ -56,7 +56,7 @@ function mockShare(): HubShare {
       { kind: 'needs_you', value: null, count: 3, describes: 'needs-you summaries (type, a one-line title and the deadline)' },
       { kind: 'questions', value: null, count: 1, describes: 'every open question addressed to you (the full question)' },
       { kind: 'type', value: 'feature', count: 1, describes: "every ticket of type 'feature' (title, status, labels, deadline)" },
-      { kind: 'ticket', value: 'DEMO-0014', count: 1, describes: "the ticket 'DEMO-0014' (title, status, labels, deadline)" },
+      { kind: 'ticket', value: 'DEMO-0045', count: 1, describes: "the ticket 'DEMO-0045' (title, status, labels, deadline)" },
     ],
     shared: 6, refused: [], tickets: SHARED.map((t) => t.key), tickets_complete: true,
   }
@@ -71,7 +71,7 @@ function mockPreview(body: { add?: HubRule; remove?: HubRule } | null): HubPrevi
   let added = 0
   let removed = 0
   if (add && (add.kind === 'type' || add.kind === 'tag')) {
-    items = [...items, { kind: 'ticket', line: `ticket DEMO-0013: Fix login redirect` }]
+    items = [...items, { kind: 'ticket', line: `ticket DEMO-0042: Fix login redirect` }]
     added = 1
   } else if (add && add.kind === 'ticket' && !SHARED.some((t) => t.key === add.value)) {
     items = [...items, { kind: 'ticket', line: `ticket ${add.value}: (a ticket you pick)` }]

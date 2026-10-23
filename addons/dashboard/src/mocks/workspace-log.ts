@@ -1,5 +1,6 @@
 // Pure reducers: workspace state and grants are derived from seed + workspace events.
 import { addonStatus } from '@/api/addons'
+import { validIcon } from '@/api/wsIcons'
 import type { CodeReviewApplies, GateName, GrantInfo, Role, SavedView, ViewParams, Workspace, WorkspaceEvent, WorkspaceRepo } from '@/api/types'
 
 export function foldWorkspace(seed: Workspace, events: WorkspaceEvent[]): Workspace {
@@ -92,6 +93,9 @@ export function foldWorkspace(seed: Workspace, events: WorkspaceEvent[]): Worksp
         // Replay checks authority at the event's position: an owner, a person. Anything else is not folded.
         const signer = ws.members.find((m) => m.person === e.actor?.id)
         if (e.actor?.kind !== 'person' || signer?.role !== 'owner') break
+        const icon = (e.set as { icon?: unknown } | undefined)?.icon
+        if (icon === null) ws.icon = null
+        else if (icon && typeof icon === 'object' && validIcon((icon as { icon?: unknown }).icon, (icon as { colour?: unknown }).colour)) ws.icon = { icon: (icon as { icon: string }).icon, colour: (icon as { colour: string }).colour }
         if (!repos || typeof repos !== 'object') break
         const next = { ...(ws.repos ?? {}) }
         for (const [name, entry] of Object.entries(repos)) {

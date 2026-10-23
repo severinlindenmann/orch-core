@@ -1,138 +1,47 @@
-// A workspace's icon: one of a small built-in set plus one of a few colours (no uploads). The default comes from the
-// workspace id, so it is stable without anyone choosing. The icon never replaces the prefix and short id, which stay beside it. A choice is a dashboard-local preference (localStorage, per
-// browser and workspace id): it is not signed, not a ticket field and not part of the core protocol.
+// A workspace's icon tile: one of a small built-in set plus one of a few colours (no uploads). The icon is the signed
+// workspace setting (see api/wsIcons.ts); without one, the default comes from the workspace id. It never replaces the
+// prefix and the short id, which stay beside it (they tell same-named workspaces apart).
 
-import { useCallback, useSyncExternalStore } from 'react'
 import { Anchor, Briefcase, Building2, Cloud, Code2, Compass, Flame, Folder, Globe, Heart, Leaf, Rocket, Star, Zap, type LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { COLOUR_IDS, ICON_IDS, workspaceIconOf, type WorkspaceIconChoice } from '@/api/wsIcons'
+import type { Workspace } from '@/api/types'
 
-export const WORKSPACE_ICONS: { id: string; label: string; Icon: LucideIcon }[] = [
-  { id: 'folder', label: 'Folder', Icon: Folder },
-  { id: 'rocket', label: 'Rocket', Icon: Rocket },
-  { id: 'briefcase', label: 'Briefcase', Icon: Briefcase },
-  { id: 'building', label: 'Building', Icon: Building2 },
-  { id: 'code', label: 'Code', Icon: Code2 },
-  { id: 'cloud', label: 'Cloud', Icon: Cloud },
-  { id: 'compass', label: 'Compass', Icon: Compass },
-  { id: 'globe', label: 'Globe', Icon: Globe },
-  { id: 'leaf', label: 'Leaf', Icon: Leaf },
-  { id: 'flame', label: 'Flame', Icon: Flame },
-  { id: 'zap', label: 'Bolt', Icon: Zap },
-  { id: 'anchor', label: 'Anchor', Icon: Anchor },
-  { id: 'heart', label: 'Heart', Icon: Heart },
-  { id: 'star', label: 'Star', Icon: Star },
-]
+const ICON_VIEW: Record<(typeof ICON_IDS)[number], { label: string; Icon: LucideIcon }> = {
+  folder: { label: 'Folder', Icon: Folder },
+  rocket: { label: 'Rocket', Icon: Rocket },
+  briefcase: { label: 'Briefcase', Icon: Briefcase },
+  building: { label: 'Building', Icon: Building2 },
+  code: { label: 'Code', Icon: Code2 },
+  cloud: { label: 'Cloud', Icon: Cloud },
+  compass: { label: 'Compass', Icon: Compass },
+  globe: { label: 'Globe', Icon: Globe },
+  leaf: { label: 'Leaf', Icon: Leaf },
+  flame: { label: 'Flame', Icon: Flame },
+  zap: { label: 'Bolt', Icon: Zap },
+  anchor: { label: 'Anchor', Icon: Anchor },
+  heart: { label: 'Heart', Icon: Heart },
+  star: { label: 'Star', Icon: Star },
+}
+export const WORKSPACE_ICONS = ICON_IDS.map((id) => ({ id, ...ICON_VIEW[id] }))
 
 /** Mid-tone colours that read on both the light and the dark theme (the tile is a tint of the colour). */
-export const WORKSPACE_COLOURS: { id: string; label: string; value: string }[] = [
-  { id: 'orange', label: 'Orange', value: '#ea7a2f' },
-  { id: 'blue', label: 'Blue', value: '#3b82f6' },
-  { id: 'green', label: 'Green', value: '#22a06b' },
-  { id: 'purple', label: 'Purple', value: '#8b5cf6' },
-  { id: 'pink', label: 'Pink', value: '#e0457b' },
-  { id: 'teal', label: 'Teal', value: '#14a3b8' },
-  { id: 'amber', label: 'Amber', value: '#c9971c' },
-  { id: 'slate', label: 'Grey', value: '#64748b' },
-]
-
-/** True when another workspace has the same name or the same icon and colour: then the prefix and a short id tail are shown beside the icon. */
-export function lookAlike(w: { id: string; name: string }, all: { id: string; name: string }[], iconOf: (id: string) => WorkspaceIconChoice): boolean {
-  const mine = iconOf(w.id)
-  return all.some((o) => {
-    if (o.id === w.id) return false
-    const theirs = iconOf(o.id)
-    return o.name.trim().toLowerCase() === w.name.trim().toLowerCase() || (theirs.icon === mine.icon && theirs.colour === mine.colour)
-  })
+const COLOUR_VIEW: Record<(typeof COLOUR_IDS)[number], { label: string; value: string }> = {
+  orange: { label: 'Orange', value: '#ea7a2f' },
+  blue: { label: 'Blue', value: '#3b82f6' },
+  green: { label: 'Green', value: '#22a06b' },
+  purple: { label: 'Purple', value: '#8b5cf6' },
+  pink: { label: 'Pink', value: '#e0457b' },
+  teal: { label: 'Teal', value: '#14a3b8' },
+  amber: { label: 'Amber', value: '#c9971c' },
+  slate: { label: 'Grey', value: '#64748b' },
 }
+export const WORKSPACE_COLOURS = COLOUR_IDS.map((id) => ({ id, ...COLOUR_VIEW[id] }))
 
-export interface WorkspaceIconChoice {
-  icon: string
-  colour: string
-}
-
-/** FNV-1a: small, stable, the same in every browser. */
-function hash(s: string): number {
-  let h = 0x811c9dc5
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i)
-    h = Math.imul(h, 0x01000193) >>> 0
-  }
-  return h
-}
-
-/** The icon and colour a workspace gets when nobody chose: derived from its id (never its name: two workspaces can share a name). */
-export function defaultWorkspaceIcon(id: string): WorkspaceIconChoice {
-  const h = hash(id.trim().toLowerCase())
-  return { icon: WORKSPACE_ICONS[h % WORKSPACE_ICONS.length].id, colour: WORKSPACE_COLOURS[(h >>> 8) % WORKSPACE_COLOURS.length].id }
-}
-
-const keyOf = (id: string) => `orch.wsicon.${id}`
-const listeners = new Set<() => void>()
-const memory = new Map<string, string>() // used when storage is unavailable: the choice then lasts for this page only
-
-function readRaw(id: string): string | null {
-  try {
-    return localStorage.getItem(keyOf(id))
-  } catch {
-    return memory.get(id) ?? null
-  }
-}
-
-/** A stored choice, or null when none or when it is not one of the built-in icons and colours (unknown values are ignored). */
-function parse(raw: string | null): Partial<WorkspaceIconChoice> | null {
-  if (!raw) return null
-  try {
-    const v = JSON.parse(raw) as Partial<WorkspaceIconChoice>
-    return {
-      icon: WORKSPACE_ICONS.some((i) => i.id === v.icon) ? v.icon : undefined,
-      colour: WORKSPACE_COLOURS.some((c) => c.id === v.colour) ? v.colour : undefined,
-    }
-  } catch {
-    return null
-  }
-}
-
-/** The workspace's icon: its own choice where there is one (each half separately), the name's default otherwise. */
-export function workspaceIconOf(id: string): WorkspaceIconChoice {
-  const d = defaultWorkspaceIcon(id)
-  const own = parse(readRaw(id))
-  return { icon: own?.icon ?? d.icon, colour: own?.colour ?? d.colour }
-}
-
-export function setWorkspaceIcon(id: string, choice: WorkspaceIconChoice | null) {
-  const raw = choice ? JSON.stringify(choice) : null
-  try {
-    if (raw) localStorage.setItem(keyOf(id), raw)
-    else localStorage.removeItem(keyOf(id))
-  } catch {
-    if (raw) memory.set(id, raw)
-    else memory.delete(id)
-  }
-  listeners.forEach((l) => l())
-}
-
-const subscribe = (cb: () => void) => {
-  listeners.add(cb)
-  window.addEventListener('storage', cb)
-  return () => {
-    listeners.delete(cb)
-    window.removeEventListener('storage', cb)
-  }
-}
-
-/** The icon choice of a workspace, live: changes in Settings show in the menu at once (and across tabs). */
-export function useWorkspaceIcon(id: string | undefined): WorkspaceIconChoice & { set: (c: WorkspaceIconChoice | null) => void; custom: boolean } {
-  const raw = useSyncExternalStore(subscribe, () => (id ? readRaw(id) : null))
-  const set = useCallback((c: WorkspaceIconChoice | null) => id && setWorkspaceIcon(id, c), [id])
-  const d = defaultWorkspaceIcon(id ?? '')
-  const own = parse(raw)
-  return { icon: own?.icon ?? d.icon, colour: own?.colour ?? d.colour, set, custom: !!own }
-}
-
-/** The tile: the icon on a tint of its colour. Decorative; the name beside it (or the button's label) says which workspace. */
+/** The tile: the icon on a tint of its colour. Decorative; the prefix and name beside it say which workspace. */
 export function WorkspaceIcon({ icon, colour, className, size = 'md' }: WorkspaceIconChoice & { className?: string; size?: 'sm' | 'md' }) {
-  const Icon = (WORKSPACE_ICONS.find((i) => i.id === icon) ?? WORKSPACE_ICONS[0]).Icon
-  const value = (WORKSPACE_COLOURS.find((c) => c.id === colour) ?? WORKSPACE_COLOURS[0]).value
+  const Icon = ICON_VIEW[icon as keyof typeof ICON_VIEW]?.Icon ?? Folder
+  const value = COLOUR_VIEW[colour as keyof typeof COLOUR_VIEW]?.value ?? COLOUR_VIEW.orange.value
   return (
     <span
       aria-hidden
@@ -146,8 +55,7 @@ export function WorkspaceIcon({ icon, colour, className, size = 'md' }: Workspac
   )
 }
 
-/** A workspace's tile that follows its stored choice (used in the switcher rows). */
-export function WorkspaceIconFor({ id, ...rest }: { id: string; className?: string; size?: 'sm' | 'md' }) {
-  const { icon, colour } = useWorkspaceIcon(id)
-  return <WorkspaceIcon icon={icon} colour={colour} {...rest} />
+/** A workspace's tile from its signed icon (or the id-derived default). */
+export function WorkspaceIconFor({ workspace, ...rest }: { workspace: Pick<Workspace, 'id' | 'icon'>; className?: string; size?: 'sm' | 'md' }) {
+  return <WorkspaceIcon {...workspaceIconOf(workspace)} {...rest} />
 }

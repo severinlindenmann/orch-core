@@ -305,6 +305,23 @@ def settings_changed(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
                 if harness not in MODEL_CHOICES or any(m not in MODEL_CHOICES[harness] for m in per.values()):
                     return Refusal(Code.SETTINGS_INVALID, "models: a model that orch does not offer for its harness")
             ws.settings["models"] = {h: dict(sorted(per.items())) for h, per in sorted(table.items()) if per}
+    if (
+        "icon" in s
+    ):  # the workspace icon: a pair of ids of the closed lists; null clears it (the default comes from the id)
+        choice = s["icon"]
+        if choice is None:
+            ws.settings.pop("icon", None)
+        else:
+            from orch.wsicons import COLOUR_LABELS, ICON_LABELS
+
+            if (
+                not isinstance(choice, dict)
+                or set(choice) != {"icon", "colour"}
+                or choice["icon"] not in ICON_LABELS
+                or choice["colour"] not in COLOUR_LABELS
+            ):
+                return Refusal(Code.SETTINGS_INVALID, "icon: an icon and a colour that orch offers")
+            ws.settings["icon"] = {"colour": choice["colour"], "icon": choice["icon"]}
     return None
 
 

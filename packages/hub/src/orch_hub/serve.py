@@ -69,6 +69,11 @@ class FixedInvites:
                 raise ValueError(f"invite #{i}: the part after '=' ({user[:40]!r}) is not a 32-hex hub user id")
         self._lock = threading.Lock()
 
+    def codes(self) -> list[str]:
+        """The unused codes, sorted (never the ``=USER_ID`` alias part)."""
+        with self._lock:
+            return sorted(self._codes)
+
     def owner_user(self, invite: str) -> str | None:
         return self._owner.get(invite)
 
@@ -81,6 +86,11 @@ class FixedInvites:
     def consume(self, invite: str, workspace_id: str) -> None:
         with self._lock:
             self._codes.discard(invite)
+
+
+def invite_line(hub_id: str, code: str) -> str:
+    """The workspace invite form ``<hub_id>:<code>`` (protocol §5), printed wherever the hub shows an invite."""
+    return f"invite {hub_id}:{code}"
 
 
 def parse_listen(value: str) -> tuple[str, int]:
@@ -278,6 +288,8 @@ def serve(
         )
         if web is not None:
             print(f"orch-hub web port={web.address[1]}", file=out, flush=True)
+        for code in gate.codes():  # protocol §5 invite form: what the workspace owner passes to `orch hub join`
+            print(invite_line(keys.hub_id, code), file=out, flush=True)
         stop.wait()
     finally:
         if web is not None:

@@ -111,7 +111,7 @@ def test_read_role_cannot_start_and_unknown_action_is_refused(w):
     _, cid = w.register_channel(tok)
     assert prepared(w, tok, cid)[1] == {"error": "forbidden_role"}
     w.env.acc.grant(WS, "team", "edit")
-    assert prepared(w, tok, cid, {"type": "policy.changed", "log": "workspace"})[1] == {"error": "not_custodial"}
+    assert prepared(w, tok, cid, {"type": "role.changed", "log": "workspace"})[1] == {"error": "not_custodial"}
     assert prepared(w, tok, cid, {"type": "log.added", "log": ACTION["log"], "text": "x", "sig": "y"})[1] == {
         "error": "malformed"
     }

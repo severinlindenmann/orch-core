@@ -323,16 +323,107 @@ def build_p4(
         ok("ticket.created"),
         "no log: the hub makes the new ticket's uid",
     )
-    for t, lg in (("settings.changed", "workspace"), ("policy.changed", "workspace"), ("policy.changed", TICKET)):
-        act(
-            f"action_{t.replace('.', '_')}_{'ws' if lg == 'workspace' else 'ticket'}_not_channel_startable",
-            {"type": t, "log": lg, "set": {"grant_hours": 4}}
-            if t == "settings.changed"
-            else {"type": t, "log": lg, "gates": {"plan": {}}},
-            "admin",
-            {"error": "not_custodial"},
-            "V3: policy and settings changes are not channel-startable (high privilege, free-form payloads)",
-        )
+
+    # ---- phase 5 (§8.8, C10 M6; V3-D29): grants, device exclusion, policy and settings through a channel
+    def act5(name: str, action: dict[str, Any], role: Any, expect: dict[str, Any], note: str = "") -> None:
+        case(name, "action", {"action": action, "role": role}, expect, 5, note)
+
+    W = "workspace"
+    pol = {
+        "approvers": ["maintainer", "owner"],
+        "count": 2,
+        "not": ["assignees"],
+        "applies": "all",
+        "independent": True,
+    }
+    gr = {"type": "grant.requested", "log": W, "scope": "workable", "verbs": "agent", "hours": 72}
+    mal = {"error": "malformed"}
+    act5(
+        "action_grant_requested_by_edit",
+        gr,
+        "edit",
+        ok("grant.requested"),
+        "the host makes the secret and appends a host-actor grant.issued naming this event",
+    )
+    act5("action_grant_requested_verbs_list", {**gr, "verbs": ["log", "task.done"]}, "edit", ok("grant.requested"))
+    act5("action_grant_requested_by_read", gr, "read", {"error": "forbidden_role"})
+    act5("action_grant_requested_on_ticket_log", {**gr, "log": TICKET}, "edit", {"error": "not_custodial"})
+    for nm, a, why in (
+        ("hours_over", {**gr, "hours": 169}, "1-168 h"),
+        ("hours_zero", {**gr, "hours": 0}, ""),
+        ("verbs_unsorted", {**gr, "verbs": ["task.done", "log"]}, "sorted unique"),
+        ("verbs_empty", {**gr, "verbs": []}, ""),
+        ("verbs_bad_name", {**gr, "verbs": ["Task.Done"]}, "core operation-name grammar"),
+        ("scope_other", {**gr, "scope": "admin"}, ""),
+        ("smuggles_secret_hash", {**gr, "secret_hash": HASH_A}, "the secret is the host's, never the hub's"),
+        ("smuggles_grant_id", {**gr, "grant": "gr_01J9ZP0000000000000000GRT1"}, "the host names the grant"),
+        ("smuggles_expires_at", {**gr, "expires_at": "2026-10-30T00:00:00Z"}, "the host derives the times"),
+    ):
+        act5(f"action_grant_requested_{nm}", a, "admin", mal, why)
+    act5(
+        "action_grant_revoked_by_edit",
+        {"type": "grant.revoked", "log": W, "grant": "gr_01J9ZP0000000000000000GRT1"},
+        "edit",
+        ok("grant.revoked"),
+        "F1 at the host: own grant (canonical person) unless the mapped role is owner (admin); a hub check is advisory",
+    )
+    act5("action_grant_revoked_bad_id", {"type": "grant.revoked", "log": W, "grant": "gr_x"}, "edit", mal)
+    dx = {"type": "device.excluded", "log": W, "device": "d_" + "c" * 32, "reason": "compromised"}
+    act5(
+        "action_device_excluded_by_admin",
+        dx,
+        "admin",
+        ok("device.excluded"),
+        "workspace-local exclusion; the global revocation stays the person's PK act; the HOST refuses it for a device "
+        "of a workspace owner (core vector device_excluded_owner_device_refused), so break-glass cannot be blocked",
+    )
+    act5("action_device_excluded_by_edit", dx, "edit", {"error": "forbidden_role"})
+    act5("action_device_excluded_bad_reason", {**dx, "reason": "stolen"}, "admin", mal)
+    act5("action_device_excluded_person_id", {**dx, "device": "p_" + "c" * 32}, "admin", mal)
+    pc = {"type": "policy.changed", "log": W, "gates": {"code": pol}}
+    act5("action_policy_changed_ws_by_admin", pc, "admin", ok("policy.changed"))
+    act5("action_policy_changed_ws_by_edit", pc, "edit", {"error": "forbidden_role"})
+    act5(
+        "action_policy_changed_ticket_by_edit",
+        {**pc, "log": TICKET, "gates": {"plan": {**pol, "not": []}}},
+        "edit",
+        ok("policy.changed"),
+        "a ticket override; F1 decides who (ticket owner, owners, maintainers)",
+    )
+    for nm, g, why in (
+        ("code_not_independent", {"code": {**pol, "independent": False}}, "D59"),
+        ("code_assignees_allowed", {"code": {**pol, "not": []}}, "D59: code excludes assignees"),
+        ("missing_key", {"plan": {k: v for k, v in pol.items() if k != "applies"}}, "all five keys"),
+        ("factor_key", {"plan": {**pol, "factor": "passkey"}}, "the D66 factor key is not channel-settable in V3"),
+        ("unknown_gate", {"deploy": pol}, ""),
+        ("approvers_unsorted", {"plan": {**pol, "approvers": ["owner", "maintainer"]}}, "sorted unique"),
+        ("approvers_empty", {"plan": {**pol, "approvers": []}}, ""),
+        ("count_zero", {"plan": {**pol, "count": 0}}, ""),
+        ("applies_bad_type", {"plan": {**pol, "applies": ["story"]}}, ""),
+        ("empty", {}, ""),
+    ):
+        act5(f"action_policy_changed_{nm}", {**pc, "gates": g}, "admin", mal, why)
+    st = {"type": "settings.changed", "log": W}
+    act5("action_settings_changed_by_admin", {**st, "set": {"grant_hours": 72}}, "admin", ok("settings.changed"))
+    act5("action_settings_changed_by_edit", {**st, "set": {"grant_hours": 72}}, "edit", {"error": "forbidden_role"})
+    for nm, v, why in (
+        ("sign_methods", {"sign_methods": ["terminal"]}, "how signatures are made stays off the channel in V3"),
+        ("repos", {"repos": {"api": {"path": "/tmp/x"}}}, "host paths are not channel-settable"),
+        ("models", {"models": None}, "not channel-settable in V3"),
+        ("grant_hours_over", {"grant_hours": 169}, ""),
+        ("claim_ttl_low", {"claim_ttl_min": 14}, ""),
+        ("factor", {"factor": "passkey"}, "the D66 factor key stays off the channel in V3 (V3-D29)"),
+        ("empty", {}, ""),
+    ):
+        act5(f"action_settings_changed_{nm}", {**st, "set": v}, "admin", mal, why)
+    # V3-D29: the grant itself (incl. a terminal-printed grant for a hand-started agent) and the person's global device
+    # revocation never travel on the channel
+    for typ, why in (
+        ("grant.issued", "the host makes the grant and its secret (after grant.requested); terminal grants stay local"),
+        ("device.revoked", "the person's own PK act; device.excluded is the workspace-local channel form"),
+    ):
+        act5(f"action_{typ.replace('.', '_')}_ws_not_custodial", {"type": typ, "log": W}, "admin",
+             {"error": "not_custodial"}, why)  # fmt: skip
     vis_r = {"restricted": sorted(["p_" + "a" * 32, "u_" + U_BOB])}
     act(
         "action_visibility_by_admin",
@@ -637,7 +728,7 @@ def build_p4(
     # so the host runs the exact-payload check in §8.3 step 1 against the same bytes as the hub (L2-C3-1)
     adm = {**cus, "snapshot": snapshot(roles={U_ALICE: "admin"})["o"]}
     ok_adm = {"ok": {"user_id": U_ALICE, "channel": CH_ALICE, "role": "admin"}}
-    for (typ, _lk), _r in sorted(H.CUSTODIAL_TYPES.items()):
+    for typ in sorted({t for (t, _lk) in H.CUSTODIAL_TYPES}):  # one per type (policy.changed has two logs)
         lg = EVENT_PAYLOADS[typ][0]
         case(f"custodial_event_{typ.replace('.', '_')}", "custodial", {**adm, "log": lg, "event": custodial(typ=typ)},
              ok_adm, 4, "event-shaped: exactly the action's fields plus the hub-derived ones")  # fmt: skip
@@ -682,6 +773,33 @@ def build_p4(
         4,
         "a new ticket's first event has based_on null",
     )  # fmt: skip
+    # phase 5 (§8.8, V3-D29): the event side of the new types at the host
+    pcl = {"gates": {"plan": {"approvers": ["owner"], "count": 1, "not": [], "applies": "all", "independent": False}}}
+    case("custodial_event_policy_changed_ticket", "custodial",
+         {**adm, "log": TICKET, "event": custodial(typ="policy.changed", log=TICKET, payload=pcl)}, ok_adm, 5,
+         "a ticket override through a channel")  # fmt: skip
+    grp = EVENT_PAYLOADS["grant.requested"][1]
+    for nm, typ, pl, why in (
+        ("grant_requested_with_secret_hash", "grant.requested", {**grp, "secret_hash": HASH_A},
+         "the grant secret is made by the host after admission, never by the hub"),
+        ("grant_requested_with_grant_id", "grant.requested", {**grp, "grant": "gr_01J9ZP0000000000000000GRT1"}, ""),
+        ("settings_with_sign_methods", "settings.changed", {"set": {"sign_methods": ["hub", "terminal"]}}, ""),
+        ("policy_with_factor", "policy.changed",
+         {"gates": {"plan": {**pcl["gates"]["plan"], "factor": "passkey"}}}, ""),
+    ):  # fmt: skip
+        case(f"custodial_event_{nm}", "custodial", {**adm, "log": EVENT_PAYLOADS[typ][0],
+             "event": custodial(typ=typ, payload=pl)}, {"error": "malformed"}, 5, why)  # fmt: skip
+    case("custodial_event_grant_revoked_by_edit", "custodial",
+         {**cus, "log": "workspace", "snapshot": snapshot(roles={U_ALICE: "edit"})["o"],
+          "event": custodial(typ="grant.revoked")}, {"ok": {"user_id": U_ALICE, "channel": CH_ALICE, "role": "edit"}},
+         5, "host F1 decides ownership (canonical person of the signer vs grant.person)")  # fmt: skip
+    act5("action_policy_changed_turns_gate_off", {"type": "policy.changed", "log": "workspace",
+         "gates": {"plan": {"approvers": ["owner"], "count": 1, "not": [], "applies": "off", "independent": False}}},
+         "admin", ok("policy.changed"),
+         "valid, but the channel shows the fixed text 'turns off the plan gate' and the host warns")  # fmt: skip
+    case("custodial_event_grant_requested_by_read", "custodial",
+         {**cus, "log": "workspace", "snapshot": snapshot(roles={U_ALICE: "read"})["o"],
+          "event": custodial(typ="grant.requested")}, {"error": "forbidden_role"}, 5)  # fmt: skip
 
     # ---- §8.4 prepare: the channel recomputes the digest from the context it shows
     ev = custodial()

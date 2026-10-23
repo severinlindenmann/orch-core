@@ -39,6 +39,8 @@ __all__ = [
     "make_delegation",
     "make_device_cert",
     "make_revocation",
+    "make_rotation",
+    "check_rotation",
     "open_device_label",
     "person_ref",
     "person_scope_ok",
@@ -67,6 +69,7 @@ _KIND_LABEL = {
     "device_cert": "sig_device_cert",
     "revocation": "sig_revocation",
     "ws_delegation": "sig_ws_delegation",
+    "device_rotation": "sig_device_rotate",
 }
 _DROP_SCOPE = re.compile(r"drop:[0-9a-f]{32}")
 _CERT_FIELDS = {
@@ -82,6 +85,7 @@ _CERT_FIELDS = {
     "expires_ms",
     "scopes_max",
 }
+_ROTATION_FIELDS = {"v", "suite", "kind", "workspace_id", "person_id", "old", "new", "roster_v"}
 _REVOCATION_FIELDS = {"v", "suite", "kind", "person_id", "device_id", "revoked_ms", "reason"}
 _DELEGATION_FIELDS = {"v", "suite", "kind", "workspace_id", "wsk_pub", "owner_person_id", "client_hosted", "issued_ms"}
 
@@ -267,6 +271,38 @@ def make_revocation(pk_pub: bytes, sign: Signer, *, device_id_hex: str, revoked_
     signed = sign_object(o, sign)
     check_revocation(signed, pk_pub)
     return signed
+
+
+def make_rotation(
+    pk_pub: bytes, sign: Signer, *, workspace_id: str, old_hex: str, new_hex: str, roster_v: int
+) -> dict[str, Any]:
+    """#1097: the person key's fresh statement that device ``new`` replaces ``old`` in ONE workspace at ONE roster
+    version (label ``orch/v2/sig/device-rotate|``): it verifies nowhere else and never again after a roster change."""
+    o = {
+        "v": 2,
+        "suite": crypto.SUITE_ID,
+        "kind": "device_rotation",
+        "workspace_id": workspace_id,
+        "person_id": crypto.person_id(pk_pub).hex(),
+        "old": old_hex,
+        "new": new_hex,
+        "roster_v": roster_v,
+    }
+    signed = sign_object(o, sign)
+    check_rotation(signed, pk_pub)
+    return signed
+
+
+def check_rotation(signed: object, pk_pub: bytes) -> dict[str, Any]:
+    """The rotation object ``o`` if it is signed by ``pk_pub`` and is of this person; else ``Refused``."""
+    o = verify_object(pk_pub, signed, "device_rotation")
+    if o is None:
+        raise Refused("bad_signature")
+    if set(o) != _ROTATION_FIELDS or type(o["roster_v"]) is not int or o["roster_v"] < 0:
+        raise Refused("malformed")
+    if o["person_id"] != crypto.person_id(pk_pub).hex():
+        raise Refused("other_person")
+    return o
 
 
 def check_revocation(signed: object, pk_pub: bytes) -> dict[str, Any]:

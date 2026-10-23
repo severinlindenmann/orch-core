@@ -79,7 +79,9 @@ __all__ = [
     "printable_action",
 ]
 
-SIGN_LABELS: tuple[str, ...] = ("sig_device_cert", "sig_cert_challenge", "sig_cert_rejection", "sig_revocation")
+SIGN_LABELS: tuple[str, ...] = (
+    "sig_device_cert", "sig_cert_challenge", "sig_cert_rejection", "sig_revocation", "sig_device_rotate",
+)  # fmt: skip
 """What a person-key source signs: certificates, cert challenges and rejections (R6) and revocations. Never
 ``sig_ws_delegation`` (see the module docstring)."""
 assert all(L[n] in PERSON_KEY_LABELS for n in SIGN_LABELS)

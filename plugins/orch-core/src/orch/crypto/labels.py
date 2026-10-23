@@ -101,6 +101,8 @@ PLANNED_LABELS: dict[str, str] = {
     "aad_space": "orch/v2/space-aad|",
     # V3 C6 (hub contract 10.2b, selective share_put): what the WSK signs (a share.item), its content AAD and its hash.
     "sig_share_item": "orch/v2/sig/share-item|",
+    # #1097 (key exposure): the person key's fresh, workspace-bound statement that a new device replaces an old one.
+    "sig_device_rotate": "orch/v2/sig/device-rotate|",
     "aad_hub_share": "orch/v2/hub-share-aad|",
     "h_share_item": "orch/v2/hub-share-item|",
 }

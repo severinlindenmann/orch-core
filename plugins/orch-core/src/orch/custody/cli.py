@@ -31,8 +31,9 @@ __all__ = ["main"]
 
 RISK = "Convenience signing: agents running as you, or anything that takes over this dashboard, could sign."
 DOWNGRADE_WARNING = (
-    "Later signatures will say passphrase, but anyone who copied the key can still sign with any label; "
-    "use --rotate for a clean break (not available yet: it needs device ops)."
+    "Later signatures will say passphrase, but anyone who copied the key can still sign with any label. The key stays "
+    "marked in the workspace log, so full hub mode and leaving a hub on your own need --rotate (a new key from your "
+    "recovery code)."
 )
 
 
@@ -161,8 +162,16 @@ def run(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, err: Text
         err.write(RISK + "\n")
         sel = select.convert_to_convenience(state, wid, prefix=str(entry.get("prefix") or ""))
         return {"workspace_id": wid, "custody": sel["custody"], "device": sel["device"], "gen": sel.gen}
-    if args.rotate:
-        raise _Fail("not_implemented", "--rotate needs device ops (designed in orch-v2-host §0.8.6, not built yet)", 2)
+    if args.rotate:  # #1097: a new device key from the recovery code; the old one stops signing in every mode
+        from orch.custody import rotate as rotation
+        from orch.custody.base import CustodyError
+
+        if args.in_place:
+            raise _Fail("invalid.input", "--rotate makes a new key; --in-place keeps the same one: pick one", 5)
+        try:
+            return rotation.rotate(state, entry, env, say=lambda t: err.write(t + "\n"), pk_factory=_pk_factory)
+        except CustodyError as exc:
+            raise _Fail(getattr(exc, "code", "custody.unavailable"), str(exc), 3) from None
     if not args.in_place:
         raise _Fail("invalid.input", "moving back needs --in-place (same key) or --rotate (a new device)", 5)
     err.write(DOWNGRADE_WARNING + "\n")

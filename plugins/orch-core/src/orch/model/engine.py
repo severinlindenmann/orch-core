@@ -92,7 +92,7 @@ def _person_sig_check(core: Core, log: str, e: dict[str, Any], ctx: Ctx, genesis
         return None if ok else Refusal(Code.CHAIN_BROKEN, "the genesis signature does not verify")
     dev = ws.devices.get(a["device"])
     if dev is None:
-        if not (e["type"] == "device.added" and e.get("device") == a["device"]):
+        if not (e["type"] in ("device.added", "device.rotated") and e.get("device") == a["device"]):
             return Refusal(Code.CHAIN_BROKEN, "the actor's device has no certificate")
         cert = e["cert"]
     elif dev.person != a["id"]:
@@ -241,6 +241,8 @@ def _workspace_handler(core: Core, lc: LogCore, e: dict[str, Any], ctx: Ctx) -> 
         "device.added": lambda: workspace.device_added(core, e, v),
         "device.removed": lambda: workspace.device_removed(ws, e),
         "device.revoked": lambda: workspace.device_revoked(core, e, v),
+        "device.exposed": lambda: workspace.device_exposed(ws, e),
+        "device.rotated": lambda: workspace.device_rotated(core, e, v),
         "policy.changed": lambda: workspace.policy_changed(core, e),
         "settings.changed": lambda: workspace.settings_changed(ws, e),
         "grant.issued": lambda: workspace.grant_issued(ws, e),
@@ -301,7 +303,6 @@ def _authorize(core: Core, log: str, t: TCore | None, e: dict[str, Any], ctx: Ct
 
 
 def _apply(core: Core, log: str, lc: LogCore, e: dict[str, Any], ctx: Ctx) -> Refusal | None:
-    """Authorize and apply ``e`` to ``core`` (a scratch copy). Mutates ``core`` even when it refuses midway."""
     typ, ws = e["type"], core.ws
     is_ws = log == WORKSPACE
     t = None if is_ws else core.tickets.get(log)

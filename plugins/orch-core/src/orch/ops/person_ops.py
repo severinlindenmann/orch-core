@@ -509,7 +509,65 @@ def handle_relay_reopen(ctx: Context, args: dict[str, Any]) -> Result:
     return h.workspace_result(done, {"hub_id": current["hub_id"]}, "the host now reopens the direct relay path")
 
 
+def handle_device_mark_exposed(ctx: Context, args: dict[str, Any]) -> Result:
+    """``device.mark_exposed {}`` (#1097): this device key signs ``device.exposed`` for itself, the signed mark that it
+    was in convenience custody. Written by :func:`orch.custody.exposure.mark_before_move` before a key enters
+    convenience custody. It only removes authority, so any member's device may sign one (never the hub)."""
+    h = _Human(ctx, "device.mark_exposed")
+    _, device = h.who()
+    done = h.run({"type": "device.exposed", "device": device, "reason": "convenience"}, "workspace",
+                 "mark this device key as exposed (it moves to one-click custody)", review=[])  # fmt: skip
+    return h.workspace_result(done, {"device": device}, None)
+
+
+def handle_device_rotate(ctx: Context, args: dict[str, Any]) -> Result:
+    """``device.rotate {old, cert, rotation}`` (#1097, ``orch keys custody passphrase --rotate``): the NEW device (the
+    signer, unknown to the roster) replaces ``old`` in one ``device.rotated`` event. The certificate and the rotation
+    are made with the recovery code by the CLI; the model checks both under the person key, the workspace, both
+    devices and the roster version (``workspace.device_rotated``)."""
+    h = _Human(ctx, "device.rotate")
+    _, device = h.who()
+    cert = args["cert"]
+    if not isinstance(cert, dict) or device != "d_" + str((cert.get("o") or {}).get("device_id")):
+        raise OrchError("invalid.input", "the new device must be the signer of the rotation")
+    event = {"type": "device.rotated", "old": args["old"], "device": device, "cert": cert, "rotation": args["rotation"]}
+    done = h.run(event, "workspace", "replace your device key", review=[])
+    return h.workspace_result(done, {"old": args["old"], "device": device}, "your old device key no longer signs")
+
+
 _HEX32 = {"type": "string", "pattern": "^[0-9a-f]{32}$"}
+DEVICE_MARK_EXPOSED = operation(
+    "device.mark_exposed",
+    "Human only",
+    "Record in the workspace log that this device key was in one-click custody. Done by orch before the key moves; it "
+    "only takes authority away from the key.",
+    who="human",
+    props={},
+    required=(),
+    emits=("device.exposed",),
+    text="ok device.exposed {device} seq={seq}",
+    data=obj({"device": STR}),
+    errors=(err("role.denied"),),
+    handler=handle_device_mark_exposed,
+)
+DEVICE_ROTATE = operation(
+    "device.rotate",
+    "Human only",
+    "Replace your device key with a new one made with your recovery code: the old key stops signing in every mode, "
+    "also while the hub is down.",
+    who="human",
+    props={
+        "old": {"type": "string", "pattern": "^d_[0-9a-f]{32}$", "description": "the device key this replaces"},
+        "cert": {"type": "object", "description": "the new device's certificate, signed by your recovery key"},
+        "rotation": {"type": "object", "description": "your recovery key's signed statement for this workspace"},
+    },
+    required=("old", "cert", "rotation"),
+    emits=("device.rotated",),
+    text="ok device.rotated {device} seq={seq}\nnext: {next}",
+    data=obj({"old": STR, "device": STR}),
+    errors=(err("role.denied"),),
+    handler=handle_device_rotate,
+)
 HUB_JOIN = operation(
     "hub.join",
     "Human only",
@@ -794,6 +852,8 @@ OPS: dict[str, Operation] = {
         HUB_MODE,
         HUB_LEAVE,
         RELAY_REOPEN,
+        DEVICE_MARK_EXPOSED,
+        DEVICE_ROTATE,
         AC_ACCEPT,
         AC_UNACCEPT,
         TASK_MARK_DONE,

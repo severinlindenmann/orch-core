@@ -153,6 +153,7 @@ class DeviceView:
     revoked: str | None
     scopes: tuple[str, ...]
     expires_ms: int | None = None  # the certificate's expiry (None: never)
+    exposed: bool = False  # #1097: signed evidence that this key was in convenience custody (nothing clears it)
 
 
 @dataclass(frozen=True)
@@ -327,8 +328,14 @@ def workspace_view(core: Core, now: int) -> WorkspaceView:
         MappingProxyType(
             {
                 i: DeviceView(
-                    i, d.person, d.removed, d.revoked, tuple(d.cert["o"]["scopes_max"]), d.cert["o"].get("expires_ms")
-                )
+                    i,
+                    d.person,
+                    d.removed,
+                    d.revoked,
+                    tuple(d.cert["o"]["scopes_max"]),
+                    d.cert["o"].get("expires_ms"),
+                    d.exposed,
+                )  # fmt: skip
                 for i, d in ws.devices.items()
             }
         ),

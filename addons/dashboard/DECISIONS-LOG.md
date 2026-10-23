@@ -3,6 +3,13 @@
 Non-trivial product and engineering decisions made during the autonomous run, for the owner's review.
 Format: date, decision, why, how to revert.
 
+## 2026-10-23 All evidence previews, agent pictures included (#1069)
+
+- **Decision:** Every evidence file previews in the Artifacts tab, under each acceptance criterion and in the verdict dialogs: HTML in the inert frame (also with the Widgets add-on off), pictures (PNG, JPEG, GIF, WebP, SVG) as an `<img>` from digest-checked bytes, text/json/csv/md/diff as text, and a card with the reason for anything else (PDF included: no preview). Owner, 23 Oct: "all evidence not just html should have a preview".
+- **Reverses:** the R3 part B rule that an agent's image stays a placeholder. That rule still holds for pictures drawn inside ticket text (only a person's pasted screenshot). Evidence previews are the new, separate path.
+- **Guards:** the server offers a picture only from a complete read whose sha256 matched the record, with core's size and pixel limits (SVG at most 512 KiB, no entities or internal DTD subset); the page re-hashes it. Every preview names who added it ("Added by agent X, not part of this dialog"), agent files are folded in the sign dialogs until clicked, markdown links in evidence are plain text.
+- **Revert:** drop `media` from the artifact route (reads.py) and the `RemotePreview` ladder in `Artifacts.tsx`; evidence goes back to "No inline preview".
+
 ## 2026-10-08 Latency off under test; shared `renderApp`
 
 - **Decision:** Latency is off under `MODE === 'test'`; UI tests share `renderApp` (`src/test/renderApp.tsx`), which resets the mock store before every render and optionally sets the viewer.

@@ -12,6 +12,14 @@ export const LONG_EDGE = 2560
 export const CHUNK = 512 * 1024
 export const MAX_IMAGES = 6
 
+/** The ONE rule for "these bytes are an SVG" (the same as `is_svg` in the dashboard server's reads.py): the first 512 bytes,
+ *  trimmed and lower-cased, start with `<svg`, or with `<?xml` / `<!doctype svg` and an `<svg` tag is in the first 4096 bytes. */
+export function isSvg(b: Uint8Array): boolean {
+  const lead = new TextDecoder().decode(b.slice(0, 512)).trimStart().toLowerCase()
+  if (lead.startsWith('<svg')) return true
+  return (lead.startsWith('<?xml') || lead.startsWith('<!doctype svg')) && new TextDecoder().decode(b.slice(0, 4096)).toLowerCase().includes('<svg')
+}
+
 export type ImageKind = 'png' | 'webp' | 'jpeg' | 'gif' | 'svg' | 'heic'
 
 /** What the first bytes say the file is (a declared type or a file name proves nothing). */
@@ -22,8 +30,7 @@ export function sniffImage(b: Uint8Array): ImageKind | null {
   if (at(0, 'RIFF') && at(8, 'WEBP')) return 'webp'
   if (at(0, 'GIF8')) return 'gif'
   if (at(4, 'ftyp') && /^(heic|heix|hevc|hevx|mif1|msf1|avif)$/.test(String.fromCharCode(...b.slice(8, 12)))) return 'heic'
-  const head = new TextDecoder().decode(b.slice(0, 512)).trimStart().toLowerCase()
-  if (head.startsWith('<svg') || head.startsWith('<?xml') || head.includes('<svg')) return 'svg'
+  if (isSvg(b)) return 'svg'
   return null
 }
 

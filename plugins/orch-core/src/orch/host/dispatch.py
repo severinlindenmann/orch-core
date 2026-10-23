@@ -22,8 +22,9 @@ a drain answers it ``host.restarting``, and ``opts.timeout_ms`` does not apply (
 ``ticket:<ref>`` through :meth:`Viewer.ticket`, the cursor against the journal) and fixes the live boundary there; the
 event loop then registers it with the host's :class:`~orch.host.bus.Bus` before its ``res`` is sent.
 
-Each op has a matrix category (:data:`orch.host.columns.OpKind`) from its registry ``who``: ``read`` (``doctor``,
-``instructions.sync`` and ``instructions.hook`` are ``person_read``), ``agent``, ``unattended``, ``human``. The gate
+Each op has a matrix category (:data:`orch.host.columns.OpKind`) from its registry ``who``: ``read`` (``doctor`` and
+``instructions.sync`` are ``person_read``, ``instructions.hook`` is ``pg_read``), ``agent``, ``unattended``,
+``human``. The gate
 (:class:`orch.host.workspace.WorkspaceGate`) applies the column with it (§0.6 steps 3 to 7); this module does steps 8
 to 11.
 
@@ -142,7 +143,12 @@ NOT_SERVED: dict[str, str] = {
     "init": "init is host.wsk_create and host.bootstrap (D-P2-9)",
     "import.v1": "import v1 runs in direct mode before registration (D-P2-9)",
 }
-PERSON_READS = frozenset({"doctor", "instructions.sync", "instructions.hook"})
+PERSON_READS = frozenset({"doctor", "instructions.sync"})
+#: registry reads for P and G: the session-start hook runs in the agent's own session (column G, a verified grant), so
+#: it must not be a person-only read (run 6, #1067: ``instructions.hook is not allowed here`` at every agent start)
+#: Column N (an agent with no verified grant) is excluded on purpose: the hook shows the person, claim and unread
+#: decisions of a session, which an unverified caller has no right to see.
+PERSON_GRANT_REGISTRY_READS = frozenset({"instructions.hook"})
 #: arguments the host refuses (``op.not_allowed``) on an op it otherwise serves
 HOST_REFUSED_ARGS: dict[str, dict[str, str]] = {
     "task.done": {
@@ -308,6 +314,8 @@ def op_kind(name: str) -> tuple[OpKind, Phase] | None:
     except KeyError:
         return None
     if who == "read":
+        if name in PERSON_GRANT_REGISTRY_READS:
+            return ("pg_read", "read")
         return ("person_read" if name in PERSON_READS else "read", "read")
     return (who, "write")  # type: ignore[return-value]
 

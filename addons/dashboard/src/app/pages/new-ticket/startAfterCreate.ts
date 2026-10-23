@@ -17,10 +17,13 @@ export interface AgentChoiceValue {
 
 export const DEFAULT_CHOICE: AgentChoiceValue = { harness: 'claude-code', mode: 'work', model: '' }
 
-/** A runner grant counts as usable for a start only with at least this long left. */
+/**
+ * A runner grant counts as startable only with at least this long left. TODO: replace by the host's own field
+ * `whoami.runner.grant.startable` (true | expiring | scope | revoked) once core serves it; fail toward asking for access.
+ */
 export const MIN_GRANT_MS = 20 * 60_000
 
-/** Is there a grant the start can use (not expiring within 15 minutes)? Unknown counts as no grant. */
+/** Is there a grant the start can use (not expiring within 20 minutes)? Unknown counts as no grant. */
 export function usableGrant(runner: Pick<RunnerInfo, 'grant'> | null | undefined, now: number): { id: string; until: string } | null {
   const g = runner?.grant
   if (!g) return null

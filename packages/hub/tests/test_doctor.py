@@ -562,3 +562,42 @@ def test_dump_with_range_set_is_a_fail_not_a_crash(state, tmp_path):
     out = _run(state, _acc(), fw, dump=weird)
     assert "FAIL link firewall allows only root, hub and host users: loaded-rule dump has an unsupported shape" in out
     assert "unexpected TypeError" not in out
+
+
+def test_unit_user_defaults_to_the_hub_user_name(state, tmp_path, monkeypatch):
+    seen = []
+    monkeypatch.setattr(D, "unit_user_of", lambda unit="orch-hub": seen.append(unit) or "orch-hub-split")
+    out = io.StringIO()
+    run(
+        state, link_listen="10.1.2.3:8106", out=out, accounts=_split_acc(), hub_user="orch-hub-split", state_uid=900,
+        fw_dump=_dump(tmp_path / "x.json", SURFACE), fw_file=_split_fw(tmp_path), dev_shared_machine=True,
+    )  # fmt: skip
+    assert seen == ["orch-hub-split"]
+    assert "PASS hub runs as its own OS user" in out.getvalue()
+
+
+def _split_fw(tmp_path):
+    f = tmp_path / "sfw.nft"
+    f.write_text(SURFACE_FILE)
+    return f
+
+
+def test_skip_link_dial_compares_the_stored_key_with_the_card(state, tmp_path):
+    out = io.StringIO()
+    run(
+        state, link_listen="10.1.2.3:8106", out=out, accounts=_split_acc(), hub_user="orch-hub-split", state_uid=900,
+        unit_user=lambda: "orch-hub-split", fw_dump=_dump(tmp_path / "x.json", SURFACE), fw_file=_split_fw(tmp_path),
+        dev_shared_machine=True, skip_link_dial=True,
+    )  # fmt: skip
+    assert "PASS stored TLS key matches the card pin (link not dialled)" in out.getvalue()
+    HubKeys.open(state).reissue_card(tls_spki_sha256="A" * 43)  # the card no longer names the stored key
+    out = io.StringIO()
+    run(
+        state, link_listen="10.1.2.3:8106", out=out, accounts=_split_acc(), hub_user="orch-hub-split", state_uid=900,
+        unit_user=lambda: "orch-hub-split", fw_dump=_dump(tmp_path / "x.json", SURFACE), fw_file=_split_fw(tmp_path),
+        dev_shared_machine=True, skip_link_dial=True,
+    )  # fmt: skip
+    assert (
+        "FAIL stored TLS key matches the card pin (link not dialled): the stored TLS key does not match the card pin"
+        in out.getvalue()
+    )

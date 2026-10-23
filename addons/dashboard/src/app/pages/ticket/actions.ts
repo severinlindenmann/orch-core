@@ -87,18 +87,16 @@ export function availableActions(t: TicketDocument, viewer: Viewer): Available {
 }
 
 /** The one thing the viewer should do next on this ticket, shown as the header's primary button (null: nothing). */
-export type Primary = { kind: 'answer'; question: string } | { kind: 'verdict' } | { kind: 'approve'; gate: 'requirements' | 'plan' | 'code' }
+export type Primary = { kind: 'verdict' } | { kind: 'approve'; gate: 'requirements' | 'plan' | 'code' }
 
-/** Answer a question > give the verdict > approve requirements > approve the plan. A blocking question goes first. */
+/** Give the verdict > approve requirements > approve the plan. (A question is answered on the question itself.) */
 export function primaryAction(av: Available): Primary | null {
-  // A question is answered in one place, on the question itself (Today, Questions tab): not here.
   if (av.verdict) return { kind: 'verdict' }
   if (av.approve.length) return { kind: 'approve', gate: av.approve[0] }
   return null
 }
 
 export function primaryLabel(p: Primary): string {
-  if (p.kind === 'answer') return `Answer ${p.question}`
   if (p.kind === 'verdict') return 'Give verdict'
   return p.gate === 'requirements' ? 'Approve requirements' : p.gate === 'code' ? 'Approve code review' : 'Approve plan'
 }

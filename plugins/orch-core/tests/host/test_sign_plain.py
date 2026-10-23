@@ -948,6 +948,16 @@ def test_f7_two_options_with_the_same_label_are_told_apart_in_the_choice_row():
         assert {r["field"]: r["after"] for r in c["fields_changed"]}["your choice"] == f"Yes (option {key})"
 
 
+def test_f7_the_note_is_titled_your_note_and_a_label_equal_to_the_key_is_not_repeated():
+    c = build(_answer(text="because"))
+    assert [s["title"] for s in c["sections"] if s["id"] == "answer"] == ["Your note"]
+    c = build(_answer({"options": [{"key": "Hello", "label": "Hello"}]}, option="Hello"))
+    assert {r["field"]: r["after"] for r in c["fields_changed"]}["your choice"] == "Hello"
+    # a free-text answer (no option) keeps "Your answer" for its text
+    c = build(_answer(option=None, text="my words"))
+    assert [s["title"] for s in c["sections"] if s["id"] == "answer"] == ["Your answer"]
+
+
 _ME = "p_42e1c38e0488b742" + "0" * 14
 MEMBERS = [{"person": _ME, "name": "Severin"}]
 

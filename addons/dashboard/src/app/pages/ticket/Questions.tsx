@@ -5,9 +5,9 @@ import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
-import { canAnswer } from './actions'
-import { Prose } from '@/components/sign/visible'
 import { AnswerSend } from '@/components/sign/AnswerSend'
+import { Prose } from '@/components/sign/visible'
+import { canAnswer } from './actions'
 import { QuestionOptions } from './QuestionOptions'
 import { ago, Mono, Pill, presenceLabel, shortHash, type TabProps, type Viewer } from './shared'
 
@@ -18,6 +18,7 @@ function AnswerForm({ q, sign, ticketKey, onViewQuestion }: { q: QuestionStatus;
   const [text, setText] = useState('')
   const hasOptions = !!q.options?.length
   const [noting, setNoting] = useState(false)
+  const [busy, setBusy] = useState(false)
   const showNote = !hasOptions || noting || !!text
   const ready = !!option || !!text.trim()
   return (
@@ -25,19 +26,22 @@ function AnswerForm({ q, sign, ticketKey, onViewQuestion }: { q: QuestionStatus;
       className="mt-3 space-y-3 border-t border-border pt-3"
       onSubmit={(e) => {
         e.preventDefault()
+        // Only the plain Send answer button submits. In one-click mode there is no such button: an Enter on a radio
+        // would otherwise open the two-step dialog behind the strip that already holds a prepared request.
+        if (!(e.nativeEvent as SubmitEvent).submitter) return
         if (ready) sign({ kind: 'answer', question: q.id, option, text: text.trim() || undefined })
       }}
     >
-      {q.options && q.options.length > 0 && <QuestionOptions q={q} name={`answer-${q.id}`} value={option} onChange={setOption} idPrefix={q.id} />}
+      {q.options && q.options.length > 0 && <QuestionOptions q={q} name={`answer-${q.id}`} value={option} onChange={setOption} idPrefix={q.id} disabled={busy} />}
       {showNote ? (
         <div className="space-y-1.5">
           <Label htmlFor={`${q.id}-note`} className="text-[12px] text-text-muted">
             {hasOptions ? 'Your note (optional, sent with the answer)' : 'Your answer'}
           </Label>
-          <Textarea id={`${q.id}-note`} rows={2} value={text} onChange={(e) => setText(e.target.value)} />
+          <Textarea id={`${q.id}-note`} rows={2} value={text} disabled={busy} onChange={(e) => setText(e.target.value)} />
         </div>
       ) : (
-        <Button type="button" variant="link" size="sm" className="h-auto p-0 text-[12px]" onClick={() => setNoting(true)}>
+        <Button type="button" variant="link" size="sm" className="h-auto p-0 text-[12px]" disabled={busy} onClick={() => setNoting(true)}>
           Add a note
         </Button>
       )}
@@ -50,6 +54,7 @@ function AnswerForm({ q, sign, ticketKey, onViewQuestion }: { q: QuestionStatus;
         type="submit"
         fallback={() => sign({ kind: 'answer', question: q.id, option, text: text.trim() || undefined })}
         onViewQuestion={onViewQuestion}
+        onBusy={setBusy}
       />
     </form>
   )
@@ -97,7 +102,7 @@ function QuestionCard({ q, viewer, sign, ticketKey }: { q: QuestionStatus; viewe
         )}
       </div>
       <Prose className="mt-2 text-[14px] font-medium leading-snug">{viewText ?? q.text}</Prose>
-      {q.why && <p className="mt-1 text-[13px] text-text-muted">{q.why}</p>}
+      {q.why && <Prose className="mt-1 text-[13px] text-text-muted">{q.why}</Prose>}
 
       {!answered && q.options && q.options.length > 0 && !canAnswer(q, viewer) && (
         <div className="mt-3">

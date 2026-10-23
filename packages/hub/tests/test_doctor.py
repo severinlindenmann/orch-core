@@ -151,3 +151,103 @@ def test_doctor_is_read_only_a_stray_generation_survives(state, capsys):
     assert stray.is_dir() and (stray / "key").exists()
     HubKeys.open(state)  # the default open still prunes uncommitted generations
     assert not stray.exists()
+
+
+# ---- §4a co-location checks (D12) -------------------------------------------------------------------------------
+
+from orch_hub.doctor import Accounts, run
+
+
+def _acc(extra=None, *, euser="orch-hub", groups=None):
+    users = {
+        "orch-hub": (986, 980),
+        "orch-relay": (995, 987),
+        "orch-publish": (993, 985),
+        "orch-host-ws2": (992, 984),
+        "agent-ws2": (991, 983),
+    }
+    users.update(extra or {})
+    return Accounts(users, groups or {}, users[euser][0] if euser in users else 1234, euser)
+
+
+def _fw(tmp_path, ids='0, "orch-hub", "orch-host-ws2"'):
+    f = tmp_path / "hub-fw.nft"
+    f.write_text(
+        f'table inet orch_hub {{ chain out {{ oifname "lo" tcp dport 8105 meta skuid != {{ {ids} }} reject }} }}'
+    )
+    return f
+
+
+def _run(state, acc, fw, capsys, listen=None):
+    import io
+
+    out = io.StringIO()
+    run(state, listen=listen, out=out, accounts=acc, fw_file=fw)
+    return out.getvalue()
+
+
+def test_colocation_good_layout_passes_and_is_reported(state, tmp_path, capsys):
+    out = _run(state, _acc(), _fw(tmp_path), capsys)
+    assert "INFO layout: one machine (hub + 1 workspace host(s), relay/publish)" in out
+    assert "weaker isolation" in out
+    for name in ("hub runs as its own OS user", "host and agent users are separate", "link firewall allows only"):
+        assert f"PASS {name}" in out, out
+
+
+def test_split_layout_has_no_colocation_checks(state, capsys):
+    acc = Accounts({"orch-hub": (986, 980)}, {}, 986, "orch-hub")
+    out = _run(state, acc, DEFAULT_FW_MISSING, capsys)
+    assert "INFO layout: hub alone" in out
+    assert "link firewall" not in out
+
+
+DEFAULT_FW_MISSING = __import__("pathlib").Path("/nonexistent/hub-fw.nft")
+
+
+@pytest.mark.parametrize(
+    "acc,needle",
+    [
+        (_acc(euser="orch-host-ws2"), "runs as orch-host-ws2"),
+        (_acc({"agent-x": (986, 777)}), "orch-hub uid or primary group shared with agent-x"),
+        (_acc(groups={980: frozenset({"agent-ws2"})}), "group orch-hub has other members: agent-ws2"),
+    ],
+)
+def test_colocation_hub_user_failures(state, tmp_path, capsys, acc, needle):
+    out = _run(state, acc, _fw(tmp_path), capsys)
+    assert f"FAIL hub runs as its own OS user: {needle}" in out, out
+
+
+def test_root_hub_fails(state, tmp_path, capsys):
+    acc = Accounts(_acc().users, {}, 0, "root")
+    assert "FAIL hub runs as its own OS user: hub tooling runs as root" in _run(state, acc, _fw(tmp_path), capsys)
+
+
+def test_host_or_agent_sharing_identity_fails(state, tmp_path, capsys):
+    out = _run(state, _acc({"orch-host-ws3": (992, 900)}), _fw(tmp_path), capsys)
+    assert "orch-host-ws3 and orch-host-ws2 share a uid" in out
+    out = _run(state, _acc({"agent-ws3": (986, 5)}), _fw(tmp_path), capsys)
+    assert "agent user agent-ws3 shares an identity" in out
+    out = _run(state, _acc(groups={980: frozenset({"orch-hub", "agent-ws2"})}), _fw(tmp_path), capsys)
+    assert "FAIL host and agent users are separate from the hub: agent user agent-ws2 is in group orch-hub" in out
+
+
+@pytest.mark.parametrize(
+    "ids,needle",
+    [
+        ('0, "orch-hub", "orch-host-ws2", "agent-ws2"', "not root, orch-hub or an orch-host-* user"),
+        ("0, 991, 986, 992", "not root, orch-hub or an orch-host-* user"),
+        ('0, "orch-host-ws2"', "does not allow the orch-hub uid"),
+        ('0, "orch-hub", "nobody-here"', "unknown user"),
+    ],
+)
+def test_link_firewall_failures(state, tmp_path, capsys, ids, needle):
+    out = _run(state, _acc(), _fw(tmp_path, ids), capsys)
+    assert "FAIL link firewall allows only root, hub and host users" in out
+    assert needle in out, out
+
+
+def test_link_firewall_missing_or_ruleless_fails(state, tmp_path, capsys):
+    assert "missing or unreadable" in _run(state, _acc(), tmp_path / "nope", capsys)
+    f = tmp_path / "x.nft"
+    f.write_text("table inet orch_hub {}")
+    assert "no 'meta skuid" in _run(state, _acc(), f, capsys)

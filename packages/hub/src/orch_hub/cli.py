@@ -62,7 +62,9 @@ def _parser() -> argparse.ArgumentParser:
     rl.add_argument("--publish-url", required=True, help="orch-publish base URL (https, or http on loopback)")
     rl.add_argument("--workspace", help="only this workspace id (32 lower-case hex)")
     rl.add_argument("--json", action="store_true", required=True, help="print JSON (the only format)")
-    dr = sub.add_parser("doctor", help="dev: check the state dir, card, registry, TLS pin and publish route")
+    dr = sub.add_parser(
+        "doctor", help="dev: check the state dir, card, registry, TLS pin, publish route and the co-location rules (4a)"
+    )
     dr.add_argument("--state", help="hub state dir (default: $ORCH_HUB_STATE)")
     dr.add_argument("--listen", help="the running hub's loopback host:port: its TLS key must match the card pin")
     dr.add_argument("--publish-url", help="orch-publish base URL: its /v2/hub/card route must answer")

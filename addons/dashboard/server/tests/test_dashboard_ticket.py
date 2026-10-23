@@ -172,6 +172,11 @@ def test_a_screenshot_is_offered_as_bytes_only_when_core_accepts_it(client, toke
         assert client.get(url(stub, f"DEMO-0001/artifacts/{name}"), headers=headers(token)).json()["image"] is None
 
 
+def _jpeg(w, h):
+    sof = b"\xff\xc0\x00\x0b\x08" + h.to_bytes(2, "big") + w.to_bytes(2, "big") + b"\x01\x01\x11\x00"
+    return b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00" + sof + b"\xff\xd9"
+
+
 def test_evidence_pictures_are_offered_as_media_only_when_complete_and_verified(client, token, stub, rich):
     """#1069: an agent's PNG/JPEG/GIF/SVG is offered as `media` (the page shows it as an <img> after re-hashing);
     text and binary files are not; a file that no longer matches its digest is refused outright."""
@@ -180,8 +185,8 @@ def test_evidence_pictures_are_offered_as_media_only_when_complete_and_verified(
     env, ids = rich
     files = {
         "a.png": _png(),
-        "b.jpg": b"\xff\xd8\xff\xe0" + b"JFIF" + b"\x00" * 8,
-        "c.gif": b"GIF89a" + b"\x00" * 10,
+        "b.jpg": _jpeg(8, 8),
+        "c.gif": b"GIF89a" + (8).to_bytes(2, "little") * 2 + b"\x00" * 6,
         "d.svg": b'<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>',
         "e.txt": b"just text",
         "f.bin": b"\x00\x01\x02\x03",
@@ -208,9 +213,59 @@ def test_evidence_pictures_are_offered_as_media_only_when_complete_and_verified(
             assert got["media"]["b64"] == base64.b64encode(data).decode()
             assert got["media"]["digest"] == "sha256:" + hashlib.sha256(data).hexdigest()
         assert got["image"] is None  # the pasted-screenshot path is unchanged: an agent's picture is not `image`
+        if got["media"]:
+            assert got["text"] is None  # the bytes travel once
     assert kinds == {"a.png": "png", "b.jpg": "jpeg", "c.gif": "gif", "d.svg": "svg", "e.txt": None, "f.bin": None}
     (env.store_dir / "tickets" / ids["First"] / "artifacts" / "a.png").write_bytes(b"tampered")
     assert client.get(url(stub, "DEMO-0001/artifacts/a.png"), headers=headers(token)).status_code == 409
+
+
+def _bomb_png(w, h):
+    import struct
+    import zlib
+
+    def chunk(kind, body=b""):
+        return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
+
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(b"\x00"))
+        + chunk(b"IEND")
+    )
+
+
+def test_evidence_pictures_with_bomb_headers_or_unsafe_svg_are_not_offered(client, token, stub, rich):
+    """Opus review M1: a decompression-bomb header (PNG, JPEG, GIF), an oversize SVG and an SVG with entities or an
+    internal DTD subset are never offered as `media`; the page then shows a card."""
+    env, ids = rich
+    svg_ok = b'<svg xmlns="http://www.w3.org/2000/svg"><rect width="1" height="1"/></svg>'
+    files = {
+        "ok.svg": svg_ok,
+        "bomb.png": _bomb_png(60000, 60000),
+        "bomb.jpg": _jpeg(60000, 60000),
+        "bomb.gif": b"GIF89a" + (60000).to_bytes(2, "little") * 2 + b"\x00" * 6,
+        "huge.svg": svg_ok[:-6] + b"<!-- " + b"x" * (600 * 1024) + b" --></svg>",
+        "entity.svg": b'<?xml version="1.0"?><!DOCTYPE svg [<!ENTITY a "aaaa">]><svg xmlns="http://www.w3.org/2000/svg">&a;</svg>',
+        "dtd.svg": b'<!DOCTYPE svg [ <!ELEMENT svg ANY> ]><svg xmlns="http://www.w3.org/2000/svg"/>',
+    }
+    for name, data in files.items():
+        env.tick()
+        env.store.append(
+            {
+                "type": "artifact.added",
+                "actor": env.agent,
+                "name": name,
+                "kind": "other",
+                "sha256": "sha256:" + hashlib.sha256(data).hexdigest(),
+                "bytes": len(data),
+            },
+            log=ids["First"],
+            artifacts={name: data},
+        )
+    got = {n: client.get(url(stub, f"DEMO-0001/artifacts/{n}"), headers=headers(token)).json()["media"] for n in files}
+    assert got["ok.svg"] is not None and got["ok.svg"]["type"] == "svg"
+    assert {n: m for n, m in got.items() if n != "ok.svg"} == dict.fromkeys(set(files) - {"ok.svg"})
 
 
 def test_changes_are_bound_to_the_observed_source(client, token, stub, rich):

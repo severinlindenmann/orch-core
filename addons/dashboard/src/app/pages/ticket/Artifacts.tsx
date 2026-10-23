@@ -21,7 +21,7 @@ import { agentName, ago, fmtBytes, Mono, Pill, shortHash, type Jump, type TabPro
 import { addonHairline, addonTile } from '@/addon-ui/addonClasses'
 import { queries } from '@/api/queries'
 import { artifactTextQuery, sameDigest, capText, looksBinary, TEXT_PREVIEW_BYTES } from '@/api/artifactText'
-import { prose } from '@/components/sign/visible'
+import { prose, visible } from '@/components/sign/visible'
 import { verifiedMedia } from '@/api/evidenceMedia'
 import { SafeMarkdownView } from '@/addon-ui/SafeMarkdownView'
 import { NoPreviewCard } from './EvidenceCard'
@@ -178,14 +178,14 @@ const isHtmlDocument = (a: Artifact) => DOCUMENT_KINDS.includes(a.kind) && /\.ht
  * Without `evidence` it would follow the live `agentHtml` value, so turning the widgets addon off replaces it with source.
  * "View source" shows the bytes instead, and then reads "Show preview".
  */
-function HtmlViewer({ a, agentHtml: agentHtmlOn, evidence = false }: { a: Artifact; agentHtml: boolean; /** An HTML artifact of the ticket (evidence): always the inert frame, whatever the widgets switch says. Nothing else sets this. */ evidence?: boolean }) {
+function HtmlViewer({ a, agentHtml: agentHtmlOn, evidence = false }: { a: Artifact; agentHtml: boolean; /** An HTML artifact of the ticket (evidence): always the inert frame, whatever the widgets switch says. Only RemotePreview (a file read from the host and digest-checked) sets it; inline page content keeps the add-on gate. */ evidence?: boolean }) {
   // Evidence HTML needs no add-on: the frame is inert (sandbox="", sanitized, no network), the same in both cases.
   const agentHtml = agentHtmlOn || evidence
   // A page that relied on scripts opens on its source with core's notice (round 2 #6); its static preview stays one click away.
   const scripted = usesScripts(a.preview!)
   const [source, setSource] = useState(scripted)
   // Agent HTML is drawn inert (no scripts, sanitized: security review #1), at a fixed height the person can drag.
-  const node = frameNode.safeParse({ type: 'frame', title: `Sandboxed preview of ${a.name}`, html: a.preview!, height: 520 })
+  const node = frameNode.safeParse({ type: 'frame', title: `Sandboxed preview of ${visible(a.name)}`, html: a.preview!, height: 520 })
   const framed = agentHtml && !source && node.success
   return (
     <div className={cn('space-y-2', agentHtml && 'rounded-lg border p-2', agentHtml && (evidence ? 'border-border' : addonHairline))} data-addon={agentHtml && !evidence ? 'widgets' : undefined}>
@@ -261,9 +261,9 @@ function PictureView({ a, url }: { a: Artifact; url: string }) {
   return (
     <div className="space-y-1.5">
       <div className={cn('rounded-md border border-border bg-bg p-1', big ? 'max-h-[75vh] overflow-auto' : 'flex justify-center')}>
-        <button type="button" aria-label={big ? `Show ${a.name} scaled to fit` : `Enlarge ${a.name}`} aria-pressed={big} onClick={() => setBig(!big)} className={cn('block outline-none focus-visible:ring-2 focus-visible:ring-ring', big ? 'cursor-zoom-out' : 'cursor-zoom-in')}>
+        <button type="button" aria-label={big ? `Show ${visible(a.name)} scaled to fit` : `Enlarge ${visible(a.name)}`} aria-pressed={big} onClick={() => setBig(!big)} className={cn('block outline-none focus-visible:ring-2 focus-visible:ring-ring', big ? 'cursor-zoom-out' : 'cursor-zoom-in')}>
           {/* The one place a file's bytes become a picture: a data: URL in an <img> (no script, no network, even for SVG). */}
-          <img src={url} alt={`Picture ${a.name}`} referrerPolicy="no-referrer" className={big ? 'max-w-none' : 'max-h-80 max-w-full object-contain'} />
+          <img src={url} alt={`Picture ${visible(a.name)}`} referrerPolicy="no-referrer" className={big ? 'max-h-[2000px] max-w-[2000px] object-contain' : 'max-h-80 max-w-full object-contain'} />
         </button>
       </div>
       <p className="text-[12px] text-text-muted">{big ? 'Full size. Click the picture to scale it to fit.' : 'Scaled to fit. Click the picture to enlarge.'}</p>
@@ -292,8 +292,9 @@ function RemotePreview({ a, ticket, unavailable }: { a: Artifact; ticket: string
   // Only the file the ticket lists: the digest the host read must be the one on the ticket.
   if (!sameDigest(d.digest, a.sha256)) return <NoPreviewCard a={a} warn why="This file does not match the digest the ticket records, so it is not shown. Do not rely on it as evidence." />
   if (d.truncated || !d.verified) return <NoPreviewCard a={a} why={`Too large to preview: ${fmtBytes(Math.max(d.size, a.bytes ?? 0))}, the limit is ${fmtBytes(5.25 * 1024 * 1024)}.`} />
-  if (d.media) {
-    const url = verifiedMedia(d.media, a.sha256)
+  const offered = d.media ?? d.image
+  if (offered) {
+    const url = verifiedMedia(offered, a.sha256)
     return url ? <PictureView a={a} url={url} /> : <NoPreviewCard a={a} warn why="The picture does not match the digest the ticket records, so it is not shown." />
   }
   const ext = extOf(a.name)
@@ -328,9 +329,9 @@ function RemotePreview({ a, ticket, unavailable }: { a: Artifact; ticket: string
   if (/^(md|markdown)$/.test(ext) && !cut)
     return (
       <div className="space-y-2">
-        <p className="text-[12px] text-text-muted">Notes shown with basic formatting. Links stay inert and pictures are not loaded.</p>
+        <p className="text-[12px] text-text-muted">Notes shown with basic formatting. Links are shown as text with their address and cannot be clicked; pictures are not loaded.</p>
         <div className="rounded-md border border-border bg-bg p-3 text-[13px]">
-          <SafeMarkdownView text={safe} />
+          <SafeMarkdownView text={safe} inertLinks />
         </div>
       </div>
     )
@@ -367,7 +368,7 @@ export function Viewer({ a, agentHtml, ticket }: { a: Artifact; agentHtml: boole
       </div>
     )
   if (!a.preview) return ticket && hasFile ? <RemotePreview a={a} ticket={ticket} /> : NO_PREVIEW
-  if (isHtmlDocument(a)) return <HtmlViewer a={a} agentHtml={agentHtml} evidence />
+  if (isHtmlDocument(a)) return <HtmlViewer a={a} agentHtml={agentHtml} />
   if (a.kind === 'log') return <TextViewer text={a.preview} label={`Log ${a.name}`} />
   if (a.kind === 'dataset' || /\.csv$/.test(a.name)) {
     return <CsvTable text={a.preview} />

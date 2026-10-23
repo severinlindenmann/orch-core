@@ -17,6 +17,8 @@ export interface ArtifactContent {
   text: string | null
   /** A picture, when the bytes are one (#1069). The page re-hashes it (`verifiedMedia`) before it is shown. */
   media?: EvidenceMedia | null
+  /** A person's pasted screenshot (png or webp): the same kind of offer, kept under its older name. */
+  image?: EvidenceMedia | null
 }
 
 /** How much of a text the page shows. */

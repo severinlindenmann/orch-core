@@ -139,25 +139,74 @@ def picture(data: bytes) -> dict | None:
     }
 
 
+SVG_MAX = 512 * 1024
+
+
+def is_svg(data: bytes) -> bool:
+    """The ONE rule for "these bytes are an SVG" (the page's `sniffImage` in pasteImage.ts uses the same one):
+    the first 512 bytes, trimmed and lower-cased, start with `<svg`, or with `<?xml` / `<!doctype svg` and an `<svg`
+    tag shows up in the first 4096 bytes."""
+    lead = data[:512].lstrip().lower()
+    return lead.startswith(b"<svg") or (
+        lead.startswith((b"<?xml", b"<!doctype svg")) and b"<svg" in data[:4096].lower()
+    )
+
+
+def _jpeg_size(data: bytes) -> tuple[int, int] | None:
+    """Width and height from the first SOFn segment, read from headers only (no decoding)."""
+    i = 2
+    while i + 9 < len(data):
+        if data[i] != 0xFF:
+            return None
+        marker = data[i + 1]
+        if marker == 0xFF:
+            i += 1
+            continue
+        if marker in (0xD8, 0x01) or 0xD0 <= marker <= 0xD7:
+            i += 2
+            continue
+        length = int.from_bytes(data[i + 2 : i + 4], "big")
+        if marker in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
+            return int.from_bytes(data[i + 7 : i + 9], "big"), int.from_bytes(data[i + 5 : i + 7], "big")
+        if length < 2:
+            return None
+        i += 2 + length
+    return None
+
+
 def media(data: bytes) -> dict | None:
     """The bytes of an evidence picture (PNG, JPEG, GIF, WebP, SVG), typed by its first bytes, never by the name.
 
     Run only on a complete file whose sha256 matched the ticket's record. It is a read-only offer: no decoding here, and
     the page hashes the bytes again and shows them only as an <img> from a data: URL (an image context runs no script,
-    loads nothing, and SVG is never drawn as markup).
+    loads nothing, and SVG is never drawn as markup). Size limits are core's: a picture side is at most SIDE_MAX pixels
+    and the area PIXELS_MAX (a decompression-bomb header is refused without decoding anything); PNG and WebP also go
+    through core's own header check. An SVG is at most 512 KiB and has no entity declaration or internal DTD subset.
     """
-    head = data[:512]
-    if data.startswith(b"\x89PNG\r\n\x1a\n"):
-        kind = "png"
-    elif data.startswith(b"\xff\xd8\xff"):
-        kind = "jpeg"
-    elif data[:4] == b"GIF8":
-        kind = "gif"
-    elif data[:4] == b"RIFF" and data[8:12] == b"WEBP":
-        kind = "webp"
-    elif (lead := head.lstrip().lower()).startswith(b"<svg") or (
-        lead.startswith((b"<?xml", b"<!doctype svg")) and b"<svg" in data[:4096].lower()
-    ):
+    from orch.host import imagecheck
+
+    if data.startswith(b"\x89PNG\r\n\x1a\n") or (data[:4] == b"RIFF" and data[8:12] == b"WEBP"):
+        try:
+            kind = "png" if imagecheck.check(data) == "image/png" else "webp"
+        except imagecheck.ImageRefused:
+            return None
+    elif data.startswith(b"\xff\xd8\xff") or data[:4] == b"GIF8":
+        if data[:2] == b"\xff\xd8":
+            kind, size = "jpeg", _jpeg_size(data)
+        else:
+            kind, size = "gif", (int.from_bytes(data[6:8], "little"), int.from_bytes(data[8:10], "little"))
+        if not size or not (1 <= size[0] <= imagecheck.SIDE_MAX and 1 <= size[1] <= imagecheck.SIDE_MAX):
+            return None
+        if size[0] * size[1] > imagecheck.PIXELS_MAX:
+            return None
+    elif is_svg(data):
+        low = data.lower()
+        if (
+            len(data) > SVG_MAX
+            or b"<!entity" in low
+            or (b"<!doctype" in low and b"[" in low[low.index(b"<!doctype") :])
+        ):
+            return None
         kind = "svg"
     else:
         return None
@@ -257,6 +306,10 @@ def register(app: FastAPI, gateway: Gateway):
             text, binary = data.decode("utf-8", errors="ignore" if not complete else "strict"), False
         except UnicodeDecodeError:
             text, binary = None, True
+        # A person's pasted screenshot keeps its own `image` offer (ticket text draws it); any other verified picture is
+        # offered as `media`. The bytes travel once, and a picture's `text` copy is never sent.
+        pasted = picture(data) if verified and pasted_by_person(gateway, ws, key, name, digest) else None
+        offered = None if pasted else media(data) if verified else None
         return {
             "name": name,
             "size": part["size"],
@@ -264,10 +317,10 @@ def register(app: FastAPI, gateway: Gateway):
             "verified": verified,
             "truncated": not complete,
             "binary": binary,
-            "text": text,
+            "text": None if (offered or pasted) else text,
             # R3 part B: a screenshot pasted into the ticket. Only a complete, verified PNG/WebP that passes core's
             # header check is offered; the page hashes the bytes itself before showing them, and only ever as an <img>.
-            "image": picture(data) if verified and pasted_by_person(gateway, ws, key, name, digest) else None,
             # Evidence preview (#1069): any complete, digest-verified picture, whoever added it. The page re-hashes it.
-            "media": media(data) if verified else None,
+            "image": pasted,
+            "media": offered,
         }

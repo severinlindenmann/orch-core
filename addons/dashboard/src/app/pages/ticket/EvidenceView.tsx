@@ -10,7 +10,7 @@ import type { AcceptanceStatus, Artifact, TicketDocument } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { visible } from '@/components/sign/visible'
-import { fmtBytes, Pill } from './shared'
+import { agentName, fmtBytes, Pill } from './shared'
 import { Viewer } from './Artifacts'
 
 /** The artifacts a criterion lists as its proof (tasks are receipts, shown by the task rows). */
@@ -25,7 +25,23 @@ function useAgentHtml(ticketKey: string): boolean {
 }
 
 /** One proving artifact: its name, what it proves, and its preview (open at first, one click to fold). */
-export function EvidenceItem({ ticket, artifact, acId, compact = false, defaultOpen = true }: { ticket: TicketDocument; artifact: Artifact; acId: string; compact?: boolean; defaultOpen?: boolean }) {
+/** Files up to this size open on their own; a bigger one waits for a click (nothing big is fetched just by opening a tab). */
+export const AUTO_OPEN_BYTES = 256 * 1024
+const openAtFirst = (a: Artifact) => a.bytes != null && a.bytes <= AUTO_OPEN_BYTES
+
+/** Who added the file, on its own background: an agent's evidence is not part of what a dialog asks the person to sign. */
+function Provenance({ a }: { a: Artifact }) {
+  const agent = a.added_by_kind ? a.added_by_kind === 'agent' : a.added_by !== 'host'
+  if (!agent)
+    return <p className="mt-1 text-[11px] text-text-faint">Added by {a.added_by === 'host' ? 'orch' : 'a person'}.</p>
+  return (
+    <p data-testid="evidence-provenance" className="mt-1 rounded border border-warning/30 bg-warning-soft px-2 py-1 text-[11px] text-text">
+      Added by agent {visible(agentName(a.added_by))}, not part of this dialog. Read it as the agent&apos;s claim, not as what you sign.
+    </p>
+  )
+}
+
+export function EvidenceItem({ ticket, artifact, acId, compact = false, defaultOpen = openAtFirst(artifact) }: { ticket: TicketDocument; artifact: Artifact; acId: string; compact?: boolean; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen)
   const agentHtml = useAgentHtml(ticket.key)
   const body = `evidence-${acId}-${artifact.name}`
@@ -37,10 +53,11 @@ export function EvidenceItem({ ticket, artifact, acId, compact = false, defaultO
         </span>
         <Pill tone="neutral">proves {acId}</Pill>
         {!!artifact.bytes && <span className="text-text-faint">{fmtBytes(artifact.bytes)}</span>}
-        <Button type="button" variant="ghost" size="sm" className="ml-auto h-6 px-2 text-[12px]" aria-expanded={open} aria-controls={body} aria-label={`${open ? 'Hide' : 'Show'} preview of ${artifact.name}`} onClick={() => setOpen(!open)}>
+        <Button type="button" variant="ghost" size="sm" className="ml-auto h-6 px-2 text-[12px]" aria-expanded={open} aria-controls={body} aria-label={`${open ? 'Hide' : 'Show'} preview of ${visible(artifact.name)}`} onClick={() => setOpen(!open)}>
           {open ? 'Hide preview' : 'Show preview'}
         </Button>
       </div>
+      <Provenance a={artifact} />
       {artifact.label && <p className="mt-0.5 text-[12px] text-text-muted">{visible(artifact.label)}</p>}
       {open && (
         <div id={body} className={cn('mt-2 overflow-auto', compact && 'max-h-64')}>

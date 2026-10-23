@@ -40,6 +40,14 @@ describe('pictures: an <img> from digest-checked bytes, never markup', () => {
     await user.click(screen.getByRole('button', { name: 'Enlarge a.png' }))
     expect(screen.getByText(/Full size/)).toBeInTheDocument()
   })
+  it('the enlarged picture keeps a maximum size (no max-w-none)', async () => {
+    const user = userEvent.setup()
+    show('a.png', { bytes: PNG, ...media('png', PNG) })
+    await user.click(await screen.findByRole('button', { name: 'Enlarge a.png' }))
+    const img = screen.getByRole('img', { name: 'Picture a.png' })
+    expect(img.className).not.toMatch(/max-w-none/)
+    expect(img.className).toMatch(/max-w-\[2000px\]/)
+  })
   it('a JPEG is drawn too', async () => {
     show('b.jpg', { bytes: JPEG, ...media('jpeg', JPEG) })
     expect((await screen.findByRole('img', { name: 'Picture b.jpg' })).getAttribute('src')).toMatch(/^data:image\/jpeg;base64,/)
@@ -80,6 +88,12 @@ describe('text-like files', () => {
     expect(container.querySelector('script')).toBeNull()
     expect(container.querySelector('a[href^="javascript"]')).toBeNull()
   })
+  it('a link in agent markdown is plain text with its address, never an anchor', async () => {
+    const { container } = show('n.md', { text: 'Please [Approve here](https://evil.example/x) now' })
+    expect(await screen.findByText(/Approve here/)).toBeInTheDocument()
+    expect(container.querySelector('a')).toBeNull()
+    expect(container).toHaveTextContent('Approve here (https://evil.example/x)')
+  })
   it('a diff is coloured by line', async () => {
     show('c.diff', { text: '--- a\n+++ b\n@@ -1 +1 @@\n-old\n+new\n' })
     const pre = await screen.findByLabelText('Diff c.diff')
@@ -117,5 +131,16 @@ describe('when there is no preview: a card that says why', () => {
     expect(card).toHaveAttribute('role', 'alert')
     expect(card).toHaveTextContent(/does not match the digest/)
     expect(screen.queryByLabelText('Text of m.txt')).toBeNull()
+  })
+})
+
+describe('one SVG rule on page and server', () => {
+  it('is an svg only when it starts with <svg, or <?xml / <!doctype svg with an <svg tag in the first 4 KiB', async () => {
+    const { sniffImage } = await import('@/api/pasteImage')
+    expect(sniffImage(enc('  <SVG xmlns="x"/>'))).toBe('svg')
+    expect(sniffImage(enc('<?xml version="1.0"?><svg/>'))).toBe('svg')
+    expect(sniffImage(enc('<!DOCTYPE svg><svg/>'))).toBe('svg')
+    expect(sniffImage(enc('<?xml version="1.0"?><note>hi</note>'))).toBeNull()
+    expect(sniffImage(enc('hello <svg/> inside text'))).toBeNull()
   })
 })

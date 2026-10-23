@@ -213,7 +213,7 @@ describe('G4 the dialog shows everything the gate hash covers', () => {
 })
 
 describe('G4 artifact drawer stays closed to stale state', () => {
-  it('turning agent HTML off while the drawer is open keeps the evidence frame (evidence HTML needs no add-on, #1069)', async () => {
+  it('turning agent HTML off while the drawer is open replaces the frame with source (inline page content keeps the add-on gate)', async () => {
     const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query')
     const { render } = await import('@testing-library/react')
     const userEvent = (await import('@testing-library/user-event')).default
@@ -233,8 +233,8 @@ describe('G4 artifact drawer stays closed to stale state', () => {
     const ws = store.workspaces.find((w) => w.prefix === 'DEMO')!.id
     store.addonOp(ws, 'widgets', { op: 'disable' }, { kind: 'person', id: 'p_sev' })
     await client.invalidateQueries()
-    expect(sheet.querySelector('iframe')?.getAttribute('sandbox')).toBe('')
-    expect(sheet).not.toHaveTextContent('Agent HTML is off')
+    await waitFor(() => expect(sheet.querySelector('iframe')).toBeNull(), T)
+    expect(sheet).toHaveTextContent('Agent HTML is off')
   })
   it('a .html-named log is shown as text, not run', async () => {
     const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query')

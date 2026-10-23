@@ -87,6 +87,26 @@ describe('evidence under a criterion and in the verdict dialog', () => {
   })
 })
 
+describe('Opus review fixes (provenance, folding, inert links)', () => {
+  it('every preview says who added the file; an agent file says it is not part of the dialog', () => {
+    const t = ticket([art({ added_by: 'claude-code:s_1:p_sev' })], [ac()])
+    wrap(<VerdictEvidence ticket={t} />)
+    expect(screen.getByTestId('evidence-provenance')).toHaveTextContent(/Added by agent .*, not part of this dialog/)
+  })
+  it('in the verdict dialog nothing is fetched or drawn until clicked', () => {
+    const t = ticket([art()], [ac()])
+    wrap(<VerdictEvidence ticket={t} />)
+    expect(screen.getByRole('button', { name: 'Show preview of elefanten.html' })).toHaveAttribute('aria-expanded', 'false')
+    expect(document.querySelector('iframe')).toBeNull()
+  })
+  it('under a criterion, a file over 256 KiB waits for a click; a small one opens', () => {
+    const t = ticket([art({ bytes: 300 * 1024 }), art({ name: 'small.log', kind: 'log', bytes: 100, sha256: 'd'.repeat(64) })], [ac({ evidence: [{ kind: 'artifact', ref: 'elefanten.html' }, { kind: 'artifact', ref: 'small.log' }] })])
+    wrap(<CriterionEvidence ticket={t} ac={t.acceptance_state[0]} />)
+    expect(screen.getByRole('button', { name: 'Show preview of elefanten.html' })).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getByRole('button', { name: 'Hide preview of small.log' })).toHaveAttribute('aria-expanded', 'true')
+  })
+})
+
 describe('Evidence entry points', () => {
   it('Today: the Evidence link opens the ticket on its Acceptance tab', async () => {
     renderApp('/')

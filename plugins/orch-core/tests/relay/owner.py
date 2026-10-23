@@ -36,7 +36,7 @@ from orch import canon, crypto
 from orch.crypto.labels import L
 from orch.identity import wscard
 from orch.identity.reader import KAT_DIGESTS
-from orch.relay import http as rhttp
+from orch.net import http as rhttp
 from orch.relay_owner import (
     ANSWER_LABELS,
     OwnerClient,
@@ -153,7 +153,7 @@ class SandboxOwner:
     """The throwaway owner of one sandbox, against one relay origin.
 
     ``origin`` is the literal the host signs (``link.json``'s). ``transport`` is a test seam
-    (:class:`orch.relay.http.Transport`); the default is a connection to ``origin``. ``kdf_n`` is the low-N seam for
+    (:class:`orch.net.http.Transport`); the default is a connection to ``origin``. ``kdf_n`` is the low-N seam for
     fast unit tests of the recovery-code derivation."""
 
     def __init__(self, root: str | os.PathLike[str], origin: str, *, transport: rhttp.Transport | None = None,

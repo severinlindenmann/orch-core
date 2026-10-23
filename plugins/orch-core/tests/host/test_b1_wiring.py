@@ -18,7 +18,7 @@ from orch.identity import members
 from orch.relay import worker as relay_worker
 from orch.relay.r6.membership import MembershipPublisher
 from orch.relay.session import Fenced
-from orch.relay.state import StateDir
+from orch.wsproto.state import StateDir
 from tests.host.lifecycle_helpers import Lab
 from tests.relay.helpers import Alarms
 from tests.relay.test_b1_membership import Dev, _person

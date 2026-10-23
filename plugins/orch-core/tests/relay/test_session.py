@@ -8,8 +8,9 @@ import os
 import pytest
 
 from orch import canon, crypto
-from orch.relay import retry, session, wire
+from orch.relay import retry, session
 from orch.relay.session import Fenced, RelayMisbehaving
+from orch.wsproto import wire
 
 from . import corpus
 from .helpers import (
@@ -461,7 +462,7 @@ def test_genesis_put_checked_before_sending(relay):
 
 
 def test_oversized_success_body_is_refused(relay):
-    from orch.relay import http
+    from orch.net import http
 
     relay.expect(
         Expect("POST", "/v2/session/challenge", reply=json_reply(200, {"challenge": "A" * 20_000, "expires_ms": 1}))

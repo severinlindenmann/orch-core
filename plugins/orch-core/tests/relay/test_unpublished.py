@@ -18,11 +18,11 @@ import pytest
 from orch import canon, crypto
 from orch.host import relayr4
 from orch.identity import certs
+from orch.net.http import TransportError
 from orch.relay import unpublished as up
-from orch.relay.http import TransportError
 from orch.relay.retry import RelayRefused
 from orch.relay.session import Fenced
-from orch.relay.state import StateDir
+from orch.wsproto.state import StateDir
 from tests.identity.helpers import Person
 from tests.store.helpers import T0, Env
 from tests.store.test_forwarded_revocation import _cert, item

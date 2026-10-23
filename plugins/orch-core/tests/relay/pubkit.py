@@ -12,10 +12,10 @@ from typing import Any
 
 from orch import canon, crypto
 from orch.crypto.labels import L
-from orch.relay import http as rhttp
+from orch.net import http as rhttp
 from orch.relay.publish import Publisher
 from orch.relay.session import Session
-from orch.relay.state import StateDir
+from orch.wsproto.state import StateDir
 from tests.store.helpers import T0, WS, Env
 
 from .helpers import OPEN_CONNS, Alarms, Clock, Key, session

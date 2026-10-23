@@ -7,7 +7,7 @@ import pytest
 
 from orch import canon, crypto
 from orch.crypto.labels import L
-from orch.relay import sign, wire
+from orch.wsproto import sign, wire
 
 from . import corpus
 
@@ -318,7 +318,7 @@ def test_a_cached_older_card_is_refused_once_a_later_seq_was_signed():
 
 
 def test_file_ledger_survives_a_restart(tmp_path):
-    from orch.relay.state import FileSignLedger, StateDir
+    from orch.wsproto.state import FileSignLedger, StateDir
 
     st = StateDir(tmp_path / "relay")
     sig = signer(ledger=FileSignLedger(st)).card(dict(CARD["o"]))
@@ -334,7 +334,7 @@ def test_two_signers_on_one_state_dir_never_return_two_cards_at_one_seq(tmp_path
     """Review D1: concurrent signers sharing a directory; at most one distinct card signature leaves at card_seq 1."""
     import threading
 
-    from orch.relay.state import FileSignLedger, StateDir
+    from orch.wsproto.state import FileSignLedger, StateDir
 
     st = StateDir(tmp_path / "relay")
     got, errors = [], []
@@ -373,7 +373,7 @@ def test_two_signers_on_one_state_dir_never_return_two_cards_at_one_seq(tmp_path
 def test_a_null_ledger_entry_never_lets_a_different_card_be_signed_at_that_seq(tmp_path, bad):
     """Round 9, equivocation: the ledger holds ``null`` (or a malformed entry) at card_seq 10; a request for a card at
     seq 10 is refused (StateError), no signature is made, and the ledger on disk is unchanged."""
-    from orch.relay.state import FileSignLedger, StateDir, StateError
+    from orch.wsproto.state import FileSignLedger, StateDir, StateError
 
     with StateDir(tmp_path / "relay") as st:
         st.write(FileSignLedger.FILE, bad)

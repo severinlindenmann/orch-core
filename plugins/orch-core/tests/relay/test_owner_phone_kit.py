@@ -15,9 +15,9 @@ from orch.crypto.labels import L
 from orch.identity import certreq, certs, memberlist, pairing, reader
 from orch.identity import recovery as rec
 from orch.identity.pairdevice import cert_digest
-from orch.relay import http as rhttp
-from orch.relay import wire
+from orch.net import http as rhttp
 from orch.relay.keys import Member
+from orch.wsproto import wire
 
 from . import bridgekit, corpus
 from .helpers import OPEN_CONNS, V_ORIGIN, WS, WSK_PRIV

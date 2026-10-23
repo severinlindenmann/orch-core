@@ -34,9 +34,9 @@ from typing import Any, Protocol
 
 from orch import canon
 from orch.crypto import push as cpush
+from orch.net.http import TransportError
 
 from .audience import PushContext, Standing, devices_for
-from .http import TransportError
 from .keys import KeyMissing, SealRefused
 from .outbound import Intent, NewIntent, OutboundStore
 from .retry import RelayRefused
@@ -358,7 +358,7 @@ def dispatch_step(ctx: _Ctx, key: str, now_ms: int, *, off_until_ms: int = 0) ->
 def _is_custody_refusal(e: BaseException) -> bool:
     """Key, seal and custody refusals: the push thread never retries them (a refused control stays refused). The R6
     key store's ``MembershipUnsafe`` is matched by name: only r6 imports that module (test_import_ban.py)."""
-    from .state import StateError
+    from orch.wsproto.state import StateError
 
     named = type(e).__name__ == "MembershipUnsafe"
     return named or isinstance(e, (cpush.PushError, SealRefused, KeyMissing, StateError))

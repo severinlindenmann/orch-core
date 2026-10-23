@@ -264,7 +264,7 @@ def seal_wk(dk_kx_pub: bytes, device_id: str, workspace_id: str, epoch: int, wk:
 def card_key_wrap(dk_kx_pub: bytes, device_id: str, workspace_id: str, card_seq: int, ck: bytes) -> bytes:
     """``seal_to(dk_kx, purpose "card", recipient = device_id, object = workspace_id, epoch = card_seq, CK)`` (§5.3,
     §7.1): the ``sealed`` of one ``card_key_wraps`` entry. ``card_seq`` is the card's, ``1 <= card_seq < 2^32`` (the
-    seal's epoch field, as ``orch.relay.card`` bounds it)."""
+    seal's epoch field, as ``orch.wsproto.card`` bounds it)."""
     if type(card_seq) is not int or not 1 <= card_seq <= MAX_EPOCH:
         raise _bad("card_seq")
     return _seal_key("card", dk_kx_pub, device_id, workspace_id, card_seq, ck)

@@ -1,7 +1,7 @@
 """``PublishSigner``: the WSK signature of an orch-publish request (protocol-v2 §12.1, design-publish-addon §2.4).
 
-It sits beside :class:`orch.relay.sign.RelaySigner`, under the same API rule (``tests/relay/test_import_ban.py``): the
-key arrives as a :class:`orch.relay.sign.WorkspaceKey`, is captured in a closure, and the signer exposes one purpose
+It sits beside :class:`orch.wsproto.sign.RelaySigner`, under the same API rule (``tests/relay/test_import_ban.py``): the
+key arrives as a :class:`orch.wsproto.sign.WorkspaceKey`, is captured in a closure, and the signer exposes one purpose
 method, :meth:`PublishSigner.request`. There is **no** generic ``sign(payload)``. The bytes it signs are built here and
 only here::
 
@@ -38,10 +38,9 @@ from dataclasses import dataclass
 
 from orch import crypto
 from orch.crypto.labels import L
-
-from . import wire
-from .sign import SignerRefused, WorkspaceKey
-from .state import SignLedger
+from orch.wsproto import wire
+from orch.wsproto.sign import SignerRefused, WorkspaceKey
+from orch.wsproto.state import SignLedger
 
 __all__ = ["METHODS", "TARGET_MAX", "PublishContext", "PublishSigner", "SignedPublish", "publish_signed_bytes"]
 

@@ -1,4 +1,4 @@
-"""``orch.relay.wire``: origin, ``auth_bytes`` (byte-equal to orch-relay ``proto.auth_bytes``), strict size-capped JSON
+"""``orch.wsproto.wire``: origin, ``auth_bytes`` (byte-equal to orch-relay ``proto.auth_bytes``), strict capped JSON
 bodies, base64 size checks, ORB2 header/envelope codec and body sealing, against the vendored vectors."""
 
 from __future__ import annotations
@@ -8,7 +8,7 @@ import json
 import pytest
 
 from orch import canon, crypto
-from orch.relay import wire
+from orch.wsproto import wire
 
 from . import corpus
 

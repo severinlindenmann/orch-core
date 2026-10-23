@@ -17,11 +17,11 @@ import pytest
 
 from orch import crypto
 from orch.relay import bridge as bridge_mod
-from orch.relay import sign, wire
 from orch.relay.bridge import Bridge, Item
 from orch.relay.keys import BridgeKeys, Member, MemberList, SealState
 from orch.relay.rids import RidStore
-from orch.relay.state import StateDir
+from orch.wsproto import sign, wire
+from orch.wsproto.state import StateDir
 
 from . import corpus
 from .bridgekit import FakeHost, Poster, SealLockFixture, open_chunk

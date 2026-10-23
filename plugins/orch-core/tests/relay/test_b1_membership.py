@@ -434,7 +434,7 @@ def test_a_relay_list_above_what_this_host_allocated_is_h7_host_state_loss(rig):
 
 
 def test_expose_records_the_holders_exclude_and_h8_are_durable_and_committed_is_a_lock_free_copy(tmp_path):
-    from orch.relay.r6.keystore import CustodyRefused
+    from orch.identity.epochs import CustodyRefused
 
     mk = open_keys(tmp_path, clock=Clock())
     assert mk.committed_record() is None

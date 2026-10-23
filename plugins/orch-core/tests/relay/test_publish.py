@@ -12,10 +12,11 @@ import time
 import pytest
 
 from orch import canon
-from orch.relay import publish, wire
+from orch.relay import publish
 from orch.relay.publish import History, PublishHeld, measure
-from orch.relay.state import StateDir, StateError
 from orch.store.outbox import Segment
+from orch.wsproto import wire
+from orch.wsproto.state import StateDir, StateError
 
 from .pubkit import Kit
 

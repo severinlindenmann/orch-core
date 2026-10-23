@@ -11,7 +11,7 @@ from typing import Any
 from orch import crypto
 from orch.identity import wscard
 from orch.identity.errors import Refused
-from orch.relay import card as relay_card
+from orch.wsproto import card as relay_card
 
 from .errors import HubRefused
 

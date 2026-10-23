@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import pytest
 
-from orch.relay import http, retry
+from orch.net import http
+from orch.relay import retry
 from orch.relay.session import RelayInfo, RelayMisbehaving, fetch_relay_info
 
 from .helpers import OPEN_CONNS, V_ORIGIN

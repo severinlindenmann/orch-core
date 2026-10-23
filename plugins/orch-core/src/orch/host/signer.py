@@ -561,7 +561,7 @@ def _question(material: Mapping[str, Any], ev: Mapping[str, Any], workspace_id: 
         _refuse("the material shows another question")
     try:
         qid = canon.question_id(workspace_id, log, q["id"])
-        bound = canon.question_hash(qid, log, q["text"], q.get("options") or [])
+        bound = canon.question_hash(qid, log, q)  # the whole raw question: kind, details, why, facts are bound
     except Exception as exc:  # noqa: BLE001
         _refuse(f"the question cannot be hashed: {exc}")
     if ev.get("hash") != bound:

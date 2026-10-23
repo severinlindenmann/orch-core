@@ -339,6 +339,24 @@ def _person_op(prepared: Mapping[str, Any]) -> None:
                 and e["type"] == "relay.reopened"
                 and set(e) - review.ENVELOPE == {"hub_id"}
             )
+        elif op == "device.mark_exposed":  # #1097: one device.exposed, the signer's own device, nothing else
+            ok = (
+                len(events) == 1
+                and log == "workspace"
+                and e["type"] == "device.exposed"
+                and set(e) - review.ENVELOPE == {"device", "reason"}
+                and e.get("reason") == "convenience"
+                and e.get("device") == e["actor"].get("device")
+            )
+        elif op == "device.rotate":  # #1097: one device.rotated, signed by the NEW device (the actor), replacing `old`
+            ok = (
+                len(events) == 1
+                and log == "workspace"
+                and e["type"] == "device.rotated"
+                and set(e) - review.ENVELOPE == {"old", "device", "cert", "rotation"}
+                and e.get("device") == e["actor"].get("device")
+                and e.get("old") != e.get("device")
+            )
         elif op == "settings.set":
             sets = e.get("set")
             ok = e["type"] == "settings.changed" and log == "workspace" and isinstance(sets, dict) and bool(sets)
@@ -644,6 +662,8 @@ _PLAIN = {
     "hub.mode": "switch hub {hub_id} to {mode} mode: the hub will be able to read everything in this workspace",
     "hub.leave": "leave hub {hub_id} (binding {binding_seq}) and tell it that this workspace is no longer bound",
     "relay.reopen": "open the direct relay path of this workspace again (phones must be paired again)",
+    "device.mark_exposed": "record that your device key {device} was in one-click custody (it only loses authority)",
+    "device.rotate": "replace your device key {old} with the new key {device}; the old key stops signing everywhere",
 }
 
 

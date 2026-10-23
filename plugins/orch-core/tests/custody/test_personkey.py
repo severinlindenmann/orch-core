@@ -194,9 +194,11 @@ def _person(code: str) -> tuple[bytes, bytes]:
 # --- the protocol and the label allow-list ------------------------------------------------------------------------
 
 
-def test_sign_labels_are_the_four_r6_and_revocation_labels_never_the_delegation():
+def test_sign_labels_are_the_r6_revocation_and_rotation_labels_never_the_delegation():
     names = personkey.SIGN_LABELS
-    assert set(names) == {"sig_device_cert", "sig_cert_challenge", "sig_cert_rejection", "sig_revocation"}
+    assert set(names) == {
+        "sig_device_cert", "sig_cert_challenge", "sig_cert_rejection", "sig_revocation", "sig_device_rotate",
+    }  # fmt: skip
     assert all(L[n] in PERSON_KEY_LABELS for n in names)
     assert "sig_ws_delegation" not in names
 

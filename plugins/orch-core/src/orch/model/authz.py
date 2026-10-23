@@ -60,6 +60,8 @@ ACTOR_RULES: dict[str, str] = {
     "device.added": "P",
     "device.removed": "P",
     "device.revoked": "PH",
+    "device.exposed": "P",  # #1097: signed by the device itself (the model checks)
+    "device.rotated": "P",  # #1097: signed by the new device itself, with the person key's certificate and rotation
     "settings.changed": "P",
     "grant.issued": "PH",  # C10: a host actor only with `request` (hub protocol 8.8), checked by the type rule
     "grant.requested": "P",  # C10: hub-signed only (HUB_ONLY)
@@ -107,7 +109,9 @@ HUB_TYPES = frozenset(
 #: C10: types that exist only as hub-signed requests; a device-signed one (no operation writes it) is refused
 HUB_ONLY = frozenset({"grant.requested", "device.excluded"})
 DECISIONS = frozenset({"gate.approved", "gate.changes_requested", "verdict.given", "question.answered"})
-VIEWER_MAY = frozenset({"question.answered", "device.added", "device.removed", "device.revoked"})
+VIEWER_MAY = frozenset(
+    {"question.answered", "device.added", "device.removed", "device.revoked", "device.exposed", "device.rotated"}
+)
 UNATTENDED_PER_SESSION = 30
 UNATTENDED_PER_WORKSPACE = 120
 BYTES_PER_SESSION = 20 * 1024 * 1024
@@ -177,7 +181,7 @@ def authorize_person(core: Core, log: str, e: dict[str, Any], v: Verifier, *, hu
     if m is None:
         return Refusal(Code.MEMBER_UNKNOWN, f"{a['id']} is not a member")
     dev = ws.devices.get(a["device"])
-    recovery = breakglass.is_recovery(ws, e)
+    recovery = breakglass.is_recovery(ws, e) or breakglass.is_rotation(ws, e)
     if recovery:
         cert = e["cert"]
     elif dev is None or dev.person != a["id"]:

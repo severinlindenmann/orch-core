@@ -22,6 +22,14 @@ from tests.ops.humans import KDF, Provider
 WS = "0123456789abcdef0123456789abcdef"
 
 
+@pytest.fixture(autouse=True)
+def _no_exposure_mark(monkeypatch):
+    """#1097 E3 needs a registered workspace and a running host (tests: test_key_exposure_custody.py)."""
+    from orch.custody import exposure
+
+    monkeypatch.setattr(exposure, "mark_before_move", lambda *a, **k: None)
+
+
 def _payload(label: str = "sig_ticket_event") -> bytes:
     return canon.LABELS[label].encode("ascii") + b'{"x":1}'
 

@@ -94,6 +94,28 @@ CASES: dict[str, tuple[str, dict]] = {
     "role.changed": ("workspace", {"person": PERSON, "role": "owner"}),
     "device.added": ("workspace", {"device": DEVICE, "cert": CERT2}),
     "device.removed": ("workspace", {"device": DEVICE, "reason": "retired laptop"}),
+    "device.exposed": ("workspace", {"device": DEVICE, "reason": "convenience"}),
+    "device.rotated": (
+        "workspace",
+        {
+            "old": "d_" + "cc" * 16,
+            "device": DEVICE,
+            "cert": CERT2,
+            "rotation": {
+                "o": {
+                    "v": 2,
+                    "suite": 2,
+                    "kind": "device_rotation",
+                    "workspace_id": "aa" * 16,
+                    "person_id": "bb" * 16,
+                    "old": "cc" * 16,
+                    "new": "dd" * 16,
+                    "roster_v": 3,
+                },
+                "sig": "A" * 86,
+            },
+        },
+    ),
     "device.revoked": ("workspace", {"device": DEVICE, "reason": "lost", "revocation": REV}),
     "settings.changed": (
         "workspace",
@@ -218,7 +240,7 @@ def test_every_decisive_field_appears_in_the_prompt(etype):
     assert "auth: passphrase" in text and "roster_v: 7" in text
     assert f"actor.person: {PERSON}" in text and f"actor.device: {DEVICE}" in text
     for field, value in fields.items():
-        if field in ("delegation", "device_cert", "cert", "revocation"):
+        if field in ("delegation", "device_cert", "cert", "revocation", "rotation"):
             obj = value["o"]
             for f in (
                 "device_id",
@@ -233,6 +255,9 @@ def test_every_decisive_field_appears_in_the_prompt(etype):
                 "wsk_pub",
                 "dk_sig_pub",
                 "dk_kx_pub",
+                "old",
+                "new",
+                "roster_v",
             ):
                 if f in obj:
                     for leaf in leaves(obj[f]):

@@ -1,0 +1,18 @@
+{
+  "ok": false,
+  "error": {
+    "code": "sign.key_exposed",
+    "message": "this device key was in one-click custody, so it cannot do this: make a new key with your recovery code",
+    "hint": "orch keys custody passphrase --rotate --workspace W (needs your recovery code; works while the hub is down)",
+    "fix": {
+      "argv": [
+        "orch",
+        "keys",
+        "custody",
+        "passphrase",
+        "--rotate"
+      ]
+    },
+    "retryable": false
+  }
+}

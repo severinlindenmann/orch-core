@@ -217,6 +217,47 @@ def _visibility(x: Any) -> bool:
     )
 
 
+#: phase 5 (§8.8): value grammars of the grant, device, policy and settings actions (core's schemas, sorted lists)
+_OPNAME = re.compile(r"[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)?")
+_GRANT = re.compile(r"gr_[0-7][0-9A-HJKMNP-TV-Z]{25}")
+_DEVICE = re.compile(r"d_[0-9a-f]{32}")
+APPROVER_TOKENS = ("owner", "maintainer", "member", "ticket_owner", "assignees", "reviewers", "watchers")
+POLICY_GATES = ("requirements", "plan", "verify", "code")
+SETTINGS_SET: dict[str, Any] = {
+    "grant_hours": lambda x: type(x) is int and 1 <= x <= 168,
+    "claim_ttl_min": lambda x: type(x) is int and 15 <= x <= 1440,
+    "lease_ttl_min": lambda x: type(x) is int and 5 <= x <= 1440,
+}
+
+
+def _gate_policy(x: Any, gate: str) -> bool:
+    """core's ``gatePolicy`` exactly (all five keys), lists sorted and unique; ``code`` per D59 (``codePolicy``)."""
+    if type(x) is not dict or set(x) != {"approvers", "count", "not", "applies", "independent"}:
+        return False
+    tok = _sorted_unique(_enum(*APPROVER_TOKENS), 0, len(APPROVER_TOKENS))
+    applies = x["applies"]
+    ok = (
+        tok(x["approvers"])
+        and len(x["approvers"]) >= 1
+        and type(x["count"]) is int
+        and 1 <= x["count"] <= 16
+        and tok(x["not"])
+        and (applies in ("all", "off") or _sorted_unique(_enum(*TICKET_TYPES), 1, len(TICKET_TYPES))(applies))
+        and type(x["independent"]) is bool
+    )
+    if gate == "code":
+        ok = ok and "assignees" in x["not"] and x["independent"] is True
+    return bool(ok)
+
+
+def _gates(x: Any) -> bool:
+    return type(x) is dict and 1 <= len(x) and all(g in POLICY_GATES and _gate_policy(v, g) for g, v in x.items())
+
+
+def _settings(x: Any) -> bool:
+    return type(x) is dict and 1 <= len(x) and all(k in SETTINGS_SET and SETTINGS_SET[k](v) for k, v in x.items())
+
+
 def visible(visibility: Any, me: Any) -> bool:
     """§10.7 "Visibility": core's ``can_see`` minus the membership test (the hub role / snapshot gates cover that).
     ``workspace`` is visible to everyone; ``{restricted: [...]}`` only to a person on the list. Being the ticket owner
@@ -266,6 +307,19 @@ ACTIONS: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {
     "verdict.given": ({"outcome": _enum("pass", "fail"), "hash": _hash}, {"text": _text(4096, multiline=True)}),
     "addon.disabled": ({"name": _re(_ADDON)}, {}),
     "addon.purged": ({"name": _re(_ADDON)}, {}),
+    # phase 5 (§8.8, C10 M6; DRAFT, not before phase-4 exit): grants, device exclusion, policy and settings
+    "grant.requested": (
+        {
+            "scope": _enum("all", "workable"),
+            "verbs": lambda x: x == "agent" or _sorted_unique(_re(_OPNAME), 1, 32)(x),
+            "hours": lambda x: type(x) is int and 1 <= x <= 168,
+        },
+        {"label": _text(200)},
+    ),
+    "grant.revoked": ({"grant": _re(_GRANT)}, {"reason": _text(500)}),
+    "device.excluded": ({"device": _re(_DEVICE), "reason": _enum("lost", "retired", "compromised")}, {}),
+    "policy.changed": ({"gates": lambda x: _gates(x)}, {}),
+    "settings.changed": ({"set": lambda x: _settings(x)}, {}),
 }
 #: Names an action can never carry at its top level: the envelope, the custodial fields and the host fields are built
 #: by the hub/host. (Nested objects have exact schemas above, so they cannot carry them either.)

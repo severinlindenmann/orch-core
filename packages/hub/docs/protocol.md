@@ -41,6 +41,7 @@ byte string is canonical unpadded b64u, `lp16(x)` is a 2-byte big-endian length 
 | 10.4 | `hub.space_proposal` (#1020) | `HK_op` | invited host | 4 |
 | 10.7 | the hub's workspace view, `log_sync` (V3-D23) | `WSK` (each line's `host_sig`) | hub | 4 |
 | 10.8 | hub → relay requests (E1) | `HK_op` | orch-relay | 4 |
+| 8.8 | **DRAFT, phase 5** (C8/C10): custodial grants, device exclusion, policy and settings; break-glass leave with the hub down | `UK` + channel key; `WSK` | host, orch-publish | 5 |
 
 Not in H0 (named so nobody builds them from guesswork): snapshot
 generations (#910), the standalone signed alias (C4), the `webauthn` passkey channel contract (#908), hub↔hub
@@ -651,12 +652,12 @@ nothing (D70: read = see). Unknown or unlisted → `not_custodial`.
 | `admin` | `ticket.moved`, `people.changed`, `visibility.changed` | `addon.disabled`, `addon.purged` |
 
 The role is the floor; the F1 rules decide the rest (eligible approvers, ticket owner, D59 independence; §8.3 step 9).
-**Not channel-startable in V3:** `policy.changed` (ticket override and workspace) and `settings.changed`: they
-change who may approve and how signatures are made, and their payloads are free-form policy and settings objects.
-People and visibility changes are `admin`-only through a channel, with exact schemas. **Not custodial in hv 0, and
+**Phase 5 (§8.8, DRAFT):** `grant.requested`, `grant.revoked`, `device.excluded`, `policy.changed` (workspace and
+ticket) and `settings.changed` (three integer keys only) join the table with exact schemas; until §8.8 merges they are
+`not_custodial`. People and visibility changes are `admin`-only through a channel, with exact schemas. **Not custodial in hv 0, and
 why:** `workspace.created`, `member.*`, `role.changed` (members and roles come from
 grants and snapshots); `device.*` (hub users have no device keys); `hub.joined`, `hub.left` (owner's local key at the
-terminal, break-glass); `grant.issued`, `grant.revoked` (see §16 open points); `addon.granted` (the host derives the
+terminal, break-glass); `grant.issued` (the host makes the secret: §8.8 `grant.requested`); `addon.granted` (the host derives the
 manifest fields); `restore`, `invalid.acknowledged` (owner recovery); `artifact.*` and `ticket.updated` with
 `sections` (the file bytes and body text are the host's; no transport for them yet); agent-only types (`claim.taken`,
 `task.*`); host types; addon types. Adding a type later needs no new `hv`: a host that does not list it refuses it,
@@ -794,6 +795,54 @@ reply decides it. The host's reply is a signed w2h reply; its body decides (refe
 - One event in flight per link (§10.2); later events wait behind it in delivery order.
 - The host replies `unavailable` only when it cannot decide now (lock timeout, `freeze.active`, a snapshot it could
   not fetch), never for a refusal on the event's content, so a resend can never turn a refusal into an admission.
+
+### 8.8 Phase-5 additions: grants, devices, policy and settings through a channel (DRAFT, C10 M6)
+
+**Status: draft for phase 5; do not merge before the phase-4 exit.** Answers the open points "agent grants" and "policy
+and settings" of §16 (orch-core #838 BLOCKED) with the recommendation there: exact custodial types, no fourth
+break-glass power. The owner decides. Design: `~/orch-dev/state/design-c10.md` (M6), `design-c8.md`.
+
+Why: in full mode no local human signature exists (D78, D81; core C11), so without these nobody could issue or revoke
+an agent grant, exclude a lost device or change policy; agents would stop within 168 h.
+
+| Type | Log | Lowest role | Action fields (exact) | Derived by the hub |
+|---|---|---|---|---|
+| `grant.requested` | workspace | `edit` | `scope` (`all` \| `workable`), `verbs` (`"agent"` or 1–32 sorted unique operation names `[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)?`), `hours` (1–168), `label?` (one line ≤ 200 bytes) | nothing |
+| `grant.revoked` | workspace | `edit` | `grant` (`gr_` + ULID), `reason?` (one line) | nothing |
+| `device.excluded` | workspace | `admin` | `device` (`d_` + 32 hex), `reason` (`lost` \| `retired` \| `compromised`) | nothing |
+| `policy.changed` | workspace | `admin` | `gates`: 1–4 of `requirements`, `plan`, `verify`, `code`, each exactly `{approvers, count, not, applies, independent}` (below) | nothing |
+| `policy.changed` | ticket | `edit` | as above (a ticket override; F1 decides who: ticket owner, owners, maintainers) | nothing |
+| `settings.changed` | workspace | `admin` | `set`: 1–3 of `grant_hours` (1–168), `claim_ttl_min` (15–1440), `lease_ttl_min` (5–1440) | nothing |
+
+- **Gate policy** (core `gatePolicy`, lists sorted and unique so a channel shows one form): `approvers` 1–7 of
+  `owner`, `maintainer`, `member`, `ticket_owner`, `assignees`, `reviewers`, `watchers`; `count` 1–16; `not` 0–7 of the
+  same tokens; `applies` `"all"`, `"off"` or 1–5 sorted unique ticket types; `independent` boolean. `code` additionally
+  has `assignees` in `not` and `independent: true` (D59). **No `factor` key** (D66 floors stay off the channel in V3).
+- **Not channel-startable in V3** (`malformed` inside `set`, `not_custodial` as types): `sign_methods` (how signatures
+  are made), `repos` (host file system paths), `models`, the D66 `factor` key; `grant.issued` itself.
+- **The grant secret stays in the host.** The event carries no `grant`, `secret_hash`, `issued_at` or `expires_at`
+  (`malformed`, vectors `action_grant_requested_smuggles_*`, `custodial_event_grant_requested_with_*`). After admitting
+  `grant.requested`, the host appends, in the same store-lock hold, a **host-actor** `grant.issued` with the same
+  terms, `request` = the request's event `id`, `issued_at` = the request's `at`, and a fresh `secret_hash`; it hands the
+  secret only to its own runner for that person (core C10). Core's model admits a host-actor `grant.issued` only with a
+  `request` naming an earlier admitted `grant.requested` of equal terms, used once, within 300 s. The grant's person is
+  the request's canonical signer (F1: a grant is always for its signer). The secret never travels on the link.
+- **`device.excluded`** is workspace-local: the device signs nothing more in this workspace; `compromised` voids open
+  decisions as a compromised device does (ticket-format §5.7). The global, PK-signed `device.revoked` stays the
+  person's own act and is not custodial.
+- F1 runs after the floor as for every custodial type (§8.3 step 9): grant terms per mapped role (member: `workable`
+  only, at most `grant_hours`), own grants only unless `admin`, workspace policy and settings owner-only (`admin`).
+- `admin` verbs need a sign-in within the last 5 min (spec §7); a channel shows every policy key and value
+  (WYSIWYS, §8.4 step 3).
+
+**Break-glass with the hub down (C8; text only, no new object).** `hub.left` (§9.1) is the owner's local act and needs
+no hub. The host then sends `hub.unbound` (§9.3) **directly to orch-publish** (`PUT /v2/hub/bindings/{ws}`, V3-D16),
+which ends hub-forwarded publish and the hub admin read (§10.6), and offers it to the hub over the link whenever one
+comes up. The relay keeps no binding: a `pending` cut-over row (§10.8.3) is deleted by the workspace at the leave; a
+`cut_over` row stays closed. On `unbound` an honest hub also fails its open prepares and queued `event_deliver`s for
+the workspace with `not_bound` and drops the workspace from its users' channel lists. Core voids open-generation
+decisions signed through the left hub (design-c8 M2.2); the one break-glass set (`hub.leave`, `hub.repin` PK only,
+`keys.rotate`) is defined in core (C8) and imported by C11.
 
 ## 9. Join, binding, leave
 
@@ -2019,7 +2068,7 @@ link errors travel as `{"error": code}` reply bodies; host-side refusals are loc
 | `phase4` | p4: the `log_sync` lines, heads, view key, AAD and one sealed page; a ticket projection `proj_ticket`, a ticket page carrying it and its plaintext bytes (D15b); a prepared context and digest; a relay request and its bytes; the relay routes' request bytes and one sealed push payload (`relay_routes`); the custodial type table; the `space.accept` built from the vector proposal |
 | `share_item_f1` | C3b addendum: a ticket item with an `f1` block and its `item_hash` (§10.2b, §8.6) |
 | `phase4.channel_api` | B stream: a pairing link and its fingerprint, a signed `hub.api_origin`, a `session_ref`, a signed `hub.channel_auth` and `hub.channel_push`, a channel → relay request with its signed bytes, the mailbox list answer |
-| `cases` | 890 cases (228 positive, 662 negative): `check`, `args`, `expect` (`{"ok": …}` or `{"error": code}`), `phase` |
+| `cases` | 950 cases (243 positive, 707 negative; 46 of them phase 5, §8.8 draft): `check`, `args`, `expect` (`{"ok": …}` or `{"error": code}`), `phase` |
 
 The negative cases cover, per object where it applies: wrong domain, wrong signer, expired, binding for another
 workspace, unbound after leave, missing dev marker, dev at a real verifier, extra or unknown field, non-canonical
@@ -2118,11 +2167,11 @@ transport in the action).
   hands to the agent; the hub cannot build it from its view, so it is not custodial (§8.5). With D78/D81 (no local
   human signing in full mode after H5) nobody could then start an agent there. Options: (a) the action carries the
   `secret_hash` from the host via the channel (the host shows the person a one-time handle), (b) the host makes the
-  secret and the channel only signs; (c) keep owner-local signing for `grant.*` as a fourth break-glass power. Needs an
-  orchestrator decision before C10/H5.
-- **Policy and settings changes in a full-mode hub workspace.** Not channel-startable in V3 (§8.5); with no local
-  human signing in full mode after H5 (D78/D81), they then need either an admin-only custodial type with an exact
-  policy/settings schema and a full review screen, or a break-glass power. Decide together with agent grants.
+  secret and the channel only signs; (c) keep owner-local signing for `grant.*` as a fourth break-glass power.
+  **Proposed in §8.8 (DRAFT, phase 5): (b)**, as `grant.requested` plus a host-actor `grant.issued`. Owner decision
+  pending.
+- **Policy and settings changes in a full-mode hub workspace.** Proposed in §8.8 (DRAFT, phase 5): admin-only
+  custodial types with exact schemas, a subset of settings. Owner decision pending (#838 BLOCKED).
 - (Decided, C3b addendum.) **Selective custodial signing** is §8.6 over the `f1` block of §10.2b.
 
 **Open / decided after L2:**

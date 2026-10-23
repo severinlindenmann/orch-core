@@ -278,7 +278,7 @@ def test_audit_failure_blocks_delivery(env):
 
 
 @pytest.mark.parametrize(
-    "typ", ["policy.changed", "settings.changed", "claim.taken", "task.done", "artifact.added", "member.added", "x.y"]
+    "typ", ["role.changed", "grant.issued", "claim.taken", "task.done", "artifact.added", "member.added", "x.y"]
 )
 def test_types_outside_the_closed_table_are_not_custodial(env, typ):
     assert code(env.prepare, {"type": typ, "log": LOG, "text": "x"}) == "not_custodial"

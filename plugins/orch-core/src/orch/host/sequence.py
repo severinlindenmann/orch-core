@@ -738,15 +738,26 @@ def step_args(intent: Mapping[str, Any], k: int, ref: str | None) -> tuple[str, 
 
 def confirm_kind(intent: Mapping[str, Any]) -> str:
     """The strongest confirmation any step needs (``click`` < ``word`` < ``terminal``); the sequence's confirmation is
-    that of its strongest step. A grant to the runner is a ``word`` (the GRANT word) in a sequence."""
+    that of its strongest step. A grant to the runner is a ``word`` (the GRANT word) in a sequence.
+
+    #1070 relaxes B12D for one case only, in this one place: a NEW ticket whose people are assignees and/or reviewers
+    (no ``owner`` step, so the creator stays owner) is a click. The View lists every person with role and full id, the
+    model refuses a person who is not a member when the event lands, and a viewer cannot act, so nothing here widens
+    who may act beyond what the creator, as owner, could do alone. An owner step (we cannot tell here whether it names
+    the creator: fail closed), agent access, and any people edit of an EXISTING ticket keep the word."""
     from orch.click.protocol import op_class
 
     rank = {"click": 0, "word": 1, "terminal": 2}
-    # AE3: the class of a step is that of its op WITH its args (``settings.set`` of Publish is terminal-only)
-    return max(
-        ("word" if s["kind"] == "grant" else op_class(s["op"], args=s["args"]) for s in steps(intent)),
-        key=lambda c: rank[c],
-    )
+
+    def step_class(s: Mapping[str, Any]) -> str:
+        if s["kind"] == "grant":
+            return "word"
+        if intent["kind"] == KIND and s["kind"] == "people" and s["args"].get("role") in ("assignees", "reviewers"):
+            return "click"
+        # AE3: the class of a step is that of its op WITH its args (``settings.set`` of Publish is terminal-only)
+        return op_class(s["op"], args=s["args"])
+
+    return max((step_class(s) for s in steps(intent)), key=lambda c: rank[c])
 
 
 def has_grant(intent: Mapping[str, Any]) -> bool:

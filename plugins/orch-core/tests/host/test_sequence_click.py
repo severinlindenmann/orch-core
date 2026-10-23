@@ -144,10 +144,10 @@ def test_the_host_refuses_a_sequence_for_the_phone(human):
     assert err(res) == "invalid.input"
 
 
-def test_a_sequence_with_people_is_a_click_and_the_typed_word(click, served, human):
-    """B12D: a people change decides who may act, so the whole review needs the typed word (a click is not enough)."""
+def test_a_sequence_with_an_owner_step_is_a_click_and_the_typed_word(click, served, human):
+    """B12D: an owner step decides who may act, so the whole review needs the typed word (a click is not enough)."""
     me = click.owner.ref  # another member would need his own reader declaration for convenience signing
-    _, p = prepare(click, intent_of(acceptance=["It opens"], people={"reviewers": [me]}))
+    _, p = prepare(click, intent_of(acceptance=["It opens"], people={"reviewers": [me], "owner": me}))
     v = click.view(p["request_id"])
     assert v["view"]["confirm"]["kind"] == "word"
     word = v["view"]["confirm"]["word"]
@@ -156,7 +156,7 @@ def test_a_sequence_with_people_is_a_click_and_the_typed_word(click, served, hum
     refused(lambda: click.sign(p["request_id"], v["view_digest"]), "human.click_refused", "word")
     assert click.signatures == 0
     out = click.sign(p["request_id"], v["view_digest"], word=word)
-    assert click.signatures == 4 + 1 + 1  # new, set, two sections, the criterion, the reviewer
+    assert click.signatures == 4 + 1 + 2  # new, set, two sections, the criterion, the reviewer, the owner
     got = ok(served.client().req("ticket.get", {"ref": out["result"]["key"]}))["data"]["doc"]
     assert [a["text"] for a in got["acceptance"]] == ["It opens"] and got["people"]["reviewers"] == [me]
 
@@ -189,3 +189,17 @@ def test_an_edit_sequence_is_signed_by_one_click_when_it_changes_no_people(click
     assert click.signatures == before + 2
     got = ok(served.client().req("ticket.get", {"ref": key}))["data"]
     assert got["doc"]["sections"]["summary"] == "A better line." and got["doc"]["acceptance"][0]["text"] == "It opens"
+
+
+def test_1070_a_new_ticket_with_a_reviewer_is_one_click_and_lists_the_person(click, served, human):
+    """#1070: assignees/reviewers on a NEW ticket (the creator stays owner) sign by click, no typed word; the View
+    still lists the person with role and full id."""
+    me = click.owner.ref
+    _, p = prepare(click, intent_of(people={"reviewers": [me]}))
+    v = click.view(p["request_id"])
+    assert v["view"]["confirm"] == {"kind": "click"}
+    assert f"reviewers: add {me}" in str(v["view"]) or me in str(v["view"])
+    click.mono.t += 2
+    out = click.sign(p["request_id"], v["view_digest"])
+    got = ok(served.client().req("ticket.get", {"ref": out["result"]["key"]}))["data"]["doc"]
+    assert got["people"]["reviewers"] == [me]

@@ -39,7 +39,7 @@ def test_a_new_ticket_with_criteria_and_people_lands_in_one_run(human, lab, tmp_
     assert got["doc"]["owner"] == quinn.ref  # the owner is set LAST
 
 
-def test_the_review_shows_criteria_and_people_and_needs_the_typed_word(human, lab, tmp_path):
+def test_the_review_shows_criteria_and_people_and_is_a_click_for_a_new_ticket(human, lab, tmp_path):
     quinn = lab.add_member()
     rig = Rig(human, tmp_path, intent_of(acceptance=["It opens"], people={"assignees": [quinn.ref]}))
     first = rig.first()
@@ -48,7 +48,7 @@ def test_the_review_shows_criteria_and_people_and_needs_the_typed_word(human, la
     assert [a["text"] for a in content["acceptance"]] == ["It opens"]
     assert any(f["field"] == "assignees: add" and f["after"] == quinn.ref for f in content["fields_changed"])
     assert content["subline"] == "Includes its text (2 sections), 1 acceptance check, its people"
-    assert sequence.confirm_kind(rig.intent) == "word"  # people.set decides who may act: the strongest step
+    assert sequence.confirm_kind(rig.intent) == "click"  # #1070: assignees on a NEW ticket (the creator stays owner)
     assert "It opens" in signer.render(first, lambda w: ("ws", "ORCH"))
 
 

@@ -406,8 +406,8 @@ class HostLink:
         """One reader at a time; calls can still consume and queue interleaved events.
 
         The wait for the next frame happens WITHOUT the link's lock: this link is shared with every REST call of the
-        workspace, and a reader that held the lock for its whole `select` made each call wait for it (about 100 ms, twice
-        per request: `addon.list` and the op itself). Only taking a frame off the socket is done under the lock."""
+        workspace, and a reader that held the lock for its whole `select` made each call wait for it (about 100 ms,
+        twice per request: `addon.list` and the op itself). Only taking a frame off the socket is done under the lock."""
         with self.lock:
             if self.events:
                 return self.events.popleft()

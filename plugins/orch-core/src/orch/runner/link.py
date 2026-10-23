@@ -160,6 +160,12 @@ def registry_argv(argv: Any, own: Mapping[str, str], config: RunnerConfig) -> li
     raise SpawnError("invalid.input", "spawn: argv[0] is neither $SHELL nor a program runner.json names")
 
 
+def _is_claude(argv: list[str]) -> bool:
+    """A registry launch of Claude Code: ``... -c 'exec "$0" "$@"' claude ...`` or an absolute ``claude``."""
+    prog = argv[4] if len(argv) >= 5 and argv[1:4] == ["-l", "-c", LOGIN_EXEC] else argv[0]
+    return os.path.basename(prog) == "claude"
+
+
 def spawn_spec(args: Mapping[str, Any], own: Mapping[str, str], config: RunnerConfig, grants: GrantStore) -> SpawnSpec:
     """A ``spawn`` command as the :class:`SpawnSpec` the supervisor starts: the registry argv, the environment
     (allow-list, ``pass_env``, host-chosen fixed values) and, for an agent, ``ORCH_GRANT`` from the grant store and
@@ -181,6 +187,10 @@ def spawn_spec(args: Mapping[str, Any], own: Mapping[str, str], config: RunnerCo
         except GrantError as exc:
             raise SpawnError(exc.code, exc.message) from None
         env["ORCH_SESSION"] = session
+        if _is_claude(argv):  # run 6, #1066: no first-run trust or import prompt in the workspace and its work folders
+            from .claude_trust import pretrust
+
+            pretrust(own, env.get("ORCH_WORKSPACE"), (args.get("cwd") or {}).get("path"))
     elif grant is not None or session is not None:
         raise SpawnError("invalid.input", "spawn: a shell acts as the person: no grant, no session")
     return SpawnSpec(

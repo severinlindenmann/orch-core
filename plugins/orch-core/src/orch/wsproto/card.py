@@ -16,8 +16,7 @@ from cryptography.exceptions import InvalidTag
 
 from orch import canon, crypto
 from orch.crypto.labels import L
-
-from .sign import CARD_FIELDS
+from orch.wsproto.sign import CARD_FIELDS
 
 __all__ = [
     "CardRefused",

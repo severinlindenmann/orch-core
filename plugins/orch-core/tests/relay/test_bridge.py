@@ -10,9 +10,10 @@ import secrets
 import pytest
 
 from orch import crypto
-from orch.relay import framing, wire
+from orch.relay import framing
 from orch.relay.bridge import CHUNK_ROOM, Item, classify_post
 from orch.relay.retry import RelayRefused
+from orch.wsproto import wire
 
 from .bridgekit import T0, Phone, World, open_chunk, ulid
 from .helpers import WS

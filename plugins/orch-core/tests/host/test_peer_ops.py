@@ -26,7 +26,7 @@ def _peer_card(wsk_name: str = "wsk_b.sig", wxk_name: str = "wxk_b_1.kx", seq: i
     from orch.crypto import suite
     from orch.hubclient import localcard
     from orch.identity import certs
-    from orch.relay.r6.firstcard import default_part
+    from orch.identity.epochs import default_part
 
     alice, wsk = priv("person_alice.sig"), priv(wsk_name)
     sign_w = lambda m: suite.sign(wsk, m)  # noqa: E731

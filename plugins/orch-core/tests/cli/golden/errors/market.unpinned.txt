@@ -1,0 +1,1 @@
+err market.unpinned an entry is not pinned to a full commit id · retry:false · next: a branch, tag or short id is refused · fix: orch market list

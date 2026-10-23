@@ -11,8 +11,8 @@ from orch import crypto
 from orch.host import relayr4
 from orch.identity import certs
 from orch.relay import unpublished as up
-from orch.relay.state import StateDir
 from orch.store.store import _verify_forwarded
+from orch.wsproto.state import StateDir
 
 from .. import corpus
 from .kit import DEVICE, PERSON, Members, Owner, now_ms, publish_card, session

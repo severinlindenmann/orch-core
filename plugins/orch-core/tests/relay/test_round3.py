@@ -11,11 +11,12 @@ from pathlib import Path
 import pytest
 
 from orch.relay import bridge as B
-from orch.relay import framing, keys, rids, wire
+from orch.relay import framing, keys, rids
 from orch.relay.bridge import BridgeLoop, Item
 from orch.relay.framing import Refusal
 from orch.relay.keys import SealRefused
-from orch.relay.sign import SignerRefused
+from orch.wsproto import wire
+from orch.wsproto.sign import SignerRefused
 
 from .bridgekit import Phone, World, _ok, open_chunk, ulid
 from .helpers import WS

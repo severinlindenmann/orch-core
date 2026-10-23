@@ -1,4 +1,4 @@
-"""``orch.relay.state``: the private state directory, atomic writes, symlink refusal, the sign ledger, write-once."""
+"""``orch.wsproto.state``: the private state directory, atomic writes, symlink refusal, the sign ledger, write-once."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import signal
 import pytest
 
 from orch import fdwait
-from orch.relay.state import FileSignLedger, PersistedOnce, StateDir, StateError
+from orch.wsproto.state import FileSignLedger, PersistedOnce, StateDir, StateError
 
 
 def test_creates_a_0700_directory_and_0600_files(tmp_path):
@@ -102,7 +102,7 @@ import threading  # noqa: E402
 
 HOLD_LOCK = """
 import sys
-from orch.relay.state import StateDir
+from orch.wsproto.state import StateDir
 st = StateDir(sys.argv[1])
 print("ready", flush=True)
 sys.stdin.read()
@@ -413,7 +413,7 @@ def test_a_too_open_ancestor_is_refused(tmp_path, mode):
 
 def test_an_ancestor_of_another_owner_is_refused(tmp_path, monkeypatch):
     """Simulated: this process claims another UID, so the ancestors owned by the real user (not root) are foreign."""
-    from orch.relay import state
+    from orch.wsproto import state
 
     real = os.getuid()
     monkeypatch.setattr(state, "_me", lambda: real + 4242)
@@ -515,7 +515,7 @@ def test_canonical_card_keys_are_accepted(tmp_path):
 
 
 def test_a_larger_limit_is_per_call_and_bounded(tmp_path):
-    from orch.relay.state import BIG_FILE, MAX_FILE
+    from orch.wsproto.state import BIG_FILE, MAX_FILE
 
     s = StateDir(tmp_path / "big")
     data = b"x" * (MAX_FILE + 1)

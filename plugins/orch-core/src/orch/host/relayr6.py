@@ -58,8 +58,8 @@ def _previously_linked(service: Any) -> bool:
 
 
 def keys_for(service: Any) -> Any:
-    """The workspace's :class:`orch.relay.r6.keystore.MembershipKeys`, opened once per process."""
-    from orch.relay.r6.keystore import MembershipKeys
+    """The workspace's :class:`orch.identity.epochs.MembershipKeys`, opened once per process."""
+    from orch.identity.epochs import MembershipKeys
 
     path = membership_path(service)
     with _LOCK:
@@ -134,7 +134,7 @@ def r6(service: Any) -> tuple[Any, Any]:
     store hook installed, the gate rebuilt from the store, THEN the key store bound to the live ``service.store``
     (a rebuild failure leaves it gated; a reopened store has no hook: gated until ``r6`` runs again). Without a
     store: refused."""
-    from orch.relay.r6.keystore import MembershipUnsafe, R6Gate
+    from orch.identity.epochs import MembershipUnsafe, R6Gate
 
     mk = keys_for(service)
     mk.check_start()
@@ -171,10 +171,11 @@ def link_source(service: Any) -> Any:
     """R5's ``link_source`` seam: :class:`orch.relay.r6.firstcard.R6LinkSource` for this workspace. The origin is
     ``relay/link.json``'s (stored verbatim, 11A.2), read with the host's checked read."""
     from orch.custody import FileBackend
-    from orch.relay import wire
-    from orch.relay.r6.firstcard import R6LinkSource, default_part
-    from orch.relay.sign import LinkContext, RelaySigner
+    from orch.identity.epochs import default_part
+    from orch.relay.r6.firstcard import R6LinkSource
     from orch.store import BackendSigner
+    from orch.wsproto import wire
+    from orch.wsproto.sign import LinkContext, RelaySigner
 
     from . import relaygenesis
     from .custody import read_json

@@ -13,8 +13,7 @@ import pytest
 
 from orch import crypto
 from orch.identity import pairing
-from orch.relay.keys import SealState
-from orch.relay.r6.keystore import (
+from orch.identity.epochs import (
     CLAMP,
     FIRST_EPOCH_MAX,
     H7_MARGIN,
@@ -22,7 +21,8 @@ from orch.relay.r6.keystore import (
     MembershipUnsafe,
     R6Gate,
 )
-from orch.relay.state import StateError
+from orch.relay.keys import SealState
+from orch.wsproto.state import StateError
 
 from .helpers import WS
 from .r6kit import DEVICE, digest, expose_rotation, list_for, open_keys, rotate

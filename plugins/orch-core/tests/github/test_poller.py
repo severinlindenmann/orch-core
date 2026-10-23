@@ -127,7 +127,7 @@ def test_304_without_body_retries(engine, monkeypatch):
     def once(*args, **kwargs):
         if args[1] == FIRST and not seen:
             seen.append(True)
-            from orch.relay.http import Response
+            from orch.net.http import Response
 
             return Response(304, {}, b"")
         return original(*args, **kwargs)

@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "market.unpinned",
+    "message": "an entry is not pinned to a full commit id",
+    "hint": "a branch, tag or short id is refused",
+    "fix": {
+      "argv": [
+        "orch",
+        "market",
+        "list"
+      ]
+    },
+    "retryable": false
+  }
+}

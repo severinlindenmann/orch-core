@@ -315,6 +315,10 @@ def main(
         from orch.cli.hub import main as hub_main
 
         return hub_main(args[1:], env=env, out=out, err=err, now=now)
+    if args[:1] == ["market"]:  # the add-on marketplace (V3 G2): a host client, not a registry op
+        from orch.cli.market import main as market_main
+
+        return market_main(args[1:], env=env, out=out, err=err, now=now)
     if args[:1] == ["space"]:  # files shared through a hub space (V3 C13): a host client, not a registry op
         from orch.cli.space import main as space_main
 

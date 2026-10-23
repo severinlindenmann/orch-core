@@ -158,10 +158,16 @@ def test_operation_errors_are_declared_once_known_and_complete():
 
     for op in person_ops.OPS.values():  # the host person ops (served through human.*): their codes count as used
         used |= {e["code"] for e in op.errors}
+    # V3 G2: the host's market ops declare their own codes (marketops.OP_CODES); the rest of spec section 13 is
+    # declared in the catalog ahead of G3 (install, update) and G4 (environments), which are the ops that raise them
+    from orch.host.marketops import OP_CODES
+
+    used |= {c for codes in OP_CODES.values() for c in codes}
+    later = {c for c in ERRORS if c.startswith("market.")} - used
     # R6c: returned by the host's control op host.relay_pair_offer (orch host relay pair), not by a registry op
     control_only = {"relay.pair_open", "relay.no_primary", "relay.quota"}
     unused = (
-        set(ERRORS) - used - set(GLOBAL_ERRORS) - {"wait.timeout", "quick.unlabelled"} - control_only
+        set(ERRORS) - used - set(GLOBAL_ERRORS) - {"wait.timeout", "quick.unlabelled"} - control_only - later
     )  # the latter: the CLI composite `quick add` (H11f)
     assert not unused, f"documented but no operation can return them: {sorted(unused)}"
 

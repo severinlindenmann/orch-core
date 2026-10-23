@@ -11,8 +11,8 @@ import pytest
 from orch import crypto
 from orch.crypto.labels import L
 from orch.identity import certreq
-from orch.relay import sign, wire
-from orch.relay.sign import SignerRefused
+from orch.wsproto import sign, wire
+from orch.wsproto.sign import SignerRefused
 
 from . import corpus
 from .helpers import WS, WSK_PUB, Key, MemLedger
@@ -152,7 +152,7 @@ def test_cert_request_refuses_without_a_verified_primary_or_ledger():
 
 
 def test_the_ledger_accepts_cert_request_keys_only_as_32_hex():
-    from orch.relay.state import _ledger_key_ok
+    from orch.wsproto.state import _ledger_key_ok
 
     assert _ledger_key_ok("cert_request", "ab" * 16)
     assert not _ledger_key_ok("cert_request", "AB" * 16)

@@ -144,3 +144,26 @@ describe('one SVG rule on page and server', () => {
     expect(sniffImage(enc('hello <svg/> inside text'))).toBeNull()
   })
 })
+
+describe('an SVG or GIF is held by its server-read type, not its name', () => {
+  it('an SVG named shot.png under a criterion opens by name but draws nothing until a click', async () => {
+    const user = userEvent.setup()
+    const { CriterionEvidence } = await import('./EvidenceView')
+    const bytes = SVG
+    const sha = sha256HexBytes(bytes)
+    const a = { name: 'shot.png', kind: 'screenshot', bytes: bytes.length, sha256: sha, added_by: 'agent', at: '2026-10-23T10:00:00Z', ac: 'AC1' } as Artifact
+    const ticket = { key: 'DEMO-1', artifacts: [a], acceptance_state: [{ id: 'AC1', text: 'x', state: 'proven', evidence: [{ kind: 'artifact', ref: 'shot.png' }] }], tasks_state: [], gates: {} } as never
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } })
+    client.setQueryData(['workspaces'], [{ id: 'w1', prefix: 'DEMO', name: 'Demo', members: [], gates: {}, addons: {}, counts: {}, needs_you: 0 }])
+    client.setQueryData(['artifact-text', 'w1', 'DEMO-1', 'shot.png', sha], { name: 'shot.png', size: bytes.length, digest: 'sha256:' + sha, verified: true, truncated: false, binary: false, text: null, ...media('svg', bytes) })
+    render(
+      <QueryClientProvider client={client}>
+        <CriterionEvidence ticket={ticket} ac={(ticket as { acceptance_state: never[] }).acceptance_state[0]} />
+      </QueryClientProvider>,
+    )
+    const hold = await screen.findByRole('button', { name: 'Show SVG picture' })
+    expect(screen.queryByRole('img', { name: /Picture/ })).toBeNull()
+    await user.click(hold)
+    expect((await screen.findByRole('img', { name: 'Picture shot.png' })).getAttribute('src')).toMatch(/^data:image\/svg\+xml/)
+  })
+})

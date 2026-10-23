@@ -280,6 +280,7 @@ def test_evidence_pictures_with_bomb_headers_are_not_offered(client, token, stub
         "notrailer.gif": _gif(4, 4, trailer=False),
         "many.gif": _gif(2, 2, ((0, 0, 1, 1),) * 501),
         "noframe.gif": _gif(2, 2, ()),
+        "tiny_frames_huge_canvas.gif": _gif(6000, 6000, ((0, 0, 1, 1),) * 7),
     }
     _offer(env, ids, files)
     got = {n: client.get(url(stub, f"DEMO-0001/artifacts/{n}"), headers=headers(token)).json()["media"] for n in files}
@@ -296,7 +297,9 @@ def test_evidence_svg_is_an_allowlist_not_a_scan(client, token, stub, rich):
 
     nested = base64.b64encode(b'<!DOCTYPE svg [<!ENTITY a "x">]><svg ' + SVG_NS + b">&a;</svg>")
     files = {
-        "ok.svg": b"<svg " + SVG_NS + b' width="9" height="9"><rect width="5" height="5" fill="#0a7"/>'
+        "ok.svg": b"<svg "
+        + SVG_NS
+        + b' width="9" height="9" viewBox="0 0 9 9"><rect x="0" y="0" width="5" height="5" fill="#0a7"/>'
         b'<circle cx="3" cy="3" r="2" fill="url(#g)"/><path d="M0 0L5 5"/><text x="1" y="9">hi</text></svg>',
         "bom.svg": b"\xef\xbb\xbf<svg " + SVG_NS + b"><rect/></svg>",
         "data.svg": b"<svg " + SVG_NS + b'><image href="data:image/png;base64,AAAA"/></svg>',
@@ -316,6 +319,17 @@ def test_evidence_svg_is_an_allowlist_not_a_scan(client, token, stub, rich):
         + SVG_NS
         + b'><linearGradient xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="http://x/y"/></svg>',
         "ns.svg": b'<svg xmlns="http://example.com/other"><rect/></svg>',
+        # Opus third delta: CSS escapes defeat any value check, so attributes are an allowlist (no style at all)
+        "esc_style.svg": b"<svg " + SVG_NS + rb' ><rect style="background:u\72l(d\61ta:image/png;base64,AAAA)"/></svg>',
+        "esc_mask.svg": b"<svg " + SVG_NS + rb' ><rect style="mask-image:u\72l(d\61ta:image/png;base64,AAAA)"/></svg>',
+        "esc_imageset.svg": b"<svg "
+        + SVG_NS
+        + rb""" ><rect style="background:image-set('d\61ta:image/png;base64,AAAA' 1x)"/></svg>""",
+        "esc_fill.svg": b"<svg " + SVG_NS + rb' ><rect fill="u\72l(d\61ta:image/png;base64,AAAA)"/></svg>',
+        "plain_style.svg": b"<svg " + SVG_NS + b'><rect style="fill:red"/></svg>',
+        "backslash.svg": b"<svg " + SVG_NS + rb' ><rect fill="re\64"/></svg>',
+        "class.svg": b"<svg " + SVG_NS + b'><rect class="a"/></svg>',
+        "latin1.svg": b'<?xml version="1.0" encoding="ISO-8859-1"?><svg ' + SVG_NS + b"><rect/></svg>",
     }
     _offer(env, ids, files)
     got = {n: client.get(url(stub, f"DEMO-0001/artifacts/{n}"), headers=headers(token)).json()["media"] for n in files}

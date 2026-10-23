@@ -59,6 +59,8 @@ function Provenance({ a, inDialog }: { a: Artifact; inDialog: boolean }) {
 
 export function EvidenceItem({ ticket, artifact, acId, compact = false, dialog = compact, defaultOpen = openAtFirst(artifact) }: { ticket: TicketDocument; artifact: Artifact; acId: string; compact?: boolean; /** Inside a sign dialog (not Today's row): the "not part of this dialog" wording. */ dialog?: boolean; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen)
+  // Opened by itself and never clicked: an SVG or GIF (by the server's typed kind) still waits for a click.
+  const [clicked, setClicked] = useState(false)
   const agentHtml = useAgentHtml(ticket.key)
   const body = `evidence-${acId}-${artifact.name}`
   return (
@@ -69,14 +71,17 @@ export function EvidenceItem({ ticket, artifact, acId, compact = false, dialog =
         </span>
         <Pill tone="neutral">proves {acId}</Pill>
         {!!artifact.bytes && <span className="text-text-faint">{fmtBytes(artifact.bytes)}</span>}
-        <Button type="button" variant="ghost" size="sm" className="ml-auto h-6 px-2 text-[12px]" aria-expanded={open} aria-controls={body} aria-label={`${open ? 'Hide' : 'Show'} preview of ${visible(artifact.name)}`} onClick={() => setOpen(!open)}>
+        <Button type="button" variant="ghost" size="sm" className="ml-auto h-6 px-2 text-[12px]" aria-expanded={open} aria-controls={body} aria-label={`${open ? 'Hide' : 'Show'} preview of ${visible(artifact.name)}`} onClick={() => {
+            setClicked(true)
+            setOpen(!open)
+          }}>
           {open ? 'Hide preview' : 'Show preview'}
         </Button>
       </div>
       <Provenance a={artifact} inDialog={dialog} />
       {open && (
         <div id={body} className={cn('mt-2 overflow-auto', compact && 'max-h-64')}>
-          <Viewer a={artifact} agentHtml={agentHtml} ticket={ticket.key} />
+          <Viewer a={artifact} agentHtml={agentHtml} ticket={ticket.key} holdPictures={defaultOpen && !clicked} />
         </div>
       )}
     </li>

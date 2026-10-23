@@ -255,6 +255,17 @@ function DiffView({ text, label }: { text: string; label: string }) {
   )
 }
 
+/** A picture that was not asked for (an SVG or GIF in an auto-opened list): not decoded until the person clicks. */
+function HeldPicture({ a, url, kind }: { a: Artifact; url: string; kind: 'svg' | 'gif' }) {
+  const [shown, setShown] = useState(false)
+  if (shown) return <PictureView a={a} url={url} />
+  return (
+    <Button type="button" variant="outline" size="sm" onClick={() => setShown(true)}>
+      Show {kind === 'svg' ? 'SVG' : 'animated GIF'} picture
+    </Button>
+  )
+}
+
 /** A picture from digest-checked bytes, shown only as an <img>: scaled to fit, one click to the real size. */
 function PictureView({ a, url }: { a: Artifact; url: string }) {
   const [big, setBig] = useState(false)
@@ -283,7 +294,7 @@ const extOf = (name: string) => /\.([A-Za-z0-9]+)$/.exec(name)?.[1].toLowerCase(
  *   3 text    plain text (hidden characters escaped); json, csv, md, diff get their own view
  * A digest that differs from the ticket's, a file read only in part, or a binary file gets the card.
  */
-function RemotePreview({ a, ticket, unavailable }: { a: Artifact; ticket: string; /** Shown when the host cannot read the file at all (a demo has no bytes). */ unavailable?: ReactNode }) {
+function RemotePreview({ a, ticket, unavailable, holdPictures = false }: { a: Artifact; ticket: string; /** Shown when the host cannot read the file at all (a demo has no bytes). */ unavailable?: ReactNode; /** The file opened by itself (nobody clicked): an SVG or GIF, by the TYPE the server read from its bytes, waits for a click. */ holdPictures?: boolean }) {
   const workspaces = useQuery(queries.workspaces())
   const home = workspaceOfTicket(ticket, workspaces.data ?? [])
   const q = useQuery({ ...artifactTextQuery(home?.id ?? '', ticket, a.name, a.sha256), enabled: !!home })
@@ -297,7 +308,7 @@ function RemotePreview({ a, ticket, unavailable }: { a: Artifact; ticket: string
   const offered = d.media ?? d.image
   if (offered) {
     const url = verifiedMedia(offered, a.sha256)
-    return url ? <PictureView a={a} url={url} /> : <NoPreviewCard a={a} warn why="The picture does not match the digest the ticket records, so it is not shown." />
+    return url ? holdPictures && (offered.type === 'svg' || offered.type === 'gif') ? <HeldPicture a={a} url={url} kind={offered.type} /> : <PictureView a={a} url={url} /> : <NoPreviewCard a={a} warn why="The picture does not match the digest the ticket records, so it is not shown." />
   }
   const ext = extOf(a.name)
   if (d.binary || d.text == null || looksBinary(d.text)) {
@@ -347,13 +358,14 @@ function RemotePreview({ a, ticket, unavailable }: { a: Artifact; ticket: string
 }
 
 /** The content of one artifact (also the Artifacts page's preview pane): same sandbox and agent-HTML rule everywhere. */
-export function Viewer({ a, agentHtml, ticket }: { a: Artifact; agentHtml: boolean; /** The ticket it is on: lets a file with no inline content be read as text. */ ticket?: string }) {
+export function Viewer({ a, agentHtml, ticket, holdPictures = false }: { a: Artifact; agentHtml: boolean; /** The ticket it is on: lets a file with no inline content be read as text. */ ticket?: string; /** Opened without a click (an evidence list): SVG and GIF wait for one. */ holdPictures?: boolean }) {
   const hasFile = a.bytes != null && !a.addon && !a.url
   if (a.kind === 'screenshot' && ticket && hasFile && !a.preview)
     return (
       <RemotePreview
         a={a}
         ticket={ticket}
+        holdPictures={holdPictures}
         unavailable={
           <div className="space-y-2">
             <Thumb a={a} large />
@@ -369,7 +381,7 @@ export function Viewer({ a, agentHtml, ticket }: { a: Artifact; agentHtml: boole
         <p className="text-[12px] text-text-faint">Placeholder rendering. The real host serves the file; the sha256 above is what an approval binds.</p>
       </div>
     )
-  if (!a.preview) return ticket && hasFile ? <RemotePreview a={a} ticket={ticket} /> : NO_PREVIEW
+  if (!a.preview) return ticket && hasFile ? <RemotePreview a={a} ticket={ticket} holdPictures={holdPictures} /> : NO_PREVIEW
   if (isHtmlDocument(a)) return <HtmlViewer a={a} agentHtml={agentHtml} />
   if (a.kind === 'log') return <TextViewer text={a.preview} label={`Log ${a.name}`} />
   if (a.kind === 'dataset' || /\.csv$/.test(a.name)) {

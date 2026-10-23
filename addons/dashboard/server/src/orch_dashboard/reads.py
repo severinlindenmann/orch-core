@@ -151,6 +151,15 @@ _SVG_ELEMENTS = frozenset(
     "svg g path rect circle ellipse line polyline polygon text tspan defs "
     "linearGradient radialGradient stop title desc clipPath".split()
 )
+#: the only attributes an evidence SVG may carry (no `style`, no events, no presentation attribute that can name a URL
+#: other than fill/stroke/clip-path with `url(#id)`). Default deny: anything else refuses the whole file.
+_SVG_ATTRS = frozenset(
+    "id x y width height cx cy r rx ry x1 y1 x2 y2 d points viewBox preserveAspectRatio transform fill stroke "
+    "stroke-width stroke-linecap stroke-linejoin stroke-dasharray opacity fill-opacity stroke-opacity fill-rule "
+    "clip-rule clip-path offset stop-color stop-opacity gradientUnits gradientTransform spreadMethod fx fy font-size "
+    "font-family font-weight text-anchor dominant-baseline dx dy version href".split()
+)
+_XML_ENCODING = re.compile(rb"^\s*<\?xml[^>]*?encoding\s*=\s*[\"']([^\"']+)", re.IGNORECASE)
 _REF = re.compile(rb"&(?!(?:amp|lt|gt|quot|apos);)")
 _URL_FN = re.compile(r"url\(", re.IGNORECASE)
 _URL_LOCAL = re.compile(r"url\(\s*#[\w.\-]+\s*\)", re.IGNORECASE)
@@ -168,13 +177,18 @@ def is_svg(data: bytes) -> bool:
 
 
 def safe_svg(data: bytes) -> bool:
-    """An ALLOWLIST, not a scan: the document parses as strict XML with no DTD, entity or processing instruction, every
+    """Deny by default: only listed elements and attributes pass; values are never trusted to be safe.
+
+    An ALLOWLIST, not a scan: the document parses as strict XML with no DTD, entity or processing instruction, every
     element is in the SVG namespace and in `_SVG_ELEMENTS`, no attribute can load or run anything (`on*`, a reference
     that is not `#fragment`, `data:`, `javascript:`, `url()` other than `url(#id)`), and element count and depth are
     bounded. Anything else, including a parse error, is refused."""
     from xml.parsers import expat
 
     if len(data) > SVG_MAX or _REF.search(data):  # numeric and named references other than the five predefined
+        return False
+    declared = _XML_ENCODING.match(data.removeprefix(_BOM))
+    if declared and declared.group(1).lower() not in (b"utf-8", b"utf8"):
         return False
     state = {"n": 0, "depth": 0, "root": False}
 
@@ -195,10 +209,14 @@ def safe_svg(data: bytes) -> bool:
         state["root"] = True
         for key, value in attrs.items():
             kns, _, klocal = key.rpartition(" ")
-            if kns not in ("", _XLINK_NS) or klocal.lower().startswith("on"):
+            if (
+                (kns == "" and klocal not in _SVG_ATTRS)
+                or (kns == _XLINK_NS and klocal != "href")
+                or kns not in ("", _XLINK_NS)
+            ):
                 raise Refused
             low = value.lower()
-            if "data:" in low or "javascript:" in low or "&" in value:
+            if "\\" in value or "data:" in low or "javascript:" in low or "&" in value:
                 raise Refused
             if klocal == "href" and not value.startswith("#"):
                 raise Refused
@@ -264,7 +282,7 @@ def _gif_ok(data: bytes, side_max: int, pixels_max: int) -> bool:
                 return False
             frames += 1
             area += w * h
-            if frames > GIF_FRAMES_MAX or area > 5 * pixels_max:
+            if frames > GIF_FRAMES_MAX or area > 5 * pixels_max or frames * sw * sh > 5 * pixels_max:
                 return False
             i += 10 + (3 * 2 ** ((local & 7) + 1) if local & 0x80 else 0) + 1  # + LZW minimum code size
             if i > n:

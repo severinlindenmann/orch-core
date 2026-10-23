@@ -46,3 +46,19 @@ it('every section of a gate review except core\'s own lands inside the agent fra
   for (const t of ['Looks fine', 'Addon words', 'Unknown words']) expect(frame.textContent).toContain(t)
   expect(frame.textContent).not.toContain('ok from me')
 })
+
+it('the frame says "this is what you approve" only when approving; a request for changes says what the decision covers', () => {
+  const c = { ...content, headline: 'Ask for changes to the requirements of ORCHT-0004' }
+  render(<SignContent content={c as never} />)
+  const frame = screen.getByRole('group', { name: 'Written by the agent' })
+  expect(frame).toHaveTextContent('Written by the agent: this is what your decision covers')
+  expect(frame.textContent).not.toContain('what you approve')
+})
+
+it('a gate review is recognised by core\'s "Applies under" mark, not by the headline wording', () => {
+  render(<SignContent content={{ ...content, headline: 'Something else entirely' } as never} />)
+  expect(screen.getByRole('group', { name: 'Written by the agent' })).toBeInTheDocument()
+  cleanup()
+  render(<SignContent content={{ ...content, fields_title: undefined } as never} />)
+  expect(screen.queryByRole('group', { name: 'Written by the agent' })).toBeNull()
+})

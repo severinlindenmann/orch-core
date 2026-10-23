@@ -83,8 +83,8 @@ export function availableActions(t: TicketDocument, viewer: Viewer): Available {
       requestChanges.push('plan')
     }
   }
-  // A verdict the host marks stale (a fail followed by a resubmit, a new commit) does not count: a new one is due.
-  const verdict = t.status === 'testing' && !(t.verdict && t.verdict.current !== false) && canApproveGate(t, 'verify', viewer)
+  // A verdict the host marks stale (a fail followed by a resubmit, a new commit) does not count: a new one is due. A current verdict by someone else leaves the viewer's own to give (a verify gate with two people).
+  const verdict = t.status === 'testing' && t.gates.verify.state !== 'approved' && !(t.verdict && t.verdict.current !== false && t.verdict.by === viewer.person) && canApproveGate(t, 'verify', viewer)
   if (verdict) requestChanges.push('verify')
   // The code review (opt-in): after a pass verdict, by a person the policy names, never an assignee.
   if (codeReviewWaits(t) && canApproveGate(t, 'code', viewer)) {

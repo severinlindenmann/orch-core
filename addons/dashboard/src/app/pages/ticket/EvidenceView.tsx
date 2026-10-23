@@ -92,7 +92,7 @@ export function EvidenceItem({ ticket, artifact, acId, compact = false, dialog =
       <Provenance a={artifact} inDialog={dialog} grouped={grouped} />
       {open && !onPreview && (
         <div id={body} className={cn('mt-2 overflow-auto', compact && 'max-h-64')}>
-          <Viewer a={artifact} agentHtml={agentHtml} ticket={ticket.key} holdPictures={defaultOpen && !clicked} />
+          <Viewer key={`${artifact.name}:${artifact.sha256}`} a={artifact} agentHtml={agentHtml} ticket={ticket.key} holdPictures={defaultOpen && !clicked} />
         </div>
       )}
     </li>
@@ -122,7 +122,7 @@ export function VerdictPreview({ ticket, artifact, onBack }: { ticket: TicketDoc
         Back to verdict
       </Button>
       <p className="break-all font-mono text-[13px] font-medium">{visible(artifact.name)}</p>
-      <div className="min-w-0 max-w-full overflow-x-hidden"><Viewer a={artifact} agentHtml={agentHtml} ticket={ticket.key} /></div>
+      <div className="min-w-0 max-w-full overflow-x-hidden"><Viewer key={`${artifact.name}:${artifact.sha256}`} a={artifact} agentHtml={agentHtml} ticket={ticket.key} /></div>
     </section>
   )
 }
@@ -140,13 +140,13 @@ export function VerdictEvidence({ ticket, dialog = true, onPreview, name = () =>
   const total = withProof.reduce((n, x) => n + x.items.length, 0)
   const row = (a: Artifact, acId: string, grouped: boolean) => <EvidenceItem key={a.name + acId} ticket={ticket} artifact={a} acId={acId} compact dialog={dialog} defaultOpen={false} grouped={grouped} onPreview={onPreview} />
   // One group per identity: agents by name, people by id, orch once. Criterion headings sit above their files in the group.
-  const groups = new Map<string, { kind: 'agent' | 'host' | 'person'; who: string; rows: { ac: AcceptanceStatus; items: Artifact[] }[] }>()
+  const groups = new Map<string, { id: string; kind: 'agent' | 'host' | 'person'; who: string; rows: { ac: AcceptanceStatus; items: Artifact[] }[] }>()
   if (dialog)
     for (const { ac, items } of withProof)
       for (const a of items) {
         const kind = artifactKind(a)
         const key = kind === 'host' ? 'host' : `${kind}:${a.added_by}`
-        const g = groups.get(key) ?? { kind, who: kind === 'agent' ? agentName(a.added_by) : kind === 'person' ? name(a.added_by) : 'orch', rows: [] }
+        const g = groups.get(key) ?? { id: key, kind, who: kind === 'agent' ? agentName(a.added_by) : kind === 'person' ? name(a.added_by) : 'orch', rows: [] }
         const last = g.rows[g.rows.length - 1]
         if (last?.ac.id === ac.id) last.items.push(a)
         else g.rows.push({ ac, items: [a] })
@@ -174,12 +174,12 @@ export function VerdictEvidence({ ticket, dialog = true, onPreview, name = () =>
                 </div>
               ))
               return g.kind === 'agent' ? (
-                <div key={`agent:${g.who}`} role="group" aria-label={`Written by the agent ${visible(g.who)}`} data-testid="agent-region" className="space-y-2 rounded-md border border-info/30 bg-info-soft/40 p-2">
+                <div key={g.id} role="group" aria-label={`Written by the agent ${visible(g.who)}`} data-testid="agent-region" className="space-y-2 rounded-md border border-info/30 bg-info-soft/40 p-2">
                   <p className="text-[12px] text-text-muted">Added by {visible(g.who)}. Your verdict covers these files exactly as they are now. Their content and any quoted notes are the agent&apos;s own words.</p>
                   {body}
                 </div>
               ) : (
-                <div key={`${g.kind}:${g.who}`} role="group" aria-label={g.kind === 'host' ? 'Added by orch' : `Added by ${visible(g.who)}`} data-testid="plain-group" className="space-y-2">
+                <div key={g.id} role="group" aria-label={g.kind === 'host' ? 'Added by orch' : `Added by ${visible(g.who)}`} data-testid="plain-group" className="space-y-2">
                   <p className="text-[12px] font-medium text-text-muted">Added by {g.kind === 'host' ? 'orch' : visible(g.who)}</p>
                   {body}
                 </div>

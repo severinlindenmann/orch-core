@@ -59,3 +59,12 @@ it('an agent heading is body-size bold text, and a fake "What happens when you s
   expect(row.className).toContain('font-semibold')
   expect(container.querySelector('h1, h2, h3, h4')).toBeNull()
 })
+
+it('a long list number grows the marker instead of being clipped (no fixed width)', () => {
+  const { container } = render(<SignedTextView text={'1234567. Long number'} />)
+  const m = container.querySelector('[data-marker]')!
+  expect(m.className).toMatch(/\bmin-w-5\b/)
+  expect(m.className).toMatch(/\bh-5\b/)
+  expect(m.className.split(' ')).not.toContain('size-5')
+  expect(m.className.split(' ')).not.toContain('w-5')
+})

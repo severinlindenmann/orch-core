@@ -198,6 +198,7 @@ describe('a drawer opened by a link holds SVG and GIF too', () => {
 })
 
 import { reformatJson } from './Artifacts'
+import { prose } from '@/components/sign/visible'
 describe('reformatted JSON is bounded', () => {
   it('skips a deeply nested or amplifying file, and a short file', () => {
     expect(reformatJson('['.repeat(5000) + ']'.repeat(5000))).toBeUndefined()
@@ -205,5 +206,17 @@ describe('reformatted JSON is bounded', () => {
     const wide = '[' + Array.from({ length: 30000 }, () => '[1]').join(',') + ']'
     expect(reformatJson(wide)).toBeUndefined()
     expect(reformatJson('{"pad":"' + 'x'.repeat(250) + '"}')).toContain('"pad"')
+  })
+  it('re-indents without parsing: duplicate keys, 1e400 and big integers stay byte for byte', () => {
+    const pad = 'x'.repeat(250)
+    const src = String.raw`{"a":1,"a":2,"big":1e400,"n":12345678901234567890123,"s":"q\"u, ] }","pad":"${pad}","e":{},"l":[1,[2]]}`
+    const out = reformatJson(src)!
+    expect(out).toContain('"a": 1,')
+    expect(out).toContain('"a": 2,')
+    expect(out).toContain('1e400')
+    expect(out).toContain('12345678901234567890123')
+    expect(out).toContain('"e": {}')
+    // only white space between tokens changed (the page shows it through prose(), as for every text)
+    expect(out.replace(/\n */g, '').replace(/": /g, '":')).toBe(prose(src))
   })
 })

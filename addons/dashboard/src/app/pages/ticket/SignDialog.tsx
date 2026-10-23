@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { commitCover, diffstat, gateSignedContent, sectionWritten, type SignedField, type SignedSection } from '@/api/gates'
-import { Inline, Prose, Raw } from '@/components/sign/visible'
+import { Inline, Prose, Raw, visible } from '@/components/sign/visible'
 import { gateActionName, policyText } from './actions'
 import type { HumanAction } from './shared'
 import { queries } from '@/api/queries'
@@ -199,7 +199,7 @@ function SimulatedSignDialog({ ticket, action, onClose, onOpenEvidence, onOpenCh
 
   // The commit a verdict or code review signs: the branch head when the dialog opened, in full (owner decision 2026-10-10).
   const head = opened.branch.head
-  const passLabel = `Pass on ${head} · ${diffstat(opened.branch)}: the evidence is enough`
+  const passLabel = `Pass on ${visible(head)} · ${diffstat(opened.branch)}: the evidence is enough`
   const proven = ticket.acceptance_state.filter((a) => a.state === 'proven').length
   const receipts = ticket.tasks_state.filter((t) => t.receipt).length
   const attested = ticket.tasks_state.some((t) => t.receipt?.attested_by)

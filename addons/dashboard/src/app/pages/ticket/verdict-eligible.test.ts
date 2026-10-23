@@ -57,3 +57,10 @@ it('labels: Answer question(s) with the count, Start agent', () => {
   expect(primaryLabel({ kind: 'answer', question: 'Q1' }, { answer: [q('Q1', false), q('Q2', false)] })).toBe('Answer questions (2)')
   expect(primaryLabel({ kind: 'start' })).toBe('Start agent')
 })
+
+it('a current verdict by ANOTHER person leaves the viewer\'s own verdict to give (two-person verify gate)', () => {
+  const doc = testing()
+  doc.gates.verify.eligible = ['p_sev', 'p_other']
+  doc.verdict = { result: 'pass', by: 'p_other', at: '2026-10-23T10:00:00Z', current: true } as never
+  expect(availableActions(doc, me).verdict).toBe(true)
+})

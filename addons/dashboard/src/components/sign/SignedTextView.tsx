@@ -45,7 +45,7 @@ export function SignedTextView({ text, className }: { text: string; className?: 
         if (l.kind === 'number')
           return (
             <div key={i} data-line="number" className="flex gap-2">
-              <span data-marker className="mt-0.5 flex size-5 min-w-5 shrink-0 items-center justify-center rounded-full border border-border bg-surface-2 px-1 font-mono text-[11px] text-text-muted [unicode-bidi:isolate]">{l.n}</span>
+              <span data-marker className="mt-0.5 flex h-5 min-w-5 w-auto shrink-0 items-center justify-center rounded-full border border-border bg-surface-2 px-1.5 font-mono text-[11px] text-text-muted [unicode-bidi:isolate]">{l.n}</span>
               {body}
             </div>
           )

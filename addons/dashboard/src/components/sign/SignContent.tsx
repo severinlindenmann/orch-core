@@ -173,7 +173,7 @@ function GateText({ sections, acceptance, tasks, approving, others }: { sections
   return <div className="space-y-3">
     <section role="group" aria-label="Written by the agent" data-testid="agent-frame" className="space-y-4 rounded-md border border-border-strong bg-surface p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-[12px] font-medium text-text-muted">Written by the agent: this is what you approve</p>
+        <p className="text-[12px] font-medium text-text-muted">Written by the agent: {approving ? 'this is what you approve' : 'this is what your decision covers'}</p>
         <label className="flex cursor-pointer items-center gap-1.5 text-[12px] text-text-muted"><input type="checkbox" checked={raw} onChange={e => toggle(e.target.checked)} />Show exactly as written</label>
       </div>
       {sections.map(s => <section key={s.id} data-section={s.id}>
@@ -189,7 +189,7 @@ function GateText({ sections, acceptance, tasks, approving, others }: { sections
       <ul className="list-disc space-y-0.5 pl-5">
         <li>Your signature is tied to exactly what is shown in this review.</li>
         <li>If the agent changes it later, this approval no longer counts and you are asked again.</li>
-        <li>Only you can sign. The agent cannot sign for you.</li>
+        <li>Only you can sign with your key. The agent cannot sign for you.</li>
       </ul>
     </section>}
   </div>
@@ -205,7 +205,8 @@ export function SignContent({ content, ws, technical, compact = false }: { conte
   // A request on an EXISTING ticket keeps its key (the host's word) and the end of the signed id in the main view; a creation
   // (it signs the key and the title) has them under Technical details only.
   const ticketLine = content.ticket && content.ticket.new !== true
-  const gate = /^(Approve|Ask for changes to|Give the verdict)/.test(content.headline ?? '') && !!content.sections?.some(s => !CORE_SECTIONS.includes(s.id))
+  // core sets fields_title 'Applies under' only on a gate review (signcontent.py _gate): the structural mark, not the headline wording.
+  const gate = content.fields_title === 'Applies under' && !!content.sections?.length
   const gateSections = content.sections?.filter(s => !CORE_SECTIONS.includes(s.id)) ?? []
   const otherSections = content.sections?.filter(s => CORE_SECTIONS.includes(s.id)).map(s => <section key={s.id}><h3 className="mb-2 text-[13px] font-medium text-text"><Inline>{s.title}</Inline></h3><Prose className="font-sans leading-relaxed text-text">{s.text}</Prose></section>)
   const acceptanceEl = !!content.acceptance?.length && <section><h3 className="mb-2 text-[13px] font-medium text-text">{gate ? 'How we know it is done' : 'Acceptance criteria'}</h3><ul className="space-y-2 leading-relaxed">{content.acceptance.map(a => <li key={a.id}><span aria-label={a.checked ? 'Checked' : 'Unchecked'}>{a.checked ? '☑' : '☐'}</span> <Inline>{a.text}</Inline> <span className="text-[12px] text-text-muted [&_bdi]:text-text-muted"><Raw>{a.id}</Raw></span>{a.manual && <p className="text-[12px] text-text-muted"><Inline>{a.manual}</Inline></p>}</li>)}</ul></section>

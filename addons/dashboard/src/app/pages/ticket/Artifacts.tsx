@@ -136,19 +136,20 @@ function langOf(a: Artifact): string {
 /** The lines of a text as tokens: coloured when the highlighter knows the language (and the text is small enough), else plain. */
 function useTokenLines(text: string, lang: string | null | undefined, on: boolean): Token[][] {
   const plain = () => text.split('\n').map((l) => [{ content: l } as Token])
-  const [lines, setLines] = useState<{ key: string; lines: Token[][] } | null>(null)
-  const key = `${lang}:${text.length}:${text.slice(0, 64)}:${text.slice(-64)}`
+  const [lines, setLines] = useState<{ lang: string; text: string; lines: Token[][] } | null>(null)
   useEffect(() => {
+    setLines(null)
     if (!on || !lang) return
     let live = true
     highlight(text, lang)
-      .then((l) => live && l && setLines({ key, lines: l }))
+      .then((l) => live && l && setLines({ lang, text, lines: l }))
       .catch(() => {})
     return () => {
       live = false
     }
-  }, [text, lang, on, key])
-  return on && lang && lines?.key === key ? lines.lines : plain()
+  }, [text, lang, on])
+  // The whole text is compared (no length/prefix key): a coloured view of another text is never shown.
+  return on && lang && lines?.lang === lang && lines.text === text ? lines.lines : plain()
 }
 
 /**
@@ -171,14 +172,54 @@ const maxDepth = (t: string): number => {
   }
   return max
 }
+/**
+ * Lays JSON out for reading without parsing it into values: every token (strings, numbers, keys, even duplicate keys or
+ * 1e400) stays byte for byte as the file has it; only the white space between tokens changes.
+ */
+function indentJson(text: string): string {
+  let out = ''
+  let depth = 0
+  let inStr = false
+  const nl = () => '\n' + '  '.repeat(depth)
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]
+    if (inStr) {
+      out += c
+      if (c === '\\') out += text[++i] ?? ''
+      else if (c === '"') inStr = false
+    } else if (c === '"') {
+      inStr = true
+      out += c
+    } else if (c === ' ' || c === '\n' || c === '\t' || c === '\r') {
+      continue
+    } else if (c === '{' || c === '[') {
+      let j = i + 1
+      while (j < text.length && /\s/.test(text[j])) j++
+      if (text[j] === (c === '{' ? '}' : ']')) {
+        out += c + text[j]
+        i = j
+      } else {
+        depth++
+        out += c + nl()
+      }
+    } else if (c === '}' || c === ']') {
+      depth--
+      out += nl() + c
+    } else if (c === ',') out += c + nl()
+    else if (c === ':') out += ': '
+    else out += c
+  }
+  return out
+}
 export function reformatJson(text: string): string | undefined {
   if (!text.split('\n').some((l) => l.length > MINIFIED_LINE) || maxDepth(text) > REFORMAT_MAX_DEPTH) return undefined
   try {
-    const out = JSON.stringify(JSON.parse(text), null, 2)
-    return out.length > TEXT_PREVIEW_BYTES || out.split('\n').length > MAX_HIGHLIGHT_LINES ? undefined : prose(out)
+    JSON.parse(text) // only to know it is JSON; the output never comes from the parsed values
   } catch {
     return undefined // not valid JSON: only the text it is
   }
+  const out = indentJson(text)
+  return out.length > TEXT_PREVIEW_BYTES || out.split('\n').length > MAX_HIGHLIGHT_LINES ? undefined : prose(out)
 }
 
 function JsonText({ shown, safe, name }: { shown: string; safe: string; name: string }) {

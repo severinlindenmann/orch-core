@@ -57,10 +57,20 @@ def mint(wid: str, log: str, typ: str, **payload: Any) -> dict[str, Any]:
 
 
 class Env:
-    def __init__(self, served: Any, human: Any, version: int = 3, mode: str = "full") -> None:
+    def __init__(
+        self,
+        served: Any,
+        human: Any,
+        version: int = 3,
+        mode: str = "full",
+        alias: bool = False,
+        role: str | None = None,
+    ) -> None:
         self.served = served
         extra = {}
-        if mode == "selective":  # the grant: the owner's person aliased to the vector user, owner-signed at join (15.7)
+        if (
+            mode == "selective" or alias
+        ):  # the grant: the owner's person aliased to the vector user, owner-signed at join (15.7)
             extra["aliases"] = [{"person_id": human.person.ref.removeprefix("p_"), "user_id": ALICE}]
         human.run("hub.join", join_args(mode=mode, **extra))
         ok(served.client().req("hub.connect", connect_args(), idem=True))
@@ -68,7 +78,7 @@ class Env:
         self.service.submit(self._dev, self.service.store).result()
         self.wid = served.wid
         self.state = hubops._load_state(self.service)  # noqa: SLF001
-        self.state.snapshot = hub_snapshot(self.wid, version)
+        self.state.snapshot = hub_snapshot(self.wid, version, {ALICE: role} if role else None)
         self.uid, self.key = served.ticket("hub ticket")
         served.lab.ws.clock[0] = 1_790_000_000.5  # inside the vector certificates' validity (contract now_ms)
         self.n = 0
@@ -351,3 +361,34 @@ def test_an_item_without_the_shown_values_grants_no_decision(sel):
 def test_a_replaced_version_is_event_changed_not_not_granted(sel):
     entry = share(sel, superseded=["sha256:" + "6" * 64])
     assert sel.deliver(answer(sel, entry, item_hash="sha256:" + "6" * 64)) == "event_changed"
+
+
+# --- #1052: a full-mode member (hub role edit) who is the addressee answers a question -----------------------------
+
+
+@pytest.mark.parametrize("role", ["edit", "admin"])
+def test_a_full_mode_aliased_addressee_with_hub_role_edit_answers_a_question(served, human, stub, role):  # noqa: F811
+    env = Env(served, human, alias=True, role=role)
+    ok(
+        served.client().req(
+            "ask", {"ref": env.key, "text": "which one?"}, grant=served.grant, session=SESSION, idem=True
+        )
+    )
+    h = next(e["hash"] for e in env.lines(env.uid) if e["type"] == "question.asked")
+    e = env.event("question.answered", question="Q1", hash=h, text="yes")
+    assert env.deliver(e) is None
+
+
+def test_an_unaliased_hub_editor_is_not_the_ticket_owner_and_cannot_answer_its_question(served, human, stub):  # noqa: F811
+    """#1052 (S6): without an alias the hub user is a plain member (edit -> member, D70); a question to the
+    ticket owner is not hers. The same user with `admin` (owner) may answer anything. Not a bug: ticket-format 15.4."""
+    env = Env(served, human, alias=False, role="edit")
+    ok(
+        served.client().req(
+            "ask", {"ref": env.key, "text": "which one?"}, grant=served.grant, session=SESSION, idem=True
+        )
+    )
+    h = next(e["hash"] for e in env.lines(env.uid) if e["type"] == "question.asked")
+    assert env.deliver(env.event("question.answered", question="Q1", hash=h, text="yes")) == "forbidden_role"
+    env.state.snapshot = hub_snapshot(env.wid, 3, {ALICE: "admin"})
+    assert env.deliver(env.event("question.answered", question="Q1", hash=h, text="yes")) is None

@@ -15,20 +15,25 @@ export const TABS = [
 export const HOST_TABS = [
   { id: 'general', label: 'General' },
   { id: 'members', label: 'Members' },
-  { id: 'gates', label: 'Gates' },
-  { id: 'grants', label: 'Grants' },
+  /** Who has to approve each step (the policy of the gates). */
+  { id: 'gates', label: 'Approvals' },
+  /** The access given to agents (grants). */
+  { id: 'grants', label: 'Agent access' },
   /** Switch the shipped add-ons on and off (each change is signed). */
   { id: 'addons', label: 'Add-ons' },
-  /** Only where the host serves `records/1` (M6). */
-  { id: 'records', label: 'Records', feature: 'records' },
-  /** Pair a phone and the paired devices (proposed `pair/1`). Always listed: without the ops it says "not available". */
-  { id: 'devices', label: 'Devices' },
+  /** Only while a hub is connected. */
   { id: 'hub', label: 'Hub', feature: 'hub' },
 ] as const
+
+/**
+ * Pages that are still served but are not tabs: the paired devices and the phone pairing live under the Phone add-on
+ * (Add-ons), and records are part of General > Advanced. A link to `/settings/records` goes to General.
+ */
+export const HIDDEN_HOST_TABS = ['devices'] as const
 
 /** The tabs this build shows: the mockup's, or the reduced ones on a real host. */
 export const settingsTabs = (workspace?: string): readonly { id: string; label: string; preview?: boolean }[] =>
   isRealHost() ? HOST_TABS.filter((t) => !('feature' in t) || hasFeature(t.feature, workspace)) : TABS
 
 /** The known /settings/$tab values on this build; anything else redirects to General. */
-export const knownSettingsTab = (tab: string): boolean => (isRealHost() ? HOST_TABS : TABS).some((t) => t.id === tab)
+export const knownSettingsTab = (tab: string): boolean => (isRealHost() ? [...HOST_TABS.map((t) => t.id), ...HIDDEN_HOST_TABS] : TABS.map((t) => t.id)).some((id) => id === tab)

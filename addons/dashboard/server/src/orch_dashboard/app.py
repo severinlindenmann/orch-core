@@ -186,9 +186,11 @@ def create_app(port: int, gateway=None, auth=None, static=None, setup_proxy=None
         return {"sub_cursor": gateway.call(ws, "ticket.query", {"limit": 1})["sub_cursor"]}
 
     @app.get("/api/session")
-    def session_info():
+    def session_info(request: Request):
         workspaces = gateway.workspaces()
         return {
+            # How this browser session was opened: "local" (a launch code from this computer; the page hides Log out).
+            "login": auth.login_kind(request.state.token) or "unknown",
             "features": sorted({f for ws in workspaces for f in ws.features}),
             "workspaces": {ws.id: ws.features for ws in workspaces},
         }

@@ -175,7 +175,7 @@ export const SESSION_READ_MS = 20_000
 export const session = async (cancel?: AbortSignal) => {
   const stop = cancel ? AbortSignal.any([cancel, AbortSignal.timeout(SESSION_READ_MS)]) : AbortSignal.timeout(SESSION_READ_MS)
   try {
-    return await call<{ features: string[]; workspaces: Record<string, string[]> }>('/api/session', 'GET', undefined, stop)
+    return await call<{ features: string[]; workspaces: Record<string, string[]>; login?: string }>('/api/session', 'GET', undefined, stop)
   } catch (e) {
     if (e instanceof ApiError || cancel?.aborted) throw e
     throw new ApiError(0, { code: 'host.unavailable', message: 'It did not answer in time. Try again.', retryable: true })

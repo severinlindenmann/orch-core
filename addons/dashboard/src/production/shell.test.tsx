@@ -23,10 +23,11 @@ const workspaces = [{ id: ws, prefix: 'DEMO', name: 'Dev workspace', members: [{
 const me = [{ person, name: 'Severin', role: 'owner', tier: 'A', workspace: ws }]
 const empty = { rows: [], next_page: null, total: 0, sub_cursor: 'c', as_of: '2026-10-11T09:00:00Z' }
 let ticketDoc: unknown
+let login: string | undefined = 'local'
 
 function route(url: string): unknown {
   const [path] = url.split('?')
-  if (path === '/api/session') return { features: FEATURES, workspaces: { [ws]: FEATURES } }
+  if (path === '/api/session') return { features: FEATURES, workspaces: { [ws]: FEATURES }, ...(login ? { login } : {}) }
   if (path === '/api/workspaces') return workspaces
   if (path === '/api/me') return me
   if (path === `/api/w/${ws}/today`) return today
@@ -39,6 +40,7 @@ function route(url: string): unknown {
 
 beforeEach(() => {
   ticketDoc = ticket
+  login = 'local'
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
     const body = route(url)
     return body === undefined ? Response.json({ ok: false, error: { code: 'not_found', message: 'No such route in the test', retryable: false } }, { status: 404 }) : Response.json(body)
@@ -67,8 +69,17 @@ it('Today lists what needs the viewer from the host, without any button that sig
   // The mockup's own demo and viewer controls do not exist in production.
   expect(screen.queryByTestId('demo-mode')).not.toBeInTheDocument()
   expect(screen.queryByText(/viewing as/i)).not.toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'Log out' })).toBeInTheDocument()
+  // A session opened from this computer has nothing to log out of.
+  expect(screen.queryByRole('button', { name: 'Log out' })).not.toBeInTheDocument()
   expect(new Set(methods())).toEqual(new Set(['GET']))
+})
+
+it.each([['hub', true], ['unknown', false], [undefined, false]])('Log out for a %s session: shown %s', async (kind, shown) => {
+  login = kind
+  show('/w/DEMO')
+  expect(await screen.findByText('Approve the requirements')).toBeInTheDocument()
+  if (shown) expect(screen.getByRole('button', { name: 'Log out' })).toBeInTheDocument()
+  else expect(screen.queryByRole('button', { name: 'Log out' })).not.toBeInTheDocument()
 })
 
 it('only the advertised pages are in the navigation', async () => {

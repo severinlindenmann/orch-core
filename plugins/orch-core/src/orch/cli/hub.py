@@ -489,7 +489,8 @@ def _status_text(d: Mapping[str, Any]) -> str:
     if d.get("member"):
         state += ", the hub is a member and can read everything"
     link = f", link {d['link']}" if d.get("link") else ""
-    queued = ", the hub has not been told yet (orch hub unbind)" if d.get("unbound_pending") else ""
+    queued = f", {d['peer_outbox']} handoff(s) wait to be sent when the hub is back" if d.get("peer_outbox") else ""
+    queued += ", the hub has not been told yet (orch hub unbind)" if d.get("unbound_pending") else ""
     queued += (
         ", the hub cannot read new content until you run orch hub connect (new key)" if d.get("reseal_needed") else ""
     )

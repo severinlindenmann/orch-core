@@ -1,11 +1,11 @@
-import { useSignMethods } from '@/components/sign/SignMethods'
+import { can } from '@/api/permissions'
 import { Link } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { Bot, Check, ChevronDown, CircleHelp, Copy, Loader2, Lock, Tag, Timer } from 'lucide-react'
 import { useState } from 'react'
 import { api } from '@/api/client'
 import { addonActive } from '@/api/addons'
-import { AddonBadge, useAddons, useRunAddonAction, type RunAddonAction } from '@/addon-ui'
+import { AddonBadge, useAddons, useRunAddonAction } from '@/addon-ui'
 import { canSpawnAgent } from '@/addon-ui/capabilities'
 import { hasFeature, isRealHost } from '@/api/features'
 import { StartAgentDialog } from '@/app/terminal/real/StartAgentDialog'
@@ -64,45 +64,49 @@ export function AgentStatus({ ticket, viewer }: { ticket: TicketDocument; viewer
 
 const START_AGENT = 'start-agent'
 
-/** "Start agent" in the Actions menu (the start-agent addon, when active here). Core checks the claim before any dialog. */
-function StartAgentItem({ ticket, viewer, r }: { ticket: TicketDocument; viewer: Viewer; r: RunAddonAction }) {
-  const { workspace } = useWorkspace()
-  const { data: addons } = useAddons()
-  const pkg = addons?.find((a) => a.name === START_AGENT)
-  if (!addonActive(workspace, START_AGENT) || !canSpawnAgent(pkg, workspace?.addons[START_AGENT]) || ticket.status === 'done') return null
-  const claimed = precheckReason(ticket, viewer.name)
-  const roleBlocked = !r.allowed(START_AGENT, 'start')
-  const reason = roleBlocked ? VIEWER_REASON : claimed
-  return (
-    <>
-      <DropdownMenuSeparator />
-      <DropdownMenuItem disabled={!!reason} onSelect={() => r.run(START_AGENT, 'start')} className="items-start">
-        <Bot className="mt-0.5" />
-        <span className="min-w-0 flex-1">
-          <span className="flex items-center gap-2">
-            Start agent
-            <AddonBadge name={START_AGENT} title={pkg?.title} className="ml-auto" />
-          </span>
-          {reason && <span className="mt-0.5 block text-[12px] text-text-muted">{reason}</span>}
-        </span>
-      </DropdownMenuItem>
-    </>
-  )
+/** The person-visible reason no agent can start now (an agent works on it already), or null. A lapsed claim is history. */
+export const WORKING_REASON = 'An agent is already working on this ticket'
+const agentWorks = (t: TicketDocument) => !!t.claim && t.claim.live !== false
+
+export interface StartAgent {
+  /** "Start agent" is part of this ticket's actions (the addon or core's agent.start is available here). */
+  shown: boolean
+  /** Why it is off right now (shown inline), null when it can start. */
+  reason: string | null
+  /** The primary button may offer it: nothing blocks it and the ticket is in a state an agent works on. */
+  startable: boolean
+  run: () => void
+  /** The start-agent addon's own title, for its badge in the mock (none on a real host). */
+  addon?: { name: string; title?: string }
+  node: React.ReactNode
 }
 
-/** M7b, a real host: core's Start agent dialog (preview, runner grant, start), when the host serves `agent.start`. */
-function RealStartAgentItem({ ticket, onStart }: { ticket: TicketDocument; onStart: () => void }) {
+/**
+ * "Start agent" for this ticket, on a real host through core's dialog (hasFeature agent.start), in the mock through the
+ * start-agent addon. The header's primary button and the Actions menu share it, so there is one dialog and one rule.
+ */
+function useStartAgent(ticket: TicketDocument, viewer: Viewer): StartAgent {
   const { workspace } = useWorkspace()
-  if (!isRealHost() || !workspace || !hasFeature('agent_start', workspace.id) || ticket.status === 'done') return null
-  return (
+  const { data: addons } = useAddons()
+  const r = useRunAddonAction(ticket.key)
+  const [open, setOpen] = useState(false)
+  const real = isRealHost()
+  const pkg = addons?.find((a) => a.name === START_AGENT)
+  const finished = ticket.status === 'done' || ticket.status === 'closed'
+  const shown = real
+    ? !!workspace && hasFeature('agent_start', workspace.id) && !finished
+    : !!workspace && addonActive(workspace, START_AGENT) && canSpawnAgent(pkg, workspace.addons[START_AGENT]) && !finished
+  const roleBlocked = real ? !can(viewer.role, 'ticket.act') : !r.allowed(START_AGENT, 'start')
+  const reason = roleBlocked ? VIEWER_REASON : agentWorks(ticket) ? WORKING_REASON : real ? null : precheckReason(ticket, viewer.name)
+  const run = () => (real ? setOpen(true) : r.run(START_AGENT, 'start'))
+  const startable = shown && !reason && ticket.status !== 'testing'
+  const node = (
     <>
-      <DropdownMenuSeparator />
-      <DropdownMenuItem onSelect={onStart} data-testid="real-start-agent">
-        <Bot />
-        Start agent
-      </DropdownMenuItem>
+      {r.dialog}
+      {open && workspace && <StartAgentDialog ws={workspace.id} ticket={ticket.key} open onClose={() => setOpen(false)} />}
     </>
   )
+  return { shown, reason, startable, run, node, addon: real ? undefined : { name: START_AGENT, title: pkg?.title } }
 }
 
 /** " · why it is their turn", or nothing when the host gave no reason (no dangling separator). */
@@ -111,24 +115,22 @@ export function turnReason(why: string): string {
   return text ? ` · ${text.charAt(0).toLowerCase()}${text.slice(1)}` : ''
 }
 
-export function ActionsMenu({ ticket, viewer, sign, jump, signing = false }: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void; signing?: boolean }) {
-  const av = availableActions(ticket, viewer)
-  const primary = primaryAction(av)
-  // The primary action is the header's button; the menu holds the rest.
-  const approve = av.approve.filter((g) => !(primary?.kind === 'approve' && primary.gate === g))
-  const verdict = av.verdict && primary?.kind !== 'verdict'
-  // A question is answered on its own card (Questions tab): the menu jumps there (it lists them even when the button does too).
-  const answer = av.answer
-  const empty = !approve.length && !av.requestChanges.length && !verdict && !answer.length
-  // Core's start dialog lives outside the menu, which closes when an item is chosen.
-  const r = useRunAddonAction(ticket.key)
-  const { workspace } = useWorkspace()
-  const [agent, setAgent] = useState(false)
-  // The label names how this workspace really signs (its allowed ways), never a method it does not offer.
-  const ways = useSignMethods(workspace?.id).allowed
-  const signedWith = !ways ? null : ways.includes('click') ? 'in your terminal or with one click' : 'in your terminal'
+function Next() {
   return (
-    <>
+    <span className="ml-auto rounded-full bg-brand/15 px-1.5 py-px text-[10px] font-medium text-brand" data-testid="next-tag">
+      next
+    </span>
+  )
+}
+
+/** The header's Actions menu lists EVERY action the viewer has, the primary one included (tagged "next"). */
+export function ActionsMenu({ ticket, viewer, sign, jump, start, signing = false }: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void; start: StartAgent; signing?: boolean }) {
+  const av = availableActions(ticket, viewer)
+  const primary = primaryAction(av, { start: start.startable })
+  const isNext = (k: string) => (primary?.kind === 'approve' ? `approve:${primary.gate}` : primary?.kind === 'answer' ? `answer:${primary.question}` : primary?.kind) === k
+  const needs = av.approve.length > 0 || av.verdict || av.answer.length > 0
+  const other = av.requestChanges.length > 0 || start.shown
+  return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button size="sm" variant="outline" disabled={signing}>
@@ -137,45 +139,61 @@ export function ActionsMenu({ ticket, viewer, sign, jump, signing = false }: { t
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-72">
-        <DropdownMenuLabel className="text-[11px] font-normal text-text-faint">Human actions{signedWith ? `, signed ${signedWith}` : ''}</DropdownMenuLabel>
-        {empty && <p className="px-2 py-2 text-[13px] text-text-muted">{primary ? 'Nothing else needs you on this ticket.' : 'Nothing needs you on this ticket.'}</p>}
-        {approve.map((g) => (
-          <DropdownMenuItem key={g} onSelect={() => sign({ kind: 'approve', gate: g })}>
-            <Check />
-            Approve {gateActionName(g)}
-          </DropdownMenuItem>
-        ))}
-        {verdict && (
-          <DropdownMenuItem onSelect={() => sign({ kind: 'verdict' })}>
-            <Check />
-            Give verdict
-          </DropdownMenuItem>
-        )}
-        {answer.map((q) => (
+        {!needs && !other && <p className="px-2 py-2 text-[13px] text-text-muted">Nothing needs you on this ticket.</p>}
+        {needs && <DropdownMenuLabel className="text-[11px] font-normal text-text-faint">Needs you</DropdownMenuLabel>}
+        {av.answer.map((q) => (
           <DropdownMenuItem key={q.id} onSelect={() => jump({ tab: 'questions', id: `question-${q.id}` })}>
             <CircleHelp />
             Answer question{av.answer.length > 1 ? ` ${q.id}` : ''}
+            {isNext(`answer:${q.id}`) && <Next />}
           </DropdownMenuItem>
         ))}
-        {av.requestChanges.length > 0 && <DropdownMenuSeparator />}
+        {av.verdict && (
+          <DropdownMenuItem onSelect={() => sign({ kind: 'verdict' })}>
+            <Check />
+            Give verdict
+            {isNext('verdict') && <Next />}
+          </DropdownMenuItem>
+        )}
+        {av.approve.map((g) => (
+          <DropdownMenuItem key={g} onSelect={() => sign({ kind: 'approve', gate: g })}>
+            <Check />
+            Approve {gateActionName(g)}
+            {isNext(`approve:${g}`) && <Next />}
+          </DropdownMenuItem>
+        ))}
+        {needs && other && <DropdownMenuSeparator />}
+        {other && <DropdownMenuLabel className="text-[11px] font-normal text-text-faint">Other</DropdownMenuLabel>}
         {av.requestChanges.map((g) => (
           <DropdownMenuItem key={g} onSelect={() => sign({ kind: 'request_changes', gate: g })}>
             <Timer />
-            Request changes on {gateActionName(g)}
+            {g === 'verify' ? 'Send back' : `Request changes on ${gateActionName(g)}`}
           </DropdownMenuItem>
         ))}
-        {isRealHost() ? <RealStartAgentItem ticket={ticket} onStart={() => setAgent(true)} /> : <StartAgentItem ticket={ticket} viewer={viewer} r={r} />}
+        {start.shown && (
+          <DropdownMenuItem disabled={!!start.reason} onSelect={start.run} className="items-start" data-testid="real-start-agent">
+            <Bot className="mt-0.5" />
+            <span className="min-w-0 flex-1">
+              <span className="flex items-center gap-2">
+                Start agent
+                {start.addon && <AddonBadge name={start.addon.name} title={start.addon.title} className="ml-auto" />}
+                {isNext('start') && <Next />}
+              </span>
+              {start.reason && <span className="mt-0.5 block text-[12px] text-text-muted">{start.reason}</span>}
+            </span>
+          </DropdownMenuItem>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
-    {r.dialog}
-    {agent && workspace && <StartAgentDialog ws={workspace.id} ticket={ticket.key} open onClose={() => setAgent(false)} />}
-    </>
   )
 }
 
-/** The header's one primary button: what the viewer should do next (hidden when nothing needs them). */
-function PrimaryButton({ ticket, viewer, sign, jump, signing }: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void; signing: boolean }) {
-  const p = primaryAction(availableActions(ticket, viewer))
+/** The header's one primary button: what the viewer should do next (a quiet status when an agent works and nothing waits). */
+function PrimaryButton({ ticket, viewer, sign, jump, start, signing }: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void; start: StartAgent; signing: boolean }) {
+  const av = availableActions(ticket, viewer)
+  const blocked = blockedApproval(ticket, viewer)
+  // A gate that waits for someone else (shown disabled below) comes before offering to start an agent.
+  const p = primaryAction(av, { start: start.startable && !blocked })
   if (signing)
     return (
       <Button size="sm" disabled aria-busy>
@@ -183,7 +201,6 @@ function PrimaryButton({ ticket, viewer, sign, jump, signing }: { ticket: Ticket
         Signing…
       </Button>
     )
-  const blocked = blockedApproval(ticket, viewer)
   // Someone who cannot sign the next gate sees the button, off, with the reason (not an empty header).
   if (!p && blocked)
     return (
@@ -197,16 +214,17 @@ function PrimaryButton({ ticket, viewer, sign, jump, signing }: { ticket: Ticket
         </span>
       </span>
     )
-  if (!p) return null
+  if (!p) return agentWorks(ticket) && ticket.status !== 'done' ? <span className="inline-flex items-center gap-1.5 text-[13px] text-text-muted" data-testid="agent-working-note"><Loader2 className="size-3.5 animate-spin" aria-hidden />Agent is working…</span> : null
   const run = () => {
     if (p.kind === 'verdict') sign({ kind: 'verdict' })
     else if (p.kind === 'answer') jump({ tab: 'questions', id: `question-${p.question}` })
+    else if (p.kind === 'start') start.run()
     else sign({ kind: 'approve', gate: p.gate })
   }
   return (
     <Button size="sm" onClick={run}>
-      {p.kind === 'answer' ? <CircleHelp /> : <Check />}
-      {primaryLabel(p)}
+      {p.kind === 'answer' ? <CircleHelp /> : p.kind === 'start' ? <Bot /> : <Check />}
+      {primaryLabel(p, av)}
     </Button>
   )
 }
@@ -254,6 +272,7 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
     queryFn: () => (home ? api.listTickets(home, { parent: ticket.key }) : []),
     enabled: ticket.type === 'epic' && !!home,
   })
+  const start = useStartAgent(ticket, viewer)
   const restricted = ticket.visibility !== 'workspace'
   const shown = ticket.labels.slice(0, MAX_LABELS)
   const more = ticket.labels.length - shown.length
@@ -277,11 +296,12 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
           </Pill>
         )}
       </div>
-      <div className="flex min-w-0 items-start gap-3">
+      <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start">
         <h1 className="min-w-0 flex-1 text-xl font-semibold leading-tight tracking-tight text-text">{ticket.title}</h1>
-        <div className="flex shrink-0 items-center gap-2">
-          <PrimaryButton ticket={ticket} viewer={viewer} sign={sign} jump={jump} signing={signing} />
-          <ActionsMenu ticket={ticket} viewer={viewer} sign={sign} jump={jump} signing={signing} />
+        <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
+          <PrimaryButton ticket={ticket} viewer={viewer} sign={sign} jump={jump} start={start} signing={signing} />
+          <ActionsMenu ticket={ticket} viewer={viewer} sign={sign} jump={jump} start={start} signing={signing} />
+          {start.node}
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">

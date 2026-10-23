@@ -52,6 +52,19 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
+class _PreAuth:
+    """One unauthenticated-connection slot; :meth:`release` is idempotent (auth done, or the connection ended)."""
+
+    def __init__(self, sem: threading.BoundedSemaphore) -> None:
+        self._sem, self._held, self._lock = sem, True, threading.Lock()
+
+    def release(self) -> None:
+        with self._lock:
+            if self._held:
+                self._held = False
+                self._sem.release()
+
+
 class LinkServer:
     def __init__(
         self,
@@ -82,6 +95,7 @@ class LinkServer:
         idle_timeout: float = 300.0,
         unjoined_idle_timeout: float = 30.0,
         max_connections: int = 64,
+        max_unauthenticated: int = 16,
     ) -> None:
         self._ctx = tls.server_context(identity)
         self._signer, self.hub_id, self._reg = op_signer, hub_id, registry
@@ -101,6 +115,9 @@ class LinkServer:
         self._max, self._t_hs, self._t_rd, self._t_idle = max_frame, handshake_timeout, read_timeout, idle_timeout
         self._t_unjoined = unjoined_idle_timeout
         self._slots = threading.BoundedSemaphore(max_connections)
+        # D12b G8: connections that have not finished auth (handshake included) hold one of these, so peers that stall
+        # the handshake cannot take all the slots from bound hosts.
+        self._pre = threading.BoundedSemaphore(min(max_unauthenticated, max_connections))
         self._stop = threading.Event()
         self._listen = socket.socket()
         self._listen.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -178,15 +195,19 @@ class LinkServer:
             if not self._slots.acquire(blocking=False):
                 sock.close()
                 continue
-            t = threading.Thread(target=self._serve, args=(sock,), name="link-conn", daemon=True)
+            if not self._pre.acquire(blocking=False):
+                sock.close()
+                self._slots.release()
+                continue
+            t = threading.Thread(target=self._serve, args=(sock, _PreAuth(self._pre)), name="link-conn", daemon=True)
             self._threads = [x for x in self._threads if x.is_alive()] + [t]
             t.start()
 
-    def _serve(self, sock: socket.socket) -> None:
+    def _serve(self, sock: socket.socket, pre: _PreAuth) -> None:
         conn = None
         try:
             conn = tls.accept(self._ctx, sock, time.monotonic() + self._t_hs, self._stop)
-            self._link(conn)
+            self._link(conn, pre)
         except framing.FrameError:
             if conn is not None:
                 self._refuse(conn, "malformed")
@@ -199,6 +220,7 @@ class LinkServer:
                 conn.close()
             else:
                 sock.close()
+            pre.release()
             self._slots.release()
 
     def _send(self, conn: tls.TlsConn, obj: dict[str, Any]) -> None:
@@ -252,8 +274,9 @@ class LinkServer:
         self._send(conn, {"t": "ready", "hub_id": self.hub_id})
         return ws, wsk
 
-    def _link(self, conn: tls.TlsConn) -> None:
+    def _link(self, conn: tls.TlsConn, pre: _PreAuth) -> None:
         who = self._auth(conn)
+        pre.release()  # authenticated (or refused): no longer counts against the unauthenticated cap
         if who is None:
             return
         ws, wsk = who
@@ -307,6 +330,7 @@ class LinkServer:
 
     def _serve_link(self, conn: tls.TlsConn, port: _Port, ws: str, wsk: bytes) -> None:
         self._attach(ws, port)
+        last_seq: int | None = None  # D12b G7: the w2h seq of the previous frame on THIS link
         while not self._stop.is_set():
             pin = self._reg.pin(ws)
             try:
@@ -331,6 +355,14 @@ class LinkServer:
                 self._log_refused(ws, signed, e.code, now)
                 self._refuse(conn, e.code)
                 return
+            # G7: one counter per direction and link, requests and replies alike. The first frame sets the baseline (a
+            # host numbers across reconnects); then every frame is exactly the previous + 1. A repeat or a skip closes
+            # the link before any side effect. Not bound to the link (no cross-link replay protection: L7 SHORTCUT).
+            if last_seq is not None and o["seq"] != last_seq + 1:
+                self._log_refused(ws, signed, "malformed", now)
+                self._refuse(conn, "malformed")
+                return
+            last_seq = o["seq"]
             if o["re"] is not None:  # a reply to one of our h2w requests (the host's ack of a route_in): no answer
                 if self._router is not None and port.live is not None:
                     self._router.on_reply(ws, port.live, o)

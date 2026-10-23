@@ -949,7 +949,7 @@ card in the `join` message) (vector `link_auth`). One link serves one `workspace
         b64u(Sign(HK_op, "orch/v2/hub-route|" || cj(o)))           (dir h2w)}
 ```
 
-`seq` ≥ 1 per direction and link; `re` is `null` on a request and the request's `seq` on its reply; `body` an object.
+`seq` ≥ 1 per direction and link, one counter for requests and replies alike. The hub enforces it on w2h frames (D12b): the first frame of a link sets the baseline (a host numbers across reconnects), every later frame must be exactly the previous + 1, otherwise the hub answers `malformed` and closes the link before any side effect. The seq is not bound to the link: replay of a frame onto another link needs a TLS break first (L7 SHORTCUT). `re` is `null` on a request and the request's `seq` on its reply; `body` an object.
 
 **The closed operation list** (spec §8, §8a). There is **no operation that asks the hub to sign anything**; an
 unknown `op` is `unknown_op`.
@@ -2073,7 +2073,7 @@ must equal `page_ticket_with_proj` byte for byte) and the hub runs `proj_build`;
 | 11 | V3-D4 "inside the WSK-signed request" | hub-path WSK bytes `orch/v2/publish-hub\|` cover `hub_id` and `H(approval)`; the approval names the exact request incl. ts and nonce (single use) | V3-D4; L2-2 (the first H0 draft bound only by a ts-less hash: rejected) |
 | 12 | Which publish requests need the approval | public access only; secret/sealed keep the charter path | spec §8 "public access still needs a human signature", §5.5 |
 | 13 | Owner key for the approval | owner's device key with its PK-signed certificate; PK must be the card delegation's owner | D64 local key; v2 §6.1, §7.1 |
-| 14 | Link replay | `seq` carried, not enforced | SHORTCUT (L7) |
+| 14 | Link replay | `seq` strictly consecutive per link (D12b); not bound across links | SHORTCUT (L7, residual) |
 | 15 | Binding replay after leave | store keeps the unbound record (§9.4) | spec §8 "no later hub.unbound" |
 | 16 | Unbound delivery with the hub down | the host sends it to publish directly | spec §8 break-glass "none needs the hub" |
 | 17 | The hub's trust in a workspace's `WSK` at join | the v2 directory card + owner `PK` in `join`; first come per `workspace_id` | L2-3 |

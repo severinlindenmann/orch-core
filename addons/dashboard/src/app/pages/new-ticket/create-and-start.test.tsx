@@ -147,8 +147,8 @@ describe('what is signed', () => {
     await r.user.click(await startBtn(sheet))
     const action = await sent()
     expect(action.agent).toBeUndefined()
-    expect(await screen.findByTestId('not-signed-start')).toHaveTextContent('Not signed: the agent start')
-    expect(screen.getByTestId('not-signed-start').textContent!.length).toBeLessThan(160) // one line, not a paragraph
+    expect(await screen.findByTestId('not-signed-start')).toHaveTextContent('Not part of what you sign')
+    expect(screen.getByTestId('not-signed-start').textContent!.length).toBeLessThan(230) // one line, not a paragraph
     expect(screen.getByTestId('starts-agent')).toHaveTextContent('true') // the dialog's steps then say the agent starts with the access already there
   })
 

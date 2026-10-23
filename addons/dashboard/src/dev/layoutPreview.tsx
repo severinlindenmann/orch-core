@@ -213,9 +213,10 @@ const quickRows = (scenario: LayoutScenario): QuickRow[] =>
     ? Array.from({ length: 60 }, (_, i) => quickRow(i, { title: i % 7 === 0 ? `Fix ${LONG_URL}` : `Quick task number ${i} with a title that goes on for a while to see how a row wraps`, labels: i % 3 === 0 ? ['quick', 'docs'] : ['quick'], quick: { commits: i % 5 === 0 ? null : i, files: i % 4 === 0 ? null : i * 2, over: i % 6 === 0 ? true : i % 5 === 0 ? null : false } }))
     : [
         quickRow(1, { title: `Read ${LONG_URL} and fix the link`, labels: ['quick', 'docs', 'a-rather-long-label-name', 'web'], quick: { commits: 4, files: 7, over: true } }),
-        quickRow(2, { title: LONG_WORD, status: 'in-progress' }),
-        quickRow(3, { title: 'No repository is linked yet', status: 'backlog', quick: { commits: null, files: null, over: null } }),
+        quickRow(2, { title: LONG_WORD, status: 'in-progress', claim: { agent: 'claude-code', for: 'p_sev', session: 's1', live: true } }),
+        quickRow(3, { title: 'No repository is linked yet', status: 'backlog', quick: { commits: null, files: null, over: null }, awaiting_gate: 'verify' }),
         quickRow(4, { title: 'Fix the typo in CONTRIBUTING' }),
+        quickRow(5, { title: 'Choose a photo format', open_questions: 1, claim: { agent: 'codex', for: 'p_sev', session: 's2', live: true } }),
       ]
 
 const records = (scenario: LayoutScenario): RecordsStatus => {

@@ -34,7 +34,7 @@ export function HostAddOns({ workspace }: { workspace: Workspace }) {
   const qc = useQueryClient()
   const [open, setOpen] = useState<Record<string, boolean>>({})
   // The row being switched: its switch keeps the old position (nothing is shown before the host confirms) and says what is happening.
-  const [busy, setBusy] = useState<{ id: string; turningOn: boolean; stage: 'signing' | 'waiting' } | null>(null)
+  const [busy, setBusy] = useState<{ id: string; turningOn: boolean; stage: 'review' | 'signing' | 'waiting' } | null>(null)
   const { ask, dialog } = useSettingsHandoff(workspace.id, async () => {
     setBusy((b) => (b ? { ...b, stage: 'waiting' } : b))
     // One read of everything the page and the sidebar are built from; the switch moves when these have answered.
@@ -57,7 +57,7 @@ export function HostAddOns({ workspace }: { workspace: Workspace }) {
       return
     }
     const name_ = plain(row.title)
-    setBusy({ id: row.id, turningOn, stage: 'signing' })
+    setBusy({ id: row.id, turningOn, stage: 'review' })
     ask({
       title: turningOn ? `Turn on ${name_}` : `Turn off ${name_}`,
       action: { action: turningOn ? 'addon_grant' : 'addon_disable', name },
@@ -130,7 +130,7 @@ export function HostAddOns({ workspace }: { workspace: Workspace }) {
                       )}
                     </div>
                     {needsSetup && <Button size="sm" variant="secondary" onClick={() => setSetup({ name: row.id as 'publish' | 'model-routing', enabling: false })}>Set up</Button>}
-                    {mine && (
+                    {mine && mine.stage !== 'review' && (
                       <span role="status" data-testid={`addon-${row.id}-pending`} className="inline-flex items-center gap-1.5 text-[12px] text-text-muted">
                         <Loader2 className="size-3.5 animate-spin" aria-hidden /> {mine.turningOn ? 'Turning on…' : 'Turning off…'}
                       </span>

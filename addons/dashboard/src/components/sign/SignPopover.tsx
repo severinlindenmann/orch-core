@@ -423,7 +423,7 @@ export function SignPopover(p: SignPopoverProps) {
                 Cancel
               </Button>
               <Button onClick={() => startMethod()} disabled={!p.action || !p.ws || !!p.hint || methods.loading || (method === 'click' && !canClick)}>
-                {method === 'click' ? (!p.autoStart && p.confirmLabel ? p.confirmLabel : 'Sign') : (methods.allowed ? methodLabel.terminal : (p.confirmLabel ?? p.title))}
+                {method === 'click' ? (!p.autoStart && p.confirmLabel ? p.confirmLabel : 'Sign') : (methods.allowed ? methodLabel.terminal : (p.confirmLabel ?? story?.signLabel ?? p.title))}
               </Button>
             </>
           )}

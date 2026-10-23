@@ -66,7 +66,7 @@ export function NotSignedBlock({ plan }: { plan: Pick<StartPlan, 'shown' | 'choi
   const { choice } = plan
   return (
     <p data-testid="not-signed-start" className="border-t border-border pt-3 text-[13px] text-text-muted">
-      Not signed: the agent start ({harnessName(choice.harness)}, {MODE_LABEL[choice.mode]}, model {modelText(plan)}). It is checked again first.
+      Not part of what you sign: after the ticket exists, {harnessName(choice.harness)} starts ({MODE_LABEL[choice.mode].toLowerCase()}, model {modelText(plan)}). Agent access is checked again first.
     </p>
   )
 }

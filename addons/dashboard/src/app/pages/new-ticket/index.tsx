@@ -10,6 +10,7 @@ import { MAX_IMAGES, missingPasted, pastedIn } from '@/api/pasteImage'
 import { MAX_CRITERIA, MAX_SECTION_BYTES, MAX_SEQUENCE_STEPS, type HandoffAction, type HandoffRequest, type HandoffState } from '@/api/handoff'
 import { can, roleOf } from '@/api/permissions'
 import { SignPopover } from '@/components/sign/SignPopover'
+import { Inline } from '@/components/sign/visible'
 import { SignButton } from '@/components/sign/SignButton'
 import { AccessSelect } from '@/components/sign/AccessSelect'
 import { hasFeature } from '@/api/features'
@@ -678,6 +679,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
           })()}
           autoStart
           startsAgent={!!handoffNew.start}
+          summary={<div className="space-y-1 text-[13px]" data-testid="nt-summary"><p><span className="text-text-muted">Title </span><Inline>{handoffNew.draft.title.trim()}</Inline></p>{handoffNew.draft.sections.requirements?.trim() && <p className="line-clamp-3 whitespace-pre-line"><span className="text-text-muted">Should be true </span><Inline>{handoffNew.draft.sections.requirements.trim()}</Inline></p>}</div>}
           anchor={handoffNew.anchor}
           controls={handoffNew.start?.withAccess ? <AccessSelect hours={plan.hours} onHours={plan.setHours} lengths={plan.lengths} prefix={workspace.prefix} agentName={harnessName(handoffNew.start.reviewed.choice.harness)} /> : undefined}
           doneToast={handoffNew.start ? '' : 'Ticket created'}

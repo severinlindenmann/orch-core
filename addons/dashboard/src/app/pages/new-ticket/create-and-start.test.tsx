@@ -12,8 +12,8 @@ import { nowMs } from '@/lib/time'
 
 vi.mock('@/api/features', async (orig) => ({ ...(await orig<typeof import('@/api/features')>()), handoffMode: () => true }))
 // The signing dialog is its own feature; here it shows the action, the "not signed" block, and reports how it ended.
-vi.mock('@/components/sign/HandoffDialog', () => ({
-  HandoffDialog: (p: { title: string; startsAgent?: boolean; action: { action: string }; unsigned?: React.ReactNode; onSettled?: (phase: string, st: unknown, req: unknown) => void; onClose: () => void }) => {
+vi.mock('@/components/sign/SignPopover', () => ({
+  SignPopover: (p: { title: string; startsAgent?: boolean; action: { action: string }; unsigned?: React.ReactNode; onSettled?: (phase: string, st: unknown, req: unknown) => void; onClose: () => void }) => {
     const req = { ...fakeRequest({ key: 'DEMO-0044', id: 'hr_' + '0'.repeat(25) + '7' }), op: 'new' }
     return (
       <div role="dialog" aria-label={p.title}>

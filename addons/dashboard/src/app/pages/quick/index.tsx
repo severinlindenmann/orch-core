@@ -10,7 +10,7 @@ import { ACTIVE_STATUSES, DONE_STATUSES, LIMIT_RANGE, QUICK_LABEL, readQuickLimi
 import { queries } from '@/api/queries'
 import type { HandoffAction } from '@/api/handoff'
 import { LoadFailed } from '@/components/LoadFailed'
-import { HandoffDialog } from '@/components/sign/HandoffDialog'
+import { SignPopover } from '@/components/sign/SignPopover'
 import { Inline } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -228,7 +228,7 @@ export function QuickPage() {
       <Limits ws={ws} limits={limits} onChange={setLimits} />
 
       {closing && (
-        <HandoffDialog
+        <SignPopover
           key={closing.action + closing.key}
           summary={closing.action === 'details' ? <div><p>Labels removed: <Inline>{QUICK_LABEL}</Inline></p><p>Labels kept: {closing.labels?.length ? closing.labels.map((label) => <span key={label} className="mr-2"><Inline>{label}</Inline></span>) : 'none'}</p></div> : undefined}
           title={closing.action === 'details' ? `Make ${closing.key} a normal ticket` : `Close ${'key' in closing ? closing.key : ''}`}

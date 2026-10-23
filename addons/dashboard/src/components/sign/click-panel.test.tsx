@@ -267,22 +267,16 @@ describe('the story around the review', () => {
     expect(within(screen.getByTestId('what-next')).getAllByRole('listitem')[0]).toHaveTextContent('You sign.')
   })
 
-  it('shows What happens next, the button label from the story and no phone link without a paired phone', () => {
+  it('shows What happens next, the button label from the story and and no phone link', () => {
     mount(answer(), { story: { signLabel: 'Sign requirements', steps: ['You sign.', 'The requirements are locked as shown.'] } })
     expect(screen.getByTestId('what-next')).toHaveTextContent('The requirements are locked as shown.')
     expect(screen.getByRole('button', { name: 'Sign requirements' })).toBeInTheDocument()
-    expect(screen.getByTestId('sign-method')).toHaveTextContent('Sign on this computer')
+    expect(screen.getByTestId('sign-method')).toHaveTextContent('On this computer')
     expect(screen.queryByTestId('use-phone')).toBeNull()
     expect(screen.queryByText('Other ways')).toBeNull()
     expect(screen.queryByTestId('click-risk')).toBeNull()
   })
 
-  it('offers the quiet phone link only when asked to', () => {
-    const onPhone = vi.fn()
-    mount(answer(), { onPhone })
-    fireEvent.click(screen.getByRole('button', { name: 'Use my phone instead' }))
-    expect(onPhone).toHaveBeenCalledTimes(1)
-  })
 })
 
 describe('the other buttons', () => {

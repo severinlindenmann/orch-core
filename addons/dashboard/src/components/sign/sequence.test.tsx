@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fingerprintOf, requestIsConsistent, reviewDigestOf, type HandoffAction, type HandoffEvent, type HandoffRequest } from '@/api/handoff'
 import { clickEligible } from '@/api/click'
 import { fakeRequest, spies, state } from '@/test/handoffHarness'
-import { HandoffDialog } from './HandoffDialog'
+import { SignPopover } from './SignPopover'
 import { GRANT_STALL_MS, POLL_MS, SEQUENCE_STALL_MS } from './useHandoff'
 
 const T = { timeout: 5000 }
@@ -55,7 +55,7 @@ function mount(onSettled = vi.fn()) {
   const user = userEvent.setup()
   render(
     <QueryClientProvider client={client}>
-      <HandoffDialog title="New ticket" ws="w_1" action={ACTION} autoStart onClose={() => {}} onSettled={onSettled} />
+      <SignPopover title="New ticket" ws="w_1" action={ACTION} autoStart onClose={() => {}} onSettled={onSettled} />
     </QueryClientProvider>,
   )
   return { user, onSettled }

@@ -17,7 +17,7 @@ import { newIdem, type Run } from '@/api/runs'
 import { ApiError } from '@/api/types'
 import { ClickSignPanel } from '@/components/sign/ClickSignPanel'
 import { storyOf } from '@/components/sign/story'
-import { HandoffDialog } from '@/components/sign/HandoffDialog'
+import { SignPopover } from '@/components/sign/SignPopover'
 import { useSignMethods } from '@/components/sign/SignMethods'
 import { useClickSign } from '@/components/sign/useClickSign'
 import { Inline, Prose, Raw } from '@/components/sign/visible'
@@ -520,7 +520,7 @@ export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initi
           {!runner?.enabled && runner && <span className="text-text-muted" data-testid="runner-grant-off">{TERMINAL_ONLY}</span>}
         </div>
       )}
-      {handoff && workspace && action.hours > 0 && <HandoffDialog ws={ws} title={extend ? 'Extend agent access' : 'Issue runner grant'} action={action} autoStart
+      {handoff && workspace && action.hours > 0 && <SignPopover ws={ws} title={extend ? 'Extend agent access' : 'Issue runner grant'} action={action} autoStart
         summary={extend ? <div className="space-y-1" data-testid="extend-summary">
           <p>Your current agent access ends {fmtDateTime(extend.until)} <span className="text-text-muted">(per host, not signed)</span>. The new access lasts {hoursText(hours)} from the moment you sign.</p>
         </div> : <p>Agents on this machine can act for you on {scope === 'all' ? 'all tickets' : 'the tickets you may work on'} for {hoursText(hours)}. When you sign in the terminal, you type GRANT to continue, then choose to hand the grant to the orch runner.</p>}

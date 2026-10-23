@@ -2,7 +2,7 @@
 // wants, the host prepares the request, and the person signs in a terminal. The dashboard signs nothing.
 import { useState, type ReactNode } from 'react'
 import type { HandoffAction } from '@/api/handoff'
-import { HandoffDialog } from '@/components/sign/HandoffDialog'
+import { SignPopover } from '@/components/sign/SignPopover'
 
 export interface HandoffSpec {
   /** Core's title: "Make Tom a maintainer". */
@@ -20,7 +20,7 @@ export interface HandoffSpec {
 export function useSettingsHandoff(ws: string | undefined, onSettled?: () => void): { ask: (spec: HandoffSpec) => void; dialog: ReactNode } {
   const [spec, setSpec] = useState<(HandoffSpec & { n: number }) | null>(null)
   const dialog = spec && (
-    <HandoffDialog
+    <SignPopover
       key={spec.n}
       title={spec.title}
       ws={ws}
@@ -39,7 +39,7 @@ export function useSettingsHandoff(ws: string | undefined, onSettled?: () => voi
       onClose={() => setSpec(null)}
     >
       {spec.form}
-    </HandoffDialog>
+    </SignPopover>
   )
   return { ask: (s) => setSpec((old) => ({ ...s, n: (old?.n ?? 0) + 1 })), dialog }
 }

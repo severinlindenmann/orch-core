@@ -9,7 +9,7 @@ import { handoffMode } from '@/api/features'
 import { MAX_IMAGES, missingPasted, pastedIn } from '@/api/pasteImage'
 import { MAX_CRITERIA, MAX_SECTION_BYTES, MAX_SEQUENCE_STEPS, type HandoffAction, type HandoffRequest, type HandoffState } from '@/api/handoff'
 import { can, roleOf } from '@/api/permissions'
-import { HandoffDialog } from '@/components/sign/HandoffDialog'
+import { SignPopover } from '@/components/sign/SignPopover'
 import { SECTIONS_BY_TYPE, requiredAtCreation, sectionLabel, type SectionName } from '@/api/sections'
 import { ApiError, type BodySections, type Me, type NewTicketRequest, type Priority, type Size, type TicketDocument, type TicketType, type Visibility, type Workspace } from '@/api/types'
 import { Button } from '@/components/ui/button'
@@ -643,7 +643,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
       </div>
 
       {handoffNew && (
-        <HandoffDialog
+        <SignPopover
           title="New ticket"
           ws={workspace.id}
           action={handoffNew.action}

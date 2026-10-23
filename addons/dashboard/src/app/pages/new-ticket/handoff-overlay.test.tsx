@@ -4,9 +4,9 @@ import { fakeRequest, state } from '@/test/handoffHarness'
 import { renderApp } from '@/test/renderApp'
 
 vi.mock('@/api/features', async (orig) => ({ ...(await orig<typeof import('@/api/features')>()), handoffMode: () => true }))
-// The signing dialog is its own feature (HandoffDialog tests); here it only reports how each signature ended.
-vi.mock('@/components/sign/HandoffDialog', () => ({
-  HandoffDialog: (p: { title: string; action: { action: string; key?: string }; onSettled?: (phase: string, st: unknown, req: unknown) => void; onClose: () => void }) => {
+// The signing dialog is its own feature (SignPopover tests); here it only reports how each signature ended.
+vi.mock('@/components/sign/SignPopover', () => ({
+  SignPopover: (p: { title: string; action: { action: string; key?: string }; onSettled?: (phase: string, st: unknown, req: unknown) => void; onClose: () => void }) => {
     const isNew = p.action.action === 'new' || p.action.action === 'new_sequence'
     const req = { ...fakeRequest({ key: 'DEMO-0044', id: 'hr_' + '0'.repeat(25) + '7' }), op: 'new' }
     return (

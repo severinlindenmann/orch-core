@@ -1,7 +1,7 @@
 // Starting a quick task as a person: ONE review and ONE confirmation (B11, order step ii). The signer signs the task
 // (a chore labelled quick), its requirements, one criterion and one task per step, the plan it derives from them, the
 // approval of the requirements and of the plan and, only when the box is ticked, the agent access, last. It goes through
-// the workspace's ONE signing path (HandoffDialog: click where it is on, the terminal where it is off); this file adds no
+// the workspace's ONE signing path (SignPopover: click where it is on, the terminal where it is off); this file adds no
 // path of its own.
 import { useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -10,7 +10,7 @@ import { accessLength, GRANT_MAX_HOURS, grantDefaultHours, runnerLengths } from 
 import { queries } from '@/api/queries'
 import { ONE_SIGNATURE } from '@/api/quickRecords'
 import { useWorkspace } from '@/app/workspace'
-import { HandoffDialog } from '@/components/sign/HandoffDialog'
+import { SignPopover } from '@/components/sign/SignPopover'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -171,7 +171,7 @@ export function AddQuick({ ws }: { ws: string }) {
         </p>
       )}
       {action && (
-        <HandoffDialog
+        <SignPopover
           title="Start task"
           ws={ws}
           action={action}

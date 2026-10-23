@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { spies } from '@/test/handoffHarness'
-import { HandoffDialog } from './HandoffDialog'
+import { SignPopover } from './SignPopover'
 
 // B11 (#14): a gate.incomplete refusal reads "Add Context, Out of scope and one acceptance check first.", never the raw
 // code, and a CLI pointer ("orch describe approve") is not shown on the page.
@@ -20,7 +20,7 @@ it('says what an incomplete gate lacks in words and never shows orch describe', 
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
   render(
     <QueryClientProvider client={client}>
-      <HandoffDialog title="Approve requirements" ws="w_1" action={{ action: 'approve', key: 'DEMO-0044', gate: 'requirements' } as never} autoStart onClose={vi.fn()} />
+      <SignPopover title="Approve requirements" ws="w_1" action={{ action: 'approve', key: 'DEMO-0044', gate: 'requirements' } as never} autoStart onClose={vi.fn()} />
     </QueryClientProvider>,
   )
   expect(await screen.findByText('Add Context, Out of scope and one acceptance check first.', {}, { timeout: 5000 })).toBeInTheDocument()

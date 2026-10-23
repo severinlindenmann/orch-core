@@ -9,9 +9,9 @@ import type { TicketDocument } from '@/api/types'
 import type { Viewer } from './shared'
 
 vi.mock('@/api/features', async (orig) => ({ ...(await orig<typeof import('@/api/features')>()), handoffMode: vi.fn(() => true) }))
-// The signing dialog is its own feature (HandoffDialog tests); here it only shows the typed action it was given.
-vi.mock('@/components/sign/HandoffDialog', () => ({
-  HandoffDialog: (p: { title: string; action: unknown; onSettled?: (phase: string) => void; onClose: () => void }) => (
+// The signing dialog is its own feature (SignPopover tests); here it only shows the typed action it was given.
+vi.mock('@/components/sign/SignPopover', () => ({
+  SignPopover: (p: { title: string; action: unknown; onSettled?: (phase: string) => void; onClose: () => void }) => (
     <div role="dialog" aria-label={`sign ${p.title}`}>
       <pre data-testid="sent-action">{JSON.stringify(p.action)}</pre>
       <button onClick={() => p.onSettled?.('done')}>signed</button>

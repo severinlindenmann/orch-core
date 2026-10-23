@@ -1,4 +1,4 @@
-// "Create and start agent" on the REAL one-click path (HandoffDialog and useClickSign are not mocked): a click sequence
+// "Create and start agent" on the REAL one-click path (SignPopover and useClickSign are not mocked): a click sequence
 // that stops at the agent access, and one whose runner hand-over is not confirmed, never start an agent and never leave
 // a second ticket to be created from the same typed text.
 import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react'

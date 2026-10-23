@@ -52,6 +52,8 @@ export interface Profile {
   relay: boolean
   /** Make the folder a git repository (only with Worktrees, only where there is none). */
   git_init?: boolean
+  /** Keep a records history (own git repository, saved on this computer automatically; never pushed). New workspaces only. */
+  records?: boolean
 }
 export interface Secrets {
   passphrase: string | null

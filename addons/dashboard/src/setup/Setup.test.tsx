@@ -278,6 +278,18 @@ test('run 8: One click is the default where core suggests it, with the risk sent
   expect(f.calls.find((c) => c.path === 'profile')?.body).toMatchObject({ method: 'click' })
 })
 
+test('run 8: the records history is ticked by default, can be switched off, and the choice is sent with the profile', async () => {
+  const f = fake()
+  render(<Setup api={f.api} />)
+  await approval()
+  const box = screen.getByRole('switch', { name: /Keep a history of this workspace/ })
+  expect(box).toBeChecked()
+  fireEvent.click(box)
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  await screen.findByRole('heading', { name: 'Your secret words' })
+  expect(f.calls.find((c) => c.path === 'profile')?.body).toMatchObject({ records: false })
+})
+
 test('typed word gates long runner access; digest and fingerprint stay bound while waiting for terminal', async () => {
   const f = fake({ typed: true })
   render(<Setup api={f.api} />)

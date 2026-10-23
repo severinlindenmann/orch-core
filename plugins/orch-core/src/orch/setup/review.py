@@ -77,6 +77,13 @@ class Item:
     retry: bool = False  # M2: a grant issued before whose hand-over was never confirmed
 
 
+#: what the review says about the records step (the consent): plain words, one place
+RECORDS_TEXT = (
+    "Keep a private history of this workspace's records in their own git repository (orch records init), and save "
+    "it on this computer automatically every 15 minutes. Nothing is ever sent anywhere."
+)
+
+
 @dataclass
 class Plan:
     items: list[Item]
@@ -254,6 +261,8 @@ def plan(
                 "None of your files is committed.",
             }
         )
+    if profile.get("records") and facts is None:  # a new workspace only
+        flags.append({"id": "records", "text": RECORDS_TEXT})
     wants_exec = profile["agent_grant"] or any(
         info[a].needs_runner or info[a].needs_terminals for a in profile["addons"]
     )
@@ -313,6 +322,7 @@ def _canon_profile(profile: Mapping[str, Any], directory: str) -> dict[str, Any]
     keys = ("name", "prefix", "addons", "method", "agent_hours", "agent_grant", "relay")
     out = {k: profile[k] for k in keys}
     out["git_init"] = bool(profile.get("git_init"))
+    out["records"] = bool(profile.get("records"))
     out["dir"] = directory
     out["custody_conversion"] = profile["method"] == "click"
     return out

@@ -353,6 +353,8 @@ class SetupFlow:
             ids.append("runner_grant")
         if self.profile and self.profile["method"] == "click":
             ids += ["flags", "custody"]
+        if any(f["id"] == "records" for f in plan.flags):
+            ids.append("records")
         return ids
 
     def _work(self, creator: Creator) -> None:

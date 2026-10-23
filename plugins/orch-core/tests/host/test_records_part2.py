@@ -88,6 +88,21 @@ def test_commit_push_is_one_child_run_and_status_follows(r):
     assert remote["current_url"] == other and remote["matches_last"] is False and remote["url"] == url
 
 
+def test_run8_status_text_says_not_set_up_in_plain_words_until_init(r):
+    def text():
+        out = io.StringIO()
+        code = rcli.main(
+            ["status"], r.env, out, link=r.link, root=r.root, workspace_id=r.w.wid, tips=r.tips,
+            protocols=WS_FILES, confirm=lambda t: True, state=r.tips.path.parent,
+        )  # fmt: skip
+        assert code == 0
+        return out.getvalue()
+
+    assert text().startswith(rcli.NOT_SET_UP) and "orch records init" in rcli.NOT_SET_UP
+    assert run_cli(r, "init")[0] == 0
+    assert rcli.NOT_SET_UP not in text()
+
+
 def test_status_reports_a_missing_or_foreign_repo_and_a_differing_index(r):
     code, out = run_cli(r, "status")
     assert code == 0 and out["detail"]["status"]["local"]["repo"] == {"state": "missing"}

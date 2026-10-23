@@ -91,7 +91,7 @@ export function summarize(review: Review): { lines: string[]; unknown: boolean }
     } else odd(item.title)
   }
   for (const flag of review.flags) {
-    if (flag.id === 'custody' || flag.id === 'terminal') lines.push(flag.text)
+    if (flag.id === 'custody' || flag.id === 'terminal' || flag.id === 'records') lines.push(flag.text)
     else if (flag.id !== 'runner' && flag.id !== 'terminals') odd(flag.text) // a flag this page does not know is shown
   }
   if (addons.length) lines.push(`Add-ons: ${addons.join(', ')}`)
@@ -307,6 +307,7 @@ export function Setup({ api }: { api: SetupAPI }) {
     agent_hours: 8,
     agent_grant: false,
     relay: false,
+    records: true,
   })
   const [step, setStep] = useState(0)
   const [secrets, setSecrets] = useState<Secrets | null>(null)
@@ -537,7 +538,7 @@ export function Setup({ api }: { api: SetupAPI }) {
     setStep(5)
   }
   async function approveProfile() {
-    await api.call('profile', { ...profile, git_init: offersGit && profile.git_init === true })
+    await api.call('profile', { ...profile, git_init: offersGit && profile.git_init === true, records: state?.mode !== 'finish' && profile.records !== false })
     if (state?.mode === 'finish' || confirmed.current) await getReview()
     else {
       const revealed = await api.call<Secrets>('secrets/reveal', {})
@@ -900,6 +901,20 @@ export function Setup({ api }: { api: SetupAPI }) {
                     </p>
                   )}
                 </>
+              )}
+              {state.mode !== 'finish' && (
+                <label className="toggle">
+                  <span>
+                    Keep a history of this workspace
+                    <small>Saved on this computer every 15 minutes in its own git repository. Nothing is sent anywhere.</small>
+                  </span>
+                  <input
+                    type="checkbox"
+                    role="switch"
+                    checked={profile.records !== false}
+                    onChange={(e) => update({ records: e.target.checked })}
+                  />
+                </label>
               )}
               <footer>
                 <button onClick={() => setStep(2)}>Back</button>

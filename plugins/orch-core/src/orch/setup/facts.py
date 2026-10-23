@@ -294,6 +294,7 @@ LABELS = {
     "runner_grant": "Agent access for this Mac's runner",
     "runner_grant_retry": "Agent access for this Mac's runner (the earlier hand-over was not confirmed)",
     "custody": "One-click approval on this Mac",
+    "records": "Records history on this computer",
 }
 
 

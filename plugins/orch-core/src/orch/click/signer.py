@@ -574,7 +574,7 @@ class ClickSigner:
             raise ClickError("invalid.input", f"sequence: {exc}") from None
         if op != sequence.steps(intent)[0]["op"]:  # a new ticket starts with new, an edit with its first change
             raise ClickError("invalid.input", "a sequence starts with the first op of its intent")
-        kind = sequence.confirm_kind(intent)
+        kind = sequence.confirm_kind(intent, self._person(entry))
         # a grant to the runner needs dashboard execution on this machine; a people change: click plus the typed word
         if kind == "terminal" or (kind == "word" and sequence.has_grant(intent) and not self._execution(entry)):
             raise refused("terminal_only", "this sequence needs more than a click; use the terminal (orch sign CODE)")
@@ -780,7 +780,7 @@ class ClickSigner:
             cancel=cancel,
             budget=self.budget.reserve,
         )
-        kind = sequence.confirm_kind(intent)  # re-asserted here: what is signed is what this click may sign
+        kind = sequence.confirm_kind(intent, person)  # re-asserted here: what is signed is what this click may sign
         if (
             kind == "terminal"
             or (kind == "word" and sequence.has_grant(intent) and not self._execution(entry))
@@ -1094,8 +1094,11 @@ class ClickSigner:
     #                convenience custody, flag on  -> nothing to do (idempotent)
     #                convenience custody, flag off -> refused: custody.terminal_needed (nothing to prove against)
     #                an unfinished change          -> refused: custody.unavailable
-    #   custody_off  the flag goes off (no factor: it only takes authority away); a passphrase is refused
-    #                (custody.terminal_needed): moving the key back is `orch keys custody passphrase --in-place`.
+    #   custody_off  the flag goes off (no factor: it only takes authority away). V3-D31 narrows H2 for this path only:
+    #                with a NEW passphrase, while the flag is ON at that moment (checked under the workspace lock: the
+    #                session held one-click authority anyway), the key moves back to passphrase custody in the same
+    #                locked step (select.turn_off_convenience). A passphrase with the flag already off or a custody
+    #                change pending: custody.terminal_needed, nothing changed. Without a passphrase: flag only.
     def _misses_dir(self) -> int:
         from orch.custody.convenience import person_root, secure_dir
 
@@ -1268,6 +1271,8 @@ class ClickSigner:
                 raise
         except HostError as exc:  # lock.busy, custody.unsafe_mode
             raise ClickError(exc.code, exc.message, retryable=exc.code == "lock.busy") from None
+        except select.TerminalNeeded as exc:  # V3-D31: the factor was chosen on the dashboard
+            raise ClickError("custody.terminal_needed", str(exc)) from None
         except KeyNotFound as exc:
             raise ClickError("custody.no_key", str(exc)) from None
         except (BackendUnavailable, CustodyError) as exc:
@@ -1277,26 +1282,32 @@ class ClickSigner:
         return self._row(entry)
 
     def custody_off(self, args: Mapping[str, Any]) -> dict[str, Any]:
-        """Click-to-sign off, from the dashboard: the flag goes off (no factor: it only takes authority away), and that
-        is all. A ``passphrase`` is refused before anything changes: the dashboard never chooses the factor of the
-        device key (Opus H2 on #539); the key moves back in the terminal, where the new passphrase is typed on
-        ``/dev/tty``."""
-        from orch.host import convenience
+        """Click-to-sign off, from the dashboard. Without a ``passphrase``: the flag goes off and nothing else. With one
+        (V3-D31, narrowing Opus H2 on #539): the flag goes off and the key moves back under that new passphrase, in one
+        locked step, and only while the flag is on at that moment (see the comment block above). The text is never
+        logged or echoed."""
+        from orch.custody import select
+        from orch.custody.base import BackendUnavailable, CustodyError, KeyNotFound
         from orch.host.errors import HostError
 
         entry = self._entry(args.get("workspace_id"))
         wid, uid = self._tier_a(entry)
-        if "passphrase" in args:
-            raise ClickError(
-                "custody.terminal_needed",
-                "the dashboard only switches signing off; move the key back under a new passphrase in the terminal: "
-                f"orch keys custody passphrase --workspace {entry.get('prefix') or wid} --in-place",
-            )
+        pw = args.get("passphrase")
+        if "passphrase" in args and (type(pw) is not str or not pw):
+            raise ClickError("invalid.input", "passphrase is a non-empty string")
         try:
-            with convenience.workspace_lock(self.state, wid, uid):
-                convenience.set_enabled(self.state, wid, False, uid)
+            select.turn_off_convenience(self.state, wid, uid, move_key=pw is not None, passphrase=pw)
         except HostError as exc:
             raise ClickError(exc.code, exc.message, retryable=exc.code == "lock.busy") from None
+        except select.TerminalNeeded as exc:
+            if exc.flag_cleared:  # the off happened before the refusal: the log says so (L2-1075-3)
+                self._note("custody_off", workspace=wid)
+            raise ClickError("custody.terminal_needed", str(exc)) from None
+        except KeyNotFound as exc:
+            raise ClickError("custody.no_key", str(exc)) from None
+        except (BackendUnavailable, CustodyError) as exc:
+            raise ClickError("custody.unavailable", str(exc)) from None
+        self.problems.pop(wid, None)
         self._note("custody_off", workspace=wid)
         return self._row(entry)
 

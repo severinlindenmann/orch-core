@@ -2,8 +2,9 @@
 // On proves the person's CURRENT passphrase of a key that is in passphrase custody now (the one factor that someone
 // who takes over this dashboard does not have); core's signer moves the device key into the key store with it and
 // sets the workspace flag. A key already in the key store with signing off is switched on in the terminal: there is
-// nothing to prove here. Off needs nothing (it only takes authority away) and never re-keys: moving the key back
-// under a passphrase is a terminal command. The passphrase is sent once and never kept here.
+// nothing to prove here. Off (V3-D31) takes the authority away AND moves the key back under a NEW passphrase the
+// person types here twice (core accepts it only while signing is on, in the same locked step). Passphrases are sent
+// once and never kept here.
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { Loader2 } from 'lucide-react'
@@ -22,6 +23,9 @@ import { Section } from '../../ticket/shared'
 import { fmtDateTime } from '@/lib/time'
 
 /** Refusals after which nothing changed: the signer said so before (or instead of) moving anything. */
+/** The shortest passphrase core accepts (custody/strength.py MIN_CHARS); core still judges the strength. */
+const MIN_NEW_PASSPHRASE = 14
+
 const MESSAGES: Record<string, string> = {
   'custody.wrong_passphrase': 'That passphrase was refused. Nothing changed.',
   'custody.no_key': 'This computer holds no device key for this workspace.',
@@ -64,6 +68,10 @@ function failure(e: unknown, on: boolean, prefix: string): Failure {
       command: { command: on ? convenienceOnCommand(prefix) : convenienceOffCommand(prefix), what: `orch host convenience ${on ? 'on' : 'off'}` },
     }
   }
+  // Core refused the new passphrase as too weak before anything changed (it names the rule, never the text).
+  if (!on && e.code === 'custody.unavailable' && /passphrase/i.test(e.message ?? '') && /(at least|common|predictable)/.test(e.message ?? '')) {
+    return { text: `${e.message}. Nothing changed: one-click signing is still on. Enter your new passphrase again.` }
+  }
   // A timeout, a lost signer or a code this page does not know: the switch may have happened (orch-9d M2).
   return { text: MESSAGES[e.code] ?? 'The signing helper did not give a clear answer, so the result is unknown. Reloading the card…' }
 }
@@ -75,6 +83,7 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
   const on = !!card && card.enabled
   const [mode, setMode] = useState<'idle' | 'on' | 'off'>('idle')
   const [pass, setPass] = useState('')
+  const [pass2, setPass2] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<Failure | null>(null)
   const errorId = useId()
@@ -83,6 +92,7 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
   const reset = useCallback(() => {
     setMode('idle')
     setPass('')
+    setPass2('')
     setError(null)
   }, [])
   // The state the form was opened on. When the card's state changes under an open form (a "result unknown" outcome
@@ -101,6 +111,9 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
   }, [card, cardState, mode, reset])
   // a key already in the key store with signing off: the dashboard has no passphrase to check (Opus H1 on #539)
   const terminalOn = !!card && !on && card.custody === 'convenience'
+  // Off with a key in the key store moves it back under a new passphrase (V3-D31); with another custody it is the flag only.
+  const moveBack = !!card && card.custody === 'convenience'
+  const newOk = [...pass].length >= MIN_NEW_PASSPHRASE && pass === pass2
   const submit = async (body: ClickSwitch) => {
     if (inFlight.current) return
     inFlight.current = true
@@ -114,6 +127,7 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
     } catch (e) {
       setError(failure(e, body.on, workspace.prefix))
       setPass('')
+      setPass2('')
       // whatever the answer, the card shows what the signer says now (a stale form after a refusal, orch-9d M2)
       void qc.invalidateQueries({ queryKey: ['click-status', workspace.id] })
       void qc.invalidateQueries({ queryKey: ['workspaces'] })
@@ -231,14 +245,58 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
             className="space-y-2"
             onSubmit={(e) => {
               e.preventDefault()
-              void submit({ on: false })
+              if (moveBack ? newOk : true) void submit(moveBack ? { on: false, passphrase: pass } : { on: false })
             }}
           >
-            <p className="text-text-muted">Your key stays in this computer's key store; nothing here can sign while signing is off.</p>
-            <p data-testid="signing-move-back" className="text-text-muted">
-              To move it back under a passphrase, run in the terminal:{' '}
-              <Command command={custodyPassphraseCommand(workspace.prefix)} what="orch keys custody passphrase --in-place" />
-            </p>
+            {moveBack ? (
+              <>
+                <p data-testid="signing-off-explain">
+                  Turn off one-click signing and protect your key with a new passphrase. It moves your key back from this computer's key store, and you will enter this passphrase every time you sign in the terminal.
+                </p>
+                <p data-testid="signing-off-copies" className="text-text-muted">
+                  This does not remove existing copies of your key from backups or snapshots on this computer. orch cannot erase those copies.
+                </p>
+                <Label htmlFor="signing-new-passphrase">New passphrase (at least {MIN_NEW_PASSPHRASE} characters, not a common phrase)</Label>
+                <Input
+                  id="signing-new-passphrase"
+                  type="password"
+                  autoComplete="new-password"
+                  aria-describedby={error ? errorId : undefined}
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  spellCheck={false}
+                  value={pass}
+                  onChange={(e) => setPass(e.target.value)}
+                  disabled={busy}
+                />
+                <Label htmlFor="signing-new-passphrase-2">New passphrase again</Label>
+                <Input
+                  id="signing-new-passphrase-2"
+                  type="password"
+                  autoComplete="new-password"
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  spellCheck={false}
+                  value={pass2}
+                  onChange={(e) => setPass2(e.target.value)}
+                  disabled={busy}
+                />
+                {pass2 !== '' && pass !== pass2 && (
+                  <p data-testid="signing-mismatch" className="text-warning">
+                    Passphrases don't match. Enter the same passphrase in both fields.
+                  </p>
+                )}
+                <p className="text-text-muted">The dashboard sends your passphrase once, to protect your key and check its strength. It does not save it.</p>
+              </>
+            ) : (
+              <>
+                <p className="text-text-muted">Your key stays in this computer's key store; nothing here can sign while signing is off.</p>
+                <p data-testid="signing-move-back" className="text-text-muted">
+                  To move it back under a passphrase, run in the terminal:{' '}
+                  <Command command={custodyPassphraseCommand(workspace.prefix)} what="orch keys custody passphrase --in-place" />
+                </p>
+              </>
+            )}
             {error && (
               <p role="alert" id={errorId} data-testid="signing-error" className="text-warning">
                 {error.text}
@@ -254,7 +312,7 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
               <Button type="button" variant="ghost" onClick={reset} disabled={busy}>
                 Cancel
               </Button>
-              <Button type="submit" variant="outline" disabled={busy}>
+              <Button type="submit" variant="outline" disabled={busy || (moveBack && !newOk)}>
                 {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null} Turn off
               </Button>
             </div>

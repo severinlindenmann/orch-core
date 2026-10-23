@@ -50,8 +50,9 @@ const SHARED = [
 
 function mockShare(): HubShare {
   const joined = scenario() === 'selective' || scenario() === 'offline'
-  if (!joined) return { rules: [], shared: 0, refused: [], tickets: [], tickets_complete: true }
+  if (!joined) return { available: true, rules: [], shared: 0, refused: [], tickets: [], tickets_complete: true }
   return {
+    available: true,
     rules: [
       { kind: 'needs_you', value: null, count: 3, describes: 'needs-you summaries (type, a one-line title and the deadline)' },
       { kind: 'questions', value: null, count: 1, describes: 'every open question addressed to you (the full question)' },

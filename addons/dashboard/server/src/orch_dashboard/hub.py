@@ -255,18 +255,23 @@ def register(app: FastAPI, gateway: Gateway):
 
     @app.get("/api/w/{ws}/hub/share")
     def hub_share(ws: str = Depends(reads.workspace)):
-        link = link_for(ws, "share.rules", "share.preview")
+        link = gateway.enabled(ws)
+        if not all(link.supports(op, "hub/1") for op in ("share.rules", "share.preview")):
+            return {**share_view({}, {}), "available": False}  # an older host: the page says so, it is not an error
         try:
-            return share_view(link.call("share.rules"), link.call("share.preview", {}))
+            return {**share_view(link.call("share.rules"), link.call("share.preview", {})), "available": True}
         except HostError as exc:
             if exc.error["code"] in ("hub.not_joined", "hub.state_mismatch"):
-                return share_view({}, {})  # no hub (or a state the host will not guess): nothing is shared
+                return {**share_view({}, {}), "available": True}  # no hub (or a state the host will not guess)
             raise
 
     @app.post("/api/w/{ws}/hub/share/preview")
     def hub_share_preview(body: PreviewBody, ws: str = Depends(reads.workspace)):
         args = {k: v.host() for k, v in (("add", body.add), ("remove", body.remove)) if v is not None}
-        return preview_view(link_for(ws, "share.preview").call("share.preview", args))
+        link = gateway.enabled(ws)
+        if not link.supports("share.preview", "hub/1"):
+            raise fail("op.unsupported", "This host cannot preview sharing yet.", exit=1)
+        return preview_view(link.call("share.preview", args))
 
     @app.post("/api/w/{ws}/hub/command")
     def hub_command(body: CommandBody, ws: str = Depends(reads.workspace)):

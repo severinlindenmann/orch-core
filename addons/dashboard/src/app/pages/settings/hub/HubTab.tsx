@@ -46,12 +46,12 @@ export function SelectivePage({ ws, onShare, onFull, onLeave }: { ws: string; on
   const share = useQuery(hubQueries.share(ws))
   return <><Panel title="Connected · Hub sees only what you share" tone={violet}><p>You keep signing locally. The hub sees your shared items, needs-you notes and questions.</p></Panel>
     <Panel title="What the hub can see">
-      {share.isPending ? <p role="status">Loading shared items…</p> : share.isError ? <><p role="alert">Could not load shared items.</p><Action id="hub-shared-retry" onClick={() => void share.refetch()}>Try again</Action></> : <>
+      {share.isPending ? <p role="status">Loading shared items…</p> : share.isError ? <><p role="alert">Could not load shared items.</p><Action id="hub-shared-retry" onClick={() => void share.refetch()}>Try again</Action></> : !share.data.available ? <p data-testid="hub-share-unavailable">Sharing settings are not available on this host yet. Update orch to choose what the hub sees.</p> : <>
         <p>{share.data.shared} shared items · from the hub, not signed</p><AlwaysShared share={share.data} />
         <p>{share.data.rules.filter(r => r.kind !== 'needs_you' && r.kind !== 'questions').length} sharing rules</p>
         {share.data.refused.length > 0 && <p className="text-warning">{share.data.refused.length} items could not be shared.</p>}
       </>}
-      <Action id="hub-choose-share" onClick={onShare}>Choose what to share</Action>
+      {share.data?.available !== false && <Action id="hub-choose-share" onClick={onShare}>Choose what to share</Action>}
     </Panel>
     <Panel title="Let the hub read everything" tone="border-warning/40 bg-warning-soft"><p>The hub will read every ticket, file and note. Hub admins become admins here. Going back requires leaving and rejoining. You review the change here and confirm it in your Terminal.</p><Action id="hub-full-switch" onClick={onFull}>Let the hub read everything</Action></Panel>
     <Panel title="Leave the hub"><p>Keep working locally. Phone access, publishing and handoffs through the hub stop. You confirm in your Terminal.</p><Action id="hub-leave" onClick={onLeave}>Leave the hub</Action></Panel>

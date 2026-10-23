@@ -74,4 +74,14 @@ describe('the mock hub (what the pages are built against)', () => {
   it('types the words for the one-way switch exactly', () => {
     expect(FULL_ACCESS_WORDS).toBe('full access')
   })
+
+  it('the hub mock is reached only from the mock router and tests, never from pages (so it is absent from the production bundle)', async () => {
+    const { readdirSync, readFileSync, statSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const walk = (dir: string): string[] => readdirSync(dir).flatMap((n) => (statSync(join(dir, n)).isDirectory() ? walk(join(dir, n)) : [join(dir, n)]))
+    const users = walk('src')
+      .filter((f) => /\.(ts|tsx)$/.test(f) && !/\.test\.tsx?$/.test(f) && !f.startsWith('src/mocks/'))
+      .filter((f) => /from '(@\/mocks\/hub|\.\.?\/mocks\/hub)'/.test(readFileSync(f, 'utf8')))
+    expect(users).toEqual([])
+  })
 })

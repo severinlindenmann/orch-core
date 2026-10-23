@@ -45,7 +45,7 @@ export function ShareRules({ ws, onBack }: { ws: string; onBack: () => void }) {
   const current = preview?.key === encoded ? preview.data : undefined
   return <div className="space-y-4">
     <Action id="hub-share-back" onClick={onBack}>Back to Hub</Action><h2 className="text-lg font-semibold">Choose what to share</h2>
-    {share.isPending ? <p role="status">Loading sharing rules…</p> : share.isError ? <><p role="alert">Could not load sharing rules.</p><Action id="hub-share-retry" onClick={() => void share.refetch()}>Try again</Action></> : <>
+    {share.isPending ? <p role="status">Loading sharing rules…</p> : share.isError ? <><p role="alert">Could not load sharing rules.</p><Action id="hub-share-retry" onClick={() => void share.refetch()}>Try again</Action></> : !share.data.available ? <p data-testid="hub-share-unavailable">Sharing settings are not available on this host yet. Update orch to choose what the hub sees.</p> : <>
       <Panel title="Notes for the hub and your phone"><AlwaysShared share={share.data} /></Panel>
       <Panel title="Sharing rules">
         <p className="text-text-muted">Counts from the hub, not signed. Review one rule change at a time. New matches will be shared too.</p>

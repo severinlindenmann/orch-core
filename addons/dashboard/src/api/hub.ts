@@ -42,6 +42,8 @@ export interface HubRuleRow {
 
 /** `GET /api/w/<ws>/hub/share`. */
 export interface HubShare {
+  /** `false`: this host has no share operations (an older core); the page says so. */
+  available: boolean
   rules: HubRuleRow[]
   shared: number
   refused: { item: string; code: string; stale: boolean }[]

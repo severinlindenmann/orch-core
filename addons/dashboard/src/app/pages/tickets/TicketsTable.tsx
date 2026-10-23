@@ -124,8 +124,7 @@ export function TicketsTable({
   )
   const show = (c: Foldable) => !folded.has(c)
   const hasAddon = addonColumns.length > 0
-  const compact = width > 0 && width < 520
-  const colSpan = (showHub ? 1 : 0) - (compact ? 4 : 0) + (canSelect ? 1 : 0) + 9 + (hasPoints ? 1 : 0) + (hasAddon ? 1 : 0) - FOLDABLE.filter((c) => folded.has(c) && (c !== 'addon' || hasAddon)).length
+  const colSpan = (showHub ? 1 : 0) + (canSelect ? 1 : 0) + 9 + (hasPoints ? 1 : 0) + (hasAddon ? 1 : 0) - FOLDABLE.filter((c) => folded.has(c) && (c !== 'addon' || hasAddon)).length
   const renderRow = (t: TicketSummary, indent = false) => {
     const isSel = selected.has(t.key)
     const turn = turnLabel(t, me, people)
@@ -155,7 +154,6 @@ export function TicketsTable({
           <div className="truncate text-[13px] text-text" title={t.title}>
             {t.title}
           </div>
-          {compact && <div className="flex flex-wrap items-center gap-1 text-xs text-text-muted"><span>Type:</span><TypeIcon type={t.type} /><span>Priority:</span><PriorityMarker priority={t.priority} /><span>Status: {statusLabel(t.status, t.landing)} · Updated: {ago(t.updated_at)}</span></div>}
           {(t.labels.length > 0 || t.match) && (
             <div className="mt-0.5 flex min-w-0 items-center gap-1 overflow-hidden">
               {t.labels.slice(0, 3).map((l) => (
@@ -197,13 +195,13 @@ export function TicketsTable({
             </div>
           )}
         </TableCell>
-        {!compact && <><TableCell className="px-1.5 py-1.5">
+        <TableCell className="px-1.5 py-1.5">
           <TypeIcon type={t.type} />
         </TableCell>
         <TableCell className="px-1.5 py-1.5">
           <PriorityMarker priority={t.priority} />
         </TableCell>
-        <TableCell className="truncate px-1.5 py-1.5 text-[12px] text-text-muted">{statusLabel(t.status, t.landing)}</TableCell></>}
+        <TableCell className="truncate px-1.5 py-1.5 text-[12px] text-text-muted">{statusLabel(t.status, t.landing)}</TableCell>
         {show('people') && (
           <TableCell className="px-1.5 py-1.5">
             <People ticket={t} people={people} />
@@ -224,9 +222,9 @@ export function TicketsTable({
             {t.type === 'epic' ? '' : (pointsOf(t.size) ?? '–')}
           </TableCell>
         )}
-        {!compact && <TableCell className="truncate px-1.5 py-1.5 font-mono text-[11px] text-text-faint" title={t.updated_at}>
+        <TableCell className="truncate px-1.5 py-1.5 font-mono text-[11px] text-text-faint" title={t.updated_at}>
           {ago(t.updated_at)}
-        </TableCell>}
+        </TableCell>
         {showHub && <TableCell className="px-1.5 py-1.5">{hubMark(t.key)}</TableCell>}
         {hasAddon && show('addon') && (
           <TableCell className="px-1.5 py-1.5">
@@ -248,14 +246,14 @@ export function TicketsTable({
             {canSelect && <TableHead className="h-8 w-8 px-2"><span className="sr-only">Select</span></TableHead>}
             <SortHeader label="Key" id="key" sort={sort} onSort={onSort} className="w-[92px]" />
             <SortHeader label="Title" sort={sort} onSort={onSort} />
-            {!compact && <><SortHeader label="Type" sort={sort} onSort={onSort} className="w-[44px]" />
+            <SortHeader label="Type" sort={sort} onSort={onSort} className="w-[44px]" />
             <SortHeader label="Pri" sr="ority" id="priority" sort={sort} onSort={onSort} className="w-[40px]" />
-            <SortHeader label="Status" id="status" sort={sort} onSort={onSort} className="w-[84px]" /></>}
+            <SortHeader label="Status" id="status" sort={sort} onSort={onSort} className="w-[84px]" />
             {show('people') && <SortHeader label="People" sort={sort} onSort={onSort} className="w-[52px]" />}
             {show('turn') && <SortHeader label="Turn" sort={sort} onSort={onSort} className="w-[60px]" />}
             {show('progress') && <SortHeader label="Progress" sort={sort} onSort={onSort} className="w-[72px]" />}
             {hasPoints && <SortHeader label="Points" sort={sort} onSort={onSort} className="w-[56px]" />}
-            {!compact && <SortHeader label="Updated" id="updated" sort={sort} onSort={onSort} className="w-[80px]" />}
+            <SortHeader label="Updated" id="updated" sort={sort} onSort={onSort} className="w-[80px]" />
             {showHub && <TableHead className="h-8 w-[86px] px-1.5 text-xs text-text-muted">Hub</TableHead>}
             {hasAddon && show('addon') && (
               <TableHead className="h-8 w-[132px] px-1.5 text-[12px] font-medium text-text-muted">

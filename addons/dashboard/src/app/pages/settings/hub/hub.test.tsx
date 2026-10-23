@@ -49,10 +49,10 @@ describe('the Hub tab has a different page for each mode', () => {
     expect(screen.getByText(/Leave this hub, then rejoin/)).toBeTruthy()
   })
 
-  it('left but not told: offers Try now and Stop telling, in amber', async () => {
+  it('left but not told: offers only Stop telling (no retry command yet), in amber', async () => {
     hubPage('nottold')
     expect(await screen.findByText('You left the hub, but the hub does not know yet', {}, T)).toBeTruthy()
-    expect(screen.getByTestId('hub-not-told-try')).toBeTruthy()
+    expect(screen.queryByTestId('hub-not-told-try')).toBeNull() // no retry command in core yet
     expect(screen.getByTestId('hub-not-told-stop')).toBeTruthy()
   })
 })

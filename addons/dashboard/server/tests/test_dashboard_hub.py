@@ -207,3 +207,21 @@ def test_module_never_names_a_hub_write():
     calls = re.findall(r"\.call\(\s*\"([a-z_.]+)\"", src)
     assert set(calls) <= {"hub.status", "share.rules", "share.preview"}
     assert "hubclient" not in src and "import orch" not in src
+
+
+def test_a_host_without_share_ops_degrades_instead_of_failing():
+    class NoShare(Link):
+        def supports(self, op, cap="ops/1"):
+            return op == "hub.status"
+
+    c = client(NoShare({"hub.status": STATUS}))
+    assert c.get(f"/api/w/{WS}/hub").status_code == 200
+    got = c.get(f"/api/w/{WS}/hub/share")
+    assert got.status_code == 200 and got.json()["available"] is False and got.json()["rules"] == []
+    res = c.post(f"/api/w/{WS}/hub/share/preview", json={"add": {"kind": "needs_you"}})
+    assert res.status_code != 200 and res.json()["error"]["code"] == "op.unsupported"
+
+
+def test_share_is_available_when_the_host_has_it():
+    got = client(Link({"share.rules": RULES, "share.preview": PREVIEW})).get(f"/api/w/{WS}/hub/share").json()
+    assert got["available"] is True

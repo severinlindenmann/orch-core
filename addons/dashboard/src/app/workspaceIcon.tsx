@@ -1,5 +1,5 @@
 // A workspace's icon: one of a small built-in set plus one of a few colours (no uploads). The default comes from the
-// workspace name, so it is stable without anyone choosing. A choice is a dashboard-local preference (localStorage, per
+// workspace id, so it is stable without anyone choosing. The icon never replaces the prefix and short id, which stay beside it. A choice is a dashboard-local preference (localStorage, per
 // browser and workspace id): it is not signed, not a ticket field and not part of the core protocol.
 
 import { useCallback, useSyncExternalStore } from 'react'
@@ -35,6 +35,16 @@ export const WORKSPACE_COLOURS: { id: string; label: string; value: string }[] =
   { id: 'slate', label: 'Grey', value: '#64748b' },
 ]
 
+/** True when another workspace has the same name or the same icon and colour: then the prefix and a short id tail are shown beside the icon. */
+export function lookAlike(w: { id: string; name: string }, all: { id: string; name: string }[], iconOf: (id: string) => WorkspaceIconChoice): boolean {
+  const mine = iconOf(w.id)
+  return all.some((o) => {
+    if (o.id === w.id) return false
+    const theirs = iconOf(o.id)
+    return o.name.trim().toLowerCase() === w.name.trim().toLowerCase() || (theirs.icon === mine.icon && theirs.colour === mine.colour)
+  })
+}
+
 export interface WorkspaceIconChoice {
   icon: string
   colour: string
@@ -50,9 +60,9 @@ function hash(s: string): number {
   return h
 }
 
-/** The icon and colour a workspace gets when nobody chose: derived from its name alone. */
-export function defaultWorkspaceIcon(name: string): WorkspaceIconChoice {
-  const h = hash(name.trim().toLowerCase())
+/** The icon and colour a workspace gets when nobody chose: derived from its id (never its name: two workspaces can share a name). */
+export function defaultWorkspaceIcon(id: string): WorkspaceIconChoice {
+  const h = hash(id.trim().toLowerCase())
   return { icon: WORKSPACE_ICONS[h % WORKSPACE_ICONS.length].id, colour: WORKSPACE_COLOURS[(h >>> 8) % WORKSPACE_COLOURS.length].id }
 }
 
@@ -83,8 +93,8 @@ function parse(raw: string | null): Partial<WorkspaceIconChoice> | null {
 }
 
 /** The workspace's icon: its own choice where there is one (each half separately), the name's default otherwise. */
-export function workspaceIconOf(id: string, name: string): WorkspaceIconChoice {
-  const d = defaultWorkspaceIcon(name)
+export function workspaceIconOf(id: string): WorkspaceIconChoice {
+  const d = defaultWorkspaceIcon(id)
   const own = parse(readRaw(id))
   return { icon: own?.icon ?? d.icon, colour: own?.colour ?? d.colour }
 }
@@ -111,10 +121,10 @@ const subscribe = (cb: () => void) => {
 }
 
 /** The icon choice of a workspace, live: changes in Settings show in the menu at once (and across tabs). */
-export function useWorkspaceIcon(id: string | undefined, name: string | undefined): WorkspaceIconChoice & { set: (c: WorkspaceIconChoice | null) => void; custom: boolean } {
+export function useWorkspaceIcon(id: string | undefined): WorkspaceIconChoice & { set: (c: WorkspaceIconChoice | null) => void; custom: boolean } {
   const raw = useSyncExternalStore(subscribe, () => (id ? readRaw(id) : null))
   const set = useCallback((c: WorkspaceIconChoice | null) => id && setWorkspaceIcon(id, c), [id])
-  const d = defaultWorkspaceIcon(name ?? '')
+  const d = defaultWorkspaceIcon(id ?? '')
   const own = parse(raw)
   return { icon: own?.icon ?? d.icon, colour: own?.colour ?? d.colour, set, custom: !!own }
 }
@@ -137,7 +147,7 @@ export function WorkspaceIcon({ icon, colour, className, size = 'md' }: Workspac
 }
 
 /** A workspace's tile that follows its stored choice (used in the switcher rows). */
-export function WorkspaceIconFor({ id, name, ...rest }: { id: string; name: string; className?: string; size?: 'sm' | 'md' }) {
-  const { icon, colour } = useWorkspaceIcon(id, name)
+export function WorkspaceIconFor({ id, ...rest }: { id: string; className?: string; size?: 'sm' | 'md' }) {
+  const { icon, colour } = useWorkspaceIcon(id)
   return <WorkspaceIcon icon={icon} colour={colour} {...rest} />
 }

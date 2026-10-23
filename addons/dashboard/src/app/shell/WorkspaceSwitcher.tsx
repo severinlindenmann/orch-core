@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils'
 import { useAttention } from '../attention'
 import { useWorkspace } from '../workspace'
 import { SHORTCUTS } from './shortcuts'
-import { WorkspaceIcon, WorkspaceIconFor, useWorkspaceIcon } from '../workspaceIcon'
+import { WorkspaceIcon, WorkspaceIconFor, lookAlike, useWorkspaceIcon, workspaceIconOf } from '../workspaceIcon'
 
 /** `⌘2` / `Ctrl+2` as aria-keyshortcuts writes it. */
 const ariaKeys = (keys: string) => keys.replace('⌘', 'Meta+').replace('Ctrl+', 'Control+')
@@ -44,7 +44,8 @@ function WorkspaceRow({ w, index, current, viewer, shared, onPick, quietFocus }:
             aria-keyshortcuts={keys ? ariaKeys(keys) : undefined}
             className="group flex w-full min-w-0 items-center gap-2 rounded-md px-1.5 py-1.5 text-left text-[13px] outline-none hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:ring-2 focus-visible:ring-brand"
           >
-            <WorkspaceIconFor id={w.id} name={w.name} size="sm" />
+            <WorkspaceIconFor id={w.id} size="sm" />
+            <span className="rounded bg-surface-3 px-1 font-mono text-[10px] font-semibold text-text-muted">{w.prefix}</span>
             <span className="min-w-0 flex-1 truncate">
               <bdi>{visible(w.name)}</bdi>
             </span>
@@ -126,8 +127,10 @@ export function WorkspaceSwitcher({ collapsed, viewer }: { collapsed: boolean; v
   const list = useRef<HTMLUListElement>(null)
   const quietFocus = useRef(false)
   const headingId = useId()
-  const mine = useWorkspaceIcon(workspace?.id, workspace?.name)
-  const currentShared = !!workspace && workspaces.some((o) => o.id !== workspace.id && sharesPrefix(o, workspace))
+  const mine = useWorkspaceIcon(workspace?.id)
+  // Same prefix, same name or same icon and colour as another workspace: the short id is shown too, so they stay apart.
+  const confusable = (w: Workspace) => workspaces.some((o) => o.id !== w.id && sharesPrefix(o, w)) || lookAlike(w, workspaces, workspaceIconOf)
+  const currentShared = !!workspace && confusable(workspace)
   const trigger = (
     <button
       type="button"
@@ -138,6 +141,7 @@ export function WorkspaceSwitcher({ collapsed, viewer }: { collapsed: boolean; v
       )}
     >
       {workspace ? <WorkspaceIcon icon={mine.icon} colour={mine.colour} /> : <span aria-hidden className="size-7 shrink-0 rounded-md bg-surface-3" />}
+      {workspace && <span className={cn('rounded bg-surface-3 px-1 font-mono text-[10px] font-semibold text-text-muted', collapsed && 'hidden')}>{workspace.prefix}</span>}
       <span className={cn('min-w-0 flex-1 truncate', collapsed && 'hidden')}>{workspace ? visible(workspace.name) : null}</span>
       {currentShared && workspace && (
         <span data-ws-uuid-current className={cn('font-mono text-[10px] text-text-faint', collapsed && 'hidden')}>
@@ -185,7 +189,7 @@ export function WorkspaceSwitcher({ collapsed, viewer }: { collapsed: boolean; v
               w={w}
               viewer={viewer}
               index={i}
-              shared={workspaces.some((o) => o.id !== w.id && sharesPrefix(o, w))}
+              shared={confusable(w)}
               current={w.id === workspace?.id}
               quietFocus={quietFocus}
               onPick={() => {

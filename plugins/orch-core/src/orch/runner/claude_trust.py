@@ -34,6 +34,8 @@ import tempfile
 from collections.abc import Mapping
 from pathlib import Path
 
+from orch.layout import STORE_DIR
+
 __all__ = ["MARKER", "TRUST_KEYS", "pretrust", "record_consent", "trust_paths"]
 
 TRUST_KEYS = (
@@ -42,7 +44,6 @@ TRUST_KEYS = (
     "hasClaudeMdExternalIncludesWarningShown",
 )
 WORK_DIR = ".orch-work"
-STORE_DIR = ".orch"
 #: the owner's consent, written by init inside the store folder
 MARKER = "claude-trust"
 LIMIT = 8 << 20

@@ -310,7 +310,8 @@ def test_ae8_existing_kinds_keep_their_digests_steps_and_confirmations():
 
 #: computed on origin/develop 053cec33 (before this feature) and unchanged by it
 PIN_NEW = "sha256:8bbb0b9172fd7b52546e005b49900ce7e3ec4e931a93f91779fafc720f0ee838"
-PIN_QUICK = "sha256:0208dfb798c3c634f29554515242876ba17b894556cf47a37f04734821693a02"
+#: PIN_QUICK recomputed in #1149: the quick() fixture's check command changed (shell syntax is refused now)
+PIN_QUICK = "sha256:3b20a1ceb3beac3bf87ed39259b896c50dd85281bdd5fd021d229f41ef802d61"
 PIN_EDIT = "sha256:b5af6594f9bf685844ce2aa42be98ac4cffbc80896cbad35af629547f81534e4"
 
 

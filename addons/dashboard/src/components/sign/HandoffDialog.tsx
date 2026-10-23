@@ -25,6 +25,8 @@ import { ClickProblemBox, RefusalDevices, TechnicalDetails } from './RefusalDevi
 import { ClickSignPanel } from './ClickSignPanel'
 import { useClickSign } from './useClickSign'
 import { HandoffPanel } from './HandoffPanel'
+import { HubSignPanel, NotFromHub } from './HubSignPanel'
+import { hubOnly, hubRequestOf } from '@/api/hubsign'
 import { Inline, Raw } from './visible'
 import { failedSubmit, useHandoff, type HandoffPhase } from './useHandoff'
 import { fmtClock } from '@/lib/time'
@@ -114,6 +116,8 @@ export function HandoffDialog(p: HandoffDialogProps) {
   // The workspace's card (the signer's flag) comes from the provider, or from the list when none wraps this dialog.
   const known = useQuery(queries.workspaces())
   const here = workspaces.find((w) => w.id === p.ws) ?? known.data?.find((w) => w.id === p.ws)
+  // V3 C11 (D78/D81): in full hub mode no local key signs; the dialog shows the hub panel and prepares nothing here.
+  const viaHub = hubOnly(here)
   // Click-to-sign (H5c): offered where the signer says the flag is on and it can sign, for the actions it serves.
   const click = useClickSign(p.ws, (_phase, state, request) => {
     toast.success(`${p.title}: signed`)
@@ -190,7 +194,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
     // Not before the list of workspaces and the signing settings are known: whether this one offers Sign decides how the
     // dialog starts. An action with nothing to fill in prepares at once (the click that opened it is the intent), so the
     // person never sees a Sign button before the host's content (WYSIWYS). Phone is a choice the person makes, never auto.
-    if (p.autoStart && p.action && !started.current && p.ws && !known.isPending && !methods.loading && !(p.phoneRequest && phones.isPending) && (method === 'click' || method === 'terminal')) {
+    if (!viaHub && p.autoStart && p.action && !started.current && p.ws && !known.isPending && !methods.loading && !(p.phoneRequest && phones.isPending) && (method === 'click' || method === 'terminal')) {
       started.current = true
       // A click request that ended earlier (cancelled, expired) must not block a fresh open: this open is a new intent.
       if (method === 'click') void click.start(p.action, 0, true)
@@ -198,7 +202,7 @@ export function HandoffDialog(p: HandoffDialogProps) {
     }
     // Once per opening: a changed action object is not a new click.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [p.autoStart, p.ws, known.isPending, canClick, methods.loading, method, phones.isPending])
+  }, [viaHub, p.autoStart, p.ws, known.isPending, canClick, methods.loading, method, phones.isPending])
 
   // Switching workspace cancels the open request at the host; the dialog belongs to the old workspace and closes.
   useEffect(() => {
@@ -274,6 +278,29 @@ export function HandoffDialog(p: HandoffDialogProps) {
   const end = words(phase, p.title, run.error?.code === 'intent.done' ? alreadySigned(run.error) : refusal ? refusalSentence(refusal) : errorText, !!run.request && !run.request.material.ticket, run.error?.code, (run.request?.material.sequence?.intent as { kind?: unknown } | undefined)?.kind === 'new_ticket')
   // a CLI pointer ("orch describe approve") means nothing on this page
   const cliOnly = (v: unknown) => run.error?.code === 'gate.incomplete' && typeof v === 'string' && /\borch describe\b/.test(v)
+
+  if (viaHub) {
+    const request = hubRequestOf(p.action)
+    return (
+      <Dialog open onOpenChange={(o) => !o && p.onClose()}>
+        <DialogContent data-handoff-dialog data-hub-dialog className="max-h-[90vh] max-w-lg gap-4 overflow-y-auto border-border bg-surface">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ShieldCheck className="size-4 text-brand" />
+              <Inline>{p.title}</Inline>
+            </DialogTitle>
+            <DialogDescription>Only you can approve this. Agents cannot.</DialogDescription>
+          </DialogHeader>
+          {request && p.ws ? <HubSignPanel ws={p.ws} request={request} /> : <NotFromHub />}
+          <DialogFooter>
+            <Button variant="outline" ref={cancelRef} onClick={p.onClose}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    )
+  }
 
   return (
     <Dialog open onOpenChange={(o) => !o && phase !== 'preparing' && click.phase !== 'preparing' && click.phase !== 'signing' && void close()}>

@@ -46,6 +46,7 @@ from .handoff import (
     send_prepare,
     sequence_progress,
 )
+from .hubapprove import mode_of, refuse_if_hub_only
 from .reads import workspace
 
 # The card text, verbatim (owner decision, 12 Oct 2026). A View that carries anything else is not shown.
@@ -252,7 +253,8 @@ def register(app: FastAPI, gateway: Gateway):
             "available": False,
             "problem": "no_signer",
         }
-        return {**card, "switchable": signer.switchable()}
+        mode = mode_of(gateway, ws)  # V3 C11: advisory, so the page shows the hub panel; the host decides
+        return {**card, "switchable": signer.switchable(), **({"mode": mode} if mode else {})}
 
     def owner(ws: str) -> bool:
         me = app.state.person_of(ws)
@@ -286,6 +288,7 @@ def register(app: FastAPI, gateway: Gateway):
     def prepare(body: ClickBody, request: Request, ws: str = Depends(workspace)):
         token = request.state.token
         gateway.enabled(ws)  # pinned workspace, dashboard addon enabled in it (the hand-off's `human()` does this)
+        refuse_if_hub_only(gateway, ws)  # V3 C11: full hub mode takes no click signature (the host refuses it too)
         if isinstance(body, PublishSetup | PublishShare) or (
             isinstance(body, AddonEnable | AddonGrant) and body.name == "publish"
         ):

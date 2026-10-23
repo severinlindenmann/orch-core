@@ -657,6 +657,9 @@ def serve(call: Call) -> dict[str, Any]:
                 "joined": bool(model) and model.get("status") == "joined",
                 "hub_id": model.get("hub_id"),
                 "mode": model.get("mode"),
+                "signing": signing_mode(
+                    service
+                ),  # V3 C11: standalone | selective | full | unknown (full takes no local key)
                 "binding_seq": model.get("binding_seq"),
                 "member": bool(model.get("member")),  # full mode: the hub is a member of kind hub
                 "sealed_epoch": None if state is None or not state.sealed else state.sealed["epoch"],

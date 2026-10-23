@@ -357,3 +357,13 @@ def test_the_catalog_code_is_global_and_has_a_closed_detail():
     e = hubsign.hub_only_error()
     assert e.error()["detail"] == {"reason": "hub"} and e.exit == 3 and not e.retryable
     assert HostError("sign.hub_only", detail={"reason": "evil"}).error().get("detail") is None
+
+
+def test_hub_status_reports_the_signing_mode_for_the_dashboard(human, served, stub, keystore):
+    from tests.host.dispatch_helpers import ok
+
+    assert ok(served.client().req("hub.status", {}, idem=False))["data"]["signing"] == "standalone"
+    full_joined(human, served)
+    assert ok(served.client().req("hub.status", {}, idem=False))["data"]["signing"] == "unknown"
+    ok(served.client().req("hub.connect", connect_args(), idem=True))
+    assert ok(served.client().req("hub.status", {}, idem=False))["data"]["signing"] == "full"

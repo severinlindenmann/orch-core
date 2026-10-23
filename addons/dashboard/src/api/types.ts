@@ -91,6 +91,8 @@ export interface Workspace {
   click?: { custody: 'convenience' | 'passphrase' | 'none'; enabled: boolean; available: boolean; problem?: string } | null
   /** A real host only (`whoami.runner`, cap `run/1`): null or absent when the host does not say. Never guessed. */
   runner?: { connected: boolean; enabled: boolean; terminals: boolean } | null
+  /** V3 C11, a real host only: the host's signing mode. `full`/`unknown`: approvals go through the hub, no local key signs. */
+  signing?: 'standalone' | 'selective' | 'full' | 'unknown' | null
 }
 
 /**

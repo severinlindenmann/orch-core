@@ -63,6 +63,8 @@ WORKSPACE_ONLY = {
     "hub.left",
     "hub.pinned",
     "relay.reopened",
+    "device.exposed",
+    "device.rotated",
 }
 
 
@@ -109,6 +111,7 @@ QUESTION = {
     "id": "Q1",
     "to": "p_" + PID2,
     "text": "Which tariff export is the source of truth, the monthly CSV or the API?",
+    "kind": "choice",
     "why": "The two differ for 3 of 40 tariffs; the seed must pick one.",
     "options": [{"key": "csv", "label": "Monthly CSV"}, {"key": "api", "label": "Tariff API", "cost": "+1 day"}],
     "recommended": "csv",
@@ -498,6 +501,29 @@ _SPEC = {
     ),
     "hub.left": (PERSON, {"hub_id": "38d8abed52ccfb538da401fd54e64bdc", "binding_seq": 1}, 5),
     "relay.reopened": (PERSON, {"hub_id": "38d8abed52ccfb538da401fd54e64bdc"}, 5),
+    "device.exposed": (PERSON, {"device": "d_" + DID, "reason": "convenience"}, 5),
+    "device.rotated": (
+        PERSON,
+        {
+            "old": "d_" + DID2,
+            "device": "d_" + DID,
+            "cert": cert(PID, DID),
+            "rotation": {
+                "o": {
+                    "v": 2,
+                    "suite": 2,
+                    "kind": "device_rotation",
+                    "workspace_id": WS,
+                    "person_id": PID,
+                    "old": DID2,
+                    "new": DID,
+                    "roster_v": 5,
+                },
+                "sig": sig("rotation"),
+            },
+        },
+        5,
+    ),
     "hub.pinned": (
         HOST,
         {

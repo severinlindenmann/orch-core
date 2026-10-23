@@ -31,7 +31,8 @@ import re
 from collections.abc import Callable
 from typing import Any
 
-from ..http import Transport, TransportError
+from orch.net.http import Transport, TransportError
+
 from ..retry import RelayRefused
 from ..session import LoginHeldOff, RelayMisbehaving, Session
 from .pair import PairRelayError

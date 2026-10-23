@@ -60,7 +60,7 @@ def test_a_production_page_opens_with_the_vector_key_and_a_fresh_salt_each_time(
 def test_the_key_stores_view_key_is_the_contract_derivation(mk):  # noqa: F811
     for e in (1,):
         assert mk.view_key(e) == derive_view_key(mk.wk(e), WS, e)
-    from orch.relay.r6.keystore import CustodyRefused
+    from orch.identity.epochs import CustodyRefused
 
     with pytest.raises(CustodyRefused):
         mk.view_key(7)  # never held

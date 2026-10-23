@@ -16,7 +16,7 @@ import pytest
 from orch import canon
 from orch.crypto import drop, recovery, suite
 from orch.crypto.labels import L
-from orch.relay import wire
+from orch.wsproto import wire
 
 WK = bytes(range(32))
 WS = bytes.fromhex("705d40abbb8c1c90354a1acaa94c935c")

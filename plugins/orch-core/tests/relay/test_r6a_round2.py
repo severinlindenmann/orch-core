@@ -16,11 +16,11 @@ from pathlib import Path
 import pytest
 
 from orch import canon, crypto
-from orch.relay import sign, wire
+from orch.identity.epochs import CustodyRefused, MembershipUnsafe, R6Gate
 from orch.relay.keys import SealRefused, SealState
-from orch.relay.r6.keystore import CustodyRefused, MembershipUnsafe, R6Gate
-from orch.relay.sign import SignerRefused
 from orch.store.store import Store
+from orch.wsproto import sign, wire
+from orch.wsproto.sign import SignerRefused
 
 from .helpers import WS
 from .r6kit import DEVICE, digest, expose_rotation, list_for, open_keys, rotate, signer
@@ -490,7 +490,8 @@ def test_m36_a_malformed_key_file_never_reaches_an_exception_or_log(tmp_path, ca
 
 
 def test_m51_a_tampered_stored_card_is_refused_on_resume(tmp_path):
-    from orch.relay.r6.firstcard import R6LinkSource, default_part
+    from orch.identity.epochs import default_part
+    from orch.relay.r6.firstcard import R6LinkSource
 
     from .helpers import OWNER_PK
     from .r6kit import DELEGATION, Clock

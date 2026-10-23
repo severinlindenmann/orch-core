@@ -65,10 +65,10 @@ class Epochs:
 
 @pytest.fixture
 def mk(tmp_path):
-    from orch.relay.r6.keystore import MembershipKeys
+    from orch.identity.epochs import MembershipKeys
 
     keys = MembershipKeys(tmp_path / "membership", WS, now_ms=lambda: NOW)
-    from orch.relay.r6.keystore import R6Gate
+    from orch.identity.epochs import R6Gate
 
     R6Gate(keys).install(lambda: r6kit.KitStore())
     r6kit.rotate(keys)  # epoch 1 committed
@@ -172,7 +172,7 @@ def test_a_replayed_wk_seal_is_refused_by_the_hub(host, mk):
 
 
 def test_no_epoch_means_nothing_is_sent(tmp_path):
-    from orch.relay.r6.keystore import MembershipKeys, R6Gate
+    from orch.identity.epochs import MembershipKeys, R6Gate
 
     empty = MembershipKeys(tmp_path / "m2", WS, now_ms=lambda: NOW)
     R6Gate(empty).install(lambda: r6kit.KitStore())
@@ -345,7 +345,7 @@ class _nothing:
 
 
 def test_a_relay_less_workspace_makes_its_own_genesis_epoch_and_rotates_locally(tmp_path):
-    from orch.relay.r6.keystore import MembershipKeys, R6Gate
+    from orch.identity.epochs import MembershipKeys, R6Gate
 
     own = MembershipKeys(tmp_path / "m3", WS, now_ms=lambda: NOW)
     R6Gate(own).install(lambda: r6kit.KitStore())
@@ -365,7 +365,7 @@ def test_a_relay_less_workspace_makes_its_own_genesis_epoch_and_rotates_locally(
 
 
 def test_a_relay_linked_key_store_never_makes_a_local_epoch(tmp_path):
-    from orch.relay.r6.keystore import CustodyRefused, MembershipKeys, MembershipUnsafe
+    from orch.identity.epochs import CustodyRefused, MembershipKeys, MembershipUnsafe
 
     linked = MembershipKeys(tmp_path / "m4", WS, now_ms=lambda: NOW, previously_linked=True)
     with pytest.raises((CustodyRefused, MembershipUnsafe)):  # a linked store with no head is unsafe too
@@ -374,7 +374,7 @@ def test_a_relay_linked_key_store_never_makes_a_local_epoch(tmp_path):
 
 
 def test_a_crash_between_expose_and_commit_is_completed_by_the_next_advance(tmp_path):
-    from orch.relay.r6.keystore import MembershipKeys, R6Gate
+    from orch.identity.epochs import MembershipKeys, R6Gate
 
     crash = {"on": True}
 
@@ -396,7 +396,7 @@ def test_a_crash_between_expose_and_commit_is_completed_by_the_next_advance(tmp_
 
 
 def test_an_invalid_exposed_body_is_abandoned_and_a_new_epoch_follows(tmp_path):
-    from orch.relay.r6.keystore import MembershipKeys, R6Gate
+    from orch.identity.epochs import MembershipKeys, R6Gate
 
     crash = {"on": True}
 
@@ -418,7 +418,7 @@ def test_an_invalid_exposed_body_is_abandoned_and_a_new_epoch_follows(tmp_path):
 
 
 def test_a_relay_linked_later_in_the_process_stops_local_epochs(tmp_path):
-    from orch.relay.r6.keystore import CustodyRefused, MembershipKeys, R6Gate
+    from orch.identity.epochs import CustodyRefused, MembershipKeys, R6Gate
 
     linked = {"v": False}
     own = MembershipKeys(tmp_path / "m7", WS, now_ms=lambda: NOW)

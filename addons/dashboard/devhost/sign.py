@@ -109,7 +109,7 @@ def recompute(prepared: dict[str, Any], *, workspace_id: str, person: str, devic
         if e["type"] == "question.answered":
             q = material.get("question") or {}
             qid = canon.question_id(workspace_id, ticket["uid"], q["id"])
-            if e.get("hash") != canon.question_hash(qid, ticket["uid"], q["text"], q.get("options") or []):
+            if e.get("hash") != canon.question_hash(qid, ticket["uid"], q):
                 raise Refused("the question hash is not the hash of the question shown")
         if op in WORKSPACE_OPS:
             if prepared.get("log") != "workspace" or material.get("ticket") is not None:

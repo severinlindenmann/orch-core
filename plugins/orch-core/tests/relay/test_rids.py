@@ -7,7 +7,7 @@ import os
 import pytest
 
 from orch.relay.rids import CHUNK_KEEP_MS, RID_KEEP_MS, SEQ_WINDOW, TOMBSTONE_KEEP_MS, Crash, RidStore, seq_accept
-from orch.relay.state import StateDir, StateError
+from orch.wsproto.state import StateDir, StateError
 
 D, R = "aa" * 16, "bb" * 16
 

@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from orch import canon, crypto
 from orch.canon.text import is_assigned, is_format
 from orch.crypto.labels import L
-from orch.relay.wire import WireError, check_origin
+from orch.wsproto.wire import WireError, check_origin
 
 from .errors import Refused
 
@@ -216,7 +216,7 @@ def cert_code(challenge_o: dict) -> str:
 # see an HTTPS link's fragment, the app's URL handler does not. The HTTPS form is the fallback a person can type or
 # open. Both are printed on the person's terminal only (11A.15.9 exposure rules).
 #
-# Canonical spellings: the origin as 11A.2 stores it (``orch.relay.wire.check_origin``: lower case, no path, no
+# Canonical spellings: the origin as 11A.2 stores it (``orch.wsproto.wire.check_origin``: lower case, no path, no
 # trailing slash, ``http`` only for loopback); the path exactly ``/pair`` (``/app/pair`` is an alias the app may
 # accept, this parser does not); in the native form, ``relay`` is the only query parameter and its value escapes every
 # byte outside RFC 3986 unreserved (``A-Z a-z 0-9 - . _ ~``) as upper-case ``%XX`` (``https%3A%2F%2F...``, what

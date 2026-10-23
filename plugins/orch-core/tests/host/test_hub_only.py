@@ -249,8 +249,8 @@ def ws_model(*, owner_device="d_o", other=True):
             "p_m": SimpleNamespace(role="maintainer"),
         },
         devices={
-            owner_device: SimpleNamespace(person="p_o"),
-            "d_m": SimpleNamespace(person="p_m"),
+            owner_device: SimpleNamespace(person="p_o", exposed=False),
+            "d_m": SimpleNamespace(person="p_m", exposed=False),
         },
     )
 

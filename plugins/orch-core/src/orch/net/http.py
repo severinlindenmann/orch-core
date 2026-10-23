@@ -37,11 +37,11 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Protocol
 
-from . import wire
+from orch.wsproto import wire
 
 __all__ = ["CutOver", "RedirectRefused", "RelayConn", "Response", "Transport", "TransportError", "tls_context"]
 
-log = logging.getLogger("orch.relay.http")
+log = logging.getLogger("orch.net.http")
 
 READ_PIECE = 64 * 1024
 MAX_LOOKUPS = 4  # outstanding name lookups per connection; above it a call fails at once ("resolver stuck")

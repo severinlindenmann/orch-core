@@ -51,6 +51,10 @@ def rotate(call: Call, epochs: Any) -> dict[str, Any]:
             hint="orch hub leave (it rotates the workspace key), then orch keys rotate if you need another",
             fix=["orch", "hub", "leave"],
         )
+    if hubsign.local_key_exposed(
+        call.service, call.viewer
+    ):  # #1097: signed evidence of convenience custody, even moved back
+        raise hubsign.key_exposed_error()
     if hubsign._click_custody(call.service):  # noqa: SLF001 - custody decides, not a label
         raise HostError(
             "sign.convenience_unavailable",
@@ -72,8 +76,8 @@ def publish_put(service: WorkspaceService) -> Callable[[dict[str, Any]], bool] |
     set up (then it stays owed). True: publish took it (2xx), or holds a newer binding (409 ``stale_binding``)."""
     from orch.canon.jcs import dumps as cj
     from orch.publishclient import Transport
-    from orch.relay import wire
     from orch.store.render import thaw
+    from orch.wsproto import wire
 
     cfg = thaw(service.store.state.workspace.settings.get("publish"))
     if not isinstance(cfg, dict) or not isinstance(cfg.get("server"), str):

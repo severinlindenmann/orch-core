@@ -34,7 +34,7 @@ from orch import canon, crypto
 from orch.crypto.labels import L
 from orch.identity import certs, memberlist, pairing, reader
 from orch.identity.reader import KAT_DIGESTS
-from orch.relay import wire
+from orch.wsproto import wire
 
 from . import bridgekit, pairkit
 

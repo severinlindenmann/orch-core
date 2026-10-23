@@ -18,8 +18,8 @@ import pytest
 
 from orch import crypto
 from orch.publishclient import PublishClient, PublishError, share_target
-from orch.relay.pubsign import PublishContext, PublishSigner, publish_signed_bytes
-from orch.relay.sign import SignerRefused
+from orch.wsproto.pubsign import PublishContext, PublishSigner, publish_signed_bytes
+from orch.wsproto.sign import SignerRefused
 from tests.relay import corpus
 from tests.relay.helpers import Key, MemLedger
 

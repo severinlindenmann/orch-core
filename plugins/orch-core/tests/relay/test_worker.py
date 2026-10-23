@@ -16,7 +16,7 @@ import pytest
 import orch.relay
 from orch import fdwait
 from orch.relay import worker as W
-from orch.relay.state import StateDir
+from orch.wsproto.state import StateDir
 
 
 @pytest.fixture

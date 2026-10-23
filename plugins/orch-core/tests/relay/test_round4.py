@@ -11,9 +11,10 @@ import threading
 import pytest
 
 from orch.relay import bridge as B
-from orch.relay import framing, rids, wire
+from orch.relay import framing, rids
 from orch.relay.bridge import BridgeLoop, Item
 from orch.relay.session import Fenced, SessionError
+from orch.wsproto import wire
 
 from .bridgekit import World, open_chunk, ulid
 from .helpers import WS

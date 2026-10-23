@@ -12,10 +12,11 @@ import time
 import pytest
 
 from orch.relay import bridge as B
-from orch.relay import framing, rids, wire
+from orch.relay import framing, rids
 from orch.relay.bridge import BridgeLoop, Item
 from orch.relay.keys import SealRefused
-from orch.relay.state import StateError
+from orch.wsproto import wire
+from orch.wsproto.state import StateError
 
 from .bridgekit import T0, Phone, World, open_chunk, ulid
 

@@ -22,6 +22,14 @@ from tests.host.lifecycle_helpers import UID
 from tests.host.test_host_mode_on import cli, fake, host, world  # noqa: F401 - fixtures
 
 
+@pytest.fixture(autouse=True)
+def _no_exposure_mark(monkeypatch):
+    """#1097 E3 needs a registered workspace and a running host (tests: test_key_exposure_custody.py)."""
+    from orch.custody import exposure
+
+    monkeypatch.setattr(exposure, "mark_before_move", lambda *a, **k: None)
+
+
 def _wid(root: Path) -> str:
     from orch.ops.caps import Files
     from orch.ops.runtime import _config

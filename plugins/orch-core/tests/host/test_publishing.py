@@ -22,7 +22,7 @@ from orch import crypto
 from orch.host import publishing, signcontent
 from orch.host.publishing import PUBLISH_OPS
 from orch.publishclient import approval, flow
-from orch.relay.pubsign import publish_signed_bytes
+from orch.wsproto.pubsign import publish_signed_bytes
 from tests.host import human_helpers
 from tests.host.dispatch_helpers import SESSION, err, ok
 from tests.host.human_helpers import Human

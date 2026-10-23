@@ -143,7 +143,7 @@ def test_the_gate_allows_exactly_the_cutover_routes_and_the_session(env):
 
 
 def test_a_relay_conn_with_the_gate_refuses_before_any_byte_is_sent(env):
-    from orch.relay import http
+    from orch.net import http
 
     dial = []
     conn = http.RelayConn(
@@ -207,7 +207,7 @@ def test_the_model_accepts_a_re_signed_full_mode_only_for_the_same_hub_binding_a
 
 def test_link_step1_builds_its_relay_connection_through_the_gate(env, monkeypatch):
     """L2-C10i-5: I1 holds by construction, not by the caller refusing first."""
-    from orch.relay import http
+    from orch.net import http
 
     seen = {}
 

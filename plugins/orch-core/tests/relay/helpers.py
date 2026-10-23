@@ -6,9 +6,11 @@ import random
 from typing import Any
 
 from orch import crypto
-from orch.relay import http, retry, sign
+from orch.net import http
+from orch.relay import retry
 from orch.relay.directory import Directory
 from orch.relay.session import Session
+from orch.wsproto import sign
 
 from . import corpus
 
@@ -36,7 +38,7 @@ class Key:
 
 
 class MemLedger:
-    """An in-memory :class:`orch.relay.state.SignLedger` (the file-backed one is tested in test_state)."""
+    """An in-memory :class:`orch.wsproto.state.SignLedger` (the file-backed one is tested in test_state)."""
 
     def __init__(self):
         self.entries: dict[tuple[str, str], tuple[str, str]] = {}
@@ -52,11 +54,11 @@ class MemLedger:
 
 
 class Holder:
-    """An in-memory :class:`orch.relay.state.HolderStore`. ``Holder()`` never held; ``Holder(gen=g)`` was the last
+    """An in-memory :class:`orch.wsproto.state.HolderStore`. ``Holder()`` never held; ``Holder(gen=g)`` was the last
     holder at ``g`` under this instance id. ``saved`` lists the saved gens, ``records`` the saved records."""
 
     def __init__(self, gen=None, *, last_holder=True, instance_id=None, pending=None, iid="0" * 32):
-        from orch.relay.state import HolderRecord
+        from orch.wsproto.state import HolderRecord
 
         self.iid = iid
         self.rec = (

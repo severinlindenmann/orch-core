@@ -9,7 +9,7 @@
   starter runs **under** ``service.relay_lock``. It never waits for a job of the workspace's worker thread: it
   builds the objects and hands off to the worker's start thread (the convenience check, then the first link while
   ``linking``, then the loop and the publisher).
-* ONE :class:`~orch.relay.state.StateDir` (opened on the resolved state path from the host's trusted config, never
+* ONE :class:`~orch.wsproto.state.StateDir` (opened on the resolved state path from the host's trusted config, never
   a ``$TMPDIR`` one: §11A.3 R6-4) and ONE :class:`~orch.relay.session.Session` per workspace, shared by its threads.
 * The 8-per-host cap (§11A.7): ``relay.link`` is refused above it (:func:`relaylink.link_reservation`); the starter
   also takes one of :data:`relaylink.MAX_LINKED` per-process slots, held until every thread of that worker ended (a
@@ -80,7 +80,7 @@ class Seams:
     * ``link_source(service) -> LinkSource``: R6a and the genesis-pin person path (11A.5 steps 2 and 3);
     * ``push(service, worker, keys, signer, view)``: H13a, the push thread (a worker companion, optional).
 
-    The transport is not a seam here: production always uses :class:`orch.relay.http.RelayConn` with ``link.json``'s
+    The transport is not a seam here: production always uses :class:`orch.net.http.RelayConn` with ``link.json``'s
     ``ca_file`` and ``proxy``; only a test passes ``transport=`` to :func:`make_starter` (an AST rule refuses it in
     ``src/``)."""
 
@@ -182,7 +182,7 @@ def make_starter(
 
 
 def _link_record(state: Any, workspace_id: str) -> dict[str, Any]:
-    from orch.relay import wire
+    from orch.wsproto import wire
 
     link = state.read_json("link.json")
     if not isinstance(link, dict) or link.get("workspace_id", workspace_id) != workspace_id:
@@ -257,7 +257,7 @@ def start_worker(
     append that the service audits while the start thread runs always sees it (review R1); a failure clears it again.
     Any failure leaves nothing open (the slot, the state directory and the rid store are released) and raises."""
     from orch.custody import FileBackend
-    from orch.relay import http
+    from orch.net import http
     from orch.relay import worker as relay_worker
     from orch.relay.bridge import Bridge, BridgeLoop
     from orch.relay.directory import Directory
@@ -266,9 +266,9 @@ def start_worker(
     from orch.relay.retry import Retrier
     from orch.relay.rids import RidStore
     from orch.relay.session import Session
-    from orch.relay.sign import LinkContext, RelaySigner
-    from orch.relay.state import FileHolderStore, FileSignLedger, StateDir
     from orch.store import BackendSigner
+    from orch.wsproto.sign import LinkContext, RelaySigner
+    from orch.wsproto.state import FileHolderStore, FileSignLedger, StateDir
 
     from . import relaylink, relaypair
     from .relayentry import RelayEntry
@@ -389,18 +389,18 @@ def cutover_session(
     transport: Callable[[str, Mapping[str, Any]], Any] | None = None,
 ) -> Iterator[Any]:
     """The one relay session the cut-over (and its reversal) uses (V3 C10, design-c10 M2.4/M4): the workspace's own
-    ``WSK`` session over a :class:`~orch.relay.http.RelayConn` that carries the ``cut_over`` gate, so even while the
+    ``WSK`` session over a :class:`~orch.net.http.RelayConn` that carries the ``cut_over`` gate, so even while the
     path is ``closing`` or ``closed`` it sends exactly the cut-over routes and the session mechanics (login, holder).
     No worker, no thread, no bridge: the caller makes a few calls and leaves. The relay worker must not run (the
     state directory has one owner: ``StateDir`` refuses a second). ``transport`` is for tests only."""
     from orch.custody import FileBackend
-    from orch.relay import http
+    from orch.net import http
     from orch.relay import worker as relay_worker
     from orch.relay.keys import BridgeKeys
     from orch.relay.session import Session
-    from orch.relay.sign import LinkContext, RelaySigner
-    from orch.relay.state import FileHolderStore, FileSignLedger, StateDir
     from orch.store import BackendSigner
+    from orch.wsproto.sign import LinkContext, RelaySigner
+    from orch.wsproto.state import FileHolderStore, FileSignLedger, StateDir
 
     seams = seams if seams is not None else SEAMS
     if seams.r6 is None:
@@ -499,7 +499,7 @@ def reserve_link(
     /v2/relay-info``, read by :func:`link_step1` before this job; ``None``: not read, counts as 0) and ``host.limit``,
     held across the write; ``relay.link_exists`` for an existing link. Returns the record written. Nothing is sent
     from here."""
-    from orch.relay import wire
+    from orch.wsproto import wire
 
     from .relaylink import link_reservation
 
@@ -537,7 +537,7 @@ def link_step1(
     workspace's worker thread: it is network I/O), then :func:`reserve_link` as a worker job with
     ``relay_level=info.reader``. ``transport`` is for tests only. Not exposed as a control op yet (11A.4 "As built
     in R5")."""
-    from orch.relay import http
+    from orch.net import http
     from orch.relay.session import fetch_relay_info
 
     link = {"origin": origin, "ca_file": ca_file, "proxy": proxy}

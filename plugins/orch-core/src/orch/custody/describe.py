@@ -71,6 +71,8 @@ EVENT_FIELDS: dict[str, tuple[str, ...]] = {
     "device.added": ("device", "cert"),
     "device.removed": ("device", "reason"),
     "device.revoked": ("device", "reason", "revocation"),
+    "device.exposed": ("device", "reason"),  # #1097
+    "device.rotated": ("old", "device", "cert", "rotation"),  # #1097
     "settings.changed": ("set",),
     "grant.issued": ("grant", "scope", "verbs", "issued_at", "hours", "expires_at", "secret_hash", "label"),
     "grant.revoked": ("grant", "reason"),
@@ -90,6 +92,8 @@ _WORKSPACE_ONLY = frozenset(
         "device.added",
         "device.removed",
         "device.revoked",
+        "device.exposed",
+        "device.rotated",
         "settings.changed",
         "grant.issued",
         "grant.revoked",
@@ -113,6 +117,7 @@ _SIGNED_OBJECT_FIELDS: dict[str, tuple[str, ...]] = {
         "scopes_max",
     ),
     "revocation": ("person_id", "device_id", "revoked_ms", "reason"),
+    "device_rotation": ("workspace_id", "person_id", "old", "new", "roster_v"),  # #1097
     "ws_delegation": ("workspace_id", "wsk_pub", "owner_person_id", "client_hosted", "issued_ms"),
     # H12d-2 (orch-v2-host §0.8.6 item 9.3): the device's own reader declaration, every field shown
     "reader_decl": ("workspace_id", "device_id", "dk_hash", "who", "reader", "kat", "bind", "created_ms"),
@@ -131,6 +136,7 @@ _EMBEDDED = {
     "device_cert": "device_cert",
     "cert": "device_cert",
     "revocation": "revocation",
+    "rotation": "device_rotation",
 }
 
 

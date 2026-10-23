@@ -10,7 +10,7 @@ import pytest
 
 from orch.relay.link import first_link
 from orch.relay.session import Fenced, TakeoverRefused
-from orch.relay.state import FileHolderStore, HolderRecord, StateDir, StateError
+from orch.wsproto.state import FileHolderStore, HolderRecord, StateDir, StateError
 
 from .helpers import GENESIS, GENESIS_CERT, GENESIS_PIN, OWNER_PK, WS, Alarms, Clock, Holder, directory, make_card
 from .helpers import retrier as make_retrier

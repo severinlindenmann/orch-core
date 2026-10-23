@@ -9,7 +9,7 @@ then signs ``publish.share {staged_id}``: a ``log.added`` note on the ticket who
 hash**). ``publish.send {staged_id}`` (column P only) builds the same words again from the stage it is about to upload
 and refuses unless a person's signed note with exactly those words is in the ticket log, so the signature covers the
 bytes that go. Only then does the host sign the requests to the server with the workspace key
-(:class:`orch.relay.pubsign.PublishSigner`) and upload.
+(:class:`orch.wsproto.pubsign.PublishSigner`) and upload.
 
 **The link.** The token is made in ``publish.send`` (``secrets.token_bytes(32)``, base64url, no padding) and returned
 to that one call only. It is kept in a 0600 file of the stage until the server has committed, then wiped; the server
@@ -780,9 +780,9 @@ def _client(service: WorkspaceService, origin: str, transport: Any = None, hub: 
     (``publish_out``, hub contract 11): signed under the hub-path label, and **never** by any other path."""
     from orch.custody import FileBackend
     from orch.publishclient import PublishClient
-    from orch.relay.pubsign import PublishContext, PublishSigner
-    from orch.relay.sign import SignerRefused
     from orch.store import BackendSigner
+    from orch.wsproto.pubsign import PublishContext, PublishSigner
+    from orch.wsproto.sign import SignerRefused
 
     keys_dir = Path(os.path.realpath(service.state_dir)) / "hosts" / service.workspace_id / "keys"
     backend = FileBackend(keys_dir) if keys_dir.is_dir() else None

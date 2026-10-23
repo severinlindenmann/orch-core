@@ -11,7 +11,7 @@ import types
 import pytest
 
 from orch import crypto
-from orch.relay import http
+from orch.net import http
 from orch.relay.bridge import BridgeLoop
 
 from .bridgekit import World, open_chunk

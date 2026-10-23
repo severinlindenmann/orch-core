@@ -60,6 +60,11 @@ def generate() -> str:
         decomp.append((cp, parts))
         if len(parts) == 2 and unicodedata.normalize("NFC", chr(cp)) == chr(cp):
             compose.append(cp)
+    casefold = [
+        (cp, [ord(c) for c in chr(cp).casefold()])
+        for cp in range(MAX)
+        if not 0xD800 <= cp <= 0xDFFF and chr(cp).casefold() != chr(cp)
+    ]
     lines = [
         '"""Unicode 16.0.0 data bundled for orch.canon.text (generated, do not edit).',
         "",
@@ -72,6 +77,7 @@ def generate() -> str:
         "CCC_RANGES: canonical combining classes other than 0.",
         "DECOMP: canonical (non-compatibility) single-step decompositions, Hangul syllables excluded.",
         "COMPOSABLE: the primary composites (two-character decomposition, not composition-excluded).",
+        "CASEFOLD: full case folding (CaseFolding.txt C and F, as str.casefold): code point -> folded code points.",
         '"""',
         "",
         'UNICODE_VERSION = "16.0.0"',
@@ -89,6 +95,8 @@ def generate() -> str:
     lines += [f"{cp:X} " + " ".join(f"{p:X}" for p in parts) for cp, parts in decomp]
     lines += [Q, "", 'COMPOSABLE = """']
     lines += [f"{cp:X}" for cp in compose]
+    lines += [Q, "", 'CASEFOLD = """']
+    lines += [f"{cp:X} " + " ".join(f"{p:X}" for p in parts) for cp, parts in casefold]
     lines += [Q, ""]
     return "\n".join(lines)
 

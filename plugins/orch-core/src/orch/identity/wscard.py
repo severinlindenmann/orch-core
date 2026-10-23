@@ -4,7 +4,7 @@ sealed part and ``ck_commit``, and the **typed** verified card every card consum
 Specs: orch-relay ``docs/protocol-v2.md`` §7.1. Vectors: the relay corpus ``card`` section
 (``tests/identity/test_wscard.py``).
 
-A :class:`VerifiedCard` exists only through :func:`verify_card`, which runs ``orch.relay.card.verify_card`` (§7.1
+A :class:`VerifiedCard` exists only through :func:`verify_card`, which runs ``orch.wsproto.card.verify_card`` (§7.1
 checks 1 to 6 under the owner's ``PK``). A function that consumes a card takes this type, never a dict, so an
 unverified card (say one served by the relay with an attacker's ``wsk_pub``) cannot reach it (Opus M1). The relay's
 update rules (``accept_card``: rollback, ``wsk_changed``, ...) stay the caller's, against its stored card.
@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from orch import canon, crypto
-from orch.relay import card as relay_card
+from orch.wsproto import card as relay_card
 
 from . import _mint
 from .errors import Refused
@@ -58,7 +58,7 @@ class VerifiedCard:
 
 
 def verify_card(card: object, owner_pk_pub: bytes) -> VerifiedCard:
-    """``orch.relay.card.verify_card`` (its codes: ``malformed``, ``wrong_suite``, ``other_person``,
+    """``orch.wsproto.card.verify_card`` (its codes: ``malformed``, ``wrong_suite``, ``other_person``,
     ``bad_signature``, ``delegation_mismatch``) as :class:`Refused`, and the typed result. ``owner_pk_pub`` is the
     pinned owner key (the genesis delegation), never one the relay served."""
     pk = _pub(owner_pk_pub, "owner_pk_pub")

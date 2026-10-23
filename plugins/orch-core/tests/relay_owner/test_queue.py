@@ -503,7 +503,7 @@ def test_the_custody_primary_session_is_the_signer_and_the_unseal(relay, fake, t
     """The product wiring: ``orch.custody.primary.unlocked`` yields the login signer, ``cert_request_unseal`` the
     opener; one passphrase prompt for the whole command."""
     from orch.custody import KdfParams, PassphraseBackend, primary
-    from orch.relay import http as rhttp
+    from orch.net import http as rhttp
     from orch.relay_owner import OwnerClient
 
     from ..relay.helpers import V_ORIGIN

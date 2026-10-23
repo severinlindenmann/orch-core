@@ -4,6 +4,7 @@ override, recomputed whenever either side changes, so an override can never end 
 
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 from orch.canon import canonical_policy, policy_hash
@@ -78,6 +79,20 @@ def check_change(gate: str, policy: dict[str, Any]) -> Refusal | None:
     if gate == "code" and ("assignees" not in policy["not"] or policy["independent"] is not True):
         return Refusal(Code.POLICY_INVALID, "code: `not` must include assignees and independent must be true (D59)")
     return None
+
+
+def channel_gates(e: dict[str, Any], gates: dict[str, Any], stored: dict[str, Any]) -> dict[str, Any]:
+    """The gates a ``policy.changed`` stores (a copy). A hub-signed one (hub protocol 8.8, C10) names the five keys only
+    and **never changes a factor floor** (D66): each gate keeps the ``factor`` already stored for it, so a channel can
+    neither lower a floor nor set one (a ticket override inherits the workspace floor through ``factor_floor``)."""
+    out = copy.deepcopy(gates)
+    if "via" in e["actor"]:
+        for g, p in out.items():
+            old = (stored.get(g) or {}).get("factor")
+            p.pop("factor", None)
+            if old is not None:
+                p["factor"] = old
+    return out
 
 
 def check_override(ws: WsCore, t: TCore, gates: dict[str, Any]) -> Refusal | None:

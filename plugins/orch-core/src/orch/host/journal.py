@@ -344,8 +344,11 @@ class _Walk:
 def grant_person_of(typ: str, e: Mapping[str, Any], grants: Any) -> str | None:
     """The person of the grant a ``grant.*`` event names: a ``grant.issued``'s signer, a ``grant.revoked``'s grant
     (looked up in ``grants``). The one derivation used by the journal's ``Entry`` and by ``activity.list``."""
-    if typ == "grant.issued":
+    if typ in ("grant.issued", "grant.requested"):
         a = e.get("actor") if isinstance(e.get("actor"), Mapping) else {}
+        if a.get("kind") == "host":  # C10: a host-actor grant.issued answers a request; the grant carries the person
+            g = grants.get(e.get("grant"))
+            return getattr(g, "person", None) if g is not None else None
         return a.get("id") if isinstance(a.get("id"), str) else None
     if typ == "grant.revoked":
         g = grants.get(e.get("grant"))

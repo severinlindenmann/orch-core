@@ -50,24 +50,51 @@
                 ]
               },
               "then": {
-                "type": "object",
-                "properties": {
-                  "kind": {
-                    "const": "person"
-                  },
-                  "id": {
-                    "$ref": "https://schemas.orch.dev/v2/common#/$defs/personId"
-                  },
-                  "device": {
-                    "$ref": "https://schemas.orch.dev/v2/common#/$defs/deviceId"
-                  }
+                "if": {
+                  "required": [
+                    "via"
+                  ]
                 },
-                "additionalProperties": false,
-                "required": [
-                  "kind",
-                  "id",
-                  "device"
-                ]
+                "then": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "person"
+                    },
+                    "id": {
+                      "$ref": "https://schemas.orch.dev/v2/common#/$defs/hubUserId"
+                    },
+                    "via": {
+                      "$ref": "https://schemas.orch.dev/v2/common#/$defs/hex32"
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": [
+                    "kind",
+                    "id",
+                    "via"
+                  ]
+                },
+                "else": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "person"
+                    },
+                    "id": {
+                      "$ref": "https://schemas.orch.dev/v2/common#/$defs/personId"
+                    },
+                    "device": {
+                      "$ref": "https://schemas.orch.dev/v2/common#/$defs/deviceId"
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": [
+                    "kind",
+                    "id",
+                    "device"
+                  ]
+                }
               }
             },
             {
@@ -219,6 +246,60 @@
     },
     "gates": {
       "$ref": "https://schemas.orch.dev/v2/common#/$defs/gatesPartial"
+    },
+    "channel": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/hex32"
+    },
+    "channel_factor": {
+      "enum": [
+        "password+totp",
+        "se-unlocked",
+        "passkey"
+      ]
+    },
+    "hub_id": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/hex32"
+    },
+    "snapshot_version": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/nonNegInt"
+    },
+    "channel_cert": {
+      "type": "object",
+      "properties": {
+        "o": {
+          "type": "object"
+        },
+        "sig": {
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/sig"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "o",
+        "sig"
+      ]
+    },
+    "uk_cert": {
+      "type": "object",
+      "properties": {
+        "o": {
+          "type": "object"
+        },
+        "sig": {
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/sig"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "o",
+        "sig"
+      ]
+    },
+    "item_hash": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+    },
+    "channel_proof": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/sig"
     }
   },
   "required": [
@@ -325,6 +406,71 @@
           },
           "based_on": {
             "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "auth": {
+            "const": "hub"
+          }
+        },
+        "required": [
+          "auth"
+        ]
+      },
+      "then": {
+        "required": [
+          "channel",
+          "channel_factor",
+          "hub_id",
+          "snapshot_version",
+          "channel_cert",
+          "uk_cert",
+          "channel_proof"
+        ],
+        "properties": {
+          "actor": {
+            "required": [
+              "via"
+            ]
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "channel": {
+            "not": {}
+          },
+          "channel_factor": {
+            "not": {}
+          },
+          "hub_id": {
+            "not": {}
+          },
+          "snapshot_version": {
+            "not": {}
+          },
+          "channel_cert": {
+            "not": {}
+          },
+          "uk_cert": {
+            "not": {}
+          },
+          "channel_proof": {
+            "not": {}
+          },
+          "item_hash": {
+            "not": {}
+          },
+          "actor": {
+            "not": {
+              "required": [
+                "via"
+              ]
+            }
           }
         }
       }

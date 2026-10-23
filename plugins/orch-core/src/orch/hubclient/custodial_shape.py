@@ -40,6 +40,12 @@ SIZES = ("xs", "s", "m", "l", "xl")
 STATUSES = ("backlog", "open", "in_progress", "testing", "done", "closed")
 TICKET_ROLES = ("ticket_owner", "assignees", "reviewers", "watchers")
 MAX_LIST = 32
+#: phase 5 (hub protocol 8.8): value grammars of the grant, device, policy and settings actions
+_OPNAME = re.compile(r"[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)?")
+_GRANT = re.compile(r"gr_[0-7][0-9A-HJKMNP-TV-Z]{25}")
+_DEVICE = re.compile(r"d_[0-9a-f]{32}")
+APPROVER_TOKENS = ("owner", "maintainer", "member", "ticket_owner", "assignees", "reviewers", "watchers")
+POLICY_GATES = ("requirements", "plan", "verify", "code")
 
 #: The Unicode version the text rule is evaluated under (contract 2.1, L2P4-3). Another table would judge text
 #: differently from the hub and the channels, so a runtime on another version refuses (fail closed) instead.
@@ -178,6 +184,49 @@ def _source_sha(x: Any) -> bool:
     )  # fmt: skip
 
 
+def _int_in(lo: int, hi: int) -> Check:
+    return lambda x: type(x) is int and lo <= x <= hi
+
+
+def _gate_policy(gate: str) -> Check:
+    """core's ``gatePolicy`` exactly (the five keys, no ``factor``: a channel never changes a factor floor, 8.8), lists
+    sorted and unique; ``code`` per D59 (``not`` names assignees, independent)."""
+    tok = _sorted_unique(_enum(*APPROVER_TOKENS), 0, len(APPROVER_TOKENS))
+    types = _sorted_unique(_enum(*TICKET_TYPES), 1, len(TICKET_TYPES))
+
+    def ok(x: Any) -> bool:
+        if type(x) is not dict or set(x) != {"approvers", "count", "not", "applies", "independent"}:
+            return False
+        good = (
+            tok(x["approvers"])
+            and len(x["approvers"]) >= 1
+            and _int_in(1, 16)(x["count"])
+            and tok(x["not"])
+            and (x["applies"] in ("all", "off") or types(x["applies"]))
+            and type(x["independent"]) is bool
+        )
+        return bool(good and (gate != "code" or ("assignees" in x["not"] and x["independent"] is True)))
+
+    return ok
+
+
+def _gates(x: Any) -> bool:
+    return type(x) is dict and len(x) >= 1 and all(g in POLICY_GATES and _gate_policy(g)(v) for g, v in x.items())
+
+
+#: ``settings.changed`` ``set``: only these three keys (``sign_methods``, ``repos``, ``models`` and the rest stay off
+#: the channel, V3-D29)
+SETTINGS_SET: dict[str, Check] = {
+    "grant_hours": _int_in(1, 168),
+    "claim_ttl_min": _int_in(15, 1440),
+    "lease_ttl_min": _int_in(5, 1440),
+}
+
+
+def _settings(x: Any) -> bool:
+    return type(x) is dict and len(x) >= 1 and all(k in SETTINGS_SET and SETTINGS_SET[k](v) for k, v in x.items())
+
+
 #: Fields every custodial event carries besides the hub fields (8.1): the envelope the hub derives.
 COMMON_REQUIRED: dict[str, Check] = {
     "v": lambda x: x == 2 and type(x) is int,
@@ -233,6 +282,19 @@ PAYLOAD: dict[str, tuple[dict[str, Check], dict[str, Check]]] = {
     ),
     "addon.disabled": ({"name": _re(_ADDON)}, {}),
     "addon.purged": ({"name": _re(_ADDON)}, {}),
+    # phase 5 (8.8, V3-D29): the event carries no grant id, secret hash or times; the host derives them
+    "grant.requested": (
+        {
+            "scope": _enum("all", "workable"),
+            "verbs": lambda x: x == "agent" or _sorted_unique(_re(_OPNAME), 1, 32)(x),
+            "hours": _int_in(1, 168),
+        },
+        {"label": _text(200)},
+    ),
+    "grant.revoked": ({"grant": _re(_GRANT)}, {"reason": _text(500)}),
+    "device.excluded": ({"device": _re(_DEVICE), "reason": _enum("lost", "retired", "compromised")}, {}),
+    "policy.changed": ({"gates": _gates}, {}),
+    "settings.changed": ({"set": _settings}, {}),
 }
 
 

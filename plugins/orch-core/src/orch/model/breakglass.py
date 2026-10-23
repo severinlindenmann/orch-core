@@ -19,7 +19,7 @@ a ``device.excluded`` line never reaches this check (and core refuses excluding 
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from .codes import Code, Refusal
@@ -36,16 +36,37 @@ SIGNER_KINDS = ("owner_device_key", "pk", "click", "convenience", "agent", "hub"
 class BreakGlass:
     """One row: the event the verb writes (``None``: a key-store act without an event) and who may sign it."""
 
-    __slots__ = ("event", "signers")
+    __slots__ = ("event", "shape", "signers")
 
-    def __init__(self, event: str | None, signers: tuple[str, ...]) -> None:
-        self.event, self.signers = event, signers
+    def __init__(
+        self, event: str | None, signers: tuple[str, ...], shape: Callable[[Any, Mapping[str, Any]], bool] | None = None
+    ) -> None:
+        #: ``shape(ws, event)``: the row matches only an event of exactly this shape (``None``: any event of the type)
+        self.event, self.signers, self.shape = event, signers, shape
+
+    def matches(self, ws: Any, e: Mapping[str, Any]) -> bool:
+        return self.event == e.get("type") and (self.shape is None or bool(self.shape(ws, e)))
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"BreakGlass({self.event!r}, {self.signers!r})"
 
 
 #: verb -> row. Owner only in every row (checked separately: the actor must be a workspace owner).
+def reaffirms_full(ws: Any, e: Mapping[str, Any]) -> bool:
+    """The one ``hub.joined`` a joined full position takes from a local key: the same hub, root and binding, full mode,
+    no aliases (V3-D29, ``orch hub mode full`` again). Anything else is a new binding and goes through the hub."""
+    h = getattr(ws, "hub", None) or {}
+    return (
+        h.get("status") == "joined"
+        and h.get("mode") == "full"
+        and e.get("mode") == "full"
+        and e.get("hub_id") == h.get("hub_id")
+        and e.get("hk_root_pub") == h.get("hk_root_pub")
+        and e.get("binding_seq") == h.get("binding_seq")
+        and e.get("aliases") == []
+    )
+
+
 BREAK_GLASS: Mapping[str, BreakGlass] = {
     "hub.leave": BreakGlass("hub.left", ("owner_device_key",)),
     # L2-C8i-1: with no valid device left, the owner recovers one with the recovery key (D50 ``device.added``, only
@@ -53,6 +74,10 @@ BREAK_GLASS: Mapping[str, BreakGlass] = {
     "device.recover": BreakGlass("device.added", ("pk",)),
     "hub.repin": BreakGlass("hub.repinned", ("pk",)),  # backlog (#876): listed so the set is complete, op refused
     "keys.rotate": BreakGlass(None, ("owner_device_key",)),
+    # V3-D29 (C10): `orch hub mode full` again on a full workspace that was joined before C10 only re-affirms the
+    # binding and triggers the cut-over. The event is a hub.joined, but the model admits one in a joined position only
+    # in exactly that shape (same hub, root and binding_seq, no aliases): `workspace.hub_joined`.
+    "hub.mode": BreakGlass("hub.joined", ("owner_device_key",), reaffirms_full),
 }
 
 
@@ -137,7 +162,7 @@ def local_refusal(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
     if not h or h.get("status") != "joined" or h.get("mode") != "full" or e.get("auth") == "hub":
         return None
     typ = e["type"]
-    row = next((r for r in BREAK_GLASS.values() if r.event == typ), None)
+    row = next((r for r in BREAK_GLASS.values() if r.matches(ws, e)), None)
     if row is None:
         return Refusal(Code.SIGN_HUB_ONLY, f"{typ} is signed through the hub in a full-mode workspace")
     m = ws.members.get(e["actor"]["id"])

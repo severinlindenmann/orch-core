@@ -62,7 +62,7 @@ class EpochKeys(Protocol):
 _ENTRY = {"unbound", "addr", "tls_spki", "hk_op_pub", "mode"}
 _OPTIONAL = {
     "outbox", "addr", "tls_spki", "hxk_pub", "sealed", "rotate_after", "card", "revoked_op_certs", "snapshot",
-    "revoked_op_objs", "direct", "publish_owed",
+    "revoked_op_objs", "direct", "publish_owed", "cut_epoch", "direct_note",
 }  # fmt: skip
 
 
@@ -120,6 +120,10 @@ class HubState:
     #: C10's switch (``open`` | ``closing`` | ``closed``): whether the direct relay path is still open for this
     #: workspace. ``None``: not set (C10 not run). C8 reads it to rotate ``WK_e`` locally and cancel a pending cut-over.
     direct: str | None = None
+    #: C10 M2.3: the epoch the cut-over's own rotation made (no direct device is listed in it); ``None``: not yet
+    cut_epoch: int | None = None
+    #: C10: one short reason the cut-over is not done (preflight, relay or hub down); shown by ``hub status``
+    direct_note: str | None = None
     #: C8 (design-c8 M2.4): hub_id -> the signed ``hub.unbound`` that orch-publish has not acknowledged yet. A leave
     #: tells publish directly (never through the hub); the entry is deleted once publish took it.
     publish_owed: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -145,6 +149,8 @@ class HubState:
             "snapshot": self.snapshot,
             "revoked_op_objs": {k: self.revoked_op_objs[k] for k in sorted(self.revoked_op_objs)},
             "direct": self.direct,
+            "cut_epoch": self.cut_epoch,
+            "direct_note": self.direct_note,
             "publish_owed": {k: self.publish_owed[k] for k in sorted(self.publish_owed)},
         }
 
@@ -178,6 +184,8 @@ class HubState:
             and type(d.get("revoked_op_objs", {})) is dict
             and all(wire.hex16(k) and type(v) is dict for k, v in d.get("revoked_op_objs", {}).items())
             and (d.get("direct") is None or d["direct"] in ("open", "closing", "closed"))
+            and (d.get("cut_epoch") is None or (type(d["cut_epoch"]) is int and d["cut_epoch"] >= 1))
+            and (d.get("direct_note") is None or (type(d["direct_note"]) is str and len(d["direct_note"]) <= 300))
             and type(d.get("publish_owed", {})) is dict
             and all(wire.hex16(k) and type(v) is dict for k, v in d.get("publish_owed", {}).items())
             and d["hub_id"] == wire.hub_id(unb64u(d["hk_root_pub"], 65))
@@ -204,6 +212,8 @@ class HubState:
             snapshot=d.get("snapshot"),
             revoked_op_objs=dict(d.get("revoked_op_objs", {})),
             direct=d.get("direct"),
+            cut_epoch=d.get("cut_epoch"),
+            direct_note=d.get("direct_note"),
             publish_owed=dict(d.get("publish_owed", {})),
         )
 

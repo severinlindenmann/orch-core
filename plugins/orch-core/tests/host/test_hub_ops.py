@@ -126,7 +126,8 @@ def test_selective_to_full_is_only_the_owner_signed_mode_verb(human, served):
     )
     hub, _ = hub_state(served)
     assert hub["status"] == "joined" and hub["mode"] == "full" and hub["binding_seq"] == 2 and hub["member"]
-    assert err(human.prepare_res("hub.mode", {"hub_card": copy.deepcopy(CARD), "mode": "full"})) == "hub.already_joined"
+    # V3-D29 (C10): full mode may be signed again by the owner while the direct path is open (it only triggers the
+    # cut-over); a join is still refused
     assert err(human.prepare_res("hub.join", join_args(mode="full"))) == "hub.already_joined"
 
 

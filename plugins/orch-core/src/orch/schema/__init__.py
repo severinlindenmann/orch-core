@@ -83,13 +83,16 @@ _WORKSPACE_ONLY = frozenset(
         "device.revoked",
         "settings.changed",
         "grant.issued",
+        "grant.requested",
         "grant.revoked",
+        "device.excluded",
         "addon.granted",
         "addon.disabled",
         "addon.purged",
         "hub.joined",
         "hub.left",
         "hub.pinned",
+        "relay.reopened",
     }
 )
 _BOTH_LOGS = frozenset({"policy.changed", "projection.repaired", "restore", "invalid.acknowledged"})

@@ -195,7 +195,7 @@ def test_the_workspace_log_types_are_admin_only_and_a_ticket_type_is_not_custodi
 
 @pytest.mark.parametrize(
     "typ",
-    ["policy.changed", "settings.changed", "member.added", "role.changed", "device.added", "hub.joined", "hub.left",
+    ["member.added", "role.changed", "device.added", "hub.joined", "hub.left",
      "grant.issued", "addon.granted", "restore", "invalid.acknowledged", "artifact.added", "claim.taken",
      "task.done", "workspace.created", "gate.invalidated", "branch.pushed"],
 )  # fmt: skip
@@ -206,22 +206,9 @@ def test_the_types_the_contract_excludes_are_not_custodial_whatever_the_role(typ
         assert e.value.code == "not_custodial"
 
 
-#: hub protocol 8.8 (owner V3-D29): the phase-5 rows core C10 (#878) adds; until then the host refuses them
-PHASE5_PENDING = {
-    ("grant.requested", "workspace"),
-    ("grant.revoked", "workspace"),
-    ("device.excluded", "workspace"),
-    ("policy.changed", "workspace"),
-    ("policy.changed", "ticket"),
-    ("settings.changed", "workspace"),
-}
-
-
 def test_the_table_is_exactly_the_contract_table():
     rows = {(r["type"], r["log"]): r["min_role"] for r in V["phase4"]["custodial_types"]}
-    assert PHASE5_PENDING <= set(rows)
-    want = {k: v for k, v in rows.items() if k not in PHASE5_PENDING or k in C.CUSTODIAL_TYPES}
-    assert C.CUSTODIAL_TYPES == want
+    assert C.CUSTODIAL_TYPES == rows  # incl. the six phase-5 rows (hub protocol 8.8, C10)
 
 
 def test_a_read_role_signs_nothing_and_an_edit_role_cannot_start_an_admin_type():

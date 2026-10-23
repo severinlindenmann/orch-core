@@ -127,7 +127,13 @@ def test_a_user_the_snapshot_gives_no_role_is_denied(w, uid):
 
 def test_a_hub_event_of_a_type_outside_the_custodial_list_is_refused_by_the_model(w):
     e = w.build_unappended(
-        "workspace", "settings.changed", hub_actor(U2), roster_v=w.roster_v, set={"claim_ttl_min": 30}, **hub_fields()
+        "workspace",
+        "role.changed",
+        hub_actor(U2),
+        roster_v=w.roster_v,
+        person="p_" + "a" * 32,
+        role="member",
+        **hub_fields(),
     )
     r = admit(w.state(), e, log="workspace")
     assert (r.code, r.detail) == (Code.HUB_DENIED, "not_custodial")

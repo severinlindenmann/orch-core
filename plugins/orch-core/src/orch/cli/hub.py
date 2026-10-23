@@ -45,7 +45,7 @@ _USAGE = (
     "usage: orch hub {join INVITE --hub-card FILE [--hub-id HEX32] [--hub-addr HOST:PORT] [--mode selective|full] "
     "[--owner-user-id HEX32] | mode full --hub-card FILE [--hub-addr HOST:PORT] | leave "
     "| connect [INVITE] --hub-card FILE [--hub-addr HOST:PORT] | unbind "
-    "| status [--refresh [--hub-card FILE]] | share rule list | share rule add|remove RULE | share revoke REF "
+    "| reopen | status [--refresh [--hub-card FILE]] | share rule list | share rule add|remove RULE | share revoke REF "
     "| share sync} [--json]"
 )
 _CARD_MAX = 64 * 1024
@@ -58,7 +58,7 @@ def _parser() -> argparse.ArgumentParser:
 
     p = Quiet(prog="orch hub", add_help=False)
     p.add_argument(
-        "cmd", choices=("join", "mode", "leave", "connect", "unbind", "status", "share", "rotate", "history")
+        "cmd", choices=("join", "mode", "leave", "connect", "unbind", "status", "share", "rotate", "history", "reopen")
     )
     p.add_argument("--tag")
     p.add_argument("--type", dest="ttype")
@@ -112,7 +112,17 @@ def _read_card(path: str) -> dict[str, Any]:
 
 
 def _check_shape(a: argparse.Namespace) -> None:
-    n = {"join": 1, "mode": 1, "connect": 1, "leave": 0, "unbind": 0, "status": 0, "rotate": 0, "history": 0}[a.cmd]
+    n = {
+        "join": 1,
+        "mode": 1,
+        "connect": 1,
+        "leave": 0,
+        "unbind": 0,
+        "status": 0,
+        "rotate": 0,
+        "history": 0,
+        "reopen": 0,
+    }[a.cmd]
     if len(a.rest) != n and not (a.cmd == "connect" and not a.rest):  # connect: the invite is for a new join only
         raise PubError("invalid.input", _USAGE, 2)
     if (a.refresh and a.cmd != "status") or (a.cmd == "status" and a.hub_card and not a.refresh):
@@ -170,7 +180,10 @@ def _emit(out: TextIO, as_json: bool, data: dict[str, Any], text: str) -> None:
     out.write((json.dumps({"ok": True, "data": data}) if as_json else text) + "\n")
 
 
-_FULL_WORDS = "full mode: the hub will be able to read everything in this workspace"
+_FULL_WORDS = (
+    "full mode: the hub will be able to read everything in this workspace, and your phones' direct pairing ends: "
+    "the hub becomes the only path"
+)
 
 
 def _connect(target: Any, env: Mapping[str, str], a: argparse.Namespace, out: TextIO) -> int:
@@ -223,7 +236,8 @@ def review_text(d: Mapping[str, Any]) -> str:
         lines.append(f"  [{x['type']}] {what} at {x.get('at')} by {x.get('user')} via {x.get('channel')}")
         rev = x.get("revert")
         lines.append(
-            "    undo here: orch " + clean_line(json.dumps(rev, sort_keys=True))
+            "    undo here: open the dashboard (Settings) and set it back to what it was before the hub changed it: "
+            + clean_line(json.dumps({k: v for k, v in rev.items() if k != "op"}, sort_keys=True))
             if rev
             else f"    {clean_line(str(x.get('note', '')))}"
         )
@@ -319,6 +333,19 @@ def main(
             return _connect(target, env, a, out)
         if not _tty_ok():
             raise PubError("invalid.input", "no terminal to sign on: run this in a terminal; nothing was signed", 5)
+        if a.cmd == "reopen":  # V3 C10 M4: after `orch hub leave`; the owner's own key, then the host acts
+            _sign(target, "relay.reopen", {})
+            out.write("signed: the reopening is recorded in your workspace log\n")
+            got = _call(target, "hub.reopen", {}, env)
+            if not got.get("relay_started", True):  # the path is open, but the relay link did not come up (L2-C10i-4)
+                _emit(
+                    out, a.json, got,
+                    f"the direct relay path is open again, but the relay link did not start ({got.get('relay')}): "
+                    "orch host relay start",
+                )  # fmt: skip
+                return 3
+            _emit(out, a.json, got, "ok the direct relay path is open again; pair your phones again")
+            return 0
         if a.cmd == "mode":
             out.write(f"{_FULL_WORDS}. Review it, then sign with your own key.\n")
             _sign(target, "hub.mode", {"hub_card": _read_card(a.hub_card), "mode": "full"})
@@ -475,4 +502,12 @@ def _status_text(d: Mapping[str, Any]) -> str:
         )
     snap = d.get("snapshot")
     roles = f", group snapshot v{snap['version']} ({len(snap['roles'])} roles)" if snap else ""
+    direct = d.get("direct")
+    if direct in ("closing", "closed"):
+        queued += f", direct relay path {direct}" + (f" ({d['direct_note']})" if d.get("direct_note") else "")
+    elif d.get("direct_pre_c10") and d.get("joined"):
+        queued += (
+            ", the direct relay path is still open (this full join was made before the switch: run orch hub mode full "
+            "again to sign the new words)"
+        )
     return f"hub {d['hub_id']}: {state} ({d.get('mode')}){link}{roles}{queued}"

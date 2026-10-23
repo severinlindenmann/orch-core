@@ -175,8 +175,8 @@ export function VerdictEvidence({ ticket, dialog = true, onPreview, name = () =>
                 </div>
               ))
               return g.kind === 'agent' ? (
-                <div key={g.id} role="group" aria-label={`Written by the agent ${visible(g.who)}`} data-testid="agent-region" className="space-y-2 rounded-md border border-info/30 bg-info-soft/40 p-2">
-                  <p className="text-[12px] text-text-muted">Added by {visible(g.who)}. Your verdict covers these files exactly as they are now. Their content and any quoted notes are the agent&apos;s own words.</p>
+                <div key={g.id} role="group" aria-label={g.who === 'An agent' ? 'Written by the agent' : `Written by the agent ${visible(g.who)}`} data-testid="agent-region" className="space-y-2 rounded-md border border-info/30 bg-info-soft/40 p-2">
+                  <p className="text-[12px] text-text-muted">Added by {g.who === 'An agent' ? 'an agent' : visible(g.who)}. Your verdict covers these files exactly as they are now. Their content and any quoted notes are the agent&apos;s own words.</p>
                   {body}
                 </div>
               ) : (

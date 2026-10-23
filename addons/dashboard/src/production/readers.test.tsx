@@ -16,14 +16,14 @@ const T = { timeout: 5000 }
 const MARA_DEVICE = 'd_' + '2'.repeat(32)
 const state = useFakeHost(() => [workspace({ id: A, features: [...READS, ...DO, 'actions', 'readers'] })])
 
-it('readers_old: the Signing card says why in its own sentence and links to Settings → Devices', async () => {
+it('readers_old: the Signing card says why in its own sentence and links to Settings → Members', async () => {
   state.host.workspaces[0].click = { custody: 'convenience', enabled: true, available: false, problem: 'readers_old' }
   show('/w/DEMO/settings/general')
   const card = await screen.findByTestId('workspace-card-signing', {}, T)
   expect(card).toHaveTextContent(SIGNER_PROBLEM_SENTENCE.readers_old)
   expect(card).not.toHaveTextContent('(readers_old)')
-  const link = within(card).getByRole('link', { name: 'See which devices need an update' })
-  expect(link.getAttribute('href')).toMatch(/\/settings\/devices$/)
+  const link = within(card).getByRole('link', { name: 'A device needs an update' })
+  expect(link.getAttribute('href')).toMatch(/\/settings\/members$/)
 })
 
 it('a hand-off refused with sign.convenience_readers says the reason in plain words and names the device, not its id', async () => {

@@ -215,8 +215,12 @@ it('a device below the required level gets the "needs an update" chip; the signi
   const list = await screen.findByRole('list', { name: 'People' }, T)
   await waitFor(() => expect(within(list).getAllByTestId('device-needs-update')).toHaveLength(1), T)
   const chip = within(list).getByTestId('device-needs-update')
-  expect(chip).toHaveTextContent('needs an update')
+  expect(chip).toHaveTextContent('Device update needed')
   expect(chip.closest('[data-testid="person-card"]')).toHaveTextContent('Tom')
+  const card = chip.closest('[data-testid="person-card"]')!
+  expect(card.querySelector('details')).not.toHaveAttribute('open')
+  await userEvent.setup().click(chip) // opens that person's details
+  expect(card.querySelector('details')).toHaveAttribute('open')
 })
 
 it('a person whose device is below the level is never flagged while that is the computer signing with one click', async () => {
@@ -313,8 +317,8 @@ it('the member form refuses a key or certificate that cannot be one, before any 
 it('Gates: the code review is never approved by the assignees and always independent; the policy goes out in full', async () => {
   const user = userEvent.setup()
   show('/w/DEMO/settings/gates')
-  expect(await screen.findByRole('heading', { name: 'Who has to approve?' }, T)).toBeInTheDocument()
-  expect(screen.getByText(/ends the approvals already given at that step/)).toBeInTheDocument()
+  expect(await screen.findByRole('heading', { name: 'Who approves what?' }, T)).toBeInTheDocument()
+  expect(screen.getByText(/A change asks everyone again at that step/)).toBeInTheDocument()
   const matrix = screen.getByRole('table', { name: 'Code review: who may approve' })
   expect(within(matrix).getByRole('checkbox', { name: 'The assignees may not approve' })).toBeChecked()
   expect(within(matrix).getByRole('checkbox', { name: 'The assignees may not approve' })).toBeDisabled()
@@ -332,7 +336,7 @@ it('Gates: the code review is never approved by the assignees and always indepen
 it('Gates: another gate changes approvers and count; a policy with no approver is not saved', async () => {
   const user = userEvent.setup()
   show('/w/DEMO/settings/gates')
-  await screen.findByRole('heading', { name: 'Who has to approve?' }, T)
+  await screen.findByRole('heading', { name: 'Who approves what?' }, T)
   const who = screen.getByRole('table', { name: 'Plan: who may approve' })
   await user.click(within(who).getByRole('checkbox', { name: 'Owners may approve' }))
   expect(screen.getAllByRole('alert')[0]).toHaveTextContent('Pick at least one kind of approver.')
@@ -352,11 +356,11 @@ it('Gates: a non-owner reads the policies and cannot change them', async () => {
   state.host.workspaces[0].me = MARA
   state.host.workspaces[0].role = 'maintainer'
   show('/w/DEMO/settings/gates')
-  await screen.findByRole('heading', { name: 'Who has to approve?' }, T)
+  await screen.findByRole('heading', { name: 'Who approves what?' }, T)
   expect(screen.getByRole('button', { name: 'Change plan policy' })).toBeDisabled()
   expect(screen.getAllByText('Only owners can change who approves.').length).toBe(7) // three questions and four custom rules
-  expect(screen.getByLabelText('Plan')).toBeDisabled()
-  expect(screen.getByRole('switch', { name: 'Also review the code before it lands' })).toBeDisabled()
+  expect(screen.getByLabelText('Who approves the plan?')).toBeDisabled()
+  expect(screen.getByRole('switch', { name: 'Require a code review before changes are added' })).toBeDisabled()
 })
 
 it('Agent access: an owner stops any active access in one step (a reason, one button), by hand-off', async () => {
@@ -453,7 +457,7 @@ it('settings, policy and grant live items refresh the settings queries', async (
   const { invalidateLive } = await vi.importActual<typeof import('@/api/useLiveUpdates')>('@/api/useLiveUpdates')
   const { queryClient } = await import('@/production/Shell')
   show('/w/DEMO/settings/gates')
-  await screen.findByRole('heading', { name: 'Who has to approve?' }, T)
+  await screen.findByRole('heading', { name: 'Who approves what?' }, T)
   const spy = vi.spyOn(queryClient, 'invalidateQueries')
   for (const type of ['settings.changed', 'policy.changed', 'grant.revoked']) invalidateLive(queryClient, ID, 'items', [{ id: '9.e', type }])
   const keys = spy.mock.calls.map((c) => JSON.stringify((c[0] as { queryKey: unknown[] }).queryKey))
@@ -477,7 +481,7 @@ void policy
 it('Gates: a one-person workspace explains that the verify rule does not block its only member', async () => {
   state.host.workspaces[0].roster = state.host.workspaces[0].roster.slice(0, 1)
   show('/w/DEMO/settings/gates')
-  await screen.findByRole('heading', { name: 'Who has to approve?' }, T)
+  await screen.findByRole('heading', { name: 'Who approves what?' }, T)
   expect(await screen.findByTestId('gate-alone', {}, T)).toHaveTextContent('only member')
 })
 

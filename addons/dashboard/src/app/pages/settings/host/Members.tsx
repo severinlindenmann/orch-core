@@ -194,7 +194,7 @@ export function HostMembers({ workspace }: { workspace: Workspace }) {
         </p>
       )}
       <ul aria-label="People" className="space-y-2">
-        {members.map((m) => {
+        {members.map((m, idx) => {
           const lastOwner = m.role === 'owner' && owners === 1
           const mine = m.person === viewer
           const below = deviceBelow(m.devices, required, mine && signsHere)
@@ -210,7 +210,7 @@ export function HostMembers({ workspace }: { workspace: Workspace }) {
                   </div>
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-text-muted">
                     <span>{deviceLine(m.devices, mine)}</span>
-                    {below && <span data-testid="device-needs-update" className="rounded-full border border-warning/50 px-2 py-px text-[11px] text-warning">needs an update</span>}
+                    {below && <button type="button" data-testid="device-needs-update" onClick={() => { const d = document.getElementById(`person-details-${idx}`) as HTMLDetailsElement | null; if (d) { d.open = true; d.scrollIntoView({ block: 'nearest' }) } }} className="rounded-full border border-warning/50 px-2 py-px text-[11px] text-warning hover:bg-warning/10">Device update needed</button>}
                   </div>
                 </div>
                 <select
@@ -241,7 +241,7 @@ export function HostMembers({ workspace }: { workspace: Workspace }) {
                   </Button>
                 )}
               </div>
-              <details className="mt-2 text-[12px] text-text-muted">
+              <details id={`person-details-${idx}`} className="mt-2 text-[12px] text-text-muted">
                 <summary className="cursor-pointer">Details</summary>
                 <div className="mt-2 space-y-2">
                   <ul aria-label={`What ${name} can do`} className="flex flex-wrap gap-1.5">

@@ -363,7 +363,7 @@ export function Sidebar() {
             </a>
           </RailTip>
 
-          {hasFeature('grants') && <RailTip label={grant ? `Agents granted until ${grantTime}` : 'No grant · run orch grant'}>
+          {hasFeature('grants') && <RailTip label={grant ? `Agents can work until ${grantTime}` : 'Agents have no access. Give access in Settings, Agent access.'}>
             <div
               className={cn(
                 'flex items-center gap-2 py-1 text-[11px]',
@@ -372,7 +372,7 @@ export function Sidebar() {
               )}
             >
               {grant ? <ShieldCheck className="size-3.5 shrink-0" /> : <ShieldOff className="size-3.5 shrink-0" />}
-              <span className={label}>{grant ? `agents granted until ${grantTime}` : 'no grant · run orch grant'}</span>
+              <span className={label}>{grant ? `Agents can work until ${grantTime}` : 'Agents have no access'}</span>
             </div>
           </RailTip>}
 

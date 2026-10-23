@@ -73,7 +73,7 @@ export function HostGeneral({ workspace }: { workspace: Workspace }) {
         <div className="flex shrink-0 flex-col items-center gap-1">
           <WorkspaceIconFor workspace={workspace} className="size-11 bg-brand-soft" />
           {workspace.icon_known && <Popover open={iconOpen} onOpenChange={setIconOpen}>
-            <PopoverTrigger asChild><Button variant="ghost" size="sm">Change</Button></PopoverTrigger>
+            <PopoverTrigger asChild><button type="button" className="rounded px-1 text-[12px] text-text-muted underline-offset-2 hover:text-text hover:underline">Change</button></PopoverTrigger>
             <PopoverContent align="start" className="w-80 max-w-[calc(100vw-2rem)]">
               <WorkspaceIconPicker workspace={workspace} canEdit={canChangeSettings(role) && served}
                 onSave={(choice) => { setIconOpen(false); ask({ title: 'Change the workspace icon', action: { action: 'icon_set', icon: choice }, autoStart: true }) }} />

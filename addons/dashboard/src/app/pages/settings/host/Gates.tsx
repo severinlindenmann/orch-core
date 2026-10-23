@@ -17,6 +17,7 @@ import { useViewerPerson, useViewerRole } from './useViewerRole'
 import { useSettingsHandoff } from './useSettingsHandoff'
 
 const STEPS: readonly PolicyGate[] = ['requirements', 'plan', 'verify']
+const STEP_QUESTION: Record<string, string> = { requirements: 'Who approves the requirements?', plan: 'Who approves the plan?', verify: 'Who checks the finished work?' }
 
 const sentence = (label: string, p: HostPolicy) => {
   const who = p.approvers.map((a) => TOKEN_LABEL[a as keyof typeof TOKEN_LABEL] ?? a).join(', ')
@@ -158,7 +159,7 @@ function ApprovalStep({ gate, current, members, viewer, mayChange, why, ask }: {
   const id = `step-${gate}`
   return (
     <div className="rounded-lg border border-border bg-surface p-4" data-testid={`approval-${gate}`}>
-      <Label htmlFor={id} className="text-[14px] font-medium">{label}</Label>
+      <Label htmlFor={id} className="text-[14px] font-medium">{STEP_QUESTION[gate] ?? label}</Label>
       <select
         id={id}
         value={preset ?? 'custom'}
@@ -170,7 +171,7 @@ function ApprovalStep({ gate, current, members, viewer, mayChange, why, ask }: {
         className="mt-2 h-9 w-full rounded-md border border-border bg-bg px-2 text-[13px] disabled:cursor-not-allowed disabled:opacity-60"
         aria-describedby={why ? `${id}-why` : undefined}
       >
-        {preset === null && <option value="custom" disabled>Custom rule (see Custom rules below)</option>}
+        {preset === null && <option value="custom" disabled>Custom rule (set under Custom rules)</option>}
         {APPROVAL_PRESETS.map((k) => (
           <option key={k} value={k} disabled={k === 'two' && canApprove < 2 && preset !== 'two'}>{labelOf(k)}</option>
         ))}
@@ -179,10 +180,9 @@ function ApprovalStep({ gate, current, members, viewer, mayChange, why, ask }: {
       {why && <OwnerNote id={`${id}-why`}>{why}</OwnerNote>}
       {unmet && (
         <div role="alert" data-testid={`approval-${gate}-unmet`} className="mt-3 space-y-1 rounded-md border border-warning/50 px-3 py-2 text-[13px]">
-          <p className="font-medium text-warning">This step can never be met.</p>
-          <p className="text-text-muted">
-            It needs {unmet.needs} {unmet.needs === 1 ? 'person' : 'people'} to approve, but only {unmet.has} can. Tickets would wait here for ever. Pick another choice above, or add a person under Members.
-          </p>
+          <p className="font-medium text-warning">{plural(unmet.needs, 'approval')} required; only {unmet.has} {unmet.has === 1 ? 'person qualifies' : 'people qualify'}.</p>
+          <p className="text-text-muted">Tickets would wait here for ever.</p>
+          <Button type="button" size="sm" variant="outline" onClick={() => document.getElementById(id)?.focus()}>Change rule</Button>
         </div>
       )}
     </div>
@@ -195,7 +195,7 @@ function CodeReviewSwitch({ current, mayChange, ask }: { current: HostPolicy; ma
   const some = Array.isArray(current.applies)
   const flip = () =>
     ask({
-      title: on ? 'Turn the code review off' : 'Also review the code before it lands',
+      title: on ? 'Turn the code review off' : 'Require a code review before changes are added',
       action: { action: 'policy_set', gate: 'code', policy: canonicalPolicy({ ...current, applies: on ? 'off' : 'all', not: current.not.includes('assignees') ? current.not : [...current.not, 'assignees'], independent: true }) },
       autoStart: true,
       form: null,
@@ -204,7 +204,8 @@ function CodeReviewSwitch({ current, mayChange, ask }: { current: HostPolicy; ma
     <div className="rounded-lg border border-border bg-surface p-4">
       <div className="flex items-center gap-3">
         <div className="min-w-0 flex-1">
-          <div id="code-review-label" className="text-[14px] font-medium">Also review the code before it lands</div>
+          <div id="code-review-label" className="text-[14px] font-medium">Require a code review before changes are added</div>
+          <p className="text-[12px] text-text-muted">Someone other than the person who did the work reviews the code.</p>
           {some && <p className="text-[12px] text-text-muted">Only for some ticket types. Change that under Custom rules.</p>}
         </div>
         <Switch checked={on} aria-labelledby="code-review-label" disabled={!mayChange} onCheckedChange={flip} />
@@ -230,10 +231,11 @@ export function HostGates({ workspace }: { workspace: Workspace }) {
   return (
     <div className="space-y-4">
       <div>
-        <h2 className="text-base font-semibold">Who has to approve?</h2>
-        <p className="mt-1 text-[13px] text-text-muted">
-          This workspace has {plural(owners, 'owner')}{approvers > 0 ? ` and ${plural(approvers, 'maintainer')}` : ''}. A ticket can only tighten these rules. A change ends the approvals already given at that step: they are asked again.
-        </p>
+        <h2 className="text-base font-semibold">Who approves what?</h2>
+        <div className="mt-1 text-[13px] text-text-muted">
+          Pick who has to say yes at each step. A change asks everyone again at that step.
+          <details className="mt-1 text-[12px]"><summary className="cursor-pointer">Details</summary>This workspace has {plural(owners, 'owner')}{approvers > 0 ? ` and ${plural(approvers, 'maintainer')}` : ''}. A ticket can only tighten these rules.</details>
+        </div>
         {data.policy_at && (
           <p className="mt-1 text-[12px] text-text-faint">
             Last changed {fmtDateTime(data.policy_at.at)} by <Raw>{people.find((m) => m.person === data.policy_at?.by)?.name ?? data.policy_at.by}</Raw>.

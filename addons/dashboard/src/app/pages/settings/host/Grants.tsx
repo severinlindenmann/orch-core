@@ -123,7 +123,7 @@ export function HostGrants({ workspace }: { workspace: Workspace }) {
                 </div>
                 <p className="text-[13px]">Can work on tickets they are allowed to.</p>
                 <p className="text-[13px] tabular-nums text-text-muted">
-                  Until {fmtDateTime(g.expires_at)}{g.sessions > 0 ? ` · ${plural(g.sessions, 'agent')} running` : ''}
+                  Agents can work until {fmtDateTime(g.expires_at)}{g.sessions > 0 ? ` · ${plural(g.sessions, 'agent')} running` : ''}
                 </p>
                 {orphan && <p data-testid="grant-not-held" className="text-[12px] text-text-muted">The agent runner on this Mac no longer holds this access (an update resets it), so agents cannot use it. Give access again from the top bar, or stop this one.</p>}
                 {canRevokeHostGrant(role, g.person, viewer) && (

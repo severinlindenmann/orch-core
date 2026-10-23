@@ -81,6 +81,13 @@ def _parser() -> argparse.ArgumentParser:
     dr.add_argument("--state", help="hub state dir (default: $ORCH_HUB_STATE)")
     dr.add_argument("--listen", help="the running hub's loopback host:port: its TLS key must match the card pin")
     dr.add_argument("--publish-url", help="orch-publish base URL: its /v2/hub/card route must answer")
+    dr.add_argument("--link-listen", help="the running hub's network link IP:port (split dev layout): pin + bind rules")
+    dr.add_argument("--dev-shared-machine", action="store_true", help="the hub runs with this dev exception (WARN)")
+    dr.add_argument(
+        "--hub-user", default="orch-hub", help="the hub's OS user (default orch-hub; split hub: orch-hub-split)"
+    )
+    dr.add_argument("--fw-dump", help="dump of the loaded hub table (default /run/orch/hub-fw.loaded.json)")
+    dr.add_argument("--link-iface", default="wt0", help="the only interface the network link port accepts on")
     dr.add_argument(
         "--layout", choices=("auto", "one-vps", "split"), default="auto", help="assert the layout (default: infer)"
     )
@@ -158,11 +165,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"orch-hub: {e}", file=sys.stderr)
             return 1
         kw = {"fw_file": Path(args.fw_file)} if args.fw_file else {}
+        if args.fw_dump:
+            kw["fw_dump"] = Path(args.fw_dump)
         return (
             1
             if run(
                 state,
                 listen=args.listen,
+                link_listen=args.link_listen,
+                dev_shared_machine=args.dev_shared_machine,
+                hub_user=args.hub_user,
+                link_iface=args.link_iface,
                 publish_url=args.publish_url,
                 out=sys.stdout,
                 layout_flag=args.layout,

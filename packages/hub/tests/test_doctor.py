@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import json
 import os
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -10,11 +11,25 @@ from pathlib import Path
 
 import pytest
 
+from orch_hub import doctor as D
 from orch_hub.cli import main
 from orch_hub.doctor import Accounts, run
 from orch_hub.keys import HubKeys
 from orch_hub.link import LinkServer, Registry
 from orch_hub.serve import REGISTRY_FILE, FixedInvites
+
+
+@pytest.fixture(autouse=True)
+def _no_remote_dials(monkeypatch):
+    """Doctor dials only loopback in tests; a non-loopback address (the split hub) must not wait for a timeout."""
+    real = D.tls.connect_pinned
+
+    def dial(host, port, pin, **kw):
+        if host != "127.0.0.1":
+            raise D.tls.LinkClosed("test: no route")
+        return real(host, port, pin, **kw)
+
+    monkeypatch.setattr(D.tls, "connect_pinned", dial)
 
 
 @pytest.fixture
@@ -160,7 +175,25 @@ def test_doctor_is_read_only_a_stray_generation_survives(state, capsys):
 
 MISSING_FW = Path("/nonexistent/hub-fw.nft")
 HUB_UID = 986
-LOADED_OK = "ip daddr 127.0.0.1 tcp dport 8105 meta skuid != { 0, 986, 992 } reject with tcp reset"
+
+
+def _jrule(chain, *, iface=None, iface_key="oifname", port=8105, ids=None, verdict="reject"):
+    expr = []
+    if iface:
+        expr.append({"match": {"op": "==", "left": {"meta": {"key": iface_key}}, "right": iface}})
+    expr.append({"match": {"op": "==", "left": {"payload": {"protocol": "tcp", "field": "dport"}}, "right": port}})
+    if ids is not None:
+        expr.append({"match": {"op": "!=", "left": {"meta": {"key": "skuid"}}, "right": {"set": sorted(ids)}}})
+    expr.append({verdict: {}} if verdict != "reject" else {"reject": {"type": "tcp reset"}})
+    return {"rule": {"family": "inet", "table": "orch_hub", "chain": chain, "expr": expr}}
+
+
+def _dump(path, rules=None, *, hooks=(("out", "output"), ("in", "input"))):
+    items = [{"metainfo": {"version": "1.1.3"}}, {"table": {"family": "inet", "name": "orch_hub"}}]
+    items += [{"chain": {"table": "orch_hub", "name": n, "hook": h}} for n, h in hooks]
+    items += rules if rules is not None else [_jrule("out", iface="lo", ids={0, 986, 992})]
+    path.write_text(json.dumps({"nftables": items}))
+    return path
 
 
 def _acc(extra=None, *, groups=None, drop=()):
@@ -185,17 +218,19 @@ def _fw(tmp_path, ids='0, "orch-hub", "orch-host-ws2"', port=8105, verdict="reje
     return f
 
 
-def _run(state, acc, fw, *, loaded=lambda: LOADED_OK, listen="127.0.0.1:8105", unit="orch-hub", suid=HUB_UID, **kw):
+def _run(state, acc, fw, *, dump=None, listen="127.0.0.1:8105", unit="orch-hub", suid=HUB_UID, **kw):
     out = io.StringIO()
+    if dump is None:  # a loaded table that agrees with the canonical file (when the file's directory exists)
+        dump = _dump(fw.parent / "loaded.json") if fw.parent.is_dir() else fw.parent / "loaded.json"
     run(
         state,
         listen=listen,
         out=out,
         accounts=acc,
         fw_file=fw,
+        fw_dump=dump,
         state_uid=suid,
         unit_user=lambda: unit,
-        nft_loaded=loaded,
         **kw,
     )
     return out.getvalue()
@@ -211,7 +246,6 @@ def test_colocation_good_layout_passes_and_is_reported(state, tmp_path):
         "link firewall allows only",
     ):
         assert f"PASS {name}" in out, out
-    assert "not readable" not in out
 
 
 def test_split_layout_has_no_colocation_checks(state):
@@ -286,7 +320,7 @@ def test_unit_user_unknown_still_checks_state_owner(state, tmp_path):
         fw_file=_fw(tmp_path),
         state_uid=HUB_UID,
         unit_user=lambda: None,
-        nft_loaded=lambda: LOADED_OK,
+        fw_dump=_dump(tmp_path / "loaded2.json"),
     )
     assert "PASS hub runs as its own OS user" in out.getvalue()
 
@@ -356,12 +390,128 @@ def test_link_firewall_needs_listen(state, tmp_path):
     assert "needs --listen" in _run(state, _acc(), _fw(tmp_path), listen=None)
 
 
-def test_loaded_ruleset_drift_fails_and_unreadable_is_stated(state, tmp_path):
-    bad = "ip daddr 127.0.0.1 tcp dport 8105 meta skuid != { 0, 986, 991, 992 } reject with tcp reset"
-    out = _run(state, _acc(), _fw(tmp_path), loaded=lambda: bad)
+def test_loaded_table_must_agree_with_the_file(state, tmp_path):
+    fw = _fw(tmp_path)
+    # an extra uid in the kernel
+    extra = _dump(tmp_path / "a.json", [_jrule("out", iface="lo", ids={0, 986, 991, 992})])
+    out = _run(state, _acc(), fw, dump=extra)
     assert "FAIL link firewall allows only root, hub and host users: loaded ruleset allows uid(s) [991]" in out
-    out = _run(state, _acc(), _fw(tmp_path), loaded=lambda: "table inet other {}")
-    assert "loaded ruleset: no 'tcp dport 8105" in out
-    out = _run(state, _acc(), _fw(tmp_path), loaded=lambda: None)
-    assert "PASS link firewall allows only" in out
-    assert "INFO loaded firewall rules not readable (needs root): only the file was checked" in out
+    # a different (narrower) uid set: not a security hole, but drift all the same
+    narrow = _dump(tmp_path / "b.json", [_jrule("out", iface="lo", ids={0, 986})])
+    assert "the loaded ruleset differs from the firewall file" in _run(state, _acc(), fw, dump=narrow)
+    # the old hand-loaded form (ip daddr, no oifname lo)
+    old = _dump(tmp_path / "c.json", [_jrule("out", ids={0, 986, 992})])
+    assert "the rule must match oifname lo (found none)" in _run(state, _acc(), fw, dump=old)
+    # wrong port, and no rule at all
+    wrong = _dump(tmp_path / "d.json", [_jrule("out", iface="lo", port=8106, ids={0, 986, 992})])
+    assert "loaded ruleset: no 'tcp dport 8105" in _run(state, _acc(), fw, dump=wrong)
+    none = _dump(tmp_path / "e.json", [])
+    assert "loaded ruleset: no 'tcp dport 8105" in _run(state, _acc(), fw, dump=none)
+
+
+def test_missing_or_garbage_dump_fails(state, tmp_path):
+    fw = _fw(tmp_path)
+    assert "loaded-rule dump" in _run(state, _acc(), fw, dump=tmp_path / "nope.json")
+    assert "missing: orch-hub-fw.service writes it" in _run(state, _acc(), fw, dump=tmp_path / "nope.json")
+    bad = tmp_path / "bad.json"
+    bad.write_text("not json")
+    assert "is not JSON" in _run(state, _acc(), fw, dump=bad)
+    bad.write_text("[]")
+    assert "is not nft JSON" in _run(state, _acc(), fw, dump=bad)
+
+
+def test_file_without_oifname_lo_fails(state, tmp_path):
+    f = tmp_path / "hub-fw.nft"
+    f.write_text(
+        "table inet orch_hub { chain out { tcp dport 8105 meta skuid != { 0, orch-hub, orch-host-ws2 } reject } }"
+    )
+    out = _run(state, _acc(), f)
+    assert "firewall file: the rule must match oifname lo (found none)" in out
+
+
+# ---- split dev layout (D12b, G9) --------------------------------------------------------------------------------
+
+SURFACE = [
+    _jrule("in", iface="wt0", iface_key="iifname", port=8106, verdict="accept"),
+    _jrule("in", port=8106, verdict="drop"),
+]
+
+
+def _split_acc():
+    users = {
+        "orch-hub-split": (900, 900),
+        "orch-host-ws2": (992, 984),
+        "agent-ws2": (991, 983),
+        "orch-relay": (995, 987),
+    }
+    return Accounts(users, {})
+
+
+def _split(state, tmp_path, rules=None, *, card_dev=True, **kw):
+    out = io.StringIO()
+    dump = _dump(tmp_path / "split.json", SURFACE if rules is None else rules)
+    run(
+        state,
+        link_listen=kw.pop("link_listen", "100.71.244.99:8106"),
+        out=out,
+        accounts=kw.pop("acc", _split_acc()),
+        fw_dump=dump,
+        hub_user="orch-hub-split",
+        state_uid=900,
+        unit_user=lambda: "orch-hub-split",
+        dev_shared_machine=kw.pop("dev_shared", True),
+        **kw,
+    )
+    return out.getvalue()
+
+
+def test_split_hub_dev_exception_warns_and_checks_surface(state, tmp_path):
+    out = _split(state, tmp_path)
+    assert "PASS network link bind is allowed here" in out
+    assert "WARN dev split on a shared machine: this proves the network link, not machine separation" in out
+    assert "PASS hub runs as its own OS user" in out  # hub_user is a parameter
+    assert "PASS network link port is limited to wt0" in out
+    assert "TLS pin" in out  # the pin check runs against the link address (it fails here: nothing listens)
+
+
+def test_split_hub_without_the_flag_fails_with_host_users(state, tmp_path):
+    out = _split(state, tmp_path, dev_shared=False)
+    assert "FAIL network link bind is allowed here" in out and "split layout" in out
+
+
+@pytest.mark.parametrize("addr", ["0.0.0.0:8106", "[::]:8106", "8.8.8.8:8106", "example.com:8106"])
+def test_split_hub_bad_bind_addresses_fail(state, tmp_path, addr):
+    out = _split(state, tmp_path, link_listen=addr)
+    assert "FAIL network link bind is allowed here" in out, out
+
+
+def test_split_hub_surface_failures(state, tmp_path):
+    assert "no 'tcp dport 8106 iifname wt0 accept'" in _split(state, tmp_path, rules=[SURFACE[1]])
+    assert "no 'tcp dport 8106 drop'" in _split(state, tmp_path, rules=[SURFACE[0]])
+    assert "comes before" in _split(state, tmp_path, rules=[SURFACE[1], SURFACE[0]])
+    any_if = _jrule("in", iface="eth0", iface_key="iifname", port=8106, verdict="accept")
+    assert "accepted on an interface other than wt0" in _split(state, tmp_path, rules=[*SURFACE, any_if])
+    assert "FAIL network link port is limited to wt0" in _split(state, tmp_path, rules=[])
+
+
+def test_clean_split_machine_has_no_exception_warning(state, tmp_path):
+    acc = Accounts({"orch-hub-split": (900, 900)}, {})
+    out = io.StringIO()
+    run(
+        state,
+        link_listen="10.1.2.3:8106",
+        out=out,
+        accounts=acc,
+        hub_user="orch-hub-split",
+        state_uid=900,
+        dev_shared_machine=False,
+    )
+    assert "PASS network link bind is allowed here" in out.getvalue()
+    assert "WARN" not in out.getvalue()
+    assert "hub alone" in out.getvalue()
+
+
+def test_listen_and_link_listen_are_exclusive(state):
+    out = io.StringIO()
+    run(state, listen="127.0.0.1:1", link_listen="10.1.2.3:8106", out=out, accounts=Accounts({}, {}), state_uid=0)
+    assert "FAIL listen addresses" in out.getvalue()

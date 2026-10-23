@@ -20,6 +20,7 @@ from dataclasses import dataclass
 
 HOST_PREFIX = "orch-host-"
 AGENT_PREFIX = "agent-"
+EDGE_PREFIXES = ("orch-relay", "orch-publish")
 
 _PRIVATE_V4 = (
     ipaddress.ip_network("10.0.0.0/8"),
@@ -62,6 +63,10 @@ class Accounts:
     @property
     def agent_users(self) -> list[str]:
         return sorted(n for n in self.users if self.is_agent(n))
+
+    @property
+    def edge_users(self) -> list[str]:
+        return sorted(n for n in self.users if n.startswith(EDGE_PREFIXES))
 
     def name_of(self, uid: int) -> str | None:
         return next((n for n, (u, _g) in self.users.items() if u == uid), None)
@@ -119,10 +124,11 @@ def check_bind_allowed(
     hub_user: str,
     card_dev: bool,
     dev_shared_machine: bool,
+    check_root: bool = True,
 ) -> str | None:
     """G3. Returns a WARN text when the dev exception applies, None when the machine has no host or agent users;
     raises :class:`BindRefused` otherwise."""
-    if os.geteuid() == 0:
+    if check_root and os.geteuid() == 0:
         raise BindRefused("a hub on a network link does not run as root (L2-D12b-3)")
     others = sorted(set(acc.host_users) | set(acc.agent_users))
     if not others:

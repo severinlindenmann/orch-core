@@ -40,8 +40,9 @@ export function CopyButton({ text, label }: { text: string; label: string }) {
 }
 
 /** Who is working on the ticket, in one line. Claiming is the agents' job, so people get no Claim/Release here. */
-function AgentStatus({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewer }) {
-  const c = ticket.claim
+export function AgentStatus({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewer }) {
+  // A claim the host marks not live (ended by Done or Close, lapsed, grant over) is history: nobody is working (run 8, 8).
+  const c = ticket.claim?.live === false ? null : ticket.claim
   const subagents = new Set(ticket.tasks_state.flatMap((t) => (t.lease && t.lease.session !== c?.session ? [t.lease.session] : []))).size
   return (
     <p className="flex min-w-0 items-center gap-2 text-[13px] text-text-muted" data-testid="agent-status">

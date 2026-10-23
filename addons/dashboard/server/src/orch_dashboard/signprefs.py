@@ -4,7 +4,8 @@
 signed: it only chooses which button is primary in a sign dialog. What may be used at all is the workspace's signed
 ``sign_methods`` (the host's ``workspace.settings``); a default that names a way the workspace does not allow is
 refused here, and one that stopped being allowed later is not used (the dialog falls back to ``terminal``, which is
-always allowed). Nothing here signs, reads a key or changes the workspace.
+always allowed). With no stored default, the effective one is ``click`` while the workspace has one-click signing
+switched on (else ``terminal``), so every dialog and the Settings form agree. Nothing here signs, reads a key or changes the workspace.
 """
 
 import json
@@ -84,7 +85,11 @@ def register(app: FastAPI, gateway: Gateway):
         methods = allowed(ws)
         mine = load(person, ws)
         usable = mine is not None and mine["method"] in methods
-        out = dict(mine) if usable else {"method": "terminal"}
+        # No usable stored choice: the effective default is one click when the workspace switched it on (the signer's
+        # flag, which needs the risk acknowledgement) and allows it, else terminal. Only the default selection moves:
+        # what may sign is still ``sign_methods`` + the signer's own checks, and a stored choice always wins.
+        click = "click" in methods and gateway.one_path_is_click(ws)
+        out = dict(mine) if usable else {"method": "click" if click else "terminal"}
         if "fallback" in out and out["fallback"] not in methods:
             out.pop("fallback")
         return {**out, "is_default": not usable, "allowed": methods}

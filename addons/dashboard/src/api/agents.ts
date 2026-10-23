@@ -47,6 +47,8 @@ export interface AgentPreview {
   display_hidden: boolean
   cwd: { kind: 'workspace' | 'repo' | 'worktree' | 'workdir' | null; repo?: string; ticket?: string }
   cwd_path: string | null
+  /** For a work folder: whether it already exists and whether it holds anything (an unattended start needs it new or empty). */
+  workdir?: { exists: boolean; empty: boolean }
   cwd_path_hidden: boolean
   will_create_worktree: boolean
   login_shell: boolean

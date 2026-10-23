@@ -176,11 +176,12 @@ def _cwd(call: Call, view: Any, cwd_arg: dict[str, Any] | None, *, agent: bool, 
 
     def workdir(key: str) -> dict[str, Any]:
         """No codebase: the ticket's work folder (absent: ``mkdir``, made by the start; present: pinned)."""
-        from orch.layout import LayoutError, workdir_stat
+        from orch.layout import LayoutError, workdir_stat, workdir_state
 
         lay = store.layout
         try:
             st = workdir_stat(lay, key)
+            out["workdir"] = workdir_state(lay, key)
             path = os.fspath(lay.workdir(key))
         except LayoutError as exc:
             p.block("launch.cwd_changed", f"{key}: the work folder cannot be used: {exc}"[:300])
@@ -373,8 +374,11 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
 
             lay = service.store.layout
             at = os.path.join(str(service.entry.root), agents_rel(lay.project, lay.store))
-            if at.isascii() and at.isprintable():
-                argv, login, program = launch_argv(harness, mode, argv_model, key, config, instructions=at)
+            argv, login, program = launch_argv(
+                harness, mode, argv_model, key, config,
+                instructions=at if at.isascii() and at.isprintable() else None,
+                workdir=where["cwd"]["kind"] == "workdir",
+            )  # fmt: skip
         except HostError:
             pass  # the first launch_argv already blocked with the same reason
     grant = None
@@ -423,6 +427,8 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
     }  # fmt: skip
     if agent:
         out.update(ticket=key, will_create_worktree=where["create"] is not None, grant=grant)
+        if where.get("workdir") is not None:  # a new ticket's folder must be new or empty for an unattended start
+            out["workdir"] = where["workdir"]
     else:
         out.update(as_person=True, notice="acts as you, not as an agent")
     return out

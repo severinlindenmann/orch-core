@@ -137,9 +137,9 @@ class Kit:
     # -- events --------------------------------------------------------------------------------------------------
     def ask(self, local: str = "Q1", text: str = "deploy now?", to: str = "ticket_owner") -> str:
         """An agent-asked question on the ticket; returns the question's qid."""
-        q = {"id": local, "to": to, "text": text, "blocking": True, "options": Q_OPTIONS}
+        q = {"id": local, "to": to, "text": text, "blocking": True, "kind": "choice", "options": Q_OPTIONS}
         qid = canon.question_id(WS, self.uid, local)
-        h = canon.question_hash(qid, self.uid, text, Q_OPTIONS)
+        h = canon.question_hash(qid, self.uid, q)
         self.store.append(
             {"type": "question.asked", "actor": self.env.agent, "question": q, "qid": qid, "hash": h}, log=self.uid
         )

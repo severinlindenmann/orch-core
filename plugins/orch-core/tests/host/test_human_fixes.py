@@ -67,7 +67,7 @@ def test_the_clear_screen_probe_is_refused_before_rendering(human, served):
 def test_every_identifier_from_the_material_is_checked_against_its_format(human, served, where):
     _, key = human.ticket()
     if where == "question":
-        human.agent("ask", {"ref": key, "text": "q?", "options": ["a"]})
+        human.agent("ask", {"ref": key, "text": "q?", "options": ["a", "b"]})
         p = human.prepare("answer", {"ref": key, "question": "Q1", "option": "a"})
         p["material"]["question"]["id"] = "Q1\x1b[2J"
     elif where == "section":
@@ -470,6 +470,7 @@ def test_a_question_changed_between_prepare_and_submit_is_question_stale(human, 
         "to": "ticket_owner",
         "text": "deploy now?",
         "blocking": True,
+        "kind": "choice",
         "options": [{"key": "yes", "label": "yes"}, {"key": "no", "label": "no"}],
     }
     qid = canon.question_id(served.wid, uid, "Q1")
@@ -483,7 +484,7 @@ def test_a_question_changed_between_prepare_and_submit_is_question_stale(human, 
                 "question.asked",
                 question=q,
                 qid=qid,
-                hash=canon.question_hash(qid, uid, q["text"], q["options"]),
+                hash=canon.question_hash(qid, uid, q),
             ),
             log=uid,
         )
@@ -559,7 +560,7 @@ def test_a_refused_submit_leaves_the_request_bound_and_pending_shows_the_code_on
 def test_a_material_key_outside_the_schema_is_refused(human, served):
     _, key = human.ticket()
     ready(human, key)
-    human.agent("ask", {"ref": key, "text": "q?", "options": ["a"]})
+    human.agent("ask", {"ref": key, "text": "q?", "options": ["a", "b"]})
     for op, args in (
         ("log", {"ref": key, "text": "x"}),
         ("approve", {"ref": key, "gate": "requirements"}),

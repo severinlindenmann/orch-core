@@ -1025,7 +1025,11 @@ def _question(material: Mapping[str, Any], events: list[Mapping[str, Any]], tick
     ev = events[0]
     _check_keys("question.answered", ev, SHOWN["question.answered"], TECHNICAL_KEYS)
     q = material.get("question") or {}
-    _check_keys("question keys", q, frozenset({"id", "text", "why", "options", "recommended", "to", "blocking"}))
+    # #1123 A: `kind` is the one new key rendered here (choice/text read as before); details, allow_other and the new
+    # option keys stay unknown, so they fall back to the full review until B2 renders them.
+    _check_keys(
+        "question keys", q, frozenset({"id", "text", "kind", "why", "options", "recommended", "to", "blocking"})
+    )
     for o in q.get("options") or []:
         _check_keys("question option keys", o, frozenset({"key", "label", "cost"}))
     keys = [_s(o.get("key")) for o in q.get("options") or []]

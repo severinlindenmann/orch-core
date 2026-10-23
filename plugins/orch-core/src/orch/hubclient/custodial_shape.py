@@ -18,6 +18,8 @@ import unicodedata
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from orch.canon.question import QuestionError, validate_question
+
 from .errors import HubRefused
 
 __all__ = ["UNICODE_VERSION", "check_custodial_payload", "text_ok"]
@@ -130,37 +132,15 @@ def _base_rev(x: Any) -> bool:
     return type(x) is dict and 0 < len(x) <= len(SET_PATHS) and all(k in SET_PATHS and _hash(v) for k, v in x.items())
 
 
-def _option(x: Any) -> bool:
-    return (
-        type(x) is dict
-        and {"key", "label"} <= set(x) <= {"key", "label", "cost"}
-        and _re(_TOKEN)(x["key"])
-        and _text(200)(x["label"])
-        and ("cost" not in x or _text(64)(x["cost"]))
-    )
-
-
 def _question(x: Any) -> bool:
-    """The question a person asks: exactly `{id, to, text, why?, options?, recommended?, blocking}` (the id is the
-    hub's next free `Q<n>`, derived like `qid`); no `sig`."""
-    if type(x) is not dict or not {"id", "to", "text", "blocking"} <= set(x) <= {
-        "id", "to", "text", "why", "options", "recommended", "blocking",
-    }:  # fmt: skip
+    """The question a person asks through the hub: the one question shape (ticket-format §5.6.1), checked by the one
+    validator, plus the routing the hub may set: the id is the hub's next free `Q<n>` (derived like `qid`), `to` a
+    person or a ticket role; no `sig`."""
+    try:
+        validate_question(x)
+    except QuestionError:
         return False
-    opts = x.get("options", [])
-    keys = [o["key"] for o in opts] if type(opts) is list and all(_option(o) for o in opts) else None
-    return (
-        _re(_QID)(x["id"])
-        and (_re(_PERSON)(x["to"]) or x["to"] in TICKET_ROLES)
-        and _text(2000, multiline=True)(x["text"])
-        and ("why" not in x or _text(1000, multiline=True)(x["why"]))
-        and keys is not None
-        and len(opts) <= 8
-        and len(keys) == len(set(keys))
-        and ("options" not in x or len(opts) > 0)
-        and ("recommended" not in x or x["recommended"] in keys)
-        and type(x["blocking"]) is bool
-    )
+    return bool(_re(_PERSON)(x["to"]) or x["to"] in TICKET_ROLES)
 
 
 def _visibility(x: Any) -> bool:

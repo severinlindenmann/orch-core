@@ -29,7 +29,7 @@ async function fill() {
   const sheet = await screen.findByRole('dialog', { name: 'New ticket' }, T)
   await r.user.type(await within(sheet).findByLabelText('Title', {}, T), 'Export CSV')
   await r.user.type(within(sheet).getByLabelText(/^Requirements/), 'Empty months export a header row')
-  await r.user.click(within(sheet).getByRole('button', { name: 'Create' }))
+  await r.user.click(within(sheet).getByRole('button', { name: 'Review ticket' }))
   return r
 }
 const gone = () => waitFor(() => expect(screen.queryByRole('dialog', { name: 'New ticket' })).toBeNull(), T)
@@ -62,7 +62,7 @@ describe('New ticket with signed hand-off', () => {
     await r.user.click(within(sheet).getByRole('button', { name: 'Add' }))
     await r.user.selectOptions(within(sheet).getByLabelText('Owner'), 'p_sev') // the signed-in person: already the owner
     await r.user.click(within(within(sheet).getByRole('group', { name: 'Assignees' })).getByRole('button', { name: 'Mara' }))
-    await r.user.click(within(sheet).getByRole('button', { name: 'Create' }))
+    await r.user.click(within(sheet).getByRole('button', { name: 'Review ticket' }))
     const sent = JSON.parse((await screen.findByTestId('sent-action')).textContent ?? '{}')
     expect(sent).toEqual({
       action: 'new_sequence',
@@ -83,7 +83,7 @@ describe('New ticket with signed hand-off', () => {
     await r.user.type(within(sheet).getByLabelText(/^Requirements/), 'Empty months export a header row')
     await r.user.click(within(sheet).getByRole('button', { name: /More sections/ }))
     await r.user.type(within(sheet).getByLabelText('New acceptance criterion'), 'A header row is exported')
-    await r.user.click(within(sheet).getByRole('button', { name: 'Create' }))
+    await r.user.click(within(sheet).getByRole('button', { name: 'Review ticket' }))
     const sent = JSON.parse((await screen.findByTestId('sent-action')).textContent ?? '{}')
     expect(sent.acceptance).toEqual(['A header row is exported'])
   })

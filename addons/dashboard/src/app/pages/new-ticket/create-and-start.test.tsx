@@ -100,7 +100,7 @@ describe('the form', () => {
     setup({ runner: { connected: false, enabled: true } })
     const { sheet } = await open()
     expect(await within(sheet).findByTestId('agent-line-off', {}, T)).toHaveTextContent('No agent runner is connected.')
-    expect(within(sheet).getByRole('button', { name: 'Create' })).toBeInTheDocument()
+    expect(within(sheet).getByRole('button', { name: 'Review ticket' })).toBeInTheDocument()
     expect(within(sheet).queryByRole('button', { name: 'Create and start agent' })).toBeNull()
   })
 

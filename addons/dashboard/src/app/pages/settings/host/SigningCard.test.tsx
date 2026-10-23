@@ -85,23 +85,49 @@ describe('Sign in the dashboard', () => {
     expect(await screen.findByTestId('signing-error')).toHaveTextContent('Try again in 10 min')
   })
 
-  it('turns off without a passphrase, keeping the key in the key store', async () => {
-    const sw = vi.spyOn(api, 'switchClick').mockResolvedValue({ ...OFF, custody: 'convenience', problem: 'disabled' })
+  it('turning off asks for a new passphrase twice and moves the key back under it (V3-D31)', async () => {
+    const sw = vi.spyOn(api, 'switchClick').mockResolvedValue({ ...OFF, custody: 'passphrase' })
     mount(ON)
     fireEvent.click(await screen.findByRole('button', { name: 'Turn off' }))
-    expect(screen.getByText(/Your key stays in this computer's key store/)).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Turn off' }))
-    await waitFor(() => expect(sw).toHaveBeenCalledWith(WS, { on: false }))
+    expect(screen.getByTestId('signing-off-explain')).toHaveTextContent(/protect your key with a new passphrase/)
+    expect(screen.getByTestId('signing-off-copies')).toHaveTextContent(/backups or snapshots/)
+    const one = screen.getByLabelText(/^New passphrase \(at least 14/)
+    const two = screen.getByLabelText('New passphrase again')
+    expect(one).toHaveAttribute('type', 'password')
+    const submit = () => screen.getByRole('button', { name: 'Turn off' })
+    expect(submit()).toBeDisabled()
+    fireEvent.change(one, { target: { value: 'short' } })
+    fireEvent.change(two, { target: { value: 'short' } })
+    expect(submit()).toBeDisabled() // under 14 characters
+    fireEvent.change(one, { target: { value: 'violet harbour 7 kettles' } })
+    fireEvent.change(two, { target: { value: 'violet harbour 7 kettle' } })
+    expect(screen.getByTestId('signing-mismatch')).toBeInTheDocument()
+    expect(submit()).toBeDisabled()
+    fireEvent.change(two, { target: { value: 'violet harbour 7 kettles' } })
+    fireEvent.click(submit())
+    await waitFor(() => expect(sw).toHaveBeenCalledWith(WS, { on: false, passphrase: 'violet harbour 7 kettles' }))
     await waitFor(() => expect(screen.getByTestId('signing-state')).toHaveTextContent(/^Off/))
+    expect(screen.queryByLabelText('New passphrase again')).toBeNull()
   })
 
-  it('turning off never offers a new passphrase: moving the key back is a terminal command', async () => {
+  it('a too-weak new passphrase is reported by core, the fields are cleared and signing is still on', async () => {
+    vi.spyOn(api, 'switchClick').mockRejectedValue(new ApiError(409, { code: 'custody.unavailable', message: 'that passphrase is on the list of common ones', retryable: false }))
     mount(ON)
     fireEvent.click(await screen.findByRole('button', { name: 'Turn off' }))
-    expect(screen.queryByLabelText(/new passphrase/i)).toBeNull()
-    expect(screen.queryByRole('checkbox')).toBeNull()
+    fireEvent.change(screen.getByLabelText(/^New passphrase \(at least/), { target: { value: 'password123456' } })
+    fireEvent.change(screen.getByLabelText('New passphrase again'), { target: { value: 'password123456' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Turn off' }))
+    expect(await screen.findByTestId('signing-error')).toHaveTextContent(/common ones. Nothing changed: one-click signing is still on/)
+    expect(screen.getByLabelText(/^New passphrase \(at least/)).toHaveValue('')
+  })
+
+  it('with the key already in passphrase custody, turning off is the flag only', async () => {
+    const sw = vi.spyOn(api, 'switchClick').mockResolvedValue(OFF)
+    mount({ ...ON, custody: 'passphrase' })
+    fireEvent.click(await screen.findByRole('button', { name: 'Turn off' }))
     expect(document.querySelectorAll('input[type=password]')).toHaveLength(0)
-    expect(screen.getByTestId('signing-move-back')).toHaveTextContent('orch keys custody passphrase --workspace INT --in-place')
+    fireEvent.click(screen.getByRole('button', { name: 'Turn off' }))
+    await waitFor(() => expect(sw).toHaveBeenCalledWith(WS, { on: false }))
   })
 
   it('a key already held with signing off is switched on in the terminal, never with a passphrase here', async () => {
@@ -148,7 +174,7 @@ describe('Sign in the dashboard', () => {
   // -- orch-9d's review of #578 (M1, M2, L1-L5) -----------------------------------------------------------------------
 
   it('a hostile prefix is never put into a command (M1)', async () => {
-    mount(ON, true, HOSTILE)
+    mount({ ...ON, custody: 'passphrase' }, true, HOSTILE)
     fireEvent.click(await screen.findByRole('button', { name: 'Turn off' }))
     expect(screen.getByTestId('signing-move-back')).toHaveTextContent(/can't be put in a command safely/)
     for (const code of document.querySelectorAll('code')) expect(code.textContent).not.toContain('rm -rf')
@@ -164,7 +190,7 @@ describe('Sign in the dashboard', () => {
   it('the commands have a copy button (L1)', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
-    mount(ON)
+    mount({ ...ON, custody: 'passphrase' })
     fireEvent.click(await screen.findByRole('button', { name: 'Turn off' }))
     fireEvent.click(screen.getByRole('button', { name: 'Copy the command' }))
     expect(writeText).toHaveBeenCalledWith('orch keys custody passphrase --workspace INT --in-place')

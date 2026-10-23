@@ -1947,10 +1947,10 @@ Every signature comes before the nonce store (v2 §12.1). Policy checks of orch-
 is orch-publish's route definition (`access: "public"` of a share or app); F1 fixes the list, and every such request
 needs step 9.
 
-**Direct requests.** A request without `Orch-Hub` is the v2 direct path, signed under `orch/v2/publish|` and checked as
-v2 §12.1 until the H6 switch, binding or not (SHORTCUT `Direct relay / publish paths behind a flag until H5/H6`). A
-hub-path signature presented there is `bad_signature` (vector `publish_hub_request_replayed_direct`). From H6 on,
-orch-publish refuses direct requests for a workspace with a live binding.
+**Direct requests (V3-D36).** There are none. orch-publish refuses a request without `Orch-Hub` and `Orch-Hub-Signature` as
+`403 hub_required`, and `POST /v1/ws/{ws}/register` no longer exists: a workspace is admitted only by `card_put` (below).
+A hub-path signature can therefore never be replayed "on the direct path" (the former vector
+`publish_hub_request_replayed_direct` is obsolete: it is dropped at the next regeneration of the vectors).
 
 **Admission through the hub (R5a, V3-D36).** There is no direct `register`. A workspace reaches orch-publish only through
 `card_put` (§10): after the hub's own checks (pin, never-change rules, `card_seq`) it forwards `{card, pk_pub}` to

@@ -76,6 +76,7 @@ class Verifier(Protocol):
         *,
         workspace_id: str,
         log: str,
+        root: str,
         card: Mapping[str, Any] | None,
         revoked: frozenset[str],
         snapshot: Mapping[str, Any] | None,

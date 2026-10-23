@@ -90,13 +90,15 @@ def check_override(ws: WsCore, t: TCore, gates: dict[str, Any]) -> Refusal | Non
     return None
 
 
-def person_tokens(ws: WsCore, t: TCore, person: str) -> set[str]:
-    """Approver tokens a person holds on a ticket; a viewer holds none (§5.7)."""
+def person_tokens(ws: WsCore, t: TCore, person: str, role: Any = identity.LOOKUP) -> set[str]:
+    """Approver tokens a person holds on a ticket; a viewer holds none (§5.7). ``role`` is the signer's effective role
+    (``identity.Signer.role``, which for a hub user is capped by the hub, §15.4); by default ``identity.role_of``."""
     person = identity.canonical(ws, person)
-    m = ws.members.get(person)
-    if m is None or m.role == "viewer":
+    if role is identity.LOOKUP:
+        role = identity.role_of(ws, person)
+    if role is None or role == "viewer":
         return set()
-    tokens = {m.role}
+    tokens = {role}
     if identity.canonical(ws, t.owner) == person:
         tokens.add("ticket_owner")
     for role in ("assignees", "reviewers", "watchers"):
@@ -114,18 +116,50 @@ def solo(ws: WsCore) -> bool:
     return len(ws.members) == 1
 
 
-def may_decide(ws: WsCore, t: TCore, gate: str, person: str, pol: dict[str, Any] | None = None) -> bool:
+def may_decide(
+    ws: WsCore, t: TCore, gate: str, person: str, pol: dict[str, Any] | None = None, role: Any = identity.LOOKUP
+) -> bool:
     """Token eligibility for a decision. In a one-member workspace that member (unless a viewer) may decide every
     gate, so a solo owner can give a verdict on a ticket they claimed. With two or more members the policy's
     ``approvers`` and ``not`` apply as written. ``independent`` is checked separately and is not relaxed."""
     pol = effective(ws, t, gate) if pol is None else pol
     person = identity.canonical(ws, person)
-    if solo(ws):
-        m = ws.members.get(person)
-        return m is not None and m.role != "viewer"
-    return eligible(pol, person_tokens(ws, t, person))
+    if role is identity.LOOKUP:
+        role = identity.role_of(ws, person)
+    if solo(ws) and person in ws.members:  # a hub user who is not the one member falls to the policy as written
+        return role is not None and role != "viewer"
+    return eligible(pol, person_tokens(ws, t, person, role))
 
 
 def eligible_persons(ws: WsCore, t: TCore, gate: str) -> list[str]:
     p = effective(ws, t, gate)
     return sorted(m for m in ws.members if may_decide(ws, t, gate, m, p))
+
+
+# --- D66 factor floor (ticket-format 15.4) ---------------------------------------------------------------------------
+
+#: the lowest ``channel_factor`` a policy's optional ``factor`` key lets decide (D66, spec 5), weakest first
+FACTORS = ("password+totp", "se-unlocked", "passkey")
+_FACTOR_FOR = {"secure-enclave": "passkey", "secure-enclave-unlocked": "se-unlocked"}
+DECISION_GATE = {"verdict.given": "verify"}
+
+
+def factor_floor(ws: WsCore, t: TCore | None, typ: str, gate: str | None = None) -> str:
+    """The ``min_factor`` for a hub-signed event of ``typ`` (``gate`` is the decision's gate; ``verdict.given`` is
+    ``verify``): the stricter of the workspace gate policy's and the ticket override's optional ``factor`` key (D66:
+    ``secure-enclave`` accepts only ``passkey``, ``secure-enclave-unlocked`` ``se-unlocked`` or ``passkey``), else the
+    weakest, ``password+totp``. The ONE place a floor is computed: replay applies it at the line's position and the
+    host passes its result to the contract verifier, never a literal. Only decisions have a floor; an unknown value
+    in the key is the strongest floor (fail closed)."""
+    gate = DECISION_GATE.get(typ, gate)
+    if gate not in GATES or typ not in ("gate.approved", "gate.changes_requested", "verdict.given"):
+        return FACTORS[0]
+    out = FACTORS[0]
+    for pol in (ws.policies.get(gate), (t.overrides.get(gate) if t is not None else None)):
+        want = (pol or {}).get("factor")
+        if want is None:
+            continue
+        floor = _FACTOR_FOR.get(want, FACTORS[-1])
+        if FACTORS.index(floor) > FACTORS.index(out):
+            out = floor
+    return out

@@ -2814,12 +2814,13 @@ a rejoin, so it is in every checkpoint with `ws.hub`): `{root, card, revoked_op_
 admits (§15.5 step 4), in this order: every op revocation it holds that the ledger lacks; its held card if the ledger
 has an older one or none; its pinned snapshot **only when needed** (below). Then the event itself.
 
-- **One atomic commit.** The pins and the custodial event are written as one store transaction (§5.5 writing, one
-  lock, one fsync of the workspace log before the ticket line, one `.state/applied` record naming the event). The model
-  admits the whole batch or nothing: **a refused event leaves no pin.** A crash in the middle is the torn-write
-  recovery of §5.5: pins whose event is not in the log are removed before the next append (they are the last lines of
-  the workspace log and were never acknowledged to the hub). So a hostile hub that sends endless refused events adds
-  no line (vector `refused_events_leave_no_pins`).
+- **Judged together, appended in one lock hold (not one atomic commit).** The pins and the custodial event are judged
+  together on a scratch state (`model.preview`), then appended pins first, then the event, in one hold of the store
+  lock (§15.5 step 7). The model admits the whole batch or nothing: **a refused event leaves no pin.** The store commits
+  one line at a time, so a crash between the writes (or an `at` the store stamps later than the preview's) can leave
+  pins whose event is not in the log. That is safe: they are valid ledger lines (rules 1-5 passed), the hub never got
+  an ack and resends, and dedup finds nothing, so the event lands or is refused then. A hostile hub that sends endless
+  refused events adds no line (vector `refused_events_leave_no_pins`).
 - **A snapshot is pinned only when the event needs it:** when the event's `snapshot_version` is above the pinned
   version (§15.3 step 3), the host pins the newest snapshot it holds. An event built on the pinned version or an
   older one adds no snapshot line (it is checked against the pinned one, which only narrows, §15.3). Every pin rides on
@@ -2827,7 +2828,8 @@ has an older one or none; its pinned snapshot **only when needed** (below). Then
 - **Caps** (a pin over a cap is refused with `hub.invalid` `too_many` / `too_large`; the event that needed it gets
   `unavailable`, retryable, §15.5): at most **64** op revocations and **16** cards per hub in the ledger; a snapshot
   object at most **64 KiB** (`cj`); at most **one** snapshot pin per **10 minutes** of `at` per hub, except a snapshot
-  that only narrows (revokes a channel, removes or lowers a role, nothing else changed), which always pins.
+  that lowers, removes or revokes anything (a channel newly revoked, a user removed, a role lowered), even if it also adds, which always pins at once: a demotion never waits.
+  The 10-minute limit is enforced at host admission (§15.5, task 5), not on replay: replay applies every pin line it finds.
 - Nothing is ever pruned: old lines are what make old events verifiable. The caps bound the ledger at
   64 + 16 + (one snapshot per 10 minutes + narrowing ones), each line ≤ 64 KiB.
 
@@ -2909,7 +2911,7 @@ The consumers:
 
 | Consumer | Rule |
 |---|---|
-| `authz` | `authorize_person` keeps the device path; a new `authorize_hub` is §15.3 steps 1–5; both end in the shared rules (viewer, `roster_v`, freeze) on `Signer.role`. `member.unknown` for a hub actor is `role_of` = `None`. |
+| `authz` | `authorize_person` keeps the device path; a new `authorize_hub` is §15.3 steps 1–5; both end in the shared rules (viewer, `roster_v`, freeze) on `Signer.role`. A hub actor with `role_of` = `None` (an alias to a person removed from the roster, or no snapshot role) is `hub.denied` `forbidden_role`, never `member.unknown`. Every admitted hub event records the `u_` ids it uses (actor and payload references) under its hub in `user_hub` (§15.6). |
 | `gates.decision` | `person = Signer.person`; the `Decision` column `device` becomes `signer` (`Signer.key`). `may_decide` and `person_tokens` take the role from `role_of`. D59 independence is unchanged: `person in canonical_set(ws, t.workers)`, so `u_x` aliased to `p_x` counts as one person (C4 union). |
 | `generations.counting` | one counting decision per canonical person (unchanged). **A channel revocation voids (C3b-2):** hv 0 carries no reason, so every channel revocation is treated like a compromised device: at the `hub.pinned` snapshot line that first adds channel X to the ledger's `revoked_channels`, the counting decisions whose `signer` is `hub:<hub_id>/X` in generations that are still open (not consumed) are voided exactly as `void_device` does for a `d_` key (`void_signer`; settled tickets list them and wait, as for devices). Deterministic on replay because the pin is a log line. An op-cert revocation, a rotation and a snapshot that drops a user or lowers a role void nothing (rotation and role changes, like `role.changed`). Vector `channel_revoked_voids_open_decisions_only`. |
 | claims | a hub actor may append `claim.released` (`released`) under the same rule as a person: ticket owner (canonical compare), owner or maintainer by `role_of`. It never takes a claim (agent-only). |
@@ -2940,7 +2942,9 @@ Under the store lock, in this order (the reply codes are the contract's, §14):
    `source_sha` the current ones, `based_on` a head of this log, `roster_v` the current version. The schema makes
    `hash` required on the four decision types (L2P4-2a), so a decision without it is `malformed`. An event the hub
    built from a stale or false view (§10.7) is refused here.
-7. Append the pins and the event as one commit (§15.2), each with `host_sig`; reply `{}`.
+7. Append the pins and then the event, each with `host_sig`, in one hold of the store lock; reply `{}`. The store commits one line at a time, so this is **not one atomic commit**: steps 3–6 judge the pins and the event together on a scratch state first (`model.preview`), so a refused event writes nothing, but a crash (or an `at` the store stamps later than the preview's, which can push a certificate past its expiry) between the writes can leave the pins without the event. That is safe: the pins are valid ledger lines, the hub resends the event, dedup finds nothing and the event lands (or is refused) then.
+
+The snapshot fetch of step 3 runs outside the store lock: the first attempt refuses `unknown_snapshot`, the lock is released, one `snapshot_get` runs, and the whole sequence runs once more.
 
 Model refusal → reply code: `validation.*`, `chain.broken`, `hub.invalid` → `malformed` (or the detail when it is a
 §14 code); `hub.cert_invalid`, `hub.denied`, `hub.unknown_snapshot` → their detail; `hub.foreign_user` →
@@ -3105,7 +3109,7 @@ vector keys, checked by `tests/hub/test_c3b_vectors.py`:
 - `lines`: the exact bytes of a `hub.pinned` snapshot line and of a custodial `gate.approved` line (`line_hex`,
   `host_signed_hex` under `wsk_a`, `head`). The custodial line is the hub vectors' event plus `seq`, `at`, `prev`,
   `ws_seq`, `host_sig` only, and its two hub signatures still verify over the stored line.
-- `replay`: 29 cases, each a sequence of steps (`pin`, `custodial`, `deliver` = pins and event as one commit,
+- `replay`: 29 cases, each a sequence of steps (`pin`, `custodial`, `deliver` = pins and event judged together, a refusal writes nothing,
   `join`, `consume`) with `at` and the expected outcome, plus where it matters the canonical `actor`, the effective
   `role`, the decisions a pin `voids` and the `ledger_lines` count: `valid_full_mode`;
   `later_revoked_op_cert_still_replays`; `snapshot_never_pinned_is_refused`; `no_snapshot_pinned_at_all`;
@@ -3147,7 +3151,7 @@ reference from then on.
    `engine.py` member lookups, L2P4-C2): §15.4. T0 `tests/model -k "gate or question or claim or generation"` + a D59
    test (worker `u_x` aliased to `p_x`, `p_x` approves → `gate.not_eligible`).
 5. **Host admission** (`hubclient/custodial.py`: `accept_event_deliver` = dedup, pre-check, scratch admit of pins +
-   event, one commit, reply mapping and ack classes; `min_factor` from `policies.factor_floor`, never a literal, with a
+   event, appended in one lock hold, reply mapping and ack classes; `min_factor` from `policies.factor_floor`, never a literal, with a
    test that the wiring passes the policy value; drop C3's `base_rev` string branch; a host `Verifier` over
    `hubclient`; a store entry for the batch under the lock): §15.2, §15.5. T0 `tests/hub -k "custodial or c3b"`.
 6. **Selective** (C6 share builder adds the `f1` block and re-puts on change; `item_hash` in `HUB_FIELDS` for

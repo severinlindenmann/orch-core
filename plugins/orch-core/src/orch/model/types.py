@@ -171,7 +171,7 @@ class Decision:
     gate: str
     kind: str  # approve | pass | fail | changes
     person: str
-    device: str
+    signer: str  # identity.Signer.key: a device id (d_...) or "hub:<hub_id>/<channel>" (ticket-format 15.4)
     gen: int
     hash: str
     policy_hash: str

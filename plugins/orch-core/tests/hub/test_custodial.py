@@ -217,14 +217,45 @@ def test_a_read_role_signs_nothing_and_an_edit_role_cannot_start_an_admin_type()
     assert verify(mint(), snapshot=_role("edit"))["floor"] == "edit"
 
 
+SEL = next(c for c in V["cases"] if c["name"] == "custodial_selective_granted_member_decides")["args"]
+
+
+def sel(**over: Any) -> dict[str, Any]:
+    """The vector's selective decision (a live item that shows exactly its values) with arguments replaced."""
+    args = {
+        "workspace_id": SEL["workspace_id"], "log": SEL["log"],
+        "held": wire.verify_card(SEL["card"], now_ms=NOW, dev_mode=True),
+        "snapshot": SEL["snapshot"], "now_ms": NOW, "dev_mode": True, "min_factor": ANY_FACTOR, "mode": "selective",
+        "granted_users": frozenset(SEL["granted_users"]), "member_roles": SEL["member_roles"],
+        "live_items": SEL["live_items"], "log_heads": SEL["log_heads"],
+    }  # fmt: skip
+    event = over.pop("event", SEL["event"])
+    return C.verify_custodial(event, **{**args, **over})
+
+
 def test_the_selective_floor_comes_from_the_member_role_not_the_hub_role():
-    kw = {"mode": "selective", "granted_users": frozenset({ALICE})}
+    def refused(**over: Any) -> str:
+        with pytest.raises(HubRefused) as e:
+            sel(**over)
+        return e.value.code
+
     # the snapshot says admin, the F1 role says viewer: nothing is signed (hub roles grant nothing, D80)
-    assert code(mint(), member_roles={ALICE: "viewer"}, **kw) == "forbidden_role"
-    assert code(mint(), **kw) == "forbidden_role"  # granted but unaliased: a viewer
-    assert code(mint(), member_roles={ALICE: "root"}, **kw) == "forbidden_role"  # unknown role fails closed
-    assert verify(mint(), member_roles={ALICE: "member"}, **kw)["floor"] == "edit"
-    assert code(mint(), mode="selective", member_roles={ALICE: "owner"}) == "not_granted"
+    assert refused(member_roles={ALICE: "viewer"}) == "forbidden_role"
+    assert refused(member_roles={}) == "forbidden_role"  # granted but unaliased: a viewer
+    assert refused(member_roles={ALICE: "root"}) == "forbidden_role"  # unknown role fails closed
+    assert sel()["role"] == "admin" and sel(member_roles={ALICE: "owner"})["user_id"] == ALICE
+    assert refused(granted_users=frozenset()) == "not_granted"
+
+
+def test_selective_needs_an_item_hash_and_full_mode_refuses_one():
+    e = dict(SEL["event"])
+    del e["item_hash"]
+    with pytest.raises(HubRefused) as x:
+        sel(event=e)
+    assert x.value.code == "malformed"
+    with pytest.raises(HubRefused) as x:
+        verify(mint({"item_hash": SEL["event"]["item_hash"]}))  # full mode: refused (15.7)
+    assert x.value.code == "malformed"
 
 
 # --- shape: smuggling, host fields, the reviewed hash ---------------------------------------------------------------
@@ -335,24 +366,6 @@ def test_a_real_workspace_refuses_a_dev_event_chain():
     assert e.value.code == "dev_refused"
 
 
-def test_event_deliver_needs_an_admit_path_and_full_mode():
-    def go(state: HubState, body: Any, admit: Any = None) -> str:
-        with pytest.raises(HubRefused) as e:
-            C.accept_event_deliver(state, body, ws=None, now_ms=NOW, dev_mode=True, admit=admit, min_factor=ANY_FACTOR)
-        return e.value.code
-
-    body = {"log": LOG, "event": CASE["event"]}
-    assert go(_state(), body) == "unavailable"  # verification alone never puts an event in a log
-    assert go(_state(mode="selective"), body, admit=lambda *a: None) == "wrong_mode"  # no item_hash in 8.1 yet
-    for bad in ({"log": LOG}, {"log": LOG, "event": {}, "x": 1}, {"log": 1, "event": {}}, [], None):
-        assert go(_state(), bad, admit=lambda *a: None) == "malformed"
-    # a changed event with the old signatures: the verification (not the link) refuses it
-    assert (
-        go(_state(), {"log": LOG, "event": mint({"hash": None}, resign=False)}, admit=lambda *a: None)
-        == "bad_signature"
-    )
-
-
 def test_min_factor_is_required_everywhere_so_step_8_cannot_be_skipped_by_forgetting_it():
     """L2-C3-3: no default and no None. Omitting it is a TypeError; None and an unknown policy value refuse."""
     kw = {"workspace_id": WS, "log": LOG, "held": HELD, "snapshot": SNAP, "now_ms": NOW, "dev_mode": True}
@@ -360,10 +373,6 @@ def test_min_factor_is_required_everywhere_so_step_8_cannot_be_skipped_by_forget
         C.verify_custodial(CASE["event"], **kw)
     with pytest.raises(TypeError):
         C.verify_hub_event(_state(), CASE["event"], log=LOG, now_ms=NOW, dev_mode=True)
-    with pytest.raises(TypeError):
-        C.accept_event_deliver(
-            _state(), {"log": LOG, "event": CASE["event"]}, ws=None, now_ms=NOW, dev_mode=True, admit=lambda *a: None
-        )
     for bad in (None, "", "magic"):
         assert code(CASE["event"], min_factor=bad) == "factor_too_weak"
     assert code(CASE["event"], min_factor="passkey") == "factor_too_weak"  # the vector event is se-unlocked

@@ -48,9 +48,9 @@ def try_hub(w: World, actor: dict | None = None, eid: str | None = None, **kw):
     )
 
 
-def test_a_valid_hub_line_passes_authorization_then_stops_at_the_consumers_guard(w):
+def test_a_valid_hub_line_passes_authorization_and_the_type_rules(w):
     _, r = try_hub(w)
-    assert r.code == Code.HUB_INVALID and r.detail == "consumers_not_ready"  # PR A: fail closed until task 4
+    assert r.code == Code.ADDON_UNKNOWN, r  # past authorization and the signer rules, at the addon rule (PR B task 4)
     assert w.verifier.actor_calls[-1]["mode"] == "full" and w.verifier.actor_calls[-1]["dev"] is False
 
 

@@ -97,16 +97,28 @@ class CryptoVerifier:
         except (crypto.EncodingError, crypto.CryptoError, canon.HashError, KeyError, TypeError, AttributeError):
             return False
 
-    # C3b (ticket-format 15.8): the hub checks are injected by the host (orch.hubclient); this verifier has none, so it
-    # refuses every hub signature, pin and actor (fail closed, D79).
+    # C3b (ticket-format 15.8): the hub checks come from this package's hub client, imported on first use so a
+    # standalone workspace never loads it (D79). Anything that goes wrong is a refusal.
     def verify_custodial_sigs(self, event: Mapping[str, Any], *, workspace_id: str, log: str) -> bool:
-        return False
+        from orch.hubclient.modelverify import HubModelChecks
+
+        return HubModelChecks().verify_custodial_sigs(event, workspace_id=workspace_id, log=log)
 
     def verify_hub_pin(self, obj: Mapping[str, Any], **kw: Any) -> str | None:
-        return "unavailable"
+        from orch.hubclient.modelverify import HubModelChecks
+
+        try:
+            return HubModelChecks().verify_hub_pin(obj, **kw)
+        except TypeError:  # a caller without the ledger arguments verifies nothing
+            return "unavailable"
 
     def verify_hub_actor(self, event: Mapping[str, Any], **kw: Any) -> str | None:
-        return "unavailable"
+        from orch.hubclient.modelverify import HubModelChecks
+
+        try:
+            return HubModelChecks().verify_hub_actor(event, **kw)
+        except TypeError:
+            return "unavailable"
 
     def genesis_failure(self, event: Mapping[str, Any]) -> str | None:
         """The code of the first failing check of §5.11 for a ``workspace.created`` (``genesis.owner_mismatch``, ...,

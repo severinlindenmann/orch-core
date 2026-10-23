@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useBlocker, useNavigate } from '@tanstack/react-router'
-import { Lock, TriangleAlert, X } from 'lucide-react'
+import { ChevronRight, Lock, TriangleAlert, X } from 'lucide-react'
 import { RadioGroup as RadioGroupPrimitive } from 'radix-ui'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
@@ -10,6 +10,9 @@ import { MAX_IMAGES, missingPasted, pastedIn } from '@/api/pasteImage'
 import { MAX_CRITERIA, MAX_SECTION_BYTES, MAX_SEQUENCE_STEPS, type HandoffAction, type HandoffRequest, type HandoffState } from '@/api/handoff'
 import { can, roleOf } from '@/api/permissions'
 import { SignPopover } from '@/components/sign/SignPopover'
+import { SignButton } from '@/components/sign/SignButton'
+import { AccessSelect } from '@/components/sign/AccessSelect'
+import { hasFeature } from '@/api/features'
 import { SECTIONS_BY_TYPE, requiredAtCreation, sectionLabel, type SectionName } from '@/api/sections'
 import { ApiError, type BodySections, type Me, type NewTicketRequest, type Priority, type Size, type TicketDocument, type TicketType, type Visibility, type Workspace } from '@/api/types'
 import { Button } from '@/components/ui/button'
@@ -20,7 +23,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Skeleton } from '@/components/ui/skeleton'
 import { useWorkspace } from '../../workspace'
 import { usePageHeader } from '../../shell/ShellUi'
-import { PRIORITY_RANK, TYPE_ICON } from '../board/lib'
+import { PRIORITY_RANK } from '../board/lib'
 import { PeoplePicker, fieldCls, type PeopleValue } from './PeoplePicker'
 import { SectionsEditor } from './SectionsEditor'
 import { AgentLine, NotSignedBlock } from './AgentLine'
@@ -110,8 +113,6 @@ export function handoffNewTicket(d: Draft, creator?: string, agentHours?: number
     } as HandoffAction,
   }
 }
-
-const isMac = typeof navigator !== 'undefined' && /mac|iphone|ipad/i.test(navigator.platform || navigator.userAgent)
 
 export interface Draft {
   type: TicketType
@@ -205,22 +206,29 @@ function problems(d: Draft): { title: string | null; sections: Partial<Record<Se
   return { title, sections, count: (title ? 1 : 0) + Object.keys(sections).length }
 }
 
+const TYPE_HINT: Partial<Record<TicketType, string>> = { feature: 'something new', bug: 'something broken', chore: 'small upkeep' }
+const EVERYDAY: TicketType[] = ['feature', 'bug', 'chore']
+
 function TypeControl({ value, onChange }: { value: TicketType; onChange: (t: TicketType) => void }) {
+  const [more, setMore] = useState(() => !EVERYDAY.includes(value))
+  const shown = more || !EVERYDAY.includes(value) ? TYPES : EVERYDAY
   return (
-    <RadioGroupPrimitive.Root value={value} onValueChange={(v) => onChange(v as TicketType)} aria-label="Ticket type" orientation="horizontal" className="inline-flex gap-1 rounded-lg border border-border bg-surface p-1">
-      {TYPES.map((t) => (
+    <RadioGroupPrimitive.Root value={value} onValueChange={(v) => onChange(v as TicketType)} aria-label="Ticket type" orientation="horizontal" className="flex flex-wrap items-center gap-1.5">
+      {shown.map((t) => (
         <RadioGroupPrimitive.Item
           key={t}
           value={t}
-          className="inline-flex h-7 items-center gap-1.5 rounded-md px-3 text-[13px] capitalize text-text-muted outline-none hover:text-text focus-visible:ring-2 focus-visible:ring-brand data-[state=checked]:bg-surface-3 data-[state=checked]:text-text"
+          className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-transparent px-3 text-[13px] capitalize text-text-muted outline-none hover:text-text focus-visible:ring-2 focus-visible:ring-brand data-[state=checked]:border-border data-[state=checked]:bg-surface-3 data-[state=checked]:text-text"
         >
-          {(() => {
-            const Icon = TYPE_ICON[t]
-            return <Icon aria-hidden className="size-3.5" />
-          })()}
           {t}
+          {TYPE_HINT[t] && <span className="text-[11px] normal-case text-text-faint">{TYPE_HINT[t]}</span>}
         </RadioGroupPrimitive.Item>
       ))}
+      {!more && EVERYDAY.includes(value) && (
+        <button type="button" onClick={() => setMore(true)} className="inline-flex min-h-9 items-center gap-1 rounded-md px-2 text-[13px] text-text-muted hover:text-text">
+          <ChevronRight aria-hidden className="size-3.5" /> More types
+        </button>
+      )}
     </RadioGroupPrimitive.Root>
   )
 }
@@ -351,7 +359,10 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
   // "Create and start agent": what the review shows about the start, kept with the request so the start afterwards is
   // compared with exactly that (never with whatever the form says by then). One idem per review.
   interface StartSnapshot { reviewed: Reviewed; idem: string; priorGrantIds: string[]; view: Pick<StartPlan, 'shown' | 'choices' | 'choice'>; withAccess: boolean }
-  const [handoffNew, setHandoffNew] = useState<{ action: HandoffAction; another: boolean; start: StartSnapshot | null } | null>(null)
+  const [handoffNew, setHandoffNew] = useState<{ action: HandoffAction; draft: Draft; another: boolean; start: StartSnapshot | null; anchor: HTMLElement | null; n: number } | null>(null)
+  const [signing, setSigning] = useState(false)
+  const primaryRef = useRef<HTMLButtonElement>(null)
+  const secondaryRef = useRef<HTMLButtonElement>(null)
   const handoffOn = handoffMode(workspace.id)
   const plan = useStartPlan(workspace, me.person)
   const after = useStartAfterCreate()
@@ -373,7 +384,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
   const submitting = useRef(false)
   // E-7: a criterion typed in the box but not added with "Add" is added when the ticket is submitted, never dropped.
   const flushAc = useRef<(() => string) | null>(null)
-  const submit = async (another: boolean, wantStart = false) => {
+  const submit = async (another: boolean, wantStart = false, anchor: HTMLElement | null = null) => {
     if (submitting.current) return
     const extra = flushAc.current?.() ?? ''
     const full = extra ? { ...draft, acceptance: [...draft.acceptance, extra] } : draft
@@ -400,7 +411,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
       const start: StartSnapshot | null = startNow
         ? { reviewed: { ...plan.reviewed, grantId: fresh?.id ?? null }, idem: newIdem(), priorGrantIds: plan.priorGrantIds, view: { shown: plan.shown, choices: plan.choices, choice: plan.choice }, withAccess }
         : null
-      return setHandoffNew({ action: made.action, another, start })
+      return setHandoffNew((old) => ({ action: made.action, draft: full, another, start, anchor, n: (old?.n ?? 0) + 1 }))
     }
     submitting.current = true
     const needs = SECTIONS_BY_TYPE[full.type]
@@ -471,7 +482,8 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
     if (out.kind === 'started') {
       toast.success(`Created ${ticketKey} and started ${harnessName(snap.reviewed.choice.harness)}`)
       afterCreate(false, ticketKey)
-    } else toast.warning(out.reason)
+    }
+    // not started: the Start agent dialog opens with the same sentence, so no second message here
   }
   const afterCreate = (another: boolean, ticketKey: string | null) => {
     if (another) {
@@ -498,157 +510,178 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
     setAttempted(false)
   }
 
-  const primaryLabel = startFirst ? 'Create and start agent' : startPossible || tooMany ? 'Only create' : handoffOn ? 'Review ticket' : 'Create'
+  const primaryLabel = startFirst ? 'Review and start agent' : startPossible || tooMany ? 'Only create' : handoffOn ? 'Create ticket' : 'Create'
   const summary = attempted && check.count ? `${check.count === 1 ? 'One thing needs' : `${check.count} things need`} your attention before the ticket can be created.` : null
 
   return (
     <div
       ref={root}
       // M-1: once the ticket exists and the Start agent dialog (or the "no access" notice) is open, the emptied form is not shown behind it.
-      className={cn(overlay ? undefined : 'mx-auto max-w-[1100px]', (after.state.kind === 'ask' || after.state.kind === 'no-access') && 'hidden')}
+      className={cn(overlay ? 'flex min-h-0 flex-1 flex-col' : 'mx-auto max-w-[1100px]', (after.state.kind === 'ask' || after.state.kind === 'no-access') && 'hidden')}
       data-ticket-created={after.state.kind === 'ask' || after.state.kind === 'no-access' ? '' : undefined}
       onKeyDown={(e) => {
         if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
           e.preventDefault()
-          void submit(false, startFirst)
+          void submit(false, startFirst, primaryRef.current)
         }
       }}
     >
-      {!overlay && <h1 className="mb-4 text-xl font-semibold">New ticket</h1>}
-      {!canCreate && (
-        <div role="alert" className="mb-4 flex items-start gap-2 rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-text-muted">
-          <Lock className="mt-0.5 size-4 shrink-0" />
-          <span>Viewers cannot create tickets in {workspace.name}. Ask an owner or maintainer.</span>
-        </div>
-      )}
-      {showRestored && (
-        <div role="status" className="mb-4 flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-2 text-[13px]">
-          <span className="flex-1">Draft restored · from your last visit</span>
-          <Button type="button" variant="ghost" size="sm" onClick={discardAll}>
-            Discard
-          </Button>
-        </div>
-      )}
-      <TypeControl value={draft.type} onChange={(type) => patch({ type, parent: type === 'epic' ? null : draft.parent })} />
-      <div className={overlay ? 'mt-5 grid grid-cols-[minmax(0,1fr)_240px] gap-6 pb-6' : 'mt-5 grid gap-8 pb-24 lg:grid-cols-[minmax(0,1fr)_280px]'}>
-        <div className="space-y-5">
-          <div className="space-y-1.5">
-            <label htmlFor="nt-title" className="text-[13px] font-medium">
-              Title
-            </label>
-            <Input
-              id="nt-title"
-              ref={titleRef}
-              autoFocus={!overlay}
-              value={draft.title}
-              onChange={(e) => patch({ title: e.target.value })}
-              maxLength={160}
-              placeholder="What needs to happen?"
-              aria-invalid={(attempted && !!check.title) || undefined}
-              aria-describedby={attempted && check.title ? 'nt-title-error' : undefined}
-              className="h-11 text-lg md:text-lg"
+      <div className={cn(overlay && 'flex min-h-0 flex-1 flex-col')}>
+        <div className={cn(overlay && 'min-h-0 flex-1 overflow-y-auto px-6 pt-4 pb-4')}>
+          {!overlay && <h1 className="mb-4 text-xl font-semibold">New ticket</h1>}
+          {!canCreate && (
+            <div role="alert" className="mb-4 flex items-start gap-2 rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-text-muted">
+              <Lock className="mt-0.5 size-4 shrink-0" />
+              <span>Viewers cannot create tickets in {workspace.name}. Ask an owner or maintainer.</span>
+            </div>
+          )}
+          {showRestored && (
+            <div role="status" className="mb-4 flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-2 text-[13px]">
+              <span className="flex-1">Draft restored · from your last visit</span>
+              <Button type="button" variant="ghost" size="sm" onClick={discardAll}>
+                Discard
+              </Button>
+            </div>
+          )}
+          <TypeControl value={draft.type} onChange={(type) => patch({ type, parent: type === 'epic' ? null : draft.parent })} />
+          <div className={overlay ? 'mt-5 space-y-5' : 'mt-5 max-w-3xl space-y-5 pb-24'}>
+            <div className="space-y-1.5">
+              <label htmlFor="nt-title" className="text-[13px] font-medium">
+                Title
+              </label>
+              <Input
+                id="nt-title"
+                ref={titleRef}
+                autoFocus={!overlay}
+                value={draft.title}
+                onChange={(e) => patch({ title: e.target.value })}
+                maxLength={160}
+                placeholder="What needs to happen?"
+                aria-invalid={(attempted && !!check.title) || undefined}
+                aria-describedby={attempted && check.title ? 'nt-title-error' : undefined}
+                className="h-11 text-lg md:text-lg"
+              />
+              {attempted && check.title && (
+                <p id="nt-title-error" className="text-[12px] text-danger">
+                  {check.title}
+                </p>
+              )}
+            </div>
+            <SectionsEditor
+              type={draft.type}
+              sections={draft.sections}
+              onSection={(n, text) => setDraft((d) => ({ ...d, sections: { ...d.sections, [n]: text } }))}
+              acceptance={draft.acceptance}
+              onAcceptance={(acceptance) => patch({ acceptance })}
+              invalid={attempted ? check.sections : {}}
+              collapsible
+              flushRef={flushAc}
+              extra={
+                <div className="grid gap-4 sm:grid-cols-2" aria-label="Properties" role="group">
+                  <Field label="Priority" htmlFor="nt-priority">
+                    <select id="nt-priority" className={fieldCls} value={draft.priority} onChange={(e) => patch({ priority: e.target.value as Priority })}>
+                      {PRIORITIES.map((p) => (
+                        <option key={p} value={p}>
+                          {p[0].toUpperCase() + p.slice(1)}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  {(hasFeature('estimate', workspace.id) || draft.size) && (
+                    <Field label="Size" htmlFor="nt-size">
+                      <select id="nt-size" className={fieldCls} value={draft.size ?? ''} onChange={(e) => patch({ size: (e.target.value || null) as Size | null })}>
+                        <option value="">Not sized</option>
+                        {SIZES.map((s) => (
+                          <option key={s} value={s}>
+                            {s}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  )}
+                  <Field label="Labels">
+                    <LabelsField value={draft.labels} onChange={(l) => patch({ labels: l })} existing={labels} />
+                  </Field>
+                  {draft.type !== 'epic' && (
+                    <Field label="Parent epic" htmlFor="nt-parent">
+                      <select id="nt-parent" className={fieldCls} value={draft.parent ?? ''} onChange={(e) => patch({ parent: e.target.value || null })}>
+                        <option value="">None</option>
+                        {epics.map((t) => (
+                          <option key={t.key} value={t.key}>
+                            {t.key} · {t.title}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  )}
+                  <Field label="Due" htmlFor="nt-due">
+                    <Input id="nt-due" type="date" value={draft.due} onChange={(e) => patch({ due: e.target.value })} className="h-8 text-[13px]" />
+                  </Field>
+                  <div className="sm:col-span-2">
+                    <PeoplePicker members={workspace.members} creator={me.person} people={draft.people} onPeople={(people) => patch({ people })} visibility={draft.visibility} onVisibility={(visibility) => patch({ visibility })} />
+                  </div>
+                </div>
+              }
             />
-            {attempted && check.title && (
-              <p id="nt-title-error" className="text-[12px] text-danger">
-                {check.title}
-              </p>
-            )}
           </div>
-          <SectionsEditor
-            type={draft.type}
-            sections={draft.sections}
-            onSection={(n, text) => setDraft((d) => ({ ...d, sections: { ...d.sections, [n]: text } }))}
-            acceptance={draft.acceptance}
-            onAcceptance={(acceptance) => patch({ acceptance })}
-            invalid={attempted ? check.sections : {}}
-            collapsible={overlay}
-            flushRef={flushAc}
-          />
         </div>
-        <aside className="space-y-4" aria-label="Properties">
-          <Field label="Priority" htmlFor="nt-priority">
-            <select id="nt-priority" className={fieldCls} value={draft.priority} onChange={(e) => patch({ priority: e.target.value as Priority })}>
-              {PRIORITIES.map((p) => (
-                <option key={p} value={p}>
-                  {p[0].toUpperCase() + p.slice(1)}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Size" htmlFor="nt-size">
-            <select id="nt-size" className={fieldCls} value={draft.size ?? ''} onChange={(e) => patch({ size: (e.target.value || null) as Size | null })}>
-              <option value="">Not sized</option>
-              {SIZES.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Labels">
-            <LabelsField value={draft.labels} onChange={(l) => patch({ labels: l })} existing={labels} />
-          </Field>
-          {draft.type !== 'epic' && (
-            <Field label="Parent epic" htmlFor="nt-parent">
-              <select id="nt-parent" className={fieldCls} value={draft.parent ?? ''} onChange={(e) => patch({ parent: e.target.value || null })}>
-                <option value="">None</option>
-                {epics.map((t) => (
-                  <option key={t.key} value={t.key}>
-                    {t.key} · {t.title}
-                  </option>
+        {/* The footer has its own space (5.1): the body above scrolls, this never overlaps it. */}
+        <div className={overlay ? 'flex-none border-t border-border bg-surface px-6 py-3' : 'sticky -bottom-4 -mx-4 mt-8 border-t border-border bg-bg px-4 py-3 @[60rem]/page:-bottom-6 @[60rem]/page:-mx-6 @[60rem]/page:px-6'} data-testid="nt-footer">
+          {(summary || serverError) && (
+            <div role="alert" className="mb-2 flex items-start gap-2 text-[13px] text-danger">
+              <TriangleAlert className="mt-0.5 size-4 shrink-0" />
+              <ul>
+                {[...(summary ? [summary] : []), ...(serverError ? [serverError] : [])].map((m) => (
+                  <li key={m}>{m}</li>
                 ))}
-              </select>
-            </Field>
+              </ul>
+            </div>
           )}
-          <Field label="Due" htmlFor="nt-due">
-            <Input id="nt-due" type="date" value={draft.due} onChange={(e) => patch({ due: e.target.value })} className="h-8 text-[13px]" />
-          </Field>
-          <PeoplePicker members={workspace.members} creator={me.person} people={draft.people} onPeople={(people) => patch({ people })} visibility={draft.visibility} onVisibility={(visibility) => patch({ visibility })} />
-        </aside>
-      </div>
-      {/* <main> pads the page: a sticky bar at bottom-0 would stop that padding short of the edge and let the form show beneath it */}
-      <div className={overlay ? 'sticky bottom-0 -mx-6 border-t border-border bg-surface px-6 py-3' : 'sticky -bottom-4 -mx-4 mt-8 border-t border-border bg-bg px-4 py-3 @[60rem]/page:-bottom-6 @[60rem]/page:-mx-6 @[60rem]/page:px-6'}>
-        {(summary || serverError) && (
-          <div role="alert" className="mb-2 flex items-start gap-2 text-[13px] text-danger">
-            <TriangleAlert className="mt-0.5 size-4 shrink-0" />
-            <ul>
-              {[...(summary ? [summary] : []), ...(serverError ? [serverError] : [])].map((m) => (
-                <li key={m}>{m}</li>
-              ))}
-            </ul>
+          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+            <AgentLine plan={plan} tooMany={tooMany} />
+            <div className="ml-auto flex flex-wrap items-center gap-2">
+              {footerExtra}
+              <Button type="button" variant="ghost" onClick={() => (overlay ? onCancel?.() : void navigate({ to: '/tickets' }))}>
+                Cancel
+              </Button>
+              {startPossible && (
+                <Button ref={secondaryRef} type="button" variant="outline" onClick={() => void submit(false, !startFirst, secondaryRef.current)} disabled={!canCreate || create.isPending || !!handoffNew || busyAfter}>
+                  {startFirst ? 'Only create' : 'Review and start agent'}
+                </Button>
+              )}
+              <SignButton
+                ref={primaryRef}
+                label={primaryLabel}
+                aria-keyshortcuts="Meta+Enter Control+Enter"
+                signing={signing}
+                after={after.state.kind === 'running' ? 'Starting agent…' : null}
+                slowLabel="Still starting…"
+                data-testid="nt-primary"
+                onClick={() => void submit(false, startFirst, primaryRef.current)}
+                disabled={!canCreate || create.isPending || (!!handoffNew && !signing) || busyAfter}
+              />
+            </div>
           </div>
-        )}
-        <AgentLine plan={plan} tooMany={tooMany} />
-        {after.state.kind === 'running' && <p role="status" data-testid="agent-starting" className="mb-2 text-[13px] text-text-muted">Created {after.state.key}. Starting the agent…</p>}
-        <div className="flex flex-wrap items-center gap-2">
-          <Button type="button" aria-label={primaryLabel} aria-keyshortcuts="Meta+Enter Control+Enter" onClick={() => void submit(false, startFirst)} disabled={!canCreate || create.isPending || !!handoffNew || busyAfter}>
-            {primaryLabel}
-            <kbd className="ml-1 rounded border border-border/40 px-1 font-mono text-[10px] opacity-70">{isMac ? '⌘↵' : 'Ctrl ↵'}</kbd>
-          </Button>
-          {startPossible && (
-            <Button type="button" variant="outline" onClick={() => void submit(false, !startFirst)} disabled={!canCreate || create.isPending || !!handoffNew || busyAfter}>
-              {startFirst ? 'Only create' : 'Create and start agent'}
-            </Button>
-          )}
-          {!startFirst && (
-            <Button type="button" variant="outline" onClick={() => void submit(true)} disabled={!canCreate || create.isPending || busyAfter}>
-              Create and open another
-            </Button>
-          )}
-          {footerExtra}
-          <Button type="button" variant="ghost" onClick={() => (overlay ? onCancel?.() : void navigate({ to: '/tickets' }))}>
-            Cancel
-          </Button>
         </div>
       </div>
 
       {handoffNew && (
         <SignPopover
+          key={`${handoffNew.n}-${handoffNew.start?.withAccess ? plan.hours : 0}`}
           title="New ticket"
           ws={workspace.id}
-          action={handoffNew.action}
+          action={(() => {
+            // The access length is chosen in the review; the action follows it (a refusal for size keeps the one that was prepared).
+            if (!handoffNew.start?.withAccess) return handoffNew.action
+            const again = handoffNewTicket(handoffNew.draft, me.person, plan.hours)
+            return 'problem' in again ? handoffNew.action : again.action
+          })()}
           autoStart
           startsAgent={!!handoffNew.start}
+          anchor={handoffNew.anchor}
+          controls={handoffNew.start?.withAccess ? <AccessSelect hours={plan.hours} onHours={plan.setHours} lengths={plan.lengths} prefix={workspace.prefix} agentName={harnessName(handoffNew.start.reviewed.choice.harness)} /> : undefined}
+          doneToast={handoffNew.start ? '' : 'Ticket created'}
+          onSigning={setSigning}
           unsigned={handoffNew.start ? <NotSignedBlock plan={handoffNew.start.view} coreSaysSo={handoffNew.start.withAccess} /> : undefined}
           onClose={() => {
             // The ticket landed but its agent access did not: say so, and offer the Start agent dialog (which has the access card).
@@ -675,7 +708,6 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
           ticket={after.state.key}
           open
           initial={after.state.initial}
-          onStarted={() => toast.success('Agent started')}
           onClose={() => { const k = after.state.kind === 'ask' ? after.state.key : null; after.reset(); if (k) afterCreate(false, k) }}
         />
       )}

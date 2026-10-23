@@ -54,8 +54,8 @@ async function signed() {
   await r.user.click(await screen.findByRole('button', { name: /New ticket/ }, T))
   const sheet = await screen.findByRole('dialog', { name: 'New ticket' }, T)
   await r.user.type(await within(sheet).findByLabelText('Title', {}, T), 'Export CSV')
-  await r.user.type(within(sheet).getByLabelText(/^Requirements/), 'Empty months export a header row')
-  await r.user.click(await within(sheet).findByRole('button', { name: 'Create and start agent' }, T))
+  await r.user.type(within(sheet).getByLabelText(/^What should be true/), 'Empty months export a header row')
+  await r.user.click(await within(sheet).findByRole('button', { name: 'Review and start agent' }, T))
   const dialog = (await screen.findAllByRole('dialog', {}, T)).find((d) => d.hasAttribute('data-handoff-dialog'))!
   expect(await within(dialog).findByTestId('not-signed-start')).toBeInTheDocument() // the real dialog carries the unsigned block
   await within(dialog).findByTestId('click-panel', {}, T)
@@ -72,8 +72,10 @@ describe('the real click path', () => {
   it('stopped at the agent access: the ticket exists, no second ticket can be made, nothing starts, Start agent is offered', async () => {
     s.sign.mockRejectedValue(new ApiError(409, { code: 'human.click_refused', message: 'the host refused the grant. 4 of 5 signatures landed; the ticket DEMO-0044 stays a draft.', retryable: false, reason: 'stopped' }))
     s.state.mockResolvedValue({ id: REQ, state: 'bound', key: 'DEMO-0044', progress: { done: 4, of: 5, last: 'grant' } })
-    const { r, dialog } = await signed()
-    await within(dialog).findByTestId('click-problem', {}, T)
+    const { r } = await signed()
+    // the review folded into the button while signing and opens again with the error inside: look it up afresh
+    await screen.findByTestId('click-problem', {}, T)
+    const dialog = (await screen.findAllByRole('dialog', {}, T)).find((d) => d.hasAttribute('data-handoff-dialog'))!
     await waitFor(() => expect(s.state).toHaveBeenCalledWith(expect.any(String), REQ), T)
     await r.user.click(within(dialog).getAllByRole('button', { name: /^(Close|Cancel)$/ }).at(-1)!)
     const info = await screen.findByTestId('agent-no-access', {}, T)

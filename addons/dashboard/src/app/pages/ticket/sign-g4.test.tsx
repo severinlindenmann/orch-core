@@ -213,7 +213,7 @@ describe('G4 the dialog shows everything the gate hash covers', () => {
 })
 
 describe('G4 artifact drawer stays closed to stale state', () => {
-  it('turning agent HTML off while the drawer is open replaces the frame with source', async () => {
+  it('turning agent HTML off while the drawer is open replaces the frame with source (inline page content keeps the add-on gate)', async () => {
     const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query')
     const { render } = await import('@testing-library/react')
     const userEvent = (await import('@testing-library/user-event')).default

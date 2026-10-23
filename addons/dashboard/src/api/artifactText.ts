@@ -15,6 +15,10 @@ export interface ArtifactContent {
   truncated: boolean
   binary: boolean
   text: string | null
+  /** A picture, when the bytes are one (#1069). The page re-hashes it (`verifiedMedia`) before it is shown. */
+  media?: EvidenceMedia | null
+  /** A person's pasted screenshot (png or webp): the same kind of offer, kept under its older name. */
+  image?: EvidenceMedia | null
 }
 
 /** How much of a text the page shows. */
@@ -55,4 +59,11 @@ export const artifactTextQuery = (ws: string, ticket: string, name: string, sha2
 export const sameDigest = (read: string, listed: string): boolean => {
   const bare = (d: string) => d.replace(/^sha256:/i, '').toLowerCase()
   return bare(read) !== '' && bare(read) === bare(listed)
+}
+
+/** A picture the server offers for an evidence file (complete, digest-verified read). Shown only as an <img> (never markup). */
+export interface EvidenceMedia {
+  type: 'png' | 'jpeg' | 'gif' | 'webp' | 'svg'
+  b64: string
+  digest: string
 }

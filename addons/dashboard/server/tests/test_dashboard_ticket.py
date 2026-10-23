@@ -172,6 +172,178 @@ def test_a_screenshot_is_offered_as_bytes_only_when_core_accepts_it(client, toke
         assert client.get(url(stub, f"DEMO-0001/artifacts/{name}"), headers=headers(token)).json()["image"] is None
 
 
+def _gif(sw, sh, frames=((0, 0, 1, 1),), trailer=True, cut=0):
+    """A GIF with the given logical screen and frames (left, top, width, height); the pixel data is one empty block."""
+    out = b"GIF89a" + sw.to_bytes(2, "little") + sh.to_bytes(2, "little") + b"\x00\x00\x00"
+    for left, top, w, h in frames:
+        out += b"\x2c" + b"".join(v.to_bytes(2, "little") for v in (left, top, w, h)) + b"\x00"
+        out += b"\x02" + b"\x01\x00" + b"\x00"  # LZW minimum code size, one sub-block of 1 byte, block terminator
+    out += b"\x3b" if trailer else b""
+    return out[: len(out) - cut] if cut else out
+
+
+def _jpeg(w, h):
+    sof = b"\xff\xc0\x00\x0b\x08" + h.to_bytes(2, "big") + w.to_bytes(2, "big") + b"\x01\x01\x11\x00"
+    return b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00" + sof + b"\xff\xd9"
+
+
+def test_evidence_pictures_are_offered_as_media_only_when_complete_and_verified(client, token, stub, rich):
+    """#1069: an agent's PNG/JPEG/GIF/SVG is offered as `media` (the page shows it as an <img> after re-hashing);
+    text and binary files are not; a file that no longer matches its digest is refused outright."""
+    import base64
+
+    env, ids = rich
+    files = {
+        "a.png": _png(),
+        "b.jpg": _jpeg(8, 8),
+        "c.gif": _gif(8, 8, ((0, 0, 8, 8),)),
+        "d.svg": b'<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><rect width="1" height="1"/></svg>',
+        "e.txt": b"just text",
+        "f.bin": b"\x00\x01\x02\x03",
+    }
+    for name, data in files.items():
+        env.tick()
+        env.store.append(
+            {
+                "type": "artifact.added",
+                "actor": env.agent,
+                "name": name,
+                "kind": "other",
+                "sha256": "sha256:" + hashlib.sha256(data).hexdigest(),
+                "bytes": len(data),
+            },
+            log=ids["First"],
+            artifacts={name: data},
+        )
+    kinds = {}
+    for name, data in files.items():
+        got = client.get(url(stub, f"DEMO-0001/artifacts/{name}"), headers=headers(token)).json()
+        kinds[name] = got["media"]["type"] if got["media"] else None
+        if got["media"]:
+            assert got["media"]["b64"] == base64.b64encode(data).decode()
+            assert got["media"]["digest"] == "sha256:" + hashlib.sha256(data).hexdigest()
+        assert got["image"] is None  # the pasted-screenshot path is unchanged: an agent's picture is not `image`
+        if got["media"]:
+            assert got["text"] is None  # the bytes travel once
+    assert kinds == {"a.png": "png", "b.jpg": "jpeg", "c.gif": "gif", "d.svg": "svg", "e.txt": None, "f.bin": None}
+    (env.store_dir / "tickets" / ids["First"] / "artifacts" / "a.png").write_bytes(b"tampered")
+    assert client.get(url(stub, "DEMO-0001/artifacts/a.png"), headers=headers(token)).status_code == 409
+
+
+def _bomb_png(w, h):
+    import struct
+    import zlib
+
+    def chunk(kind, body=b""):
+        return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
+
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(b"\x00"))
+        + chunk(b"IEND")
+    )
+
+
+def _offer(env, ids, files):
+    for name, data in files.items():
+        env.tick()
+        env.store.append(
+            {
+                "type": "artifact.added",
+                "actor": env.agent,
+                "name": name,
+                "kind": "other",
+                "sha256": "sha256:" + hashlib.sha256(data).hexdigest(),
+                "bytes": len(data),
+            },
+            log=ids["First"],
+            artifacts={name: data},
+        )
+
+
+SVG_NS = b'xmlns="http://www.w3.org/2000/svg"'
+
+
+def test_evidence_pictures_with_bomb_headers_are_not_offered(client, token, stub, rich):
+    """Opus M1 and delta MED-1: a decompression-bomb header (PNG, JPEG, GIF), a GIF whose frame sticks out of the screen
+    (the browser enlarges the canvas), a truncated GIF, a GIF without trailer or with too many frames: no `media`."""
+    env, ids = rich
+    files = {
+        "ok.gif": _gif(4, 4, ((0, 0, 4, 4), (1, 1, 2, 2))),
+        "bomb.png": _bomb_png(60000, 60000),
+        "bomb.jpg": _jpeg(60000, 60000),
+        "bomb.gif": _gif(60000, 60000),
+        "lying.gif": _gif(1, 1, ((0, 0, 65535, 65535),)),
+        "offset.gif": _gif(10, 10, ((8, 8, 4, 4),)),
+        "truncated.gif": _gif(4, 4, cut=6),
+        "notrailer.gif": _gif(4, 4, trailer=False),
+        "many.gif": _gif(2, 2, ((0, 0, 1, 1),) * 501),
+        "noframe.gif": _gif(2, 2, ()),
+        "tiny_frames_huge_canvas.gif": _gif(6000, 6000, ((0, 0, 1, 1),) * 7),
+    }
+    _offer(env, ids, files)
+    got = {n: client.get(url(stub, f"DEMO-0001/artifacts/{n}"), headers=headers(token)).json()["media"] for n in files}
+    assert got["ok.gif"] is not None and got["ok.gif"]["type"] == "gif"
+    assert {n: m for n, m in got.items() if n != "ok.gif"} == dict.fromkeys(set(files) - {"ok.gif"})
+
+
+def test_evidence_svg_is_an_allowlist_not_a_scan(client, token, stub, rich):
+    """Opus delta MED-2: only a strict, plain SVG is offered. Nested raster images, character references, a prefixed
+    <svg:image>, style url(data:), <use>, scripts, event handlers, any DTD or entity, base64-nested SVG, an element or
+    depth bomb and an oversize file are refused (the page shows a card)."""
+    env, ids = rich
+    import base64
+
+    nested = base64.b64encode(b'<!DOCTYPE svg [<!ENTITY a "x">]><svg ' + SVG_NS + b">&a;</svg>")
+    files = {
+        "ok.svg": b"<svg "
+        + SVG_NS
+        + b' width="9" height="9" viewBox="0 0 9 9"><rect x="0" y="0" width="5" height="5" fill="#0a7"/>'
+        b'<circle cx="3" cy="3" r="2" fill="url(#g)" transform="translate(1 1) rotate(5)"'
+        b' stroke="rgb(1,2,3)"/><path d="M0 0L5 5"/><text x="1" y="9">hi</text></svg>',
+        "bom.svg": b"\xef\xbb\xbf<svg " + SVG_NS + b"><rect/></svg>",
+        "data.svg": b"<svg " + SVG_NS + b'><image href="data:image/png;base64,AAAA"/></svg>',
+        "charref.svg": b"<svg " + SVG_NS + b'><rect fill="&#100;ata:x"/></svg>',
+        "prefixed.svg": b'<svg:svg xmlns:svg="http://www.w3.org/2000/svg"><svg:image/></svg:svg>',
+        "style.svg": b"<svg " + SVG_NS + b'><rect style="fill:url(data:image/png;base64,AA)"/></svg>',
+        "use.svg": b"<svg " + SVG_NS + b'><use href="#a"/></svg>',
+        "script.svg": b"<svg " + SVG_NS + b"><script>alert(1)</script></svg>",
+        "onload.svg": b"<svg " + SVG_NS + b' onload="x()"/>',
+        "doctype.svg": b'<?xml version="1.0"?><!DOCTYPE svg [<!ENTITY a "aaaa">]><svg ' + SVG_NS + b">&a;</svg>",
+        "base64.svg": b"<svg " + SVG_NS + b'><image href="data:image/svg+xml;base64,' + nested + b'"/></svg>',
+        "depth.svg": b"<svg " + SVG_NS + b">" + b"<g>" * 40 + b"</g>" * 40 + b"</svg>",
+        "count.svg": b"<svg " + SVG_NS + b">" + b"<g/>" * 6000 + b"</svg>",
+        "huge.svg": b"<svg " + SVG_NS + b"><!-- " + b"x" * (600 * 1024) + b" --></svg>",
+        "fe.svg": b"<svg " + SVG_NS + b'><filter><feImage href="#a"/></filter></svg>',
+        "href.svg": b"<svg "
+        + SVG_NS
+        + b'><linearGradient xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="http://x/y"/></svg>',
+        "ns.svg": b'<svg xmlns="http://example.com/other"><rect/></svg>',
+        # Opus third delta: CSS escapes defeat any value check, so attributes are an allowlist (no style at all)
+        "esc_style.svg": b"<svg " + SVG_NS + rb' ><rect style="background:u\72l(d\61ta:image/png;base64,AAAA)"/></svg>',
+        "esc_mask.svg": b"<svg " + SVG_NS + rb' ><rect style="mask-image:u\72l(d\61ta:image/png;base64,AAAA)"/></svg>',
+        "esc_imageset.svg": b"<svg "
+        + SVG_NS
+        + rb""" ><rect style="background:image-set('d\61ta:image/png;base64,AAAA' 1x)"/></svg>""",
+        "esc_fill.svg": b"<svg " + SVG_NS + rb' ><rect fill="u\72l(d\61ta:image/png;base64,AAAA)"/></svg>',
+        "plain_style.svg": b"<svg " + SVG_NS + b'><rect style="fill:red"/></svg>',
+        "backslash.svg": b"<svg " + SVG_NS + rb' ><rect fill="re\64"/></svg>',
+        "calc.svg": b"<svg " + SVG_NS + b'><rect width="calc(1px + 2px)"/></svg>',
+        "image_set_fn.svg": b"<svg " + SVG_NS + b'><rect fill="image-set(x)"/></svg>',
+        "bare_paren.svg": b"<svg " + SVG_NS + b'><rect fill="(1)"/></svg>',
+        "class.svg": b"<svg " + SVG_NS + b'><rect class="a"/></svg>',
+        "latin1.svg": b'<?xml version="1.0" encoding="ISO-8859-1"?><svg ' + SVG_NS + b"><rect/></svg>",
+    }
+    _offer(env, ids, files)
+    got = {n: client.get(url(stub, f"DEMO-0001/artifacts/{n}"), headers=headers(token)).json()["media"] for n in files}
+    assert got["ok.svg"] is not None and got["ok.svg"]["type"] == "svg"
+    assert got["bom.svg"] is not None  # a BOM is stripped by the one rule on both sides
+    assert {n: m for n, m in got.items() if n not in ("ok.svg", "bom.svg")} == dict.fromkeys(
+        set(files) - {"ok.svg", "bom.svg"}
+    )
+
+
 def test_changes_are_bound_to_the_observed_source(client, token, stub, rich):
     env, ids = rich
     res = client.get(url(stub, "DEMO-0001/changes"), headers=headers(token))

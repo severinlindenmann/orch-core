@@ -140,6 +140,12 @@ class NextFlight:
         return value
 
 
+def hub_mode(link):
+    from .hubapprove import mode_of_link  # lazy: hubapprove imports this module's types
+
+    return mode_of_link(link)
+
+
 class Gateway:
     def __init__(self, state=None, click=None):
         self.state = state or state_dir()
@@ -396,6 +402,7 @@ class Gateway:
                         runner=runner(link.call("whoami"), True)
                         if link.supports("whoami", "ops/1") and link.has("run/1")
                         else None,
+                        signing=hub_mode(link),
                     )
                 )
             except HostError as exc:

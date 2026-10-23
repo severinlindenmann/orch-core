@@ -1054,6 +1054,9 @@ class RealPorts:
     def convenience_on(self, wid: str) -> None:
         from orch.host import convenience
 
+        entry = convenience.registered_entry(self.state, wid, self.uid)
+        if entry is not None:  # like the CLI and the dashboard: B10 reader check and the full-mode refusal, up front
+            convenience.refuse_turn_on(self.state, entry, self.uid)
         convenience.set_enabled(self.state, wid, True, self.uid)
 
     def stage(self, wid: str, prefix: str, passphrase: str) -> Any:

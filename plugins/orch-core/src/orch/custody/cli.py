@@ -157,6 +157,7 @@ def run(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, err: Text
                 "sign.convenience_unavailable",
                 "disabled: click-to-sign is off for this workspace (orch host convenience on --workspace W)",
             )
+        # V3 C11: the full-mode refusal is in select.stage_convenience (one choke point for every path)
         err.write(RISK + "\n")
         sel = select.convert_to_convenience(state, wid, prefix=str(entry.get("prefix") or ""))
         return {"workspace_id": wid, "custody": sel["custody"], "device": sel["device"], "gen": sel.gen}

@@ -55,9 +55,14 @@ def status(code: str) -> int:
         "records.snapshot_invalid",
     } or code.startswith(("parse.", "frame.")):
         return 400
-    if code in {"human_only", "role.denied", "op.not_allowed", "peer.denied", "host.required"} or code.startswith(
-        "grant."
-    ):
+    if code in {
+        "human_only",
+        "role.denied",
+        "op.not_allowed",
+        "peer.denied",
+        "host.required",
+        "sign.hub_only",
+    } or code.startswith("grant."):
         return 403
     if code in {"intent.ended", "intent.done", "intent.expired"}:
         return 409
@@ -136,6 +141,7 @@ DETAIL_KEYS: dict[str, dict[str, tuple[str, ...] | str]] = {
         ),
         "devices": DEVICES,
     },
+    "sign.hub_only": {"reason": ("hub",)},  # V3 C11: full hub mode takes no local key
     "sign.convenience_readers": {
         "reason": ("no_declaration", "reader_too_old", "declaration_unknown", "relay_too_old", "unknown_readers"),
         "devices": DEVICES,

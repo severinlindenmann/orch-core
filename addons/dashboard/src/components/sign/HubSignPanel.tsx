@@ -63,11 +63,18 @@ export function HubSignPanel({ ws, request }: { ws: string; request: HubSignRequ
         <Smartphone className="size-4 text-brand" aria-hidden /> {WAYS}
       </p>
       <p className="text-text-muted">
-        {what(info.summary)} on <Raw>{info.summary.ticket}</Raw>. Your phone also lists it under “Needs you”.
+        {what(info.summary)} on <Raw>{info.summary.ticket}</Raw>. On your phone, open “Needs you” and pick this request.
       </p>
+      <div className="rounded-md border border-border px-3 py-2">
+        <p className="text-[12px] text-text-muted">Request, as written on the ticket:</p>
+        <p data-testid="hub-title" className="break-words text-text">
+          <Inline>{info.summary.title}</Inline>
+        </p>
+      </div>
       {short ? (
         <div className="rounded-md border border-border bg-bg p-3">
           <p className="text-[12px] text-text-muted">Check that these 12 characters match on your phone before you approve.</p>
+          <p className="text-[12px] text-text-muted">If they differ, do not approve.</p>
           <p data-testid="hub-short-hash" className="mt-1 font-mono text-[18px] tracking-wider text-text">{short}</p>
         </div>
       ) : (
@@ -81,7 +88,7 @@ export function HubSignPanel({ ws, request }: { ws: string; request: HubSignRequ
           target="_blank"
           rel="noopener noreferrer"
           data-testid="hub-link"
-          className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-text hover:bg-surface-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand"
+          className="inline-flex min-h-11 items-center gap-1.5 rounded-md border border-border px-4 py-2 text-text hover:bg-surface-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand"
         >
           Open in the hub <ExternalLink className="size-3.5" aria-hidden />
         </a>
@@ -89,14 +96,8 @@ export function HubSignPanel({ ws, request }: { ws: string; request: HubSignRequ
         <p className="text-text-muted">The host sent no link; approve on your phone.</p>
       )}
       <p className="flex items-center gap-2 text-text-muted" role="status">
-        <Loader2 className="size-3.5 animate-spin" aria-hidden /> Waiting for your approval. This page updates when it arrives.
+        <Loader2 className="size-3.5 animate-spin" aria-hidden /> Waiting for you to approve on your phone or in the hub. This page updates by itself.
       </p>
-      <div className="border-t border-border pt-2">
-        <p className="text-[11px] text-text-faint">Ticket title, written by its people and agents:</p>
-        <p data-testid="hub-title" className="break-words text-text-muted">
-          <Inline>{info.summary.title}</Inline>
-        </p>
-      </div>
     </div>
   )
 }

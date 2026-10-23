@@ -141,16 +141,29 @@ function ClampedProse({ children }: { children: string }) {
   </>
 }
 
+/** The sections the compact answer review draws itself (the full list below it leaves them out). */
+const COMPACT_IDS = ['selected', 'answer', 'note', 'question', 'details']
+
+/** The signer View's `question hash` row, as the host wrote it (a section or a row; null when the View has none). */
+export function viewQuestionHash(content: Content | null | undefined): string | null {
+  const row = content?.fields_changed?.find(f => f.field === 'question hash')
+  if (row) return row.after
+  return content?.sections?.find(s => s.id === 'question hash')?.text ?? null
+}
+
 /**
- * The fields a compact answer review needs: the ticket (an existing one), the question, the chosen option. Null when any
- * is missing or the host sent a summary: the caller then shows the full review. Never a compact view that hides content.
+ * The fields a compact answer review needs, by the frozen section ids of the signer View: `selected` (the chosen option:
+ * title, key, text, facts, cost; "Something else" for Other), `answer` (typed text of Other or a text question) or `note`
+ * (an annotation), `question`, `details`. A choice has `selected`, a text question only `answer`. Null when the question
+ * or the answer part is missing, or the host sent a summary: the caller then shows the full review. Never a compact view
+ * that hides content.
  */
 export function compactAnswer(content: Content | null | undefined) {
   if (!content || content.summary || !content.ticket || content.ticket.new === true) return null
-  const choice = content.fields_changed?.find(f => f.field === 'your choice')
-  const question = content.sections?.find(s => s.id === 'question')
-  if (!choice || choice.after == null || !question) return null
-  return { ticket: content.ticket, choice, question, notes: content.sections?.filter(s => s.id === 'answer') ?? [] }
+  const sec = (id: string) => content.sections?.find(s => s.id === id)
+  const selected = sec('selected'), answer = sec('answer'), note = sec('note'), question = sec('question')
+  if (!question || (!selected && !answer)) return null
+  return { ticket: content.ticket, selected, answer, note, question, details: sec('details') }
 }
 
 /** `technical`: more facts for the ONE "Technical details" expander of the review (the panel's own: action, fingerprint, device). */
@@ -163,9 +176,11 @@ export function SignContent({ content, ws, technical, compact = false }: { conte
   // A request on an EXISTING ticket keeps its key (the host's word) and the end of the signed id in the main view; a creation
   // (it signs the key and the title) has them under Technical details only.
   const ticketLine = content.ticket && content.ticket.new !== true
+  // Compact: the sections the strip draws itself are not repeated in the expander.
+  const compactShown = compact && compactAnswer(content) !== null && !!content.ticket && content.ticket.new !== true
   const rest = <>
     {ticketLine && content.ticket && <p data-testid="sign-ticket" className="text-[12px] text-text-muted"><Raw>{content.ticket.key}</Raw> (key per host) · signed id …<Raw>{content.ticket.uid_tail}</Raw></p>}
-    {content.sections?.map(s => <section key={s.id}><h3 className="mb-2 text-[13px] font-medium text-text"><Inline>{s.title}</Inline></h3><Prose className="font-sans leading-relaxed text-text">{s.text}</Prose></section>)}
+    {content.sections?.filter(s => !(compactShown && COMPACT_IDS.includes(s.id))).map(s => <section key={s.id}><h3 className="mb-2 text-[13px] font-medium text-text"><Inline>{s.title}</Inline></h3><Prose className="font-sans leading-relaxed text-text">{s.text}</Prose></section>)}
     <Pictures images={content.images} />
     {!!content.acceptance?.length && <section><h3 className="mb-2 text-[13px] font-medium text-text">Acceptance criteria</h3><ul className="space-y-2 leading-relaxed">{content.acceptance.map(a => <li key={a.id}><span aria-label={a.checked ? 'Checked' : 'Unchecked'}>{a.checked ? '☑' : '☐'}</span> <Inline>{a.text}</Inline> <span className="text-[12px] text-text-muted [&_bdi]:text-text-muted"><Raw>{a.id}</Raw></span>{a.manual && <p className="text-[12px] text-text-muted"><Inline>{a.manual}</Inline></p>}</li>)}</ul></section>}
     {!!content.tasks?.length && <section><h3 className="mb-2 text-[13px] font-medium text-text">Plan tasks</h3><ol className="list-decimal space-y-3 pl-5 leading-relaxed">{content.tasks.map(t => <li key={t.n} value={t.n}><Inline>{t.title}</Inline> <span className="text-[12px] text-text-muted [&_bdi]:text-text-muted"><Raw>{t.id}</Raw></span>{t.verify?.map((v,i) => <p key={i} className="mt-1 font-mono text-[12px] leading-relaxed text-text-muted [&_bdi]:text-text-muted">Verify: <Value>{v}</Value></p>)}</li>)}</ol></section>}
@@ -194,14 +209,17 @@ export function SignContent({ content, ws, technical, compact = false }: { conte
   // field is missing, the full review is shown: a compact view never hides content.
   const parts = compact ? compactAnswer(content) : null
   if (parts && ticketLine) {
-    const { choice, question, ticket: tk, notes: note } = parts
-    // Order matters: the ticket, then the choice in a box of its own, BEFORE any text someone else wrote (a question that
-    // ends in "Your answer: …" cannot pass for the real line, and cannot push it off screen). The exact text is under Details.
+    const { selected, answer, note, question, details, ticket: tk } = parts
+    // Order matters: the ticket, then what the person sends in a box of its own (the selected option, or their own words),
+    // UNCLAMPED, BEFORE any text someone else wrote (a question that ends in "Your answer: ..." cannot pass for the real
+    // thing, and cannot push it off screen). Question and details are clamped here with "Show all".
     return <div data-testid="sign-compact" className="min-w-0 space-y-3 font-sans text-[13px] leading-relaxed text-text [overflow-wrap:anywhere]">
       <p data-testid="sign-ticket" className="text-[12px] text-text-muted"><Raw>{tk.key}</Raw> (key per host) · signed id …<Raw>{tk.uid_tail}</Raw></p>
-      <div data-testid="sign-choice" className="rounded-md border border-brand bg-brand-soft px-3 py-2"><span className="text-[12px] text-text-muted">Your answer</span><p className="font-medium text-text"><Shown plain value={choice.after} members={members} /></p></div>
-      {note.map(s => <section key={s.id}><h3 className="mb-1 text-[12px] font-medium text-text-muted"><Inline>{s.title}</Inline></h3><ClampedProse>{s.text}</ClampedProse></section>)}
+      {selected && <div data-testid="sign-choice" className="rounded-md border border-brand bg-brand-soft px-3 py-2"><span className="text-[12px] text-text-muted"><Inline>{selected.title}</Inline></span><Prose className="font-sans font-medium leading-relaxed text-text">{selected.text}</Prose></div>}
+      {answer && <div data-testid="sign-answer" className="rounded-md border border-brand bg-brand-soft px-3 py-2"><span className="text-[12px] text-text-muted"><Inline>{answer.title}</Inline></span><Prose className="font-sans font-medium leading-relaxed text-text">{answer.text}</Prose></div>}
+      {note && <section data-testid="sign-note"><h3 className="mb-1 text-[12px] font-medium text-text-muted"><Inline>{note.title}</Inline></h3><Prose className="font-sans leading-relaxed text-text">{note.text}</Prose></section>}
       <section aria-label={question.title}><h3 className="mb-1 text-[12px] font-medium text-text-muted"><Inline>{question.title}</Inline></h3><ClampedProse>{question.text}</ClampedProse></section>
+      {details && <section data-testid="sign-details" aria-label={details.title}><h3 className="mb-1 text-[12px] font-medium text-text-muted"><Inline>{details.title}</Inline></h3><ClampedProse>{details.text}</ClampedProse></section>}
       <details data-testid="sign-exact" className="space-y-3 rounded-md border border-border p-3">
         <summary className="cursor-pointer text-[12px] font-medium text-text-muted">Details: all options and facts</summary>
         <div className="mt-2 max-h-[38vh] min-w-0 space-y-5 overflow-auto pr-3">{rest}</div>

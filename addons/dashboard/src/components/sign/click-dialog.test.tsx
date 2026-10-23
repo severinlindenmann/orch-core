@@ -675,11 +675,15 @@ describe('answering a question in one-click mode', () => {
   const ANSWER = { kind: 'answer', question: 'Q2', option: 'date' } as const
   const content = {
     headline: 'Answer “Which date?” on DEMO-0043 with DATE (local midnight)',
-    sections: [{ id: 'question', title: 'Question', text: 'Which date should the report use?' }],
+    sections: [
+      { id: 'selected', title: 'Your choice', text: 'DATE (local midnight)' },
+      { id: 'question', title: 'Question', text: 'Which date should the report use?' },
+    ],
     ticket: { key: 'DEMO-0043', uid_tail: 'abcd1234' },
     fields_changed: [
-      { field: 'your choice', before: null, after: 'DATE (local midnight)' },
+      { field: 'option a', before: null, after: 'DATE (local midnight)' },
       { field: 'option b', before: null, after: 'TIMESTAMP' },
+      { field: 'question hash', before: null, after: 'sha256:' + 'a'.repeat(64) },
     ],
   }
 
@@ -690,7 +694,7 @@ describe('answering a question in one-click mode', () => {
     await within(dialog).findByTestId('click-panel', {}, T)
     expect(within(dialog).getAllByRole('button', { name: 'Send answer' })).toHaveLength(1) // the review's own button, no first screen before it
     // what is answered is in view; the question and the other options are under Details, closed
-    expect(within(dialog).getByTestId('sign-choice')).toHaveTextContent(/Your answer.*DATE \(local midnight\)/)
+    expect(within(dialog).getByTestId('sign-choice')).toHaveTextContent(/Your choice.*DATE \(local midnight\)/)
     const compact = within(dialog).getByTestId('sign-compact')
     const shown = within(compact).getAllByTestId('sign-ticket').find((e) => !e.closest('details'))! // outside Details
     expect(shown).toHaveTextContent('DEMO-0043')

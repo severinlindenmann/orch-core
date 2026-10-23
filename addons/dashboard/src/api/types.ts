@@ -141,19 +141,32 @@ export interface TaskDef {
   assignee?: string
 }
 
+/** One option of a choice question, exactly as the host stores it: `label` is the title, `facts` are [label, value] pairs. */
 export interface QuestionOption {
   key: string
   label: string
+  text?: string
   cost?: string
+  facts?: [string, string][]
 }
+
+/** The closed set of question kinds (core `KINDS`). A kind this dashboard does not know is never answerable here. */
+export type QuestionKind = 'choice' | 'text'
 
 export interface QuestionDef {
   id: string // Q1
   to: string // person or ticket role
   text: string
+  /** Absent only for a question the host did not describe: it is shown, never answerable. */
+  kind?: QuestionKind
   why?: string
+  details?: string
+  /** Only a choice has options (2 to 6) and may allow "Something else". */
   options?: QuestionOption[]
   recommended?: string
+  allow_other?: boolean
+  /** Every question key except id, to, blocking, text, options: as the host sent it (the hash binds it). Never rebuilt here. */
+  spec?: Record<string, unknown>
   blocking: boolean
 }
 
@@ -257,7 +270,7 @@ export interface QuestionStatus extends QuestionDef {
   asked_at: string
   asked_by: string
   answer: { option?: string; text?: string; by: string; at: string; via?: Via; presence?: Presence } | null
-  /** Hash an answer signs (the question text, options and recommendation). */
+  /** Hash an answer signs (the question text, options and spec). */
   hash?: string
 }
 

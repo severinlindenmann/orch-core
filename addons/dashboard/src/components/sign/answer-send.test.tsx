@@ -16,8 +16,10 @@ const WS_FEATURES = ['identity', 'today', 'tickets', 'board', 'ticket', 'actions
 const q = { id: 'Q2', text: 'Card text of the question', state: 'open', hash: 'sha256:' + 'a'.repeat(64), options: [{ key: 'a', label: 'DATE' }, { key: 'b', label: 'TIMESTAMP' }] } as unknown as QuestionStatus
 
 let n = 0
+// The hash of the card the View belongs to (the Host's question, or the real mock ticket's Q2 when the page is mounted).
+let cardHash = q.hash!
 const digestOf = (id: string) => 'sha256:' + id.padStart(64, '0').slice(-64)
-const view = (id: string, over: Partial<ClickViewAnswer['view']> = {}, choice = 'DATE', question = q.text): ClickViewAnswer => ({
+const view = (id: string, over: Partial<ClickViewAnswer['view']> = {}, choice = 'DATE', question = q.text, extra: { id: string; title: string; text: string }[] = [], hash = cardHash): ClickViewAnswer => ({
   view_digest: digestOf(id),
   view: {
     risk: CLICK_RISK,
@@ -34,8 +36,14 @@ const view = (id: string, over: Partial<ClickViewAnswer['view']> = {}, choice = 
     content: {
       headline: 'Answer',
       ticket: { key: 'DEMO-0043', uid_tail: 'abcd1234' },
-      sections: [{ id: 'question', title: 'Question', text: question }],
-      fields_changed: [{ field: 'your choice', before: null, after: choice }],
+      // The frozen signer View (design-question-options.md section 4): selected first, the question, one row per option,
+      // the question hash last.
+      sections: [{ id: 'selected', title: 'Your choice', text: choice }, { id: 'question', title: 'Question', text: question }, ...extra],
+      fields_changed: [
+        { field: 'option a', before: null, after: 'DATE' },
+        { field: 'option b', before: null, after: 'TIMESTAMP' },
+        { field: 'question hash', before: null, after: hash },
+      ],
     },
     ...over,
   } as ClickViewAnswer['view'],
@@ -93,6 +101,7 @@ function Host({ fallback, onViewQuestion }: { fallback: () => void; onViewQuesti
 
 async function mountHost(fallback = vi.fn(), onViewQuestion?: (t: string | null) => void, ui?: (ticket: TicketDocument) => ReactNode) {
   const ticket = await api.getTicket('DEMO-0043')
+  cardHash = ui ? ticket.questions_state.find((x) => x.id === 'Q2')!.hash! : q.hash!
   const ws = mockStore.workspaces.find((w) => ticket.key.startsWith(w.prefix + '-'))!.id
   setFeatures({ features: WS_FEATURES, workspaces: { [ws]: WS_FEATURES } })
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -226,6 +235,41 @@ describe('Send answer in the card, one-click custody', () => {
     expect(sign.mock.calls[1][2]).toBe(digestOf('77'))
   })
 
+  it('a View of another question (its question hash differs from the card) never arms, is cancelled and says so', async () => {
+    flag(true)
+    prepare.mockImplementation(async () => {
+      const id = 'reqm'.padEnd(32, '0')
+      views[id] = view('9', {}, 'DATE', q.text, [], 'sha256:' + 'b'.repeat(64))
+      return { request_id: id, expires_at: new Date(Date.now() + 600_000).toISOString(), op: 'answer', confirm: 'click' }
+    })
+    const onView = vi.fn()
+    await mountHost(vi.fn(), onView)
+    fireEvent.click(screen.getByText('pick a'))
+    await screen.findByTestId('strip-mismatch', {}, T)
+    expect(screen.queryByTestId('answer-strip')).toBeNull()
+    expect(cancel).toHaveBeenCalled()
+    expect(sign).not.toHaveBeenCalled()
+    expect(screen.getByTestId('card-text')).toHaveTextContent(q.text) // View text never replaces the card's
+    expect(onView).not.toHaveBeenCalledWith(expect.stringContaining('Question'))
+    await new Promise((r) => setTimeout(r, ARM_MS + 300))
+    expect(sign).not.toHaveBeenCalled()
+  })
+
+  it('a View without a question hash row fails closed in the same way', async () => {
+    flag(true)
+    prepare.mockImplementation(async () => {
+      const id = 'reqn'.padEnd(32, '0')
+      const v = view('8')
+      v.view.content!.fields_changed = v.view.content!.fields_changed!.filter((f) => f.field !== 'question hash')
+      views[id] = v
+      return { request_id: id, expires_at: new Date(Date.now() + 600_000).toISOString(), op: 'answer', confirm: 'click' }
+    })
+    await mountHost()
+    fireEvent.click(screen.getByText('pick a'))
+    await screen.findByTestId('strip-mismatch', {}, T)
+    expect(screen.queryByTestId('answer-strip')).toBeNull()
+  })
+
   it('an unknown outcome keeps the strip, disabled, and says not to send again', async () => {
     flag(true)
     sign.mockRejectedValueOnce(new TypeError('Failed to fetch'))
@@ -253,7 +297,7 @@ describe('Send answer in the card, one-click custody', () => {
     fireEvent.click(screen.getByText('pick a'))
     const strip = await screen.findByTestId('answer-strip', {}, T)
     const choice = screen.getByTestId('sign-choice')
-    expect(choice).toHaveTextContent('Your answer')
+    expect(choice).toHaveTextContent('Your choice')
     expect(choice).toHaveTextContent('DATE (option a)')
     expect(choice).not.toHaveTextContent('Approve deploy')
     // the choice box comes before any text someone else wrote, and the question is clamped with a way to read it all
@@ -328,8 +372,8 @@ describe('answer follow-ups (fake timers)', () => {
     flag(true)
     sign.mockReturnValue(new Promise(() => undefined)) // never answers: the signature stays on its way
     await mountQuestions()
-    fireEvent.click((await screen.findAllByRole('button', { name: 'Add a note' }, T))[0])
     fireEvent.click(await openQ2())
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Add a note' }, T))[0])
     await screen.findByTestId('answer-strip', {}, T)
     await vi.advanceTimersByTimeAsync(ARM_MS + 100)
     const button = screen.getByRole('button', { name: 'Send answer' })

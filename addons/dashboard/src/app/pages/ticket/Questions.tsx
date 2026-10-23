@@ -8,19 +8,26 @@ import { cn } from '@/lib/utils'
 import { AnswerSend } from '@/components/sign/AnswerSend'
 import { Prose } from '@/components/sign/visible'
 import { canAnswer } from './actions'
-import { QuestionOptions } from './QuestionOptions'
+import { ANSWER_MAX, answerableKind, answerOf, QuestionDetails, QuestionOptions, TextAnswer, type Picked } from './QuestionOptions'
 import { ago, Mono, Pill, presenceLabel, shortHash, type TabProps, type Viewer } from './shared'
 
 const VIA: Record<string, string> = { cli: 'CLI', dashboard: 'dashboard', phone: 'phone' }
 
 function AnswerForm({ q, sign, ticketKey, onViewQuestion }: { q: QuestionStatus; sign: TabProps['sign']; ticketKey: string; onViewQuestion: (t: string | null) => void }) {
-  const [option, setOption] = useState<string | undefined>(undefined)
-  const [text, setText] = useState('')
-  const hasOptions = !!q.options?.length
+  const kind = answerableKind(q)
+  const [pick, setPick] = useState<Picked | null>(null)
+  // One box per purpose: a note that goes with a key, the words of "Something else", the answer of a text question.
+  const [note, setNote] = useState('')
+  const [other, setOther] = useState('')
+  const [typed, setTyped] = useState('')
   const [noting, setNoting] = useState(false)
   const [busy, setBusy] = useState(false)
-  const showNote = !hasOptions || noting || !!text
-  const ready = !!option || !!text.trim()
+  if (!kind) return <p className="mt-3 border-t border-border pt-3 text-[12px] text-text-faint">This question cannot be shown here in full. Answer it in your terminal.</p>
+  const text = kind === 'text' ? typed : pick?.type === 'other' ? other : note
+  const option = kind === 'choice' && pick?.type === 'key' ? pick.key : undefined
+  const answer = kind === 'text' ? answerOf(null, typed) : pick ? answerOf(pick, text) : null
+  const ready = !!answer && Array.from(text.trim()).length <= ANSWER_MAX
+  const go = () => answer && sign({ kind: 'answer', question: q.id, option: answer.option, text: answer.text })
   return (
     <form
       className="mt-3 space-y-3 border-t border-border pt-3"
@@ -30,22 +37,30 @@ function AnswerForm({ q, sign, ticketKey, onViewQuestion }: { q: QuestionStatus;
         // would otherwise open the two-step dialog behind the strip that already holds a prepared request.
         // `null`: an implicit submission. (A browser without `submitter` says undefined: that still submits.)
         if ((e.nativeEvent as SubmitEvent).submitter === null) return
-        if (ready) sign({ kind: 'answer', question: q.id, option, text: text.trim() || undefined })
+        if (ready) go()
       }}
     >
-      {q.options && q.options.length > 0 && <QuestionOptions q={q} name={`answer-${q.id}`} value={option} onChange={setOption} idPrefix={q.id} disabled={busy} />}
-      {showNote ? (
-        <div className="space-y-1.5">
-          <Label htmlFor={`${q.id}-note`} className="text-[12px] text-text-muted">
-            {hasOptions ? 'Your note (optional, sent with the answer)' : 'Your answer'}
-          </Label>
-          <Textarea id={`${q.id}-note`} rows={2} value={text} disabled={busy} onChange={(e) => setText(e.target.value)} />
-        </div>
+      {kind === 'choice' ? (
+        <QuestionOptions q={q} name={`answer-${q.id}`} value={pick} onChange={setPick} idPrefix={q.id} otherText={other} onOtherText={setOther} disabled={busy} />
       ) : (
-        <Button type="button" variant="link" size="sm" className="h-auto p-0 text-[12px]" disabled={busy} onClick={() => setNoting(true)}>
-          Add a note
-        </Button>
+        <>
+          <TextAnswer q={q} idPrefix={q.id} value={typed} onChange={setTyped} disabled={busy} />
+          <QuestionDetails q={q} />
+        </>
       )}
+      {kind === 'choice' && pick?.type === 'key' &&
+        (noting || !!note ? (
+          <div className="space-y-1.5">
+            <Label htmlFor={`${q.id}-note`} className="text-[12px] text-text-muted">
+              Your note (optional, sent with the answer)
+            </Label>
+            <Textarea id={`${q.id}-note`} rows={2} value={note} disabled={busy} onChange={(e) => setNote(e.target.value)} />
+          </div>
+        ) : (
+          <Button type="button" variant="link" size="sm" className="h-auto p-0 text-[12px]" disabled={busy} onClick={() => setNoting(true)}>
+            Add a note
+          </Button>
+        ))}
       <AnswerSend
         ticket={ticketKey}
         question={q}
@@ -53,7 +68,7 @@ function AnswerForm({ q, sign, ticketKey, onViewQuestion }: { q: QuestionStatus;
         text={text}
         canSend={ready}
         type="submit"
-        fallback={() => sign({ kind: 'answer', question: q.id, option, text: text.trim() || undefined })}
+        fallback={go}
         onViewQuestion={onViewQuestion}
         onBusy={setBusy}
       />
@@ -105,9 +120,9 @@ function QuestionCard({ q, viewer, sign, ticketKey }: { q: QuestionStatus; viewe
       <Prose className="mt-2 text-[14px] font-medium leading-snug">{viewText ?? q.text}</Prose>
       {q.why && <Prose className="mt-1 text-[13px] text-text-muted">{q.why}</Prose>}
 
-      {!answered && q.options && q.options.length > 0 && !canAnswer(q, viewer) && (
+      {!answered && !canAnswer(q, viewer) && (
         <div className="mt-3">
-          <QuestionOptions q={q} name={`view-${q.id}`} value={null} idPrefix={`view-${q.id}`} readOnly />
+          {q.options && q.options.length > 0 ? <QuestionOptions q={q} name={`view-${q.id}`} value={null} idPrefix={`view-${q.id}`} readOnly /> : <QuestionDetails q={q} />}
         </div>
       )}
 

@@ -1,7 +1,7 @@
 import { cleanup, render, screen, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, expect, it } from 'vitest'
-import { SignContent } from './SignContent'
+import { SignContent, viewQuestionHash } from './SignContent'
 
 afterEach(cleanup)
 
@@ -289,4 +289,58 @@ it.each([undefined, [], null, 'bad', {}, [null], [{ gate: 'unknown', people: [SE
 it('renders a host manual-acceptance annotation under the criterion', () => {
   render(<SignContent content={{ headline: 'Review result', acceptance: [{ id: 'AC2', text: 'Works', manual: 'AC2: accepted manually by Severin (no automated check)' }] }} />)
   expect(screen.getByRole('listitem')).toHaveTextContent('AC2: accepted manually by Severin (no automated check)')
+})
+
+const QUESTION = {
+  headline: 'Answer',
+  ticket: { key: 'TST-0001', title: '', uid_tail: 'ab12cd34', key_note: 'key per host' },
+  fields_changed: [{ field: 'option a', before: null, after: 'Monthly CSV' }, { field: 'question hash', before: null, after: 'sha256:' + 'a'.repeat(64) }],
+}
+
+it('compact answer: the selected option and a note are unclamped, question and details are clamped with Show all', () => {
+  const long = 'Monthly CSV\n' + 'one more line of what this costs\n'.repeat(12)
+  const details = 'background line\n'.repeat(20)
+  render(<SignContent compact content={{ ...QUESTION, sections: [
+    { id: 'selected', title: 'Your choice', text: long },
+    { id: 'note', title: 'Your note', text: 'my note\n'.repeat(12) },
+    { id: 'question', title: 'Question', text: 'Which export?\n'.repeat(12) },
+    { id: 'details', title: 'Details from the agent', text: details },
+  ] }} />)
+  const choice = screen.getByTestId('sign-choice')
+  expect(choice.textContent).toContain('one more line of what this costs')
+  expect(choice.querySelector('.max-h-32')).toBeNull()
+  expect(screen.getByTestId('sign-note').querySelector('.max-h-32')).toBeNull()
+  expect(screen.getByRole('region', { name: 'Question' }).querySelector('.max-h-32')).not.toBeNull()
+  const d = screen.getByTestId('sign-details')
+  expect(d.querySelector('.max-h-32')).not.toBeNull()
+  expect(within(d).getByRole('button', { name: 'Show all' })).toBeInTheDocument()
+  // each of them once: the expander does not repeat what the strip drew
+  expect(screen.getAllByText(/Monthly CSV/)).toHaveLength(2) // the box and the option row under Details
+})
+
+it('compact answer: Other shows Something else and the typed text; a text question shows only the answer', () => {
+  const { unmount } = render(<SignContent compact content={{ ...QUESTION, sections: [
+    { id: 'selected', title: 'Your choice', text: 'Something else' },
+    { id: 'answer', title: 'Your answer', text: 'Neither, keep the seeds' },
+    { id: 'question', title: 'Question', text: 'Which export?' },
+  ] }} />)
+  expect(screen.getByTestId('sign-choice')).toHaveTextContent('Something else')
+  expect(screen.getByTestId('sign-answer')).toHaveTextContent('Neither, keep the seeds')
+  unmount()
+  render(<SignContent compact content={{ ...QUESTION, sections: [
+    { id: 'answer', title: 'Your answer', text: 'Acme Bank' },
+    { id: 'question', title: 'Question', text: 'Which bank?' },
+  ] }} />)
+  expect(screen.queryByTestId('sign-choice')).toBeNull()
+  expect(screen.getByTestId('sign-answer')).toHaveTextContent('Acme Bank')
+})
+
+it('compact answer: no answer part (neither selected nor answer) shows the full review, never a compact one', () => {
+  render(<SignContent compact content={{ ...QUESTION, sections: [{ id: 'question', title: 'Question', text: 'Which?' }] }} />)
+  expect(screen.queryByTestId('sign-compact')).toBeNull()
+})
+
+it('exposes the question hash of the View', () => {
+  expect(viewQuestionHash(QUESTION as never)).toBe('sha256:' + 'a'.repeat(64))
+  expect(viewQuestionHash({ headline: 'x' })).toBeNull()
 })

@@ -22,7 +22,7 @@ import { toastApiError } from '@/app/toast'
 import { useWorkspace } from '@/app/workspace'
 import { visible } from '@/components/sign/visible'
 import { AnswerSend } from '@/components/sign/AnswerSend'
-import { QuestionOptions } from '../ticket/QuestionOptions'
+import { answerableKind, answerOf, QuestionDetails, QuestionOptions, type Picked } from '../ticket/QuestionOptions'
 import { type HumanAction } from '../ticket/shared'
 import { ago } from './shared'
 import { fmtClock, nowMs, plural } from '@/lib/time'
@@ -154,10 +154,12 @@ const Locked = () => <span className="text-xs text-text-muted">Answer in your te
 
 export function QuestionRow({ item, ticket, now, expanded, onToggle, sign, askedBy, decider, locked }: CoreRowProps) {
   const q = ticket?.questions_state.find((x) => x.id === item.ref)
-  const [choice, setChoice] = useState<string | null>(null)
+  const [choice, setChoice] = useState<Picked | null>(null)
+  const [otherText, setOtherText] = useState('')
   const [viewText, setViewText] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const id = `question:${item.ticket}:${item.ref}`
+  const answer = choice ? answerOf(choice, otherText) : null
   const readOnly = decider !== undefined
   return (
     <RowShell
@@ -189,16 +191,17 @@ export function QuestionRow({ item, ticket, now, expanded, onToggle, sign, asked
     >
       {q?.why && <p className="text-[13px] leading-relaxed text-text-muted">{q.why}</p>}
       {locked ? (
-        q && <QuestionOptions q={q} name={`answer-${id}`} value={null} idPrefix={`answer-${id}`} readOnly />
-      ) : q?.options?.length ? (
+        q && (q.options?.length ? <QuestionOptions q={q} name={`answer-${id}`} value={null} idPrefix={`answer-${id}`} readOnly /> : <QuestionDetails q={q} />)
+      ) : q && answerableKind(q) === 'choice' ? (
         <div className="space-y-3">
-          <QuestionOptions q={q} name={`answer-${id}`} value={choice} onChange={setChoice} idPrefix={`answer-${id}`} disabled={busy} />
+          <QuestionOptions q={q} name={`answer-${id}`} value={choice} onChange={setChoice} idPrefix={`answer-${id}`} otherText={otherText} onOtherText={setOtherText} disabled={busy} />
           <AnswerSend
             ticket={item.ticket}
             question={q}
-            option={choice}
-            canSend={!!choice && !!ticket}
-            fallback={() => choice && sign(item.ticket, { kind: 'answer', question: item.ref!, option: choice })}
+            option={choice?.type === 'key' ? choice.key : undefined}
+            text={choice?.type === 'other' ? otherText : ''}
+            canSend={!!answer && !!ticket}
+            fallback={() => answer && sign(item.ticket, { kind: 'answer', question: item.ref!, ...answer })}
             onViewQuestion={setViewText}
             onBusy={setBusy}
           />

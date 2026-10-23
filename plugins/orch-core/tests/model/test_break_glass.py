@@ -147,3 +147,57 @@ def test_leave_ends_grants_the_hub_requested_and_no_others():
     assert workspace.hub_left(ws, e) is None
     assert ws.grants["gr_hub"].revoked
     assert not ws.grants["gr_own"].revoked and not ws.grants["gr_other"].revoked
+
+
+# --- the signer is classified fail closed (security review of the first push) ----------------------------------------
+
+
+def _leave(w, who="sev", **extra):
+    return w.build_unappended("workspace", "hub.left", who, roster_v=w.roster_v, hub_id=HUB, binding_seq=1, **extra)
+
+
+@pytest.mark.parametrize("auth", ["secure-enclave", "secure-enclave-unlocked", "webauthn", "tpm", "windows-hello"])
+def test_only_the_passphrase_label_is_the_owners_terminal(w, auth):
+    r = admit(strict(w), _leave(w, auth=auth), log="workspace")
+    assert r.code == Code.SIGN_HUB_ONLY
+
+
+def test_a_passphrase_leave_by_the_owners_own_device_is_allowed(w):
+    assert not hasattr(admit(strict(w), _leave(w, auth="passphrase"), log="workspace"), "code")
+
+
+def test_a_relay_signed_leave_is_refused(w):
+    r = admit(strict(w), _leave(w, signed_by=["p_x", "d_x"]), log="workspace")
+    assert r.code == Code.SIGN_HUB_ONLY
+
+
+def test_a_device_that_is_not_the_actors_is_not_the_owners_key(w):
+    e = _leave(w)
+    e["actor"] = {**e["actor"], "device": w.dev["tom"]}
+    assert breakglass.signer_kind(strict(w)._core.ws, e) == "other"
+    assert not breakglass.allowed("hub.leave", "other")
+
+
+def test_the_recovery_shape_is_its_own_kind(w):
+    ws = strict(w)._core.ws
+    e = _leave(w)
+    e["actor"] = {**e["actor"], "device": "d_" + "9" * 32}
+    e["cert"] = {"o": {}, "sig": "x"}
+    assert breakglass.signer_kind(ws, e) == "pk"
+    assert breakglass.allowed("hub.leave", "pk") and not breakglass.allowed("hub.repin", "owner_device_key")
+
+
+def test_an_agent_cannot_write_a_human_only_event_in_full_mode():
+    w = World(validate=False).bootstrap({"mara": "maintainer"})
+    gid = w.grant("sev")
+    u = w.ticket()  # made before the join: a full-mode workspace takes no local ticket
+    hub_joined(w, [])
+    assert {"gate.approved", "ticket.closed", "grant.issued", "verdict.given"} <= breakglass.human_only_types()
+    assert "task.done" not in breakglass.human_only_types() and "log.added" not in breakglass.human_only_types()
+    ag = w.agent("sev", gid)
+    e = w.build_unappended(u, "ticket.closed", ag)
+    # the actor-kind rule already refuses it; the full-mode check is the second line of defence at the same choke point
+    assert admit(strict(w), e, log=u).code in (Code.EVENT_BAD_ACTOR, Code.SIGN_HUB_ONLY)
+    assert breakglass.agent_refusal(strict(w)._core.ws, e).code == Code.SIGN_HUB_ONLY
+    e = w.build_unappended(u, "log.added", ag, text="hello")
+    assert getattr(admit(strict(w), e, log=u), "code", None) != Code.SIGN_HUB_ONLY  # agents keep their other writes

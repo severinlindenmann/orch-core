@@ -25,7 +25,10 @@ from typing import Any
 from .codes import Code, Refusal
 from .types import WsCore
 
-__all__ = ["BREAK_GLASS", "BreakGlass", "SIGNER_KINDS", "allowed", "event_types", "local_refusal", "signer_kind"]
+__all__ = [
+    "BREAK_GLASS", "BreakGlass", "SIGNER_KINDS", "agent_refusal", "allowed", "event_types", "human_only_types",
+    "local_refusal", "signer_kind",
+]  # fmt: skip
 
 SIGNER_KINDS = ("owner_device_key", "pk", "click", "convenience", "agent", "hub", "relay")
 
@@ -60,20 +63,60 @@ def allowed(verb: str, signer: str) -> bool:
     return row is not None and signer in SIGNER_KINDS and signer in row.signers
 
 
-def signer_kind(e: Mapping[str, Any]) -> str:
-    """The kind of signer a person event carries, from the line itself (never from a label the caller chooses).
-    ``auth: "hub"`` is the hub, ``convenience`` the click signer, a ``signed_by`` the relay; anything else is the
-    owner's device key (a recovery-key signature is indistinguishable at this level and is judged by the host)."""
+def _recovery_signature(ws: WsCore, e: Mapping[str, Any]) -> bool:
+    """The recovery key ``PK`` signed: the actor's device is not a device of the roster and the line carries the
+    recovery certificate (the shape ``authorize_person`` calls recovery). Same rule as C11's ``hubsign``."""
+    return e["actor"].get("device") not in ws.devices and isinstance(e.get("cert"), Mapping)
+
+
+def signer_kind(ws: WsCore, e: Mapping[str, Any]) -> str:
+    """The kind of signer of a person event, read from the line and the roster, **fail closed**: only a passphrase (or
+    unlabelled) event with no ``signed_by`` is ever the owner's device key (a device of this actor's own) or the
+    recovery key. Every other label, a device of someone else, or a device the roster does not know is ``other``,
+    which no row of :data:`BREAK_GLASS` allows."""
     a = e.get("actor", {})
     if a.get("kind") == "agent":
         return "agent"
-    if e.get("auth") == "hub":
+    if "via" in a or e.get("auth") == "hub":
         return "hub"
     if e.get("auth") == "convenience":
         return "convenience"
     if e.get("signed_by"):
         return "relay"
-    return "owner_device_key"
+    if e.get("auth") not in (None, "passphrase"):
+        return "other"  # a phone's label, webauthn, ...: not the terminal
+    if _recovery_signature(ws, e):
+        return "pk"
+    dev = ws.devices.get(a.get("device"))
+    return "owner_device_key" if dev is not None and dev.person == a.get("id") else "other"
+
+
+# ``other`` is deliberately not a member of SIGNER_KINDS: nothing allows it.
+_AGENT_ONLY_TYPES: frozenset[str] | None = None
+
+
+def human_only_types() -> frozenset[str]:
+    """Event types only a person's operation emits (``emits.HUMAN_ONLY`` minus what any agent operation emits)."""
+    global _AGENT_ONLY_TYPES
+    if _AGENT_ONLY_TYPES is None:
+        from .emits import EMITS_V1, HUMAN_ONLY
+
+        human = frozenset().union(*(EMITS_V1[o] for o in HUMAN_ONLY if o in EMITS_V1))
+        agent = frozenset().union(*(t for o, t in EMITS_V1.items() if o not in HUMAN_ONLY))
+        _AGENT_ONLY_TYPES = human - agent
+    return _AGENT_ONLY_TYPES
+
+
+def agent_refusal(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
+    """The same choke point for agents (C8, orchestrator note): in a joined full-mode position an agent line of a
+    human-only type (a decision, a close, a grant) is refused, however its grant reads.
+    Agents keep every other write."""
+    h = ws.hub
+    if not h or h.get("status") != "joined" or h.get("mode") != "full":
+        return None
+    if e["type"] in human_only_types():
+        return Refusal(Code.SIGN_HUB_ONLY, f"{e['type']} is signed through the hub in a full-mode workspace")
+    return None
 
 
 def local_refusal(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
@@ -89,6 +132,6 @@ def local_refusal(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
     m = ws.members.get(e["actor"]["id"])
     if m is None or m.role != "owner":
         return Refusal(Code.SIGN_HUB_ONLY, f"{typ} is break-glass: the owner only")
-    if signer_kind(e) not in row.signers:
+    if signer_kind(ws, e) not in row.signers:
         return Refusal(Code.SIGN_HUB_ONLY, f"{typ} is break-glass: not by this way of signing")
     return None

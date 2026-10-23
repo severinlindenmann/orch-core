@@ -1039,7 +1039,9 @@ def _question(material: Mapping[str, Any], events: list[Mapping[str, Any]], tick
     if q.get("why"):  # the question hash binds the text and the options, not this: the host's word
         out["sections"].append({"id": "why", "title": "Why it was asked (per host, not signed)", "text": _s(q["why"])})
     if ev.get("text"):
-        out["sections"].append({"id": "answer", "title": "Your answer", "text": _s(ev["text"])})
+        out["sections"].append(
+            {"id": "answer", "title": "Your note" if picked else "Your answer", "text": _s(ev["text"])}
+        )
     if ev.get("question") != q.get("id"):
         raise PlainUnavailable("the event and the material name different questions")
     if picked:
@@ -1047,7 +1049,15 @@ def _question(material: Mapping[str, Any], events: list[Mapping[str, Any]], tick
         _row(
             out,
             "your choice",
-            f"{answer} (option {_s(picked)})" if _s(picked) in opts else f"{answer} (not one of the options)",
+            # The suffix goes only when the label IS the key and no other option carries that label: {a: "b"} next to
+            # {b: "b"} must keep it, or the row would not tell the two apart.
+            (
+                answer
+                if answer == _s(picked) and list(opts.values()).count(answer) == 1
+                else f"{answer} (option {_s(picked)})"
+            )
+            if _s(picked) in opts
+            else f"{answer} (not one of the options)",
         )
     for o in q.get("options") or []:
         _row(

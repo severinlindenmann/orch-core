@@ -48,4 +48,17 @@ describe('question options as cards', () => {
     expect(screen.queryAllByRole('radio')).toHaveLength(0)
     expect(screen.getByRole('list', { name: 'Options for Q1' })).toHaveTextContent('Recommended')
   })
+
+  it('shows the key of a long-keyed option as text, and names the option, Recommended and cost for a screen reader', () => {
+    const long = { ...q, recommended: 'timestamp', options: [{ key: 'date', label: 'DATE' }, { key: 'timestamp', label: 'TIMESTAMP', cost: '2 days' }] } as unknown as QuestionStatus
+    render(<QuestionOptions q={long} name="n" value={null} idPrefix="y" />)
+    expect(screen.getByText('timestamp', { selector: 'bdi' })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: 'timestamp: TIMESTAMP, recommended, 2 days' })).toBeInTheDocument()
+  })
+
+  it('locks the radios while disabled', () => {
+    render(<QuestionOptions q={q} name="n" value="a" idPrefix="z" disabled />)
+    for (const r of screen.getAllByRole('radio')) expect(r).toBeDisabled()
+  })
 })
+

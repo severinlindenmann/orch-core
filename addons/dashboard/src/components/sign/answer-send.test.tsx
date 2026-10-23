@@ -1,13 +1,15 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createMemoryHistory, createRootRoute, createRouter, RouterProvider } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api, mockStore, resetMockStoreForTests } from '@/api/client'
 import { ARM_MS, CLICK_RISK, type ClickCard, type ClickViewAnswer } from '@/api/click'
 import { setFeatures } from '@/api/features'
-import { ApiError, type QuestionStatus } from '@/api/types'
-import { AnswerSend } from './AnswerSend'
+import { ApiError, type QuestionStatus, type TicketDocument } from '@/api/types'
+import { Questions } from '@/app/pages/ticket/Questions'
+import { useViewer } from '@/app/pages/ticket/shared'
+import { AnswerSend, liveText } from './AnswerSend'
 
 const T = { timeout: 5000 }
 const WS_FEATURES = ['identity', 'today', 'tickets', 'board', 'ticket', 'actions']
@@ -89,15 +91,15 @@ function Host({ fallback, onViewQuestion }: { fallback: () => void; onViewQuesti
   )
 }
 
-async function mountHost(fallback = vi.fn(), onViewQuestion?: (t: string | null) => void) {
+async function mountHost(fallback = vi.fn(), onViewQuestion?: (t: string | null) => void, ui?: (ticket: TicketDocument) => ReactNode) {
   const ticket = await api.getTicket('DEMO-0043')
   const ws = mockStore.workspaces.find((w) => ticket.key.startsWith(w.prefix + '-'))!.id
   setFeatures({ features: WS_FEATURES, workspaces: { [ws]: WS_FEATURES } })
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  const root = createRootRoute({ component: () => (<QueryClientProvider client={client}><Host fallback={fallback} onViewQuestion={onViewQuestion} /></QueryClientProvider>) })
+  const root = createRootRoute({ component: () => (<QueryClientProvider client={client}>{ui ? ui(ticket) : <Host fallback={fallback} onViewQuestion={onViewQuestion} />}</QueryClientProvider>) })
   const router = createRouter({ routeTree: root, history: createMemoryHistory({ initialEntries: ['/'] }) })
   render(<RouterProvider router={router} />)
-  await screen.findByText('pick a', {}, T)
+  if (!ui) await screen.findByText('pick a', {}, T)
   return fallback
 }
 const send = () => screen.getByRole('button', { name: /Send answer|Preparing/ })
@@ -263,3 +265,106 @@ describe('Send answer in the card, one-click custody', () => {
     expect(send()).toBeInTheDocument()
   })
 })
+
+function QuestionsPage({ ticket, sign }: { ticket: TicketDocument; sign: () => void }) {
+  const viewer = useViewer(ticket.key)
+  return <Questions ticket={ticket} viewer={viewer} sign={sign} jump={() => undefined} />
+}
+const mountQuestions = (sign = vi.fn()) => mountHost(vi.fn(), undefined, (ticket) => <QuestionsPage ticket={ticket} sign={sign} />).then(() => sign)
+const openQ2 = () => screen.findByRole('radio', { name: /DATE \(local midnight\)/ }, T)
+
+describe('answer follow-ups (fake timers)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('leaving the page cancels the prepared request', async () => {
+    flag(true)
+    await mountHost()
+    fireEvent.click(screen.getByText('pick a'))
+    await screen.findByTestId('answer-strip', {}, T)
+    expect(cancel).not.toHaveBeenCalled()
+    cleanup() // the row collapses, or the person navigates away
+    await vi.advanceTimersByTimeAsync(50)
+    expect(cancel).toHaveBeenCalledTimes(1)
+  })
+
+  it('Enter on a radio in one-click mode opens no dialog and makes no second request', async () => {
+    flag(true)
+    const sign = await mountQuestions()
+    fireEvent.click(await openQ2())
+    await screen.findByTestId('answer-strip', {}, T)
+    const form = screen.getByTestId('answer-strip').closest('form')!
+    form.dispatchEvent(new SubmitEvent('submit', { submitter: null, bubbles: true, cancelable: true })) // implicit submission
+    await vi.advanceTimersByTimeAsync(600)
+    expect(sign).not.toHaveBeenCalled()
+    expect(prepare).toHaveBeenCalledTimes(1)
+  })
+
+  it('a browser that reports no submitter (undefined) still submits in non-one-click mode', async () => {
+    flag(false)
+    const sign = await mountQuestions()
+    fireEvent.click(await openQ2())
+    const button = await screen.findByRole('button', { name: 'Send answer' })
+    await waitFor(() => expect(button).toBeEnabled())
+    fireEvent.submit(button.closest('form')!) // a plain Event: submitter is undefined
+    expect(sign).toHaveBeenCalledTimes(1)
+  })
+
+  it('without one click the plain Send answer button still submits the form', async () => {
+    flag(false)
+    const sign = await mountQuestions()
+    fireEvent.click(await openQ2())
+    const button = await screen.findByRole('button', { name: 'Send answer' })
+    await waitFor(() => expect(button).toBeEnabled())
+    fireEvent.click(button)
+    expect(sign).toHaveBeenCalledTimes(1)
+  })
+
+  it('the options and the note are locked while the signature is on its way', async () => {
+    flag(true)
+    sign.mockReturnValue(new Promise(() => undefined)) // never answers: the signature stays on its way
+    await mountQuestions()
+    fireEvent.click((await screen.findAllByRole('button', { name: 'Add a note' }, T))[0])
+    fireEvent.click(await openQ2())
+    await screen.findByTestId('answer-strip', {}, T)
+    await vi.advanceTimersByTimeAsync(ARM_MS + 100)
+    const button = screen.getByRole('button', { name: 'Send answer' })
+    await waitFor(() => expect(button).toBeEnabled())
+    fireEvent.pointerDown(button)
+    fireEvent.click(button)
+    await screen.findByRole('button', { name: /Sending/ }, T)
+    for (const r of screen.getAllByRole('radio')) expect(r).toBeDisabled()
+    expect(screen.getByRole('textbox')).toBeDisabled()
+    expect(screen.getByTestId('answer-strip')).toBeInTheDocument() // the strip does not vanish under the person
+  })
+
+  it('the live region maps each phase and starts empty', async () => {
+    expect(liveText('signing', true)).toBe('Sending your answer.')
+    expect(liveText('settling', true)).toBe('Sending your answer.')
+    expect(liveText('done', true)).toBe('Answer sent.')
+    expect(liveText('failed', true)).toBe('')
+    expect(liveText('ready', false)).toMatch(/^Review loaded/)
+    expect(liveText('ready', true)).toBe('Send answer is ready.')
+    flag(true)
+    await mountHost()
+    fireEvent.click(screen.getByText('pick a'))
+    const live = await screen.findByTestId('strip-live', {}, T)
+    await waitFor(() => expect(live).toHaveTextContent('Review loaded')) // filled one tick after mount
+  })
+
+  it('announces the strip and the moment Send answer turns on', async () => {
+    flag(true)
+    await mountHost()
+    fireEvent.click(screen.getByText('pick a'))
+    const live = await screen.findByTestId('strip-live', {}, T)
+    expect(live).toHaveAttribute('role', 'status')
+    await waitFor(() => expect(live).toHaveTextContent('Review loaded'))
+    await vi.advanceTimersByTimeAsync(ARM_MS + 100)
+    await waitFor(() => expect(live).toHaveTextContent('Send answer is ready.'))
+  })
+})
+

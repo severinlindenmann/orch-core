@@ -36,6 +36,7 @@ export function AnswerSend({
   canSend,
   fallback,
   onViewQuestion,
+  onBusy,
   type = 'button',
 }: {
   ticket: string
@@ -48,6 +49,8 @@ export function AnswerSend({
   fallback: () => void
   /** The question text of the signer's View, when it is shown (it replaces the card's text); null otherwise. */
   onViewQuestion?: (text: string | null) => void
+  /** True while the signature is on its way or done: the owner of the answer form locks the option and the note. */
+  onBusy?: (busy: boolean) => void
   type?: 'button' | 'submit'
 }) {
   const qc = useQueryClient()
@@ -127,6 +130,13 @@ export function AnswerSend({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewQuestion])
 
+  const busyNow = inline && ['signing', 'settling', 'done'].includes(click.phase)
+  useEffect(() => {
+    onBusy?.(busyNow)
+    return () => onBusy?.(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busyNow])
+
   // The View expires, or the signer says it changed: a new request, a new View, the timer starts over.
   const expires = shown && click.phase === 'ready' ? Date.parse(click.view!.view.expires_at) : NaN
   useEffect(() => {
@@ -199,6 +209,9 @@ function Presented({ click, showWorkspace }: { click: ReturnType<typeof useClick
   }
   return (
     <section data-testid="answer-strip" aria-label="You are sending" className="space-y-3 rounded-md border border-border bg-bg p-3">
+      <p role="status" className="sr-only" data-testid="strip-live">
+        <Said text={liveText(click.phase, armed)} />
+      </p>
       <h3 className="text-[12px] font-medium text-text-muted">You are sending</h3>
       {showWorkspace && view.workspace?.name && (
         <p data-testid="strip-workspace" className="text-[12px] text-text-muted">
@@ -236,4 +249,22 @@ function Presented({ click, showWorkspace }: { click: ReturnType<typeof useClick
       </div>
     </section>
   )
+}
+
+/** What the live region says for a phase of the strip (nothing for a refusal: its own message is on screen). */
+export function liveText(phase: string, armed: boolean): string {
+  if (phase === 'signing' || phase === 'settling') return 'Sending your answer.'
+  if (phase === 'done') return 'Answer sent.'
+  if (phase !== 'ready') return ''
+  return armed ? 'Send answer is ready.' : 'Review loaded. Send answer turns on in a moment.'
+}
+
+/** The region starts empty and is filled one tick later, so the first announcement is read by screen readers. */
+function Said({ text }: { text: string }) {
+  const [said, setSaid] = useState('')
+  useEffect(() => {
+    const t = setTimeout(() => setSaid(text), 0)
+    return () => clearTimeout(t)
+  }, [text])
+  return <>{said}</>
 }

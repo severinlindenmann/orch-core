@@ -632,7 +632,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'W9',
         title: 'Only create (simpler dialog)',
         text: 'New ticket, "Only create": open the review.',
-        see: 'With one-click signing the button says "Sign and create ticket"; with Terminal signing (the default) there is no such button, the review shows "Sign in Terminal on this computer" and then "Waiting for your signature". What happens next ends with "Nothing starts yet". No orange line, no "Other ways".',
+        see: 'With one-click signing the button says "Create ticket"; with Terminal signing (the default) there is no such button, the review shows "Sign in Terminal on this computer" and then "Waiting for your signature". What happens next ends with "Nothing starts yet". No orange line, no "Other ways".',
       },
       {
         id: 'W10',

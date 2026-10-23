@@ -60,7 +60,7 @@ def test_a_click_re_asserts_the_confirmation_kind_of_the_stored_intent(click, se
     _, p = prepare(click)
     v = click.view(p["request_id"])
     click.mono.t += 2
-    monkeypatch.setattr(sequence, "confirm_kind", lambda intent: "word")
+    monkeypatch.setattr(sequence, "confirm_kind", lambda intent, person=None: "word")
     refused(lambda: click.sign(p["request_id"], v["view_digest"]), "human.click_refused", "terminal_only")
     assert click.signatures == 0
 
@@ -144,10 +144,10 @@ def test_the_host_refuses_a_sequence_for_the_phone(human):
     assert err(res) == "invalid.input"
 
 
-def test_a_sequence_with_people_is_a_click_and_the_typed_word(click, served, human):
-    """B12D: a people change decides who may act, so the whole review needs the typed word (a click is not enough)."""
+def test_a_sequence_with_an_owner_step_is_a_click_and_the_typed_word(click, served, human):
+    """B12D: an owner step decides who may act, so the whole review needs the typed word (a click is not enough)."""
     me = click.owner.ref  # another member would need his own reader declaration for convenience signing
-    _, p = prepare(click, intent_of(acceptance=["It opens"], people={"reviewers": [me]}))
+    _, p = prepare(click, intent_of(acceptance=["It opens"], people={"reviewers": [me], "owner": me}))
     v = click.view(p["request_id"])
     assert v["view"]["confirm"]["kind"] == "word"
     word = v["view"]["confirm"]["word"]
@@ -156,7 +156,7 @@ def test_a_sequence_with_people_is_a_click_and_the_typed_word(click, served, hum
     refused(lambda: click.sign(p["request_id"], v["view_digest"]), "human.click_refused", "word")
     assert click.signatures == 0
     out = click.sign(p["request_id"], v["view_digest"], word=word)
-    assert click.signatures == 4 + 1 + 1  # new, set, two sections, the criterion, the reviewer
+    assert click.signatures == 4 + 1 + 2  # new, set, two sections, the criterion, the reviewer, the owner
     got = ok(served.client().req("ticket.get", {"ref": out["result"]["key"]}))["data"]["doc"]
     assert [a["text"] for a in got["acceptance"]] == ["It opens"] and got["people"]["reviewers"] == [me]
 
@@ -189,3 +189,62 @@ def test_an_edit_sequence_is_signed_by_one_click_when_it_changes_no_people(click
     assert click.signatures == before + 2
     got = ok(served.client().req("ticket.get", {"ref": key}))["data"]
     assert got["doc"]["sections"]["summary"] == "A better line." and got["doc"]["acceptance"][0]["text"] == "It opens"
+
+
+def test_1070_a_new_ticket_with_a_reviewer_is_one_click_and_lists_the_person(click, served, human):
+    """#1070: assignees/reviewers on a NEW ticket (the creator stays owner) sign by click, no typed word; the View
+    still lists the person with role and full id."""
+    me = click.owner.ref
+    _, p = prepare(click, intent_of(people={"reviewers": [me]}))
+    v = click.view(p["request_id"])
+    assert v["view"]["confirm"] == {"kind": "click"}
+    rows = v["view"]["content"]["fields_changed"]
+    assert {"field": "reviewers: add", "before": None, "after": me} in [
+        {"field": r["field"], "before": r.get("before"), "after": r["after"]} for r in rows
+    ] or any(r["field"] == "reviewers: add" and r["after"] == me for r in rows)
+    click.mono.t += 2
+    out = click.sign(p["request_id"], v["view_digest"])
+    got = ok(served.client().req("ticket.get", {"ref": out["result"]["key"]}))["data"]["doc"]
+    assert got["people"]["reviewers"] == [me]
+
+
+def test_1070_naming_another_member_or_a_mix_keeps_the_word_and_a_stranger_aborts(click, served, human):
+    """MED-1/LOW-2: only the signer's own id lowers the confirmation; anyone else (a member, a mix, a non-member id)
+    stays a word, and a non-member id never lands."""
+    me = click.owner.ref
+    other = "p_" + "9" * 32  # not a member
+    for people in ({"reviewers": [other]}, {"assignees": [other]}, {"reviewers": sorted([me, other])}):
+        _, p = prepare(click, intent_of(people=people))
+        v = click.view(p["request_id"])
+        assert v["view"]["confirm"]["kind"] == "word", people
+        notes = str(v["view"]["content"].get("notes"))
+        assert ("Reviewers may approve" in notes) or ("Assignees do the work" in notes)
+
+
+def test_1070_sign_time_classes_a_non_self_member_as_word_so_a_click_approval_is_refused(click, served, human):
+    """The class is re-asserted at sign time from the stored intent and the signer's own person: an approval that was
+    (wrongly) recorded as a click for an intent naming another member is refused and nothing is signed."""
+    other = "p_" + "9" * 32
+    _, p = prepare(click, intent_of(people={"reviewers": [other]}))
+    v = click.view(p["request_id"])
+    assert v["view"]["confirm"]["kind"] == "word"
+    approvals = [a for a in click.signer.approvals.values() if a.request_id == p["request_id"]]
+    assert len(approvals) == 1
+    approvals[0].kind = "click"  # as if the prepare had classed it a click
+    v = click.view(p["request_id"])  # a view the page could now have been shown
+    click.mono.t += 2
+    refused(lambda: click.sign(p["request_id"], v["view_digest"]), "human.click_refused", "terminal_only")
+    assert click.signatures == 0
+
+
+def test_1070_self_as_assignee_and_reviewer_is_a_click_at_prepare_and_at_sign(click, served, human):
+    me = click.owner.ref
+    _, p = prepare(click, intent_of(people={"assignees": [me], "reviewers": [me]}))
+    approvals = [a for a in click.signer.approvals.values() if a.request_id == p["request_id"]]
+    assert approvals[0].kind == "click"  # classed at prepare
+    v = click.view(p["request_id"])
+    assert v["view"]["confirm"] == {"kind": "click"}
+    click.mono.t += 2
+    out = click.sign(p["request_id"], v["view_digest"])  # accepted at sign time with no word
+    got = ok(served.client().req("ticket.get", {"ref": out["result"]["key"]}))["data"]["doc"]
+    assert got["people"]["assignees"] == [me] and got["people"]["reviewers"] == [me]

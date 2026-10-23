@@ -1038,9 +1038,11 @@ class WebApi:
         reg, out = self.d.registry, []
         for ws in sorted(reg.pins()):
             st = reg.binding_state(ws)
+            card_name = (reg.card(ws) or {}).get("name")
             out.append(
                 {
                     "workspace_id": ws,
+                    "name": P4.render_text(card_name) if type(card_name) is str and card_name else None,
                     "mode": reg.last_mode(ws),
                     "status": st["status"] if st else None,
                     "owner_alias": reg.owner_alias(ws),

@@ -196,3 +196,14 @@ describe('a drawer opened by a link holds SVG and GIF too', () => {
     expect(screen.queryByRole('img', { name: /Picture/ })).toBeNull()
   })
 })
+
+import { reformatJson } from './Artifacts'
+describe('reformatted JSON is bounded', () => {
+  it('skips a deeply nested or amplifying file, and a short file', () => {
+    expect(reformatJson('['.repeat(5000) + ']'.repeat(5000))).toBeUndefined()
+    expect(reformatJson('{"a":1}')).toBeUndefined()
+    const wide = '[' + Array.from({ length: 30000 }, () => '[1]').join(',') + ']'
+    expect(reformatJson(wide)).toBeUndefined()
+    expect(reformatJson('{"pad":"' + 'x'.repeat(250) + '"}')).toContain('"pad"')
+  })
+})

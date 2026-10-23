@@ -61,7 +61,7 @@ export function langForFile(name: string): string | null {
 /** The most lines that are coloured; a longer text is shown plain. Together with the 64 KiB text cap this bounds the work. */
 export const MAX_HIGHLIGHT_LINES = 5000
 const MAX_LINE = 1000
-const TIME_LIMIT_MS = 200
+const LINE_LIMIT_MS = 20
 
 /**
  * Token colour (the theme's fixed palette) to a class on a CSS variable (styles/tokens.css). A colour not listed draws in the
@@ -79,15 +79,31 @@ const TOKEN_CLASS: Record<string, string> = {
 }
 export const tokenClass = (color?: string): string | undefined => (color ? TOKEN_CLASS[color.toLowerCase().slice(0, 7)] : undefined)
 
-/** Returns lines of tokens, or null when the language is unknown or the text is too long to colour (render plain text then). */
-export async function highlight(code: string, language: string): Promise<Token[][] | null> {
+/**
+ * The time every highlight may use in all (`tokenizeTimeLimit` is per LINE, so it alone cannot bound a file). The text is
+ * tokenised a few lines at a time, carrying the grammar state across; once the budget is spent the caller gets null and
+ * draws plain text. An agent-supplied file can therefore never keep the page busy for long.
+ */
+export const BUDGET_MS = 100
+const CHUNK_LINES = 5
+
+/** Returns lines of tokens, or null when the language is unknown, the text is too long, or the time budget ran out (render plain text then). */
+export async function highlight(code: string, language: string, budgetMs: number = BUDGET_MS): Promise<Token[][] | null> {
   const h = await load()
   const lang = ALIASES[language] ?? language
-  if (code.split('\n').length > MAX_HIGHLIGHT_LINES) return null
+  const all = code.split('\n')
+  if (all.length > MAX_HIGHLIGHT_LINES) return null
   if (!h.getLoadedLanguages().includes(lang) && LAZY[lang]) await h.loadLanguage(LAZY[lang]() as never)
   if (!h.getLoadedLanguages().includes(lang)) return null
-  // The token API only (never an HTML-producing call): the page draws the tokens as React text.
-  return h
-    .codeToTokensBase(code, { lang, theme: THEME, tokenizeMaxLineLength: MAX_LINE, tokenizeTimeLimit: TIME_LIMIT_MS })
-    .map((line) => line.map((t) => ({ content: t.content, color: t.color })))
+  const started = performance.now()
+  const out: Token[][] = []
+  let state: ReturnType<typeof h.getLastGrammarState> | undefined
+  for (let i = 0; i < all.length; i += CHUNK_LINES) {
+    if (performance.now() - started > budgetMs) return null
+    // The token API only (never an HTML-producing call): the page draws the tokens as React text.
+    const part = h.codeToTokensBase(all.slice(i, i + CHUNK_LINES).join('\n'), { lang, theme: THEME, tokenizeMaxLineLength: MAX_LINE, tokenizeTimeLimit: LINE_LIMIT_MS, grammarState: state })
+    for (const line of part) out.push(line.map((t) => ({ content: t.content, color: t.color })))
+    state = h.getLastGrammarState(part as never)
+  }
+  return performance.now() - started > budgetMs * 2 ? null : out
 }

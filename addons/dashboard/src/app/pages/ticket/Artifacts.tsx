@@ -1,5 +1,5 @@
 import { ArrowUpRight, BarChart3, Check, Copy, Eye, FileJson, Info, FileText, Image as ImageIcon, Link2, ScrollText, Table2, Workflow } from 'lucide-react'
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { addonActive } from '@/api/addons'
@@ -13,7 +13,7 @@ import type { Artifact } from '@/api/types'
 import { AddonBadge } from '@/addon-ui'
 import { useSlot } from '@/addon-ui/slots'
 import { CodeBlock } from '@/addon-ui/CodeBlock'
-import { highlight, langForFile, tokenClass, type Token } from '@/addon-ui/highlight'
+import { highlight, langForFile, MAX_HIGHLIGHT_LINES, tokenClass, type Token } from '@/addon-ui/highlight'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -26,6 +26,7 @@ import { prose, visible } from '@/components/sign/visible'
 import { verifiedMedia } from '@/api/evidenceMedia'
 import { SafeMarkdownView } from '@/addon-ui/SafeMarkdownView'
 import { NoPreviewCard } from './EvidenceCard'
+import { EvidenceThumb, TypeBadge } from './EvidenceThumb'
 
 export const KIND_ICON: Record<Artifact['kind'], typeof FileText> = {
   screenshot: ImageIcon,
@@ -150,6 +151,41 @@ function useTokenLines(text: string, lang: string | null | undefined, on: boolea
   return on && lang && lines?.key === key ? lines.lines : plain()
 }
 
+/**
+ * The most the reformatted view may be (the file is agent-supplied: indenting nested arrays multiplies its size) and the
+ * deepest nesting it is tried on. Over either, only the file's own text is offered.
+ */
+const REFORMAT_MAX_DEPTH = 64
+const maxDepth = (t: string): number => {
+  let d = 0
+  let max = 0
+  let inStr = false
+  for (let i = 0; i < t.length; i++) {
+    const c = t[i]
+    if (inStr) {
+      if (c === '\\') i++
+      else if (c === '"') inStr = false
+    } else if (c === '"') inStr = true
+    else if (c === '[' || c === '{') max = Math.max(max, ++d)
+    else if (c === ']' || c === '}') d--
+  }
+  return max
+}
+export function reformatJson(text: string): string | undefined {
+  if (!text.split('\n').some((l) => l.length > MINIFIED_LINE) || maxDepth(text) > REFORMAT_MAX_DEPTH) return undefined
+  try {
+    const out = JSON.stringify(JSON.parse(text), null, 2)
+    return out.length > TEXT_PREVIEW_BYTES || out.split('\n').length > MAX_HIGHLIGHT_LINES ? undefined : prose(out)
+  } catch {
+    return undefined // not valid JSON: only the text it is
+  }
+}
+
+function JsonText({ shown, safe, name }: { shown: string; safe: string; name: string }) {
+  const reformatted = useMemo(() => reformatJson(shown), [shown])
+  return <TextViewer text={safe} label={`JSON of ${name}`} lang="json" reformatted={reformatted} />
+}
+
 /** A line is "minified" when one line is this long: only then is a reformatted view offered. */
 const MINIFIED_LINE = 200
 
@@ -209,7 +245,7 @@ function TextViewer({ text, label, lang, rendered, reformatted, rawLabel = 'Raw'
         rendered
       ) : (
         <pre tabIndex={0} aria-label={label} className="max-h-[70vh] overflow-auto rounded-md border border-border bg-bg py-2 font-mono text-[12px] leading-5">
-          {lines.map((line, i) => (
+          {lines.slice(0, MAX_HIGHLIGHT_LINES).map((line, i) => (
             <div key={i} data-ln={view ? i + 1 : undefined} className={cn('min-h-5 pr-3', view ? 'pl-12 before:float-left before:-ml-10 before:w-8 before:select-none before:text-right before:text-text-faint before:content-[attr(data-ln)]' : 'pl-3', wrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre')}>
               {line.map((t, j) => (
                 <span key={j} className={tokenClass(t.color)}>
@@ -220,6 +256,7 @@ function TextViewer({ text, label, lang, rendered, reformatted, rawLabel = 'Raw'
           ))}
         </pre>
       )}
+      {!(view && rendered) && lines.length > MAX_HIGHLIGHT_LINES && <p className="text-[12px] text-text-muted">Showing the first {MAX_HIGHLIGHT_LINES} lines. Copy all copies the whole text.</p>}
     </div>
   )
 }
@@ -386,18 +423,10 @@ function RemotePreview({ a, ticket, unavailable, holdPictures = false }: { a: Ar
   if (ext === 'json' && !cut) {
     // The file's own text, coloured. Never re-parsed (that would hide duplicate keys and rounded numbers). Only a minified
     // file (one very long line) is also offered reformatted, and says so.
-    let reformatted: string | undefined
-    if (shown.split('\n').some((l) => l.length > MINIFIED_LINE)) {
-      try {
-        reformatted = prose(JSON.stringify(JSON.parse(d.text), null, 2))
-      } catch {
-        /* not valid JSON: only the text it is */
-      }
-    }
     return (
       <div className="space-y-2">
         {note}
-        <TextViewer text={safe} label={`JSON of ${a.name}`} lang="json" reformatted={reformatted} />
+        <JsonText shown={shown} safe={safe} name={a.name} />
       </div>
     )
   }
@@ -599,12 +628,13 @@ export function Artifacts({ ticket, viewer, jump, focus }: TabProps & { focus?: 
                 aria-current={open?.name === a.name ? 'true' : undefined}
                 className={cn('flex scroll-mt-4 flex-col rounded-lg border bg-surface p-2.5', a.addon ? addonHairline : 'border-border')}
               >
-                <TypeTile a={a} />
+                <EvidenceThumb a={a} ticket={ticket.key} />
                 <div className="mt-2 flex items-center gap-1.5">
                   <Icon className="size-3.5 shrink-0 text-text-muted" aria-hidden />
                   <span className="min-w-0 flex-1 truncate text-[13px] font-medium" title={a.name}>
                     {a.name}
                   </span>
+                  <TypeBadge a={a} />
                 </div>
                 {a.label && <p className="mt-0.5 line-clamp-2 text-[12px] text-text-muted">{a.label}</p>}
                 <p className="mt-1 truncate text-[11px] text-text-faint">

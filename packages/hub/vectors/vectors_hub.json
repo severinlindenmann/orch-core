@@ -40377,6 +40377,88 @@
   },
   {
    "args": {
+    "hash": "sha256:3d3f5e93357cf4b89511c728d2d7995ebc233f435574ef9b95de0259f3247987"
+   },
+   "check": "short_hash",
+   "expect": {
+    "ok": {
+     "shown": "3d3f 5e93 357c"
+    }
+   },
+   "name": "short_hash_form",
+   "note": "gate and verdict: the projection gate hash; question: the question hash; a status move has no hash",
+   "phase": 4
+  },
+  {
+   "args": {
+    "hash": "sha256:3D3F5E93357CF4B89511C728D2D7995EBC233F435574EF9B95DE0259F3247987"
+   },
+   "check": "short_hash",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "short_hash_upper_refused",
+   "phase": 4
+  },
+  {
+   "args": {
+    "hash": "md5:3d3f5e93357cf4b89511c728d2d7995ebc233f435574ef9b95de0259f3247987"
+   },
+   "check": "short_hash",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "short_hash_wrong_prefix",
+   "phase": 4
+  },
+  {
+   "args": {
+    "hash": "sha256:3d3f"
+   },
+   "check": "short_hash",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "short_hash_too_short",
+   "phase": 4
+  },
+  {
+   "args": {
+    "hash": null
+   },
+   "check": "short_hash",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "short_hash_not_a_string",
+   "phase": 4
+  },
+  {
+   "args": {
+    "digest": "3d3f5e93357cf4b89511c728d2d7995ebc233f435574ef9b95de0259f3247987"
+   },
+   "check": "short_digest",
+   "expect": {
+    "ok": {
+     "shown": "3d3f 5e93 357c"
+    }
+   },
+   "name": "short_digest_form",
+   "phase": 4
+  },
+  {
+   "args": {
+    "digest": "3D3F5E93357CF4B89511C728D2D7995EBC233F435574EF9B95DE0259F3247987"
+   },
+   "check": "short_digest",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "short_digest_upper_refused",
+   "phase": 4
+  },
+  {
+   "args": {
     "ctx": {
      "contract": 1,
      "event": {

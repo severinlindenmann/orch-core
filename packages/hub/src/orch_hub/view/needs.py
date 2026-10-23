@@ -25,6 +25,7 @@ from typing import Any, Protocol
 
 from ..contract import phase4 as P4
 from ..contract import suite as S
+from ..contract.hub import Refused
 from . import project as PR
 from .service import Keyring, ViewService
 
@@ -35,6 +36,14 @@ class ViewReader(Protocol):
     def needs_you(self, workspace_id: str, user_id: str) -> list[dict[str, Any]]: ...
 
     def item(self, workspace_id: str, user_id: str, item_id: str) -> dict[str, Any] | None: ...
+
+
+def _short(h: Any) -> str:
+    """Protocol 8.4 short form of a content hash (12 lower-case hex in groups of 4); "" when it is not a hash."""
+    try:
+        return P4.short_hash(h)
+    except Refused:
+        return ""
 
 
 def _one_line(s: Any) -> str:
@@ -110,6 +119,7 @@ class StoreViewReader:
                     ],
                     "recommended": _recommended(q.obj),
                     "blocking": q.obj.get("blocking") is True,
+                    "short_hash": _short(q.hash),
                 }
                 out.append((row, content))
         out.sort(key=lambda rc: (rc[0]["key"], rc[0]["item_id"]))
@@ -159,7 +169,7 @@ class StoreViewReader:
             content = {
                 "ticket_title": _one_line(t.title),
                 "gate": gate,
-                "short_hash": P4.render_text(g["hash"][7:15]),
+                "short_hash": _short(g["hash"]),
                 "gate_gen": g["gen"],
                 "sources": [
                     {"repo": P4.render_text(e["repo"]), "sha": P4.render_text(e["sha"][:8])}

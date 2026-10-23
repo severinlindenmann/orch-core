@@ -2,7 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { DECISIONS, MOVES, Refusal, checkBindings, checkPrepared, contextDigest, describe, renderText } from "../../src/orch_hub/web/render.js";
+import { DECISIONS, MOVES, Refusal, checkBindings, checkPrepared, contextDigest, describe, renderText, shortDigest, shortHash } from "../../src/orch_hub/web/render.js";
 import { hex, parseStrict } from "../../src/orch_hub/web/cj.js";
 
 const V = JSON.parse(readFileSync(new URL("../../vectors/vectors_hub.json", import.meta.url)));
@@ -98,7 +98,7 @@ test("D15b-2: a code approval shows gate, short hash, gate_gen and each repo wit
   assert.equal(d.signable, true);
   assert.deepEqual(d.facts, [
     ["Gate", "code"],
-    ["Content reference", "ABAB ABAB"],
+    ["Content reference", "abab abab abab"],
     ["Generation", "3"],
     ["Code", "github.com/acme/app c0c0c0c0"],
   ]);
@@ -132,4 +132,17 @@ test("D15b-2: status moves show from -> to, are signable, and an unknown field m
 test("D15b-2: facts escape workspace text and show a surprise shape as JSON", () => {
   const d = describe(ctxOf("gate.approved", { gate: "code", source_sha: [{ repo: "a\u202eb", ref: "refs/heads/x", sha: "12345678abcd" }, { repo: "r", sha: "12345678" }, 7] }), D);
   assert.deepEqual(d.facts.slice(-3), [["Code", "a<U+202E>b 12345678"], ["Code", '{"repo":"r","sha":"12345678"}'], ["Code", "7"]]);
+});
+
+test("orch-hub#55: short hash is 12 lower-case hex in groups of 4, from the shared vectors", () => {
+  let n = 0;
+  for (const c of V.cases) {
+    if (c.check !== "short_hash" && c.check !== "short_digest") continue;
+    const f = c.check === "short_hash" ? shortHash : shortDigest;
+    const got = f(c.args.hash ?? c.args.digest);
+    if ("ok" in c.expect) assert.equal(got, c.expect.ok.shown, c.name);
+    else assert.equal(got, "", c.name);
+    n++;
+  }
+  assert.ok(n >= 7);
 });

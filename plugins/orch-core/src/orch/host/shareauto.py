@@ -29,6 +29,12 @@ MAX_WAIT_S = 30.0
 RETRY_MIN_S = 30.0
 RETRY_MAX_S = 300.0
 
+# Time seam (tests only): production reads the monotonic clock and sleeps until the next deadline. A test installs a
+# manual clock with ``_CLOCK`` and ``_TIMED = False``; the thread then waits without a timeout and re-checks its
+# deadlines on every :func:`tick`, so a debounce or a retry is stepped by the test instead of waited for.
+_CLOCK = time.monotonic
+_TIMED = True
+
 _MU = threading.Lock()
 _AUTOS: dict[tuple[str, str], _Auto] = {}
 
@@ -66,12 +72,12 @@ class _Auto:
             while not self.stopped and (self.dirty_since is None or self.parked):
                 self.cv.wait()
             while not self.stopped:
-                now = time.monotonic()
+                now = _CLOCK()
                 due = max(min(self.last_touch + DEBOUNCE_S, self.dirty_since + MAX_WAIT_S), self.not_before)  # type: ignore[operator]
                 if now >= due:
                     self.dirty_since = None
                     return True
-                self.cv.wait(due - now)
+                self.cv.wait(due - now if _TIMED else None)
             return False
 
     def _loop(self) -> None:
@@ -91,7 +97,7 @@ class _Auto:
             else:
                 if isinstance(result, dict) and result.get("synced") is False:  # hub unreachable or refused: retry
                     with self.cv:
-                        self.dirty_since = time.monotonic()
+                        self.dirty_since = _CLOCK()
                         self.not_before = self.dirty_since + self.backoff
                         self.backoff = min(self.backoff * 2, RETRY_MAX_S)
                 elif isinstance(result, dict):
@@ -131,7 +137,7 @@ def touch(service: WorkspaceService) -> None:
     try:
         a = _AUTOS.get(_key(service))
         if a is not None and a.service is service:
-            a.mark(time.monotonic())
+            a.mark(_CLOCK())
     except Exception:  # noqa: BLE001
         pass
 
@@ -162,6 +168,15 @@ def stop(service: WorkspaceService) -> None:
     _drop(a)
     if a.thread is not threading.current_thread():
         a.thread.join(10)
+
+
+def tick() -> None:
+    """For tests with a manual clock: wake every auto thread so it re-checks its deadlines."""
+    with _MU:
+        autos = list(_AUTOS.values())
+    for a in autos:
+        with a.cv:
+            a.cv.notify_all()
 
 
 def state_of(service: WorkspaceService) -> _Auto | None:

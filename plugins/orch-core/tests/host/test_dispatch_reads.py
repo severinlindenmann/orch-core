@@ -53,7 +53,8 @@ def world(tmp_path):
 READS = sorted(
     op
     for op in served_ops()
-    if op_kind(op)[0] in {"read", "person_read"} and op not in ("term.preview", "agent.preview")
+    if (op_kind(op)[0] in {"read", "person_read"} or op == "instructions.hook")
+    and op not in ("term.preview", "agent.preview")
 )  # agent.preview (H11c) is not a registry op either: tests/host/test_agents.py
 
 

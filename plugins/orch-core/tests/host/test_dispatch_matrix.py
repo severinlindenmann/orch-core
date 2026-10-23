@@ -235,7 +235,7 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
                             "grant.forget": ("person_write", "write")}[op]  # fmt: skip
         else:
             who = ops.get(op).who
-            assert kind[0] == ("person_read" if op in PERSON_READS else who)
+            assert kind[0] == ("person_read" if op in PERSON_READS else "pg_read" if op == "instructions.hook" else who)
             assert kind[1] == ("wait" if op == "wait" else "read" if who == "read" else "write")
         for row, (peer, grant, valid) in ROWS.items():
             assert refusal(resolve(peer, grant, valid), kind[0]) == expected(row, kind[0]), (op, row)
@@ -492,3 +492,16 @@ def test_grant_deposit_is_a_person_with_their_own_verified_grant():
             assert got is not None, row
     for name in ("W", "C"):
         assert refusal(Column(name, "none"), "deposit") == "op.not_allowed"
+
+
+def test_the_session_start_hook_runs_for_an_agent_with_a_verified_grant_and_for_the_person():
+    """Run 6, #1067: a Start-agent session (peer class agent, verified grant: column G) got
+    ``op.not_allowed instructions.hook is not allowed here`` at SessionStart. The hook is a P and G read; the
+    person-only reads stay refused to an agent, and no-grant callers still get nothing."""
+    kind = op_kind("instructions.hook")
+    assert kind == ("pg_read", "read")
+    assert refusal(resolve("agent", "verified", False), kind[0]) is None  # the agent's own hook
+    assert refusal(resolve("person", "absent", True), kind[0]) is None
+    assert refusal(resolve("agent", "absent", False), kind[0]) == "op.not_allowed"
+    assert refusal(resolve("agent", "unverified", False), kind[0]) == "op.not_allowed"
+    assert refusal(resolve("agent", "verified", False), op_kind("instructions.sync")[0]) == "op.not_allowed"

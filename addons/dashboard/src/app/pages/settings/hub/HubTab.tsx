@@ -44,7 +44,7 @@ export function StandalonePage({ onJoin }: { onJoin: () => void }) {
 }
 export function SelectivePage({ ws, onShare, onFull, onLeave }: { ws: string; onShare: () => void; onFull: () => void; onLeave: () => void }) {
   const share = useQuery(hubQueries.share(ws))
-  return <><Panel title="Connected · Hub sees only what you share" tone={violet}><p>You keep signing locally. The hub sees your shared items, needs-you notes and questions.</p></Panel>
+  return <><Panel title="Connected · Hub sees only what you share" tone={violet}><p>You keep signing locally. Needs-you notes (items that need your attention) and full questions are always shared; the hub sees nothing else unless you choose it.</p></Panel>
     <Panel title="What the hub can see">
       {share.isPending ? <p role="status">Loading shared items…</p> : share.isError ? <><p role="alert">Could not load shared items.</p><Action id="hub-shared-retry" onClick={() => void share.refetch()}>Try again</Action></> : !share.data.available ? <p data-testid="hub-share-unavailable">Sharing settings are not available on this host yet. Update orch to choose what the hub sees.</p> : <>
         <p>{share.data.shared} shared items · from the hub, not signed</p><AlwaysShared share={share.data} />
@@ -53,13 +53,13 @@ export function SelectivePage({ ws, onShare, onFull, onLeave }: { ws: string; on
       </>}
       {share.data?.available !== false && <Action id="hub-choose-share" onClick={onShare}>Choose what to share</Action>}
     </Panel>
-    <Panel title="Let the hub read everything" tone="border-warning/40 bg-warning-soft"><p>The hub will read every ticket, file and note. Hub admins become admins here. Going back requires leaving and rejoining. You review the change here and confirm it in your Terminal.</p><Action id="hub-full-switch" onClick={onFull}>Let the hub read everything</Action></Panel>
+    <Panel title="Let the hub read everything"><p>The hub will read every ticket, file and note. Hub admins become admins here. Going back requires leaving and rejoining. You review the change here and confirm it in your Terminal.</p><Action id="hub-full-switch" onClick={onFull}>Let the hub read everything</Action></Panel>
     <Panel title="Leave the hub"><p>Keep working locally. Phone access, publishing and handoffs through the hub stop. You confirm in your Terminal.</p><Action id="hub-leave" onClick={onLeave}>Leave the hub</Action></Panel>
   </>
 }
 export function FullPage({ status, onLeave }: { status: HubStatus; onLeave: () => void }) {
   return <><Panel title="The hub can read everything in this workspace" tone={violet}><p>Every ticket, file and note, now and later. Hub admins act as admins here. Approvals use your phone or passkey.</p></Panel>
-    <Panel title="Who has access through the hub"><p className="text-text-muted">from the hub, not signed</p>
+    <Panel title="Access through the hub"><p className="text-text-muted">from the hub, not signed</p>
       {(['read', 'edit', 'admin'] as const).map(role => <div key={role} className="flex flex-wrap justify-between gap-2 border-t border-border py-2"><span>{role === 'read' ? 'Can read' : role === 'edit' ? 'Can edit' : 'Admins'}</span><span>{status.groups ? status.groups[role] + ' people' : 'Count not available'}</span></div>)}
     </Panel>
     <Panel title="Share only some things instead"><p>Leave this hub, then rejoin and choose “Only what I choose”. What the hub has already read cannot be taken back.</p></Panel>

@@ -166,7 +166,7 @@ describe('the Tickets Hub column (A5.6)', () => {
   it('marks Shared or Not shared in selective mode', async () => {
     hubPage('selective', '/w/DEMO/tickets')
     expect((await screen.findByTestId('ticket-hub-DEMO-0043', {}, T)).textContent).toBe('Shared')
-    expect(screen.getByTestId('ticket-hub-DEMO-0042').textContent).toBe('Not shared')
+    expect(screen.getByTestId('ticket-hub-DEMO-0042').textContent).toBe('Only here')
   })
   it('full mode: one banner and no marks', async () => {
     hubPage('full', '/w/DEMO/tickets')

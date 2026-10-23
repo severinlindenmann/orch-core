@@ -18,7 +18,7 @@ export function JoinFlow({ ws, onClose }: { ws: string; onClose: () => void }) {
     </Panel> : <>
       {step === 1 && <>
         <Field label="Invite code" value={invite} onChange={setInvite} testId="hub-invite" hint="Ask your hub admin for the invite code. Paste it exactly." />
-        <Field label="Hub card file path" value={card} onChange={setCard} testId="hub-card" hint="The path to the hub card file on the computer running this workspace." />
+        <Field label="Hub card file path" value={card} onChange={setCard} testId="hub-card" hint="The file your hub admin gave you, on the computer that runs this workspace. For example /Users/you/acme-hub-card.json" />
         <p>The Terminal checks the invite and shows the hub's fingerprint. Ask your hub admin to read you the fingerprint; if it differs, stop.</p>
         <Action id="hub-join-continue" disabled={!invite.trim() || !card.trim()} onClick={() => setStep(2)}>Continue</Action>
       </>}

@@ -72,7 +72,7 @@ export function ShareRules({ ws, onBack }: { ws: string; onBack: () => void }) {
           <details><summary data-testid="hub-preview-details">Technical details</summary>{current.items.map((item, i) => <p key={i}><Raw>{item.line}</Raw></p>)}{current.rules.map((rule, i) => <p key={i}><Raw>{rule}</Raw></p>)}</details>
           {current.more > 0 && <p>and {current.more} more</p>}
         </>}
-        <Action id="hub-share-review" disabled={!change || !current || !!error} onClick={() => setReview(change)}>Review and save</Action>
+        <Action id="hub-share-review" disabled={!change || !current || !!error} onClick={() => setReview(change)}>Review change</Action>
       </Panel>
       {share.data.tickets_complete && share.data.tickets.length > 0 && <Panel title="Stop sharing a single ticket">
         <p>Ask the hub to delete one shared ticket. Choose the ticket in Technical details.</p>

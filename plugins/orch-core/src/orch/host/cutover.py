@@ -39,7 +39,9 @@ from .errors import HostError
 if TYPE_CHECKING:
     from .workspace import WorkspaceService
 
-__all__ = ["TRANSPORT", "cutover_delete", "needs_run", "preflight", "reopen", "run", "start", "status_fields"]
+__all__ = [
+    "TRANSPORT", "cutover_delete", "needs_run", "preflight", "reopen", "run", "start", "status_fields", "watch",
+]  # fmt: skip
 
 LOG = logging.getLogger("orch.host.cutover")
 
@@ -346,7 +348,6 @@ def start(service: WorkspaceService) -> None:
     """At the open of a served workspace (``workspace.open``, never fails it): when the cut-over is owed (``closing``,
     an ``open`` a C10 connect left behind, or a dev pre-C10 full join), a background thread resumes it with backoff.
     One thread per workspace; it ends when the state is ``closed``, nothing is owed, or the workspace closes."""
-    key = (str(service.state_dir), service.workspace_id)
     try:  # on the worker thread (the open): read the model directly, a submit() here would wait for itself
         model = dict(service.store.state.workspace.hub)
         state = _hubops()._load_state(service)  # noqa: SLF001
@@ -354,6 +355,13 @@ def start(service: WorkspaceService) -> None:
             return
     except Exception:  # noqa: BLE001 - never fail the open
         return
+    watch(service)
+
+
+def watch(service: WorkspaceService) -> None:
+    """Make sure the background retry of the cut-over runs (one thread per workspace). Called at the open and after a
+    ``hub.connect`` that left the switch unfinished (for example no group snapshot with an admin yet)."""
+    key = (str(service.state_dir), service.workspace_id)
     with _THREADS_MU:
         old = _THREADS.get(key)
         if old is not None and old.is_alive():
@@ -374,6 +382,8 @@ def _loop(service: WorkspaceService) -> None:
             state = _hubops()._load_state(service)  # noqa: SLF001
             if not needs_run(service, model, state):
                 return
+            if preflight(state) is not None and state.status == "bound":
+                _refresh_snapshot(service, state)  # an admin grant made on the hub since: pin it, then try again
             if run(service, model) == "closed":
                 return
         except Exception as exc:  # noqa: BLE001
@@ -383,6 +393,15 @@ def _loop(service: WorkspaceService) -> None:
         if _sleep(service, wait):
             return
         wait = min(wait * 2, _BACKOFF_MAX_S)
+
+
+def _refresh_snapshot(service: WorkspaceService, state: Any) -> None:
+    from . import hubdeliver
+
+    try:
+        hubdeliver._fetch_snapshot(service, state)  # noqa: SLF001 - the one snapshot fetch of the host
+    except Exception as exc:  # noqa: BLE001 - a hub that is down is tried again later
+        LOG.info("cut-over of %s: snapshot not refreshed (%s)", service.workspace_id, type(exc).__name__)
 
 
 def _sleep(service: WorkspaceService, seconds: float) -> bool:

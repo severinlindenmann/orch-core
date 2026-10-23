@@ -854,6 +854,8 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
                 )  # the review text the owner signed says the phones' pairing ends
                 if fresh or (before is not None and before.direct in ("closing", "open")):
                     out["direct"] = cutover.run(service, model, hub_card=plan["card"], force_start=fresh)
+                    if out["direct"] != "closed":
+                        cutover.watch(service)  # retry in the background (an admin grant may still come)
                     _audit(call, "hub.cutover", hub_id=r.hub_id, direct=out["direct"])
             return ok_result(out)
         if plan["op"] == "hub.refresh":

@@ -281,7 +281,17 @@ The card has exactly the three members `o`, `op_cert`, `sig` (an exception to §
 **current** revoked set → `revoked`. A revocation that arrives after the card was admitted stops it at once; no caller
 relies on having re-verified the card.
 
-**Pinning.** The host pins `hk_root_pub` at `hub join` (it arrives in the invite and is signed into `hub.joined`, §9.1).
+**Workspace invite form (D12c).** The workspace owner passes the invite as `<hub_id>:<code>`, or as `--hub-id <hub_id>` plus
+the bare `<code>`. `hub_id` is the 128-bit hash of the hub root key (`H(hk_root_pub)[:16]`, 32 lowercase hex), delivered
+out of band by the hub admin; `orch-hub serve` prints it as `invite <hub_id>:<code>` (never with the `=USER_ID` alias). The
+host sends only `<code>` to the hub (the hub never sees the prefix) and compares the card's `hub_id` with the invite's
+before anything is signed: a mismatch is refused `other_hub`, a card whose root does not hash to its `hub_id` is refused
+by `verify_card`. This is not the phone pair link `h1.<hub_id>.<user_id>.<code>` (§6.4): that form names a hub user and
+authorises a phone, while a workspace invite names no user (an operator-chosen `--invite CODE[=USER]` carries the alias
+on the hub side only) and carries no authority beyond one join.
+
+**Pinning.** The host pins `hk_root_pub` at `hub join` (the card arrives with the join, is verified against the invite's
+`hub_id`, and is signed into `hub.joined`, §9.1).
 Only `orch hub repin` (PK only, spec §8) changes the pin. A new `HK_op` reaches the host as a new card (higher
 `op_seq`, new `op_cert`). The TLS pin follows the card: the host takes `tls_spki_sha256` only from a card it verified
 through the pinned root, and drops a pin that came from a revoked op cert.

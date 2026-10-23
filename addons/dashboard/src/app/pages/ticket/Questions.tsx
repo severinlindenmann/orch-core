@@ -1,5 +1,5 @@
 import { CheckCircle2, CircleHelp, OctagonAlert } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { QuestionStatus } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
@@ -16,6 +16,8 @@ const VIA: Record<string, string> = { cli: 'CLI', dashboard: 'dashboard', phone:
 function AnswerForm({ q, sign, ticketKey, onViewQuestion }: { q: QuestionStatus; sign: TabProps['sign']; ticketKey: string; onViewQuestion: (t: string | null) => void }) {
   const kind = answerableKind(q)
   const [pick, setPick] = useState<Picked | null>(null)
+  // A new version of the question (another hash) is another question: nothing picked carries over.
+  useEffect(() => setPick(null), [q.hash])
   // One box per purpose: a note that goes with a key, the words of "Something else", the answer of a text question.
   const [note, setNote] = useState('')
   const [other, setOther] = useState('')

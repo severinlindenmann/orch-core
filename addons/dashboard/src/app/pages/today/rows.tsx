@@ -22,7 +22,7 @@ import { toastApiError } from '@/app/toast'
 import { useWorkspace } from '@/app/workspace'
 import { visible } from '@/components/sign/visible'
 import { AnswerSend } from '@/components/sign/AnswerSend'
-import { answerableKind, answerOf, QuestionDetails, QuestionOptions, type Picked } from '../ticket/QuestionOptions'
+import { ANSWER_MAX, answerableKind, answerOf, QuestionDetails, QuestionOptions, type Picked } from '../ticket/QuestionOptions'
 import { type HumanAction } from '../ticket/shared'
 import { ago } from './shared'
 import { fmtClock, nowMs, plural } from '@/lib/time'
@@ -159,7 +159,8 @@ export function QuestionRow({ item, ticket, now, expanded, onToggle, sign, asked
   const [viewText, setViewText] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const id = `question:${item.ticket}:${item.ref}`
-  const answer = choice ? answerOf(choice, otherText) : null
+  const answer = choice && (choice.type !== 'other' || Array.from(otherText.trim()).length <= ANSWER_MAX) ? answerOf(choice, otherText) : null
+  useEffect(() => setChoice(null), [q?.hash])
   const readOnly = decider !== undefined
   return (
     <RowShell

@@ -90,6 +90,20 @@ describe('question options as cards (frozen fixtures)', () => {
     expect(answerOf({ type: 'other' }, '  ')).toBeNull()
     expect(answerableKind({ ...choice, kind: undefined } as QuestionStatus)).toBeNull()
     expect(answerableKind({ ...choice, kind: 'form' } as unknown as QuestionStatus)).toBeNull()
+    expect(answerableKind(choice)).toBe('choice')
+    expect(answerableKind({ ...choice, spec: { ...choice.spec, preview: 'x' } } as QuestionStatus)).toBeNull()
+    const o = choice.options!
+    expect(answerableKind({ ...choice, options: [{ ...o[0], icon: 'x' }, o[1]] } as unknown as QuestionStatus)).toBeNull()
+    expect(answerableKind({ ...choice, options: [{ ...o[0], facts: [['a']] }, o[1]] } as unknown as QuestionStatus)).toBeNull()
+    expect(answerableKind({ ...choice, options: [{ ...o[0], facts: 'x' }, o[1]] } as unknown as QuestionStatus)).toBeNull()
+  })
+})
+
+describe('malformed facts', () => {
+  it('render as not shown, without throwing', () => {
+    const bad = { ...choice, options: [{ key: 'a', label: 'A', facts: 'x' }, { key: 'b', label: 'B', facts: [['only']] }] } as unknown as QuestionStatus
+    render(<QuestionOptions q={bad} name="n" value={null} idPrefix="m" />)
+    expect(screen.queryAllByTestId('facts')).toHaveLength(0)
   })
 })
 

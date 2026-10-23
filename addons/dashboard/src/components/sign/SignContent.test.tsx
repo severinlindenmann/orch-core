@@ -1,7 +1,7 @@
 import { cleanup, render, screen, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, expect, it } from 'vitest'
-import { SignContent, viewQuestionHash } from './SignContent'
+import { compactAnswer, SignContent, viewQuestionHash } from './SignContent'
 
 afterEach(cleanup)
 
@@ -327,7 +327,7 @@ it('compact answer: Other shows Something else and the typed text; a text questi
   expect(screen.getByTestId('sign-choice')).toHaveTextContent('Something else')
   expect(screen.getByTestId('sign-answer')).toHaveTextContent('Neither, keep the seeds')
   unmount()
-  render(<SignContent compact content={{ ...QUESTION, sections: [
+  render(<SignContent compact content={{ ...QUESTION, fields_changed: [QUESTION.fields_changed[1]], sections: [
     { id: 'answer', title: 'Your answer', text: 'Acme Bank' },
     { id: 'question', title: 'Question', text: 'Which bank?' },
   ] }} />)
@@ -343,4 +343,31 @@ it('compact answer: no answer part (neither selected nor answer) shows the full 
 it('exposes the question hash of the View', () => {
   expect(viewQuestionHash(QUESTION as never)).toBe('sha256:' + 'a'.repeat(64))
   expect(viewQuestionHash({ headline: 'x' })).toBeNull()
+})
+
+it('compact answer enforces the frozen shape in one place (dialog path included)', () => {
+  const H = { field: 'question hash', before: null, after: 'sha256:' + 'a'.repeat(64) }
+  const q = { id: 'question', title: 'Question', text: 'Which?' }
+  const base = { headline: 'Answer', ticket: { key: 'T-1', title: '', uid_tail: 'ab12cd34', key_note: '' } }
+  // today's host: option + note as `answer` titled "Your note", a `your choice` row, no question hash row
+  const old = { ...base, sections: [q, { id: 'answer', title: 'Your note', text: 'because' }], fields_changed: [{ field: 'your choice', before: null, after: 'DATE' }] }
+  expect(compactAnswer(old as never)).toBeNull()
+  render(<SignContent compact content={old as never} />)
+  expect(screen.queryByTestId('sign-compact')).toBeNull()
+  expect(screen.getByText('DATE')).toBeVisible() // the chosen option stays in the full review
+  // the same with a hash row: still not compact (your choice row)
+  expect(compactAnswer({ ...old, fields_changed: [...old.fields_changed, H] } as never)).toBeNull()
+  // note without selected, option rows without selected
+  expect(compactAnswer({ ...base, sections: [q, { id: 'answer', title: 'Your answer', text: 'x' }, { id: 'note', title: 'Note', text: 'n' }], fields_changed: [H] } as never)).toBeNull()
+  expect(compactAnswer({ ...base, sections: [q, { id: 'answer', title: 'Your answer', text: 'x' }], fields_changed: [{ field: 'option a', before: null, after: 'A' }, H] } as never)).toBeNull()
+  // the frozen shapes
+  expect(compactAnswer({ ...base, sections: [q, { id: 'answer', title: 'Your answer', text: 'x' }], fields_changed: [H] } as never)).not.toBeNull()
+  expect(compactAnswer({ ...base, sections: [{ id: 'selected', title: 'Your choice', text: 'A' }, { id: 'note', title: 'Note', text: 'n' }, q], fields_changed: [{ field: 'option a', before: null, after: 'A' }, H] } as never)).not.toBeNull()
+})
+
+it('viewQuestionHash is the one contract row: null for none or several', () => {
+  const r = (a: string) => ({ field: 'question hash', before: null, after: a })
+  expect(viewQuestionHash({ headline: 'x', fields_changed: [r('h1'), r('h2')] })).toBeNull()
+  expect(viewQuestionHash({ headline: 'x', sections: [{ id: 'question hash', title: 't', text: 'h' }] })).toBeNull()
+  expect(viewQuestionHash({ headline: 'x', fields_changed: [r('h1')] })).toBe('h1')
 })

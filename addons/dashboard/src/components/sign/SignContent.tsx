@@ -144,25 +144,28 @@ function ClampedProse({ children }: { children: string }) {
 /** The sections the compact answer review draws itself (the full list below it leaves them out). */
 const COMPACT_IDS = ['selected', 'answer', 'note', 'question', 'details']
 
-/** The signer View's `question hash` row, as the host wrote it (a section or a row; null when the View has none). */
+/** The signer View's `question hash`: the ONE contract row. Null when there are none or more than one (never a guess). */
 export function viewQuestionHash(content: Content | null | undefined): string | null {
-  const row = content?.fields_changed?.find(f => f.field === 'question hash')
-  if (row) return row.after
-  return content?.sections?.find(s => s.id === 'question hash')?.text ?? null
+  const rows = (content?.fields_changed ?? []).filter(f => f.field === 'question hash')
+  return rows.length === 1 && typeof rows[0].after === 'string' && rows[0].after ? rows[0].after : null
 }
 
 /**
- * The fields a compact answer review needs, by the frozen section ids of the signer View: `selected` (the chosen option:
- * title, key, text, facts, cost; "Something else" for Other), `answer` (typed text of Other or a text question) or `note`
- * (an annotation), `question`, `details`. A choice has `selected`, a text question only `answer`. Null when the question
- * or the answer part is missing, or the host sent a summary: the caller then shows the full review. Never a compact view
- * that hides content.
+ * The compact answer review, by the frozen signer View shape (design-question-options.md section 4), enforced HERE and
+ * nowhere else. Null (the caller shows the full review) unless: the View has exactly one `question hash` row and a
+ * `question` section; a choice has `selected` (`note` only together with it, option rows only with it); a text question
+ * has `answer` and no `selected`, no `note` and no option rows; Other has `selected` and `answer`. A View of any other
+ * shape (an older host: `your choice` row, a note called `answer`) is never compact: it must not hide the chosen option.
  */
 export function compactAnswer(content: Content | null | undefined) {
   if (!content || content.summary || !content.ticket || content.ticket.new === true) return null
+  if (viewQuestionHash(content) === null) return null
   const sec = (id: string) => content.sections?.find(s => s.id === id)
   const selected = sec('selected'), answer = sec('answer'), note = sec('note'), question = sec('question')
   if (!question || (!selected && !answer)) return null
+  const optionRows = (content.fields_changed ?? []).some(f => f.field.startsWith('option '))
+  if (!selected && (note || optionRows)) return null
+  if (content.fields_changed?.some(f => f.field === 'your choice')) return null
   return { ticket: content.ticket, selected, answer, note, question, details: sec('details') }
 }
 

@@ -255,7 +255,20 @@ describe('Send answer in the card, one-click custody', () => {
     expect(sign).not.toHaveBeenCalled()
   })
 
-  it('a View without a question hash row fails closed in the same way', async () => {
+  it('a View whose hash differs from the card only in the last character is a mismatch', async () => {
+    flag(true)
+    prepare.mockImplementation(async () => {
+      const id = 'reqp'.padEnd(32, '0')
+      views[id] = view('7', {}, 'DATE', q.text, [], q.hash!.slice(0, -1) + 'b')
+      return { request_id: id, expires_at: new Date(Date.now() + 600_000).toISOString(), op: 'answer', confirm: 'click' }
+    })
+    await mountHost()
+    fireEvent.click(screen.getByText('pick a'))
+    await screen.findByTestId('strip-mismatch', {}, T)
+    expect(screen.queryByTestId('answer-strip')).toBeNull()
+  })
+
+  it('a View without a question hash row (today\'s host) is not the frozen shape: no strip, its own wording, the dialog', async () => {
     flag(true)
     prepare.mockImplementation(async () => {
       const id = 'reqn'.padEnd(32, '0')
@@ -264,10 +277,16 @@ describe('Send answer in the card, one-click custody', () => {
       views[id] = v
       return { request_id: id, expires_at: new Date(Date.now() + 600_000).toISOString(), op: 'answer', confirm: 'click' }
     })
-    await mountHost()
+    const fb = vi.fn()
+    await mountHost(fb)
     fireEvent.click(screen.getByText('pick a'))
-    await screen.findByTestId('strip-mismatch', {}, T)
+    await screen.findByTestId('strip-unshown', {}, T)
     expect(screen.queryByTestId('answer-strip')).toBeNull()
+    expect(screen.queryByTestId('strip-mismatch')).toBeNull()
+    await waitFor(() => expect(send()).toBeEnabled(), T)
+    fireEvent.click(send())
+    await waitFor(() => expect(fb).toHaveBeenCalled(), T)
+    expect(sign).not.toHaveBeenCalled()
   })
 
   it('an unknown outcome keeps the strip, disabled, and says not to send again', async () => {

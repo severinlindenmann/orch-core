@@ -22,11 +22,24 @@ export function answerOf(pick: Picked | null, text: string): { option?: string; 
   return { option: pick.key, ...(t ? { text: t } : {}) }
 }
 
-/** The kind this page can answer, or null (unknown kind, or a question the host did not describe: shown, never answerable). */
+const SPEC_KEYS = new Set(['kind', 'why', 'details', 'recommended', 'allow_other'])
+const OPTION_KEYS = new Set(['key', 'label', 'text', 'cost', 'facts'])
+const isFacts = (f: unknown): f is [string, string][] =>
+  Array.isArray(f) && f.every((p) => Array.isArray(p) && p.length === 2 && typeof p[0] === 'string' && typeof p[1] === 'string')
+
+/**
+ * The kind this page can answer, or null: an unknown kind, a spec key or option key this page does not know (the hash
+ * binds them, so it could not show every bound byte), malformed facts, or a question the host did not describe.
+ * Such a question is shown, never answerable here.
+ */
 export function answerableKind(q: QuestionStatus): 'choice' | 'text' | null {
-  if (q.kind === 'text') return 'text'
-  if (q.kind === 'choice' && (q.options?.length ?? 0) >= 2) return 'choice'
-  return null
+  if (q.spec && Object.keys(q.spec).some((k) => !SPEC_KEYS.has(k))) return null
+  if (q.kind === 'text') return q.options?.length ? null : 'text'
+  if (q.kind !== 'choice' || (q.options?.length ?? 0) < 2) return null
+  for (const o of q.options ?? []) {
+    if (Object.keys(o).some((k) => !OPTION_KEYS.has(k)) || (o.facts !== undefined && !isFacts(o.facts))) return null
+  }
+  return 'choice'
 }
 
 const letter = (i: number) => String.fromCharCode(65 + i)
@@ -125,7 +138,7 @@ export function QuestionOptions({
       <div role={readOnly ? 'list' : 'radiogroup'} aria-label={readOnly ? `Options for ${q.id}` : `Answer to ${q.id}`} className="grid gap-2">
         {options.map((o, i) => {
           const recommended = q.recommended === o.key
-          const facts = o.facts ?? []
+          const facts = isFacts(o.facts) ? o.facts : []
           const body = (
             <>
               <span aria-hidden className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full border border-border bg-surface-2 font-mono text-[12px] text-text-muted">

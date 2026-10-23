@@ -154,12 +154,13 @@ describe('ticket page structure: next action first, gates as a stepper, a rail t
     expect(screen.queryByTestId('ticket-properties')).toBeNull()
   })
 
-  it('the primary action follows what the viewer has to do: Answer Q2 first', async () => {
+  it('a question is answered in one place: no Answer button in the header or its menu', async () => {
     vi.stubGlobal('innerWidth', 1440)
     const { user } = renderApp('/ticket/DEMO-0043')
     await screen.findByRole('heading', { level: 1, name: /Load tariff tables/ }, T)
-    await user.click(within(header()).getByRole('button', { name: 'Answer Q2' }))
-    expect(await screen.findByRole('tab', { name: /Questions/, selected: true })).toBeInTheDocument()
+    expect(within(header()).queryByRole('button', { name: /^Answer Q/ })).toBeNull()
+    await user.click(within(header()).getByRole('button', { name: 'Actions' }))
+    expect(screen.queryByRole('menuitem', { name: /^Answer Q/ })).toBeNull()
   })
 
   it('a viewer gets no primary action', async () => {

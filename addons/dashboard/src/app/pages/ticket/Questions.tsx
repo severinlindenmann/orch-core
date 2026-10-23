@@ -14,6 +14,9 @@ const VIA: Record<string, string> = { cli: 'CLI', dashboard: 'dashboard', phone:
 function AnswerForm({ q, sign }: { q: QuestionStatus; sign: TabProps['sign'] }) {
   const [option, setOption] = useState<string | undefined>(undefined)
   const [text, setText] = useState('')
+  const hasOptions = !!q.options?.length
+  const [noting, setNoting] = useState(false)
+  const showNote = !hasOptions || noting || !!text
   const ready = !!option || !!text.trim()
   return (
     <form
@@ -24,12 +27,18 @@ function AnswerForm({ q, sign }: { q: QuestionStatus; sign: TabProps['sign'] }) 
       }}
     >
       {q.options && q.options.length > 0 && <QuestionOptions q={q} name={`answer-${q.id}`} value={option} onChange={setOption} idPrefix={q.id} />}
-      <div className="space-y-1.5">
-        <Label htmlFor={`${q.id}-note`} className="text-[12px] text-text-muted">
-          {q.options?.length ? 'Add a note (optional)' : 'Your answer'}
-        </Label>
-        <Textarea id={`${q.id}-note`} rows={2} value={text} onChange={(e) => setText(e.target.value)} />
-      </div>
+      {showNote ? (
+        <div className="space-y-1.5">
+          <Label htmlFor={`${q.id}-note`} className="text-[12px] text-text-muted">
+            {hasOptions ? 'Your note (optional, sent with the answer)' : 'Your answer'}
+          </Label>
+          <Textarea id={`${q.id}-note`} rows={2} value={text} onChange={(e) => setText(e.target.value)} />
+        </div>
+      ) : (
+        <Button type="button" variant="link" size="sm" className="h-auto p-0 text-[12px]" onClick={() => setNoting(true)}>
+          Add a note
+        </Button>
+      )}
       <div className="flex items-center justify-end gap-2">
         <Button type="submit" size="sm" disabled={!ready}>
           <Fingerprint />

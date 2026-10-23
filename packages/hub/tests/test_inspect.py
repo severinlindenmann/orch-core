@@ -134,22 +134,25 @@ def test_old_registry_without_op_log(state):
 
 def test_unjoined_link_does_not_grow_the_table(make_hub, state):
     hub = make_hub(registry=Registry(str(state / "registry.db")))
-    c = hub.open(first=True)
     db = sqlite3.connect(state / "registry.db")
 
     def rows():
         return db.execute("SELECT COUNT(*) FROM op_counts").fetchone()[0]
 
+    def refused_once():  # an unjoined link ends after its first non-join op (D12b G8): one link per attempt
+        c = hub.open(first=True)
+        with pytest.raises(LinkError):
+            c.request("snapshot_get", {})
+        c.close()
+
     for _ in range(3):
-        with pytest.raises(LinkError):
-            c.request("snapshot_get", {})
+        refused_once()
     base = rows()
-    for _ in range(200):
-        with pytest.raises(LinkError):
-            c.request("snapshot_get", {})
+    for _ in range(100):
+        refused_once()
     assert rows() == base
     d = inspect(state)
-    assert d["workspaces"] == {} and d["unjoined_ops"]["snapshot_get"]["refused"] == 203
+    assert d["workspaces"] == {} and d["unjoined_ops"]["snapshot_get"]["refused"] == 103
     db.close()
 
 

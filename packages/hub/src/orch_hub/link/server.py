@@ -35,7 +35,8 @@ from ..contract import suite as S
 from ..contract.canon import CanonError, b64u, unb64u, unhex
 from ..contract.hub import Refused
 from ..contract.keystore import OpSigner
-from ..keys import HubKeys
+from ..keys import HubKeys, KeysError
+from ..keys.store import PLACEHOLDER_TLS
 from . import framing, ops, tls
 from .registry import Registry
 from .tls import LinkClosed, LinkTimeout
@@ -49,6 +50,19 @@ _log = logging.getLogger("orch_hub.link")
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
+
+
+class _PreAuth:
+    """One unauthenticated-connection slot; :meth:`release` is idempotent (auth done, or the connection ended)."""
+
+    def __init__(self, sem: threading.BoundedSemaphore) -> None:
+        self._sem, self._held, self._lock = sem, True, threading.Lock()
+
+    def release(self) -> None:
+        with self._lock:
+            if self._held:
+                self._held = False
+                self._sem.release()
 
 
 class LinkServer:
@@ -80,7 +94,9 @@ class LinkServer:
         read_timeout: float = 10.0,
         idle_timeout: float = 300.0,
         unjoined_idle_timeout: float = 30.0,
+        unjoined_lifetime: float = 30.0,
         max_connections: int = 64,
+        max_unauthenticated: int = 16,
     ) -> None:
         self._ctx = tls.server_context(identity)
         self._signer, self.hub_id, self._reg = op_signer, hub_id, registry
@@ -99,7 +115,11 @@ class LinkServer:
         self._dev, self._now = dev_mode, now_ms
         self._max, self._t_hs, self._t_rd, self._t_idle = max_frame, handshake_timeout, read_timeout, idle_timeout
         self._t_unjoined = unjoined_idle_timeout
+        self._t_unjoined_life = unjoined_lifetime
         self._slots = threading.BoundedSemaphore(max_connections)
+        # D12b G8: connections that have not finished auth (handshake included) hold one of these, so peers that stall
+        # the handshake cannot take all the slots from bound hosts.
+        self._pre = threading.BoundedSemaphore(min(max_unauthenticated, max_connections))
         self._stop = threading.Event()
         self._listen = socket.socket()
         self._listen.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -115,16 +135,30 @@ class LinkServer:
         keys: HubKeys,
         *,
         identity: tls.TlsIdentity | None = None,
+        ephemeral_tls: bool = False,
         snapshots: ops.SnapshotProvider | None = None,
         now_ms: Callable[[], int] = _now_ms,
         **kw: Any,
     ) -> LinkServer:
-        """Start from a hub key store: ``HK_op`` signs the replies, the hub card pins the TLS key. If the held card
-        does not carry this TLS identity's SPKI hash, the card is re-issued with it (card_seq + 1), so the card the
-        hosts verify always names the certificate this server presents."""
-        identity = identity or tls.TlsIdentity.generate()
-        if keys.card()["o"]["tls_spki_sha256"] != identity.spki_sha256:
-            keys.reissue_card(tls_spki_sha256=identity.spki_sha256)
+        """Start from a hub key store: ``HK_op`` signs the replies, the hub card pins the TLS key.
+
+        The TLS key is the store's persistent one (``keys init`` / ``keys rotate-tls``): a restart never changes the pin.
+        If the card does not name that key (or still carries the placeholder), the server refuses to start with
+        ``tls_pin_mismatch``; a store without a TLS key is refused with ``tls_key_missing``. Only ``ephemeral_tls=True``
+        (loopback tests) or an explicit ``identity=`` generates or accepts another key and re-issues the card (card_seq + 1)."""
+        pinned = keys.card()["o"]["tls_spki_sha256"]
+        if identity is None and not ephemeral_tls:
+            identity = keys.tls_identity()
+            if identity is None:
+                raise KeysError("tls_key_missing", "this key store has no TLS key: run `orch-hub keys rotate-tls`")
+            if pinned != identity.spki_sha256 or pinned == PLACEHOLDER_TLS:
+                raise KeysError(
+                    "tls_pin_mismatch", "the card does not name the stored TLS key: run `orch-hub keys rotate-tls`"
+                )
+        else:
+            identity = identity or tls.TlsIdentity.generate()
+            if pinned != identity.spki_sha256:
+                keys.reissue_card(tls_spki_sha256=identity.spki_sha256)
         signer = keys.op_signer
         snapshots = snapshots or ops.StubSnapshots(signer, keys.hub_id, keys.op_cert()["o"]["cert_id"], now_ms)
         return cls(identity=identity, op_signer=signer, hub_id=keys.hub_id, snapshots=snapshots, now_ms=now_ms, **kw)
@@ -163,15 +197,19 @@ class LinkServer:
             if not self._slots.acquire(blocking=False):
                 sock.close()
                 continue
-            t = threading.Thread(target=self._serve, args=(sock,), name="link-conn", daemon=True)
+            if not self._pre.acquire(blocking=False):
+                sock.close()
+                self._slots.release()
+                continue
+            t = threading.Thread(target=self._serve, args=(sock, _PreAuth(self._pre)), name="link-conn", daemon=True)
             self._threads = [x for x in self._threads if x.is_alive()] + [t]
             t.start()
 
-    def _serve(self, sock: socket.socket) -> None:
+    def _serve(self, sock: socket.socket, pre: _PreAuth) -> None:
         conn = None
         try:
             conn = tls.accept(self._ctx, sock, time.monotonic() + self._t_hs, self._stop)
-            self._link(conn)
+            self._link(conn, pre)
         except framing.FrameError:
             if conn is not None:
                 self._refuse(conn, "malformed")
@@ -184,6 +222,7 @@ class LinkServer:
                 conn.close()
             else:
                 sock.close()
+            pre.release()
             self._slots.release()
 
     def _send(self, conn: tls.TlsConn, obj: dict[str, Any]) -> None:
@@ -237,7 +276,7 @@ class LinkServer:
         self._send(conn, {"t": "ready", "hub_id": self.hub_id})
         return ws, wsk
 
-    def _link(self, conn: tls.TlsConn) -> None:
+    def _link(self, conn: tls.TlsConn, pre: _PreAuth) -> None:
         who = self._auth(conn)
         if who is None:
             return
@@ -249,7 +288,7 @@ class LinkServer:
             and (port.attached_seq is None or self._bound_seq(ws, wsk) == port.attached_seq)
         )
         try:
-            self._serve_link(conn, port, ws, wsk)
+            self._serve_link(conn, port, ws, wsk, pre)
         finally:
             self._detach(ws, port)
 
@@ -290,12 +329,28 @@ class LinkServer:
         if port.live is not None or port.delivery is not None:
             port.attached_seq = seq
 
-    def _serve_link(self, conn: tls.TlsConn, port: _Port, ws: str, wsk: bytes) -> None:
+    def _pinned_to(self, ws: str, wsk: bytes) -> bool:
+        pin = self._reg.pin(ws)
+        return pin is not None and unb64u(pin["wsk_pub"], 65) == wsk
+
+    def _serve_link(self, conn: tls.TlsConn, port: _Port, ws: str, wsk: bytes, pre: _PreAuth) -> None:
+        # G8: a link counts as unauthenticated until the workspace is pinned to THIS link's key. A self-asserted key
+        # (first link of a join) proves nothing, so it keeps its slot until the join pins it; one that dies sooner
+        # than the lifetime below, or never joins, frees it at the end of the connection.
+        if self._pinned_to(ws, wsk):
+            pre.release()
+        started = time.monotonic()
         self._attach(ws, port)
+        last_seq: int | None = None  # D12b G7: the w2h seq of the previous frame on THIS link
         while not self._stop.is_set():
-            pin = self._reg.pin(ws)
+            first = self._t_idle
+            if not self._pinned_to(ws, wsk):  # unjoined, or pinned to another key: a hard lifetime no peer frame resets
+                left = self._t_unjoined_life - (time.monotonic() - started)
+                if left <= 0:
+                    return
+                first = min(self._t_unjoined, left)
             try:
-                signed = self._recv(conn, self._t_idle if pin is not None else self._t_unjoined)
+                signed = self._recv(conn, first)
             except LinkTimeout:
                 return
             # The link's key must be the CURRENT pinned key: a link opened before the pin (offering its own key)
@@ -316,16 +371,29 @@ class LinkServer:
                 self._log_refused(ws, signed, e.code, now)
                 self._refuse(conn, e.code)
                 return
+            # G7: one counter per direction and link, requests and replies alike. The first frame sets the baseline (a
+            # host numbers across reconnects); then every frame is exactly the previous + 1. A repeat or a skip closes
+            # the link before any side effect. Not bound to the link (no cross-link replay protection: L7 SHORTCUT).
+            if last_seq is not None and o["seq"] != last_seq + 1:
+                self._log_refused(ws, signed, "malformed", now)
+                self._refuse(conn, "malformed")
+                return
+            last_seq = o["seq"]
             if o["re"] is not None:  # a reply to one of our h2w requests (the host's ack of a route_in): no answer
                 if self._router is not None and port.live is not None:
                     self._router.on_reply(ws, port.live, o)
                 if self._deliveries is not None and port.delivery is not None:
                     self._deliveries.on_reply(ws, port.delivery, o)
                 continue
+            was_unjoined = self._reg.pin(ws) is None
             body = self._dispatch(ws, wsk, o, now)
             port.send_signed(
                 o["op"] if o["op"] in H.LINK_OPS else "error", o["seq"], body
             )  # never sign a peer-chosen string
+            if self._pinned_to(ws, wsk):
+                pre.release()  # the join pinned this link's key: now it is authenticated
+            elif was_unjoined and o["op"] != "join":
+                return  # an unjoined link may send one join; anything else ends it (after the refusal above)
             self._attach(ws, port)  # a join on this link just made the workspace routable
 
     def _count(self, ws: str, op: object, accepted: bool) -> None:

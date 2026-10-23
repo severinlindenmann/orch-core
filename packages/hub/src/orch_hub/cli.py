@@ -24,6 +24,9 @@ def _parser() -> argparse.ArgumentParser:
     i.add_argument("--relay-url")
     i.add_argument("--tls-spki-sha256", help="b64u SHA-256 of the hub TLS SubjectPublicKeyInfo")
     ks.add_parser("rotate-op", help="new HK_op under the next op_seq; reissues card and all certificates")
+    ks.add_parser(
+        "rotate-tls", help="new persistent TLS key and a re-issued card pinning it (also adds one to an old store)"
+    )
     r = ks.add_parser("revoke-op", help="root-signed revocation of an op certificate (default: the current one)")
     r.add_argument("--cert-id")
     c = ks.add_parser("card", help="print the current card; with options, reissue it (card_seq + 1)")
@@ -37,7 +40,17 @@ def _parser() -> argparse.ArgumentParser:
     ch.add_argument("--factor", required=True, choices=FACTORS)
     sv = sub.add_parser("serve", help="run the dev hub: link server + publish forwarding (loopback only)")
     sv.add_argument("--state", help="hub state dir (default: $ORCH_HUB_STATE)")
-    sv.add_argument("--listen", required=True, help="loopback host:port, e.g. 127.0.0.1:0")
+    sv.add_argument("--listen", help="loopback host:port, e.g. 127.0.0.1:0 (or --link-listen, exactly one)")
+    sv.add_argument(
+        "--link-listen",
+        help="network link bind: one literal private IP assigned to this machine, IP:port (refused on a machine with "
+        "workspace host or agent users, see --dev-shared-machine)",
+    )
+    sv.add_argument(
+        "--dev-shared-machine",
+        action="store_true",
+        help="dev only: allow --link-listen on a machine that has host/agent users (needs a dev card; network link, not separation)",
+    )
     sv.add_argument("--publish-url", required=True, help="orch-publish base URL (https, or http on loopback)")
     sv.add_argument("--api-host", help="host the workspaces sign (default: the host:port of --publish-url)")
     sv.add_argument("--invite", action="append", default=[], help="invite code accepted once (repeatable)")
@@ -68,6 +81,13 @@ def _parser() -> argparse.ArgumentParser:
     dr.add_argument("--state", help="hub state dir (default: $ORCH_HUB_STATE)")
     dr.add_argument("--listen", help="the running hub's loopback host:port: its TLS key must match the card pin")
     dr.add_argument("--publish-url", help="orch-publish base URL: its /v2/hub/card route must answer")
+    dr.add_argument("--link-listen", help="the running hub's network link IP:port (split dev layout): pin + bind rules")
+    dr.add_argument("--dev-shared-machine", action="store_true", help="the hub runs with this dev exception (WARN)")
+    dr.add_argument(
+        "--hub-user", default="orch-hub", help="the hub's OS user (default orch-hub; split hub: orch-hub-split)"
+    )
+    dr.add_argument("--fw-dump", help="dump of the loaded hub table (default /run/orch/hub-fw.loaded.json)")
+    dr.add_argument("--link-iface", default="wt0", help="the only interface the network link port accepts on")
     dr.add_argument(
         "--layout", choices=("auto", "one-vps", "split"), default="auto", help="assert the layout (default: infer)"
     )
@@ -111,6 +131,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.listen,
                 args.publish_url,
                 args.invite,
+                link_listen=args.link_listen,
+                dev_shared_machine=args.dev_shared_machine,
                 api_host=args.api_host,
                 web_listen=args.web_listen,
                 relay_url=args.relay_url,
@@ -143,11 +165,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"orch-hub: {e}", file=sys.stderr)
             return 1
         kw = {"fw_file": Path(args.fw_file)} if args.fw_file else {}
+        if args.fw_dump:
+            kw["fw_dump"] = Path(args.fw_dump)
         return (
             1
             if run(
                 state,
                 listen=args.listen,
+                link_listen=args.link_listen,
+                dev_shared_machine=args.dev_shared_machine,
+                hub_user=args.hub_user,
+                link_iface=args.link_iface,
                 publish_url=args.publish_url,
                 out=sys.stdout,
                 layout_flag=args.layout,
@@ -175,6 +203,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             keys = HubKeys.open(state)
             if args.cmd == "rotate-op":
                 out = keys.rotate_op()
+            elif args.cmd == "rotate-tls":
+                out = keys.rotate_tls()
             elif args.cmd == "revoke-op":
                 out = keys.revoke_op(args.cert_id)
             elif args.cmd == "card":

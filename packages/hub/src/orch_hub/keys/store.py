@@ -32,6 +32,7 @@ from ..contract import hub as H
 from ..contract import keystore as KS
 from ..contract import suite as S
 from ..contract.canon import CanonError, b64u, cj, unb64u
+from ..tlsid import TlsIdentity
 from .fsutil import StateError, check_dir, make_dir, read_file, write_atomic
 
 _CH_FILE = re.compile(r"[0-9a-f]{32}\.json")
@@ -43,6 +44,7 @@ DAY_MS = 86_400_000
 OP_LIFETIME_MS = 366 * DAY_MS  # matches the H0 vectors (issued NOW-1d, expires NOW+365d)
 UK_LIFETIME_MS = 31 * DAY_MS
 CHANNEL_LIFETIME_MS = 31 * DAY_MS
+TLS_KEY_FILE = "tls.key"  # hex P-256 scalar like the other keys: 0600, owned by the hub user
 PLACEHOLDER_TLS = b64u(S.sha256(b"orch-hub dev: no TLS key pinned yet"))  # never matches a real key
 _HEX16 = re.compile(r"[0-9a-f]{32}")
 ENV_STATE = "ORCH_HUB_STATE"
@@ -147,6 +149,10 @@ class HubKeys:
             hxk = self._keygen("hxk")
             write_atomic(self.state / "hk_root.key", _key_bytes(root))
             write_atomic(self.state / "hxk.key", _key_bytes(hxk))
+            if tls_spki_sha256 is None:  # D12b G4: the TLS key is made here, once, and the first card pins it
+                tls_key = _gen("tls")
+                write_atomic(self.state / TLS_KEY_FILE, _key_bytes(tls_key))
+                tls_spki_sha256 = TlsIdentity.from_key(tls_key).spki_sha256
             hub_id = H.hub_id(S.public_bytes(root))
             self._meta = {
                 "v": 1,
@@ -251,6 +257,27 @@ class HubKeys:
 
     def card(self) -> dict[str, Any]:
         return self._read_obj(self._gen_dir() / "card.json")
+
+    def tls_identity(self) -> TlsIdentity | None:
+        """The persistent TLS identity of this hub, or None for a store made before D12b (``rotate_tls`` adds one)."""
+        path = self.state / TLS_KEY_FILE
+        try:
+            if not os.path.lexists(path):
+                return None
+            return TlsIdentity.from_key(_load_key(path))
+        except StateError as e:
+            raise KeysError(e.code, str(e)) from None
+
+    def rotate_tls(self) -> dict[str, Any]:
+        """New TLS key (written first, 0600), then the card re-issued with its pin (card_seq + 1). A crash between the
+        two leaves the key and the card disagreeing; ``serve`` refuses that (``tls_pin_mismatch``): run this again."""
+        self._require_op()
+        key = _gen("tls")
+        try:
+            write_atomic(self.state / TLS_KEY_FILE, _key_bytes(key))
+        except StateError as e:
+            raise KeysError(e.code, str(e)) from None
+        return self.reissue_card(tls_spki_sha256=TlsIdentity.from_key(key).spki_sha256)
 
     def op_cert_by_id(self, cert_id: str) -> dict[str, Any] | None:
         """The root-signed ``hub.op_cert`` with this id among the generations still on disk (the audit chain serves the

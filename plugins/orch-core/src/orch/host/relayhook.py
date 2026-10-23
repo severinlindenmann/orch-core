@@ -541,7 +541,14 @@ def link_step1(
     from orch.relay.session import fetch_relay_info
 
     link = {"origin": origin, "ca_file": ca_file, "proxy": proxy}
-    conn = transport(origin, link) if transport is not None else http.RelayConn(origin, ca_file=ca_file, proxy=proxy)
+    conn = (
+        transport(origin, link)
+        if transport is not None
+        else http.RelayConn(  # through the cut-over gate by construction (L2-C10i-5)
+            origin, ca_file=ca_file, proxy=proxy,
+            allowed=directpath.gate(service.state_dir, service.workspace_id, service.host_uid),
+        )
+    )  # fmt: skip
     info = fetch_relay_info(conn)
     return service.submit(
         lambda: reserve_link(

@@ -337,6 +337,13 @@ def main(
             _sign(target, "relay.reopen", {})
             out.write("signed: the reopening is recorded in your workspace log\n")
             got = _call(target, "hub.reopen", {}, env)
+            if not got.get("relay_started", True):  # the path is open, but the relay link did not come up (L2-C10i-4)
+                _emit(
+                    out, a.json, got,
+                    f"the direct relay path is open again, but the relay link did not start ({got.get('relay')}): "
+                    "orch host relay start",
+                )  # fmt: skip
+                return 3
             _emit(out, a.json, got, "ok the direct relay path is open again; pair your phones again")
             return 0
         if a.cmd == "mode":

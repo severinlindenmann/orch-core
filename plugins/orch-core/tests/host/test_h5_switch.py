@@ -203,3 +203,22 @@ def test_the_model_accepts_a_re_signed_full_mode_only_for_the_same_hub_binding_a
                       ({"mode": "selective"}, "downgrade"), ({"binding_seq": 0}, "lower")):  # fmt: skip
         _, r = w.try_("workspace", "hub.joined", "sev", roster_v=w.roster_v, **{**base, **over})
         assert getattr(r, "code", None) == Code.HUB_INVALID, why
+
+
+def test_link_step1_builds_its_relay_connection_through_the_gate(env, monkeypatch):
+    """L2-C10i-5: I1 holds by construction, not by the caller refusing first."""
+    from orch.relay import http
+
+    seen = {}
+
+    class Stop(Exception):
+        pass
+
+    def fake(origin, **kw):
+        seen.update(kw)
+        raise Stop
+
+    monkeypatch.setattr(http, "RelayConn", fake)
+    with pytest.raises(Stop):
+        relayhook.link_step1(env.service, origin="http://127.0.0.1:9", max_publication_bytes=4 << 20)
+    assert callable(seen["allowed"])

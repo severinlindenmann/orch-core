@@ -471,11 +471,13 @@ def device_excluded(core: Core, e: dict[str, Any]) -> Refusal | None:
     holder = ws.members.get(dev.person)
     if holder is None or holder.role == "owner":
         return Refusal(Code.ROLE_DENIED, "an owner's device is revoked by its person key, not excluded by a channel")
-    if dev.removed or dev.revoked:
+    upgrade = e["reason"] == "compromised" and dev.excluded in ("lost", "retired")  # like device.revoked (L2-C10i-6)
+    if (dev.removed and not upgrade) or dev.revoked:
         return Refusal(Code.DEVICE_EXISTS, e["device"])
 
     def change() -> None:
         dev.removed = True
+        dev.excluded = e["reason"]
         if e["reason"] == "compromised":
             for grant in ws.grants.values():
                 grant.revoked = grant.revoked or grant.device == e["device"]

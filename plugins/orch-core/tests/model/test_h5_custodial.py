@@ -301,3 +301,14 @@ def test_a_hub_settings_changed_refuses_every_off_channel_key_at_append_and_on_r
     st = replay(w.ws, w.tl, verifier=w.verifier, now=w.at(), expected_workspace_id=w.workspace_id)
     assert any(i.type == "settings.changed" for i in st._core.logs["workspace"].invalid)
     assert key not in st._core.ws.settings
+
+
+def test_device_excluded_lost_can_be_upgraded_to_compromised_like_device_revoked(w):
+    tom = _device_of(w, "tom")
+    assert hub(w, "device.excluded", U1, device=tom, reason="lost") is None
+    assert hub(w, "device.excluded", U1, device=tom, reason="lost").code == Code.DEVICE_EXISTS  # same reason again
+    now = w.at()
+    w.wev("grant.issued", "mara", grant="gr_01J9ZP0000000000000000GRT8", scope="workable", verbs="agent",
+          issued_at=now, hours=8, expires_at=_plus(now, 8), secret_hash="sha256:" + "e" * 64)  # fmt: skip
+    assert hub(w, "device.excluded", U1, device=tom, reason="compromised") is None  # the upgrade is accepted
+    assert hub(w, "device.excluded", U1, device=tom, reason="compromised").code == Code.DEVICE_EXISTS

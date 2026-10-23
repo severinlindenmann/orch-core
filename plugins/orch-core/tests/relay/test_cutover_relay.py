@@ -169,3 +169,91 @@ def test_every_precondition_of_a_reopening_is_checked():
         with pytest.raises(HostError) as e:
             _check(**kw)
         assert e.value.code == code, kw
+
+
+# --- the Opus review of #1112 (L2-C10i-1 to -4) ---------------------------------------------------------------------
+
+
+def test_a_leave_while_closing_unbinds_deletes_nothing_owed_and_the_path_can_be_reopened(env, relay):
+    """L2-C10i-1: the real CUTOVER_DELETE seam, through hub.unbind. `closing` (the relay does not know the hub) -> leave
+    -> unbind -> `closed`; reopen then works (before: owed forever)."""
+    from tests.host.dispatch_helpers import ok
+
+    relay.known = set()
+    pin_snapshot(env)
+    assert cutover.run(env.service, force_start=True) == "closing"
+    env.human.run("hub.leave", {})
+    got = ok(env.served.client().req("hub.unbind", {}, idem=True))["data"]
+    assert got["cutover"] == "none"  # nothing owed any more
+    assert hubops._load_state(env.service).direct == "closed"  # noqa: SLF001
+    env.human.run("relay.reopen", {})
+    assert cutover.reopen(env.service)["direct"] == "open"
+
+
+def test_a_relay_that_is_down_never_fails_the_unbind_it_stays_owed(env, relay):
+    from tests.host.dispatch_helpers import ok
+
+    relay.known = set()
+    pin_snapshot(env)
+    cutover.run(env.service, force_start=True)
+    relay.mock.close()  # the relay goes away
+    env.human.run("hub.leave", {})
+    got = ok(env.served.client().req("hub.unbind", {}, idem=True))["data"]
+    assert got["cutover"] == "owed" and hubops._load_state(env.service).direct == "closing"  # noqa: SLF001
+
+
+def test_a_concurrent_unbind_keeps_its_fields_the_cut_over_writes_only_its_own(env, relay, monkeypatch):
+    """L2-C10i-2: another writer saves hub.json between the preflight and the seal; its fields survive."""
+    pin_snapshot(env)
+    real = cutover._stop_relay  # noqa: SLF001
+
+    def stop_then_other_writer(service):
+        real(service)
+        with hubops._MU:  # noqa: SLF001
+            st = hubops._load_state(service)  # noqa: SLF001
+            st.publish_owed = {st.hub_id: {"owed": "by a concurrent unbind"}}
+            hubops._write_state(service, st)  # noqa: SLF001
+
+    monkeypatch.setattr(cutover, "_stop_relay", stop_then_other_writer)
+    assert cutover.run(env.service, force_start=True) == "closed"
+    st = hubops._load_state(env.service)  # noqa: SLF001
+    assert st.publish_owed == {st.hub_id: {"owed": "by a concurrent unbind"}} and st.direct == "closed"
+
+
+def test_a_binding_that_changed_aborts_the_cut_over_without_writing(env, relay, monkeypatch):
+    pin_snapshot(env)
+    real = cutover._stop_relay  # noqa: SLF001
+
+    def unbound_meanwhile(service):
+        real(service)
+        with hubops._MU:  # noqa: SLF001
+            st = hubops._load_state(service)  # noqa: SLF001
+            st.status = "unbound"
+            hubops._write_state(service, st)  # noqa: SLF001
+
+    monkeypatch.setattr(cutover, "_stop_relay", unbound_meanwhile)
+    cutover.run(env.service, force_start=True)
+    st = hubops._load_state(env.service)  # noqa: SLF001
+    assert st.status == "unbound" and st.direct == "closing" and st.cut_epoch is None  # nothing of ours after the abort
+
+
+def test_reopen_after_a_crash_between_the_relay_delete_and_the_save_is_idempotent(env, relay):
+    """L2-C10i-3: the row is gone already (our DELETE landed, the save did not): GET sees `direct`, no second DELETE."""
+    pin_snapshot(env)
+    cutover.run(env.service, force_start=True)
+    _left_and_reopened(env)
+    relay.row = None  # deleted before the crash
+    relay.calls.clear()
+    assert cutover.reopen(env.service)["direct"] == "open"
+    assert [m for m, p in relay.calls if p.endswith("/cutover")] == ["GET"]
+
+
+def test_reopen_says_when_the_relay_did_not_start(env, relay, monkeypatch):
+    """L2-C10i-4: the answer carries the reason, not an `ok`."""
+    pin_snapshot(env)
+    cutover.run(env.service, force_start=True)
+    _left_and_reopened(env)
+    monkeypatch.setattr(env.service, "relay_start", lambda: "none")
+    env.service.relay_reason = "start_failed: SeamMissing"
+    out = cutover.reopen(env.service)
+    assert out["direct"] == "open" and out["relay_started"] is False and "start_failed" in out["relay"]

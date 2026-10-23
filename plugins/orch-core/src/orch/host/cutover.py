@@ -50,6 +50,7 @@ TRANSPORT: Callable[[str, Any], Any] | None = None
 _BACKOFF_FIRST_S, _BACKOFF_MAX_S = 30.0, 3600.0
 _THREADS: dict[tuple[str, str], threading.Thread] = {}
 _THREADS_MU = threading.Lock()
+_LOCKS: dict[tuple[str, str], threading.Lock] = {}
 
 
 # -- the facts ---------------------------------------------------------------------------------------------------------
@@ -137,9 +138,39 @@ def _relay_linked(service: WorkspaceService) -> bool:
     return os.path.lexists(link_path(service.state_dir, service.workspace_id))
 
 
-def _note(service: WorkspaceService, state: Any, text: str | None) -> None:
-    state.direct_note = None if text is None else text[:300]
-    _hubops()._save_state(service, state)  # noqa: SLF001
+def _lock_for(service: WorkspaceService) -> threading.Lock:
+    """One cut-over at a time per workspace (the connect thread and the background loop share it): two runs would rotate
+    twice. Lock order: this lock, then ``hubops._MU`` (inside :func:`_delta`)."""
+    with _THREADS_MU:
+        return _LOCKS.setdefault((str(service.state_dir), service.workspace_id), threading.Lock())
+
+
+def _delta(service: WorkspaceService, base: Any, mutate: Callable[[Any], None]) -> Any:
+    """Write ONLY the cut-over's own fields (L2-C10i-2): re-read ``hub.json`` under ``_MU``, require the same bound
+    full binding the run started for, apply ``mutate`` to that fresh copy, write it. A concurrent unbind, refresh or
+    pump keeps its fields (``status``, ``outbox``, ``rotate_after``, ``publish_owed``, a snapshot); a changed binding
+    aborts."""
+    h = _hubops()
+    with h._MU:  # noqa: SLF001
+        cur = h._load_state(service)  # noqa: SLF001
+        if (
+            cur is None
+            or cur.status != "bound"
+            or cur.mode != "full"
+            or cur.hub_id != base.hub_id
+            or cur.binding_seq != base.binding_seq
+        ):
+            raise HostError("hub.not_joined", "the hub binding changed while the cut-over ran: nothing was written")
+        mutate(cur)
+        h._write_state(service, cur)  # noqa: SLF001
+        return cur
+
+
+def _note(service: WorkspaceService, base: Any, text: str | None) -> None:
+    try:
+        _delta(service, base, lambda c: setattr(c, "direct_note", None if text is None else text[:300]))
+    except HostError:
+        pass  # the binding is gone: there is no cut-over left to annotate
 
 
 def run(
@@ -152,42 +183,50 @@ def run(
     """Run or resume the cut-over; returns ``direct`` afterwards (``open`` | ``closing`` | ``closed``). Does not raise
     for a hub or relay that is down: the state stays ``closing`` with ``direct_note``. ``hub_card``: the card the owner
     just supplied (hub.connect), else the one held. ``force_start``: the caller (a C10 connect after a full join or
-    mode switch) has the owner's new review text behind it, so a state with ``direct`` unset starts too."""
+    mode switch) has the owner's new review text behind it, so a state with ``direct`` unset starts too. One run at a
+    time per workspace; every write is a delta on a fresh read (:func:`_delta`)."""
+    with _lock_for(service):
+        return _run_locked(service, model, hub_card, force_start)
+
+
+def _run_locked(service: WorkspaceService, model: dict[str, Any] | None, hub_card: Any, force_start: bool) -> str:
     h = _hubops()
-    model = model if model is not None else _model(service)
-    state = h._load_state(service)  # noqa: SLF001
-    if not _full_bound(model, state):
-        return "open" if state is None or state.direct is None else str(state.direct)
-    if state.direct == "closed":
+    model = _model(service)  # always fresh, the caller's copy may be older than the lock wait
+    base = h._load_state(service)  # noqa: SLF001
+    if not _full_bound(model, base):
+        return "open" if base is None or base.direct is None else str(base.direct)
+    if base.direct == "closed":
         return "closed"
-    if state.direct is None and not force_start and not needs_run(service, model, state):
+    if base.direct is None and not force_start and not needs_run(service, model, base):
         return "open"
-    if state.direct in (None, "open"):
-        why = preflight(state)
-        if why is not None:
-            state.direct = state.direct or "open"
-            _note(service, state, f"hub.not_ready: {why}")
-            return "open"
-        state.direct, state.direct_note = "closing", None
-        h._save_state(service, state)  # noqa: SLF001 - saved before anything else: from here the host is closed
     try:
+        if base.direct in (None, "open"):
+            why = preflight(base)
+            if why is not None:
+                _delta(service, base, lambda c: (setattr(c, "direct", c.direct or "open"),
+                                                 setattr(c, "direct_note", f"hub.not_ready: {why}")))  # fmt: skip
+                return "open"
+            # saved before anything else: from here the host behaves as closed
+            _delta(service, base, lambda c: (setattr(c, "direct", "closing"), setattr(c, "direct_note", None)))
         _stop_relay(service)
-        _rotate_and_seal(service, state, hub_card)
-        state = h._load_state(service)  # noqa: SLF001
-        _relay_cut(service, state)
+        _rotate_and_seal(service, base, hub_card)
+        _relay_cut(service, h._load_state(service))  # noqa: SLF001
+        _delta(service, base, lambda c: (setattr(c, "direct", "closed"), setattr(c, "direct_note", None)))
     except HostError as exc:
         LOG.warning("cut-over of %s stays closing: %s", service.workspace_id, exc.code)
-        _note(service, h._load_state(service), f"{exc.code}: {exc.message}")  # noqa: SLF001
-        return "closing"
+        _note(service, base, f"{exc.code}: {exc.message}")
+        return _now_direct(service)
     except Exception as exc:  # noqa: BLE001 - a hub or relay that is down is not an error of the owner
         LOG.warning("cut-over of %s stays closing: %s", service.workspace_id, type(exc).__name__)
-        _note(service, h._load_state(service), f"{type(exc).__name__}: the hub or the relay did not answer")  # noqa: SLF001
-        return "closing"
-    state = h._load_state(service)  # noqa: SLF001
-    state.direct, state.direct_note = "closed", None
-    h._save_state(service, state)  # noqa: SLF001
+        _note(service, base, f"{type(exc).__name__}: the hub or the relay did not answer")
+        return _now_direct(service)
     LOG.info("the direct relay path of %s is closed", service.workspace_id)
     return "closed"
+
+
+def _now_direct(service: WorkspaceService) -> str:
+    st = _hubops()._load_state(service)  # noqa: SLF001
+    return "open" if st is None or st.direct is None else str(st.direct)
 
 
 def _stop_relay(service: WorkspaceService) -> None:
@@ -200,8 +239,8 @@ def _stop_relay(service: WorkspaceService) -> None:
         raise HostError("relay.cut_over", "a relay thread of this workspace has not ended yet: retrying")
 
 
-def _rotate_and_seal(service: WorkspaceService, state: Any, hub_card: Any) -> None:
-    """Step 3: the cut-over's own epoch (no device in it) and its seal to the hub."""
+def _rotate_and_seal(service: WorkspaceService, base: Any, hub_card: Any) -> None:
+    """Step 3: the cut-over's own epoch (no device in it) and its seal to the hub. Every write is a delta."""
     from orch.crypto.encoding import unb64u
     from orch.hubclient import HubRefused, seal_to_hub
 
@@ -209,11 +248,12 @@ def _rotate_and_seal(service: WorkspaceService, state: Any, hub_card: Any) -> No
     epochs = h.epochs_for(service, create=True)
     if epochs is None or not hasattr(epochs, "rotate_cut_over"):
         raise HostError("hub.no_epoch", "the workspace key store is not available for the cut-over")
+    state = h._load_state(service)  # noqa: SLF001
     if state.cut_epoch is None:
         epochs.ensure_epoch()
         epochs.rotate_cut_over()
-        state.cut_epoch = epochs.current_epoch()
-        h._save_state(service, state)  # noqa: SLF001
+        made = epochs.current_epoch()
+        state = _delta(service, base, lambda c: setattr(c, "cut_epoch", c.cut_epoch or made))
     if state.sealed is not None and state.sealed["epoch"] >= state.cut_epoch:
         return
     wsk_pub, sign = h._wsk_sign(service)  # noqa: SLF001
@@ -223,12 +263,15 @@ def _rotate_and_seal(service: WorkspaceService, state: Any, hub_card: Any) -> No
         "wsk_pub": wsk_pub, "sign": sign, "mode": "full",
     }  # fmt: skip
     transport = h._transport(service, state.hub_id, link)  # noqa: SLF001
+
+    def save(s: Any) -> None:  # seal_to_hub changed only the hub key and the sealed epoch of its copy
+        _delta(service, base, lambda c: (setattr(c, "sealed", s.sealed), setattr(c, "hxk_pub", s.hxk_pub)))
+
     try:
         seal_to_hub(
             state=state, hub_card=hub_card if hub_card is not None else state.card,
             workspace_id=service.workspace_id, sign_wsk=sign, dev_mode=dev,
-            now_ms=lambda: int(service.clock() * 1000), transport=transport,
-            save=lambda s: h._save_state(service, s), epochs=epochs,  # noqa: SLF001
+            now_ms=lambda: int(service.clock() * 1000), transport=transport, save=save, epochs=epochs,
         )  # fmt: skip
     except HubRefused as exc:
         raise HostError("hub.unreachable", f"the new key could not be sealed to the hub ({exc.code})") from None
@@ -267,19 +310,24 @@ def _relay_cut(service: WorkspaceService, state: Any) -> None:
 def cutover_delete(service: WorkspaceService) -> bool:
     """C8's seam (``breakglass.CUTOVER_DELETE``): at a leave, delete a *pending* naming at the relay so the hub can
     never confirm it. A row that is already ``cut_over`` is the owner's own closed door and stays closed (I6):
-    nothing to delete, answered ``True``. A relay-less workspace has no row."""
+    nothing to delete, answered ``True``. A relay-less workspace has no row. **Any relay failure answers ``False``**
+    (owed, tried again by the next ``orch hub unbind``): it never raises into ``hub.unbind`` (L2-C10i-1)."""
     if not _relay_linked(service):
         return True
     from . import relayhook
 
     ws = service.workspace_id
     path = f"/v2/workspaces/{ws}/cutover"
-    with relayhook.cutover_session(service, transport=TRANSPORT) as session:
-        session.hold()
-        held = session.call("GET", path, "GET /v2/workspaces/{ws}/cutover")
-        if held.get("state") != "pending":
-            return True
-        session.call("DELETE", path, "DELETE /v2/workspaces/{ws}/cutover", holder=True)
+    try:
+        with relayhook.cutover_session(service, transport=TRANSPORT) as session:
+            session.hold()
+            held = session.call("GET", path, "GET /v2/workspaces/{ws}/cutover")
+            if held.get("state") != "pending":
+                return True
+            session.call("DELETE", path, "DELETE /v2/workspaces/{ws}/cutover", holder=True)
+    except Exception as exc:  # noqa: BLE001 - RelayRefused, TransportError, CutOver, HostError, StateError ...
+        LOG.warning("cut-over delete of %s owed: %s", service.workspace_id, type(exc).__name__)
+        return False
     return True
 
 
@@ -321,9 +369,12 @@ def reopen(service: WorkspaceService) -> dict[str, Any]:
         from . import relayhook
 
         ws = service.workspace_id
+        path = f"/v2/workspaces/{ws}/cutover"
         with relayhook.cutover_session(service, transport=TRANSPORT) as session:
             session.hold()
-            session.call("DELETE", f"/v2/workspaces/{ws}/cutover", "DELETE /v2/workspaces/{ws}/cutover", holder=True)
+            held = session.call("GET", path, "GET /v2/workspaces/{ws}/cutover")
+            if held.get("state") != "direct":  # a retry after a crash between our DELETE and the save finds no row
+                session.call("DELETE", path, "DELETE /v2/workspaces/{ws}/cutover", holder=True)
     # both are read outside the lock (they take it, or wait for the worker thread that may be waiting for it)
     model = _model(service)
     rotation = h._rotation(service, h._load_state(service))  # noqa: SLF001
@@ -334,11 +385,19 @@ def reopen(service: WorkspaceService) -> dict[str, Any]:
         h._write_state(service, state)  # noqa: SLF001
     started = "none"
     if _relay_linked(service):
-        try:  # the stop marker the cut-over left is cleared; a link that cannot start now starts at the next open
+        try:  # the stop marker the cut-over left is cleared
             started = service.relay_start()
         except HostError as exc:
             started = exc.code
-    return {"direct": "open", "relay_linked": _relay_linked(service), "relay": started}
+        if started == "none":  # relay_start answers "none" when nothing started: say why
+            started = str(service.relay_reason or "not_started")
+    linked = _relay_linked(service)
+    return {
+        "direct": "open",
+        "relay_linked": linked,
+        "relay": started,
+        "relay_started": (not linked) or started == "started",
+    }
 
 
 # -- at host start: resume ---------------------------------------------------------------------------------------------

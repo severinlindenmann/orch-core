@@ -868,8 +868,7 @@ export function LayoutPreview({ name }: { name: string }) {
     return <div className="p-4"><AgentAccess ws={workspace.id} previewStopped={scenario === 'agent-pill-stopped'} /></div>
   if (scenario.startsWith('agent-'))
     return (
-      <StartAgentDialog ws={workspace.id} ticket="DEMO-0043" open onClose={() => {}}
-        grantStep={scenario === 'agent-outcomes' ? { kind: 'unknown', grant: AGENT_GRANT } : undefined} />
+      <StartAgentDialog ws={workspace.id} ticket="DEMO-0043" open choose onClose={() => {}} />
     )
   if (scenario.startsWith('drop-'))
     return (

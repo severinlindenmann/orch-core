@@ -54,7 +54,9 @@ export function storyOf(action: ClickAction | null | undefined, ctx: StoryContex
       const length = accessLength(action.hours)
       return action.extend
         ? { signLabel: 'Sign and extend', access: { length }, steps: ['You sign.', `The old access ends and the new one starts, for ${length} from now.`, 'Running agents stop. Start them again to use the new access.'] }
-        : { signLabel: 'Sign and allow access', access: { length }, steps: ['You sign.', `Agents may work for you for ${length} from now.`] }
+        : ctx.startsAgent
+          ? { signLabel: 'Sign and start agent', access: { length }, steps: ['You sign.', `Agents may work for you for ${length} from now.`, 'The agent starts.'] }
+          : { signLabel: 'Sign and allow access', access: { length }, steps: ['You sign.', `Agents may work for you for ${length} from now.`] }
     }
     default:
       return null

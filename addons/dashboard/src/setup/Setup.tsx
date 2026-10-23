@@ -846,7 +846,7 @@ export function Setup({ api }: { api: SetupAPI }) {
               ))}
               {profile.method === 'click' && state.click_available && (
                 <p className="notice" data-testid="click-risk">
-                  <Raw>{state.click_risk}</Raw>
+                  <Inline>{state.click_risk}</Inline>
                 </p>
               )}
               <h2>Let agents work for you for:</h2>
@@ -897,7 +897,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                     <p>
                       Relay is unavailable with One click:{' '}
                       {state.click_reason ||
-                        'One click and phone approvals cannot be used together yet (click_relay_unsupported).'}
+                        'Phone approvals are not available with One click yet. Choose Terminal to use them.'}
                     </p>
                   )}
                 </>

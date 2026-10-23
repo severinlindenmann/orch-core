@@ -59,7 +59,7 @@ export function ClickSignPanel({ answer, problem, signing, onSign, onCancel, wai
 }
 
 /** What the one "Technical details" expander of the review holds besides the content's own ids (action, workspace, fingerprint, device, the signer's lines and checks). */
-function TechnicalFacts({ view }: { view: ClickViewAnswer['view'] }) {
+export function TechnicalFacts({ view }: { view: ClickViewAnswer['view'] }) {
   return (
     <>
       <dl className="grid grid-cols-[110px_1fr] gap-x-3 gap-y-1 text-[13px]">
@@ -137,7 +137,7 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
   const label = story?.signLabel ?? 'Sign'
   return (
     <section data-testid="click-panel" aria-label="Review before signing" className="space-y-3">
-      {view.content && <SignContent content={view.content} ws={view.workspace?.id} technical={technical} />}
+      {view.content && <SignContent content={view.content} ws={view.workspace?.id} technical={technical} compact={story?.compact} />}
       {story?.scope && <p data-testid="sign-scope" className="text-[13px] text-text">{story.scope}</p>}
       {word !== null && <TypedWord word={word} story={story ?? null} value={typed} onChange={setTyped} disabled={signing} />}
       {story && <WhatNext story={story} />}

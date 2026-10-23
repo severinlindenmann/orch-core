@@ -53,6 +53,8 @@ TECHNICAL_KEYS = frozenset(
         "host_sig",
         # hashes and attestations the details carry
         "gate_gen", "hash", "policy_hash", "base_rev", "secret_hash",
+        # C10: the id of the grant.requested a host-actor grant.issued answers; a person never signs it
+        "request",
     }
 )  # fmt: skip
 
@@ -71,6 +73,7 @@ SHOWN: dict[str, frozenset[str]] = {
     "verdict.given": frozenset({"outcome", "text", "source_sha"}),
     "hub.joined": frozenset({"hub_id", "hk_root_pub", "mode", "binding_seq", "aliases"}),
     "hub.left": frozenset({"hub_id", "binding_seq"}),
+    "relay.reopened": frozenset({"hub_id"}),
     "grant.issued": frozenset({"grant", "scope", "verbs", "label", "hours", "issued_at", "expires_at"}),
     "grant.revoked": frozenset({"grant", "reason"}),
     "log.added": frozenset({"text"}),
@@ -505,6 +508,38 @@ def _models_rows(out: dict[str, Any], value: Any, before: Any, ctx: Any) -> bool
             _row(out, f"{hword}: {mword}", _model_word(after), _model_word(was), ctx.note(False))
     out.setdefault("notes", []).append(
         "Start agent uses these models for new agents. You still see the model before each start."
+    )
+    return True
+
+
+def _icon_word(v: Any) -> str | None:
+    """``Rocket, Pink`` for a plain pair of the closed lists, else ``None``."""
+    from orch.wsicons import COLOUR_LABELS, ICON_LABELS
+
+    if (
+        not isinstance(v, Mapping)
+        or set(v) != {"icon", "colour"}
+        or not isinstance(v["icon"], str)
+        or not isinstance(v["colour"], str)
+        or v["icon"] not in ICON_LABELS
+        or v["colour"] not in COLOUR_LABELS
+    ):
+        return None
+    return f"{ICON_LABELS[v['icon']]}, {COLOUR_LABELS[v['colour']]}"
+
+
+def _icon_rows(out: dict[str, Any], value: Any, before: Any, ctx: Any) -> bool:
+    """``settings.changed`` ``set.icon``: the workspace icon in words (``Rocket, Pink``); ``None`` removes it. ``False``
+    (the generic row, every byte) when the value, or the host's current one, is not a plain pair of the closed lists."""
+    new = "(removed: default icon)" if value is None else _icon_word(value)
+    if new is None:
+        return False
+    old = "(default icon)" if before is None else _icon_word(before)
+    if old is None:
+        return False
+    _row(out, "Workspace icon", new, old, ctx.note(False))
+    out.setdefault("notes", []).append(
+        "The icon is shown beside the workspace name in menus. It never replaces the prefix."
     )
     return True
 
@@ -1004,11 +1039,26 @@ def _question(material: Mapping[str, Any], events: list[Mapping[str, Any]], tick
     if q.get("why"):  # the question hash binds the text and the options, not this: the host's word
         out["sections"].append({"id": "why", "title": "Why it was asked (per host, not signed)", "text": _s(q["why"])})
     if ev.get("text"):
-        out["sections"].append({"id": "answer", "title": "Your answer", "text": _s(ev["text"])})
+        out["sections"].append(
+            {"id": "answer", "title": "Your note" if picked else "Your answer", "text": _s(ev["text"])}
+        )
     if ev.get("question") != q.get("id"):
         raise PlainUnavailable("the event and the material name different questions")
     if picked:
-        _row(out, "your choice", answer if _s(picked) in opts else f"{answer} (not one of the options)")
+        # The key too: two options may carry the same label, and the row is what the strip shows and the person signs.
+        _row(
+            out,
+            "your choice",
+            # The suffix goes only when the label IS the key and no other option carries that label: {a: "b"} next to
+            # {b: "b"} must keep it, or the row would not tell the two apart.
+            (
+                answer
+                if answer == _s(picked) and list(opts.values()).count(answer) == 1
+                else f"{answer} (option {_s(picked)})"
+            )
+            if _s(picked) in opts
+            else f"{answer} (not one of the options)",
+        )
     for o in q.get("options") or []:
         _row(
             out,
@@ -1162,6 +1212,8 @@ def _event(
                 continue
             if key == "models" and _models_rows(out, value, before.get(key), ctx):
                 continue
+            if key == "icon" and _icon_rows(out, value, before.get(key), ctx):
+                continue
             _row(out, key, value, before.get(key), ctx.note(False))
         if "grant_hours" in (ev.get("set") or {}):  # B8: the longest agent access, in days/hours
             out.setdefault("notes", []).append(
@@ -1187,7 +1239,9 @@ def _event(
                 "Full: the hub will be able to read everything in this workspace, restricted tickets too. It becomes "
                 "a member of the workspace and gets the workspace key (sealed to the hub's own key). Leaving later "
                 "starts a new key the hub never gets, but it cannot take back what the hub already read. Only you can"
-                " sign this, with your own key at this terminal."
+                " sign this, with your own key at this terminal. Your phones' direct pairing ends: from then on the hub"
+                " is the only path to this workspace, and no direct connection is accepted. Leaving the hub does not"
+                " bring the direct path back; only orch relay reopen does, and phones must be paired again."
             )
             return f"Join hub {hub} in full mode: the hub will be able to read everything in this workspace"
         out.setdefault("notes", []).append(
@@ -1204,6 +1258,14 @@ def _event(
             "never gets."
         )
         return f"Leave hub {_short(ev.get('hub_id'))}"
+    if typ == "relay.reopened":  # V3 C10 M4
+        _row(out, "hub that was left", ev.get("hub_id"))
+        out.setdefault("notes", []).append(
+            "The direct relay path of this workspace opens again. Phones that were paired before are not members any "
+            "more: they must be paired again. Anyone who pairs through the relay again can reach this workspace "
+            "without the hub."
+        )
+        return "Open the direct relay path of this workspace again"
     if typ == "people.changed":
         role = _s(ev.get("role"))
         add, remove = ev.get("add") or [], ev.get("remove") or []

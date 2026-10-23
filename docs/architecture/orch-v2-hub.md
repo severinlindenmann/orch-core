@@ -210,7 +210,9 @@ front-page warning name both. That is why the split layout is the recommendation
 ## 8. Workspaces joining and leaving
 
 1. A hub admin creates an invite code for a new or existing workspace.
-2. A person with access to the workspace's host runs `orch hub join <code>` on its terminal (human-only verb).
+2. A person with access to the workspace's host runs `orch hub join <hub_id>:<code> --hub-card FILE` on its terminal (human-only verb; or a bare code with `--hub-id`).
+   The host refuses (`hub.refused`, `other_hub`) a card whose `hub_id` is not the one the invite named, before anything is
+   signed (D12c); the hub only ever sees `<code>`.
 3. The owner's current key signs `hub.joined {hub_id, hk_root_pub, aliases}` into the ledger. The host pins
    `HK_root`, adds a member of the new kind `hub` to its `WSK`-signed member list (D39), and seals `WK_e` to `HXK`
    over the hub link. That link replaces the relay's `PUT membership` (§5.4) for this workspace.

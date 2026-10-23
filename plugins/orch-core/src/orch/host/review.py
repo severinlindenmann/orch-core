@@ -89,6 +89,7 @@ HOST_PERSON_OPS: dict[str, frozenset[str]] = {
     "hub.join": frozenset({"hub.joined"}),
     "hub.mode": frozenset({"hub.joined"}),  # V3 C2b: selective to full, the owner's own signature
     "hub.leave": frozenset({"hub.left"}),
+    "relay.reopen": frozenset({"relay.reopened"}),  # V3 C10 M4
 }
 _NOT_PERSON = frozenset({"init", "import.v1"})  # init is host.wsk_create + host.bootstrap; import v1 is direct mode
 

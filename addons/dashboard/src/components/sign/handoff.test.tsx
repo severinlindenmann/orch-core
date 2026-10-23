@@ -487,10 +487,11 @@ describe('forms keep core words and prepare only on the verb', () => {
     const request = fakeRequest({ key: 'DEMO-0043' })
     s.prepare.mockResolvedValue(request)
     s.get.mockResolvedValue(state(request))
-    const { user, ticket } = await mount({ kind: 'answer', question: 'Q2', option: 'date', text: 'local midnight' }, { key: 'DEMO-0043' })
+    const { ticket } = await mount({ kind: 'answer', question: 'Q2', option: 'date', text: 'local midnight' }, { key: 'DEMO-0043' })
     const dialog = await screen.findByRole('dialog', {}, T)
-    await user.click(within(dialog).getByRole('button', { name: 'Send answer' }))
+    // The click on the question's Send answer was the intent: the dialog prepares at once, no second Send answer.
     await within(dialog).findByTestId('handoff-command', {}, T)
+    expect(within(dialog).queryByRole('button', { name: 'Send answer' })).toBeNull()
     expect(s.prepare).toHaveBeenCalledWith(expect.any(String), { action: 'answer', key: ticket.key, question: 'Q2', option: 'date', message: 'local midnight' }, 0)
   })
 

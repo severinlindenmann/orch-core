@@ -122,6 +122,7 @@ def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
         "hub.join",
         "hub.mode",
         "hub.leave",
+        "relay.reopen",
     }  # H12c-e, B12D, P5, R3, V3 C2a, C2b
     assert set(HUMAN_OPS) == {"human.prepare", "human.get", "human.submit", "human.cancel", "human.pending"}
     assert set(NOT_SERVED) == {"init", "import.v1"}
@@ -442,7 +443,8 @@ def _catalog_rows() -> list[tuple[str, int, bool, str]]:
     # H11d: the worktree.* rows sit in a later table of the section, after a prose paragraph
     rest = "\n".join(lines[start + 2 + len(table) :]).split("\n### ", 1)[0]
     for line in rest.splitlines():
-        m = re.match(r"\| `((?:worktree\.|publish\.|unsupported\.|hub\.)[a-z_]+)` \| (\d) \| (yes|no) \| (\w+)", line)
+        pre = r"(?:worktree\.|publish\.|unsupported\.|hub\.|keys\.|relay\.cut|relay\.not_cut)"
+        m = re.match(rf"\| `({pre}[a-z_]+)` \| (\d) \| (yes|no) \| (\w+)", line)
         if m and m.group(1) not in {r[0] for r in rows}:
             rows.append((m.group(1), int(m.group(2)), m.group(3) == "yes", m.group(4)))
     return rows

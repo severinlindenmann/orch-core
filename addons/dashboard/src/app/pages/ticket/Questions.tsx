@@ -1,61 +1,68 @@
-import { CheckCircle2, CircleHelp, Fingerprint, OctagonAlert } from 'lucide-react'
+import { CheckCircle2, CircleHelp, OctagonAlert } from 'lucide-react'
 import { useState } from 'react'
 import type { QuestionStatus } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
+import { AnswerSend } from '@/components/sign/AnswerSend'
+import { Prose } from '@/components/sign/visible'
 import { canAnswer } from './actions'
-import { ago, Mono, Pill, presenceLabel, RecommendedTag, shortHash, type TabProps, type Viewer } from './shared'
+import { QuestionOptions } from './QuestionOptions'
+import { ago, Mono, Pill, presenceLabel, shortHash, type TabProps, type Viewer } from './shared'
 
 const VIA: Record<string, string> = { cli: 'CLI', dashboard: 'dashboard', phone: 'phone' }
 
-function AnswerForm({ q, sign }: { q: QuestionStatus; sign: TabProps['sign'] }) {
+function AnswerForm({ q, sign, ticketKey, onViewQuestion }: { q: QuestionStatus; sign: TabProps['sign']; ticketKey: string; onViewQuestion: (t: string | null) => void }) {
   const [option, setOption] = useState<string | undefined>(undefined)
   const [text, setText] = useState('')
+  const hasOptions = !!q.options?.length
+  const [noting, setNoting] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const showNote = !hasOptions || noting || !!text
   const ready = !!option || !!text.trim()
   return (
     <form
       className="mt-3 space-y-3 border-t border-border pt-3"
       onSubmit={(e) => {
         e.preventDefault()
+        // Only the plain Send answer button submits. In one-click mode there is no such button: an Enter on a radio
+        // would otherwise open the two-step dialog behind the strip that already holds a prepared request.
+        // `null`: an implicit submission. (A browser without `submitter` says undefined: that still submits.)
+        if ((e.nativeEvent as SubmitEvent).submitter === null) return
         if (ready) sign({ kind: 'answer', question: q.id, option, text: text.trim() || undefined })
       }}
     >
-      {q.options && q.options.length > 0 && (
-        <RadioGroup value={option ?? ''} onValueChange={setOption} aria-label={`Options for ${q.id}`} className="gap-1.5">
-          {q.options.map((o) => (
-            <label
-              key={o.key}
-              htmlFor={`${q.id}-${o.key}`}
-              className="flex cursor-pointer items-center gap-2.5 rounded-md border border-border px-3 py-2 text-[13px] hover:bg-surface-2 has-[[data-state=checked]]:border-brand has-[[data-state=checked]]:bg-brand-soft"
-            >
-              <RadioGroupItem id={`${q.id}-${o.key}`} value={o.key} />
-              <span className="flex-1">{o.label}</span>
-              {o.cost && <span className="text-[11px] text-text-muted">{o.cost}</span>}
-              {q.recommended === o.key && <RecommendedTag />}
-            </label>
-          ))}
-        </RadioGroup>
-      )}
-      <div className="space-y-1.5">
-        <Label htmlFor={`${q.id}-note`} className="text-[12px] text-text-muted">
-          {q.options?.length ? 'Add a note (optional)' : 'Your answer'}
-        </Label>
-        <Textarea id={`${q.id}-note`} rows={2} value={text} onChange={(e) => setText(e.target.value)} />
-      </div>
-      <div className="flex items-center justify-end gap-2">
-        <Button type="submit" size="sm" disabled={!ready}>
-          <Fingerprint />
-          Answer {q.id}
+      {q.options && q.options.length > 0 && <QuestionOptions q={q} name={`answer-${q.id}`} value={option} onChange={setOption} idPrefix={q.id} disabled={busy} />}
+      {showNote ? (
+        <div className="space-y-1.5">
+          <Label htmlFor={`${q.id}-note`} className="text-[12px] text-text-muted">
+            {hasOptions ? 'Your note (optional, sent with the answer)' : 'Your answer'}
+          </Label>
+          <Textarea id={`${q.id}-note`} rows={2} value={text} disabled={busy} onChange={(e) => setText(e.target.value)} />
+        </div>
+      ) : (
+        <Button type="button" variant="link" size="sm" className="h-auto p-0 text-[12px]" disabled={busy} onClick={() => setNoting(true)}>
+          Add a note
         </Button>
-      </div>
+      )}
+      <AnswerSend
+        ticket={ticketKey}
+        question={q}
+        option={option}
+        text={text}
+        canSend={ready}
+        type="submit"
+        fallback={() => sign({ kind: 'answer', question: q.id, option, text: text.trim() || undefined })}
+        onViewQuestion={onViewQuestion}
+        onBusy={setBusy}
+      />
     </form>
   )
 }
 
-function QuestionCard({ q, viewer, sign }: { q: QuestionStatus; viewer: Viewer; sign: TabProps['sign'] }) {
+function QuestionCard({ q, viewer, sign, ticketKey }: { q: QuestionStatus; viewer: Viewer; sign: TabProps['sign']; ticketKey: string }) {
+  const [viewText, setViewText] = useState<string | null>(null)
   const open = q.state === 'open'
   const stale = q.state === 'stale'
   const answered = stale ? null : q.answer
@@ -95,20 +102,13 @@ function QuestionCard({ q, viewer, sign }: { q: QuestionStatus; viewer: Viewer; 
           </Mono>
         )}
       </div>
-      <p className="mt-2 text-[14px] font-medium leading-snug">{q.text}</p>
-      {q.why && <p className="mt-1 text-[13px] text-text-muted">{q.why}</p>}
+      <Prose className="mt-2 text-[14px] font-medium leading-snug">{viewText ?? q.text}</Prose>
+      {q.why && <Prose className="mt-1 text-[13px] text-text-muted">{q.why}</Prose>}
 
       {!answered && q.options && q.options.length > 0 && !canAnswer(q, viewer) && (
-        <ul className="mt-3 space-y-1">
-          {q.options.map((o) => (
-            <li key={o.key} className="flex items-center gap-2 text-[13px] text-text-muted">
-              <span className="size-1.5 rounded-full bg-border-strong" aria-hidden />
-              {o.label}
-              {o.cost && <span className="text-[11px] text-text-faint">{o.cost}</span>}
-              {q.recommended === o.key && <RecommendedTag />}
-            </li>
-          ))}
-        </ul>
+        <div className="mt-3">
+          <QuestionOptions q={q} name={`view-${q.id}`} value={null} idPrefix={`view-${q.id}`} readOnly />
+        </div>
       )}
 
       {answered && (
@@ -124,7 +124,7 @@ function QuestionCard({ q, viewer, sign }: { q: QuestionStatus; viewer: Viewer; 
         </div>
       )}
 
-      {open && canAnswer(q, viewer) && <AnswerForm q={q} sign={sign} />}
+      {open && canAnswer(q, viewer) && <AnswerForm q={q} sign={sign} ticketKey={ticketKey} onViewQuestion={setViewText} />}
       {open && !canAnswer(q, viewer) && (
         <p className="mt-3 text-[12px] text-text-faint">Waiting for {viewer.name(q.to)}. The first valid signed answer wins.</p>
       )}
@@ -139,7 +139,7 @@ export function Questions({ ticket, viewer, sign }: TabProps) {
   return (
     <ul className="space-y-3" aria-label="Questions">
       {ordered.map((q) => (
-        <QuestionCard key={q.id} q={q} viewer={viewer} sign={sign} />
+        <QuestionCard key={q.id} q={q} viewer={viewer} sign={sign} ticketKey={ticket.key} />
       ))}
     </ul>
   )

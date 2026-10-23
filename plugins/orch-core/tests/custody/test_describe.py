@@ -138,6 +138,7 @@ CASES: dict[str, tuple[str, dict]] = {
         },
     ),
     "hub.left": ("workspace", {"hub_id": "38d8abed52ccfb538da401fd54e64bdc", "binding_seq": 1}),
+    "relay.reopened": ("workspace", {"hub_id": "38d8abed52ccfb538da401fd54e64bdc"}),
     # A types a person signs through human.prepare (H5a: person versions of agent ops, and move)
     "ticket.moved": (TICKET, {"from": "in_progress", "to": "backlog", "reason": "parked"}),
     "ticket.created": (TICKET, {"key": "DEMO-0042", "ticket_type": "feature", "title": "Login", "owner": PERSON}),

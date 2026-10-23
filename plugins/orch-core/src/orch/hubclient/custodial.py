@@ -96,6 +96,14 @@ CUSTODIAL_TYPES: dict[tuple[str, str], str] = {
     },  # fmt: skip
     **{(t, "ticket"): "admin" for t in ("ticket.moved", "people.changed", "visibility.changed")},
     **{(t, "workspace"): "admin" for t in ("addon.disabled", "addon.purged")},
+    # phase 5 (hub protocol 8.8, owner V3-D29, C10): grants, device exclusion, policy and settings. ``grant.issued`` is
+    # NOT custodial: the host makes the secret and appends it itself, naming the ``grant.requested`` it answers.
+    ("grant.requested", "workspace"): "edit",
+    ("grant.revoked", "workspace"): "edit",
+    ("device.excluded", "workspace"): "admin",
+    ("policy.changed", "workspace"): "admin",
+    ("policy.changed", "ticket"): "edit",
+    ("settings.changed", "workspace"): "admin",
 }
 #: L2P4-2a: a decision names the hash the person reviewed. The hub binds ``action.hash`` to ``event.hash`` byte for
 #: byte; the host's side of that is that the field is present on all four (``malformed``) and that step 9 compares it

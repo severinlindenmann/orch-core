@@ -925,7 +925,7 @@ def test_f7_an_answer_to_a_question_with_why_and_a_recommendation_is_plain():
         "with Hello"
     )
     rows = {r["field"]: r["after"] for r in c["fields_changed"]}
-    assert rows["your choice"] == "Hello"
+    assert rows["your choice"] == "Hello (option hello)"
     assert rows["option hello"] == "Hello" and rows["option hi"] == "Hi"
     assert rows["recommended option (per host)"] == "Hello"
     assert any(s["title"].endswith("(per host, not signed)") and "before I write" in s["text"] for s in c["sections"])
@@ -939,6 +939,28 @@ def test_f7_an_answer_outside_the_options_says_so_and_a_new_question_key_still_f
     assert {r["field"]: r["after"] for r in c["fields_changed"]}["your choice"] == "nope (not one of the options)"
     with pytest.raises(signcontent.PlainUnavailable):
         build(_answer({"surprise": 1}))
+
+
+def test_f7_two_options_with_the_same_label_are_told_apart_in_the_choice_row():
+    opts = {"options": [{"key": "a", "label": "Yes"}, {"key": "b", "label": "Yes"}], "recommended": "a"}
+    for key in ("a", "b"):
+        c = build(_answer(opts, option=key))
+        assert {r["field"]: r["after"] for r in c["fields_changed"]}["your choice"] == f"Yes (option {key})"
+
+
+def test_f7_the_note_is_titled_your_note_and_a_label_equal_to_the_key_is_not_repeated():
+    c = build(_answer(text="because"))
+    assert [s["title"] for s in c["sections"] if s["id"] == "answer"] == ["Your note"]
+    c = build(_answer({"options": [{"key": "Hello", "label": "Hello"}]}, option="Hello"))
+    assert {r["field"]: r["after"] for r in c["fields_changed"]}["your choice"] == "Hello"
+    # label == key stays suffixed when another option carries that label: {a: "b"} next to {b: "b"}
+    dup = {"options": [{"key": "a", "label": "b"}, {"key": "b", "label": "b"}], "recommended": "a"}
+    for key in ("a", "b"):
+        c = build(_answer(dup, option=key))
+        assert {r["field"]: r["after"] for r in c["fields_changed"]}["your choice"] == f"b (option {key})"
+    # a free-text answer (no option) keeps "Your answer" for its text
+    c = build(_answer(option=None, text="my words"))
+    assert [s["title"] for s in c["sections"] if s["id"] == "answer"] == ["Your answer"]
 
 
 _ME = "p_42e1c38e0488b742" + "0" * 14

@@ -175,6 +175,11 @@ def test_the_checklist_page_is_a_dashboard_address(client):
     assert client.get("/w/DEMO/checklist").status_code == 404
 
 
+def test_the_feedback_page_is_a_dashboard_address(client):
+    assert client.get("/feedback").status_code == 200
+    assert client.get("/w/DEMO/feedback").status_code == 404
+
+
 def test_a_symlinked_run_or_images_dir_is_refused(client, h, gateway, tmp_path):
     assert put(client, h).status_code == 200
     run = gateway.state / "dashboard" / "testrun" / "run2"

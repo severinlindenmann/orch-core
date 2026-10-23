@@ -10,6 +10,7 @@ import {
   History,
   LayoutDashboard,
   ListChecks,
+  MessageSquareText,
   PanelLeftClose,
   PanelLeftOpen,
   Pin,
@@ -351,6 +352,14 @@ export function Sidebar() {
             <a href="/checklist" className={cn(link, 'text-[12px] text-text-muted')} aria-label="Test checklist">
               <ListChecks className="size-4" />
               <span className={label}>Test checklist</span>
+            </a>
+          </RailTip>
+
+          <RailTip label="Feedback">
+            {/* A full page load, like the checklist: the page is outside the shell. */}
+            <a href="/feedback" className={cn(link, 'text-[12px] text-text-muted')} aria-label="Feedback">
+              <MessageSquareText className="size-4" />
+              <span className={label}>Feedback</span>
             </a>
           </RailTip>
 

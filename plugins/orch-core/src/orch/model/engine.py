@@ -21,6 +21,7 @@ from orch.schema import LOG_TYPES, SchemaError, validate, validate_settings
 
 from . import (
     authz,
+    breakglass,
     claims,
     edits,
     gates,
@@ -44,12 +45,14 @@ CROSS_TICKETS = frozenset(
         "member.removed",
         "role.changed",
         "device.revoked",
+        "device.excluded",  # compromised voids open decisions like a compromised device (C10)
         "policy.changed",
         "addon.granted",
         "addon.disabled",
         "addon.purged",
         "restore",
         "hub.pinned",  # a channel revocation voids open decisions (C3b-2)
+        "hub.left",  # a leave voids the open decisions signed through the hub (C8)
     }
 )
 
@@ -61,6 +64,9 @@ class Ctx:
     expected_genesis: str | None = None
     admit: bool = False  # pre-append: no host_sig yet, ws_seq must be the workspace head
     verb_events: Any = None  # operation name -> event types it emits (grant verbs are operation names, F1 10.1)
+    #: C8/D78: judge local person events in a joined full-mode position (``breakglass.local_refusal``). A host
+    #: configuration like ``hub_dev``: the Store always sets it; model-only tests opt in.
+    hub_only: bool = True
     hub_dev: bool = False  # C3b 15.3: the reader is a dev workspace (host configuration, never a field of an event)
 
 
@@ -238,12 +244,15 @@ def _workspace_handler(core: Core, lc: LogCore, e: dict[str, Any], ctx: Ctx) -> 
         "policy.changed": lambda: workspace.policy_changed(core, e),
         "settings.changed": lambda: workspace.settings_changed(ws, e),
         "grant.issued": lambda: workspace.grant_issued(ws, e),
+        "grant.requested": lambda: workspace.grant_requested(ws, e),
         "grant.revoked": lambda: workspace.grant_revoked(ws, e),
+        "device.excluded": lambda: workspace.device_excluded(core, e),
         "addon.granted": lambda: workspace.addon_event(core, e),
         "addon.disabled": lambda: workspace.addon_event(core, e),
         "addon.purged": lambda: workspace.addon_event(core, e),
         "hub.joined": lambda: workspace.hub_joined(ws, e),
-        "hub.left": lambda: workspace.hub_left(ws, e),
+        "hub.left": lambda: workspace.hub_left(ws, e, core),
+        "relay.reopened": lambda: workspace.relay_reopened(ws, e),
         "hub.pinned": lambda: workspace.hub_pinned(core, e, v, dev=ctx.hub_dev),
         "restore": lambda: workspace.restore(core, lc, e, v),
         "invalid.acknowledged": lambda: _ack(ws, lc, e),
@@ -272,9 +281,13 @@ def _authorize(core: Core, log: str, t: TCore | None, e: dict[str, Any], ctx: Ct
             return r
         return identity.record_users(ws, e)  # P1 (Opus, PR A): the ids this event uses now belong to its hub
     if a["kind"] == "person":
-        if (r := authz.authorize_person(core, log, e, ctx.verifier)) is not None:
+        if e["type"] in authz.HUB_ONLY:  # C10: these two exist only as hub-signed requests (hub protocol 8.8)
+            return Refusal(Code.EVENT_BAD_ACTOR, f"{e['type']} is signed through a hub only")
+        if (r := authz.authorize_person(core, log, e, ctx.verifier, hub_only=ctx.hub_only)) is not None:
             return r
     elif a["kind"] == "agent":
+        if ctx.hub_only and (r := breakglass.agent_refusal(ws, e)) is not None:  # C8: same choke point as people
+            return r
         if a.get("unattended") is True:
             if (r := authz.authorize_unattended(ws, t, e)) is not None:
                 return r

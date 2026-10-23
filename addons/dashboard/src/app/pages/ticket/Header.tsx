@@ -1,7 +1,7 @@
 import { useSignMethods } from '@/components/sign/SignMethods'
 import { Link } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { Bot, Check, ChevronDown, Copy, Loader2, Lock, MessageSquareReply, Tag, Timer } from 'lucide-react'
+import { Bot, Check, ChevronDown, Copy, Loader2, Lock, Tag, Timer } from 'lucide-react'
 import { useState } from 'react'
 import { api } from '@/api/client'
 import { addonActive } from '@/api/addons'
@@ -19,7 +19,7 @@ import { VIEWER_REASON } from '@/components/DisabledReason'
 import { CopyLinkButton } from '@/app/shell/CopyLinkButton'
 import { BlockedByConnection } from './Needs'
 import { availableActions, gateActionName, blockedApproval, primaryAction, primaryLabel } from './actions'
-import { agentName, ago, fmtClock, KeyRef, Mono, Pill, StatusChip, useIsVisibleKey, type Jump, type HumanAction, type Viewer } from './shared'
+import { agentName, ago, fmtClock, KeyRef, Mono, Pill, StatusChip, useIsVisibleKey, type HumanAction, type Viewer } from './shared'
 
 export function CopyButton({ text, label }: { text: string; label: string }) {
   const [done, setDone] = useState(false)
@@ -110,14 +110,13 @@ export function turnReason(why: string): string {
   return text ? ` · ${text.charAt(0).toLowerCase()}${text.slice(1)}` : ''
 }
 
-export function ActionsMenu({ ticket, viewer, sign, jump, signing = false }: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void; signing?: boolean }) {
+export function ActionsMenu({ ticket, viewer, sign, signing = false }: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; signing?: boolean }) {
   const av = availableActions(ticket, viewer)
   const primary = primaryAction(av)
   // The primary action is the header's button; the menu holds the rest.
-  const answer = av.answer.filter((q) => !(primary?.kind === 'answer' && primary.question === q.id))
   const approve = av.approve.filter((g) => !(primary?.kind === 'approve' && primary.gate === g))
   const verdict = av.verdict && primary?.kind !== 'verdict'
-  const empty = !approve.length && !av.requestChanges.length && !verdict && !answer.length
+  const empty = !approve.length && !av.requestChanges.length && !verdict
   // Core's start dialog lives outside the menu, which closes when an item is chosen.
   const r = useRunAddonAction(ticket.key)
   const { workspace } = useWorkspace()
@@ -137,12 +136,6 @@ export function ActionsMenu({ ticket, viewer, sign, jump, signing = false }: { t
       <DropdownMenuContent align="end" className="w-72">
         <DropdownMenuLabel className="text-[11px] font-normal text-text-faint">Human actions{signedWith ? `, signed ${signedWith}` : ''}</DropdownMenuLabel>
         {empty && <p className="px-2 py-2 text-[13px] text-text-muted">{primary ? 'Nothing else needs you on this ticket.' : 'Nothing needs you on this ticket.'}</p>}
-        {answer.map((q) => (
-          <DropdownMenuItem key={q.id} onSelect={() => jump({ tab: 'questions', id: q.id })}>
-            <MessageSquareReply />
-            Answer {q.id}
-          </DropdownMenuItem>
-        ))}
         {approve.map((g) => (
           <DropdownMenuItem key={g} onSelect={() => sign({ kind: 'approve', gate: g })}>
             <Check />
@@ -172,7 +165,7 @@ export function ActionsMenu({ ticket, viewer, sign, jump, signing = false }: { t
 }
 
 /** The header's one primary button: what the viewer should do next (hidden when nothing needs them). */
-function PrimaryButton({ ticket, viewer, sign, jump, signing }: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void; signing: boolean }) {
+function PrimaryButton({ ticket, viewer, sign, signing }: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; signing: boolean }) {
   const p = primaryAction(availableActions(ticket, viewer))
   if (signing)
     return (
@@ -197,13 +190,12 @@ function PrimaryButton({ ticket, viewer, sign, jump, signing }: { ticket: Ticket
     )
   if (!p) return null
   const run = () => {
-    if (p.kind === 'answer') jump({ tab: 'questions', id: p.question })
-    else if (p.kind === 'verdict') sign({ kind: 'verdict' })
+    if (p.kind === 'verdict') sign({ kind: 'verdict' })
     else sign({ kind: 'approve', gate: p.gate })
   }
   return (
     <Button size="sm" onClick={run}>
-      {p.kind === 'answer' ? <MessageSquareReply /> : <Check />}
+      <Check />
       {primaryLabel(p)}
     </Button>
   )
@@ -241,7 +233,7 @@ function ClosedNotice({ closed, name }: { closed: ClosedInfo; name: (id: string)
   )
 }
 
-export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void; signing?: boolean }) {
+export function TicketHeader({ ticket, viewer, sign, signing = false }: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; signing?: boolean }) {
   const { workspaces } = useWorkspace()
   // The ticket's own workspace: the rows come from it, so they are keyed by it too and its gone / revoked / ready
   // purge reaches them (the live cache rules only see keys with the id).
@@ -278,8 +270,8 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
       <div className="flex min-w-0 items-start gap-3">
         <h1 className="min-w-0 flex-1 text-xl font-semibold leading-tight tracking-tight text-text">{ticket.title}</h1>
         <div className="flex shrink-0 items-center gap-2">
-          <PrimaryButton ticket={ticket} viewer={viewer} sign={sign} jump={jump} signing={signing} />
-          <ActionsMenu ticket={ticket} viewer={viewer} sign={sign} jump={jump} signing={signing} />
+          <PrimaryButton ticket={ticket} viewer={viewer} sign={sign} signing={signing} />
+          <ActionsMenu ticket={ticket} viewer={viewer} sign={sign} signing={signing} />
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">

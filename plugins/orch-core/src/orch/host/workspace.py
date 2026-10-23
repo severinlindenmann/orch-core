@@ -279,6 +279,9 @@ class WorkspaceService:
         from . import logsyncops
 
         logsyncops.start(self)  # V3 C14: the hub log_sync sender of a full-mode workspace (never fails the open)
+        from . import cutover
+
+        cutover.start(self)  # V3 C10: resume an owed cut-over (closing; a dev pre-C10 full join) in the background
 
     # -- the relay worker (§11A.4 "The hook", R5)
     def _relay_open(self) -> None:

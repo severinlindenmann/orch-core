@@ -16,6 +16,8 @@ from tests.hub.vec import V
 
 CARD = V["objects"]["card"]
 USER = V["ids"]["user_alice"]
+HUB = V["ids"]["hub"]
+INV = f"{HUB}:inv-1"  # D12c: <hub_id>:<code>
 
 
 def run(argv, env, *, as_json=False):
@@ -98,12 +100,31 @@ def test_an_agent_never_joins_in_full_mode(offline, card_file):
 
 def test_join_signs_then_connects(host, card_file):
     host.reply["hub.connect"] = {"hub_id": V["ids"]["hub"], "status": "bound", "binding_seq": 1}
-    code, out = run(["join", "inv-1", "--hub-card", card_file, "--owner-user-id", USER], {})
+    code, out = run(["join", INV, "--hub-card", card_file, "--owner-user-id", USER], {})
     assert code == 0 and "signed" in out and "ok hub joined" in out and "sees only what you share" in out
     ((op, args),) = host.signed
     assert op == "hub.join" and args["mode"] == "selective" and args["hub_card"] == CARD
-    assert args["aliases"] == [{"person_id": "4c" * 16, "user_id": USER}]
+    assert args["aliases"] == [{"person_id": "4c" * 16, "user_id": USER}] and args["hub_id"] == HUB
     assert host.called == [("hub.connect", {"invite": "inv-1", "hub_card": CARD})]
+
+
+def test_a_bare_code_needs_hub_id_and_the_hub_only_ever_sees_the_code(host, card_file):
+    host.reply["hub.connect"] = {"hub_id": HUB, "status": "bound", "binding_seq": 1}
+    code, out = run(["join", "inv-1", "--hub-card", card_file], {})
+    assert code == 5 and "names no hub" in out and host.signed == [] and host.called == []
+    code, _ = run(["join", "inv-1", "--hub-id", HUB, "--hub-card", card_file], {})
+    assert code == 0 and host.signed[0][1]["hub_id"] == HUB and host.called[0][1]["invite"] == "inv-1"
+
+
+def test_a_malformed_or_conflicting_hub_id_is_refused_before_signing(host, card_file):
+    for argv in (
+        ["join", "inv-1", "--hub-id", "XYZ", "--hub-card", card_file],
+        ["join", INV, "--hub-id", "0" * 32, "--hub-card", card_file],
+        ["join", f"{HUB.upper()}:inv-1", "--hub-card", card_file],
+    ):
+        code, out = run(argv, {})
+        assert code == 5 and "error invalid.input" in out
+    assert host.signed == [] and host.called == []
 
 
 def test_join_without_a_terminal_signs_nothing(host, card_file):
@@ -114,7 +135,7 @@ def test_join_without_a_terminal_signs_nothing(host, card_file):
 
 def test_a_hub_that_is_down_after_the_signature_says_how_to_finish(host, card_file):
     host.reply["hub.connect"] = OrchError("hub.unreachable", "down")
-    code, out = run(["join", "inv-1", "--hub-card", card_file], {})
+    code, out = run(["join", INV, "--hub-card", card_file], {})
     assert code == 9 and "orch hub connect inv-1" in out and "orch hub leave" in out and len(host.signed) == 1
 
 
@@ -163,7 +184,7 @@ def test_orch_dispatches_the_hub_verb(monkeypatch):
 
 def test_join_full_warns_signs_full_and_connects(host, card_file):
     host.reply["hub.connect"] = {"hub_id": V["ids"]["hub"], "status": "bound", "binding_seq": 1, "mode": "full"}
-    code, out = run(["join", "inv-1", "--hub-card", card_file, "--mode", "full"], {})
+    code, out = run(["join", INV, "--hub-card", card_file, "--mode", "full"], {})
     assert code == 0 and "read everything in this workspace" in out
     assert host.signed[0][0] == "hub.join" and host.signed[0][1]["mode"] == "full"
     assert host.called[0][0] == "hub.connect" and host.called[0][1]["invite"] == "inv-1"
@@ -313,3 +334,70 @@ def test_a_cut_off_list_needs_the_typed_count(share_host, monkeypatch):
 
     prev = {"count": 250, "new": 250, "revoked": 0, "more": 150, "plan": "p" * 43, "items": []}
     assert H._confirm_word(prev) == "all 250" and H._confirm_word({**prev, "more": 0}) == "share"  # noqa: SLF001
+
+
+# --- C8 goldens: keys rotate and hub history (exact output; both are host ops, so no registry golden file) -----------
+
+HIST = {
+    "hub_id": V["ids"]["hub"],
+    "first": [{"type": "policy.changed", "gates": ["plan"], "at": "2026-10-22T10:00:00Z", "user": "u_1",
+               "channel": "c_1", "revert": {"op": "policy.set"}}],
+    "stuck": [{"ticket": "ORCH-0001", "gate": "plan", "needed": 2, "can_still_give": 1}],
+    "other": [{"type": "gate.approved", "ticket": "ORCH-0001", "at": "2026-10-22T11:00:00Z", "user": "u_1",
+               "channel": "c_1", "factor": "password+totp"}],
+}  # fmt: skip
+
+
+def test_keys_rotate_golden(host):
+    host.reply["keys.rotate"] = {"epoch_before": 1, "epoch": 2, "rotated": True, "path": "local"}
+    code, out = run(["rotate"], {})
+    assert code == 0 and host.signed == [] and host.called == [("keys.rotate", {})]
+    assert out == "ok new workspace key: epoch 2 (made here; nothing was sent to any hub)\n"
+    host.reply["keys.rotate"] = {"epoch_before": 1, "epoch": 1, "rotated": False, "path": "requested"}
+    assert run(["rotate"], {})[1] == (
+        "ok a new workspace key is requested; it is made with the next membership update (orch hub status)\n"
+    )
+    code, out = run(["rotate"], {}, as_json=True)
+    assert code == 0 and json.loads(out)["data"] == host.reply["keys.rotate"]
+
+
+@pytest.mark.parametrize("code", ["keys.joined", "keys.no_epoch"])
+def test_keys_rotate_refusals_golden(host, code):
+    host.reply["keys.rotate"] = OrchError(code, "refused")
+    rc, out = run(["rotate"], {}, as_json=True)
+    assert rc != 0 and json.loads(out)["code"] == code
+
+
+def test_hub_history_golden(host):
+    host.reply["hub.history"] = HIST
+    code, out = run(["history", "--since", "2026-10-20T00:00:00Z"], {})
+    assert code == 0 and host.called == [("hub.history", {"since": "2026-10-20T00:00:00Z"})]
+    hid = V["ids"]["hub"]
+    assert out.splitlines() == [
+        f"What hub {hid} did in this workspace:",
+        "  [policy.changed] plan at 2026-10-22T10:00:00Z by u_1 via c_1",
+        out.splitlines()[2],  # the undo line: its wording is L2-C8i-6 (hardening), not pinned here
+        "  stuck: ORCH-0001 plan needs 2, 1 can give it here",
+        "  gate.approved ORCH-0001 at 2026-10-22T11:00:00Z by u_1 via c_1 (password+totp)",
+        "What the hub has already read stays with it: the new workspace key only protects what comes next.",
+    ]
+    assert out.splitlines()[2].startswith(
+        "    undo here: open the dashboard (Settings)"
+    )  # L2-C8i-6: no JSON pretending to be a command
+    code, out = run(["history"], {}, as_json=True)
+    assert code == 0 and json.loads(out)["data"] == HIST
+
+
+def test_reopen_reports_a_relay_link_that_did_not_start(host, monkeypatch):
+    """L2-C10i-4: the path is open but the relay did not come up: not `ok`, exit 3, the reason and the next step."""
+    host.reply["hub.reopen"] = {
+        "direct": "open",
+        "relay_linked": True,
+        "relay": "start_failed: SeamMissing",
+        "relay_started": False,
+    }
+    code, out = run(["reopen"], {})
+    assert code == 3 and "did not start (start_failed: SeamMissing)" in out and "orch host relay start" in out
+    host.reply["hub.reopen"] = {"direct": "open", "relay_linked": True, "relay": "started", "relay_started": True}
+    code, out = run(["reopen"], {})
+    assert code == 0 and "ok the direct relay path is open again" in out

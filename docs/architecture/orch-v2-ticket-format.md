@@ -525,13 +525,16 @@ agent; **D** an addon; **H** the host only. Types marked D58–D60 are new with 
 | `device.revoked` | P, H | `device`; `reason`: `compromised`, `lost` or `retired`; `revocation`: signed object | The global revocation (protocol §6.2), signed by the person key, verbatim; its authority (§5.3). `reason` must equal `revocation.o.reason`, otherwise refused. Every workspace refuses the device from then on. For an already revoked device, only lost/retired → compromised is accepted; same or weaker reasons give `device.exists`. `compromised` has the effects in §5.7. H may append a freshly received revocation independently of any restore. |
 | `policy.changed` | P | `gates`: {gate: policy} | The workspace defaults. |
 | `settings.changed` | P | `set`: {`grant_hours?`: int 1–24, `claim_ttl_min?`: int 15–1440, `lease_ttl_min?`: int 5–1440, `sign_methods?`: array of `terminal`, `click`, `phone`, `hub` (1–4, unique, contains `terminal`; `touchid` is reserved and refused; `hub` is C3b, §15.4), `models?`: {`claude-code?`/`codex?`: {`work?`/`refine?`/`fix?`/`continue?`/`context?`: a model name of that harness's closed list} or null} (Model routing: the model a Start agent mode uses; unnamed = harness default; `null` clears; typed word, owner only), `repos?`: {repo name: {`path`: str, `remote?`: canonical repo identity, `default_branch?`: branch name} or null}} | **D60** (`grant_hours`). Existing grants keep their end time. `null` removes a repo. Refused when two repos resolve to the same path or declare the same identity (ignoring ASCII case), or a `local:` remote names another repo. **B6** (`sign_methods`, owner decision F of 16 Oct 2026): the ways a signature may be made in this workspace; absent means not set: every way is allowed (the model judges none). The model enforces it for honest `auth` labels only (the label is the signer's own word); custody and host admission are the real control (HOST §0.8.6 B6 item 5). |
-| `grant.issued` | P | `grant`: grant id; `scope`: `all` or `workable`; `verbs`: `"agent"` or [operation name]; `issued_at`: timestamp; `hours`: int; `expires_at`: timestamp; `secret_hash`: hash; `label?`: str | **D60** terms in §10.1 A3. Always for the signer. Readers check `\|at − issued_at\| ≤ 300 s`, `expires_at == issued_at + 3600·hours` (seconds, no leap seconds) and the role terms at the event's position. |
-| `grant.revoked` | P | `grant`; `reason?`: str | **D60.** |
+| `grant.issued` | P, H | `grant`: grant id; `scope`: `all` or `workable`; `verbs`: `"agent"` or [operation name]; `issued_at`: timestamp; `hours`: int; `expires_at`: timestamp; `secret_hash`: hash; `label?`: str; `request?`: event id | **D60** terms in §10.1 A3. Always for the signer. Readers check `\|at − issued_at\| ≤ 300 s`, `expires_at == issued_at + 3600·hours` (seconds, no leap seconds) and the role terms at the event's position. **C10 (hub protocol §8.8):** the host (H) also appends it, and only with `request` naming an admitted `grant.requested` of the same terms (`scope`, `verbs`, `hours`, `label`), not answered before, with `0 ≤ at − request.at ≤ 300 s` and `issued_at = min(request.at, at)`. The grant is then for the request's canonical signer, with that signer's role at the request, no device, and `Grant.hub_id` = the request's hub (leaving the hub ends it, C8). A person never writes `request`. |
+| `grant.requested` | P (hub) | `scope`: `all` or `workable`; `verbs`: `"agent"` or [operation name]; `hours`: int 1–168; `label?`: str | C10 (hub protocol §8.8, V3-D29). Hub-signed only (`auth: "hub"`; a device-signed one is refused). A request for an agent grant: it changes no grant by itself; the host answers with a host-actor `grant.issued` naming it. The signer must be a member (an aliased hub user). Terms by the signer's role as `grant.issued` (D60). The event carries no grant id, secret hash or times. |
+| `grant.revoked` | P | `grant`; `reason?`: str | **D60.** Owners revoke any grant; others their own, compared as the signer's **canonical** person (a hub user aliased to the grantee revokes it, C10). |
+| `device.excluded` | P (hub) | `device`; `reason`: `lost`, `retired` or `compromised` | C10 (hub protocol §8.8). Hub-signed only, an `admin` of the hub. Ends the device in **this** workspace as `device.removed` does; `compromised` has the effects of §5.7 and ends the device's grants. Refused (`role.denied`) for a device of a workspace owner: owner devices go only through the person-signed `device.revoked`, so the hub cannot block the owner's break-glass. |
 | `addon.granted` | P | `name`: addon name; `version`: str; `package_sha256`: hash; `capabilities`: [token]; `fields`: {field: {`type`, its limits, `set_by`, `gate`?}}; `sections`: [{`id`, `types`, `gate`?}]; `artifact_kinds`: [kind] | Owner only. Also enables the addon. The host derives `fields`, `sections` and `artifact_kinds` from the package's manifest (§8.1); replay never reads the manifest and checks every later addon write against these three (§8.1). The bindings of §5.7 are the entries that have `gate`. |
 | `addon.disabled` | P | `name` | Data stays untouched. A new `addon.granted` enables it again. |
 | `addon.purged` | P | `name` | Deletes the addon's data. |
 | `hub.joined` | P | `hub_id`: hex16; `hk_root_pub`: b64u; `mode`: `selective` (`full` is refused until C2b); `binding_seq`: int ≥ 1; `aliases`: [{`person_id`, `user_id`}] sorted by `person_id` | V3 (hub contract H0 §9.1). Owner only, signed by the owner's device key at the host terminal. `hub_id` is the hub id of `hk_root_pub`. Adds no member and seals no key: a selective hub never holds `WK_e` (spec §8a). `binding_seq` is higher than every earlier one; refused while a hub is joined; an alias is never re-pointed. |
 | `hub.left` | P | `hub_id`; `binding_seq` | V3 (hub contract H0 §9.1). Owner only (break-glass): ends the joined binding it names. |
+| `relay.reopened` | P | `hub_id` | V3 C10 (design M4). Owner only, signed at the terminal with the owner's own key. Opens the direct relay path again, which a full-mode join closed (H5) and a leave did not reopen. Refused unless the workspace has left a hub, and it names that hub. Phones must be paired again. |
 | `hub.pinned` | H | `hub_id`; `object`: one signed `hub.card` (with its `op_cert`), `hub.op_revoked` or `hub.snapshot`, verbatim | C3b (§15.2). The hub ledger: workspace log only, appended by the host together with the custodial event that needs it. Its authority is the embedded signatures under the `hk_root_pub` of `hub.joined`. |
 | `hub.pinned` | H | `hub_id`; `object`: a signed `hub.card`, `hub.op_revoked` or `hub.snapshot` | C3b (§15.2): the hub ledger; authority is the embedded signatures under the root pinned by `hub.joined`. |
 
@@ -553,11 +556,14 @@ with an old role.
 | `device.added` | the device's own person, from an existing device, or the new device when none is left |
 | `device.revoked` | any member's device, or the host; the embedded revocation must be signed by the device's person key |
 | `device.removed` | the device's own person; owners for any device |
+| `relay.reopened` | owners, at the terminal (C10) |
+| `device.excluded` | an `admin` of the hub (mapped to owner), never for an owner's device (C10) |
 | `grant.issued`, `grant.revoked` | §10.1 A3 (D60) |
+| `grant.requested` | any role with a grant (hub `edit` and `admin`), through the hub only (C10) |
 
 **Unknown types.** The prefixes `ticket`, `status`, `visibility`, `people`, `policy`, `claim`, `task`, `handoff`,
 `log`, `question`, `gate`, `verdict`, `branch`, `artifact`, `edit`, `projection`, `restore`, `workspace`, `member`,
-`role`, `device`, `settings`, `grant`, `addon`, `invalid` and `hub` are reserved: no addon may take one of these names, and an
+`role`, `device`, `settings`, `grant`, `addon`, `invalid`, `hub` and `relay` are reserved: no addon may take one of these names, and an
 unknown type under one of them is refused. Custom `<addon>.<verb>` events are deferred (A5); in P1 they are
 refused.
 
@@ -1846,6 +1852,7 @@ these codes; they are the stable `error.code` strings of §10.4 for these refusa
 | `device.invalid` | §5.3 the device was removed, revoked, or its certificate expired |
 | `device.scope` | §5.3 the certificate lacks `decide` (or `operate`), or has a `drop:` scope |
 | `sign.method` | B6: the person event's `auth` is a way (`convenience` is `click`, `secure-enclave-unlocked` is `phone`) that the workspace's `settings.sign_methods` leaves out, judged by the state at the event's own position; honest labels only |
+| `sign.hub_only` | C8/C11 (D78, D81): a person event that is not `auth: "hub"` at a position where the workspace is joined to a hub in **full** mode, and whose type is not a break-glass event (`hub.left`, signed by an owner without the click or convenience signer); judged by the state at the event's own position, append and replay alike. The break-glass set is `orch.model.breakglass.BREAK_GLASS` |
 | `device.cert` | §5.3 an embedded certificate or revocation is not signed by the person key, or is for another person |
 | `grant.invalid` | §10.1 the grant is unknown, expired, revoked, ended, another person's, or its person may not run agents |
 | `grant.scope` | §10.1 the grant's scope does not cover the ticket, or the person can't see it |
@@ -2797,6 +2804,7 @@ a rejoin, so it is in every checkpoint with `ws.hub`): `{root, card, revoked_op_
 **Rules**, the same at append and on replay. "now" is always the event's `at`, never a reader's clock:
 
 1. The workspace is joined to `hub_id` at this position → else `hub.invalid` (`not_joined`).
+   **C8 (P2-b):** and the line's `at` is not earlier than the `at` of the `hub.joined` of this binding (detail `before_binding`), so a line the hub signed before a leave and kept never lands after a rejoin of the same hub id.
 2. `hub.card`: hub contract §5 steps 1–7 with `pinned_root = root`, the ledger's revoked set and `held` = the ledger
    card (`stale_op_cert`, `stale_card`, `other_hub`, …). The identical card again → `hub.invalid` (`already_pinned`).
 3. `hub.op_revoked`: §4.2 under `root` (no dev-marker check, L2-8). A `cert_id` already in the set →
@@ -3161,3 +3169,31 @@ reference from then on.
    T0 the readmodel tests + CLI goldens.
 
 Tasks 4–7 = PR B; tasks 5 and 6 need the Opus security pass (custody, authority).
+
+
+### C8 break-glass (V3, design-c8)
+
+`hub.left` at its position also (a) voids the counting decisions signed by any `hub:<hub_id>/*` key in a generation that
+is still open, on every unsettled ticket (`generations.void_hub`; a settled ticket keeps its state and lists them as
+revoked, like a revoked device), and (b) ends every grant whose request was a line of that hub (`Grant.hub_id`, set by
+the C10 host-actor `grant.issued`; state, no new line). The break-glass set is `orch.model.breakglass.BREAK_GLASS`
+(`hub.leave`, `hub.repin` recovery key only, `keys.rotate`). In a joined **full**-mode position every person event that
+is not `auth: "hub"` and not a break-glass event by an owner is refused (`sign.hub_only`); the model's default is ON
+(`Ctx.hub_only`; C10 flipped it from off, L2-C8i-5), model-only tests opt out (`World.hub_only = False`).
+
+### C10 hub-signed grants, devices, policy, settings and the H5 switch (V3, design-c10, hub protocol 8.8)
+
+* `grant.requested` (hub-signed only) records the terms, the canonical signer and the signer's role in `ws.requests`.
+  The host answers in the same store-lock hold with a host-actor `grant.issued` naming it (`request`): same terms,
+  `0 <= at - request.at <= 300 s`, `issued_at = min(request.at, at)`, used once; the grant is the signer's (alias
+  resolved), has no device, and carries `Grant.hub_id`. The secret reaches the runner only for a pending local
+  `hub.handoff {kind: grant}` of the same person, binding and terms (`host/grantoff.py`); otherwise it is destroyed.
+* A hub-signed `settings.changed` sets only `grant_hours`, `claim_ttl_min`, `lease_ttl_min`; a hub-signed
+  `policy.changed` never changes a stored `factor` floor; `device.excluded` is refused for an owner's device.
+* H5: `HubState.direct` (`open` | `closing` | `closed`, `hub.json`) is set by the owner's full-mode join through
+  `hub.connect` (`host/cutover.py`). From `closing` the host starts no relay thread, every `RelayConn` passes the
+  `directpath` gate (cut-over routes and session mechanics only) and direct ops answer `relay.cut_over`. The cut-over
+  rotates to a local epoch with no listed device, seals it to the hub, and for a relay-linked workspace sends
+  `PUT /v2/workspaces/{ws}/cutover {v: 2, hub_id, state: "cut_over"}`. A leave never reopens it; the owner's
+  `relay.reopened` (`orch relay reopen`, after the leave is finished) does. A join made before C10 is cut over
+  automatically only for a dev workspace holding a dev hub card.

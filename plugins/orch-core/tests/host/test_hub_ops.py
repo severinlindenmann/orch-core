@@ -126,7 +126,8 @@ def test_selective_to_full_is_only_the_owner_signed_mode_verb(human, served):
     )
     hub, _ = hub_state(served)
     assert hub["status"] == "joined" and hub["mode"] == "full" and hub["binding_seq"] == 2 and hub["member"]
-    assert err(human.prepare_res("hub.mode", {"hub_card": copy.deepcopy(CARD), "mode": "full"})) == "hub.already_joined"
+    # V3-D29 (C10): full mode may be signed again by the owner while the direct path is open (it only triggers the
+    # cut-over); a join is still refused
     assert err(human.prepare_res("hub.join", join_args(mode="full"))) == "hub.already_joined"
 
 
@@ -172,6 +173,28 @@ def test_a_bad_hub_card_is_refused(human, mutate):
     card = copy.deepcopy(CARD)
     mutate(card)
     assert err(human.prepare_res("hub.join", join_args(hub_card=card))) == "hub.refused"
+
+
+def test_a_card_of_another_hub_than_the_invite_names_is_refused_and_nothing_is_written(human, served):
+    """D12c/G5: a valid card of a different hub (whoever handed over the file) is not what the owner was told."""
+    res = human.prepare_res("hub.join", join_args(hub_id="0" * 32))
+    assert err(res) == "hub.refused" and "other_hub" in res["error"]["message"]
+    hub, _ = hub_state(served)
+    assert not hub  # no hub.joined, no pin
+    assert err(human.prepare_res("hub.join", join_args(hub_id=HUB_ID.upper()))) == "invalid.input"  # not lower-case hex
+
+
+def test_a_join_without_the_invites_hub_id_is_refused(human, served):
+    args = {"hub_card": copy.deepcopy(CARD), "mode": "selective"}
+    assert (
+        err(human.c.req("human.prepare", {"op": "hub.join", "args": args, "signer": human.signer})) == "invalid.input"
+    )
+    assert not hub_state(served)[0]
+
+
+def test_the_card_of_the_hub_the_invite_names_is_accepted(human):
+    _, _, signed = human.run("hub.join", join_args(hub_id=HUB_ID))
+    assert signed.events[0]["hub_id"] == HUB_ID
 
 
 def test_only_the_owner_may_be_aliased(human):
@@ -328,6 +351,30 @@ def test_join_then_connect_sends_the_selective_binding_and_never_a_key(human, se
     assert status["joined"] and status["link"] == "bound" and status["mode"] == "selective"
     _, members = hub_state(served)
     assert not any("hub" in m for m in members)  # still no hub member
+
+
+def test_status_reports_an_unreachable_hub_and_a_reachable_one(human, served, stub, monkeypatch):
+    """V3 D78 (#1102): `link` is not `bound` while the hub address does not answer; the binding stays visible."""
+    import socket
+
+    from orch.host import hublinkprobe
+    from tests.host.dispatch_helpers import ok
+
+    human.run("hub.join", join_args())
+    ok(served.client().req("hub.connect", connect_args(), idem=True))
+    hublinkprobe.clear()
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(4)
+    port = srv.getsockname()[1]
+    monkeypatch.setattr(hubops, "_addr", lambda args, state, dev: f"127.0.0.1:{port}")
+    up = ok(served.client().req("hub.status", {}, idem=False))["data"]
+    assert (up["link"], up["binding"], up["reachable"]) == ("bound", "bound", True)
+    srv.close()  # the hub process dies
+    hublinkprobe.clear()
+    down = ok(served.client().req("hub.status", {}, idem=False))["data"]
+    assert (down["link"], down["binding"], down["reachable"]) == ("unreachable", "bound", False)
+    assert down["peer_outbox"] == 0 and down["link_error"] is None
 
 
 def test_connect_with_the_hub_down_keeps_the_join_and_resumes(human, served, stub, monkeypatch):

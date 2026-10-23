@@ -320,6 +320,10 @@ def start_blocker(state_dir: Path, workspace_id: str, host_uid: int) -> str | No
     checked last so that ``host.status.relay`` names the operator's own stop first."""
     from orch.relay import worker
 
+    from . import directpath
+
+    if directpath.closed(state_dir, workspace_id, host_uid):
+        return "cut_over"  # V3 C10: the direct relay path is closing or closed
     if unlink_pending(state_dir, workspace_id):
         return "unlink_pending"
     if is_stopped(state_dir, workspace_id, host_uid):

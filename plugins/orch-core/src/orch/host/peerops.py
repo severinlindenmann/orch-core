@@ -92,6 +92,9 @@ class _Runtime:
         self.hub_id, self.binding_seq = hub_id, binding_seq
         self.stop = threading.Event()
         self.thread: threading.Thread | None = None
+        self.last_error: str | None = (
+            None  # the receive loop's last failure (a class name, never a message); None = fine
+        )
 
 
 def _key(service: WorkspaceService) -> tuple[str, str]:
@@ -277,11 +280,26 @@ def _loop(service: WorkspaceService, rt: _Runtime) -> None:
             rt.svc.pump(0.5)
             _deliveries(service, rt)
             wait = 0.5
-        except Exception:  # noqa: BLE001 - the hub is down or refused: back off, never die
+            rt.last_error = None
+        except Exception as exc:  # noqa: BLE001 - the hub is down or refused: back off, never die
+            rt.last_error = type(exc).__name__
             rt.svc.drop_link()
             rt.stop.wait(wait)
             wait = min(wait * 2, 10.0)
     rt.svc.close()
+
+
+def status_fields(service: WorkspaceService) -> dict[str, Any]:
+    """For ``hub.status``: how many ws->ws envelopes wait in the outbox, and the receive loop's last error. Starts no
+    runtime; an unreadable mailbox reads as empty here (status must answer)."""
+    with _MU:
+        rt = _RUNTIMES.get(_key(service))
+    try:
+        box = rt.svc.mb if rt is not None else _load_box(service)
+        n = len(box.outbox)
+    except Exception:  # noqa: BLE001
+        n = 0
+    return {"peer_outbox": n, "link_error": None if rt is None else rt.last_error}
 
 
 def _deliveries(service: WorkspaceService, rt: _Runtime) -> None:

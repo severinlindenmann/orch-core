@@ -235,3 +235,16 @@ def test_1070_sign_time_classes_a_non_self_member_as_word_so_a_click_approval_is
     click.mono.t += 2
     refused(lambda: click.sign(p["request_id"], v["view_digest"]), "human.click_refused", "terminal_only")
     assert click.signatures == 0
+
+
+def test_1070_self_as_assignee_and_reviewer_is_a_click_at_prepare_and_at_sign(click, served, human):
+    me = click.owner.ref
+    _, p = prepare(click, intent_of(people={"assignees": [me], "reviewers": [me]}))
+    approvals = [a for a in click.signer.approvals.values() if a.request_id == p["request_id"]]
+    assert approvals[0].kind == "click"  # classed at prepare
+    v = click.view(p["request_id"])
+    assert v["view"]["confirm"] == {"kind": "click"}
+    click.mono.t += 2
+    out = click.sign(p["request_id"], v["view_digest"])  # accepted at sign time with no word
+    got = ok(served.client().req("ticket.get", {"ref": out["result"]["key"]}))["data"]["doc"]
+    assert got["people"]["assignees"] == [me] and got["people"]["reviewers"] == [me]

@@ -365,7 +365,7 @@ def build_p4(
         {"type": "grant.revoked", "log": W, "grant": "gr_01J9ZP0000000000000000GRT1"},
         "edit",
         ok("grant.revoked"),
-        "F1 terms decide whose grant (own unless admin)",
+        "F1 at the host: own grant (canonical person) unless the mapped role is owner (admin); a hub check is advisory",
     )
     act5("action_grant_revoked_bad_id", {"type": "grant.revoked", "log": W, "grant": "gr_x"}, "edit", mal)
     dx = {"type": "device.excluded", "log": W, "device": "d_" + "c" * 32, "reason": "compromised"}
@@ -374,7 +374,8 @@ def build_p4(
         dx,
         "admin",
         ok("device.excluded"),
-        "workspace-local exclusion; the global revocation stays the person's PK act",
+        "workspace-local exclusion; the global revocation stays the person's PK act; the HOST refuses it for a device "
+        "of a workspace owner (core vector device_excluded_owner_device_refused), so break-glass cannot be blocked",
     )
     act5("action_device_excluded_by_edit", dx, "edit", {"error": "forbidden_role"})
     act5("action_device_excluded_bad_reason", {**dx, "reason": "stolen"}, "admin", mal)
@@ -779,6 +780,14 @@ def build_p4(
     ):  # fmt: skip
         case(f"custodial_event_{nm}", "custodial", {**adm, "log": EVENT_PAYLOADS[typ][0],
              "event": custodial(typ=typ, payload=pl)}, {"error": "malformed"}, 5, why)  # fmt: skip
+    case("custodial_event_grant_revoked_by_edit", "custodial",
+         {**cus, "log": "workspace", "snapshot": snapshot(roles={U_ALICE: "edit"})["o"],
+          "event": custodial(typ="grant.revoked")}, {"ok": {"user_id": U_ALICE, "channel": CH_ALICE, "role": "edit"}},
+         5, "host F1 decides ownership (canonical person of the signer vs grant.person)")  # fmt: skip
+    act5("action_policy_changed_turns_gate_off", {"type": "policy.changed", "log": "workspace",
+         "gates": {"plan": {"approvers": ["owner"], "count": 1, "not": [], "applies": "off", "independent": False}}},
+         "admin", ok("policy.changed"),
+         "valid, but the channel shows the fixed text 'turns off the plan gate' and the host warns")  # fmt: skip
     case("custodial_event_grant_requested_by_read", "custodial",
          {**cus, "log": "workspace", "snapshot": snapshot(roles={U_ALICE: "read"})["o"],
           "event": custodial(typ="grant.requested")}, {"error": "forbidden_role"}, 5)  # fmt: skip

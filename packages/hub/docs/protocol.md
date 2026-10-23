@@ -827,13 +827,21 @@ an agent grant, exclude a lost device or change policy; agents would stop within
   secret only to its own runner for that person (core C10). Core's model admits a host-actor `grant.issued` only with a
   `request` naming an earlier admitted `grant.requested` of equal terms, used once, within 300 s. The grant's person is
   the request's canonical signer (F1: a grant is always for its signer). The secret never travels on the link.
+  **The host keeps the secret only for a pending local hand-off** (a person-started Mission Control "Start agent" of
+  the same person and exact terms, at most 10 min old, used once); otherwise the grant is recorded inert and its secret
+  destroyed at once, so a hub (the channel CA) cannot mint usable grants nobody asked for (L2-P5-3).
+- **`grant.revoked`:** F1 at the host decides ownership: the signer's own grant (compared as the **canonical** person,
+  alias-resolved) unless the mapped role is owner (`admin`). A hub-side check is advisory (a friendly error only).
 - **`device.excluded`** is workspace-local: the device signs nothing more in this workspace; `compromised` voids open
-  decisions as a compromised device does (ticket-format §5.7). The global, PK-signed `device.revoked` stays the
+  decisions as a compromised device does (ticket-format §5.7). **The host refuses it for a device of a workspace
+  owner** (owner devices go only through the PK-signed `device.revoked`), and an exclusion never applies to
+  break-glass verification, so the hub cannot block `orch hub leave` (L2-P5-2). The global, PK-signed `device.revoked` stays the
   person's own act and is not custodial.
 - F1 runs after the floor as for every custodial type (§8.3 step 9): grant terms per mapped role (member: `workable`
   only, at most `grant_hours`), own grants only unless `admin`, workspace policy and settings owner-only (`admin`).
 - `admin` verbs need a sign-in within the last 5 min (spec §7); a channel shows every policy key and value
-  (WYSIWYS, §8.4 step 3).
+  (WYSIWYS, §8.4 step 3). A policy with `applies: "off"` shows the fixed text "turns off the <gate> gate"; a `count`
+  above the people eligible shows "no one can approve this"; the host also returns a warning on admission.
 
 **Break-glass with the hub down (C8; text only, no new object).** `hub.left` (§9.1) is the owner's local act and needs
 no hub. The host then sends `hub.unbound` (§9.3) **directly to orch-publish** (`PUT /v2/hub/bindings/{ws}`, V3-D16),
@@ -841,7 +849,8 @@ which ends hub-forwarded publish and the hub admin read (§10.6), and offers it 
 comes up. The relay keeps no binding: a `pending` cut-over row (§10.8.3) is deleted by the workspace at the leave; a
 `cut_over` row stays closed. On `unbound` an honest hub also fails its open prepares and queued `event_deliver`s for
 the workspace with `not_bound` and drops the workspace from its users' channel lists. Core voids open-generation
-decisions signed through the left hub (design-c8 M2.2); the one break-glass set (`hub.leave`, `hub.repin` PK only,
+decisions signed through the left hub, and **hub-requested grants end at `hub.left`** (every grant whose `request` is
+a line of that hub is revoked at that position and its secret dropped; design-c8 M2.2); the one break-glass set (`hub.leave`, `hub.repin` PK only,
 `keys.rotate`) is defined in core (C8) and imported by C11.
 
 ## 9. Join, binding, leave
@@ -2068,7 +2077,7 @@ link errors travel as `{"error": code}` reply bodies; host-side refusals are loc
 | `phase4` | p4: the `log_sync` lines, heads, view key, AAD and one sealed page; a ticket projection `proj_ticket`, a ticket page carrying it and its plaintext bytes (D15b); a prepared context and digest; a relay request and its bytes; the relay routes' request bytes and one sealed push payload (`relay_routes`); the custodial type table; the `space.accept` built from the vector proposal |
 | `share_item_f1` | C3b addendum: a ticket item with an `f1` block and its `item_hash` (§10.2b, §8.6) |
 | `phase4.channel_api` | B stream: a pairing link and its fingerprint, a signed `hub.api_origin`, a `session_ref`, a signed `hub.channel_auth` and `hub.channel_push`, a channel → relay request with its signed bytes, the mailbox list answer |
-| `cases` | 950 cases (243 positive, 707 negative; 46 of them phase 5, §8.8 draft): `check`, `args`, `expect` (`{"ok": …}` or `{"error": code}`), `phase` |
+| `cases` | 952 cases (245 positive, 707 negative; 48 of them phase 5, §8.8 draft): `check`, `args`, `expect` (`{"ok": …}` or `{"error": code}`), `phase` |
 
 The negative cases cover, per object where it applies: wrong domain, wrong signer, expired, binding for another
 workspace, unbound after leave, missing dev marker, dev at a real verifier, extra or unknown field, non-canonical

@@ -1300,6 +1300,8 @@ class ClickSigner:
         except HostError as exc:
             raise ClickError(exc.code, exc.message, retryable=exc.code == "lock.busy") from None
         except select.TerminalNeeded as exc:
+            if exc.flag_cleared:  # the off happened before the refusal: the log says so (L2-1075-3)
+                self._note("custody_off", workspace=wid)
             raise ClickError("custody.terminal_needed", str(exc)) from None
         except KeyNotFound as exc:
             raise ClickError("custody.no_key", str(exc)) from None

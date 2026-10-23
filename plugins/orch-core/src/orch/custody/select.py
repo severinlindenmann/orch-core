@@ -86,7 +86,10 @@ def refuse_full_mode(state_dir: Path, workspace_id: str) -> None:
 
 
 class TerminalNeeded(CustodyError):
-    """The dashboard asked for a change only the terminal may make (``custody.terminal_needed``); nothing changed."""
+    """The dashboard asked for a change only the terminal may make (``custody.terminal_needed``). Nothing changed,
+    except that ``flag_cleared`` says the click-to-sign flag was switched off on the way (it always goes first)."""
+
+    flag_cleared = False
 
 
 class Selection(dict):
@@ -401,8 +404,41 @@ def undo_staged(
         _write_selection(state_dir, workspace_id, dict(before))
 
 
+def _abandon_convenience_stage(state_dir: Path, workspace_id: str, store: Any, *, locked: bool) -> Selection:
+    """L2-C11f-2: a conversion to convenience that never finished (in full hub mode its finish is refused for good) is
+    abandoned by the way back: the stored copy goes, the passphrase file was never touched. L2-1075-2: under the
+    workspace lock (a concurrent unlocked finish would otherwise lose the device key), and only when the passphrase file
+    is still there and holds this device's key, so the last copy is never deleted."""
+    from orch.host import convenience as host_convenience
+
+    def run() -> Selection:
+        sel = read_selection(state_dir, workspace_id)
+        if sel is None or sel["transition"] is None or sel["transition"]["to"] != "convenience":
+            raise CustodyError("the custody of this key changed meanwhile; nothing was done (orch keys custody status)")
+        legacy = _legacy_backend(state_dir, workspace_id)
+        if legacy is None or legacy.public_key(KEY_ID) != crypto.unb64u(sel["pub"], crypto.PUB_LEN):
+            raise CustodyError("the passphrase key of this device is not on this computer; nothing was removed")
+        try:
+            store.delete(workspace_id, sel["device"])
+        except KeyNotFound:
+            pass
+        done = {**sel, "gen": sel.gen + 1, "transition": None}
+        _write_selection(state_dir, workspace_id, done)
+        return Selection(done)
+
+    if locked:
+        return run()
+    with host_convenience.workspace_lock(state_dir, workspace_id, os.getuid()):
+        return run()
+
+
 def downgrade_in_place(
-    state_dir: Path, workspace_id: str, *, store: Any = None, passphrase: str | None = None
+    state_dir: Path,
+    workspace_id: str,
+    *,
+    store: Any = None,
+    passphrase: str | None = None,
+    _locked: bool = False,
 ) -> Selection:
     """Move the same key back under a new passphrase. Without ``passphrase`` the key backend asks on the terminal
     (``orch keys custody passphrase --in-place``). ``passphrase`` comes only from :func:`turn_off_convenience`
@@ -420,15 +456,7 @@ def downgrade_in_place(
         raise KeyNotFound("this workspace's device key is not in convenience custody")
     # (a convenience-direction transition passes this check and is abandoned below)
     if sel["transition"] is not None and sel["transition"]["to"] == "convenience":
-        # L2-C11f-2: a conversion to convenience that never finished (in full hub mode its finish is refused for good).
-        # Going to passphrase custody abandons it: the stored copy goes, the passphrase file was never touched.
-        try:
-            store.delete(workspace_id, sel["device"])
-        except KeyNotFound:
-            pass
-        done = {**sel, "gen": sel.gen + 1, "transition": None}
-        _write_selection(state_dir, workspace_id, done)
-        return Selection(done)
+        return _abandon_convenience_stage(state_dir, workspace_id, store, locked=_locked)
     pub = crypto.unb64u(sel["pub"], crypto.PUB_LEN)
     directory = human.keys_dir(Path(state_dir), workspace_id)
     legacy = human.open_backend(directory)
@@ -507,20 +535,34 @@ def turn_off_convenience(
             )
         sel = read_selection(state_dir, workspace_id)
         if passphrase is not None and sel is not None and sel["transition"] is not None:
-            raise TerminalNeeded("a custody change of this workspace is unfinished; finish it in the terminal first")
-        if sel is None or not move_key:
+            pending = TerminalNeeded(
+                "click-to-sign is now off; a custody change of this workspace is unfinished, so finish it in the "
+                "terminal first"
+            )
+            pending.flag_cleared = was_on
+            raise pending
+        if sel is None:
             return None
-        store = store if store is not None else _store(state_dir)
         if sel["custody"] == "passphrase" and sel["transition"] is None:
+            store = store if store is not None else _store(state_dir)
             try:
                 store.delete(workspace_id, sel["device"])  # Opus A: a scalar a crashed move left in the key store
             except KeyNotFound:
-                pass
+                pass  # (also when nothing moves: L2-1075-4)
             return None
-        done = downgrade_in_place(state_dir, workspace_id, store=store, passphrase=passphrase)
+        if not move_key:
+            return None
+        store = store if store is not None else _store(state_dir)
         if passphrase is not None:
-            _mark_dashboard_rekey(state_dir, workspace_id, done.gen)
-        return done
+            # L2-1075-1: the mark first, so no error after the move can skip it; bound to the generation the move writes
+            _mark_dashboard_rekey(state_dir, workspace_id, sel.gen + 1)
+        try:
+            return downgrade_in_place(state_dir, workspace_id, store=store, passphrase=passphrase, _locked=True)
+        except BaseException:
+            after = read_selection(state_dir, workspace_id)
+            if passphrase is not None and (after is None or after.gen == sel.gen):
+                _drop_mark(state_dir, workspace_id)  # nothing moved: no stale mark for a later generation
+            raise
 
 
 def forget(state_dir: Path, workspace_id: str, *, store: Any = None) -> list[str]:

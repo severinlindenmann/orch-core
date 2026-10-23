@@ -854,13 +854,18 @@ def _convenience(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) 
             convenience.refuse_turn_on(state, match[0], uid)
         if args.switch == "off":
             # V3-D31: off also moves a key in convenience custody back under a passphrase (typed on /dev/tty by the key
-            # backend), flag and move under one workspace lock; no terminal: the flag only, with the hint below
+            # backend); no terminal: the flag only, with the hint below
             from orch.custody import cli as custody_cli
             from orch.custody import select
             from orch.custody.base import CustodyError
 
             try:
-                moved = select.turn_off_convenience(state, wid, uid, move_key=custody_cli.has_terminal())
+                # flag off (+ sweep) under the lock; the /dev/tty prompt of the move runs without it (L2-1075-4)
+                select.turn_off_convenience(state, wid, uid, move_key=False)
+                moved = None
+                st = select.status(state, wid)
+                if custody_cli.has_terminal() and (st["custody"] == "convenience" or "problem" in st):
+                    moved = select.downgrade_in_place(state, wid)
             except CustodyError as exc:
                 return write_error(
                     out,

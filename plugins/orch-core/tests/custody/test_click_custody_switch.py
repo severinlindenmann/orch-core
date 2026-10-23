@@ -656,3 +656,67 @@ def test_turn_off_clears_a_stuck_convenience_transition_in_full_mode(switch, mon
     st = select.status(state, WS)
     assert st["custody"] == "passphrase" and "problem" not in st and not store.exists(WS, staged["device"])
     assert legacy_file(state).exists()
+
+
+def test_the_rekey_mark_is_written_before_the_move_so_a_failing_delete_cannot_skip_it(switch, monkeypatch):
+    """L2-1075-1: the final store.delete fails (a Keychain error); the chosen factor is still no proof."""
+    signer, state, provider, store, _, _ = switch
+    on(signer, provider.passphrase)
+
+    def boom(self, *a, **k):
+        raise select.BackendUnavailable("the key store refused")
+
+    monkeypatch.setattr(FakeStore, "delete", boom)
+    with pytest.raises(ClickError):
+        off(signer, passphrase=STRONG)
+    assert not flag(state)
+    assert select.status(state, WS)["custody"] == "passphrase"
+    assert select._dashboard_rekeyed(state, WS, select.read_selection(state, WS))
+
+
+def test_a_failed_move_leaves_no_stale_mark(switch):
+    signer, state, provider, store, _, _ = switch
+    on(signer, provider.passphrase)
+    legacy_file(state).write_bytes(b"{}")  # a stray file: the L1 refusal, nothing moves
+    refused(lambda: off(signer, passphrase=STRONG), "custody.unavailable")
+    assert not select._dashboard_rekeyed(state, WS, select.read_selection(state, WS))
+
+
+def test_the_abandon_refuses_without_the_passphrase_key_and_keeps_the_stored_copy(switch):
+    """L2-1075-2: never delete the last copy of the device key."""
+    signer, state, provider, store, _, _ = switch
+    staged = select.stage_convenience(state, WS, store=store)
+    legacy_file(state).unlink()  # the passphrase file is gone (a racing finish removed it)
+    with pytest.raises(select.CustodyError):
+        select.downgrade_in_place(state, WS, store=store)
+    assert store.exists(WS, staged["device"])
+
+
+def test_the_abandon_takes_the_workspace_lock(switch):
+    from orch.host.errors import HostError
+
+    signer, state, provider, store, _, _ = switch
+    select.stage_convenience(state, WS, store=store)
+    with convenience.workspace_lock(state, WS, os.getuid()):
+        with pytest.raises(HostError) as ei:
+            select.downgrade_in_place(state, WS, store=store)
+    assert ei.value.code == "lock.busy"
+
+
+def test_the_pending_refusal_says_signing_is_off_and_the_log_records_it(switch):
+    signer, state, provider, store, _, log = switch
+    on(signer, provider.passphrase)
+    sel = select.read_selection(state, WS)
+    select._write_selection(state, WS, {**sel, "transition": {"to": "passphrase", "step": "written"}})
+    err = refused(lambda: off(signer, passphrase=STRONG), TERMINAL)
+    assert "click-to-sign is now off" in err.message and not flag(state)
+    assert ("custody_off", {"workspace": WS}) in log.lines
+
+
+def test_the_leftover_sweep_runs_for_a_dashboard_off_without_a_passphrase(switch):
+    signer, state, provider, store, _, _ = switch
+    device = on(signer, provider.passphrase)["device"]
+    select.downgrade_in_place(state, WS, store=store)
+    store.put(WS, device, b"\x01" * 32)  # what a crashed move left behind
+    off(signer)
+    assert not store.exists(WS, device)

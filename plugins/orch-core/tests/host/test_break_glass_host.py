@@ -198,6 +198,31 @@ def test_keys_rotate_without_a_key_store_says_so(served, monkeypatch):
     assert err(served.client().req("keys.rotate", {}, idem=True)) == "keys.no_epoch"
 
 
+def test_keys_rotate_is_refused_while_joined_in_full_mode(served, monkeypatch):
+    """L2-C8i-2: an epoch made while the hub is a full member would never be sealed to it: leave first."""
+    monkeypatch.setattr(hubops, "epochs_for", lambda service, create=False: hubops._Epochs(FakeMk(), "owner"))
+    for mode in ("full", "unknown"):
+        monkeypatch.setattr(hubops, "signing_mode", lambda service, mode=mode: mode)
+        assert err(served.client().req("keys.rotate", {}, idem=True)) == "keys.joined"
+    monkeypatch.setattr(hubops, "signing_mode", lambda service: "selective")
+    assert ok(served.client().req("keys.rotate", {}, idem=True))["data"]["rotated"] is True
+
+
+def test_keys_rotate_is_refused_while_the_key_is_in_convenience_custody(served, monkeypatch):
+    from orch.host import hubsign
+
+    monkeypatch.setattr(hubops, "epochs_for", lambda service, create=False: hubops._Epochs(FakeMk(), "owner"))
+    monkeypatch.setattr(hubsign, "_click_custody", lambda service: True)
+    assert err(served.client().req("keys.rotate", {}, idem=True)) == "sign.convenience_unavailable"
+
+
+def test_keys_no_epoch_and_keys_joined_are_declared_host_codes():
+    from orch.host.errors import HOST_CODES, disposition
+
+    assert HOST_CODES["keys.no_epoch"] == (3, False) and HOST_CODES["keys.joined"] == (3, False)
+    assert disposition("keys.no_epoch") == (3, False)
+
+
 # --- the review ----------------------------------------------------------------------------------------------------
 
 

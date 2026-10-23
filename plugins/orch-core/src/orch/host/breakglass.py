@@ -2,7 +2,9 @@
 files and the network, with the hub down or hostile.
 
 * :func:`rotate` is ``keys.rotate`` (owner, column P like every hub op; an agent is refused by the column, the
-  dashboard has no route to it, and the click signer signs events only, which this is not).
+  dashboard has no route to it). It signs nothing (no event): L2-C8i-2 makes it refuse while the key is in convenience
+  custody (any process of the owner could ask) and while a hub is joined in full mode (the hub would never get the new
+  epoch: leave first, the leave rotates). A terminal passphrase proof is not built (design-c8 C8-5, amended).
 * :func:`publish_put` tells orch-publish directly (``PUT /v2/hub/bindings/{ws}``, V3-D16: the signed ``hub.unbound`` is
   self-authenticating, so there is no transport signature) with a bounded retry on a lost answer or a 5xx.
 * :func:`cutover_delete` is the seam C10 fills (``DELETE /v2/workspaces/{ws}/cutover`` through the relay allowlist).
@@ -39,8 +41,22 @@ def rotate(call: Call, epochs: Any) -> dict[str, Any]:
     """``keys.rotate``: a new ``WK_e`` epoch now. ``epochs`` is the key store (``hubops.epochs_for``). A relay-less or
     cut-over workspace makes the epoch locally at once; a relay-linked one raises the key store's rotation gate and the
     membership machinery makes it (``requested``). The new epoch is never sealed to a hub that has left."""
+    from . import hubops, hubsign
     from .workspace import ok_result
 
+    if hubops.signing_mode(call.service) in hubsign.HUB_ONLY:
+        raise HostError(
+            "keys.joined",
+            "a hub is joined in full mode: rotating now would make an epoch the hub never gets; leave first",
+            hint="orch hub leave (it rotates the workspace key), then orch keys rotate if you need another",
+            fix=["orch", "hub", "leave"],
+        )
+    if hubsign._click_custody(call.service):  # noqa: SLF001 - custody decides, not a label
+        raise HostError(
+            "sign.convenience_unavailable",
+            "keys rotate is refused while your key is in convenience custody (any process of yours could ask)",
+            hint="move the key back first: orch keys custody passphrase --workspace W --in-place",
+        )
     if epochs is None:
         raise HostError("keys.no_epoch", "this workspace has no workspace key to rotate yet")
     before = int(epochs.current_epoch())

@@ -169,12 +169,7 @@ def authorize_person(core: Core, log: str, e: dict[str, Any], v: Verifier, *, hu
     if m is None:
         return Refusal(Code.MEMBER_UNKNOWN, f"{a['id']} is not a member")
     dev = ws.devices.get(a["device"])
-    recovery = (
-        typ == "device.added"
-        and e["device"] == a["device"]
-        and dev is None
-        and not person_has_valid_device(ws, a["id"], at)
-    )
+    recovery = breakglass.is_recovery(ws, e)
     if recovery:
         cert = e["cert"]
     elif dev is None or dev.person != a["id"]:

@@ -21,6 +21,7 @@ from tests.model.test_hub_consumers import (
 )
 from tests.model.test_hubledger import card
 from tests.model.world import World, pol
+from tests.schema.examples import cert, hex32, revocation
 
 
 @pytest.fixture
@@ -40,16 +41,17 @@ def strict(w: World):
 # --- the table -----------------------------------------------------------------------------------------------------
 
 
-def test_the_set_is_exactly_leave_repin_rotate():
-    assert set(breakglass.BREAK_GLASS) == {"hub.leave", "hub.repin", "keys.rotate"}
-    assert breakglass.event_types() == {"hub.left", "hub.repinned"}
+def test_the_set_is_exactly_leave_recover_repin_rotate():
+    assert set(breakglass.BREAK_GLASS) == {"hub.leave", "device.recover", "hub.repin", "keys.rotate"}
+    assert breakglass.event_types() == {"hub.left", "device.added", "hub.repinned"}
 
 
 @pytest.mark.parametrize("signer", breakglass.SIGNER_KINDS)
 def test_matrix_verb_by_signer(signer):
-    both = signer in ("owner_device_key", "pk")
-    assert breakglass.allowed("hub.leave", signer) is both
-    assert breakglass.allowed("keys.rotate", signer) is both
+    dev = signer == "owner_device_key"
+    assert breakglass.allowed("hub.leave", signer) is dev
+    assert breakglass.allowed("keys.rotate", signer) is dev
+    assert breakglass.allowed("device.recover", signer) is (signer == "pk")  # L2-C8i-1: the recovery key recovers
     assert breakglass.allowed("hub.repin", signer) is (signer == "pk")  # recovery key only: a device key is refused
     assert not breakglass.allowed("hub.join", signer) and not breakglass.allowed("hub.leave", "nobody")
 
@@ -178,13 +180,90 @@ def test_a_device_that_is_not_the_actors_is_not_the_owners_key(w):
     assert not breakglass.allowed("hub.leave", "other")
 
 
+def _lose_device(w):
+    w.wev(
+        "device.revoked", w.HOST, device=w.dev["sev"], reason="lost",
+        revocation=revocation(w.people["sev"][2:], w.dev["sev"][2:], "lost"),
+    )  # fmt: skip
+    newdev = hex32("recovered")
+    actor = {"kind": "person", "id": w.people["sev"], "device": "d_" + newdev}
+    return newdev, actor
+
+
+def _recovery(w, newdev, actor, **extra):
+    return w.build_unappended(
+        "workspace", "device.added", actor, roster_v=w.roster_v, device="d_" + newdev,
+        cert=cert(w.people["sev"][2:], newdev), **extra,
+    )  # fmt: skip
+
+
+def _admit_append(w, e):
+    r = admit(strict(w), e, log="workspace")
+    assert not hasattr(r, "code"), r
+    e["host_sig"] = "h" * 8
+    w._append("workspace", e)
+
+
 def test_the_recovery_shape_is_its_own_kind(w):
+    newdev, actor = _lose_device(w)
     ws = strict(w)._core.ws
-    e = _leave(w)
-    e["actor"] = {**e["actor"], "device": "d_" + "9" * 32}
-    e["cert"] = {"o": {}, "sig": "x"}
-    assert breakglass.signer_kind(ws, e) == "pk"
-    assert breakglass.allowed("hub.leave", "pk") and not breakglass.allowed("hub.repin", "owner_device_key")
+    e = _recovery(w, newdev, actor)
+    assert breakglass.is_recovery(ws, e) and breakglass.signer_kind(ws, e) == "pk"
+    assert breakglass.allowed("device.recover", "pk") and not breakglass.allowed("hub.repin", "owner_device_key")
+
+
+def test_lost_device_pk_recovery_is_admitted_then_the_new_device_leaves(w):
+    """L2-C8i-1, end to end: the owner's only device is lost, a hub-joined full-mode workspace still lets the owner
+    recover with the recovery key (append and replay) and leave with the recovered device."""
+    newdev, actor = _lose_device(w)
+    assert admit(strict(w), _leave(w), log="workspace").code == Code.DEVICE_INVALID  # the lost device itself: no
+    _admit_append(w, _recovery(w, newdev, actor))
+    left = w.build_unappended("workspace", "hub.left", actor, roster_v=w.roster_v, hub_id=HUB, binding_seq=1)
+    assert breakglass.signer_kind(strict(w)._core.ws, left) == "owner_device_key"
+    _admit_append(w, left)
+    assert strict(w)._core.ws.hub.get("status") != "joined"
+
+
+def test_recovery_by_a_non_owner_or_with_a_valid_device_or_another_signer_is_refused(w):
+    newdev, actor = _lose_device(w)
+    # a valid device exists (tom's own): tom's "recovery" is not the recovery shape, the device is unknown
+    t_actor = {"kind": "person", "id": w.people["tom"], "device": "d_" + newdev}
+    e = w.build_unappended(
+        "workspace", "device.added", t_actor, roster_v=w.roster_v, device="d_" + newdev,
+        cert=cert(w.people["tom"][2:], newdev),
+    )  # fmt: skip
+    assert admit(strict(w), e, log="workspace").code == Code.DEVICE_UNKNOWN
+    # the owner has no valid device, but a non-owner member with none either: refused as break-glass is owner only
+    w.wev(
+        "device.revoked", w.HOST, device=w.dev["tom"], reason="lost",
+        revocation=revocation(w.people["tom"][2:], w.dev["tom"][2:], "lost"),
+    )  # fmt: skip
+    e = w.build_unappended(
+        "workspace", "device.added", t_actor, roster_v=w.roster_v, device="d_" + newdev,
+        cert=cert(w.people["tom"][2:], newdev),
+    )  # fmt: skip
+    assert admit(strict(w), e, log="workspace").code == Code.SIGN_HUB_ONLY
+    # a labelled (not terminal) recovery, a relay-signed one, and a convenience-labelled one
+    for extra in ({"auth": "convenience"}, {"auth": "secure-enclave-unlocked"}, {"signed_by": ["p_x", "d_x"]}):
+        r = admit(strict(w), _recovery(w, newdev, actor, **extra), log="workspace")
+        assert r.code == Code.SIGN_HUB_ONLY, extra
+
+
+def test_an_ordinary_device_added_in_full_mode_is_still_refused(w):
+    """A plain ``device.added`` by the owner's valid device is not the recovery shape: it needs the hub."""
+    newdev = hex32("plain")
+    e = w.build_unappended(
+        "workspace", "device.added", "sev", roster_v=w.roster_v, device="d_" + newdev,
+        cert=cert(w.people["sev"][2:], newdev),
+    )  # fmt: skip
+    assert admit(strict(w), e, log="workspace").code == Code.SIGN_HUB_ONLY
+
+
+def test_agent_and_hub_cannot_recover_a_device(w):
+    newdev, actor = _lose_device(w)
+    e = _recovery(w, newdev, actor)
+    assert breakglass.signer_kind(strict(w)._core.ws, {**e, "actor": {**actor, "via": "ch"}}) == "hub"
+    assert breakglass.signer_kind(strict(w)._core.ws, {**e, "actor": {**actor, "kind": "agent"}}) == "agent"
 
 
 def test_an_agent_cannot_write_a_human_only_event_in_full_mode():

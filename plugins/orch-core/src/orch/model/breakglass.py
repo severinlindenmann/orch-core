@@ -23,11 +23,11 @@ from collections.abc import Mapping
 from typing import Any
 
 from .codes import Code, Refusal
-from .types import WsCore
+from .types import WsCore, ts
 
 __all__ = [
     "BREAK_GLASS", "BreakGlass", "SIGNER_KINDS", "agent_refusal", "allowed", "event_types", "human_only_types",
-    "local_refusal", "signer_kind",
+    "is_recovery", "local_refusal", "signer_kind",
 ]  # fmt: skip
 
 SIGNER_KINDS = ("owner_device_key", "pk", "click", "convenience", "agent", "hub", "relay")
@@ -47,9 +47,12 @@ class BreakGlass:
 
 #: verb -> row. Owner only in every row (checked separately: the actor must be a workspace owner).
 BREAK_GLASS: Mapping[str, BreakGlass] = {
-    "hub.leave": BreakGlass("hub.left", ("owner_device_key", "pk")),
+    "hub.leave": BreakGlass("hub.left", ("owner_device_key",)),
+    # L2-C8i-1: with no valid device left, the owner recovers one with the recovery key (D50 ``device.added``, only
+    # in the recovery shape: :func:`is_recovery`) and that device signs the leave. A plain ``device.added`` is not pk.
+    "device.recover": BreakGlass("device.added", ("pk",)),
     "hub.repin": BreakGlass("hub.repinned", ("pk",)),  # backlog (#876): listed so the set is complete, op refused
-    "keys.rotate": BreakGlass(None, ("owner_device_key", "pk")),
+    "keys.rotate": BreakGlass(None, ("owner_device_key",)),
 }
 
 
@@ -63,10 +66,18 @@ def allowed(verb: str, signer: str) -> bool:
     return row is not None and signer in SIGNER_KINDS and signer in row.signers
 
 
-def _recovery_signature(ws: WsCore, e: Mapping[str, Any]) -> bool:
-    """The recovery key ``PK`` signed: the actor's device is not a device of the roster and the line carries the
-    recovery certificate (the shape ``authorize_person`` calls recovery). Same rule as C11's ``hubsign``."""
-    return e["actor"].get("device") not in ws.devices and isinstance(e.get("cert"), Mapping)
+def is_recovery(ws: WsCore, e: Mapping[str, Any]) -> bool:
+    """The D50 recovery shape, the ONE predicate (``authz.authorize_person`` and :func:`signer_kind` both use it): a
+    ``device.added`` signed by the new device itself, which the roster does not know, for a person with no valid device
+    at ``at``. The line then carries the recovery certificate (``PK``)."""
+    from .authz import person_has_valid_device
+
+    a = e.get("actor", {})
+    if e.get("type") != "device.added" or e.get("device") != a.get("device") or a.get("device") in ws.devices:
+        return False
+    if not isinstance(e.get("cert"), Mapping):
+        return False
+    return not person_has_valid_device(ws, a.get("id"), ts(e["at"]))
 
 
 def signer_kind(ws: WsCore, e: Mapping[str, Any]) -> str:
@@ -85,7 +96,7 @@ def signer_kind(ws: WsCore, e: Mapping[str, Any]) -> str:
         return "relay"
     if e.get("auth") not in (None, "passphrase"):
         return "other"  # a phone's label, webauthn, ...: not the terminal
-    if _recovery_signature(ws, e):
+    if is_recovery(ws, e):
         return "pk"
     dev = ws.devices.get(a.get("device"))
     return "owner_device_key" if dev is not None and dev.person == a.get("id") else "other"

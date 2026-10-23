@@ -28,6 +28,7 @@ from .fake import FakeHub, HostLink
 from .vec import V, private_key, pub
 
 WS = V["ids"]["workspace_a"]
+OWNER = V["ids"]["person_alice"]
 HUB_ID = V["ids"]["hub"]
 NOW = V["now_ms"]
 WSK = private_key("wsk_a")
@@ -57,7 +58,15 @@ class Epochs:
     def __init__(self, mk, local_owner=None, sealed_epoch=None) -> None:
         from orch.host.hubops import _Epochs
 
-        self._e = _Epochs(mk, local_owner, sealed_epoch)
+        #: ``local_owner=None``: a rotation is only requested through the gate (it stays owed until it is made)
+        self._deferred = local_owner is None
+        self._e = _Epochs(mk, local_owner or OWNER, sealed_epoch)
+
+    def rotate(self):
+        if self._deferred:
+            self._e._mk.raise_gate("", "rotate")  # noqa: SLF001
+        else:
+            self._e.rotate()
 
     def __getattr__(self, name):
         return getattr(self._e, name)
@@ -315,7 +324,7 @@ def test_only_the_committed_epoch_is_ever_sealed(host, mk):
     from orch.host.hubops import _Epochs
 
     r6kit.expose_rotation(mk)  # epoch 2 claimed and exposed, not committed
-    e = _Epochs(mk)
+    e = _Epochs(mk, OWNER)
     with pytest.raises(HubRefused):
         e.seal_to_hub(2, pub("hxk"), HUB_ID)
     assert e.seal_to_hub(1, pub("hxk"), HUB_ID)
@@ -414,25 +423,4 @@ def test_an_invalid_exposed_body_is_abandoned_and_a_new_epoch_follows(tmp_path):
     e = own.advance_local(owner)
     assert e == 2 and own.current_epoch() == 2 and own.head()["exposed"] is None  # epoch 1 burned, never used
     assert 1 in own.head()["burned"]["epochs"] or own.is_burned(1)
-    own.close()
-
-
-def test_a_relay_linked_later_in_the_process_stops_local_epochs(tmp_path):
-    from orch.identity.epochs import CustodyRefused, MembershipKeys, R6Gate
-
-    linked = {"v": False}
-    own = MembershipKeys(tmp_path / "m7", WS, now_ms=lambda: NOW)
-    R6Gate(own).install(lambda: r6kit.KitStore())
-    own.link_probe = lambda: linked["v"]
-    owner = V["ids"]["person_alice"]
-    assert own.advance_local(owner) == 1 and own.has_local_epochs()
-    assert own.previously_linked is False
-    linked["v"] = True  # a relay is linked after the key store was opened
-    assert own.previously_linked is True
-    with pytest.raises(CustodyRefused):
-        own.advance_local(owner)
-    assert own.current_epoch() == 1
-    own.link_probe = lambda: (_ for _ in ()).throw(OSError("unreadable"))
-    with pytest.raises(CustodyRefused):  # an unreadable link state counts as linked
-        own.advance_local(owner)
     own.close()

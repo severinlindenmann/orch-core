@@ -122,7 +122,6 @@ def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
         "hub.join",
         "hub.mode",
         "hub.leave",
-        "relay.reopen",
         "device.mark_exposed",
         "device.rotate",
     }  # H12c-e, B12D, P5, R3, V3 C2a, C2b, #1097

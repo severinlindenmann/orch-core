@@ -715,9 +715,7 @@ def serve(call: Call) -> dict[str, Any]:
         plan.update(dev=workspace_dev(service), hub_card=args.get("hub_card"))
         return {"plan": plan}
     if op == "hub.unbind":
-        if state is not None and (
-            state.outbox or state.rotate_after is not None or state.publish_owed
-        ):
+        if state is not None and (state.outbox or state.rotate_after is not None or state.publish_owed):
             return {"plan": plan}  # a signed unbound or a rotation is still owed, whatever the model says now
         if not model or model.get("status") != "left":
             raise HostError("hub.not_joined", "sign `orch hub leave` first: the log has no hub.left")

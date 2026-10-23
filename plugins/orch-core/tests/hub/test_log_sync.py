@@ -725,7 +725,7 @@ def test_l2_c14_2_the_view_key_is_only_for_the_epoch_sealed_to_the_hub():
             return b"k" * 32
 
     st, sealed = Store(), {"v": 1}
-    e = _Epochs(st, None, lambda: sealed["v"])
+    e = _Epochs(st, "a" * 32, lambda: sealed["v"])
     assert e.view_key(1) == b"k" * 32
     with pytest.raises(HubRefused) as x:
         e.view_key(2)  # held, but newer than the epoch sealed to the hub
@@ -734,4 +734,4 @@ def test_l2_c14_2_the_view_key_is_only_for_the_epoch_sealed_to_the_hub():
     with pytest.raises(HubRefused):
         e.view_key(1)
     with pytest.raises(HubRefused):
-        _Epochs(st).view_key(1)  # no provider: fail closed
+        _Epochs(st, "a" * 32).view_key(1)  # no provider: fail closed

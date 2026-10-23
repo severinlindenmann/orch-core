@@ -14,7 +14,7 @@ not the event-type check below. ``hub.repin`` is listed so the set is complete; 
 **Key exposure (#1097).** A device key with *positive evidence* of convenience custody has the signer kind ``exposed``
 (:func:`signer_kind`): a signed ``device.exposed`` mark (the model sets ``Device.exposed``; nothing clears it, only a
 new key does). It is read from the roster before the ``auth`` label, so no label hides it. No row allows ``exposed``,
-so a copy of such a key cannot sign ``hub.left``, the ``hub.mode`` reaffirmation or a full ``hub.joined``, whatever
+so a copy of such a key cannot sign ``hub.left``, or a full ``hub.joined``, whatever
 ``auth`` label it writes: ``sign.key_exposed``. The one exception is the mark itself (``device.mark_exposed``), which
 only removes authority and so may land in full mode. Keys with no such evidence count as clean.
 
@@ -178,7 +178,7 @@ def local_refusal(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
         and e.get("auth") != "hub"
         and e["actor"].get("kind") == "person"
         and signer_kind(ws, e) in ("exposed", "convenience")
-    ):  # #1097 E2: full-mode entry (first join, selective -> full, reaffirmation) never from a convenience key
+    ):  # #1097 E2: full-mode entry (first join, selective -> full) never from a convenience key
         return Refusal(Code.SIGN_KEY_EXPOSED, "full hub mode needs a device key that was never in one-click custody")
     if not h or h.get("status") != "joined" or h.get("mode") != "full" or e.get("auth") == "hub":
         return None

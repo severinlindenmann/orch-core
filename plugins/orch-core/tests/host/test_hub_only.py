@@ -309,8 +309,7 @@ def test_break_glass_constant_is_the_one_shared_table_of_the_model():
     from orch.model import breakglass
 
     assert hubops.BREAK_GLASS is hubsign.BREAK_GLASS is breakglass.BREAK_GLASS
-    # hub.joined is in the table only through the exact re-affirmation shape (V3-D29), never as any hub.joined
-    assert "hub.left" in breakglass.event_types() and breakglass.BREAK_GLASS["hub.mode"].shape is not None
+    assert "hub.left" in breakglass.event_types() and "hub.joined" not in breakglass.event_types()
 
 
 def test_signer_kind_is_fail_closed_for_every_kind_and_an_unknown_label():

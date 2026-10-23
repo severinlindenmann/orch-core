@@ -801,5 +801,3 @@ class OutcomeStore(IntentStore):
         if "error" in record:
             out["error"] = record["error"]
         return out
-
-

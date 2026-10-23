@@ -374,7 +374,9 @@ def check(service: Any, person: str, device: str, *, gate: Any = None) -> None:
 
 #: V3 C2a: the ops that bind the workspace to (or free it from) a hub. The owner's own key at the terminal signs them;
 #: a convenience (click-to-sign) key never does, however the label reads.
-HUB_OPS = frozenset({"hub.join", "hub.mode", "hub.leave", "keys.rotate", "device.rotate"})  # keys.rotate: C8 break-glass
+HUB_OPS = frozenset(
+    {"hub.join", "hub.mode", "hub.leave", "keys.rotate", "device.rotate"}
+)  # keys.rotate: C8 break-glass
 
 
 def refuse_hub_op(op: str, auth: str | None) -> None:

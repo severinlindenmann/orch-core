@@ -185,7 +185,7 @@ _SPECS = [
         "orch keys custody passphrase --rotate --workspace W (needs your recovery code; works while the hub is down)",
         ["orch", "keys", "custody", "passphrase", "--rotate"],
         "#1097: a device key with a signed device.exposed mark (written before it entered convenience custody)"
-        " cannot enter full hub mode, leave a hub on its own, re-affirm full mode or rotate "
+        " cannot enter full hub mode, leave a hub on its own, or rotate "
         "the workspace key, because a process of yours may hold a copy. Only a new key (device.rotated) clears it.",
     ),
     _e(

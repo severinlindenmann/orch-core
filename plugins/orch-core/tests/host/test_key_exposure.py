@@ -58,7 +58,7 @@ def test_a_mark_can_be_written_in_full_hub_mode_even_by_an_exposed_key(human, se
 # -- the gated acts ------------------------------------------------------------------------------------------------
 
 
-def test_an_exposed_key_cannot_join_full_or_reaffirm_but_may_join_selective(human, served, stub, keystore):
+def test_an_exposed_key_cannot_join_full_but_may_join_selective(human, served, stub, keystore):
     human.run("device.mark_exposed", {})
     assert err(human.prepare_res("hub.join", join_args(mode="full"))) == "sign.key_exposed"
     human.run("hub.join", join_args(mode="selective"))  # not gated

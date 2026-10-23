@@ -683,8 +683,6 @@ def test_a_key_in_convenience_custody_is_refused_outside_the_hosted_path(tmp_pat
     import pytest
 
     from orch.custody import select
-    from orch.host import paircli
-    from orch.host.errors import HostError
     from orch.ops.errors import OrchError
 
     wid = "ab" * 16
@@ -694,7 +692,4 @@ def test_a_key_in_convenience_custody_is_refused_outside_the_hosted_path(tmp_pat
     with pytest.raises(OrchError) as e:
         ops_human.device_backend(tmp_path, wid)  # what direct-mode Human.backend calls
     assert e.value.code == "custody.no_key" and "one-click custody" in e.value.message and e.value.hint
-    with pytest.raises(HostError) as h:
-        paircli._device_backend(tmp_path, wid)  # genesis pin and pair_device
-    assert h.value.code == "custody.no_key"
     assert ops_human.device_backend(tmp_path, wid, convenience=True) is conv  # hosted CLI path

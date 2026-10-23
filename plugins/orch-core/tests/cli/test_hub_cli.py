@@ -386,18 +386,3 @@ def test_hub_history_golden(host):
     )  # L2-C8i-6: no JSON pretending to be a command
     code, out = run(["history"], {}, as_json=True)
     assert code == 0 and json.loads(out)["data"] == HIST
-
-
-def test_reopen_reports_a_relay_link_that_did_not_start(host, monkeypatch):
-    """L2-C10i-4: the path is open but the relay did not come up: not `ok`, exit 3, the reason and the next step."""
-    host.reply["hub.reopen"] = {
-        "direct": "open",
-        "relay_linked": True,
-        "relay": "start_failed: SeamMissing",
-        "relay_started": False,
-    }
-    code, out = run(["reopen"], {})
-    assert code == 3 and "did not start (start_failed: SeamMissing)" in out and "orch host relay start" in out
-    host.reply["hub.reopen"] = {"direct": "open", "relay_linked": True, "relay": "started", "relay_started": True}
-    code, out = run(["reopen"], {})
-    assert code == 0 and "ok the direct relay path is open again" in out

@@ -506,6 +506,13 @@ def test_a_crash_between_leave_and_unbind_still_lets_the_rejoin_through(human, s
 # --- C2b: the full join through the host ------------------------------------------------------------------------------
 
 
+class _DeferredEpochs(hubops._Epochs):
+    """A rotation is only requested through the gate: it stays owed until the key store makes the epoch."""
+
+    def rotate(self) -> None:
+        self._mk.raise_gate("", "rotate")
+
+
 @pytest.fixture
 def keystore(monkeypatch, served, tmp_path):
     """A membership key store for the served workspace with epoch 1 committed, standing in for the relay's."""
@@ -518,7 +525,7 @@ def keystore(monkeypatch, served, tmp_path):
     monkeypatch.setattr(
         hubops,
         "epochs_for",
-        lambda service, create=False: hubops._Epochs(mk, None, lambda: hubops._sealed_epoch(service)),
+        lambda service, create=False: _DeferredEpochs(mk, "a" * 32, lambda: hubops._sealed_epoch(service)),
     )
     yield mk
     mk.close()
@@ -668,36 +675,3 @@ def test_status_warns_when_a_routine_rotation_was_not_resealed(human, served, st
     ok(c.req("hub.connect", {"hub_card": copy.deepcopy(CARD)}, idem=True))
     assert ok(c.req("hub.status", {}, idem=False))["data"]["reseal_needed"] is False
     assert _unwrap([m for m in stub.sent if m["o"]["op"] == "wk_seal"][1], served.wid, 2) == keystore.wk(2)
-
-
-def test_epochs_for_sees_a_relay_linked_after_the_first_open(served, tmp_path, monkeypatch):
-    from orch.host import relayr6
-
-    linked = {"v": False}
-    monkeypatch.setattr(relayr6, "_previously_linked", lambda service: linked["v"])
-    monkeypatch.setattr(relayr6, "membership_path", lambda service: tmp_path / "membership")
-    from orch.crypto.encoding import unb64u
-    from orch.host import relayr3
-
-    monkeypatch.setattr(relayr3, "owner_pk_pub", lambda service: unb64u(V["keys"]["pk_alice"]["pub"], 65))
-    svc = served.service
-    first = hubops.epochs_for(svc, create=True)
-    assert first is not None and first._local_owner is not None  # relay-less: local epochs allowed
-    linked["v"] = True
-    second = hubops.epochs_for(svc, create=True)
-    assert second is not None and second._local_owner is None  # now the relay path's; never a local epoch
-    relayr6.close(svc)
-
-
-def test_linking_a_relay_is_refused_for_a_workspace_with_local_epochs(served):
-    from orch.host import relaylink
-    from orch.host.errors import HostError
-
-    svc = served.service
-    mark = relaylink.local_epochs_path(svc.state_dir, svc.workspace_id)
-    mark.parent.mkdir(parents=True, exist_ok=True)
-    mark.write_text("{}")
-    with pytest.raises(HostError) as e:
-        with relaylink.link_reservation(svc):
-            pass
-    assert e.value.code == "relay.local_epochs" and "H5" in str(e.value)

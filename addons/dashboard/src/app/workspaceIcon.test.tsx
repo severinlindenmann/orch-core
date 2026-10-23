@@ -60,23 +60,25 @@ describe('workspace icon in the app', () => {
     const def = defaultWorkspaceIcon(mockStore.workspaces[0].id)
     const icon = def.icon === 'rocket' ? 'Star' : 'Rocket'
     const colour = def.colour === 'pink' ? 'Teal' : 'Pink'
-    const group = await screen.findByRole('group', { name: 'Icon' })
+    const group = await screen.findByRole('group', { name: 'Symbol' })
     await user.click(within(group).getByRole('button', { name: icon }))
     await user.click(within(screen.getByRole('group', { name: 'Colour' })).getByRole('button', { name: colour }))
     const sel = `[data-ws-icon="${icon.toLowerCase()}"][data-ws-colour="${colour.toLowerCase()}"]`
     expect(trigger.querySelector(sel)).toBeNull() // a draft until it is signed
-    const section = screen.getByRole('group', { name: 'Icon' }).closest('section') ?? document.body
+    const section = screen.getByRole('group', { name: 'Symbol' }).closest('section') ?? document.body
     await user.click(within(section).getByRole('button', { name: 'Save' }))
     await user.click(await screen.findByRole('button', { name: 'Sign and save' }))
     await waitFor(() => expect(trigger.querySelector(sel)).not.toBeNull())
     expect(mockStore.workspaces[0].icon).toEqual({ icon: icon.toLowerCase(), colour: colour.toLowerCase() })
     await user.click(screen.getByRole('button', { name: 'Use the automatic icon' }))
+    expect(trigger.querySelector(sel)).not.toBeNull() // reset is a draft too, until it is signed
+    await user.click(within(section).getByRole('button', { name: 'Save' }))
     await user.click(await screen.findByRole('button', { name: 'Sign and save' }))
     await waitFor(() => expect(trigger.querySelector(sel)).toBeNull())
   })
   it('a member cannot save it', async () => {
     renderApp('/settings/general', { viewer: 'p_mara' })
-    const group = await screen.findByRole('group', { name: 'Icon' })
+    const group = await screen.findByRole('group', { name: 'Symbol' })
     expect(within(group).getByRole('button', { name: 'Rocket' })).toBeDisabled()
   })
 })

@@ -15,62 +15,66 @@ export const iconWords = (c: WorkspaceIconChoice) => `${WORKSPACE_ICONS.find((i)
  * host does not report the setting (an older host).
  */
 export function WorkspaceIconPicker({ workspace, canEdit, onSave }: { workspace: Workspace; canEdit: boolean; onSave: (choice: WorkspaceIconChoice | null) => void }) {
-  if (workspace.icon_known === false) return null
   const saved = workspaceIconOf(workspace)
   const auto = defaultWorkspaceIcon(workspace.id)
-  const [draft, setDraft] = useState<WorkspaceIconChoice | null>(null)
-  const shown = draft ?? saved
-  const changed = draft !== null && (draft.icon !== saved.icon || draft.colour !== saved.colour)
-  const custom = !!workspace.icon
+  // The draft is what the preview shows; `automatic` is the draft "go back to the automatic icon" (saved as null).
+  const [draft, setDraft] = useState<WorkspaceIconChoice | 'automatic' | null>(null)
+  const shown = draft === 'automatic' ? auto : (draft ?? saved)
+  const wantsAuto = draft === 'automatic' || (draft === null && !workspace.icon)
+  const changed = draft === 'automatic' ? !!workspace.icon : draft !== null && (draft.icon !== saved.icon || draft.colour !== saved.colour)
+  const pick = (c: WorkspaceIconChoice) => setDraft(c)
+  if (workspace.icon_known === false) return null
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex items-start gap-3">
         <WorkspaceIcon {...shown} />
-        <p className="min-w-0 flex-1 text-[13px] text-text-muted">Shown in the left menu next to the prefix and name, and on its own when the menu is narrow. Everyone in the workspace sees it.</p>
-        <Button disabled={!canEdit || !changed} onClick={() => draft && onSave(draft)} aria-describedby={canEdit ? undefined : 'ws-icon-why'}>
+        <p className="min-w-0 flex-1 text-[13px] text-text-muted">Choose how this workspace appears in the left menu. Everyone in the workspace sees it. The prefix and name always stay next to it.</p>
+      </div>
+      <fieldset className="space-y-1.5">
+        <legend className="text-[12px] text-text-muted">Symbol</legend>
+        <div className="flex flex-wrap gap-1.5">
+          {WORKSPACE_ICONS.map((i) => (
+            <button
+              key={i.id}
+              type="button"
+              aria-label={i.label}
+              aria-pressed={shown.icon === i.id}
+              disabled={!canEdit}
+              onClick={() => pick({ ...shown, icon: i.id })}
+              className={cn('rounded-md p-0.5 outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-60', shown.icon === i.id ? 'bg-surface-3 ring-2 ring-text' : 'hover:bg-surface-2')}
+            >
+              <WorkspaceIcon icon={i.id} colour={shown.colour} />
+            </button>
+          ))}
+        </div>
+      </fieldset>
+      <fieldset className="space-y-1.5">
+        <legend className="text-[12px] text-text-muted">Colour</legend>
+        <div className="flex flex-wrap gap-1.5">
+          {WORKSPACE_COLOURS.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              aria-label={c.label}
+              aria-pressed={shown.colour === c.id}
+              disabled={!canEdit}
+              onClick={() => pick({ ...shown, colour: c.id })}
+              style={{ background: c.value }}
+              className={cn('flex size-7 items-center justify-center rounded-full text-white outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 disabled:opacity-60', shown.colour === c.id && 'ring-2 ring-text ring-offset-2')}
+            >
+              {shown.colour === c.id && <Check aria-hidden className="size-3.5" />}
+            </button>
+          ))}
+        </div>
+      </fieldset>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button size="sm" disabled={!canEdit || !changed} onClick={() => onSave(draft === 'automatic' ? null : (draft as WorkspaceIconChoice))} aria-describedby={canEdit ? undefined : 'ws-icon-why'}>
           Save
         </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={!canEdit || (!custom && !changed)}
-          onClick={() => (custom ? onSave(null) : setDraft(null))}
-          title={`The automatic icon is ${iconWords(auto)}`}
-        >
+        <Button variant="outline" size="sm" disabled={!canEdit || wantsAuto} onClick={() => setDraft('automatic')} title={`Every workspace has an automatic icon (this one: ${iconWords(auto)})`}>
           Use the automatic icon
         </Button>
-      </div>
-      {!canEdit && <OwnerNote id="ws-icon-why">Only owners can save.</OwnerNote>}
-      <div role="group" aria-label="Icon" className="flex flex-wrap gap-1.5">
-        {WORKSPACE_ICONS.map((i) => (
-          <button
-            key={i.id}
-            type="button"
-            aria-label={i.label}
-            aria-pressed={shown.icon === i.id}
-            disabled={!canEdit}
-            onClick={() => setDraft({ ...shown, icon: i.id })}
-            className={cn('rounded-md p-0.5 outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-60', shown.icon === i.id ? 'ring-2 ring-brand' : 'hover:bg-surface-2')}
-          >
-            <WorkspaceIcon icon={i.id} colour={shown.colour} />
-          </button>
-        ))}
-      </div>
-      <div role="group" aria-label="Colour" className="flex flex-wrap gap-1.5">
-        {WORKSPACE_COLOURS.map((c) => (
-          <button
-            key={c.id}
-            type="button"
-            aria-label={c.label}
-            aria-pressed={shown.colour === c.id}
-            disabled={!canEdit}
-            onClick={() => setDraft({ ...shown, colour: c.id })}
-            style={{ background: c.value }}
-            className={cn('flex size-7 items-center justify-center rounded-full text-white outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 disabled:opacity-60', shown.colour === c.id && 'ring-2 ring-text ring-offset-2')}
-          >
-            {shown.colour === c.id && <Check aria-hidden className="size-3.5" />}
-          </button>
-        ))}
+        {!canEdit && <OwnerNote id="ws-icon-why">Only owners can save.</OwnerNote>}
       </div>
     </div>
   )

@@ -383,3 +383,29 @@ def test_a_direct_re_added_device_counts_at_the_admitted_level_never_a_stale_rec
     assert r.code == 0, r.err
     rec = read_record(hws.host_state, WS, p.device[2:])
     assert rec["reader"] == admitted and rec["source"] == "member.add"
+
+
+def test_member_add_does_not_take_certificate_key_material_for_a_github_token(hws, me, tmp_path):
+    """#1044: a token-shaped run inside a key field gets past the secret check (the certificate check then refuses the
+    altered file); the same run in any other field of the file is a secret."""
+    import random
+
+    from tests.host.test_key_material_exempt import forced
+
+    p, pk, cert = invite(hws, tmp_path)
+    doc = json.load(open(cert))
+    doc["o"]["dk_kx_pub"] = forced(65, random.Random(1044))
+    planted = tmp_path / "planted.json"
+    planted.write_text(json.dumps(doc))
+    n = len(roster(hws))
+    r = me("member", "add", "--name", "N", "--pk", pk, "--cert", str(planted), "--json")
+    assert r.err_code != "grant.secret_in_args" and len(roster(hws)) == n
+    doc["o"]["dk_kx_pub"] = json.load(open(cert))["o"]["dk_kx_pub"]
+    doc["o"]["label"] = "ghp_" + "A" * 30
+    planted.write_text(json.dumps(doc))
+    assert me("member", "add", "--name", "N", "--pk", pk, "--cert", str(planted), "--json").err_code == (
+        "grant.secret_in_args"
+    )
+    assert me("member", "add", "--name", "ghp_" + "A" * 30, "--pk", pk, "--cert", cert, "--json").err_code == (
+        "grant.secret_in_args"
+    )

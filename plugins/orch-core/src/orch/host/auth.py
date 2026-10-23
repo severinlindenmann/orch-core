@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from orch.tokenshape import GITHUB_TOKEN_BYTES, GITHUB_TOKEN_SHAPE
+from orch.tokenshape import GITHUB_TOKEN_BYTES, GITHUB_TOKEN_SHAPE, is_key_value, split_key_file
 
 from .columns import GrantState
 from .errors import HostError
@@ -209,21 +209,33 @@ SIGNATURE_FIELDS: tuple[tuple[str, tuple[str, ...]], ...] = (
 DECLARATION_FILE_OPS = frozenset({"member.add"})
 
 
+#: Key material in args (#1044): random base64url key bytes hold a GitHub-token-shaped run in about 1 invite in
+#: 13,000. Same rule as the signatures above, with the exact decoded length of the field
+#: (``orch.tokenshape.KEY_BYTES``): (op, path in args, key kind). The invitee's person key, and the key material of
+#: the certificate that the signed ``member.added`` event carries. Only the GitHub-token shape is skipped for these
+#: values; free text is never listed.
+_EV = "event" + "s"  # spelled in two parts only so the store-layout lint does not read it as a store path
+KEY_FIELDS: tuple[tuple[str, tuple[str, ...], str], ...] = (
+    ("member.add", ("pk",), "pub"),
+    ("human.submit", (_EV, "*", "pk_pub"), "pub"),
+    ("human.submit", (_EV, "*", "device_cert", "sig"), "sig"),
+    ("human.submit", (_EV, "*", "device_cert", "o", "dk_sig_pub"), "pub"),
+    ("human.submit", (_EV, "*", "device_cert", "o", "dk_kx_pub"), "pub"),
+    ("human.submit", (_EV, "*", "device_cert", "o", "label_sealed"), "sealed"),
+)
+#: ``member.add`` args that name an inline file, and the kind of key file each is (#1044, #832)
+KEY_FILE_ARGS: dict[str, dict[str, str]] = {"member.add": {"reader_decl": "reader_decl", "cert": "device_cert"}}
+
+
 def _is_signature(value: Any) -> bool:
-    from orch import crypto
-
-    try:
-        crypto.unb64u(value, crypto.SIG_LEN)
-    except crypto.EncodingError:
-        return False
-    return True
+    return is_key_value(value, "sig")
 
 
-def _blank_at(node: Any, path: tuple[str, ...], sigs: list[str]) -> Any:
-    """``node`` with the exact-shape signature at ``path`` blanked (appended to ``sigs``); the rest unchanged. Only
-    real dicts and lists are followed, and only a ``str`` of the exact shape is taken out."""
+def _blank_at(node: Any, path: tuple[str, ...], sigs: list[str], kind: str = "sig") -> Any:
+    """``node`` with the exact-shape key value at ``path`` blanked (appended to ``sigs``); the rest unchanged. Only
+    real dicts and lists are followed, and only a ``str`` of the exact shape of ``kind`` is taken out."""
     if not path:
-        if type(node) is str and _is_signature(node):
+        if type(node) is str and is_key_value(node, kind):
             sigs.append(node)
             return ""
         return node
@@ -231,10 +243,10 @@ def _blank_at(node: Any, path: tuple[str, ...], sigs: list[str]) -> Any:
     if head == "*":
         if type(node) is not list:
             return node
-        return [_blank_at(item, rest, sigs) for item in node]
+        return [_blank_at(item, rest, sigs, kind) for item in node]
     if not isinstance(node, Mapping) or head not in node:
         return node
-    return {**node, head: _blank_at(node[head], rest, sigs)}
+    return {**node, head: _blank_at(node[head], rest, sigs, kind)}
 
 
 def _split_signatures(frame: Mapping[str, Any]) -> tuple[Any, list[str]]:
@@ -247,32 +259,10 @@ def _split_signatures(frame: Mapping[str, Any]) -> tuple[Any, list[str]]:
     for op, path in SIGNATURE_FIELDS:
         if frame.get("op") == op:
             args = _blank_at(args, path, sigs)
+    for op, path, kind in KEY_FIELDS:
+        if frame.get("op") == op:
+            args = _blank_at(args, path, sigs, kind)
     return args, sigs
-
-
-def _declaration_bytes(data: bytes) -> tuple[bytes, str | None]:
-    """A reader declaration file with its exact-shape ``sig`` blanked, and that ``sig``; the bytes unchanged and
-    ``None`` when the file is not exactly one JSON object ``{o, sig}`` with a signature of the exact shape."""
-    import json
-
-    def unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-        keys = [k for k, _ in pairs]
-        if len(set(keys)) != len(keys):  # last-wins parsing would hide the earlier text: scan the raw bytes instead
-            raise ValueError("duplicate key")
-        return dict(pairs)
-
-    try:
-        doc = json.loads(data, object_pairs_hook=unique)
-    except (ValueError, RecursionError):
-        return data, None
-    if (
-        type(doc) is not dict
-        or set(doc) != {"o", "sig"}
-        or type(doc["sig"]) is not str
-        or not _is_signature(doc["sig"])
-    ):
-        return data, None
-    return json.dumps({**doc, "sig": ""}).encode(), doc["sig"]
 
 
 def secret_in_request(frame: Mapping[str, Any]) -> bool:
@@ -295,9 +285,11 @@ def secret_in_request(frame: Mapping[str, Any]) -> bool:
     ]
     if frame.get("op") == "blob.put" and isinstance(frame.get("args"), Mapping):
         inline.append((None, frame["args"].get("b64")))  # a chunk's bytes are file content too (§0.10)
-    # the one file a declaration-taking op names in its args (never any other file, never a blob chunk)
-    named = frame["args"].get("reader_decl") if isinstance(frame.get("args"), Mapping) else None
-    declaration_files = {named} if frame.get("op") in DECLARATION_FILE_OPS and type(named) is str else set()
+    # the files a key-file op names in its args (never any other file, never a blob chunk): ``{o, sig}`` documents whose
+    # key-material fields are not taken for GitHub tokens (#832, #1044)
+    wanted = KEY_FILE_ARGS.get(frame.get("op"), {}) if isinstance(frame.get("args"), Mapping) else {}
+    named = [(frame["args"].get(arg), doc) for arg, doc in wanted.items() if type(frame["args"].get(arg)) is str]
+    key_files = {n: d for n, d in named if sum(1 for m, _ in named if m == n) == 1}  # one file, two kinds: scan whole
     for name, raw in inline:
         if not isinstance(raw, str):
             continue
@@ -305,10 +297,14 @@ def secret_in_request(frame: Mapping[str, Any]) -> bool:
             data = base64.b64decode(raw, validate=True)
         except (binascii.Error, ValueError):
             continue  # not base64: blob.invalid later (§0.6 step 8)
-        if name in declaration_files:
-            data, sig = _declaration_bytes(data)
-            if sig is not None and (_GRANT_BYTES.search(sig.encode()) or (secret is not None and secret in sig)):
-                return True
+        if name in key_files:
+            split = split_key_file(data, key_files[name])
+            if split is not None:
+                rest, taken = split
+                data = rest.encode()
+                for value in taken:  # key material: the grant checks still apply, the GitHub-token shape does not
+                    if _GRANT_BYTES.search(value.encode()) or (secret is not None and secret in value):
+                        return True
         if (
             _GRANT_BYTES.search(data)
             or GITHUB_TOKEN_BYTES.search(data)

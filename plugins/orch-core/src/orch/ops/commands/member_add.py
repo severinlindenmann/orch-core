@@ -62,7 +62,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     except (crypto.CryptoError, ValueError):
         raise OrchError("invalid.input", "--pk is a public key, base64url of 65 bytes") from None
     try:
-        cert = canon.loads_strict(h.call.read_file_text(args["cert"]).encode("utf-8"))
+        cert = canon.loads_strict(h.call.read_file_text(args["cert"], key_file="device_cert").encode("utf-8"))
     except (canon.JcsError, ValueError):
         raise OrchError("parse.json", "--cert is a device certificate, strict JSON") from None
     person = person_ref(pk)

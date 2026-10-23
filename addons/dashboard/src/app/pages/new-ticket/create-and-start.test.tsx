@@ -198,6 +198,14 @@ describe('after the ticket exists', () => {
     return { r, sheet }
   }
 
+  it('#1127: once the ticket exists the emptied form shows no red validation errors while the agent starts', async () => {
+    s.preview.mockReturnValue(new Promise(() => {})) // the start stays "running"
+    const { sheet } = await signed()
+    await within(sheet).findByTestId('agent-starting', {}, T)
+    expect(within(sheet).queryByText(/needs 3 to 120 characters/)).toBeNull()
+    expect(within(sheet).queryByText(/need your attention|needs your attention/)).toBeNull()
+  })
+
   it('previews for the ticket\'s own key, then starts once with the preview\'s spec and the review\'s idem', async () => {
     const { r } = await signed()
     await waitFor(() => expect(s.start).toHaveBeenCalledTimes(1), T)

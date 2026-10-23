@@ -162,11 +162,19 @@ def u_refs(e: Mapping[str, Any]) -> list[str]:
 
 
 def record_users(ws: WsCore, e: Mapping[str, Any]) -> Refusal | None:
-    """An admitted hub event records every ``u_`` id it uses under its hub in ``ws.hub["user_hub"]`` (append-only,
-    first writer wins), so a later event of ANOTHER hub that presents one of them is ``hub.foreign_user`` (L2P4-C1,
-    §15.6) without any state injected by a join. The same check runs on every reference first (``hub_actor``)."""
-    hub_id = e["hub_id"]
+    """An admitted event records every ``u_`` id it uses under a hub in ``ws.hub["user_hub"]`` (append-only, first
+    writer wins), so a later event of ANOTHER hub that presents one of them is ``hub.foreign_user`` (L2P4-C1, §15.6)
+    without any state injected by a join. The hub is the event's own ``hub_id`` for a hub-signed event (actor and
+    payload references), and the hub joined at this position for any other event's payload references (§15.6 case 2:
+    a member's device event naming a hub user). Every reference is checked first (``hub_actor``); an event with no
+    ``u_`` id, or a device event with no hub joined (the type rules refuse that), records nothing."""
     ids = u_refs(e)
+    if not ids:
+        return None
+    h = ws.hub
+    hub_id = e["hub_id"] if "via" in e["actor"] else (h.get("hub_id") if h and h.get("status") == "joined" else None)
+    if hub_id is None:
+        return None
     for uid in ids:
         who = hub_actor(ws, hub_id, uid)
         if isinstance(who, Refusal):

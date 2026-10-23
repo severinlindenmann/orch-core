@@ -155,13 +155,19 @@ def _envelope_check(lc: LogCore, e: dict[str, Any]) -> Refusal | None:
     return None
 
 
+def _names_users(e: dict[str, Any]) -> bool:
+    """Does this event name a hub user (``u_``) in its payload? Then admitting it records the id (§15.6), so it gets
+    its own copy of the workspace state."""
+    return e.get("actor", {}).get("kind") != "host" and bool(identity.u_refs(e))
+
+
 def _scratch(core: Core, log: str, e: dict[str, Any]) -> Core:
     typ = e["type"]
     a = e["actor"]
     unattended = a["kind"] == "agent" and a.get("unattended") is True
     is_ws = log == WORKSPACE
     sc = Core(
-        ws=copy.deepcopy(core.ws) if (is_ws or unattended or "via" in a) else core.ws,
+        ws=copy.deepcopy(core.ws) if (is_ws or unattended or "via" in a or _names_users(e)) else core.ws,
         tickets=dict(core.tickets),
         keys=dict(core.keys) if typ == "ticket.created" else core.keys,
         created_at=dict(core.created_at) if typ == "ticket.created" else core.created_at,
@@ -276,7 +282,9 @@ def _authorize(core: Core, log: str, t: TCore | None, e: dict[str, Any], ctx: Ct
             return r
     if (r := authz.freeze_check(core, log, e)) is not None:
         return r
-    return authz.visible_to_actor(core, t, e)
+    if (r := authz.visible_to_actor(core, t, e)) is not None:
+        return r
+    return identity.record_users(ws, e)  # §15.6 case 2: a u_ id named by a local event belongs to the joined hub
 
 
 def _apply(core: Core, log: str, lc: LogCore, e: dict[str, Any], ctx: Ctx) -> Refusal | None:

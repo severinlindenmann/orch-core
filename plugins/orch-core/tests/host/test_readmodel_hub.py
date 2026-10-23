@@ -61,3 +61,14 @@ def test_a_hub_pinned_line_reads_as_hub_key_roles_updated_with_kind_and_version(
     assert views.event_line(card).endswith("hub key/roles updated (card)")
     assert readmodel.ws_event_visible("hub.pinned", "p_x", False, None)  # every member with a person sees the line
     assert readmodel.summary(e) == "hub key/roles updated (snapshot v3)"
+
+
+def test_orch_log_names_the_member_a_hub_user_is_aliased_to():
+    ws = SimpleNamespace(
+        hub={"alias_book": {HUB: {"4c" * 16: USER}}},
+        members={"p_" + "4c" * 16: SimpleNamespace(name="Mara")},
+    )
+    names = views.hub_names(ws)
+    assert names == {"u_" + USER: "Mara"}
+    assert views.event_line(hub_event(), None, names) == "#4 log.added Mara via hub · phone, unlocked: from my phone"
+    assert views.event_line(hub_event(), None, {}).startswith(f"#4 log.added hub user {USER[:8]} via hub")

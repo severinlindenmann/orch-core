@@ -97,6 +97,8 @@ def test_a_snapshot_pins_at_most_once_per_ten_minutes_unless_it_narrows():
     ):
         st = hub_state(snapshot=narrow)
         assert C.pins_needed(st, led, 1000, 1001) == [narrow]  # narrowing always pins, even at once
+    mixed = hub_state(snapshot=snap(2, {"u": "admin", "v": "read", "w": "admin"}))  # demotes AND adds (l2-c3bB P1-2)
+    assert C.pins_needed(mixed, led, 1000, 1001) == [mixed.snapshot]
     raised = hub_state(snapshot=snap(2, {"u": "admin", "v": "admin"}))
     assert C.pins_needed(raised, led, 1000, 1001) == []  # a raise is not narrowing
 

@@ -2827,7 +2827,7 @@ has an older one or none; its pinned snapshot **only when needed** (below). Then
 - **Caps** (a pin over a cap is refused with `hub.invalid` `too_many` / `too_large`; the event that needed it gets
   `unavailable`, retryable, §15.5): at most **64** op revocations and **16** cards per hub in the ledger; a snapshot
   object at most **64 KiB** (`cj`); at most **one** snapshot pin per **10 minutes** of `at` per hub, except a snapshot
-  that only narrows (revokes a channel, removes or lowers a role, nothing else changed), which always pins.
+  that lowers, removes or revokes anything (a channel newly revoked, a user removed, a role lowered), even if it also adds, which always pins at once: a demotion never waits.
   The 10-minute limit is enforced at host admission (§15.5, task 5), not on replay: replay applies every pin line it finds.
 - Nothing is ever pruned: old lines are what make old events verifiable. The caps bound the ledger at
   64 + 16 + (one snapshot per 10 minutes + narrowing ones), each line ≤ 64 KiB.
@@ -2941,7 +2941,9 @@ Under the store lock, in this order (the reply codes are the contract's, §14):
    `source_sha` the current ones, `based_on` a head of this log, `roster_v` the current version. The schema makes
    `hash` required on the four decision types (L2P4-2a), so a decision without it is `malformed`. An event the hub
    built from a stale or false view (§10.7) is refused here.
-7. Append the pins and the event as one commit (§15.2), each with `host_sig`; reply `{}`.
+7. Append the pins and then the event, each with `host_sig`, in one hold of the store lock; reply `{}`. The store commits one line at a time, so this is **not one atomic commit**: steps 3–6 judge the pins and the event together on a scratch state first (`model.preview`), so a refused event writes nothing, but a crash (or an `at` the store stamps later than the preview's, which can push a certificate past its expiry) between the writes can leave the pins without the event. That is safe: the pins are valid ledger lines, the hub resends the event, dedup finds nothing and the event lands (or is refused) then.
+
+The snapshot fetch of step 3 runs outside the store lock: the first attempt refuses `unknown_snapshot`, the lock is released, one `snapshot_get` runs, and the whole sequence runs once more.
 
 Model refusal → reply code: `validation.*`, `chain.broken`, `hub.invalid` → `malformed` (or the detail when it is a
 §14 code); `hub.cert_invalid`, `hub.denied`, `hub.unknown_snapshot` → their detail; `hub.foreign_user` →

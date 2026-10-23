@@ -451,7 +451,7 @@ def pins_needed(
 ) -> list[dict[str, Any]]:
     """The ledger pins (15.2) the host's hub state holds and the workspace log does not, in order: the card, then the
     op revocations, then the newest snapshot. A snapshot is pinned at most once per 10 minutes of ``at`` per hub,
-    unless it only narrows (revokes a channel, removes or lowers a role): then it always pins."""
+    unless it lowers, removes or revokes anything (even if it also adds): then it always pins."""
     if ledger is None:
         return []
     out: list[dict[str, Any]] = []
@@ -466,7 +466,7 @@ def pins_needed(
     if snap is not None and (held is None or snap["o"]["version"] > held["o"]["version"]):
         if (
             held is None
-            or _narrows(snap["o"], held["o"])
+            or _lowers(snap["o"], held["o"])
             or last_snapshot_ms is None
             or (at_ms - last_snapshot_ms >= SNAPSHOT_PIN_INTERVAL_MS)
         ):
@@ -474,12 +474,12 @@ def pins_needed(
     return out
 
 
-def _narrows(new: Mapping[str, Any], old: Mapping[str, Any]) -> bool:
-    """Only narrows: no role added or raised, no channel un-revoked, and something was revoked, removed or lowered."""
+def _lowers(new: Mapping[str, Any], old: Mapping[str, Any]) -> bool:
+    """Does the new snapshot take anything away: a user removed, a role lowered or a channel newly revoked? Whatever
+    else it adds does not matter: a demotion must reach the model at once (a snapshot that also adds a user is not
+    "wider")."""
     rank = {r: i for i, r in enumerate(ROLES)}
     o_roles, n_roles = old["roles"], new["roles"]
-    if any(u not in o_roles or rank[r] > rank[o_roles[u]] for u, r in n_roles.items()):
-        return False
     return bool(set(new["revoked_channels"]) - set(old["revoked_channels"])) or any(
         u not in n_roles or rank[n_roles[u]] < rank[r] for u, r in o_roles.items()
     )
@@ -523,7 +523,8 @@ def accept_event_deliver(
     log, event = body["log"], body["event"]
     if type(event) is not dict or type(event.get("id")) is not str or type(event.get("type")) is not str:
         raise HubRefused("malformed")
-    try:
+
+    def attempt() -> dict[str, Any]:
         with land.locked():
             existing = land.logged(log, event["id"])
             if existing is not None:
@@ -533,23 +534,22 @@ def accept_event_deliver(
             core = land.core()
             floor = factor_floor(core.ws, core.tickets.get(log), event["type"], event.get("gate"))
             kw = _selective_args(state, core.ws, land, log) if state.mode == "selective" else {}
-            try:
-                verified = verify_hub_event(
-                    state, event, log=log, now_ms=now_ms, dev_mode=dev_mode, min_factor=floor, **kw
-                )
-            except HubRefused as e:
-                if e.code != "unknown_snapshot" or not land.refresh_snapshot():
-                    raise
-                verified = verify_hub_event(
-                    state, event, log=log, now_ms=now_ms, dev_mode=dev_mode, min_factor=floor, **kw
-                )
+            verified = verify_hub_event(state, event, log=log, now_ms=now_ms, dev_mode=dev_mode, min_factor=floor, **kw)
             led = ledger_of(core.ws, state.hub_id)
-            at_ms = now_ms
             pins = [
                 {"type": "hub.pinned", "actor": {"kind": "host"}, "hub_id": state.hub_id, "object": obj}
-                for obj in pins_needed(state, led, land.last_snapshot_pin_ms(state.hub_id), at_ms)
+                for obj in pins_needed(state, led, land.last_snapshot_pin_ms(state.hub_id), now_ms)
             ]
             land.land(pins, event, log)
             return verified
+
+    try:
+        try:
+            return attempt()
+        except HubRefused as e:
+            # one snapshot_get, OUTSIDE the store lock (a slow hub must not hold up the workspace), then once more
+            if e.code != "unknown_snapshot" or not land.refresh_snapshot():
+                raise
+            return attempt()
     except LandRefused as e:
         raise HubRefused(reply_code(e.refusal)) from None

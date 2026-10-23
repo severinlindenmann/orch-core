@@ -89,7 +89,9 @@ class StoreLanding:
         state = shareops._load(self.service)  # noqa: SLF001
         live: dict[str, Any] = {}
         old: set[str] = set()
-        for entry in state.sent.values():
+        for lg, entry in state.sent.items():
+            if lg in state.withdrawn:  # revoked by the owner: not live for a decision now, before the hub acknowledges
+                continue
             h = entry.get("item_hash")
             if type(h) is not str or entry.get("digest") is None:
                 continue

@@ -178,15 +178,17 @@ def via_hub(e: dict[str, Any]) -> str:
     return "via hub" + (f" · {factor}" if factor else "") if e.get("auth") == "hub" else ""
 
 
-def event_line(e: dict[str, Any], state: dict[str, dict[str, Any]] | None = None) -> str:
+def event_line(
+    e: dict[str, Any], state: dict[str, dict[str, Any]] | None = None, names: dict[str, str] | None = None
+) -> str:
     """One event as ``#seq type actor: detail``. The actor is ``agent`` (``agent (unattended)`` without a grant),
     ``person`` and the first characters of the person id, or ``host``. The detail is a task, a question, an artifact
     name, the start of a note, what a decision decided or, for ``ticket.updated``, what changed (``AC1 added``)."""
     a = e["actor"]
     if a["kind"] == "agent":
         who = "agent (unattended)" if a.get("unattended") else "agent"
-    elif a["kind"] == "person" and "via" in a:  # a hub user: the alias's name needs the roster, the log line has none
-        who = f"hub user {a['id'][2:10]} {via_hub(e)}".rstrip()
+    elif a["kind"] == "person" and "via" in a:  # a hub user: the member it is aliased to (names), else the id's start
+        who = f"{(names or {}).get(a['id']) or 'hub user ' + a['id'][2:10]} {via_hub(e)}".rstrip()
     elif a["kind"] == "person":
         who = f"person {a['id'][:8]}"
     else:
@@ -226,15 +228,30 @@ def event_line(e: dict[str, Any], state: dict[str, dict[str, Any]] | None = None
     return f"#{e['seq']} {t} {who}" + (f": {detail}" if detail else "")
 
 
+def hub_names(ws: Any) -> dict[str, str]:
+    """``u_<user>`` -> the name of the member it is aliased to (any hub's book, the C4 union), for the log lines."""
+    out: dict[str, str] = {}
+    hub = getattr(ws, "hub", None) or {}
+    for book in (hub.get("alias_book") or {}).values():
+        for person, user in book.items():
+            m = ws.members.get("p_" + person)
+            if m is not None:
+                out["u_" + user] = m.name
+    return out
+
+
 def event_lines(
-    all_events: list[dict[str, Any]], after: int, state: dict[str, dict[str, Any]] | None = None
+    all_events: list[dict[str, Any]],
+    after: int,
+    state: dict[str, dict[str, Any]] | None = None,
+    names: dict[str, str] | None = None,
 ) -> list[str]:
     """The lines of the events after ``after``; the earlier ones are read only to know what an update changed."""
     state = {"acceptance": {}, "tasks": {}} if state is None else state
     out = []
     for e in all_events:
         if e["seq"] > after:
-            out.append(event_line(e, state))
+            out.append(event_line(e, state, names))
         elif e["type"] == "ticket.updated":
             _update_detail(e, state)
     return out
@@ -245,7 +262,7 @@ def log_lines(store: Any, uid: str, after: int) -> tuple[list[str], list[dict[st
     tail = store.events(uid, after=after)
     names = {name for name in ("acceptance", "tasks") if any(f"ticket.{name}" in e.get("set", {}) for e in tail)}
     state = store.event_fields_before(uid, after, names) if after and names else None
-    return event_lines(tail, after, state), tail
+    return event_lines(tail, after, state, hub_names(store.state.workspace)), tail
 
 
 def verified(c: Any, uids: Any, chunk: int = 40) -> Any:

@@ -258,7 +258,7 @@ EVENT_PAYLOADS: dict[str, tuple[str, dict[str, Any] | None]] = {
     "people.changed": (TICKET, {"role": "reviewers", "add": ["u_" + U_BOB], "remove": []}),
     "addon.disabled": ("workspace", {"name": "wiki"}),
     "addon.purged": ("workspace", {"name": "wiki"}),
-    # phase 5 (§8.8, DRAFT)
+    # phase 5 (§8.8, V3-D29)
     "grant.requested": ("workspace", {"scope": "workable", "verbs": "agent", "hours": 72, "label": "Tariff import"}),
     "grant.revoked": ("workspace", {"grant": "gr_01J9ZP0000000000000000GRT1", "reason": "done"}),
     "device.excluded": ("workspace", {"device": "d_" + fake16("device_old_phone"), "reason": "lost"}),

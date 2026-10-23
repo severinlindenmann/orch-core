@@ -307,7 +307,7 @@ ACTIONS: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {
     "verdict.given": ({"outcome": _enum("pass", "fail"), "hash": _hash}, {"text": _text(4096, multiline=True)}),
     "addon.disabled": ({"name": _re(_ADDON)}, {}),
     "addon.purged": ({"name": _re(_ADDON)}, {}),
-    # phase 5 (§8.8, C10 M6; DRAFT, not before phase-4 exit): grants, device exclusion, policy and settings
+    # phase 5 (§8.8, C10 M6; owner V3-D29): grants, device exclusion, policy and settings
     "grant.requested": (
         {
             "scope": _enum("all", "workable"),

@@ -614,7 +614,7 @@ CUSTODIAL_TYPES: dict[tuple[str, str], str] = {
     ("people.changed", "ticket"): "admin",
     ("addon.disabled", "workspace"): "admin",
     ("addon.purged", "workspace"): "admin",
-    # phase 5 (§8.8, C10 M6; DRAFT, not before phase-4 exit). The host makes the grant secret itself: it admits
+    # phase 5 (§8.8, C10 M6; owner V3-D29). The host makes the grant secret itself: it admits
     # ``grant.requested`` and appends a host-actor ``grant.issued`` naming it (``grant.issued`` stays not custodial).
     ("grant.requested", "workspace"): "edit",
     ("grant.revoked", "workspace"): "edit",

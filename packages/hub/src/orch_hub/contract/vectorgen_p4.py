@@ -324,7 +324,7 @@ def build_p4(
         "no log: the hub makes the new ticket's uid",
     )
 
-    # ---- phase 5 (§8.8, C10 M6; DRAFT): grants, device exclusion, policy and settings through a channel
+    # ---- phase 5 (§8.8, C10 M6; V3-D29): grants, device exclusion, policy and settings through a channel
     def act5(name: str, action: dict[str, Any], role: Any, expect: dict[str, Any], note: str = "") -> None:
         case(name, "action", {"action": action, "role": role}, expect, 5, note)
 
@@ -412,9 +412,18 @@ def build_p4(
         ("models", {"models": None}, "not channel-settable in V3"),
         ("grant_hours_over", {"grant_hours": 169}, ""),
         ("claim_ttl_low", {"claim_ttl_min": 14}, ""),
+        ("factor", {"factor": "passkey"}, "the D66 factor key stays off the channel in V3 (V3-D29)"),
         ("empty", {}, ""),
     ):
         act5(f"action_settings_changed_{nm}", {**st, "set": v}, "admin", mal, why)
+    # V3-D29: the grant itself (incl. a terminal-printed grant for a hand-started agent) and the person's global device
+    # revocation never travel on the channel
+    for typ, why in (
+        ("grant.issued", "the host makes the grant and its secret (after grant.requested); terminal grants stay local"),
+        ("device.revoked", "the person's own PK act; device.excluded is the workspace-local channel form"),
+    ):
+        act5(f"action_{typ.replace('.', '_')}_ws_not_custodial", {"type": typ, "log": W}, "admin",
+             {"error": "not_custodial"}, why)  # fmt: skip
     vis_r = {"restricted": sorted(["p_" + "a" * 32, "u_" + U_BOB])}
     act(
         "action_visibility_by_admin",
@@ -764,7 +773,7 @@ def build_p4(
         4,
         "a new ticket's first event has based_on null",
     )  # fmt: skip
-    # phase 5 (§8.8, DRAFT): the event side of the new types at the host
+    # phase 5 (§8.8, V3-D29): the event side of the new types at the host
     pcl = {"gates": {"plan": {"approvers": ["owner"], "count": 1, "not": [], "applies": "all", "independent": False}}}
     case("custodial_event_policy_changed_ticket", "custodial",
          {**adm, "log": TICKET, "event": custodial(typ="policy.changed", log=TICKET, payload=pcl)}, ok_adm, 5,

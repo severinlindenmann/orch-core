@@ -34434,6 +34434,25 @@
    "args": {
     "action": {
      "log": "workspace",
+     "set": {
+      "factor": "passkey"
+     },
+     "type": "settings.changed"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_settings_changed_factor",
+   "note": "the D66 factor key stays off the channel in V3 (V3-D29)",
+   "phase": 5
+  },
+  {
+   "args": {
+    "action": {
+     "log": "workspace",
      "set": {},
      "type": "settings.changed"
     },
@@ -34444,6 +34463,38 @@
     "error": "malformed"
    },
    "name": "action_settings_changed_empty",
+   "phase": 5
+  },
+  {
+   "args": {
+    "action": {
+     "log": "workspace",
+     "type": "grant.issued"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "not_custodial"
+   },
+   "name": "action_grant_issued_ws_not_custodial",
+   "note": "the host makes the grant and its secret (after grant.requested); terminal grants stay local",
+   "phase": 5
+  },
+  {
+   "args": {
+    "action": {
+     "log": "workspace",
+     "type": "device.revoked"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "not_custodial"
+   },
+   "name": "action_device_revoked_ws_not_custodial",
+   "note": "the person's own PK act; device.excluded is the workspace-local channel form",
    "phase": 5
   },
   {

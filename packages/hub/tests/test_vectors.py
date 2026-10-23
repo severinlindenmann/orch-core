@@ -59,6 +59,7 @@ def test_case(case):
 
 def test_every_case_has_a_phase_and_negatives_cover_the_brief():
     names = {c["name"] for c in V["cases"]}
+    assert len(names) == len(V["cases"]), "case names are unique (core xfails and skips by name)"
     assert all(c["phase"] in (2, 3, 4, 5) for c in V["cases"])
     for must in (
         "card_under_snapshot_label",

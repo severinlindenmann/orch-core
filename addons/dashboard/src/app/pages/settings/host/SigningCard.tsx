@@ -161,7 +161,7 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
           <p className="mt-1" data-testid="click-risk-full">{CLICK_RISK}</p>
         </details>
         {card?.risk_ack && <p className="text-text-muted">Risk notice acknowledged on <time dateTime={card.risk_ack}>{fmtDateTime(card.risk_ack)}</time></p>}
-        <p data-testid="signing-state" className="text-text-muted">
+        <p data-testid="signing-state" className={on && card?.available ? "sr-only" : "text-text-muted"}>
           {on && card?.available
             ? 'On: you approve here with one click.'
             : on

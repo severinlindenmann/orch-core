@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from orch.relay import wire
 from orch.relay.rids import Crash
+from orch.wsproto import wire
 
 from .bridgekit import World, open_chunk
 

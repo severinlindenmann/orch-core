@@ -27,9 +27,9 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from orch.relay import wire
-from orch.relay.pubsign import PublishSigner, SignedPublish
-from orch.relay.sign import SignerRefused
+from orch.wsproto import wire
+from orch.wsproto.pubsign import PublishSigner, SignedPublish
+from orch.wsproto.sign import SignerRefused
 
 __all__ = ["MAX_ATTEMPTS", "PublishClient", "PublishError", "PublishResponse", "Transport", "share_target"]
 

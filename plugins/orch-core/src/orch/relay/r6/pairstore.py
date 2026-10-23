@@ -23,7 +23,7 @@
 **Writers** (11A.15.3): the pair thread; the allocation critical section (the host's step 9 hooks, under the store
 lock) and the load-time recovery are the only others. All of them go through one :class:`PairStore` per directory
 and its lock, so a record read-modify-write is never interleaved. Every file is 0600 under a 0700 directory, written
-relative to a locked directory fd (:class:`orch.relay.state.StateDir`), never through a symlink.
+relative to a locked directory fd (:class:`orch.wsproto.state.StateDir`), never through a symlink.
 """
 
 from __future__ import annotations
@@ -34,8 +34,7 @@ from pathlib import Path
 from typing import Any
 
 from orch import canon
-
-from ..state import StateDir, StateError
+from orch.wsproto.state import StateDir, StateError
 
 __all__ = ["ANSWER_LIFE_MS", "PairStore", "PairStoreError", "pairing_present"]
 

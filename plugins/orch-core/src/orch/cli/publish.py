@@ -381,7 +381,7 @@ def _check_shape(a: argparse.Namespace) -> None:
 
 
 def _check_setup(a: argparse.Namespace) -> None:
-    from orch.relay import wire
+    from orch.wsproto import wire
 
     if not a.server or not a.share_addr:
         raise PubError("invalid.input", _USAGE, 2)

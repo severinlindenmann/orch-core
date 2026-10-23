@@ -8,7 +8,7 @@ only **reads** it, for the places that must not depend on the store lock or a hu
   something else, is ``closed`` (fail closed: the host refuses to guess, as ``hub.state_mismatch`` does);
 * :func:`closed`: ``closing`` or ``closed``;
 * :func:`allows`: the allow-list of the one gate every relay connection of a workspace passes
-  (:class:`orch.relay.http.RelayConn` ``allowed=``): with the path not open, exactly the workspace's cut-over routes and
+  (:class:`orch.net.http.RelayConn` ``allowed=``): with the path not open, exactly the workspace's cut-over routes and
   the session mechanics they need (login, the holder generation the fenced writes name, relay-info). Every other route
   raises ``cut_over`` before a byte is sent. There is no bypass flag.
 * :func:`gate`: the callable a ``RelayConn`` takes, bound to one workspace (cached by the file's identity, so a relay

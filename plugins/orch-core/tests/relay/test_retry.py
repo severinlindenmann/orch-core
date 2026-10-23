@@ -8,7 +8,8 @@ import random
 
 import pytest
 
-from orch.relay import http, retry
+from orch.net import http
+from orch.relay import retry
 
 
 class Clock:
@@ -210,7 +211,7 @@ def test_max_attempts_bound():
 
 
 def test_refusal_from_response():
-    from orch.relay.http import Response
+    from orch.net.http import Response
 
     r = retry.RelayRefused.from_response(
         "R",

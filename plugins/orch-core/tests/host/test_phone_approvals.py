@@ -442,7 +442,7 @@ def test_the_hint_push_is_a_generic_wake_with_exact_payload_bytes(human, served,
     from orch.crypto import push as cpush
     from orch.relay.outbound import OutboundStore
     from orch.relay.push import HINT_KIND, HINT_LABEL, HINT_LOG, Planner
-    from orch.relay.state import StateDir
+    from orch.wsproto.state import StateDir
 
     assert HINT_KIND in cpush.PUSH_KINDS and HINT_KIND in cpush.HOST_PUSH_KINDS
     uid, key = human.ticket("Secret title")
@@ -475,7 +475,7 @@ def test_the_hint_push_is_a_generic_wake_with_exact_payload_bytes(human, served,
 def test_a_cancelled_hint_is_not_pushed(human, served, tmp_path):  # noqa: F811
     from orch.relay.outbound import OutboundStore
     from orch.relay.push import HINT_LOG, Planner
-    from orch.relay.state import StateDir
+    from orch.wsproto.state import StateDir
 
     uid, key = human.ticket()
     _ready(human, key)

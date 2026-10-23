@@ -27,12 +27,12 @@ from collections.abc import Callable, Mapping
 from typing import Any, Protocol
 
 from orch import canon
+from orch.wsproto import wire
+from orch.wsproto.state import PersistedOnce, StateDir
 
-from . import wire
 from .directory import Directory
 from .retry import Retrier
 from .session import Session
-from .state import PersistedOnce, StateDir
 
 __all__ = ["LinkRefused", "LinkSteps", "first_link"]
 

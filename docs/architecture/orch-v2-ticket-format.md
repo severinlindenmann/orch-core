@@ -3190,10 +3190,5 @@ is not `auth: "hub"` and not a break-glass event by an owner is refused (`sign.h
   `hub.handoff {kind: grant}` of the same person, binding and terms (`host/grantoff.py`); otherwise it is destroyed.
 * A hub-signed `settings.changed` sets only `grant_hours`, `claim_ttl_min`, `lease_ttl_min`; a hub-signed
   `policy.changed` never changes a stored `factor` floor; `device.excluded` is refused for an owner's device.
-* H5: `HubState.direct` (`open` | `closing` | `closed`, `hub.json`) is set by the owner's full-mode join through
-  `hub.connect` (`host/cutover.py`). From `closing` the host starts no relay thread, every `RelayConn` passes the
-  `directpath` gate (cut-over routes and session mechanics only) and direct ops answer `relay.cut_over`. The cut-over
-  rotates to a local epoch with no listed device, seals it to the hub, and for a relay-linked workspace sends
-  `PUT /v2/workspaces/{ws}/cutover {v: 2, hub_id, state: "cut_over"}`. A leave never reopens it; the owner's
-  `relay.reopened` (`orch relay reopen`, after the leave is finished) does. A join made before C10 is cut over
-  automatically only for a dev workspace holding a dev hub card.
+* No direct relay path (V3-D36, D69): a workspace host never starts a relay thread; the former H5 cut-over state is gone. The
+  relay.reopened event rows stay in the tables above only until legacy removal R4b deletes its schema.

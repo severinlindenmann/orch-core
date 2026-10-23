@@ -318,7 +318,19 @@ def _private_access(tree: ast.AST, filename: str) -> list[str]:
 
 def test_relay_package_has_modules():
     names = {m.stem for m in MODULES}
-    assert {"wire", "sign", "http", "session", "directory"} <= names, names
+    assert {"session", "directory"} <= names, names
+
+
+SRC = PKG.parent
+# R4a moved these out of orch.relay; the same ban still binds them. (path, the key ALLOWED/KEYGEN_ALLOWED use)
+MOVED = [(SRC / "wsproto" / f"{n}.py", f"{n}.py") for n in ("card", "wire", "pubsign", "sign", "state")]
+MOVED += [(SRC / "net" / "http.py", "http.py"), (SRC / "identity" / "epochs.py", "r6/keystore.py")]
+
+
+@pytest.mark.parametrize("path,rel", MOVED, ids=lambda x: x.name if isinstance(x, Path) else x)
+def test_moved_modules_keep_the_ban(path, rel):
+    pkg = ".".join(("orch", *path.relative_to(SRC).parent.parts))
+    assert violations(ast.parse(path.read_text(), filename=str(path)), rel, pkg) == []
 
 
 def scan(root: Path, root_name: str = PKG_NAME) -> dict[str, list[str]]:
@@ -393,7 +405,7 @@ BYPASSES = [
     "d = f.__defaults__",
     "import weakref",
     "import copy\nc = copy.copy(s)",
-    "from orch.relay.sign import *",
+    "from orch.wsproto.sign import *",
     # round-3 delta (R6): frames, interpreters and module patching
     "import logging\nlogging.currentframe().f_builtins['getattr'](s, '_sign_bytes')(b'x')",
     "import traceback\nfor f, _ in traceback.walk_stack(None):\n    f.f_builtins['__import__']('importlib')",
@@ -403,13 +415,13 @@ BYPASSES = [
     "x = coro.cr_frame",
     "from . import wire\nwire.auth_bytes = lambda *a: b'attacker'",
     "from orch.relay import wire\nwire.auth_bytes = lambda *a: b'attacker'",
-    "import orch.relay.wire\norch.relay.wire.auth_bytes = None",
+    "import orch.wsproto.wire\norch.wsproto.wire.auth_bytes = None",
     "from . import wire\ndel wire.auth_bytes",
     "from .sign import RelaySigner\nRelaySigner.login = evil",
     "from unittest import mock\nmock.patch.object(wire, 'auth_bytes', evil)",
     "import unittest.mock",
     "x = threading.sys.modules",
-    "from orch.relay.wire import attrgetter\nf = attrgetter('_sign_bytes')(s)",  # a re-export, not operator itself
+    "from orch.wsproto.wire import attrgetter\nf = attrgetter('_sign_bytes')(s)",  # a re-export, not operator itself
     "g = attrgetter('_sign_bytes')",
 ]
 
@@ -507,7 +519,7 @@ def test_the_ban_allows(src):
 
 def test_signer_holds_no_key_attribute():
     """The key is captured in a closure: no attribute of a RelaySigner is the key object."""
-    from orch.relay import pubsign, sign
+    from orch.wsproto import pubsign, sign
 
     from .helpers import Key
 
@@ -603,7 +615,7 @@ def _relay_built_calls(path: Path) -> list[tuple[str, int]]:
     names: set[str] = set()
     modules: set[str] = set()
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("orch.relay"):
+        if isinstance(node, ast.ImportFrom) and (node.module or "").startswith(("orch.relay", "orch.wsproto.state")):
             for a in node.names:
                 (names if a.name in R5_BUILT else modules).add(a.asname or a.name)
     out = []

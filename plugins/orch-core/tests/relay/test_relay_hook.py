@@ -15,9 +15,9 @@ import pytest
 from orch import crypto
 from orch.host import relayhook, relaylink
 from orch.host.errors import HostError
-from orch.relay import http
+from orch.net import http
 from orch.relay import worker as relay_worker
-from orch.relay.state import FileHolderStore, HolderRecord, StateDir
+from orch.wsproto.state import FileHolderStore, HolderRecord, StateDir
 from tests.host.dispatch_helpers import ok
 from tests.host.human_helpers import lab, served  # noqa: F401 - fixtures
 from tests.host.lifecycle_helpers import UID

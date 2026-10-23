@@ -12,7 +12,8 @@ from pathlib import Path
 import pytest
 
 from orch import crypto
-from orch.relay import bridge, framing, submit, wire
+from orch.relay import bridge, framing, submit
+from orch.wsproto import wire
 
 from .bridgekit import World, apply_setup, open_chunk
 

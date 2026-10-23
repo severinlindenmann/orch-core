@@ -1,4 +1,4 @@
-"""``orch.relay.http`` (11A.7): stdlib transport with verified TLS, a total monotonic deadline per call, bounded bodies,
+"""``orch.net.http`` (11A.7): stdlib transport with verified TLS, a total monotonic deadline per call, bounded bodies,
 no redirects, no environment proxies, and redaction. Fault injection against the loopback mock relay."""
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ import time
 
 import pytest
 
-from orch.relay import http
+from orch.net import http
 
 from .mock import Expect, MockRelay, Reply, json_reply, make_tls
 
@@ -202,7 +202,7 @@ def test_tls_untrusted_certificate_is_refused_never_downgraded(tls_relay):
 
 
 def test_tls_hostname_is_checked(tmp_path):
-    from orch.relay import wire
+    from orch.wsproto import wire
 
     ctx = http.tls_context(None)
     assert ctx.verify_mode == ssl.CERT_REQUIRED and ctx.check_hostname
@@ -295,7 +295,7 @@ SECRET = "TOKENSECRETxyz123"
 
 
 def test_logs_and_errors_hold_no_token_or_body(relay, caplog):
-    caplog.set_level(logging.DEBUG, logger="orch.relay")
+    caplog.set_level(logging.DEBUG, logger="orch.net")
     relay.expect(
         Expect("POST", "/v2/x", reply=json_reply(200, {"token": SECRET})),
         Expect("POST", "/v2/x", reply=Reply(body=SECRET.encode() * 100, fault="chunked")),

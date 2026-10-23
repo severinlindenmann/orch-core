@@ -33,11 +33,11 @@ from typing import Any
 from orch import canon, crypto
 from orch.identity.certs import check_cert, person_scope_ok
 from orch.identity.errors import Refused
+from orch.net.http import Transport
 from orch.store.checkpoints import verify_object as verify_checkpoint
+from orch.wsproto import card as cards
+from orch.wsproto import wire
 
-from . import card as cards
-from . import wire
-from .http import Transport
 from .retry import RelayRefused
 from .session import RelayMisbehaving, Session
 

@@ -72,8 +72,8 @@ def publish_put(service: WorkspaceService) -> Callable[[dict[str, Any]], bool] |
     set up (then it stays owed). True: publish took it (2xx), or holds a newer binding (409 ``stale_binding``)."""
     from orch.canon.jcs import dumps as cj
     from orch.publishclient import Transport
-    from orch.relay import wire
     from orch.store.render import thaw
+    from orch.wsproto import wire
 
     cfg = thaw(service.store.state.workspace.settings.get("publish"))
     if not isinstance(cfg, dict) or not isinstance(cfg.get("server"), str):

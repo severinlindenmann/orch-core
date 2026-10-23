@@ -9,7 +9,7 @@ import pytest
 
 from orch import crypto
 from orch.identity import certreq, pairing
-from orch.relay import wire
+from orch.wsproto import wire
 
 from . import corpus
 from .helpers import WS, WSK_PUB

@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "market.duplicate_id",
+    "message": "two entries have the same id",
+    "hint": "fix the index",
+    "fix": {
+      "argv": [
+        "orch",
+        "market",
+        "list"
+      ]
+    },
+    "retryable": false
+  }
+}

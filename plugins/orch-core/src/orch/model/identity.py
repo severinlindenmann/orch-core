@@ -88,9 +88,13 @@ def _lower(a: str, b: str) -> str:
     return a if ROLE_ORDER.index(a) >= ROLE_ORDER.index(b) else b
 
 
-def _snapshot_role(ws: WsCore, user_id: str) -> str | None:
+def _snapshot(ws: WsCore) -> Any:
     h = ws.hub
-    snap = (h.get("ledger", {}).get(h.get("hub_id"), {}) or {}).get("snapshot")
+    return (h.get("ledger", {}).get(h.get("hub_id"), {}) or {}).get("snapshot")
+
+
+def _snapshot_role(ws: WsCore, user_id: str) -> str | None:
+    snap = _snapshot(ws)
     role = ((snap or {}).get("o", {}).get("roles", {}) or {}).get(user_id)
     return HUB_ROLE.get(role) if type(role) is str else None
 
@@ -120,6 +124,38 @@ def role_of(ws: WsCore, ident: str) -> str | None:
         hub_role = _snapshot_role(ws, ident[2:])
         return None if hub_role is None else _lower(m.role, hub_role)
     return _snapshot_role(ws, ident[2:]) if h.get("mode") == "full" else None
+
+
+def member_role(ws: WsCore, person: str) -> str | None:
+    """The effective role of the workspace member ``person`` (``p_...``) for what its AGENTS may do (#1133).
+
+    Standalone, hub left, or selective mode: the member's role. Full mode: the **lower** of the member's role and the
+    hub role of the user aliased to ``person`` in the joined hub's book, ``None`` when no user is aliased to it or the
+    hub gave that user no role (removed from the group). The one place agent authority reads the hub projection."""
+    m = ws.members.get(person)
+    if m is None:
+        return None
+    h = ws.hub
+    if not h or h.get("status") != "joined" or h.get("mode") != "full":
+        return m.role
+    if _snapshot(ws) is None:  # no snapshot pinned yet: the hub has taken nothing away, the member's role stands
+        return m.role
+    uid = (h.get("alias_book", {}).get(h.get("hub_id"), {}) or {}).get(person[2:])
+    hub_role = _snapshot_role(ws, uid) if type(uid) is str else None
+    return None if hub_role is None else _lower(m.role, hub_role)
+
+
+def persons(ws: WsCore) -> set[str]:
+    """Every canonical person who counts as a participant now: the members, plus (full mode) every hub user the pinned
+    snapshot gives a role, aliased ones merged with their member (#1134)."""
+    out = set(ws.members)
+    h = ws.hub
+    if h and h.get("status") == "joined" and h.get("mode") == "full":
+        snap = _snapshot(ws)
+        for uid in (snap or {}).get("o", {}).get("roles", {}) or {}:
+            if _snapshot_role(ws, uid) is not None:
+                out.add(canonical(ws, "u_" + uid))
+    return out
 
 
 LOOKUP: Any = object()  # "look the role up with role_of" (the default of the role parameters of the type rules)

@@ -613,6 +613,83 @@ _SPECS = [
     ),
 ]
 
+# V3 G2: the add-on marketplace (docs/architecture/orch-v2-marketplace.md section 13, plus three of the host's own).
+# Every refusal carries the fixed text below and never echoes index or package content. exit: 3 refused, 5 invalid,
+# 9 retryable.
+_MARKET = (
+    ("market.malformed", 5, False, "the marketplace index is not valid", "the file or the URL breaks the format"),
+    ("market.unpinned", 5, False, "an entry is not pinned to a full commit id", "a branch, tag or short id is refused"),
+    ("market.bad_digest_format", 5, False, "an entry digest is not sha256: plus 64 hex", "fix the index"),
+    ("market.duplicate_id", 5, False, "two entries have the same id", "fix the index"),
+    ("market.source_mismatch", 3, False, "the index is not the one added from this URL", "check the marketplace URL"),
+    (
+        "market.index_unsigned",
+        3,
+        False,
+        "the index has no valid signature by the pinned key",
+        "wait for a signed index",
+    ),
+    ("market.rollback", 3, False, "this is older than what was already seen", "an older index or entry is refused"),
+    (
+        "market.community_unisolated",
+        3,
+        False,
+        "only the official marketplace can be added for now",
+        "other marketplaces need per-add-on user isolation",
+    ),
+    ("market.blocked", 3, False, "the hub blocks this marketplace", "ask the hub admin"),
+    ("market.not_allowed", 3, False, "the hub does not allow this marketplace", "ask the hub admin"),
+    ("market.unknown_addon", 3, False, "the marketplace has no add-on with this id", "orch market list --entries"),
+    ("market.revoked", 3, False, "this add-on version is revoked by the marketplace", "pick another version"),
+    ("market.host_not_allowed", 3, False, "the add-on repository host is not allowed", "orch market list"),
+    ("market.reserved_id", 3, False, "this id belongs to a built-in or official add-on", "pick another id"),
+    ("market.origin_changed", 3, False, "the installed add-on came from another marketplace", "orch addon list"),
+    ("market.version_reused", 3, False, "the version number is installed with other bytes", "raise the version"),
+    ("market.official_unsigned", 3, False, "an official entry lacks the official publisher signature", "wait"),
+    ("market.bad_signature", 3, False, "a signature does not verify", "the entry is refused"),
+    (
+        "market.publisher_key_changed",
+        3,
+        False,
+        "the publisher key differs from the remembered one",
+        "orch market trust --replace",
+    ),
+    ("market.capability_ceiling", 3, False, "the add-on asks for more than the hub allows", "ask the hub admin"),
+    ("market.min_orch", 3, False, "this orch is older than the add-on needs", "update orch"),
+    (
+        "market.address_refused",
+        3,
+        False,
+        "the marketplace host resolves to an address orch does not connect to",
+        "only public addresses are used",
+    ),
+    ("market.fetch_failed", 9, True, "the marketplace could not be fetched", "check the network and try again"),
+    ("market.commit_mismatch", 3, False, "the fetched commit is not the pinned one", "the pin is refused"),
+    ("market.package_invalid", 5, False, "the package breaks the package rules", "fix the package"),
+    ("market.digest_mismatch", 3, False, "the package digest is not the one in the index", "the entry is refused"),
+    ("market.manifest_mismatch", 3, False, "the manifest and the index entry disagree", "the entry is refused"),
+    ("market.lock_missing", 5, False, "the lockfile named by the manifest is missing", "fix the package"),
+    ("market.lock_invalid", 5, False, "the lockfile breaks the lockfile rules", "fix the package"),
+    ("market.staged_changed", 3, False, "the staged package changed after review", "start again"),
+    ("market.env_failed", 5, False, "the dependency environment could not be built", "see the add-on's lockfile"),
+    ("market.env_changed", 3, False, "the dependency environment no longer matches its stamp", "reinstall the add-on"),
+    ("market.actor_refused", 3, False, "a person does this at their own terminal; an agent cannot", "ask the person"),
+    # the host's own (not in the spec's table)
+    (
+        "market.state_invalid",
+        5,
+        False,
+        "the marketplace records of this workspace are not readable",
+        "the host does not guess: repair or remove the market directory",
+    ),
+    ("market.refresh_running", 9, True, "a refresh of this marketplace is already running", "try again in a moment"),
+    ("market.already_added", 3, False, "this marketplace is already added", "orch market refresh"),
+)
+_SPECS += [
+    _e(code, exit_, retry, msg, hint, ["orch", "market", "list"], "Marketplace refusal (spec section 13): " + msg + ".")
+    for code, exit_, retry, msg, hint in _MARKET
+]
+
 ERRORS: dict[str, ErrorSpec] = {s.code: s for s in _SPECS}
 assert len(ERRORS) == len(_SPECS), "duplicate error code"
 

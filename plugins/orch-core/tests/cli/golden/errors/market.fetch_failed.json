@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "market.fetch_failed",
+    "message": "the marketplace could not be fetched",
+    "hint": "check the network and try again",
+    "fix": {
+      "argv": [
+        "orch",
+        "market",
+        "list"
+      ]
+    },
+    "retryable": true
+  }
+}

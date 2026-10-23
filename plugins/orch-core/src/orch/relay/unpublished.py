@@ -47,10 +47,11 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
-from .http import TransportError
+from orch.net.http import TransportError
+from orch.wsproto.state import StateDir, StateError
+
 from .retry import RelayRefused
 from .session import Session
-from .state import StateDir, StateError
 
 __all__ = [
     "FILE", "FULL_EVERY_MS", "LEDGER_MAX", "MIRROR", "STANDINGS", "Ledger", "UnpublishedConsumer", "held_pairs",

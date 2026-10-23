@@ -34,12 +34,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from orch import crypto
+from orch.net.http import Transport
+from orch.wsproto import wire
+from orch.wsproto.sign import RelaySigner
+from orch.wsproto.state import HolderRecord, HolderStore, StateError
 
-from . import wire
-from .http import Transport
 from .retry import RelayRefused
-from .sign import RelaySigner
-from .state import HolderRecord, HolderStore, StateError
 
 __all__ = [
     "Fenced",

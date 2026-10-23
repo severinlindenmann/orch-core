@@ -5,7 +5,7 @@ R6 is a security dependency of R2, not a fixture (11A.1): R2 is tested against a
 (R5) does not start the poll thread until R6 is merged. Nothing here writes R6 state.
 
 * :class:`BridgeKeys` opens a request body and seals a response chunk; it hands out plaintext or envelopes, never a key
-  (11A.2 "Epoch keys are used only through BridgeKeys"). It is also the :class:`orch.relay.sign.EpochKeys` the signer
+  (11A.2 "Epoch keys are used only through BridgeKeys"). It is also the :class:`orch.wsproto.sign.EpochKeys` the signer
   asks before it signs a chunk (burned keys count as held there, proto §8.5 G2b).
 * **G1, the seal gate** (orch-52 / R6 design #473): every chunk is sealed inside :meth:`BridgeKeys.sealing`, which
   holds the seal lock and takes ONE snapshot of the seal state (:class:`SealState`: the committed epoch, the rotation
@@ -40,9 +40,11 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from orch.crypto import push as cpush
+from orch.identity.epochs import SealState
+from orch.wsproto import wire
+from orch.wsproto.sign import RelaySigner
 
-from . import framing, wire
-from .sign import RelaySigner
+from . import framing
 
 __all__ = [
     "BridgeKeys", "EpochKeySource", "KeyMissing", "Member", "MemberList", "R6View", "SealRefused", "SealState",
@@ -57,17 +59,6 @@ class KeyMissing(Exception):
 
 class SealRefused(Exception):  # noqa: N818 - the gate's verdict, not an I/O error
     """G1: data may not be sealed under this epoch now (old, burned or gated): the caller answers with a refusal."""
-
-
-@dataclass(frozen=True)
-class SealState:
-    """One seal-time snapshot (G1). ``current``: the committed epoch, the only one data is sealed under; ``gated``:
-    the rotation gate is up (proto §7.2 H5: no new sealing of data even under ``current``); ``stale_target``: the
-    epoch a ``stale_epoch`` names for a burned or gated request: the pending epoch, else ``EHW + 1``."""
-
-    current: int
-    gated: bool
-    stale_target: int
 
 
 class EpochKeySource(Protocol):
@@ -151,7 +142,7 @@ class BridgeKeys:
         return self._source.is_burned(epoch)
 
     def holds(self, epoch: int) -> bool:
-        """For the signer (:class:`orch.relay.sign.EpochKeys`): served or burned (G2b: a burned key counts as held)."""
+        """For the signer (:class:`orch.wsproto.sign.EpochKeys`): served or burned (G2b: burned counts as held)."""
         return self.serves(epoch) or self.burned(epoch)
 
     def _wk(self, epoch: int) -> bytes:

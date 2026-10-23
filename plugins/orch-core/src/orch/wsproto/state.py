@@ -8,7 +8,7 @@
   file is opened relative to a directory fd with ``O_NOFOLLOW``, must be a regular file owned by this UID with mode
   ``0600``, and is written as a temp file (``O_CREAT | O_EXCL | O_NOFOLLOW``, ``0600``) + ``fsync`` + ``rename`` +
   directory ``fsync``. A symlink, a foreign owner or a wider mode is refused (:class:`StateError`), never repaired.
-* :class:`FileSignLedger`: the last-signed ledger of :class:`orch.relay.sign.RelaySigner` (review M2). An entry is
+* :class:`FileSignLedger`: the last-signed ledger of :class:`orch.wsproto.sign.RelaySigner` (review M2). An entry is
   durable before the signature leaves the signer.
 * :class:`PersistedOnce`: write-once bytes (the genesis pin and the card of the first link, review L1): the first value
   is kept and every later call gets the stored bytes back.
@@ -46,7 +46,7 @@ __all__ = [
     "regenerate_instance_id",
 ]
 
-log = logging.getLogger("orch.relay.state")
+log = logging.getLogger("orch.wsproto.state")
 
 MAX_FILE = 1 << 20
 BIG_FILE = 8 << 20  # R3's staging manifest (<= 4 MiB) and restore records (a final body <= 2.6 MiB plus its source)

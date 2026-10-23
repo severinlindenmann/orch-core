@@ -13,7 +13,7 @@ import time
 
 import pytest
 
-from orch.relay import http as rhttp
+from orch.net import http as rhttp
 from orch.relay.framing import MAX_ANSWER
 from orch.relay.retry import RelayRefused
 from orch.relay.session import Fenced, LoginHeldOff

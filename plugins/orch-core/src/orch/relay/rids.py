@@ -54,7 +54,7 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from .state import StateDir, StateError
+from orch.wsproto.state import StateDir, StateError
 
 __all__ = [
     "CHUNK_KEEP_MS",

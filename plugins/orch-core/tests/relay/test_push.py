@@ -230,7 +230,7 @@ def test_the_sealer_is_built_only_by_push_sealing_and_refuses_a_bad_payload(kit)
 
 def test_the_signer_signs_a_push_only_for_a_held_epoch_a_host_kind_and_a_padded_label(kit):
     from orch.crypto import push as cpush
-    from orch.relay.sign import SignerRefused
+    from orch.wsproto.sign import SignerRefused
 
     good = cpush.push_payload("question", "qid", "hello", 5)
     assert len(kit.signer.push(1, good)) == 64
@@ -581,7 +581,7 @@ def test_a_custody_refusal_stops_the_push_thread_without_retry(kit):
 
 
 def test_a_state_error_also_stops_the_push_thread(kit):
-    from orch.relay.state import StateError
+    from orch.wsproto.state import StateError
 
     _drive(kit, lambda: StateError("custody"), lambda: ("push_stopped", "StateError") in kit.alarms)
     assert kit.thread.join(10) and "push_error" not in kit.alarms.codes()
@@ -713,7 +713,7 @@ def test_seal_step_loops_past_an_all_dropped_batch(kit):
 
 
 def test_a_newer_outbox_schema_is_refused_with_a_clear_error(tmp_path):
-    from orch.relay.state import StateDir
+    from orch.wsproto.state import StateDir
 
     sd = StateDir(tmp_path / "st")
     ob = outbound.OutboundStore(sd, instance_id="i" * 32, now_ms=1)

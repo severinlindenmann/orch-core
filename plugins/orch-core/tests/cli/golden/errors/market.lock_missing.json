@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "market.lock_missing",
+    "message": "the lockfile named by the manifest is missing",
+    "hint": "fix the package",
+    "fix": {
+      "argv": [
+        "orch",
+        "market",
+        "list"
+      ]
+    },
+    "retryable": false
+  }
+}

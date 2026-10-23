@@ -31,7 +31,7 @@ def lapse_reason(ws: WsCore, t: TCore, at: int) -> str | None:
         return "released"
     if c.ended is not None:
         return c.ended
-    if c.for_person not in ws.members:
+    if identity.member_role(ws, c.for_person) in (None, "viewer"):  # removed, or no longer allowed agents (#1133)
         return "member_removed"
     if grant_ended(ws, c.grant, at):
         return "grant_ended"

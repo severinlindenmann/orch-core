@@ -24,7 +24,7 @@ from orch import crypto
 from orch.host import publishing
 from orch.publishclient import PublishClient, PublishError, flow
 from orch.publishclient.client import Transport
-from orch.relay.pubsign import PublishContext, PublishSigner, publish_signed_bytes
+from orch.wsproto.pubsign import PublishContext, PublishSigner, publish_signed_bytes
 from tests.host.dispatch_helpers import Served, err, ok
 from tests.host.human_helpers import Human
 from tests.host.lifecycle_helpers import Lab

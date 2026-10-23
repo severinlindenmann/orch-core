@@ -13,12 +13,12 @@ from pathlib import Path
 import pytest
 
 from orch.identity import pairing
-from orch.relay import sign, wire
+from orch.identity.epochs import CustodyRefused, R6Gate
 from orch.relay.bridge import Bridge
 from orch.relay.keys import BridgeKeys, MemberList, SealRefused
-from orch.relay.r6.keystore import CustodyRefused, R6Gate
 from orch.relay.rids import RidStore
-from orch.relay.state import StateDir
+from orch.wsproto import sign, wire
+from orch.wsproto.state import StateDir
 
 from .bridgekit import LIST_HASH, Clock, FakeHost, Phone, Poster, World, open_chunk
 from .helpers import WS, Key
@@ -117,7 +117,7 @@ def test_a_crash_after_the_orphan_recovery_write_is_idempotent(tmp_path):
 CHILD = textwrap.dedent(
     """
     import os, signal, sys
-    from orch.relay.r6.keystore import MembershipKeys
+    from orch.identity.epochs import MembershipKeys
     root, ws, point = sys.argv[1], sys.argv[2], sys.argv[3]
 
     def fault(p):

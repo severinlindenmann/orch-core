@@ -51,8 +51,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from orch import canon
-
-from . import wire
+from orch.wsproto import wire
 
 __all__ = [
     "MAX_ANSWER",

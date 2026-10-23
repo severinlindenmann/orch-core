@@ -13,9 +13,9 @@ import pytest
 from orch import canon
 from orch.relay import publish
 from orch.relay.publish import History, PublishHeld
-from orch.relay.state import StateDir
 from orch.store.checkpoints import sign_object
 from orch.store.errors import StoreError
+from orch.wsproto.state import StateDir
 
 from .mock import json_reply
 from .pubkit import Kit
@@ -873,7 +873,7 @@ def test_a_413_without_a_code_on_the_final_put_is_too_large(kit):
 
 
 def test_a_conflicting_archived_segment_is_a_state_error(tmp_path, monkeypatch):
-    from orch.relay.state import StateError
+    from orch.wsproto.state import StateError
 
     monkeypatch.setattr(publish, "HISTORY_SEGMENT", 3)
     st = StateDir(tmp_path / "h")
@@ -1113,7 +1113,7 @@ def test_f4_without_a_host_level_a_convenience_restore_is_held_whatever_relay_in
 
 
 def test_f5_a_redirect_on_the_renewal_is_alarmed_and_stops_the_first_link(kit, monkeypatch):
-    from orch.relay.http import RedirectRefused
+    from orch.net.http import RedirectRefused
 
     from .mock import Reply
 

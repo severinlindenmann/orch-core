@@ -10,7 +10,7 @@ import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
-from orch.relay.http import RelayConn, Transport, TransportError
+from orch.net.http import RelayConn, Transport, TransportError
 
 from .token import NoToken, Token
 

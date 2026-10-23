@@ -264,7 +264,7 @@ def engine_for(service: Any) -> Any:
     ``membership/`` is never created here."""
     from orch.relay.r6.pair import PairContext, PairEngine, UnavailableMembership
     from orch.relay.r6.pairstore import PairStore
-    from orch.relay.sign import LinkContext, RelaySigner
+    from orch.wsproto.sign import LinkContext, RelaySigner
 
     from .relayr6 import keys_for
 

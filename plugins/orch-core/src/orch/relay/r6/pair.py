@@ -48,10 +48,10 @@ from orch.identity import answers, certreq, pairing
 from orch.identity.certs import check_cert, verify_cert
 from orch.identity.errors import Refused
 from orch.identity.pairdevice import PHONE_SCOPES, PairDeviceFacts, PairDeviceInvalid, cert_digest
+from orch.wsproto import wire
+from orch.wsproto.sign import RelaySigner, SignerRefused
+from orch.wsproto.state import StateError
 
-from .. import wire
-from ..sign import RelaySigner, SignerRefused
-from ..state import StateError
 from .pairstore import ANSWER_LIFE_MS, PairStore, PairStoreError
 
 __all__ = [

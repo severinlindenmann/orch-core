@@ -7,8 +7,9 @@ import secrets
 
 import pytest
 
-from orch.relay import bridge, wire
+from orch.relay import bridge
 from orch.relay.bridge import Item
+from orch.wsproto import wire
 
 from .bridgekit import Phone, World, open_chunk
 

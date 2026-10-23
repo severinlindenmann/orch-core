@@ -12,7 +12,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { queries } from '@/api/queries'
 import { CopyButton } from '../General'
-import { Raw } from '@/components/sign/visible'
+import { visible } from '@/components/sign/visible'
 import { DASHBOARD_EXECUTION_LINE, TERMINAL_COMMANDS } from '@/api/quickRecords'
 import { SigningCard } from './SigningCard'
 import { HostAlarms } from '@/components/dev/DevHost'
@@ -81,7 +81,7 @@ export function HostGeneral({ workspace }: { workspace: Workspace }) {
           </Popover>}
         </div>
         <div className="min-w-0 space-y-1 break-words">
-          <h2 className="text-xl font-semibold"><Raw>{workspace.name}</Raw></h2>
+          <h2 className="text-[22px] font-semibold leading-tight"><bdi>{visible(workspace.name)}</bdi></h2>
           <p className="text-[13px] text-text-muted">Tickets are numbered {workspace.prefix}-0001, {workspace.prefix}-0002 ...</p>
         </div>
       </header>

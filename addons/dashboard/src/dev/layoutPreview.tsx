@@ -14,6 +14,9 @@ import { SettingsFrame } from '@/app/pages/settings'
 import { HostGeneral } from '@/app/pages/settings/host/General'
 import { RecordsBlock } from '@/app/pages/settings/host/Records'
 import { HostAddOns } from '@/app/pages/settings/host/AddOns'
+import { HostGates } from '@/app/pages/settings/host/Gates'
+import { HostGrants } from '@/app/pages/settings/host/Grants'
+import { HostMembers } from '@/app/pages/settings/host/Members'
 import { HostDevices } from '@/app/pages/settings/host/Devices'
 import { createPairFixture, installPairFixture, type PairFixture, type PairFixtureOptions } from './pairFixture'
 import type { MemberDevice, PairMember, PairOfferStatus } from '@/api/pairing'
@@ -40,10 +43,10 @@ import { Section } from '@/app/pages/new-ticket/SectionsEditor'
 import { ClickSignPanel } from '@/components/sign/ClickSignPanel'
 import { storyOf } from '@/components/sign/story'
 import { signerProblem } from '@/api/refusals'
-import type { RosterMember } from '@/api/settings'
+import type { HostGrant, HostPolicy, PolicyGate, RosterMember } from '@/api/settings'
 import type { Workspace } from '@/api/types'
 import { ClickProblemBox } from '@/components/sign/RefusalDevices'
-import { readersOf, readersRoster, refusalSamples } from './readersFixture'
+import { ME as READER_ME, MARA, readersOf, readersRoster, refusalSamples } from './readersFixture'
 import { setFeatures } from '@/api/features'
 import { NewTicketPage } from '@/app/pages/new-ticket'
 import { TicketPage } from '@/app/pages/ticket'
@@ -122,6 +125,13 @@ export const LAYOUT_SCENARIOS = [
   'drop-errors',
   'drop-versions',
   'drop-phone',
+  // Run 8 V1: the final Settings pages (General, People, Approvals, Agent access) with fixture answers.
+  'settings-general',
+  'settings-members',
+  'settings-approvals',
+  'settings-approvals-stuck',
+  'settings-access',
+  'settings-access-empty',
   // B11 (finding 9): the New ticket form with a signed hand-off; Create opens ONE review of the ticket and its text.
   'new-sequence',
   // U4: the same form on a host that can start agents: with a usable agent access, and without one.
@@ -218,6 +228,21 @@ const quickRows = (scenario: LayoutScenario): QuickRow[] =>
         quickRow(4, { title: 'Fix the typo in CONTRIBUTING' }),
       ]
 
+const gatePolicy = (over: Partial<HostPolicy> = {}): HostPolicy => ({ approvers: ['owner'], count: 1, not: [], applies: 'all', independent: false, ...over })
+/** The three questions, one of each kind: a preset, another preset, a custom rule (and, when stuck, a count nobody can meet). */
+const settingsGates = (scenario: LayoutScenario): Record<PolicyGate, HostPolicy> => ({
+  requirements: gatePolicy(),
+  plan: scenario === 'settings-approvals-stuck' ? gatePolicy({ approvers: ['owner', 'maintainer'], count: 9 }) : gatePolicy({ approvers: ['maintainer', 'owner'] }),
+  verify: gatePolicy({ approvers: ['reviewers'], not: ['assignees'] }),
+  code: gatePolicy({ approvers: ['maintainer', 'owner'], not: ['assignees'], applies: 'off', independent: true }),
+})
+const accessGrants = (scenario: LayoutScenario): HostGrant[] =>
+  scenario === 'settings-access-empty'
+    ? []
+    : [
+        { id: 'gr_' + '0'.repeat(25) + 'A', person: READER_ME, scope: 'workable', verbs: 'agent', issued_at: '2026-10-23T08:00:00Z', expires_at: new Date(Date.now() + 3 * 86_400_000).toISOString(), revoked: null, sessions: 2, session_ids: [], sessions_more: null, label: 'runner' },
+        { id: 'gr_' + '0'.repeat(25) + 'B', person: MARA, scope: 'workable', verbs: 'agent', issued_at: '2026-10-20T08:00:00Z', expires_at: new Date(Date.now() - 86_400_000).toISOString(), revoked: { at: '2026-10-21T09:00:00Z', by: READER_ME, seq: 4 }, sessions: 0, session_ids: [], sessions_more: null, label: null },
+      ]
 const records = (scenario: LayoutScenario): RecordsStatus => {
   const base: RecordsStatus = {
     available: true,
@@ -587,6 +612,7 @@ const pairOptions = (scenario: LayoutScenario): PairFixtureOptions => {
 /** The roster a scenario reads: the pair fixture's members for `pair-*`, else the readers fixture. */
 function rosterFor(scenario: LayoutScenario): RosterMember[] {
   if (scenario.startsWith('pair-')) return ({ ...pairOptions(scenario), ...pairOverride }.members ?? []) as RosterMember[]
+  if (scenario === 'settings-approvals-stuck') return readersRoster().slice(0, 1)
   return readersRoster()
 }
 const DAY = 86_400_000
@@ -816,8 +842,8 @@ function install() {
     claim_ttl_min: 120,
     lease_ttl_min: 60,
     defaults: ['claim_ttl_min', 'lease_ttl_min'],
-    gates: {},
-    repos: [{ name: 'code', default_branch: 'main', remote: LONG_URL }],
+    gates: current.startsWith('settings-approvals') ? settingsGates(current) : {},
+    repos: current === 'settings-general' ? [] : [{ name: 'code', default_branch: 'main', remote: LONG_URL }],
     repos_more: false,
     models: current.startsWith('new-sequence-start') ? { 'claude-code': { work: 'opus' } } : current.startsWith('addons-model-routing') ? { 'claude-code': { work: 'sonnet', refine: 'opus', context: 'haiku' }, codex: { fix: 'gpt-5.4' } } : null,
     settings_at: null,
@@ -825,7 +851,8 @@ function install() {
   }))
   // H12d-2: `/members` and `/readers` in the real shape. The pair scenarios read the pair fixture's members.
   set('getRoster', async () => rosterFor(current))
-  set('getReaders', async () => readersOf(rosterFor(current), current === 'readers-devices' ? 1 : 0))
+  set('listHostGrants', async (_ws: string, active: boolean) => accessGrants(current).filter((g) => !active || (!g.revoked && Date.parse(g.expires_at) > Date.now())))
+  set('getReaders', async () => readersOf(rosterFor(current), current === 'readers-devices' || current === 'settings-members' ? 1 : 0))
   set('getHandoff', async (_ws: string, id: string): Promise<HandoffState> => ({ id, state: 'prepared', op: opOf.get(id) ?? 'new', key: null, expires_at: new Date(Date.now() + 600_000).toISOString(), event_ids: [], seq: null }))
   set('cancelHandoff', async (_ws: string, id: string) => ({ id, state: 'cancelled' }))
 }
@@ -926,6 +953,10 @@ export function LayoutPreview({ name }: { name: string }) {
         {scenario.endsWith('-open') && <OpenAddOnPanel customize={scenario === 'addons-model-routing-open'} />}
       </SettingsFrame>
     )
+  if (scenario === 'settings-general') return <SettingsFrame current="general" addon={undefined} ws={workspace.id} tabs={HOST_TABS}><HostGeneral workspace={{ ...workspace, click: signingCard('signing-off'), icon_known: true }} /></SettingsFrame>
+  if (scenario === 'settings-members') return <SettingsFrame current="members" addon={undefined} ws={workspace.id} tabs={HOST_TABS}><HostMembers workspace={workspace} /></SettingsFrame>
+  if (scenario.startsWith('settings-approvals')) return <SettingsFrame current="gates" addon={undefined} ws={workspace.id} tabs={HOST_TABS}><HostGates workspace={workspace} /></SettingsFrame>
+  if (scenario.startsWith('settings-access')) return <SettingsFrame current="grants" addon={undefined} ws={workspace.id} tabs={HOST_TABS}><HostGrants workspace={workspace} /></SettingsFrame>
   if (scenario.startsWith('records-'))
     return (
       <SettingsFrame current="records" addon={undefined} ws={workspace.id} tabs={HOST_TABS}>

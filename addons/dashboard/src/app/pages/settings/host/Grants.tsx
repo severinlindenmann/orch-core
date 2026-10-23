@@ -114,7 +114,7 @@ export function HostGrants({ workspace }: { workspace: Workspace }) {
             return (
               <article key={g.id} data-testid="grant-card" aria-label={`${who}’s agents`} className="space-y-3 rounded-lg border border-border bg-surface p-4">
                 <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="text-[14px] font-medium"><Raw>{name(g.person)}</Raw>’s agents</h3>
+                  <h3 className="text-[14px] font-medium"><bdi>{who}</bdi>’s agents</h3>
                   <span className={orphan ? 'rounded-full border border-border px-2 py-px text-[11px] text-text-muted' : 'rounded-full border border-brand/40 px-2 py-px text-[11px] text-brand'}>{orphan ? 'Not in use' : 'Active'}</span>
                   {g.label === 'runner' && <span data-testid="runner-grant-tag" className="text-[11px] text-text-faint">on this computer</span>}
                 </div>

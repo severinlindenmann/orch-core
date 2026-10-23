@@ -181,7 +181,7 @@ export function HostMembers({ workspace }: { workspace: Workspace }) {
       <div className="flex items-center gap-2">
         <h2 className="flex-1 text-base font-semibold">People</h2>
         {mayAdd && (
-          <Button size="sm" onClick={() => setAdding(true)}>
+          <Button size="sm" variant="outline" onClick={() => setAdding(true)}>
             <UserPlus />
             Add person
           </Button>
@@ -206,7 +206,7 @@ export function HostMembers({ workspace }: { workspace: Workspace }) {
                 <PersonAvatar id={m.person} name={m.name} size="default" />
                 <div className="min-w-0 flex-1 basis-40">
                   <div className="truncate text-[14px] font-medium">
-                    {m.name_hidden ? <span className="text-warning">Name not shown: it has invisible characters</span> : <Raw>{m.name}</Raw>}
+                    {m.name_hidden ? <span className="text-warning">Name not shown: it has invisible characters</span> : <bdi>{name}</bdi>}
                   </div>
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-text-muted">
                     <span>{deviceLine(m.devices, mine)}</span>
@@ -225,7 +225,7 @@ export function HostMembers({ workspace }: { workspace: Workspace }) {
                   className="h-8 rounded-full border border-border bg-bg px-3 text-[13px] disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {ROLES.map((r) => (
-                    <option key={r} value={r}>{r}</option>
+                    <option key={r} value={r}>{ROLE_LABEL[r]}</option>
                   ))}
                 </select>
                 {mayRemove(m.role) && (

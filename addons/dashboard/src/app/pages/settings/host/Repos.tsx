@@ -164,7 +164,7 @@ export function ReposSection({ workspace, data, onSettled }: { workspace: Worksp
           {data.repos_more && <p className="mt-2 text-[12px] text-text-muted">More repositories exist than are listed here.</p>}
           <div className="mt-3 flex flex-wrap items-center gap-3">
             {mayEdit && (
-              <Button size="sm" onClick={() => open()}>
+              <Button size="sm" variant="outline" onClick={() => open()}>
                 <Plus />
                 Add folder
               </Button>

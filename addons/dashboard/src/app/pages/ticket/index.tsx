@@ -199,7 +199,7 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
 
   return (
     <TicketEditProvider ticket={ticket} viewer={viewer}><div className="mx-auto min-w-0 max-w-[1280px] space-y-4 pb-12">
-      <TicketHeader ticket={ticket} viewer={viewer} sign={setSigning} jump={jump} signing={signPending} />
+      <TicketHeader ticket={ticket} viewer={viewer} sign={setSigning} signing={signPending} />
       <GatesStrip ticket={ticket} viewer={viewer} />
       {!wide && <PropertiesStrip ticket={ticket} viewer={viewer} />}
 

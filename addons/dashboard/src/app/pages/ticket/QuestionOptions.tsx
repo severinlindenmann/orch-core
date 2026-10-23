@@ -1,6 +1,6 @@
 import type { QuestionStatus } from '@/api/types'
 import { cn } from '@/lib/utils'
-import { Inline } from '@/components/sign/visible'
+import { Inline, Raw, visible } from '@/components/sign/visible'
 import { RecommendedTag } from './shared'
 
 /** "Short title: the longer text" as two parts when the label has that shape; otherwise the whole label is the text. */
@@ -20,6 +20,7 @@ export function QuestionOptions({
   onChange,
   idPrefix,
   readOnly = false,
+  disabled = false,
 }: {
   q: QuestionStatus
   name: string
@@ -27,6 +28,8 @@ export function QuestionOptions({
   onChange?: (key: string) => void
   idPrefix: string
   readOnly?: boolean
+  /** The answer is being signed (or is): the choice cannot change under the strip. */
+  disabled?: boolean
 }) {
   const options = q.options ?? []
   return (
@@ -46,6 +49,7 @@ export function QuestionOptions({
                 <span className="text-[13px] font-medium text-text">
                   <Inline>{title ?? text}</Inline>
                 </span>
+                {o.key.length > 2 && <span aria-hidden className="font-mono text-[11px] text-text-muted">option <Raw>{o.key}</Raw></span>}
                 {recommended && <RecommendedTag />}
                 {o.cost && <span className="text-[11px] text-text-muted">{o.cost}</span>}
               </span>
@@ -68,11 +72,11 @@ export function QuestionOptions({
             key={o.key}
             htmlFor={`${idPrefix}-${o.key}`}
             className={cn(
-              'flex cursor-pointer items-start gap-3 rounded-md border px-3 py-2 hover:bg-surface-2 has-[:checked]:border-brand has-[:checked]:bg-brand-soft has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-brand/40',
+              disabled ? 'opacity-60' : 'cursor-pointer hover:bg-surface-2', 'flex items-start gap-3 rounded-md border px-3 py-2 has-[:checked]:border-brand has-[:checked]:bg-brand-soft has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-brand/40',
               recommended ? 'border-border-strong' : 'border-border',
             )}
           >
-            <input type="radio" id={`${idPrefix}-${o.key}`} name={name} value={o.key} checked={value === o.key} onChange={() => onChange?.(o.key)} className="sr-only" aria-label={`${o.key}: ${o.label}`} />
+            <input type="radio" id={`${idPrefix}-${o.key}`} name={name} value={o.key} checked={value === o.key} disabled={disabled} onChange={() => onChange?.(o.key)} className="sr-only" aria-label={`${visible(o.key)}: ${visible(o.label)}${recommended ? ', recommended' : ''}${o.cost ? `, ${visible(o.cost)}` : ''}`} />
             {body}
           </label>
         )

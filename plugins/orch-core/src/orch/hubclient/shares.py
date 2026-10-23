@@ -3,7 +3,8 @@
 
 A selective workspace shows the hub only what its owner selects. The owner's **share rules** are a closed list:
 
-* ``{"kind": "needs_you"}``: needs-you summaries (type, one-line title, deadline). The default and the only rule a new
+* ``{"kind": "needs_you"}``: needs-you summaries (type, one-line title, deadline; plus a full-text
+  `question` item per question need). The default and the only rule a new
   selective join has: nothing else leaves the host.
 * ``{"kind": "type", "type": T}``: every ticket of type ``T``.
 * ``{"kind": "ticket", "ticket": KEY}``: one ticket.
@@ -90,7 +91,10 @@ def describe(rule: Mapping[str, str]) -> str:
     """What the rule shares, in words (WYSIWYS: the owner types a confirmation after reading this)."""
     k = rule["kind"]
     if k == "needs_you":
-        return "needs-you summaries (type, a one-line title and the deadline)"
+        return (
+            "needs-you summaries (type, a one-line title and the deadline); a question you must answer is also shared "
+            "in full (up to 2000 bytes) as its own item"
+        )
     if k == "questions":
         return "every open question addressed to you (the full question)"
     if k == "type":
@@ -312,14 +316,26 @@ def select(rules: Iterable[Mapping[str, str]], tickets: Iterable[TicketFact]) ->
             for n in t.needs:
                 if not n.to_owner or n.kind not in NEED_TYPES:
                     continue
-                title = (
-                    next((q.text for q in t.questions if q.qid == n.ref), t.title) if n.kind == "question" else t.title
-                )
+                if n.kind == "question":
+                    # C6-3 / C6bd-2 (V3-D31): the one-line summary never carries f1.questions (nothing answerable from a
+                    # cut title); the full text goes in a `question` item, the only one that names the question.
+                    q = next((x for x in t.questions if x.qid == n.ref), None)
+                    if q is not None:
+                        put(_item(
+                            f"question:{t.uid}:{q.qid}", "question", t,
+                            {"key": t.key, "type": t.type, "id": q.qid, "title": _line(q.text),
+                             "text": _multiline(q.text), "deadline": t.due},
+                            make_f1(t, (), {q.qid}),
+                        ))  # fmt: skip
+                    put(_item(
+                        f"summary:{t.uid}:{n.kind}:{n.ref or ''}", "summary", t,
+                        {"type": NEED_TYPES[n.kind], "title": _line(q.text if q else t.title), "deadline": t.due},
+                    ))  # fmt: skip
+                    continue
                 put(_item(
                     f"summary:{t.uid}:{n.kind}:{n.ref or ''}", "summary", t,
-                    {"type": NEED_TYPES[n.kind], "title": _line(title), "deadline": t.due},
-                    make_f1(t, {n.ref} if n.kind == "approve" and n.ref else (),
-                            {n.ref} if n.kind == "question" and n.ref else ()),
+                    {"type": NEED_TYPES[n.kind], "title": _line(t.title), "deadline": t.due},
+                    make_f1(t, {n.ref} if n.ref else ()),
                 ))  # fmt: skip
     return [out[k] for k in sorted(out)]
 

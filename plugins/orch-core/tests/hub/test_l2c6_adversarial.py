@@ -82,13 +82,26 @@ def test_c6_2_host_built_titles_and_texts_pass_the_authoritative_rule(ch):
                 assert not bad, (i.logical, k, bad)
 
 
-def test_c6_3_a_needs_you_summary_of_a_question_carries_the_question_text():
-    """C6-3 (P2, documents behaviour): under the default ``needs_you`` rule the summary title of a question need is the
-    agent-written question text, not the ticket title; ``describe`` calls it "a one-line title"."""
-    q = S.QuestionFact("Q1", "the db password is hunter2", True)
-    t = S.TicketFact(
+def _qticket(text):
+    q = S.QuestionFact("Q1", text, True, "sha256:" + "a" * 64)
+    return S.TicketFact(
         "01J9ZP0000000000000000000A", "K-1", "bug", "Ticket title", "open", (), None, (q,),
-        (S.NeedFact("question", "Q1", True),),
+        (S.NeedFact("question", "Q1", True),), (), 1,
     )  # fmt: skip
-    (item,) = S.select(list(S.DEFAULT_RULES), [t])
-    assert item.payload["title"] == "the db password is hunter2"
+
+
+def test_c6_3_a_needs_you_question_summary_never_carries_f1_questions_and_full_text_is_a_question_item():
+    """C6-3 / C6bd-2 (V3-D31): the one-line summary of a question need is never answerable (no f1.questions); the full
+    text (up to 2000 bytes, multi-line) travels in a `question` item that carries f1.questions[Q]."""
+    text = "line one\n" + "x" * 1500 + "\nlast line"
+    items = {i.kind: i for i in S.select(list(S.DEFAULT_RULES), [_qticket(text)])}
+    summ, qi = items["summary"], items["question"]
+    assert summ.f1 is None
+    assert len(summ.payload["title"].encode()) <= 200 and "\n" not in summ.payload["title"]
+    assert qi.payload["text"] == text
+    assert set(qi.f1["questions"]) == {"Q1"}
+
+
+def test_c6_3_b_question_over_2000_bytes_is_not_answerable():
+    items = S.select(list(S.DEFAULT_RULES), [_qticket("y" * 2001)])
+    assert [i.kind for i in items] == ["summary"] and items[0].f1 is None

@@ -665,3 +665,7 @@ Server regression coverage is in `server/tests/test_wiki.py`; the driver runs it
 As a ticket owner/reviewer or workspace owner/maintainer on a live host, open Acceptance: accept a criterion with an optional note, review the host statement, then sign. Withdraw requires a reason. An earlier-wording acceptance offers Accept again. Mark done explains that no criterion is proved and warns when it ends an agent lease. Verify review lists current manual acceptance and stale wording. Check that viewers and unrelated members have no controls, progress follows host coverage, and History names acceptance/withdrawal plainly.
 
 Tests were added for the lead to run; this task does not run Vitest or pytest.
+
+## Try the hub pages (V3 A7)
+
+Open `/w/DEMO/settings/hub?hub=selective` (also `standalone`, `full`, `offline`, `nottold`): the chip in the top bar, the three Hub pages, "Choose what to share" with its live preview, the switch to full access (type "full access"), Leave, and the Terminal step with its copy box. Tickets shows the Hub column in selective mode only. Nothing is signed in the page.

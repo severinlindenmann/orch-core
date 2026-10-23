@@ -1,3 +1,7 @@
+import { useQuery } from '@tanstack/react-query'
+import { hubQueries, hubServed } from '@/api/hub'
+import { Badge } from '@/components/ui/badge'
+import { useHub } from '../settings/hub/shared'
 import { useEffect, useRef } from 'react'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Lock } from 'lucide-react'
@@ -96,6 +100,10 @@ export function TicketsTable({
 }) {
   const navigate = useNavigate()
   const { workspace } = useWorkspace()
+  const hub = useHub(workspace?.id)
+  const hubShare = useQuery({ ...hubQueries.share(workspace?.id ?? ''), enabled: !!workspace && hubServed(workspace.id) && hub.data?.mode === 'selective' })
+  const showHub = hub.data?.mode === 'selective' && hubShare.data?.tickets_complete === true
+  const hubMark = (key: string) => <Badge variant="outline" data-testid={'ticket-hub-' + key} className={hubShare.data?.tickets.includes(key) ? 'border-chart-4/40 bg-chart-4/10 text-chart-4' : 'border-border bg-surface-2 text-text-muted'}>{hubShare.data?.tickets.includes(key) ? 'Shared' : 'Only here'}</Badge>
   // With Estimate on the list has its own Points column (the chip is not repeated in the add-on column).
   const hasPoints = estimateOn(workspace)
   const body = useRef<HTMLTableSectionElement>(null)
@@ -116,7 +124,7 @@ export function TicketsTable({
   )
   const show = (c: Foldable) => !folded.has(c)
   const hasAddon = addonColumns.length > 0
-  const colSpan = (canSelect ? 1 : 0) + 9 + (hasPoints ? 1 : 0) + (hasAddon ? 1 : 0) - FOLDABLE.filter((c) => folded.has(c) && (c !== 'addon' || hasAddon)).length
+  const colSpan = (showHub ? 1 : 0) + (canSelect ? 1 : 0) + 9 + (hasPoints ? 1 : 0) + (hasAddon ? 1 : 0) - FOLDABLE.filter((c) => folded.has(c) && (c !== 'addon' || hasAddon)).length
   const renderRow = (t: TicketSummary, indent = false) => {
     const isSel = selected.has(t.key)
     const turn = turnLabel(t, me, people)
@@ -217,6 +225,7 @@ export function TicketsTable({
         <TableCell className="truncate px-1.5 py-1.5 font-mono text-[11px] text-text-faint" title={t.updated_at}>
           {ago(t.updated_at)}
         </TableCell>
+        {showHub && <TableCell className="px-1.5 py-1.5">{hubMark(t.key)}</TableCell>}
         {hasAddon && show('addon') && (
           <TableCell className="px-1.5 py-1.5">
             <span className="flex flex-wrap gap-1">
@@ -230,6 +239,7 @@ export function TicketsTable({
 
   return (
     <div ref={frame} className="min-h-0 flex-1 overflow-auto rounded-lg border border-border bg-surface">
+      {hub.data?.mode === 'full' && <p data-testid="hub-all-tickets" className="border-b border-chart-4/40 bg-chart-4/10 p-3 text-sm text-chart-4">The hub can read every ticket here</p>}
       <Table aria-label="Tickets" className={cn('table-fixed', folded.size === 0 && 'min-w-[800px]')}>
         <TableHeader className="sticky top-0 z-10 bg-surface-2">
           <TableRow>
@@ -244,6 +254,7 @@ export function TicketsTable({
             {show('progress') && <SortHeader label="Progress" sort={sort} onSort={onSort} className="w-[72px]" />}
             {hasPoints && <SortHeader label="Points" sort={sort} onSort={onSort} className="w-[56px]" />}
             <SortHeader label="Updated" id="updated" sort={sort} onSort={onSort} className="w-[80px]" />
+            {showHub && <TableHead className="h-8 w-[86px] px-1.5 text-xs text-text-muted">Hub</TableHead>}
             {hasAddon && show('addon') && (
               <TableHead className="h-8 w-[132px] px-1.5 text-[12px] font-medium text-text-muted">
                 <span className="inline-flex items-center gap-1">

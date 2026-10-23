@@ -167,6 +167,17 @@ _SPECS = [
         "(orch-v2-host 0.8.6 item 9.9).",
     ),
     _e(
+        "sign.hub_only",
+        3,
+        False,
+        "this workspace is joined to a hub in full mode: approve on your phone or in the hub",
+        "approve in the hub or on your phone; to leave the hub (break-glass): orch hub leave",
+        ["orch", "hub", "status"],
+        "Full hub mode (D78, D81): the hub's role gate decides every human verb and a channel signs it; no local key, "
+        "click signer or relay device does. Only the owner's break-glass leave is signed locally. Verbs the hub cannot "
+        "build yet are not signable here either.",
+    ),
+    _e(
         "relay.pair_open",
         3,
         False,
@@ -610,6 +621,8 @@ GLOBAL_ERRORS = (
     # H12d-2 (§0.8.6 item 9.4): any person op signed with convenience custody (direct mode too) is refused while a
     # reader of the workspace is below level 1
     "sign.convenience_unavailable",
+    # V3 C11 (D78/D81): any person op signed locally is refused while the workspace is in full hub mode
+    "sign.hub_only",
 )
 
 

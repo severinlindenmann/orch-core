@@ -199,6 +199,7 @@ def refuse_turn_on(state_dir: Path, entry: dict[str, Any], host_uid: int, *, per
     try:
         with store.locked():
             store.refresh()
+            _refuse_full_mode(store, state_dir, wid, host_uid)
             mine = _own_device(state_dir, wid)
             found = why(store, state_dir, wid, host_uid, me or "", mine, gated=True)
     finally:
@@ -208,6 +209,18 @@ def refuse_turn_on(state_dir: Path, entry: dict[str, Any], host_uid: int, *, per
     reason, devices = found
     err = unavailable(reason, devices)
     raise HostError(err.code, err.message, hint=TURN_ON_ESCAPE, detail=err.detail)
+
+
+def _refuse_full_mode(store: Any, state_dir: Path, workspace_id: str, host_uid: int) -> None:
+    """V3 C11 (D78/D81): click-to-sign is not switched on in a workspace in full hub mode (or ``unknown``): the click
+    signer is refused at the append there, so the flag would only mislead. Called under the store lock."""
+    from types import SimpleNamespace
+
+    from . import hubops, hubsign
+
+    view = SimpleNamespace(store=store, state_dir=state_dir, workspace_id=workspace_id, host_uid=host_uid)
+    if hubops.signing_mode(view) in hubsign.HUB_ONLY:
+        raise hubsign.hub_only_error()
 
 
 def refuse_dev_host(state_dir: Path, env: Any = None) -> None:

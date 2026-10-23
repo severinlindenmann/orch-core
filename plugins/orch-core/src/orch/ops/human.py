@@ -672,11 +672,30 @@ class Human:
         from orch.ops.readers import READER_EVENTS
 
         typ = ev.get("type")
+        precommit = self._hub_only_check(precommit, ev)  # V3 C11: direct mode takes no local signature in full hub mode
         if self.readers or typ in READER_EVENTS or typ == "restore" or ev.get("auth") == "convenience":
             precommit = self._readers_check(precommit, [ev])  # H12d-2: before the mark, so a refusal sets none
         if ev.get("auth") == "convenience":  # #441: the durable mark, inside the append, before the event is written
             precommit = self._mark_seen(precommit)
         return self.store.append(ev, log=log, precommit=precommit, artifacts=artifacts)
+
+    def _hub_only_check(self, inner: Callable[[], None] | None, ev: dict[str, Any]) -> Callable[[], None]:
+        """``precommit`` (V3 C11, D78/D81): in full hub mode, as the signed log says it under the store lock, only the
+        owner's break-glass event (:data:`orch.host.hubsign.BREAK_GLASS`) is signed locally. Direct mode has no host
+        state to read ``hub.json`` from, so this is the log's half of :func:`orch.host.hubops.signing_mode`; the host
+        path refuses at ``append_signed``."""
+        from orch.host import hubsign
+
+        def check() -> None:
+            if inner is not None:
+                inner()
+            self.store.refresh()
+            ws = self.store.state.workspace
+            if hubsign.log_hub_only(ws) and not hubsign.break_glass_allowed(ws, ev, None):
+                err = hubsign.hub_only_error()
+                raise OrchError(err.code, err.message, hint=err.hint, fix=err.fix)
+
+        return check
 
     def _mark_seen(self, inner: Callable[[], None] | None) -> Callable[[], None]:
         """``precommit`` that also sets the durable ``convenience_seen`` mark (:mod:`orch.ops.readers`); a mark that

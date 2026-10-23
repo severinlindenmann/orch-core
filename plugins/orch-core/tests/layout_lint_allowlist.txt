@@ -17,7 +17,7 @@ host/custody.py 3
 host/devmode.py 1
 host/dispatch.py 2
 host/handoff.py 2
-host/human.py 19
+host/human.py 18
 host/journal.py 6
 host/pairdevice.py 1
 host/reads.py 1

@@ -315,3 +315,19 @@ def test_registration_reentry_shares_the_sign_in_limiter(w):
         "POST", "/channels/register/begin", {"kind": "browser", "key_pub": key, **w.creds(w.ann)}, token=tok
     )
     assert s in (401, 429)
+
+
+def test_facts_of_decisions_and_moves_in_shown():
+    from orch_hub.webapi.api import _facts
+
+    src = [{"repo": "github.com/acme/app", "ref": "refs/heads/x", "sha": "c0" * 20}]
+    ev = {"type": "gate.approved", "gate": "code", "hash": "sha256:" + "ab" * 32, "gate_gen": 3, "source_sha": src}
+    assert _facts(ev) == [
+        ["Gate", "code"],
+        ["Content reference", "ABAB ABAB"],
+        ["Generation", "3"],
+        ["Code", "github.com/acme/app c0c0c0c0"],
+    ]
+    assert _facts({**ev, "type": "verdict.given"})[0] == ["Gate", "verify"]
+    assert _facts({"type": "ticket.moved", "from": "testing", "to": "backlog"}) == [["Status", "testing → backlog"]]
+    assert _facts({"type": "log.added"}) == []

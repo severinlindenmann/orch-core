@@ -6,7 +6,7 @@ from __future__ import annotations
 import pytest
 from custodial_helpers import LOG, WK, WS
 from test_view_service import make_seals
-from view_helpers import OWNER, TK2, Host, build_view_services
+from view_helpers import OWNER, TK2, WSK_PUB, Host, build_view_services
 
 from orch_hub.view import project as PR
 from orch_hub.view.needs import ViewReader
@@ -232,3 +232,84 @@ def test_every_string_that_leaves_the_view_is_render_text_safe(kit):
     seen = list(_strings(out))
     assert seen and all(s == P4.render_text(s) for s in seen)
     assert any("<U+202E>" in s for s in seen)
+
+
+# --- D15b-3: gate and verdict rows from P --------------------------------------------------------------------------------
+
+SRC = [{"repo": "github.com/acme/app", "ref": "refs/heads/x", "sha": "c0" * 20}]
+H_PLAN, H_VER = "sha256:" + "a2" * 32, "sha256:" + "a4" * 32
+
+
+def push_proj(kit, status="open", log=LOG):
+    kit.push()
+    gates = {"plan": kit.host.gate(2, H_PLAN), "verify": kit.host.gate(4, H_VER, SRC)}
+    n = len(kit.host.logs[log])
+    kit.vs.service.accept(WS, WSK_PUB, kit.host.page(log, n, 1, proj=kit.host.proj(log, status, gates)))
+
+
+def test_gate_row_from_P_keeps_the_hash_it_was_listed_with(kit):
+    push_proj(kit, "open")
+    rows = kit.r.needs_you(WS, USER)
+    assert [(r["kind"], r["hash"]) for r in rows] == [("gate", H_PLAN)]  # verify only while testing
+    got = kit.r.item(WS, USER, rows[0]["item_id"])
+    assert got["content"]["gate"] == "plan" and got["content"]["gate_gen"] == 2
+    assert got["content"]["short_hash"] == "a2a2a2a2" and rows[0]["key"] == "DEMO-0001"
+
+
+def test_verdict_row_only_while_testing_with_sources(kit):
+    push_proj(kit, "testing")
+    rows = {r["kind"]: r for r in kit.r.needs_you(WS, USER)}
+    assert set(rows) == {"gate", "verdict"} and rows["verdict"]["hash"] == H_VER
+    c = kit.r.item(WS, USER, rows["verdict"]["item_id"])["content"]
+    assert c["gate"] == "verify" and c["sources"] == [{"repo": "github.com/acme/app", "sha": "c0c0c0c0"}]
+
+
+def test_a_new_hash_is_a_new_row(kit):
+    push_proj(kit)
+    old = kit.r.needs_you(WS, USER)[0]
+    kit.vs.service.accept(
+        WS,
+        WSK_PUB,
+        kit.host.page(LOG, 1, 1, proj=kit.host.proj(LOG, "open", {"plan": kit.host.gate(3, "sha256:" + "ee" * 32)})),
+    )
+    new = kit.r.needs_you(WS, USER)[0]
+    assert new["hash"] != old["hash"] and new["item_id"] != old["item_id"]
+
+
+def test_no_rows_without_P_with_stale_P_or_a_stale_roster(kit):
+    kit.push()
+    assert kit.r.needs_you(WS, USER) == []
+    push_proj(kit)
+    assert len(kit.r.needs_you(WS, USER)) == 1
+    kit.host.append(LOG, "log.added", text="moved", roster_v=1)
+    kit.push()
+    assert kit.r.needs_you(WS, USER) == []  # P describes seq 1, the view is at seq 2
+    push_proj(kit)
+    kit.host.append("workspace", "member.added", roster_v=1)
+    kit.push()
+    assert kit.r.needs_you(WS, USER) == []  # the hub counts another roster_v than P
+
+
+def test_gate_rows_only_for_visible_tickets(kit):
+    kit.host.append(LOG, "visibility.changed", visibility={"restricted": ["p_" + "22" * 16]}, roster_v=1)
+    push_proj(kit)
+    assert kit.r.needs_you(WS, USER) == []
+    kit.host.append(LOG, "visibility.changed", visibility={"restricted": ["u_" + USER]}, roster_v=1)
+    push_proj(kit)
+    assert len(kit.r.needs_you(WS, USER)) == 1
+
+
+def test_a_gate_this_person_already_decided_is_not_listed(kit):
+    kit.host.append(
+        LOG, "gate.approved", gate="plan", hash=H_PLAN, actor={"kind": "person", "id": "u_" + USER}, roster_v=1
+    )
+    push_proj(kit)
+    assert kit.r.needs_you(WS, USER) == []
+
+
+def test_someone_elses_decision_does_not_hide_the_gate(kit):
+    kit.host.append(
+        LOG, "gate.approved", gate="plan", hash=H_PLAN, actor={"kind": "person", "id": "u_" + "ee" * 16}, roster_v=1
+    )
+    push_proj(kit)
+    assert [r["kind"] for r in kit.r.needs_you(WS, USER)] == ["gate"]

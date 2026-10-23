@@ -136,17 +136,87 @@ def test_roster_change_between_prepare_and_sign_is_event_changed(env):
     assert code(env.engine.sign, p.prepared_id, env.channel, env.proof(p.digest)) == "event_changed"
 
 
+SRC = [{"repo": "github.com/acme/app", "ref": "refs/heads/feat-x", "sha": "c0" * 20}]
+H_REQ, H_CODE, H_VER = ("sha256:" + x * 32 for x in ("a1", "a3", "a4"))
+
+
+def push_proj(env, status="in_progress", from_seq=None):
+    """The host's overlap page for the ticket's last line, carrying P (D15b, sender rule 7)."""
+    n = len(env.host.logs[LOG])
+    gates = {
+        "requirements": env.host.gate(1, H_REQ),
+        "code": env.host.gate(2, H_CODE, SRC),
+        "verify": env.host.gate(4, H_VER, SRC),
+    }
+    env.vs.service.accept(
+        WS, WSK_PUB, env.host.page(LOG, from_seq or n, 1, proj=env.host.proj(status=status, gates=gates))
+    )
+
+
 @pytest.mark.parametrize(
-    "action",
+    "action, extra",
     [
-        {"type": "gate.approved", "log": LOG, "gate": "plan", "hash": "sha256:" + "ab" * 32},
-        {"type": "gate.changes_requested", "log": LOG, "gate": "plan", "hash": "sha256:" + "ab" * 32, "text": "no"},
-        {"type": "verdict.given", "log": LOG, "outcome": "pass", "hash": "sha256:" + "ab" * 32},
-        {"type": "status.changed", "log": LOG, "to": "open"},
+        ({"type": "gate.approved", "gate": "requirements", "hash": H_REQ}, {"gate_gen": 1}),
+        ({"type": "gate.approved", "gate": "code", "hash": H_CODE}, {"gate_gen": 2, "source_sha": SRC}),
+        ({"type": "gate.changes_requested", "gate": "code", "hash": H_CODE, "text": "no"}, {"gate_gen": 2}),
+        ({"type": "verdict.given", "outcome": "pass", "hash": H_VER}, {"gate_gen": 4, "source_sha": SRC}),
+        ({"type": "status.changed", "to": "open"}, {"from": "testing"}),
+        ({"type": "ticket.moved", "to": "backlog", "reason": "later"}, {"from": "testing"}),
     ],
 )
-def test_types_the_view_cannot_build_yet_fail_closed(env, action):
-    assert code(env.prepare, action) == "unavailable"
+def test_five_types_are_built_from_P_and_signed(env, action, extra):
+    push_proj(env, status="testing")
+    p, ev = sign(env, {**action, "log": LOG})
+    e = p.ctx["event"]
+    assert {k: e[k] for k in extra} == extra and e["type"] == action["type"]
+    if "hash" in action:
+        assert e["hash"] == action["hash"] and e["policy_hash"] == "sha256:" + "cd" * 32
+    assert env.delivered[-1][2] is ev or env.delivered[-1][2] == ev
+
+
+def test_no_projection_yet_is_unavailable(env):
+    a = {"type": "gate.approved", "log": LOG, "gate": "requirements", "hash": H_REQ}
+    assert code(env.prepare, a) == "unavailable"
+    assert code(env.prepare, {"type": "status.changed", "log": LOG, "to": "open"}) == "unavailable"
+
+
+def test_stale_P_is_unavailable(env):
+    push_proj(env)
+    env.host.append(LOG, "log.added", text="moved on", roster_v=2)
+    env.vs.service.accept(WS, WSK_PUB, env.host.page(LOG, 2))  # the P held describes seq 1, the view is at seq 2
+    assert code(env.prepare, {"type": "status.changed", "log": LOG, "to": "open"}) == "unavailable"
+    push_proj(env)  # the host's refresh
+    assert env.prepare({"type": "status.changed", "log": LOG, "to": "open"}).ctx["event"]["from"] == "in_progress"
+
+
+def test_roster_moved_makes_P_unavailable(env):
+    push_proj(env)
+    env.host.append("workspace", "member.added", roster_v=2)
+    env.vs.service.accept(WS, WSK_PUB, env.host.page("workspace", 3))
+    assert code(env.prepare, {"type": "status.changed", "log": LOG, "to": "open"}) == "unavailable"
+
+
+def test_gate_left_out_is_unknown_item_and_other_hash_is_event_changed(env):
+    push_proj(env)
+    assert code(env.prepare, {"type": "gate.approved", "log": LOG, "gate": "plan", "hash": H_REQ}) == "unknown_item"
+    a = {"type": "gate.approved", "log": LOG, "gate": "requirements", "hash": "sha256:" + "ee" * 32}
+    assert code(env.prepare, a) == "event_changed"
+
+
+def test_P_changing_between_prepare_and_sign_is_event_changed(env):
+    push_proj(env, status="testing")
+    p = env.prepare({"type": "status.changed", "log": LOG, "to": "open"})
+    push_proj(env, status="done")
+    assert code(env.engine.sign, p.prepared_id, env.channel, env.proof(p.digest)) == "event_changed"
+
+
+def test_P_is_only_used_for_a_visible_ticket(env):
+    push_proj(env)
+    env.host.append(LOG, "visibility.changed", visibility={"restricted": ["p_" + "22" * 16]}, roster_v=2)
+    env.vs.service.accept(WS, WSK_PUB, env.host.page(LOG, 2))
+    push_proj(env)
+    a = {"type": "gate.approved", "log": LOG, "gate": "requirements", "hash": H_REQ}
+    assert code(env.prepare, a) == code(env.prepare, {**a, "log": NEW_LOG}) == "unknown_item"
 
 
 def test_unknown_ticket_and_unsynced_view(env, tmp_path):

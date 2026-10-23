@@ -20,6 +20,7 @@ from orch_hub.contract.canon import b64u, unb64u
 from orch_hub.contract.hub import Refused
 from orch_hub.link.wkseal import WkSeals
 from orch_hub.view import ViewStore
+from orch_hub.view.service import Keyring
 
 V = json.loads((Path(__file__).parent.parent / "vectors" / "vectors_hub.json").read_text())
 HXK_PRIV, HXK_PUB = G.K.priv["hxk"], G.K.pub["hxk"]
@@ -86,8 +87,6 @@ def test_vector_replay(tmp_path, case):
 
     try:
         want = case["expect"]
-        if "ok" in want:  # D15b: which projection the service keeps is the hub's task 1 (#1043); its checks run here
-            want = {"ok": {k: v for k, v in want["ok"].items() if k != "proj"}}
         if "error" in want:
             got = None
             with pytest.raises(Refused) as r:
@@ -103,6 +102,11 @@ def test_vector_replay(tmp_path, case):
                     for lg in sorted(s.store.logs(ws))
                 }
             }
+            if "proj" in want["ok"]:  # D15b: the projection the service keeps per ticket log
+                keys = Keyring(seals, ws, {int(e): bytes.fromhex(k) for e, k in a["wk_epochs"].items()})
+                got["ok"]["proj"] = {
+                    lg: s.service.proj(ws, lg, keys) for lg in sorted(s.store.logs(ws)) if s.store.proj_key(ws, lg)
+                }
         assert got == want
     finally:
         s.close()
@@ -317,3 +321,99 @@ def test_over_link_full_mode_accepts_selective_refuses(tmp_path, make_hub):
     assert s.store.logs(G.WS_B) == []
     s.close()
     seals.close()
+
+
+# --- D15b task 1: the projection is kept with the view, in ONE transaction -----------------------------------------
+
+
+def _ticket_host():
+    h = Host()
+    h.genesis()
+    h.ticket()
+    return h
+
+
+def _keys(svc, seals):
+    return Keyring(seals, WS, {1: WK})
+
+
+def test_proj_is_kept_and_read_back(svc, seals):
+    h = _ticket_host()
+    accept(svc, h.page("workspace"))
+    p = h.proj(gates={"requirements": h.gate()})
+    accept(svc, h.page(LOG, proj=p))
+    assert svc.service.proj(WS, LOG, _keys(svc, seals)) == p
+    assert svc.service.proj(WS, "workspace", _keys(svc, seals)) is None
+
+
+def test_proj_is_sealed_at_rest(svc):
+    h = _ticket_host()
+    accept(svc, h.page("workspace"))
+    accept(svc, h.page(LOG, proj=h.proj(status="testing")))
+    raw = svc.store.proj_page(WS, LOG)
+    assert "testing" not in json.dumps(raw)
+
+
+def test_bad_proj_leaves_the_view_unchanged(svc, seals):
+    h = _ticket_host()
+    accept(svc, h.page("workspace"))
+    h.ask()
+    good = h.proj()
+    accept(svc, h.page(LOG, 1, 1, proj={**good, "seq": 1, "head": P4.event_head(h.logs[LOG][0])}))
+    before = (svc.store.heads(WS, LOG), svc.store.pages(WS, LOG), svc.store.proj_key(WS, LOG))
+    bad = {**h.proj(), "status": "nonsense"}  # the lines (seq 2) are fine, the projection is not
+    assert code(accept, svc, h.page(LOG, 2, proj=bad)) == "malformed"
+    assert (svc.store.heads(WS, LOG), svc.store.pages(WS, LOG), svc.store.proj_key(WS, LOG)) == before
+    assert len(svc.store.heads(WS, LOG)) == 1
+    stale_ws = {**h.proj(), "ws_head": "sha256:" + "00" * 32}
+    assert code(accept, svc, h.page(LOG, 2, proj=stale_ws)) == "view_fork"
+    assert len(svc.store.heads(WS, LOG)) == 1
+    # the good page still goes in afterwards
+    accept(svc, h.page(LOG, 2, proj=h.proj()))
+    assert svc.service.proj(WS, LOG, _keys(svc, seals))["seq"] == 2
+
+
+def test_overlap_page_refreshes_proj_without_new_lines(svc, seals):
+    h = _ticket_host()
+    accept(svc, h.page("workspace"))
+    accept(svc, h.page(LOG, proj=h.proj(status="backlog")))
+    npages = len(svc.store.pages(WS, LOG))
+    accept(svc, h.page(LOG, 1, 1, proj=h.proj(status="in_progress")))
+    assert len(svc.store.pages(WS, LOG)) == npages
+    assert svc.service.proj(WS, LOG, _keys(svc, seals))["status"] == "in_progress"
+
+
+def test_ticket_reset_drops_its_proj_and_workspace_reset_drops_all(svc, seals):
+    h = _ticket_host()
+    accept(svc, h.page("workspace"))
+    accept(svc, h.page(LOG, proj=h.proj()))
+    accept(svc, h.page(LOG, reset=True))
+    assert svc.service.proj(WS, LOG, _keys(svc, seals)) is None
+    accept(svc, h.page(LOG, proj=h.proj()))
+    accept(svc, h.page("workspace", reset=True))
+    assert svc.store.proj_key(WS, LOG) is None
+
+
+def test_projection_only_pages_count_toward_the_cap(svc, monkeypatch):
+    from orch_hub.view import store as ST
+
+    h = _ticket_host()
+    accept(svc, h.page("workspace"))
+    accept(svc, h.page(LOG, proj=h.proj()))
+    one = len(json.dumps(svc.store.proj_page(WS, LOG), sort_keys=True, separators=(",", ":")))
+    used = sum(
+        len(json.dumps(b, sort_keys=True, separators=(",", ":")))
+        for lg in svc.store.logs(WS)
+        for b in svc.store.pages(WS, lg)
+    )
+    # room for the pages held plus one projection body (the one a refresh replaces) and a little
+    monkeypatch.setattr(ST, "MAX_WS_BYTES", used + one + one // 2)
+    accept(svc, h.page(LOG, 1, 1, proj=h.proj(status="testing")))  # replaces its own row: fits
+    # a second ticket's projection-only page would add a row that no longer fits
+    h.ticket(uid="01J9ZP0000000000000000TKT2", key="DEMO-0002")
+    accept(svc, h.page("workspace"))  # no-op resend
+    before = (svc.store.proj_key(WS, "01J9ZP0000000000000000TKT2"), svc.store.heads(WS, "01J9ZP0000000000000000TKT2"))
+    pg = h.page("01J9ZP0000000000000000TKT2", proj=h.proj("01J9ZP0000000000000000TKT2"))
+    assert code(accept, svc, pg) == "too_large"
+    assert before == (None, [])
+    assert svc.store.proj_key(WS, LOG) is not None

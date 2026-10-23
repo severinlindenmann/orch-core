@@ -1,12 +1,13 @@
 """Run 8 (owner 1.8): setup can set up the records history: the same code as ``orch records init`` and local
 auto-commit on (never push), consented in the review. A failure is a retry item, never a failed setup."""
+# ruff: noqa: F811 - the records world fixtures (w, home) are imported, then named as test arguments
 
 import pytest
 
 from orch.setup import steps
 from orch.setup.protocol import SetupError
 from orch.setup.review import RECORDS_TEXT
-from tests.host.test_records_sync import home, w  # noqa: F401, F811 - fixtures
+from tests.host.test_records_sync import home, w  # noqa: F401 - fixtures
 
 from .conftest import post
 from .fakes import FakePorts, names
@@ -91,7 +92,7 @@ def test_the_real_port_in_a_records_root_nested_in_the_project_repo_is_a_retry_i
     monkeypatch,
     tmp_path,
     w,
-    home,  # noqa: F811 - the fixtures imported above
+    home,
 ):
     """Opus F2: the records root (the store) sits inside the project's own git repository. ``init`` refuses it (the
     repository must be dedicated), the step is a retry item, setup does not fail, and no auto-commit timer or

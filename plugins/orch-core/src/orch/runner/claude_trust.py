@@ -1,19 +1,27 @@
-"""Pre-trust the workspace for Claude Code, so a "Start agent" run reaches its first message without the two first-run
-prompts ("Do you trust this folder?" and "Allow external CLAUDE.md file imports?", run 6, #1066).
+"""Pre-trust a ticket's work folder for Claude Code, so a "Start agent" run reaches its first message without the two
+first-run prompts ("Do you trust this folder?" and "Allow external CLAUDE.md file imports?", run 6, #1066).
 
 **Where it is stored.** Claude Code keeps both answers per project path in the person's own ``~/.claude.json``
 (``$CLAUDE_CONFIG_DIR/.claude.json`` when that is set for the runner): ``projects["<path>"]`` gets
 ``hasTrustDialogAccepted``, ``hasClaudeMdExternalIncludesApproved`` and ``hasClaudeMdExternalIncludesWarningShown``,
-all ``true``. The runner writes them, as the person (it runs under the person's uid, the host never touches a person's
+all ``true``. The runner writes them, as the person (it runs under the person's uid; the host never touches a person's
 home), just before it starts a ``claude`` agent.
 
-**Only workspace paths.** An entry is made for the workspace root and for the run's folder, and only when that folder
-is the root itself or lies below ``<root>/.orch-work/`` (the ticket work folders). Anything else, including a git
-worktree of a linked repository (outside the workspace), gets nothing, so the owner is still asked there. ``root``
-comes from the host-chosen ``ORCH_WORKSPACE``. Nothing is ever written for a parent of the root or for ``/``.
+**Scope.** Exactly one project entry: the ticket's work folder ``<root>/.orch-work/<KEY>`` (in its real spelling, and
+its nominal one when that lies under the nominal root). Never the workspace root, never a parent, never a git worktree
+of a linked repository. Claude Code's include approval is one boolean per project path: it cannot name a file. The
+entry is that single folder, whose only external import is the workspace's ``AGENTS.md`` (through the root's
+``CLAUDE.md``); the approval reaches no other project.
 
-**Fail soft, never fail open.** A missing, unparseable, linked or oddly shaped config file is left alone (the prompts
-then appear, as before); an error here never stops a launch. Other keys and projects are kept as they are.
+**Consent.** The owner agreed when creating the workspace: ``orch init`` / setup writes the marker
+``<root>/.orch/claude-trust`` (:func:`record_consent`). Without it (an older workspace, or a folder that merely
+looks like one) nothing is written.
+
+**Guards (fail closed).** The root must hold a real ``.orch`` store folder with the marker, must not equal or
+contain the home folder or the Claude config folder, and must be at least two levels deep. The work folder is resolved
+(links followed) and must lie under the resolved root's ``.orch-work``; if it resolves anywhere else both spellings are
+rejected. It must also be the folder the spawn pinned (``dev``/``ino``). A missing, unparseable, linked or oddly shaped
+config file is left alone (the prompts then appear, as before); an error here never stops a launch.
 """
 
 from __future__ import annotations
@@ -26,7 +34,7 @@ import tempfile
 from collections.abc import Mapping
 from pathlib import Path
 
-__all__ = ["TRUST_KEYS", "pretrust", "trust_paths"]
+__all__ = ["MARKER", "TRUST_KEYS", "pretrust", "record_consent", "trust_paths"]
 
 TRUST_KEYS = (
     "hasTrustDialogAccepted",
@@ -34,6 +42,9 @@ TRUST_KEYS = (
     "hasClaudeMdExternalIncludesWarningShown",
 )
 WORK_DIR = ".orch-work"
+STORE_DIR = ".orch"
+#: the owner's consent, written by init inside the store folder
+MARKER = "claude-trust"
 LIMIT = 8 << 20
 
 
@@ -42,22 +53,69 @@ def _inside(path: str, root: str) -> bool:
     return p == r or r in p.parents
 
 
-def trust_paths(root: str, cwd: str) -> list[str]:
-    """The project paths to trust for a run in ``cwd`` of the workspace ``root``: the root and ``cwd``, in their
-    spelling and as resolved (links followed), each only if it is the root or below ``<root>/.orch-work/``. Empty when
-    ``cwd`` is anywhere else."""
+def record_consent(store: Path) -> bool:
+    """Init's act: remember that the owner agreed to pre-trust this workspace's work folders. ``store`` is the
+    ``.orch`` folder (a real directory); the marker is made without following a link. False if it could not be made."""
+    try:
+        if store.name != STORE_DIR or not stat.S_ISDIR(os.lstat(store).st_mode):
+            return False
+        fd = os.open(store / MARKER, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    except OSError:
+        return False
+    with os.fdopen(fd, "w") as f:
+        f.write("the owner agreed at setup: Claude Code agents start in ticket folders unasked\n")
+    return True
+
+
+def _consented(root: str) -> bool:
+    """The root holds a real ``.orch`` folder with the marker (both without links), owned by this user."""
+    try:
+        st = os.lstat(os.path.join(root, STORE_DIR))
+        if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid():
+            return False
+        m = os.lstat(os.path.join(root, STORE_DIR, MARKER))
+        return stat.S_ISREG(m.st_mode) and m.st_uid == os.getuid()
+    except OSError:
+        return False
+
+
+def _root_ok(root: str, env: Mapping[str, str]) -> bool:
+    """Not ``/``, not a top-level folder, not the home or Claude config folder or any folder above them."""
+    real = os.path.realpath(root)
+    if len(Path(real).parts) < 3:  # "/" and "/Users" are 1 and 2 parts
+        return False
+    for var in ("HOME", "CLAUDE_CONFIG_DIR"):
+        v = env.get(var)
+        if v and v.startswith("/"):
+            for guard in {os.path.realpath(v), os.path.normpath(v)}:
+                if _inside(guard, real):  # the root equals or contains it
+                    return False
+    return True
+
+
+def trust_paths(root: str, cwd: str, pin: Mapping[str, object] | None = None) -> list[str]:
+    """The project paths to trust for a run in ``cwd`` of the workspace ``root``: the ticket's work folder
+    ``<root>/.orch-work/<KEY>`` in its resolved spelling, plus its nominal one when that too lies under the nominal
+    root. A folder that resolves anywhere else, the root itself, a deeper or other folder, or one that is not the
+    pinned ``dev``/``ino``: empty."""
     if not (root.startswith("/") and cwd.startswith("/")) or "\0" in root + cwd:
         return []
-    out: list[str] = []
-    pairs = [(root, cwd)]
     real_root, real_cwd = os.path.realpath(root), os.path.realpath(cwd)
-    if (real_root, real_cwd) != (root, cwd):
-        pairs.append((real_root, real_cwd))
-    for r, c in pairs:
-        r, c = os.path.normpath(r), os.path.normpath(c)
-        if r == "/" or not (c == r or _inside(c, os.path.join(r, WORK_DIR))):
-            continue
-        out += [p for p in (r, c) if p not in out]
+    base = os.path.join(real_root, WORK_DIR)
+    if os.path.dirname(os.path.normpath(real_cwd)) != base:  # exactly <root>/.orch-work/<KEY>, links resolved
+        return []
+    if os.path.islink(base):
+        return []
+    try:
+        st = os.stat(real_cwd)
+    except OSError:
+        return []
+    if pin is not None and (pin.get("dev"), pin.get("ino")) != (st.st_dev, st.st_ino):
+        return []
+    out = [os.path.normpath(real_cwd)]
+    nominal = os.path.normpath(cwd)
+    if nominal != out[0] and os.path.dirname(nominal) == os.path.join(os.path.normpath(root), WORK_DIR):
+        out.append(nominal)
     return out
 
 
@@ -68,11 +126,15 @@ def _config_path(env: Mapping[str, str]) -> Path | None:
     return Path(base) / ".claude.json"
 
 
-def pretrust(env: Mapping[str, str], root: str | None, cwd: str | None) -> list[str]:
+def pretrust(
+    env: Mapping[str, str], root: str | None, cwd: str | None, pin: Mapping[str, object] | None = None
+) -> list[str]:
     """Record the trust for a ``claude`` run in ``cwd`` of the workspace ``root``; returns the paths written (empty
-    when nothing was needed or possible). Never raises."""
+    when nothing was needed or allowed). Never raises."""
     try:
-        paths = trust_paths(root, cwd) if root and cwd else []
+        if not root or not cwd or not _consented(root) or not _root_ok(root, env):
+            return []
+        paths = trust_paths(root, cwd, pin)
         cfg = _config_path(env)
         if not paths or cfg is None:
             return []

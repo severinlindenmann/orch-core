@@ -925,6 +925,10 @@ def _finish(root, sd, wid, key_line, prefix, owner_name, person, seq) -> Result:
         key_line,
     ]
     try:
+        # the owner agreed to this when creating the workspace: Claude Code agents start in its ticket folders unasked
+        from orch.runner.claude_trust import record_consent
+
+        record_consent(layout_mod.store_of(root))
         written, kept = write_workspace_files(root, store=layout_mod.store_of(root))
         lines.append("wrote " + ", ".join(written) if written else "instructions are current")
         lines += kept

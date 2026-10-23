@@ -190,7 +190,8 @@ def spawn_spec(args: Mapping[str, Any], own: Mapping[str, str], config: RunnerCo
         if _is_claude(argv):  # run 6, #1066: no first-run trust or import prompt in the workspace and its work folders
             from .claude_trust import pretrust
 
-            pretrust(own, env.get("ORCH_WORKSPACE"), (args.get("cwd") or {}).get("path"))
+            pin = args.get("cwd") or {}
+            pretrust(own, env.get("ORCH_WORKSPACE"), pin.get("path"), pin)
     elif grant is not None or session is not None:
         raise SpawnError("invalid.input", "spawn: a shell acts as the person: no grant, no session")
     return SpawnSpec(

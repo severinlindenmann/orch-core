@@ -52,6 +52,12 @@ describe('compareStart (fail closed)', () => {
     ['other grant', preview({ grant: { ...GRANT, id: 'gr_B' } })],
     ['unknown warning', preview({ warnings: ['something new'] })],
   ])('refuses %s', (_n, p) => expect(compareStart(p, reviewed(), args, ACK).ok).toBe(false))
+  it("accepts the ticket's own work folder (a ticket without a codebase), and no other ticket's", () => {
+    const own = preview({ cwd: { kind: 'workdir', ticket: args.ticket } })
+    expect(compareStart(own, reviewed(), args, ACK)).toEqual({ ok: true })
+    expect(compareStart(preview({ cwd: { kind: 'workdir', ticket: 'DEMO-9999' } }), reviewed(), args, ACK).ok).toBe(false)
+    expect(compareStart(preview({ cwd: { kind: 'workdir' } }), reviewed(), args, ACK).ok).toBe(false)
+  })
   it('refuses another agent or mode than the choice', () => {
     expect(compareStart(preview(), reviewed(), { ...args, harness: 'codex' }, ACK).ok).toBe(false)
     expect(compareStart(preview(), reviewed(), { ...args, mode: 'fix' }, ACK).ok).toBe(false)

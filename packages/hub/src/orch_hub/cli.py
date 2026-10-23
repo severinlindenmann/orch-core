@@ -24,6 +24,9 @@ def _parser() -> argparse.ArgumentParser:
     i.add_argument("--relay-url")
     i.add_argument("--tls-spki-sha256", help="b64u SHA-256 of the hub TLS SubjectPublicKeyInfo")
     ks.add_parser("rotate-op", help="new HK_op under the next op_seq; reissues card and all certificates")
+    ks.add_parser(
+        "rotate-tls", help="new persistent TLS key and a re-issued card pinning it (also adds one to an old store)"
+    )
     r = ks.add_parser("revoke-op", help="root-signed revocation of an op certificate (default: the current one)")
     r.add_argument("--cert-id")
     c = ks.add_parser("card", help="print the current card; with options, reissue it (card_seq + 1)")
@@ -165,6 +168,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             keys = HubKeys.open(state)
             if args.cmd == "rotate-op":
                 out = keys.rotate_op()
+            elif args.cmd == "rotate-tls":
+                out = keys.rotate_tls()
             elif args.cmd == "revoke-op":
                 out = keys.revoke_op(args.cert_id)
             elif args.cmd == "card":

@@ -35,7 +35,8 @@ from ..contract import suite as S
 from ..contract.canon import CanonError, b64u, unb64u, unhex
 from ..contract.hub import Refused
 from ..contract.keystore import OpSigner
-from ..keys import HubKeys
+from ..keys import HubKeys, KeysError
+from ..keys.store import PLACEHOLDER_TLS
 from . import framing, ops, tls
 from .registry import Registry
 from .tls import LinkClosed, LinkTimeout
@@ -115,16 +116,30 @@ class LinkServer:
         keys: HubKeys,
         *,
         identity: tls.TlsIdentity | None = None,
+        ephemeral_tls: bool = False,
         snapshots: ops.SnapshotProvider | None = None,
         now_ms: Callable[[], int] = _now_ms,
         **kw: Any,
     ) -> LinkServer:
-        """Start from a hub key store: ``HK_op`` signs the replies, the hub card pins the TLS key. If the held card
-        does not carry this TLS identity's SPKI hash, the card is re-issued with it (card_seq + 1), so the card the
-        hosts verify always names the certificate this server presents."""
-        identity = identity or tls.TlsIdentity.generate()
-        if keys.card()["o"]["tls_spki_sha256"] != identity.spki_sha256:
-            keys.reissue_card(tls_spki_sha256=identity.spki_sha256)
+        """Start from a hub key store: ``HK_op`` signs the replies, the hub card pins the TLS key.
+
+        The TLS key is the store's persistent one (``keys init`` / ``keys rotate-tls``): a restart never changes the pin.
+        If the card does not name that key (or still carries the placeholder), the server refuses to start with
+        ``tls_pin_mismatch``; a store without a TLS key is refused with ``tls_key_missing``. Only ``ephemeral_tls=True``
+        (loopback tests) or an explicit ``identity=`` generates or accepts another key and re-issues the card (card_seq + 1)."""
+        pinned = keys.card()["o"]["tls_spki_sha256"]
+        if identity is None and not ephemeral_tls:
+            identity = keys.tls_identity()
+            if identity is None:
+                raise KeysError("tls_key_missing", "this key store has no TLS key: run `orch-hub keys rotate-tls`")
+            if pinned != identity.spki_sha256 or pinned == PLACEHOLDER_TLS:
+                raise KeysError(
+                    "tls_pin_mismatch", "the card does not name the stored TLS key: run `orch-hub keys rotate-tls`"
+                )
+        else:
+            identity = identity or tls.TlsIdentity.generate()
+            if pinned != identity.spki_sha256:
+                keys.reissue_card(tls_spki_sha256=identity.spki_sha256)
         signer = keys.op_signer
         snapshots = snapshots or ops.StubSnapshots(signer, keys.hub_id, keys.op_cert()["o"]["cert_id"], now_ms)
         return cls(identity=identity, op_signer=signer, hub_id=keys.hub_id, snapshots=snapshots, now_ms=now_ms, **kw)

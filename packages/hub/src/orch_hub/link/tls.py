@@ -12,23 +12,20 @@ server shut its connection threads down.
 
 from __future__ import annotations
 
-import datetime
 import select
 import socket
 import threading
 import time
-from dataclasses import dataclass
 
-from cryptography import x509
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import ec
-from cryptography.x509.oid import NameOID
 from OpenSSL import SSL
 
-from ..contract.canon import b64u
+from ..tlsid import TlsIdentity, spki_sha256
 
 EXPORTER_LABEL = b"EXPORTER-orch-hub-link"
 EXPORTER_LEN = 32
+
+
+__all__ = ["TlsIdentity", "spki_sha256"]
 
 
 class LinkClosed(Exception):
@@ -41,42 +38,6 @@ class LinkTimeout(Exception):
 
 class PinMismatch(Exception):
     """The peer's certificate does not hash to the pinned SPKI."""
-
-
-def spki_sha256(cert: x509.Certificate) -> str:
-    der = cert.public_key().public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
-    h = hashes.Hash(hashes.SHA256())
-    h.update(der)
-    return b64u(h.finalize())
-
-
-@dataclass(frozen=True)
-class TlsIdentity:
-    """The hub's TLS key and self-signed certificate; the card's ``tls_spki_sha256`` is :attr:`spki_sha256`."""
-
-    key: ec.EllipticCurvePrivateKey
-    cert: x509.Certificate
-
-    @staticmethod
-    def generate(name: str = "orch-hub") -> TlsIdentity:
-        key = ec.generate_private_key(ec.SECP256R1())
-        subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, name)])
-        now = datetime.datetime.now(datetime.UTC)
-        cert = (
-            x509.CertificateBuilder()
-            .subject_name(subject)
-            .issuer_name(subject)
-            .public_key(key.public_key())
-            .serial_number(x509.random_serial_number())
-            .not_valid_before(now - datetime.timedelta(days=1))
-            .not_valid_after(now + datetime.timedelta(days=3650))
-            .sign(key, hashes.SHA256())
-        )
-        return TlsIdentity(key, cert)
-
-    @property
-    def spki_sha256(self) -> str:
-        return spki_sha256(self.cert)
 
 
 class TlsConn:

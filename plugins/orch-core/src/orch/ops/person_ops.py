@@ -36,6 +36,7 @@ from orch.ops.base import Context, Operation, Result
 from orch.ops.errors import GLOBAL_ERRORS, OrchError
 from orch.ops.human import Human
 from orch.ops.runtime import Call, Workspace
+from orch.wsicons import COLOUR_LABELS, ICON_LABELS
 
 __all__ = ["OPS", "get"]
 
@@ -73,6 +74,17 @@ _ORIGIN = {
     "maxLength": 300,
     "pattern": r"^(?:https://[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[1-9][0-9]{0,4})?"
     r"|http://(?:localhost|127\.0\.0\.1)(?::[1-9][0-9]{0,4})?)(?![\s\S])",
+}
+_ICON = {  # the workspace icon: an icon and a colour of the closed lists, or null to clear it
+    "oneOf": [
+        {
+            "type": "object",
+            "properties": {"icon": {"enum": list(ICON_LABELS)}, "colour": {"enum": list(COLOUR_LABELS)}},
+            "required": ["icon", "colour"],
+            "additionalProperties": False,
+        },
+        {"type": "null"},
+    ]
 }
 _MODELS = {  # Model routing: harness -> Start agent mode -> a model of that harness's closed list; null clears all
     "oneOf": [
@@ -118,6 +130,7 @@ _SET = {
             ]
         },
         "models": _MODELS,
+        "icon": _ICON,
         "repos": {
             "type": "object",
             "minProperties": 1,

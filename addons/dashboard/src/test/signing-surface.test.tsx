@@ -625,7 +625,7 @@ const CASES: Case[] = [
     path: '/settings/general',
     open: async (user) => {
       await user.click(await screen.findByRole('button', { name: '1 day' }, T))
-      await user.click(screen.getAllByRole('button', { name: 'Save' })[1])
+      await user.click(screen.getAllByRole('button', { name: 'Save' })[2]) // name, icon, then the grant length
       return screen.findByRole('dialog', {}, T)
     },
     confirm: press('Sign and save'),

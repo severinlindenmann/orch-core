@@ -169,8 +169,8 @@ def _grant_class(events: list[dict[str, Any]] | None, args: dict[str, Any] | Non
     prepare, the signed event at sign time, which wins). A plain click needs ALL of: an empty SIGNED capability list,
     a built-in add-on name, and the digest of exactly that built-in package (``builtin.is_builtin_package``: an
     unknown add-on, even one without capabilities, keeps the word). Any capability (network, pty, spawn_agent,
-    serve_http: code, network or a server as you) keeps the typed word. A missing or malformed list fails closed. From ``args`` alone (the early check, before the host has built the event) the capabilities are
-    not known: the word, the ceiling. That early class is only used to refuse terminal-only ops; the signed event
+    serve_http: code, network or a server as you) keeps the typed word. A missing or malformed list fails closed. From ``args`` alone (the early check, before
+    the host has built the event) the capabilities are not known: the word, the ceiling. That early class is only used to refuse terminal-only ops; the signed event
     decides click versus word."""
     from orch.addons import builtin
 

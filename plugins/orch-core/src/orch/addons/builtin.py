@@ -10,10 +10,11 @@ import argparse
 import os
 import secrets
 import stat
+from collections.abc import Mapping
 from contextlib import ExitStack
 from importlib.resources import files
 from pathlib import Path
-from typing import Any, Mapping, TextIO
+from typing import Any, TextIO
 
 from orch.layout import LayoutError
 
@@ -39,8 +40,8 @@ def manifest_bytes(name: str) -> bytes:
 
 
 def is_builtin_package(ev: Mapping[str, Any], name: str | None = None) -> bool:
-    """True when the signed event names a built-in add-on (``name``, when given, must be that one) AND carries the
-    digest of exactly that built-in package: never by name alone (a clone of the name with other code is not built-in)."""
+    """True when the signed event names a built-in add-on (``name``, when given, must be that one) AND
+    carries the digest of exactly that built-in package: never by name alone (a clone with other code is not it)."""
     from orch.addons.package import MANIFEST_FILE, package_digest
 
     ev_name = ev.get("name")

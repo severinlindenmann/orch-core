@@ -55,6 +55,8 @@ class HubConfig:
             raise ValueError(
                 "--api-origin must be one of the --web-origin values (one configured origin, signed as is)"
             )
+        if not self.dev and any(o.startswith("http://") for o in self.allowed_origins):
+            raise ValueError("a non-dev hub signs and serves https origins only (D1)")
         if self.behind_edge and self.resolved_api_origin() is None:
             raise ValueError("behind_edge with several --web-origin values needs --api-origin (the one the phone uses)")
         if self.behind_edge and not all(_https_origin(o) for o in self.allowed_origins):

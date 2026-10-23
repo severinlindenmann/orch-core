@@ -21,6 +21,7 @@ CREATE INDEX IF NOT EXISTS failures_by ON failures(kind, subject, ts_ms);
 CREATE TABLE IF NOT EXISTS sessions (
   token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, created_ms INTEGER NOT NULL, expires_ms INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS api_origins (op_cert_id TEXT PRIMARY KEY, origin TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS push_keys (
   channel_id TEXT PRIMARY KEY, push_pub TEXT NOT NULL, issued_ms INTEGER NOT NULL
 );

@@ -408,13 +408,24 @@ class Channels:
             "login_ms": login if login is not None else created,
         }
 
+    def pin_api_origin(self, op_cert_id: str, origin: str) -> bool:
+        """The first API origin signed under an op cert is the only one for that cert (protocol §6.4, D1: a new origin
+        needs a new HK_op and the old cert revoked). True when ``origin`` is the pinned one."""
+        with self._tx() as db:
+            db.execute("INSERT OR IGNORE INTO api_origins(op_cert_id, origin) VALUES (?,?)", (op_cert_id, origin))
+            return (
+                db.execute("SELECT origin FROM api_origins WHERE op_cert_id=?", (op_cert_id,)).fetchone()[0] == origin
+            )
+
     def channel_state(self, user_id: str, channel_id: str) -> str:
         """``active`` | ``revoked`` | ``expired`` | ``unknown`` for one channel of the user (fail closed: ``unknown``)."""
         try:
+            if channel_id in self.acc.revoked_channels():  # the access model's list is the truth (L2H1-2)
+                return "revoked"
             for c in self.channels(user_id):
                 if c["channel_id"] == channel_id:
                     return c["status"]
-        except ChannelError:
+        except ChannelError, AccessError:
             pass
         return "unknown"
 
@@ -746,18 +757,22 @@ class Channels:
                     log.warning("on_revoke hook failed")
 
     def remove_user(self, user_id: str, *, actor: str | None = None) -> None:
-        """Remove a user (the access model decides whether ``actor`` may) AND revoke every channel of theirs, each
-        revocation permanent, audited, and through ``on_revoke`` purging the push target and mailbox at the relay. The
-        user goes first: a refused removal revokes nothing, and a user without a record has no active channel anyway
-        (``active_channel`` fails closed)."""
+        """Remove a user: revoke (audit, purge at the relay through ``on_revoke``) EVERY channel of theirs first, then
+        delete the user (L2H1-4). Idempotent: a retry skips what is revoked and finishes the job, so a failure part-way
+        never leaves a deleted user with live channels. ``actor`` may not remove a hub-admin unless an admin
+        (checked before anything is revoked)."""
         u = self._user(user_id)
-        live = [c["channel_id"] for c in self.channels(u) if c["status"] != "revoked"]
+        try:
+            self.acc.check_remove_user(u, actor)
+        except AccessError as e:
+            raise ChannelError(e.code) from None
+        for c in self.channels(u):
+            if c["status"] != "revoked":
+                self.revoke(c["channel_id"])  # the operator-level path: the removal is the authorised act
         try:
             self.acc.remove_user(u, actor=actor)
         except AccessError as e:
             raise ChannelError(e.code) from None
-        for cid in live:
-            self.revoke(cid)  # the operator-level path: the removal above was the authorised act
 
     def revoke_as(self, token: str, channel_id: str) -> None:
         self.revoke(channel_id, actor=self.session_user(token))

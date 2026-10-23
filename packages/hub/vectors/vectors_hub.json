@@ -42213,6 +42213,81 @@
     },
     "dev_mode": true,
     "event": {
+     "actor_user_id": null,
+     "change": "renew",
+     "channel_id": "a521208444bffafc2188fe6b5f1f286f",
+     "factor": "se-unlocked",
+     "nonce": "HxSfNFmpl13kN-Iv3OVowY7yWMNWkact8rwXAC5kyP0",
+     "user_id": "a368bd380588e5dabee62a516031e21f"
+    },
+    "now_ms": 1790000000000,
+    "signed": {
+     "o": {
+      "dev": true,
+      "event_hash": "IhWjhiKqpQuASEbwOgx_ejj5Mplqpeb9YV-2ocQzIe0",
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "kind": "hub.audit",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "prev": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "scope_tag": null,
+      "seq": 1,
+      "suite": 2,
+      "ts_ms": 1789999991000,
+      "type": "channel",
+      "v": 2
+     },
+     "sig": "A25t_Ing3WTvhKauDZViqCJeUR2p_GGk_EO3iXlkMbzBKFSQn-lAt0p0nIOzKnKMbH5BEYVUqA4FtyJ2kQd9Ng"
+    }
+   },
+   "check": "audit",
+   "expect": {
+    "ok": {
+     "hash": "RpOxQgyD8b6NBQg6l3U8iMiTPRUw39XQVunky0LDMcc",
+     "seq": 1
+    }
+   },
+   "name": "audit_channel_renew",
+   "note": "contract text only in V3: no hub renews a channel certificate yet",
+   "phase": 4
+  },
+  {
+   "args": {
+    "card": {
+     "o": {
+      "card_seq": 1,
+      "dev": true,
+      "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "hxk_pub": "BPL5BSYzK4pViSYlGYnw-Ow5FIY3-D1et4PP74_LVjLF1s_FvTIh8KJq3syjmkJN6B2VQoHH14tnC7fsxzTtuX0",
+      "issued_ms": 1789913600000,
+      "kind": "hub.card",
+      "relay_url": null,
+      "suite": 2,
+      "tls_spki_sha256": "19dzV-BWnXf27oDtjqrK-6FGcfYbFEPuMUYMTzOrlY4",
+      "v": 2
+     },
+     "op_cert": {
+      "o": {
+       "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "dev": true,
+       "expires_ms": 1821536000000,
+       "hk_op_pub": "BGKyaYh6M5-PTj4pcMYwjvcmBflbTMCaHcCtr8J0vV4knajypjV15SXhIGpnZO404RAfMhkTi9R1g6_7JxV96s4",
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "kind": "hub.op_cert",
+       "op_seq": 1,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "IkiDO7ivIMFh9v4YZOITIZ4S2fsRo8hL5q7RBkafUZ5q3ZMpIXjeXU-g16p8YbpDLpjxC4N0eCWK-IRhCkW1bg"
+     },
+     "sig": "YxOSEHHCj0u5x8_T_UD2foB8QYYPEwzBTLTrI7Dtxg31_nxiqxlsCCjsmcMzhUSSQB_LJGmmgvRWpGLrzdXpZQ"
+    },
+    "dev_mode": true,
+    "event": {
      "actor_user_id": "a368bd380588e5dabee62a516031e21f",
      "change": "register",
      "channel_id": "a521208444bffafc2188fe6b5f1f286f",

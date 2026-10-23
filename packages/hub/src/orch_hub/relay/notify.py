@@ -99,11 +99,13 @@ class PushNotifier:
             raise RelayError("unknown_channel")
         if push_pub is not None and (not S.valid_public_key(push_pub) or push_pub == cert_pub):
             raise RelayError("malformed")
+        self._client.put_push_target(channel_id, env, topic, token)
+        # the key is stored only after the relay accepted the target, so a failed relay call leaves the held key and its
+        # issued_ms untouched and the phone can retry the same registration (L2H1-5)
         if push_pub is not None and push_issued_ms is None:
             self._push_keys[channel_id] = push_pub  # direct caller (tests): no registration object, no replay rule
         elif push_pub is not None and not self._push_keys.put(channel_id, push_pub, push_issued_ms):
-            raise RelayError("replay")  # an older (or equal) registration than the held one
-        self._client.put_push_target(channel_id, env, topic, token)
+            raise RelayError("replay")  # an older registration won the race
 
     def held_push_issued_ms(self, channel_id: str) -> int | None:
         """``issued_ms`` of the ``hub.channel_push`` behind the held push key (None = no key): what a new registration

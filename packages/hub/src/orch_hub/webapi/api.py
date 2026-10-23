@@ -309,6 +309,14 @@ SCOPE_ROUTES: dict[str, frozenset[str]] = {
     )
     for h in {rt.handler for rt in ROUTES}
 }
+
+
+def route_scopes(rt: Route) -> frozenset[str]:
+    """The session scopes that may call this ROUTE (keyed by route, not handler: ``/admin/channels/{id}/revoke`` shares the
+    ``revoke`` handler with the channel's own revoke, but an admin route is ``full`` only, L2H1-1)."""
+    return frozenset({"full"}) if rt.auth == "admin" else SCOPE_ROUTES.get(rt.handler, frozenset())
+
+
 _BY_METHOD: dict[str, list[Route]] = {}
 for _rt in ROUTES:
     _BY_METHOD.setdefault(_rt.method, []).append(_rt)
@@ -507,7 +515,7 @@ class WebApi:
             # ``channel``); the scope is stored with the session, so it also holds across a restart
             if (ctx.scope == "full") != ctx.cookie:
                 raise ApiError("no_session")
-            if ctx.scope not in SCOPE_ROUTES.get(route.handler, frozenset()):
+            if ctx.scope not in route_scopes(route):
                 raise ApiError("forbidden_role")
             if ctx.scope == "channel":  # every request re-checks the channel (revocation takes effect at once)
                 state = self.d.channels.channel_state(ctx.user_id, ctx.channel_id or "")
@@ -682,6 +690,8 @@ class WebApi:
         dev = self.d.keys.card()["o"].get("dev")
         if type(dev) is not bool:
             raise ApiError("unavailable")
+        if not self.d.channels.pin_api_origin(cert_id, origin):
+            raise ApiError("unavailable")  # another origin under the same HK_op: rotate HK_op and revoke the old cert
         signed = self.d.keys.op_signer.sign_object(
             {
                 "v": 2,

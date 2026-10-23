@@ -1965,6 +1965,48 @@ def test_a_stopped_sequence_says_which_ticket_exists_and_that_the_agent_access_i
     assert "key" not in plain and "progress" not in plain
 
 
+def test_a_sequence_that_ends_in_the_agent_access_still_answers_its_ticket_key(client, token, stub, script, host_check):
+    """The page starts the agent for exactly the ticket this signature created: its key must reach it when the sequence
+    ends in a deposit (the access), as it does when there is none. The deposit fields stay the closed set."""
+    script.features = ["custody", "sequence"]
+    res = prepare(client, token, stub, {**SEQUENCE, "agent": {"hours": 24}})
+    assert res.status_code == 200, res.text
+    rid = res.json()["request_id"]
+    base = script.handler
+
+    def handler(op, args):
+        if op == "sign":
+            script.states[args["request_id"]] = "submitted"
+            return {"result": {"key": "DEMO-0044", "seq": 7, "secret": SECRET}, "duplicate": False, "deposit": "confirmed", "deposit_id": rid[3:], "grant": GRANT}
+        return base(op, args)
+
+    script.clients[0].handler = handler
+    signed = client.post(url(stub, "sign"), json={"request_id": rid, "view_digest": HASH}, headers=hdr(token))
+    assert signed.status_code == 200, signed.text
+    body = signed.json()
+    assert body["key"] == "DEMO-0044" and body["seq"] == 7 and body["deposit"] == "confirmed"
+    assert SECRET not in signed.text and "result" not in body
+
+
+def test_the_key_comes_from_the_hosts_row_when_the_last_steps_result_has_none(client, token, stub, script, host_check):
+    """The deposit's result is the grant's: it carries no ticket key. The host's own row of the request does."""
+    script.features = ["custody", "sequence"]
+    rid = prepare(client, token, stub, {**SEQUENCE, "agent": {"hours": 24}}).json()["request_id"]
+    base = script.clients[0].handler
+
+    def handler(op, args):
+        if op == "sign":
+            script.states[args["request_id"]] = "submitted"
+            return {"result": {"data": {"grant": GRANT}}, "duplicate": False, "deposit": "confirmed", "deposit_id": rid[3:], "grant": GRANT}
+        return base(op, args)
+
+    script.clients[0].handler = handler
+    host_check.key = "DEMO-0045"
+    signed = client.post(url(stub, "sign"), json={"request_id": rid, "view_digest": HASH}, headers=hdr(token))
+    assert signed.status_code == 200, signed.text
+    assert signed.json()["key"] == "DEMO-0045" and signed.json()["deposit"] == "confirmed"
+
+
 # --- R3 part B: pasted screenshots ---------------------------------------------------------------------------------
 DIGEST = "ab" * 32
 PIC = {

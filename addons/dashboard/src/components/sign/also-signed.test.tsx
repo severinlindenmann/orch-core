@@ -16,7 +16,7 @@ function hostContent(t: QuickTyped = typed): Content {
     headline: 'Start task DEMO-0001',
     ticket: { key: 'DEMO-0001', title: want.title, uid_tail: 'ab12cd34', key_note: 'key per host', new: true },
     sections: [{ id: 'requirements', title: 'Requirements', text: want.requirements }, { id: 'plan', title: 'Plan', text: want.plan }],
-    acceptance: want.checks.map((c, i) => ({ id: `AC${i + 1}`, text: c.text })),
+    acceptance: want.checks.map((c, i) => ({ id: `AC${i + 1}`, text: c.text, checked: false })),
     tasks: want.checks.map((c, i) => ({ n: i + 1, id: `T${i + 1}`, title: `${c.text} (proves AC${i + 1})`, ...(c.cmd ? { verify: [c.cmd] } : {}) })),
     fields_title: 'Details',
     fields_changed: [{ field: 'type', before: null, after: 'chore' }, { field: 'owner', before: null, after: SIGNER }, { field: 'labels', before: null, after: 'quick' }],

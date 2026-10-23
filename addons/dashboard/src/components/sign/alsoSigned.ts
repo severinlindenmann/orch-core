@@ -60,7 +60,7 @@ export function alsoSigned(content: SignContent, typed: QuickTyped): AlsoSigned 
   const acceptance = content.acceptance ?? []
   if (acceptance.length !== want.checks.length) return null
   for (const [i, a] of acceptance.entries()) {
-    if (!keysAre(a, ['id', 'text']) || a.id !== `AC${i + 1}` || a.text !== want.checks[i]!.text) return null
+    if (!Object.keys(a).every((x) => ['id', 'text', 'checked'].includes(x)) || a.checked === true || a.id !== `AC${i + 1}` || a.text !== want.checks[i]!.text) return null
   }
   const tasks = content.tasks ?? []
   if (tasks.length !== want.checks.length) return null

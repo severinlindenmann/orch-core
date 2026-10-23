@@ -436,6 +436,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
       titleRef.current?.focus()
     } else if (overlay) {
       setDraft(EMPTY)
+      setAttempted(false)
       onCreated?.(ticket)
     } else {
       leaving.current = true
@@ -450,6 +451,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
     writeDraft(key, null)
     setShowRestored(false)
     setDraft(EMPTY)
+    setAttempted(false) // the emptied form must not keep the red errors of the filled one (#1127)
     onDirtyChange?.(false)
   }
   /** The signer's event is in the log: the ticket exists. */

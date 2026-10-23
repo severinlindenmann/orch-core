@@ -462,6 +462,17 @@ describe('a short, calm dialog (U6)', () => {
     expect(screen.getByTestId('execution-line')).toHaveTextContent(EXECUTION_LINE) // still there, under Details
   })
 
+  it('#1128: opened after Create and start agent, Start is the one button; the notice stays and starting acknowledges it', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(<QueryClientProvider client={qc}><TooltipProvider><StartAgentDialog ws={WS} ticket="DEMO-1" open onClose={vi.fn()} initial={{ harness: 'claude-code', mode: 'work' }} /></TooltipProvider></QueryClientProvider>)
+    const full = await screen.findByTestId('agent-risk-full', {}, T)
+    expect(within(full).getByTestId('execution-line')).toHaveTextContent(EXECUTION_LINE)
+    expect(screen.queryByTestId('agent-risk-ack')).toBeNull()
+    await waitFor(() => expect(screen.getByTestId('agent-start')).toBeEnabled(), T)
+    fireEvent.click(screen.getByTestId('agent-start'))
+    await waitFor(() => expect(s.acknowledge).toHaveBeenCalledWith(WS, 'start_agent'), T)
+  })
+
   it('starting with the full notice on screen counts as having read it', async () => {
     mount()
     await screen.findByTestId('agent-risk-full', {}, T)

@@ -5,7 +5,9 @@
 
 from __future__ import annotations
 
+import copy
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -275,8 +277,8 @@ def test_break_glass_signer_rules():
     assert not ok(ws, fake_event("gate.approved", person="p_o", device="d_o"), None)
 
 
-def test_a_recovery_only_type_takes_the_recovery_key_and_never_a_device_key(monkeypatch):
-    monkeypatch.setitem(hubsign.BREAK_GLASS, "hub.repinned", "recovery")  # C8's repin, by event type
+def test_a_recovery_only_type_takes_the_recovery_key_and_never_a_device_key():
+    # the table's repin row (event hub.repinned) is the recovery key only
     ws = ws_model()
     assert not hubsign.break_glass_allowed(ws, fake_event("hub.repinned", person="p_o", device="d_o"), None)
     pk = fake_event("hub.repinned", person="p_o", device="d_pk", cert={"x": 1})
@@ -285,9 +287,42 @@ def test_a_recovery_only_type_takes_the_recovery_key_and_never_a_device_key(monk
     assert not hubsign.break_glass_allowed(ws, {**pk, "auth": "convenience"}, None)
 
 
-def test_break_glass_constant_is_the_one_shared_list():
-    assert hubops.BREAK_GLASS is hubsign.BREAK_GLASS
-    assert "hub.left" in hubsign.BREAK_GLASS and "hub.joined" not in hubsign.BREAK_GLASS
+def test_break_glass_constant_is_the_one_shared_table_of_the_model():
+    from orch.model import breakglass
+
+    assert hubops.BREAK_GLASS is hubsign.BREAK_GLASS is breakglass.BREAK_GLASS
+    assert "hub.left" in breakglass.event_types() and "hub.joined" not in breakglass.event_types()
+
+
+def test_signer_kind_is_fail_closed_for_every_kind_and_an_unknown_label():
+    from orch.model.breakglass import SIGNER_KINDS, allowed, signer_kind
+
+    ws = ws_model()
+    kinds = {
+        "owner_device_key": left(),
+        "pk": left(device="d_pk", cert={"x": 1}),
+        "convenience": left(auth="convenience"),
+        "hub": left(auth="hub"),
+        "relay": left(signed_by="r"),
+        "other": left(auth="some-future-label"),
+    }
+    for want, ev in kinds.items():
+        assert signer_kind(ws, ev) == want, want
+    ev = left()
+    ev["actor"] = {**ev["actor"], "via": "c_1"}
+    assert signer_kind(ws, ev) == "hub"
+    ag = left()
+    ag["actor"] = {"kind": "agent", "id": "x"}
+    assert signer_kind(ws, ag) == "agent"
+    assert signer_kind(ws, left(device="d_m")) == "other"  # another person's device
+    assert signer_kind(ws, left(device="d_unknown")) == "other"  # a device the roster does not know
+    assert not allowed("hub.leave", "other") and not allowed("hub.leave", "click") and not allowed("nope", "pk")
+    assert (
+        allowed("hub.leave", "owner_device_key")
+        and allowed("hub.repin", "pk")
+        and not allowed("hub.repin", "owner_device_key")
+    )
+    assert "other" not in SIGNER_KINDS
 
 
 def test_a_second_hub_joined_is_refused_in_full_mode(human, served):
@@ -330,7 +365,10 @@ def test_grant_forget_is_not_a_signing_op_and_works_in_full_mode(human, served):
 # -- direct mode (no host): the log's half of the rule ---------------------------------------------------------------
 
 
-def test_direct_mode_has_the_same_rule_from_the_log():
+def test_direct_mode_has_the_same_rule_from_the_log(tmp_path, monkeypatch):
+    from orch.custody import select
+
+    monkeypatch.setattr(select, "read_selection", lambda state, wid: None)  # passphrase custody
     from orch.ops.errors import OrchError
     from orch.ops.human import Human
 
@@ -339,7 +377,8 @@ def test_direct_mode_has_the_same_rule_from_the_log():
         **vars(ws_model()),
     )
     store = SimpleNamespace(refresh=lambda: None, state=SimpleNamespace(workspace=full))
-    h = object.__new__(type("H", (Human,), {"store": store}))
+    call = SimpleNamespace(ws=SimpleNamespace(state_dir=Path("/nonexistent-orch-state")))
+    h = object.__new__(type("H", (Human,), {"store": store, "workspace_id": "w" * 32, "call": call}))
     with pytest.raises(OrchError) as ei:
         h._hub_only_check(None, fake_event("gate.approved", person="p_o", device="d_o"))()
     assert ei.value.code == "sign.hub_only"
@@ -367,3 +406,98 @@ def test_hub_status_reports_the_signing_mode_for_the_dashboard(human, served, st
     assert ok(served.client().req("hub.status", {}, idem=False))["data"]["signing"] == "unknown"
     ok(served.client().req("hub.connect", connect_args(), idem=True))
     assert ok(served.client().req("hub.status", {}, idem=False))["data"]["signing"] == "full"
+
+
+# -- L2-C11i-1: custody decides, not the label ---------------------------------------------------------------------
+
+
+@pytest.fixture
+def convenience_custody(monkeypatch):
+    """The owner's key sits in convenience custody with the click-to-sign flag OFF (the 'Turn off' leaves it there)."""
+    from orch.custody import select
+
+    monkeypatch.setattr(select, "read_selection", lambda state, wid: {"custody": "convenience", "transition": None})
+
+
+def test_a_full_join_needs_passphrase_custody_not_just_the_flag_off(human, served, convenience_custody):
+    assert not convenience.enabled(served.lab.state, served.wid, UID)  # the flag is off
+    assert err(human.prepare_res("hub.join", join_args(mode="full"))) == "sign.hub_only"
+    human.prepare("hub.join", join_args())  # selective is unchanged
+
+
+def test_hub_mode_to_full_needs_passphrase_custody(human, served, monkeypatch):
+    human.run("hub.join", join_args())
+    from orch.custody import select
+
+    monkeypatch.setattr(select, "read_selection", lambda state, wid: {"custody": "convenience", "transition": None})
+    assert err(human.prepare_res("hub.mode", {"hub_card": copy.deepcopy(CARD), "mode": "full"})) == "sign.hub_only"
+
+
+def test_a_full_connect_needs_passphrase_custody(human, served, stub, keystore, monkeypatch):
+    full_joined(human, served)
+    from orch.custody import select
+
+    monkeypatch.setattr(select, "read_selection", lambda state, wid: {"custody": "convenience", "transition": None})
+    assert err(served.client().req("hub.connect", connect_args(), idem=True)) == "sign.hub_only"
+
+
+def test_an_unreadable_custody_setting_counts_as_convenience(human, served, monkeypatch):
+    from orch.custody import select
+
+    def boom(state, wid):
+        raise OSError("unreadable")
+
+    monkeypatch.setattr(select, "read_selection", boom)
+    assert err(human.prepare_res("hub.join", join_args(mode="full"))) == "sign.hub_only"
+
+
+def test_a_transition_to_convenience_counts_as_convenience(human, served, monkeypatch):
+    from orch.custody import select
+
+    monkeypatch.setattr(
+        select, "read_selection", lambda state, wid: {"custody": "passphrase", "transition": {"to": "convenience"}}
+    )
+    assert err(human.prepare_res("hub.join", join_args(mode="full"))) == "sign.hub_only"
+
+
+def test_moving_the_key_into_convenience_custody_is_refused_in_full_mode(human, served, stub, keystore):
+    entry = {"workspace_id": served.wid, "root": served.lab.root}
+    convenience.refuse_full_mode_entry(served.lab.state, entry, UID)  # standalone: allowed
+    full_joined(human, served)
+    with pytest.raises(HostError) as ei:
+        convenience.refuse_full_mode_entry(served.lab.state, entry, UID)
+    assert ei.value.code == "sign.hub_only"
+
+
+def test_break_glass_is_refused_while_custody_is_convenience(human, served, stub, keystore, monkeypatch):
+    full_joined(human, served)
+    from orch.custody import select
+
+    monkeypatch.setattr(select, "read_selection", lambda state, wid: {"custody": "convenience", "transition": None})
+    # any process of the owner's UID could sign a leave labelled passphrase: refused at the choke point
+    before = log_len(served)
+    landed, error = append(served, [owner_event(served, "hub.left")])
+    assert landed == [] and error.code == "sign.hub_only" and "convenience custody" in error.message
+    assert err(human.prepare_res("hub.leave", {})) == "sign.hub_only"
+    assert log_len(served) == before
+
+
+def test_direct_mode_refuses_break_glass_while_custody_is_convenience(convenience_custody, tmp_path):
+    from orch.ops.errors import OrchError
+    from orch.ops.human import Human
+
+    full = SimpleNamespace(
+        hub={"status": "joined", "mode": "full", "hub_id": "h", "binding_seq": 1}, **vars(ws_model())
+    )
+    store = SimpleNamespace(refresh=lambda: None, state=SimpleNamespace(workspace=full))
+    call = SimpleNamespace(ws=SimpleNamespace(state_dir=tmp_path))
+    h = object.__new__(type("H", (Human,), {"store": store, "workspace_id": "w" * 32, "call": call}))
+    with pytest.raises(OrchError):
+        h._hub_only_check(None, left())()
+
+
+def test_another_members_device_row_of_the_matrix(human, served, stub, keystore):
+    full_joined(human, served)
+    ev = fake_event("gate.approved", person="p_" + "9" * 32, device="d_" + "9" * 32)
+    landed, error = append(served, [ev])
+    assert landed == [] and error.code == "sign.hub_only"

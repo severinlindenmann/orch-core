@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from orch.model.breakglass import BREAK_GLASS, signer_kind
+
 from .errors import HostError
 
 if TYPE_CHECKING:
@@ -33,14 +35,6 @@ __all__ = [
 #: signing modes in which no local signature is accepted (``unknown`` fails closed, as full)
 HUB_ONLY = frozenset({"full", "unknown"})
 
-#: event type -> the key that may sign it in break-glass: ``"owner"`` (the owner's passphrase device key, or the
-#: recovery key ``PK``) or ``"recovery"`` (``PK`` only: a repin moves the root of trust). Only an owner, over the
-#: person path (never the relay), never ``auth: convenience``. ``hub.joined`` is NOT here: a second join in full mode
-#: would act as a repin without ``PK``. C8 adds its repin (``"recovery"``) and rotate (``"owner"``) types.
-BREAK_GLASS: dict[str, str] = {"hub.left": "owner"}
-
-_ALLOWED_AUTH = (None, "passphrase")
-
 
 def hub_only_error(reason: str = "hub") -> HostError:
     """``sign.hub_only``: this workspace is in full hub mode, so approvals are signed on the phone or in the hub."""
@@ -53,36 +47,20 @@ def hub_only_error(reason: str = "hub") -> HostError:
     )
 
 
-def _is_recovery_signature(ws: Any, ev: dict[str, Any]) -> bool:
-    """The recovery key ``PK`` signed (and no device key): the actor's device is not a device of the roster and the
-    event carries the recovery certificate (the shape ``authorize_person`` calls recovery). C8 may tighten this."""
-    dev = ev["actor"].get("device")
-    return dev not in ws.devices and isinstance(ev.get("cert"), dict)
-
-
 def break_glass_allowed(ws: Any, ev: dict[str, Any], signed_by: tuple[str, str] | None) -> bool:
-    """May ``ev`` land although the workspace is hub-only? All of: the type is in :data:`BREAK_GLASS`; it did not come
-    over the relay; the actor is a person, a workspace owner, with no hub ``via``; ``auth`` is the passphrase (never
-    ``convenience``, ``hub`` or a phone's); the signature is the owner's own device key or the recovery key, and the
-    recovery key alone for a ``"recovery"`` type."""
-    need = BREAK_GLASS.get(str(ev.get("type")))
+    """May ``ev`` land although the workspace is hub-only? A thin host wrapper over the model's table: the event type
+    is a :data:`BREAK_GLASS` event; it did not come over the relay (``signed_by``); the actor is a workspace owner; and
+    :func:`orch.model.breakglass.signer_kind` (fail closed: only a passphrase or unlabelled event, never convenience,
+    hub, agent or a phone's label) names a signer that row allows (the owner's own device key or the recovery key; the
+    recovery key alone for a repin)."""
+    row = next((r for r in BREAK_GLASS.values() if r.event == ev.get("type")), None)
     actor = ev.get("actor")
-    if (
-        need is None
-        or signed_by is not None
-        or not isinstance(actor, dict)
-        or actor.get("kind") != "person"
-        or "via" in actor
-        or ev.get("auth") not in _ALLOWED_AUTH
-    ):
+    if row is None or signed_by is not None or not isinstance(actor, dict) or actor.get("kind") != "person":
         return False
     member = ws.members.get(actor.get("id"))
     if member is None or member.role != "owner":
         return False
-    if _is_recovery_signature(ws, ev):
-        return True
-    dev = ws.devices.get(actor.get("device"))
-    return need == "owner" and dev is not None and dev.person == actor["id"]
+    return signer_kind(ws, ev) in row.signers
 
 
 def log_hub_only(ws: Any) -> bool:
@@ -109,20 +87,33 @@ def refusal(
     for ev in events:
         if not break_glass_allowed(ws, ev, signed_by):
             return hub_only_error()
+        if _click_custody(service):  # custody decides, not the label: a convenience key signs any label (L2-C11i-1)
+            return HostError(
+                "sign.hub_only",
+                "break-glass is refused while your key is in convenience custody (any process of yours could sign it)",
+                hint="move the key back first: orch keys custody passphrase --workspace W --in-place",
+                detail={"reason": "hub"},
+            )
     return None
 
 
-def refuse_full_while_click_on(service: Any) -> None:
-    """A full join, a ``selective -> full`` switch and a full ``hub.connect`` first need click-to-sign OFF
-    (``orch host convenience off``): in full mode the click signer is refused at the append anyway, and a flag left on
-    would only look like a way to sign. Raises ``sign.hub_only`` (reason ``hub``) while the flag is on."""
+def _click_custody(service: Any) -> bool:
     from . import convenience
 
-    if convenience.enabled(service.state_dir, service.workspace_id, service.host_uid):
+    return bool(convenience._click_custody(service))  # noqa: SLF001 - the one custody read: flag on, convenience, unreadable
+
+
+def refuse_full_while_click_on(service: Any) -> None:
+    """A full join, a ``selective -> full`` switch and a full ``hub.connect`` need the owner's key in **passphrase
+    custody** (L2-C11i-1): the flag off is not enough, because the key can still sit in convenience custody, where any
+    process of the owner's UID can sign with it and write any ``auth`` label (so a label-trusting break-glass would be
+    open). Raises ``sign.hub_only`` while click-to-sign is on, the key is in (or moving to) convenience custody, or the
+    custody cannot be read."""
+    if _click_custody(service):
         raise HostError(
             "sign.hub_only",
-            "full hub mode takes no click-to-sign: switch it off first (orch host convenience off), then join",
-            hint="orch host convenience off --workspace W, then join the hub again",
+            "full hub mode needs your key in passphrase custody: switch click-to-sign off and move the key back first",
+            hint="orch host convenience off --workspace W, then orch keys custody passphrase --workspace W --in-place",
             fix=["orch", "host", "convenience", "off", "--workspace", str(service.workspace_id)],
             detail={"reason": "hub"},
         )

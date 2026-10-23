@@ -686,14 +686,20 @@ class Human:
         path refuses at ``append_signed``."""
         from orch.host import hubsign
 
+        state_dir, wid = self.call.ws.state_dir, self.workspace_id
+
         def check() -> None:
             if inner is not None:
                 inner()
             self.store.refresh()
             ws = self.store.state.workspace
-            if hubsign.log_hub_only(ws) and not hubsign.break_glass_allowed(ws, ev, None):
-                err = hubsign.hub_only_error()
-                raise OrchError(err.code, err.message, hint=err.hint, fix=err.fix)
+            if hubsign.log_hub_only(ws):
+                from types import SimpleNamespace
+
+                held = SimpleNamespace(state_dir=state_dir, workspace_id=wid, host_uid=os.getuid())
+                if not hubsign.break_glass_allowed(ws, ev, None) or hubsign._click_custody(held):  # noqa: SLF001
+                    err = hubsign.hub_only_error()
+                    raise OrchError(err.code, err.message, hint=err.hint, fix=err.fix)
 
         return check
 

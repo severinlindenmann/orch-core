@@ -21,7 +21,6 @@ from __future__ import annotations
 import logging
 import queue
 import threading
-from collections.abc import MutableMapping
 from typing import Any
 
 from ..contract import suite as S
@@ -45,12 +44,34 @@ def _safe_code(code: object) -> str:
     return code if isinstance(code, str) and code in KNOWN_CODES else "bad_response"
 
 
+class MemoryPushKeys(dict):  # type: ignore[type-arg]
+    """The in-memory push-key store (tests); a running hub passes ``channels.pushkeys.PushKeyStore`` instead."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._issued: dict[str, int] = {}
+
+    def put(self, channel_id: str, push_pub: bytes, issued_ms: int) -> bool:
+        held = self._issued.get(channel_id)
+        if held is not None and issued_ms <= held:
+            return False
+        self[channel_id], self._issued[channel_id] = push_pub, issued_ms
+        return True
+
+    def held_issued_ms(self, channel_id: str) -> int | None:
+        return self._issued.get(channel_id)
+
+    def pop(self, channel_id: str, *default: Any) -> Any:
+        self._issued.pop(channel_id, None)
+        return super().pop(channel_id, *default)
+
+
 class PushNotifier:
-    def __init__(self, client: RelayClient, channels: Any, push_keys: MutableMapping[str, bytes] | None = None) -> None:
+    def __init__(self, client: RelayClient, channels: Any, push_keys: Any = None) -> None:
         """``push_keys``: channel id -> the push key the phone registered (§6.4 ``hub.channel_push``, verified by the
         web API). In memory by default; a running hub passes a persistent store (H1). No key, no hint (§10.8.2)."""
         self._client, self._channels = client, channels
-        self._push_keys: MutableMapping[str, bytes] = push_keys if push_keys is not None else {}
+        self._push_keys: Any = push_keys if push_keys is not None else MemoryPushKeys()
         self._lock = threading.Lock()
         self.pending_cleanup: set[str] = set()
         self._q: queue.Queue[tuple[str, str, str | None]] = queue.Queue(QUEUE_MAX)
@@ -59,7 +80,14 @@ class PushNotifier:
     # --- the phone gave its APNs token (over its authenticated channel session; the caller has checked that) -------
 
     def register_target(
-        self, user_id: str, channel_id: str, env: str, topic: str, token: bytes, push_pub: bytes | None = None
+        self,
+        user_id: str,
+        channel_id: str,
+        env: str,
+        topic: str,
+        token: bytes,
+        push_pub: bytes | None = None,
+        push_issued_ms: int | None = None,
     ) -> None:
         """Register or replace the push target of one of the user's own live phone channels. ``push_pub`` is the push
         key of a ``hub.channel_push`` the caller verified (§6.4); ``None`` keeps the held one. It is never the
@@ -72,9 +100,18 @@ class PushNotifier:
         if push_pub is not None and (not S.valid_public_key(push_pub) or push_pub == cert_pub):
             raise RelayError("malformed")
         self._client.put_push_target(channel_id, env, topic, token)
-        if push_pub is not None:
-            with self._lock:
-                self._push_keys[channel_id] = push_pub
+        # the key is stored only after the relay accepted the target, so a failed relay call leaves the held key and its
+        # issued_ms untouched and the phone can retry the same registration (L2H1-5)
+        if push_pub is not None and push_issued_ms is None:
+            self._push_keys[channel_id] = push_pub  # direct caller (tests): no registration object, no replay rule
+        elif push_pub is not None and not self._push_keys.put(channel_id, push_pub, push_issued_ms):
+            raise RelayError("replay")  # an older registration won the race
+
+    def held_push_issued_ms(self, channel_id: str) -> int | None:
+        """``issued_ms`` of the ``hub.channel_push`` behind the held push key (None = no key): what a new registration
+        must beat (``verify_channel_push``, ``replay``)."""
+        with self._lock:
+            return self._push_keys.held_issued_ms(channel_id)
 
     # --- push -----------------------------------------------------------------------------------------------------
 

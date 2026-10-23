@@ -21,6 +21,7 @@ from .access import Access, AccessSnapshots
 from .access.cli import ACCESS_FILE
 from .audit import open_log
 from .channels import Channels
+from .channels.pushkeys import PushKeyStore
 from .channels.service import CHANNELS_FILE
 from .config import HubConfig
 from .contract.hub import Refused
@@ -103,6 +104,7 @@ def serve(
     trusted_peers: frozenset[str] = frozenset(),
     behind_edge: bool = False,
     web_origins: frozenset[str] = frozenset(),
+    api_origin: str | None = None,
     relay_transport: Transport | None = None,
     stop: threading.Event | None = None,
     out: TextIO | None = None,
@@ -122,6 +124,7 @@ def serve(
         trusted_peers=trusted_peers,
         behind_edge=behind_edge,
         allowed_origins=web_origins,
+        api_origin=api_origin,
     )
     reg_path = state / REGISTRY_FILE
     registry = Registry(str(reg_path))
@@ -162,7 +165,7 @@ def serve(
             raise ValueError(f"relay: {e.code}") from None
         client = None  # no relay URL on the card or the command line: no push, everything else runs
     if client is not None:
-        notifier = PushNotifier(client, channels)
+        notifier = PushNotifier(client, channels, PushKeyStore(channels.db))  # keys survive a restart
         channels.on_revoke = notifier.channel_revoked_async  # D10: a revoked channel's push target and mailbox go
     deliveries = build_delivery(str(state), sender=router.send_event)  # §8.7: persisted, acked, resent
     engine = CustodialEngine(
@@ -194,12 +197,14 @@ def serve(
                 allowed_origins=cfg.allowed_origins,
                 trusted_peers=cfg.trusted_peers,
                 behind_edge=cfg.behind_edge,
+                api_origin=cfg.resolved_api_origin(),
+                push=notifier,
                 secure_cookies=cfg.behind_edge,  # plain http on loopback (dev) cannot carry a Secure cookie
             )
         )
         web = WebServer.from_listen(api, cfg.web_listen)  # loopback only; the edge fronts it (no public listener)
         if not cfg.allowed_origins:  # loopback dev: the console is served from this very address
-            api.allow_origin(f"http://{web.address[0]}:{web.address[1]}")
+            api.allow_loopback_origin(f"http://{web.address[0]}:{web.address[1]}")
     fw = HubPublish(keys, HttpPublishSync(publish_url), PublishConfig(publish_url, api_host))
     stop = stop or threading.Event()
     server = LinkServer.from_keys(

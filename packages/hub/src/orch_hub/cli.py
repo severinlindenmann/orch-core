@@ -48,6 +48,7 @@ def _parser() -> argparse.ArgumentParser:
         "--behind-edge", action="store_true", help="the web API is served behind the edge (needs --trusted-peer)"
     )
     sv.add_argument("--web-origin", action="append", default=[], help="exact origin of the console (repeatable)")
+    sv.add_argument("--api-origin", help="the public API origin the phone pairs with: one of the --web-origin values")
     ins = sub.add_parser(
         "inspect", help="dev only: read-only JSON view of the registry (pins, mode, binding, op counts)"
     )
@@ -108,6 +109,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 trusted_peers=frozenset(args.trusted_peer),
                 behind_edge=args.behind_edge,
                 web_origins=frozenset(args.web_origin),
+                api_origin=args.api_origin,
             )
         except (ValueError, KeysError) as e:
             print(f"orch-hub: refused: {e}", file=sys.stderr)

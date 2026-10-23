@@ -56,7 +56,7 @@ def test_review_cookie_uses_host_prefix(w):
 
 
 def test_review_app_token_is_not_accepted_as_a_cookie(w):
-    tok = w.login(w.ann)  # client: app
+    tok = w.login(w.ann, "app")  # a pairing session (bearer)
     s, _, _ = w.call("GET", "/session", token=tok, cookie=True)
     assert s == 401
 
@@ -132,4 +132,4 @@ def test_server_answers_503_beyond_its_worker_bound(w):
 def test_browser_token_is_not_accepted_as_a_bearer(w):
     tok = w.login(w.ann, "browser")
     assert w.call("GET", "/session", token=tok, cookie=True)[0] == 200
-    assert w.call("GET", "/session", token=tok)[0] == 401
+    assert w.call("GET", "/session", token=tok, cookie=False)[0] == 401

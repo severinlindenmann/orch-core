@@ -1055,6 +1055,16 @@ def build_p4(
         {"ok": {"seq": 1, "hash": AU.chain_hash(rec_rv)}},
         4,
     )
+    rn = {**ch_ev, "change": "renew", "actor_user_id": None, "nonce": nonce32("channel_renew")}
+    rec_rn = audit_rec(1, AU.GENESIS_PREV, "channel", rn)
+    case(
+        "audit_channel_renew",
+        "audit",
+        {**with_card, "signed": rec_rn, "event": rn},
+        {"ok": {"seq": 1, "hash": AU.chain_hash(rec_rn)}},
+        4,
+        "contract text only in V3: no hub renews a channel certificate yet",
+    )
     bare = {k: v for k, v in ch_ev.items() if k != "nonce"}
     case(
         "audit_event_without_nonce_channel",

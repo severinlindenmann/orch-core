@@ -146,6 +146,14 @@ class Access:
         except sqlite3.Error as e:
             raise AccessError("store_error", type(e).__name__) from None
 
+    def check_remove_user(self, user_id: str, actor: str | None) -> None:
+        """The refusals of :meth:`remove_user` without deleting anything (``forbidden``, ``unknown_user``)."""
+        _hex(user_id, "user_id")
+        if self._admin_only_change(user_id, actor):
+            raise AccessError("forbidden", "only a hub-admin removes a hub-admin")
+        if not self.has_user(user_id):
+            raise AccessError("unknown_user")
+
     def remove_user(self, user_id: str, *, actor: str | None = None) -> None:
         _hex(user_id, "user_id")
         try:

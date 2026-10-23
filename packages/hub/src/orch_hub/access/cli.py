@@ -150,8 +150,7 @@ def _dispatch(args: argparse.Namespace, state: Path, acc: Access):
             return {"user_id": user_id, "name": name}
         if c == "list":
             return acc.users()
-        acc.remove_user(args.user_id)
-        return {}
+        return channels_dispatch(args, state, acc)  # revokes the user's channels first, then removes the user
     if g == "groups":
         if c == "list":
             return acc.groups()

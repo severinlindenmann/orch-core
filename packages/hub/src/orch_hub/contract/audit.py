@@ -81,12 +81,12 @@ EVENT_FIELDS: dict[str, dict[str, Any]] = {
         "item_hash": lambda x: x is None or (type(x) is str and len(x) == 71 and x.startswith("sha256:")),
         "count": lambda x: x is None or _int_min(0)(x),
     },
-    # p4 (§10.5): a channel key was registered or revoked (revocation is permanent); hub-wide, so no scope tag.
+    # p4 (§10.5): a channel key was registered, revoked (permanent) or its certificate renewed for the same key (renew); hub-wide, so no scope tag.
     # actor_user_id: the user who registered or revoked it, or None for the operator at the hub terminal.
     "channel": {
         "channel_id": _hex16,
         "user_id": _hex16,
-        "change": _enum("register", "revoke"),
+        "change": _enum("register", "revoke", "renew"),
         "factor": _enum("se-unlocked", "passkey", "password+totp"),
         "actor_user_id": _opt_hex16,
     },

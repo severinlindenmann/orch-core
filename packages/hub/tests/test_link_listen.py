@@ -221,3 +221,12 @@ def test_accepted_bind_serves_and_prints_the_warn_only_for_the_exception(state, 
         stop.set()
         t.join(15)
     assert result == [0]
+
+
+def test_root_is_refused_even_on_a_clean_machine(monkeypatch):
+    monkeypatch.setattr(CO.os, "geteuid", lambda: 0)
+    acc = Accounts({"orch-hub": (986, 980)}, {})
+    with pytest.raises(BindRefused, match="does not run as root"):
+        check_bind_allowed(acc, hub_user="root", card_dev=True, dev_shared_machine=False)
+    with pytest.raises(BindRefused, match="does not run as root"):
+        check_bind_allowed(_acc(), hub_user="root", card_dev=True, dev_shared_machine=True)

@@ -122,6 +122,8 @@ def check_bind_allowed(
 ) -> str | None:
     """G3. Returns a WARN text when the dev exception applies, None when the machine has no host or agent users;
     raises :class:`BindRefused` otherwise."""
+    if os.geteuid() == 0:
+        raise BindRefused("a hub on a network link does not run as root (L2-D12b-3)")
     others = sorted(set(acc.host_users) | set(acc.agent_users))
     if not others:
         if dev_shared_machine:

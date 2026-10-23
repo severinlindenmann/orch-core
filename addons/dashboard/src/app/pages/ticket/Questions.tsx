@@ -1,4 +1,4 @@
-import { CheckCircle2, CircleHelp, Fingerprint, OctagonAlert } from 'lucide-react'
+import { CheckCircle2, CircleHelp, OctagonAlert } from 'lucide-react'
 import { useState } from 'react'
 import type { QuestionStatus } from '@/api/types'
 import { Button } from '@/components/ui/button'
@@ -6,12 +6,13 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { canAnswer } from './actions'
+import { AnswerSend } from '@/components/sign/AnswerSend'
 import { QuestionOptions } from './QuestionOptions'
 import { ago, Mono, Pill, presenceLabel, shortHash, type TabProps, type Viewer } from './shared'
 
 const VIA: Record<string, string> = { cli: 'CLI', dashboard: 'dashboard', phone: 'phone' }
 
-function AnswerForm({ q, sign }: { q: QuestionStatus; sign: TabProps['sign'] }) {
+function AnswerForm({ q, sign, ticketKey, onViewQuestion }: { q: QuestionStatus; sign: TabProps['sign']; ticketKey: string; onViewQuestion: (t: string | null) => void }) {
   const [option, setOption] = useState<string | undefined>(undefined)
   const [text, setText] = useState('')
   const hasOptions = !!q.options?.length
@@ -39,17 +40,22 @@ function AnswerForm({ q, sign }: { q: QuestionStatus; sign: TabProps['sign'] }) 
           Add a note
         </Button>
       )}
-      <div className="flex items-center justify-end gap-2">
-        <Button type="submit" size="sm" disabled={!ready}>
-          <Fingerprint />
-          Send answer
-        </Button>
-      </div>
+      <AnswerSend
+        ticket={ticketKey}
+        question={q}
+        option={option}
+        text={text}
+        canSend={ready}
+        type="submit"
+        fallback={() => sign({ kind: 'answer', question: q.id, option, text: text.trim() || undefined })}
+        onViewQuestion={onViewQuestion}
+      />
     </form>
   )
 }
 
-function QuestionCard({ q, viewer, sign }: { q: QuestionStatus; viewer: Viewer; sign: TabProps['sign'] }) {
+function QuestionCard({ q, viewer, sign, ticketKey }: { q: QuestionStatus; viewer: Viewer; sign: TabProps['sign']; ticketKey: string }) {
+  const [viewText, setViewText] = useState<string | null>(null)
   const open = q.state === 'open'
   const stale = q.state === 'stale'
   const answered = stale ? null : q.answer
@@ -89,7 +95,7 @@ function QuestionCard({ q, viewer, sign }: { q: QuestionStatus; viewer: Viewer; 
           </Mono>
         )}
       </div>
-      <p className="mt-2 text-[14px] font-medium leading-snug">{q.text}</p>
+      <p className="mt-2 text-[14px] font-medium leading-snug">{viewText ?? q.text}</p>
       {q.why && <p className="mt-1 text-[13px] text-text-muted">{q.why}</p>}
 
       {!answered && q.options && q.options.length > 0 && !canAnswer(q, viewer) && (
@@ -111,7 +117,7 @@ function QuestionCard({ q, viewer, sign }: { q: QuestionStatus; viewer: Viewer; 
         </div>
       )}
 
-      {open && canAnswer(q, viewer) && <AnswerForm q={q} sign={sign} />}
+      {open && canAnswer(q, viewer) && <AnswerForm q={q} sign={sign} ticketKey={ticketKey} onViewQuestion={setViewText} />}
       {open && !canAnswer(q, viewer) && (
         <p className="mt-3 text-[12px] text-text-faint">Waiting for {viewer.name(q.to)}. The first valid signed answer wins.</p>
       )}
@@ -126,7 +132,7 @@ export function Questions({ ticket, viewer, sign }: TabProps) {
   return (
     <ul className="space-y-3" aria-label="Questions">
       {ordered.map((q) => (
-        <QuestionCard key={q.id} q={q} viewer={viewer} sign={sign} />
+        <QuestionCard key={q.id} q={q} viewer={viewer} sign={sign} ticketKey={ticket.key} />
       ))}
     </ul>
   )

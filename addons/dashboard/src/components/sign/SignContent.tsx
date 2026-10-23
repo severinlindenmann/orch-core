@@ -130,6 +130,18 @@ function cancellationRows(value: unknown): NonNullable<Content['cancels']> {
   return value
 }
 
+/**
+ * The fields a compact answer review needs: the ticket (an existing one), the question, the chosen option. Null when any
+ * is missing or the host sent a summary: the caller then shows the full review. Never a compact view that hides content.
+ */
+export function compactAnswer(content: Content | null | undefined) {
+  if (!content || content.summary || !content.ticket || content.ticket.new === true) return null
+  const choice = content.fields_changed?.find(f => f.field === 'your choice')
+  const question = content.sections?.find(s => s.id === 'question')
+  if (!choice || choice.after == null || !question) return null
+  return { ticket: content.ticket, choice, question, notes: content.sections?.filter(s => s.id === 'answer') ?? [] }
+}
+
 /** `technical`: more facts for the ONE "Technical details" expander of the review (the panel's own: action, fingerprint, device). */
 export function SignContent({ content, ws, technical, compact = false }: { content: Content; ws?: string; technical?: ReactNode; compact?: boolean }) {
   const members = useWorkspaceMembers(ws)
@@ -169,12 +181,11 @@ export function SignContent({ content, ws, technical, compact = false }: { conte
   // Compact (an answer): the ticket (key and signed id end), the question, the chosen option and the typed note stay in
   // view without opening anything; the other options and the host's facts are in full under Details. If any expected
   // field is missing, the full review is shown: a compact view never hides content.
-  const choice = content.fields_changed?.find(f => f.field === 'your choice')
-  const question = content.sections?.find(s => s.id === 'question')
-  if (compact && !summary && ticketLine && content.ticket && choice && choice.after != null && question) {
-    const note = content.sections?.filter(s => s.id === 'answer') ?? []
+  const parts = compact ? compactAnswer(content) : null
+  if (parts && ticketLine) {
+    const { choice, question, ticket: tk, notes: note } = parts
     return <div data-testid="sign-compact" className="min-w-0 space-y-3 font-sans text-[13px] leading-relaxed text-text [overflow-wrap:anywhere]">
-      <p data-testid="sign-ticket" className="text-[12px] text-text-muted"><Raw>{content.ticket.key}</Raw> (key per host) · signed id …<Raw>{content.ticket.uid_tail}</Raw></p>
+      <p data-testid="sign-ticket" className="text-[12px] text-text-muted"><Raw>{tk.key}</Raw> (key per host) · signed id …<Raw>{tk.uid_tail}</Raw></p>
       <section aria-label={question.title}><h3 className="mb-1 text-[12px] font-medium text-text-muted"><Inline>{question.title}</Inline></h3><Prose className="font-sans leading-relaxed text-text">{question.text}</Prose></section>
       <p data-testid="sign-choice" className="text-text"><span className="text-text-muted">Your answer: </span><Shown plain value={choice.after} members={members} /></p>
       {note.map(s => <section key={s.id}><h3 className="mb-1 text-[12px] font-medium text-text-muted"><Inline>{s.title}</Inline></h3><Prose className="font-sans leading-relaxed text-text">{s.text}</Prose></section>)}

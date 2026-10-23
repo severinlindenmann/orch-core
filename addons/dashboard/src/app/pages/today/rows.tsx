@@ -19,6 +19,7 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { toastApiError } from '@/app/toast'
 import { useWorkspace } from '@/app/workspace'
+import { AnswerSend } from '@/components/sign/AnswerSend'
 import { QuestionOptions } from '../ticket/QuestionOptions'
 import { type HumanAction } from '../ticket/shared'
 import { ago } from './shared'
@@ -152,13 +153,14 @@ const Locked = () => <span className="text-xs text-text-muted">Answer in your te
 export function QuestionRow({ item, ticket, now, expanded, onToggle, sign, askedBy, decider, locked }: CoreRowProps) {
   const q = ticket?.questions_state.find((x) => x.id === item.ref)
   const [choice, setChoice] = useState<string | null>(null)
+  const [viewText, setViewText] = useState<string | null>(null)
   const id = `question:${item.ticket}:${item.ref}`
   const readOnly = decider !== undefined
   return (
     <RowShell
       testId={`card-${id}`}
       icon={<HelpCircle className="size-4" aria-label="question" />}
-      ask={item.text}
+      ask={viewText ?? item.text}
       sub={
         <>
           <TicketLine ticket={item.ticket} title={item.title} />
@@ -188,10 +190,15 @@ export function QuestionRow({ item, ticket, now, expanded, onToggle, sign, asked
       ) : q?.options?.length ? (
         <div className="space-y-3">
           <QuestionOptions q={q} name={`answer-${id}`} value={choice} onChange={setChoice} idPrefix={`answer-${id}`} />
-          <div className="flex justify-end">
-            <Button size="sm" disabled={!choice || !ticket} onClick={() => choice && sign(item.ticket, { kind: 'answer', question: item.ref!, option: choice })}>
-              Send answer
-            </Button>
+          <div className="block">
+            <AnswerSend
+              ticket={item.ticket}
+              question={q}
+              option={choice}
+              canSend={!!choice && !!ticket}
+              fallback={() => choice && sign(item.ticket, { kind: 'answer', question: item.ref!, option: choice })}
+              onViewQuestion={setViewText}
+            />
           </div>
         </div>
       ) : (

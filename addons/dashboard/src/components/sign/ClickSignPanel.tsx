@@ -59,7 +59,7 @@ export function ClickSignPanel({ answer, problem, signing, onSign, onCancel, wai
 }
 
 /** What the one "Technical details" expander of the review holds besides the content's own ids (action, workspace, fingerprint, device, the signer's lines and checks). */
-function TechnicalFacts({ view }: { view: ClickViewAnswer['view'] }) {
+export function TechnicalFacts({ view }: { view: ClickViewAnswer['view'] }) {
   return (
     <>
       <dl className="grid grid-cols-[110px_1fr] gap-x-3 gap-y-1 text-[13px]">

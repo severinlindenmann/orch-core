@@ -156,6 +156,7 @@ export function QuestionRow({ item, ticket, now, expanded, onToggle, sign, asked
   const q = ticket?.questions_state.find((x) => x.id === item.ref)
   const [choice, setChoice] = useState<string | null>(null)
   const [viewText, setViewText] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
   const id = `question:${item.ticket}:${item.ref}`
   const readOnly = decider !== undefined
   return (
@@ -191,17 +192,16 @@ export function QuestionRow({ item, ticket, now, expanded, onToggle, sign, asked
         q && <QuestionOptions q={q} name={`answer-${id}`} value={null} idPrefix={`answer-${id}`} readOnly />
       ) : q?.options?.length ? (
         <div className="space-y-3">
-          <QuestionOptions q={q} name={`answer-${id}`} value={choice} onChange={setChoice} idPrefix={`answer-${id}`} />
-          <div className="block">
-            <AnswerSend
-              ticket={item.ticket}
-              question={q}
-              option={choice}
-              canSend={!!choice && !!ticket}
-              fallback={() => choice && sign(item.ticket, { kind: 'answer', question: item.ref!, option: choice })}
-              onViewQuestion={setViewText}
-            />
-          </div>
+          <QuestionOptions q={q} name={`answer-${id}`} value={choice} onChange={setChoice} idPrefix={`answer-${id}`} disabled={busy} />
+          <AnswerSend
+            ticket={item.ticket}
+            question={q}
+            option={choice}
+            canSend={!!choice && !!ticket}
+            fallback={() => choice && sign(item.ticket, { kind: 'answer', question: item.ref!, option: choice })}
+            onViewQuestion={setViewText}
+            onBusy={setBusy}
+          />
         </div>
       ) : (
         <Button asChild size="sm" variant="outline">

@@ -35,7 +35,7 @@ export function EvidenceItem({ ticket, artifact, acId, compact = false, defaultO
         <span className="min-w-0 truncate font-mono text-[12px] font-medium" title={visible(artifact.name)}>
           {visible(artifact.name)}
         </span>
-        <Pill tone="success">proves {acId}</Pill>
+        <Pill tone="neutral">proves {acId}</Pill>
         {!!artifact.bytes && <span className="text-text-faint">{fmtBytes(artifact.bytes)}</span>}
         <Button type="button" variant="ghost" size="sm" className="ml-auto h-6 px-2 text-[12px]" aria-expanded={open} aria-controls={body} aria-label={`${open ? 'Hide' : 'Show'} preview of ${artifact.name}`} onClick={() => setOpen(!open)}>
           {open ? 'Hide preview' : 'Show preview'}
@@ -56,7 +56,7 @@ export function CriterionEvidence({ ticket, ac }: { ticket: TicketDocument; ac: 
   const items = proofArtifacts(ticket, ac)
   if (items.length === 0) return null
   return (
-    <ul className="mt-2 space-y-2 pl-[3.75rem]" aria-label={`Evidence for ${ac.id}`}>
+    <ul className="mt-2 space-y-2 pl-7 sm:pl-[3.75rem]" aria-label={`Evidence for ${ac.id}`}>
       {items.map((a) => (
         <EvidenceItem key={a.name} ticket={ticket} artifact={a} acId={ac.id} />
       ))}

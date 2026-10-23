@@ -614,6 +614,7 @@ def _plan(call: Call, op: str, args: dict[str, Any]) -> dict[str, Any]:
         _ticket(call, rec["ticket"])  # a ticket the person may not see is not theirs to act on
         _rate(call, "revoke")
         plan["record"] = rec
+        plan["hub"] = _hub_route(service)
         return plan
     meta = _load_stage(service, args["staged_id"])
     view = _ticket(call, meta["ticket"]["uid"])
@@ -628,10 +629,17 @@ def _plan(call: Call, op: str, args: dict[str, Any]) -> dict[str, Any]:
             "must match this staged copy and this server exactly",
         )
     _rate(call, "send")
-    plan.update(meta=meta, text_hash=hashlib.sha256(text.encode()).hexdigest())
+    plan.update(meta=meta, text_hash=hashlib.sha256(text.encode()).hexdigest(), hub=_hub_route(service))
     if _registered(service, cfg) is None:
         plan["reg"] = _delegation(call)
     return plan
+
+
+def _hub_route(service: WorkspaceService) -> dict[str, Any] | None:
+    """The hub this workspace publishes through, or ``None`` (not in hub mode: the direct path). Worker thread."""
+    from . import hubops
+
+    return hubops.publish_route(service)
 
 
 def _discard(call: Call, args: dict[str, Any]) -> dict[str, Any]:
@@ -711,7 +719,7 @@ def _list(call: Call, args: dict[str, Any]) -> dict[str, Any]:
             # No server is set up yet: there is nothing to ask. The local answer says so (`configured` false, `live`
             # false) instead of failing, so a page can tell the person what to do next.
             return ok_result({**out, "live": False})
-        return {"plan": {"op": "publish.list", "cfg": _config(service), "out": out}}
+        return {"plan": {"op": "publish.list", "cfg": _config(service), "out": out, "hub": _hub_route(service)}}
     return ok_result(out)
 
 
@@ -747,10 +755,13 @@ def _delegation(call: Call) -> dict[str, Any]:
     }
 
 
-def _client(service: WorkspaceService, origin: str, transport: Any = None) -> Any:
+def _client(service: WorkspaceService, origin: str, transport: Any = None, hub: dict[str, Any] | None = None) -> Any:
     """A :class:`PublishClient` signing with the workspace key for ``origin`` (the signed server setting). No ledger:
     the server's nonce store already refuses a replay, and a file ledger that is rewritten on every request and never
-    pruned would only grow (lead decision, #684 review)."""
+    pruned would only grow (lead decision, #684 review).
+
+    ``hub`` (from ``hubops.publish_route``, decided in the plan) sends every request through the hub link instead
+    (``publish_out``, hub contract 11): signed under the hub-path label, and **never** by any other path."""
     from orch.custody import FileBackend
     from orch.publishclient import PublishClient
     from orch.relay.pubsign import PublishContext, PublishSigner
@@ -762,12 +773,53 @@ def _client(service: WorkspaceService, origin: str, transport: Any = None) -> An
     if backend is None or not backend.exists("wsk"):
         raise HostError("workspace.unavailable", "the workspace signing key is not in the host's custody")
     try:
+        if hub is not None:
+            return _hub_client(service, PublishContext(service.workspace_id, origin), hub)
         signer = PublishSigner(BackendSigner(backend, "wsk"), PublishContext(service.workspace_id, origin))
     except SignerRefused:
         raise HostError(
             "publish.server_refused", "the server address is not allowed", detail={"reason": "rejected"}
         ) from None
     return PublishClient(signer, transport=transport)
+
+
+#: the hub links this worker thread opened for one network op (one link per hub, so its message numbers count up)
+_LINKS = threading.local()
+
+
+def _hub_client(service: WorkspaceService, ctx: Any, route: dict[str, Any]) -> Any:
+    from orch.hubclient.publish import HubPublishSigner, HubPublishTransport
+    from orch.publishclient import PublishClient
+
+    from . import hubops
+
+    links = _LINKS.__dict__.setdefault("open", {})
+    if route["hub_id"] not in links:
+        links[route["hub_id"]] = hubops.publish_link(service, route)
+    hub_link, _transport, wsk_pub, sign = links[route["hub_id"]]
+    signer = HubPublishSigner(public_key=wsk_pub, sign=sign, ctx=ctx, hub_id=route["hub_id"])
+    return PublishClient(signer, transport=HubPublishTransport(hub_link))
+
+
+def _close_hub_links() -> None:
+    for entry in getattr(_LINKS, "open", {}).values():
+        with contextlib.suppress(Exception):
+            getattr(entry[1], "close", lambda: None)()
+    _LINKS.open = {}
+
+
+def _hub_error(exc: Any) -> HostError:
+    """A hub refusal on the publish path as the host's own error. The hub being down is ``hub.unreachable``; nothing is
+    sent any other way."""
+    from . import hubops
+
+    if exc.code == "too_large":
+        return HostError(
+            "publish.server_refused",
+            "this is too large to send through the hub link yet; nothing was shared",
+            detail={"reason": "limit"},
+        )
+    return hubops._refused(exc.code)  # noqa: SLF001 - the one mapping of hub codes
 
 
 #: set by tests: a transport for :class:`PublishClient` instead of the network
@@ -817,6 +869,7 @@ async def execute(call: Call, planned: dict[str, Any]) -> dict[str, Any]:
 
 
 def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
+    from orch.hubclient import HubRefused
     from orch.publishclient import PublishError
 
     from .workspace import ok_result
@@ -843,6 +896,12 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
             status=getattr(exc, "status", 0),
         )
         raise err from None
+    except HubRefused as exc:
+        err = _hub_error(exc)
+        _audit(call, "publish.refused", op=plan["op"], code=err.code, reason=exc.code, status=0, via="hub")
+        raise err from None
+    finally:
+        _close_hub_links()
 
 
 def _register(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
@@ -898,7 +957,7 @@ def _send(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
             }
             _write(token_path, token.encode())
             _put_json(send_path, send)
-        client = _client(service, cfg["server"], TRANSPORT)
+        client = _client(service, cfg["server"], TRANSPORT, plan.get("hub"))
         body = flow.meta_bytes(
             ticket=meta["ticket"]["key"],
             kind=meta["kind"],
@@ -952,6 +1011,7 @@ def _send(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
             files=len(meta["files"]),
             server=cfg["server"],
             origin=meta["origin"],
+            via="direct" if plan.get("hub") is None else "hub",
         )
         shutil.rmtree(sdir, ignore_errors=True)  # the token goes with the stage: nothing keeps the link
         return {
@@ -989,7 +1049,7 @@ def _revoke(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
 
     service = call.service
     rec = plan["record"]
-    client = _client(service, rec.get("server") or plan["cfg"]["server"], TRANSPORT)
+    client = _client(service, rec.get("server") or plan["cfg"]["server"], TRANSPORT, plan.get("hub"))
     try:
         flow.revoke(client, service.workspace_id, rec["id"])
     except PublishError as exc:
@@ -1005,6 +1065,7 @@ def _revoke(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
 def _live(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
     """``publish.list {live}``: the local rows with the server's state and view count. A server that cannot be reached
     leaves the local rows as they are, said plainly."""
+    from orch.hubclient import HubRefused
     from orch.publishclient import PublishError, flow
 
     service = call.service
@@ -1012,9 +1073,11 @@ def _live(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
     try:
         remote = {
             r.get("id"): r
-            for r in flow.list_shares(_client(service, plan["cfg"]["server"], TRANSPORT), service.workspace_id)
+            for r in flow.list_shares(
+                _client(service, plan["cfg"]["server"], TRANSPORT, plan.get("hub")), service.workspace_id
+            )
         }
-    except PublishError:
+    except (PublishError, HubRefused):  # a hub that is down is a server that is down: the local rows, said plainly
         return {**out, "live": False}
     for row in out["shares"]:
         got = remote.get(row["id"])

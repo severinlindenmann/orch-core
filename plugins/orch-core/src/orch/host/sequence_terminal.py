@@ -9,14 +9,14 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from typing import Any
 
 from orch import canon
 
 from . import sequence, signer
 
-__all__ = ["sign_sequence", "unlocked_backend"]
+__all__ = ["request_backend", "sign_sequence", "unlocked_backend"]
 
 
 class _Unlocked:
@@ -30,6 +30,27 @@ class _Unlocked:
 
     def sign(self, key_id: str, payload: bytes, *, action: str) -> bytes:
         return self._raw(payload)
+
+
+@contextmanager
+def request_backend(
+    backend: Any, key_id: str, prepared: Mapping[str, Any], events: list[Mapping[str, Any]], workspace_id: str
+) -> Iterator[Any]:
+    """The backend to sign the events of ONE reviewed request (an Extend: the new grant and the take-back of the old):
+    one passphrase for them where the custody can do it. The batch may sign the event label of the request's log and no
+    other; the person has seen every event in the one review."""
+    import hashlib
+
+    label = "sig_ws_event" if prepared["log"] == "workspace" else "sig_ticket_event"
+    with unlocked_backend(
+        backend,
+        key_id,
+        digest=hashlib.sha256(canon.dumps(events)).hexdigest(),
+        fields=(("signatures", str(len(events))), ("workspace", workspace_id)),
+        action=f"{prepared['op']}: {len(events)} signatures, one review",
+        labels=(canon.LABELS[label].encode("ascii"),),
+    ) as be:
+        yield be
 
 
 def labels_for(intent: Mapping[str, Any]) -> tuple[bytes, ...]:
@@ -119,11 +140,8 @@ def sign_sequence(
             review = _prefixed(review, note)
         if not confirm(review, signer.confirm_word(prepared, workspace)):
             signer._refuse("not confirmed")
-    except BaseException:
-        try:
-            call("human.cancel", {"request_id": request_id})
-        except Exception:  # noqa: BLE001 - it expires in 10 minutes anyway
-            pass
+    except BaseException as exc:
+        signer.cancel_request(call, request_id, exc)
         raise
     box: dict[str, Any] = {}
     fields = (
@@ -131,14 +149,21 @@ def sign_sequence(
         ("add-on" if intent["kind"] == sequence.ADDON else "ticket title", sequence.label_of(intent)),
         ("workspace", workspace_id),
     )
-    with unlocked_backend(
-        backend,
-        key_id,
-        digest=driver.digest,
-        fields=fields,
-        action=f"orch: {driver.total} signatures, one review",
-        labels=labels_for(intent),
-    ) as be:
+    with ExitStack() as stack:
+        try:  # the one passphrase prompt of the batch: an interrupt or refusal here is still before any signature
+            be = stack.enter_context(
+                unlocked_backend(
+                    backend,
+                    key_id,
+                    digest=driver.digest,
+                    fields=fields,
+                    action=f"orch: {driver.total} signatures, one review",
+                    labels=labels_for(intent),
+                )
+            )
+        except BaseException as exc:
+            signer.cancel_request(call, request_id, exc)
+            raise
         box["backend"] = be
         port = _port(call, be, key_id, workspace_id, person, device, auth, workspace, new_idem, box)
         driver.port = port

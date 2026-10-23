@@ -10,7 +10,7 @@ import { carryFor, stepHash } from './carry'
 
 vi.mock('@/api/testrun', async (orig) => {
   const real = await orig<typeof import('@/api/testrun')>()
-  return { ...real, loadRun: vi.fn(), loadPrevious: vi.fn(), saveStep: vi.fn(), addImage: vi.fn(), removeImage: vi.fn(), imageUrl: vi.fn() }
+  return { ...real, loadRun: vi.fn(), loadPrevious: vi.fn(), saveStep: vi.fn(), addImage: vi.fn(), removeImage: vi.fn(), imageUrl: vi.fn(), downloadScreenshots: vi.fn() }
 })
 const m = vi.mocked(testrun)
 const T = { timeout: 8000 }
@@ -83,6 +83,32 @@ describe('the checklist page', () => {
     await userEvent.type(box, 'ok')
     fireEvent.blur(box)
     await waitFor(() => expect(m.saveStep).toHaveBeenCalledWith('run4', 'D1', { note: 'ok' }))
+  })
+
+  it('shows the zip button only when the run has screenshots, with the count', async () => {
+    renderApp('/checklist')
+    expect(await screen.findByLabelText('Notes for D2', {}, T)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /screenshots? \(zip\)/ })).toBeNull()
+  })
+
+  it('downloads the screenshots as one zip and says so', async () => {
+    m.loadRun.mockResolvedValue({ path: PATH, images_path: `${PATH}/images`, notes: {
+      B1: { status: 'pass', note: '', images: ['B1-0123456789ab.png', 'B1-aaaaaaaaaaaa.png'] },
+      C5: { status: 'pass', note: '', images: ['C5-0123456789ab.png'] },
+    } })
+    m.downloadScreenshots.mockResolvedValue(undefined)
+    renderApp('/checklist')
+    await userEvent.click(await screen.findByRole('button', { name: 'Download 3 screenshots (zip)' }, T))
+    expect(m.downloadScreenshots).toHaveBeenCalledWith('run4')
+    expect(await screen.findByText('Zip downloaded')).toBeInTheDocument()
+  })
+
+  it('says why the zip failed in plain words', async () => {
+    m.loadRun.mockResolvedValue({ path: PATH, images_path: `${PATH}/images`, notes: { B1: { status: 'pass', note: '', images: ['B1-0123456789ab.png'] } } })
+    m.downloadScreenshots.mockRejectedValue(new testrun.TestrunError(409, 'zip.too_large'))
+    renderApp('/checklist')
+    await userEvent.click(await screen.findByRole('button', { name: 'Download 1 screenshot (zip)' }, T))
+    expect(await screen.findByText(/larger than 200 MB/)).toBeInTheDocument()
   })
 
   it('shows what was saved before and filters to steps with notes or failures', async () => {

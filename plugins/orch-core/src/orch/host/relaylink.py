@@ -70,6 +70,13 @@ def link_path(state_dir: Path, workspace_id: str) -> Path:
     return relay_dir(state_dir, workspace_id) / "link.json"
 
 
+def local_epochs_path(state_dir: Path, workspace_id: str) -> Path:
+    """The mark ``MembershipKeys.advance_local`` writes (V3 C2b): epochs made for the hub, unknown to any relay."""
+    from orch.relay.r6.keystore import LOCAL_MARK
+
+    return Path(os.path.realpath(state_dir)) / "hosts" / workspace_id / "membership" / LOCAL_MARK
+
+
 def stopped_path(state_dir: Path, workspace_id: str) -> Path:
     return relay_dir(state_dir, workspace_id) / "stopped.json"
 
@@ -123,6 +130,11 @@ def link_reservation(
             raise HostError(
                 "lock.busy",
                 "unlink_pending: an unlink of this workspace has not finished (it finishes at the next open)"[:118],
+            )
+        if os.path.lexists(local_epochs_path(service.state_dir, service.workspace_id)):
+            raise HostError(
+                "relay.local_epochs",
+                "this workspace's keys were created for the hub; linking a relay comes with H5"[:118],
             )
         refuse_reader_op(service, "relay.link", history=True, relay_level=relay_level)
         linked = linked_workspaces(service.state_dir)

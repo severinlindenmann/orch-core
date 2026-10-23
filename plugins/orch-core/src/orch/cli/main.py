@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 import os
 import re
 import sys
@@ -12,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any, TextIO
 
 from orch import schema
+from orch._build import build_info, version_line
 from orch.cli import meta, parser, render
 from orch.cli.args import arg_specs
 from orch.cli.errors import UsageError
@@ -21,7 +23,7 @@ from orch.ops.errors import ERRORS, GLOBAL_ERRORS, OrchError
 
 __all__ = ["Hooks", "main", "run", "stop_rule"]
 
-VERSION_LINE = "orch v2 (in development)"
+VERSION_LINE = version_line()
 _SESSION = re.compile(schema.load("common")["$defs"]["sessionId"]["pattern"])
 _GRANT = re.compile(r"gr_[0-7][0-9A-HJKMNP-TV-Z]{25}\.[A-Za-z0-9_-]{43}")
 # Not counted by the stop rule: they are about the command line, not about a refusal of the action.
@@ -235,6 +237,19 @@ def _progress(line: str, err: TextIO) -> None:
         pass
 
 
+def entry() -> int:
+    """The ``orch`` command (console script and ``python -m orch``). Ctrl-C (a passphrase prompt, a wait) ends calmly:
+    one line, exit 130, no traceback. ``main`` itself still lets KeyboardInterrupt through (tests simulate a kill)."""
+    try:
+        return main()
+    except KeyboardInterrupt:
+        try:
+            sys.stderr.write("Cancelled.\n")
+        except (OSError, ValueError):
+            pass
+        return 130
+
+
 def main(
     argv: list[str] | None = None,
     *,
@@ -288,6 +303,18 @@ def main(
         from orch.worktree_cli import main as worktree_main
 
         return worktree_main(args[1:], env=env, out=out, err=err, now=now)
+    if args[:1] == ["hub"]:  # join and leave a hub, selective mode (V3 C2a): a host client, not a registry op
+        from orch.cli.hub import main as hub_main
+
+        return hub_main(args[1:], env=env, out=out, err=err, now=now)
+    if args[:1] == ["space"]:  # files shared through a hub space (V3 C13): a host client, not a registry op
+        from orch.cli.space import main as space_main
+
+        return space_main(args[1:], env=env, out=out, err=err, now=now)
+    if args[:1] == ["peer"]:  # ws->ws through the hub (V3 C12): a host client, not a registry op
+        from orch.cli.peer import main as peer_main
+
+        return peer_main(args[1:], env=env, out=out, err=err, now=now)
     if args[:1] == ["publish"]:  # the Publish add-on (P5): a host client, not a registry op
         from orch.cli.publish import main as publish_main
 
@@ -320,8 +347,8 @@ def main(
         hooks = hooks or workspace_hooks(workspace)
         records = records if records is not None else workspace_records(workspace, _DEFAULT_RECORDS)
 
-        if args == ["--version"]:
-            out.write(VERSION_LINE + "\n")
+        if args in (["--version"], ["--version", "--json"], ["--json", "--version"]):
+            out.write((json.dumps(build_info()) if "--json" in args else VERSION_LINE) + "\n")
             return 0
         grant_env = env.get("ORCH_GRANT") or None
         secrets = _secrets(grant_env)

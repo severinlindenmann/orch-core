@@ -16,13 +16,17 @@ from orch.host.agents import AGENT_OPS
 from orch.host.columns import Column, refusal, resolve
 from orch.host.dispatch import FILE_OPS, GIT_OPS, HOST_OPS, NOT_SERVED, PERSON_READS, op_kind, served_ops
 from orch.host.errors import HostError, disposition
+from orch.host.hubops import HUB_OPS
 from orch.host.human import HUMAN_OPS
+from orch.host.peerops import PEER_OPS, PEER_READS
 from orch.host.publishing import PUBLISH_OPS
 from orch.host.reads import READ_OPS
 from orch.host.records import RECORDS_OPS
 from orch.host.review import HOST_PERSON_OPS
 from orch.host.runnergrants import GRANT_OPS
 from orch.host.runners import RUN_OPS
+from orch.host.shareops import SHARE_OPS, SHARE_READS
+from orch.host.spaceops import SPACE_OPS, SPACE_READS
 from orch.host.terms import TERM_OPS
 from orch.host.worktrees import WORKTREE_OPS
 from orch.ops.errors import ERRORS
@@ -80,6 +84,10 @@ def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
     host |= set(RUN_OPS) | set(TERM_OPS)  # H11a, H11b
     host |= set(WORKTREE_OPS)  # H11d
     host |= set(PUBLISH_OPS)  # P5
+    host |= set(HUB_OPS)  # V3 C2a
+    host |= set(PEER_OPS)  # V3 C12
+    host |= set(SPACE_OPS)  # V3 C13
+    host |= set(SHARE_OPS)  # V3 C6
     host |= set(GRANT_OPS) | set(AGENT_OPS)  # H11c
     host |= {"reader.declare"}  # H12d-2
     host |= {"phone.request", "phone.cancel"}  # B10 Part B
@@ -100,7 +108,10 @@ def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
         "ac.accept",
         "ac.unaccept",
         "task.mark_done",
-    }  # H12c-e, B12D, P5, R3
+        "hub.join",
+        "hub.mode",
+        "hub.leave",
+    }  # H12c-e, B12D, P5, R3, V3 C2a, C2b
     assert set(HUMAN_OPS) == {"human.prepare", "human.get", "human.submit", "human.cancel", "human.pending"}
     assert set(NOT_SERVED) == {"init", "import.v1"}
     assert {"wait", "sub.open", "sub.close"} <= set(welcome["ops"])  # H6a: served on the bus
@@ -207,6 +218,16 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
                 "publish.list": ("pg_read", "read"),
             }.get(op, ("person_write", "write"))
             assert kind == want
+        elif op in HUB_OPS:  # V3 C2a: P only (the op checks the owner role); status reads
+            assert kind == (
+                ("person_read", "read") if op in ("hub.status", "hub.handoff") else ("person_write", "write")
+            )
+        elif op in SHARE_OPS:  # V3 C6: column P only (owner role)
+            assert kind == (("person_read", "read") if op in SHARE_READS else ("person_write", "write"))
+        elif op in SPACE_OPS:  # V3 C13: list and get for P and G, the rest P only (owner role)
+            assert kind == (("pg_read", "read") if op in SPACE_READS else ("person_write", "write"))
+        elif op in PEER_OPS:  # V3 C12: reads for P and G, writes P only (owner role)
+            assert kind == (("pg_read", "read") if op in PEER_READS else ("person_write", "write"))
         elif op in AGENT_OPS:  # H11c: P only
             assert kind == (("person_read", "read") if op == "agent.preview" else ("person_write", "write"))
         elif op in GRANT_OPS:  # H11c: deposit needs a grant; status and forget are P only
@@ -406,7 +427,7 @@ def _catalog_rows() -> list[tuple[str, int, bool, str]]:
     # H11d: the worktree.* rows sit in a later table of the section, after a prose paragraph
     rest = "\n".join(lines[start + 2 + len(table) :]).split("\n### ", 1)[0]
     for line in rest.splitlines():
-        m = re.match(r"\| `((?:worktree\.|publish\.|unsupported\.)[a-z_]+)` \| (\d) \| (yes|no) \| (\w+)", line)
+        m = re.match(r"\| `((?:worktree\.|publish\.|unsupported\.|hub\.)[a-z_]+)` \| (\d) \| (yes|no) \| (\w+)", line)
         if m and m.group(1) not in {r[0] for r in rows}:
             rows.append((m.group(1), int(m.group(2)), m.group(3) == "yes", m.group(4)))
     return rows

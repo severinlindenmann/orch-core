@@ -125,7 +125,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         : named && 'missing' in named
           ? unavailable.find((w) => !!w.prefix && w.prefix.toUpperCase() === addressed.toUpperCase())
           : undefined
-      : undefined
+      : // #951: no address and no workspace answers (a fresh install whose dashboard is not granted yet): say why, not
+        // "Could not load Today". The first one is shown; with several, the person fixes it and the rest follow.
+        addressed === undefined && isSuccess && data.length === 0
+        ? unavailable[0]
+        : undefined
   const ambiguous = named && 'ambiguous' in named && !stopped ? named.ambiguous : undefined
   const missingPrefix = addressed !== undefined && isSuccess && named && 'missing' in named && !stopped ? addressed : undefined
   /** A `/w/<PREFIX>` address whose workspace is not known yet: the page waits instead of showing another workspace. */

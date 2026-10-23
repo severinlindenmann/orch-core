@@ -112,3 +112,27 @@ export async function imageUrl(run: string, name: string): Promise<string> {
   const data = await toBase64(blob)
   return `data:${blob.type};base64,${data}`
 }
+
+const two = (n: number) => String(n).padStart(2, '0')
+
+/** `orch-<run>-screenshots-<YYYYMMDD-HHMM>.zip`, in the person's local time. */
+export function zipName(run: string, now: Date = new Date()): string {
+  return `orch-${run}-screenshots-${now.getFullYear()}${two(now.getMonth() + 1)}${two(now.getDate())}-${two(now.getHours())}${two(now.getMinutes())}.zip`
+}
+
+/** All pictures of the run as one zip (the request needs the bearer header, so the page saves the answer itself). */
+export async function downloadScreenshots(run: string): Promise<void> {
+  const blob = await (await call('GET', `${base(run)}/screenshots.zip`)).blob()
+  const url = URL.createObjectURL(blob)
+  try {
+    const a = document.createElement('a')
+    a.href = url
+    a.download = zipName(run)
+    a.rel = 'noopener'
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(url), 10_000)
+  }
+}

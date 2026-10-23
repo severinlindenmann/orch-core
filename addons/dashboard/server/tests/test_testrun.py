@@ -331,3 +331,70 @@ def test_hash_retest_only_bodies_and_bad_hash(client, h):
     assert client.get("/api/testrun/run4", headers=h).json()["notes"]["A1"]["retest"] is True
     for bad in ({"hash": "XYZ"}, {"hash": "0123456789ABCDEF"}, {"retest": "yes"}, {}):
         assert client.put("/api/testrun/run4/steps/A1", json=bad, headers=h).status_code in (400, 422)
+
+
+def test_screenshots_zip_has_every_picture_by_stored_name(client, h):
+    import io
+    import re
+    import zipfile
+
+    a = upload(client, h, PNG, step="B1.2").json()["name"]
+    b = upload(client, h, JPG, "image/jpeg", step="C5").json()["name"]
+    res = client.get("/api/testrun/run2/screenshots.zip", headers=h)
+    assert res.status_code == 200
+    assert res.headers["content-type"] == "application/zip"
+    assert re.fullmatch(
+        r'attachment; filename="orch-run2-screenshots-\d{8}-\d{4}\.zip"', res.headers["content-disposition"]
+    )
+    with zipfile.ZipFile(io.BytesIO(res.content)) as z:
+        assert sorted(z.namelist()) == sorted([a, b])
+        assert z.read(a) == PNG and z.read(b) == JPG
+
+
+def test_screenshots_zip_needs_a_session_and_a_picture(client, h):
+    assert client.get("/api/testrun/run2/screenshots.zip", headers={"Origin": ORIGIN}).status_code == 401
+    assert client.get("/api/testrun/run2/screenshots.zip", headers=h).status_code == 404  # empty run
+    put(client, h)
+    assert client.get("/api/testrun/run2/screenshots.zip", headers=h).status_code == 404  # notes but no picture
+    assert client.get("/api/testrun/run../screenshots.zip", headers=h).status_code in (400, 404, 422)
+
+
+def test_screenshots_zip_skips_symlinks_and_unsafe_names(client, h, gateway, tmp_path):
+    import io
+    import zipfile
+
+    good = upload(client, h, PNG).json()["name"]
+    link = upload(client, h, PNG).json()["name"]
+    run = gateway.state / "dashboard" / "testrun" / "run2"
+    secret = tmp_path / "secret.png"
+    secret.write_bytes(b"secret")
+    os.unlink(run / "images" / link)
+    os.symlink(secret, run / "images" / link)
+    # a hand-edited notes file naming a traversal path and a non-image must not be read either
+    (tmp_path / "x.png").write_bytes(b"outside")
+    notes = json.loads((run / "notes.json").read_text())
+    notes["steps"]["C5"]["images"] += ["../../../../x.png", "notes.json", "C5-0123456789ab.png"]
+    (run / "notes.json").write_text(json.dumps(notes))
+    res = client.get("/api/testrun/run2/screenshots.zip", headers=h)
+    assert res.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(res.content)) as z:
+        assert z.namelist() == [good]
+
+
+def test_screenshots_zip_refuses_a_symlinked_images_dir(client, h, gateway, tmp_path):
+    upload(client, h, PNG)
+    run = gateway.state / "dashboard" / "testrun" / "run2"
+    elsewhere = tmp_path / "elsewhere"
+    run.joinpath("images").rename(elsewhere)
+    (run / "images").symlink_to(elsewhere)
+    assert client.get("/api/testrun/run2/screenshots.zip", headers=h).status_code == 400
+
+
+def test_screenshots_zip_is_capped(client, h, monkeypatch):
+    from orch_dashboard import testrun
+
+    upload(client, h, PNG)
+    monkeypatch.setattr(testrun, "ZIP_BYTES_MAX", 10)
+    res = client.get("/api/testrun/run2/screenshots.zip", headers=h)
+    assert res.status_code == 409
+    assert res.json()["error"]["code"] == "zip.too_large"

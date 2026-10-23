@@ -496,7 +496,7 @@ class FakeStore:
         from types import SimpleNamespace
 
         return SimpleNamespace(
-            workspace=SimpleNamespace(devices={}, members={}, settings={}), device_evidence=lambda d: None
+            workspace=SimpleNamespace(devices={}, members={}, settings={}, hub={}), device_evidence=lambda d: None
         )
 
     def logged_event(self, log: str, event_id: str) -> dict[str, Any] | None:

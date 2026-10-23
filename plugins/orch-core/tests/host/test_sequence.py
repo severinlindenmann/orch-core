@@ -543,3 +543,28 @@ def test_the_host_refuses_to_bind_a_sequence_to_the_phone(human, tmp_path):
     p = handoff_first(rig)
     res = human.get(p["request"]["id"], signer={"device": human.person.device, "auth": "secure-enclave"})
     assert res["error"]["code"] == "invalid.input"
+
+
+def test_ctrl_c_at_the_batch_passphrase_cancels_the_request_before_anything_is_signed(human, served, tmp_path):
+    """Opus delta, finding 1: the batch unlock sits after the review's guarded block; an interrupt there must still
+    cancel the request and surface as Cancelled ("nothing was signed")."""
+    import contextlib
+
+    from tests.host.test_handoff import Shown, by_id
+
+    class CtrlC:
+        name, person_capable, auth = "test", True, "passphrase"
+
+        def unlocked(self, key_id, *, action, digest, labels, fields=()):
+            @contextlib.contextmanager
+            def cm():
+                raise KeyboardInterrupt
+                yield
+
+            return cm()
+
+    rig = Rig(human, tmp_path)
+    p = handoff_first(rig)
+    with pytest.raises(signer.Cancelled):
+        terminal(rig, served, Shown(), p["request"]["code"], backend=CtrlC())
+    assert by_id(human.c, p["request"]["id"])["state"] == "cancelled"

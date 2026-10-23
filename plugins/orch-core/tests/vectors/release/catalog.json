@@ -1,0 +1,166 @@
+{
+ "cases": [
+  {
+   "channel": "develop",
+   "envelope": "{\"format\":\"orch.release-envelope/1\",\"key_cert\":{\"cert\":\"eyJjaGFubmVscyI6WyJkZXZlbG9wIiwibWFpbiJdLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2Uta2V5LzEiLCJrZXlfaWQiOiJjay0xIiwibm90X2FmdGVyIjoiMjAyNy0wMy0zMFQwMDowMDowMFoiLCJub3RfYmVmb3JlIjoiMjAyNi0xMC0wMVQwMDowMDowMFoiLCJwdWJsaWNfa2V5IjoidWY5WHFSQSs0QTIzaEkxQ3pJYmVoNVA4aWVOby8rS05IekdCemJ3dndqST0iLCJwdXJwb3NlIjoiYWRkb24tY2F0YWxvZyIsInNlcmlhbCI6N30=\",\"root_key_id\":\"root-1\",\"sig\":\"2JQQIgMo+fSO4KEZ+i+HzBMVs+5IopNVZgrzHUvj6UQoSMyKa5iz8fkIU6vy6ge+YrzYsBtvRbKYn9NOv6yfDQ==\"},\"payload\":\"eyJhZGRvbnMiOnsid2lraSI6eyJ0aXRsZSI6Ildpa2kiLCJ2ZXJzaW9ucyI6W3siYXBpIjoiPj0xLjEsPDIiLCJhcmNoaXZlIjp7InNoYTI1NiI6IjMwM2UzMjc3NDQ2ZGMzZjNjYTk4MDBkZjE1MzE2Njg1ZjM2ZTIwZjkyNmU5Mjk2ODdmOGFhZDNlNDU4MDRkYjkiLCJzaXplIjo1MTIwLCJ1cmwiOiJodHRwczovL2dpdGh1Yi5jb20vc2V2ZXJpbmxpbmRlbm1hbm4vb3JjaC1jb3JlL3JlbGVhc2VzL2Rvd25sb2FkL2FkZG9uLXdpa2ktdjAuMi4wL3dpa2ktMC4yLjAudGFyIn0sImNhcGFiaWxpdGllcyI6W10sImNoYW5nZWxvZyI6IlRFU1QuIFBhZ2UgbGlua3MgaW4gdGlja2V0cy4iLCJtaW5fY29yZSI6IjIuMC4wLmRldjYwIiwicGFja2FnZV9zaGEyNTYiOiJzaGEyNTY6ZjdjNjM1NWRmM2NkMTQ3YjI1YjU5ZjA5MWUwZDFiZDE4ZDQwYjcwMTk5OTllZTQ3ODMyNzM0YzA2NmVkZDBkZSIsInJldm9rZWQiOmZhbHNlLCJ2ZXJzaW9uIjoiMC4yLjAifV19fSwiY2hhbm5lbCI6ImRldmVsb3AiLCJleHBpcmVzX2F0IjoiMjAyNi0xMS0xMVQwNzo0MDowMFoiLCJmb3JtYXQiOiJvcmNoLmFkZG9uLWNhdGFsb2cvMSIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjFUMDc6NDA6MDBaIiwic2VxIjozMTF9\",\"revocations\":{\"doc\":\"eyJmb3JtYXQiOiJvcmNoLnJldm9jYXRpb25zLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDAwOjAwOjAwWiIsIm1pbl9zZXJpYWwiOjIsInJldm9rZWQiOls0XX0=\",\"root_key_id\":\"root-1\",\"sig\":\"8YAEebkNLHvcXbSGReypFnsmd9sdbZ+I8GMqSrEVjFS5OJ1Vhzen1sDDWMcSHzWt9p7Vfe8CRZHFRJJCWgAQCg==\"},\"sig\":{\"alg\":\"ed25519\",\"key_id\":\"ck-1\",\"value\":\"JRA6tYaiUO11pP79x4Y2ePJZjA9KJRnoaf9CmtzWkDsfXrBzSqWYEVcZSMVADohhppmIjKjLi7299gAQKrHlAQ==\"}}",
+   "expect": {
+    "accept": {
+     "channel": "develop",
+     "min_serial": 2,
+     "revocations_issued_at": "2026-10-20T00:00:00Z",
+     "seq": 311,
+     "version": null
+    },
+    "code": null,
+    "reason": "ok"
+   },
+   "name": "ok_catalog_develop",
+   "now": "2026-10-22T08:00:00Z",
+   "pins": "a valid develop add-on catalog signed by the catalog key",
+   "purpose": "addon-catalog",
+   "state": {
+    "revocations_issued_at": "2026-10-20T00:00:00Z",
+    "seq_seen": 310,
+    "trusted_roots": [
+     "root-1"
+    ]
+   }
+  },
+  {
+   "channel": "develop",
+   "envelope": "{\"format\":\"orch.release-envelope/1\",\"key_cert\":{\"cert\":\"eyJjaGFubmVscyI6WyJkZXZlbG9wIiwibWFpbiJdLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2Uta2V5LzEiLCJrZXlfaWQiOiJyay0zIiwibm90X2FmdGVyIjoiMjAyNy0wMy0zMFQwMDowMDowMFoiLCJub3RfYmVmb3JlIjoiMjAyNi0xMC0wMVQwMDowMDowMFoiLCJwdWJsaWNfa2V5IjoiTzU0c1pNRlk5aW5DT0xWelRuOUJ2ci80cDFvS0RDWVVScnNOUDQ4ek9hMD0iLCJwdXJwb3NlIjoiY29yZSIsInNlcmlhbCI6M30=\",\"root_key_id\":\"root-1\",\"sig\":\"Mw2cAoDRgDuJ9pMXZou+UTftrDcNyGGOynBhLGmz0ZbUR4+DBkmBFDdUNii8cCElTzB2DQcMMMTw/jUKGoZTDA==\"},\"payload\":\"eyJhZGRvbnMiOnsid2lraSI6eyJ0aXRsZSI6Ildpa2kiLCJ2ZXJzaW9ucyI6W3siYXBpIjoiPj0xLjEsPDIiLCJhcmNoaXZlIjp7InNoYTI1NiI6IjMwM2UzMjc3NDQ2ZGMzZjNjYTk4MDBkZjE1MzE2Njg1ZjM2ZTIwZjkyNmU5Mjk2ODdmOGFhZDNlNDU4MDRkYjkiLCJzaXplIjo1MTIwLCJ1cmwiOiJodHRwczovL2dpdGh1Yi5jb20vc2V2ZXJpbmxpbmRlbm1hbm4vb3JjaC1jb3JlL3JlbGVhc2VzL2Rvd25sb2FkL2FkZG9uLXdpa2ktdjAuMi4wL3dpa2ktMC4yLjAudGFyIn0sImNhcGFiaWxpdGllcyI6W10sImNoYW5nZWxvZyI6IlRFU1QuIFBhZ2UgbGlua3MgaW4gdGlja2V0cy4iLCJtaW5fY29yZSI6IjIuMC4wLmRldjYwIiwicGFja2FnZV9zaGEyNTYiOiJzaGEyNTY6ZjdjNjM1NWRmM2NkMTQ3YjI1YjU5ZjA5MWUwZDFiZDE4ZDQwYjcwMTk5OTllZTQ3ODMyNzM0YzA2NmVkZDBkZSIsInJldm9rZWQiOmZhbHNlLCJ2ZXJzaW9uIjoiMC4yLjAifV19fSwiY2hhbm5lbCI6ImRldmVsb3AiLCJleHBpcmVzX2F0IjoiMjAyNi0xMS0xMVQwNzo0MDowMFoiLCJmb3JtYXQiOiJvcmNoLmFkZG9uLWNhdGFsb2cvMSIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjFUMDc6NDA6MDBaIiwic2VxIjozMTF9\",\"revocations\":{\"doc\":\"eyJmb3JtYXQiOiJvcmNoLnJldm9jYXRpb25zLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDAwOjAwOjAwWiIsIm1pbl9zZXJpYWwiOjIsInJldm9rZWQiOls0XX0=\",\"root_key_id\":\"root-1\",\"sig\":\"8YAEebkNLHvcXbSGReypFnsmd9sdbZ+I8GMqSrEVjFS5OJ1Vhzen1sDDWMcSHzWt9p7Vfe8CRZHFRJJCWgAQCg==\"},\"sig\":{\"alg\":\"ed25519\",\"key_id\":\"rk-3\",\"value\":\"WJ4qrArZHE6OTjjYUP84EySkLQLiSg1bu9NCL+m/sLanQBnQLyS3IM/xZnIHLnqkumPkcWn69W1pL2hC7pbhBA==\"}}",
+   "expect": {
+    "code": "update.unverified",
+    "reason": "wrong_purpose"
+   },
+   "name": "wrong_purpose_core_key",
+   "now": "2026-10-22T08:00:00Z",
+   "pins": "the core release key signs a catalog under the catalog domain",
+   "purpose": "addon-catalog",
+   "state": {
+    "revocations_issued_at": "2026-10-20T00:00:00Z",
+    "seq_seen": 310,
+    "trusted_roots": [
+     "root-1"
+    ]
+   }
+  },
+  {
+   "channel": "develop",
+   "envelope": "{\"format\":\"orch.release-envelope/1\",\"key_cert\":{\"cert\":\"eyJjaGFubmVscyI6WyJkZXZlbG9wIiwibWFpbiJdLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2Uta2V5LzEiLCJrZXlfaWQiOiJjay0xIiwibm90X2FmdGVyIjoiMjAyNy0wMy0zMFQwMDowMDowMFoiLCJub3RfYmVmb3JlIjoiMjAyNi0xMC0wMVQwMDowMDowMFoiLCJwdWJsaWNfa2V5IjoidWY5WHFSQSs0QTIzaEkxQ3pJYmVoNVA4aWVOby8rS05IekdCemJ3dndqST0iLCJwdXJwb3NlIjoiYWRkb24tY2F0YWxvZyIsInNlcmlhbCI6N30=\",\"root_key_id\":\"root-1\",\"sig\":\"2JQQIgMo+fSO4KEZ+i+HzBMVs+5IopNVZgrzHUvj6UQoSMyKa5iz8fkIU6vy6ge+YrzYsBtvRbKYn9NOv6yfDQ==\"},\"payload\":\"eyJhZGRvbnMiOnsid2lraSI6eyJ0aXRsZSI6Ildpa2kiLCJ2ZXJzaW9ucyI6W3siYXBpIjoiPj0xLjEsPDIiLCJhcmNoaXZlIjp7InNoYTI1NiI6IjMwM2UzMjc3NDQ2ZGMzZjNjYTk4MDBkZjE1MzE2Njg1ZjM2ZTIwZjkyNmU5Mjk2ODdmOGFhZDNlNDU4MDRkYjkiLCJzaXplIjo1MTIwLCJ1cmwiOiJodHRwczovL2dpdGh1Yi5jb20vc2V2ZXJpbmxpbmRlbm1hbm4vb3JjaC1jb3JlL3JlbGVhc2VzL2Rvd25sb2FkL2FkZG9uLXdpa2ktdjAuMi4wL3dpa2ktMC4yLjAudGFyIn0sImNhcGFiaWxpdGllcyI6W10sImNoYW5nZWxvZyI6IlRFU1QuIFBhZ2UgbGlua3MgaW4gdGlja2V0cy4iLCJtaW5fY29yZSI6IjIuMC4wLmRldjYwIiwicGFja2FnZV9zaGEyNTYiOiJzaGEyNTY6ZjdjNjM1NWRmM2NkMTQ3YjI1YjU5ZjA5MWUwZDFiZDE4ZDQwYjcwMTk5OTllZTQ3ODMyNzM0YzA2NmVkZDBkZSIsInJldm9rZWQiOmZhbHNlLCJ2ZXJzaW9uIjoiMC4yLjAifV19fSwiY2hhbm5lbCI6ImRldmVsb3AiLCJleHBpcmVzX2F0IjoiMjAyNi0xMS0xMVQwNzo0MDowMFoiLCJmb3JtYXQiOiJvcmNoLmFkZG9uLWNhdGFsb2cvMSIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjFUMDc6NDA6MDBaIiwic2VxIjozMTF9\",\"revocations\":{\"doc\":\"eyJmb3JtYXQiOiJvcmNoLnJldm9jYXRpb25zLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDAwOjAwOjAwWiIsIm1pbl9zZXJpYWwiOjIsInJldm9rZWQiOls0XX0=\",\"root_key_id\":\"root-1\",\"sig\":\"8YAEebkNLHvcXbSGReypFnsmd9sdbZ+I8GMqSrEVjFS5OJ1Vhzen1sDDWMcSHzWt9p7Vfe8CRZHFRJJCWgAQCg==\"},\"sig\":{\"alg\":\"ed25519\",\"key_id\":\"ck-1\",\"value\":\"ZLvrPU1CHffG5TJqIa9zfrXvYrkcA7eVBkfFIycvAUVdoXZBrSkAHidiC6Hu2xJWzqUZDqEaFDEsutYlOUmkAw==\"}}",
+   "expect": {
+    "code": "update.unverified",
+    "reason": "bad_sig"
+   },
+   "name": "bad_sig_core_domain",
+   "now": "2026-10-22T08:00:00Z",
+   "pins": "the catalog key signs the catalog under the core domain",
+   "purpose": "addon-catalog",
+   "state": {
+    "revocations_issued_at": "2026-10-20T00:00:00Z",
+    "seq_seen": 310,
+    "trusted_roots": [
+     "root-1"
+    ]
+   }
+  },
+  {
+   "channel": "develop",
+   "envelope": "{\"format\":\"orch.release-envelope/1\",\"key_cert\":{\"cert\":\"eyJjaGFubmVscyI6WyJkZXZlbG9wIiwibWFpbiJdLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2Uta2V5LzEiLCJrZXlfaWQiOiJjay0xIiwibm90X2FmdGVyIjoiMjAyNy0wMy0zMFQwMDowMDowMFoiLCJub3RfYmVmb3JlIjoiMjAyNi0xMC0wMVQwMDowMDowMFoiLCJwdWJsaWNfa2V5IjoidWY5WHFSQSs0QTIzaEkxQ3pJYmVoNVA4aWVOby8rS05IekdCemJ3dndqST0iLCJwdXJwb3NlIjoiYWRkb24tY2F0YWxvZyIsInNlcmlhbCI6N30=\",\"root_key_id\":\"root-1\",\"sig\":\"2JQQIgMo+fSO4KEZ+i+HzBMVs+5IopNVZgrzHUvj6UQoSMyKa5iz8fkIU6vy6ge+YrzYsBtvRbKYn9NOv6yfDQ==\"},\"payload\":\"eyJjaGFuZ2Vsb2ciOiJURVNUIHJlbGVhc2UuIFdpa2kgYWRkLW9uOiBwYWdlIGxpbmtzOyBmaXggdGVybWluYWwgcmVzaXplLiIsImNoYW5uZWwiOiJkZXZlbG9wIiwiY29tbWl0IjoiMDJkOGViMDdkZDE1Yzk1MTA0YjRiMmM1ZTcxYzQwZjlmMDM3OWVlNiIsImV4cGlyZXNfYXQiOiIyMDI2LTExLTExVDA3OjQwOjAwWiIsImZpbGVzIjpbeyJuYW1lIjoib3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwiLCJyb2xlIjoiY29yZSIsInNoYTI1NiI6IjJhZGE1YWMzOWUwMzUzNjgzODI4MTRiNTRiNmNiMDdjMGMwNWM1YWVjMzg4OTBmOGI2NTAyYjQ3YTg3NmMzNWEiLCJzaXplIjo0NiwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwifSx7Im5hbWUiOiJvcmNoX2Rhc2hib2FyZC0yLjAuMC5kZXY0Mi1weTMtbm9uZS1hbnkud2hsIiwicm9sZSI6ImRhc2hib2FyZCIsInNoYTI1NiI6IjY0YTBmNjkyMTQzY2U2N2FkZTcxODUyNWNiNGRmOGVmYTNhNjRhNDhkMzhhYmUyMDE1NTc0MjdjNWRmZWFiNjMiLCJzaXplIjo1MSwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9kYXNoYm9hcmQtMi4wLjAuZGV2NDItcHkzLW5vbmUtYW55LndobCJ9LHsibmFtZSI6ImNvbnN0cmFpbnRzLnR4dCIsInJvbGUiOiJjb25zdHJhaW50cyIsInNoYTI1NiI6IjZjMzJjZWIzZDcxOTBkN2FmNWFlYmVmMjk2NGRiM2U4MmZjMDFkMDNlY2IyZjQ3NzNkMTQwNTFlNjNiZjVlNzgiLCJzaXplIjo1MywidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvY29uc3RyYWludHMudHh0In1dLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2UvMSIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjFUMDc6NDA6MDBaIiwibWluX2Zyb20iOiIyLjAuMC5kZXYxIiwic2VxIjo0MiwidmVyc2lvbiI6IjIuMC4wLmRldjQyIn0=\",\"revocations\":{\"doc\":\"eyJmb3JtYXQiOiJvcmNoLnJldm9jYXRpb25zLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDAwOjAwOjAwWiIsIm1pbl9zZXJpYWwiOjIsInJldm9rZWQiOls0XX0=\",\"root_key_id\":\"root-1\",\"sig\":\"8YAEebkNLHvcXbSGReypFnsmd9sdbZ+I8GMqSrEVjFS5OJ1Vhzen1sDDWMcSHzWt9p7Vfe8CRZHFRJJCWgAQCg==\"},\"sig\":{\"alg\":\"ed25519\",\"key_id\":\"ck-1\",\"value\":\"DuZmHYmNq4g19op7m6VeY03wbgrn41Hbzc5V66HYUulpKsTXIsabjT0rRlGxorUQTdc+ytI+0p1DW3fz2NVkBQ==\"}}",
+   "expect": {
+    "code": "update.unverified",
+    "reason": "wrong_format"
+   },
+   "name": "wrong_format_core_payload",
+   "now": "2026-10-22T08:00:00Z",
+   "pins": "the catalog key signs a core manifest under the catalog domain; verified as catalog",
+   "purpose": "addon-catalog",
+   "state": {
+    "revocations_issued_at": "2026-10-20T00:00:00Z",
+    "seq_seen": 310,
+    "trusted_roots": [
+     "root-1"
+    ]
+   }
+  },
+  {
+   "channel": "main",
+   "envelope": "{\"format\":\"orch.release-envelope/1\",\"key_cert\":{\"cert\":\"eyJjaGFubmVscyI6WyJkZXZlbG9wIiwibWFpbiJdLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2Uta2V5LzEiLCJrZXlfaWQiOiJjay0xIiwibm90X2FmdGVyIjoiMjAyNy0wMy0zMFQwMDowMDowMFoiLCJub3RfYmVmb3JlIjoiMjAyNi0xMC0wMVQwMDowMDowMFoiLCJwdWJsaWNfa2V5IjoidWY5WHFSQSs0QTIzaEkxQ3pJYmVoNVA4aWVOby8rS05IekdCemJ3dndqST0iLCJwdXJwb3NlIjoiYWRkb24tY2F0YWxvZyIsInNlcmlhbCI6N30=\",\"root_key_id\":\"root-1\",\"sig\":\"2JQQIgMo+fSO4KEZ+i+HzBMVs+5IopNVZgrzHUvj6UQoSMyKa5iz8fkIU6vy6ge+YrzYsBtvRbKYn9NOv6yfDQ==\"},\"payload\":\"eyJhZGRvbnMiOnsid2lraSI6eyJ0aXRsZSI6Ildpa2kiLCJ2ZXJzaW9ucyI6W3siYXBpIjoiPj0xLjEsPDIiLCJhcmNoaXZlIjp7InNoYTI1NiI6IjMwM2UzMjc3NDQ2ZGMzZjNjYTk4MDBkZjE1MzE2Njg1ZjM2ZTIwZjkyNmU5Mjk2ODdmOGFhZDNlNDU4MDRkYjkiLCJzaXplIjo1MTIwLCJ1cmwiOiJodHRwczovL2dpdGh1Yi5jb20vc2V2ZXJpbmxpbmRlbm1hbm4vb3JjaC1jb3JlL3JlbGVhc2VzL2Rvd25sb2FkL2FkZG9uLXdpa2ktdjAuMi4wL3dpa2ktMC4yLjAudGFyIn0sImNhcGFiaWxpdGllcyI6W10sImNoYW5nZWxvZyI6IlRFU1QuIFBhZ2UgbGlua3MgaW4gdGlja2V0cy4iLCJtaW5fY29yZSI6IjIuMC4wLmRldjYwIiwicGFja2FnZV9zaGEyNTYiOiJzaGEyNTY6ZjdjNjM1NWRmM2NkMTQ3YjI1YjU5ZjA5MWUwZDFiZDE4ZDQwYjcwMTk5OTllZTQ3ODMyNzM0YzA2NmVkZDBkZSIsInJldm9rZWQiOmZhbHNlLCJ2ZXJzaW9uIjoiMC4yLjAifV19fSwiY2hhbm5lbCI6ImRldmVsb3AiLCJleHBpcmVzX2F0IjoiMjAyNi0xMS0xMVQwNzo0MDowMFoiLCJmb3JtYXQiOiJvcmNoLmFkZG9uLWNhdGFsb2cvMSIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjFUMDc6NDA6MDBaIiwic2VxIjozMTF9\",\"revocations\":{\"doc\":\"eyJmb3JtYXQiOiJvcmNoLnJldm9jYXRpb25zLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDAwOjAwOjAwWiIsIm1pbl9zZXJpYWwiOjIsInJldm9rZWQiOls0XX0=\",\"root_key_id\":\"root-1\",\"sig\":\"8YAEebkNLHvcXbSGReypFnsmd9sdbZ+I8GMqSrEVjFS5OJ1Vhzen1sDDWMcSHzWt9p7Vfe8CRZHFRJJCWgAQCg==\"},\"sig\":{\"alg\":\"ed25519\",\"key_id\":\"ck-1\",\"value\":\"JRA6tYaiUO11pP79x4Y2ePJZjA9KJRnoaf9CmtzWkDsfXrBzSqWYEVcZSMVADohhppmIjKjLi7299gAQKrHlAQ==\"}}",
+   "expect": {
+    "code": "update.unverified",
+    "reason": "wrong_channel"
+   },
+   "name": "wrong_channel",
+   "now": "2026-10-22T08:00:00Z",
+   "pins": "a develop catalog fetched for channel main",
+   "purpose": "addon-catalog",
+   "state": {
+    "revocations_issued_at": "2026-10-20T00:00:00Z",
+    "seq_seen": 310,
+    "trusted_roots": [
+     "root-1"
+    ]
+   }
+  },
+  {
+   "channel": "develop",
+   "envelope": "{\"format\":\"orch.release-envelope/1\",\"key_cert\":{\"cert\":\"eyJjaGFubmVscyI6WyJkZXZlbG9wIiwibWFpbiJdLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2Uta2V5LzEiLCJrZXlfaWQiOiJjay0xIiwibm90X2FmdGVyIjoiMjAyNy0wMy0zMFQwMDowMDowMFoiLCJub3RfYmVmb3JlIjoiMjAyNi0xMC0wMVQwMDowMDowMFoiLCJwdWJsaWNfa2V5IjoidWY5WHFSQSs0QTIzaEkxQ3pJYmVoNVA4aWVOby8rS05IekdCemJ3dndqST0iLCJwdXJwb3NlIjoiYWRkb24tY2F0YWxvZyIsInNlcmlhbCI6N30=\",\"root_key_id\":\"root-1\",\"sig\":\"2JQQIgMo+fSO4KEZ+i+HzBMVs+5IopNVZgrzHUvj6UQoSMyKa5iz8fkIU6vy6ge+YrzYsBtvRbKYn9NOv6yfDQ==\"},\"payload\":\"eyJhZGRvbnMiOnsid2lraSI6eyJ0aXRsZSI6Ildpa2kiLCJ2ZXJzaW9ucyI6W3siYXBpIjoiPj0xLjEsPDIiLCJhcmNoaXZlIjp7InNoYTI1NiI6IjMwM2UzMjc3NDQ2ZGMzZjNjYTk4MDBkZjE1MzE2Njg1ZjM2ZTIwZjkyNmU5Mjk2ODdmOGFhZDNlNDU4MDRkYjkiLCJzaXplIjo1MTIwLCJ1cmwiOiJodHRwczovL2dpdGh1Yi5jb20vc2V2ZXJpbmxpbmRlbm1hbm4vb3JjaC1jb3JlL3JlbGVhc2VzL2Rvd25sb2FkL2FkZG9uLXdpa2ktdjAuMi4wL3dpa2ktMC4yLjAudGFyIn0sImNhcGFiaWxpdGllcyI6W10sImNoYW5nZWxvZyI6IlRFU1QuIFBhZ2UgbGlua3MgaW4gdGlja2V0cy4iLCJtaW5fY29yZSI6IjIuMC4wLmRldjYwIiwicGFja2FnZV9zaGEyNTYiOiJzaGEyNTY6ZjdjNjM1NWRmM2NkMTQ3YjI1YjU5ZjA5MWUwZDFiZDE4ZDQwYjcwMTk5OTllZTQ3ODMyNzM0YzA2NmVkZDBkZSIsInJldm9rZWQiOmZhbHNlLCJ2ZXJzaW9uIjoiMC4yLjAifV19fSwiY2hhbm5lbCI6ImRldmVsb3AiLCJleHBpcmVzX2F0IjoiMjAyNi0xMC0xMVQwNzo0MDowMFoiLCJmb3JtYXQiOiJvcmNoLmFkZG9uLWNhdGFsb2cvMSIsImlzc3VlZF9hdCI6IjIwMjYtMDktMjBUMDc6NDA6MDBaIiwic2VxIjozMTF9\",\"revocations\":{\"doc\":\"eyJmb3JtYXQiOiJvcmNoLnJldm9jYXRpb25zLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDAwOjAwOjAwWiIsIm1pbl9zZXJpYWwiOjIsInJldm9rZWQiOls0XX0=\",\"root_key_id\":\"root-1\",\"sig\":\"8YAEebkNLHvcXbSGReypFnsmd9sdbZ+I8GMqSrEVjFS5OJ1Vhzen1sDDWMcSHzWt9p7Vfe8CRZHFRJJCWgAQCg==\"},\"sig\":{\"alg\":\"ed25519\",\"key_id\":\"ck-1\",\"value\":\"16oZrotgMEwyWw3ihv4cAmEdTm+78zXVyaj6g1K5gmbZMWSjKORoBB+jiwNzzqxtqZp1FPIgyzq5fxV/tu/2Aw==\"}}",
+   "expect": {
+    "code": "update.stale",
+    "reason": "expired"
+   },
+   "name": "expired",
+   "now": "2026-10-22T08:00:00Z",
+   "pins": "now >= catalog expires_at",
+   "purpose": "addon-catalog",
+   "state": {
+    "revocations_issued_at": "2026-10-20T00:00:00Z",
+    "seq_seen": 310,
+    "trusted_roots": [
+     "root-1"
+    ]
+   }
+  },
+  {
+   "channel": "develop",
+   "envelope": "{\"format\":\"orch.release-envelope/1\",\"key_cert\":{\"cert\":\"eyJjaGFubmVscyI6WyJkZXZlbG9wIiwibWFpbiJdLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2Uta2V5LzEiLCJrZXlfaWQiOiJjay0xIiwibm90X2FmdGVyIjoiMjAyNy0wMy0zMFQwMDowMDowMFoiLCJub3RfYmVmb3JlIjoiMjAyNi0xMC0wMVQwMDowMDowMFoiLCJwdWJsaWNfa2V5IjoidWY5WHFSQSs0QTIzaEkxQ3pJYmVoNVA4aWVOby8rS05IekdCemJ3dndqST0iLCJwdXJwb3NlIjoiYWRkb24tY2F0YWxvZyIsInNlcmlhbCI6N30=\",\"root_key_id\":\"root-1\",\"sig\":\"2JQQIgMo+fSO4KEZ+i+HzBMVs+5IopNVZgrzHUvj6UQoSMyKa5iz8fkIU6vy6ge+YrzYsBtvRbKYn9NOv6yfDQ==\"},\"payload\":\"eyJhZGRvbnMiOnsid2lraSI6eyJ0aXRsZSI6Ildpa2kiLCJ2ZXJzaW9ucyI6W3siYXBpIjoiPj0xLjEsPDIiLCJhcmNoaXZlIjp7InNoYTI1NiI6IjMwM2UzMjc3NDQ2ZGMzZjNjYTk4MDBkZjE1MzE2Njg1ZjM2ZTIwZjkyNmU5Mjk2ODdmOGFhZDNlNDU4MDRkYjkiLCJzaXplIjo1MTIwLCJ1cmwiOiJodHRwczovL2dpdGh1Yi5jb20vc2V2ZXJpbmxpbmRlbm1hbm4vb3JjaC1jb3JlL3JlbGVhc2VzL2Rvd25sb2FkL2FkZG9uLXdpa2ktdjAuMi4wL3dpa2ktMC4yLjAudGFyIn0sImNhcGFiaWxpdGllcyI6W10sImNoYW5nZWxvZyI6IlRFU1QuIFBhZ2UgbGlua3MgaW4gdGlja2V0cy4iLCJtaW5fY29yZSI6IjIuMC4wLmRldjYwIiwicGFja2FnZV9zaGEyNTYiOiJzaGEyNTY6ZjdjNjM1NWRmM2NkMTQ3YjI1YjU5ZjA5MWUwZDFiZDE4ZDQwYjcwMTk5OTllZTQ3ODMyNzM0YzA2NmVkZDBkZSIsInJldm9rZWQiOmZhbHNlLCJ2ZXJzaW9uIjoiMC4yLjAifV19fSwiY2hhbm5lbCI6ImRldmVsb3AiLCJleHBpcmVzX2F0IjoiMjAyNi0xMS0xMVQwNzo0MDowMFoiLCJmb3JtYXQiOiJvcmNoLmFkZG9uLWNhdGFsb2cvMSIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjFUMDc6NDA6MDBaIiwic2VxIjozMTF9\",\"revocations\":{\"doc\":\"eyJmb3JtYXQiOiJvcmNoLnJldm9jYXRpb25zLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDAwOjAwOjAwWiIsIm1pbl9zZXJpYWwiOjIsInJldm9rZWQiOls0XX0=\",\"root_key_id\":\"root-1\",\"sig\":\"8YAEebkNLHvcXbSGReypFnsmd9sdbZ+I8GMqSrEVjFS5OJ1Vhzen1sDDWMcSHzWt9p7Vfe8CRZHFRJJCWgAQCg==\"},\"sig\":{\"alg\":\"ed25519\",\"key_id\":\"ck-1\",\"value\":\"JRA6tYaiUO11pP79x4Y2ePJZjA9KJRnoaf9CmtzWkDsfXrBzSqWYEVcZSMVADohhppmIjKjLi7299gAQKrHlAQ==\"}}",
+   "expect": {
+    "code": "update.stale",
+    "reason": "rollback"
+   },
+   "name": "rollback",
+   "now": "2026-10-22T08:00:00Z",
+   "pins": "catalog seq 311 < seq_seen 312",
+   "purpose": "addon-catalog",
+   "state": {
+    "revocations_issued_at": "2026-10-20T00:00:00Z",
+    "seq_seen": 312,
+    "trusted_roots": [
+     "root-1"
+    ]
+   }
+  },
+  {
+   "channel": "develop",
+   "envelope": "{\"format\":\"orch.release-envelope/1\",\"key_cert\":{\"cert\":\"eyJjaGFubmVscyI6WyJkZXZlbG9wIiwibWFpbiJdLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2Uta2V5LzEiLCJrZXlfaWQiOiJjay0xIiwibm90X2FmdGVyIjoiMjAyNy0wMy0zMFQwMDowMDowMFoiLCJub3RfYmVmb3JlIjoiMjAyNi0xMC0wMVQwMDowMDowMFoiLCJwdWJsaWNfa2V5IjoidWY5WHFSQSs0QTIzaEkxQ3pJYmVoNVA4aWVOby8rS05IekdCemJ3dndqST0iLCJwdXJwb3NlIjoiYWRkb24tY2F0YWxvZyIsInNlcmlhbCI6N30=\",\"root_key_id\":\"root-1\",\"sig\":\"2JQQIgMo+fSO4KEZ+i+HzBMVs+5IopNVZgrzHUvj6UQoSMyKa5iz8fkIU6vy6ge+YrzYsBtvRbKYn9NOv6yfDQ==\"},\"payload\":\"eyJhZGRvbnMiOnsid2lraSI6eyJ0aXRsZSI6Ildpa2kiLCJ2ZXJzaW9ucyI6W3siYXBpIjoiPj0xLjEsPDIiLCJhcmNoaXZlIjp7InNoYTI1NiI6IjMwM2UzMjc3NDQ2ZGMzZjNjYTk4MDBkZjE1MzE2Njg1ZjM2ZTIwZjkyNmU5Mjk2ODdmOGFhZDNlNDU4MDRkYjkiLCJzaXplIjo1MTIwLCJ1cmwiOiJodHRwczovL2dpdGh1Yi5jb20vc2V2ZXJpbmxpbmRlbm1hbm4vb3JjaC1jb3JlL3JlbGVhc2VzL2Rvd25sb2FkL2FkZG9uLXdpa2ktdjAuMi4wL3dpa2ktMC4yLjAudGFyIn0sImNhcGFiaWxpdGllcyI6W10sImNoYW5nZWxvZyI6IlRFU1QuIFBhZ2UgbGlua3MgaW4gdGlja2V0cy4iLCJtaW5fY29yZSI6IjIuMC4wLmRldjYwIiwicGFja2FnZV9zaGEyNTYiOiJzaGEyNTY6ZjdjNjM1NWRmM2NkMTQ3YjI1YjU5ZjA5MWUwZDFiZDE4ZDQwYjcwMTk5OTllZTQ3ODMyNzM0YzA2NmVkZDBkZSIsInJldm9rZWQiOmZhbHNlLCJ2ZXJzaW9uIjoiMC4yLjAifV19fSwiY2hhbm5lbCI6ImRldmVsb3AiLCJleHBpcmVzX2F0IjoiMjAyNi0xMS0xMVQwNzo0MDowMFoiLCJleHRyYSI6dHJ1ZSwiZm9ybWF0Ijoib3JjaC5hZGRvbi1jYXRhbG9nLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIxVDA3OjQwOjAwWiIsInNlcSI6MzExfQ==\",\"revocations\":{\"doc\":\"eyJmb3JtYXQiOiJvcmNoLnJldm9jYXRpb25zLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDAwOjAwOjAwWiIsIm1pbl9zZXJpYWwiOjIsInJldm9rZWQiOls0XX0=\",\"root_key_id\":\"root-1\",\"sig\":\"8YAEebkNLHvcXbSGReypFnsmd9sdbZ+I8GMqSrEVjFS5OJ1Vhzen1sDDWMcSHzWt9p7Vfe8CRZHFRJJCWgAQCg==\"},\"sig\":{\"alg\":\"ed25519\",\"key_id\":\"ck-1\",\"value\":\"4wRwr64Tpi4Ac7xfOo8P7Pqq8TBtKGeX8EyLpLTCfk41yIQ3CK6ORseRU+z3zpXuYTpHLuRMF55SvOjV5gkHDg==\"}}",
+   "expect": {
+    "code": "update.unverified",
+    "reason": "malformed"
+   },
+   "name": "malformed_unknown_field_catalog",
+   "now": "2026-10-22T08:00:00Z",
+   "pins": "a correctly signed catalog with an unknown top-level field",
+   "purpose": "addon-catalog",
+   "state": {
+    "revocations_issued_at": "2026-10-20T00:00:00Z",
+    "seq_seen": 310,
+    "trusted_roots": [
+     "root-1"
+    ]
+   }
+  }
+ ],
+ "contract": "CONTRACT.md",
+ "format": "orch.release-vectors/1",
+ "test_only": true
+}

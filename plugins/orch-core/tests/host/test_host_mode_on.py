@@ -164,9 +164,11 @@ def test_the_service_manager_commands(tmp_path, platform):
         ran.append(list(argv))
         if argv[1] in ("print",) or argv[2:3] == ["is-enabled"]:
             return done(0 if loaded[0] else 1)
+        if argv[1] == "bootout":
+            loaded[0] = False  # unloaded at once (the wait for a slow unload is in test_bootout_wait)
         return done()
 
-    m = svc.Manager(unit, run=run)
+    m = svc.Manager(unit, run=run, sleep=lambda _s: None)
     assert m.install() is True and m.installed() and m.install() is False
     assert unit.unit_path.stat().st_mode & 0o777 == 0o644
     m.start(changed=True)
@@ -178,7 +180,7 @@ def test_the_service_manager_commands(tmp_path, platform):
         assert ran[-1] == ["launchctl", "kickstart", "gui/501/io.orch.host"]
         ran.clear()
         m.start(changed=True)  # launchd reads a plist at bootstrap only
-        assert ran[1:] == [
+        assert [a for a in ran[1:] if a[1] != "print"] == [
             ["launchctl", "bootout", "gui/501/io.orch.host"],
             ["launchctl", "bootstrap", "gui/501", str(unit.unit_path)],
         ]
@@ -196,7 +198,7 @@ def test_the_service_manager_commands(tmp_path, platform):
         return done(5) if argv[1] in ("bootstrap", "enable") or argv[2:3] == ["enable"] else done(1)
 
     with pytest.raises(OSError, match="failed"):
-        svc.Manager(unit, run=failing).start(changed=True)
+        svc.Manager(unit, run=failing, sleep=lambda _s: None).start(changed=True)
 
 
 def test_enable_on_a_platform_without_a_user_service_stays_direct_and_installs_nothing(tmp_path, monkeypatch, fake):

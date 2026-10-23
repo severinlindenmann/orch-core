@@ -423,3 +423,41 @@ def test_restore_settles_compromised_voids_on_an_inapplicable_gate(env, monkeypa
     assert not ticket.marks
     assert all(ticket.gates[g].gen - before[g] == (0 if g == "requirements" else 1) for g in ALL)
     assert approval["id"] in ticket.gates["requirements"].pending_void
+
+
+def test_void_person_voids_every_decision_of_an_aliased_person_not_only_the_counting_one(monkeypatch):
+    from types import SimpleNamespace
+
+    from orch.model import generations
+    from orch.model.types import Decision, GateCore
+
+    monkeypatch.setattr("orch.model.generations.reached", lambda *_: False)
+    ws = SimpleNamespace(hub={"alias_book": {"h1": {"mara": "x"}}})  # u_x is p_mara
+    gc = GateCore(gen=0)
+    mk = lambda i, who, dev: Decision(i, i, "plan", "approve", who, dev, 0, "h", "ph")  # noqa: E731
+    gc.decisions += [mk(1, "u_x", "d1"), mk(2, "p_mara", "d2")]
+    t = SimpleNamespace(gates={g: GateCore(gen=0) for g in generations.GATES}, marks=set())
+    t.gates["plan"] = gc
+    assert len(generations.counting(t, "plan", ws)) == 1  # one person, one counting decision
+    generations._void_person_now(ws, t, "p_mara")  # noqa: SLF001
+    assert all(d.voided for d in gc.decisions)
+    assert generations.live(t, "plan") == []
+    # the same through the other id
+    gc.decisions[:] = [mk(1, "u_x", "d1"), mk(2, "p_mara", "d2")]
+    generations._void_person_now(ws, t, "u_x")  # noqa: SLF001
+    assert all(d.voided for d in gc.decisions)
+
+
+def test_void_device_voids_a_device_decision_hidden_behind_the_same_persons_earlier_one():
+    from types import SimpleNamespace
+
+    from orch.model import generations
+    from orch.model.types import Decision, GateCore
+
+    gc = GateCore(gen=0)
+    mk = lambda i, dev: Decision(i, i, "plan", "approve", "p_a", dev, 0, "h", "ph")  # noqa: E731
+    gc.decisions += [mk(1, "d1"), mk(2, "bad")]
+    t = SimpleNamespace(gates={g: GateCore(gen=0) for g in generations.GATES}, marks=set())
+    t.gates["plan"] = gc
+    generations._void_device_now(t, "bad")  # noqa: SLF001
+    assert [d.voided for d in gc.decisions] == [False, True]

@@ -1,6 +1,7 @@
 // Test harness for the terminal hand-off (M3): the real-host mode of core's signing dialog, with the three hand-off
 // api calls replaced by spies. The ticket comes from the mock store, so a test can prove the preview is NOT built from
 // it: the host's `material` says other things than the cached ticket does.
+import { useSigningMethodRefresh } from '@/api/signingRefresh'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createMemoryHistory, createRootRoute, createRouter, RouterProvider } from '@tanstack/react-router'
 import { render } from '@testing-library/react'
@@ -84,6 +85,8 @@ export function spies() {
   }
 }
 
+function Refresh() { useSigningMethodRefresh(); return null }
+
 export async function mount(action: HumanAction, opts: { key?: string; onClose?: () => void } = {}) {
   resetMockStoreForTests()
   mockStore.setViewer('p_sev')
@@ -96,6 +99,7 @@ export async function mount(action: HumanAction, opts: { key?: string; onClose?:
   const root = createRootRoute({
     component: () => (
       <QueryClientProvider client={client}>
+        <Refresh />
         <SignDialog ticket={ticket} action={action} onClose={onClose} />
       </QueryClientProvider>
     ),

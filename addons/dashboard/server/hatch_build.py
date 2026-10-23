@@ -13,9 +13,28 @@ UI_ERROR = (
 )
 
 
+PREBUILT_ERROR = (
+    "ORCH_DASHBOARD_REQUIRE_PREBUILT=1 but the prebuilt dashboard UI is missing or incomplete ({why}) in {static}. "
+    "Build it first with `cd addons/dashboard && npm ci && npm run build`; this mode never runs npm or Node."
+)
+
+
+def require_prebuilt(static):
+    """Release mode: use the already-built page as is; never run npm or Node, never skip the UI."""
+    if not (static / "index.html").is_file():
+        why = "index.html not found"
+    elif not (static / "assets").is_dir() or not any(p.is_file() for p in (static / "assets").rglob("*")):
+        why = "assets/ is missing or empty"
+    else:
+        return static
+    raise RuntimeError(PREBUILT_ERROR.format(why=why, static=static))
+
+
 def ensure_ui(server):
     """Reuse a prebuilt UI, or build it in the full dashboard source tree."""
     static = Path(server) / "src/orch_dashboard/static"
+    if os.environ.get("ORCH_DASHBOARD_REQUIRE_PREBUILT") == "1":
+        return require_prebuilt(static)
     if os.environ.get("ORCH_DASHBOARD_SKIP_UI") == "1" or (static / "index.html").is_file():
         return static
     dashboard = Path(server).parent

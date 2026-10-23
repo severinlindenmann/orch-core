@@ -22,6 +22,19 @@ F1 = Path(__file__).parent.parent / "vectors" / "f1" / "labels.json"
 PLANNED = {
     "kdf_host_drop_recovery": "orch/v2/host-drop-recovery|",
     "sig_drop_handoff": "orch/v2/sig/drop-handoff|",
+    "sig_hub_binding": "orch/v2/sig/hub-binding|",  # V3 C2a: what the WSK signs for a hub
+    "sig_hub_unbound": "orch/v2/sig/hub-unbound|",
+    "sig_hub_link": "orch/v2/sig/hub-link|",
+    "sig_hub_link_auth": "orch/v2/sig/hub-link-auth|",
+    "sig_publish_hub": "orch/v2/publish-hub|",  # V3 C7: publish through the hub
+    "sig_space_item": "orch/v2/sig/space-item|",  # V3 C13: shared spaces (hub contract 10.4)
+    "sig_space_accept": "orch/v2/sig/space-accept|",
+    "h_space_members": "orch/v2/hub-space-members|",
+    "h_sk_commit": "orch/v2/hub-sk-commit|",
+    "aad_space": "orch/v2/space-aad|",
+    "sig_share_item": "orch/v2/sig/share-item|",  # V3 C6: selective share_put (hub contract 10.2b)
+    "aad_hub_share": "orch/v2/hub-share-aad|",
+    "h_share_item": "orch/v2/hub-share-item|",
 }
 
 

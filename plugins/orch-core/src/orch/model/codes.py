@@ -49,6 +49,11 @@ class Code(StrEnum):
     UNATTENDED_DENIED = "unattended.denied"
     VALIDATION_EVENT = "validation.event"
     SETTINGS_INVALID = "settings.invalid"
+    HUB_INVALID = "hub.invalid"
+    HUB_CERT_INVALID = "hub.cert_invalid"  # C3b 15.3: uk_cert/channel_cert do not chain to the pinned hub material
+    HUB_UNKNOWN_SNAPSHOT = "hub.unknown_snapshot"
+    HUB_FOREIGN_USER = "hub.foreign_user"  # 15.6: a u_ id of another hub
+    HUB_DENIED = "hub.denied"  # channel revoked, no role / not granted, not custodial, factor too weak
     ADDON_UNKNOWN = "addon.unknown"
     ADDON_FIELD_UNKNOWN = "addon.field_unknown"
     ADDON_VALUE_INVALID = "addon.value_invalid"

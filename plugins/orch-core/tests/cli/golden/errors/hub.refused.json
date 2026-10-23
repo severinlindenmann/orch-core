@@ -1,0 +1,15 @@
+{
+  "ok": false,
+  "error": {
+    "code": "hub.refused",
+    "message": "the hub is refused",
+    "hint": "check the hub card and that this is a dev workspace for a dev hub",
+    "fix": {
+      "argv": [
+        "orch",
+        "status"
+      ]
+    },
+    "retryable": false
+  }
+}

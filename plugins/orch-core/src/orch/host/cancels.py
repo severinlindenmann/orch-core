@@ -85,8 +85,8 @@ def compute(store: Any, log: str, paths: set[str]) -> list[dict[str, Any]]:
     generations.settle(ws, scratch, snap)
     out: list[dict[str, Any]] = []
     for g in GATES:
-        was = generations.counting(t, g)
-        now = {d.id for d in generations.counting(scratch, g)}
+        was = generations.counting(t, g, ws)
+        now = {d.id for d in generations.counting(scratch, g, ws)}
         lost = [d for d in was if d.id not in now]
         if lost:
             out.append(

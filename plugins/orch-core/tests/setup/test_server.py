@@ -166,7 +166,7 @@ def test_oversized_body_refused(srv):
     path, token, _ = claimed(srv)
     try:
         st, out, _ = call(path, "POST", "/api/setup/cancel", {"x": "a" * 70000}, token=token)
-    except (BrokenPipeError, ConnectionResetError):  # the server answers and closes before the body is sent
+    except OSError:  # the server answers and closes before the body is sent: reset, broken pipe or (macOS) ENOTCONN
         return
     assert st == 413
 
@@ -459,3 +459,63 @@ def test_a_leave_call_does_not_reset_the_idle_timer(srv):
     srv.clock_obj.t += 20  # 610 s since the last real request: the leave call did not count as activity
     srv.check_idle()
     assert srv.ended == "idle"
+
+
+def test_stop_waits_for_the_request_that_ended_the_session_to_be_answered(srv):
+    """#949: ``die()`` runs inside the request that ends the session (finish, shutdown), before its response is
+    written. The command's main loop wakes on ``stop_event`` and calls ``stop()``; ``stop()`` must not return (and the
+    process exit) while that response is still being written, or the page loses its last answer.
+
+    No timing: the request is held inside ``die`` until the test has seen ``stop()`` block on the in-flight count,
+    then released; ``stop()`` may only return after the request is done. The waits below are failure guards only."""
+    import threading
+
+    path, _tok, _ = claimed(srv)
+    # The handler thread of a request the client already has the answer to may still be on its way to
+    # ``request_done`` (it runs after the response is written). Let those finish before the test counts, or their
+    # late "request done" lands in ``order`` (#1047).
+    with srv._idle:
+        assert srv._idle.wait_for(lambda: srv._inflight == 0, timeout=10), "an earlier request never finished"
+    real_die = srv.die
+    in_die, release, stop_blocked = threading.Event(), threading.Event(), threading.Event()
+    order: list[str] = []
+
+    def held_die(why):
+        real_die(why)  # stop_event is set from here on
+        in_die.set()
+        release.wait(10)  # ... and the response is not written until the test lets it go
+
+    real_request_done, real_wait_for = srv.request_done, srv._idle.wait_for
+
+    def request_done():
+        order.append("request done")  # before the real call: that call wakes stop(), which then records its own return
+        real_request_done()
+
+    def wait_for(predicate, timeout=None):
+        stop_blocked.set()  # stop() is now waiting for the in-flight request
+        return real_wait_for(predicate, timeout)
+
+    srv.die = held_die  # type: ignore[method-assign]
+    srv.request_done = request_done  # type: ignore[method-assign]
+    srv._idle.wait_for = wait_for  # type: ignore[method-assign]
+
+    got: list = []
+
+    def stopper():
+        srv.stop()  # what the command does as soon as it sees the event
+        order.append("stop returned")
+
+    request = threading.Thread(target=lambda: got.append(call(path, "POST", "/shutdown", {})))
+    request.start()
+    assert in_die.wait(10) and srv.stop_event.wait(10)
+    stopping = threading.Thread(target=stopper)
+    stopping.start()
+    try:
+        assert stop_blocked.wait(10), "stop() did not wait for the in-flight request"
+    finally:
+        release.set()
+    stopping.join(10)
+    request.join(10)
+    assert not stopping.is_alive() and not request.is_alive()
+    assert got and got[0][0] == 200
+    assert order == ["request done", "stop returned"], order

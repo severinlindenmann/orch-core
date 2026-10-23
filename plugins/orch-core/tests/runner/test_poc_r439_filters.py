@@ -163,20 +163,23 @@ def test_exec_risk_ignores_other_scopes():
 
 
 def test_a_global_driver_still_works_in_run_git(world):  # noqa: F811
-    """The person's own global filter (LFS-like) is not the repo's config: worktree add still applies it."""
+    """The person's own global filter (LFS-like): worktree add refuses the repo instead of running it."""
     root, repo, own, args = world
     marker = root / "global-smudge"
     script = root / "smudge.sh"
     script.write_text(f"#!/bin/sh\ntouch {marker}\ncat\n")
     os.chmod(script, 0o755)
-    (root / ".gitconfig").write_text(f'[filter "g"]\n\tsmudge = {script}\n\tclean = cat\n')
-    (repo / ".gitattributes").write_text("* filter=g\n")
+    # #584: the checkout is orch's own; only the allow-listed filter name (lfs) from the PERSON's config is applied
+    (root / ".gitconfig").write_text(f'[filter "lfs"]\n\tsmudge = {script}\n\tclean = cat\n')
+    (repo / ".gitattributes").write_text("* filter=lfs\n")
     _git(repo, "add", ".gitattributes")
     _git(repo, "commit", "-qm", "attrs")
     a = args("worktree.add")
     a["base"] = _git(repo, "rev-parse", "HEAD")
-    assert wtgit.run_git(a, own) == {"ok": True}
-    assert marker.exists()
+    with pytest.raises(SpawnError) as e:  # #584 (structural): no filter process runs during populate, lfs included
+        wtgit.run_git(a, own)
+    assert e.value.code == "worktree.checkout_unsupported"
+    assert not marker.exists()
 
 
 @pytest.mark.parametrize("key", ["diff.x.textconv", "diff.x.command", "diff.external"])

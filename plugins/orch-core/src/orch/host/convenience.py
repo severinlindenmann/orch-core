@@ -49,7 +49,9 @@ __all__ = [
     "readers_error",
     "recheck_readers",
     "refuse_reader_op",
+    "refuse_full_mode_entry",
     "refuse_turn_on",
+    "registered_entry",
     "set_enabled",
     "unavailable",
     "why",
@@ -199,6 +201,7 @@ def refuse_turn_on(state_dir: Path, entry: dict[str, Any], host_uid: int, *, per
     try:
         with store.locked():
             store.refresh()
+            _refuse_full_mode(store, state_dir, wid, host_uid)
             mine = _own_device(state_dir, wid)
             found = why(store, state_dir, wid, host_uid, me or "", mine, gated=True)
     finally:
@@ -208,6 +211,46 @@ def refuse_turn_on(state_dir: Path, entry: dict[str, Any], host_uid: int, *, per
     reason, devices = found
     err = unavailable(reason, devices)
     raise HostError(err.code, err.message, hint=TURN_ON_ESCAPE, detail=err.detail)
+
+
+def _refuse_full_mode(store: Any, state_dir: Path, workspace_id: str, host_uid: int) -> None:
+    """V3 C11 (D78/D81): click-to-sign is not switched on in a workspace in full hub mode (or ``unknown``): the click
+    signer is refused at the append there, so the flag would only mislead. Called under the store lock."""
+    from types import SimpleNamespace
+
+    from . import hubops, hubsign
+
+    view = SimpleNamespace(store=store, state_dir=state_dir, workspace_id=workspace_id, host_uid=host_uid)
+    if hubops.signing_mode(view) in hubsign.HUB_ONLY:
+        raise hubsign.hub_only_error()
+
+
+def registered_entry(state_dir: Path, workspace_id: str, host_uid: int) -> dict[str, Any] | None:
+    """The host registry entry of a workspace, or None when it is not registered on this host."""
+    from .custody import read_json
+    from .registry import registry_path
+
+    for entry in (read_json(registry_path(state_dir), host_uid) or {}).get("workspaces") or []:
+        if entry.get("workspace_id") == workspace_id:
+            return entry
+    return None
+
+
+def refuse_full_mode_entry(state_dir: Path, entry: dict[str, Any], host_uid: int) -> None:
+    """V3 C11: moving the key into convenience custody (``orch keys custody convenience``) is refused in a workspace in
+    full hub mode (or ``unknown``): the key there must stay in passphrase custody. Fail closed on an unreadable log."""
+    from orch.store import Store, StoreError
+
+    try:
+        store = Store.open(entry["root"], expected_workspace_id=entry["workspace_id"], host_state_dir=None, load="lazy")
+    except (StoreError, OSError, KeyError) as exc:
+        raise HostError("host.unavailable", f"the workspace log could not be read ({type(exc).__name__})") from None
+    try:
+        with store.locked():
+            store.refresh()
+            _refuse_full_mode(store, state_dir, entry["workspace_id"], host_uid)
+    finally:
+        store.close()
 
 
 def refuse_dev_host(state_dir: Path, env: Any = None) -> None:
@@ -327,6 +370,20 @@ def check(service: Any, person: str, device: str, *, gate: Any = None) -> None:
     found = why(service.store, service.state_dir, service.workspace_id, service.host_uid, person, device, gated=gated)
     if found is not None:
         raise unavailable(*found)
+
+
+#: V3 C2a: the ops that bind the workspace to (or free it from) a hub. The owner's own key at the terminal signs them;
+#: a convenience (click-to-sign) key never does, however the label reads.
+HUB_OPS = frozenset({"hub.join", "hub.mode", "hub.leave"})
+
+
+def refuse_hub_op(op: str, auth: str | None) -> None:
+    if op in HUB_OPS and auth == "convenience":
+        raise HostError(
+            "sign.convenience_unavailable",
+            "joining or leaving a hub is signed with your own key at the terminal, never with click-to-sign",
+            hint="sign in your terminal with orch sign CODE (or run orch hub join / mode / leave there)",
+        )
 
 
 def refuse_reader_op(
@@ -554,8 +611,9 @@ READER_UPGRADE = (
 # -- one signing path per workspace (§0.8.6 item 8, owner decision of 12 Oct 2026)
 
 CLICK_ONLY_TEXT = (
-    "click-to-sign is on for this workspace: use Sign in the dashboard, or turn convenience off with "
-    "`orch host convenience off --workspace {ws}`"
+    "click-to-sign is on for this workspace: use Sign in the dashboard. To sign in the terminal instead, turn "
+    "convenience off with `orch host convenience off --workspace {ws}` and move the key back with "
+    "`orch keys custody passphrase --workspace {ws} --in-place`"
 )
 
 
@@ -604,7 +662,8 @@ def refuse_handoff(service: Any) -> None:
         raise HostError(
             "sign.click_only",
             CLICK_ONLY_TEXT.format(ws=service.workspace_id),
-            hint="sign in the dashboard, or: orch host convenience off --workspace W",
+            hint="sign in the dashboard, or: orch host convenience off --workspace W, then "
+            "orch keys custody passphrase --workspace W --in-place",
             fix=["orch", "host", "convenience", "off", "--workspace", service.workspace_id],
         )
 

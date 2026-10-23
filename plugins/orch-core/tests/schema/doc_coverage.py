@@ -55,6 +55,12 @@ ENVELOPE_FIELDS = [
     "ws_seq", "roster_v", "auth", "sig", "host_sig",
 ]  # fmt: skip
 
+#: C3b (section 15.1): the hub fields a custodial event may carry (all inside the hub's two signatures), allowed only
+#: with auth "hub"; section 15 describes them, the payload cells of section 5.4 do not.
+HUB_FIELDS = {
+    "channel", "channel_factor", "hub_id", "snapshot_version", "channel_cert", "uk_cert", "channel_proof", "item_hash",
+}  # fmt: skip
+
 # 11.4 value lists: doc row name -> (schema, def name or JSON path into properties)
 VALUE_LISTS = {
     "ticket type": ("common", "ticketType"),

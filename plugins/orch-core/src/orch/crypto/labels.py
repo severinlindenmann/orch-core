@@ -83,6 +83,26 @@ PLANNED_LABELS: dict[str, str] = {
     # corpus, so kept apart from LABELS (which mirrors it); tests/crypto/test_h13_labels.py keeps them prefix-free.
     "kdf_host_drop_recovery": "orch/v2/host-drop-recovery|",  # the host-only Drop recovery envelope (D7, Q4)
     "sig_drop_handoff": "orch/v2/sig/drop-handoff|",  # the terminal hand-off (O1); signable from H13b-4 only
+    # V3 C2a (orch-hub contract H0, section 3): what the WSK signs for a hub. Hub-side labels (op cert, card, snapshot,
+    # route ...) are signed by the hub's keys and never by core, so they are not here.
+    "sig_hub_binding": "orch/v2/sig/hub-binding|",
+    "sig_hub_unbound": "orch/v2/sig/hub-unbound|",
+    "sig_hub_link": "orch/v2/sig/hub-link|",
+    "sig_hub_link_auth": "orch/v2/sig/hub-link-auth|",
+    # V3 C7 (hub contract 11.1): the WSK signature of a publish request that goes through the hub (its own label, so it
+    # never verifies as a direct v2 12.1 request).
+    "sig_publish_hub": "orch/v2/publish-hub|",
+    # V3 C13 (hub contract 10.4, shared spaces): what the WSK signs (an item, an accept) and the hashes / AAD.
+    # The HK_op labels of hub.space and hub.space_wrap are the hub's and are only verified (hubclient/spaces.py).
+    "sig_space_item": "orch/v2/sig/space-item|",
+    "sig_space_accept": "orch/v2/sig/space-accept|",
+    "h_space_members": "orch/v2/hub-space-members|",
+    "h_sk_commit": "orch/v2/hub-sk-commit|",
+    "aad_space": "orch/v2/space-aad|",
+    # V3 C6 (hub contract 10.2b, selective share_put): what the WSK signs (a share.item), its content AAD and its hash.
+    "sig_share_item": "orch/v2/sig/share-item|",
+    "aad_hub_share": "orch/v2/hub-share-aad|",
+    "h_share_item": "orch/v2/hub-share-item|",
 }
 
 L: dict[str, bytes] = {k: v.encode("ascii") for k, v in {**LABELS, **PLANNED_LABELS}.items()}

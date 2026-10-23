@@ -13,7 +13,7 @@ from typing import Any
 
 from orch.canon import HashError, check_repo_identity, event_head, same_repo_identity
 
-from . import addon_rules, authz, generations, policies
+from . import addon_rules, authz, generations, hubledger, identity, policies
 from .codes import Code, Refusal
 from .types import GATES, WORKSPACE, Addon, Core, Device, Grant, LogCore, Member, TCore, WsCore, ts
 from .verifier import SigContext, Verifier
@@ -39,8 +39,10 @@ def cross(
     return []
 
 
-def _role(ws: WsCore, e: dict[str, Any]) -> str:
-    return ws.members[e["actor"]["id"]].role
+def _role(ws: WsCore, e: dict[str, Any]) -> str | None:
+    """The effective role of the signer of ``e`` through ``identity.signer`` (``None``: none, fail closed)."""
+    sg = identity.signer(ws, e)
+    return None if isinstance(sg, Refusal) else sg.role
 
 
 def _owner_only(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
@@ -222,6 +224,24 @@ def device_revoked(core: Core, e: dict[str, Any], v: Verifier) -> Refusal | None
     return None
 
 
+def hub_pinned(core: Core, e: dict[str, Any], v: Verifier, *, dev: bool) -> Refusal | None:
+    """``hub.pinned`` (15.2) and its one effect on tickets (C3b-2): hub contract hv 0 carries no reason, so every
+    channel revocation is treated like a compromised device. At the pin that FIRST adds channel X to the ledger's
+    ``revoked_channels``, the counting decisions signed by ``hub:<hub_id>/X`` are voided (``void_signer``), on every
+    unsettled ticket, exactly as ``device.revoked`` voids a device's. An op-cert revocation, a new card and a snapshot
+    that drops a user or lowers a role void nothing (like ``role.changed`` for the decisions already taken)."""
+    ws, hub_id = core.ws, e["hub_id"]
+    led = hubledger.ledger_of(ws, hub_id)
+    before = set(led["revoked_channels"]) if led else set()
+    if (r := hubledger.apply_pin(ws, e, v, dev=dev)) is not None:
+        return r
+    led = hubledger.ledger_of(ws, hub_id)
+    keys = [f"hub:{hub_id}/{c}" for c in sorted(set(led["revoked_channels"]) - before)] if led else []
+    if keys:
+        cross(core, lambda: None, lambda t: [generations.void_signer(ws, t, k) for k in keys])
+    return None
+
+
 def policy_changed(core: Core, e: dict[str, Any]) -> Refusal | None:
     ws = core.ws
     if (r := _owner_only(ws, e)) is not None:
@@ -234,7 +254,7 @@ def policy_changed(core: Core, e: dict[str, Any]) -> Refusal | None:
 
 
 #: the ways to sign, in the canonical order a stored ``sign_methods`` has (B6); ``touchid`` is reserved
-SIGN_METHODS = ("terminal", "click", "phone")
+SIGN_METHODS = ("terminal", "click", "phone", "hub")
 
 
 def settings_changed(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
@@ -291,6 +311,8 @@ def settings_changed(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
 def grant_issued(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
     """D60 terms: the role decides scope and length; always for the signer; times are checked on every read."""
     role, hours = _role(ws, e), e["hours"]
+    if role is None:
+        return Refusal(Code.MEMBER_UNKNOWN, "the signer has no role")
     if role == "viewer":
         return Refusal(Code.GRANT_TERMS, "a viewer holds no grant")
     if role == "member" and (e["scope"] != "workable" or hours > ws.settings["grant_hours"]):
@@ -430,4 +452,87 @@ def restore(core: Core, lc: LogCore, e: dict[str, Any], v: Verifier) -> Refusal 
                 before = generations.snapshot(ws, ticket)
                 generations.void_device(ws, ticket, dev_id)
                 generations.settle(ws, ticket, before, raise_gates=False)
+    return None
+
+
+# --- the hub (hub contract H0 section 9.1; C2a selective, C2b full) -------------------------------------------------
+
+#: modes the model accepts. Full mode (D74) makes the hub a member of kind ``hub``: ``ws.hub["member"]`` is set by a
+#: full ``hub.joined`` and gone with ``hub.left``; selective mode never has one (D80).
+HUB_MODES = ("selective", "full")
+
+
+def hub_joined(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
+    """``hub.joined`` (owner only, owner-signed): a new binding of the one hub. A selective one adds no member (D80);
+    a full one makes the hub a member of kind ``hub`` (D74). ``binding_seq`` is strictly higher than any earlier one
+    (across joins, mode switches and rejoins, 9.2); an earlier join must have ended with ``hub.left``, except the one
+    switch the contract allows while joined: selective to full, naming the same hub (9.1; full to selective is
+    ``hub.left`` and a new selective join, so the hub loses ``WK_e`` from the new epoch on). Aliases are never
+    re-pointed, in either direction (9.1)."""
+    if (r := _owner_only(ws, e)) is not None:
+        return r
+    h = ws.hub
+    if e["mode"] not in HUB_MODES:
+        return Refusal(Code.HUB_INVALID, "unknown hub mode")
+    if h and h["status"] == "joined":
+        switch = h["mode"] == "selective" and e["mode"] == "full" and e["hub_id"] == h["hub_id"]
+        if not switch or e["hk_root_pub"] != h["hk_root_pub"]:
+            return Refusal(Code.HUB_INVALID, "this workspace is already joined to a hub; leave it first")
+    if e["binding_seq"] <= h.get("binding_seq", 0):
+        return Refusal(Code.HUB_INVALID, "binding_seq must be higher than every earlier binding of this workspace")
+    # aliases belong to their hub (L2P4-C1): a rejoin restores this hub's own, another hub starts empty
+    book = {k: dict(v) for k, v in h.get("alias_book", {}).items()}
+    aliases = dict(book.get(e["hub_id"], {}))
+    users = {u: p for p, u in aliases.items()}
+    for a in e["aliases"]:
+        pid, uid = a["person_id"], a["user_id"]
+        if aliases.get(pid, uid) != uid or users.get(uid, pid) != pid:
+            return Refusal(Code.HUB_INVALID, "an alias is never re-pointed")
+        aliases[pid], users[uid] = uid, pid
+    ledger = {k: dict(v) for k, v in h.get("ledger", {}).items()}
+    if e["hub_id"] in ledger and ledger[e["hub_id"]]["root"] != e["hk_root_pub"]:
+        return Refusal(Code.HUB_INVALID, "root_mismatch")  # the hub id is derived from the root: it never changes
+    ledger.setdefault(e["hub_id"], hubledger.new_ledger(e["hk_root_pub"]))
+    # the union over all hubs must stay a function: a user id another hub aliased to someone else is refused (L2P4-C1b)
+    other = {u: p for hid, al in book.items() if hid != e["hub_id"] for p, u in al.items()}
+    for a in e["aliases"]:
+        if other.get(a["user_id"], a["person_id"]) != a["person_id"]:
+            return Refusal(Code.HUB_INVALID, "this user id is already aliased to another person under another hub")
+    # C3b-5 (§15.6): a u_ id belongs to the hub it first appeared under. An alias on this hub may not take an id that
+    # first appeared under another hub, unless that hub's own book maps the id to the same person.
+    user_hub = dict(h.get("user_hub", {}))
+    for a in e["aliases"]:
+        first = user_hub.get(a["user_id"])
+        if first is not None and first != e["hub_id"] and book.get(first, {}).get(a["person_id"]) != a["user_id"]:
+            return Refusal(Code.HUB_INVALID, "foreign_user")
+    for a in e["aliases"]:
+        user_hub.setdefault(a["user_id"], e["hub_id"])
+    if any("p_" + pid not in ws.members for pid in aliases):
+        return Refusal(Code.HUB_INVALID, "an alias names a person who is not a member")
+    ws.hub = {
+        "hub_id": e["hub_id"],
+        "hk_root_pub": e["hk_root_pub"],
+        "mode": e["mode"],
+        "binding_seq": e["binding_seq"],
+        "status": "joined",
+        "aliases": aliases,
+        "alias_book": {**book, e["hub_id"]: dict(aliases)},
+        "ledger": ledger,
+        "user_hub": user_hub,
+        **({"member": {"kind": "hub", "hub_id": e["hub_id"]}} if e["mode"] == "full" else {}),
+    }
+    return None
+
+
+def hub_left(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
+    """``hub.left`` (owner only): ends the binding it names. It must name the hub and binding that are joined;
+    ``binding_seq`` stays as the high-water mark, so no earlier binding can come back."""
+    if (r := _owner_only(ws, e)) is not None:
+        return r
+    h = ws.hub
+    if not h or h["status"] != "joined":
+        return Refusal(Code.HUB_INVALID, "this workspace is not joined to a hub")
+    if e["hub_id"] != h["hub_id"] or e["binding_seq"] != h["binding_seq"]:
+        return Refusal(Code.HUB_INVALID, "hub.left must name the hub and binding that are joined")
+    ws.hub = {**{k: v for k, v in h.items() if k != "member"}, "status": "left"}  # the hub member goes with the leave
     return None

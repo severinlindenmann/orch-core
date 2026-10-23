@@ -370,3 +370,22 @@ def test_a_frozen_host_fails_closed(pkg, tmp_path, monkeypatch, host, code):
     monkeypatch.setattr(runner.sys, "executable", str(exe) if host is not None else "")
     refused(pkg, "ok", code)
     assert not marker.exists()
+
+
+def test_an_incompatible_addon_is_never_started(tmp_path):
+    from tests.addons.helpers import manifest
+
+    d = make_package(tmp_path, man=manifest(schema="orch.addon/3", api=">=2.0,<3"))
+    package = read_package(d)
+    p = (d, package, granted_for(package))
+    err = refused(p, "manual", "addon.incompatible")
+    assert "API" in err.detail
+
+
+def test_an_addon_needing_a_newer_core_is_never_started(tmp_path):
+    from tests.addons.helpers import manifest
+
+    d = make_package(tmp_path, man=manifest(schema="orch.addon/3", api=">=1.0,<2", min_core="999.0.0"))
+    package = read_package(d)
+    err = refused((d, package, granted_for(package)), "manual", "addon.incompatible")
+    assert "999.0.0" in err.detail

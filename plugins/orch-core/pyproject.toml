@@ -9,11 +9,12 @@ license-files = ["LICENSE"]
 dependencies = [
     "cryptography>=43",
     "jsonschema>=4.26.0",
+    "pyopenssl>=25",
     "segno>=1.6.6",
 ]
 
 [project.scripts]
-orch = "orch.cli.main:main"
+orch = "orch.cli.main:entry"
 
 [dependency-groups]
 dev = ["pytest>=8", "pytest-xdist>=3.6", "hypothesis>=6", "ruff>=0.6"]
@@ -24,6 +25,8 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/orch"]
+# written by scripts/release/stamp.py at build time and gitignored, so named here or hatchling leaves it out
+artifacts = ["src/orch/_build.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

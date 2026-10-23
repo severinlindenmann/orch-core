@@ -275,9 +275,32 @@ def background_off_message(name: str) -> str:
 class Manager:
     """Install, start and look at the unit of a :class:`Plan` through the person's own service manager."""
 
-    def __init__(self, unit: Plan, run: Runner | None = None) -> None:
+    #: how long ``start`` waits for a booted-out service to finish unloading, and how often it looks
+    UNLOAD_SECONDS = 15.0
+    UNLOAD_POLL = 0.25
+
+    def __init__(
+        self,
+        unit: Plan,
+        run: Runner | None = None,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
         self.plan = unit
         self.run = run or _default_run
+        self._clock = clock
+        self._sleep = sleep
+
+    def _wait_unloaded(self) -> None:
+        """``launchctl bootout`` returns before the old service (and its agents) finished stopping; a bootstrap in that
+        window fails with 5 (EIO). Wait, bounded, until launchd no longer lists the label."""
+        deadline = self._clock() + self.UNLOAD_SECONDS
+        while self.loaded():
+            if self._clock() >= deadline:
+                what = "runner" if self.plan.program_name == "orch-runner" else "host"
+                raise OSError(f"the old {what} service is still stopping; wait a moment and run the command again")
+            self._sleep(self.UNLOAD_POLL)
 
     # -- commands
     def _domain(self) -> str:
@@ -357,6 +380,35 @@ class Manager:
             raise
         return True
 
+    BOOTSTRAP_TRIES = 3
+    BOOTSTRAP_PAUSE = 5.0
+
+    def _bootstrap(self, ran: list[list[str]]) -> None:
+        """``launchctl bootstrap`` with a bounded retry for exit 5 only: the first bootstrap of a new or changed login
+        item can fail transiently (macOS is adding it to Background Items) and works a few seconds later."""
+        argv = ["launchctl", "bootstrap", self._domain(), str(self.plan.unit_path)]
+        for attempt in range(self.BOOTSTRAP_TRIES):
+            ran.append(argv)
+            res = self.run(argv)
+            if res.returncode == 0:
+                return
+            if self.disabled_in_background():
+                raise OSError(background_off_message(self.plan.program_name))
+            if res.returncode != 5:
+                break
+            if attempt + 1 < self.BOOTSTRAP_TRIES:
+                self._sleep(self.BOOTSTRAP_PAUSE)
+                if self.loaded():  # the old service is still unloading: wait for it too
+                    self._wait_unloaded()
+        what = "runner" if self.plan.program_name == "orch-runner" else "host"
+        msg = f"{' '.join(argv)} failed ({res.returncode}): {(res.stderr or res.stdout or '').strip()}"
+        if res.returncode == 5:
+            msg += (
+                f". macOS may still be adding orch-{what} as a background item: check System Settings > General > "
+                f"Login Items, then run orch {what} enable again"
+            )
+        raise OSError(msg)
+
     def start(self, *, changed: bool) -> list[list[str]]:
         """Load and start the unit (a changed unit is reloaded); returns the commands that ran."""
         ran: list[list[str]] = []
@@ -373,11 +425,12 @@ class Manager:
             if self.loaded():
                 if changed:  # launchd reads the plist at bootstrap only
                     do(["launchctl", "bootout", self._target()], check=False)
-                    do(["launchctl", "bootstrap", self._domain(), str(self.plan.unit_path)])
+                    self._wait_unloaded()
+                    self._bootstrap(ran)
                 else:
                     do(["launchctl", "kickstart", self._target()])
             else:
-                do(["launchctl", "bootstrap", self._domain(), str(self.plan.unit_path)])
+                self._bootstrap(ran)
             return ran
         do(["systemctl", "--user", "daemon-reload"])
         do(["systemctl", "--user", "enable", self.plan.systemd_name])

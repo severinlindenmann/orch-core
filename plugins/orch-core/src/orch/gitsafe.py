@@ -73,10 +73,9 @@ prune``)                                                (and the worktree) plus 
                                                         checkout runs their filters, ``git lfs install``'s smudge).
                                                         RACE NOTE (#565, at the spawn): ``remove`` always ``--force``
                                                         after orch's own clean check (git's ``status`` never runs);
-                                                        ``prune`` checks out nothing; ``add``'s checkout is the open
-                                                        tier-A residual (a column-G ``worktree.create`` runs a
-                                                        smudge filter an agent committed to the repo config; the
-                                                        UID is the boundary, D-P2-31; fix tracked in #584)
+                                                        ``prune`` checks out nothing; ``add`` is ``--no-checkout`` and
+                                                        orch writes the tree itself (#584, ``gitread.checkout``):
+                                                        no process at all; a ``filter=`` attribute refuses
 ``records/git.Git.run``, ``records/tool`` fast-import   :func:`config_env` with ``person_config``'s lists, the
                                                         records ``HARDEN`` (incl. :data:`PINNED`), ``check_local``
                                                         on top of :func:`exec_risk` (#541); out of #565's scope

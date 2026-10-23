@@ -63,3 +63,21 @@ def test_cli_prints_and_writes(tmp_path):
 def test_unknown_name_is_refused():
     err = io.StringIO()
     assert main(["addon", "manifest", "nope"], env={}, stdout=io.StringIO(), stderr=err) == 2
+
+
+@pytest.mark.parametrize("name", builtin.NAMES)
+def test_every_bundled_manifest_is_compatible_with_this_core(name):
+    from orch import __version__
+    from orch.addons.manifest import incompatibility
+
+    assert incompatibility(load_manifest(builtin.manifest_bytes(name)), __version__) is None
+
+
+def test_every_repo_addon_manifest_is_compatible_with_this_core():
+    from orch import __version__
+    from orch.addons.manifest import incompatibility
+
+    found = sorted(REPO_ADDONS.glob("*/orch-addon.json"))
+    assert found
+    for f in found:
+        assert incompatibility(load_manifest(f.read_bytes()), __version__) is None, f

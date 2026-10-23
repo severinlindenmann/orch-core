@@ -46,7 +46,7 @@ from orch.layout import Layout, LayoutError, StorePin
 from orch.ops.base import Context, Handler, Result
 from orch.ops.caps import CapabilityDenied, Files, NotARegularFile
 from orch.ops.errors import GLOBAL_ERRORS, OrchError
-from orch.tokenshape import GITHUB_TOKEN_SHAPE
+from orch.tokenshape import GITHUB_TOKEN_SHAPE, split_key_file
 
 __all__ = [
     "Call",
@@ -967,6 +967,24 @@ class Call:
                 "grant.secret_in_args", "the text contains a secret (a grant or a GitHub token); it was not stored"
             )
 
+    def check_secret_structured(self, data: str | bytes, doc: str) -> None:
+        """:meth:`check_secret` for a key-material file (``doc``: ``device_cert`` or ``reader_decl``, see
+        :data:`orch.tokenshape.KEY_FILE_FIELDS`). The key-material fields are exempt from the GitHub-token shape only;
+        they still get the grant checks, and everything else in the file is scanned in full. Not exactly such a file:
+        the whole text is scanned, as :meth:`check_secret` does (#1044)."""
+        text = data if isinstance(data, str) else data.decode("latin-1")
+        split = split_key_file(text, doc)
+        if split is None:
+            return self.check_secret(text)
+        rest, taken = split
+        self.check_secret(rest)
+        secret = (self.ctx.grant or "").partition(".")[2]
+        for value in taken:
+            if GRANT_SHAPE.search(value) or (len(secret) >= 8 and secret in value):
+                raise OrchError(
+                    "grant.secret_in_args", "the text contains a secret (a grant or a GitHub token); it was not stored"
+                )
+
     def read_text_source(
         self, args: Mapping[str, Any], names: tuple[str, ...] = ("text", "message", "file")
     ) -> str | None:
@@ -983,13 +1001,18 @@ class Call:
             return value
         return self.read_file_text(value)
 
-    def read_file_text(self, source: str) -> str:
+    def read_file_text(self, source: str, *, key_file: str | None = None) -> str:
+        """The text of a file argument, free of secrets. ``key_file``: the file is a certificate or declaration (see
+        :meth:`check_secret_structured`); its key-material fields are not taken for GitHub tokens (#1044)."""
         raw = self._read_limited(source)
         try:
             text = raw.decode("utf-8")
         except UnicodeDecodeError:
             raise self._fail_text("the file is not UTF-8") from None
-        self.check_secret(text)
+        if key_file is None:
+            self.check_secret(text)
+        else:
+            self.check_secret_structured(text, key_file)
         return text
 
     def read_file_capped(self, source: str, cap: int) -> bytes:

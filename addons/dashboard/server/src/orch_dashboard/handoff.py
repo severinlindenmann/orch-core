@@ -1348,20 +1348,70 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
 
 
 CLICK_ONLY = (
-    "This workspace signs in the dashboard. Use Sign here, or turn convenience off from the terminal with "
-    "`orch host convenience off --workspace {ws}`."
+    "This workspace now signs with one click: use Sign in the dashboard (the page is updating; press Try "
+    "again). To sign in "
+    "the terminal instead, run `orch host convenience off --workspace {ws}` and then move the key back with "
+    "`orch keys custody passphrase --workspace {ws} --in-place`."
 )
 
 
+#: How many earlier ENDED (cancelled, expired) attempts of one action a single press steps past. The cap bounds the
+#: work per press: walking only replays idem records the host already holds (it creates nothing), so a press costs at
+#: most NEXT_RETRY_HOPS + 1 host calls and makes exactly one new request, at the first retry whose attempt has not
+#: ended. Nobody can burn retries to deny service: the walk makes no request, and only a cancel ends one (the
+#: session's open-request cap limits those). Past the cap the answer is `intent.exhausted`; the page then carries on
+#: from the retry after the last one stepped past (`retry + NEXT_RETRY_HOPS + 1`), so nothing is ever stuck.
+NEXT_RETRY_HOPS = 16
+ENDED_REQUEST = re.compile(r"^the request is (cancelled|expired)$")
+
+
+def request_ended(got) -> bool:
+    """The answer is a request of this very intent that ended unsigned."""
+    request = got.get("request") if isinstance(got, dict) else None
+    return isinstance(request, dict) and request.get("state") in ("cancelled", "expired")
+
+
 def send_prepare(plan_: Plan, ws: str, retry: int, call, pending=None):
-    """Prepare once with the intent's idem. Retention expiry ends this attempt (`intent.expired`); only the
-    person's explicit "Start again" advances `retry` and permits a fresh request.
+    """Prepare with the intent's idem at the first retry (from `retry` up) whose attempt has not ended.
+
+    The idem is the intent plus `retry`. An attempt that ENDED unsigned (cancelled, expired) can never be signed, so
+    pressing again steps to the next retry: a fresh request, never the dead one. An OPEN attempt is returned as it is
+    (a double click, a second tab, an agent: one request per person and action); a SIGNED one is returned too and
+    stays "Already done" (never stepped past). The terminal path sees an ended request in the host's answer, the click
+    path as the signer's `the request is <ended>`; both are stepped past.
+
+    Retention expiry of a record (`idem.expired`, 24 h) is not stepped past: an earlier one may have been signed, so
+    only the person's explicit "Start again" advances `retry` there.
 
     `idem.conflict` means the host holds an attempt bound to another path or signer. Report it as
-    `intent.open` while a matching op+key is open, otherwise `intent.blocked`. Neither prepares another request."""
+    `intent.open` while a matching op+key is open, otherwise `intent.blocked`. Neither prepares another request.
+
+    A HostError leaves with `retry_used`: the retry whose attempt it is about."""
+    used = retry
     try:
-        return call(plan_.idem(ws, retry))
+        for hop in range(NEXT_RETRY_HOPS + 1):
+            used = retry + hop
+            try:
+                got = call(plan_.idem(ws, used))
+            except HostError as exc:
+                said = str(exc.error.get("message", "")) if exc.error.get("code") == "human.request_state" else ""
+                if ENDED_REQUEST.fullmatch(said):
+                    continue
+                raise
+            if request_ended(got):
+                continue
+            return got
+        raise HostError(
+            {
+                "code": "intent.exhausted",
+                "message": "This was started and then cancelled or left to expire many times in a row. "
+                "Press it once more to carry on.",
+                "retryable": False,
+            },
+            exit=5,
+        )
     except HostError as exc:
+        exc.retry_used = used
         code = exc.error.get("code")
         if code == "idem.conflict":
             rows = pending().get("requests", []) if pending else None

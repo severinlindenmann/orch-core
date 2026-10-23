@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 
 from orch.cli.main import main
 from orch.custody import PassphraseBackend
@@ -40,6 +41,43 @@ def test_the_flag_is_switched_per_workspace_by_the_host_cli(served, monkeypatch)
         "host", "convenience", "on", "--workspace", served.wid, "--state", state, env={"ORCH_GRANT": "x"}
     )
     assert code == 3 and "human_only" in out
+
+
+def test_convenience_defaults_to_the_workspace_of_the_current_folder(served, monkeypatch):
+    """F3: inside a workspace folder `--workspace` is that folder's workspace; elsewhere the error names the fix."""
+    monkeypatch.setattr(convenience, "_own_device", lambda state, wid: served.lab.ws.owner.device)
+    state = str(served.lab.state)
+    convenience.set_enabled(served.lab.state, served.wid, True, UID)
+    monkeypatch.chdir(served.service.entry.root)
+    monkeypatch.setenv("PWD", os.getcwd())
+    code, out, _ = run("host", "convenience", "on", "--state", state)  # `on` never defaults to the folder
+    assert code == 5 and "--workspace is required" in out
+    assert f"convenience on --workspace {served.service.entry.prefix}" in out  # the folder's prefix, not a placeholder
+    code, out, _ = run("host", "convenience", "off", "--state", state)
+    assert code == 0 and not convenience.enabled(served.lab.state, served.wid, UID)
+    assert "this folder belongs to" in out and served.service.entry.prefix in out
+    assert "one-click custody" not in out and "orch sign" not in out  # no key held here: neither claim is made
+    from orch.custody import select
+
+    real = select.status
+    monkeypatch.setattr(select, "status", lambda st, wid: {**real(st, wid), "custody": "passphrase"})
+    code, out, _ = run("host", "convenience", "off", "--state", state)
+    # a key already in passphrase custody signs in the Terminal: no "stays in one-click custody" claim
+    assert "Sign in the Terminal with orch sign" in out and "stays in one-click custody" not in out
+    monkeypatch.setattr(select, "status", lambda st, wid: {**real(st, wid), "custody": "convenience"})
+    code, out, _ = run("host", "convenience", "off", "--state", state)
+    assert (
+        code == 0 and "stays in one-click custody" in out and "orch keys custody passphrase" in out
+    )  # F1: the way to a passphrase
+    assert "Sign in the Terminal with orch sign" not in out
+    monkeypatch.setattr(select, "status", real)
+    monkeypatch.chdir("/")
+    monkeypatch.setenv("PWD", "/")
+    code, out, _ = run("host", "convenience", "off", "--state", state)
+    assert code == 5 and "invalid.input" in out
+    assert "describe describe" not in out and "convenience off --workspace <your workspace prefix>" in out
+    code, out, _ = run("host", "convenience", "on", "--state", state)
+    assert code == 5 and "convenience on --workspace <your workspace prefix>" in out
 
 
 def test_orch_keys_converts_only_with_the_flag_and_moves_back_only_in_place(served, monkeypatch):
@@ -92,3 +130,21 @@ def _with_passphrase(create, passphrase):
         return create(self, key_id, secret=secret, role=role, passphrase=passphrase)
 
     return wrapped
+
+
+def test_the_on_hint_names_the_prefix_only_when_the_folder_is_not_reached_through_a_symlink(
+    served, monkeypatch, tmp_path
+):
+    """A copyable hint must not be steerable: a planted symlink ($PWD != real cwd) gets the placeholder."""
+    state = str(served.lab.state)
+    link = tmp_path / "link"
+    link.symlink_to(served.service.entry.root)
+    monkeypatch.chdir(link)
+    monkeypatch.setenv("PWD", str(link))  # the logical path differs from the physical one
+    code, out, _ = run("host", "convenience", "on", "--state", state)
+    assert code == 5 and "convenience on --workspace <your workspace prefix>" in out
+    assert served.service.entry.prefix not in out
+    monkeypatch.chdir(served.service.entry.root)
+    monkeypatch.setenv("PWD", os.getcwd())
+    code, out, _ = run("host", "convenience", "on", "--state", state)
+    assert f"convenience on --workspace {served.service.entry.prefix}" in out

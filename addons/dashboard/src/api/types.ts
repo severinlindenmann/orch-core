@@ -91,6 +91,8 @@ export interface Workspace {
   click?: { custody: 'convenience' | 'passphrase' | 'none'; enabled: boolean; available: boolean; problem?: string } | null
   /** A real host only (`whoami.runner`, cap `run/1`): null or absent when the host does not say. Never guessed. */
   runner?: { connected: boolean; enabled: boolean; terminals: boolean } | null
+  /** V3 C11, a real host only: the host's signing mode. `full`/`unknown`: approvals go through the hub, no local key signs. */
+  signing?: 'standalone' | 'selective' | 'full' | 'unknown' | null
 }
 
 /**
@@ -1008,7 +1010,18 @@ export class ApiError extends Error {
     this.exit = exit
     this.why = body.why
     this.detail = body.detail
+    if (signingMethodStale(this)) notifySigningMethodStale()
   }
+}
+
+/** The window event that says: the host's click-to-sign switch no longer matches what the page believed. */
+export const SIGNING_METHOD_STALE = 'orch:signing-method-stale'
+/** A refusal that means the page chose the wrong way to sign because the switch moved (the host decides, never the page). */
+export const signingMethodStale = (e: { code: string; reason?: string; detail?: { reason?: string } }): boolean =>
+  e.code === 'sign.click_only' ||
+  ((e.code === 'human.click_refused' || e.code === 'sign.convenience_unavailable') && (e.reason ?? e.detail?.reason) === 'disabled')
+function notifySigningMethodStale() {
+  try { if (typeof window !== 'undefined') window.dispatchEvent(new Event(SIGNING_METHOD_STALE)) } catch { /* no window: nothing to refresh */ }
 }
 
 // ---------------------------------------------------------------- workspace event log

@@ -144,6 +144,8 @@ orch host enable    # starts the host that holds the keys
 orch help work      # what an agent reads first
 ```
 
+On a Mac and not sure where to start? Follow [Set up a personal workspace](docs/setup-personal-workspace.md): every step with what you should see and what to do if you don't.
+
 ## Documentation
 
 - [Design](docs/architecture/orch-v2.md): decisions, threat model, keys, relay, mobile

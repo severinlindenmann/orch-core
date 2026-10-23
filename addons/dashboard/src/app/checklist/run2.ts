@@ -77,7 +77,7 @@ const CORE_SECTIONS: ChecklistSection[] = [
         id: 'A1',
         title: 'Install with the line from the lead',
         text: 'Use the install line the lead sent you (it names the exact version). It needs uv, Node 24, git 2.32+ and builds the dashboard, about 20 s. If orch is already installed (the run 2 version), install over it, then run "orch host enable" and "orch dashboard restart" (the dashboard restart is needed once when coming from the run 2 version).',
-        see: 'Installed 1 executable: orch. "orch --version" prints "orch v2 (in development)". If not found: uv tool update-shell, then a new Terminal.',
+        see: 'Installed 1 executable: orch. "orch --version" prints "orch 2.0.0.dev0 (development build)" for a source build, or the version, channel and commit for a release. If not found: uv tool update-shell, then a new Terminal.',
         warn: 'Do not use pip install git+https:// (keychain hang).',
       },
       {

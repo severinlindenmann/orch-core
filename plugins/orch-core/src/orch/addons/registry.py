@@ -23,7 +23,8 @@ from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from orch.addons.manifest import Manifest
+from orch import __version__ as CORE_VERSION
+from orch.addons.manifest import ADDON_API, Manifest, incompatibility
 from orch.canon import is_clean_text
 from orch.model import addon_rules
 from orch.model.addon_rules import validate_value
@@ -32,6 +33,7 @@ from orch.schema import MAX_SECTION_BYTES, _forged_heading, heading_key
 
 __all__ = [
     "ACTIVE",
+    "INCOMPATIBLE",
     "STATES",
     "Proposal",
     "ProposalError",
@@ -43,7 +45,8 @@ __all__ = [
 ]
 
 ACTIVE = "active"
-STATES = (ACTIVE, "disabled", "purged", "changed", "missing", "unknown")
+INCOMPATIBLE = "incompatible"
+STATES = (ACTIVE, "disabled", "purged", "changed", "missing", INCOMPATIBLE, "unknown")
 _NAME_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
 _MAX_REF = 4096
 _MAX_ITEMS = 32  # most artifacts in one proposal
@@ -62,9 +65,16 @@ class ProposalError(ValueError):
     """What an addon returned is not a valid proposal; nothing of it is used."""
 
 
-def state_of(addon: Any, loaded: tuple[Manifest, str] | None) -> str:
+def state_of(
+    addon: Any,
+    loaded: tuple[Manifest, str] | None,
+    core_version: str = CORE_VERSION,
+    api: str = ADDON_API,
+) -> str:
     """One of :data:`STATES` for a replayed ``Addon`` (``None``: never granted) and ``(manifest, package digest)``
-    as read from its package (``None``: no package on disk). ``changed``: not the package that was granted."""
+    as read from its package (``None``: no package on disk). ``changed``: not the package that was granted.
+    ``incompatible``: the granted package, but its ``api`` range or ``min_core`` does not fit this core; it does not
+    run and is shown as incompatible, never as disabled (add-on API contract, compatibility)."""
     if addon is None:
         return "unknown"
     if addon.purged:
@@ -79,6 +89,8 @@ def state_of(addon: Any, loaded: tuple[Manifest, str] | None) -> str:
     headings = {f"{manifest.name}.{s['id']}": heading_key(s["heading"]) for s in manifest.sections}
     if any(headings.get(s["id"]) != s["heading_key"] for s in addon.sections):
         return "changed"
+    if incompatibility(manifest, core_version, api) is not None:
+        return INCOMPATIBLE
     return ACTIVE
 
 
@@ -94,16 +106,25 @@ class Proposal:
 
 
 class Registry:
-    def __init__(self, addons: Mapping[str, Addon], manifests: Mapping[str, tuple[Manifest, str]]) -> None:
+    def __init__(
+        self,
+        addons: Mapping[str, Addon],
+        manifests: Mapping[str, tuple[Manifest, str]],
+        core_version: str = CORE_VERSION,
+        api: str = ADDON_API,
+    ) -> None:
         """``addons``: name -> replayed ``Addon``. ``manifests``: name -> ``(manifest, digest of the package it was
-        read from)``."""
+        read from)``. ``core_version`` and ``api`` are this core's (parameters for tests)."""
         self._headings = {n: {s["heading_key"] for s in a.sections} for n, a in addons.items() if not a.purged}
         self._grants: dict[str, Addon] = {}
         self._manifests: dict[str, Manifest] = {}
         self._state: dict[str, str] = {}
+        self._why: dict[str, str] = {}
         for name, a in addons.items():
             loaded = manifests.get(name)
-            self._state[name] = state = state_of(a, loaded)
+            self._state[name] = state = state_of(a, loaded, core_version, api)
+            if state == INCOMPATIBLE and loaded is not None:
+                self._why[name] = incompatibility(loaded[0], core_version, api) or ""
             if state == ACTIVE and loaded is not None:
                 self._grants[name] = a
                 self._manifests[name] = loaded[0]
@@ -111,6 +132,10 @@ class Registry:
     # -- states
     def state(self, name: str) -> str:
         return self._state.get(name, "unknown")
+
+    def incompatible_reason(self, name: str) -> str | None:
+        """Why an ``incompatible`` addon is paused (for the CLI and the UI); ``None`` in every other state."""
+        return self._why.get(name)
 
     def active(self) -> list[str]:
         return sorted(self._grants)

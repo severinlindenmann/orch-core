@@ -150,6 +150,14 @@ HOST_LABELS: tuple[bytes, ...] = (  # WSK: host events and workspace-signed obje
     _p("sig_publish"),
     _p("sig_relay_auth"),
     _p("sig_drop_object"),
+    _p("sig_hub_binding"),  # V3 C2a: the workspace's statement that a hub serves it, and its leave (hub contract 9)
+    _p("sig_hub_unbound"),
+    _p("sig_hub_link"),  # V3 C2a: link requests and the link login (hub contract 10)
+    _p("sig_hub_link_auth"),
+    _p("sig_publish_hub"),  # V3 C7: publish through the hub (hub contract 11.1)
+    _p("sig_space_item"),  # V3 C13: an item the workspace puts into a shared space (hub contract 10.4)
+    _p("sig_space_accept"),  # V3 C13: the owner's consent to join a space (hub contract 10.4)
+    _p("sig_share_item"),  # V3 C6: an item a selective workspace shares with its hub (hub contract 10.2b)
 )
 PRIMARY_SIG_LABELS: tuple[bytes, ...] = (_p("sig_relay_auth"),)
 """The primary's ``dk_sig`` (orch-v2-host 11A.15.1): it only logs in to the relay as the account's device (protocol

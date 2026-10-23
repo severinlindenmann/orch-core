@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from . import identity
 from .codes import Code, Refusal
 from .types import ClaimCore, TCore, WsCore, ts
 
@@ -105,7 +106,7 @@ def released(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
     elif a["kind"] == "person":
         if lapse_reason(ws, t, at) is not None:
             return Refusal(Code.CLAIM_NOT_LIVE, "the claim is not live")
-        if not may_manage(ws, t, a["id"]):
+        if not signer_manages(ws, t, e):
             return Refusal(Code.ROLE_DENIED, "only the ticket owner, an owner or a maintainer releases another's claim")
     else:  # host: the reason must be true at this position (§5.12)
         if lapse_reason(ws, t, at) != e["reason"]:
@@ -117,7 +118,18 @@ def released(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
     return None
 
 
-def may_manage(ws: WsCore, t: TCore, person: str) -> bool:
-    """The ticket owner, workspace owners and maintainers (§5.4.2 "who may sign what")."""
-    m = ws.members.get(person)
-    return m is not None and (m.role in ("owner", "maintainer") or (t.owner == person and m.role != "viewer"))
+def may_manage(ws: WsCore, t: TCore, person: str, role: Any = identity.LOOKUP) -> bool:
+    """The ticket owner, workspace owners and maintainers (§5.4.2 "who may sign what"). ``role`` is the signer's
+    effective role (``identity.Signer.role``); by default ``identity.role_of`` of the canonical person."""
+    person = identity.canonical(ws, person)
+    if role is identity.LOOKUP:
+        role = identity.role_of(ws, person)
+    return role is not None and (
+        role in ("owner", "maintainer") or (identity.canonical(ws, t.owner) == person and role != "viewer")
+    )
+
+
+def signer_manages(ws: WsCore, t: TCore, e: dict[str, Any]) -> bool:
+    """:func:`may_manage` for the person who signed ``e``, through ``identity.signer`` (device or hub actor)."""
+    sg = identity.signer(ws, e)
+    return not isinstance(sg, Refusal) and may_manage(ws, t, sg.person, sg.role)

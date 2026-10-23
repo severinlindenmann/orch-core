@@ -66,7 +66,7 @@ def test_the_host_person_ops_are_not_registry_ops():
     from orch.model.emits import EMITS_V1
 
     want = {"move", "policy.set", "settings.set", "people.set", "relay.pair_device", "publish.share"}  # B12D, P5
-    want |= {"ac.accept", "ac.unaccept", "task.mark_done"}
+    want |= {"ac.accept", "ac.unaccept", "task.mark_done", "hub.join", "hub.mode", "hub.leave"}  # V3 C2a, C2b
     assert set(person_ops.OPS) == set(review.HOST_PERSON_OPS) == want
     for name in person_ops.OPS:
         assert name not in {op.name for op in ops.all()} and name not in EMITS_V1  # the frozen table is untouched

@@ -1,0 +1,831 @@
+{
+ "cases": [
+  {
+   "channel": "develop",
+   "envelope": "{\"format\":\"orch.release-envelope/1\",\"key_cert\":{\"cert\":\"eyJjaGFubmVscyI6WyJkZXZlbG9wIiwibWFpbiJdLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2Uta2V5LzEiLCJrZXlfaWQiOiJyay0zIiwibm90X2FmdGVyIjoiMjAyNy0wMy0zMFQwMDowMDowMFoiLCJub3RfYmVmb3JlIjoiMjAyNi0xMC0wMVQwMDowMDowMFoiLCJwdWJsaWNfa2V5IjoiTzU0c1pNRlk5aW5DT0xWelRuOUJ2ci80cDFvS0RDWVVScnNOUDQ4ek9hMD0iLCJwdXJwb3NlIjoiY29yZSIsInNlcmlhbCI6M30=\",\"root_key_id\":\"root-1\",\"sig\":\"Mw2cAoDRgDuJ9pMXZou+UTftrDcNyGGOynBhLGmz0ZbUR4+DBkmBFDdUNii8cCElTzB2DQcMMMTw/jUKGoZTDA==\"},\"payload\":\"eyJjaGFuZ2Vsb2ciOiJURVNUIHJlbGVhc2UuIFdpa2kgYWRkLW9uOiBwYWdlIGxpbmtzOyBmaXggdGVybWluYWwgcmVzaXplLiIsImNoYW5uZWwiOiJkZXZlbG9wIiwiY29tbWl0IjoiMDJkOGViMDdkZDE1Yzk1MTA0YjRiMmM1ZTcxYzQwZjlmMDM3OWVlNiIsImV4cGlyZXNfYXQiOiIyMDI2LTExLTExVDA3OjQwOjAwWiIsImZpbGVzIjpbeyJuYW1lIjoib3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwiLCJyb2xlIjoiY29yZSIsInNoYTI1NiI6IjJhZGE1YWMzOWUwMzUzNjgzODI4MTRiNTRiNmNiMDdjMGMwNWM1YWVjMzg4OTBmOGI2NTAyYjQ3YTg3NmMzNWEiLCJzaXplIjo0NiwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwifSx7Im5hbWUiOiJvcmNoX2Rhc2hib2FyZC0yLjAuMC5kZXY0Mi1weTMtbm9uZS1hbnkud2hsIiwicm9sZSI6ImRhc2hib2FyZCIsInNoYTI1NiI6IjY0YTBmNjkyMTQzY2U2N2FkZTcxODUyNWNiNGRmOGVmYTNhNjRhNDhkMzhhYmUyMDE1NTc0MjdjNWRmZWFiNjMiLCJzaXplIjo1MSwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9kYXNoYm9hcmQtMi4wLjAuZGV2NDItcHkzLW5vbmUtYW55LndobCJ9LHsibmFtZSI6ImNvbnN0cmFpbnRzLnR4dCIsInJvbGUiOiJjb25zdHJhaW50cyIsInNoYTI1NiI6IjZjMzJjZWIzZDcxOTBkN2FmNWFlYmVmMjk2NGRiM2U4MmZjMDFkMDNlY2IyZjQ3NzNkMTQwNTFlNjNiZjVlNzgiLCJzaXplIjo1MywidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvY29uc3RyYWludHMudHh0In1dLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2UvMSIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjFUMDc6NDA6MDBaIiwibWluX2Zyb20iOiIyLjAuMC5kZXYxIiwic2VxIjo0MiwidmVyc2lvbiI6IjIuMC4wLmRldjQyIn0=\",\"revocations\":{\"doc\":\"eyJmb3JtYXQiOiJvcmNoLnJldm9jYXRpb25zLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDAwOjAwOjAwWiIsIm1pbl9zZXJpYWwiOjIsInJldm9rZWQiOls0XX0=\",\"root_key_id\":\"root-1\",\"sig\":\"8YAEebkNLHvcXbSGReypFnsmd9sdbZ+I8GMqSrEVjFS5OJ1Vhzen1sDDWMcSHzWt9p7Vfe8CRZHFRJJCWgAQCg==\"},\"sig\":{\"alg\":\"ed25519\",\"key_id\":\"rk-3\",\"value\":\"NiO6Wmvb3y2nvfePehaGx0XvI6zXGPecLF6fWa7A/Qqg3IviNaYLSxuBrii20rSlL9Qtm6YKw4naVJ/fbUs6Bw==\"}}",
+   "expect": {
+    "accept": {
+     "channel": "develop",
+     "min_serial": 2,
+     "revocations_issued_at": "2026-10-20T00:00:00Z",
+     "seq": 42,
+     "version": "2.0.0.dev42"
+    },
+    "code": null,
+    "reason": "ok"
+   },
+   "files": [
+    {
+     "content_b64": "VEVTVCBvcmNoLWNvcmUgd2hlZWwgYnl0ZXMgKG5vdCBhIHJlYWwgd2hlZWwpCg==",
+     "name": "orch_core-2.0.0.dev42-py3-none-any.whl"
+    },
+    {
+     "content_b64": "VEVTVCBvcmNoLWRhc2hib2FyZCB3aGVlbCBieXRlcyAobm90IGEgcmVhbCB3aGVlbCkK",
+     "name": "orch_dashboard-2.0.0.dev42-py3-none-any.whl"
+    },
+    {
+     "content_b64": "Y3J5cHRvZ3JhcGh5PT00Ni4wLjMKanNvbnNjaGVtYT09NC4yNi4wCnNlZ25vPT0xLjYuNgo=",
+     "name": "constraints.txt"
+    }
+   ],
+   "name": "ok_develop",
+   "now": "2026-10-22T08:00:00Z",
+   "pins": "a valid develop release",
+   "purpose": "core",
+   "state": {
+    "revocations_issued_at": "2026-10-20T00:00:00Z",
+    "seq_seen": 41,
+    "trusted_roots": [
+     "root-1"
+    ]
+   }
+  },
+  {
+   "channel": "main",
+   "envelope": "{\"format\":\"orch.release-envelope/1\",\"key_cert\":{\"cert\":\"eyJjaGFubmVscyI6WyJkZXZlbG9wIiwibWFpbiJdLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2Uta2V5LzEiLCJrZXlfaWQiOiJyay0zIiwibm90X2FmdGVyIjoiMjAyNy0wMy0zMFQwMDowMDowMFoiLCJub3RfYmVmb3JlIjoiMjAyNi0xMC0wMVQwMDowMDowMFoiLCJwdWJsaWNfa2V5IjoiTzU0c1pNRlk5aW5DT0xWelRuOUJ2ci80cDFvS0RDWVVScnNOUDQ4ek9hMD0iLCJwdXJwb3NlIjoiY29yZSIsInNlcmlhbCI6M30=\",\"root_key_id\":\"root-1\",\"sig\":\"Mw2cAoDRgDuJ9pMXZou+UTftrDcNyGGOynBhLGmz0ZbUR4+DBkmBFDdUNii8cCElTzB2DQcMMMTw/jUKGoZTDA==\"},\"payload\":\"eyJjaGFuZ2Vsb2ciOiJURVNUIHJlbGVhc2UuIFdpa2kgYWRkLW9uOiBwYWdlIGxpbmtzOyBmaXggdGVybWluYWwgcmVzaXplLiIsImNoYW5uZWwiOiJtYWluIiwiY29tbWl0IjoiZjM4MWU0NDg5YmIzYTAyM2JkOWIxYjFjM2NmZTc0OWM0ZjExYWVjMSIsImV4cGlyZXNfYXQiOiIyMDI2LTExLTExVDA3OjQwOjAwWiIsImZpbGVzIjpbeyJuYW1lIjoib3JjaF9jb3JlLTIuMC4wLmRldjQwLXB5My1ub25lLWFueS53aGwiLCJyb2xlIjoiY29yZSIsInNoYTI1NiI6IjJhZGE1YWMzOWUwMzUzNjgzODI4MTRiNTRiNmNiMDdjMGMwNWM1YWVjMzg4OTBmOGI2NTAyYjQ3YTg3NmMzNWEiLCJzaXplIjo0NiwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDAvb3JjaF9jb3JlLTIuMC4wLmRldjQwLXB5My1ub25lLWFueS53aGwifSx7Im5hbWUiOiJvcmNoX2Rhc2hib2FyZC0yLjAuMC5kZXY0MC1weTMtbm9uZS1hbnkud2hsIiwicm9sZSI6ImRhc2hib2FyZCIsInNoYTI1NiI6IjY0YTBmNjkyMTQzY2U2N2FkZTcxODUyNWNiNGRmOGVmYTNhNjRhNDhkMzhhYmUyMDE1NTc0MjdjNWRmZWFiNjMiLCJzaXplIjo1MSwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDAvb3JjaF9kYXNoYm9hcmQtMi4wLjAuZGV2NDAtcHkzLW5vbmUtYW55LndobCJ9LHsibmFtZSI6ImNvbnN0cmFpbnRzLnR4dCIsInJvbGUiOiJjb25zdHJhaW50cyIsInNoYTI1NiI6IjZjMzJjZWIzZDcxOTBkN2FmNWFlYmVmMjk2NGRiM2U4MmZjMDFkMDNlY2IyZjQ3NzNkMTQwNTFlNjNiZjVlNzgiLCJzaXplIjo1MywidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDAvY29uc3RyYWludHMudHh0In1dLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2UvMSIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjFUMDc6NDA6MDBaIiwibWluX2Zyb20iOiIyLjAuMC5kZXYxIiwic2VxIjo0MCwidmVyc2lvbiI6IjIuMC4wLmRldjQwIn0=\",\"revocations\":{\"doc\":\"eyJmb3JtYXQiOiJvcmNoLnJldm9jYXRpb25zLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDAwOjAwOjAwWiIsIm1pbl9zZXJpYWwiOjIsInJldm9rZWQiOls0XX0=\",\"root_key_id\":\"root-1\",\"sig\":\"8YAEebkNLHvcXbSGReypFnsmd9sdbZ+I8GMqSrEVjFS5OJ1Vhzen1sDDWMcSHzWt9p7Vfe8CRZHFRJJCWgAQCg==\"},\"sig\":{\"alg\":\"ed25519\",\"key_id\":\"rk-3\",\"value\":\"E33HbnTNm7rOcB0H8JEnqHoY8NnlQQMWornpuuQOYm73LquLWrTC8GOIrnLfeczn3NTQY/qqtv+uogg6ll/lDQ==\"}}",
+   "expect": {
+    "accept": {
+     "channel": "main",
+     "min_serial": 2,
+     "revocations_issued_at": "2026-10-20T00:00:00Z",
+     "seq": 40,
+     "version": "2.0.0.dev40"
+    },
+    "code": null,
+    "reason": "ok"
+   },
+   "files": [
+    {
+     "content_b64": "VEVTVCBvcmNoLWNvcmUgd2hlZWwgYnl0ZXMgKG5vdCBhIHJlYWwgd2hlZWwpCg==",
+     "name": "orch_core-2.0.0.dev40-py3-none-any.whl"
+    },
+    {
+     "content_b64": "VEVTVCBvcmNoLWRhc2hib2FyZCB3aGVlbCBieXRlcyAobm90IGEgcmVhbCB3aGVlbCkK",
+     "name": "orch_dashboard-2.0.0.dev40-py3-none-any.whl"
+    },
+    {
+     "content_b64": "Y3J5cHRvZ3JhcGh5PT00Ni4wLjMKanNvbnNjaGVtYT09NC4yNi4wCnNlZ25vPT0xLjYuNgo=",
+     "name": "constraints.txt"
+    }
+   ],
+   "name": "ok_main",
+   "now": "2026-10-22T08:00:00Z",
+   "pins": "a valid main release, first check ever (no seq seen, no stored revocations)",
+   "purpose": "core",
+   "state": {
+    "revocations_issued_at": null,
+    "seq_seen": null,
+    "trusted_roots": [
+     "root-1"
+    ]
+   }
+  },
+  {
+   "channel": "develop",
+   "envelope": "{\"format\":\"orch.release-envelope/1\",\"key_cert\":{\"cert\":\"eyJjaGFubmVscyI6WyJkZXZlbG9wIiwibWFpbiJdLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2Uta2V5LzEiLCJrZXlfaWQiOiJyay0zIiwibm90X2FmdGVyIjoiMjAyNy0wMy0zMFQwMDowMDowMFoiLCJub3RfYmVmb3JlIjoiMjAyNi0xMC0wMVQwMDowMDowMFoiLCJwdWJsaWNfa2V5IjoiTzU0c1pNRlk5aW5DT0xWelRuOUJ2ci80cDFvS0RDWVVScnNOUDQ4ek9hMD0iLCJwdXJwb3NlIjoiY29yZSIsInNlcmlhbCI6M30=\",\"root_key_id\":\"root-1\",\"sig\":\"Mw2cAoDRgDuJ9pMXZou+UTftrDcNyGGOynBhLGmz0ZbUR4+DBkmBFDdUNii8cCElTzB2DQcMMMTw/jUKGoZTDA==\"},\"payload\":\"eyJjaGFuZ2Vsb2ciOiJURVNUIHJlbGVhc2UuIFdpa2kgYWRkLW9uOiBwYWdlIGxpbmtzOyBmaXggdGVybWluYWwgcmVzaXplLiIsImNoYW5uZWwiOiJkZXZlbG9wIiwiY29tbWl0IjoiMDJkOGViMDdkZDE1Yzk1MTA0YjRiMmM1ZTcxYzQwZjlmMDM3OWVlNiIsImV4cGlyZXNfYXQiOiIyMDI2LTExLTExVDA3OjQwOjAwWiIsImZpbGVzIjpbeyJuYW1lIjoib3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwiLCJyb2xlIjoiY29yZSIsInNoYTI1NiI6IjJhZGE1YWMzOWUwMzUzNjgzODI4MTRiNTRiNmNiMDdjMGMwNWM1YWVjMzg4OTBmOGI2NTAyYjQ3YTg3NmMzNWEiLCJzaXplIjo0NiwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwifSx7Im5hbWUiOiJvcmNoX2Rhc2hib2FyZC0yLjAuMC5kZXY0Mi1weTMtbm9uZS1hbnkud2hsIiwicm9sZSI6ImRhc2hib2FyZCIsInNoYTI1NiI6IjY0YTBmNjkyMTQzY2U2N2FkZTcxODUyNWNiNGRmOGVmYTNhNjRhNDhkMzhhYmUyMDE1NTc0MjdjNWRmZWFiNjMiLCJzaXplIjo1MSwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9kYXNoYm9hcmQtMi4wLjAuZGV2NDItcHkzLW5vbmUtYW55LndobCJ9LHsibmFtZSI6ImNvbnN0cmFpbnRzLnR4dCIsInJvbGUiOiJjb25zdHJhaW50cyIsInNoYTI1NiI6IjZjMzJjZWIzZDcxOTBkN2FmNWFlYmVmMjk2NGRiM2U4MmZjMDFkMDNlY2IyZjQ3NzNkMTQwNTFlNjNiZjVlNzgiLCJzaXplIjo1MywidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvY29uc3RyYWludHMudHh0In1dLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2UvMSIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjFUMDc6NDA6MDBaIiwibWluX2Zyb20iOiIyLjAuMC5kZXYxIiwic2VxIjo0MiwidmVyc2lvbiI6IjIuMC4wLmRldjQyIn0=\",\"revocations\":{\"doc\":\"eyJmb3JtYXQiOiJvcmNoLnJldm9jYXRpb25zLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDAwOjAwOjAwWiIsIm1pbl9zZXJpYWwiOjIsInJldm9rZWQiOls0XX0=\",\"root_key_id\":\"root-1\",\"sig\":\"8YAEebkNLHvcXbSGReypFnsmd9sdbZ+I8GMqSrEVjFS5OJ1Vhzen1sDDWMcSHzWt9p7Vfe8CRZHFRJJCWgAQCg==\"},\"sig\":{\"alg\":\"ed25519\",\"key_id\":\"rk-3\",\"value\":\"NiO6Wmvb3y2nvfePehaGx0XvI6zXGPecLF6fWa7A/Qqg3IviNaYLSxuBrii20rSlL9Qtm6YKw4naVJ/fbUs6Bw==\"}}",
+   "expect": {
+    "accept": {
+     "channel": "develop",
+     "min_serial": 2,
+     "revocations_issued_at": "2026-10-20T00:00:00Z",
+     "seq": 42,
+     "version": "2.0.0.dev42"
+    },
+    "code": null,
+    "reason": "ok"
+   },
+   "files": [
+    {
+     "content_b64": "VEVTVCBvcmNoLWNvcmUgd2hlZWwgYnl0ZXMgKG5vdCBhIHJlYWwgd2hlZWwpCg==",
+     "name": "orch_core-2.0.0.dev42-py3-none-any.whl"
+    },
+    {
+     "content_b64": "VEVTVCBvcmNoLWRhc2hib2FyZCB3aGVlbCBieXRlcyAobm90IGEgcmVhbCB3aGVlbCkK",
+     "name": "orch_dashboard-2.0.0.dev42-py3-none-any.whl"
+    },
+    {
+     "content_b64": "Y3J5cHRvZ3JhcGh5PT00Ni4wLjMKanNvbnNjaGVtYT09NC4yNi4wCnNlZ25vPT0xLjYuNgo=",
+     "name": "constraints.txt"
+    }
+   ],
+   "name": "ok_seq_equal",
+   "now": "2026-10-22T08:00:00Z",
+   "pins": "seq equal to the last seen is accepted (rerunning install.sh or a weekly refresh)",
+   "purpose": "core",
+   "state": {
+    "revocations_issued_at": "2026-10-20T00:00:00Z",
+    "seq_seen": 42,
+    "trusted_roots": [
+     "root-1"
+    ]
+   }
+  },
+  {
+   "channel": "test-ci",
+   "envelope": "{\"format\":\"orch.release-envelope/1\",\"key_cert\":{\"cert\":\"eyJjaGFubmVscyI6WyJ0ZXN0LSoiXSwiZm9ybWF0Ijoib3JjaC5yZWxlYXNlLWtleS8xIiwia2V5X2lkIjoidGstMSIsIm5vdF9hZnRlciI6IjIwMjctMDMtMzBUMDA6MDA6MDBaIiwibm90X2JlZm9yZSI6IjIwMjYtMTAtMDFUMDA6MDA6MDBaIiwicHVibGljX2tleSI6ImQxekRYVW5RVEMyeTY5c2lsRFJ6WHN4ekxFQXREL2tMeDJHenJZTGd2OEE9IiwicHVycG9zZSI6ImNvcmUiLCJzZXJpYWwiOjh9\",\"root_key_id\":\"root-1\",\"sig\":\"47VQLgzKmeY52RoEQI3UBES+EPylwJeamoQKyngcXZBsaFVjuG9Ny9UNEl4S26n1JgKmeELHoJQlC+nSe4/2CQ==\"},\"payload\":\"eyJjaGFuZ2Vsb2ciOiJURVNUIHJlbGVhc2UuIFdpa2kgYWRkLW9uOiBwYWdlIGxpbmtzOyBmaXggdGVybWluYWwgcmVzaXplLiIsImNoYW5uZWwiOiJ0ZXN0LWNpIiwiY29tbWl0IjoiYWRhYjE3ZmVmYzk3YjA3Zjg4NmZjMDNlMWNhOTBmODAzMGFlMTU5MiIsImV4cGlyZXNfYXQiOiIyMDI2LTExLTExVDA3OjQwOjAwWiIsImZpbGVzIjpbeyJuYW1lIjoib3JjaF9jb3JlLTIuMC4wLmRldjQzLXB5My1ub25lLWFueS53aGwiLCJyb2xlIjoiY29yZSIsInNoYTI1NiI6IjJhZGE1YWMzOWUwMzUzNjgzODI4MTRiNTRiNmNiMDdjMGMwNWM1YWVjMzg4OTBmOGI2NTAyYjQ3YTg3NmMzNWEiLCJzaXplIjo0NiwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDMvb3JjaF9jb3JlLTIuMC4wLmRldjQzLXB5My1ub25lLWFueS53aGwifSx7Im5hbWUiOiJvcmNoX2Rhc2hib2FyZC0yLjAuMC5kZXY0My1weTMtbm9uZS1hbnkud2hsIiwicm9sZSI6ImRhc2hib2FyZCIsInNoYTI1NiI6IjY0YTBmNjkyMTQzY2U2N2FkZTcxODUyNWNiNGRmOGVmYTNhNjRhNDhkMzhhYmUyMDE1NTc0MjdjNWRmZWFiNjMiLCJzaXplIjo1MSwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDMvb3JjaF9kYXNoYm9hcmQtMi4wLjAuZGV2NDMtcHkzLW5vbmUtYW55LndobCJ9LHsibmFtZSI6ImNvbnN0cmFpbnRzLnR4dCIsInJvbGUiOiJjb25zdHJhaW50cyIsInNoYTI1NiI6IjZjMzJjZWIzZDcxOTBkN2FmNWFlYmVmMjk2NGRiM2U4MmZjMDFkMDNlY2IyZjQ3NzNkMTQwNTFlNjNiZjVlNzgiLCJzaXplIjo1MywidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDMvY29uc3RyYWludHMudHh0In1dLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2UvMSIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjFUMDc6NDA6MDBaIiwibWluX2Zyb20iOiIyLjAuMC5kZXYxIiwic2VxIjo0MywidmVyc2lvbiI6IjIuMC4wLmRldjQzIn0=\",\"revocations\":{\"doc\":\"eyJmb3JtYXQiOiJvcmNoLnJldm9jYXRpb25zLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDAwOjAwOjAwWiIsIm1pbl9zZXJpYWwiOjIsInJldm9rZWQiOls0XX0=\",\"root_key_id\":\"root-1\",\"sig\":\"8YAEebkNLHvcXbSGReypFnsmd9sdbZ+I8GMqSrEVjFS5OJ1Vhzen1sDDWMcSHzWt9p7Vfe8CRZHFRJJCWgAQCg==\"},\"sig\":{\"alg\":\"ed25519\",\"key_id\":\"tk-1\",\"value\":\"yDK+pB/BeO6iEr8qFPoT27fFvfF8JebpF0PMvDuBOWTEG2NbdS00c4DzhXjYqCl6pRmtff8tsvRwF5Gw7S3xBw==\"}}",
+   "expect": {
+    "accept": {
+     "channel": "test-ci",
+     "min_serial": 2,
+     "revocations_issued_at": "2026-10-20T00:00:00Z",
+     "seq": 43,
+     "version": "2.0.0.dev43"
+    },
+    "code": null,
+    "reason": "ok"
+   },
+   "files": [
+    {
+     "content_b64": "VEVTVCBvcmNoLWNvcmUgd2hlZWwgYnl0ZXMgKG5vdCBhIHJlYWwgd2hlZWwpCg==",
+     "name": "orch_core-2.0.0.dev43-py3-none-any.whl"
+    },
+    {
+     "content_b64": "VEVTVCBvcmNoLWRhc2hib2FyZCB3aGVlbCBieXRlcyAobm90IGEgcmVhbCB3aGVlbCkK",
+     "name": "orch_dashboard-2.0.0.dev43-py3-none-any.whl"
+    },
+    {
+     "content_b64": "Y3J5cHRvZ3JhcGh5PT00Ni4wLjMKanNvbnNjaGVtYT09NC4yNi4wCnNlZ25vPT0xLjYuNgo=",
+     "name": "constraints.txt"
+    }
+   ],
+   "name": "ok_test_channel",
+   "now": "2026-10-22T08:00:00Z",
+   "pins": "the test key (channels ['test-*']) signs a test-<name> channel",
+   "purpose": "core",
+   "state": {
+    "revocations_issued_at": "2026-10-20T00:00:00Z",
+    "seq_seen": null,
+    "trusted_roots": [
+     "root-1"
+    ]
+   }
+  },
+  {
+   "channel": "develop",
+   "envelope": "{\"format\":\"orch.release-envelope/1\",\"key_cert\":{\"cert\":\"eyJjaGFubmVscyI6WyJkZXZlbG9wIiwibWFpbiJdLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2Uta2V5LzEiLCJrZXlfaWQiOiJyay0zIiwibm90X2FmdGVyIjoiMjAyNy0wMy0zMFQwMDowMDowMFoiLCJub3RfYmVmb3JlIjoiMjAyNi0xMC0wMVQwMDowMDowMFoiLCJwdWJsaWNfa2V5IjoiTzU0c1pNRlk5aW5DT0xWelRuOUJ2ci80cDFvS0RDWVVScnNOUDQ4ek9hMD0iLCJwdXJwb3NlIjoiY29yZSIsInNlcmlhbCI6M30=\",\"root_key_id\":\"root-1\",\"sig\":\"Mw2cAoDRgDuJ9pMXZou+UTftrDcNyGGOynBhLGmz0ZbUR4+DBkmBFDdUNii8cCElTzB2DQcMMMTw/jUKGoZTDA==\"},\"payload\":\"eyJjaGFuZ2Vsb2ciOiJURVNUIHJlbGVhc2UuIFdpa2kgYWRkLW9uOiBwYWdlIGxpbmtzOyBmaXggdGVybWluYWwgcmVzaXplLiIsImNoYW5uZWwiOiJkZXZlbG9wIiwiY29tbWl0IjoiMDJkOGViMDdkZDE1Yzk1MTA0YjRiMmM1ZTcxYzQwZjlmMDM3OWVlNiIsImV4cGlyZXNfYXQiOiIyMDI2LTExLTExVDA3OjQwOjAwWiIsImZpbGVzIjpbeyJuYW1lIjoib3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwiLCJyb2xlIjoiY29yZSIsInNoYTI1NiI6IjJhZGE1YWMzOWUwMzUzNjgzODI4MTRiNTRiNmNiMDdjMGMwNWM1YWVjMzg4OTBmOGI2NTAyYjQ3YTg3NmMzNWEiLCJzaXplIjo0NiwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwifSx7Im5hbWUiOiJvcmNoX2Rhc2hib2FyZC0yLjAuMC5kZXY0Mi1weTMtbm9uZS1hbnkud2hsIiwicm9sZSI6ImRhc2hib2FyZCIsInNoYTI1NiI6IjY0YTBmNjkyMTQzY2U2N2FkZTcxODUyNWNiNGRmOGVmYTNhNjRhNDhkMzhhYmUyMDE1NTc0MjdjNWRmZWFiNjMiLCJzaXplIjo1MSwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9kYXNoYm9hcmQtMi4wLjAuZGV2NDItcHkzLW5vbmUtYW55LndobCJ9LHsibmFtZSI6ImNvbnN0cmFpbnRzLnR4dCIsInJvbGUiOiJjb25zdHJhaW50cyIsInNoYTI1NiI6IjZjMzJjZWIzZDcxOTBkN2FmNWFlYmVmMjk2NGRiM2U4MmZjMDFkMDNlY2IyZjQ3NzNkMTQwNTFlNjNiZjVlNzgiLCJzaXplIjo1MywidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvY29uc3RyYWludHMudHh0In1dLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2UvMSIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjFUMDc6NDA6MDBaIiwibWluX2Zyb20iOiIyLjAuMC5kZXYxIiwic2VxIjo0MiwidmVyc2lvbiI6IjIuMC4wLmRldjQyIn0=\",\"revocations\":{\"doc\":\"eyJmb3JtYXQiOiJvcmNoLnJldm9jYXRpb25zLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDAwOjAwOjAwWiIsIm1pbl9zZXJpYWwiOjIsInJldm9rZWQiOls0XX0=\",\"root_key_id\":\"root-1\",\"sig\":\"8YAEebkNLHvcXbSGReypFnsmd9sdbZ+I8GMqSrEVjFS5OJ1Vhzen1sDDWMcSHzWt9p7Vfe8CRZHFRJJCWgAQCg==\"},\"sig\":{\"alg\":\"ed25519\",\"key_id\":\"rk-3\",\"value\":\"NiO6Wmvb3y2nvfePehaGx0XvI6zXGPecLF6fWa7A/Qqg3IviNaYLSxuBrii20rSlL9Qtm6YKw4naVJ/fbUs6Bw==\"}}",
+   "expect": {
+    "accept": {
+     "channel": "develop",
+     "min_serial": 2,
+     "revocations_issued_at": "2026-10-20T00:00:00Z",
+     "seq": 42,
+     "version": "2.0.0.dev42"
+    },
+    "code": null,
+    "reason": "ok"
+   },
+   "files": [
+    {
+     "content_b64": "VEVTVCBvcmNoLWNvcmUgd2hlZWwgYnl0ZXMgKG5vdCBhIHJlYWwgd2hlZWwpCg==",
+     "name": "orch_core-2.0.0.dev42-py3-none-any.whl"
+    },
+    {
+     "content_b64": "VEVTVCBvcmNoLWRhc2hib2FyZCB3aGVlbCBieXRlcyAobm90IGEgcmVhbCB3aGVlbCkK",
+     "name": "orch_dashboard-2.0.0.dev42-py3-none-any.whl"
+    },
+    {
+     "content_b64": "Y3J5cHRvZ3JhcGh5PT00Ni4wLjMKanNvbnNjaGVtYT09NC4yNi4wCnNlZ25vPT0xLjYuNgo=",
+     "name": "constraints.txt"
+    }
+   ],
+   "name": "ok_revocations_older_stored",
+   "now": "2026-10-22T08:00:00Z",
+   "pins": "a newer revocation list than the stored one is accepted (and then stored)",
+   "purpose": "core",
+   "state": {
+    "revocations_issued_at": "2026-10-01T00:00:00Z",
+    "seq_seen": 41,
+    "trusted_roots": [
+     "root-1"
+    ]
+   }
+  },
+  {
+   "channel": "develop",
+   "envelope": "{\n  \"format\": \"orch.release-envelope/1\",\n  \"payload\": \"eyJjaGFuZ2Vsb2ciOiJURVNUIHJlbGVhc2UuIFdpa2kgYWRkLW9uOiBwYWdlIGxpbmtzOyBmaXggdGVybWluYWwgcmVzaXplLiIsImNoYW5uZWwiOiJkZXZlbG9wIiwiY29tbWl0IjoiMDJkOGViMDdkZDE1Yzk1MTA0YjRiMmM1ZTcxYzQwZjlmMDM3OWVlNiIsImV4cGlyZXNfYXQiOiIyMDI2LTExLTExVDA3OjQwOjAwWiIsImZpbGVzIjpbeyJuYW1lIjoib3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwiLCJyb2xlIjoiY29yZSIsInNoYTI1NiI6IjJhZGE1YWMzOWUwMzUzNjgzODI4MTRiNTRiNmNiMDdjMGMwNWM1YWVjMzg4OTBmOGI2NTAyYjQ3YTg3NmMzNWEiLCJzaXplIjo0NiwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwifSx7Im5hbWUiOiJvcmNoX2Rhc2hib2FyZC0yLjAuMC5kZXY0Mi1weTMtbm9uZS1hbnkud2hsIiwicm9sZSI6ImRhc2hib2FyZCIsInNoYTI1NiI6IjY0YTBmNjkyMTQzY2U2N2FkZTcxODUyNWNiNGRmOGVmYTNhNjRhNDhkMzhhYmUyMDE1NTc0MjdjNWRmZWFiNjMiLCJzaXplIjo1MSwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9kYXNoYm9hcmQtMi4wLjAuZGV2NDItcHkzLW5vbmUtYW55LndobCJ9LHsibmFtZSI6ImNvbnN0cmFpbnRzLnR4dCIsInJvbGUiOiJjb25zdHJhaW50cyIsInNoYTI1NiI6IjZjMzJjZWIzZDcxOTBkN2FmNWFlYmVmMjk2NGRiM2U4MmZjMDFkMDNlY2IyZjQ3NzNkMTQwNTFlNjNiZjVlNzgiLCJzaXplIjo1MywidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvY29uc3RyYWludHMudHh0In1dLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2UvMSIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjFUMDc6NDA6MDBaIiwibWluX2Zyb20iOiIyLjAuMC5kZXYxIiwic2VxIjo0MiwidmVyc2lvbiI6IjIuMC4wLmRldjQyIn0=\",\n  \"sig\": {\n    \"alg\": \"ed25519\",\n    \"key_id\": \"rk-3\",\n    \"value\": \"NiO6Wmvb3y2nvfePehaGx0XvI6zXGPecLF6fWa7A/Qqg3IviNaYLSxuBrii20rSlL9Qtm6YKw4naVJ/fbUs6Bw==\"\n  },\n  \"key_cert\": {\n    \"cert\": \"eyJjaGFubmVscyI6WyJkZXZlbG9wIiwibWFpbiJdLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2Uta2V5LzEiLCJrZXlfaWQiOiJyay0zIiwibm90X2FmdGVyIjoiMjAyNy0wMy0zMFQwMDowMDowMFoiLCJub3RfYmVmb3JlIjoiMjAyNi0xMC0wMVQwMDowMDowMFoiLCJwdWJsaWNfa2V5IjoiTzU0c1pNRlk5aW5DT0xWelRuOUJ2ci80cDFvS0RDWVVScnNOUDQ4ek9hMD0iLCJwdXJwb3NlIjoiY29yZSIsInNlcmlhbCI6M30=\",\n    \"root_key_id\": \"root-1\",\n    \"sig\": \"Mw2cAoDRgDuJ9pMXZou+UTftrDcNyGGOynBhLGmz0ZbUR4+DBkmBFDdUNii8cCElTzB2DQcMMMTw/jUKGoZTDA==\"\n  },\n  \"revocations\": {\n    \"doc\": \"eyJmb3JtYXQiOiJvcmNoLnJldm9jYXRpb25zLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDAwOjAwOjAwWiIsIm1pbl9zZXJpYWwiOjIsInJldm9rZWQiOls0XX0=\",\n    \"root_key_id\": \"root-1\",\n    \"sig\": \"8YAEebkNLHvcXbSGReypFnsmd9sdbZ+I8GMqSrEVjFS5OJ1Vhzen1sDDWMcSHzWt9p7Vfe8CRZHFRJJCWgAQCg==\"\n  }\n}",
+   "expect": {
+    "accept": {
+     "channel": "develop",
+     "min_serial": 2,
+     "revocations_issued_at": "2026-10-20T00:00:00Z",
+     "seq": 42,
+     "version": "2.0.0.dev42"
+    },
+    "code": null,
+    "reason": "ok"
+   },
+   "name": "ok_outer_not_canonical",
+   "now": "2026-10-22T08:00:00Z",
+   "pins": "the outer envelope is not signed, so whitespace and key order there do not matter",
+   "purpose": "core",
+   "state": {
+    "revocations_issued_at": "2026-10-20T00:00:00Z",
+    "seq_seen": 41,
+    "trusted_roots": [
+     "root-1"
+    ]
+   }
+  },
+  {
+   "channel": "develop",
+   "envelope": "{\"format\":\"orch.release-envelope/1\",\"key_cert\":{\"cert\":\"eyJjaGFubmVscyI6WyJkZXZlbG9wIiwibWFpbiJdLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2Uta2V5LzEiLCJrZXlfaWQiOiJyay0zIiwibm90X2FmdGVyIjoiMjAyNy0wMy0zMFQwMDowMDowMFoiLCJub3RfYmVmb3JlIjoiMjAyNi0xMC0wMVQwMDowMDowMFoiLCJwdWJsaWNfa2V5IjoiTzU0c1pNRlk5aW5DT0xWelRuOUJ2ci80cDFvS0RDWVVScnNOUDQ4ek9hMD0iLCJwdXJwb3NlIjoiY29yZSIsInNlcmlhbCI6M30=\",\"root_key_id\":\"root-1\",\"sig\":\"Mw2cAoDRgDuJ9pMXZou+UTftrDcNyGGOynBhLGmz0ZbUR4+DBkmBFDdUNii8cCElTzB2DQcMMMTw/jUKGoZTDA==\"},\"payload\":\"eyJjaGFuZ2Vsb2ciOiJURVNUIHJlbGVhc2UuIFdpa2kgYWRkLW9uOiBwYWdlIGxpbmtzOyBmaXggdGVybWluYWwgcmVzaXplLiIsImNoYW5uZWwiOiJkZXZlbG9wIiwiY29tbWl0IjoiMDJkOGViMDdkZDE1Yzk1MTA0YjRiMmM1ZTcxYzQwZjlmMDM3OWVlNiIsImV4cGlyZXNfYXQiOiIyMDI2LTExLTExVDA3OjQwOjAwWiIsImZpbGVzIjpbeyJuYW1lIjoib3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwiLCJyb2xlIjoiY29yZSIsInNoYTI1NiI6IjJhZGE1YWMzOWUwMzUzNjgzODI4MTRiNTRiNmNiMDdjMGMwNWM1YWVjMzg4OTBmOGI2NTAyYjQ3YTg3NmMzNWEiLCJzaXplIjo0NiwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwifSx7Im5hbWUiOiJvcmNoX2Rhc2hib2FyZC0yLjAuMC5kZXY0Mi1weTMtbm9uZS1hbnkud2hsIiwicm9sZSI6ImRhc2hib2FyZCIsInNoYTI1NiI6IjY0YTBmNjkyMTQzY2U2N2FkZTcxODUyNWNiNGRmOGVmYTNhNjRhNDhkMzhhYmUyMDE1NTc0MjdjNWRmZWFiNjMiLCJzaXplIjo1MSwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9kYXNoYm9hcmQtMi4wLjAuZGV2NDItcHkzLW5vbmUtYW55LndobCJ9LHsibmFtZSI6ImNvbnN0cmFpbnRzLnR4dCIsInJvbGUiOiJjb25zdHJhaW50cyIsInNoYTI1NiI6IjZjMzJjZWIzZDcxOTBkN2FmNWFlYmVmMjk2NGRiM2U4MmZjMDFkMDNlY2IyZjQ3NzNkMTQwNTFlNjNiZjVlNzgiLCJzaXplIjo1MywidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvY29uc3RyYWludHMudHh0In1dLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2UvMSIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjFUMDc6NDA6MDBaIiwibWluX2Zyb20iOiIyLjAuMC5kZXYxIiwic2VxIjo0MiwidmVyc2lvbiI6IjIuMC4wLmRldjQyIn0=\",\"revocations\":{\"doc\":\"eyJmb3JtYXQiOiJvcmNoLnJldm9jYXRpb25zLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDAwOjAwOjAwWiIsIm1pbl9zZXJpYWwiOjIsInJldm9rZWQiOls0XX0=\",\"root_key_id\":\"root-1\",\"sig\":\"8YAEebkNLHvcXbSGReypFnsmd9sdbZ+I8GMqSrEVjFS5OJ1Vhzen1sDDWMcSHzWt9p7Vfe8CRZHFRJJCWgAQCg==\"},\"sig\":{\"alg\":\"ed25519\",\"key_id\":\"rk-3\",\"value\":\"NiO6Wmvb3y2nvfePehaGx0XvI6zXGPecLF6fWa7A/Qqg3IviNaYLSxuBrii20rSlL9Qtm6YKw4naVJ/fbUs6",
+   "expect": {
+    "code": "update.unverified",
+    "reason": "malformed"
+   },
+   "name": "malformed_not_json",
+   "now": "2026-10-22T08:00:00Z",
+   "pins": "not JSON at all",
+   "purpose": "core",
+   "state": {
+    "revocations_issued_at": "2026-10-20T00:00:00Z",
+    "seq_seen": 41,
+    "trusted_roots": [
+     "root-1"
+    ]
+   }
+  },
+  {
+   "channel": "develop",
+   "envelope": "{\"format\":\"orch.release-envelope/1\",\"key_cert\":{\"cert\":\"eyJjaGFubmVscyI6WyJkZXZlbG9wIiwibWFpbiJdLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2Uta2V5LzEiLCJrZXlfaWQiOiJyay0zIiwibm90X2FmdGVyIjoiMjAyNy0wMy0zMFQwMDowMDowMFoiLCJub3RfYmVmb3JlIjoiMjAyNi0xMC0wMVQwMDowMDowMFoiLCJwdWJsaWNfa2V5IjoiTzU0c1pNRlk5aW5DT0xWelRuOUJ2ci80cDFvS0RDWVVScnNOUDQ4ek9hMD0iLCJwdXJwb3NlIjoiY29yZSIsInNlcmlhbCI6M30=\",\"root_key_id\":\"root-1\",\"sig\":\"Mw2cAoDRgDuJ9pMXZou+UTftrDcNyGGOynBhLGmz0ZbUR4+DBkmBFDdUNii8cCElTzB2DQcMMMTw/jUKGoZTDA==\"},\"payload\":\"eyJjaGFuZ2Vsb2ciOiJURVNUIHJlbGVhc2UuIFdpa2kgYWRkLW9uOiBwYWdlIGxpbmtzOyBmaXggdGVybWluYWwgcmVzaXplLiIsImNoYW5uZWwiOiJkZXZlbG9wIiwiY29tbWl0IjoiMDJkOGViMDdkZDE1Yzk1MTA0YjRiMmM1ZTcxYzQwZjlmMDM3OWVlNiIsImV4cGlyZXNfYXQiOiIyMDI2LTExLTExVDA3OjQwOjAwWiIsImZpbGVzIjpbeyJuYW1lIjoib3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwiLCJyb2xlIjoiY29yZSIsInNoYTI1NiI6IjJhZGE1YWMzOWUwMzUzNjgzODI4MTRiNTRiNmNiMDdjMGMwNWM1YWVjMzg4OTBmOGI2NTAyYjQ3YTg3NmMzNWEiLCJzaXplIjo0NiwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwifSx7Im5hbWUiOiJvcmNoX2Rhc2hib2FyZC0yLjAuMC5kZXY0Mi1weTMtbm9uZS1hbnkud2hsIiwicm9sZSI6ImRhc2hib2FyZCIsInNoYTI1NiI6IjY0YTBmNjkyMTQzY2U2N2FkZTcxODUyNWNiNGRmOGVmYTNhNjRhNDhkMzhhYmUyMDE1NTc0MjdjNWRmZWFiNjMiLCJzaXplIjo1MSwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9kYXNoYm9hcmQtMi4wLjAuZGV2NDItcHkzLW5vbmUtYW55LndobCJ9LHsibmFtZSI6ImNvbnN0cmFpbnRzLnR4dCIsInJvbGUiOiJjb25zdHJhaW50cyIsInNoYTI1NiI6IjZjMzJjZWIzZDcxOTBkN2FmNWFlYmVmMjk2NGRiM2U4MmZjMDFkMDNlY2IyZjQ3NzNkMTQwNTFlNjNiZjVlNzgiLCJzaXplIjo1MywidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvY29uc3RyYWludHMudHh0In1dLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2UvMSIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjFUMDc6NDA6MDBaIiwibWluX2Zyb20iOiIyLjAuMC5kZXYxIiwic2VxIjo0MiwidmVyc2lvbiI6IjIuMC4wLmRldjQyIn0=\",\"revocations\":{\"doc\":\"eyJmb3JtYXQiOiJvcmNoLnJldm9jYXRpb25zLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDAwOjAwOjAwWiIsIm1pbl9zZXJpYWwiOjIsInJldm9rZWQiOls0XX0=\",\"root_key_id\":\"root-1\",\"sig\":\"8YAEebkNLHvcXbSGReypFnsmd9sdbZ+I8GMqSrEVjFS5OJ1Vhzen1sDDWMcSHzWt9p7Vfe8CRZHFRJJCWgAQCg==\"},\"sig\":{\"alg\":\"ed25519\",\"key_id\":\"rk-3\",\"value\":\"NiO6Wmvb3y2nvfePehaGx0XvI6zXGPecLF6fWa7A/Qqg3IviNaYLSxuBrii20rSlL9Qtm6YKw4naVJ/fbUs6Bw==\"},\"format\":\"orch.release-envelope/1\"}",
+   "expect": {
+    "code": "update.unverified",
+    "reason": "malformed"
+   },
+   "name": "malformed_duplicate_key",
+   "now": "2026-10-22T08:00:00Z",
+   "pins": "a duplicate key in the outer envelope",
+   "purpose": "core",
+   "state": {
+    "revocations_issued_at": "2026-10-20T00:00:00Z",
+    "seq_seen": 41,
+    "trusted_roots": [
+     "root-1"
+    ]
+   }
+  },
+  {
+   "channel": "develop",
+   "envelope": "{\"format\":\"orch.release-envelope/1\",\"key_cert\":{\"cert\":\"eyJjaGFubmVscyI6WyJkZXZlbG9wIiwibWFpbiJdLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2Uta2V5LzEiLCJrZXlfaWQiOiJyay0zIiwibm90X2FmdGVyIjoiMjAyNy0wMy0zMFQwMDowMDowMFoiLCJub3RfYmVmb3JlIjoiMjAyNi0xMC0wMVQwMDowMDowMFoiLCJwdWJsaWNfa2V5IjoiTzU0c1pNRlk5aW5DT0xWelRuOUJ2ci80cDFvS0RDWVVScnNOUDQ4ek9hMD0iLCJwdXJwb3NlIjoiY29yZSIsInNlcmlhbCI6M30=\",\"root_key_id\":\"root-1\",\"sig\":\"Mw2cAoDRgDuJ9pMXZou+UTftrDcNyGGOynBhLGmz0ZbUR4+DBkmBFDdUNii8cCElTzB2DQcMMMTw/jUKGoZTDA==\"},\"note\":\"x\",\"payload\":\"eyJjaGFuZ2Vsb2ciOiJURVNUIHJlbGVhc2UuIFdpa2kgYWRkLW9uOiBwYWdlIGxpbmtzOyBmaXggdGVybWluYWwgcmVzaXplLiIsImNoYW5uZWwiOiJkZXZlbG9wIiwiY29tbWl0IjoiMDJkOGViMDdkZDE1Yzk1MTA0YjRiMmM1ZTcxYzQwZjlmMDM3OWVlNiIsImV4cGlyZXNfYXQiOiIyMDI2LTExLTExVDA3OjQwOjAwWiIsImZpbGVzIjpbeyJuYW1lIjoib3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwiLCJyb2xlIjoiY29yZSIsInNoYTI1NiI6IjJhZGE1YWMzOWUwMzUzNjgzODI4MTRiNTRiNmNiMDdjMGMwNWM1YWVjMzg4OTBmOGI2NTAyYjQ3YTg3NmMzNWEiLCJzaXplIjo0NiwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwifSx7Im5hbWUiOiJvcmNoX2Rhc2hib2FyZC0yLjAuMC5kZXY0Mi1weTMtbm9uZS1hbnkud2hsIiwicm9sZSI6ImRhc2hib2FyZCIsInNoYTI1NiI6IjY0YTBmNjkyMTQzY2U2N2FkZTcxODUyNWNiNGRmOGVmYTNhNjRhNDhkMzhhYmUyMDE1NTc0MjdjNWRmZWFiNjMiLCJzaXplIjo1MSwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9kYXNoYm9hcmQtMi4wLjAuZGV2NDItcHkzLW5vbmUtYW55LndobCJ9LHsibmFtZSI6ImNvbnN0cmFpbnRzLnR4dCIsInJvbGUiOiJjb25zdHJhaW50cyIsInNoYTI1NiI6IjZjMzJjZWIzZDcxOTBkN2FmNWFlYmVmMjk2NGRiM2U4MmZjMDFkMDNlY2IyZjQ3NzNkMTQwNTFlNjNiZjVlNzgiLCJzaXplIjo1MywidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvY29uc3RyYWludHMudHh0In1dLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2UvMSIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjFUMDc6NDA6MDBaIiwibWluX2Zyb20iOiIyLjAuMC5kZXYxIiwic2VxIjo0MiwidmVyc2lvbiI6IjIuMC4wLmRldjQyIn0=\",\"revocations\":{\"doc\":\"eyJmb3JtYXQiOiJvcmNoLnJldm9jYXRpb25zLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDAwOjAwOjAwWiIsIm1pbl9zZXJpYWwiOjIsInJldm9rZWQiOls0XX0=\",\"root_key_id\":\"root-1\",\"sig\":\"8YAEebkNLHvcXbSGReypFnsmd9sdbZ+I8GMqSrEVjFS5OJ1Vhzen1sDDWMcSHzWt9p7Vfe8CRZHFRJJCWgAQCg==\"},\"sig\":{\"alg\":\"ed25519\",\"key_id\":\"rk-3\",\"value\":\"NiO6Wmvb3y2nvfePehaGx0XvI6zXGPecLF6fWa7A/Qqg3IviNaYLSxuBrii20rSlL9Qtm6YKw4naVJ/fbUs6Bw==\"}}",
+   "expect": {
+    "code": "update.unverified",
+    "reason": "malformed"
+   },
+   "name": "malformed_unknown_field_envelope",
+   "now": "2026-10-22T08:00:00Z",
+   "pins": "an unknown top-level envelope field",
+   "purpose": "core",
+   "state": {
+    "revocations_issued_at": "2026-10-20T00:00:00Z",
+    "seq_seen": 41,
+    "trusted_roots": [
+     "root-1"
+    ]
+   }
+  },
+  {
+   "channel": "develop",
+   "envelope": "{\"format\":\"orch.release-envelope/1\",\"key_cert\":{\"cert\":\"eyJjaGFubmVscyI6WyJkZXZlbG9wIiwibWFpbiJdLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2Uta2V5LzEiLCJrZXlfaWQiOiJyay0zIiwibm90X2FmdGVyIjoiMjAyNy0wMy0zMFQwMDowMDowMFoiLCJub3RfYmVmb3JlIjoiMjAyNi0xMC0wMVQwMDowMDowMFoiLCJwdWJsaWNfa2V5IjoiTzU0c1pNRlk5aW5DT0xWelRuOUJ2ci80cDFvS0RDWVVScnNOUDQ4ek9hMD0iLCJwdXJwb3NlIjoiY29yZSIsInNlcmlhbCI6M30=\",\"root_key_id\":\"root-1\",\"sig\":\"Mw2cAoDRgDuJ9pMXZou+UTftrDcNyGGOynBhLGmz0ZbUR4+DBkmBFDdUNii8cCElTzB2DQcMMMTw/jUKGoZTDA==\"},\"payload\":\"eyJjaGFuZ2Vsb2ciOiJURVNUIHJlbGVhc2UuIFdpa2kgYWRkLW9uOiBwYWdlIGxpbmtzOyBmaXggdGVybWluYWwgcmVzaXplLiIsImNoYW5uZWwiOiJkZXZlbG9wIiwiY29tbWl0IjoiMDJkOGViMDdkZDE1Yzk1MTA0YjRiMmM1ZTcxYzQwZjlmMDM3OWVlNiIsImV4cGlyZXNfYXQiOiIyMDI2LTExLTExVDA3OjQwOjAwWiIsImV4dHJhIjoxLCJmaWxlcyI6W3sibmFtZSI6Im9yY2hfY29yZS0yLjAuMC5kZXY0Mi1weTMtbm9uZS1hbnkud2hsIiwicm9sZSI6ImNvcmUiLCJzaGEyNTYiOiIyYWRhNWFjMzllMDM1MzY4MzgyODE0YjU0YjZjYjA3YzBjMDVjNWFlYzM4ODkwZjhiNjUwMmI0N2E4NzZjMzVhIiwic2l6ZSI6NDYsInVybCI6Imh0dHBzOi8vZ2l0aHViLmNvbS9zZXZlcmlubGluZGVubWFubi9vcmNoLWNvcmUvcmVsZWFzZXMvZG93bmxvYWQvdjIuMC4wLmRldjQyL29yY2hfY29yZS0yLjAuMC5kZXY0Mi1weTMtbm9uZS1hbnkud2hsIn0seyJuYW1lIjoib3JjaF9kYXNoYm9hcmQtMi4wLjAuZGV2NDItcHkzLW5vbmUtYW55LndobCIsInJvbGUiOiJkYXNoYm9hcmQiLCJzaGEyNTYiOiI2NGEwZjY5MjE0M2NlNjdhZGU3MTg1MjVjYjRkZjhlZmEzYTY0YTQ4ZDM4YWJlMjAxNTU3NDI3YzVkZmVhYjYzIiwic2l6ZSI6NTEsInVybCI6Imh0dHBzOi8vZ2l0aHViLmNvbS9zZXZlcmlubGluZGVubWFubi9vcmNoLWNvcmUvcmVsZWFzZXMvZG93bmxvYWQvdjIuMC4wLmRldjQyL29yY2hfZGFzaGJvYXJkLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwifSx7Im5hbWUiOiJjb25zdHJhaW50cy50eHQiLCJyb2xlIjoiY29uc3RyYWludHMiLCJzaGEyNTYiOiI2YzMyY2ViM2Q3MTkwZDdhZjVhZWJlZjI5NjRkYjNlODJmYzAxZDAzZWNiMmY0NzczZDE0MDUxZTYzYmY1ZTc4Iiwic2l6ZSI6NTMsInVybCI6Imh0dHBzOi8vZ2l0aHViLmNvbS9zZXZlcmlubGluZGVubWFubi9vcmNoLWNvcmUvcmVsZWFzZXMvZG93bmxvYWQvdjIuMC4wLmRldjQyL2NvbnN0cmFpbnRzLnR4dCJ9XSwiZm9ybWF0Ijoib3JjaC5yZWxlYXNlLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIxVDA3OjQwOjAwWiIsIm1pbl9mcm9tIjoiMi4wLjAuZGV2MSIsInNlcSI6NDIsInZlcnNpb24iOiIyLjAuMC5kZXY0MiJ9\",\"revocations\":{\"doc\":\"eyJmb3JtYXQiOiJvcmNoLnJldm9jYXRpb25zLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDAwOjAwOjAwWiIsIm1pbl9zZXJpYWwiOjIsInJldm9rZWQiOls0XX0=\",\"root_key_id\":\"root-1\",\"sig\":\"8YAEebkNLHvcXbSGReypFnsmd9sdbZ+I8GMqSrEVjFS5OJ1Vhzen1sDDWMcSHzWt9p7Vfe8CRZHFRJJCWgAQCg==\"},\"sig\":{\"alg\":\"ed25519\",\"key_id\":\"rk-3\",\"value\":\"VUPzlZjkaRYsYwMGUswIwrTYQ91nS2+arn/0UqpKkRDjYJNZxq09U0FabNwsxD16Vb9OaK4xohKc5xVppFhwBw==\"}}",
+   "expect": {
+    "code": "update.unverified",
+    "reason": "malformed"
+   },
+   "name": "malformed_unknown_field_manifest",
+   "now": "2026-10-22T08:00:00Z",
+   "pins": "a correctly signed, canonical manifest with an unknown field",
+   "purpose": "core",
+   "state": {
+    "revocations_issued_at": "2026-10-20T00:00:00Z",
+    "seq_seen": 41,
+    "trusted_roots": [
+     "root-1"
+    ]
+   }
+  },
+  {
+   "channel": "develop",
+   "envelope": "{\"format\":\"orch.release-envelope/1\",\"key_cert\":{\"cert\":\"eyJjaGFubmVscyI6WyJkZXZlbG9wIiwibWFpbiJdLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2Uta2V5LzEiLCJrZXlfaWQiOiJyay0zIiwibm90X2FmdGVyIjoiMjAyNy0wMy0zMFQwMDowMDowMFoiLCJub3RfYmVmb3JlIjoiMjAyNi0xMC0wMVQwMDowMDowMFoiLCJwdWJsaWNfa2V5IjoiTzU0c1pNRlk5aW5DT0xWelRuOUJ2ci80cDFvS0RDWVVScnNOUDQ4ek9hMD0iLCJwdXJwb3NlIjoiY29yZSIsInNlcmlhbCI6M30=\",\"root_key_id\":\"root-1\",\"sig\":\"Mw2cAoDRgDuJ9pMXZou+UTftrDcNyGGOynBhLGmz0ZbUR4+DBkmBFDdUNii8cCElTzB2DQcMMMTw/jUKGoZTDA==\"},\"payload\":\"ewogImNoYW5nZWxvZyI6ICJURVNUIHJlbGVhc2UuIFdpa2kgYWRkLW9uOiBwYWdlIGxpbmtzOyBmaXggdGVybWluYWwgcmVzaXplLiIsCiAiY2hhbm5lbCI6ICJkZXZlbG9wIiwKICJjb21taXQiOiAiMDJkOGViMDdkZDE1Yzk1MTA0YjRiMmM1ZTcxYzQwZjlmMDM3OWVlNiIsCiAiZXhwaXJlc19hdCI6ICIyMDI2LTExLTExVDA3OjQwOjAwWiIsCiAiZmlsZXMiOiBbCiAgewogICAibmFtZSI6ICJvcmNoX2NvcmUtMi4wLjAuZGV2NDItcHkzLW5vbmUtYW55LndobCIsCiAgICJyb2xlIjogImNvcmUiLAogICAic2hhMjU2IjogIjJhZGE1YWMzOWUwMzUzNjgzODI4MTRiNTRiNmNiMDdjMGMwNWM1YWVjMzg4OTBmOGI2NTAyYjQ3YTg3NmMzNWEiLAogICAic2l6ZSI6IDQ2LAogICAidXJsIjogImh0dHBzOi8vZ2l0aHViLmNvbS9zZXZlcmlubGluZGVubWFubi9vcmNoLWNvcmUvcmVsZWFzZXMvZG93bmxvYWQvdjIuMC4wLmRldjQyL29yY2hfY29yZS0yLjAuMC5kZXY0Mi1weTMtbm9uZS1hbnkud2hsIgogIH0sCiAgewogICAibmFtZSI6ICJvcmNoX2Rhc2hib2FyZC0yLjAuMC5kZXY0Mi1weTMtbm9uZS1hbnkud2hsIiwKICAgInJvbGUiOiAiZGFzaGJvYXJkIiwKICAgInNoYTI1NiI6ICI2NGEwZjY5MjE0M2NlNjdhZGU3MTg1MjVjYjRkZjhlZmEzYTY0YTQ4ZDM4YWJlMjAxNTU3NDI3YzVkZmVhYjYzIiwKICAgInNpemUiOiA1MSwKICAgInVybCI6ICJodHRwczovL2dpdGh1Yi5jb20vc2V2ZXJpbmxpbmRlbm1hbm4vb3JjaC1jb3JlL3JlbGVhc2VzL2Rvd25sb2FkL3YyLjAuMC5kZXY0Mi9vcmNoX2Rhc2hib2FyZC0yLjAuMC5kZXY0Mi1weTMtbm9uZS1hbnkud2hsIgogIH0sCiAgewogICAibmFtZSI6ICJjb25zdHJhaW50cy50eHQiLAogICAicm9sZSI6ICJjb25zdHJhaW50cyIsCiAgICJzaGEyNTYiOiAiNmMzMmNlYjNkNzE5MGQ3YWY1YWViZWYyOTY0ZGIzZTgyZmMwMWQwM2VjYjJmNDc3M2QxNDA1MWU2M2JmNWU3OCIsCiAgICJzaXplIjogNTMsCiAgICJ1cmwiOiAiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvY29uc3RyYWludHMudHh0IgogIH0KIF0sCiAiZm9ybWF0IjogIm9yY2gucmVsZWFzZS8xIiwKICJpc3N1ZWRfYXQiOiAiMjAyNi0xMC0yMVQwNzo0MDowMFoiLAogIm1pbl9mcm9tIjogIjIuMC4wLmRldjEiLAogInNlcSI6IDQyLAogInZlcnNpb24iOiAiMi4wLjAuZGV2NDIiCn0=\",\"revocations\":{\"doc\":\"eyJmb3JtYXQiOiJvcmNoLnJldm9jYXRpb25zLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDAwOjAwOjAwWiIsIm1pbl9zZXJpYWwiOjIsInJldm9rZWQiOls0XX0=\",\"root_key_id\":\"root-1\",\"sig\":\"8YAEebkNLHvcXbSGReypFnsmd9sdbZ+I8GMqSrEVjFS5OJ1Vhzen1sDDWMcSHzWt9p7Vfe8CRZHFRJJCWgAQCg==\"},\"sig\":{\"alg\":\"ed25519\",\"key_id\":\"rk-3\",\"value\":\"nPNaMW1K2YYSXaX+IUafEZB8VAe9JbYnSD1gI7Uk1HZ+hM8U3sqCoNKT5/n+zPpR54/w27hK2tIfsgog0bq8Bg==\"}}",
+   "expect": {
+    "code": "update.unverified",
+    "reason": "malformed"
+   },
+   "name": "malformed_noncanonical_manifest",
+   "now": "2026-10-22T08:00:00Z",
+   "pins": "correctly signed manifest bytes that are not JCS (indented)",
+   "purpose": "core",
+   "state": {
+    "revocations_issued_at": "2026-10-20T00:00:00Z",
+    "seq_seen": 41,
+    "trusted_roots": [
+     "root-1"
+    ]
+   }
+  },
+  {
+   "channel": "develop",
+   "envelope": "{\"format\":\"orch.release-envelope/1\",\"key_cert\":{\"cert\":\"eyJmb3JtYXQiOiAib3JjaC5yZWxlYXNlLWtleS8xIiwgImtleV9pZCI6ICJyay0zIiwgInB1YmxpY19rZXkiOiAiTzU0c1pNRlk5aW5DT0xWelRuOUJ2ci80cDFvS0RDWVVScnNOUDQ4ek9hMD0iLCAic2VyaWFsIjogMywgInB1cnBvc2UiOiAiY29yZSIsICJjaGFubmVscyI6IFsiZGV2ZWxvcCIsICJtYWluIl0sICJub3RfYmVmb3JlIjogIjIwMjYtMTAtMDFUMDA6MDA6MDBaIiwgIm5vdF9hZnRlciI6ICIyMDI3LTAzLTMwVDAwOjAwOjAwWiJ9\",\"root_key_id\":\"root-1\",\"sig\":\"VIpDc3q6k6n1xEDtFCR1pf4MCvoeiIl6pzGYMQloabtoNGSvzs7jiB/UyHjRPq07wH1yATML1Mbhbrpi/L+bAA==\"},\"payload\":\"eyJjaGFuZ2Vsb2ciOiJURVNUIHJlbGVhc2UuIFdpa2kgYWRkLW9uOiBwYWdlIGxpbmtzOyBmaXggdGVybWluYWwgcmVzaXplLiIsImNoYW5uZWwiOiJkZXZlbG9wIiwiY29tbWl0IjoiMDJkOGViMDdkZDE1Yzk1MTA0YjRiMmM1ZTcxYzQwZjlmMDM3OWVlNiIsImV4cGlyZXNfYXQiOiIyMDI2LTExLTExVDA3OjQwOjAwWiIsImZpbGVzIjpbeyJuYW1lIjoib3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwiLCJyb2xlIjoiY29yZSIsInNoYTI1NiI6IjJhZGE1YWMzOWUwMzUzNjgzODI4MTRiNTRiNmNiMDdjMGMwNWM1YWVjMzg4OTBmOGI2NTAyYjQ3YTg3NmMzNWEiLCJzaXplIjo0NiwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwifSx7Im5hbWUiOiJvcmNoX2Rhc2hib2FyZC0yLjAuMC5kZXY0Mi1weTMtbm9uZS1hbnkud2hsIiwicm9sZSI6ImRhc2hib2FyZCIsInNoYTI1NiI6IjY0YTBmNjkyMTQzY2U2N2FkZTcxODUyNWNiNGRmOGVmYTNhNjRhNDhkMzhhYmUyMDE1NTc0MjdjNWRmZWFiNjMiLCJzaXplIjo1MSwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9kYXNoYm9hcmQtMi4wLjAuZGV2NDItcHkzLW5vbmUtYW55LndobCJ9LHsibmFtZSI6ImNvbnN0cmFpbnRzLnR4dCIsInJvbGUiOiJjb25zdHJhaW50cyIsInNoYTI1NiI6IjZjMzJjZWIzZDcxOTBkN2FmNWFlYmVmMjk2NGRiM2U4MmZjMDFkMDNlY2IyZjQ3NzNkMTQwNTFlNjNiZjVlNzgiLCJzaXplIjo1MywidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvY29uc3RyYWludHMudHh0In1dLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2UvMSIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjFUMDc6NDA6MDBaIiwibWluX2Zyb20iOiIyLjAuMC5kZXYxIiwic2VxIjo0MiwidmVyc2lvbiI6IjIuMC4wLmRldjQyIn0=\",\"revocations\":{\"doc\":\"eyJmb3JtYXQiOiJvcmNoLnJldm9jYXRpb25zLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDAwOjAwOjAwWiIsIm1pbl9zZXJpYWwiOjIsInJldm9rZWQiOls0XX0=\",\"root_key_id\":\"root-1\",\"sig\":\"8YAEebkNLHvcXbSGReypFnsmd9sdbZ+I8GMqSrEVjFS5OJ1Vhzen1sDDWMcSHzWt9p7Vfe8CRZHFRJJCWgAQCg==\"},\"sig\":{\"alg\":\"ed25519\",\"key_id\":\"rk-3\",\"value\":\"NiO6Wmvb3y2nvfePehaGx0XvI6zXGPecLF6fWa7A/Qqg3IviNaYLSxuBrii20rSlL9Qtm6YKw4naVJ/fbUs6Bw==\"}}",
+   "expect": {
+    "code": "update.unverified",
+    "reason": "malformed"
+   },
+   "name": "malformed_noncanonical_cert",
+   "now": "2026-10-22T08:00:00Z",
+   "pins": "a root-signed certificate whose bytes are not JCS (key order)",
+   "purpose": "core",
+   "state": {
+    "revocations_issued_at": "2026-10-20T00:00:00Z",
+    "seq_seen": 41,
+    "trusted_roots": [
+     "root-1"
+    ]
+   }
+  },
+  {
+   "channel": "develop",
+   "envelope": "{\"format\":\"orch.release-envelope/1\",\"key_cert\":{\"cert\":\"eyJjaGFubmVscyI6WyJkZXZlbG9wIiwibWFpbiJdLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2Uta2V5LzEiLCJrZXlfaWQiOiJyay0zIiwibm90X2FmdGVyIjoiMjAyNy0wMy0zMFQwMDowMDowMFoiLCJub3RfYmVmb3JlIjoiMjAyNi0xMC0wMVQwMDowMDowMFoiLCJwdWJsaWNfa2V5IjoiTzU0c1pNRlk5aW5DT0xWelRuOUJ2ci80cDFvS0RDWVVScnNOUDQ4ek9hMD0iLCJwdXJwb3NlIjoiY29yZSIsInNlcmlhbCI6M30=\",\"root_key_id\":\"root-1\",\"sig\":\"Mw2cAoDRgDuJ9pMXZou+UTftrDcNyGGOynBhLGmz0ZbUR4+DBkmBFDdUNii8cCElTzB2DQcMMMTw/jUKGoZTDA==\"},\"payload\":\"eyJjaGFuZ2Vsb2ciOiJURVNUIHJlbGVhc2UuIFdpa2kgYWRkLW9uOiBwYWdlIGxpbmtzOyBmaXggdGVybWluYWwgcmVzaXplLiIsImNoYW5uZWwiOiJkZXZlbG9wIiwiY29tbWl0IjoiMDJkOGViMDdkZDE1Yzk1MTA0YjRiMmM1ZTcxYzQwZjlmMDM3OWVlNiIsImV4cGlyZXNfYXQiOiIyMDI2LTExLTExVDA3OjQwOjAwWiIsImZpbGVzIjpbeyJuYW1lIjoib3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwiLCJyb2xlIjoiY29yZSIsInNoYTI1NiI6IjJhZGE1YWMzOWUwMzUzNjgzODI4MTRiNTRiNmNiMDdjMGMwNWM1YWVjMzg4OTBmOGI2NTAyYjQ3YTg3NmMzNWEiLCJzaXplIjo0NiwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwifSx7Im5hbWUiOiJvcmNoX2Rhc2hib2FyZC0yLjAuMC5kZXY0Mi1weTMtbm9uZS1hbnkud2hsIiwicm9sZSI6ImRhc2hib2FyZCIsInNoYTI1NiI6IjY0YTBmNjkyMTQzY2U2N2FkZTcxODUyNWNiNGRmOGVmYTNhNjRhNDhkMzhhYmUyMDE1NTc0MjdjNWRmZWFiNjMiLCJzaXplIjo1MSwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9kYXNoYm9hcmQtMi4wLjAuZGV2NDItcHkzLW5vbmUtYW55LndobCJ9LHsibmFtZSI6ImNvbnN0cmFpbnRzLnR4dCIsInJvbGUiOiJjb25zdHJhaW50cyIsInNoYTI1NiI6IjZjMzJjZWIzZDcxOTBkN2FmNWFlYmVmMjk2NGRiM2U4MmZjMDFkMDNlY2IyZjQ3NzNkMTQwNTFlNjNiZjVlNzgiLCJzaXplIjo1MywidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvY29uc3RyYWludHMudHh0In1dLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2UvMSIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjFUMDc6NDA6MDBaIiwibWluX2Zyb20iOiIyLjAuMC5kZXYxIiwic2VxIjo0Mi4wLCJ2ZXJzaW9uIjoiMi4wLjAuZGV2NDIifQ==\",\"revocations\":{\"doc\":\"eyJmb3JtYXQiOiJvcmNoLnJldm9jYXRpb25zLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDAwOjAwOjAwWiIsIm1pbl9zZXJpYWwiOjIsInJldm9rZWQiOls0XX0=\",\"root_key_id\":\"root-1\",\"sig\":\"8YAEebkNLHvcXbSGReypFnsmd9sdbZ+I8GMqSrEVjFS5OJ1Vhzen1sDDWMcSHzWt9p7Vfe8CRZHFRJJCWgAQCg==\"},\"sig\":{\"alg\":\"ed25519\",\"key_id\":\"rk-3\",\"value\":\"g85hjgVoO6TFHha00kD1e524uVPsvc13EslU9DppijtTgZs4tPCGDw9O7l1polflAETQ7Q7YEHAPZ64JP4zoBw==\"}}",
+   "expect": {
+    "code": "update.unverified",
+    "reason": "malformed"
+   },
+   "name": "malformed_float_seq",
+   "now": "2026-10-22T08:00:00Z",
+   "pins": "seq is a JSON number with a fraction (floats are never allowed)",
+   "purpose": "core",
+   "state": {
+    "revocations_issued_at": "2026-10-20T00:00:00Z",
+    "seq_seen": 41,
+    "trusted_roots": [
+     "root-1"
+    ]
+   }
+  },
+  {
+   "channel": "develop",
+   "envelope": "{\"format\":\"orch.release-envelope/1\",\"key_cert\":{\"cert\":\"eyJjaGFubmVscyI6WyJkZXZlbG9wIiwibWFpbiJdLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2Uta2V5LzEiLCJrZXlfaWQiOiJyay0zIiwibm90X2FmdGVyIjoiMjAyNy0wMy0zMFQwMDowMDowMFoiLCJub3RfYmVmb3JlIjoiMjAyNi0xMC0wMVQwMDowMDowMFoiLCJwdWJsaWNfa2V5IjoiTzU0c1pNRlk5aW5DT0xWelRuOUJ2ci80cDFvS0RDWVVScnNOUDQ4ek9hMD0iLCJwdXJwb3NlIjoiY29yZSIsInNlcmlhbCI6M30=\",\"root_key_id\":\"root-1\",\"sig\":\"Mw2cAoDRgDuJ9pMXZou+UTftrDcNyGGOynBhLGmz0ZbUR4+DBkmBFDdUNii8cCElTzB2DQcMMMTw/jUKGoZTDA==\"},\"payload\":\"eyJjaGFuZ2Vsb2ciOiJURVNUIHJlbGVhc2UuIFdpa2kgYWRkLW9uOiBwYWdlIGxpbmtzOyBmaXgg\\ndGVybWluYWwgcmVzaXplLiIsImNoYW5uZWwiOiJkZXZlbG9wIiwiY29tbWl0IjoiMDJkOGViMDdkZDE1Yzk1MTA0YjRiMmM1ZTcxYzQwZjlmMDM3OWVlNiIsImV4cGlyZXNfYXQiOiIyMDI2LTExLTExVDA3OjQwOjAwWiIsImZpbGVzIjpbeyJuYW1lIjoib3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwiLCJyb2xlIjoiY29yZSIsInNoYTI1NiI6IjJhZGE1YWMzOWUwMzUzNjgzODI4MTRiNTRiNmNiMDdjMGMwNWM1YWVjMzg4OTBmOGI2NTAyYjQ3YTg3NmMzNWEiLCJzaXplIjo0NiwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwifSx7Im5hbWUiOiJvcmNoX2Rhc2hib2FyZC0yLjAuMC5kZXY0Mi1weTMtbm9uZS1hbnkud2hsIiwicm9sZSI6ImRhc2hib2FyZCIsInNoYTI1NiI6IjY0YTBmNjkyMTQzY2U2N2FkZTcxODUyNWNiNGRmOGVmYTNhNjRhNDhkMzhhYmUyMDE1NTc0MjdjNWRmZWFiNjMiLCJzaXplIjo1MSwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9kYXNoYm9hcmQtMi4wLjAuZGV2NDItcHkzLW5vbmUtYW55LndobCJ9LHsibmFtZSI6ImNvbnN0cmFpbnRzLnR4dCIsInJvbGUiOiJjb25zdHJhaW50cyIsInNoYTI1NiI6IjZjMzJjZWIzZDcxOTBkN2FmNWFlYmVmMjk2NGRiM2U4MmZjMDFkMDNlY2IyZjQ3NzNkMTQwNTFlNjNiZjVlNzgiLCJzaXplIjo1MywidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvY29uc3RyYWludHMudHh0In1dLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2UvMSIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjFUMDc6NDA6MDBaIiwibWluX2Zyb20iOiIyLjAuMC5kZXYxIiwic2VxIjo0MiwidmVyc2lvbiI6IjIuMC4wLmRldjQyIn0=\",\"revocations\":{\"doc\":\"eyJmb3JtYXQiOiJvcmNoLnJldm9jYXRpb25zLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDAwOjAwOjAwWiIsIm1pbl9zZXJpYWwiOjIsInJldm9rZWQiOls0XX0=\",\"root_key_id\":\"root-1\",\"sig\":\"8YAEebkNLHvcXbSGReypFnsmd9sdbZ+I8GMqSrEVjFS5OJ1Vhzen1sDDWMcSHzWt9p7Vfe8CRZHFRJJCWgAQCg==\"},\"sig\":{\"alg\":\"ed25519\",\"key_id\":\"rk-3\",\"value\":\"NiO6Wmvb3y2nvfePehaGx0XvI6zXGPecLF6fWa7A/Qqg3IviNaYLSxuBrii20rSlL9Qtm6YKw4naVJ/fbUs6Bw==\"}}",
+   "expect": {
+    "code": "update.unverified",
+    "reason": "malformed"
+   },
+   "name": "malformed_base64_linebreak",
+   "now": "2026-10-22T08:00:00Z",
+   "pins": "payload base64 with a MIME line break (only canonical RFC 4648 base64, no whitespace, is accepted)",
+   "purpose": "core",
+   "state": {
+    "revocations_issued_at": "2026-10-20T00:00:00Z",
+    "seq_seen": 41,
+    "trusted_roots": [
+     "root-1"
+    ]
+   }
+  },
+  {
+   "channel": "develop",
+   "envelope": "{\"format\":\"orch.release-envelope/1\",\"key_cert\":{\"cert\":\"eyJjaGFubmVscyI6WyJkZXZlbG9wIiwibWFpbiJdLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2Uta2V5LzEiLCJrZXlfaWQiOiJyay0zIiwibm90X2FmdGVyIjoiMjAyNy0wMy0zMFQwMDowMDowMFoiLCJub3RfYmVmb3JlIjoiMjAyNi0xMC0wMVQwMDowMDowMFoiLCJwdWJsaWNfa2V5IjoiTzU0c1pNRlk5aW5DT0xWelRuOUJ2ci80cDFvS0RDWVVScnNOUDQ4ek9hMD0iLCJwdXJwb3NlIjoiY29yZSIsInNlcmlhbCI6M30=\",\"root_key_id\":\"root-1\",\"sig\":\"Mw2cAoDRgDuJ9pMXZou+UTftrDcNyGGOynBhLGmz0ZbUR4+DBkmBFDdUNii8cCElTzB2DQcMMMTw/jUKGoZTDA==\"},\"payload\":\"eyJjaGFuZ2Vsb2ciOiJURVNUIHJlbGVhc2UuIFdpa2kgYWRkLW9uOiBwYWdlIGxpbmtzOyBmaXggdGVybWluYWwgcmVzaXplLiIsImNoYW5uZWwiOiJkZXZlbG9wIiwiY29tbWl0IjoiMDJkOGViMDdkZDE1Yzk1MTA0YjRiMmM1ZTcxYzQwZjlmMDM3OWVlNiIsImV4cGlyZXNfYXQiOiIyMDI2LTExLTExVDA3OjQwOjAwWiIsImZpbGVzIjpbeyJuYW1lIjoiLi4vLi4vLnpzaHJjIiwicm9sZSI6ImNvcmUiLCJzaGEyNTYiOiIyYWRhNWFjMzllMDM1MzY4MzgyODE0YjU0YjZjYjA3YzBjMDVjNWFlYzM4ODkwZjhiNjUwMmI0N2E4NzZjMzVhIiwic2l6ZSI6NDYsInVybCI6Imh0dHBzOi8vZ2l0aHViLmNvbS9zZXZlcmlubGluZGVubWFubi9vcmNoLWNvcmUvcmVsZWFzZXMvZG93bmxvYWQvdjIuMC4wLmRldjQyL29yY2hfY29yZS0yLjAuMC5kZXY0Mi1weTMtbm9uZS1hbnkud2hsIn0seyJuYW1lIjoib3JjaF9kYXNoYm9hcmQtMi4wLjAuZGV2NDItcHkzLW5vbmUtYW55LndobCIsInJvbGUiOiJkYXNoYm9hcmQiLCJzaGEyNTYiOiI2NGEwZjY5MjE0M2NlNjdhZGU3MTg1MjVjYjRkZjhlZmEzYTY0YTQ4ZDM4YWJlMjAxNTU3NDI3YzVkZmVhYjYzIiwic2l6ZSI6NTEsInVybCI6Imh0dHBzOi8vZ2l0aHViLmNvbS9zZXZlcmlubGluZGVubWFubi9vcmNoLWNvcmUvcmVsZWFzZXMvZG93bmxvYWQvdjIuMC4wLmRldjQyL29yY2hfZGFzaGJvYXJkLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwifSx7Im5hbWUiOiJjb25zdHJhaW50cy50eHQiLCJyb2xlIjoiY29uc3RyYWludHMiLCJzaGEyNTYiOiI2YzMyY2ViM2Q3MTkwZDdhZjVhZWJlZjI5NjRkYjNlODJmYzAxZDAzZWNiMmY0NzczZDE0MDUxZTYzYmY1ZTc4Iiwic2l6ZSI6NTMsInVybCI6Imh0dHBzOi8vZ2l0aHViLmNvbS9zZXZlcmlubGluZGVubWFubi9vcmNoLWNvcmUvcmVsZWFzZXMvZG93bmxvYWQvdjIuMC4wLmRldjQyL2NvbnN0cmFpbnRzLnR4dCJ9XSwiZm9ybWF0Ijoib3JjaC5yZWxlYXNlLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIxVDA3OjQwOjAwWiIsIm1pbl9mcm9tIjoiMi4wLjAuZGV2MSIsInNlcSI6NDIsInZlcnNpb24iOiIyLjAuMC5kZXY0MiJ9\",\"revocations\":{\"doc\":\"eyJmb3JtYXQiOiJvcmNoLnJldm9jYXRpb25zLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDAwOjAwOjAwWiIsIm1pbl9zZXJpYWwiOjIsInJldm9rZWQiOls0XX0=\",\"root_key_id\":\"root-1\",\"sig\":\"8YAEebkNLHvcXbSGReypFnsmd9sdbZ+I8GMqSrEVjFS5OJ1Vhzen1sDDWMcSHzWt9p7Vfe8CRZHFRJJCWgAQCg==\"},\"sig\":{\"alg\":\"ed25519\",\"key_id\":\"rk-3\",\"value\":\"z2/6re0N9wrfxMF2cX7HXvg798hrHdrBk1tbTr7BdNLRhr9dYHVUJ0UorRJ7NvTTw1T0hKKDd/4zAlXCYVeVCA==\"}}",
+   "expect": {
+    "code": "update.unverified",
+    "reason": "malformed"
+   },
+   "name": "malformed_file_name_traversal",
+   "now": "2026-10-22T08:00:00Z",
+   "pins": "a signed manifest whose file name is a path (names are bare file names)",
+   "purpose": "core",
+   "state": {
+    "revocations_issued_at": "2026-10-20T00:00:00Z",
+    "seq_seen": 41,
+    "trusted_roots": [
+     "root-1"
+    ]
+   }
+  },
+  {
+   "channel": "develop",
+   "envelope": "{\"format\":\"orch.release-envelope/1\",\"key_cert\":{\"cert\":\"eyJjaGFubmVscyI6WyJkZXZlbG9wIiwibWFpbiJdLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2Uta2V5LzEiLCJrZXlfaWQiOiJyay0zIiwibm90X2FmdGVyIjoiMjAyNy0wMy0zMFQwMDowMDowMFoiLCJub3RfYmVmb3JlIjoiMjAyNi0xMC0wMVQwMDowMDowMFoiLCJwdWJsaWNfa2V5IjoiTzU0c1pNRlk5aW5DT0xWelRuOUJ2ci80cDFvS0RDWVVScnNOUDQ4ek9hMD0iLCJwdXJwb3NlIjoiY29yZSIsInNlcmlhbCI6M30=\",\"root_key_id\":\"root-1\",\"sig\":\"Mw2cAoDRgDuJ9pMXZou+UTftrDcNyGGOynBhLGmz0ZbUR4+DBkmBFDdUNii8cCElTzB2DQcMMMTw/jUKGoZTDA==\"},\"payload\":\"eyJjaGFuZ2Vsb2ciOiJURVNUIHJlbGVhc2UuIFdpa2kgYWRkLW9uOiBwYWdlIGxpbmtzOyBmaXggdGVybWluYWwgcmVzaXplLiIsImNoYW5uZWwiOiJkZXZlbG9wIiwiY29tbWl0IjoiMDJkOGViMDdkZDE1Yzk1MTA0YjRiMmM1ZTcxYzQwZjlmMDM3OWVlNiIsImV4cGlyZXNfYXQiOiIyMDI2LTExLTExVDA3OjQwOjAwWiIsImZpbGVzIjpbeyJuYW1lIjoib3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwiLCJyb2xlIjoiY29yZSIsInNoYTI1NiI6IjJhZGE1YWMzOWUwMzUzNjgzODI4MTRiNTRiNmNiMDdjMGMwNWM1YWVjMzg4OTBmOGI2NTAyYjQ3YTg3NmMzNWEiLCJzaXplIjo0NiwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwifSx7Im5hbWUiOiJvcmNoX2Rhc2hib2FyZC0yLjAuMC5kZXY0Mi1weTMtbm9uZS1hbnkud2hsIiwicm9sZSI6ImRhc2hib2FyZCIsInNoYTI1NiI6IjY0YTBmNjkyMTQzY2U2N2FkZTcxODUyNWNiNGRmOGVmYTNhNjRhNDhkMzhhYmUyMDE1NTc0MjdjNWRmZWFiNjMiLCJzaXplIjo1MSwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9kYXNoYm9hcmQtMi4wLjAuZGV2NDItcHkzLW5vbmUtYW55LndobCJ9LHsibmFtZSI6ImNvbnN0cmFpbnRzLnR4dCIsInJvbGUiOiJjb25zdHJhaW50cyIsInNoYTI1NiI6IjZjMzJjZWIzZDcxOTBkN2FmNWFlYmVmMjk2NGRiM2U4MmZjMDFkMDNlY2IyZjQ3NzNkMTQwNTFlNjNiZjVlNzgiLCJzaXplIjo1MywidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvY29uc3RyYWludHMudHh0In1dLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2UvMSIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjFUMDc6NDA6MDBaIiwibWluX2Zyb20iOiIyLjAuMC5kZXYxIiwic2VxIjo0MiwidmVyc2lvbiI6IjIuMC4wLmRldjQyIn0=\",\"revocations\":{\"doc\":\"eyJmb3JtYXQiOiJvcmNoLnJldm9jYXRpb25zLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDAwOjAwOjAwWiIsIm1pbl9zZXJpYWwiOjIsInJldm9rZWQiOls0XX0=\",\"root_key_id\":\"root-1\",\"sig\":\"8YAEebkNLHvcXbSGReypFnsmd9sdbZ+I8GMqSrEVjFS5OJ1Vhzen1sDDWMcSHzWt9p7Vfe8CRZHFRJJCWgAQCg==\"},\"sig\":{\"alg\":\"ed448\",\"key_id\":\"rk-3\",\"value\":\"NiO6Wmvb3y2nvfePehaGx0XvI6zXGPecLF6fWa7A/Qqg3IviNaYLSxuBrii20rSlL9Qtm6YKw4naVJ/fbUs6Bw==\"}}",
+   "expect": {
+    "code": "update.unverified",
+    "reason": "malformed"
+   },
+   "name": "malformed_wrong_alg",
+   "now": "2026-10-22T08:00:00Z",
+   "pins": "sig.alg other than ed25519",
+   "purpose": "core",
+   "state": {
+    "revocations_issued_at": "2026-10-20T00:00:00Z",
+    "seq_seen": 41,
+    "trusted_roots": [
+     "root-1"
+    ]
+   }
+  },
+  {
+   "channel": "develop",
+   "envelope": "{\"format\":\"orch.release-envelope/1\",\"key_cert\":{\"cert\":\"eyJjaGFubmVscyI6WyJkZXZlbG9wIiwibWFpbiJdLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2Uta2V5LzEiLCJrZXlfaWQiOiJyay0zIiwibm90X2FmdGVyIjoiMjAyNy0wMy0zMFQwMDowMDowMFoiLCJub3RfYmVmb3JlIjoiMjAyNi0xMC0wMVQwMDowMDowMFoiLCJwdWJsaWNfa2V5IjoiTzU0c1pNRlk5aW5DT0xWelRuOUJ2ci80cDFvS0RDWVVScnNOUDQ4ek9hMD0iLCJwdXJwb3NlIjoiY29yZSIsInNlcmlhbCI6M30=\",\"root_key_id\":\"root-9\",\"sig\":\"vBU4MaKtY79vF4dJGXizatJWXhzNzVzpdokIRBMSYIwpFAQGOVhnC49ojXgDmqkBeFxejIYOQ3oe6LPS6yflBw==\"},\"payload\":\"eyJjaGFuZ2Vsb2ciOiJURVNUIHJlbGVhc2UuIFdpa2kgYWRkLW9uOiBwYWdlIGxpbmtzOyBmaXggdGVybWluYWwgcmVzaXplLiIsImNoYW5uZWwiOiJkZXZlbG9wIiwiY29tbWl0IjoiMDJkOGViMDdkZDE1Yzk1MTA0YjRiMmM1ZTcxYzQwZjlmMDM3OWVlNiIsImV4cGlyZXNfYXQiOiIyMDI2LTExLTExVDA3OjQwOjAwWiIsImZpbGVzIjpbeyJuYW1lIjoib3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwiLCJyb2xlIjoiY29yZSIsInNoYTI1NiI6IjJhZGE1YWMzOWUwMzUzNjgzODI4MTRiNTRiNmNiMDdjMGMwNWM1YWVjMzg4OTBmOGI2NTAyYjQ3YTg3NmMzNWEiLCJzaXplIjo0NiwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwifSx7Im5hbWUiOiJvcmNoX2Rhc2hib2FyZC0yLjAuMC5kZXY0Mi1weTMtbm9uZS1hbnkud2hsIiwicm9sZSI6ImRhc2hib2FyZCIsInNoYTI1NiI6IjY0YTBmNjkyMTQzY2U2N2FkZTcxODUyNWNiNGRmOGVmYTNhNjRhNDhkMzhhYmUyMDE1NTc0MjdjNWRmZWFiNjMiLCJzaXplIjo1MSwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9kYXNoYm9hcmQtMi4wLjAuZGV2NDItcHkzLW5vbmUtYW55LndobCJ9LHsibmFtZSI6ImNvbnN0cmFpbnRzLnR4dCIsInJvbGUiOiJjb25zdHJhaW50cyIsInNoYTI1NiI6IjZjMzJjZWIzZDcxOTBkN2FmNWFlYmVmMjk2NGRiM2U4MmZjMDFkMDNlY2IyZjQ3NzNkMTQwNTFlNjNiZjVlNzgiLCJzaXplIjo1MywidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvY29uc3RyYWludHMudHh0In1dLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2UvMSIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjFUMDc6NDA6MDBaIiwibWluX2Zyb20iOiIyLjAuMC5kZXYxIiwic2VxIjo0MiwidmVyc2lvbiI6IjIuMC4wLmRldjQyIn0=\",\"revocations\":{\"doc\":\"eyJmb3JtYXQiOiJvcmNoLnJldm9jYXRpb25zLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDAwOjAwOjAwWiIsIm1pbl9zZXJpYWwiOjIsInJldm9rZWQiOls0XX0=\",\"root_key_id\":\"root-1\",\"sig\":\"8YAEebkNLHvcXbSGReypFnsmd9sdbZ+I8GMqSrEVjFS5OJ1Vhzen1sDDWMcSHzWt9p7Vfe8CRZHFRJJCWgAQCg==\"},\"sig\":{\"alg\":\"ed25519\",\"key_id\":\"rk-3\",\"value\":\"NiO6Wmvb3y2nvfePehaGx0XvI6zXGPecLF6fWa7A/Qqg3IviNaYLSxuBrii20rSlL9Qtm6YKw4naVJ/fbUs6Bw==\"}}",
+   "expect": {
+    "code": "update.unverified",
+    "reason": "unknown_root"
+   },
+   "name": "unknown_root",
+   "now": "2026-10-22T08:00:00Z",
+   "pins": "certificate signed by a root that is not in the trust set",
+   "purpose": "core",
+   "state": {
+    "revocations_issued_at": "2026-10-20T00:00:00Z",
+    "seq_seen": 41,
+    "trusted_roots": [
+     "root-1"
+    ]
+   }
+  },
+  {
+   "channel": "develop",
+   "envelope": "{\"format\":\"orch.release-envelope/1\",\"key_cert\":{\"cert\":\"eyJjaGFubmVscyI6WyJkZXZlbG9wIiwibWFpbiJdLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2Uta2V5LzEiLCJrZXlfaWQiOiJyay0zIiwibm90X2FmdGVyIjoiMjAyNy0wMy0zMFQwMDowMDowMFoiLCJub3RfYmVmb3JlIjoiMjAyNi0xMC0wMVQwMDowMDowMFoiLCJwdWJsaWNfa2V5IjoiTzU0c1pNRlk5aW5DT0xWelRuOUJ2ci80cDFvS0RDWVVScnNOUDQ4ek9hMD0iLCJwdXJwb3NlIjoiY29yZSIsInNlcmlhbCI6M30=\",\"root_key_id\":\"root-1\",\"sig\":\"vBU4MaKtY79vF4dJGXizatJWXhzNzVzpdokIRBMSYIwpFAQGOVhnC49ojXgDmqkBeFxejIYOQ3oe6LPS6yflBw==\"},\"payload\":\"eyJjaGFuZ2Vsb2ciOiJURVNUIHJlbGVhc2UuIFdpa2kgYWRkLW9uOiBwYWdlIGxpbmtzOyBmaXggdGVybWluYWwgcmVzaXplLiIsImNoYW5uZWwiOiJkZXZlbG9wIiwiY29tbWl0IjoiMDJkOGViMDdkZDE1Yzk1MTA0YjRiMmM1ZTcxYzQwZjlmMDM3OWVlNiIsImV4cGlyZXNfYXQiOiIyMDI2LTExLTExVDA3OjQwOjAwWiIsImZpbGVzIjpbeyJuYW1lIjoib3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwiLCJyb2xlIjoiY29yZSIsInNoYTI1NiI6IjJhZGE1YWMzOWUwMzUzNjgzODI4MTRiNTRiNmNiMDdjMGMwNWM1YWVjMzg4OTBmOGI2NTAyYjQ3YTg3NmMzNWEiLCJzaXplIjo0NiwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwifSx7Im5hbWUiOiJvcmNoX2Rhc2hib2FyZC0yLjAuMC5kZXY0Mi1weTMtbm9uZS1hbnkud2hsIiwicm9sZSI6ImRhc2hib2FyZCIsInNoYTI1NiI6IjY0YTBmNjkyMTQzY2U2N2FkZTcxODUyNWNiNGRmOGVmYTNhNjRhNDhkMzhhYmUyMDE1NTc0MjdjNWRmZWFiNjMiLCJzaXplIjo1MSwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9kYXNoYm9hcmQtMi4wLjAuZGV2NDItcHkzLW5vbmUtYW55LndobCJ9LHsibmFtZSI6ImNvbnN0cmFpbnRzLnR4dCIsInJvbGUiOiJjb25zdHJhaW50cyIsInNoYTI1NiI6IjZjMzJjZWIzZDcxOTBkN2FmNWFlYmVmMjk2NGRiM2U4MmZjMDFkMDNlY2IyZjQ3NzNkMTQwNTFlNjNiZjVlNzgiLCJzaXplIjo1MywidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvY29uc3RyYWludHMudHh0In1dLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2UvMSIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjFUMDc6NDA6MDBaIiwibWluX2Zyb20iOiIyLjAuMC5kZXYxIiwic2VxIjo0MiwidmVyc2lvbiI6IjIuMC4wLmRldjQyIn0=\",\"revocations\":{\"doc\":\"eyJmb3JtYXQiOiJvcmNoLnJldm9jYXRpb25zLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDAwOjAwOjAwWiIsIm1pbl9zZXJpYWwiOjIsInJldm9rZWQiOls0XX0=\",\"root_key_id\":\"root-1\",\"sig\":\"8YAEebkNLHvcXbSGReypFnsmd9sdbZ+I8GMqSrEVjFS5OJ1Vhzen1sDDWMcSHzWt9p7Vfe8CRZHFRJJCWgAQCg==\"},\"sig\":{\"alg\":\"ed25519\",\"key_id\":\"rk-3\",\"value\":\"NiO6Wmvb3y2nvfePehaGx0XvI6zXGPecLF6fWa7A/Qqg3IviNaYLSxuBrii20rSlL9Qtm6YKw4naVJ/fbUs6Bw==\"}}",
+   "expect": {
+    "code": "update.unverified",
+    "reason": "bad_cert_sig"
+   },
+   "name": "bad_cert_sig",
+   "now": "2026-10-22T08:00:00Z",
+   "pins": "certificate claims root-1 but is signed by another key",
+   "purpose": "core",
+   "state": {
+    "revocations_issued_at": "2026-10-20T00:00:00Z",
+    "seq_seen": 41,
+    "trusted_roots": [
+     "root-1"
+    ]
+   }
+  },
+  {
+   "channel": "develop",
+   "envelope": "{\"format\":\"orch.release-envelope/1\",\"key_cert\":{\"cert\":\"eyJjaGFubmVscyI6WyJkZXZlbG9wIiwibWFpbiJdLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2Uta2V5LzEiLCJrZXlfaWQiOiJyay0zIiwibm90X2FmdGVyIjoiMjAyNy0wMy0zMFQwMDowMDowMFoiLCJub3RfYmVmb3JlIjoiMjAyNi0xMC0wMVQwMDowMDowMFoiLCJwdWJsaWNfa2V5IjoiTzU0c1pNRlk5aW5DT0xWelRuOUJ2ci80cDFvS0RDWVVScnNOUDQ4ek9hMD0iLCJwdXJwb3NlIjoiY29yZSIsInNlcmlhbCI6M30=\",\"root_key_id\":\"root-1\",\"sig\":\"Mw2cAoDRgDuJ9pMXZou+UTftrDcNyGGOynBhLGmz0ZbUR4+DBkmBFDdUNii8cCElTzB2DQcMMMTw/jUKGoZTDA==\"},\"payload\":\"eyJjaGFuZ2Vsb2ciOiJURVNUIHJlbGVhc2UuIFdpa2kgYWRkLW9uOiBwYWdlIGxpbmtzOyBmaXggdGVybWluYWwgcmVzaXplLiIsImNoYW5uZWwiOiJkZXZlbG9wIiwiY29tbWl0IjoiMDJkOGViMDdkZDE1Yzk1MTA0YjRiMmM1ZTcxYzQwZjlmMDM3OWVlNiIsImV4cGlyZXNfYXQiOiIyMDI2LTExLTExVDA3OjQwOjAwWiIsImZpbGVzIjpbeyJuYW1lIjoib3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwiLCJyb2xlIjoiY29yZSIsInNoYTI1NiI6IjJhZGE1YWMzOWUwMzUzNjgzODI4MTRiNTRiNmNiMDdjMGMwNWM1YWVjMzg4OTBmOGI2NTAyYjQ3YTg3NmMzNWEiLCJzaXplIjo0NiwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwifSx7Im5hbWUiOiJvcmNoX2Rhc2hib2FyZC0yLjAuMC5kZXY0Mi1weTMtbm9uZS1hbnkud2hsIiwicm9sZSI6ImRhc2hib2FyZCIsInNoYTI1NiI6IjY0YTBmNjkyMTQzY2U2N2FkZTcxODUyNWNiNGRmOGVmYTNhNjRhNDhkMzhhYmUyMDE1NTc0MjdjNWRmZWFiNjMiLCJzaXplIjo1MSwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9kYXNoYm9hcmQtMi4wLjAuZGV2NDItcHkzLW5vbmUtYW55LndobCJ9LHsibmFtZSI6ImNvbnN0cmFpbnRzLnR4dCIsInJvbGUiOiJjb25zdHJhaW50cyIsInNoYTI1NiI6IjZjMzJjZWIzZDcxOTBkN2FmNWFlYmVmMjk2NGRiM2U4MmZjMDFkMDNlY2IyZjQ3NzNkMTQwNTFlNjNiZjVlNzgiLCJzaXplIjo1MywidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvY29uc3RyYWludHMudHh0In1dLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2UvMSIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjFUMDc6NDA6MDBaIiwibWluX2Zyb20iOiIyLjAuMC5kZXYxIiwic2VxIjo0MiwidmVyc2lvbiI6IjIuMC4wLmRldjQyIn0=\",\"revocations\":{\"doc\":\"eyJmb3JtYXQiOiJvcmNoLnJldm9jYXRpb25zLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDAwOjAwOjAwWiIsIm1pbl9zZXJpYWwiOjIsInJldm9rZWQiOls0XX0=\",\"root_key_id\":\"root-1\",\"sig\":\"kXoIF2aMqgg+Kq2s4kWVY3c+aqcsY3y8szcsX8qaGD42WtmTY4FTyljxfqoLlmw4P9G7U42fg7WX5XwvPUxZAg==\"},\"sig\":{\"alg\":\"ed25519\",\"key_id\":\"rk-3\",\"value\":\"NiO6Wmvb3y2nvfePehaGx0XvI6zXGPecLF6fWa7A/Qqg3IviNaYLSxuBrii20rSlL9Qtm6YKw4naVJ/fbUs6Bw==\"}}",
+   "expect": {
+    "code": "update.unverified",
+    "reason": "bad_revocations_sig"
+   },
+   "name": "bad_revocations_sig",
+   "now": "2026-10-22T08:00:00Z",
+   "pins": "revocation list claims root-1 but is signed by the release key",
+   "purpose": "core",
+   "state": {
+    "revocations_issued_at": "2026-10-20T00:00:00Z",
+    "seq_seen": 41,
+    "trusted_roots": [
+     "root-1"
+    ]
+   }
+  },
+  {
+   "channel": "develop",
+   "envelope": "{\"format\":\"orch.release-envelope/1\",\"key_cert\":{\"cert\":\"eyJjaGFubmVscyI6WyJkZXZlbG9wIiwibWFpbiJdLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2Uta2V5LzEiLCJrZXlfaWQiOiJyay0zIiwibm90X2FmdGVyIjoiMjAyNy0wMy0zMFQwMDowMDowMFoiLCJub3RfYmVmb3JlIjoiMjAyNi0xMC0wMVQwMDowMDowMFoiLCJwdWJsaWNfa2V5IjoiTzU0c1pNRlk5aW5DT0xWelRuOUJ2ci80cDFvS0RDWVVScnNOUDQ4ek9hMD0iLCJwdXJwb3NlIjoiY29yZSIsInNlcmlhbCI6M30=\",\"root_key_id\":\"root-1\",\"sig\":\"Mw2cAoDRgDuJ9pMXZou+UTftrDcNyGGOynBhLGmz0ZbUR4+DBkmBFDdUNii8cCElTzB2DQcMMMTw/jUKGoZTDA==\"},\"payload\":\"eyJjaGFuZ2Vsb2ciOiJURVNUIHJlbGVhc2UuIFdpa2kgYWRkLW9uOiBwYWdlIGxpbmtzOyBmaXggdGVybWluYWwgcmVzaXplLiIsImNoYW5uZWwiOiJkZXZlbG9wIiwiY29tbWl0IjoiMDJkOGViMDdkZDE1Yzk1MTA0YjRiMmM1ZTcxYzQwZjlmMDM3OWVlNiIsImV4cGlyZXNfYXQiOiIyMDI2LTExLTExVDA3OjQwOjAwWiIsImZpbGVzIjpbeyJuYW1lIjoib3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwiLCJyb2xlIjoiY29yZSIsInNoYTI1NiI6IjJhZGE1YWMzOWUwMzUzNjgzODI4MTRiNTRiNmNiMDdjMGMwNWM1YWVjMzg4OTBmOGI2NTAyYjQ3YTg3NmMzNWEiLCJzaXplIjo0NiwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwifSx7Im5hbWUiOiJvcmNoX2Rhc2hib2FyZC0yLjAuMC5kZXY0Mi1weTMtbm9uZS1hbnkud2hsIiwicm9sZSI6ImRhc2hib2FyZCIsInNoYTI1NiI6IjY0YTBmNjkyMTQzY2U2N2FkZTcxODUyNWNiNGRmOGVmYTNhNjRhNDhkMzhhYmUyMDE1NTc0MjdjNWRmZWFiNjMiLCJzaXplIjo1MSwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9kYXNoYm9hcmQtMi4wLjAuZGV2NDItcHkzLW5vbmUtYW55LndobCJ9LHsibmFtZSI6ImNvbnN0cmFpbnRzLnR4dCIsInJvbGUiOiJjb25zdHJhaW50cyIsInNoYTI1NiI6IjZjMzJjZWIzZDcxOTBkN2FmNWFlYmVmMjk2NGRiM2U4MmZjMDFkMDNlY2IyZjQ3NzNkMTQwNTFlNjNiZjVlNzgiLCJzaXplIjo1MywidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvY29uc3RyYWludHMudHh0In1dLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2UvMSIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjFUMDc6NDA6MDBaIiwibWluX2Zyb20iOiIyLjAuMC5kZXYxIiwic2VxIjo0MiwidmVyc2lvbiI6IjIuMC4wLmRldjQyIn0=\",\"revocations\":{\"doc\":\"eyJmb3JtYXQiOiJvcmNoLnJldm9jYXRpb25zLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDAwOjAwOjAwWiIsIm1pbl9zZXJpYWwiOjIsInJldm9rZWQiOls0XX0=\",\"root_key_id\":\"root-1\",\"sig\":\"8YAEebkNLHvcXbSGReypFnsmd9sdbZ+I8GMqSrEVjFS5OJ1Vhzen1sDDWMcSHzWt9p7Vfe8CRZHFRJJCWgAQCg==\"},\"sig\":{\"alg\":\"ed25519\",\"key_id\":\"rk-3\",\"value\":\"NiO6Wmvb3y2nvfePehaGx0XvI6zXGPecLF6fWa7A/Qqg3IviNaYLSxuBrii20rSlL9Qtm6YKw4naVJ/fbUs6Bw==\"}}",
+   "expect": {
+    "code": "update.stale",
+    "reason": "revocations_rollback"
+   },
+   "name": "revocations_rollback",
+   "now": "2026-10-22T08:00:00Z",
+   "pins": "the revocation list is older than the stored one (a held-back revocation)",
+   "purpose": "core",
+   "state": {
+    "revocations_issued_at": "2026-10-21T00:00:00Z",
+    "seq_seen": 41,
+    "trusted_roots": [
+     "root-1"
+    ]
+   }
+  },
+  {
+   "channel": "develop",
+   "envelope": "{\"format\":\"orch.release-envelope/1\",\"key_cert\":{\"cert\":\"eyJjaGFubmVscyI6WyJkZXZlbG9wIiwibWFpbiJdLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2Uta2V5LzEiLCJrZXlfaWQiOiJjay0xIiwibm90X2FmdGVyIjoiMjAyNy0wMy0zMFQwMDowMDowMFoiLCJub3RfYmVmb3JlIjoiMjAyNi0xMC0wMVQwMDowMDowMFoiLCJwdWJsaWNfa2V5IjoidWY5WHFSQSs0QTIzaEkxQ3pJYmVoNVA4aWVOby8rS05IekdCemJ3dndqST0iLCJwdXJwb3NlIjoiYWRkb24tY2F0YWxvZyIsInNlcmlhbCI6N30=\",\"root_key_id\":\"root-1\",\"sig\":\"2JQQIgMo+fSO4KEZ+i+HzBMVs+5IopNVZgrzHUvj6UQoSMyKa5iz8fkIU6vy6ge+YrzYsBtvRbKYn9NOv6yfDQ==\"},\"payload\":\"eyJjaGFuZ2Vsb2ciOiJURVNUIHJlbGVhc2UuIFdpa2kgYWRkLW9uOiBwYWdlIGxpbmtzOyBmaXggdGVybWluYWwgcmVzaXplLiIsImNoYW5uZWwiOiJkZXZlbG9wIiwiY29tbWl0IjoiMDJkOGViMDdkZDE1Yzk1MTA0YjRiMmM1ZTcxYzQwZjlmMDM3OWVlNiIsImV4cGlyZXNfYXQiOiIyMDI2LTExLTExVDA3OjQwOjAwWiIsImZpbGVzIjpbeyJuYW1lIjoib3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwiLCJyb2xlIjoiY29yZSIsInNoYTI1NiI6IjJhZGE1YWMzOWUwMzUzNjgzODI4MTRiNTRiNmNiMDdjMGMwNWM1YWVjMzg4OTBmOGI2NTAyYjQ3YTg3NmMzNWEiLCJzaXplIjo0NiwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwifSx7Im5hbWUiOiJvcmNoX2Rhc2hib2FyZC0yLjAuMC5kZXY0Mi1weTMtbm9uZS1hbnkud2hsIiwicm9sZSI6ImRhc2hib2FyZCIsInNoYTI1NiI6IjY0YTBmNjkyMTQzY2U2N2FkZTcxODUyNWNiNGRmOGVmYTNhNjRhNDhkMzhhYmUyMDE1NTc0MjdjNWRmZWFiNjMiLCJzaXplIjo1MSwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9kYXNoYm9hcmQtMi4wLjAuZGV2NDItcHkzLW5vbmUtYW55LndobCJ9LHsibmFtZSI6ImNvbnN0cmFpbnRzLnR4dCIsInJvbGUiOiJjb25zdHJhaW50cyIsInNoYTI1NiI6IjZjMzJjZWIzZDcxOTBkN2FmNWFlYmVmMjk2NGRiM2U4MmZjMDFkMDNlY2IyZjQ3NzNkMTQwNTFlNjNiZjVlNzgiLCJzaXplIjo1MywidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvY29uc3RyYWludHMudHh0In1dLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2UvMSIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjFUMDc6NDA6MDBaIiwibWluX2Zyb20iOiIyLjAuMC5kZXYxIiwic2VxIjo0MiwidmVyc2lvbiI6IjIuMC4wLmRldjQyIn0=\",\"revocations\":{\"doc\":\"eyJmb3JtYXQiOiJvcmNoLnJldm9jYXRpb25zLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDAwOjAwOjAwWiIsIm1pbl9zZXJpYWwiOjIsInJldm9rZWQiOls0XX0=\",\"root_key_id\":\"root-1\",\"sig\":\"8YAEebkNLHvcXbSGReypFnsmd9sdbZ+I8GMqSrEVjFS5OJ1Vhzen1sDDWMcSHzWt9p7Vfe8CRZHFRJJCWgAQCg==\"},\"sig\":{\"alg\":\"ed25519\",\"key_id\":\"ck-1\",\"value\":\"+UyE07Dw8QcJG7JmDZmPTp0MjgIldb9nYMzruP637v5N2G813jvGykQifsKI3AT58lHYcKX0e2dGOA9AykU4Dg==\"}}",
+   "expect": {
+    "code": "update.unverified",
+    "reason": "wrong_purpose"
+   },
+   "name": "wrong_purpose_catalog_key",
+   "now": "2026-10-22T08:00:00Z",
+   "pins": "the add-on catalog key (purpose addon-catalog) signs a core manifest with the core domain",
+   "purpose": "core",
+   "state": {
+    "revocations_issued_at": "2026-10-20T00:00:00Z",
+    "seq_seen": 41,
+    "trusted_roots": [
+     "root-1"
+    ]
+   }
+  },
+  {
+   "channel": "develop",
+   "envelope": "{\"format\":\"orch.release-envelope/1\",\"key_cert\":{\"cert\":\"eyJjaGFubmVscyI6WyJ0ZXN0LSoiXSwiZm9ybWF0Ijoib3JjaC5yZWxlYXNlLWtleS8xIiwia2V5X2lkIjoidGstMSIsIm5vdF9hZnRlciI6IjIwMjctMDMtMzBUMDA6MDA6MDBaIiwibm90X2JlZm9yZSI6IjIwMjYtMTAtMDFUMDA6MDA6MDBaIiwicHVibGljX2tleSI6ImQxekRYVW5RVEMyeTY5c2lsRFJ6WHN4ekxFQXREL2tMeDJHenJZTGd2OEE9IiwicHVycG9zZSI6ImNvcmUiLCJzZXJpYWwiOjh9\",\"root_key_id\":\"root-1\",\"sig\":\"47VQLgzKmeY52RoEQI3UBES+EPylwJeamoQKyngcXZBsaFVjuG9Ny9UNEl4S26n1JgKmeELHoJQlC+nSe4/2CQ==\"},\"payload\":\"eyJjaGFuZ2Vsb2ciOiJURVNUIHJlbGVhc2UuIFdpa2kgYWRkLW9uOiBwYWdlIGxpbmtzOyBmaXggdGVybWluYWwgcmVzaXplLiIsImNoYW5uZWwiOiJkZXZlbG9wIiwiY29tbWl0IjoiMDJkOGViMDdkZDE1Yzk1MTA0YjRiMmM1ZTcxYzQwZjlmMDM3OWVlNiIsImV4cGlyZXNfYXQiOiIyMDI2LTExLTExVDA3OjQwOjAwWiIsImZpbGVzIjpbeyJuYW1lIjoib3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwiLCJyb2xlIjoiY29yZSIsInNoYTI1NiI6IjJhZGE1YWMzOWUwMzUzNjgzODI4MTRiNTRiNmNiMDdjMGMwNWM1YWVjMzg4OTBmOGI2NTAyYjQ3YTg3NmMzNWEiLCJzaXplIjo0NiwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwifSx7Im5hbWUiOiJvcmNoX2Rhc2hib2FyZC0yLjAuMC5kZXY0Mi1weTMtbm9uZS1hbnkud2hsIiwicm9sZSI6ImRhc2hib2FyZCIsInNoYTI1NiI6IjY0YTBmNjkyMTQzY2U2N2FkZTcxODUyNWNiNGRmOGVmYTNhNjRhNDhkMzhhYmUyMDE1NTc0MjdjNWRmZWFiNjMiLCJzaXplIjo1MSwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9kYXNoYm9hcmQtMi4wLjAuZGV2NDItcHkzLW5vbmUtYW55LndobCJ9LHsibmFtZSI6ImNvbnN0cmFpbnRzLnR4dCIsInJvbGUiOiJjb25zdHJhaW50cyIsInNoYTI1NiI6IjZjMzJjZWIzZDcxOTBkN2FmNWFlYmVmMjk2NGRiM2U4MmZjMDFkMDNlY2IyZjQ3NzNkMTQwNTFlNjNiZjVlNzgiLCJzaXplIjo1MywidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvY29uc3RyYWludHMudHh0In1dLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2UvMSIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjFUMDc6NDA6MDBaIiwibWluX2Zyb20iOiIyLjAuMC5kZXYxIiwic2VxIjo0MiwidmVyc2lvbiI6IjIuMC4wLmRldjQyIn0=\",\"revocations\":{\"doc\":\"eyJmb3JtYXQiOiJvcmNoLnJldm9jYXRpb25zLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDAwOjAwOjAwWiIsIm1pbl9zZXJpYWwiOjIsInJldm9rZWQiOls0XX0=\",\"root_key_id\":\"root-1\",\"sig\":\"8YAEebkNLHvcXbSGReypFnsmd9sdbZ+I8GMqSrEVjFS5OJ1Vhzen1sDDWMcSHzWt9p7Vfe8CRZHFRJJCWgAQCg==\"},\"sig\":{\"alg\":\"ed25519\",\"key_id\":\"tk-1\",\"value\":\"nKK+/MYpwMDKKyMlTe3Rn8xq8S1cenJdmTvAbEgUb/LPeI66zhxZTMjeHAY7hESNfV5yMrQ3tRal+JdkjvR/Dg==\"}}",
+   "expect": {
+    "code": "update.unverified",
+    "reason": "channel_not_allowed"
+   },
+   "name": "channel_not_allowed",
+   "now": "2026-10-22T08:00:00Z",
+   "pins": "the test key (channels ['test-*']) signs a develop manifest",
+   "purpose": "core",
+   "state": {
+    "revocations_issued_at": "2026-10-20T00:00:00Z",
+    "seq_seen": 41,
+    "trusted_roots": [
+     "root-1"
+    ]
+   }
+  },
+  {
+   "channel": "develop",
+   "envelope": "{\"format\":\"orch.release-envelope/1\",\"key_cert\":{\"cert\":\"eyJjaGFubmVscyI6WyJkZXZlbG9wIiwibWFpbiJdLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2Uta2V5LzEiLCJrZXlfaWQiOiJyay01Iiwibm90X2FmdGVyIjoiMjAyNi0wOS0yOFQwMDowMDowMFoiLCJub3RfYmVmb3JlIjoiMjAyNi0wNC0wMVQwMDowMDowMFoiLCJwdWJsaWNfa2V5IjoiV2VSU00yYkxtWGVLa2tVdklZWDV0eXhpZGVydWtTSlEwdGlzaWQvcEgxZz0iLCJwdXJwb3NlIjoiY29yZSIsInNlcmlhbCI6NX0=\",\"root_key_id\":\"root-1\",\"sig\":\"tlOZu68r5Va22FbNrfu/RMU4pOkQvyU9wrc/hXur/XQPHzqtcERXJyMCTORvIlN6J32+8ACLoBCfKG13CVASDQ==\"},\"payload\":\"eyJjaGFuZ2Vsb2ciOiJURVNUIHJlbGVhc2UuIFdpa2kgYWRkLW9uOiBwYWdlIGxpbmtzOyBmaXggdGVybWluYWwgcmVzaXplLiIsImNoYW5uZWwiOiJkZXZlbG9wIiwiY29tbWl0IjoiMDJkOGViMDdkZDE1Yzk1MTA0YjRiMmM1ZTcxYzQwZjlmMDM3OWVlNiIsImV4cGlyZXNfYXQiOiIyMDI2LTExLTExVDA3OjQwOjAwWiIsImZpbGVzIjpbeyJuYW1lIjoib3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwiLCJyb2xlIjoiY29yZSIsInNoYTI1NiI6IjJhZGE1YWMzOWUwMzUzNjgzODI4MTRiNTRiNmNiMDdjMGMwNWM1YWVjMzg4OTBmOGI2NTAyYjQ3YTg3NmMzNWEiLCJzaXplIjo0NiwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwifSx7Im5hbWUiOiJvcmNoX2Rhc2hib2FyZC0yLjAuMC5kZXY0Mi1weTMtbm9uZS1hbnkud2hsIiwicm9sZSI6ImRhc2hib2FyZCIsInNoYTI1NiI6IjY0YTBmNjkyMTQzY2U2N2FkZTcxODUyNWNiNGRmOGVmYTNhNjRhNDhkMzhhYmUyMDE1NTc0MjdjNWRmZWFiNjMiLCJzaXplIjo1MSwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9kYXNoYm9hcmQtMi4wLjAuZGV2NDItcHkzLW5vbmUtYW55LndobCJ9LHsibmFtZSI6ImNvbnN0cmFpbnRzLnR4dCIsInJvbGUiOiJjb25zdHJhaW50cyIsInNoYTI1NiI6IjZjMzJjZWIzZDcxOTBkN2FmNWFlYmVmMjk2NGRiM2U4MmZjMDFkMDNlY2IyZjQ3NzNkMTQwNTFlNjNiZjVlNzgiLCJzaXplIjo1MywidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvY29uc3RyYWludHMudHh0In1dLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2UvMSIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjFUMDc6NDA6MDBaIiwibWluX2Zyb20iOiIyLjAuMC5kZXYxIiwic2VxIjo0MiwidmVyc2lvbiI6IjIuMC4wLmRldjQyIn0=\",\"revocations\":{\"doc\":\"eyJmb3JtYXQiOiJvcmNoLnJldm9jYXRpb25zLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDAwOjAwOjAwWiIsIm1pbl9zZXJpYWwiOjIsInJldm9rZWQiOls0XX0=\",\"root_key_id\":\"root-1\",\"sig\":\"8YAEebkNLHvcXbSGReypFnsmd9sdbZ+I8GMqSrEVjFS5OJ1Vhzen1sDDWMcSHzWt9p7Vfe8CRZHFRJJCWgAQCg==\"},\"sig\":{\"alg\":\"ed25519\",\"key_id\":\"rk-5\",\"value\":\"yiUtjcM3v/w7FGiUe/G9J+9DLSdqfBv59l/7MvuKIW56MnA2EEhYpf8h6r5jtF43uk2gQozoYBZ17Jy5HvkqAA==\"}}",
+   "expect": {
+    "code": "update.unverified",
+    "reason": "cert_expired"
+   },
+   "name": "cert_expired",
+   "now": "2026-10-22T08:00:00Z",
+   "pins": "now >= cert not_after",
+   "purpose": "core",
+   "state": {
+    "revocations_issued_at": "2026-10-20T00:00:00Z",
+    "seq_seen": 41,
+    "trusted_roots": [
+     "root-1"
+    ]
+   }
+  },
+  {
+   "channel": "develop",
+   "envelope": "{\"format\":\"orch.release-envelope/1\",\"key_cert\":{\"cert\":\"eyJjaGFubmVscyI6WyJkZXZlbG9wIiwibWFpbiJdLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2Uta2V5LzEiLCJrZXlfaWQiOiJyay02Iiwibm90X2FmdGVyIjoiMjAyNy0wNC0zMFQwMDowMDowMFoiLCJub3RfYmVmb3JlIjoiMjAyNi0xMS0wMVQwMDowMDowMFoiLCJwdWJsaWNfa2V5IjoicW9ENGJGVkZlWDR4cE54YkVMMWxzekVNL0E4WXdwRnBoOTE5Z0s4UGNiTT0iLCJwdXJwb3NlIjoiY29yZSIsInNlcmlhbCI6Nn0=\",\"root_key_id\":\"root-1\",\"sig\":\"D+OECMoA0hIFlNVzu8t8MXvbiY2oZoGRGL2TlILiiqUmIVhyZ+Fl+c77KUqN2LQEcMIxtPbXZ2RfATwP2pBpCw==\"},\"payload\":\"eyJjaGFuZ2Vsb2ciOiJURVNUIHJlbGVhc2UuIFdpa2kgYWRkLW9uOiBwYWdlIGxpbmtzOyBmaXggdGVybWluYWwgcmVzaXplLiIsImNoYW5uZWwiOiJkZXZlbG9wIiwiY29tbWl0IjoiMDJkOGViMDdkZDE1Yzk1MTA0YjRiMmM1ZTcxYzQwZjlmMDM3OWVlNiIsImV4cGlyZXNfYXQiOiIyMDI2LTExLTExVDA3OjQwOjAwWiIsImZpbGVzIjpbeyJuYW1lIjoib3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwiLCJyb2xlIjoiY29yZSIsInNoYTI1NiI6IjJhZGE1YWMzOWUwMzUzNjgzODI4MTRiNTRiNmNiMDdjMGMwNWM1YWVjMzg4OTBmOGI2NTAyYjQ3YTg3NmMzNWEiLCJzaXplIjo0NiwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwifSx7Im5hbWUiOiJvcmNoX2Rhc2hib2FyZC0yLjAuMC5kZXY0Mi1weTMtbm9uZS1hbnkud2hsIiwicm9sZSI6ImRhc2hib2FyZCIsInNoYTI1NiI6IjY0YTBmNjkyMTQzY2U2N2FkZTcxODUyNWNiNGRmOGVmYTNhNjRhNDhkMzhhYmUyMDE1NTc0MjdjNWRmZWFiNjMiLCJzaXplIjo1MSwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9kYXNoYm9hcmQtMi4wLjAuZGV2NDItcHkzLW5vbmUtYW55LndobCJ9LHsibmFtZSI6ImNvbnN0cmFpbnRzLnR4dCIsInJvbGUiOiJjb25zdHJhaW50cyIsInNoYTI1NiI6IjZjMzJjZWIzZDcxOTBkN2FmNWFlYmVmMjk2NGRiM2U4MmZjMDFkMDNlY2IyZjQ3NzNkMTQwNTFlNjNiZjVlNzgiLCJzaXplIjo1MywidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvY29uc3RyYWludHMudHh0In1dLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2UvMSIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjFUMDc6NDA6MDBaIiwibWluX2Zyb20iOiIyLjAuMC5kZXYxIiwic2VxIjo0MiwidmVyc2lvbiI6IjIuMC4wLmRldjQyIn0=\",\"revocations\":{\"doc\":\"eyJmb3JtYXQiOiJvcmNoLnJldm9jYXRpb25zLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDAwOjAwOjAwWiIsIm1pbl9zZXJpYWwiOjIsInJldm9rZWQiOls0XX0=\",\"root_key_id\":\"root-1\",\"sig\":\"8YAEebkNLHvcXbSGReypFnsmd9sdbZ+I8GMqSrEVjFS5OJ1Vhzen1sDDWMcSHzWt9p7Vfe8CRZHFRJJCWgAQCg==\"},\"sig\":{\"alg\":\"ed25519\",\"key_id\":\"rk-6\",\"value\":\"W28RFBhbkyxCiA0DRsxBec1AiFxIkwwh15RSLXk20Ky5IIi7XayOZJ8zD0aCyZk8QbgTdm8M0+1q/2NdYG6TCQ==\"}}",
+   "expect": {
+    "code": "update.unverified",
+    "reason": "cert_not_yet_valid"
+   },
+   "name": "cert_not_yet_valid",
+   "now": "2026-10-22T08:00:00Z",
+   "pins": "now < cert not_before",
+   "purpose": "core",
+   "state": {
+    "revocations_issued_at": "2026-10-20T00:00:00Z",
+    "seq_seen": 41,
+    "trusted_roots": [
+     "root-1"
+    ]
+   }
+  },
+  {
+   "channel": "develop",
+   "envelope": "{\"format\":\"orch.release-envelope/1\",\"key_cert\":{\"cert\":\"eyJjaGFubmVscyI6WyJkZXZlbG9wIiwibWFpbiJdLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2Uta2V5LzEiLCJrZXlfaWQiOiJyay0xIiwibm90X2FmdGVyIjoiMjAyNy0wMy0zMFQwMDowMDowMFoiLCJub3RfYmVmb3JlIjoiMjAyNi0xMC0wMVQwMDowMDowMFoiLCJwdWJsaWNfa2V5IjoiaXVRdFhkaW1QQmxYV280cmxrRXRvUW5YZ005M0NxWURvbXNrMUF0YVIrWT0iLCJwdXJwb3NlIjoiY29yZSIsInNlcmlhbCI6MX0=\",\"root_key_id\":\"root-1\",\"sig\":\"vfcV4i5KAJXlP96KFfaa1CbmPFegEjemfI38qO1deZ1MrAz/Q45km+8Tv6xlC3Q+kfvEt0RCXcLwXg1lsCWpDQ==\"},\"payload\":\"eyJjaGFuZ2Vsb2ciOiJURVNUIHJlbGVhc2UuIFdpa2kgYWRkLW9uOiBwYWdlIGxpbmtzOyBmaXggdGVybWluYWwgcmVzaXplLiIsImNoYW5uZWwiOiJkZXZlbG9wIiwiY29tbWl0IjoiMDJkOGViMDdkZDE1Yzk1MTA0YjRiMmM1ZTcxYzQwZjlmMDM3OWVlNiIsImV4cGlyZXNfYXQiOiIyMDI2LTExLTExVDA3OjQwOjAwWiIsImZpbGVzIjpbeyJuYW1lIjoib3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwiLCJyb2xlIjoiY29yZSIsInNoYTI1NiI6IjJhZGE1YWMzOWUwMzUzNjgzODI4MTRiNTRiNmNiMDdjMGMwNWM1YWVjMzg4OTBmOGI2NTAyYjQ3YTg3NmMzNWEiLCJzaXplIjo0NiwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwifSx7Im5hbWUiOiJvcmNoX2Rhc2hib2FyZC0yLjAuMC5kZXY0Mi1weTMtbm9uZS1hbnkud2hsIiwicm9sZSI6ImRhc2hib2FyZCIsInNoYTI1NiI6IjY0YTBmNjkyMTQzY2U2N2FkZTcxODUyNWNiNGRmOGVmYTNhNjRhNDhkMzhhYmUyMDE1NTc0MjdjNWRmZWFiNjMiLCJzaXplIjo1MSwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9kYXNoYm9hcmQtMi4wLjAuZGV2NDItcHkzLW5vbmUtYW55LndobCJ9LHsibmFtZSI6ImNvbnN0cmFpbnRzLnR4dCIsInJvbGUiOiJjb25zdHJhaW50cyIsInNoYTI1NiI6IjZjMzJjZWIzZDcxOTBkN2FmNWFlYmVmMjk2NGRiM2U4MmZjMDFkMDNlY2IyZjQ3NzNkMTQwNTFlNjNiZjVlNzgiLCJzaXplIjo1MywidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvY29uc3RyYWludHMudHh0In1dLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2UvMSIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjFUMDc6NDA6MDBaIiwibWluX2Zyb20iOiIyLjAuMC5kZXYxIiwic2VxIjo0MiwidmVyc2lvbiI6IjIuMC4wLmRldjQyIn0=\",\"revocations\":{\"doc\":\"eyJmb3JtYXQiOiJvcmNoLnJldm9jYXRpb25zLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDAwOjAwOjAwWiIsIm1pbl9zZXJpYWwiOjIsInJldm9rZWQiOls0XX0=\",\"root_key_id\":\"root-1\",\"sig\":\"8YAEebkNLHvcXbSGReypFnsmd9sdbZ+I8GMqSrEVjFS5OJ1Vhzen1sDDWMcSHzWt9p7Vfe8CRZHFRJJCWgAQCg==\"},\"sig\":{\"alg\":\"ed25519\",\"key_id\":\"rk-1\",\"value\":\"UHQl0DHGa3d0TTmKcJsKZecamoG0PHlFffAB5dhizqreYLXXhMnJDAuuFB0y8F02prCBsWZMEvb2LpgQuc+VCQ==\"}}",
+   "expect": {
+    "code": "update.unverified",
+    "reason": "key_revoked"
+   },
+   "name": "key_revoked_min_serial",
+   "now": "2026-10-22T08:00:00Z",
+   "pins": "cert serial 1 < min_serial 2",
+   "purpose": "core",
+   "state": {
+    "revocations_issued_at": "2026-10-20T00:00:00Z",
+    "seq_seen": 41,
+    "trusted_roots": [
+     "root-1"
+    ]
+   }
+  },
+  {
+   "channel": "develop",
+   "envelope": "{\"format\":\"orch.release-envelope/1\",\"key_cert\":{\"cert\":\"eyJjaGFubmVscyI6WyJkZXZlbG9wIiwibWFpbiJdLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2Uta2V5LzEiLCJrZXlfaWQiOiJyay00Iiwibm90X2FmdGVyIjoiMjAyNy0wMy0zMFQwMDowMDowMFoiLCJub3RfYmVmb3JlIjoiMjAyNi0xMC0wMVQwMDowMDowMFoiLCJwdWJsaWNfa2V5IjoiU2MrYk1rR1dqbWNYUXErVm5Ib3R2TXBQcTU2bzM3cUw3Y0IrN3VVWDBZZz0iLCJwdXJwb3NlIjoiY29yZSIsInNlcmlhbCI6NH0=\",\"root_key_id\":\"root-1\",\"sig\":\"gZUdLTVpS3mtsvlrBhoiQqaqoJlVKytnDJDWkj3EBZjetEDryqmfxq4C2vTgaKswJzCvZXfuVvbXDKx84KwrDQ==\"},\"payload\":\"eyJjaGFuZ2Vsb2ciOiJURVNUIHJlbGVhc2UuIFdpa2kgYWRkLW9uOiBwYWdlIGxpbmtzOyBmaXggdGVybWluYWwgcmVzaXplLiIsImNoYW5uZWwiOiJkZXZlbG9wIiwiY29tbWl0IjoiMDJkOGViMDdkZDE1Yzk1MTA0YjRiMmM1ZTcxYzQwZjlmMDM3OWVlNiIsImV4cGlyZXNfYXQiOiIyMDI2LTExLTExVDA3OjQwOjAwWiIsImZpbGVzIjpbeyJuYW1lIjoib3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwiLCJyb2xlIjoiY29yZSIsInNoYTI1NiI6IjJhZGE1YWMzOWUwMzUzNjgzODI4MTRiNTRiNmNiMDdjMGMwNWM1YWVjMzg4OTBmOGI2NTAyYjQ3YTg3NmMzNWEiLCJzaXplIjo0NiwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwifSx7Im5hbWUiOiJvcmNoX2Rhc2hib2FyZC0yLjAuMC5kZXY0Mi1weTMtbm9uZS1hbnkud2hsIiwicm9sZSI6ImRhc2hib2FyZCIsInNoYTI1NiI6IjY0YTBmNjkyMTQzY2U2N2FkZTcxODUyNWNiNGRmOGVmYTNhNjRhNDhkMzhhYmUyMDE1NTc0MjdjNWRmZWFiNjMiLCJzaXplIjo1MSwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9kYXNoYm9hcmQtMi4wLjAuZGV2NDItcHkzLW5vbmUtYW55LndobCJ9LHsibmFtZSI6ImNvbnN0cmFpbnRzLnR4dCIsInJvbGUiOiJjb25zdHJhaW50cyIsInNoYTI1NiI6IjZjMzJjZWIzZDcxOTBkN2FmNWFlYmVmMjk2NGRiM2U4MmZjMDFkMDNlY2IyZjQ3NzNkMTQwNTFlNjNiZjVlNzgiLCJzaXplIjo1MywidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvY29uc3RyYWludHMudHh0In1dLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2UvMSIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjFUMDc6NDA6MDBaIiwibWluX2Zyb20iOiIyLjAuMC5kZXYxIiwic2VxIjo0MiwidmVyc2lvbiI6IjIuMC4wLmRldjQyIn0=\",\"revocations\":{\"doc\":\"eyJmb3JtYXQiOiJvcmNoLnJldm9jYXRpb25zLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDAwOjAwOjAwWiIsIm1pbl9zZXJpYWwiOjIsInJldm9rZWQiOls0XX0=\",\"root_key_id\":\"root-1\",\"sig\":\"8YAEebkNLHvcXbSGReypFnsmd9sdbZ+I8GMqSrEVjFS5OJ1Vhzen1sDDWMcSHzWt9p7Vfe8CRZHFRJJCWgAQCg==\"},\"sig\":{\"alg\":\"ed25519\",\"key_id\":\"rk-4\",\"value\":\"g5d9/l9riYmJW/aKHReZ4mdrRmh0S5h1rF+qbgzdG8Ri0jV83O0fVizRZzwfe1emAhDtCYr07yTKFBrTpt2TCA==\"}}",
+   "expect": {
+    "code": "update.unverified",
+    "reason": "key_revoked"
+   },
+   "name": "key_revoked_listed",
+   "now": "2026-10-22T08:00:00Z",
+   "pins": "cert serial 4 is on the revoked list",
+   "purpose": "core",
+   "state": {
+    "revocations_issued_at": "2026-10-20T00:00:00Z",
+    "seq_seen": 41,
+    "trusted_roots": [
+     "root-1"
+    ]
+   }
+  },
+  {
+   "channel": "develop",
+   "envelope": "{\"format\":\"orch.release-envelope/1\",\"key_cert\":{\"cert\":\"eyJjaGFubmVscyI6WyJkZXZlbG9wIiwibWFpbiJdLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2Uta2V5LzEiLCJrZXlfaWQiOiJyay0zIiwibm90X2FmdGVyIjoiMjAyNy0wMy0zMFQwMDowMDowMFoiLCJub3RfYmVmb3JlIjoiMjAyNi0xMC0wMVQwMDowMDowMFoiLCJwdWJsaWNfa2V5IjoiTzU0c1pNRlk5aW5DT0xWelRuOUJ2ci80cDFvS0RDWVVScnNOUDQ4ek9hMD0iLCJwdXJwb3NlIjoiY29yZSIsInNlcmlhbCI6M30=\",\"root_key_id\":\"root-1\",\"sig\":\"Mw2cAoDRgDuJ9pMXZou+UTftrDcNyGGOynBhLGmz0ZbUR4+DBkmBFDdUNii8cCElTzB2DQcMMMTw/jUKGoZTDA==\"},\"payload\":\"eyJjaGFuZ2Vsb2ciOiJURVNUIHJlbGVhc2UuIFdpa2kgYWRkLW9uOiBwYWdlIGxpbmtzOyBmaXggdGVybWluYWwgcmVzaXplLiIsImNoYW5uZWwiOiJkZXZlbG9wIiwiY29tbWl0IjoiMDJkOGViMDdkZDE1Yzk1MTA0YjRiMmM1ZTcxYzQwZjlmMDM3OWVlNiIsImV4cGlyZXNfYXQiOiIyMDI2LTExLTExVDA3OjQwOjAwWiIsImZpbGVzIjpbeyJuYW1lIjoib3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwiLCJyb2xlIjoiY29yZSIsInNoYTI1NiI6IjJhZGE1YWMzOWUwMzUzNjgzODI4MTRiNTRiNmNiMDdjMGMwNWM1YWVjMzg4OTBmOGI2NTAyYjQ3YTg3NmMzNWEiLCJzaXplIjo0NiwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwifSx7Im5hbWUiOiJvcmNoX2Rhc2hib2FyZC0yLjAuMC5kZXY0Mi1weTMtbm9uZS1hbnkud2hsIiwicm9sZSI6ImRhc2hib2FyZCIsInNoYTI1NiI6IjY0YTBmNjkyMTQzY2U2N2FkZTcxODUyNWNiNGRmOGVmYTNhNjRhNDhkMzhhYmUyMDE1NTc0MjdjNWRmZWFiNjMiLCJzaXplIjo1MSwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9kYXNoYm9hcmQtMi4wLjAuZGV2NDItcHkzLW5vbmUtYW55LndobCJ9LHsibmFtZSI6ImNvbnN0cmFpbnRzLnR4dCIsInJvbGUiOiJjb25zdHJhaW50cyIsInNoYTI1NiI6IjZjMzJjZWIzZDcxOTBkN2FmNWFlYmVmMjk2NGRiM2U4MmZjMDFkMDNlY2IyZjQ3NzNkMTQwNTFlNjNiZjVlNzgiLCJzaXplIjo1MywidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvY29uc3RyYWludHMudHh0In1dLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2UvMSIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjFUMDc6NDA6MDBaIiwibWluX2Zyb20iOiIyLjAuMC5kZXYxIiwic2VxIjo0MiwidmVyc2lvbiI6IjIuMC4wLmRldjQyIn0=\",\"revocations\":{\"doc\":\"eyJmb3JtYXQiOiJvcmNoLnJldm9jYXRpb25zLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDAwOjAwOjAwWiIsIm1pbl9zZXJpYWwiOjIsInJldm9rZWQiOls0XX0=\",\"root_key_id\":\"root-1\",\"sig\":\"8YAEebkNLHvcXbSGReypFnsmd9sdbZ+I8GMqSrEVjFS5OJ1Vhzen1sDDWMcSHzWt9p7Vfe8CRZHFRJJCWgAQCg==\"},\"sig\":{\"alg\":\"ed25519\",\"key_id\":\"rk-9\",\"value\":\"NiO6Wmvb3y2nvfePehaGx0XvI6zXGPecLF6fWa7A/Qqg3IviNaYLSxuBrii20rSlL9Qtm6YKw4naVJ/fbUs6Bw==\"}}",
+   "expect": {
+    "code": "update.unverified",
+    "reason": "key_mismatch"
+   },
+   "name": "key_mismatch",
+   "now": "2026-10-22T08:00:00Z",
+   "pins": "sig.key_id names another key than the certificate",
+   "purpose": "core",
+   "state": {
+    "revocations_issued_at": "2026-10-20T00:00:00Z",
+    "seq_seen": 41,
+    "trusted_roots": [
+     "root-1"
+    ]
+   }
+  },
+  {
+   "channel": "develop",
+   "envelope": "{\"format\":\"orch.release-envelope/1\",\"key_cert\":{\"cert\":\"eyJjaGFubmVscyI6WyJkZXZlbG9wIiwibWFpbiJdLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2Uta2V5LzEiLCJrZXlfaWQiOiJyay0zIiwibm90X2FmdGVyIjoiMjAyNy0wMy0zMFQwMDowMDowMFoiLCJub3RfYmVmb3JlIjoiMjAyNi0xMC0wMVQwMDowMDowMFoiLCJwdWJsaWNfa2V5IjoiTzU0c1pNRlk5aW5DT0xWelRuOUJ2ci80cDFvS0RDWVVScnNOUDQ4ek9hMD0iLCJwdXJwb3NlIjoiY29yZSIsInNlcmlhbCI6M30=\",\"root_key_id\":\"root-1\",\"sig\":\"Mw2cAoDRgDuJ9pMXZou+UTftrDcNyGGOynBhLGmz0ZbUR4+DBkmBFDdUNii8cCElTzB2DQcMMMTw/jUKGoZTDA==\"},\"payload\":\"eyJjaGFuZ2Vsb2ciOiJURVNUIHJlbGVhc2UuIFdpa2kgYWRkLW9uOiBwYWdlIGxpbmtzOyBmaXggdGVybWluYWwgcmVzaXpFLiIsImNoYW5uZWwiOiJkZXZlbG9wIiwiY29tbWl0IjoiMDJkOGViMDdkZDE1Yzk1MTA0YjRiMmM1ZTcxYzQwZjlmMDM3OWVlNiIsImV4cGlyZXNfYXQiOiIyMDI2LTExLTExVDA3OjQwOjAwWiIsImZpbGVzIjpbeyJuYW1lIjoib3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwiLCJyb2xlIjoiY29yZSIsInNoYTI1NiI6IjJhZGE1YWMzOWUwMzUzNjgzODI4MTRiNTRiNmNiMDdjMGMwNWM1YWVjMzg4OTBmOGI2NTAyYjQ3YTg3NmMzNWEiLCJzaXplIjo0NiwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwifSx7Im5hbWUiOiJvcmNoX2Rhc2hib2FyZC0yLjAuMC5kZXY0Mi1weTMtbm9uZS1hbnkud2hsIiwicm9sZSI6ImRhc2hib2FyZCIsInNoYTI1NiI6IjY0YTBmNjkyMTQzY2U2N2FkZTcxODUyNWNiNGRmOGVmYTNhNjRhNDhkMzhhYmUyMDE1NTc0MjdjNWRmZWFiNjMiLCJzaXplIjo1MSwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9kYXNoYm9hcmQtMi4wLjAuZGV2NDItcHkzLW5vbmUtYW55LndobCJ9LHsibmFtZSI6ImNvbnN0cmFpbnRzLnR4dCIsInJvbGUiOiJjb25zdHJhaW50cyIsInNoYTI1NiI6IjZjMzJjZWIzZDcxOTBkN2FmNWFlYmVmMjk2NGRiM2U4MmZjMDFkMDNlY2IyZjQ3NzNkMTQwNTFlNjNiZjVlNzgiLCJzaXplIjo1MywidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvY29uc3RyYWludHMudHh0In1dLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2UvMSIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjFUMDc6NDA6MDBaIiwibWluX2Zyb20iOiIyLjAuMC5kZXYxIiwic2VxIjo0MiwidmVyc2lvbiI6IjIuMC4wLmRldjQyIn0=\",\"revocations\":{\"doc\":\"eyJmb3JtYXQiOiJvcmNoLnJldm9jYXRpb25zLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDAwOjAwOjAwWiIsIm1pbl9zZXJpYWwiOjIsInJldm9rZWQiOls0XX0=\",\"root_key_id\":\"root-1\",\"sig\":\"8YAEebkNLHvcXbSGReypFnsmd9sdbZ+I8GMqSrEVjFS5OJ1Vhzen1sDDWMcSHzWt9p7Vfe8CRZHFRJJCWgAQCg==\"},\"sig\":{\"alg\":\"ed25519\",\"key_id\":\"rk-3\",\"value\":\"NiO6Wmvb3y2nvfePehaGx0XvI6zXGPecLF6fWa7A/Qqg3IviNaYLSxuBrii20rSlL9Qtm6YKw4naVJ/fbUs6Bw==\"}}",
+   "expect": {
+    "code": "update.unverified",
+    "reason": "bad_sig"
+   },
+   "name": "bad_sig_tampered_payload",
+   "now": "2026-10-22T08:00:00Z",
+   "pins": "payload changed after signing",
+   "purpose": "core",
+   "state": {
+    "revocations_issued_at": "2026-10-20T00:00:00Z",
+    "seq_seen": 41,
+    "trusted_roots": [
+     "root-1"
+    ]
+   }
+  },
+  {
+   "channel": "develop",
+   "envelope": "{\"format\":\"orch.release-envelope/1\",\"key_cert\":{\"cert\":\"eyJjaGFubmVscyI6WyJkZXZlbG9wIiwibWFpbiJdLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2Uta2V5LzEiLCJrZXlfaWQiOiJyay0zIiwibm90X2FmdGVyIjoiMjAyNy0wMy0zMFQwMDowMDowMFoiLCJub3RfYmVmb3JlIjoiMjAyNi0xMC0wMVQwMDowMDowMFoiLCJwdWJsaWNfa2V5IjoiTzU0c1pNRlk5aW5DT0xWelRuOUJ2ci80cDFvS0RDWVVScnNOUDQ4ek9hMD0iLCJwdXJwb3NlIjoiY29yZSIsInNlcmlhbCI6M30=\",\"root_key_id\":\"root-1\",\"sig\":\"Mw2cAoDRgDuJ9pMXZou+UTftrDcNyGGOynBhLGmz0ZbUR4+DBkmBFDdUNii8cCElTzB2DQcMMMTw/jUKGoZTDA==\"},\"payload\":\"eyJjaGFuZ2Vsb2ciOiJURVNUIHJlbGVhc2UuIFdpa2kgYWRkLW9uOiBwYWdlIGxpbmtzOyBmaXggdGVybWluYWwgcmVzaXplLiIsImNoYW5uZWwiOiJkZXZlbG9wIiwiY29tbWl0IjoiMDJkOGViMDdkZDE1Yzk1MTA0YjRiMmM1ZTcxYzQwZjlmMDM3OWVlNiIsImV4cGlyZXNfYXQiOiIyMDI2LTExLTExVDA3OjQwOjAwWiIsImZpbGVzIjpbeyJuYW1lIjoib3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwiLCJyb2xlIjoiY29yZSIsInNoYTI1NiI6IjJhZGE1YWMzOWUwMzUzNjgzODI4MTRiNTRiNmNiMDdjMGMwNWM1YWVjMzg4OTBmOGI2NTAyYjQ3YTg3NmMzNWEiLCJzaXplIjo0NiwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwifSx7Im5hbWUiOiJvcmNoX2Rhc2hib2FyZC0yLjAuMC5kZXY0Mi1weTMtbm9uZS1hbnkud2hsIiwicm9sZSI6ImRhc2hib2FyZCIsInNoYTI1NiI6IjY0YTBmNjkyMTQzY2U2N2FkZTcxODUyNWNiNGRmOGVmYTNhNjRhNDhkMzhhYmUyMDE1NTc0MjdjNWRmZWFiNjMiLCJzaXplIjo1MSwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9kYXNoYm9hcmQtMi4wLjAuZGV2NDItcHkzLW5vbmUtYW55LndobCJ9LHsibmFtZSI6ImNvbnN0cmFpbnRzLnR4dCIsInJvbGUiOiJjb25zdHJhaW50cyIsInNoYTI1NiI6IjZjMzJjZWIzZDcxOTBkN2FmNWFlYmVmMjk2NGRiM2U4MmZjMDFkMDNlY2IyZjQ3NzNkMTQwNTFlNjNiZjVlNzgiLCJzaXplIjo1MywidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvY29uc3RyYWludHMudHh0In1dLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2UvMSIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjFUMDc6NDA6MDBaIiwibWluX2Zyb20iOiIyLjAuMC5kZXYxIiwic2VxIjo0MiwidmVyc2lvbiI6IjIuMC4wLmRldjQyIn0=\",\"revocations\":{\"doc\":\"eyJmb3JtYXQiOiJvcmNoLnJldm9jYXRpb25zLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDAwOjAwOjAwWiIsIm1pbl9zZXJpYWwiOjIsInJldm9rZWQiOls0XX0=\",\"root_key_id\":\"root-1\",\"sig\":\"8YAEebkNLHvcXbSGReypFnsmd9sdbZ+I8GMqSrEVjFS5OJ1Vhzen1sDDWMcSHzWt9p7Vfe8CRZHFRJJCWgAQCg==\"},\"sig\":{\"alg\":\"ed25519\",\"key_id\":\"rk-3\",\"value\":\"abl2G7BvzCj9eqrMRBVSFlThZibzTMHV9jCNKd2P9PvgEwvVExpgVmBJvc96CmnCL+aGrXs2EZ6Fv3ALfeloAQ==\"}}",
+   "expect": {
+    "code": "update.unverified",
+    "reason": "bad_sig"
+   },
+   "name": "bad_sig_no_domain",
+   "now": "2026-10-22T08:00:00Z",
+   "pins": "signature over the payload without the domain prefix",
+   "purpose": "core",
+   "state": {
+    "revocations_issued_at": "2026-10-20T00:00:00Z",
+    "seq_seen": 41,
+    "trusted_roots": [
+     "root-1"
+    ]
+   }
+  },
+  {
+   "channel": "develop",
+   "envelope": "{\"format\":\"orch.release-envelope/1\",\"key_cert\":{\"cert\":\"eyJjaGFubmVscyI6WyJkZXZlbG9wIiwibWFpbiJdLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2Uta2V5LzEiLCJrZXlfaWQiOiJyay0zIiwibm90X2FmdGVyIjoiMjAyNy0wMy0zMFQwMDowMDowMFoiLCJub3RfYmVmb3JlIjoiMjAyNi0xMC0wMVQwMDowMDowMFoiLCJwdWJsaWNfa2V5IjoiTzU0c1pNRlk5aW5DT0xWelRuOUJ2ci80cDFvS0RDWVVScnNOUDQ4ek9hMD0iLCJwdXJwb3NlIjoiY29yZSIsInNlcmlhbCI6M30=\",\"root_key_id\":\"root-1\",\"sig\":\"Mw2cAoDRgDuJ9pMXZou+UTftrDcNyGGOynBhLGmz0ZbUR4+DBkmBFDdUNii8cCElTzB2DQcMMMTw/jUKGoZTDA==\"},\"payload\":\"eyJjaGFuZ2Vsb2ciOiJURVNUIHJlbGVhc2UuIFdpa2kgYWRkLW9uOiBwYWdlIGxpbmtzOyBmaXggdGVybWluYWwgcmVzaXplLiIsImNoYW5uZWwiOiJkZXZlbG9wIiwiY29tbWl0IjoiMDJkOGViMDdkZDE1Yzk1MTA0YjRiMmM1ZTcxYzQwZjlmMDM3OWVlNiIsImV4cGlyZXNfYXQiOiIyMDI2LTExLTExVDA3OjQwOjAwWiIsImZpbGVzIjpbeyJuYW1lIjoib3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwiLCJyb2xlIjoiY29yZSIsInNoYTI1NiI6IjJhZGE1YWMzOWUwMzUzNjgzODI4MTRiNTRiNmNiMDdjMGMwNWM1YWVjMzg4OTBmOGI2NTAyYjQ3YTg3NmMzNWEiLCJzaXplIjo0NiwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwifSx7Im5hbWUiOiJvcmNoX2Rhc2hib2FyZC0yLjAuMC5kZXY0Mi1weTMtbm9uZS1hbnkud2hsIiwicm9sZSI6ImRhc2hib2FyZCIsInNoYTI1NiI6IjY0YTBmNjkyMTQzY2U2N2FkZTcxODUyNWNiNGRmOGVmYTNhNjRhNDhkMzhhYmUyMDE1NTc0MjdjNWRmZWFiNjMiLCJzaXplIjo1MSwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9kYXNoYm9hcmQtMi4wLjAuZGV2NDItcHkzLW5vbmUtYW55LndobCJ9LHsibmFtZSI6ImNvbnN0cmFpbnRzLnR4dCIsInJvbGUiOiJjb25zdHJhaW50cyIsInNoYTI1NiI6IjZjMzJjZWIzZDcxOTBkN2FmNWFlYmVmMjk2NGRiM2U4MmZjMDFkMDNlY2IyZjQ3NzNkMTQwNTFlNjNiZjVlNzgiLCJzaXplIjo1MywidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvY29uc3RyYWludHMudHh0In1dLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2UvMSIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjFUMDc6NDA6MDBaIiwibWluX2Zyb20iOiIyLjAuMC5kZXYxIiwic2VxIjo0MiwidmVyc2lvbiI6IjIuMC4wLmRldjQyIn0=\",\"revocations\":{\"doc\":\"eyJmb3JtYXQiOiJvcmNoLnJldm9jYXRpb25zLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDAwOjAwOjAwWiIsIm1pbl9zZXJpYWwiOjIsInJldm9rZWQiOls0XX0=\",\"root_key_id\":\"root-1\",\"sig\":\"8YAEebkNLHvcXbSGReypFnsmd9sdbZ+I8GMqSrEVjFS5OJ1Vhzen1sDDWMcSHzWt9p7Vfe8CRZHFRJJCWgAQCg==\"},\"sig\":{\"alg\":\"ed25519\",\"key_id\":\"rk-3\",\"value\":\"T1WMT6TFv0mASQSEmtECguUS/L/zqTwFZ0U4xpc0uxxTi/HoQufB/Kb1kuVOptospOB8RVmnuUv0Z4C8btboCA==\"}}",
+   "expect": {
+    "code": "update.unverified",
+    "reason": "bad_sig"
+   },
+   "name": "bad_sig_catalog_domain",
+   "now": "2026-10-22T08:00:00Z",
+   "pins": "the core key signs a core manifest under the catalog domain",
+   "purpose": "core",
+   "state": {
+    "revocations_issued_at": "2026-10-20T00:00:00Z",
+    "seq_seen": 41,
+    "trusted_roots": [
+     "root-1"
+    ]
+   }
+  },
+  {
+   "channel": "develop",
+   "envelope": "{\"format\":\"orch.release-envelope/1\",\"key_cert\":{\"cert\":\"eyJjaGFubmVscyI6WyJkZXZlbG9wIiwibWFpbiJdLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2Uta2V5LzEiLCJrZXlfaWQiOiJyay0zIiwibm90X2FmdGVyIjoiMjAyNy0wMy0zMFQwMDowMDowMFoiLCJub3RfYmVmb3JlIjoiMjAyNi0xMC0wMVQwMDowMDowMFoiLCJwdWJsaWNfa2V5IjoiTzU0c1pNRlk5aW5DT0xWelRuOUJ2ci80cDFvS0RDWVVScnNOUDQ4ek9hMD0iLCJwdXJwb3NlIjoiY29yZSIsInNlcmlhbCI6M30=\",\"root_key_id\":\"root-1\",\"sig\":\"Mw2cAoDRgDuJ9pMXZou+UTftrDcNyGGOynBhLGmz0ZbUR4+DBkmBFDdUNii8cCElTzB2DQcMMMTw/jUKGoZTDA==\"},\"payload\":\"eyJhZGRvbnMiOnsid2lraSI6eyJ0aXRsZSI6Ildpa2kiLCJ2ZXJzaW9ucyI6W3siYXBpIjoiPj0xLjEsPDIiLCJhcmNoaXZlIjp7InNoYTI1NiI6IjMwM2UzMjc3NDQ2ZGMzZjNjYTk4MDBkZjE1MzE2Njg1ZjM2ZTIwZjkyNmU5Mjk2ODdmOGFhZDNlNDU4MDRkYjkiLCJzaXplIjo1MTIwLCJ1cmwiOiJodHRwczovL2dpdGh1Yi5jb20vc2V2ZXJpbmxpbmRlbm1hbm4vb3JjaC1jb3JlL3JlbGVhc2VzL2Rvd25sb2FkL2FkZG9uLXdpa2ktdjAuMi4wL3dpa2ktMC4yLjAudGFyIn0sImNhcGFiaWxpdGllcyI6W10sImNoYW5nZWxvZyI6IlRFU1QuIFBhZ2UgbGlua3MgaW4gdGlja2V0cy4iLCJtaW5fY29yZSI6IjIuMC4wLmRldjYwIiwicGFja2FnZV9zaGEyNTYiOiJzaGEyNTY6ZjdjNjM1NWRmM2NkMTQ3YjI1YjU5ZjA5MWUwZDFiZDE4ZDQwYjcwMTk5OTllZTQ3ODMyNzM0YzA2NmVkZDBkZSIsInJldm9rZWQiOmZhbHNlLCJ2ZXJzaW9uIjoiMC4yLjAifV19fSwiY2hhbm5lbCI6ImRldmVsb3AiLCJleHBpcmVzX2F0IjoiMjAyNi0xMS0xMVQwNzo0MDowMFoiLCJmb3JtYXQiOiJvcmNoLmFkZG9uLWNhdGFsb2cvMSIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjFUMDc6NDA6MDBaIiwic2VxIjozMTF9\",\"revocations\":{\"doc\":\"eyJmb3JtYXQiOiJvcmNoLnJldm9jYXRpb25zLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDAwOjAwOjAwWiIsIm1pbl9zZXJpYWwiOjIsInJldm9rZWQiOls0XX0=\",\"root_key_id\":\"root-1\",\"sig\":\"8YAEebkNLHvcXbSGReypFnsmd9sdbZ+I8GMqSrEVjFS5OJ1Vhzen1sDDWMcSHzWt9p7Vfe8CRZHFRJJCWgAQCg==\"},\"sig\":{\"alg\":\"ed25519\",\"key_id\":\"rk-3\",\"value\":\"fTgbYV1HkcBpShH+3Jhrmu3dTYwsyXHRJ07QTVVTeJAvqPU8PlmpW5Ly5FU93oDfRhwdJ8auJse3JLDZ6VaqAg==\"}}",
+   "expect": {
+    "code": "update.unverified",
+    "reason": "wrong_format"
+   },
+   "name": "wrong_format_catalog_payload",
+   "now": "2026-10-22T08:00:00Z",
+   "pins": "the core key signs a catalog payload under the core domain; verified as core",
+   "purpose": "core",
+   "state": {
+    "revocations_issued_at": "2026-10-20T00:00:00Z",
+    "seq_seen": 41,
+    "trusted_roots": [
+     "root-1"
+    ]
+   }
+  },
+  {
+   "channel": "main",
+   "envelope": "{\"format\":\"orch.release-envelope/1\",\"key_cert\":{\"cert\":\"eyJjaGFubmVscyI6WyJkZXZlbG9wIiwibWFpbiJdLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2Uta2V5LzEiLCJrZXlfaWQiOiJyay0zIiwibm90X2FmdGVyIjoiMjAyNy0wMy0zMFQwMDowMDowMFoiLCJub3RfYmVmb3JlIjoiMjAyNi0xMC0wMVQwMDowMDowMFoiLCJwdWJsaWNfa2V5IjoiTzU0c1pNRlk5aW5DT0xWelRuOUJ2ci80cDFvS0RDWVVScnNOUDQ4ek9hMD0iLCJwdXJwb3NlIjoiY29yZSIsInNlcmlhbCI6M30=\",\"root_key_id\":\"root-1\",\"sig\":\"Mw2cAoDRgDuJ9pMXZou+UTftrDcNyGGOynBhLGmz0ZbUR4+DBkmBFDdUNii8cCElTzB2DQcMMMTw/jUKGoZTDA==\"},\"payload\":\"eyJjaGFuZ2Vsb2ciOiJURVNUIHJlbGVhc2UuIFdpa2kgYWRkLW9uOiBwYWdlIGxpbmtzOyBmaXggdGVybWluYWwgcmVzaXplLiIsImNoYW5uZWwiOiJkZXZlbG9wIiwiY29tbWl0IjoiMDJkOGViMDdkZDE1Yzk1MTA0YjRiMmM1ZTcxYzQwZjlmMDM3OWVlNiIsImV4cGlyZXNfYXQiOiIyMDI2LTExLTExVDA3OjQwOjAwWiIsImZpbGVzIjpbeyJuYW1lIjoib3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwiLCJyb2xlIjoiY29yZSIsInNoYTI1NiI6IjJhZGE1YWMzOWUwMzUzNjgzODI4MTRiNTRiNmNiMDdjMGMwNWM1YWVjMzg4OTBmOGI2NTAyYjQ3YTg3NmMzNWEiLCJzaXplIjo0NiwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwifSx7Im5hbWUiOiJvcmNoX2Rhc2hib2FyZC0yLjAuMC5kZXY0Mi1weTMtbm9uZS1hbnkud2hsIiwicm9sZSI6ImRhc2hib2FyZCIsInNoYTI1NiI6IjY0YTBmNjkyMTQzY2U2N2FkZTcxODUyNWNiNGRmOGVmYTNhNjRhNDhkMzhhYmUyMDE1NTc0MjdjNWRmZWFiNjMiLCJzaXplIjo1MSwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9kYXNoYm9hcmQtMi4wLjAuZGV2NDItcHkzLW5vbmUtYW55LndobCJ9LHsibmFtZSI6ImNvbnN0cmFpbnRzLnR4dCIsInJvbGUiOiJjb25zdHJhaW50cyIsInNoYTI1NiI6IjZjMzJjZWIzZDcxOTBkN2FmNWFlYmVmMjk2NGRiM2U4MmZjMDFkMDNlY2IyZjQ3NzNkMTQwNTFlNjNiZjVlNzgiLCJzaXplIjo1MywidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvY29uc3RyYWludHMudHh0In1dLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2UvMSIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjFUMDc6NDA6MDBaIiwibWluX2Zyb20iOiIyLjAuMC5kZXYxIiwic2VxIjo0MiwidmVyc2lvbiI6IjIuMC4wLmRldjQyIn0=\",\"revocations\":{\"doc\":\"eyJmb3JtYXQiOiJvcmNoLnJldm9jYXRpb25zLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDAwOjAwOjAwWiIsIm1pbl9zZXJpYWwiOjIsInJldm9rZWQiOls0XX0=\",\"root_key_id\":\"root-1\",\"sig\":\"8YAEebkNLHvcXbSGReypFnsmd9sdbZ+I8GMqSrEVjFS5OJ1Vhzen1sDDWMcSHzWt9p7Vfe8CRZHFRJJCWgAQCg==\"},\"sig\":{\"alg\":\"ed25519\",\"key_id\":\"rk-3\",\"value\":\"NiO6Wmvb3y2nvfePehaGx0XvI6zXGPecLF6fWa7A/Qqg3IviNaYLSxuBrii20rSlL9Qtm6YKw4naVJ/fbUs6Bw==\"}}",
+   "expect": {
+    "code": "update.unverified",
+    "reason": "wrong_channel"
+   },
+   "name": "wrong_channel",
+   "now": "2026-10-22T08:00:00Z",
+   "pins": "a valid develop release fetched for channel main",
+   "purpose": "core",
+   "state": {
+    "revocations_issued_at": "2026-10-20T00:00:00Z",
+    "seq_seen": 41,
+    "trusted_roots": [
+     "root-1"
+    ]
+   }
+  },
+  {
+   "channel": "develop",
+   "envelope": "{\"format\":\"orch.release-envelope/1\",\"key_cert\":{\"cert\":\"eyJjaGFubmVscyI6WyJkZXZlbG9wIiwibWFpbiJdLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2Uta2V5LzEiLCJrZXlfaWQiOiJyay0zIiwibm90X2FmdGVyIjoiMjAyNy0wMy0zMFQwMDowMDowMFoiLCJub3RfYmVmb3JlIjoiMjAyNi0xMC0wMVQwMDowMDowMFoiLCJwdWJsaWNfa2V5IjoiTzU0c1pNRlk5aW5DT0xWelRuOUJ2ci80cDFvS0RDWVVScnNOUDQ4ek9hMD0iLCJwdXJwb3NlIjoiY29yZSIsInNlcmlhbCI6M30=\",\"root_key_id\":\"root-1\",\"sig\":\"Mw2cAoDRgDuJ9pMXZou+UTftrDcNyGGOynBhLGmz0ZbUR4+DBkmBFDdUNii8cCElTzB2DQcMMMTw/jUKGoZTDA==\"},\"payload\":\"eyJjaGFuZ2Vsb2ciOiJURVNUIHJlbGVhc2UuIFdpa2kgYWRkLW9uOiBwYWdlIGxpbmtzOyBmaXggdGVybWluYWwgcmVzaXplLiIsImNoYW5uZWwiOiJkZXZlbG9wIiwiY29tbWl0IjoiMDJkOGViMDdkZDE1Yzk1MTA0YjRiMmM1ZTcxYzQwZjlmMDM3OWVlNiIsImV4cGlyZXNfYXQiOiIyMDI2LTEwLTExVDA3OjQwOjAwWiIsImZpbGVzIjpbeyJuYW1lIjoib3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwiLCJyb2xlIjoiY29yZSIsInNoYTI1NiI6IjJhZGE1YWMzOWUwMzUzNjgzODI4MTRiNTRiNmNiMDdjMGMwNWM1YWVjMzg4OTBmOGI2NTAyYjQ3YTg3NmMzNWEiLCJzaXplIjo0NiwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwifSx7Im5hbWUiOiJvcmNoX2Rhc2hib2FyZC0yLjAuMC5kZXY0Mi1weTMtbm9uZS1hbnkud2hsIiwicm9sZSI6ImRhc2hib2FyZCIsInNoYTI1NiI6IjY0YTBmNjkyMTQzY2U2N2FkZTcxODUyNWNiNGRmOGVmYTNhNjRhNDhkMzhhYmUyMDE1NTc0MjdjNWRmZWFiNjMiLCJzaXplIjo1MSwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9kYXNoYm9hcmQtMi4wLjAuZGV2NDItcHkzLW5vbmUtYW55LndobCJ9LHsibmFtZSI6ImNvbnN0cmFpbnRzLnR4dCIsInJvbGUiOiJjb25zdHJhaW50cyIsInNoYTI1NiI6IjZjMzJjZWIzZDcxOTBkN2FmNWFlYmVmMjk2NGRiM2U4MmZjMDFkMDNlY2IyZjQ3NzNkMTQwNTFlNjNiZjVlNzgiLCJzaXplIjo1MywidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvY29uc3RyYWludHMudHh0In1dLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2UvMSIsImlzc3VlZF9hdCI6IjIwMjYtMDktMjBUMDc6NDA6MDBaIiwibWluX2Zyb20iOiIyLjAuMC5kZXYxIiwic2VxIjo0MiwidmVyc2lvbiI6IjIuMC4wLmRldjQyIn0=\",\"revocations\":{\"doc\":\"eyJmb3JtYXQiOiJvcmNoLnJldm9jYXRpb25zLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDAwOjAwOjAwWiIsIm1pbl9zZXJpYWwiOjIsInJldm9rZWQiOls0XX0=\",\"root_key_id\":\"root-1\",\"sig\":\"8YAEebkNLHvcXbSGReypFnsmd9sdbZ+I8GMqSrEVjFS5OJ1Vhzen1sDDWMcSHzWt9p7Vfe8CRZHFRJJCWgAQCg==\"},\"sig\":{\"alg\":\"ed25519\",\"key_id\":\"rk-3\",\"value\":\"RJinEXpAGItmzwGAai6VNAwzSpnNSNrUZYanU8+4fHsz6Xk1SRiLw5vjCd0kYlqgj0cO9tRjHf/kurKDGoV3Cg==\"}}",
+   "expect": {
+    "code": "update.stale",
+    "reason": "expired"
+   },
+   "name": "expired",
+   "now": "2026-10-22T08:00:00Z",
+   "pins": "now >= manifest expires_at",
+   "purpose": "core",
+   "state": {
+    "revocations_issued_at": "2026-10-20T00:00:00Z",
+    "seq_seen": 41,
+    "trusted_roots": [
+     "root-1"
+    ]
+   }
+  },
+  {
+   "channel": "develop",
+   "envelope": "{\"format\":\"orch.release-envelope/1\",\"key_cert\":{\"cert\":\"eyJjaGFubmVscyI6WyJkZXZlbG9wIiwibWFpbiJdLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2Uta2V5LzEiLCJrZXlfaWQiOiJyay0zIiwibm90X2FmdGVyIjoiMjAyNy0wMy0zMFQwMDowMDowMFoiLCJub3RfYmVmb3JlIjoiMjAyNi0xMC0wMVQwMDowMDowMFoiLCJwdWJsaWNfa2V5IjoiTzU0c1pNRlk5aW5DT0xWelRuOUJ2ci80cDFvS0RDWVVScnNOUDQ4ek9hMD0iLCJwdXJwb3NlIjoiY29yZSIsInNlcmlhbCI6M30=\",\"root_key_id\":\"root-1\",\"sig\":\"Mw2cAoDRgDuJ9pMXZou+UTftrDcNyGGOynBhLGmz0ZbUR4+DBkmBFDdUNii8cCElTzB2DQcMMMTw/jUKGoZTDA==\"},\"payload\":\"eyJjaGFuZ2Vsb2ciOiJURVNUIHJlbGVhc2UuIFdpa2kgYWRkLW9uOiBwYWdlIGxpbmtzOyBmaXggdGVybWluYWwgcmVzaXplLiIsImNoYW5uZWwiOiJkZXZlbG9wIiwiY29tbWl0IjoiMDJkOGViMDdkZDE1Yzk1MTA0YjRiMmM1ZTcxYzQwZjlmMDM3OWVlNiIsImV4cGlyZXNfYXQiOiIyMDI2LTExLTExVDA3OjQwOjAwWiIsImZpbGVzIjpbeyJuYW1lIjoib3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwiLCJyb2xlIjoiY29yZSIsInNoYTI1NiI6IjJhZGE1YWMzOWUwMzUzNjgzODI4MTRiNTRiNmNiMDdjMGMwNWM1YWVjMzg4OTBmOGI2NTAyYjQ3YTg3NmMzNWEiLCJzaXplIjo0NiwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwifSx7Im5hbWUiOiJvcmNoX2Rhc2hib2FyZC0yLjAuMC5kZXY0Mi1weTMtbm9uZS1hbnkud2hsIiwicm9sZSI6ImRhc2hib2FyZCIsInNoYTI1NiI6IjY0YTBmNjkyMTQzY2U2N2FkZTcxODUyNWNiNGRmOGVmYTNhNjRhNDhkMzhhYmUyMDE1NTc0MjdjNWRmZWFiNjMiLCJzaXplIjo1MSwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9kYXNoYm9hcmQtMi4wLjAuZGV2NDItcHkzLW5vbmUtYW55LndobCJ9LHsibmFtZSI6ImNvbnN0cmFpbnRzLnR4dCIsInJvbGUiOiJjb25zdHJhaW50cyIsInNoYTI1NiI6IjZjMzJjZWIzZDcxOTBkN2FmNWFlYmVmMjk2NGRiM2U4MmZjMDFkMDNlY2IyZjQ3NzNkMTQwNTFlNjNiZjVlNzgiLCJzaXplIjo1MywidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvY29uc3RyYWludHMudHh0In1dLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2UvMSIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjFUMDc6NDA6MDBaIiwibWluX2Zyb20iOiIyLjAuMC5kZXYxIiwic2VxIjo0MiwidmVyc2lvbiI6IjIuMC4wLmRldjQyIn0=\",\"revocations\":{\"doc\":\"eyJmb3JtYXQiOiJvcmNoLnJldm9jYXRpb25zLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDAwOjAwOjAwWiIsIm1pbl9zZXJpYWwiOjIsInJldm9rZWQiOls0XX0=\",\"root_key_id\":\"root-1\",\"sig\":\"8YAEebkNLHvcXbSGReypFnsmd9sdbZ+I8GMqSrEVjFS5OJ1Vhzen1sDDWMcSHzWt9p7Vfe8CRZHFRJJCWgAQCg==\"},\"sig\":{\"alg\":\"ed25519\",\"key_id\":\"rk-3\",\"value\":\"NiO6Wmvb3y2nvfePehaGx0XvI6zXGPecLF6fWa7A/Qqg3IviNaYLSxuBrii20rSlL9Qtm6YKw4naVJ/fbUs6Bw==\"}}",
+   "expect": {
+    "code": "update.stale",
+    "reason": "rollback"
+   },
+   "name": "rollback",
+   "now": "2026-10-22T08:00:00Z",
+   "pins": "seq 42 < seq_seen 43",
+   "purpose": "core",
+   "state": {
+    "revocations_issued_at": "2026-10-20T00:00:00Z",
+    "seq_seen": 43,
+    "trusted_roots": [
+     "root-1"
+    ]
+   }
+  },
+  {
+   "channel": "develop",
+   "envelope": "{\"format\":\"orch.release-envelope/1\",\"key_cert\":{\"cert\":\"eyJjaGFubmVscyI6WyJkZXZlbG9wIiwibWFpbiJdLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2Uta2V5LzEiLCJrZXlfaWQiOiJyay0zIiwibm90X2FmdGVyIjoiMjAyNy0wMy0zMFQwMDowMDowMFoiLCJub3RfYmVmb3JlIjoiMjAyNi0xMC0wMVQwMDowMDowMFoiLCJwdWJsaWNfa2V5IjoiTzU0c1pNRlk5aW5DT0xWelRuOUJ2ci80cDFvS0RDWVVScnNOUDQ4ek9hMD0iLCJwdXJwb3NlIjoiY29yZSIsInNlcmlhbCI6M30=\",\"root_key_id\":\"root-1\",\"sig\":\"Mw2cAoDRgDuJ9pMXZou+UTftrDcNyGGOynBhLGmz0ZbUR4+DBkmBFDdUNii8cCElTzB2DQcMMMTw/jUKGoZTDA==\"},\"payload\":\"eyJjaGFuZ2Vsb2ciOiJURVNUIHJlbGVhc2UuIFdpa2kgYWRkLW9uOiBwYWdlIGxpbmtzOyBmaXggdGVybWluYWwgcmVzaXplLiIsImNoYW5uZWwiOiJkZXZlbG9wIiwiY29tbWl0IjoiMDJkOGViMDdkZDE1Yzk1MTA0YjRiMmM1ZTcxYzQwZjlmMDM3OWVlNiIsImV4cGlyZXNfYXQiOiIyMDI2LTExLTExVDA3OjQwOjAwWiIsImZpbGVzIjpbeyJuYW1lIjoib3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwiLCJyb2xlIjoiY29yZSIsInNoYTI1NiI6IjJhZGE1YWMzOWUwMzUzNjgzODI4MTRiNTRiNmNiMDdjMGMwNWM1YWVjMzg4OTBmOGI2NTAyYjQ3YTg3NmMzNWEiLCJzaXplIjo0NiwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwifSx7Im5hbWUiOiJvcmNoX2Rhc2hib2FyZC0yLjAuMC5kZXY0Mi1weTMtbm9uZS1hbnkud2hsIiwicm9sZSI6ImRhc2hib2FyZCIsInNoYTI1NiI6IjY0YTBmNjkyMTQzY2U2N2FkZTcxODUyNWNiNGRmOGVmYTNhNjRhNDhkMzhhYmUyMDE1NTc0MjdjNWRmZWFiNjMiLCJzaXplIjo1MSwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9kYXNoYm9hcmQtMi4wLjAuZGV2NDItcHkzLW5vbmUtYW55LndobCJ9LHsibmFtZSI6ImNvbnN0cmFpbnRzLnR4dCIsInJvbGUiOiJjb25zdHJhaW50cyIsInNoYTI1NiI6IjZjMzJjZWIzZDcxOTBkN2FmNWFlYmVmMjk2NGRiM2U4MmZjMDFkMDNlY2IyZjQ3NzNkMTQwNTFlNjNiZjVlNzgiLCJzaXplIjo1MywidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvY29uc3RyYWludHMudHh0In1dLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2UvMSIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjFUMDc6NDA6MDBaIiwibWluX2Zyb20iOiIyLjAuMC5kZXYxIiwic2VxIjo0MiwidmVyc2lvbiI6IjIuMC4wLmRldjQyIn0=\",\"revocations\":{\"doc\":\"eyJmb3JtYXQiOiJvcmNoLnJldm9jYXRpb25zLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDAwOjAwOjAwWiIsIm1pbl9zZXJpYWwiOjIsInJldm9rZWQiOls0XX0=\",\"root_key_id\":\"root-1\",\"sig\":\"8YAEebkNLHvcXbSGReypFnsmd9sdbZ+I8GMqSrEVjFS5OJ1Vhzen1sDDWMcSHzWt9p7Vfe8CRZHFRJJCWgAQCg==\"},\"sig\":{\"alg\":\"ed25519\",\"key_id\":\"rk-3\",\"value\":\"NiO6Wmvb3y2nvfePehaGx0XvI6zXGPecLF6fWa7A/Qqg3IviNaYLSxuBrii20rSlL9Qtm6YKw4naVJ/fbUs6Bw==\"}}",
+   "expect": {
+    "code": "update.unverified",
+    "reason": "hash_mismatch"
+   },
+   "files": [
+    {
+     "content_b64": "VUVTVCBvcmNoLWNvcmUgd2hlZWwgYnl0ZXMgKG5vdCBhIHJlYWwgd2hlZWwpCg==",
+     "name": "orch_core-2.0.0.dev42-py3-none-any.whl"
+    },
+    {
+     "content_b64": "VEVTVCBvcmNoLWRhc2hib2FyZCB3aGVlbCBieXRlcyAobm90IGEgcmVhbCB3aGVlbCkK",
+     "name": "orch_dashboard-2.0.0.dev42-py3-none-any.whl"
+    },
+    {
+     "content_b64": "Y3J5cHRvZ3JhcGh5PT00Ni4wLjMKanNvbnNjaGVtYT09NC4yNi4wCnNlZ25vPT0xLjYuNgo=",
+     "name": "constraints.txt"
+    }
+   ],
+   "name": "hash_mismatch",
+   "now": "2026-10-22T08:00:00Z",
+   "pins": "a downloaded file has the right size but another sha256",
+   "purpose": "core",
+   "state": {
+    "revocations_issued_at": "2026-10-20T00:00:00Z",
+    "seq_seen": 41,
+    "trusted_roots": [
+     "root-1"
+    ]
+   }
+  },
+  {
+   "channel": "develop",
+   "envelope": "{\"format\":\"orch.release-envelope/1\",\"key_cert\":{\"cert\":\"eyJjaGFubmVscyI6WyJkZXZlbG9wIiwibWFpbiJdLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2Uta2V5LzEiLCJrZXlfaWQiOiJyay0zIiwibm90X2FmdGVyIjoiMjAyNy0wMy0zMFQwMDowMDowMFoiLCJub3RfYmVmb3JlIjoiMjAyNi0xMC0wMVQwMDowMDowMFoiLCJwdWJsaWNfa2V5IjoiTzU0c1pNRlk5aW5DT0xWelRuOUJ2ci80cDFvS0RDWVVScnNOUDQ4ek9hMD0iLCJwdXJwb3NlIjoiY29yZSIsInNlcmlhbCI6M30=\",\"root_key_id\":\"root-1\",\"sig\":\"Mw2cAoDRgDuJ9pMXZou+UTftrDcNyGGOynBhLGmz0ZbUR4+DBkmBFDdUNii8cCElTzB2DQcMMMTw/jUKGoZTDA==\"},\"payload\":\"eyJjaGFuZ2Vsb2ciOiJURVNUIHJlbGVhc2UuIFdpa2kgYWRkLW9uOiBwYWdlIGxpbmtzOyBmaXggdGVybWluYWwgcmVzaXplLiIsImNoYW5uZWwiOiJkZXZlbG9wIiwiY29tbWl0IjoiMDJkOGViMDdkZDE1Yzk1MTA0YjRiMmM1ZTcxYzQwZjlmMDM3OWVlNiIsImV4cGlyZXNfYXQiOiIyMDI2LTExLTExVDA3OjQwOjAwWiIsImZpbGVzIjpbeyJuYW1lIjoib3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwiLCJyb2xlIjoiY29yZSIsInNoYTI1NiI6IjJhZGE1YWMzOWUwMzUzNjgzODI4MTRiNTRiNmNiMDdjMGMwNWM1YWVjMzg4OTBmOGI2NTAyYjQ3YTg3NmMzNWEiLCJzaXplIjo0NiwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9jb3JlLTIuMC4wLmRldjQyLXB5My1ub25lLWFueS53aGwifSx7Im5hbWUiOiJvcmNoX2Rhc2hib2FyZC0yLjAuMC5kZXY0Mi1weTMtbm9uZS1hbnkud2hsIiwicm9sZSI6ImRhc2hib2FyZCIsInNoYTI1NiI6IjY0YTBmNjkyMTQzY2U2N2FkZTcxODUyNWNiNGRmOGVmYTNhNjRhNDhkMzhhYmUyMDE1NTc0MjdjNWRmZWFiNjMiLCJzaXplIjo1MSwidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvb3JjaF9kYXNoYm9hcmQtMi4wLjAuZGV2NDItcHkzLW5vbmUtYW55LndobCJ9LHsibmFtZSI6ImNvbnN0cmFpbnRzLnR4dCIsInJvbGUiOiJjb25zdHJhaW50cyIsInNoYTI1NiI6IjZjMzJjZWIzZDcxOTBkN2FmNWFlYmVmMjk2NGRiM2U4MmZjMDFkMDNlY2IyZjQ3NzNkMTQwNTFlNjNiZjVlNzgiLCJzaXplIjo1MywidXJsIjoiaHR0cHM6Ly9naXRodWIuY29tL3NldmVyaW5saW5kZW5tYW5uL29yY2gtY29yZS9yZWxlYXNlcy9kb3dubG9hZC92Mi4wLjAuZGV2NDIvY29uc3RyYWludHMudHh0In1dLCJmb3JtYXQiOiJvcmNoLnJlbGVhc2UvMSIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjFUMDc6NDA6MDBaIiwibWluX2Zyb20iOiIyLjAuMC5kZXYxIiwic2VxIjo0MiwidmVyc2lvbiI6IjIuMC4wLmRldjQyIn0=\",\"revocations\":{\"doc\":\"eyJmb3JtYXQiOiJvcmNoLnJldm9jYXRpb25zLzEiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDAwOjAwOjAwWiIsIm1pbl9zZXJpYWwiOjIsInJldm9rZWQiOls0XX0=\",\"root_key_id\":\"root-1\",\"sig\":\"8YAEebkNLHvcXbSGReypFnsmd9sdbZ+I8GMqSrEVjFS5OJ1Vhzen1sDDWMcSHzWt9p7Vfe8CRZHFRJJCWgAQCg==\"},\"sig\":{\"alg\":\"ed25519\",\"key_id\":\"rk-3\",\"value\":\"NiO6Wmvb3y2nvfePehaGx0XvI6zXGPecLF6fWa7A/Qqg3IviNaYLSxuBrii20rSlL9Qtm6YKw4naVJ/fbUs6Bw==\"}}",
+   "expect": {
+    "code": "update.unverified",
+    "reason": "size_mismatch"
+   },
+   "files": [
+    {
+     "content_b64": "VEVTVCBvcmNoLWNvcmUgd2hlZWwgYnl0ZXMgKG5vdCBhIHJlYWwgd2hlZWwpCg==",
+     "name": "orch_core-2.0.0.dev42-py3-none-any.whl"
+    },
+    {
+     "content_b64": "VEVTVCBvcmNoLWRhc2hib2FyZCB3aGVlbCBieXRlcyAobm90IGEgcmVhbCB3aGVlbCkKeA==",
+     "name": "orch_dashboard-2.0.0.dev42-py3-none-any.whl"
+    },
+    {
+     "content_b64": "Y3J5cHRvZ3JhcGh5PT00Ni4wLjMKanNvbnNjaGVtYT09NC4yNi4wCnNlZ25vPT0xLjYuNgo=",
+     "name": "constraints.txt"
+    }
+   ],
+   "name": "size_mismatch",
+   "now": "2026-10-22T08:00:00Z",
+   "pins": "a downloaded file has another size",
+   "purpose": "core",
+   "state": {
+    "revocations_issued_at": "2026-10-20T00:00:00Z",
+    "seq_seen": 41,
+    "trusted_roots": [
+     "root-1"
+    ]
+   }
+  }
+ ],
+ "contract": "CONTRACT.md",
+ "format": "orch.release-vectors/1",
+ "test_only": true
+}

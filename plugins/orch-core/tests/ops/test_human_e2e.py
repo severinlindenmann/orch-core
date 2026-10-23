@@ -200,3 +200,55 @@ def test_agent_works_person_signs_ticket_done_and_the_log_replays_clean(ws, tmp_
     finally:
         fresh.close()
     assert canon is not None and repo.exists()
+
+
+def test_ctrl_c_at_the_passphrase_prompt_ends_with_one_line_and_no_traceback(ws):
+    """The person presses Ctrl-C (a real ``\\x03`` on the pty, so the child gets SIGINT) at the passphrase prompt."""
+    out_r, out_w = os.pipe()
+    err_r, err_w = os.pipe()
+    env = {"PATH": "/usr/bin:/bin", "HOME": str(ws.tmp), "ORCH_STATE_DIR": str(ws.host_state), "TERM": "dumb"}
+    pid, tty = pty.fork()
+    if pid == 0:
+        try:
+            os.dup2(out_w, 1)
+            os.dup2(err_w, 2)
+            os.chdir(ws.store_dir / "tickets")
+            os.execve(sys.executable, [sys.executable, "-m", "orch", "grant", "--label", "e2e"], env)
+        finally:
+            os._exit(127)
+    os.close(out_w)
+    os.close(err_w)
+    shown, sent, confirmed = b"", False, False
+    deadline = time.time() + 60
+    while time.time() < deadline:
+        if fdwait.readable(tty, 0.2):
+            try:
+                chunk = os.read(tty, 65536)
+            except OSError:
+                break
+            if not chunk:
+                break
+            shown += chunk
+            if not confirmed and b"and Enter to continue; anything else stops: " in shown:
+                time.sleep(0.3)
+                os.write(tty, b"GRANT\n")
+                confirmed = True
+            if not sent and b"Passphrase: " in shown:
+                for _ in range(100):
+                    if not termios.tcgetattr(tty)[3] & termios.ECHO:
+                        break
+                    time.sleep(0.05)
+                os.write(tty, b"\x03")
+                sent = True
+    else:
+        os.kill(pid, 9)
+        os.waitpid(pid, 0)
+        raise AssertionError(f"the command did not finish; the terminal showed {shown!r}")
+    _, status = os.waitpid(pid, 0)
+    out, err = os.read(out_r, 1 << 20).decode(), os.read(err_r, 1 << 20).decode()
+    for fd in (tty, out_r, err_r):
+        os.close(fd)
+    assert sent, shown
+    assert os.waitstatus_to_exitcode(status) == 130, (out, err)
+    assert "Traceback" not in err + out + shown.decode(errors="replace")
+    assert err.strip() == "Cancelled." and out == ""

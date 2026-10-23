@@ -22,6 +22,7 @@ custody.no_key 3 retry:false
 custody.wrong_passphrase 3 retry:false
 sign.convenience_readers 3 retry:false
 sign.convenience_unavailable 3 retry:false
+sign.hub_only 3 retry:false
 relay.pair_open 3 retry:false
 relay.no_primary 3 retry:false
 relay.quota 3 retry:false
@@ -61,6 +62,9 @@ wait.timeout 7 retry:true
 conflict.section 8 retry:true
 conflict.field 8 retry:true
 quick.unlabelled 9 retry:true
+hub.refused 3 retry:false
+hub.already_joined 3 retry:false
+hub.not_joined 3 retry:false
 retry.later 9 retry:true
 quota.unattended 9 retry:true
 members.stale 9 retry:true

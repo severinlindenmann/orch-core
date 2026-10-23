@@ -574,7 +574,7 @@ class ClickSigner:
             raise ClickError("invalid.input", f"sequence: {exc}") from None
         if op != sequence.steps(intent)[0]["op"]:  # a new ticket starts with new, an edit with its first change
             raise ClickError("invalid.input", "a sequence starts with the first op of its intent")
-        kind = sequence.confirm_kind(intent)
+        kind = sequence.confirm_kind(intent, self._person(entry))
         # a grant to the runner needs dashboard execution on this machine; a people change: click plus the typed word
         if kind == "terminal" or (kind == "word" and sequence.has_grant(intent) and not self._execution(entry)):
             raise refused("terminal_only", "this sequence needs more than a click; use the terminal (orch sign CODE)")
@@ -780,7 +780,7 @@ class ClickSigner:
             cancel=cancel,
             budget=self.budget.reserve,
         )
-        kind = sequence.confirm_kind(intent)  # re-asserted here: what is signed is what this click may sign
+        kind = sequence.confirm_kind(intent, person)  # re-asserted here: what is signed is what this click may sign
         if (
             kind == "terminal"
             or (kind == "word" and sequence.has_grant(intent) and not self._execution(entry))

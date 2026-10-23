@@ -145,9 +145,12 @@ def test_logout_and_login_then_retry_never_makes_a_second_request(client, token,
     # The tab that holds it logs out while the other session never attached: the request is cancelled at the signer.
     client.post("/auth/logout", headers=hdr(token))
     again = client.post(url(stub, "prepare"), json=comment(1), headers=hdr(other))
-    assert again.json()["error"]["code"] == "intent.ended"  # not a new request: "Start again" is an explicit click
-    assert script.prepared == 1 and first["request_id"] == REQ
-    # And while the first is still open, the other session attaches to it rather than making one.
+    # #794: the cancelled attempt is ended, so pressing again is ONE fresh request (the server steps to the next retry)
+    assert again.status_code == 200 and again.json()["request_id"] != REQ
+    assert script.prepared == 2 and first["request_id"] == REQ
+    assert client.post(url(stub, "prepare"), json=comment(1), headers=hdr(other)).json() == again.json()  # still one
+    assert script.prepared == 2
+    # A different intent, while its first request is still open: the other session attaches to it.
     third = client.post(url(stub, "prepare"), json=comment(2), headers=hdr(other)).json()
     assert client.post(url(stub, "prepare"), json=comment(2), headers=hdr(other)).json() == third
 

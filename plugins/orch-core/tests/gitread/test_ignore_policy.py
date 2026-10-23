@@ -27,7 +27,8 @@ USES = re.compile(r"\bcompile_glob\b|\bparse_ignore\b|ignorepolicy\._parse|\bIgn
 def test_no_other_code_parses_or_applies_an_ignore_pattern():
     """The single entry point: ``_parse``, ``compile_glob`` and ``Pattern(`` appear only in ignorepolicy (and the
     matcher's own module); treecheck asks the policy for every stack it walks with."""
-    allowed = {SRC / "gitread" / "ignorepolicy.py", SRC / "gitread" / "wildmatch.py"}
+    # checkout.py matches .gitattributes patterns (#584: which blobs a filter attribute selects), never ignore rules
+    allowed = {SRC / "gitread" / "ignorepolicy.py", SRC / "gitread" / "wildmatch.py", SRC / "gitread" / "checkout.py"}
     offenders = []
     for p in SRC.rglob("*.py"):
         if p in allowed:

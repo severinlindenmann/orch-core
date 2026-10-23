@@ -567,7 +567,8 @@ def test_an_idem_conflict_at_the_host_is_an_open_attempt_and_prepares_nothing_mo
     assert post(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "hi"}).status_code == 409
 
 
-def test_a_retry_after_the_request_ended_answers_its_terminal_state(ready, monkeypatch):
+def test_a_press_after_the_request_ended_makes_a_fresh_one(ready, monkeypatch):
+    """#794: the server steps past an ended (cancelled) attempt of the same action: pressing again is a new request."""
     client, token, stub, rich, signing = ready
     lose(monkeypatch)
     body = {"action": "comment", "key": "DEMO-0001", "message": "hi"}
@@ -575,8 +576,43 @@ def test_a_retry_after_the_request_ended_answers_its_terminal_state(ready, monke
     (made,) = signing.stub.requests.table
     signing.stub.requests.cancel({"request_id": made})
     again = post(client, token, stub, body)
-    assert again.status_code == 200 and again.json()["id"] == made and again.json()["state"] == "cancelled"
-    assert len(signing.stub.requests.table) == 1
+    assert again.status_code == 200 and again.json()["id"] != made and again.json()["state"] in ("prepared", "bound")
+    assert len(signing.stub.requests.table) == 2 and states(signing)[made] == "cancelled"
+
+
+def test_cancel_twice_then_press_is_fresh_and_an_open_one_is_the_same(ready):
+    client, token, stub, rich, signing = ready
+    body = {"action": "comment", "key": "DEMO-0001", "message": "hi"}
+    ids = []
+    for _ in range(2):
+        made = post(client, token, stub, body)
+        assert made.status_code == 200
+        ids.append(made.json()["id"])
+        assert client.delete(f"{base(stub)}/{ids[-1]}", headers=auth(token, True)).status_code == 200
+    third = post(client, token, stub, body)
+    assert third.status_code == 200 and third.json()["id"] not in ids
+    assert third.json()["state"] in ("prepared", "bound")
+    # an open request is returned as it is (double click, second tab): no further request
+    twin = post(client, token, stub, body)
+    assert twin.json()["id"] == third.json()["id"] and len(signing.stub.requests.table) == 3
+    # also when the page starts from a higher retry that is still ahead of the open one
+    assert post(client, token, stub, {**body, "retry": 1}).json()["id"] == third.json()["id"]
+
+
+def test_the_walk_is_capped_and_says_so(ready):
+    from orch_dashboard.handoff import NEXT_RETRY_HOPS
+
+    client, token, stub, rich, signing = ready
+    body = {"action": "comment", "key": "DEMO-0001", "message": "hi"}
+    for r in range(NEXT_RETRY_HOPS + 1):
+        made = post(client, token, stub, {**body, "retry": r})
+        assert client.delete(f"{base(stub)}/{made.json()['id']}", headers=auth(token, True)).status_code == 200
+    made_so_far = len(signing.stub.requests.table)
+    res = post(client, token, stub, body)
+    assert res.status_code == 409 and res.json()["error"]["code"] == "intent.exhausted"
+    assert len(signing.stub.requests.table) == made_so_far  # the walk made nothing
+    carry_on = post(client, token, stub, {**body, "retry": NEXT_RETRY_HOPS + 1})
+    assert carry_on.status_code == 200 and len(signing.stub.requests.table) == made_so_far + 1
 
 
 def test_a_retry_after_a_signature_answers_submitted(ready, monkeypatch):
@@ -1118,3 +1154,107 @@ def test_another_persons_burst_of_prepares_cannot_evict_my_intent():
     for i in range(INTENTS_PER_PERSON):  # my own burst still evicts only my own oldest
         h.note_intent("alice", f"a_{i}", {"n": i})
     assert h.intent_of("alice", "r_mine") is None and h.intent_of("alice", "a_0") is not None
+
+
+# --- #794: the next free retry is computed server-side from the host's own records, never from the browser ---
+
+P1, P2, WS794 = "p_" + "1" * 32, "p_" + "2" * 32, "2" * 32
+
+
+def _fake_host(states_by_idem):
+    """A prepare() stand-in: idems not yet seen create an open request; seen ones answer their recorded state."""
+    calls = []
+
+    def prepare(idem):
+        calls.append(idem)
+        state = states_by_idem.setdefault(idem, "prepared")
+        return {"request": {"id": "hr_" + idem[-8:], "state": state}}
+
+    return prepare, calls
+
+
+def _plan(person):
+    from orch_dashboard.handoff import Plan
+
+    return Plan("ticket.comment", {"ref": "DEMO-0001", "message": "hi"}, None, None, person)
+
+
+def test_794_first_press_uses_retry_zero_and_a_browser_retry_below_the_free_one_is_stepped_past():
+    from orch_dashboard.handoff import send_prepare
+
+    plan, seen = _plan(P1), {}
+    prepare, calls = _fake_host(seen)
+    got = send_prepare(plan, WS794, 0, prepare)
+    assert got["request"]["state"] == "prepared" and calls == [plan.idem(WS794, 0)]
+    # the host holds retry 0 cancelled: a browser that still says 0 lands on retry 1
+    seen[plan.idem(WS794, 0)] = "cancelled"
+    prepare, calls = _fake_host(seen)
+    send_prepare(plan, WS794, 0, prepare)
+    assert calls == [plan.idem(WS794, 0), plan.idem(WS794, 1)]
+
+
+def test_794_next_free_after_pending_is_the_same_request():
+    from orch_dashboard.handoff import send_prepare
+
+    plan, seen = _plan(P1), {}
+    prepare, calls = _fake_host(seen)
+    first = send_prepare(plan, WS794, 0, prepare)
+    again = send_prepare(plan, WS794, 0, prepare)
+    assert again == first and calls == [plan.idem(WS794, 0)] * 2  # never a second request for an open one
+
+
+@pytest.mark.parametrize("state", ["submitted", "signed"])
+def test_794_a_signed_attempt_is_never_stepped_past(state):
+    from orch_dashboard.handoff import send_prepare
+
+    plan = _plan(P1)
+    seen = {plan.idem(WS794, 0): state}
+    prepare, calls = _fake_host(seen)
+    got = send_prepare(plan, WS794, 0, prepare)
+    assert got["request"]["state"] == state and calls == [plan.idem(WS794, 0)]
+
+
+@pytest.mark.parametrize("ended", ["cancelled", "expired"])
+def test_794_after_a_cancelled_or_expired_attempt_the_next_press_takes_the_next_retry(ended):
+    from orch_dashboard.handoff import send_prepare
+
+    plan = _plan(P1)
+    seen = {plan.idem(WS794, 0): ended, plan.idem(WS794, 1): ended}
+    prepare, calls = _fake_host(seen)
+    got = send_prepare(plan, WS794, 0, prepare)
+    assert calls[-1] == plan.idem(WS794, 2) and got["request"]["state"] == "prepared"
+    assert len(set(calls)) == 3
+
+
+def test_794_two_persons_do_not_interfere():
+    from orch_dashboard.handoff import send_prepare
+
+    one, two, seen = _plan(P1), _plan(P2), {}
+    seen[one.idem(WS794, 0)] = "cancelled"
+    prepare, calls = _fake_host(seen)
+    send_prepare(two, WS794, 0, prepare)  # the other person's first press is retry 0, untouched by person one
+    assert calls == [two.idem(WS794, 0)] and one.idem(WS794, 0) != two.idem(WS794, 0)
+    assert two.idem(WS794, 1) not in seen and one.idem(WS794, 1) not in seen
+
+
+def test_794_an_unreadable_host_record_refuses_and_does_not_guess_a_retry():
+    from orch_dashboard.errors import HostError, fail
+    from orch_dashboard.handoff import send_prepare
+
+    plan, calls = _plan(P1), []
+
+    def prepare(idem):
+        calls.append(idem)
+        raise fail("host.unavailable", "Cannot read the earlier signing record.")
+
+    with pytest.raises(HostError) as caught:
+        send_prepare(plan, WS794, 0, prepare)
+    assert caught.value.error["code"] == "host.unavailable" and calls == [plan.idem(WS794, 0)]  # stopped at once
+
+
+def test_794_an_unrecognised_answer_state_is_not_treated_as_free():
+    """Fail closed: a malformed answer is returned as it is (never read as an ended request), so nothing new is made."""
+    from orch_dashboard.handoff import request_ended
+
+    assert not request_ended({"request": {"state": "weird"}})
+    assert not request_ended({"request": "x"}) and not request_ended(None) and not request_ended({})

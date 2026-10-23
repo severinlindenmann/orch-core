@@ -57,14 +57,18 @@ class FakeServer:
         self.fail: list[tuple[str, str, int, str]] = []
         self.bad_signatures: list[str] = []
 
-    def __call__(self, scheme, netloc, method, target, headers, body, timeout):
-        self.requests.append({"method": method, "target": target, "body": body, "netloc": netloc, "headers": headers})
+    def _authentic(self, headers, method, netloc, target, body) -> bool:
+        """The direct v2 12.1 signature (the hub path overrides this: tests/hub/test_publish_out_host.py)."""
         sig = crypto.unb64u(headers["Orch-Signature"])
         signed = publish_signed_bytes(
             bytes.fromhex(headers["Orch-Workspace"]), int(headers["Orch-Ts"]), bytes.fromhex(headers["Orch-Nonce"]),
             method, netloc, target, body,
         )  # fmt: skip
-        if netloc != self.host or not crypto.verify(self.wsk_pub, sig, signed):
+        return bool(crypto.verify(self.wsk_pub, sig, signed))
+
+    def __call__(self, scheme, netloc, method, target, headers, body, timeout):
+        self.requests.append({"method": method, "target": target, "body": body, "netloc": netloc, "headers": headers})
+        if netloc != self.host or not self._authentic(headers, method, netloc, target, body):
             self.bad_signatures.append(f"{method} {target}")
             return 401, b'{"error":"bad_signature"}'
         for i, (m, rx, status, error) in enumerate(self.fail):

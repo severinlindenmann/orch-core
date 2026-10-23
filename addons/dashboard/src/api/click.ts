@@ -155,9 +155,16 @@ export interface ClickProblem {
   details?: string
   /** H12d-2: the device ids the refusal names (shown by label through `RefusalDevices`, never as ids). */
   devices?: string[]
+  /** The switch moved after the page chose its way: a new request follows the host's current answer (Try again). */
+  stale?: boolean
 }
 
-const OFF = ' Fix it, or turn convenience off from the terminal with `orch host convenience off --workspace <prefix>`.'
+/** The placeholder the sentences carry for the workspace prefix; `withPrefix` fills it in where the page knows the workspace. */
+export const PREFIX_PLACEHOLDER = '<prefix>'
+export const withPrefix = (text: string, prefix: string | undefined): string =>
+  text.split(PREFIX_PLACEHOLDER).join(prefix || '<your workspace prefix>')
+
+const OFF = ' Fix it, or sign in the terminal: turn convenience off with `orch host convenience off --workspace <prefix>`, then move the key back with `orch keys custody passphrase --workspace <prefix> --in-place`.'
 
 const REFUSED: Record<string, ClickProblem> = {
   terminal_only: { title: 'Terminal only', body: 'This one cannot be signed with one click.', next: 'terminal' },
@@ -204,6 +211,8 @@ export function clickProblem(e: unknown): ClickProblem {
       return REFUSED[e.reason ?? ''] ?? { title: 'Refused', body: `The signing helper refused this (${e.reason ?? 'no reason'}). Nothing was signed.`, next: 'terminal' }
     case 'sign.convenience_unavailable': {
       const r = refusalOf(e)!
+      // The switch moved after the page chose its way: nothing is wrong, the next try follows the host's current answer.
+      if (r.reason === 'disabled') return { title: 'Click-to-sign was switched off', body: `${refusalSentence(r)} To sign in the Terminal, the key must first move back to a passphrase: "orch keys custody passphrase --workspace <prefix> --in-place". Try again makes a new request for the Terminal.`, next: 'retry', stale: true, devices: r.devices }
       return { title: 'Click-to-sign is not available here', body: r.reason === 'dev_host' ? refusalSentence(r) : `${refusalSentence(r)}${OFF}`, next: 'terminal', devices: r.devices }
     }
     case DEV_REFUSED:
@@ -227,7 +236,7 @@ export function clickProblem(e: unknown): ClickProblem {
     case 'intent.open':
       return { title: 'An attempt for this is already open', body: e.message || 'The host holds an open request for this action. Wait until it ends or expires.', next: 'open' }
     case 'sign.click_only':
-      return { title: 'This workspace signs in the dashboard', body: e.message, next: 'open' }
+      return { title: 'This workspace signs in the dashboard', body: e.message, next: 'retry' }
     case 'sign.convenience_readers': {
       const r = refusalOf(e)!
       // A known reason is said in plain words; without one (a host before H12d-2) the host's own message stays.

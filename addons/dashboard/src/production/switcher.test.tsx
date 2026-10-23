@@ -226,3 +226,19 @@ it('an address for a workspace the host cannot serve shows the host\'s reason, n
   expect(screen.queryByText(/No workspace/)).not.toBeInTheDocument()
   expect(gets(C)).toEqual([])
 })
+
+it('#951: when no host serves the dashboard because it is not granted, the home page says how to switch it on', async () => {
+  state.host.workspaces.splice(0, state.host.workspaces.length, workspace({ id: A, host_state: 'addon.disabled' }))
+  show('/')
+  expect(await screen.findByRole('heading', { name: 'The dashboard is not switched on yet' }, T)).toBeInTheDocument()
+  expect(screen.getByText('orch addon grant dashboard')).toBeInTheDocument()
+  expect(screen.queryByText(/Could not load/)).not.toBeInTheDocument()
+  expect(gets(A)).toEqual([]) // nothing is read from it
+})
+
+it('#951: a running workspace still wins over one that is not granted', async () => {
+  state.host.workspaces.push(workspace({ id: C, host_state: 'addon.disabled' }))
+  show(`/w/DEMO/tickets?ws=${uuid8(A)}`)
+  expect(await screen.findByText('Real P1 ticket', {}, T)).toBeInTheDocument()
+  expect(screen.queryByText('The dashboard is not switched on yet')).not.toBeInTheDocument()
+})

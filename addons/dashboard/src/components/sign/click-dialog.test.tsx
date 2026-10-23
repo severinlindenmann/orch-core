@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/api/client'
-import { ARM_MS, CLICK_RISK, clickProblem, type ClickViewAnswer } from '@/api/click'
+import { ARM_MS, CLICK_RISK, clickProblem, type ClickCard, type ClickViewAnswer } from '@/api/click'
 import { setFeatures } from '@/api/features'
 import { ApiError } from '@/api/types'
 import { fakeRequest, mount, spies, state } from '@/test/handoffHarness'
@@ -40,9 +40,11 @@ const click = {
 let c: { prepare: ReturnType<typeof click.prepare>; view: ReturnType<typeof click.view>; sign: ReturnType<typeof click.sign>; cancel: ReturnType<typeof click.cancel> }
 
 /** What the server sends for each workspace card (the signer's flag), whatever the store is reset to. */
+let card: ClickCard | undefined
 function flag(on: boolean | 'unavailable') {
+  card = on === 'unavailable' ? { custody: 'convenience' as const, enabled: true, available: false, problem: 'custody_unavailable' } : on ? { custody: 'convenience' as const, enabled: true, available: true } : undefined
+  if (vi.isMockFunction(api.getWorkspaces)) return // the switch can move while the page is open: the spy reads the current card
   const real = api.getWorkspaces.bind(api)
-  const card = on === 'unavailable' ? { custody: 'convenience' as const, enabled: true, available: false, problem: 'custody_unavailable' } : on ? { custody: 'convenience' as const, enabled: true, available: true } : undefined
   vi.spyOn(api, 'getWorkspaces').mockImplementation(async () => (await real()).map((w) => ({ ...w, click: card })))
 }
 
@@ -170,6 +172,30 @@ describe('the action dialog with click-to-sign', () => {
     await mount(PLAN)
     const dialog = await screen.findByRole('dialog', {}, T)
     expect(await within(dialog).findByText(/signs in the dashboard/, {}, T)).toBeInTheDocument()
+  })
+
+  it('click-to-sign switched ON while the dialog showed the terminal way: the refusal refreshes it, Try again shows the click review, no reload', async () => {
+    flag(false)
+    s.prepare.mockImplementationOnce(async () => { flag(true) /* the host's switch is on by now */; throw new ApiError(409, { code: 'sign.click_only', message: 'This workspace now signs with one click in the dashboard.', retryable: false }, 3) })
+    await mount(PLAN)
+    const dialog = await screen.findByRole('dialog', {}, T)
+    expect(await within(dialog).findByText(/signs with one click/, {}, T)).toBeInTheDocument()
+    expect(within(dialog).queryByText(/Use Sign here/)).toBeNull() // never points at a button that is not shown
+    fireEvent.click(await within(dialog).findByRole('button', { name: /Try again|Start again|Prepare again/ }, T))
+    expect(await within(dialog).findByTestId('click-panel', {}, T)).toBeInTheDocument()
+  })
+
+  it('click-to-sign switched OFF while the dialog showed one click: the refusal refreshes it, Try again shows the terminal code, no reload', async () => {
+    flag(true)
+    s.prepare.mockResolvedValue(fakeRequest())
+    s.get.mockResolvedValue(state(fakeRequest()))
+    c.prepare.mockImplementationOnce(async () => { flag(false) /* the host's switch is off by now */; throw new ApiError(409, { code: 'sign.convenience_unavailable', message: 'disabled: convenience signing is off for this workspace', retryable: false, reason: 'disabled' }, 3) })
+    await mount(PLAN)
+    const dialog = await screen.findByRole('dialog', {}, T)
+    await within(dialog).findByText(/Click-to-sign was switched off/, {}, T)
+    const again = await within(dialog).findByRole('button', { name: /Try again|Start again|Prepare again/ }, T)
+    fireEvent.click(again)
+    expect(await within(dialog).findByTestId('handoff-command', {}, T)).toBeInTheDocument()
   })
 
   it('Sign prepares once with one idem, reads the View and shows only it', async () => {
@@ -502,7 +528,7 @@ describe('every error code and reason has an honest message', () => {
   const err = (code: string, reason?: string, extra: Partial<{ retry_after_ms: number; message: string }> = {}) =>
     new ApiError(409, { code, message: extra.message ?? 'server words', retryable: false, reason, retry_after_ms: extra.retry_after_ms })
   const cases: [string, ApiError, RegExp, string][] = [
-    ['disabled', err('sign.convenience_unavailable', 'disabled'), /switched off/, 'terminal'],
+    ['disabled', err('sign.convenience_unavailable', 'disabled'), /switched off/, 'retry'],
     ['relay_paired', err('sign.convenience_unavailable', 'relay_paired'), /relay/, 'terminal'],
     ['other_member', err('sign.convenience_unavailable', 'other_member'), /another member/, 'terminal'],
     ['phone_device', err('sign.convenience_unavailable', 'phone_device'), /another device/, 'terminal'],
@@ -534,6 +560,17 @@ describe('every error code and reason has an honest message', () => {
     const p = clickProblem(e)
     expect(`${p.title} ${p.body}`).toMatch(text)
     expect(p.next).toBe(next)
+  })
+  it('names the real workspace prefix in the switched-off text, never a literal <prefix>', async () => {
+    const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query')
+    const { ClickProblemBox } = await import('./RefusalDevices')
+    const { render } = await import('@testing-library/react')
+    const w = (await api.getWorkspaces())[0]!
+    const problem = clickProblem(err('sign.convenience_unavailable', 'disabled'))
+    expect(problem.body).toContain('<prefix>')
+    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><ClickProblemBox problem={problem} ws={w.id} /></QueryClientProvider>)
+    await waitFor(() => expect(screen.getByTestId('click-problem').textContent).toContain(`--workspace ${w.prefix} --in-place`), T)
+    expect(screen.getByTestId('click-problem').textContent).not.toContain('<prefix>')
   })
   it('preserves the host reader fix', () => {
     const problem = clickProblem(new ApiError(409, { code: 'sign.convenience_readers', message: 'Reader refused', retryable: false, fix: 'HOST FIX \u202ehere' }))
@@ -600,4 +637,36 @@ it('has no "Other ways": the method follows My settings, with the phone as the o
   expect(within(dialog).queryByRole('button', { name: 'Sign in Terminal' })).toBeNull()
   expect(within(dialog).queryByRole('button', { name: 'Use my phone instead' })).toBeNull() // no phone paired
   expect(s.prepare).not.toHaveBeenCalled()
+})
+
+describe('[rev818] adversarial: the switch moving never re-binds or signs an open request', () => {
+  it('a stale-method event while the click review is open: the review stays, nothing is signed, cancelled or re-prepared', async () => {
+    const { dialog } = await toPanel()
+    flag(false)
+    act(() => { window.dispatchEvent(new Event('orch:signing-method-stale')) })
+    await new Promise((r) => setTimeout(r, 300))
+    expect(within(dialog).getByTestId('click-panel')).toBeInTheDocument()
+    expect(c.sign).not.toHaveBeenCalled()
+    expect(c.cancel).not.toHaveBeenCalled()
+    expect(s.prepare).not.toHaveBeenCalled()
+    expect(c.prepare).toHaveBeenCalledTimes(1)
+  })
+
+  it('switched off between review and Sign: one sign attempt, Try again cancels the click request BEFORE a new terminal request', async () => {
+    s.prepare.mockResolvedValue(fakeRequest())
+    s.get.mockResolvedValue(state(fakeRequest()))
+    const { dialog } = await toPanel()
+    c.sign.mockImplementationOnce(async () => { flag(false); throw new ApiError(409, { code: 'sign.convenience_unavailable', message: 'disabled: off', retryable: false, reason: 'disabled' }, 3) })
+    press(await armed(dialog))
+    await within(dialog).findByTestId('click-problem', {}, T)
+    // The text says Try again, so the button is there (the request is still open: a sign refusal keeps it)
+    const again = await within(dialog).findByRole('button', { name: /Try again/ }, T)
+    expect(c.sign).toHaveBeenCalledTimes(1)
+    fireEvent.click(again)
+    await within(dialog).findByTestId('handoff-command', {}, T)
+    expect(c.cancel).toHaveBeenCalledTimes(1) // the click request is cancelled before the new terminal request
+    expect(c.sign).toHaveBeenCalledTimes(1) // never signed another way
+    expect(s.prepare).toHaveBeenCalledTimes(1)
+    expect(s.postAction).not.toHaveBeenCalled()
+  })
 })

@@ -1201,14 +1201,55 @@ def test_already_done_replay_maps_idem_codes_like_send_prepare(
     assert script.prepared == 1  # still no second request
 
 
-def test_n15_a_cancelled_or_expired_attempt_is_ended_and_start_again_is_explicit(client, token, stub, script, rich):
+def test_n15_a_cancelled_or_expired_attempt_is_ended_and_pressing_again_is_a_fresh_request(
+    client, token, stub, script, rich
+):
+    """#794: the server steps past ended attempts itself; it makes exactly one new request."""
     prepare(client, token, stub, comment(1))
     assert client.post(url(stub, "cancel"), json={"request_id": REQ}, headers=hdr(token)).status_code == 200
+    fresh = client.post(url(stub, "prepare"), json=comment(1), headers=hdr(token))
+    assert fresh.status_code == 200 and fresh.json()["request_id"] != REQ and script.prepared == 2
+    # cancel that one too (expired reads the same): the next press is another fresh one
+    assert (
+        client.post(
+            url(stub, "cancel"), json={"request_id": fresh.json()["request_id"]}, headers=hdr(token)
+        ).status_code
+        == 200
+    )
+    third = client.post(url(stub, "prepare"), json=comment(1), headers=hdr(token))
+    assert third.status_code == 200 and script.prepared == 3
+    # an open request is the same one for a second press (double click, second tab)
+    twin = client.post(url(stub, "prepare"), json=comment(1), headers=hdr(token))
+    assert twin.json()["request_id"] == third.json()["request_id"] and script.prepared == 3
+
+
+def test_794_a_signed_attempt_is_already_done_even_after_earlier_cancels(client, token, stub, script, rich):
+    prepare(client, token, stub, comment(1))
+    assert client.post(url(stub, "cancel"), json={"request_id": REQ}, headers=hdr(token)).status_code == 200
+    second = client.post(url(stub, "prepare"), json=comment(1), headers=hdr(token)).json()["request_id"]
+    script.states[second] = "submitted"  # signed
     again = client.post(url(stub, "prepare"), json=comment(1), headers=hdr(token))
-    err = again.json()["error"]
-    assert again.status_code == 409 and err["code"] == "intent.ended" and err["state"] == "cancelled"
-    fresh = client.post(url(stub, "prepare"), json={**comment(1), "retry": 1}, headers=hdr(token))
-    assert fresh.status_code == 200 and fresh.json()["request_id"] != REQ
+    assert again.status_code == 409 and again.json()["error"]["code"] in (
+        "intent.done",
+        "intent.expired",
+        "intent.blocked",
+    )
+    assert script.prepared == 2  # no third request
+
+
+def test_794_the_walk_is_capped(client, token, stub, script, rich):
+    from orch_dashboard.handoff import NEXT_RETRY_HOPS
+
+    for r in range(NEXT_RETRY_HOPS + 1):
+        got = client.post(url(stub, "prepare"), json={**comment(1), "retry": r}, headers=hdr(token))
+        assert got.status_code == 200, got.text
+        client.post(url(stub, "cancel"), json={"request_id": got.json()["request_id"]}, headers=hdr(token))
+    made = script.prepared
+    res = client.post(url(stub, "prepare"), json=comment(1), headers=hdr(token))
+    assert res.status_code == 409 and res.json()["error"]["code"] == "intent.exhausted"
+    assert script.prepared == made
+    ok = client.post(url(stub, "prepare"), json={**comment(1), "retry": NEXT_RETRY_HOPS + 1}, headers=hdr(token))
+    assert ok.status_code == 200 and script.prepared == made + 1
 
 
 def test_n15_an_idem_conflict_from_the_signer_is_an_open_attempt_not_a_second_request(

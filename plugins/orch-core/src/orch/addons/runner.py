@@ -46,8 +46,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from orch import __version__ as CORE_VERSION
 from orch import canon
-from orch.addons.manifest import ManifestError, load_manifest
+from orch.addons.manifest import ManifestError, incompatibility, load_manifest
 from orch.addons.package import MANIFEST_FILE, Package, PackageError, check_path, package_digest, read_package
 from orch.model.types import Addon
 
@@ -58,10 +59,10 @@ MAX_REQUEST = 64 << 10
 
 
 class RunnerError(Exception):
-    """A call failed. ``code`` is one of ``addon.digest_mismatch``, ``addon.start_failed``, ``addon.timeout``,
-    ``addon.crashed``, ``addon.output_too_large``, ``addon.bad_response``, ``addon.error`` (the addon answered with a
-    JSON-RPC error), ``addon.bad_request``; ``detail`` never contains output of the addon, ``stderr`` does (capped, for
-    the log, never to be shown as instructions)."""
+    """A call failed. ``code`` is one of ``addon.digest_mismatch``, ``addon.incompatible``, ``addon.start_failed``,
+    ``addon.timeout``, ``addon.crashed``, ``addon.output_too_large``, ``addon.bad_response``, ``addon.error`` (the
+    addon answered with a JSON-RPC error), ``addon.bad_request``; ``detail`` never contains output of the addon,
+    ``stderr`` does (capped, for the log, never to be shown as instructions)."""
 
     def __init__(self, code: str, detail: str, stderr: str = "") -> None:
         super().__init__(f"{code}: {detail}")
@@ -196,6 +197,9 @@ def call(
         sorted(granted.capabilities),
     ):
         raise RunnerError("addon.digest_mismatch", "the manifest is not the one that was granted")
+    why = incompatibility(manifest, CORE_VERSION)  # the registry state ``incompatible``: never run, never hidden
+    if why is not None:
+        raise RunnerError("addon.incompatible", why)
     granted_digest = granted.package_sha256
     try:
         request = canon.dumps(

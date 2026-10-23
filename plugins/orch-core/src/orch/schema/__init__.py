@@ -87,6 +87,9 @@ _WORKSPACE_ONLY = frozenset(
         "addon.granted",
         "addon.disabled",
         "addon.purged",
+        "hub.joined",
+        "hub.left",
+        "hub.pinned",
     }
 )
 _BOTH_LOGS = frozenset({"policy.changed", "projection.repaired", "restore", "invalid.acknowledged"})
@@ -143,6 +146,48 @@ def _raw(name: str) -> dict[str, Any]:
     except KeyError:
         raise KeyError(f"unknown schema {name!r}") from None
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _deref(ref: str) -> tuple[str, Any] | None:
+    for prefix in _INLINE_PREFIXES:
+        if ref.startswith(prefix):
+            doc = _raw(prefix[len(BASE) : prefix.index("#")])
+            return ref[len(prefix) :], doc["$defs"][ref[len(prefix) :]]
+    return None
+
+
+@cache
+def person_ref_paths(name: str) -> tuple[tuple[str, ...], ...]:
+    """Every place the schema ``name`` (for example ``event.people.changed``) allows a ``personRef`` (a ``p_`` person or
+    a ``u_`` hub user), as key paths from the document root; ``"*"`` is an array item. Derived from the schema
+    itself, through every ``$ref``, ``oneOf``/``anyOf``/``allOf`` and conditional branch, so a personRef field added
+    to a schema is found without anyone remembering to list it (ticket-format 15.1, user_hub recording)."""
+    found: set[tuple[str, ...]] = set()
+
+    def walk(node: Any, path: tuple[str, ...], seen: frozenset[str]) -> None:
+        if not isinstance(node, dict):
+            return
+        ref = node.get("$ref")
+        if isinstance(ref, str):
+            hit = _deref(ref)
+            if hit is not None:
+                if hit[0] == "personRef":
+                    found.add(path)
+                elif hit[0] not in seen:
+                    walk(hit[1], path, seen | {hit[0]})
+        for key in ("properties", "patternProperties"):
+            for k, v in (node.get(key) or {}).items():
+                walk(v, (*path, k if key == "properties" else "*"), seen)
+        for key in ("items", "additionalProperties", "contains"):
+            walk(node.get(key), (*path, "*") if key == "items" else path, seen)
+        for key in ("oneOf", "anyOf", "allOf"):
+            for v in node.get(key) or ():
+                walk(v, path, seen)
+        for key in ("if", "then", "else", "not"):
+            walk(node.get(key), path, seen)
+
+    walk(_raw(name), (), frozenset())
+    return tuple(sorted(found))
 
 
 def preload() -> None:
@@ -789,12 +834,32 @@ def validate_settings(value: Any, *, repos: dict[str, Any] | None = None) -> Non
     _check_repos(name, ("set", "repos"), resulting)
 
 
+def _ev_hub_joined(obj: dict[str, Any], actor: dict[str, Any]) -> None:
+    """Hub contract 9.1: ``hub_id`` is derived from ``hk_root_pub``; aliases sorted by ``person_id``, unique on both
+    members (a re-pointed alias across joins is the model's check)."""
+    from orch.crypto.encoding import EncodingError, unb64u
+    from orch.hubclient import wire
+    from orch.hubclient.errors import HubRefused
+
+    try:
+        root = unb64u(obj["hk_root_pub"], 65)
+        if obj["hub_id"] != wire.hub_id(root):
+            raise SchemaError("event", "/hub_id", "hub_id is not the hub id of hk_root_pub")
+    except (EncodingError, HubRefused):
+        raise SchemaError("event", "/hk_root_pub", "hk_root_pub is not a key") from None
+    pids = [a["person_id"] for a in obj["aliases"]]
+    uids = [a["user_id"] for a in obj["aliases"]]
+    if pids != sorted(set(pids)) or len(set(uids)) != len(uids):
+        raise SchemaError("event", "/aliases", "aliases must be sorted by person_id and unique")
+
+
 def _ev_settings_changed(obj: dict[str, Any], actor: dict[str, Any]) -> None:
     _check_repos("event", ("set", "repos"), obj["set"].get("repos", {}))
 
 
 _EVENT_CHECKS = {
     "settings.changed": _ev_settings_changed,
+    "hub.joined": _ev_hub_joined,
     "ticket.created": _ev_ticket_created,
     "ticket.updated": _ev_ticket_updated,
     "edit.external": _ev_edit_external,

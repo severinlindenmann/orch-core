@@ -69,6 +69,8 @@ SHOWN: dict[str, frozenset[str]] = {
     "gate.approved": frozenset({"gate", "source_sha"}),
     "gate.changes_requested": frozenset({"gate", "text"}),
     "verdict.given": frozenset({"outcome", "text", "source_sha"}),
+    "hub.joined": frozenset({"hub_id", "hk_root_pub", "mode", "binding_seq", "aliases"}),
+    "hub.left": frozenset({"hub_id", "binding_seq"}),
     "grant.issued": frozenset({"grant", "scope", "verbs", "label", "hours", "issued_at", "expires_at"}),
     "grant.revoked": frozenset({"grant", "reason"}),
     "log.added": frozenset({"text"}),
@@ -262,7 +264,35 @@ def _views_line(views: int) -> str:
     return f"Link: a show-once link: it opens at most {views} time{'' if views == 1 else 's'}"
 
 
-def _extend_summary(events: list[Mapping[str, Any]]) -> dict[str, Any] | None:
+_GRANT_INFO = frozenset({"label", "scope", "expires_at", "person"})
+
+
+def _grant_words(ev: Mapping[str, Any], ctx: _Ctx) -> tuple[str, bool]:
+    """Which access an event takes back, in words and by the host's word (``material["grants"]``, labelled "per host,
+    not signed" where it is shown):
+    ``("agent access for this Mac's runner, until Sun 00:37", True)`` for the person's own
+    runner access, ``(.., False)`` for any other own access. The id is never in the words (it is in the technical
+    details). Anything that cannot be said distinctly (no host word, a malformed one, an access of another person, no
+    end time) raises :class:`PlainUnavailable`: the caller then shows the full review, with the ids."""
+    gid = ev.get("grant")
+    info = ctx.grants.get(gid) if isinstance(ctx.grants, Mapping) and type(gid) is str else None
+    if not isinstance(info, Mapping) or set(info) != _GRANT_INFO or not all(type(v) is str for v in info.values()):
+        raise PlainUnavailable("the host did not say which access is taken back")
+    until = local_time(info["expires_at"])
+    if until is None:
+        raise PlainUnavailable("the access to be taken back has no usable end time")
+    if info["person"] != (ev.get("actor") or {}).get("id"):
+        raise PlainUnavailable("the access to be taken back is not the signer's own")
+    if info["label"] == "runner" and info["scope"] == "workable":
+        return f"agent access for this Mac's runner, until {until}", True
+    label = f' "{one(info["label"])}"' if info["label"] else ""
+    return f"agent access{label} (tickets: {one(info['scope'])}), until {until}", False
+
+
+_EXTEND_WARNING = "Running agents will stop. New agents use the extended access (per host, not signed)."
+
+
+def _extend_summary(events: list[Mapping[str, Any]], ctx: _Ctx) -> dict[str, Any] | None:
     """The plain lead of an Extend (the ordinary runner grant plus the take-back of the access it replaces, B8).
     Only for exactly that shape; anything else keeps the generic review (nothing here may claim less than is signed)."""
     kinds = [e.get("type") for e in events]
@@ -280,18 +310,19 @@ def _extend_summary(events: list[Mapping[str, Any]]) -> dict[str, Any] | None:
     ):
         return None
     until = local_time(new.get("expires_at"), hours)
+    replaced, is_runner = _grant_words(old, ctx)
+    if not is_runner:  # an Extend replaces the runner's own access; anything else is not what this summary says
+        raise PlainUnavailable("the access an Extend takes back is not the runner's own access")
     lines = [
         f"New access: agents working for you, for {span(hours)}.",
         *([f"The new access ends {until} (your time)."] if until else []),
-        f"It replaces the access {_grant_short(old.get('grant'))}, which is taken back when you sign.",
+        f"The access it replaces is taken back when you sign. Per host, not signed: that is the {replaced}.",
         "Affected: agents working for you (per host, not signed).",
-        "Running agents will stop. New agents use the extended access (per host, not signed).",
     ]
-    # the headline is all the terminal's plain view prints first: it keeps the length, the end and the replaced access
-    head = (
-        f"Extend agent access: agents working for you, for {span(hours)}"
-        + (f" (until {until}, your time)" if until else "")
-        + f"; takes back {_grant_short(old.get('grant'))}"
+    # the headline is all the terminal's plain view prints first: it keeps the length and the end; the ids of the new
+    # and the replaced access are in the technical details (the full review), never in the plain words
+    head = f"Extend agent access for this Mac's runner, for {span(hours)}" + (
+        f" (until {until}, your time)" if until else ""
     )
     return {"title": "Extend agent access", "lines": lines, "headline": head}
 
@@ -857,6 +888,9 @@ class _Ctx:
 
     def __init__(self, verified: bool) -> None:
         self.verified = verified
+        self.grants: Any = None  # material["grants"]: the host's word about each access taken back (not signed)
+        self.taken = 0  # how many accesses the request takes back, and how many rows were made so far
+        self.rows = 0
 
     def note(self, bound: bool) -> str | None:
         """The ``before_note`` of a ``before``: ``bound`` is "the event's ``base_rev`` binds it"."""
@@ -1013,6 +1047,11 @@ def _payload(
     texts = material.get("texts") or {}
     ref = _ref(ticket)
     heads: list[str] = []
+    ctx.grants = material.get("grants")
+    taken = [_grant_words(ev, ctx)[0] for ev in events if ev.get("type") == "grant.revoked"]
+    ctx.taken = len(taken)
+    if len(set(taken)) != len(taken):  # two accesses that read alike are never shown as one
+        raise PlainUnavailable("two accesses taken back cannot be told apart")
     for ev in events:
         typ = _s(ev.get("type"))
         if typ not in SHOWN:
@@ -1024,8 +1063,6 @@ def _payload(
     if issued and revoked:  # an Extend: the access it replaces must be another one than the new access
         if set(issued) & set(revoked):
             raise PlainUnavailable("the access to be taken back is the one being given")
-        for new in issued:
-            _row(out, "new access", _grant_short(new))
     shown = {}
     for gid in [*issued, *revoked]:
         if shown.setdefault(_grant_short(gid), gid) != gid:  # two different accesses that look alike on the screen
@@ -1035,8 +1072,11 @@ def _payload(
         summary = _share_summary(_s(events[0].get("text")))
         if summary is not None:
             out["summary"] = summary
+    if len(taken) > 1:  # several take-backs: one headline with the count; each access has its own row
+        heads = [h for h, ev in zip(heads, events, strict=True) if ev.get("type") != "grant.revoked"]
+        heads.append(f"Take back {len(taken)} agent accesses")
     uniq = list(dict.fromkeys(heads))
-    extend = _extend_summary(events) if issued and revoked else None
+    extend = _extend_summary(events, ctx) if issued and revoked else None
     if extend is not None:
         out["headline"] = extend.pop("headline")
         out["summary"] = extend
@@ -1097,15 +1137,23 @@ def _event(
     if typ == "grant.issued":
         return _grant_issued(ev, out)
     if typ == "grant.revoked":
-        _row(out, "access taken back", _grant_short(ev.get("grant")))
-        note = "The full access id is in the technical details."
+        # which access, in words by the host's word (labelled); the id is in the technical details only (DETAILS_ONLY)
+        words, _ = _grant_words(ev, ctx)
+        ctx.rows += 1
+        _row(
+            out,
+            "access taken back" + (f" {ctx.rows}/{ctx.taken}" if ctx.taken > 1 else ""),
+            words[0].upper() + words[1:] + " (per host, not signed)",
+        )
+        note = "Which access is the host's word, not signed; the access id is in the technical details."
         if note not in out.setdefault("notes", []):
             out["notes"].append(note)
-        if ev.get("reason") == "extended":  # B8: the old half of an Extend
-            out.setdefault("notes", []).append("Agents that are running now stop; new agents use the extended access.")
+        if ev.get("reason") == "extended":  # B8: the old half of an Extend; said ONCE (see _EXTEND_WARNING)
+            if _EXTEND_WARNING not in out["notes"]:
+                out["notes"].append(_EXTEND_WARNING)
         if ev.get("reason"):
             _row(out, "reason", ev["reason"])
-        return f"Take back the agent access {_grant_short(ev.get('grant'))}"
+        return "Take back agent access"  # signed words only: which access is in the labelled row (the host's word)
     if typ == "settings.changed":
         for key, value in sorted((ev.get("set") or {}).items()):
             if key == "repos" and _repo_rows(out, value, before.get(key), ctx):
@@ -1120,6 +1168,42 @@ def _event(
                 f"Agents may get access for up to {span(ev['set']['grant_hours'])} (members; the runner too)."
             )
         return "Change the workspace settings"
+    if typ == "hub.joined":  # V3 C2a/C2b: the words say what the hub does and does not get
+        hub = _short(ev.get("hub_id"))
+        mode = ev.get("mode")
+        if mode not in ("selective", "full"):
+            raise PlainUnavailable("only the selective and full modes have plain words")
+        _row(out, "hub", ev.get("hub_id"))
+        _row(out, "hub key fingerprint", _fp(ev.get("hk_root_pub")))
+        _row(out, "mode", mode)
+        _row(out, "binding", ev.get("binding_seq"))
+        aliases = ev.get("aliases") if isinstance(ev.get("aliases"), list) else []
+        for a in aliases:
+            if not isinstance(a, dict) or set(a) != {"person_id", "user_id"}:
+                raise PlainUnavailable("hub.joined alias is not a pair")
+            _row(out, "hub name for you", f"{one(a['person_id'])} is {one(a['user_id'])} on the hub")
+        if mode == "full":
+            out.setdefault("notes", []).append(
+                "Full: the hub will be able to read everything in this workspace, restricted tickets too. It becomes "
+                "a member of the workspace and gets the workspace key (sealed to the hub's own key). Leaving later "
+                "starts a new key the hub never gets, but it cannot take back what the hub already read. Only you can"
+                " sign this, with your own key at this terminal."
+            )
+            return f"Join hub {hub} in full mode: the hub will be able to read everything in this workspace"
+        out.setdefault("notes", []).append(
+            "Selective: the hub sees only what you choose to share. It never gets the workspace key and is not a "
+            "member of the workspace. You can leave at any time (orch hub leave), also while the hub is down."
+        )
+        return f"Join hub {hub} in selective mode: the hub sees only what you share"
+    if typ == "hub.left":
+        _row(out, "hub", ev.get("hub_id"))
+        _row(out, "binding", ev.get("binding_seq"))
+        out.setdefault("notes", []).append(
+            "The workspace tells the hub and publish that it is no longer bound. This does not take back what the "
+            "hub already read. If the hub was in full mode, the workspace key is replaced by a new one that the hub "
+            "never gets."
+        )
+        return f"Leave hub {_short(ev.get('hub_id'))}"
     if typ == "people.changed":
         role = _s(ev.get("role"))
         add, remove = ev.get("add") or [], ev.get("remove") or []

@@ -197,12 +197,13 @@ class WorkspaceView:
     invalid: tuple[InvalidView, ...]
     frozen: bool
     needs: tuple[Need, ...]
+    hub: Mapping[str, Any] = MappingProxyType({})  # the workspace's hub (hub contract 9.1); empty if it never joined
 
 
 def _gate_view(ws: WsCore, t: TCore, g: str) -> GateView:
     pol = policies.effective(ws, t, g)
     gc = t.gates[g]
-    count = {d.id for d in generations.counting(t, g)}
+    count = {d.id for d in generations.counting(t, g, ws)}
     try:
         raw = gates.gate_input(ws, t, g)
         h, g_in = gate_hash(raw), freeze(raw)
@@ -219,7 +220,7 @@ def _gate_view(ws: WsCore, t: TCore, g: str) -> GateView:
         g_in,
         pol["count"],
         gates.approved(ws, t, g),
-        tuple(d.person for d in generations.counting(t, g)),
+        tuple(d.person for d in generations.counting(t, g, ws)),
         tuple(policies.eligible_persons(ws, t, g)),
         tuple(
             DecisionView(
@@ -237,7 +238,7 @@ def _gate_view(ws: WsCore, t: TCore, g: str) -> GateView:
             for d in gc.decisions
         ),
         needs.gate_waiting(ws, t, g),
-        tuple(sorted(gc.revoked_flag & {d.id for d in generations.counting(t, g)})),
+        tuple(sorted(gc.revoked_flag & {d.id for d in generations.counting(t, g, ws)})),
         tuple(gates.missing_for_gate(ws, t, g)),
     )
 
@@ -371,4 +372,5 @@ def workspace_view(core: Core, now: int) -> WorkspaceView:
         invalid,
         frozen,
         tuple(needs.workspace_needs(ws, frozen)),
+        freeze(ws.hub),
     )

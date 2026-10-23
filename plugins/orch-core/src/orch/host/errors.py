@@ -95,6 +95,7 @@ HOST_CODES: dict[str, tuple[int, bool]] = {
     "worktree.in_use": (3, False),
     "worktree.unpinned": (3, False),
     "worktree.git_failed": (1, False),
+    "worktree.checkout_unsupported": (3, False),
     "unsupported.platform": (3, False),
     # P5, the Publish add-on (design-publish-addon)
     "publish.not_configured": (3, False),
@@ -102,6 +103,14 @@ HOST_CODES: dict[str, tuple[int, bool]] = {
     "publish.changed": (3, False),
     "publish.server_refused": (3, False),
     "publish.unreachable": (9, True),
+    # V3 C2a, the hub (hub contract 9; host/hubops.py)
+    "hub.unreachable": (9, True),
+    "hub.no_card": (3, False),
+    "hub.no_epoch": (3, False),
+    "relay.local_epochs": (3, False),
+    "hub.rotation_pending": (9, True),
+    "hub.state_mismatch": (3, False),
+    "hub.not_joined": (3, False),
     # H11c, start agent and the runner grant (§12.4)
     "launch.claimed": (3, False),
     "launch.no_grant": (3, False),
@@ -203,6 +212,7 @@ DETAIL_KEYS: dict[str, dict[str, tuple[str, ...] | str | None]] = {
             "dev_host",
         ),
     },
+    "sign.hub_only": {"reason": ("hub",)},  # V3 C11
     "sign.convenience_readers": {
         "reason": ("no_declaration", "reader_too_old", "declaration_unknown", "relay_too_old", "unknown_readers"),
         "devices": DEVICES,

@@ -1,0 +1,1 @@
+err hub.already_joined this workspace is already joined to a hub · retry:false · next: leave the hub first: orch hub leave · fix: orch status

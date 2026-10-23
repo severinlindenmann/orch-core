@@ -47,3 +47,64 @@ class Verifier(Protocol):
         and ``pk_pub``; verify both signatures and key bindings, without expiry or person-scope authorization.
         This evidence establishes a tombstone, never membership.
         ``False`` for an event that carries none or an unknown type."""
+
+    def verify_custodial_sigs(self, event: Mapping[str, Any], *, workspace_id: str, log: str) -> bool:
+        """C3b (§15.3 line checks): the two signatures of a hub-signed line, ``sig`` under ``uk_cert.o.uk_pub`` with the
+        label of ``type`` and ``channel_proof`` under ``channel_cert.o.key_pub`` over the event digest. ``False`` also
+        when a certificate or key cannot be read. Whether the certificates chain to the hub is authorization."""
+
+    def verify_hub_pin(
+        self,
+        obj: Mapping[str, Any],
+        *,
+        root: str,
+        card: Mapping[str, Any] | None,
+        revoked: frozenset[str],
+        snapshot: Mapping[str, Any] | None,
+        workspace_id: str,
+        at_ms: int,
+        dev: bool,
+    ) -> str | None:
+        """C3b (§15.2 rules 2-4): the signed hub object ``obj`` (card, op revocation or snapshot) under the pinned
+        ``root`` (``hk_root_pub``), against the ledger's ``card`` (signed), ``revoked`` op cert ids and pinned
+        ``snapshot`` (signed), at ``at_ms`` (the line's ``at``, never a clock). ``None`` when it holds, else the hub
+        contract's refusal code (``stale_card``, ``other_hub``, ``revoked``, ``stale_snapshot``, ...)."""
+
+    def verify_hub_actor(
+        self,
+        event: Mapping[str, Any],
+        *,
+        workspace_id: str,
+        log: str,
+        root: str,
+        card: Mapping[str, Any] | None,
+        revoked: frozenset[str],
+        snapshot: Mapping[str, Any] | None,
+        revoked_channels: frozenset[str],
+        at_ms: int,
+        dev: bool,
+        mode: str,
+        member_role: str | None,
+    ) -> str | None:
+        """C3b (§15.3 steps 2, 3 and 5) for a hub-signed ``event``: the certificate chain through the ledger card
+        (``no_card``, ``revoked``, ``cert_expired``, ``bad_signature``, ``stale_op_cert``, ``dev_*``, ``other_user``,
+        ``factor_mismatch``), the pinned snapshot (``unknown_snapshot``), then the role and type
+        (``channel_revoked``, ``forbidden_role``, ``not_granted``, ``not_custodial``, ``factor_too_weak``).
+        ``member_role`` is the F1 role of the canonical person in selective mode. ``None`` when it holds, else the
+        contract code."""
+
+
+class RefuseHub:
+    """Fail-closed defaults for the three C3b methods: a verifier that does not inherit real ones refuses every hub
+    signature, pin and actor (D79: a workspace without hub wiring never admits hub material)."""
+
+    __slots__ = ()
+
+    def verify_custodial_sigs(self, event: Mapping[str, Any], *, workspace_id: str, log: str) -> bool:
+        return False
+
+    def verify_hub_pin(self, obj: Mapping[str, Any], **kw: Any) -> str | None:
+        return "unavailable"
+
+    def verify_hub_actor(self, event: Mapping[str, Any], **kw: Any) -> str | None:
+        return "unavailable"

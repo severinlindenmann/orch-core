@@ -76,7 +76,8 @@
           "settings",
           "grant",
           "addon",
-          "invalid"
+          "invalid",
+          "hub"
         ]
       }
     },
@@ -106,7 +107,8 @@
         "settings",
         "grant",
         "addon",
-        "invalid"
+        "invalid",
+        "hub"
       ]
     },
     "personId": {
@@ -298,7 +300,8 @@
         "convenience",
         "webauthn",
         "tpm",
-        "windows-hello"
+        "windows-hello",
+        "hub"
       ]
     },
     "grantScope": {
@@ -450,7 +453,7 @@
             "restricted": {
               "type": "array",
               "items": {
-                "$ref": "https://schemas.orch.dev/v2/common#/$defs/personId"
+                "$ref": "https://schemas.orch.dev/v2/common#/$defs/personRef"
               },
               "uniqueItems": true,
               "minItems": 1
@@ -491,7 +494,7 @@
         "to": {
           "oneOf": [
             {
-              "$ref": "https://schemas.orch.dev/v2/common#/$defs/personId"
+              "$ref": "https://schemas.orch.dev/v2/common#/$defs/personRef"
             },
             {
               "$ref": "https://schemas.orch.dev/v2/common#/$defs/questionToRole"
@@ -938,6 +941,22 @@
       "maxLength": 300,
       "description": "an origin the Publish add-on may send files to: https with a lower-case host and optional port, or http for this computer only (the signer re-checks it)",
       "pattern": "^(?:https://[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[1-9][0-9]{0,4})?|http://(?:localhost|127\\.0\\.0\\.1)(?::[1-9][0-9]{0,4})?)(?![\\s\\S])"
+    },
+    "hubUserId": {
+      "type": "string",
+      "pattern": "^(?:u_[0-9a-f]{32})(?![\\s\\S])",
+      "description": "Ticket-format section 15.1: a hub user, u_ plus the hub's 32-hex user id."
+    },
+    "personRef": {
+      "description": "Ticket-format section 15.1: a person reference that may name a hub user. A u_ reference is accepted only while a hub is joined at that position (the model checks).",
+      "anyOf": [
+        {
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/personId"
+        },
+        {
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/hubUserId"
+        }
+      ]
     }
   }
 }

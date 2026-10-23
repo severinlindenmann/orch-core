@@ -15,12 +15,13 @@ import secrets
 import stat
 import tempfile
 import threading
+import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Literal
 
 from fastapi import Path as PathParam
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from .errors import fail
@@ -36,6 +37,7 @@ IMAGE_MAX = 5 * 1024 * 1024
 IMAGES_PER_STEP = 12
 STEP_ROWS_MAX = 500
 RUN_BYTES_MAX = 300 * 1024 * 1024
+ZIP_BYTES_MAX = 200 * 1024 * 1024
 #: base64 of the largest image plus the JSON around it; the Security layer bounds the request to this.
 UPLOAD_LIMIT = (IMAGE_MAX * 4 // 3) + 4096
 TYPES = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
@@ -278,6 +280,71 @@ def register(app, gateway):
             except OSError:
                 raise fail("not_found", exit=1) from None
         return Response(data, media_type=MEDIA[name.rsplit(".", 1)[1]])
+
+    def zip_of(run):
+        """Every picture the notes list, as one stored zip in a temporary file (pictures are already compressed).
+        Only names that match IMAGE are read, each through an fd opened without following a symlink; a name that
+        is missing, unsafe or not a regular file is left out. Refused above ZIP_BYTES_MAX."""
+        doc = store.load(run)
+        names = sorted(
+            {
+                n
+                for row in doc["steps"].values()
+                if isinstance(row, dict)
+                for n in row.get("images", [])
+                if isinstance(n, str) and re.fullmatch(IMAGE, n)
+            }
+        )
+        images = store.run_dir(run) / "images"
+        out = tempfile.TemporaryFile()
+        total = count = 0
+        try:
+            with zipfile.ZipFile(out, "w", zipfile.ZIP_STORED) as archive:
+                for name in names:
+                    try:
+                        data = _read(images / name, IMAGE_MAX)
+                    except OSError:
+                        continue
+                    if len(data) > IMAGE_MAX:
+                        continue
+                    total += len(data)
+                    if total > ZIP_BYTES_MAX:
+                        raise fail(
+                            "zip.too_large",
+                            "The screenshots are larger than 200 MB; copy them from the folder instead.",
+                            exit=5,
+                        )
+                    archive.writestr(zipfile.ZipInfo(name, (2026, 1, 1, 0, 0, 0)), data)
+                    count += 1
+        except BaseException:
+            out.close()
+            raise
+        if count == 0:
+            out.close()
+            raise fail("not_found", exit=1)
+        out.seek(0)
+        return out
+
+    @app.get("/api/testrun/{run}/screenshots.zip")
+    def read_zip(run: run_type):
+        with store.lock:
+            out = zip_of(run)
+        stamp = datetime.now().strftime("%Y%m%d-%H%M")  # local time
+
+        def chunks():
+            try:
+                while block := out.read(1 << 20):
+                    yield block
+            finally:
+                out.close()
+
+        size = os.fstat(out.fileno()).st_size
+        headers = {
+            "Content-Disposition": f'attachment; filename="orch-{run}-screenshots-{stamp}.zip"',
+            "Content-Length": str(size),
+            "Cache-Control": "no-store",
+        }
+        return StreamingResponse(chunks(), media_type="application/zip", headers=headers)
 
     @app.delete("/api/testrun/{run}/images/{name}")
     def delete_image(run: run_type, name: image_type):

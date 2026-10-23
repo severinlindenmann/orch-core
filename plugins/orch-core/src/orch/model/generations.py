@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from . import policies
+from . import identity, policies
 from .types import GATES, Decision, TCore, WsCore
 
 _REQ_PATHS = {
@@ -104,24 +104,27 @@ def mark_from(t: TCore, gate: str) -> None:
 # --- counting ---------------------------------------------------------------------------------------------------
 
 
-def counting(t: TCore, gate: str) -> list[Decision]:
-    """Counting approvals: ``approve``/``pass`` at the current generation, not voided, one per person, by ``seq``."""
+def counting(t: TCore, gate: str, ws: WsCore | None = None) -> list[Decision]:
+    """Counting approvals: ``approve``/``pass`` at the current generation, not voided, one per person, by ``seq``.
+    With ``ws`` the person is the canonical identity (``u_x`` and its aliased ``p_x`` are one person, D59); every
+    caller that has the workspace passes it, so an alias joined after the decisions still merges them."""
     gc = t.gates[gate]
     out, seen = [], set()
     for d in gc.decisions:
-        if d.kind in ("approve", "pass") and d.gen == gc.gen and not d.voided and d.person not in seen:
-            seen.add(d.person)
+        who = d.person if ws is None else identity.canonical(ws, d.person)
+        if d.kind in ("approve", "pass") and d.gen == gc.gen and not d.voided and who not in seen:
+            seen.add(who)
             out.append(d)
     return out
 
 
 def first_count(ws: WsCore, t: TCore, gate: str) -> tuple[str, ...]:
     need = policies.effective(ws, t, gate)["count"]
-    return tuple(sorted(d.id for d in counting(t, gate)[:need]))
+    return tuple(sorted(d.id for d in counting(t, gate, ws)[:need]))
 
 
 def reached(ws: WsCore, t: TCore, gate: str) -> bool:
-    return len(counting(t, gate)) >= policies.effective(ws, t, gate)["count"]
+    return len(counting(t, gate, ws)) >= policies.effective(ws, t, gate)["count"]
 
 
 # --- settle -----------------------------------------------------------------------------------------------------
@@ -138,7 +141,7 @@ def snapshot(ws: WsCore, t: TCore) -> dict[str, Snap]:
     return {
         g: Snap(
             policies.applies(ws, t, g),
-            frozenset(d.id for d in counting(t, g)),
+            frozenset(d.id for d in counting(t, g, ws)),
             first_count(ws, t, g),
         )
         for g in GATES
@@ -172,7 +175,7 @@ def settle(ws: WsCore, t: TCore, before: dict[str, Snap], *, raise_gates: bool =
             t.gates[g].gen += 1
     lost = []
     for g in GATES:
-        gone = set(before[g].counting) - {d.id for d in counting(t, g)}
+        gone = set(before[g].counting) - {d.id for d in counting(t, g, ws)}
         t.gates[g].pending_void |= gone
         if gone:
             lost.append(g)
@@ -185,9 +188,22 @@ def settle(ws: WsCore, t: TCore, before: dict[str, Snap], *, raise_gates: bool =
 SETTLED = ("done", "closed")
 
 
+def live(t: TCore, gate: str) -> list[Decision]:
+    """Every live approve/pass at the gate's current generation, not just the one per person that counts. The void paths
+    (person, device) work on this list, so a second decision by the same person is never left counting."""
+    gc = t.gates[gate]
+    return [d for d in gc.decisions if d.kind in ("approve", "pass") and d.gen == gc.gen and not d.voided]
+
+
+def person_decisions(ws: WsCore, t: TCore, gate: str, person: str) -> list[Decision]:
+    """All live decisions of ``person`` (canonical identity, D59), under any of its ids."""
+    who = identity.canonical(ws, person)
+    return [d for d in live(t, gate) if identity.canonical(ws, d.person) == who]
+
+
 def _void_person_now(ws: WsCore, t: TCore, person: str) -> None:
     for g in GATES:
-        mine = [d for d in counting(t, g) if d.person == person]
+        mine = person_decisions(ws, t, g, person)
         if mine and not reached(ws, t, g):
             for d in mine:
                 d.voided = True
@@ -206,23 +222,27 @@ def void_person(ws: WsCore, t: TCore, person: str) -> None:
 
 def _void_device_now(t: TCore, device: str) -> None:
     for g in GATES:
-        mine = [d for d in counting(t, g) if d.device == device]
+        mine = [d for d in live(t, g) if d.signer == device]
         for d in mine:
             d.voided = True
         if mine:
             t.marks.add(g)
 
 
-def void_device(ws: WsCore, t: TCore, device: str) -> None:
-    """``device.revoked`` (compromised): voids what the device signed on every unsettled ticket, reached or not. A
-    settled ticket keeps its state; each gate lists the device's decisions that were counting (``revoked_flag``) and
-    the void waits in ``exempt_devices`` (§5.7)."""
+def void_signer(ws: WsCore, t: TCore, key: str) -> None:
+    """``device.revoked`` (compromised) or a channel revocation (C3b-2): voids what the signing key signed on every
+    unsettled ticket, reached or not. ``key`` is a :class:`identity.Signer` key: a ``d_`` device id, or
+    ``hub:<hub_id>/<channel>``. A settled ticket keeps its state; each gate lists the key's decisions that were counting
+    (``revoked_flag``) and the void waits in ``exempt_devices`` (§5.7). Decisions of other keys are never touched."""
     if t.status in SETTLED:
-        t.exempt_devices.add(device)
+        t.exempt_devices.add(key)
         for g in GATES:
-            t.gates[g].revoked_flag |= {d.id for d in counting(t, g) if d.device == device}
+            t.gates[g].revoked_flag |= {d.id for d in live(t, g) if d.signer == key}
         return
-    _void_device_now(t, device)
+    _void_device_now(t, key)
+
+
+void_device = void_signer  # the device case (ticket-format 5.7)
 
 
 def on_unsettle(ws: WsCore, t: TCore, before_status: str) -> None:

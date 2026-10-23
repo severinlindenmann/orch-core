@@ -36,7 +36,7 @@ describe('every reason is a plain sentence', () => {
     expect(p.body).toContain(UNAVAILABLE_SENTENCE[reason])
     expect(p.body).not.toContain(reason)
     expect(p.devices).toEqual([LAPTOP])
-    expect(p.next).toBe('terminal')
+    expect(p.next).toBe(reason === 'disabled' ? 'retry' : 'terminal') // disabled: the switch moved, Try again follows it
   })
 
   it.each(READERS_REASONS)('sign.convenience_readers · %s', (reason) => {

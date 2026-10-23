@@ -28,7 +28,10 @@ MATERIAL_KEYS = {
         {"kind", "gate", "input", "policy", "texts", "ticket", "review", "manual_acceptances"},
     ),
     "question": ({"kind", "ticket", "question", "review"},) * 2,
-    "payload": ({"kind", "ticket", "review"}, {"kind", "ticket", "review", "texts", "before", "sequence", "statement"}),
+    "payload": (
+        {"kind", "ticket", "review"},
+        {"kind", "ticket", "review", "texts", "before", "sequence", "statement", "grants"},
+    ),
 }
 #: the only ops whose material may carry a manual acceptance `statement` (core signer `_person_op`)
 STATEMENT_OPS = ("ac.accept", "ac.unaccept")

@@ -96,12 +96,13 @@
             "enum": [
               "terminal",
               "click",
-              "phone"
+              "phone",
+              "hub"
             ]
           },
           "uniqueItems": true,
           "minItems": 1,
-          "maxItems": 3,
+          "maxItems": 4,
           "contains": {
             "const": "terminal"
           }

@@ -19,6 +19,7 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { toastApiError } from '@/app/toast'
 import { useWorkspace } from '@/app/workspace'
+import { visible } from '@/components/sign/visible'
 import { AnswerSend } from '@/components/sign/AnswerSend'
 import { QuestionOptions } from '../ticket/QuestionOptions'
 import { type HumanAction } from '../ticket/shared'
@@ -78,8 +79,8 @@ export function RowShell({
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-2">
             {onToggle ? (
-              <button type="button" aria-expanded={!!expanded} onClick={onToggle} className={cn(toggleCls, expanded ? 'whitespace-normal' : 'truncate')} title={ask}>
-                {ask}
+              <button type="button" aria-expanded={!!expanded} onClick={onToggle} className={cn(toggleCls, expanded ? 'whitespace-normal' : 'truncate')} title={visible(ask)}>
+                {visible(ask)}
               </button>
             ) : (
               <p className="min-w-0 truncate text-[13px] font-medium leading-5 text-text" title={ask}>

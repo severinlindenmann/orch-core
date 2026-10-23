@@ -690,7 +690,7 @@ describe('answering a question in one-click mode', () => {
     await within(dialog).findByTestId('click-panel', {}, T)
     expect(within(dialog).getAllByRole('button', { name: 'Send answer' })).toHaveLength(1) // the review's own button, no first screen before it
     // what is answered is in view; the question and the other options are under Details, closed
-    expect(within(dialog).getByTestId('sign-choice')).toHaveTextContent('Your answer: DATE (local midnight)')
+    expect(within(dialog).getByTestId('sign-choice')).toHaveTextContent(/Your answer.*DATE \(local midnight\)/)
     const compact = within(dialog).getByTestId('sign-compact')
     const shown = within(compact).getAllByTestId('sign-ticket').find((e) => !e.closest('details'))! // outside Details
     expect(shown).toHaveTextContent('DEMO-0043')

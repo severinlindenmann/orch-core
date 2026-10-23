@@ -1,5 +1,5 @@
 import { QueryClientContext } from '@tanstack/react-query'
-import { useContext, type ReactNode } from 'react'
+import { useContext, useState, type ReactNode } from 'react'
 import type { Workspace } from '@/api/types'
 import type { SignContent as Content } from '@/api/signing'
 import { GATE_LABEL } from '@/api/settings'
@@ -130,6 +130,17 @@ function cancellationRows(value: unknown): NonNullable<Content['cancels']> {
   return value
 }
 
+/** Someone else's long text, shortened on screen: runs of blank lines collapsed, at most ~6 lines until "Show all". Display only. */
+function ClampedProse({ children }: { children: string }) {
+  const [all, setAll] = useState(false)
+  const flat = children.replace(/\n[ \t]*(\n[ \t]*)+/g, '\n')
+  const long = flat.length > 280 || flat.split('\n').length > 6
+  return <>
+    <div className={!all && long ? 'max-h-32 overflow-hidden' : undefined}><Prose className="font-sans leading-relaxed text-text">{flat}</Prose></div>
+    {long && <button type="button" onClick={() => setAll(a => !a)} className="mt-1 text-[12px] text-text-muted underline underline-offset-4">{all ? 'Show less' : 'Show all'}</button>}
+  </>
+}
+
 /**
  * The fields a compact answer review needs: the ticket (an existing one), the question, the chosen option. Null when any
  * is missing or the host sent a summary: the caller then shows the full review. Never a compact view that hides content.
@@ -184,11 +195,13 @@ export function SignContent({ content, ws, technical, compact = false }: { conte
   const parts = compact ? compactAnswer(content) : null
   if (parts && ticketLine) {
     const { choice, question, ticket: tk, notes: note } = parts
+    // Order matters: the ticket, then the choice in a box of its own, BEFORE any text someone else wrote (a question that
+    // ends in "Your answer: …" cannot pass for the real line, and cannot push it off screen). The exact text is under Details.
     return <div data-testid="sign-compact" className="min-w-0 space-y-3 font-sans text-[13px] leading-relaxed text-text [overflow-wrap:anywhere]">
       <p data-testid="sign-ticket" className="text-[12px] text-text-muted"><Raw>{tk.key}</Raw> (key per host) · signed id …<Raw>{tk.uid_tail}</Raw></p>
-      <section aria-label={question.title}><h3 className="mb-1 text-[12px] font-medium text-text-muted"><Inline>{question.title}</Inline></h3><Prose className="font-sans leading-relaxed text-text">{question.text}</Prose></section>
-      <p data-testid="sign-choice" className="text-text"><span className="text-text-muted">Your answer: </span><Shown plain value={choice.after} members={members} /></p>
-      {note.map(s => <section key={s.id}><h3 className="mb-1 text-[12px] font-medium text-text-muted"><Inline>{s.title}</Inline></h3><Prose className="font-sans leading-relaxed text-text">{s.text}</Prose></section>)}
+      <div data-testid="sign-choice" className="rounded-md border border-brand bg-brand-soft px-3 py-2"><span className="text-[12px] text-text-muted">Your answer</span><p className="font-medium text-text"><Shown plain value={choice.after} members={members} /></p></div>
+      {note.map(s => <section key={s.id}><h3 className="mb-1 text-[12px] font-medium text-text-muted"><Inline>{s.title}</Inline></h3><ClampedProse>{s.text}</ClampedProse></section>)}
+      <section aria-label={question.title}><h3 className="mb-1 text-[12px] font-medium text-text-muted"><Inline>{question.title}</Inline></h3><ClampedProse>{question.text}</ClampedProse></section>
       <details data-testid="sign-exact" className="space-y-3 rounded-md border border-border p-3">
         <summary className="cursor-pointer text-[12px] font-medium text-text-muted">Details: all options and facts</summary>
         <div className="mt-2 max-h-[38vh] min-w-0 space-y-5 overflow-auto pr-3">{rest}</div>

@@ -6,6 +6,7 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { canAnswer } from './actions'
+import { Prose } from '@/components/sign/visible'
 import { AnswerSend } from '@/components/sign/AnswerSend'
 import { QuestionOptions } from './QuestionOptions'
 import { ago, Mono, Pill, presenceLabel, shortHash, type TabProps, type Viewer } from './shared'
@@ -95,7 +96,7 @@ function QuestionCard({ q, viewer, sign, ticketKey }: { q: QuestionStatus; viewe
           </Mono>
         )}
       </div>
-      <p className="mt-2 text-[14px] font-medium leading-snug">{viewText ?? q.text}</p>
+      <Prose className="mt-2 text-[14px] font-medium leading-snug">{viewText ?? q.text}</Prose>
       {q.why && <p className="mt-1 text-[13px] text-text-muted">{q.why}</p>}
 
       {!answered && q.options && q.options.length > 0 && !canAnswer(q, viewer) && (

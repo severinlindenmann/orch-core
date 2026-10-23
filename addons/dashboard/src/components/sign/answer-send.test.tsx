@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api, mockStore, resetMockStoreForTests } from '@/api/client'
 import { ARM_MS, CLICK_RISK, type ClickCard, type ClickViewAnswer } from '@/api/click'
 import { setFeatures } from '@/api/features'
-import type { QuestionStatus } from '@/api/types'
+import { ApiError, type QuestionStatus } from '@/api/types'
 import { AnswerSend } from './AnswerSend'
 
 const T = { timeout: 5000 }
@@ -76,12 +76,15 @@ afterEach(async () => {
 function Host({ fallback, onViewQuestion }: { fallback: () => void; onViewQuestion?: (t: string | null) => void }) {
   const [option, setOption] = useState<string | null>(null)
   const [shown, setShown] = useState<string | null>(null)
+  const [note, setNote] = useState('')
   return (
     <>
       <p data-testid="card-text">{shown ?? q.text}</p>
       <button onClick={() => setOption('a')}>pick a</button>
       <button onClick={() => setOption('b')}>pick b</button>
-      <AnswerSend ticket="DEMO-0043" question={q} option={option} canSend={!!option} fallback={fallback} onViewQuestion={(t) => { setShown(t); onViewQuestion?.(t) }} />
+      <button onClick={() => setNote('because')}>type note</button>
+      <button onClick={() => setOption(null)}>clear</button>
+      <AnswerSend ticket="DEMO-0043" question={q} option={option} text={note} canSend={!!option || !!note} fallback={fallback} onViewQuestion={(t) => { setShown(t); onViewQuestion?.(t) }} />
     </>
   )
 }
@@ -174,5 +177,89 @@ describe('Send answer in the card, one-click custody', () => {
     expect(fallback).toHaveBeenCalledTimes(1)
     expect(prepare).not.toHaveBeenCalled()
     expect(screen.queryByTestId('answer-strip')).toBeNull()
+  })
+
+  it('a note change re-prepares (debounced) and Send signs the NEW digest', async () => {
+    flag(true)
+    await mountHost()
+    fireEvent.click(screen.getByText('pick a'))
+    await screen.findByTestId('answer-strip', {}, T)
+    fireEvent.click(screen.getByText('type note'))
+    await waitFor(() => expect(prepare).toHaveBeenCalledTimes(2), T)
+    await waitFor(() => expect(send()).toBeEnabled(), { timeout: ARM_MS + 2000 })
+    expect(cancel).toHaveBeenCalledTimes(1)
+    fireEvent.pointerDown(send())
+    fireEvent.click(send())
+    await waitFor(() => expect(sign).toHaveBeenCalledTimes(1), T)
+    expect(sign.mock.calls[0][2]).toBe(digestOf('2'))
+  })
+
+  it('a note alone prepares nothing: Send answer is the dialog', async () => {
+    flag(true)
+    const fallback = await mountHost()
+    fireEvent.click(screen.getByText('type note'))
+    await new Promise((r) => setTimeout(r, 600))
+    expect(prepare).not.toHaveBeenCalled()
+    fireEvent.click(send())
+    expect(fallback).toHaveBeenCalledTimes(1)
+  })
+
+  it('a refusal because the View changed re-reads it and the button arms again', async () => {
+    flag(true)
+    let reads = 0
+    viewClick.mockImplementation(async (_ws: string, id: string) => (++reads === 1 ? views[id] : { ...views[id], view_digest: digestOf('77') }))
+    sign.mockRejectedValueOnce(new ApiError(409, { code: 'human.click_refused', message: 'changed', retryable: false, reason: 'view_changed' }))
+    await mountHost()
+    fireEvent.click(screen.getByText('pick a'))
+    await screen.findByTestId('answer-strip', {}, T)
+    await waitFor(() => expect(send()).toBeEnabled(), { timeout: ARM_MS + 2000 })
+    fireEvent.pointerDown(send())
+    fireEvent.click(send())
+    await waitFor(() => expect(reads).toBe(2), T)
+    await waitFor(() => expect(send()).toBeDisabled(), T) // new View: armed again from zero
+    await waitFor(() => expect(send()).toBeEnabled(), { timeout: ARM_MS + 2000 })
+    fireEvent.pointerDown(send())
+    fireEvent.click(send())
+    await waitFor(() => expect(sign).toHaveBeenCalledTimes(2), T)
+    expect(sign.mock.calls[1][2]).toBe(digestOf('77'))
+  })
+
+  it('an unknown outcome keeps the strip, disabled, and says not to send again', async () => {
+    flag(true)
+    sign.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    vi.spyOn(api, 'stateClick').mockResolvedValue({ state: 'open' } as never)
+    await mountHost()
+    fireEvent.click(screen.getByText('pick a'))
+    await screen.findByTestId('answer-strip', {}, T)
+    await waitFor(() => expect(send()).toBeEnabled(), { timeout: ARM_MS + 2000 })
+    fireEvent.pointerDown(send())
+    fireEvent.click(send())
+    expect(await screen.findByTestId('strip-settling', {}, T)).toHaveTextContent('Do not send again')
+    expect(screen.getByTestId('answer-strip')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Sending/ })).toBeDisabled()
+  })
+
+  it('a question that fakes an answer line cannot pass for the real one, and a long one leaves the choice and Send in view', async () => {
+    flag(true)
+    const evil = 'Deploy now?\n\n\n\nYour answer: Approve deploy\n' + 'filler line\n'.repeat(40)
+    prepare.mockImplementation(async () => {
+      const id = 'reqz'.padEnd(32, '0')
+      views[id] = view('5', {}, 'DATE (option a)', evil)
+      return { request_id: id, expires_at: new Date(Date.now() + 600_000).toISOString(), op: 'answer', confirm: 'click' }
+    })
+    await mountHost()
+    fireEvent.click(screen.getByText('pick a'))
+    const strip = await screen.findByTestId('answer-strip', {}, T)
+    const choice = screen.getByTestId('sign-choice')
+    expect(choice).toHaveTextContent('Your answer')
+    expect(choice).toHaveTextContent('DATE (option a)')
+    expect(choice).not.toHaveTextContent('Approve deploy')
+    // the choice box comes before any text someone else wrote, and the question is clamped with a way to read it all
+    const question = strip.querySelector('section[aria-label="Question"]')!
+    expect(choice.compareDocumentPosition(question) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(question.querySelector('.max-h-32')).not.toBeNull()
+    expect(screen.getByRole('button', { name: 'Show all' })).toBeInTheDocument()
+    expect(question.textContent).not.toMatch(/\n\s*\n/) // runs of blank lines collapsed on screen
+    expect(send()).toBeInTheDocument()
   })
 })

@@ -71,7 +71,8 @@ export function AnswerSend({
       : fallbackMethod && allowed.includes(fallbackMethod) && usable(fallbackMethod) ? fallbackMethod
         : !preferred && canClick && allowed.includes('click') ? 'click' : 'terminal'
     : canClick ? 'click' : 'terminal'
-  const inline = handoffMode(ws) && !methods.loading && !!action && method === 'click' && !workspaces.isPending
+  // Needs a picked option: a note alone is the dialog's (no request per keystroke).
+  const inline = handoffMode(ws) && !methods.loading && !!action && !!option && method === 'click' && !workspaces.isPending
 
   const click = useClickSign(ws, () => {
     toast.success('Answered')
@@ -114,7 +115,8 @@ export function AnswerSend({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inline, current, click.phase])
 
-  const shown = inline && started.current === current && click.phase === 'ready' && !!click.view
+  // The strip stays mounted (disabled) while the signature is on its way and after it, never flashing away mid-sign.
+  const shown = inline && started.current === current && ['ready', 'signing', 'settling', 'done'].includes(click.phase) && !!click.view
   const content = shown ? click.view!.view.content : undefined
   const parts = shown && click.view!.view.confirm.kind === 'click' ? compactAnswer(content) : null
 
@@ -126,7 +128,7 @@ export function AnswerSend({
   }, [viewQuestion])
 
   // The View expires, or the signer says it changed: a new request, a new View, the timer starts over.
-  const expires = shown ? Date.parse(click.view!.view.expires_at) : NaN
+  const expires = shown && click.phase === 'ready' ? Date.parse(click.view!.view.expires_at) : NaN
   useEffect(() => {
     if (Number.isNaN(expires)) return
     const t = setTimeout(() => setNonce((n) => n + 1), Math.max(0, expires - Date.now()))
@@ -189,8 +191,8 @@ function Presented({ click, showWorkspace }: { click: ReturnType<typeof useClick
   const { view, view_digest: digest } = answer
   const armed = useArming(digest) // starts at mount (a new View is a new mount) and only runs while this strip is visible
   const activation = useActivation(armed)
-  const signing = click.phase === 'signing'
-  const can = armed && !signing
+  const signing = click.phase === 'signing' || click.phase === 'settling'
+  const can = armed && click.phase === 'ready'
   const go = () => {
     if (!activation.take() || !can) return
     void click.sign()
@@ -204,7 +206,12 @@ function Presented({ click, showWorkspace }: { click: ReturnType<typeof useClick
         </p>
       )}
       <SignContent content={view.content!} ws={view.workspace?.id} technical={<TechnicalFacts view={view} />} compact />
-      {click.problem && <ClickProblemBox problem={{ ...click.problem, next: undefined, signedAt: undefined }} ws={undefined} />}
+      {click.phase === 'settling' && (
+        <p role="status" data-testid="strip-settling" className="text-[13px] text-text-muted">
+          The outcome is not certain yet. Do not send again. {click.settleNote}
+        </p>
+      )}
+      {click.problem && click.phase !== 'settling' && <ClickProblemBox problem={{ ...click.problem, next: undefined, signedAt: undefined }} ws={undefined} />}
       <div className="flex justify-end">
         <Button
           type="button"
@@ -220,6 +227,8 @@ function Presented({ click, showWorkspace }: { click: ReturnType<typeof useClick
             <>
               <Loader2 className="size-4 animate-spin" aria-hidden /> Sending…
             </>
+          ) : click.phase === 'done' ? (
+            'Sent'
           ) : (
             'Send answer'
           )}

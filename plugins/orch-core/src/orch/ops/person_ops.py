@@ -377,11 +377,12 @@ def _prior_aliases(hub: dict[str, Any], hk_root_pub: bytes) -> dict[str, str]:
 
 
 def handle_hub_join(ctx: Context, args: dict[str, Any]) -> Result:
-    """``hub.join {hub_card, mode, aliases?}`` (V3 C2a/C2b, hub contract 9.1, spec 8 and 8a): ``hub.joined`` on the
-    workspace log, signed by the owner at the host terminal. The hub card is verified here against the host's own
-    clock and dev state (``ctx.prepare.hub``). A selective join carries no key material beyond the hub's public root;
-    a full join says in its review that the hub will read everything, and the host then adds the ``hub`` member and
-    seals ``WK_e`` to the hub's ``HXK`` (``hub.connect``, never in this op)."""
+    """``hub.join {hub_card, hub_id, mode, aliases?}`` (V3 C2a/C2b, D12c, hub contract 9.1, spec 8 and 8a):
+    ``hub.joined`` on the workspace log, signed by the owner at the host terminal. The hub card is verified here
+    against the host's own clock and dev state (``ctx.prepare.hub``) and must name the ``hub_id`` the invite carried
+    (D12c). A selective join carries no key material beyond the hub's public root; a full join says in its review
+    that the hub will read everything, and the host then adds the ``hub`` member and seals ``WK_e`` to the hub's
+    ``HXK`` (``hub.connect``, never in this op)."""
     from orch.hubclient import wire
     from orch.hubclient.errors import HubRefused
 
@@ -396,6 +397,10 @@ def handle_hub_join(ctx: Context, args: dict[str, Any]) -> Result:
         raise OrchError("hub.already_joined", "this workspace is already joined to a hub; leave it first")
     try:
         verified = wire.verify_card(args["hub_card"], now_ms=facts.now_ms, dev_mode=facts.dev_mode)
+        if (
+            verified["card"]["hub_id"] != args["hub_id"]
+        ):  # D12c/G5: the hub the owner was told, not the one the file names
+            raise HubRefused("other_hub")
         me = h.person.removeprefix("p_")  # the owner is the only person a join may alias (spec 8a)
         aliases = list(args.get("aliases") or [])
         if any(a["person_id"] != me for a in aliases) or len(aliases) > 1:
@@ -476,6 +481,11 @@ HUB_JOIN = operation(
     who="human",
     props={
         "hub_card": {"type": "object", "description": "the hub card (hub contract 5), verified by the host"},
+        "hub_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{32}$",
+            "description": "the hub id from the invite (<hub_id>:<code>); the card must name this hub (D12c)",
+        },
         "mode": E("the join mode", "selective", "full"),
         "aliases": {
             "type": "array",
@@ -489,7 +499,7 @@ HUB_JOIN = operation(
             },
         },
     },
-    required=("hub_card", "mode"),
+    required=("hub_card", "hub_id", "mode"),
     emits=("hub.joined",),
     text="ok hub.joined {hub_id} seq={seq}\nnext: {next}",
     data=obj({"hub_id": STR, "mode": STR, "binding_seq": {"type": "integer"}}),

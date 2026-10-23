@@ -1,6 +1,7 @@
 """``orch hub``: join a hub, switch it to full mode, and leave it (V3 C2a/C2b; hub contract 9.1, spec 8 and 8a).
 
-    orch hub join INVITE --hub-card FILE [--hub-addr HOST:PORT] [--mode selective|full] [--owner-user-id HEX32]
+    orch hub join INVITE --hub-card FILE [--hub-id HEX32] [--hub-addr HOST:PORT] [--mode selective|full]
+                                         [--owner-user-id HEX32]
                                                                                        a person: join (signed)
     orch hub mode full --hub-card FILE [--hub-addr HOST:PORT]   a person: selective -> full (signed, your own key)
     orch hub leave                                                                       a person: leave (signed)
@@ -39,7 +40,7 @@ from orch.cli.publish import PubError, _call, _sign, _tty_ok
 __all__ = ["main"]
 
 _USAGE = (
-    "usage: orch hub {join INVITE --hub-card FILE [--hub-addr HOST:PORT] [--mode selective|full] "
+    "usage: orch hub {join INVITE --hub-card FILE [--hub-id HEX32] [--hub-addr HOST:PORT] [--mode selective|full] "
     "[--owner-user-id HEX32] | mode full --hub-card FILE [--hub-addr HOST:PORT] | leave "
     "| connect [INVITE] --hub-card FILE [--hub-addr HOST:PORT] | unbind "
     "| status [--refresh [--hub-card FILE]] | share rule list | share rule add|remove RULE | share revoke REF "
@@ -63,6 +64,7 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("rest", nargs="*")
     p.add_argument("--hub-card")
     p.add_argument("--hub-addr")
+    p.add_argument("--hub-id", dest="hub_id")
     p.add_argument("--mode", default="selective")
     p.add_argument("--owner-user-id")
     p.add_argument("--refresh", action="store_true")
@@ -129,6 +131,27 @@ def _check_shape(a: argparse.Namespace) -> None:
         raise PubError("invalid.input", "--owner-user-id is 32 lower-case hex digits and belongs to join", 5)
 
 
+_HUB_ID = re.compile(r"[0-9a-f]{32}")
+_INVITE_PREFIX = re.compile(r"([0-9a-f]{32}):(.+)", re.DOTALL)
+
+
+def _split_invite(invite: str, flag: str | None) -> tuple[str, str]:
+    """D12c: ``(hub_id, code)`` of a join invite, from ``<hub_id>:<code>`` or a bare code plus ``--hub-id``. The hub
+    only ever sees the code. No hub id, a malformed one, or two that differ: refused (fail closed)."""
+    m = _INVITE_PREFIX.fullmatch(invite)
+    hub_id, code = (m.group(1), m.group(2)) if m else (None, invite)
+    if flag is not None and (_HUB_ID.fullmatch(flag) is None or (hub_id is not None and flag != hub_id)):
+        raise PubError("invalid.input", "--hub-id is 32 lower-case hex digits and must match the invite's hub id", 5)
+    hub_id = hub_id or flag
+    if hub_id is None:
+        raise PubError(
+            "invalid.input",
+            "the invite names no hub: use INVITE as <hub_id>:<code>, or add --hub-id HEX32 (ask the hub's operator)",
+            5,
+        )
+    return hub_id, code
+
+
 def _person(target: Any) -> str:
     entry = target.entry
     person = ((entry or {}).get("peers") or {}).get(str(os.getuid()), {}).get("person") if entry else None
@@ -148,6 +171,8 @@ def _connect(target: Any, env: Mapping[str, str], a: argparse.Namespace, out: Te
     from orch.ops.errors import OrchError
 
     invite = a.rest[0] if a.cmd != "mode" and a.rest else None  # no invite: a mode switch or a re-seal (hub joined)
+    if invite is not None and (m := _INVITE_PREFIX.fullmatch(invite)):
+        invite = m.group(2)  # the hub id is the join's check (D12c); the hub only ever sees the code
     try:
         args: dict[str, Any] = {"hub_card": _read_card(a.hub_card)}
         if invite is not None:
@@ -248,7 +273,8 @@ def main(
         if a.cmd == "join":
             if a.mode == "full":
                 out.write(f"{_FULL_WORDS}. Review it, then sign with your own key.\n")
-            args: dict[str, Any] = {"hub_card": _read_card(a.hub_card), "mode": a.mode}
+            hub_id, _code = _split_invite(a.rest[0], a.hub_id)
+            args: dict[str, Any] = {"hub_card": _read_card(a.hub_card), "hub_id": hub_id, "mode": a.mode}
             if a.owner_user_id:
                 args["aliases"] = [{"person_id": _person(target), "user_id": a.owner_user_id}]
             _sign(target, "hub.join", args)

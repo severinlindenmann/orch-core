@@ -16,6 +16,8 @@ from tests.hub.vec import V
 
 CARD = V["objects"]["card"]
 USER = V["ids"]["user_alice"]
+HUB = V["ids"]["hub"]
+INV = f"{HUB}:inv-1"  # D12c: <hub_id>:<code>
 
 
 def run(argv, env, *, as_json=False):
@@ -98,12 +100,31 @@ def test_an_agent_never_joins_in_full_mode(offline, card_file):
 
 def test_join_signs_then_connects(host, card_file):
     host.reply["hub.connect"] = {"hub_id": V["ids"]["hub"], "status": "bound", "binding_seq": 1}
-    code, out = run(["join", "inv-1", "--hub-card", card_file, "--owner-user-id", USER], {})
+    code, out = run(["join", INV, "--hub-card", card_file, "--owner-user-id", USER], {})
     assert code == 0 and "signed" in out and "ok hub joined" in out and "sees only what you share" in out
     ((op, args),) = host.signed
     assert op == "hub.join" and args["mode"] == "selective" and args["hub_card"] == CARD
-    assert args["aliases"] == [{"person_id": "4c" * 16, "user_id": USER}]
+    assert args["aliases"] == [{"person_id": "4c" * 16, "user_id": USER}] and args["hub_id"] == HUB
     assert host.called == [("hub.connect", {"invite": "inv-1", "hub_card": CARD})]
+
+
+def test_a_bare_code_needs_hub_id_and_the_hub_only_ever_sees_the_code(host, card_file):
+    host.reply["hub.connect"] = {"hub_id": HUB, "status": "bound", "binding_seq": 1}
+    code, out = run(["join", "inv-1", "--hub-card", card_file], {})
+    assert code == 5 and "names no hub" in out and host.signed == [] and host.called == []
+    code, _ = run(["join", "inv-1", "--hub-id", HUB, "--hub-card", card_file], {})
+    assert code == 0 and host.signed[0][1]["hub_id"] == HUB and host.called[0][1]["invite"] == "inv-1"
+
+
+def test_a_malformed_or_conflicting_hub_id_is_refused_before_signing(host, card_file):
+    for argv in (
+        ["join", "inv-1", "--hub-id", "XYZ", "--hub-card", card_file],
+        ["join", INV, "--hub-id", "0" * 32, "--hub-card", card_file],
+        ["join", f"{HUB.upper()}:inv-1", "--hub-card", card_file],
+    ):
+        code, out = run(argv, {})
+        assert code == 5 and "error invalid.input" in out
+    assert host.signed == [] and host.called == []
 
 
 def test_join_without_a_terminal_signs_nothing(host, card_file):
@@ -114,7 +135,7 @@ def test_join_without_a_terminal_signs_nothing(host, card_file):
 
 def test_a_hub_that_is_down_after_the_signature_says_how_to_finish(host, card_file):
     host.reply["hub.connect"] = OrchError("hub.unreachable", "down")
-    code, out = run(["join", "inv-1", "--hub-card", card_file], {})
+    code, out = run(["join", INV, "--hub-card", card_file], {})
     assert code == 9 and "orch hub connect inv-1" in out and "orch hub leave" in out and len(host.signed) == 1
 
 
@@ -163,7 +184,7 @@ def test_orch_dispatches_the_hub_verb(monkeypatch):
 
 def test_join_full_warns_signs_full_and_connects(host, card_file):
     host.reply["hub.connect"] = {"hub_id": V["ids"]["hub"], "status": "bound", "binding_seq": 1, "mode": "full"}
-    code, out = run(["join", "inv-1", "--hub-card", card_file, "--mode", "full"], {})
+    code, out = run(["join", INV, "--hub-card", card_file, "--mode", "full"], {})
     assert code == 0 and "read everything in this workspace" in out
     assert host.signed[0][0] == "hub.join" and host.signed[0][1]["mode"] == "full"
     assert host.called[0][0] == "hub.connect" and host.called[0][1]["invite"] == "inv-1"

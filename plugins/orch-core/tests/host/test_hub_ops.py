@@ -174,6 +174,28 @@ def test_a_bad_hub_card_is_refused(human, mutate):
     assert err(human.prepare_res("hub.join", join_args(hub_card=card))) == "hub.refused"
 
 
+def test_a_card_of_another_hub_than_the_invite_names_is_refused_and_nothing_is_written(human, served):
+    """D12c/G5: a valid card of a different hub (whoever handed over the file) is not what the owner was told."""
+    res = human.prepare_res("hub.join", join_args(hub_id="0" * 32))
+    assert err(res) == "hub.refused" and "other_hub" in res["error"]["message"]
+    hub, _ = hub_state(served)
+    assert not hub  # no hub.joined, no pin
+    assert err(human.prepare_res("hub.join", join_args(hub_id=HUB_ID.upper()))) == "invalid.input"  # not lower-case hex
+
+
+def test_a_join_without_the_invites_hub_id_is_refused(human, served):
+    args = {"hub_card": copy.deepcopy(CARD), "mode": "selective"}
+    assert (
+        err(human.c.req("human.prepare", {"op": "hub.join", "args": args, "signer": human.signer})) == "invalid.input"
+    )
+    assert not hub_state(served)[0]
+
+
+def test_the_card_of_the_hub_the_invite_names_is_accepted(human):
+    _, _, signed = human.run("hub.join", join_args(hub_id=HUB_ID))
+    assert signed.events[0]["hub_id"] == HUB_ID
+
+
 def test_only_the_owner_may_be_aliased(human):
     other = {"person_id": V["ids"]["person_alice"], "user_id": V["ids"]["user_alice"]}
     assert err(human.prepare_res("hub.join", join_args(aliases=[other]))) == "hub.refused"

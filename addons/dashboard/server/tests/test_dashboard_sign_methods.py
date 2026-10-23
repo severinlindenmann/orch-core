@@ -124,3 +124,28 @@ def test_grant_notice_is_its_own_key(worlds, owner):
     world = worlds(owner.owner.ref)
     url = f"/api/w/{world.stub.ws}/me/risk_notices"
     assert world.post(url, {"notice": "grant"}).json() == {"acknowledged": {"grant": True}}
+
+
+def test_one_click_on_makes_click_the_effective_default_until_a_choice_is_stored(worlds, owner, monkeypatch):
+    from orch_dashboard.gateway import Gateway
+
+    world = worlds(owner.owner.ref)
+    url = f"/api/w/{world.stub.ws}/me/sign_default"
+    every = ["terminal", "click", "phone"]
+    assert world.get(url).json()["method"] == "terminal"  # one click off: unchanged
+    monkeypatch.setattr(Gateway, "one_path_is_click", lambda self, ws: True)
+    assert world.get(url).json() == {"method": "click", "is_default": True, "allowed": every}
+    # a stored choice always wins
+    assert world.put(url, {"method": "terminal"}).status_code == 200
+    assert world.get(url).json() == {"method": "terminal", "is_default": False, "allowed": every}
+    # the workspace not allowing click: terminal, even with the flag on (the allowed list is the rule)
+    owner.tick()
+    owner.store.append(
+        owner.person_event(owner.owner, "workspace", "settings.changed", set={"sign_methods": ["terminal"]}),
+        log="workspace",
+    )
+    assert world.put(url, {"method": "terminal"}).status_code == 200  # (stored choice is dropped below)
+    import os
+
+    os.remove(signprefs._path())
+    assert world.get(url).json() == {"method": "terminal", "is_default": True, "allowed": ["terminal"]}

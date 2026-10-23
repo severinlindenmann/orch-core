@@ -1,6 +1,6 @@
 import { cn } from '@/lib/utils'
 import { useEffect, useState } from 'react'
-import type { Token } from './highlight'
+import { tokenClass, type Token } from './highlight'
 
 const SHELL = new Set(['bash', 'sh', 'shell', 'zsh', 'console'])
 
@@ -24,7 +24,7 @@ export function CodeBlock({ language, text }: { language: string; text: string }
           ? lines.map((line, i) => (
               <div key={i}>
                 {line.map((t, j) => (
-                  <span key={j} style={t.color ? { color: t.color } : undefined}>
+                  <span key={j} className={tokenClass(t.color)}>
                     {t.content}
                   </span>
                 ))}

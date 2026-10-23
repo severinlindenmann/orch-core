@@ -38,3 +38,11 @@ it('"Show exactly as written" shows core\'s own text of each section, in a monos
   expect(within(frame).getByText((_, el) => el?.tagName === 'BDI' && el.textContent === REQ)).toBeInTheDocument()
   await userEvent.click(screen.getByLabelText('Show exactly as written'))
 })
+
+it('every section of a gate review except core\'s own lands inside the agent frame, incl. findings and an add-on id', () => {
+  const c = { ...content, sections: [...content.sections, { id: 'findings', title: 'Findings', text: 'Looks fine' }, { id: 'acme.notes', title: 'Notes', text: 'Addon words' }, { id: 'zzz_unknown', title: 'Zzz', text: 'Unknown words' }] }
+  render(<SignContent content={c as never} />)
+  const frame = screen.getByRole('group', { name: 'Written by the agent' })
+  for (const t of ['Looks fine', 'Addon words', 'Unknown words']) expect(frame.textContent).toContain(t)
+  expect(frame.textContent).not.toContain('ok from me')
+})

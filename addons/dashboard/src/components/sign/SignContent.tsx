@@ -154,8 +154,8 @@ export function compactAnswer(content: Content | null | undefined) {
   return { ticket: content.ticket, choice, question, notes: content.sections?.filter(s => s.id === 'answer') ?? [] }
 }
 
-/** The sections of a gate decision are the ticket's own text, written by the agent (core: material.texts, ids = the ticket's section keys). */
-const GATE_SECTIONS = ['summary', 'context', 'requirements', 'out_of_scope', 'plan', 'decisions', 'verification', 'current_state']
+/** A deny-list, never an allow-list: in a gate review every section except core's own is ticket text (the ticket's section keys, `findings`, an add-on's) and sits in the agent frame. */
+const CORE_SECTIONS = ['comment'] // sections core writes itself (the signer's own comment): every OTHER section of a gate review is agent text
 /** orch's own words for the known section ids (renaming is presentation); an unknown id shows core's title. */
 const PLAIN_TITLES: Record<string, string> = { context: 'What it is about', requirements: 'What will be built', out_of_scope: 'Out of scope', plan: 'Steps' }
 const SHOW_RAW_KEY = 'orch.sign.showRaw'
@@ -167,7 +167,7 @@ try { showRawNow = sessionStorage.getItem(SHOW_RAW_KEY) === '1' } catch { /* no 
  * every agent-written section, each line restyled by its leading marker only (SignedTextView); "Show exactly as written"
  * swaps in core's own text per section. The frame label, section titles and "What happens when you sign" are orch's words.
  */
-function GateText({ sections, acceptance, tasks, approving }: { sections: NonNullable<Content['sections']>; acceptance?: ReactNode; tasks?: ReactNode; approving: boolean }) {
+function GateText({ sections, acceptance, tasks, approving, others }: { sections: NonNullable<Content['sections']>; acceptance?: ReactNode; tasks?: ReactNode; approving: boolean; others?: ReactNode }) {
   const [raw, setRaw] = useState(showRawNow)
   const toggle = (v: boolean) => { showRawNow = v; setRaw(v); try { sessionStorage.setItem(SHOW_RAW_KEY, v ? '1' : '0') } catch { /* no storage */ } }
   return <div className="space-y-3">
@@ -183,10 +183,11 @@ function GateText({ sections, acceptance, tasks, approving }: { sections: NonNul
       {acceptance}
       {tasks}
     </section>
+    {others}
     {approving && <section aria-label="What happens when you sign" className="space-y-1 text-[12px] text-text-muted">
       <h3 className="font-medium text-text">What happens when you sign</h3>
       <ul className="list-disc space-y-0.5 pl-5">
-        <li>Your signature is tied to exactly the text above.</li>
+        <li>Your signature is tied to exactly what is shown in this review.</li>
         <li>If the agent changes it later, this approval no longer counts and you are asked again.</li>
         <li>Only you can sign. The agent cannot sign for you.</li>
       </ul>
@@ -204,14 +205,15 @@ export function SignContent({ content, ws, technical, compact = false }: { conte
   // A request on an EXISTING ticket keeps its key (the host's word) and the end of the signed id in the main view; a creation
   // (it signs the key and the title) has them under Technical details only.
   const ticketLine = content.ticket && content.ticket.new !== true
-  const gate = /^(Approve|Ask for changes to|Give the verdict)/.test(content.headline ?? '') && !!content.sections?.some(s => GATE_SECTIONS.includes(s.id))
-  const gateSections = content.sections?.filter(s => GATE_SECTIONS.includes(s.id)) ?? []
+  const gate = /^(Approve|Ask for changes to|Give the verdict)/.test(content.headline ?? '') && !!content.sections?.some(s => !CORE_SECTIONS.includes(s.id))
+  const gateSections = content.sections?.filter(s => !CORE_SECTIONS.includes(s.id)) ?? []
+  const otherSections = content.sections?.filter(s => CORE_SECTIONS.includes(s.id)).map(s => <section key={s.id}><h3 className="mb-2 text-[13px] font-medium text-text"><Inline>{s.title}</Inline></h3><Prose className="font-sans leading-relaxed text-text">{s.text}</Prose></section>)
   const acceptanceEl = !!content.acceptance?.length && <section><h3 className="mb-2 text-[13px] font-medium text-text">{gate ? 'How we know it is done' : 'Acceptance criteria'}</h3><ul className="space-y-2 leading-relaxed">{content.acceptance.map(a => <li key={a.id}><span aria-label={a.checked ? 'Checked' : 'Unchecked'}>{a.checked ? '☑' : '☐'}</span> <Inline>{a.text}</Inline> <span className="text-[12px] text-text-muted [&_bdi]:text-text-muted"><Raw>{a.id}</Raw></span>{a.manual && <p className="text-[12px] text-text-muted"><Inline>{a.manual}</Inline></p>}</li>)}</ul></section>
   const tasksEl = !!content.tasks?.length && <section><h3 className="mb-2 text-[13px] font-medium text-text">{gate ? 'Steps' : 'Plan tasks'}</h3><ol className="list-decimal space-y-3 pl-5 leading-relaxed">{content.tasks.map(t => <li key={t.n} value={t.n}><Inline>{t.title}</Inline> <span className="text-[12px] text-text-muted [&_bdi]:text-text-muted"><Raw>{t.id}</Raw></span>{t.verify?.map((v,i) => <p key={i} className="mt-1 font-mono text-[12px] leading-relaxed text-text-muted [&_bdi]:text-text-muted">Verify: <Value>{v}</Value></p>)}</li>)}</ol></section>
   const rest = <>
     {ticketLine && content.ticket && <p data-testid="sign-ticket" className="text-[12px] text-text-muted"><Raw>{content.ticket.key}</Raw> (key per host) · signed id …<Raw>{content.ticket.uid_tail}</Raw></p>}
-    {gate ? <GateText sections={gateSections} approving={/^Approve /.test(content.headline ?? '')} acceptance={acceptanceEl} tasks={tasksEl} /> : null}
-    {content.sections?.filter(s => !gate || !GATE_SECTIONS.includes(s.id)).map(s => <section key={s.id}><h3 className="mb-2 text-[13px] font-medium text-text"><Inline>{s.title}</Inline></h3><Prose className="font-sans leading-relaxed text-text">{s.text}</Prose></section>)}
+    {gate ? <GateText sections={gateSections} approving={/^Approve /.test(content.headline ?? '')} acceptance={acceptanceEl} tasks={tasksEl} others={otherSections} /> : null}
+    {!gate && content.sections?.map(s => <section key={s.id}><h3 className="mb-2 text-[13px] font-medium text-text"><Inline>{s.title}</Inline></h3><Prose className="font-sans leading-relaxed text-text">{s.text}</Prose></section>)}
     <Pictures images={content.images} />
     {!gate && acceptanceEl}
     {!gate && tasksEl}

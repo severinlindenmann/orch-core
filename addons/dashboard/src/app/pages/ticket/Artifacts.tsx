@@ -1,4 +1,4 @@
-import { ArrowUpRight, BarChart3, Check, Copy, Eye, FileJson, FileText, Image as ImageIcon, Link2, ScrollText, Table2, Workflow } from 'lucide-react'
+import { ArrowUpRight, BarChart3, Check, Copy, Eye, FileJson, Info, FileText, Image as ImageIcon, Link2, ScrollText, Table2, Workflow } from 'lucide-react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
@@ -13,6 +13,7 @@ import type { Artifact } from '@/api/types'
 import { AddonBadge } from '@/addon-ui'
 import { useSlot } from '@/addon-ui/slots'
 import { CodeBlock } from '@/addon-ui/CodeBlock'
+import { highlight, langForFile, tokenClass, type Token } from '@/addon-ui/highlight'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -131,9 +132,36 @@ function langOf(a: Artifact): string {
   return 'shellscript'
 }
 
-/** Plain text with a wrap toggle (on by default) and "Copy all": a log is read, searched and pasted, not highlighted. */
-function TextViewer({ text, label }: { text: string; label: string }) {
+/** The lines of a text as tokens: coloured when the highlighter knows the language (and the text is small enough), else plain. */
+function useTokenLines(text: string, lang: string | null | undefined, on: boolean): Token[][] {
+  const plain = () => text.split('\n').map((l) => [{ content: l } as Token])
+  const [lines, setLines] = useState<{ key: string; lines: Token[][] } | null>(null)
+  const key = `${lang}:${text.length}:${text.slice(0, 64)}:${text.slice(-64)}`
+  useEffect(() => {
+    if (!on || !lang) return
+    let live = true
+    highlight(text, lang)
+      .then((l) => live && l && setLines({ key, lines: l }))
+      .catch(() => {})
+    return () => {
+      live = false
+    }
+  }, [text, lang, on, key])
+  return on && lang && lines?.key === key ? lines.lines : plain()
+}
+
+/** A line is "minified" when one line is this long: only then is a reformatted view offered. */
+const MINIFIED_LINE = 200
+
+/**
+ * A text file: line numbers, colours by file type (tokens as text nodes with classes: nothing is parsed as markup), a
+ * Formatted / Raw switch, Wrap lines (on) and Copy all. `text` is already made visible (`prose`). `rendered` is a
+ * formatted view of the same text (markdown), `reformatted` another layout of it (minified JSON); Raw is always the file's own text.
+ */
+function TextViewer({ text, label, lang, rendered, reformatted, rawLabel = 'Raw' }: { text: string; label: string; lang?: string | null; rendered?: ReactNode; reformatted?: string; rawLabel?: string }) {
   const [wrap, setWrap] = useState(true)
+  const hasFormatted = !!lang || !!rendered || !!reformatted
+  const [formatted, setFormatted] = useState(true)
   const [copy, setCopy] = useState<'idle' | 'copied' | 'failed'>('idle')
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined)
   useEffect(() => () => clearTimeout(timer.current), [])
@@ -147,13 +175,27 @@ function TextViewer({ text, label }: { text: string; label: string }) {
     if (!navigator.clipboard?.writeText) return show('failed')
     navigator.clipboard.writeText(text).then(() => show('copied'), () => show('failed'))
   }
+  const view = formatted && hasFormatted
+  const shownText = view && reformatted ? reformatted : text
+  const lines = useTokenLines(shownText, lang, view)
   return (
-    <div className="space-y-2">
+    <div className="min-w-0 space-y-2">
       <div className="flex flex-wrap items-center gap-2">
-        <Button type="button" variant="outline" size="sm" aria-pressed={wrap} onClick={() => setWrap(!wrap)}>
-          {wrap && <Check />}
-          Wrap lines
-        </Button>
+        {hasFormatted && (
+          <div role="group" aria-label="View" className="inline-flex overflow-hidden rounded-md border border-border text-[12px]">
+            {([true, false] as const).map((f) => (
+              <button key={String(f)} type="button" aria-pressed={formatted === f} onClick={() => setFormatted(f)} className={cn('px-2.5 py-1', formatted === f ? 'bg-brand-soft text-brand' : 'text-text-muted hover:bg-surface-2')}>
+                {f ? 'Formatted' : rawLabel}
+              </button>
+            ))}
+          </div>
+        )}
+        {!(view && rendered) && (
+          <Button type="button" variant="outline" size="sm" aria-pressed={wrap} onClick={() => setWrap(!wrap)}>
+            {wrap && <Check />}
+            Wrap lines
+          </Button>
+        )}
         <Button type="button" variant="outline" size="sm" onClick={copyAll}>
           {copy === 'copied' ? <Check /> : <Copy />}
           Copy all
@@ -162,9 +204,22 @@ function TextViewer({ text, label }: { text: string; label: string }) {
           {copy === 'copied' ? 'Copied' : copy === 'failed' ? 'Could not copy. Select the text and copy it instead.' : ''}
         </span>
       </div>
-      <pre tabIndex={0} aria-label={label} className={cn('max-h-[70vh] overflow-auto rounded-md border border-border bg-bg p-3 font-mono text-[12px] leading-5', wrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre')}>
-        {text}
-      </pre>
+      {view && reformatted && <p className="text-[12px] text-text-muted">Reformatted view for reading: {rawLabel} shows the file as it is.</p>}
+      {view && rendered ? (
+        rendered
+      ) : (
+        <pre tabIndex={0} aria-label={label} className="max-h-[70vh] overflow-auto rounded-md border border-border bg-bg py-2 font-mono text-[12px] leading-5">
+          {lines.map((line, i) => (
+            <div key={i} data-ln={view ? i + 1 : undefined} className={cn('min-h-5 pr-3', view ? 'pl-12 before:float-left before:-ml-10 before:w-8 before:select-none before:text-right before:text-text-faint before:content-[attr(data-ln)]' : 'pl-3', wrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre')}>
+              {line.map((t, j) => (
+                <span key={j} className={tokenClass(t.color)}>
+                  {t.content}
+                </span>
+              ))}
+            </div>
+          ))}
+        </pre>
+      )}
     </div>
   )
 }
@@ -320,39 +375,58 @@ function RemotePreview({ a, ticket, unavailable, holdPictures = false }: { a: Ar
   if (/^html?$/.test(ext))
     return cut ? <NoPreviewCard a={a} why={`Too large to preview as a page: ${fmtBytes(bytes)}, the limit is 64 KiB.`} /> : <HtmlViewer a={{ ...a, preview: shown }} agentHtml={false} evidence />
   const note = (
-    <p className="text-[12px] text-text-muted">
+    <p className="flex flex-wrap items-center gap-x-1 text-[12px] text-text-muted">
       {cut ? `Showing the first ${TEXT_PREVIEW_BYTES / 1024} KiB of ${fmtBytes(Math.max(bytes, d.size))}. ` : ''}
-      Shown as plain text; hidden characters appear as {'\\u{...}'}.
+      Shown as text. Nothing in the file is run.
+      <span role="img" aria-label={'Hidden characters are shown as \\u{…}'} title={'Hidden characters are shown as \\u{…}'} className="inline-flex cursor-help"><Info className="size-3.5" aria-hidden /></span>
     </p>
   )
   const safe = prose(shown)
+  const lang = langForFile(a.name)
   if (ext === 'json' && !cut) {
-    try {
-      return (
-        <div className="space-y-2">
-          {note}
-          <TextViewer text={prose(JSON.stringify(JSON.parse(d.text), null, 2))} label={`JSON of ${a.name}`} />
-        </div>
-      )
-    } catch {
-      /* not valid JSON: shown as the text it is */
+    // The file's own text, coloured. Never re-parsed (that would hide duplicate keys and rounded numbers). Only a minified
+    // file (one very long line) is also offered reformatted, and says so.
+    let reformatted: string | undefined
+    if (shown.split('\n').some((l) => l.length > MINIFIED_LINE)) {
+      try {
+        reformatted = prose(JSON.stringify(JSON.parse(d.text), null, 2))
+      } catch {
+        /* not valid JSON: only the text it is */
+      }
     }
+    return (
+      <div className="space-y-2">
+        {note}
+        <TextViewer text={safe} label={`JSON of ${a.name}`} lang="json" reformatted={reformatted} />
+      </div>
+    )
   }
   if (ext === 'csv' && !cut && parseCsv(shown).length > 1 && parseCsv(shown).length <= 200) return <CsvTable text={safe} />
   if (/^(md|markdown)$/.test(ext) && !cut)
     return (
       <div className="space-y-2">
-        <p className="text-[12px] text-text-muted">Notes shown with basic formatting. Links are shown as text with their address and cannot be clicked; pictures are not loaded.</p>
-        <div className="rounded-md border border-border bg-bg p-3 text-[13px]">
-          <SafeMarkdownView text={safe} inertLinks />
-        </div>
+        {note}
+        <TextViewer
+          text={safe}
+          label={`Text of ${a.name}`}
+          lang="markdown"
+          rawLabel="Source"
+          rendered={
+            <div className="space-y-2">
+              <p className="text-[12px] text-text-muted">Notes shown with basic formatting. Links are shown as text with their address and cannot be clicked; pictures are not loaded.</p>
+              <div className="rounded-md border border-border bg-bg p-3 text-[13px]">
+                <SafeMarkdownView text={safe} inertLinks />
+              </div>
+            </div>
+          }
+        />
       </div>
     )
   if (/^(diff|patch)$/.test(ext)) return <div className="space-y-2">{note}<DiffView text={safe} label={`Diff ${a.name}`} /></div>
   return (
     <div className="space-y-2">
       {note}
-      <TextViewer text={safe} label={`Text of ${a.name}`} />
+      <TextViewer text={safe} label={`Text of ${a.name}`} lang={lang} />
     </div>
   )
 }

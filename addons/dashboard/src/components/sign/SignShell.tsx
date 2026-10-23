@@ -49,6 +49,9 @@ export interface SignShellProps {
   children: ReactNode
 }
 
+/** The row with Cancel and the sign button: it stays at the bottom of the scrolling review, so Cancel is always reachable (phone sheet and popover). */
+export const STICKY_FOOTER = 'sticky bottom-0 z-10 -mx-4 -mb-4 border-t border-border bg-surface px-4 pb-4 pt-3'
+
 const BODY = 'grid max-h-[85dvh] grid-cols-[minmax(0,1fr)] gap-3 overflow-y-auto'
 
 export function SignShell(p: SignShellProps) {
@@ -94,7 +97,7 @@ export function SignShell(p: SignShellProps) {
         showCloseButton={p.showClose}
         data-handoff-dialog
         data-sign-sheet
-        className={cn(BODY, 'gap-4 border-border bg-surface max-sm:top-auto max-sm:bottom-0 max-sm:max-w-full max-sm:translate-y-0 max-sm:rounded-b-none sm:max-w-lg')}
+        className={cn(BODY, 'gap-4 border-border bg-surface p-4 max-sm:top-auto max-sm:bottom-0 max-sm:max-w-full max-sm:translate-y-0 max-sm:rounded-b-none sm:max-w-lg')}
         onOpenAutoFocus={p.onOpenAutoFocus}
       >
         <header className="space-y-1">

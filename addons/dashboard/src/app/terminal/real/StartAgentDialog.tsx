@@ -73,7 +73,7 @@ export interface StartInitial {
 }
 
 const lastKey = (ws: string) => `orch.dashboard.start-agent.harness.${ws}`
-function lastHarness(ws: string): Harness {
+export function lastHarness(ws: string): Harness {
   try {
     const v = localStorage.getItem(lastKey(ws))
     return HARNESSES.some((h) => h.id === v) ? (v as Harness) : 'claude-code'

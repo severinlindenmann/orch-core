@@ -16,6 +16,7 @@ import { useActivation, useArming } from './useArming'
 import { TypedWord, WhatNext } from './SignAside'
 import type { SignStory } from './story'
 import { fmtClock } from '@/lib/time'
+import { STICKY_FOOTER } from './SignShell'
 
 function RiskLine({ text }: { text: string }) {
   return (
@@ -134,7 +135,7 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
   const label = story?.signLabel ?? 'Sign'
   return (
     <section data-testid="click-panel" aria-label="Review before signing" className="space-y-3">
-      {view.content && <SignContent content={view.content} ws={view.workspace?.id} technical={technical} compact={story?.compact} />}
+      {view.content && <SignContent content={view.content} ws={view.workspace?.id} technical={technical} compact={story?.compact} quick={story?.quick} />}
       {story?.scope && <p data-testid="sign-scope" className="text-[13px] text-text">{story.scope}</p>}
       {word !== null && <TypedWord word={word} story={story ?? null} value={typed} onChange={setTyped} disabled={signing} />}
       {story && <WhatNext story={story} />}
@@ -143,7 +144,7 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
       {!view.content && <SignDetails>{technical}</SignDetails>}
       {!view.content && <div data-testid="click-lines" className="max-h-64 overflow-auto rounded-md border border-border bg-bg p-3 font-mono text-[12px]">{view.lines.map((line, i) => <div key={i} className="whitespace-pre-wrap break-all">{line || " "}</div>)}</div>}
       {problem && <ClickProblemBox problem={{ ...problem, next: undefined, signedAt: undefined }} ws={ws} />}
-      <div className="space-y-2">
+      <div className={STICKY_FOOTER} data-testid="sign-footer">
         <p data-testid="sign-method" className="text-[12px] text-text-muted">On this computer</p>
         {word !== null && !wordOk && armed && <p data-testid="word-hint" className="text-[12px] text-text-muted">Type {word} above to continue.</p>}
         <div className="flex flex-wrap items-center justify-end gap-2">

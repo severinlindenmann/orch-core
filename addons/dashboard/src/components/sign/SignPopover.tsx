@@ -7,12 +7,13 @@ import { methodLabel, type SignContent } from '@/api/signing'
 // Touch ID dialog it replaces, but the dashboard does not sign: it prepares a request with the host, shows the host's
 // material, the fingerprint, the code and the exact terminal command, and follows the outcome (design 4).
 import { Loader2 } from 'lucide-react'
+import { Link, useRouter } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import type { HandoffAction, HandoffRequest, HandoffState } from '@/api/handoff'
 import { Button } from '@/components/ui/button'
-import { lastTrigger, SignShell } from './SignShell'
+import { lastTrigger, SignShell, STICKY_FOOTER } from './SignShell'
 import { queries } from '@/api/queries'
 import { sharesPrefix, uuid8 } from '@/api/workspaces'
 import { useWorkspace } from '@/app/workspace'
@@ -128,6 +129,7 @@ export function SignPopover(p: SignPopoverProps) {
     p.onSettled?.('done', state, request)
   })
   const methods = useSignMethods(p.ws)
+  const router = useRouter({ warn: false }) as ReturnType<typeof useRouter> | null | undefined
   const story = storyOf(p.action, { startsAgent: p.startsAgent })
   // One sign button. The terminal is only the forced fallback: an op the browser cannot sign, or a workspace where
   // One click is off or not allowed.
@@ -277,6 +279,9 @@ export function SignPopover(p: SignPopoverProps) {
     )
   }
 
+  // The Cancel row sits at the bottom of the review. The click panel carries its own (Cancel and Sign); before the request
+  // exists, or while it is being read, there is nothing in it yet.
+  const footerShown = !['ready', 'signing', 'preparing', 'viewing'].includes(click.phase) && !(phase === 'idle' && click.phase === 'idle' && autoNow && !!p.action)
   const title = <Inline>{click.view?.view.content?.title ?? click.view?.view.content?.headline ?? click.view?.view.headline ?? run.request?.content?.title ?? run.request?.content?.headline ?? run.request?.headline ?? p.title}</Inline>
   const description = (
     <>
@@ -382,7 +387,12 @@ export function SignPopover(p: SignPopoverProps) {
               Refused: {failedSubmit(run.state.error.code)} The request stays open until {fmtClock(run.request.expires_at)}.
             </p>
           )}
-          <HandoffPanel request={run.request} workspace={here ?? null} />
+          <HandoffPanel
+            request={run.request}
+            workspace={here ?? null}
+            why={clickEligible(p.action) ? 'click_off' : 'terminal_only'}
+            whyAction={router && <Link to="/settings/$tab" params={{ tab: 'general' }} onClick={() => void close()} className="text-brand underline underline-offset-2 hover:no-underline">Turn on One click</Link>}
+          />
           {run.state?.progress && (
             <p role="status" data-testid="sequence-progress" className="text-[13px] text-text-muted">
               Signing in your terminal: {run.state.progress.done} of {run.state.progress.of} steps are in the ticket.
@@ -410,7 +420,7 @@ export function SignPopover(p: SignPopoverProps) {
       {p.unsigned && !end && click.phase !== 'done' && <div data-testid="handoff-unsigned">{p.unsigned}</div>}
 
       {phase === 'waiting' && story && <WhatNext story={story} />}
-      <div className="flex flex-wrap items-center gap-2 sm:justify-between">
+      {footerShown && <div className={`${STICKY_FOOTER} flex flex-wrap items-center gap-2 sm:justify-between`} data-testid="sign-footer-row">
         <span aria-live="polite" className="text-[12px] text-text-muted">
           {phase === 'idle' && p.hint}
           {phase === 'waiting' && 'Waiting for your signature'}
@@ -468,7 +478,7 @@ export function SignPopover(p: SignPopoverProps) {
             </Button>
           )}
         </div>
-      </div>
+      </div>}
     </SignShell>
   )
 }

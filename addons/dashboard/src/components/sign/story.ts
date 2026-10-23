@@ -3,6 +3,7 @@
 // listed only when the action really does it. An action this file does not know gets the plain "Sign" and no steps.
 import { accessLength } from '@/api/grants'
 import type { ClickAction } from '@/api/click'
+import type { QuickTyped } from './alsoSigned'
 
 export interface SignStory {
   /** The button: what happens when it is pressed. */
@@ -15,6 +16,8 @@ export interface SignStory {
   access?: { length: string }
   /** The signed content is shown short (what is answered), the rest under Details; the dialog closes by itself when signed. */
   compact?: boolean
+  /** A quick task: what was typed, so the review can fold the derived rows under "Also signed". */
+  quick?: QuickTyped
 }
 
 /** What agents may do with the access, in the words of the review (the same for every grant the dashboard signs). */
@@ -41,6 +44,7 @@ export function storyOf(action: ClickAction | null | undefined, ctx: StoryContex
       return {
         signLabel: ctx.startsAgent ? 'Sign and start agent' : 'Sign and create task',
         access,
+        quick: { title: action.title, details: action.description ?? '', checks: action.checks ?? [] },
         steps: ['You sign.', 'The task is created, with the requirements and the plan you see here approved.', ...(hours ? [`Access is given for ${accessLength(hours)}.`] : []), ...(ctx.startsAgent ? ['An agent starts and does the work.'] : ['Nothing starts yet: an agent starts only when you press Start agent.'])],
       }
     }

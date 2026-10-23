@@ -8,7 +8,7 @@ import { addonActive } from '@/api/addons'
 import { AddonBadge, useAddons, useRunAddonAction, type RunAddonAction } from '@/addon-ui'
 import { canSpawnAgent } from '@/addon-ui/capabilities'
 import { hasFeature, isRealHost } from '@/api/features'
-import { StartAgentDialog } from '@/app/terminal/real/StartAgentDialog'
+import { StartAgentSplit } from '@/app/terminal/real/StartAgentSplit'
 import { precheckReason } from '@/addon-ui/SpawnConfirm'
 import { useWorkspace } from '@/app/workspace'
 import { workspaceOfTicket } from '@/api/workspaces'
@@ -90,21 +90,6 @@ function StartAgentItem({ ticket, viewer, r }: { ticket: TicketDocument; viewer:
   )
 }
 
-/** M7b, a real host: core's Start agent dialog (preview, runner grant, start), when the host serves `agent.start`. */
-function RealStartAgentItem({ ticket, onStart }: { ticket: TicketDocument; onStart: () => void }) {
-  const { workspace } = useWorkspace()
-  if (!isRealHost() || !workspace || !hasFeature('agent_start', workspace.id) || ticket.status === 'done') return null
-  return (
-    <>
-      <DropdownMenuSeparator />
-      <DropdownMenuItem onSelect={onStart} data-testid="real-start-agent">
-        <Bot />
-        Start agent
-      </DropdownMenuItem>
-    </>
-  )
-}
-
 /** " · why it is their turn", or nothing when the host gave no reason (no dangling separator). */
 export function turnReason(why: string): string {
   const text = why.trim()
@@ -123,12 +108,14 @@ export function ActionsMenu({ ticket, viewer, sign, jump, signing = false }: { t
   // Core's start dialog lives outside the menu, which closes when an item is chosen.
   const r = useRunAddonAction(ticket.key)
   const { workspace } = useWorkspace()
-  const [agent, setAgent] = useState(false)
   // The label names how this workspace really signs (its allowed ways), never a method it does not offer.
   const ways = useSignMethods(workspace?.id).allowed
   const signedWith = !ways ? null : ways.includes('click') ? 'in your terminal or with one click' : 'in your terminal'
+  // A real host: Start agent is a split button next to Actions (start at once, or change the agent or model first).
+  const split = isRealHost() && !!workspace && hasFeature('agent_start', workspace.id) && ticket.status !== 'done'
   return (
     <>
+    {split && workspace && <StartAgentSplit ws={workspace.id} ticket={ticket.key} />}
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button size="sm" variant="outline" disabled={signing}>
@@ -164,11 +151,10 @@ export function ActionsMenu({ ticket, viewer, sign, jump, signing = false }: { t
             Request changes on {gateActionName(g)}
           </DropdownMenuItem>
         ))}
-        {isRealHost() ? <RealStartAgentItem ticket={ticket} onStart={() => setAgent(true)} /> : <StartAgentItem ticket={ticket} viewer={viewer} r={r} />}
+        {!isRealHost() && <StartAgentItem ticket={ticket} viewer={viewer} r={r} />}
       </DropdownMenuContent>
     </DropdownMenu>
     {r.dialog}
-    {agent && workspace && <StartAgentDialog ws={workspace.id} ticket={ticket.key} open onClose={() => setAgent(false)} />}
     </>
   )
 }

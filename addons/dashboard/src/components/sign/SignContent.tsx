@@ -5,6 +5,7 @@ import type { SignContent as Content } from '@/api/signing'
 import { GATE_LABEL } from '@/api/settings'
 import { Pictures } from './Pictures'
 import { Inline, Prose, Raw } from './visible'
+import { alsoSigned, type AlsoSigned, type QuickTyped } from './alsoSigned'
 
 export function SignDetails({ children }: { children: ReactNode }) {
   return <details className="space-y-3 text-[12px] text-text-muted"><summary className="cursor-pointer">Technical details</summary>{children}</details>
@@ -154,7 +155,34 @@ export function compactAnswer(content: Content | null | undefined) {
 }
 
 /** `technical`: more facts for the ONE "Technical details" expander of the review (the panel's own: action, fingerprint, device). */
-export function SignContent({ content, ws, technical, compact = false }: { content: Content; ws?: string; technical?: ReactNode; compact?: boolean }) {
+/** A row of the quick-task review: a label and the text signed for it (one line stays a line, several keep their breaks). */
+function SignedRow({ label, text }: { label: string; text: string }) {
+  return <div className="grid min-w-0 grid-cols-1 gap-x-4 gap-y-0.5 sm:grid-cols-[8rem_minmax(0,1fr)]"><dt className="text-text-muted"><Inline>{label}</Inline></dt><dd className="min-w-0 text-text">{text.includes('\n') ? <Prose className="font-sans leading-relaxed text-text">{text}</Prose> : <Inline>{text}</Inline>}</dd></div>
+}
+
+/**
+ * The quick task: what was typed once, the sentence that more is approved, and the derived rows folded under a count.
+ * The fold opens by itself when a derived row differs from what the typed values give.
+ */
+function QuickSigned({ typed, also }: { typed: QuickTyped; also: AlsoSigned }) {
+  return <>
+    <section data-testid="sign-typed" aria-label="What you sign" className="space-y-2">
+      <h3 className="text-[13px] font-medium text-text">What you sign</h3>
+      <dl className="space-y-2">
+        <SignedRow label="Title" text={typed.title} />
+        {typed.details.trim() && <SignedRow label="Details" text={typed.details.trim()} />}
+        {typed.checks.length > 0 && <SignedRow label={typed.checks.length === 1 ? 'Check' : 'Checks'} text={typed.checks.map((c, i) => `${typed.checks.length > 1 ? `${i + 1}. ` : ''}${c.text}${c.cmd ? ` (checked by ${c.cmd})` : ''}`).join('\n')} />}
+      </dl>
+    </section>
+    <p data-testid="sign-also-sentence" className="text-[13px] text-text">This also approves its requirements and plan, made from these checks.</p>
+    <details key={String(also.differs)} data-testid="sign-also" open={also.differs} className="rounded-md border border-border p-3">
+      <summary className="cursor-pointer text-[12px] font-medium text-text-muted">Also signed ({also.rows.length}){also.differs ? ' · differs from what you typed' : ''}</summary>
+      <dl className="mt-2 space-y-2">{also.rows.map((r, i) => <SignedRow key={i} label={r.label} text={r.text} />)}</dl>
+    </details>
+  </>
+}
+
+export function SignContent({ content, ws, technical, compact = false, quick }: { content: Content; ws?: string; technical?: ReactNode; compact?: boolean; /** A quick task: the typed values, for the folded "Also signed" view. */ quick?: QuickTyped }) {
   const members = useWorkspaceMembers(ws)
   // Every signed person id appears in full somewhere in the view: the plain view shows it short, this list in full.
   const ids = [...new Set((content.fields_changed ?? []).flatMap(f => [f.before, f.after]).filter((v): v is string => personLabel(v, members)?.full != null))]
@@ -163,13 +191,15 @@ export function SignContent({ content, ws, technical, compact = false }: { conte
   // A request on an EXISTING ticket keeps its key (the host's word) and the end of the signed id in the main view; a creation
   // (it signs the key and the title) has them under Technical details only.
   const ticketLine = content.ticket && content.ticket.new !== true
+  const also = quick && !content.summary ? alsoSigned(content, quick) : null
   const rest = <>
+    {also && quick && <QuickSigned typed={quick} also={also} />}
     {ticketLine && content.ticket && <p data-testid="sign-ticket" className="text-[12px] text-text-muted"><Raw>{content.ticket.key}</Raw> (key per host) · signed id …<Raw>{content.ticket.uid_tail}</Raw></p>}
-    {content.sections?.map(s => <section key={s.id}><h3 className="mb-2 text-[13px] font-medium text-text"><Inline>{s.title}</Inline></h3><Prose className="font-sans leading-relaxed text-text">{s.text}</Prose></section>)}
+    {!also && content.sections?.map(s => <section key={s.id}><h3 className="mb-2 text-[13px] font-medium text-text"><Inline>{s.title}</Inline></h3><Prose className="font-sans leading-relaxed text-text">{s.text}</Prose></section>)}
     <Pictures images={content.images} />
-    {!!content.acceptance?.length && <section><h3 className="mb-2 text-[13px] font-medium text-text">Acceptance criteria</h3><ul className="space-y-2 leading-relaxed">{content.acceptance.map(a => <li key={a.id}><span aria-label={a.checked ? 'Checked' : 'Unchecked'}>{a.checked ? '☑' : '☐'}</span> <Inline>{a.text}</Inline> <span className="text-[12px] text-text-muted [&_bdi]:text-text-muted"><Raw>{a.id}</Raw></span>{a.manual && <p className="text-[12px] text-text-muted"><Inline>{a.manual}</Inline></p>}</li>)}</ul></section>}
-    {!!content.tasks?.length && <section><h3 className="mb-2 text-[13px] font-medium text-text">Plan tasks</h3><ol className="list-decimal space-y-3 pl-5 leading-relaxed">{content.tasks.map(t => <li key={t.n} value={t.n}><Inline>{t.title}</Inline> <span className="text-[12px] text-text-muted [&_bdi]:text-text-muted"><Raw>{t.id}</Raw></span>{t.verify?.map((v,i) => <p key={i} className="mt-1 font-mono text-[12px] leading-relaxed text-text-muted [&_bdi]:text-text-muted">Verify: <Value>{v}</Value></p>)}</li>)}</ol></section>}
-    {!!content.fields_changed?.length && <section><h3 className="mb-2 text-[13px] font-medium text-text"><Inline>{content.fields_title ?? 'Changed fields'}</Inline></h3><dl className="space-y-3">{content.fields_changed.map(f => <div key={f.field} className="grid min-w-0 grid-cols-1 gap-x-4 gap-y-1 sm:grid-cols-[7rem_minmax(0,1fr)]"><dt className="text-text-muted"><Inline>{`${cap(f.field)}:`}</Inline></dt> <dd className="min-w-0 text-text [&_bdi]:font-sans [&_bdi]:text-[13px]">{(content.fields_title || /: (add|remove)$/.test(f.field) || / \(unchanged, per host\)$/.test(f.field)) && f.before == null ? null : <><Shown plain value={f.before} members={members} />{f.before_note && <span className="text-text-muted"> (<Raw>{f.before_note}</Raw>)</span>} → </>}<Shown plain value={f.field === 'type' && f.after ? (TYPE_WORDS[f.after] ?? f.after) : f.after} members={members} empty="(not set)" /></dd></div>)}</dl></section>}
+    {!also && !!content.acceptance?.length && <section><h3 className="mb-2 text-[13px] font-medium text-text">Acceptance criteria</h3><ul className="space-y-2 leading-relaxed">{content.acceptance.map(a => <li key={a.id}><span aria-label={a.checked ? 'Checked' : 'Unchecked'}>{a.checked ? '☑' : '☐'}</span> <Inline>{a.text}</Inline> <span className="text-[12px] text-text-muted [&_bdi]:text-text-muted"><Raw>{a.id}</Raw></span>{a.manual && <p className="text-[12px] text-text-muted"><Inline>{a.manual}</Inline></p>}</li>)}</ul></section>}
+    {!also && !!content.tasks?.length && <section><h3 className="mb-2 text-[13px] font-medium text-text">Plan tasks</h3><ol className="list-decimal space-y-3 pl-5 leading-relaxed">{content.tasks.map(t => <li key={t.n} value={t.n}><Inline>{t.title}</Inline> <span className="text-[12px] text-text-muted [&_bdi]:text-text-muted"><Raw>{t.id}</Raw></span>{t.verify?.map((v,i) => <p key={i} className="mt-1 font-mono text-[12px] leading-relaxed text-text-muted [&_bdi]:text-text-muted">Verify: <Value>{v}</Value></p>)}</li>)}</ol></section>}
+    {!also && !!content.fields_changed?.length && <section><h3 className="mb-2 text-[13px] font-medium text-text"><Inline>{content.fields_title ?? 'Changed fields'}</Inline></h3><dl className="space-y-3">{content.fields_changed.map(f => <div key={f.field} className="grid min-w-0 grid-cols-1 gap-x-4 gap-y-1 sm:grid-cols-[7rem_minmax(0,1fr)]"><dt className="text-text-muted"><Inline>{`${cap(f.field)}:`}</Inline></dt> <dd className="min-w-0 text-text [&_bdi]:font-sans [&_bdi]:text-[13px]">{(content.fields_title || /: (add|remove)$/.test(f.field) || / \(unchanged, per host\)$/.test(f.field)) && f.before == null ? null : <><Shown plain value={f.before} members={members} />{f.before_note && <span className="text-text-muted"> (<Raw>{f.before_note}</Raw>)</span>} → </>}<Shown plain value={f.field === 'type' && f.after ? (TYPE_WORDS[f.after] ?? f.after) : f.after} members={members} empty="(not set)" /></dd></div>)}</dl></section>}
     {cancels.length > 0 && <section aria-label="Signing cancels">
       <h3 className="text-[13px] font-medium">Signing cancels:</h3>
       <ul>{cancels.map((c, i) => <li key={i}>

@@ -72,7 +72,6 @@ ACTOR_RULES: dict[str, str] = {
     "addon.purged": "P",
     "hub.joined": "P",
     "hub.left": "P",
-    "relay.reopened": "P",  # C10 M4: the owner reopens the direct path, after leaving the hub
     "hub.pinned": "H",
 }
 OPERATE = frozenset(
@@ -89,7 +88,6 @@ OPERATE = frozenset(
         "addon.purged",
         "hub.joined",
         "hub.left",
-        "relay.reopened",
         "restore",
         "invalid.acknowledged",
     }

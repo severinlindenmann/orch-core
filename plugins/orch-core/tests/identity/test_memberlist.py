@@ -10,7 +10,7 @@ from orch import canon, crypto
 from orch.crypto import sealing, suite
 from orch.identity import Refused, memberlist
 
-from ..relay import corpus
+from ..wsproto import corpus
 
 S2 = corpus.S2
 KEYS = S2["keys"]

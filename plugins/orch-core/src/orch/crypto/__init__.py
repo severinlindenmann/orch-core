@@ -1,7 +1,7 @@
 """The suite (P-256 per D46), sealing, signatures, domain labels.
 
 Spec: orch-relay ``docs/protocol-v2.md`` §1 (suite 2), §3 (labels), §4 (ids), §5 (SALTED-AEAD, sealing). Vectors:
-``tests/relay/vectors/vectors_v2.json.xz`` (suite 2; the relay's ``tests/vectors_v2.json``, stored xz-compressed).
+``tests/wsproto/vectors/vectors_v2.json.xz`` (suite 2; the relay's ``tests/vectors_v2.json``, stored xz-compressed).
 No key is read from disk here (that is ``custody/``).
 """
 

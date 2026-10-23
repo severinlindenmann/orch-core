@@ -62,7 +62,7 @@ class EpochKeys(Protocol):
 _ENTRY = {"unbound", "addr", "tls_spki", "hk_op_pub", "mode"}
 _OPTIONAL = {
     "outbox", "addr", "tls_spki", "hxk_pub", "sealed", "rotate_after", "card", "revoked_op_certs", "snapshot",
-    "revoked_op_objs", "direct", "publish_owed", "cut_epoch", "direct_note",
+    "revoked_op_objs", "publish_owed",
 }  # fmt: skip
 
 
@@ -117,13 +117,6 @@ class HubState:
     snapshot: dict[str, Any] | None = None  # the pinned signed hub.snapshot (section 7); its version only grows
     #: cert_id -> the root-signed ``hub.op_revoked`` object itself: what a ``hub.pinned`` line carries (15.2)
     revoked_op_objs: dict[str, dict[str, Any]] = field(default_factory=dict)
-    #: C10's switch (``open`` | ``closing`` | ``closed``): whether the direct relay path is still open for this
-    #: workspace. ``None``: not set (C10 not run). C8 reads it to rotate ``WK_e`` locally and cancel a pending cut-over.
-    direct: str | None = None
-    #: C10 M2.3: the epoch the cut-over's own rotation made (no direct device is listed in it); ``None``: not yet
-    cut_epoch: int | None = None
-    #: C10: one short reason the cut-over is not done (preflight, relay or hub down); shown by ``hub status``
-    direct_note: str | None = None
     #: C8 (design-c8 M2.4): hub_id -> the signed ``hub.unbound`` that orch-publish has not acknowledged yet. A leave
     #: tells publish directly (never through the hub); the entry is deleted once publish took it.
     publish_owed: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -148,9 +141,6 @@ class HubState:
             "revoked_op_certs": sorted(self.revoked_op_certs),
             "snapshot": self.snapshot,
             "revoked_op_objs": {k: self.revoked_op_objs[k] for k in sorted(self.revoked_op_objs)},
-            "direct": self.direct,
-            "cut_epoch": self.cut_epoch,
-            "direct_note": self.direct_note,
             "publish_owed": {k: self.publish_owed[k] for k in sorted(self.publish_owed)},
         }
 
@@ -183,9 +173,6 @@ class HubState:
             and (d.get("snapshot") is None or (type(d["snapshot"]) is dict and type(d["snapshot"].get("o")) is dict))
             and type(d.get("revoked_op_objs", {})) is dict
             and all(wire.hex16(k) and type(v) is dict for k, v in d.get("revoked_op_objs", {}).items())
-            and (d.get("direct") is None or d["direct"] in ("open", "closing", "closed"))
-            and (d.get("cut_epoch") is None or (type(d["cut_epoch"]) is int and d["cut_epoch"] >= 1))
-            and (d.get("direct_note") is None or (type(d["direct_note"]) is str and len(d["direct_note"]) <= 300))
             and type(d.get("publish_owed", {})) is dict
             and all(wire.hex16(k) and type(v) is dict for k, v in d.get("publish_owed", {}).items())
             and d["hub_id"] == wire.hub_id(unb64u(d["hk_root_pub"], 65))
@@ -211,9 +198,6 @@ class HubState:
             revoked_op_certs=list(d.get("revoked_op_certs", [])),
             snapshot=d.get("snapshot"),
             revoked_op_objs=dict(d.get("revoked_op_objs", {})),
-            direct=d.get("direct"),
-            cut_epoch=d.get("cut_epoch"),
-            direct_note=d.get("direct_note"),
             publish_owed=dict(d.get("publish_owed", {})),
         )
 
@@ -231,7 +215,6 @@ class LeaveResult:
     unbound: dict[str, Any]
     delivered: bool  # False: the hub did not take the unbound yet (queued in the state)
     publish_told: bool = False  # C8: orch-publish holds the unbound (False: still owed in state.publish_owed)
-    cutover: str = "none"  # C8: none | cancelled | owed (a pending relay cut-over)
     rotation_done: bool = True  # False: a full hub left and the newer epoch is not committed yet (state.rotate_after)
 
 
@@ -568,26 +551,6 @@ def flush_publish(
     return not state.publish_owed
 
 
-def cancel_cutover(*, state: HubState, delete: Callable[[], bool] | None, save: Callable[[HubState], None]) -> str:
-    """C8 M2.5 / I6: a leave never reopens the direct relay path. ``closed`` stays closed. A ``closing`` (pending)
-    cut-over is deleted at the relay at once, so the hub can never confirm it later; only then does the state read
-    ``closed`` (it behaved as closed all along). If the delete fails it stays ``closing`` and is tried again by the next
-    unbind. Returns ``none`` | ``cancelled`` | ``owed``."""
-    if state.direct != "closing":
-        return "none"
-    ok = False
-    if delete is not None:
-        try:
-            ok = bool(delete())
-        except (OSError, HubRefused):
-            ok = False
-    if ok:
-        state.direct = "closed"
-        save(state)
-        return "cancelled"
-    return "owed"
-
-
 def settle_rotation(
     *, state: HubState, epochs: EpochKeys | None, save: Callable[[HubState], None], request: bool
 ) -> bool:
@@ -620,7 +583,6 @@ def leave(
     save: Callable[[HubState], None],
     epochs: EpochKeys | None = None,
     publish_put: Callable[[dict[str, Any]], bool] | None = None,
-    cutover_delete: Callable[[], bool] | None = None,
 ) -> LeaveResult:
     """Break-glass leave: ``hub.left`` is logged, ``hub.unbound`` is signed with ``WSK``, stored in the outbox and
     offered to its hub once; an unreachable hub does not stop it. Works from ``joining`` too. From full mode the hub
@@ -637,9 +599,6 @@ def leave(
     state.status = "unbound"
     save(state)
     done = settle_rotation(state=state, epochs=epochs, save=save, request=False)  # the retire already asked
-    cutover = cancel_cutover(
-        state=state, delete=cutover_delete, save=save
-    )  # before anything slow: the hub cannot confirm
     told = flush_publish(state=state, put=publish_put, save=save)  # publish first: it ends hub-forwarded publish
     flush_outbox(state=state, workspace_id=workspace_id, sign_wsk=sign_wsk, now_ms=now_ms,
                  transport_for=transport_for, save=save)  # fmt: skip
@@ -650,5 +609,4 @@ def leave(
         state.hub_id not in state.outbox,
         rotation_done=done,
         publish_told=told,
-        cutover=cutover,
     )

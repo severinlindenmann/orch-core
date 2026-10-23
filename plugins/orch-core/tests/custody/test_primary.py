@@ -263,7 +263,7 @@ def _request_to(info):
     from orch import canon
     from orch.identity import certreq, wscard
 
-    from ..relay import corpus
+    from ..wsproto import corpus
 
     s2 = corpus.S2
     cr, keys = s2["cert_request"], s2["keys"]

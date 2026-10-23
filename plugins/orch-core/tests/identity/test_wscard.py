@@ -9,7 +9,7 @@ from orch import canon, crypto
 from orch.identity import Refused, wscard
 from orch.wsproto import card as relay_card
 
-from ..relay import corpus
+from ..wsproto import corpus
 
 S2 = corpus.S2
 CARD = S2["card"]

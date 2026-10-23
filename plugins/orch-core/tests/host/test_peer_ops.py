@@ -13,7 +13,7 @@ from tests.host.human_helpers import err
 from tests.host.test_hub_join_real import genesis, make_card, now_ms
 from tests.host.test_hub_ops import keystore  # noqa: F401
 from tests.hub.tlshub import TlsHub
-from tests.relay.corpus import IDS, priv, pub
+from tests.wsproto.corpus import IDS, priv, pub
 
 lab, served, human = human_helpers.lab, human_helpers.served, human_helpers.human
 

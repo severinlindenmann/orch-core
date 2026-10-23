@@ -39,7 +39,7 @@ from typing import Protocol
 
 from orch.wsproto import wire
 
-__all__ = ["CutOver", "RedirectRefused", "RelayConn", "Response", "Transport", "TransportError", "tls_context"]
+__all__ = ["RedirectRefused", "RelayConn", "Response", "Transport", "TransportError", "tls_context"]
 
 log = logging.getLogger("orch.net.http")
 
@@ -72,16 +72,6 @@ class RedirectRefused(TransportError):
 
     def __init__(self, route: str) -> None:
         super().__init__("redirect", route)
-
-
-class CutOver(TransportError):
-    """The workspace's direct relay path is closed (V3 C10): the host's gate refused the route before a byte was sent.
-    Permanent until the owner reopens the path."""
-
-    transient = False
-
-    def __init__(self, route: str) -> None:
-        super().__init__("cut_over", route)
 
 
 @dataclass(frozen=True)
@@ -145,11 +135,7 @@ class RelayConn:
         mono: Callable[[], float] = time.monotonic,
         context_factory: Callable[..., ssl.SSLContext] = ssl.create_default_context,
         resolve: Callable[..., list] = socket.getaddrinfo,
-        allowed: Callable[[str, str], bool] | None = None,
     ) -> None:
-        #: C10: the host's gate for one workspace, ``allowed(method, target) -> bool``. When it says no, the call raises
-        #: :class:`CutOver` before any byte is sent. The only way around it is not to hold a RelayConn of the workspace.
-        self._allowed = allowed
         try:
             self.scheme, self.host, self.port = wire.origin_parts(origin)
         except wire.WireError:
@@ -359,8 +345,6 @@ class RelayConn:
     ) -> Response:
         if method not in ("GET", "POST", "PUT", "DELETE") or not _TARGET.fullmatch(target):
             raise TransportError("request", route)
-        if self._allowed is not None and not self._allowed(method, target):
-            raise CutOver(route)
         for k, v in headers.items():
             if not _HEADER_NAME.fullmatch(k) or type(v) is not str or not _HEADER_VALUE.fullmatch(v):
                 raise TransportError("request", route)

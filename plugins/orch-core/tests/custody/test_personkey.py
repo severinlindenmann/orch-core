@@ -24,7 +24,7 @@ from orch.identity import certreq, certs, wscard
 from orch.identity import recovery as rec
 from orch.ops import workspace_init
 
-from ..relay import corpus
+from ..wsproto import corpus
 
 FAST = 2**10
 SRC = Path(orch.__file__).resolve().parent

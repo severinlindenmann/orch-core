@@ -12,8 +12,7 @@ import time
 import pytest
 
 from orch.net import http
-
-from .mock import Expect, MockRelay, Reply, json_reply, make_tls
+from tests.wsproto.mock import Expect, MockRelay, Reply, json_reply, make_tls
 
 
 @pytest.fixture
@@ -138,7 +137,7 @@ def test_deadline_uses_the_injected_monotonic_clock(relay):
 
 
 def test_connection_refused_is_transient():
-    from .mock import free_port
+    from tests.wsproto.mock import free_port
 
     c = http.RelayConn(f"http://127.0.0.1:{free_port()}")
     with pytest.raises(http.TransportError) as e:

@@ -10,7 +10,7 @@ import pytest
 from orch import canon, crypto
 from orch.identity import Refused, answers, certreq
 
-from ..relay import corpus
+from ..wsproto import corpus
 from .test_pairing import ANSWERS, EPOCH0_SOURCES, _steps
 
 _b = crypto.unb64u

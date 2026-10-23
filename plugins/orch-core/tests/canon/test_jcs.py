@@ -10,10 +10,10 @@ from hypothesis import strategies as st
 
 from orch.canon import jcs
 
-from ..relay import corpus
+from ..wsproto import corpus
 from .rfc8785_oracle import dumps_general
 
-VECTORS = corpus.VECTORS["encodings"]  # the one vendored copy (tests/relay/vectors, xz-compressed)
+VECTORS = corpus.VECTORS["encodings"]  # the one vendored copy (tests/wsproto/vectors, xz-compressed)
 
 
 def _f(bits: int) -> float:

@@ -22,7 +22,7 @@ from orch.hubclient import (
     settle_rotation,
     switch_full,
 )
-from tests.relay import r6kit
+from tests.wsproto import r6kit
 
 from .fake import FakeHub, HostLink
 from .vec import V, private_key, pub

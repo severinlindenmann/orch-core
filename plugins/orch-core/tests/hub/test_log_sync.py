@@ -12,7 +12,7 @@ from orch.crypto import suite as S
 from orch.crypto.encoding import b64u, unb64u
 from orch.hubclient import HubLink, HubRefused, Position, derive_view_key, sync_logs
 from orch.hubclient import logsync as LS
-from tests.relay import r6kit
+from tests.wsproto import r6kit
 
 from . import logview
 from .fake import FakeHub

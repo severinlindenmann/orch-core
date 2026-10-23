@@ -510,7 +510,7 @@ def test_a_crash_between_leave_and_unbind_still_lets_the_rejoin_through(human, s
 def keystore(monkeypatch, served, tmp_path):
     """A membership key store for the served workspace with epoch 1 committed, standing in for the relay's."""
     from orch.identity.epochs import MembershipKeys, R6Gate
-    from tests.relay import r6kit
+    from tests.wsproto import r6kit
 
     mk = MembershipKeys(tmp_path / "membership", served.wid, now_ms=lambda: 1_790_000_000_000)
     R6Gate(mk).install(lambda: r6kit.KitStore())
@@ -593,7 +593,7 @@ def test_a_connect_without_an_invite_never_starts_a_join(human, served, stub, ke
 
 def test_leave_from_full_through_the_host_requests_the_rotation_and_keeps_it_owed(human, served, stub, keystore):
     from tests.host.dispatch_helpers import ok
-    from tests.relay import r6kit
+    from tests.wsproto import r6kit
 
     c = served.client()
     human.run("hub.join", join_args(mode="full"))
@@ -621,7 +621,7 @@ def test_leave_from_full_through_the_host_requests_the_rotation_and_keeps_it_owe
 def test_a_full_rejoin_over_an_unended_binding_still_owes_the_rotation(human, served, stub, keystore):
     """The leave is logged but `hub.unbind` never ran: the next connect must not re-seal the SAME epoch."""
     from tests.host.dispatch_helpers import ok
-    from tests.relay import r6kit
+    from tests.wsproto import r6kit
 
     c = served.client()
     human.run("hub.join", join_args(mode="full"))
@@ -640,7 +640,7 @@ def test_a_full_rejoin_over_an_unended_binding_still_owes_the_rotation(human, se
 
 def test_a_selective_rejoin_over_an_unended_full_binding_owes_the_rotation(human, served, stub, keystore):
     from tests.host.dispatch_helpers import ok
-    from tests.relay import r6kit
+    from tests.wsproto import r6kit
 
     c = served.client()
     human.run("hub.join", join_args(mode="full"))
@@ -657,7 +657,7 @@ def test_a_selective_rejoin_over_an_unended_full_binding_owes_the_rotation(human
 
 def test_status_warns_when_a_routine_rotation_was_not_resealed(human, served, stub, keystore):
     from tests.host.dispatch_helpers import ok
-    from tests.relay import r6kit
+    from tests.wsproto import r6kit
 
     c = served.client()
     human.run("hub.join", join_args(mode="full"))

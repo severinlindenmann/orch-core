@@ -250,7 +250,7 @@ def test_a_commit_failing_after_or_at_the_commit_point_is_gated_before_the_lock_
 def test_a_failed_commit_with_the_real_key_store_is_gated_at_once(env, tmp_path, monkeypatch):
     """E1b: with R6's key store bound to this store, seal_state is gated right after the failed append."""
     from orch.identity.epochs import R6Gate
-    from tests.relay.r6kit import open_keys, rotate
+    from tests.wsproto.r6kit import open_keys, rotate
 
     d2, _ = env.add_device()
     (tmp_path / "k").mkdir(mode=0o700)
@@ -350,7 +350,7 @@ def _ok(store, dev: str) -> bool:
 
 def _keys_bound_to(env, tmp_path):
     from orch.identity.epochs import R6Gate
-    from tests.relay.r6kit import open_keys, rotate
+    from tests.wsproto.r6kit import open_keys, rotate
 
     (tmp_path / "k").mkdir(mode=0o700)
     mk = open_keys(tmp_path / "k", hooked=False)
@@ -627,7 +627,7 @@ def test_a_raise_from_another_thread_between_judgement_and_write_stops_the_prune
     import threading
 
     from orch.identity.epochs import R6Gate
-    from tests.relay.r6kit import open_keys, rotate
+    from tests.wsproto.r6kit import open_keys, rotate
 
     d2, _ = env.add_device()
     (tmp_path / "k").mkdir(mode=0o700)
@@ -660,7 +660,7 @@ def test_a_raise_from_another_thread_between_judgement_and_write_stops_the_prune
 
 def test_p06_the_in_memory_gate_goes_down_only_after_the_durable_write(env, tmp_path):
     from orch.identity.epochs import R6Gate
-    from tests.relay.r6kit import open_keys, rotate
+    from tests.wsproto.r6kit import open_keys, rotate
 
     class Crash(Exception):
         pass
@@ -684,7 +684,7 @@ def test_p06_the_in_memory_gate_goes_down_only_after_the_durable_write(env, tmp_
 
 def test_the_prune_is_refused_while_unsafe(tmp_path):
     from orch.identity.epochs import MembershipUnsafe
-    from tests.relay.r6kit import open_keys, rotate
+    from tests.wsproto.r6kit import open_keys, rotate
 
     mk = open_keys(tmp_path)
     rotate(mk)
@@ -729,7 +729,7 @@ def test_k07_a_raise_queued_between_the_prune_write_and_its_lowering_keeps_the_g
     import threading
 
     from orch.identity.epochs import R6Gate
-    from tests.relay.r6kit import open_keys, rotate
+    from tests.wsproto.r6kit import open_keys, rotate
 
     th = {}
 

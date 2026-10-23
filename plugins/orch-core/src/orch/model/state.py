@@ -34,7 +34,6 @@ _NO_TICKET_EFFECT = frozenset(
         "invalid.acknowledged",
         "hub.joined",
         "hub.left",
-        "relay.reopened",
     }
 )
 

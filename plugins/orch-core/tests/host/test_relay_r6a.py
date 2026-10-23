@@ -232,14 +232,14 @@ def test_the_rebuild_covers_the_exposed_rotation_and_malformed_entries(tmp_path,
     """X6 / N11: an exposed rotation's member whose standing is lost, and a malformed entry, raise the gate."""
     import types
 
-    from tests.relay.r6kit import DEVICE, expose_rotation, open_keys, rotate
+    from tests.wsproto.r6kit import DEVICE, expose_rotation, open_keys, rotate
 
     other = "ab" * 16
     mk = open_keys(tmp_path)
     try:
         rotate(mk, devices=[DEVICE])
         expose_rotation(mk, devices=[DEVICE, other])
-        from tests.relay.r6kit import PERSON
+        from tests.wsproto.r6kit import PERSON
 
         live = _FakeLiveStore([other], persons={"d_" + d: "p_" + PERSON for d in (DEVICE, other)})
         relayr6._rebuild_gate(types.SimpleNamespace(store=live), mk)  # noqa: SLF001
@@ -335,7 +335,7 @@ def test_r6_prunes_a_stale_reason_of_a_device_that_kept_its_standing(lab):
 def test_r01_the_rebuild_prunes_inside_its_one_lock_span(tmp_path):
     import types
 
-    from tests.relay.r6kit import DEVICE, PERSON, open_keys, rotate
+    from tests.wsproto.r6kit import DEVICE, PERSON, open_keys, rotate
 
     mk = open_keys(tmp_path)
     try:

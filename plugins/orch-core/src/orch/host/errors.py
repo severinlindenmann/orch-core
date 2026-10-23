@@ -110,10 +110,7 @@ HOST_CODES: dict[str, tuple[int, bool]] = {
     "keys.no_epoch": (3, False),  # V3 C8 (L2-C8i-2): keys.rotate on a workspace without a workspace key
     "keys.joined": (3, False),  # V3 C8: keys.rotate while joined to a hub in full mode
     "relay.local_epochs": (3, False),
-    "relay.cut_over": (3, False),  # V3 C10: the direct relay path is closing or closed (served by a hub)
-    "relay.not_cut_over": (3, False),  # V3 C10: relay reopen while the direct path is not closed
     "hub.not_ready": (3, False),  # V3 C10: the cut-over preflight failed (link, card, or a snapshot with an admin)
-    "hub.cutover_unknown_hub": (3, False),  # V3 C10: the relay has no account for this hub; stay closing
     "hub.rotation_pending": (9, True),
     "hub.state_mismatch": (3, False),
     "hub.not_joined": (3, False),

@@ -11,8 +11,8 @@ every real workspace.
 * :func:`check_admit` is the dev side of the one registration choke point :func:`orch.host.registry.admit`: a dev
   host admits sandbox workspaces only (R5), a normal host refuses every ``SBX`` genesis and every workspace with the
   marker (F2).
-* :func:`refuse_link` and :func:`refuse_push`: ``relay.link`` to another origin on a dev host (``dev_origin``), a
-  records push from a dev host (``dev_host``), both for an ``SBX`` workspace on a normal host (``sandbox_workspace``).
+* :func:`refuse_push`: a records push from a dev host (``dev_host``) or of an ``SBX`` workspace on a normal host
+  (``sandbox_workspace``).
 
 ``ORCH_NO_CONVENIENCE`` (any non-empty value) makes :func:`dev_gate` return ``None`` (narrowing, 11A.15.11).
 """
@@ -49,7 +49,6 @@ __all__ = [
     "gated",
     "no_convenience",
     "prove",
-    "refuse_link",
     "refuse_push",
     "refused",
     "sandbox_reason",
@@ -119,12 +118,11 @@ class DevGate:
 
 @dataclass(frozen=True)
 class View:
-    """What S1 to S6 read of one workspace: its verified genesis, members, former members and link origin."""
+    """What S1 to S6 read of one workspace: its verified genesis, members and former members."""
 
     genesis: Mapping[str, Any]
     members: frozenset[str]
     former: frozenset[str] = field(default_factory=frozenset)
-    link_origin: str | None = None
 
 
 # -- the start (17.2) --------------------------------------------------------------------------------------------------
@@ -306,26 +304,7 @@ def sandbox_reason(
         return f"S5: {exc}"
     if marker["sandbox_id"] != dev.sandbox_id or marker["workspace_id"] != workspace_id:
         return "S5: the workspace marker names another sandbox or workspace"
-    if s6 and view.link_origin is not None and view.link_origin != dev.relay_origin:
-        return "S6: the relay link is not dev.json's relay_origin"
     return None
-
-
-def _link_origin(state_dir: Path, workspace_id: str, host_uid: int) -> str | None:
-    """The workspace's ``link.json`` origin, ``None`` without a link; an unreadable link is a sentinel that never
-    equals an origin (S6 then fails)."""
-    from .custody import read_json
-    from .relaylink import link_path
-
-    path = link_path(state_dir, workspace_id)
-    if not os.path.lexists(path):
-        return None
-    try:
-        doc = read_json(path, host_uid)
-    except Exception:  # noqa: BLE001 - unreadable: S6 fails
-        return "\x00unreadable"
-    origin = doc.get("origin") if isinstance(doc, dict) else None
-    return origin if isinstance(origin, str) else "\x00unreadable"
 
 
 def service_view(service: Any) -> View | None:
@@ -337,12 +316,7 @@ def service_view(service: Any) -> View | None:
     if genesis is None:
         return None
     ws = store.state.workspace
-    return View(
-        genesis,
-        frozenset(ws.members),
-        frozenset(ws.former),
-        _link_origin(Path(service.state_dir), service.workspace_id, service.host_uid),
-    )
+    return View(genesis, frozenset(ws.members), frozenset(ws.former))
 
 
 def dev_gate(service: Any) -> DevGate | None:
@@ -408,18 +382,6 @@ def _is_sandbox_genesis(service: Any) -> bool:
     return entry is not None and (entry.prefix == RESERVED_PREFIX or devsandbox.marker_present(entry.root))
 
 
-def refuse_link(service: Any, origin: str | None) -> None:
-    """``relay.link`` (F5): on a dev host only to ``dev.json``'s ``relay_origin`` (``dev_origin``); on a normal host
-    never for a sandbox workspace (``sandbox_workspace``). Called before anything is written."""
-    dev = getattr(service, "dev", None)
-    if dev is not None:
-        if origin != dev.relay_origin:
-            raise refused("dev_origin", "a dev host links a sandbox only to the dev relay dev-pair chose (dev.json)")
-        return
-    if _is_sandbox_genesis(service):
-        raise refused("sandbox_workspace", "a dev-pair sandbox is never linked from a normal host", hint=SANDBOX_FIX)
-
-
 def refuse_push(service: Any) -> None:
     """A records push (F5): never from a dev host (``dev_host``), never of a sandbox workspace
     (``sandbox_workspace``)."""
@@ -465,9 +427,7 @@ def entry_view(state_dir: Path, workspace_id: str, root: str, host_uid: int) -> 
         if genesis is None:
             return None
         ws = store.state.workspace
-        return View(
-            genesis, frozenset(ws.members), frozenset(ws.former), _link_origin(state_dir, workspace_id, host_uid)
-        )
+        return View(genesis, frozenset(ws.members), frozenset(ws.former))
     finally:
         store.close()
 

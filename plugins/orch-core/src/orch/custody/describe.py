@@ -81,7 +81,6 @@ EVENT_FIELDS: dict[str, tuple[str, ...]] = {
     "addon.purged": ("name",),
     "hub.joined": ("hub_id", "hk_root_pub", "mode", "binding_seq", "aliases"),
     "hub.left": ("hub_id", "binding_seq"),
-    "relay.reopened": ("hub_id",),  # V3 C10 M4
 }
 _WORKSPACE_ONLY = frozenset(
     {
@@ -102,7 +101,6 @@ _WORKSPACE_ONLY = frozenset(
         "addon.purged",
         "hub.joined",
         "hub.left",
-        "relay.reopened",
     }
 )
 _TICKET_ONLY = frozenset(set(EVENT_FIELDS) - _WORKSPACE_ONLY - {"restore", "invalid.acknowledged", "policy.changed"})

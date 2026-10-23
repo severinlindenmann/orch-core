@@ -14,8 +14,7 @@ from orch.identity.memberlist import member_list_o
 from orch.wsproto import sign
 
 from . import corpus
-from .bridgekit import T0
-from .helpers import WS, Key, MemLedger
+from .helpers import T0, WS, Key, MemLedger
 
 PERSON = corpus.IDS["person_alice"]
 DEVICE = corpus.IDS["device_phone"]

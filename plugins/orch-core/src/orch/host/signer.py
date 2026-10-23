@@ -332,13 +332,6 @@ def _person_op(prepared: Mapping[str, Any]) -> None:
                 and e["type"] == "hub.left"
                 and set(e) - review.ENVELOPE == {"hub_id", "binding_seq"}
             )
-        elif op == "relay.reopen":  # V3 C10 M4: one relay.reopened on the workspace log, naming the hub that was left
-            ok = (
-                len(events) == 1
-                and log == "workspace"
-                and e["type"] == "relay.reopened"
-                and set(e) - review.ENVELOPE == {"hub_id"}
-            )
         elif op == "device.mark_exposed":  # #1097: one device.exposed, the signer's own device, nothing else
             ok = (
                 len(events) == 1
@@ -661,7 +654,6 @@ _PLAIN = {
     "hub.join.full": "join hub {hub_id} in full mode: the hub will be able to read everything in this workspace",
     "hub.mode": "switch hub {hub_id} to {mode} mode: the hub will be able to read everything in this workspace",
     "hub.leave": "leave hub {hub_id} (binding {binding_seq}) and tell it that this workspace is no longer bound",
-    "relay.reopen": "open the direct relay path of this workspace again (phones must be paired again)",
     "device.mark_exposed": "record that your device key {device} was in one-click custody (it only loses authority)",
     "device.rotate": "replace your device key {old} with the new key {device}; the old key stops signing everywhere",
 }

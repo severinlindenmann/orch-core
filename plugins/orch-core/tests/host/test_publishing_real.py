@@ -219,7 +219,7 @@ def test_a_second_workspace_cannot_touch_the_first_ones_shares(real, tmp_path):
     from orch import crypto
     from orch.publishclient import PublishClient, PublishError, flow
     from orch.wsproto.pubsign import PublishContext, PublishSigner
-    from tests.relay.helpers import Key
+    from tests.wsproto.helpers import Key
 
     srv, w = real
     start_allowing(srv, w)

@@ -277,14 +277,32 @@ def test_break_glass_signer_rules():
     assert not ok(ws, fake_event("gate.approved", person="p_o", device="d_o"), None)
 
 
-def test_a_recovery_only_type_takes_the_recovery_key_and_never_a_device_key():
-    # the table's repin row (event hub.repinned) is the recovery key only
-    ws = ws_model()
-    assert not hubsign.break_glass_allowed(ws, fake_event("hub.repinned", person="p_o", device="d_o"), None)
-    pk = fake_event("hub.repinned", person="p_o", device="d_pk", cert={"x": 1})
-    assert hubsign.break_glass_allowed(ws, pk, None)
-    assert not hubsign.break_glass_allowed(ws, pk, ("p_o", "d_pk"))  # still never the relay
-    assert not hubsign.break_glass_allowed(ws, {**pk, "auth": "convenience"}, None)
+def test_the_recovery_key_recovers_a_device_and_never_signs_anything_else():
+    """L2-C8i-1: ``device.recover`` is the one ``pk`` row (the D50 ``device.added`` shape: the new device signs with the
+    recovery certificate, the owner has no valid device); a plain device key or any other label never recovers."""
+    ws = ws_model(owner_device="d_m_only")  # the owner's device is not on the roster (lost): only maintainer d_m
+    ws.devices.pop("d_m_only")
+    at = "2026-10-23T10:00:00Z"
+    rec = fake_event("device.added", person="p_o", device="d_new", cert={"x": 1}, at=at)
+    rec["device"] = "d_new"
+    assert hubsign.break_glass_allowed(ws, rec, None)
+    assert not hubsign.break_glass_allowed(ws, rec, ("p_o", "d_new"))  # never the relay
+    assert not hubsign.break_glass_allowed(ws, {**rec, "auth": "convenience"}, None)
+    assert not hubsign.break_glass_allowed(ws, {**rec, "device": "d_other"}, None)  # not signed by the new device
+    assert not hubsign.break_glass_allowed(ws, {k: v for k, v in rec.items() if k != "cert"}, None)
+    assert not hubsign.break_glass_allowed(
+        ws, {**rec, "actor": {"kind": "agent", "id": "p_o", "device": "d_new"}}, None
+    )
+    other = fake_event("device.added", person="p_m", device="d_new", cert={"x": 1}, at=at)
+    other["device"] = "d_new"
+    assert not hubsign.break_glass_allowed(ws, other, None)  # a non-owner recovering
+    # a hub.repinned / hub.left in the recovery shape is never "pk": the recovered device does the leaving
+    assert not hubsign.break_glass_allowed(
+        ws, fake_event("hub.left", person="p_o", device="d_new", cert={"x": 1}), None
+    )
+    assert not hubsign.break_glass_allowed(
+        ws, fake_event("hub.repinned", person="p_o", device="d_new", cert={"x": 1}), None
+    )
 
 
 def test_break_glass_constant_is_the_one_shared_table_of_the_model():
@@ -300,7 +318,6 @@ def test_signer_kind_is_fail_closed_for_every_kind_and_an_unknown_label():
     ws = ws_model()
     kinds = {
         "owner_device_key": left(),
-        "pk": left(device="d_pk", cert={"x": 1}),
         "convenience": left(auth="convenience"),
         "hub": left(auth="hub"),
         "relay": left(signed_by="r"),
@@ -308,6 +325,7 @@ def test_signer_kind_is_fail_closed_for_every_kind_and_an_unknown_label():
     }
     for want, ev in kinds.items():
         assert signer_kind(ws, ev) == want, want
+    assert signer_kind(ws, left(device="d_pk", cert={"x": 1})) == "other"  # hub.left is never "pk"
     ev = left()
     ev["actor"] = {**ev["actor"], "via": "c_1"}
     assert signer_kind(ws, ev) == "hub"

@@ -334,3 +334,53 @@ def test_a_cut_off_list_needs_the_typed_count(share_host, monkeypatch):
 
     prev = {"count": 250, "new": 250, "revoked": 0, "more": 150, "plan": "p" * 43, "items": []}
     assert H._confirm_word(prev) == "all 250" and H._confirm_word({**prev, "more": 0}) == "share"  # noqa: SLF001
+
+
+# --- C8 goldens: keys rotate and hub history (exact output; both are host ops, so no registry golden file) -----------
+
+HIST = {
+    "hub_id": V["ids"]["hub"],
+    "first": [{"type": "policy.changed", "gates": ["plan"], "at": "2026-10-22T10:00:00Z", "user": "u_1",
+               "channel": "c_1", "revert": {"op": "policy.set"}}],
+    "stuck": [{"ticket": "ORCH-0001", "gate": "plan", "needed": 2, "can_still_give": 1}],
+    "other": [{"type": "gate.approved", "ticket": "ORCH-0001", "at": "2026-10-22T11:00:00Z", "user": "u_1",
+               "channel": "c_1", "factor": "password+totp"}],
+}  # fmt: skip
+
+
+def test_keys_rotate_golden(host):
+    host.reply["keys.rotate"] = {"epoch_before": 1, "epoch": 2, "rotated": True, "path": "local"}
+    code, out = run(["rotate"], {})
+    assert code == 0 and host.signed == [] and host.called == [("keys.rotate", {})]
+    assert out == "ok new workspace key: epoch 2 (made here; nothing was sent to any hub)\n"
+    host.reply["keys.rotate"] = {"epoch_before": 1, "epoch": 1, "rotated": False, "path": "requested"}
+    assert run(["rotate"], {})[1] == (
+        "ok a new workspace key is requested; it is made with the next membership update (orch hub status)\n"
+    )
+    code, out = run(["rotate"], {}, as_json=True)
+    assert code == 0 and json.loads(out)["data"] == host.reply["keys.rotate"]
+
+
+@pytest.mark.parametrize("code", ["keys.joined", "keys.no_epoch"])
+def test_keys_rotate_refusals_golden(host, code):
+    host.reply["keys.rotate"] = OrchError(code, "refused")
+    rc, out = run(["rotate"], {}, as_json=True)
+    assert rc != 0 and json.loads(out)["code"] == code
+
+
+def test_hub_history_golden(host):
+    host.reply["hub.history"] = HIST
+    code, out = run(["history", "--since", "2026-10-20T00:00:00Z"], {})
+    assert code == 0 and host.called == [("hub.history", {"since": "2026-10-20T00:00:00Z"})]
+    hid = V["ids"]["hub"]
+    assert out.splitlines() == [
+        f"What hub {hid} did in this workspace:",
+        "  [policy.changed] plan at 2026-10-22T10:00:00Z by u_1 via c_1",
+        out.splitlines()[2],  # the undo line: its wording is L2-C8i-6 (hardening), not pinned here
+        "  stuck: ORCH-0001 plan needs 2, 1 can give it here",
+        "  gate.approved ORCH-0001 at 2026-10-22T11:00:00Z by u_1 via c_1 (password+totp)",
+        "What the hub has already read stays with it: the new workspace key only protects what comes next.",
+    ]
+    assert out.splitlines()[2].startswith("    undo here: orch ")
+    code, out = run(["history"], {}, as_json=True)
+    assert code == 0 and json.loads(out)["data"] == HIST

@@ -509,6 +509,38 @@ def _models_rows(out: dict[str, Any], value: Any, before: Any, ctx: Any) -> bool
     return True
 
 
+def _icon_word(v: Any) -> str | None:
+    """``Rocket, Pink`` for a plain pair of the closed lists, else ``None``."""
+    from orch.wsicons import COLOUR_LABELS, ICON_LABELS
+
+    if (
+        not isinstance(v, Mapping)
+        or set(v) != {"icon", "colour"}
+        or not isinstance(v["icon"], str)
+        or not isinstance(v["colour"], str)
+        or v["icon"] not in ICON_LABELS
+        or v["colour"] not in COLOUR_LABELS
+    ):
+        return None
+    return f"{ICON_LABELS[v['icon']]}, {COLOUR_LABELS[v['colour']]}"
+
+
+def _icon_rows(out: dict[str, Any], value: Any, before: Any, ctx: Any) -> bool:
+    """``settings.changed`` ``set.icon``: the workspace icon in words (``Rocket, Pink``); ``None`` removes it. ``False``
+    (the generic row, every byte) when the value, or the host's current one, is not a plain pair of the closed lists."""
+    new = "(removed: default icon)" if value is None else _icon_word(value)
+    if new is None:
+        return False
+    old = "(default icon)" if before is None else _icon_word(before)
+    if old is None:
+        return False
+    _row(out, "Workspace icon", new, old, ctx.note(False))
+    out.setdefault("notes", []).append(
+        "The icon is shown beside the workspace name in menus. It never replaces the prefix."
+    )
+    return True
+
+
 _LINK_KEYS = frozenset({"repos", "branches", "prs", "external"})
 _LINK_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
 
@@ -1004,7 +1036,9 @@ def _question(material: Mapping[str, Any], events: list[Mapping[str, Any]], tick
     if q.get("why"):  # the question hash binds the text and the options, not this: the host's word
         out["sections"].append({"id": "why", "title": "Why it was asked (per host, not signed)", "text": _s(q["why"])})
     if ev.get("text"):
-        out["sections"].append({"id": "answer", "title": "Your answer", "text": _s(ev["text"])})
+        out["sections"].append(
+            {"id": "answer", "title": "Your note" if picked else "Your answer", "text": _s(ev["text"])}
+        )
     if ev.get("question") != q.get("id"):
         raise PlainUnavailable("the event and the material name different questions")
     if picked:
@@ -1012,7 +1046,15 @@ def _question(material: Mapping[str, Any], events: list[Mapping[str, Any]], tick
         _row(
             out,
             "your choice",
-            f"{answer} (option {_s(picked)})" if _s(picked) in opts else f"{answer} (not one of the options)",
+            # The suffix goes only when the label IS the key and no other option carries that label: {a: "b"} next to
+            # {b: "b"} must keep it, or the row would not tell the two apart.
+            (
+                answer
+                if answer == _s(picked) and list(opts.values()).count(answer) == 1
+                else f"{answer} (option {_s(picked)})"
+            )
+            if _s(picked) in opts
+            else f"{answer} (not one of the options)",
         )
     for o in q.get("options") or []:
         _row(
@@ -1166,6 +1208,8 @@ def _event(
             if key == "publish" and _publish_rows(out, value, before.get(key), ctx):
                 continue
             if key == "models" and _models_rows(out, value, before.get(key), ctx):
+                continue
+            if key == "icon" and _icon_rows(out, value, before.get(key), ctx):
                 continue
             _row(out, key, value, before.get(key), ctx.note(False))
         if "grant_hours" in (ev.get("set") or {}):  # B8: the longest agent access, in days/hours

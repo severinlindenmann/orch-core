@@ -38,6 +38,7 @@ class Code(StrEnum):
     DEVICE_INVALID = "device.invalid"
     DEVICE_SCOPE = "device.scope"
     SIGN_METHOD = "sign.method"
+    SIGN_HUB_ONLY = "sign.hub_only"  # C8/C11: a local signature in a joined full-mode position (D78, D81)
     DEVICE_CERT = "device.cert"
     GRANT_INVALID = "grant.invalid"
     GRANT_SCOPE = "grant.scope"

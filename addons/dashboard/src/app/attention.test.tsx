@@ -31,7 +31,7 @@ describe('one attention count', () => {
     const n = await headerCount()
     await user.click(await screen.findByRole('button', { name: 'Switch workspace' }))
     // The row's name carries the count (the pill itself is aria-hidden).
-    await waitFor(() => expect(screen.getByRole('button', { name: /^DEMO · / })).toHaveAccessibleName(`DEMO · Acme energy data, ${n} need you`))
+    await waitFor(() => expect(screen.getByRole('button', { name: /^DEMO · / })).toHaveAccessibleName(new RegExp(`^DEMO · Acme energy data( \\([0-9a-f]{8}\\))?, ${n} need you$`)))
     expect(screen.getByRole('button', { name: /^DEMO · / })).toHaveTextContent(String(n))
   })
 })

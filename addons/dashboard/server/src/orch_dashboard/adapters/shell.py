@@ -39,7 +39,7 @@ class Workspace(BaseModel):
     # V3 C11: the host's signing mode (`full`/`unknown`: approvals go through the hub); null: not known.
     signing: str | None = None
     # The signed workspace icon (`settings.icon`): an icon and a colour of core's closed lists, or null (none signed:
-    # the page shows the default from the id). `icon_known`: the host reports the setting at all (an older host does not).
+    # the page shows the default from the id). `icon_known`: the host reports the setting (an older host does not).
     icon: dict | None = None
     icon_known: bool = False
 

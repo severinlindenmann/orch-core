@@ -40,6 +40,15 @@ def test_address_vectors_give_the_reference_answers(case):
     assert code_of(address.check_address, case["args"]["ip"]) == case["expect"].get("refuse")
 
 
+KNOWN_DIGEST = "sha256:3f8e89e323846e8e54e539550c34b536d78eb959ee4db7d925211a4931d7e897"
+
+
+def test_the_package_digest_has_a_fixed_known_answer():
+    """The same bytes and the same answer as in orch-marketplace's tests (``tests/test_digest.py``): the two
+    implementations cannot drift apart without one of the two suites failing in CI."""
+    assert package_digest({"orch-addon.json": b"{}", "a/b.txt": b"x"}) == KNOWN_DIGEST
+
+
 def test_the_digest_is_the_one_core_computes_and_the_marketplace_validator_agrees():
     files = {"orch-addon.json": b"{}", "a/b.txt": b"x"}
     want = package_digest(files)
@@ -204,11 +213,12 @@ def test_E7_the_fetch_argv_is_exactly_the_closed_set():
     cs = [argv[i + 1] for i, a in enumerate(argv) if a == "-c"]
     for want in (
         "protocol.allow=never", "protocol.https.allow=always", "http.followRedirects=false", "http.proxy=",
-        "http.sslVerify=true", "http.sslCAInfo=", "transfer.fsckObjects=true", "fetch.fsckObjects=true",
+        "http.sslVerify=true", "transfer.fsckObjects=true", "fetch.fsckObjects=true",
         "core.hooksPath=/dev/null", "core.symlinks=false", "submodule.recurse=false", "credential.helper=",
         "http.curloptResolve=github.com:443:93.184.216.34",
     ):  # fmt: skip
         assert want in cs
+    assert not [a for a in argv if a.lower().startswith(("http.sslcainfo", "http.sslcapath"))]  # curl keeps its CAs
     assert argv[-9:] == [
         "fetch",
         "--depth",
@@ -420,3 +430,60 @@ def test_hostile_content_of_the_remote_runs_nothing(local, tmp_path):
     local["repo"] = str(repo)
     assert fetch.fetch_index(H.OFFICIAL, None)[1] == b"{}"
     assert not marker.exists()
+
+
+# ---- limits (no preexec_fn)
+
+
+def test_the_file_size_limit_is_set_by_a_trampoline_not_by_preexec_fn(tmp_path):
+    import inspect
+
+    src = inspect.getsource(gitsafe._market_run)
+    assert "preexec_fn" not in src.replace("``preexec_fn``", "")
+    out = tmp_path / "elsewhere"
+    out.mkdir()
+    # the write goes outside the staging directory, where the watchdog does not look: only RLIMIT_FSIZE stops it
+    with pytest.raises(gitsafe.MarketGitError):
+        gitsafe._market_run(
+            ["sh", "-c", f"head -c 3000000 /dev/zero > {out}/f"],
+            str(tmp_path),
+            str(tmp_path / "stg"),
+            timeout=10,
+            cap=100_000,
+        )
+    assert out.joinpath("f").stat().st_size <= 100_000
+
+
+def test_output_is_read_with_a_cap_and_a_chatty_command_is_killed(tmp_path):
+    import time
+
+    t0 = time.monotonic()
+    with pytest.raises(gitsafe.MarketGitError) as e:
+        gitsafe._market_run(
+            ["sh", "-c", "yes"], str(tmp_path), str(tmp_path), timeout=20, cap=1 << 30, stdout_cap=100_000
+        )
+    assert e.value.kind == "too_big" and time.monotonic() - t0 < 10
+    with pytest.raises(gitsafe.MarketGitError) as e:
+        gitsafe._market_run(["sh", "-c", "yes >&2"], str(tmp_path), str(tmp_path), timeout=20, cap=1 << 30)
+    assert e.value.kind == "too_big"
+    assert (
+        gitsafe._market_run(["sh", "-c", "printf abc"], str(tmp_path), str(tmp_path), timeout=5, cap=1 << 20) == b"abc"
+    )
+
+
+#: a commit of orch-marketplace's develop that holds the (empty) index; main has none until develop is merged
+INDEX_COMMIT = "3e73e374c5dc78e223bd1ef9b1f6351cfc18973f"
+
+
+@pytest.mark.slow
+def test_a_real_https_fetch_of_the_official_index_reaches_the_signature_check():
+    """L2-G2i-1: with curl's own CA store the fetch works; today the index is unsigned, so the answer is
+    ``market.index_unsigned`` (fail closed), never ``market.fetch_failed``. Needs the network and github.com."""
+    try:
+        got, data = fetch.fetch_index(constants.OFFICIAL_URL, INDEX_COMMIT)
+    except MarketError as exc:
+        if exc.code == "market.address_refused":
+            pytest.skip("no usable network")
+        raise
+    assert got == INDEX_COMMIT and data
+    assert code_of(index.evaluate, data, constants.OFFICIAL_URL, official=True, now=1.0) == "market.index_unsigned"

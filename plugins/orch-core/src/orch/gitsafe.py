@@ -1081,11 +1081,12 @@ def _market_env(home: str) -> dict[str, str]:
 
 _MARKET_C = (
     "-c", "protocol.allow=never", "-c", "protocol.https.allow=always", "-c", "http.followRedirects=false",
-    "-c", "http.proxy=", "-c", "http.sslVerify=true", "-c", "http.sslCAInfo=", "-c", "http.sslCAPath=",
+    "-c", "http.proxy=", "-c", "http.sslVerify=true",
     "-c", "http.extraHeader=", "-c", "http.cookieFile=", "-c", "credential.helper=", "-c", "core.askPass=",
     "-c", "transfer.fsckObjects=true", "-c", "fetch.fsckObjects=true", "-c", "core.hooksPath=/dev/null",
     "-c", "core.fsmonitor=false", "-c", "core.symlinks=false", "-c", "submodule.recurse=false",
     "-c", "http.lowSpeedLimit=1000", "-c", "http.lowSpeedTime=20", "-c", "core.attributesFile=/dev/null",
+    "-c", "advice.graftFileDeprecated=false",  # GIT_GRAFT_FILE=/dev/null makes git hint on every command
 )  # fmt: skip
 
 
@@ -1106,33 +1107,49 @@ def market_fetch_argv(url: str, commit: str | None, host: str, address: str, sta
     ]  # fmt: skip
 
 
+#: re-executes the real command with ``RLIMIT_FSIZE`` and no core dump set: a fixed program text (no operand is
+#: interpolated), run as ``python -I -c TRAMPOLINE LIMIT PROGRAM ARGS...``. It replaces ``preexec_fn``, which forks
+#: then runs Python in the child and can deadlock the threaded host (the repo's rule: no ``preexec_fn`` in the host).
+_TRAMPOLINE = (
+    "import os,resource,sys;n=int(sys.argv[1]);resource.setrlimit(resource.RLIMIT_FSIZE,(n,n));"
+    "resource.setrlimit(resource.RLIMIT_CORE,(0,0));os.execvp(sys.argv[2],sys.argv[2:])"
+)
+
+
 def _market_run(
     argv: list[str], home: str, staging: str, *, timeout: float, cap: int, stdout_cap: int = 1 << 20
 ) -> bytes:
-    """Run one marketplace git command in its own process group with a wall-clock limit, ``RLIMIT_FSIZE`` in the child
-    and a watchdog on the staging directory's size (the cap is a mechanism, not a hope)."""
-    import resource
+    """Run one marketplace git command in its own process group with a wall-clock limit, ``RLIMIT_FSIZE`` set by the
+    trampoline, a watchdog on the staging directory's size and bounded reading of its output (the caps are
+    mechanisms, not hopes)."""
+    import sys
     import threading
     import time
 
-    def limits() -> None:
-        resource.setrlimit(resource.RLIMIT_FSIZE, (cap, cap))
-        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
-
     try:
         proc = subprocess.Popen(  # noqa: S603 - fixed argv built above
-            argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=_market_env(home),
-            cwd="/", start_new_session=True, preexec_fn=limits,  # noqa: PLW1509
+            [sys.executable, "-I", "-c", _TRAMPOLINE, str(cap), *argv], stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=_market_env(home), cwd="/", start_new_session=True,
         )  # fmt: skip
     except OSError:
         raise MarketGitError("failed") from None
     done = threading.Event()
     killed: list[str] = []
+    bufs: dict[str, bytearray] = {"out": bytearray(), "err": bytearray()}
 
     def kill(why: str) -> None:
         killed.append(why)
         with contextlib.suppress(OSError):
             os.killpg(proc.pid, signal.SIGKILL)
+
+    def drain(pipe: object, name: str, limit: int) -> None:
+        """Read until EOF, keeping at most ``limit`` bytes; more than that kills the group (output is not buffered
+        without bound while a hostile server keeps talking)."""
+        while chunk := pipe.read(65536):  # type: ignore[attr-defined]
+            if len(bufs[name]) + len(chunk) > limit:
+                bufs[name] += chunk[: max(0, limit - len(bufs[name]))]
+                return kill("too_big")
+            bufs[name] += chunk
 
     def watch() -> None:
         deadline = time.monotonic() + timeout
@@ -1147,23 +1164,29 @@ def _market_run(
             if total > cap:
                 return kill("too_big")
 
-    t = threading.Thread(target=watch, daemon=True)
-    t.start()
+    readers = [
+        threading.Thread(target=drain, args=(proc.stdout, "out", stdout_cap), daemon=True),
+        threading.Thread(target=drain, args=(proc.stderr, "err", 64 << 10), daemon=True),
+        threading.Thread(target=watch, daemon=True),
+    ]
+    for t in readers:
+        t.start()
     try:
-        out, err = proc.communicate()
+        proc.wait()
     finally:
         done.set()
         with contextlib.suppress(OSError):
             os.killpg(proc.pid, signal.SIGKILL)  # nothing of the group outlives the call
-    t.join(1)
+    for t in readers:
+        t.join(2)
+    for pipe in (proc.stdout, proc.stderr):
+        pipe.close()  # type: ignore[union-attr]
     if killed:
         raise MarketGitError(killed[0])
     if proc.returncode != 0:
-        low = err[:4000].lower()
+        low = bytes(bufs["err"][:4000]).lower()
         raise MarketGitError("redirect" if b"redirect" in low else "failed")
-    if len(out) > stdout_cap:
-        raise MarketGitError("too_big")
-    return out
+    return bytes(bufs["out"])
 
 
 def market_fetch(url: str, commit: str | None, host: str, address: str, staging: str) -> str:

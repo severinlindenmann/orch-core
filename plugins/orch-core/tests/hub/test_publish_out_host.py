@@ -174,6 +174,9 @@ def test_register_goes_through_the_hub_as_card_put_and_never_direct(world, human
         ("workspace_blocked", "blocked"),
         ("delegation_changed", "conflict"),
         ("stale_card", "rejected"),
+        ("delegation_refused", "rejected"),
+        ("other_person", "rejected"),
+        ("delegation_mismatch", "rejected"),
     ],
 )
 def test_register_refusals_of_publish_reach_the_owner_and_nothing_goes_direct(world, human, served, code, reason):

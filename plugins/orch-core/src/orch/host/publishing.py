@@ -844,8 +844,11 @@ def _hub_error(exc: Any) -> HostError:
             "conflict",
             "the server holds another delegation for this workspace: its admin must unbind it",
         ),
-        "stale_card": ("rejected", "the server holds a newer card of this workspace, or this card is too old"),
+        "stale_card": ("rejected", "the server holds a newer card of this workspace than this one"),
     }
+    for bad in ("other_person", "other_workspace", "delegation_mismatch", "delegation_refused", "bad_signature",
+                "malformed", "wrong_suite"):  # fmt: skip
+        reasons[bad] = ("rejected", f"the server refused this workspace's card ({bad})")
     if exc.code in reasons:
         reason, text = reasons[exc.code]
         return HostError("publish.server_refused", text, detail={"reason": reason})

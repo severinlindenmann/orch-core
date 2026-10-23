@@ -45,6 +45,8 @@ export type HandoffAction =
 
   /** Reduced workspace settings (M4). Repos have their own actions (`repo_set`, `repo_remove`). */
   | { action: 'settings_set'; sign_methods?: import('./signing').SignMethod[]; grant_hours?: number; claim_ttl_min?: number; lease_ttl_min?: number }
+  /** The workspace icon (`settings.set` of `icon`, a click): an icon and a colour of the closed lists, or null for the automatic one. */
+  | { action: 'icon_set'; icon: { icon: string; colour: string } | null }
   /** Model routing: the model per agent and mode (`settings.set` of `models`, the typed word). An empty table clears it. */
   | { action: 'models_set'; models: import('./modelRouting').ModelTable }
   /** Add or change one workspace repository (Repos add-on); the host checks the folder before anything is signed. */

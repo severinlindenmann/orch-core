@@ -456,6 +456,7 @@ def _snapshot(ctx: ReadCtx, limit: int) -> dict[str, Any]:
         "defaults": [k for k in SETTINGS if k not in named],
         "sign_methods": sign_methods(ctx.service, ws),
         "models": thaw(ws.settings["models"]) if "models" in ws.settings else None,
+        "icon": thaw(ws.settings["icon"]) if "icon" in ws.settings else None,
         "publish": thaw(ws.settings["publish"]) if "publish" in ws.settings else None,
         "settings_at": settings_at,
         "policy_at": policy_at,
@@ -513,6 +514,7 @@ def workspace_settings(ctx: ReadCtx) -> dict[str, Any]:
         "defaults": data["defaults"],
         "sign_methods": data["sign_methods"],
         "models": data["models"],
+        "icon": data["icon"],  # always present (null: none signed): the key means "this host knows the icon setting"
         "sub_cursor": data["sub_cursor"],
     }
     if viewer.column in ("P", "R"):  # the Publish server addresses: for a person (or their phone), not an agent (G, N)

@@ -166,16 +166,20 @@ export function SignContent({ content, ws, technical, compact = false }: { conte
       {technical}
     </details>}
   </>
-  // Compact (an answer): what is answered stays in view (the choice row and the typed note); the question, the other
-  // options and the host's facts are all still there, in full, under Details. Nothing is left out of the signed values.
-  if (compact && !summary) {
-    const mine = content.fields_changed?.filter(f => f.field === 'your choice') ?? []
+  // Compact (an answer): the ticket (key and signed id end), the question, the chosen option and the typed note stay in
+  // view without opening anything; the other options and the host's facts are in full under Details. If any expected
+  // field is missing, the full review is shown: a compact view never hides content.
+  const choice = content.fields_changed?.find(f => f.field === 'your choice')
+  const question = content.sections?.find(s => s.id === 'question')
+  if (compact && !summary && ticketLine && content.ticket && choice && choice.after != null && question) {
     const note = content.sections?.filter(s => s.id === 'answer') ?? []
-    return <div className="min-w-0 space-y-3 font-sans text-[13px] leading-relaxed text-text [overflow-wrap:anywhere]">
-      {mine.map(f => <p key={f.field} data-testid="sign-choice" className="text-text"><span className="text-text-muted">Your answer: </span><Shown plain value={f.after} members={members} /></p>)}
+    return <div data-testid="sign-compact" className="min-w-0 space-y-3 font-sans text-[13px] leading-relaxed text-text [overflow-wrap:anywhere]">
+      <p data-testid="sign-ticket" className="text-[12px] text-text-muted"><Raw>{content.ticket.key}</Raw> (key per host) · signed id …<Raw>{content.ticket.uid_tail}</Raw></p>
+      <section aria-label={question.title}><h3 className="mb-1 text-[12px] font-medium text-text-muted"><Inline>{question.title}</Inline></h3><Prose className="font-sans leading-relaxed text-text">{question.text}</Prose></section>
+      <p data-testid="sign-choice" className="text-text"><span className="text-text-muted">Your answer: </span><Shown plain value={choice.after} members={members} /></p>
       {note.map(s => <section key={s.id}><h3 className="mb-1 text-[12px] font-medium text-text-muted"><Inline>{s.title}</Inline></h3><Prose className="font-sans leading-relaxed text-text">{s.text}</Prose></section>)}
       <details data-testid="sign-exact" className="space-y-3 rounded-md border border-border p-3">
-        <summary className="cursor-pointer text-[12px] font-medium text-text-muted">Details: everything you sign</summary>
+        <summary className="cursor-pointer text-[12px] font-medium text-text-muted">Details: all options and facts</summary>
         <div className="mt-2 max-h-[38vh] min-w-0 space-y-5 overflow-auto pr-3">{rest}</div>
       </details>
     </div>

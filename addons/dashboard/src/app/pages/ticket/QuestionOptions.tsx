@@ -36,9 +36,11 @@ export function QuestionOptions({
         const recommended = q.recommended === o.key
         const body = (
           <>
-            <span aria-hidden className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full border border-border bg-surface-2 font-mono text-[12px] uppercase text-text-muted">
-              {o.key}
-            </span>
+            {o.key.length <= 2 && (
+              <span aria-hidden className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full border border-border bg-surface-2 font-mono text-[12px] uppercase text-text-muted">
+                {o.key}
+              </span>
+            )}
             <span className="min-w-0 flex-1 space-y-0.5">
               <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
                 <span className="text-[13px] font-medium text-text">

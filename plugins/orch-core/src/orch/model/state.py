@@ -143,7 +143,7 @@ def replay(
     verb_events: Mapping[str, Iterable[str]] | None = None,
     invalidations: tuple[str, Callable[[str, str], None]] | None = None,
     hub_dev: bool = False,
-    hub_only: bool = False,
+    hub_only: bool = True,
 ) -> State:
     """Derive the state from the parsed events of the workspace log and the ticket logs (schema-valid).
 

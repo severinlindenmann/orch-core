@@ -171,7 +171,7 @@ def person_has_valid_device(ws: WsCore, person: str, at: int) -> bool:
     return any(d.person == person and device_valid(d, d.cert, at, False) is None for d in ws.devices.values())
 
 
-def authorize_person(core: Core, log: str, e: dict[str, Any], v: Verifier, *, hub_only: bool = False) -> Refusal | None:
+def authorize_person(core: Core, log: str, e: dict[str, Any], v: Verifier, *, hub_only: bool = True) -> Refusal | None:
     ws, a, typ, at = core.ws, e["actor"], e["type"], ts(e["at"])
     m = ws.members.get(a["id"])
     if m is None:

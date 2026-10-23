@@ -3178,5 +3178,22 @@ is still open, on every unsettled ticket (`generations.void_hub`; a settled tick
 revoked, like a revoked device), and (b) ends every grant whose request was a line of that hub (`Grant.hub_id`, set by
 the C10 host-actor `grant.issued`; state, no new line). The break-glass set is `orch.model.breakglass.BREAK_GLASS`
 (`hub.leave`, `hub.repin` recovery key only, `keys.rotate`). In a joined **full**-mode position every person event that
-is not `auth: "hub"` and not a break-glass event by an owner is refused (`sign.hub_only`); the store turns this on
-(`Ctx.hub_only`), model-only tests opt in.
+is not `auth: "hub"` and not a break-glass event by an owner is refused (`sign.hub_only`); the model's default is ON
+(`Ctx.hub_only`; C10 flipped it from off, L2-C8i-5), model-only tests opt out (`World.hub_only = False`).
+
+### C10 hub-signed grants, devices, policy, settings and the H5 switch (V3, design-c10, hub protocol 8.8)
+
+* `grant.requested` (hub-signed only) records the terms, the canonical signer and the signer's role in `ws.requests`.
+  The host answers in the same store-lock hold with a host-actor `grant.issued` naming it (`request`): same terms,
+  `0 <= at - request.at <= 300 s`, `issued_at = min(request.at, at)`, used once; the grant is the signer's (alias
+  resolved), has no device, and carries `Grant.hub_id`. The secret reaches the runner only for a pending local
+  `hub.handoff {kind: grant}` of the same person, binding and terms (`host/grantoff.py`); otherwise it is destroyed.
+* A hub-signed `settings.changed` sets only `grant_hours`, `claim_ttl_min`, `lease_ttl_min`; a hub-signed
+  `policy.changed` never changes a stored `factor` floor; `device.excluded` is refused for an owner's device.
+* H5: `HubState.direct` (`open` | `closing` | `closed`, `hub.json`) is set by the owner's full-mode join through
+  `hub.connect` (`host/cutover.py`). From `closing` the host starts no relay thread, every `RelayConn` passes the
+  `directpath` gate (cut-over routes and session mechanics only) and direct ops answer `relay.cut_over`. The cut-over
+  rotates to a local epoch with no listed device, seals it to the hub, and for a relay-linked workspace sends
+  `PUT /v2/workspaces/{ws}/cutover {v: 2, hub_id, state: "cut_over"}`. A leave never reopens it; the owner's
+  `relay.reopened` (`orch relay reopen`, after the leave is finished) does. A join made before C10 is cut over
+  automatically only for a dev workspace holding a dev hub card.

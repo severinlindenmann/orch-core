@@ -273,11 +273,11 @@ def start_worker(
     from . import relaylink, relaypair
     from .relayentry import RelayEntry
 
+    if not relay_worker.r6_ready():  # the host checked it (start_blocker); checked again before anything is opened
+        raise relay_worker.SeamMissing(relay_worker.R6_GATE_REASON)
     if directpath.closed(service.state_dir, service.workspace_id, service.host_uid):
         # C10 M3: a cut-over (or closing) workspace dials the direct relay with no thread at all, whoever asked
         raise HostError("relay.cut_over", "the direct relay path of this workspace is closed (it is served by a hub)")
-    if not relay_worker.r6_ready():  # the host checked it (start_blocker); checked again before anything is opened
-        raise relay_worker.SeamMissing(relay_worker.R6_GATE_REASON)
     missing = seams.missing()
     if missing:
         raise relay_worker.SeamMissing(f"seams not set: {', '.join(missing)}")

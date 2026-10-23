@@ -102,9 +102,20 @@ def test_a_leave_deletes_a_pending_row_and_never_a_cut_over_row(env, relay):
     assert cutover.cutover_delete(env.service) is True and relay.row["state"] == "cut_over"  # I6: stays closed
 
 
+def _left_and_reopened(env):
+    """The owner leaves the hub (the host unbinds), then signs relay.reopened: the state a reopening needs."""
+    from tests.host.dispatch_helpers import ok
+
+    env.human.run("hub.leave", {})
+    ok(env.served.client().req("hub.unbind", {}, idem=True))
+    env.human.run("relay.reopen", {})
+
+
 def test_reopen_deletes_the_row_opens_the_state_and_clears_the_gate(env, relay):
     pin_snapshot(env)
     cutover.run(env.service, force_start=True)
+    _left_and_reopened(env)
+    assert relay.row is not None and relay.row["state"] == "cut_over"  # the leave itself did not reopen it (I6)
     out = cutover.reopen(env.service)
     assert out["direct"] == "open" and relay.row is None
     assert not directpath.closed(env.service.state_dir, env.wid, env.service.host_uid)
@@ -116,3 +127,45 @@ def test_reopen_is_refused_when_the_path_is_not_closed(env):
     with pytest.raises(HostError) as e:
         cutover.reopen(env.service)
     assert e.value.code == "relay.not_cut_over"
+
+
+def test_reopen_is_refused_before_the_leave_or_the_signature(env, relay):
+    pin_snapshot(env)
+    cutover.run(env.service, force_start=True)
+    with pytest.raises(HostError) as e:  # still joined
+        cutover.reopen(env.service)
+    assert e.value.code == "hub.not_joined" and relay.row is not None
+    env.human.run("hub.leave", {})
+    with pytest.raises(HostError) as e:  # left, but the owner did not sign relay.reopened
+        cutover.reopen(env.service)
+    assert e.value.code == "hub.not_joined" and relay.row is not None
+
+
+def _check(**over):
+    import types
+
+    st = dict(direct="closed", hub_id="h", status="unbound", rotate_after=None, outbox={}, publish_owed={})
+    model = {"status": "left", "reopened": True, "hub_id": "h"}
+    rotation = over.pop("rotation", "none")
+    model.update(over.pop("model", {}))
+    st.update(over)
+    cutover._reopen_check(types.SimpleNamespace(**st), model, rotation, publish_set=True)  # noqa: SLF001
+
+
+def test_every_precondition_of_a_reopening_is_checked():
+    _check()  # all good
+    for kw, code in (
+        ({"direct": "open"}, "relay.not_cut_over"),
+        ({"model": {"status": "joined"}}, "hub.not_joined"),
+        ({"model": {"reopened": False}}, "hub.not_joined"),
+        ({"model": {"hub_id": "other"}}, "hub.state_mismatch"),
+        ({"status": "bound"}, "hub.not_ready"),
+        ({"rotate_after": 3}, "hub.rotation_pending"),
+        ({"rotation": "pending"}, "hub.rotation_pending"),
+        ({"outbox": {"h": {}}}, "hub.not_ready"),
+        ({"publish_owed": {"h": {}}}, "hub.not_ready"),
+        ({"direct": "closing"}, "hub.not_ready"),
+    ):
+        with pytest.raises(HostError) as e:
+            _check(**kw)
+        assert e.value.code == code, kw

@@ -211,7 +211,8 @@ def review_text(d: Mapping[str, Any]) -> str:
         lines.append(f"  [{x['type']}] {what} at {x.get('at')} by {x.get('user')} via {x.get('channel')}")
         rev = x.get("revert")
         lines.append(
-            "    undo here: orch " + clean_line(json.dumps(rev, sort_keys=True))
+            "    undo here: open the dashboard (Settings) and set it back to what it was before the hub changed it: "
+            + clean_line(json.dumps({k: v for k, v in rev.items() if k != "op"}, sort_keys=True))
             if rev
             else f"    {clean_line(str(x.get('note', '')))}"
         )

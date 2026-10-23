@@ -30,6 +30,7 @@ def env(served, human, stub, monkeypatch):
     e = Env(served, human, alias=True)  # the owner's person is the vector hub user (admin)
     e.state.addr = "hub.example.test:4443"  # hub.handoff builds its link from the pinned address
     e.service.submit(hubops._save_state, e.service, e.state).result()  # noqa: SLF001
+    e.human = human  # type: ignore[attr-defined]
     e.captured = []  # type: ignore[attr-defined]
     monkeypatch.setattr(hubdeliver, "_runner_ready", lambda service, runners: True)
 
@@ -157,3 +158,25 @@ def test_the_hand_off_is_for_full_mode_owners_and_takes_exact_terms(env):
     r = env.served.client().req("hub.handoff", {"kind": "gate", "ticket": "X-1", "hours": 3})
     assert err(r)  # terms belong to the grant kind only
     assert ALICE  # the vector user is the hub identity the owner's person is aliased to
+
+
+def test_a_leave_ends_the_hub_requested_grant_for_the_runner_and_for_the_agent(env):
+    """L2-C8i-3, end to end: the grant the hub requested (hand-off matched, secret deposited) stops at ``hub.left``."""
+    from orch.host.runnergrants import RunnerGrants
+    from orch.identity import parse_grant
+
+    ok(handoff(env))
+    assert env.deliver(request(env), "workspace") is None
+    (plan, secret), *_ = env.captured
+    service = env.service
+
+    def verify() -> tuple[str | None, str]:
+        service.submit(lambda: (service.refresh(), service.sync(check=True))).result()
+        auth = service.auth
+        v = auth.verify(secret, service.clock())
+        return RunnerGrants.valid(service, plan["person"], plan["grant"]), v.state
+
+    assert verify() == (None, "verified")
+    env.human.run("hub.leave", {})
+    assert verify() == ("revoked", "unverified")  # the runner's watcher drops it; the agent's token no longer verifies
+    assert parse_grant(secret).grant_id == plan["grant"]

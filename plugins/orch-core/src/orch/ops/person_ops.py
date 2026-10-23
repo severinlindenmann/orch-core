@@ -777,6 +777,7 @@ OPS: dict[str, Operation] = {
         HUB_JOIN,
         HUB_MODE,
         HUB_LEAVE,
+        RELAY_REOPEN,
         AC_ACCEPT,
         AC_UNACCEPT,
         TASK_MARK_DONE,

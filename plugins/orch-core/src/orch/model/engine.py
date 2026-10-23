@@ -66,7 +66,7 @@ class Ctx:
     verb_events: Any = None  # operation name -> event types it emits (grant verbs are operation names, F1 10.1)
     #: C8/D78: judge local person events in a joined full-mode position (``breakglass.local_refusal``). A host
     #: configuration like ``hub_dev``: the Store always sets it; model-only tests opt in.
-    hub_only: bool = False
+    hub_only: bool = True
     hub_dev: bool = False  # C3b 15.3: the reader is a dev workspace (host configuration, never a field of an event)
 
 

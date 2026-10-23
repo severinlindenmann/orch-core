@@ -627,7 +627,14 @@ def test_r5_the_relay_objects_are_built_once_and_only_by_the_hook():
         for name, line in _relay_built_calls(path):
             sites[name].append(f"{path.name}:{line}")
     for name, where in sites.items():
-        assert len(where) == 1 and where[0].startswith("relayhook.py:"), (name, where)
+        # C10: ``cutover_session`` builds the one-shot Session of the cut-over beside the worker's; never both at once
+        # (the state directory's flock has one owner and the worker is stopped first)
+        assert len(where) == (2 if name in ("Session", "StateDir") else 1) and all(
+            w.startswith("relayhook.py:") for w in where
+        ), (
+            name,
+            where,
+        )
     for path in MODULES:
         built = {n for n, _ in _calls(path)} & {"BridgeLoop", "RidStore", "RelayWorker", "Bridge"}
         assert not built, (path.name, built)

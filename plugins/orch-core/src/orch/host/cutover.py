@@ -281,14 +281,40 @@ def cutover_delete(service: WorkspaceService) -> bool:
     return True
 
 
-def reopen(service: WorkspaceService) -> dict[str, Any]:
-    """M4, the owner's reversal, only after leaving (the caller checked the model: ``hub.left`` is the newest hub
-    record, owner, column P): delete the cut-over at the relay (fenced), set ``direct`` to ``open``, and start the relay
-    link again. Phones must be paired again (their push registrations were purged after the drain)."""
-    h = _hubops()
-    state = h._load_state(service)  # noqa: SLF001
+def _reopen_check(state: Any, model: dict[str, Any], rotation: str, publish_set: bool = False) -> None:
+    """Pure: every precondition of a reopening. Refuses unless the leave is FINISHED on this host: the model says
+    ``left`` and the owner signed ``relay.reopened`` for this very hub, the hub link is ``unbound``, the rotation a
+    full hub's leave owes is done (else the relay would restart on an epoch the hub knew), nothing is owed to the hub
+    or (when a publish server is set) to orch-publish, and no cut-over is half done."""
     if state is None or state.direct not in ("closing", "closed"):
         raise HostError("relay.not_cut_over", "the direct relay path is not closed")
+    if model.get("status") != "left" or not model.get("reopened"):
+        raise HostError("hub.not_joined", "sign `orch relay reopen` first (after `orch hub leave`)")
+    if state.hub_id != model.get("hub_id"):
+        raise HostError("hub.state_mismatch", "the hub state is for another hub than the one that was left")
+    if state.status != "unbound":
+        raise HostError("hub.not_ready", "finish the leave first: orch hub unbind")
+    if state.rotate_after is not None or rotation != "none":
+        raise HostError(
+            "hub.rotation_pending", "the new workspace key is not ready yet: orch hub unbind", retry_after_ms=2000
+        )
+    if state.outbox or (publish_set and state.publish_owed):
+        raise HostError("hub.not_ready", "the hub or orch-publish was not told about the leave yet: orch hub unbind")
+    if state.direct == "closing":
+        raise HostError("hub.not_ready", "a cut-over is still owed: let it finish first")
+
+
+def reopen(service: WorkspaceService) -> dict[str, Any]:
+    """M4, the owner's reversal, only after leaving and only when the leave is finished (:func:`_reopen_ready`, checked
+    before the relay is touched and again under the state lock right before the state changes): delete the cut-over at
+    the relay (fenced), set ``direct`` to ``open``, and start the relay link again. Phones must be paired again."""
+    h = _hubops()
+    from . import breakglass
+
+    publish_set = breakglass.publish_put(service) is not None  # without a publish server nothing can be owed to it
+    model = _model(service)
+    state = h._load_state(service)  # noqa: SLF001
+    _reopen_check(state, model, h._rotation(service, state), publish_set)  # noqa: SLF001 - before the relay
     if _relay_linked(service):
         from . import relayhook
 
@@ -296,8 +322,14 @@ def reopen(service: WorkspaceService) -> dict[str, Any]:
         with relayhook.cutover_session(service, transport=TRANSPORT) as session:
             session.hold()
             session.call("DELETE", f"/v2/workspaces/{ws}/cutover", "DELETE /v2/workspaces/{ws}/cutover", holder=True)
-    state.direct, state.direct_note, state.cut_epoch = "open", None, None
-    h._save_state(service, state)  # noqa: SLF001
+    # both are read outside the lock (they take it, or wait for the worker thread that may be waiting for it)
+    model = _model(service)
+    rotation = h._rotation(service, h._load_state(service))  # noqa: SLF001
+    with h._MU:  # noqa: SLF001 - the check and the save are one step
+        state = h._load_state(service)  # noqa: SLF001
+        _reopen_check(state, model, rotation, publish_set)
+        state.direct, state.direct_note, state.cut_epoch = "open", None, None
+        h._write_state(service, state)  # noqa: SLF001
     started = "none"
     if _relay_linked(service):
         try:  # the stop marker the cut-over left is cleared; a link that cannot start now starts at the next open

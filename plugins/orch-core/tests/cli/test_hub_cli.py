@@ -360,6 +360,8 @@ def test_hub_history_golden(host):
         "  gate.approved ORCH-0001 at 2026-10-22T11:00:00Z by u_1 via c_1 (password+totp)",
         "What the hub has already read stays with it: the new workspace key only protects what comes next.",
     ]
-    assert out.splitlines()[2].startswith("    undo here: orch ")
+    assert out.splitlines()[2].startswith(
+        "    undo here: open the dashboard (Settings)"
+    )  # L2-C8i-6: no JSON pretending to be a command
     code, out = run(["history"], {}, as_json=True)
     assert code == 0 and json.loads(out)["data"] == HIST

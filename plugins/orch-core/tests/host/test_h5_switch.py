@@ -29,7 +29,9 @@ def pin_snapshot(env: Env, roles: dict[str, str] | None = None) -> None:
 
 @pytest.fixture
 def env(served, human, stub):
-    return Env(served, human, alias=True)
+    e = Env(served, human, alias=True)
+    e.human = human  # type: ignore[attr-defined]
+    return e
 
 
 def test_without_a_snapshot_with_an_admin_the_workspace_stays_open_and_says_why(env):

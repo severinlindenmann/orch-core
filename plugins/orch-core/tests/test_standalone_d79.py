@@ -172,3 +172,31 @@ def test_a_fresh_workspace_works_with_no_hub_relay_or_publish(human: Human, serv
     assert res["ok"] is False, res
 
     assert offline == [], f"outbound connection attempted: {offline}"
+
+
+def test_no_relay_client_module_exists():
+    """V3-D36 / D69: a workspace never has a direct relay path, so core carries no relay client at all."""
+    pkgs = [p.relative_to(CORE / "src").as_posix() for p in (CORE / "src" / "orch").iterdir() if p.is_dir()]
+    mods = [p.stem for p in (CORE / "src" / "orch").glob("*.py")]
+    banned = [n for n in (*pkgs, *mods) if n.startswith(("orch/relay", "relay"))]
+    assert banned == [], banned
+    host = [p.name for p in (CORE / "src" / "orch" / "host").glob("relay*.py")]
+    assert host == ["relayid.py"], host  # column R identity: deleted with R4d (orch-core #1152)
+    for p in python_files():
+        for line, mod in [
+            (n.lineno, a)
+            for n in ast.walk(ast.parse(p.read_text()))
+            if isinstance(n, ast.ImportFrom)
+            for a in [n.module or ""]
+            if a == "orch.relay" or a.startswith(("orch.relay.", "orch.relay_owner"))
+        ]:
+            pytest.fail(f"{p}:{line} imports {mod}")
+
+
+def test_a_served_workspace_holds_no_relay_state_or_url(human: Human, served, offline):
+    """The host's state for a workspace has no relay directory, link or origin, whatever mode it is in."""
+    state = Path(served.service.state_dir) / "hosts" / served.wid
+    assert not (state / "relay").exists()
+    for f in state.rglob("*.json"):
+        text = f.read_text(errors="replace")
+        assert "link_origin" not in text and "relay_origin" not in text, f

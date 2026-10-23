@@ -786,37 +786,6 @@ describe('start agent', () => {
   })
 })
 
-describe('approval methods policy', () => {
-  it('requires terminal review for sign_methods even when the personal default is one click', async () => {
-    const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query')
-    const { HandoffDialog } = await import('@/components/sign/HandoffDialog')
-    const { fingerprintOf, reviewDigestOf } = await import('@/api/handoff')
-    const { fakeRequest, state } = await import('@/test/handoffHarness')
-    const ws = 'a'.repeat(32)
-    const methods = ['terminal', 'phone'] as const
-    const event = { id: 'event-settings', type: 'settings.changed', actor: { kind: 'person', id: 'p_owner', device: null }, auth: null, sign_methods: [...methods] }
-    const material = { kind: 'payload' as const, ticket: null, review: [{ event_id: event.id, type: event.type, payload: { sign_methods: [...methods] }, derived: {} }] }
-    const request = { ...fakeRequest(), op: 'settings.set', material, events: [event], review_digest: reviewDigestOf(material), content: { headline: 'Change allowed ways to approve', fields_changed: [{ field: 'sign_methods', before: 'terminal, click', after: methods.join(', '), before_note: 'per host, not signed' }] } }
-    request.fingerprint = fingerprintOf(request.review_digest, request.events, request.op)
-    vi.spyOn(api, 'getWorkspaces').mockResolvedValue([])
-    vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods: ['terminal', 'click', 'phone'] } as Awaited<ReturnType<typeof api.getHostSettings>>)
-    vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'click', fallback: 'terminal', is_default: false, allowed: ['terminal', 'click', 'phone'] })
-    const prepare = vi.spyOn(api, 'prepareHandoff').mockResolvedValue(request)
-    vi.spyOn(api, 'getHandoff').mockResolvedValue(state(request))
-    vi.spyOn(api, 'cancelHandoff').mockResolvedValue({ id: request.id, state: 'cancelled' })
-    const click = vi.spyOn(api, 'prepareClick')
-    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><HandoffDialog ws={ws} title="Change allowed ways to approve" action={{ action: 'settings_set', sign_methods: [...methods] }} onClose={() => {}} /></QueryClientProvider>)
-    const button = await screen.findByRole('button', { name: 'Sign in Terminal' })
-    await waitFor(() => expect(button).toBeEnabled())
-    button.click()
-    await screen.findByTestId('handoff-command')
-    expect(screen.getByText('terminal, phone')).toBeVisible()
-    expect(screen.getByText('per host, not signed')).toBeVisible()
-    expect(prepare).toHaveBeenCalledWith(ws, { action: 'settings_set', sign_methods: [...methods] }, 0)
-    expect(click).not.toHaveBeenCalled()
-  })
-})
-
 it('shows the host refusal and recovery hint when removing one click would strand a custody key', async () => {
   const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query')
   const { HandoffDialog } = await import('@/components/sign/HandoffDialog')

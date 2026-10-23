@@ -766,6 +766,8 @@ def confirm_kind(intent: Mapping[str, Any], person: str | None = None) -> str:
             and all(who == person for who in s["args"]["add"])
         ):
             return "click"
+        if s["op"] == "addon.grant" and intent["kind"] == ADDON:
+            return op_class(s["op"], events=[intent["grant"]])  # the signed capability list decides (click or word)
         # AE3: the class of a step is that of its op WITH its args (``settings.set`` of Publish is terminal-only)
         return op_class(s["op"], args=s["args"])
 

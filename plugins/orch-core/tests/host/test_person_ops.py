@@ -65,7 +65,7 @@ def test_the_host_person_ops_are_not_registry_ops():
     import orch.ops as ops
     from orch.model.emits import EMITS_V1
 
-    want = {"move", "policy.set", "settings.set", "people.set", "relay.pair_device", "publish.share"}  # B12D, P5
+    want = {"move", "policy.set", "settings.set", "people.set", "publish.share"}  # B12D, P5
     want |= {
         "ac.accept",
         "ac.unaccept",

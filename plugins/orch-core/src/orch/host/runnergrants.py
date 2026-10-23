@@ -378,6 +378,17 @@ class RunnerGrants:
             return "expiring"
         return None
 
+    def launch_reason(self, service: Any, person: str, cur: dict[str, Any]) -> str | None:
+        """The ONE rule for "may this grant start an agent now": ``None`` when it may, else the ``launch.no_grant``
+        reason. A live grant of the person with at least :data:`MIN_LEFT` left (``revoked``, ``expiring``; a role
+        change to viewer or a removed person counts as ``revoked``), and a ``scope: all`` grant never starts agents for
+        a member (``scope``). The launch plan (agents.plan) and ``whoami.runner.grant.startable`` both use it."""
+        reason = self.valid(service, person, cur["grant"], left=MIN_LEFT)
+        auth = getattr(service, "auth", None)
+        if reason is None and cur.get("scope") == "all" and auth is not None and auth.roles.get(person) == "member":
+            reason = "scope"
+        return reason
+
     # -- the watcher
     def watch(self) -> None:
         try:

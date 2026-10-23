@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import base64
 import contextlib
+import json
 import re
 import secrets as _secrets
 import threading
@@ -359,6 +360,7 @@ class Ports(Protocol):
     def git_init(self, root: Path) -> None: ...
     def runner_enable(self, wid: str, prefix: str, terminals: bool) -> None: ...
     def runner_hello(self, wid: str, timeout: float) -> bool: ...
+    def records_setup(self, wid: str, root: Path) -> None: ...
     def workspace(self, wid: str) -> Any: ...  # a connection: .call(op, args, **kw) -> result dict; .close()
     def unlock(self, wid: str, passphrase: str | None, digest: str, fields: tuple[tuple[str, str], ...]) -> Any: ...
     def convenience_on(self, wid: str) -> None: ...
@@ -442,6 +444,7 @@ STEP_LABELS = {
     "flags": "Turning on one-click approval",
     "runner_grant": "Giving this machine's runner agent access",
     "custody": "Moving your key to one-click custody",
+    "records": "Setting up the records history on this computer",
 }
 HELLO_SECONDS = 30.0
 
@@ -526,6 +529,7 @@ class Creator:
             self._batch()
             self._flags()
             self._custody()
+            self._records()
             self.run.done = True
         except KeyboardInterrupt:
             self._fail(SetupError("stop", "setup was stopped from the terminal", 409), post_genesis)
@@ -637,6 +641,26 @@ class Creator:
             self.run.set("git", "failed")
             raise SetupError("git.init_failed", f"git init failed ({type(exc).__name__})", 500) from None
         self.run.set("git", "done")
+
+    def _records(self) -> None:
+        """The records step (run 8, owner 1.8): the same code as ``orch records init``, then local auto-commit on (never
+        push). The person consented in the review (the ``records`` flag, part of the review digest). A failure is a
+        retry item with the command to run next, never a failed setup: the workspace itself is already made."""
+        if not any(f["id"] == "records" for f in self.plan.flags):
+            return
+        assert self.wid is not None
+        self.run.set("records", "doing")
+        try:
+            self.ports.records_setup(self.wid, self.root)
+        except Exception as exc:  # noqa: BLE001 - reported as a retry item; the rest of the setup is done
+            self.run.set("records", "failed")
+            self.run.add_retry("records")
+            why = " ".join("".join(c if c.isprintable() else " " for c in self._safe(str(exc), None)).split())[:300]
+            self.run.explain(
+                "records", f"The records history is not on: {why or type(exc).__name__}. Next: orch records init"
+            )
+            return
+        self.run.set("records", "done")
 
     def _install_addons(self) -> None:
         for it in self.items:
@@ -978,6 +1002,24 @@ class RealPorts:
     # -- the runner (D-P2-31)
     def git_init(self, root: Path) -> None:
         init_repository(root)
+
+    def records_setup(self, wid: str, root: Path) -> None:
+        """``orch records init`` and ``orch records auto on`` (no ``--push``): the records tool's own code, with the
+        consent already given in the setup review (the tool's terminal question is answered by that consent)."""
+        import io
+
+        from orch.records import cli as records_cli
+
+        for argv in (["init", "--workspace", wid, "--json"], ["auto", "on", "--workspace", wid, "--json"]):
+            out = io.StringIO()
+            code = records_cli.main(argv, self.env, out, confirm=lambda _text: True)
+            if code != 0:
+                line = (out.getvalue().strip().splitlines() or ["{}"])[-1]
+                try:
+                    message = str(json.loads(line).get("message", "records"))
+                except ValueError:
+                    message = "records"
+                raise SetupError("records.setup_failed", message, 500)
 
     def runner_enable(self, wid: str, prefix: str, terminals: bool) -> None:
         import io

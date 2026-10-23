@@ -84,7 +84,6 @@ HOST_PERSON_OPS: dict[str, frozenset[str]] = {
     # B12D: one role's people of a ticket (the sequence engine's last steps; also a plain person op)
     "people.set": frozenset({"people.changed"}),
     # H12c-e (11A.15.10 item 12): the paired phone's device.added, with its own material kind
-    "relay.pair_device": frozenset({"device.added"}),
     # P5: a person's signature over the exact words of one staged share (a log.added note on its ticket)
     "publish.share": frozenset({"log.added"}),
     # V3 C2a (hub contract 9.1): the owner's record that the workspace joined a hub selectively, or left it

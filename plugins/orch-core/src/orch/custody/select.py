@@ -67,7 +67,15 @@ def refuse_full_mode(state_dir: Path, workspace_id: str) -> None:
     """V3 C11 (L2-C11d-1): the one custody choke point for entering convenience custody. In a workspace in full hub mode
     (or ``unknown``) the device key stays in passphrase custody, whoever asks (``orch keys custody convenience``, the
     dashboard switch, Finish setup): :func:`stage_convenience` calls this before the key store is opened. A workspace
-    that is not registered on this host has no hub log, so there is nothing to refuse."""
+    that is not registered on this host has no hub log, so there is nothing to refuse.
+
+    Why an unregistered workspace is a no-op (L2-C11e-4): every caller resolves the workspace through the host registry
+    first (CLI ``_one``, dashboard ``entry``, setup's ``missing_items``), and a workspace without a host entry has no
+    host hub state either. An unsafe or unreadable registry is not "unregistered": ``read_json`` fails closed
+    (``custody.unsafe_mode``); only a missing registry file means no workspace is registered.
+
+    Also called at the top of :func:`finish_convenience` (L2-C11e-3): the check in stage releases the store lock before
+    the passphrase KDF and the ``transition`` write, so a full join landing in that gap is caught by the second call."""
     from orch.host import convenience as host_convenience
 
     uid = os.getuid()
@@ -286,6 +294,7 @@ def finish_convenience(state_dir: Path, workspace_id: str, staged: Selection, *,
     ``staged`` (another process changed custody in between)."""
     from .convenience import ConvenienceBackend
 
+    refuse_full_mode(state_dir, workspace_id)  # V3 C11 (L2-C11e-3): re-check; a full join may have landed since stage
     store = store if store is not None else _store(state_dir)
     if read_selection(state_dir, workspace_id) != staged:
         raise CustodyError("the custody of this key changed meanwhile; nothing was finished (orch keys custody status)")

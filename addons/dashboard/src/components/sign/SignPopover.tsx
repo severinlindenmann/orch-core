@@ -101,7 +101,7 @@ export interface SignPopoverProps {
   onSigning?: (signing: boolean) => void
   /** A click signature was rejected or cancelled. */
   onInterrupted?: () => void
-  /** The ONE toast after a signature (default: "<title>: signed"). */
+  /** The ONE toast after a signature (default: "<title>: signed"). An empty string: the caller says the outcome itself once its follow-up step is done. */
   doneToast?: string
   /** The button this review belongs to. Default: the button that was pressed last. */
   anchor?: HTMLElement | null
@@ -112,7 +112,7 @@ export interface SignPopoverProps {
 export function SignPopover(p: SignPopoverProps) {
   const [anchor] = useState<HTMLElement | null>(() => (p.anchor !== undefined ? p.anchor : lastTrigger()))
   const run = useHandoff(p.ws, (phase, state, request) => {
-    if (phase === 'done') toast.success(p.doneToast ?? `${p.title}: signed`)
+    if (phase === 'done' && p.doneToast !== '') toast.success(p.doneToast ?? `${p.title}: signed`)
     p.onSettled?.(phase, state, request)
   })
   const { phase } = run
@@ -124,7 +124,7 @@ export function SignPopover(p: SignPopoverProps) {
   const viaHub = hubOnly(here)
   // Click-to-sign (H5c): offered where the signer says the flag is on and it can sign, for the actions it serves.
   const click = useClickSign(p.ws, (_phase, state, request) => {
-    toast.success(p.doneToast ?? `${p.title}: signed`)
+    if (p.doneToast !== '') toast.success(p.doneToast ?? `${p.title}: signed`)
     p.onSettled?.('done', state, request)
   })
   const methods = useSignMethods(p.ws)
@@ -159,6 +159,8 @@ export function SignPopover(p: SignPopoverProps) {
   const clickOpen = click.phase !== 'idle'
   const [waitUntil, setWaitUntil] = useState(0)
   const shared = !!here && workspaces.some((o) => o.id !== here.id && sharesPrefix(o, here))
+  // With controls on the terminal path nothing is prepared until the person has chosen: the terminal request is not changeable afterwards.
+  const autoNow = !!p.autoStart && !(p.controls && method === 'terminal')
   const started = useRef(false)
   const cancelRef = useRef<HTMLButtonElement>(null)
 
@@ -166,7 +168,7 @@ export function SignPopover(p: SignPopoverProps) {
     // Not before the list of workspaces and the signing settings are known: whether this one offers Sign decides how the
     // review starts. An action with nothing to fill in prepares at once (the press that opened it is the intent), so the
     // person never sees a Sign button before the host's content (WYSIWYS).
-    if (!viaHub && p.autoStart && p.action && !started.current && p.ws && !known.isPending && !methods.loading) {
+    if (!viaHub && autoNow && p.action && !started.current && p.ws && !known.isPending && !methods.loading) {
       started.current = true
       // A click request that ended earlier (cancelled, expired) must not block a fresh open: this open is a new intent.
       if (method === 'click') void click.start(p.action, 0, true)
@@ -415,7 +417,7 @@ export function SignPopover(p: SignPopoverProps) {
           {phase === 'waiting' && 'Waiting for your signature'}
         </span>
         <div className="flex flex-wrap gap-2">
-          {phase === 'idle' && !clickOpen && !(p.autoStart && p.action) && (
+          {phase === 'idle' && !clickOpen && !(autoNow && p.action) && (
             <>
               <Button ref={cancelRef} variant="ghost" onClick={() => void close()}>
                 Cancel

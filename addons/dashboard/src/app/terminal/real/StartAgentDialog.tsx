@@ -34,6 +34,7 @@ import { fmtDateTime, fmtExact, nowMs } from '@/lib/time'
 import { EXECUTION_LINE } from './executionLine'
 import { MODE_LABEL, ModelPick } from '@/components/agents/AgentChoice'
 import { AgentIcon } from '@/components/agents/AgentIcon'
+import { AccessSelect } from '@/components/sign/AccessSelect'
 import { SignButton } from '@/components/sign/SignButton'
 import { lastTrigger, SignShell } from '@/components/sign/SignShell'
 import { ExactCommandLine } from '@/components/sign/HandoffPanel'
@@ -276,17 +277,7 @@ function StartAgent({ ws, ticket, onClose, onStarted, initial, choose }: { ws: s
   }
 
   const title = `Start ${agentName}${ticket ? ` on ${ticket}` : ''}`
-  const accessSelect = (
-    <div className="space-y-1.5" data-testid="agent-access">
-      <Label htmlFor="agent-access-hours" className="text-[13px] text-text">Give agents access for</Label>
-      <select id="agent-access-hours" value={hours} onChange={(e) => setHours(Number(e.target.value))} className="block min-h-10 w-full rounded-md border border-border bg-bg px-3 text-[13px] text-text">
-        {lengths.map(([h, text]) => <option key={h} value={h}>{text}</option>)}
-      </select>
-      <p className="text-[12px] text-text-muted" data-testid="agent-access-until">
-        Agents may work on tickets they are allowed to{prefix ? ` in ${prefix}` : ''}, until <time dateTime={new Date(nowMs() + hours * 3_600_000).toISOString()}>{fmtExact(new Date(nowMs() + hours * 3_600_000).toISOString())}</time>. Every agent the runner starts can use this access, not only {agentName}.
-      </p>
-    </div>
-  )
+  const accessSelect = <AccessSelect hours={hours} onHours={setHours} lengths={lengths} prefix={prefix} agentName={agentName} />
 
   if (quiet) return null
   if (step === 'sign') {

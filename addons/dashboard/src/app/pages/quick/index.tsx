@@ -1,90 +1,31 @@
-// Quick tasks on a real host (M6, host contract 12.9): the list is `quick.list` (a quick task is a chore ticket with the
-// label `quick`), its limits are this browser's own setting, and adding one is the workspace's ONE signing path.
-import { useState } from 'react'
+// Quick tasks on a real host (M6, host contract 12.9, run 8 V2): one input to add, then the list. Each row says in plain
+// words where the task is (Not started, Working, Ready for your review, Needs your answer, Couldn't start, Finished) and
+// has the one button that fits. Size is not asked: a row only says "Bigger than a quick task" when the host measured it.
+import { useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import { toast } from 'sonner'
+import { MoreHorizontal } from 'lucide-react'
 import { hasFeature } from '@/api/features'
 import { atLeast } from '@/api/permissions'
-import { ACTIVE_STATUSES, DONE_STATUSES, LIMIT_RANGE, QUICK_LABEL, readQuickLimits, writeQuickLimits, type QuickLimits, type QuickRow } from '@/api/quickRecords'
+import { ACTIVE_STATUSES, DONE_STATUSES, QUICK_LABEL, type QuickRow } from '@/api/quickRecords'
 import { queries } from '@/api/queries'
 import type { HandoffAction } from '@/api/handoff'
+import { AgentName } from '@/components/agents/AgentIcon'
 import { LoadFailed } from '@/components/LoadFailed'
 import { SignPopover } from '@/components/sign/SignPopover'
 import { Inline } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { harnessForAgent } from '@/api/harnesses'
+import { StartAgentDialog } from '@/app/terminal/real/StartAgentDialog'
 import { cn } from '@/lib/utils'
-import { plural } from '@/lib/time'
 import { useRole } from '@/app/useRole'
 import { useWorkspace } from '@/app/workspace'
 import { usePageHeader } from '@/app/shell/ShellUi'
-import { statusLabel } from '../ticket/shared'
 import { AddQuick } from './AddQuick'
+import { taskState, type TaskState } from './status'
 
 type Group = 'active' | 'done'
-
-/** "4 commits, 7 files"; a count the host could not read is "unknown", never zero. */
-export function countsText(q: QuickRow['quick']): string {
-  if (!q || (q.commits === null && q.files === null)) return 'size not measured yet'
-  return `${q.commits === null ? 'commits unknown' : plural(q.commits, 'commit')}, ${q.files === null ? 'files unknown' : plural(q.files, 'file')}`
-}
-
-function Limits({ ws, limits, onChange }: { ws: string; limits: QuickLimits; onChange: (l: QuickLimits) => void }) {
-  const [draft, setDraft] = useState({ max_commits: String(limits.max_commits ?? ''), max_files: String(limits.max_files ?? '') })
-  const parse = (v: string, key: keyof QuickLimits): number | null | 'bad' => {
-    if (v.trim() === '') return null
-    const n = Number(v)
-    return Number.isInteger(n) && n >= LIMIT_RANGE[key].min && n <= LIMIT_RANGE[key].max ? n : 'bad'
-  }
-  const commits = parse(draft.max_commits, 'max_commits')
-  const files = parse(draft.max_files, 'max_files')
-  const bad = commits === 'bad' || files === 'bad'
-  const save = () => {
-    if (commits === 'bad' || files === 'bad') return
-    const next = { max_commits: commits, max_files: files }
-    if (!writeQuickLimits(ws, next)) toast('This browser would not keep the limits; they last for this page only.')
-    onChange(next)
-  }
-  return (
-    <details data-testid="quick-limits" className="rounded-md border border-border bg-surface px-3 py-2 text-[13px]">
-      <summary className="cursor-pointer select-none text-text-muted hover:text-text">When is a quick task too big?</summary>
-      <div className="mt-3 space-y-3">
-        <p className="text-text-muted">A quick task that changes more commits or files than these is marked "too big" and should become a normal ticket. Kept in this browser only, for this workspace; empty means the host's default.</p>
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="space-y-1.5">
-            <Label htmlFor="quick-max-commits">Commits (1 to {LIMIT_RANGE.max_commits.max})</Label>
-            <Input id="quick-max-commits" type="number" className="w-28" min={1} max={LIMIT_RANGE.max_commits.max} step={1} value={draft.max_commits} aria-invalid={commits === 'bad' ? true : undefined} onChange={(e) => setDraft({ ...draft, max_commits: e.target.value })} />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="quick-max-files">Files (1 to {LIMIT_RANGE.max_files.max})</Label>
-            <Input id="quick-max-files" type="number" className="w-28" min={1} max={LIMIT_RANGE.max_files.max} step={1} value={draft.max_files} aria-invalid={files === 'bad' ? true : undefined} onChange={(e) => setDraft({ ...draft, max_files: e.target.value })} />
-          </div>
-          <Button size="sm" disabled={bad} onClick={save}>
-            Save limits
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => {
-              setDraft({ max_commits: '', max_files: '' })
-              writeQuickLimits(ws, { max_commits: null, max_files: null })
-              onChange({ max_commits: null, max_files: null })
-            }}
-          >
-            Use the host's defaults
-          </Button>
-        </div>
-        {bad && (
-          <p role="alert" className="text-danger">
-            Commits are a whole number from 1 to {LIMIT_RANGE.max_commits.max}, files from 1 to {LIMIT_RANGE.max_files.max}.
-          </p>
-        )}
-      </div>
-    </details>
-  )
-}
 
 /**
  * The labels a ticket keeps when it stops being a quick task: all but `quick`. There is no remove-label op, so "make a normal
@@ -92,35 +33,55 @@ function Limits({ ws, limits, onChange }: { ws: string; limits: QuickLimits; onC
  */
 export const remainingLabels = (labels: readonly string[]): string[] => labels.filter((l) => l !== QUICK_LABEL)
 
-function Row({ row, canClose, onClose, onNormal }: { row: QuickRow; canClose: boolean; onClose: (key: string) => void; onNormal: (key: string) => void }) {
-  const over = row.quick?.over === true
+const TONE: Record<TaskState['tone'], string> = {
+  quiet: 'border-border text-text-muted',
+  live: 'border-success/40 bg-success/10 text-success',
+  attention: 'border-warning/50 text-warning',
+  bad: 'border-danger/50 text-danger',
+}
+
+function Row({ row, state, canAct, onStart, onClose, onNormal }: { row: QuickRow; state: TaskState; canAct: boolean; onStart: (key: string) => void; onClose: (key: string, at: HTMLElement | null) => void; onNormal: (key: string, at: HTMLElement | null) => void }) {
   const finished = row.status === 'done' || row.status === 'closed'
+  const harness = row.claim?.agent ? harnessForAgent(row.claim.agent) : null
+  const known = harness === 'claude-code' || harness === 'codex'
+  const over = row.quick?.over === true
+  const menuAt = useRef<HTMLElement | null>(null)
   return (
-    <li className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2 text-[13px]" data-key={row.key}>
+    <li className="flex flex-wrap items-center gap-x-3 gap-y-1.5 py-2.5 text-[13px]" data-key={row.key}>
       <Link to="/ticket/$key" params={{ key: row.key }} className="font-mono text-[12px] text-brand hover:underline">
         {row.key}
       </Link>
       <span className="min-w-0 flex-1 basis-48">
         <Inline>{row.title}</Inline>
+        {over && <span data-testid="quick-over" className="ml-2 rounded-full border border-warning/50 px-2 py-px text-[11px] text-warning">Bigger than a quick task</span>}
       </span>
-      <span className="rounded-full border border-border px-2 py-px text-[11px] text-text-muted">{statusLabel(row.status)}</span>
-      <span className={cn('text-[12px]', over ? 'text-warning' : 'text-text-faint')} data-testid="quick-counts">
-        {over && <span className="mr-1.5 rounded bg-warning-soft px-1.5 py-px font-medium text-warning">too big</span>}
-        {countsText(row.quick)}
-      </span>
-      {canClose && !finished && row.labels?.includes(QUICK_LABEL) && (
-        <Button size="sm" variant="ghost" className="h-7 text-[12px]" aria-label={`Make ${row.key} a normal ticket`} onClick={() => onNormal(row.key)}>
-          Make a normal ticket
-        </Button>
-      )}
-      {canClose && !finished && (
-        <Button size="sm" variant="ghost" className="h-7 text-[12px]" aria-label={`Close ${row.key}`} onClick={() => onClose(row.key)}>
-          Close
-        </Button>
+      {known && <AgentName harness={harness} className="text-[12px] text-text-muted" />}
+      <span data-testid="quick-status" className={cn('rounded-full border px-2 py-px text-[11px]', TONE[state.tone])}>{state.word}</span>
+      {state.action === 'start' || state.action === 'retry' ? (
+        <Button size="sm" variant="outline" disabled={!canAct} onClick={() => onStart(row.key)}>{state.actionLabel}</Button>
+      ) : state.action === 'review' ? (
+        <Button size="sm" variant="outline" asChild><Link to="/ticket/$key" params={{ key: row.key }}>{state.actionLabel}</Link></Button>
+      ) : state.action === 'answer' ? (
+        <Button size="sm" variant="outline" asChild><Link to="/ticket/$key" params={{ key: row.key }} search={{ tab: 'questions' } as never}>{state.actionLabel}</Link></Button>
+      ) : null}
+      {canAct && !finished && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button size="icon-sm" variant="ghost" aria-label={`More for ${row.key}`} onPointerDown={(e) => { menuAt.current = e.currentTarget }}><MoreHorizontal /></Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {row.labels?.includes(QUICK_LABEL) && <DropdownMenuItem onSelect={() => onNormal(row.key, menuAt.current)}>Make a normal ticket</DropdownMenuItem>}
+            <DropdownMenuItem onSelect={() => onClose(row.key, menuAt.current)}>Close</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       )}
     </li>
   )
 }
+
+/** A row for a task this page just created, until the list has it. */
+const placeholder = (key: string, title: string): QuickRow =>
+  ({ key, uid: '', title, type: 'chore', priority: null, size: null, status: 'open', labels: [QUICK_LABEL], parent: null, owner: null, assignees: [], claim: null, turn: null, progress: null, open_questions: 0, blocking_questions: null, restricted: null, awaiting_gate: null, addons: {}, updated_at: '', quick: null }) as unknown as QuickRow
 
 export function QuickPage() {
   usePageHeader('Quick tasks')
@@ -129,11 +90,13 @@ export function QuickPage() {
   const role = useRole()
   const qc = useQueryClient()
   const [group, setGroup] = useState<Group>('active')
-  const [limits, setLimits] = useState<QuickLimits>(() => (ws ? readQuickLimits(ws) : { max_commits: null, max_files: null }))
-  const [closing, setClosing] = useState<Extract<HandoffAction, { action: 'close' | 'details' }> | null>(null)
+  const [closing, setClosing] = useState<(Extract<HandoffAction, { action: 'close' | 'details' }> & { at: HTMLElement | null }) | null>(null)
+  const [starting, setStarting] = useState<Record<string, string>>({})
+  const [failed, setFailed] = useState<Set<string>>(new Set())
+  const [startFor, setStartFor] = useState<string | null>(null)
   const [reading, setReading] = useState(false)
   const [readError, setReadError] = useState(false)
-  const makeNormal = async (key: string) => {
+  const makeNormal = async (key: string, at: HTMLElement | null) => {
     if (!ws || reading) return
     setReading(true)
     setReadError(false)
@@ -144,7 +107,7 @@ export function QuickPage() {
         setReadError(true)
         return
       }
-      setClosing({ action: 'details', key, labels })
+      setClosing({ action: 'details', key, labels, at })
     } catch {
       setReadError(true)
     } finally {
@@ -152,10 +115,10 @@ export function QuickPage() {
     }
   }
   const served = !!ws && hasFeature('quick', ws)
-  const list = useQuery({ ...queries.quick(ws ?? '', group === 'active' ? ACTIVE_STATUSES : DONE_STATUSES, limits), enabled: served })
-  const other = useQuery({ ...queries.quick(ws ?? '', group === 'active' ? DONE_STATUSES : ACTIVE_STATUSES, limits), enabled: served })
+  const list = useQuery({ ...queries.quick(ws ?? '', group === 'active' ? ACTIVE_STATUSES : DONE_STATUSES), enabled: served })
+  const other = useQuery({ ...queries.quick(ws ?? '', group === 'active' ? DONE_STATUSES : ACTIVE_STATUSES), enabled: served })
   if (!workspace || !ws) return null
-  if (!served) {
+  if (!served || (list.data && !list.data.available)) {
     return (
       <div className="max-w-2xl space-y-2">
         <h1 className="text-xl font-semibold tracking-tight">Quick tasks</h1>
@@ -166,20 +129,11 @@ export function QuickPage() {
     )
   }
   if (list.isError) return <LoadFailed what="quick tasks" onRetry={() => void list.refetch()} />
-  if (list.data && !list.data.available) {
-    return (
-      <div className="max-w-2xl space-y-2">
-        <h1 className="text-xl font-semibold tracking-tight">Quick tasks</h1>
-        <p data-testid="quick-unavailable" className="text-[13px] text-text-muted">
-          This host does not serve quick tasks, so there is nothing to list here.
-        </p>
-      </div>
-    )
-  }
-  const rows = list.data?.rows ?? []
-  const counts = { active: group === 'active' ? list.data?.total : other.data?.total, done: group === 'done' ? list.data?.total : other.data?.total }
-  // Outgrown tasks come first, then the host's order.
-  const sorted = [...rows].sort((a, b) => Number(b.quick?.over === true) - Number(a.quick?.over === true))
+  const listed = list.data?.rows ?? []
+  // A task this page just created is in the list at once (optimistic), until the host's own list has it.
+  const extra = group === 'active' ? Object.entries(starting).filter(([k]) => !listed.some((r) => r.key === k)).map(([k, t]) => placeholder(k, t)) : []
+  const sorted = [...extra, ...listed]
+  const counts = { active: group === 'active' ? (list.data?.total ?? 0) + extra.length : other.data?.total, done: group === 'done' ? list.data?.total : other.data?.total }
   const mayAdd = atLeast(role, 'member')
 
   return (
@@ -187,9 +141,16 @@ export function QuickPage() {
       <div className="flex items-center gap-2">
         <h1 className="text-xl font-semibold tracking-tight">Quick tasks</h1>
       </div>
-      <p className="text-[13px] text-text-muted">One-line jobs too small for a full ticket. A quick task is a chore ticket with the label quick; an agent picks it up on its own.</p>
+      <p className="text-[13px] text-text-muted">Small jobs an agent can do right away.</p>
 
-      {mayAdd && <AddQuick ws={ws} />}
+      {mayAdd && (
+        <AddQuick
+          ws={ws}
+          onCreated={(key, title) => setStarting((s) => ({ ...s, [key]: title }))}
+          onStartFailed={(key) => setFailed((f) => new Set(f).add(key))}
+          onStartDone={(key) => { setStarting((s) => { const n = { ...s }; delete n[key]; return n }); void qc.invalidateQueries({ queryKey: ['quick', ws] }) }}
+        />
+      )}
 
       <div role="tablist" aria-label="Quick tasks" className="flex gap-1 border-b border-border">
         {(['active', 'done'] as const).map((g) => (
@@ -201,7 +162,7 @@ export function QuickPage() {
             onClick={() => setGroup(g)}
             className={cn('-mb-px border-b-2 px-3 py-1.5 text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-brand', group === g ? 'border-brand text-text' : 'border-transparent text-text-muted hover:text-text')}
           >
-            {g === 'active' ? 'Active' : 'Completed'} {counts[g] != null && <span className="ml-1 text-text-faint">{counts[g]}</span>}
+            {g === 'active' ? 'Active' : 'Finished'} {counts[g] != null && <span className="ml-1 text-text-faint">{counts[g]}</span>}
           </button>
         ))}
       </div>
@@ -212,12 +173,20 @@ export function QuickPage() {
         </p>
       ) : sorted.length === 0 ? (
         <p data-testid="quick-empty" className="text-[13px] text-text-muted">
-          {group === 'active' ? 'No quick tasks are waiting.' : 'No quick task has been completed yet.'}
+          {group === 'active' ? 'No quick tasks are waiting.' : 'No quick task has been finished yet.'}
         </p>
       ) : (
-        <ul aria-label={group === 'active' ? 'Active quick tasks' : 'Completed quick tasks'} className="divide-y divide-border rounded-lg border border-border bg-surface px-3">
+        <ul aria-label={group === 'active' ? 'Active quick tasks' : 'Finished quick tasks'} className="divide-y divide-border rounded-lg border border-border bg-surface px-3">
           {sorted.map((r) => (
-            <Row key={r.key} row={r} canClose={mayAdd && !reading} onClose={(key) => setClosing({ action: 'close', key })} onNormal={(key) => void makeNormal(key)} />
+            <Row
+              key={r.key}
+              row={r}
+              state={taskState(r, { starting: r.key in starting, failed: failed.has(r.key) })}
+              canAct={mayAdd && !reading}
+              onStart={(key) => { setFailed((f) => { const n = new Set(f); n.delete(key); return n }); setStartFor(key) }}
+              onClose={(key, at) => setClosing({ action: 'close', key, at })}
+              onNormal={(key, at) => void makeNormal(key, at)}
+            />
           ))}
         </ul>
       )}
@@ -225,15 +194,17 @@ export function QuickPage() {
 
       {reading && <p role="status">Reading the ticket’s current labels…</p>}
       {readError && <p role="alert">Could not prepare conversion from the current ticket. Reload the quick tasks and try again.</p>}
-      <Limits ws={ws} limits={limits} onChange={setLimits} />
 
+      {startFor && <StartAgentDialog ws={ws} ticket={startFor} open onClose={() => setStartFor(null)} onStarted={() => void qc.invalidateQueries({ queryKey: ['quick', ws] })} />}
       {closing && (
         <SignPopover
           key={closing.action + closing.key}
           summary={closing.action === 'details' ? <div><p>Labels removed: <Inline>{QUICK_LABEL}</Inline></p><p>Labels kept: {closing.labels?.length ? closing.labels.map((label) => <span key={label} className="mr-2"><Inline>{label}</Inline></span>) : 'none'}</p></div> : undefined}
           title={closing.action === 'details' ? `Make ${closing.key} a normal ticket` : `Close ${'key' in closing ? closing.key : ''}`}
           ws={ws}
-          action={closing}
+          anchor={closing.at}
+          action={(({ at: _at, ...a }) => a)(closing)}
+          doneToast={closing.action === 'details' ? `${closing.key} is a normal ticket now` : `${closing.key} is closed`}
           autoStart
           onClose={() => setClosing(null)}
           onSettled={(phase) => phase === 'done' && void qc.invalidateQueries({ queryKey: ['quick', ws] })}

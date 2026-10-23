@@ -44,6 +44,10 @@ class LogHub:
         self.relink = False
         self.links: list[Any] = []
 
+    def logs(self) -> dict[str, Any]:
+        """The held ``{log: {seq, head}}`` (the projections, D15b, are in ``view.proj``)."""
+        return {k: v for k, v in self.view.summary().items() if k != "proj"}
+
     def send(self, message: dict[str, Any]) -> dict[str, Any]:
         m = message["o"]
         if self.hold is not None:
@@ -127,12 +131,12 @@ def until(fn, timeout=8.0):
 def test_a_full_connect_starts_the_sender_and_the_hub_view_follows_every_commit(human, served, stub, loghub):  # noqa: F811
     human.run("hub.join", join_args(mode="full"))
     ok(served.client().req("hub.connect", connect_args(), idem=True))
-    assert until(lambda: loghub.view.summary() == local_summary(served))  # the link connect: everything so far
+    assert until(lambda: loghub.logs() == local_summary(served))  # the link connect: everything so far
     first = len(loghub.pages)
     assert first >= 1 and all(p["epoch"] == 1 and p["reset"] is False for p in loghub.pages)
     human.ticket("one")
     human.ticket("two")
-    assert until(lambda: loghub.view.summary() == local_summary(served) and len(loghub.view.summary()) >= 3)
+    assert until(lambda: loghub.logs() == local_summary(served) and len(loghub.logs()) >= 3)
     assert len(loghub.pages) > first
     sent = [p for p in loghub.pages if p["log"] != "workspace"]
     assert sent and all(p["from_seq"] >= 1 for p in sent)
@@ -143,7 +147,7 @@ def test_a_full_connect_starts_the_sender_and_the_hub_view_follows_every_commit(
 def test_an_idle_workspace_sends_nothing_more(human, served, stub, loghub):  # noqa: F811
     human.run("hub.join", join_args(mode="full"))
     ok(served.client().req("hub.connect", connect_args(), idem=True))
-    assert until(lambda: loghub.view.summary() == local_summary(served))
+    assert until(lambda: loghub.logs() == local_summary(served))
     n = len(loghub.calls)
     served.service  # noqa: B018
     logsyncops.wake(served.service)
@@ -168,7 +172,7 @@ def test_a_full_join_not_connected_yet_does_not_send(human, served, stub, loghub
 def test_a_leave_and_unbind_end_the_sender(human, served, stub, loghub):  # noqa: F811
     human.run("hub.join", join_args(mode="full"))
     ok(served.client().req("hub.connect", connect_args(), idem=True))
-    assert until(lambda: loghub.view.summary() == local_summary(served))
+    assert until(lambda: loghub.logs() == local_summary(served))
     human.run("hub.leave", {})
     ok(served.client().req("hub.unbind", {}, idem=True))
     assert logsyncops.status(served.service) is None
@@ -182,7 +186,7 @@ def test_l2_c14_1_a_leave_stops_a_pass_that_a_slow_hub_keeps_alive(monkeypatch, 
     monkeypatch.setattr(logsyncops, "STOP_WAIT_S", 0.3)
     human.run("hub.join", join_args(mode="full"))
     ok(served.client().req("hub.connect", connect_args(), idem=True))
-    assert until(lambda: loghub.view.summary() == local_summary(served))
+    assert until(lambda: loghub.logs() == local_summary(served))
     n = len(loghub.pages)
     loghub.hold = threading.Event()
     human.ticket("before the leave")
@@ -193,13 +197,13 @@ def test_l2_c14_1_a_leave_stops_a_pass_that_a_slow_hub_keeps_alive(monkeypatch, 
     loghub.hold.set()
     time.sleep(0.6)
     assert len(loghub.pages) <= n + 1  # the page already on the wire, nothing after it
-    assert loghub.view.summary() != local_summary(served)
+    assert loghub.logs() != local_summary(served)
 
 
 def test_a_hub_left_in_the_log_stops_sending_even_while_hub_json_lags(human, served, stub, loghub):  # noqa: F811
     human.run("hub.join", join_args(mode="full"))
     ok(served.client().req("hub.connect", connect_args(), idem=True))
-    assert until(lambda: loghub.view.summary() == local_summary(served))
+    assert until(lambda: loghub.logs() == local_summary(served))
     human.run("hub.leave", {})  # recorded in the log; hub.unbind has NOT run, hub.json still says bound
     assert hubops._load_state(served.service).status == "bound"  # noqa: SLF001
     assert not logsyncops._model_joined(  # noqa: SLF001
@@ -210,7 +214,7 @@ def test_a_hub_left_in_the_log_stops_sending_even_while_hub_json_lags(human, ser
     n = len(loghub.calls)
     human.ticket("after the hub.left")
     time.sleep(0.5)
-    assert len(loghub.calls) == n and loghub.view.summary() != local_summary(served)
+    assert len(loghub.calls) == n and loghub.logs() != local_summary(served)
 
 
 @pytest.mark.parametrize(
@@ -228,7 +232,7 @@ def test_every_hub_op_that_can_change_the_binding_stops_the_sender_first(monkeyp
 def test_the_position_is_kept_in_a_private_file_and_survives_a_restart(human, served, stub, loghub):  # noqa: F811
     human.run("hub.join", join_args(mode="full"))
     ok(served.client().req("hub.connect", connect_args(), idem=True))
-    assert until(lambda: loghub.view.summary() == local_summary(served))
+    assert until(lambda: loghub.logs() == local_summary(served))
     path = logsyncops._path(served.service)  # noqa: SLF001
     assert path.is_file() and (path.stat().st_mode & 0o777) == 0o600
     logsyncops.stop(served.service)
@@ -238,7 +242,7 @@ def test_the_position_is_kept_in_a_private_file_and_survives_a_restart(human, se
     probe = loghub.pages[n:]
     assert len(probe) == 1 and probe[0]["count"] == 1 and not probe[0]["reset"]  # only the resume probe, no resend
     human.ticket("later")
-    assert until(lambda: loghub.view.summary() == local_summary(served))
+    assert until(lambda: loghub.logs() == local_summary(served))
     assert loghub.pages[n + 1]["from_seq"] > 1 or loghub.pages[n + 1]["log"] != "workspace"
 
 
@@ -246,7 +250,7 @@ def test_a_new_link_starts_with_the_probe_and_a_hub_that_lost_its_view_is_refill
     human.run("hub.join", join_args(mode="full"))
     ok(served.client().req("hub.connect", connect_args(), idem=True))
     human.ticket("one")
-    assert until(lambda: loghub.view.summary() == local_summary(served) and len(loghub.view.summary()) >= 2)
+    assert until(lambda: loghub.logs() == local_summary(served) and len(loghub.logs()) >= 2)
     assert len(loghub.links) == 1  # one link for the pass after pass: no link of its own per pass
     n = len(loghub.pages)
     logsyncops.wake(served.service)
@@ -255,7 +259,7 @@ def test_a_new_link_starts_with_the_probe_and_a_hub_that_lost_its_view_is_refill
     loghub.view = logview.View()  # the hub restored an old database ...
     loghub.relink = True  # ... and the link was redialed
     logsyncops.wake(served.service)
-    assert until(lambda: loghub.view.summary() == local_summary(served))
+    assert until(lambda: loghub.logs() == local_summary(served))
     assert len(loghub.links) == 2 and all(not p["reset"] for p in loghub.pages[n:])
 
 
@@ -290,9 +294,9 @@ def test_the_sender_uses_the_workspaces_shared_link_and_never_closes_or_dials_it
     monkeypatch.setattr(_Link, "close", lambda self: closed.append(True))
     human.run("hub.join", join_args(mode="full"))
     ok(served.client().req("hub.connect", connect_args(), idem=True))
-    assert until(lambda: loghub.view.summary() == local_summary(served))
+    assert until(lambda: loghub.logs() == local_summary(served))
     human.ticket("x")
-    assert until(lambda: loghub.view.summary() == local_summary(served) and len(loghub.view.summary()) >= 2)
+    assert until(lambda: loghub.logs() == local_summary(served) and len(loghub.logs()) >= 2)
     assert True in seen and len(made) == 1 and closed == []
 
 
@@ -301,7 +305,7 @@ def test_core_1034_a_retryable_failure_does_not_end_the_sender(monkeypatch, huma
 
     human.run("hub.join", join_args(mode="full"))
     ok(served.client().req("hub.connect", connect_args(), idem=True))
-    assert until(lambda: loghub.view.summary() == local_summary(served))
+    assert until(lambda: loghub.logs() == local_summary(served))
     real = logsyncops._pass  # noqa: SLF001
     codes = iter(["epoch_changed", "live_check_failed"])
 
@@ -313,7 +317,7 @@ def test_core_1034_a_retryable_failure_does_not_end_the_sender(monkeypatch, huma
 
     monkeypatch.setattr(logsyncops, "_pass", flaky)
     human.ticket("during the re-seal")
-    assert until(lambda: loghub.view.summary() == local_summary(served) and len(loghub.view.summary()) >= 2, 12)
+    assert until(lambda: loghub.logs() == local_summary(served) and len(loghub.logs()) >= 2, 12)
     status = logsyncops.status(served.service)
     assert status is not None and status["running"] and status["last_error"] is None
 
@@ -325,7 +329,7 @@ def test_core_1034_the_live_check_tells_a_moved_epoch_from_a_definite_no(monkeyp
 
     human.run("hub.join", join_args(mode="full"))
     ok(served.client().req("hub.connect", connect_args(), idem=True))
-    assert until(lambda: loghub.view.summary() == local_summary(served))
+    assert until(lambda: loghub.logs() == local_summary(served))
     captured: dict[str, Any] = {}
     real = LS.sync_logs
     monkeypatch.setattr(logsyncops, "OPEN_LINK", lambda service: loghub.links[-1])
@@ -367,6 +371,77 @@ def test_core_1034_the_live_check_tells_a_moved_epoch_from_a_definite_no(monkeyp
 def test_hub_status_reports_the_sender(human, served, stub, loghub):  # noqa: F811
     human.run("hub.join", join_args(mode="full"))
     ok(served.client().req("hub.connect", connect_args(), idem=True))
-    assert until(lambda: loghub.view.summary() == local_summary(served))
+    assert until(lambda: loghub.logs() == local_summary(served))
     data = ok(served.client().req("hub.status", {}, idem=False))["data"]
     assert data["log_sync"] == {"running": True, "last_error": None, "stuck": {}}
+
+
+# --- D15b: the projection P (orch-core#1043) -------------------------------------------------------------------------
+
+
+def _add_member(served) -> None:  # noqa: ANN001
+    """A workspace-log commit by another writer: it changes ``roster_v``, so every ticket's ``P``."""
+    from orch import crypto
+    from tests.identity.helpers import Person
+
+    p = Person()
+    ws = served.lab.ws
+    ws.tick()
+    store = ws.other()
+    ws.store = store
+    try:
+        store.append(
+            ws.person_event(
+                ws.owner, "workspace", "member.added", person=p.ref, name="quinn", role="member",
+                pk_pub=crypto.b64u(p.pk_pub), device_cert=p.cert(created=ws.clock[0] * 1000),
+            ),
+            log="workspace",
+        )  # fmt: skip
+    finally:
+        store.close()
+        ws.store = None
+
+
+def test_d15b_the_hub_holds_the_hosts_own_projection_of_each_ticket(human, served, stub, loghub):  # noqa: F811
+    from orch.hubclient import check_proj
+
+    human.run("hub.join", join_args(mode="full"))
+    ok(served.client().req("hub.connect", connect_args(), idem=True))
+    uid, _key = human.ticket("one")
+    assert until(lambda: uid in loghub.view.proj and loghub.logs() == local_summary(served))
+    p = loghub.view.proj[uid]
+    check_proj(p)
+    store = served.lab.ws.other()
+    try:
+        src = logsyncops.StoreSource(store)
+        assert p == src.proj(uid)  # the same values the host would admit with: nothing moved since
+        assert p["roster_v"] == store.state.workspace.roster_v and p["status"] == store.state.tickets[uid].status
+        assert (p["seq"], p["head"]) == (store.log_seq(uid), store.head_at(uid, store.log_seq(uid)))
+        assert src.proj("workspace") is None
+    finally:
+        store.close()
+
+
+def test_d15b_a_changed_projection_with_no_new_line_is_sent_once_for_a_burst(monkeypatch, human, served, stub, loghub):  # noqa: F811
+    monkeypatch.setattr(logsyncops, "PROJ_QUIET_S", 1.0)
+    human.run("hub.join", join_args(mode="full"))
+    ok(served.client().req("hub.connect", connect_args(), idem=True))
+    uid, _key = human.ticket("one")
+    assert until(lambda: uid in loghub.view.proj and loghub.logs() == local_summary(served))
+    before = len(loghub.pages)
+    roster = loghub.view.proj[uid]["roster_v"]
+    seq = loghub.view.proj[uid]["seq"]
+    _add_member(served)
+    logsyncops.wake(served.service)
+    time.sleep(0.2)
+    _add_member(served)  # a second change inside the quiet period: still one refresh
+    logsyncops.wake(served.service)
+    assert until(lambda: loghub.view.proj[uid]["roster_v"] == roster + 2, timeout=15)
+    new = loghub.pages[before:]
+    refresh = [x for x in new if x["log"] == uid]
+    assert len(refresh) == 1 and (refresh[0]["from_seq"], refresh[0]["count"]) == (seq, 1)  # one line, once
+    assert loghub.logs() == local_summary(served)
+    n = len(loghub.calls)
+    logsyncops.wake(served.service)
+    time.sleep(0.5)
+    assert len(loghub.calls) == n  # settled

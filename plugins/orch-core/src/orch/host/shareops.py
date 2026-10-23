@@ -186,45 +186,46 @@ def _shareable(state: Any, viewer: str | None) -> dict[str, Any]:
 def tickets_for(service: WorkspaceService, viewer: str | None = None) -> list[Any]:
     """The owner's visible tickets as :class:`~orch.hubclient.shares.TicketFact` (restricted tickets the owners cannot
     see are never offered). A question or need is "to me" when an owner of this workspace is an addressee."""
-    from orch.hubclient.shares import GateFact, NeedFact, QuestionFact, TicketFact
-
     store = service.store
     # C6r3-2: the fields and each ticket's (seq, head) come from ONE locked read, so an item's chain claim always
     # describes the content it carries (a writer cannot slip a commit in between)
     with store.locked():
         state = store.state
-        owners = sorted(p for p, m in state.workspace.members.items() if m.role == "owner")
         seen = _shareable(state, viewer)
-        out = []
-        for uid, t in sorted(seen.items()):
-            texts = {q["id"]: str(q.get("text", "")) for q in t.fields.get("questions", ()) if isinstance(q, Mapping)}
-            qs = tuple(
-                QuestionFact(
-                    q.id, texts.get(q.id, ""), (not q.answered) and bool(set(q.addressees) & set(owners)), q.hash
-                )
-                for q in t.questions
-            )
-            needs = tuple(NeedFact(n.kind, n.ref, bool(set(n.who) & set(owners))) for n in t.needs)
-            due = t.fields.get("due")
-            gates = tuple(
-                GateFact(
-                    g.gate, g.gen, g.hash, g.policy_hash,
-                    tuple((e["repo"], e["ref"], e["sha"]) for e in g.input.get("source_sha", ()))
-                    if g.gate in ("code", "verify") else None,
-                )
-                for g in t.gates.values()
-                if g.hash is not None and g.input is not None
-            )  # fmt: skip
-            seq = store.log_seq(uid)
-            head = store.head_at(uid, seq) if seq else None
-            out.append(
-                TicketFact(
-                    uid, t.key, t.type, t.title, t.status, tuple(t.fields.get("labels", ())),
-                    due if isinstance(due, str) else None, qs, needs, gates, state.workspace.roster_v,
-                    (seq, head) if seq and head else None,
-                )
-            )  # fmt: skip
-    return out
+        return [ticket_fact(store, state, uid, t) for uid, t in sorted(seen.items())]
+
+
+def ticket_fact(store: Any, state: Any, uid: str, t: Any) -> Any:
+    """One ticket as a :class:`~orch.hubclient.shares.TicketFact`: its fields, gate facts (the ones whose hash can be
+    built now), the workspace roster version and its log's ``(seq, head)``. The caller holds ``store.locked()`` and
+    passes the ``state`` it read there. One copy of the gate fact code: the selective ``f1`` and the full-mode
+    projection ``P`` (D15b) are both made from it."""
+    from orch.hubclient.shares import GateFact, NeedFact, QuestionFact, TicketFact
+
+    owners = sorted(p for p, m in state.workspace.members.items() if m.role == "owner")
+    texts = {q["id"]: str(q.get("text", "")) for q in t.fields.get("questions", ()) if isinstance(q, Mapping)}
+    qs = tuple(
+        QuestionFact(q.id, texts.get(q.id, ""), (not q.answered) and bool(set(q.addressees) & set(owners)), q.hash)
+        for q in t.questions
+    )
+    needs = tuple(NeedFact(n.kind, n.ref, bool(set(n.who) & set(owners))) for n in t.needs)
+    due = t.fields.get("due")
+    gates = tuple(
+        GateFact(
+            g.gate, g.gen, g.hash, g.policy_hash,
+            tuple((e["repo"], e["ref"], e["sha"]) for e in g.input.get("source_sha", ()))
+            if g.gate in ("code", "verify") else None,
+        )
+        for g in t.gates.values()
+        if g.hash is not None and g.input is not None
+    )  # fmt: skip
+    seq = store.log_seq(uid)
+    head = store.head_at(uid, seq) if seq else None
+    return TicketFact(
+        uid, t.key, t.type, t.title, t.status, tuple(t.fields.get("labels", ())),
+        due if isinstance(due, str) else None, qs, needs, gates, state.workspace.roster_v,
+        (seq, head) if seq and head else None,
+    )  # fmt: skip
 
 
 def _plan(items: list[Any]) -> str:

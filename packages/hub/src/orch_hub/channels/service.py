@@ -69,7 +69,6 @@ PW_USER_FREE = 10
 KNOWN_SOURCE_MS = 30 * 86_400_000
 MIN_PASSWORD = 10
 CHANNEL_SESSION_MS = 12 * 3_600_000  # spec §7, protocol §6.4 (the contract's constant is the same)
-RENEW_BELOW_MS = 16 * 86_400_000  # a channel certificate (31 days) in its second half is renewed at bind
 #: the gate the hub checked for each channel kind (browser: live password+TOTP session; phone: operator pairing code)
 GATE_OF = {"browser": "session", "phone": "pairing-code"}
 _HEX32 = re.compile(r"[0-9a-f]{32}")
@@ -423,8 +422,7 @@ class Channels:
         """``POST /api/v1/session/channel`` (protocol §6.4): a channel key binds the live PAIRING session ``token`` of its
         user to itself. Checks with the contract's ``verify_channel_auth``; the pairing session is consumed and the
         channel session made in ONE transaction, so two racing binds never both win (the loser is ``no_session``). The
-        channel session lives until 12 h after the password sign-in or the certificate's end, whichever is first. A
-        certificate in its second half is renewed here (the key holder has just proved itself)."""
+        channel session lives until 12 h after the password sign-in or the certificate's end, whichever is first."""
         from ..contract import channelapi as CA
 
         now = self._now()
@@ -471,16 +469,6 @@ class Channels:
             cert = self._cert_of(user, cid)
             if cert is None:
                 raise ChannelError("unknown_channel")
-            if cert["o"]["expires_ms"] - now < RENEW_BELOW_MS:  # cert renewal at bind
-                factor = db.execute("SELECT factor FROM channels WHERE channel_id=?", (cid,)).fetchone()[0]
-                try:
-                    cert = self.keys.issue_channel(user, unb64u(cert["o"]["key_pub"], 65), factor)
-                except KeysError as e:
-                    raise ChannelError("issue_failed", e.code) from None
-                db.execute(
-                    "INSERT INTO events(ts_ms, action, user_id, channel_id, actor) VALUES (?,?,?,?,?)",
-                    (now, "renew", user, cid, "bind"),
-                )
             login = row[3] if row[3] is not None else row[2]
             expires = min(login + CHANNEL_SESSION_MS, cert["o"]["expires_ms"])
             if db.execute("DELETE FROM sessions WHERE token_hash=? AND scope='pairing'", (_sha(token),)).rowcount != 1:

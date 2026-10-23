@@ -277,19 +277,16 @@ def test_the_12h_limit_runs_from_the_password_sign_in_not_the_bind(w):
     assert o["expires_ms"] <= w.clock() + 12 * HOUR - 8 * 60_000  # about 12 h after the sign-in
 
 
-def test_cert_renewal_at_bind(w):
+def test_bind_issues_no_certificate(w):
+    """Cert renewal at bind is NOT built: §10.5 has no ``renew`` channel change, so a new channel credential could not be
+    put on the audit chain. A bind returns the held certificate unchanged (contract question for the orchestrator)."""
     signer, cid, tok = pair(w, w.ann)
-    old = w.env.keys.channel_certs(w.ann)[0]["o"]
-    w.clock.advance(20 * DAY)  # 11 days of the 31 left
+    old = w.env.keys.channel_certs(w.ann)
+    w.clock.advance(20 * DAY)
     tok = w.login(w.ann, "app")
     s, o, _ = bind(w, signer, cid, w.ann, tok)
-    assert s == 200
-    new = o["channel_cert"]["o"]
-    assert new["channel_id"] == cid and new["key_pub"] == old["key_pub"] and new["factor"] == old["factor"]
-    assert new["expires_ms"] > old["expires_ms"] and new["issued_ms"] == w.clock()
-    # a fresh cert is not reissued
-    tok = w.login(w.ann, "app")
-    assert bind(w, signer, cid, w.ann, tok)[1]["channel_cert"]["o"]["issued_ms"] == new["issued_ms"]
+    assert s == 200 and o["channel_cert"] == old[0]
+    assert w.env.keys.channel_certs(w.ann) == old
 
 
 def test_an_expired_cert_cannot_bind_and_is_not_renewed(w):

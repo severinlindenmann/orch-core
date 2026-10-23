@@ -152,3 +152,15 @@ def test_a_failed_join_may_be_retried_inside_the_lifetime(hub):
     with pytest.raises(LinkError):
         c.request("join", hub.join_body(invite="nope"))
     c.request("join", hub.join_body())
+
+
+def test_a_link_pinned_to_another_key_gets_the_lifetime_and_keeps_its_slot(make_hub):
+    h = make_hub(max_connections=8, max_unauthenticated=2, unjoined_idle_timeout=30, unjoined_lifetime=1.0)
+    a = h.open(first=True)  # self-asserts wsk_a for an unpinned workspace
+    b = h.open(wsk="wsk_b", first=True)
+    b.request("join", h.join_body(wsk="wsk_b"))  # B pins the workspace to ITS key; A is now pinned-to-other
+    assert h.open(wsk="wsk_b") is not None  # B joined: its slot is free again (A still holds one of the 2)
+    t0 = time.monotonic()
+    with pytest.raises((tls.LinkClosed, tls.LinkTimeout, OSError)):  # A is not left idle for the 300 s idle timeout
+        framing.read_frame(a._c, first_timeout=4, rest_timeout=4)
+    assert time.monotonic() - t0 < 3.5

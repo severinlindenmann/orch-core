@@ -343,9 +343,8 @@ class LinkServer:
         self._attach(ws, port)
         last_seq: int | None = None  # D12b G7: the w2h seq of the previous frame on THIS link
         while not self._stop.is_set():
-            pin = self._reg.pin(ws)
             first = self._t_idle
-            if pin is None:  # unjoined: a hard lifetime that no peer frame can reset, and the idle timeout inside it
+            if not self._pinned_to(ws, wsk):  # unjoined, or pinned to another key: a hard lifetime no peer frame resets
                 left = self._t_unjoined_life - (time.monotonic() - started)
                 if left <= 0:
                     return

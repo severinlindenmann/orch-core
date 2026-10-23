@@ -189,7 +189,7 @@ function HtmlViewer({ a, agentHtml: agentHtmlOn, evidence = false }: { a: Artifa
   const framed = agentHtml && !source && node.success
   return (
     <div className={cn('space-y-2', agentHtml && 'rounded-lg border p-2', agentHtml && (evidence ? 'border-border' : addonHairline))} data-addon={agentHtml && !evidence ? 'widgets' : undefined}>
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         {agentHtml && !evidence && <AddonBadge name="widgets" />}
         {framed && <Pill tone="neutral">Sandboxed preview</Pill>}
         {agentHtml && node.success && (
@@ -271,6 +271,8 @@ function PictureView({ a, url }: { a: Artifact; url: string }) {
   )
 }
 
+/** Big sizes in MB (the shared formatter stops at KB). */
+const mb = (n: number) => (n >= 1024 * 1024 ? `${(n / (1024 * 1024)).toFixed(1)} MB` : fmtBytes(n))
 const extOf = (name: string) => /\.([A-Za-z0-9]+)$/.exec(name)?.[1].toLowerCase() ?? ''
 
 /**
@@ -291,7 +293,7 @@ function RemotePreview({ a, ticket, unavailable }: { a: Artifact; ticket: string
   const d = q.data
   // Only the file the ticket lists: the digest the host read must be the one on the ticket.
   if (!sameDigest(d.digest, a.sha256)) return <NoPreviewCard a={a} warn why="This file does not match the digest the ticket records, so it is not shown. Do not rely on it as evidence." />
-  if (d.truncated || !d.verified) return <NoPreviewCard a={a} why={`Too large to preview: ${fmtBytes(Math.max(d.size, a.bytes ?? 0))}, the limit is ${fmtBytes(5.25 * 1024 * 1024)}.`} />
+  if (d.truncated || !d.verified) return <NoPreviewCard a={a} why={`Too large to preview: ${mb(Math.max(d.size, a.bytes ?? 0))}, the limit is ${mb(5.25 * 1024 * 1024)}.`} />
   const offered = d.media ?? d.image
   if (offered) {
     const url = verifiedMedia(offered, a.sha256)

@@ -30,13 +30,14 @@ export const AUTO_OPEN_BYTES = 256 * 1024
 const openAtFirst = (a: Artifact) => a.bytes != null && a.bytes <= AUTO_OPEN_BYTES
 
 /** Who added the file, on its own background: an agent's evidence is not part of what a dialog asks the person to sign. */
-function Provenance({ a }: { a: Artifact }) {
+function Provenance({ a, inDialog }: { a: Artifact; inDialog: boolean }) {
   const agent = a.added_by_kind ? a.added_by_kind === 'agent' : a.added_by !== 'host'
   if (!agent)
     return <p className="mt-1 text-[11px] text-text-faint">Added by {a.added_by === 'host' ? 'orch' : 'a person'}.</p>
+  if (!inDialog) return <p data-testid="evidence-provenance" className="mt-1 text-[11px] text-text-faint">Added by agent {visible(agentName(a.added_by))}.</p>
   return (
     <p data-testid="evidence-provenance" className="mt-1 rounded border border-warning/30 bg-warning-soft px-2 py-1 text-[11px] text-text">
-      Added by agent {visible(agentName(a.added_by))}, not part of this dialog. Read it as the agent&apos;s claim, not as what you sign.
+      Added by agent {visible(agentName(a.added_by))} · not part of this dialog, not what you sign
     </p>
   )
 }
@@ -57,7 +58,7 @@ export function EvidenceItem({ ticket, artifact, acId, compact = false, defaultO
           {open ? 'Hide preview' : 'Show preview'}
         </Button>
       </div>
-      <Provenance a={artifact} />
+      <Provenance a={artifact} inDialog={compact} />
       {artifact.label && <p className="mt-0.5 text-[12px] text-text-muted">{visible(artifact.label)}</p>}
       {open && (
         <div id={body} className={cn('mt-2 overflow-auto', compact && 'max-h-64')}>
@@ -95,6 +96,7 @@ export function VerdictEvidence({ ticket }: { ticket: TicketDocument }) {
         Evidence · {total} {total === 1 ? 'file' : 'files'} for {withProof.length - without.length} of {withProof.length} {withProof.length === 1 ? 'criterion' : 'criteria'}
       </h3>
       {total === 0 && <p className="text-[12px] text-text-muted">No file is attached as proof yet.</p>}
+      <div className="max-h-[40vh] space-y-2 overflow-auto">
       {withProof.map(({ ac, items }) =>
         items.length === 0 ? null : (
           <div key={ac.id}>
@@ -109,6 +111,7 @@ export function VerdictEvidence({ ticket }: { ticket: TicketDocument }) {
           </div>
         ),
       )}
+      </div>
       {without.length > 0 && <p className="text-[12px] text-warning">No evidence file yet for {without.map((x) => x.ac.id).join(', ')}.</p>}
     </section>
   )

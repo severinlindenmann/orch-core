@@ -1991,6 +1991,15 @@ Hub web API (local, `/api/v1`, V3-D13; answers are `{"error": code}`; none of th
 | `exists`, `channel_exists`, `reserved_group` | 409, 409, 400 | a user or group name taken; a channel key already registered; a built-in group name |
 | `bad_pairing_code` | 400 | phone registration: wrong, used or expired pairing code |
 
+Selective item answers (local, orch-hub#57; no new signed bytes, no new codes). `GET /me/needs-you` rows and
+`GET /workspaces/{ws}/items/{id}` of a selective workspace carry, besides `content` and `item_hash`, the verified
+`chain` (`{log, seq, head}`) and `f1` of the `share.item` (§10.2b) unchanged (`f1` is `null` when the item has none).
+Workspace text goes out through `render_text`. `signable` is `true` only for the owner alias (the only reader of a
+selective workspace's items) and only for a ticket-log item whose `f1` names exactly one target (one gate or one
+question), the one `build_selective` (§8.6) can build; a `needs_you` summary, an item without `f1`, or an empty `f1` is
+never signable. `chain` and `f1` are display data for the phone's comparison with the prepared event; the hub build
+and the host stay the authority.
+
 B stream (§6.4) reuses: `unknown_channel` (404, a bind naming no channel of the session's user), `not_allowed` (403, a
 bind of a non-phone channel), `challenge_invalid` (400, `session_ref` of another session), `channel_revoked` and
 `cert_expired` (403, told only to a holder of the key or a channel session), `forbidden_role` (403, a channel session

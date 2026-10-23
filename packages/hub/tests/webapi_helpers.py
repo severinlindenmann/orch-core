@@ -70,12 +70,24 @@ class FakeView:
         return self.detail
 
 
-def shared_item(item_id: str, kind: str = "question", title: str = "CSV or API?") -> dict:
+def shared_item(
+    item_id: str,
+    kind: str = "question",
+    title: str = "CSV or API?",
+    *,
+    chain: dict | None = None,
+    f1: dict | None = None,
+) -> dict:
     content = {"needs_you": {"type": "question", "title": title, "deadline": None}}.get(
         kind, {"key": "T-1", "type": "task", "id": "Q1", "title": title, "text": "x", "deadline": None}
     )
+    o = {"item_id": item_id, "item_version": 1, "item_kind": kind, "content": content}
+    if chain is not None:
+        o["chain"] = chain
+    if f1 is not None:
+        o["f1"] = f1
     return {
-        "item": {"item_id": item_id, "item_version": 1, "item_kind": kind, "content": content},
+        "item": o,
         "hash": "sha256:" + "11" * 32,
     }
 

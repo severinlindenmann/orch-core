@@ -792,6 +792,19 @@ class WebApi:
     def _h_my_workspaces(self, c: Ctx, p: dict, q: dict, b: dict | None):
         return 200, {"workspaces": self._workspaces(c.user_id)}
 
+    @staticmethod
+    def _shared_signable(o: dict[str, Any]) -> bool:
+        """Issue #57 / protocol §8.6: a shared item is signable only when it is a ticket-log item (not a needs_you
+        summary) whose verified ``f1`` names exactly one target (one gate or one question), the one ``build_selective``
+        can build. Display data for the phone; the hub build and the host stay the authority. Fail closed."""
+        f1, chain = o.get("f1"), o.get("chain")
+        if o.get("item_kind") == "needs_you" or type(f1) is not dict or type(chain) is not dict:
+            return False
+        if chain.get("log") == "workspace":
+            return False
+        gates, qs = f1.get("gates"), f1.get("questions")
+        return type(gates) is dict and type(qs) is dict and len(gates) + len(qs) == 1
+
     def _shared_row(self, ws: dict[str, Any], it: dict[str, Any]) -> dict[str, Any]:
         o = it["item"]
         content = o["content"]
@@ -807,7 +820,9 @@ class WebApi:
                 "title": content.get("title"),
                 "deadline": content.get("deadline"),
                 "summary_only": o["item_kind"] == "needs_you",
-                "signable": False,  # selective custodial signing over shared items is C6, not built (engine: wrong_mode)
+                "chain": o.get("chain"),  # §10.2b, as verified by D9 (display data; the hub build is the authority)
+                "f1": o.get("f1"),
+                "signable": self._shared_signable(o),
             }
         )
 

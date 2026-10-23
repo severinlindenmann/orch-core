@@ -214,3 +214,59 @@ def test_routes_table_is_complete():
         assert hasattr(WebApi, "_h_" + r.handler), r
     assert len({(r.method, r.path) for r in ROUTES}) == len(ROUTES)
     assert ORIGIN
+
+
+# --- selective items carry chain and f1 (orch-hub#57, protocol §8.6 / §10.2b) -------------------------------------------
+
+_H = "sha256:" + "ab" * 32
+_CHAIN = {"log": "01" * 13, "seq": 4, "head": _H}
+
+
+def _f1(gates=("requirements",), questions=()):
+    return {
+        "roster_v": 2,
+        "gates": {g: {"gen": 1, "hash": _H, "policy_hash": _H} for g in gates},
+        "questions": {q: {"hash": _H} for q in questions},
+    }
+
+
+def test_selective_items_carry_chain_f1_and_are_signable_for_the_owner_alias(w):
+    w.reg.add(WS_SEL, "selective", owner=w.ann)
+    one, two, none = "11" * 16, "22" * 16, "33" * 16
+    w.shares.items[(w.ann, WS_SEL)] = [
+        shared_item(one, "ticket", chain=_CHAIN, f1=_f1()),
+        shared_item(two, "ticket", chain=_CHAIN, f1=_f1(("plan",), ("Q1",))),
+        shared_item(none, "ticket", chain=_CHAIN, f1=_f1(())),
+    ]
+    ann = w.login(w.ann)
+    _, o, _ = w.call("GET", "/me/needs-you", token=ann)
+    by = {i["item_id"]: i for i in o["items"]}
+    assert by[one]["signable"] is True and by[one]["chain"] == _CHAIN and by[one]["f1"] == _f1()
+    assert by[two]["signable"] is False and by[two]["f1"] == _f1(("plan",), ("Q1",))  # two targets
+    assert by[none]["signable"] is False  # empty f1 names nothing
+    s, d, _ = w.call("GET", f"/workspaces/{WS_SEL}/items/{one}", token=ann)
+    assert s == 200 and d["signable"] is True and d["chain"] == _CHAIN and d["f1"] == _f1() and d["item_hash"]
+
+
+def test_selective_summary_and_item_without_f1_are_never_signable(w):
+    w.reg.add(WS_SEL, "selective", owner=w.ann)
+    w.shares.items[(w.ann, WS_SEL)] = [
+        shared_item("11" * 16, "needs_you", chain=_CHAIN, f1=_f1()),  # even a summary carrying f1
+        shared_item("22" * 16, "ticket", chain=_CHAIN),  # no f1: the hub cannot build on it
+        shared_item("33" * 16, "ticket", chain={**_CHAIN, "log": "workspace"}, f1=_f1()),
+    ]
+    _, o, _ = w.call("GET", "/me/needs-you", token=w.login(w.ann))
+    assert [i["signable"] for i in o["items"]] == [False, False, False]
+    assert o["items"][1]["f1"] is None
+
+
+def test_selective_chain_f1_only_for_the_owner_alias(w):
+    w.reg.add(WS_SEL, "selective", owner=w.ann)
+    w.shares.items[(w.ann, WS_SEL)] = [shared_item("11" * 16, "ticket", chain=_CHAIN, f1=_f1())]
+    bob = w.login(w.env.user("bob"))
+    _, o, _ = w.call("GET", "/me/needs-you", token=bob)
+    assert o["items"] == []
+    assert w.call("GET", f"/workspaces/{WS_SEL}/items/{'11' * 16}", token=bob)[:2] == (
+        404,
+        {"error": "unknown_workspace"},
+    )

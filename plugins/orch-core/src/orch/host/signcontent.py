@@ -1040,7 +1040,12 @@ def _question(material: Mapping[str, Any], events: list[Mapping[str, Any]], tick
     if ev.get("question") != q.get("id"):
         raise PlainUnavailable("the event and the material name different questions")
     if picked:
-        _row(out, "your choice", answer if _s(picked) in opts else f"{answer} (not one of the options)")
+        # The key too: two options may carry the same label, and the row is what the strip shows and the person signs.
+        _row(
+            out,
+            "your choice",
+            f"{answer} (option {_s(picked)})" if _s(picked) in opts else f"{answer} (not one of the options)",
+        )
     for o in q.get("options") or []:
         _row(
             out,

@@ -196,7 +196,7 @@ const CASES: Case[] = [
     open: async (user) => {
       await user.click(await screen.findByRole('tab', { name: /Questions/ }, T))
       await user.click(await screen.findByRole('radio', { name: /DATE \(local midnight\)/ }, T))
-      await user.click(within(document.getElementById('question-Q2')!).getByRole('button', { name: 'Answer Q2' }))
+      await user.click(within(document.getElementById('question-Q2')!).getByRole('button', { name: 'Send answer' }))
       return screen.findByRole('dialog', {}, T)
     },
     confirm: press('Send answer'),

@@ -52,7 +52,7 @@ def test_the_answering_backend_and_dashboard_passphrases_have_one_caller_each():
     the click signer, and only the conversion to convenience (the dashboard never re-keys: H2)."""
     import ast
 
-    transitions = {"convert_to_convenience", "stage_convenience", "downgrade_in_place"}
+    transitions = {"convert_to_convenience", "stage_convenience", "downgrade_in_place", "turn_off_convenience"}
     answering, dashboard = [], []
     for path in SRC.rglob("*.py"):
         rel = path.relative_to(SRC).as_posix()
@@ -87,4 +87,9 @@ def test_the_answering_backend_and_dashboard_passphrases_have_one_caller_each():
         and path.relative_to(SRC).as_posix() != "custody/select.py"
     )
     assert setup_callers == ["setup/steps.py", "setup/steps.py"]  # the generated-passphrase backend: setup's two sites
-    assert sorted(dashboard) == [("click/signer.py", "stage_convenience"), ("setup/steps.py", "stage_convenience")]
+    assert sorted(dashboard) == [
+        ("click/signer.py", "stage_convenience"),
+        ("click/signer.py", "turn_off_convenience"),  # V3-D31: the dashboard's new factor, only while the flag is on
+        ("custody/select.py", "downgrade_in_place"),  # only inside turn_off_convenience
+        ("setup/steps.py", "stage_convenience"),
+    ]

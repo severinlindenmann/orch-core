@@ -1980,6 +1980,14 @@ WITH_PIC = {
 }
 
 
+def _all_keys(node):
+    if isinstance(node, dict):
+        return set(node) | {k for v in node.values() for k in _all_keys(v)}
+    if isinstance(node, list | tuple):
+        return {k for v in node for k in _all_keys(v)}
+    return set()
+
+
 def test_a_new_ticket_with_a_picture_sends_the_intent_with_its_digest_and_never_the_bytes(client, token, stub, script):
     script.features = ["custody", "sequence", "images"]
     res = prepare(client, token, stub, WITH_PIC)
@@ -1988,7 +1996,8 @@ def test_a_new_ticket_with_a_picture_sends_the_intent_with_its_digest_and_never_
     meta = args["sequence"]
     assert meta["of"] == 5  # new, set, the picture, two sections
     assert meta["intent"]["images"] == [PIC]
-    assert "files" not in args and "b64" not in repr(args)
+    # Structural, not a repr substring: random ids/digests are hex and can contain "b64" (#1114).
+    assert "files" not in args and "b64" not in _all_keys(args)
 
 
 def test_a_signer_that_cannot_hold_pictures_is_never_asked_for_one(client, token, stub, script):

@@ -819,18 +819,21 @@ class MembershipKeys:
         except (CustodyRefused, MembershipUnsafe, crypto.EncodingError, KeyError, TypeError, ValueError):
             return False
 
-    def advance_local(self, owner_person_id: str) -> int:
+    def advance_local(self, owner_person_id: str, *, cut_over: bool = False) -> int:
         """A relay-less workspace makes its own epoch (V3 C2b): the first one (the genesis epoch, an empty list) or the
         next one (the committed list's members carried over), through the same write-ahead steps as a rotation:
         ``new_epoch_key``, one ``expose``, one ``commit``. Same file formats, same custody, no new crypto; the list is
         not signed or sent anywhere (no relay). Refused, fail closed, for a workspace that is or was linked to a relay
-        (checked fresh here, not at open): its epochs are the publisher's. The ``local-epochs.json`` mark is written
-        before any key, so a store with local epochs is always marked (a relay link is refused for it).
+        (checked fresh here, not at open): its epochs are the publisher's. ``cut_over`` (C8/C10, passed by the host only
+        when its own state says the direct relay path is ``closing``/``closed``): the relay no longer takes a membership
+        list, so the owner's local epochs are the only ones left and the linked refusal does not apply. The
+        ``local-epochs.json`` mark is written before any key, so a store with local epochs is always
+        marked (a relay link is refused for it).
 
         A crash between ``expose`` and ``commit`` leaves an exposed body: it is committed when complete and valid
         (that epoch is the one returned), else abandoned (its ``list_seq`` and epoch burned), then a new one is made."""
         self._require_safe()
-        if self._linked_now():
+        if self._linked_now() and not cut_over:
             raise CustodyRefused("a relay-linked workspace gets its epochs from the relay path")
         with self._write():
             if self._dir.read_json(LOCAL_MARK) is None:

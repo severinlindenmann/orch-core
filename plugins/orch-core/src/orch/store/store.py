@@ -824,6 +824,7 @@ class Store:
                 verb_events=_verb_events(),
                 invalidations=(uid, note),
                 hub_dev=self.hub_dev,
+                hub_only=True,
             )
 
     def _flush(self, uid: str, *, cause: str | None = None) -> list[dict[str, Any]]:
@@ -1100,6 +1101,7 @@ class Store:
             expected_genesis=self._pin,
             verb_events=_verb_events(),
             hub_dev=self.hub_dev,
+            hub_only=True,
         )
         ws = self._state.workspace
         if ws_events and ws.genesis is None:

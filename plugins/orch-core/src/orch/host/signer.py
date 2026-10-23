@@ -242,7 +242,7 @@ _MOVE_TO = frozenset({"backlog", "open"})
 _GATES = frozenset({"requirements", "plan", "verify", "code"})
 _PEOPLE_ROLES = ("owner", "assignees", "reviewers")  # watchers: not offered by the dashboard yet
 _SETTINGS_KEYS = frozenset(
-    {"grant_hours", "claim_ttl_min", "lease_ttl_min", "sign_methods", "repos", "publish", "models"}
+    {"grant_hours", "claim_ttl_min", "lease_ttl_min", "sign_methods", "repos", "publish", "models", "icon"}
 )
 
 

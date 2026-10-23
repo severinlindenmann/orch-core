@@ -527,6 +527,8 @@ drops. The host never sends it.
 | `hub.unreachable` | 9 | yes | stays | the hub could not be reached or did not answer; the join stays recorded and `orch hub connect` finishes it, a leave is already recorded and `orch hub unbind` tells the hub later (V3 C2a) | `retry_after_ms` |
 | `hub.no_card` | 3 | no | stays | `hub.connect` on a workspace with no v2 directory card yet (link a relay first) (V3 C2a) | — |
 | `hub.no_epoch` | 3 | no | stays | `hub.connect` in full mode on a workspace that holds no epoch key `WK_e` to give the hub (link a relay first) (V3 C2b) | — |
+| `keys.no_epoch` | 3 | no | stays | `keys.rotate` on a workspace that holds no workspace key yet (V3 C8) | — |
+| `keys.joined` | 3 | no | stays | `keys.rotate` while a hub is joined in full mode: the new epoch would never reach the hub; leave first (V3 C8) | — |
 | `hub.rotation_pending` | 9 | yes | stays | `hub.connect` in full mode while the new workspace key a leave from full mode owes is not committed yet: nothing is sent (V3 C2b) | — |
 | `hub.state_mismatch` | 3 | no | stays | the host's `hub.json` cannot be read: the host refuses to guess (V3 C2a) | — |
 | `hub.not_joined` | 3 | no | stays | `hub.connect` or `hub.unbind` while the log has no `hub.joined` / no `hub.left` for them (V3 C2a) | — |

@@ -41,6 +41,8 @@ interface ServerWorkspace {
   features: string[]
   click?: Workspace['click']
   runner?: Workspace['runner']
+  icon?: { icon: string; colour: string } | null
+  icon_known?: boolean
 }
 interface ServerMe {
   person: string
@@ -145,6 +147,8 @@ function workspace(s: ServerWorkspace): Workspace {
     needs_you: s.needs_you ?? 0,
     ...(s.host_state === 'ok' ? {} : { host_state: s.host_state }),
     ...(s.host_state !== 'ok' && s.host_message ? { host_message: s.host_message } : {}),
+    icon: s.icon ?? null,
+    icon_known: s.icon_known === true,
     // Offered only when the server lists the feature: the flag is on AND the signer can sign in this workspace.
     ...(s.runner !== undefined ? { runner: s.runner } : {}),
     ...(s.click ? { click: { ...s.click, available: s.click.available && s.features.includes('click') } } : {}),

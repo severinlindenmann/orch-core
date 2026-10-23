@@ -305,6 +305,23 @@ def settings_changed(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
                 if harness not in MODEL_CHOICES or any(m not in MODEL_CHOICES[harness] for m in per.values()):
                     return Refusal(Code.SETTINGS_INVALID, "models: a model that orch does not offer for its harness")
             ws.settings["models"] = {h: dict(sorted(per.items())) for h, per in sorted(table.items()) if per}
+    if (
+        "icon" in s
+    ):  # the workspace icon: a pair of ids of the closed lists; null clears it (the default comes from the id)
+        choice = s["icon"]
+        if choice is None:
+            ws.settings.pop("icon", None)
+        else:
+            from orch.wsicons import COLOUR_LABELS, ICON_LABELS
+
+            if (
+                not isinstance(choice, dict)
+                or set(choice) != {"icon", "colour"}
+                or choice["icon"] not in ICON_LABELS
+                or choice["colour"] not in COLOUR_LABELS
+            ):
+                return Refusal(Code.SETTINGS_INVALID, "icon: an icon and a colour that orch offers")
+            ws.settings["icon"] = {"colour": choice["colour"], "icon": choice["icon"]}
     return None
 
 
@@ -519,14 +536,20 @@ def hub_joined(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
         "alias_book": {**book, e["hub_id"]: dict(aliases)},
         "ledger": ledger,
         "user_hub": user_hub,
+        **({"joined_at": e["at"]} if "at" in e else {}),  # C8 P2-b: nothing made before this binding lands under it
         **({"member": {"kind": "hub", "hub_id": e["hub_id"]}} if e["mode"] == "full" else {}),
     }
     return None
 
 
-def hub_left(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
+def hub_left(ws: WsCore, e: dict[str, Any], core: Core | None = None) -> Refusal | None:
     """``hub.left`` (owner only): ends the binding it names. It must name the hub and binding that are joined;
-    ``binding_seq`` stays as the high-water mark, so no earlier binding can come back."""
+    ``binding_seq`` stays as the high-water mark, so no earlier binding can come back.
+
+    C8 (design-c8 M2.2): from this line the hub's power is gone. Hub contract hv 0 has no reason field, so every leave
+    is treated as a compromise: the counting decisions signed by ``hub:<hub_id>/*`` in a generation that is still open
+    are voided on every unsettled ticket (``void_hub``; consumed generations stay, as for a device), and every grant
+    whose request was a line of this hub ends (``Grant.hub_id``; state, not a new line, L2-P5-1)."""
     if (r := _owner_only(ws, e)) is not None:
         return r
     h = ws.hub
@@ -534,5 +557,19 @@ def hub_left(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
         return Refusal(Code.HUB_INVALID, "this workspace is not joined to a hub")
     if e["hub_id"] != h["hub_id"] or e["binding_seq"] != h["binding_seq"]:
         return Refusal(Code.HUB_INVALID, "hub.left must name the hub and binding that are joined")
-    ws.hub = {**{k: v for k, v in h.items() if k != "member"}, "status": "left"}  # the hub member goes with the leave
+    hub_id = e["hub_id"]
+
+    def change() -> None:
+        ws.hub = {
+            **{k: v for k, v in h.items() if k != "member"},
+            "status": "left",
+        }  # the hub member goes with the leave
+        for grant in ws.grants.values():
+            if grant.hub_id == hub_id:
+                grant.revoked = True
+
+    if core is None:
+        change()
+    else:
+        cross(core, change, lambda t: generations.void_hub(ws, t, hub_id))
     return None

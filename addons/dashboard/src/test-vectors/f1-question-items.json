@@ -1,0 +1,94 @@
+{
+ "_source": "orch-core plugins/orch-core/tests/vectors/f1/questions.json (task A, PR #1135, frozen): read_item form only",
+ "choice_full": {
+  "answered_by": null,
+  "answered_seq": null,
+  "asked_at": "2026-10-23T12:00:00Z",
+  "asked_by": {
+   "for": "p_5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+   "grant": "g_33333333333333333333333333333333",
+   "id": "a_11111111111111111111111111111111",
+   "kind": "agent",
+   "session": "s_22222222222222222222222222222222"
+  },
+  "asked_seq": 2,
+  "blocking": true,
+  "hash": "sha256:4ce043c8a54809b66226299087f177ce99331746a1dd70925748b99bc57ea0bd",
+  "id": "Q1",
+  "options": [
+   {
+    "cost": "½ day",
+    "facts": [
+     [
+      "Effort",
+      "½ day"
+     ],
+     [
+      "Cost",
+      "CHF 400"
+     ]
+    ],
+    "key": "csv",
+    "label": "Monthly CSV",
+    "text": "One file a month, checked by hand"
+   },
+   {
+    "facts": [
+     [
+      "Effort",
+      "2 days"
+     ]
+    ],
+    "key": "api",
+    "label": "Tariff API",
+    "text": "Daily pull, no manual step"
+   },
+   {
+    "key": "other",
+    "label": "Keep the old seeds"
+   }
+  ],
+  "qid": "d60478ec5ff8f6ff213cded9c0f8f243",
+  "spec": {
+   "allow_other": true,
+   "details": "If you pick CSV, we import monthly.\n\tAPI means a daily pull.",
+   "kind": "choice",
+   "recommended": "csv",
+   "why": "The seeds are stale."
+  },
+  "state": "open",
+  "text": "Which export should feed the tariff tables?\nPick the one we keep.",
+  "to": [
+   "p_5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+  ],
+  "to_ref": "ticket_owner"
+ },
+ "text_with_why_and_details": {
+  "answered_by": null,
+  "answered_seq": null,
+  "asked_at": "2026-10-23T12:00:00Z",
+  "asked_by": {
+   "for": "p_5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e",
+   "grant": "g_33333333333333333333333333333333",
+   "id": "a_11111111111111111111111111111111",
+   "kind": "agent",
+   "session": "s_22222222222222222222222222222222"
+  },
+  "asked_seq": 2,
+  "blocking": true,
+  "hash": "sha256:6059b02ec306fb08d5632a82bd961ddb4cef8eb9d6190836994820a6274caf18",
+  "id": "Q1",
+  "qid": "d60478ec5ff8f6ff213cded9c0f8f243",
+  "spec": {
+   "details": "IBAN or name is fine.",
+   "kind": "text",
+   "why": "For the invoice."
+  },
+  "state": "open",
+  "text": "Which bank?",
+  "to": [
+   "p_5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+  ],
+  "to_ref": "ticket_owner"
+ }
+}

@@ -19,7 +19,7 @@ import { Button } from '@/components/ui/button'
 import { Loader2 } from 'lucide-react'
 import { ClickProblemBox } from './RefusalDevices'
 import { TechnicalFacts } from './ClickSignPanel'
-import { SignContent, compactAnswer } from './SignContent'
+import { SignContent, compactAnswer, viewQuestionHash } from './SignContent'
 import { useSignMethods } from './SignMethods'
 import { useActivation, useArming } from './useArming'
 import { useClickSign } from './useClickSign'
@@ -84,7 +84,8 @@ export function AnswerSend({
   const clickRef = useRef(click)
   clickRef.current = click
   const [nonce, setNonce] = useState(0)
-  const current = `${JSON.stringify(action)}#${nonce}`
+  // The card's hash is part of the request's identity: a new version of the question is a new request.
+  const current = `${JSON.stringify(action)}#${nonce}#${question.hash ?? ''}`
   const started = useRef<string | null>(null)
   const lastText = useRef(note)
 
@@ -123,7 +124,24 @@ export function AnswerSend({
   const content = shown ? click.view!.view.content : undefined
   const parts = shown && click.view!.view.confirm.kind === 'click' ? compactAnswer(content) : null
 
-  const viewQuestion = parts ? parts.question.text : null
+  // The View must be of THE question on the card: its `question hash` row equals the card's hash (a View without the row,
+  // or a card without a hash, fails closed). Otherwise nothing arms, the request is cancelled and the data is read again;
+  // card text and View text are never mixed.
+  const hashOk = !parts || (!!question.hash && viewQuestionHash(content) === question.hash)
+  // A click View that is not the frozen shape (no question hash row, no selected section): the dialog shows it in full.
+  const unshown = shown && click.view!.view.confirm.kind === 'click' && !parts
+  const [refusedFor, setRefusedFor] = useState<string | null>(null)
+  const mismatch = !!parts && !hashOk
+  useEffect(() => {
+    if (!mismatch) return
+    setRefusedFor(current)
+    for (const k of ['ticket', 'today']) void qc.invalidateQueries({ queryKey: [k] })
+    void clickRef.current.cancel().then(() => clickRef.current.reset())
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mismatch])
+  const refused = refusedFor === current
+
+  const viewQuestion = parts && hashOk ? parts.question.text : null
   useEffect(() => {
     onViewQuestion?.(viewQuestion)
     return () => onViewQuestion?.(null)
@@ -166,20 +184,40 @@ export function AnswerSend({
 
   if (!inline) {
     return (
-      <div className="flex justify-end">
+      <div className="flex items-center justify-end gap-3">
+        {!canSend && <span className="text-[12px] text-text-muted">Choose or write an answer first</span>}
         <Button type={type} size="sm" disabled={!canSend} onClick={type === 'submit' ? undefined : fallback}>
           Send answer
         </Button>
       </div>
     )
   }
-  if (shown && parts && click.view) {
+  if (refused) {
+    return (
+      <div className="space-y-2">
+        <p role="alert" data-testid="strip-mismatch" className="text-[13px] text-text-muted">
+          The question changed while the review was being prepared, so nothing was sent. The latest version is loading.
+        </p>
+        <div className="flex justify-end">
+          <Button type="button" size="sm" variant="outline" onClick={() => setNonce((n) => n + 1)}>
+            Review again
+          </Button>
+        </div>
+      </div>
+    )
+  }
+  if (shown && parts && click.view && hashOk) {
     return <Presented key={click.view.view_digest} click={click} showWorkspace={(workspaces.data?.length ?? 0) > 1} />
   }
   const preparing = !['ready', 'failed', 'cancelled'].includes(click.phase) || started.current !== current
   return (
     <div className="space-y-2">
       {click.phase === 'failed' && click.problem && <ClickProblemBox problem={click.problem} ws={ws} />}
+      {unshown && (
+        <p data-testid="strip-unshown" className="text-[13px] text-text-muted">
+          This review can't be shown here. Use Send answer to see it in full.
+        </p>
+      )}
       <div className="flex justify-end">
         {/* A View without what the strip needs, or a refusal: the full review dialog, the same as before. */}
         <Button type="button" size="sm" disabled={!canSend || preparing} onClick={() => void open()} aria-busy={preparing}>

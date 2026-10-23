@@ -419,13 +419,16 @@ def document(
             "text": info.get("text") or q["text"],
             "blocking": q["blocking"],
         }
-        if info.get("options"):
-            entry["options"] = [{k: o[k] for k in ("key", "label", "cost") if k in o} for o in info["options"]]
-        elif q.get("options"):
-            entry["options"] = [{"key": k, "label": k} for k in q["options"]]
-        for k in ("why", "recommended"):
-            if info.get(k):
-                entry[k] = info[k]
+        # Options and spec are the host's, verbatim (the question hash binds them): no key whitelist.
+        # The flat keys the page reads come out of the spec; a question the host did not describe has no kind.
+        if "options" in info:
+            entry["options"] = info["options"]
+        spec = info.get("spec")
+        if isinstance(spec, dict):
+            entry["spec"] = spec
+            for k in ("kind", "why", "details", "recommended", "allow_other"):
+                if k in spec:
+                    entry[k] = spec[k]
         questions.append(entry)
         state = info.get("state", "open")
         answer = info.get("answer")

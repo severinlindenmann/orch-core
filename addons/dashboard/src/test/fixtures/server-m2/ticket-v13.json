@@ -103,32 +103,12 @@
   {
    "blocking": true,
    "id": "Q1",
-   "options": [
-    {
-     "key": "csv",
-     "label": "csv"
-    },
-    {
-     "key": "api",
-     "label": "api"
-    }
-   ],
    "text": "Which export is the source?",
    "to": "ticket_owner"
   },
   {
    "blocking": false,
    "id": "Q2",
-   "options": [
-    {
-     "key": "csv",
-     "label": "csv"
-    },
-    {
-     "key": "api",
-     "label": "api"
-    }
-   ],
    "text": "Any naming rule?",
    "to": "ticket_owner"
   }
@@ -143,16 +123,6 @@
    "asked_by": "",
    "blocking": true,
    "id": "Q1",
-   "options": [
-    {
-     "key": "csv",
-     "label": "csv"
-    },
-    {
-     "key": "api",
-     "label": "api"
-    }
-   ],
    "state": "answered",
    "text": "Which export is the source?",
    "to": "ticket_owner"
@@ -163,16 +133,6 @@
    "asked_by": "",
    "blocking": false,
    "id": "Q2",
-   "options": [
-    {
-     "key": "csv",
-     "label": "csv"
-    },
-    {
-     "key": "api",
-     "label": "api"
-    }
-   ],
    "state": "open",
    "text": "Any naming rule?",
    "to": "ticket_owner"

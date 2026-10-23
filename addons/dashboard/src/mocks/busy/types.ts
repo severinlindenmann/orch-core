@@ -1,3 +1,4 @@
+import type { QuestionOption } from '@/api/types'
 import type { GenEvent } from './timeline'
 
 /** Ticket definition in fixture shape (src/mocks/fixtures/demo.json): the store fills the rest with defaults. */
@@ -19,7 +20,10 @@ export interface GenDefinition {
     to: string
     text: string
     why?: string
-    options?: { key: string; label: string; cost?: string }[]
+    kind?: 'choice' | 'text'
+    details?: string
+    allow_other?: boolean
+    options?: QuestionOption[]
     recommended?: string
     blocking: boolean
   }[]

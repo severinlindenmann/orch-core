@@ -318,11 +318,22 @@ export function deriveTicket(
   const questions_state: QuestionStatus[] = allQuestions.map((q) => {
     const a = asked.get(q.id)
     const answer = answers.get(q.id) ?? null
+    // The mock host stores one shape: `kind`, and a `spec` of every key except id, to, blocking, text, options (as core does).
+    const kind = q.kind ?? (q.options?.length ? 'choice' : 'text')
+    const spec: Record<string, unknown> = q.spec ?? {
+      kind,
+      ...(q.why ? { why: q.why } : {}),
+      ...(q.details ? { details: q.details } : {}),
+      ...(q.recommended ? { recommended: q.recommended } : {}),
+      ...(q.allow_other ? { allow_other: true } : {}),
+    }
     return {
       ...q,
+      kind,
+      spec,
       state: answer ? 'answered' : 'open',
-      // A full content hash: an answer binds it (the host compares it, security review #7).
-      hash: contentHash(`${def.uid}|q|${q.id}`, JSON.stringify([def.uid, q.id, q.to, q.text, q.options ?? []])),
+      // A full content hash: an answer binds it (the host compares it, security review #7). Options and spec verbatim.
+      hash: contentHash(`${def.uid}|q|${q.id}`, JSON.stringify([def.uid, q.id, q.text, q.options ?? [], spec])),
       asked_at: a?.at ?? created,
       asked_by: a?.by ?? (people.owner ?? 'unknown'),
       answer,

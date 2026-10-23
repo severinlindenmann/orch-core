@@ -1983,7 +1983,7 @@ WITH_PIC = {
 def _all_keys(node):
     if isinstance(node, dict):
         return set(node) | {k for v in node.values() for k in _all_keys(v)}
-    if isinstance(node, (list, tuple)):
+    if isinstance(node, list | tuple):
         return {k for v in node for k in _all_keys(v)}
     return set()
 

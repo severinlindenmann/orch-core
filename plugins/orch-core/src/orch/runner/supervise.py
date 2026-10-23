@@ -138,6 +138,8 @@ class SpawnSpec:
     cwd: dict[str, Any]
     cols: int = 120
     rows: int = 40
+    #: ``(workspace root, work folder)`` a Claude Code trust entry was recorded for (re-checked when the run exits)
+    trusted: tuple[str, str] | None = field(default=None, compare=False)
 
     def check(self) -> None:
         def bad(what: str) -> SpawnError:

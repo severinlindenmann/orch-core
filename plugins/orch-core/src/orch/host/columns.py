@@ -36,9 +36,9 @@ __all__ = [
 
 GrantState = Literal["absent", "verified", "malformed", "unverified"]
 PeerClass = Literal["person", "agent", "worker", "control"]  # "relay" is refused: :func:`resolve_relay`
-#: read: registry read ops (and the §0.8 reads); person_read: doctor, instructions.sync, instructions.hook;
+#: read: registry read ops (and the §0.8 reads); person_read: doctor, instructions.sync;
 #: agent / unattended / human: the registry ``who``; human_api: ``human.*``; job, control: their sockets' ops;
-#: pg_read: ``session.list`` and ``grant.list`` (P and G only, H6b).
+#: pg_read: ``session.list``, ``grant.list`` (P and G only, H6b) and ``instructions.hook`` (the agent's own hook).
 #: person_write: a host-side write only a person-class caller makes (``records.remote_private``, H11e).
 #: pg_write: a host-side side effect of P and G (``worktree.create``/``remove``, H11d; the op narrows G further).
 #: device_signed: device-signed person events through the relay entry (``relay.submit``, column R only, §11A.4).

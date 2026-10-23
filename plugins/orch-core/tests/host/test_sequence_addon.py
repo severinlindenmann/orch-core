@@ -341,7 +341,7 @@ def test_ae3_publish_is_refused_at_sign_when_the_stored_kind_is_forced_down(clic
     p = click_prepare(click, intent)  # a word sequence: accepted
     v = click.view(p["request_id"])
     click.mono.t += 2
-    monkeypatch.setattr(sequence, "confirm_kind", lambda i: "terminal")
+    monkeypatch.setattr(sequence, "confirm_kind", lambda i, person=None: "terminal")
     refused(
         lambda: click.sign(p["request_id"], v["view_digest"], word=v["view"]["confirm"]["word"]),
         "human.click_refused",

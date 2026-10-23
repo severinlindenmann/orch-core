@@ -19,7 +19,7 @@ export function TerminalStep({ ws, request, children, onStatus }: { ws: string; 
   useEffect(() => {
     let alive = true
     setCommand(undefined); setError('')
-    void api.hubCommand(ws, JSON.parse(encoded) as HubCommandRequest).then(
+    void api.getHubCommand(ws, JSON.parse(encoded) as HubCommandRequest).then(
       result => { if (alive) setCommand(result.command) },
       e => { if (alive) setError(e instanceof ApiError && e.status === 400 ? 'Check the values you entered. The invite code, file path or sharing rule was not accepted. Go back to correct them.' : 'Could not prepare the command. Try again.') },
     )

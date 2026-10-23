@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import { inviteHubId } from '@/api/hub'
+import { Raw } from '@/components/sign/visible'
 import { Action, Field, Flow, Panel, violet } from './shared'
 import { TerminalStep } from './TerminalStep'
 
@@ -37,6 +39,7 @@ export function JoinFlow({ ws, onClose }: { ws: string; onClose: () => void }) {
           return false
         }}>
           <h3 className="font-semibold">Review your connection</h3>
+          <p data-testid="hub-invite-id">{inviteHubId(invite) ? <>Hub id in your invite: <Raw>{inviteHubId(invite) ?? ''}</Raw>. Compare it with what your hub admin tells you. It comes from the invite you typed, not from the card file.</> : 'Your invite does not name a hub id. The Terminal decides whether it accepts it; ask your hub admin for an invite that does.'}</p>
           <p>{mode === 'full' ? 'The hub will read everything. Hub admins will act as admins here.' : 'The hub will see only what you share, plus needs-you notes and questions.'}</p>
           <p>The Terminal checks the invite and shows the hub's fingerprint. Ask your hub admin to read you the fingerprint; if it differs, stop.</p>
         </TerminalStep>

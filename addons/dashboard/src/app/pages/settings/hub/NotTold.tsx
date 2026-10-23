@@ -7,7 +7,7 @@ export function NotTold({ ws }: { ws: string }) {
   const [confirmed, setConfirmed] = useState(false)
   const [done, setDone] = useState(false)
   return <><Panel title="You left the hub, but the hub does not know yet" tone="border-warning/40 bg-warning-soft">
-    <p>Until it is told, the hub may still show this workspace as joined and hold what it read earlier.</p>
+    <p>Until it is told, the hub may still show this workspace as joined. Telling it does not take back what it already read.</p>
     <div className="flex flex-wrap gap-2">
       <Action id="hub-not-told-try" onClick={() => { setAction('try'); setConfirmed(true); setDone(false) }}>Try now</Action>
       <Action id="hub-not-told-stop" onClick={() => { setAction('stop'); setConfirmed(false); setDone(false) }}>Stop telling</Action>

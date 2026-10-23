@@ -54,10 +54,10 @@ describe('Settings', () => {
     expect(await screen.findByText(/Not connected yet/)).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Open Relay & devices' })).toHaveAttribute('href', '/w/DEMO/settings/relay')
   })
-  it('the nav shows General, Members, Gates, Relay & devices (Preview), Addons, Skills and Connections only: no entry per addon', async () => {
+  it('the nav shows General, Members, Gates, Relay & devices (Preview), Addons, Skills, Connections and Hub only: no entry per addon', async () => {
     renderApp('/settings/general')
     const nav = await screen.findByRole('navigation', { name: 'Settings' })
-    expect(within(nav).getAllByRole('link').map((l) => l.textContent)).toEqual(['General', 'Members', 'Gates', 'Relay & devicesPreview', 'Addons', 'Skills', 'Connections'])
+    expect(within(nav).getAllByRole('link').map((l) => l.textContent)).toEqual(['General', 'Members', 'Gates', 'Relay & devicesPreview', 'Addons', 'Skills', 'Connections', 'Hub'])
     expect(within(nav).queryByRole('img', { name: /From addon/ })).toBeNull()
   })
   it("an addon's settings expand as an accordion beneath its row, one at a time, with Addons marked as the current section", async () => {

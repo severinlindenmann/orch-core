@@ -35,7 +35,7 @@ export function ShareRules({ ws, onBack }: { ws: string; onBack: () => void }) {
     setError('')
     if (!encoded) return
     const timer = setTimeout(() => {
-      void api.hubPreview(ws, JSON.parse(encoded) as Change).then(
+      void api.getHubPreview(ws, JSON.parse(encoded) as Change).then(
         data => { if (alive) setPreview({ key: encoded, data }) },
         () => { if (alive) setError('Could not preview this rule. Check its value or try again.') },
       )

@@ -88,6 +88,7 @@ describe('joining (A3.1): the person decides, the Terminal signs', () => {
     await view.user.click(screen.getByTestId('hub-join-review'))
 
     const command = await screen.findByTestId('hub-command', {}, T)
+    expect(screen.getByTestId('hub-invite-id').textContent).toMatch(/does not name a hub id/)
     expect(command.textContent).toBe("orch hub join INV-7QK2-M9XD --hub-card '/Users/me/acme card.json' --mode full")
     expect(screen.getByText(/Finish on your computer/)).toBeTruthy()
     expect(screen.getByText(/never sees your passphrase or your key/)).toBeTruthy()
@@ -162,10 +163,10 @@ describe('share rules (A3.3)', () => {
 })
 
 describe('the Tickets Hub column (A5.6)', () => {
-  it('marks Shared or Only here in selective mode', async () => {
+  it('marks Shared or Not shared in selective mode', async () => {
     hubPage('selective', '/w/DEMO/tickets')
     expect((await screen.findByTestId('ticket-hub-DEMO-0043', {}, T)).textContent).toBe('Shared')
-    expect(screen.getByTestId('ticket-hub-DEMO-0042').textContent).toBe('Only here')
+    expect(screen.getByTestId('ticket-hub-DEMO-0042').textContent).toBe('Not shared')
   })
   it('full mode: one banner and no marks', async () => {
     hubPage('full', '/w/DEMO/tickets')
@@ -177,5 +178,26 @@ describe('the Tickets Hub column (A5.6)', () => {
     await screen.findByRole('table', { name: 'Tickets' }, T)
     expect(screen.queryByTestId('hub-all-tickets')).toBeNull()
     expect(screen.queryByTestId('ticket-hub-DEMO-0043')).toBeNull()
+  })
+})
+
+describe('the hub id of an invite (core#1110)', () => {
+  it('is read only from the invite the person typed, in short form', async () => {
+    const { inviteHubId } = await import('@/api/hub')
+    expect(inviteHubId('9f3c1ab277de40c8aa11bb22cc33dd44:7QK2M9XD')).toBe('9f3c 1ab2 77de 40c8')
+    expect(inviteHubId('INV-7QK2-M9XD')).toBeNull()
+    expect(inviteHubId('9f3c:abc')).toBeNull()
+  })
+
+  it('shows it in the review and hands the invite to the Terminal unchanged', async () => {
+    const view = hubPage('standalone')
+    await view.user.click(await screen.findByTestId('hub-connect', {}, T))
+    await type(view, 'hub-invite', '9f3c1ab277de40c8aa11bb22cc33dd44:7QK2M9XD')
+    await type(view, 'hub-card', 'card.json')
+    await view.user.click(screen.getByTestId('hub-join-continue'))
+    await view.user.click(screen.getByTestId('hub-mode-selective'))
+    await view.user.click(screen.getByTestId('hub-join-review'))
+    expect((await screen.findByTestId('hub-command', {}, T)).textContent).toBe('orch hub join 9f3c1ab277de40c8aa11bb22cc33dd44:7QK2M9XD --hub-card card.json --mode selective')
+    expect(screen.getByTestId('hub-invite-id').textContent).toContain('9f3c 1ab2 77de 40c8')
   })
 })

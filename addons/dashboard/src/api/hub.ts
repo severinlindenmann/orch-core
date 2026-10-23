@@ -76,8 +76,8 @@ export interface HubCommand {
 export const hubServed = (ws: string | undefined): boolean => hasFeature('hub', ws)
 
 export const hubQueries = {
-  status: (ws: string) => queryOptions({ queryKey: ['hub', ws, 'status'], queryFn: () => api.hubStatus(ws), staleTime: 15_000, retry: false }),
-  share: (ws: string) => queryOptions({ queryKey: ['hub', ws, 'share'], queryFn: () => api.hubShare(ws), retry: false }),
+  status: (ws: string) => queryOptions({ queryKey: ['hub', ws, 'status'], queryFn: () => api.getHubStatus(ws), staleTime: 15_000, retry: false }),
+  share: (ws: string) => queryOptions({ queryKey: ['hub', ws, 'share'], queryFn: () => api.getHubShare(ws), retry: false }),
 }
 
 /** What the top-bar chip says (A5.1). Violet is a hub, amber needs attention, grey is standalone. */
@@ -103,3 +103,13 @@ export function hubChip(s: HubStatus | null | undefined): HubChip | null {
 
 /** The words the owner must type to start the switch to full mode (A3.2). */
 export const FULL_ACCESS_WORDS = 'full access'
+
+/**
+ * The hub id an invite names (`<hub_id>:<code>`, core#1110), in the short form the person compares: the first 16 hex
+ * digits in groups of four. It comes only from what the person typed or pasted, never from the hub card file, so the
+ * comparison cannot be void. `null`: the invite names no hub id (shown as such; the Terminal decides).
+ */
+export function inviteHubId(invite: string): string | null {
+  const m = /^([0-9a-f]{16,64}):[A-Za-z0-9._-]+$/.exec(invite.trim())
+  return m ? m[1].slice(0, 16).replace(/(.{4})(?=.)/g, '$1 ') : null
+}

@@ -38,37 +38,37 @@ describe('the mock hub (what the pages are built against)', () => {
   it('answers each scenario with the status the chip expects', async () => {
     for (const [scenario, mode] of [['standalone', 'standalone'], ['selective', 'selective'], ['full', 'full'], ['offline', 'selective']] as const) {
       setHubScenario(scenario)
-      expect((await api.hubStatus('ws')).mode).toBe(mode)
+      expect((await api.getHubStatus('ws')).mode).toBe(mode)
     }
     setHubScenario('offline')
-    expect((await api.hubStatus('ws')).reachable).toBe(false)
+    expect((await api.getHubStatus('ws')).reachable).toBe(false)
     setHubScenario('nottold')
-    expect(await api.hubStatus('ws')).toMatchObject({ not_told: true, owed: 1 })
+    expect(await api.getHubStatus('ws')).toMatchObject({ not_told: true, owed: 1 })
   })
 
   it('shares nothing without a hub and lists the shared tickets in selective mode', async () => {
     setHubScenario('standalone')
-    expect(await api.hubShare('ws')).toMatchObject({ rules: [], tickets: [] })
+    expect(await api.getHubShare('ws')).toMatchObject({ rules: [], tickets: [] })
     setHubScenario('selective')
-    const share = await api.hubShare('ws')
+    const share = await api.getHubShare('ws')
     expect(share.tickets.length).toBeGreaterThan(0)
     expect(share.rules.filter((r) => r.kind === 'needs_you' || r.kind === 'questions')).toHaveLength(2)
   })
 
   it('previews one rule change without changing anything', async () => {
     setHubScenario('selective')
-    const before = await api.hubShare('ws')
-    const p = await api.hubPreview('ws', { add: { kind: 'tag', value: 'team' } })
+    const before = await api.getHubShare('ws')
+    const p = await api.getHubPreview('ws', { add: { kind: 'tag', value: 'team' } })
     expect(p.new).toBe(1)
-    expect(await api.hubShare('ws')).toEqual(before)
+    expect(await api.getHubShare('ws')).toEqual(before)
   })
 
   it('builds Terminal commands and never a hub write of its own', async () => {
-    const join = await api.hubCommand('ws', { kind: 'join', invite: 'INV-7QK2-M9XD', card: 'hub card.json', mode: 'selective' })
+    const join = await api.getHubCommand('ws', { kind: 'join', invite: 'INV-7QK2-M9XD', card: 'hub card.json', mode: 'selective' })
     expect(join.command).toBe("orch hub join INV-7QK2-M9XD --hub-card 'hub card.json' --mode selective")
-    expect((await api.hubCommand('ws', { kind: 'mode_full', card: 'c.json' })).command).toBe('orch hub mode full --hub-card c.json')
-    expect((await api.hubCommand('ws', { kind: 'leave' })).command).toBe('orch hub leave')
-    expect((await api.hubCommand('ws', { kind: 'share_remove', rule: { kind: 'ticket', value: 'DEMO-0045' } })).command).toBe('orch hub share rule remove --ticket DEMO-0045')
+    expect((await api.getHubCommand('ws', { kind: 'mode_full', card: 'c.json' })).command).toBe('orch hub mode full --hub-card c.json')
+    expect((await api.getHubCommand('ws', { kind: 'leave' })).command).toBe('orch hub leave')
+    expect((await api.getHubCommand('ws', { kind: 'share_remove', rule: { kind: 'ticket', value: 'DEMO-0045' } })).command).toBe('orch hub share rule remove --ticket DEMO-0045')
   })
 
   it('types the words for the one-way switch exactly', () => {

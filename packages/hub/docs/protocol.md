@@ -2011,7 +2011,7 @@ same fields instead.)
 inside the `WSK`-signed bytes (`approval_hash`, §11.1), and the approval in turn names the one exact request, nonce
 included. Vectors: `publish_approval_reused_on_second_request` (same body, fresh nonce → `bad_approval`),
 `publish_approval_replayed_with_its_request` (`replay`), `publish_approval_attached_by_hub` and
-`publish_approval_stripped_by_hub` (`bad_signature`), `publish_hub_request_replayed_direct` (`bad_signature`).
+`publish_approval_stripped_by_hub` (`bad_signature`).
 
 Requests for `secret` or `sealed` access keep the v2 path: the host evaluates the charter (spec §5.5, §8 "the agent
 `publish(...)` path is unchanged") and no approval is needed. An approval on such a request is still verified, and its

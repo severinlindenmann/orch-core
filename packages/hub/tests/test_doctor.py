@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import io
 import os
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 
 import pytest
 
 from orch_hub.cli import main
+from orch_hub.doctor import Accounts, run
 from orch_hub.keys import HubKeys
 from orch_hub.link import LinkServer, Registry
 from orch_hub.serve import REGISTRY_FILE, FixedInvites
@@ -62,7 +65,7 @@ def test_all_pass_with_listen_and_publish(state, publish, capsys):
         reg.close()
     assert rc == 0, out
     assert "FAIL" not in out
-    assert out.count("PASS ") == 6
+    assert out.count("PASS ") == 7
     assert "doctor: all checks passed" in out
 
 
@@ -155,10 +158,12 @@ def test_doctor_is_read_only_a_stray_generation_survives(state, capsys):
 
 # ---- §4a co-location checks (D12) -------------------------------------------------------------------------------
 
-from orch_hub.doctor import Accounts, run
+MISSING_FW = Path("/nonexistent/hub-fw.nft")
+HUB_UID = 986
+LOADED_OK = "ip daddr 127.0.0.1 tcp dport 8105 meta skuid != { 0, 986, 992 } reject with tcp reset"
 
 
-def _acc(extra=None, *, euser="orch-hub", groups=None):
+def _acc(extra=None, *, groups=None, drop=()):
     users = {
         "orch-hub": (986, 980),
         "orch-relay": (995, 987),
@@ -167,68 +172,148 @@ def _acc(extra=None, *, euser="orch-hub", groups=None):
         "agent-ws2": (991, 983),
     }
     users.update(extra or {})
-    return Accounts(users, groups or {}, users[euser][0] if euser in users else 1234, euser)
+    for d in drop:
+        users.pop(d)
+    return Accounts(users, groups or {})
 
 
-def _fw(tmp_path, ids='0, "orch-hub", "orch-host-ws2"'):
+def _fw(tmp_path, ids='0, "orch-hub", "orch-host-ws2"', port=8105, verdict="reject", pre=""):
     f = tmp_path / "hub-fw.nft"
     f.write_text(
-        f'table inet orch_hub {{ chain out {{ oifname "lo" tcp dport 8105 meta skuid != {{ {ids} }} reject }} }}'
+        f'{pre}table inet orch_hub {{ chain out {{ oifname "lo" tcp dport {port} meta skuid != {{ {ids} }} {verdict} }} }}'
     )
     return f
 
 
-def _run(state, acc, fw, capsys, listen=None):
-    import io
-
+def _run(state, acc, fw, *, loaded=lambda: LOADED_OK, listen="127.0.0.1:8105", unit="orch-hub", suid=HUB_UID, **kw):
     out = io.StringIO()
-    run(state, listen=listen, out=out, accounts=acc, fw_file=fw)
+    run(
+        state,
+        listen=listen,
+        out=out,
+        accounts=acc,
+        fw_file=fw,
+        state_uid=suid,
+        unit_user=lambda: unit,
+        nft_loaded=loaded,
+        **kw,
+    )
     return out.getvalue()
 
 
-def test_colocation_good_layout_passes_and_is_reported(state, tmp_path, capsys):
-    out = _run(state, _acc(), _fw(tmp_path), capsys)
+def test_colocation_good_layout_passes_and_is_reported(state, tmp_path):
+    out = _run(state, _acc(), _fw(tmp_path))
     assert "INFO layout: one machine (hub + 1 workspace host(s), relay/publish)" in out
-    assert "weaker isolation" in out
-    for name in ("hub runs as its own OS user", "host and agent users are separate", "link firewall allows only"):
+    for name in (
+        "hub runs as its own OS user",
+        "host and agent users are separate",
+        "hosts use the server custody profile",
+        "link firewall allows only",
+    ):
         assert f"PASS {name}" in out, out
+    assert "not readable" not in out
 
 
-def test_split_layout_has_no_colocation_checks(state, capsys):
-    acc = Accounts({"orch-hub": (986, 980)}, {}, 986, "orch-hub")
-    out = _run(state, acc, DEFAULT_FW_MISSING, capsys)
+def test_split_layout_has_no_colocation_checks(state):
+    out = _run(state, Accounts({"orch-hub": (986, 980)}, {}), MISSING_FW)
     assert "INFO layout: hub alone" in out
     assert "link firewall" not in out
 
 
-DEFAULT_FW_MISSING = __import__("pathlib").Path("/nonexistent/hub-fw.nft")
+def test_edge_only_layout_is_not_hub_alone(state, tmp_path):
+    acc = _acc(drop=("orch-host-ws2", "agent-ws2"))
+    out = _run(state, acc, MISSING_FW)
+    assert "hub alone" not in out
+    assert "INFO layout: one machine (hub + relay/publish)" in out
+    assert "PASS hub runs as its own OS user" in out
+    assert "link firewall" not in out  # no workspace host here: nothing dials the link locally
+
+
+def test_layout_flags(state, tmp_path):
+    acc = Accounts({"orch-hub": (986, 980)}, {})
+    assert "INFO layout: one machine (hub + nothing found, forced by --layout)" in _run(
+        state, acc, MISSING_FW, layout_flag="one-vps"
+    )
+    assert "FAIL layout: --layout split but" in _run(state, _acc(), _fw(tmp_path), layout_flag="split")
+
+
+def test_unreadable_accounts_fail_closed(state, monkeypatch):
+    def boom(*a):
+        raise OSError("nss down")
+
+    monkeypatch.setattr(Accounts, "load", classmethod(lambda cls, *a: boom()))
+    out = io.StringIO()
+    rc = run(state, out=out)
+    assert rc >= 1
+    assert "FAIL OS accounts readable: unexpected OSError" in out.getvalue()
+    assert "FAIL layout: OS accounts unreadable, layout unknown" in out.getvalue()
+    assert "hub alone" not in out.getvalue()
+
+
+def test_flag_named_host_and_agent_users_are_found(state, tmp_path):
+    acc = Accounts(
+        {"orch-hub": (986, 980), "ws-alpha": (900, 900), "robot-alpha": (901, 901)},
+        {},
+        frozenset({"ws-alpha"}),
+        frozenset({"robot-alpha"}),
+    )
+    out = _run(state, acc, MISSING_FW)
+    assert "1 workspace host(s)" in out
+    assert "FAIL hosts use the server custody profile: ws-alpha has no agent user agent-ws-alpha" in out
+    assert "PASS host and agent users are separate" in out
+
+
+@pytest.mark.parametrize(
+    "kw,needle",
+    [
+        ({"suid": 992}, "state dir is owned by orch-host-ws2, expected orch-hub"),
+        ({"suid": 4242}, "state dir is owned by uid 4242"),
+        ({"unit": "root"}, "the hub unit runs as root, expected orch-hub"),
+    ],
+)
+def test_hub_user_judged_by_state_owner_and_unit(state, tmp_path, kw, needle):
+    out = _run(state, _acc(), _fw(tmp_path), **kw)
+    assert f"FAIL hub runs as its own OS user: {needle}" in out, out
+
+
+def test_unit_user_unknown_still_checks_state_owner(state, tmp_path):
+    out = io.StringIO()
+    run(
+        state,
+        listen="127.0.0.1:8105",
+        out=out,
+        accounts=_acc(),
+        fw_file=_fw(tmp_path),
+        state_uid=HUB_UID,
+        unit_user=lambda: None,
+        nft_loaded=lambda: LOADED_OK,
+    )
+    assert "PASS hub runs as its own OS user" in out.getvalue()
 
 
 @pytest.mark.parametrize(
     "acc,needle",
     [
-        (_acc(euser="orch-host-ws2"), "runs as orch-host-ws2"),
         (_acc({"agent-x": (986, 777)}), "orch-hub uid or primary group shared with agent-x"),
         (_acc(groups={980: frozenset({"agent-ws2"})}), "group orch-hub has other members: agent-ws2"),
     ],
 )
-def test_colocation_hub_user_failures(state, tmp_path, capsys, acc, needle):
-    out = _run(state, acc, _fw(tmp_path), capsys)
-    assert f"FAIL hub runs as its own OS user: {needle}" in out, out
+def test_colocation_hub_user_failures(state, tmp_path, acc, needle):
+    assert f"FAIL hub runs as its own OS user: {needle}" in _run(state, acc, _fw(tmp_path))
 
 
-def test_root_hub_fails(state, tmp_path, capsys):
-    acc = Accounts(_acc().users, {}, 0, "root")
-    assert "FAIL hub runs as its own OS user: hub tooling runs as root" in _run(state, acc, _fw(tmp_path), capsys)
-
-
-def test_host_or_agent_sharing_identity_fails(state, tmp_path, capsys):
-    out = _run(state, _acc({"orch-host-ws3": (992, 900)}), _fw(tmp_path), capsys)
+def test_host_or_agent_sharing_identity_fails(state, tmp_path):
+    out = _run(state, _acc({"orch-host-ws3": (992, 900), "agent-ws3": (905, 905)}), _fw(tmp_path))
     assert "orch-host-ws3 and orch-host-ws2 share a uid" in out
-    out = _run(state, _acc({"agent-ws3": (986, 5)}), _fw(tmp_path), capsys)
+    out = _run(state, _acc({"agent-ws3": (986, 5)}), _fw(tmp_path))
     assert "agent user agent-ws3 shares an identity" in out
-    out = _run(state, _acc(groups={980: frozenset({"orch-hub", "agent-ws2"})}), _fw(tmp_path), capsys)
+    out = _run(state, _acc(groups={980: frozenset({"orch-hub", "agent-ws2"})}), _fw(tmp_path))
     assert "FAIL host and agent users are separate from the hub: agent user agent-ws2 is in group orch-hub" in out
+
+
+def test_p2_style_host_without_agent_user_is_refused(state, tmp_path):
+    out = _run(state, _acc(drop=("agent-ws2",)), _fw(tmp_path))
+    assert "FAIL hosts use the server custody profile: orch-host-ws2 has no agent user agent-ws2" in out
 
 
 @pytest.mark.parametrize(
@@ -240,14 +325,43 @@ def test_host_or_agent_sharing_identity_fails(state, tmp_path, capsys):
         ('0, "orch-hub", "nobody-here"', "unknown user"),
     ],
 )
-def test_link_firewall_failures(state, tmp_path, capsys, ids, needle):
-    out = _run(state, _acc(), _fw(tmp_path, ids), capsys)
+def test_link_firewall_file_failures(state, tmp_path, ids, needle):
+    out = _run(state, _acc(), _fw(tmp_path, ids))
     assert "FAIL link firewall allows only root, hub and host users" in out
     assert needle in out, out
 
 
-def test_link_firewall_missing_or_ruleless_fails(state, tmp_path, capsys):
-    assert "missing or unreadable" in _run(state, _acc(), tmp_path / "nope", capsys)
+def test_link_firewall_missing_or_ruleless_or_wrong_port_fails(state, tmp_path):
+    assert "missing or unreadable" in _run(state, _acc(), tmp_path / "nope")
     f = tmp_path / "x.nft"
     f.write_text("table inet orch_hub {}")
-    assert "no 'meta skuid" in _run(state, _acc(), f, capsys)
+    assert "no 'tcp dport 8105" in _run(state, _acc(), f)
+    assert "no 'tcp dport 8105" in _run(state, _acc(), _fw(tmp_path, port=9999))
+    assert "no 'tcp dport 8105" in _run(state, _acc(), _fw(tmp_path, verdict="accept"))
+
+
+def test_link_firewall_ignores_comments(state, tmp_path):
+    out = _run(
+        state,
+        _acc(),
+        _fw(tmp_path, ids='0, "orch-hub", "orch-host-ws2"', pre="# tcp dport 8105 meta skuid != { 0, 991 } reject\n"),
+    )
+    assert "PASS link firewall allows only" in out
+    f = tmp_path / "c.nft"
+    f.write_text("# tcp dport 8105 meta skuid != { 0, 986, 992 } reject\n")
+    assert "no 'tcp dport 8105" in _run(state, _acc(), f)
+
+
+def test_link_firewall_needs_listen(state, tmp_path):
+    assert "needs --listen" in _run(state, _acc(), _fw(tmp_path), listen=None)
+
+
+def test_loaded_ruleset_drift_fails_and_unreadable_is_stated(state, tmp_path):
+    bad = "ip daddr 127.0.0.1 tcp dport 8105 meta skuid != { 0, 986, 991, 992 } reject with tcp reset"
+    out = _run(state, _acc(), _fw(tmp_path), loaded=lambda: bad)
+    assert "FAIL link firewall allows only root, hub and host users: loaded ruleset allows uid(s) [991]" in out
+    out = _run(state, _acc(), _fw(tmp_path), loaded=lambda: "table inet other {}")
+    assert "loaded ruleset: no 'tcp dport 8105" in out
+    out = _run(state, _acc(), _fw(tmp_path), loaded=lambda: None)
+    assert "PASS link firewall allows only" in out
+    assert "INFO loaded firewall rules not readable (needs root): only the file was checked" in out

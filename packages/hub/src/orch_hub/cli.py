@@ -68,6 +68,12 @@ def _parser() -> argparse.ArgumentParser:
     dr.add_argument("--state", help="hub state dir (default: $ORCH_HUB_STATE)")
     dr.add_argument("--listen", help="the running hub's loopback host:port: its TLS key must match the card pin")
     dr.add_argument("--publish-url", help="orch-publish base URL: its /v2/hub/card route must answer")
+    dr.add_argument(
+        "--layout", choices=("auto", "one-vps", "split"), default="auto", help="assert the layout (default: infer)"
+    )
+    dr.add_argument("--host-user", action="append", default=[], help="a workspace host OS user not named orch-host-*")
+    dr.add_argument("--agent-user", action="append", default=[], help="an agent OS user not named agent-*")
+    dr.add_argument("--fw-file", help="the link firewall file (default: /etc/orch/hub-fw.nft)")
     rg = sub.add_parser("relay", help="dev: the hub's account at its relay (card from the key store)")
     rg.add_argument("--state", help="hub state dir (default: $ORCH_HUB_STATE)")
     rg.add_argument("--relay-url", help="override the card's relay_url (https, or http on loopback)")
@@ -136,7 +142,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         except KeysError as e:
             print(f"orch-hub: {e}", file=sys.stderr)
             return 1
-        return 1 if run(state, listen=args.listen, publish_url=args.publish_url, out=sys.stdout) else 0
+        kw = {"fw_file": Path(args.fw_file)} if args.fw_file else {}
+        return (
+            1
+            if run(
+                state,
+                listen=args.listen,
+                publish_url=args.publish_url,
+                out=sys.stdout,
+                layout_flag=args.layout,
+                host_users=args.host_user,
+                agent_users=args.agent_user,
+                **kw,
+            )
+            else 0
+        )
     if args.group == "inspect":
         from .inspect import InspectError, inspect
 

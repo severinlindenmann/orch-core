@@ -80,7 +80,23 @@ SKIPPED_CHECKS = {
 }
 #: cases of a check core runs whose rules core has not implemented yet (orch-core#1036): non-strict xfail, so CI shows
 #: them and a fix turns them into XPASS
-PENDING_VECTORS = frozenset({})
+#: phase 5 (hub protocol 8.8, owner V3-D29): the five new custodial types; core C10 (#878) admits them
+PENDING_VECTORS = frozenset(
+    {
+        "custodial_event_device_excluded",
+        "custodial_event_grant_requested",
+        "custodial_event_grant_revoked",
+        "custodial_event_policy_changed",
+        "custodial_event_settings_changed",
+        "custodial_event_policy_changed_ticket",
+        "custodial_event_grant_requested_with_secret_hash",
+        "custodial_event_grant_requested_with_grant_id",
+        "custodial_event_settings_with_sign_methods",
+        "custodial_event_policy_with_factor",
+        "custodial_event_grant_revoked_by_edit",
+        "custodial_event_grant_requested_by_read",
+    }
+)
 
 
 def private_key(name: str):

@@ -1,0 +1,1 @@
+err market.malformed the marketplace index is not valid · retry:false · next: the file or the URL breaks the format · fix: orch market list

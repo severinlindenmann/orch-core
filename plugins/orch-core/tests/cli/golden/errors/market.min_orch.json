@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "market.min_orch",
+    "message": "this orch is older than the add-on needs",
+    "hint": "update orch",
+    "fix": {
+      "argv": [
+        "orch",
+        "market",
+        "list"
+      ]
+    },
+    "retryable": false
+  }
+}

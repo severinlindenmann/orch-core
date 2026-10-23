@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "market.digest_mismatch",
+    "message": "the package digest is not the one in the index",
+    "hint": "the entry is refused",
+    "fix": {
+      "argv": [
+        "orch",
+        "market",
+        "list"
+      ]
+    },
+    "retryable": false
+  }
+}

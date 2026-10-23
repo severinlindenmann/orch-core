@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "market.origin_changed",
+    "message": "the installed add-on came from another marketplace",
+    "hint": "orch addon list",
+    "fix": {
+      "argv": [
+        "orch",
+        "market",
+        "list"
+      ]
+    },
+    "retryable": false
+  }
+}

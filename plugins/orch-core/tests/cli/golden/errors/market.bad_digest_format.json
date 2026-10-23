@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "market.bad_digest_format",
+    "message": "an entry digest is not sha256: plus 64 hex",
+    "hint": "fix the index",
+    "fix": {
+      "argv": [
+        "orch",
+        "market",
+        "list"
+      ]
+    },
+    "retryable": false
+  }
+}

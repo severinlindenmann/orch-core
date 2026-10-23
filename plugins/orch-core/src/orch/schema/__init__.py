@@ -81,6 +81,8 @@ _WORKSPACE_ONLY = frozenset(
         "device.added",
         "device.removed",
         "device.revoked",
+        "device.exposed",
+        "device.rotated",
         "settings.changed",
         "grant.issued",
         "grant.requested",
@@ -809,6 +811,25 @@ def _ev_device_added(obj: dict[str, Any], actor: dict[str, Any]) -> None:
     _check_cert("event", ("cert",), obj["cert"])
 
 
+def _ev_device_exposed(obj: dict[str, Any], actor: dict[str, Any]) -> None:
+    if obj["device"] != actor.get("device"):
+        raise SchemaError("event", "/device", "a device marks itself: device must be the actor's device")
+
+
+def _ev_device_rotated(obj: dict[str, Any], actor: dict[str, Any]) -> None:
+    """#1097: the new device signs its own rotation; every id the three signed parts name is the same one."""
+    o, r = obj["cert"]["o"], obj["rotation"]["o"]
+    if obj["device"] != "d_" + o["device_id"] or obj["device"] != actor.get("device"):
+        raise SchemaError("event", "/device", "device must be the certificate's device and the actor's device")
+    if obj["old"] == obj["device"]:
+        raise SchemaError("event", "/old", "a device cannot replace itself")
+    if "p_" + o["person_id"] != actor.get("id") or r["person_id"] != o["person_id"]:
+        raise SchemaError("event", "/cert/o/person_id", "the rotation is for the actor's person")
+    if r["new"] != o["device_id"] or "d_" + r["old"] != obj["old"]:
+        raise SchemaError("event", "/rotation/o", "rotation must name this old and new device")
+    _check_cert("event", ("cert",), obj["cert"])
+
+
 def _ev_device_revoked(obj: dict[str, Any], actor: dict[str, Any]) -> None:
     o = obj["revocation"]["o"]
     if obj["reason"] != o["reason"]:
@@ -881,6 +902,8 @@ _EVENT_CHECKS = {
     "workspace.created": _ev_workspace_created,
     "member.added": _ev_member_added,
     "device.added": _ev_device_added,
+    "device.exposed": _ev_device_exposed,
+    "device.rotated": _ev_device_rotated,
     "device.revoked": _ev_device_revoked,
     "grant.issued": _ev_grant_issued,
 }

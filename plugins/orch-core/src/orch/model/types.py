@@ -97,6 +97,9 @@ class Device:
     removed: bool = False
     excluded: str | None = None  # C10: the reason of a hub-signed device.excluded (lost | retired | compromised)
     revoked: str | None = None
+    #: #1097: positive evidence that this key was in convenience custody (a ``device.exposed`` mark, or a line of this
+    #: device signed ``auth: "convenience"``). Monotonic: nothing clears it, only a new key (``device.rotated``) does.
+    exposed: bool = False
 
 
 @dataclass

@@ -92,7 +92,7 @@ def _person_sig_check(core: Core, log: str, e: dict[str, Any], ctx: Ctx, genesis
         return None if ok else Refusal(Code.CHAIN_BROKEN, "the genesis signature does not verify")
     dev = ws.devices.get(a["device"])
     if dev is None:
-        if not (e["type"] == "device.added" and e.get("device") == a["device"]):
+        if not (e["type"] in ("device.added", "device.rotated") and e.get("device") == a["device"]):
             return Refusal(Code.CHAIN_BROKEN, "the actor's device has no certificate")
         cert = e["cert"]
     elif dev.person != a["id"]:
@@ -173,7 +173,9 @@ def _scratch(core: Core, log: str, e: dict[str, Any]) -> Core:
     unattended = a["kind"] == "agent" and a.get("unattended") is True
     is_ws = log == WORKSPACE
     sc = Core(
-        ws=copy.deepcopy(core.ws) if (is_ws or unattended or "via" in a or _names_users(e)) else core.ws,
+        ws=copy.deepcopy(core.ws)
+        if (is_ws or unattended or "via" in a or _names_users(e) or e.get("auth") == "convenience")
+        else core.ws,
         tickets=dict(core.tickets),
         keys=dict(core.keys) if typ == "ticket.created" else core.keys,
         created_at=dict(core.created_at) if typ == "ticket.created" else core.created_at,
@@ -241,6 +243,8 @@ def _workspace_handler(core: Core, lc: LogCore, e: dict[str, Any], ctx: Ctx) -> 
         "device.added": lambda: workspace.device_added(core, e, v),
         "device.removed": lambda: workspace.device_removed(ws, e),
         "device.revoked": lambda: workspace.device_revoked(core, e, v),
+        "device.exposed": lambda: workspace.device_exposed(ws, e),
+        "device.rotated": lambda: workspace.device_rotated(core, e, v),
         "policy.changed": lambda: workspace.policy_changed(core, e),
         "settings.changed": lambda: workspace.settings_changed(ws, e),
         "grant.issued": lambda: workspace.grant_issued(ws, e),
@@ -301,7 +305,21 @@ def _authorize(core: Core, log: str, t: TCore | None, e: dict[str, Any], ctx: Ct
 
 
 def _apply(core: Core, log: str, lc: LogCore, e: dict[str, Any], ctx: Ctx) -> Refusal | None:
-    """Authorize and apply ``e`` to ``core`` (a scratch copy). Mutates ``core`` even when it refuses midway."""
+    """Authorize and apply ``e`` to ``core`` (a scratch copy). Mutates ``core`` even when it refuses midway.
+
+    #1097 (b): an admitted person line with ``auth: "convenience"`` is signed evidence that its device key was in
+    convenience custody; the device is marked ``exposed`` from the next line on (the check of this line saw the state
+    before). ``_scratch`` copies the workspace for such a line, so a ticket-log line never touches shared state."""
+    r = _apply_event(core, log, lc, e, ctx)
+    a = e["actor"]
+    if r is None and e.get("auth") == "convenience" and a["kind"] == "person" and "via" not in a:
+        dev = core.ws.devices.get(a.get("device"))
+        if dev is not None and dev.person == a.get("id"):
+            dev.exposed = True
+    return r
+
+
+def _apply_event(core: Core, log: str, lc: LogCore, e: dict[str, Any], ctx: Ctx) -> Refusal | None:
     typ, ws = e["type"], core.ws
     is_ws = log == WORKSPACE
     t = None if is_ws else core.tickets.get(log)

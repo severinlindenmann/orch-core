@@ -295,6 +295,7 @@ VALUES = {
     "duplicate_of": "DEMO-0007", "resolution": "duplicate", "key": "DEMO-0002", "ticket_type": "chore", "title": "Marker Title",
     "owner": "p_" + "4" * 32, "add": ["p_" + "7" * 32], "remove": ["p_" + "8" * 32], "from": "open", "to": "backlog", "gate": "plan",
     "gates": {"plan": POLICY}, "set": {"grant_hours": 5},
+    "old": "d_" + "5" * 32, "rotation": {"o": {"kind": "device_rotation", "marker": "rot"}, "sig": "s"},
     "hub_id": "38d8abed52ccfb538da401fd54e64bdc", "hk_root_pub": "marker-hubroot", "mode": "selective", "binding_seq": 3,
     "aliases": [{"person_id": "9" * 32, "user_id": "a" * 32}], "sections": {"summary": {"hash": "sha256:" + "ee" * 32, "refs": ["marker-art"]}},
 }  # fmt: skip
@@ -364,7 +365,7 @@ def test_the_plain_view_shows_every_key_it_claims_to_show(typ):
         needles = []
         if isinstance(value, str) and value.startswith("sha256:"):
             needles.append(value[7:19])  # a digest is shown short
-        elif key in ("pk_pub", "cert", "device_cert", "hk_root_pub"):
+        elif key in ("pk_pub", "cert", "device_cert", "hk_root_pub", "rotation"):
             needles.append(signcontent._fp(value))  # a key or certificate is shown by its fingerprint
         elif key in ("sections", "set", "gates", "source_sha"):
             needles.append(

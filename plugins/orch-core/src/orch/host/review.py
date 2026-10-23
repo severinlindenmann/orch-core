@@ -48,7 +48,9 @@ ENVELOPE = frozenset({"v", "id", "type", "actor", "auth", "hash_v", "roster_v", 
 #: attestation (v1.5 "Bound hashes"); on any other type an unexpected ``gate_gen`` stays in the payload, so it is shown
 GATE_TYPES = frozenset({"gate.approved", "gate.changes_requested", "verdict.given"})
 _DECISIONS = frozenset({"gate.approved", "gate.changes_requested", "verdict.given", "question.answered"})
-_CERTS = {"member.added": "device_cert", "workspace.created": "device_cert", "device.added": "cert"}
+_CERTS = {
+    "member.added": "device_cert", "workspace.created": "device_cert", "device.added": "cert", "device.rotated": "cert",
+}  # fmt: skip
 _SECTIONS = frozenset({"ticket.updated", "ticket.created", "question.asked"})
 
 
@@ -90,6 +92,8 @@ HOST_PERSON_OPS: dict[str, frozenset[str]] = {
     "hub.mode": frozenset({"hub.joined"}),  # V3 C2b: selective to full, the owner's own signature
     "hub.leave": frozenset({"hub.left"}),
     "relay.reopen": frozenset({"relay.reopened"}),  # V3 C10 M4
+    "device.mark_exposed": frozenset({"device.exposed"}),  # #1097: written before a key enters convenience custody
+    "device.rotate": frozenset({"device.rotated"}),  # #1097: the new device replaces the old (recovery code)
 }
 _NOT_PERSON = frozenset({"init", "import.v1"})  # init is host.wsk_create + host.bootstrap; import v1 is direct mode
 

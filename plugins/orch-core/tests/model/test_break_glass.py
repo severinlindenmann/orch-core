@@ -42,8 +42,12 @@ def strict(w: World):
 
 
 def test_the_set_is_exactly_leave_recover_repin_rotate_and_the_v3_d29_reaffirmation():
-    assert set(breakglass.BREAK_GLASS) == {"hub.leave", "device.recover", "hub.repin", "keys.rotate", "hub.mode"}
-    assert breakglass.event_types() == {"hub.left", "device.added", "hub.repinned", "hub.joined"}
+    assert set(breakglass.BREAK_GLASS) == {
+        "hub.leave", "device.recover", "hub.repin", "keys.rotate", "hub.mode", "device.rotate", "device.mark_exposed",
+    }  # fmt: skip
+    assert breakglass.event_types() == {
+        "hub.left", "device.added", "hub.repinned", "hub.joined", "device.rotated", "device.exposed",
+    }  # fmt: skip
     assert breakglass.BREAK_GLASS["hub.mode"].shape is breakglass.reaffirms_full  # not any hub.joined
 
 

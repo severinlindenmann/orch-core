@@ -25,6 +25,7 @@ from typing import Any
 
 from orch import crypto
 
+from . import exposure
 from .base import BackendUnavailable, CustodyError, KeyExists, KeyNotFound
 
 __all__ = [
@@ -337,6 +338,8 @@ def stage_convenience(
     gen = (sel.gen if sel is not None else 0) + 1
     scalar = legacy.export_for_custody_change(KEY_ID, fields=_fields(workspace_id, device, "convenience"))
     try:
+        # #1097 E3: the signed mark lands in the workspace log BEFORE any key-store write. If it cannot, nothing moves.
+        exposure.mark_before_move(state_dir, workspace_id, device, bytes(scalar), pub)
         if store.exists(workspace_id, device):
             held = bytearray(store.get(workspace_id, device))
             try:

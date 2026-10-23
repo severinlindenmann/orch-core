@@ -233,6 +233,11 @@ def probe_device(store: Any, person: str, now: float) -> str:
     raise HostError("device.invalid", f"{person} has no valid device")
 
 
+#: #1097: the one op whose signer is a device the roster does not know yet (the NEW device signs its own
+#: ``device.rotated``); the model judges that shape (``breakglass.is_rotation``), not the roster check below.
+ROTATE_OP = "device.rotate"
+
+
 def _operate(types: list[str]) -> bool:
     from orch.model.authz import OPERATE
 
@@ -406,7 +411,7 @@ class HumanOps:
             convenience.refuse_hub_op(name, signer["auth"])  # V3 C2a: a hub op is never click-to-sign
         if signer is not None and signer["auth"] == "convenience":
             convenience.check(service, person, signer["device"])  # the owner's condition, at prepare
-        if signer is not None:
+        if signer is not None and name != ROTATE_OP:
             check_device(store, person, signer["device"], now, operate=_operate(sorted(types)))
         operation = _person_operation(name)
         inner = dict(args["args"])
@@ -461,7 +466,7 @@ class HumanOps:
         if len(logs) != 1:
             raise HostError("internal", f"{name} prepared events for more than one log")
         log = logs.pop()
-        if signer is not None:
+        if signer is not None and name != ROTATE_OP:
             check_device(
                 store, person, signer["device"], now, operate=_operate([c.event["type"] for c in capture.events])
             )
@@ -852,13 +857,14 @@ class HumanOps:
         store = call.service.store
         store.refresh()
         events = record["prepared"]["events"]
-        check_device(
-            store,
-            record["person"],
-            signer["device"],
-            call.service.clock(),
-            operate=_operate([e["type"] for e in events]),
-        )
+        if record["op"] != ROTATE_OP:
+            check_device(
+                store,
+                record["person"],
+                signer["device"],
+                call.service.clock(),
+                operate=_operate([e["type"] for e in events]),
+            )
         if _binds_commits(record["prepared"]):  # N3: a tree dirtied since prepare is refused here, nothing bound
             check_bindings(call, record)
             record = recheck_trees(call, record)

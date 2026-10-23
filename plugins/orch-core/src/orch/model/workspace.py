@@ -168,6 +168,49 @@ def device_added(core: Core, e: dict[str, Any], v: Verifier) -> Refusal | None:
     return None
 
 
+def device_exposed(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
+    """``device.exposed`` (#1097): the device marks itself as having been in convenience custody. Only the device
+    itself, for its own person, can sign one (the hub, a relay and an agent never can: the actor rules). The mark only
+    removes authority (``signer_kind`` then reads ``exposed``), is monotonic, and nothing clears it."""
+    a = e["actor"]
+    dev = ws.devices.get(e["device"])
+    if dev is None:
+        return Refusal(Code.DEVICE_UNKNOWN, e["device"])
+    if e["device"] != a.get("device") or dev.person != a.get("id"):
+        return Refusal(Code.ROLE_DENIED, "a device is marked exposed by that device itself")
+    dev.exposed = True
+    return None
+
+
+def device_rotated(core: Core, e: dict[str, Any], v: Verifier) -> Refusal | None:
+    """``device.rotated`` (#1097): the new device (the actor) replaces ``old``, a device of the same person, in ONE
+    event: the new one is added and the old one removed, so a copy of the old key is dead in every mode. The
+    certificate and the rotation are signed by the person key (``verify_embedded``); the rotation is bound to THIS
+    workspace, the old and the new device and the current ``roster_v``, so it cannot be replayed elsewhere or later."""
+    ws, a, dev = core.ws, e["actor"], e["device"]
+    old = ws.devices.get(e["old"])
+    if old is None or old.person != a["id"] or old.removed or old.revoked:
+        return Refusal(Code.DEVICE_UNKNOWN, f"{e['old']} is not a valid device of {a['id']}")
+    if dev in ws.devices or dev in ws.revocations:
+        return Refusal(Code.DEVICE_EXISTS, dev)
+    if (r := authz.device_valid(None, e["cert"], ts(e["at"]), False)) is not None:
+        return r
+    o = e["rotation"]["o"]
+    if (
+        o["workspace_id"] != ws.workspace_id
+        or o["roster_v"] != ws.roster_v
+        or "p_" + o["person_id"] != a["id"]
+        or "d_" + o["old"] != e["old"]
+        or "d_" + o["new"] != dev
+    ):
+        return Refusal(Code.DEVICE_CERT, "the rotation is not for this workspace, person, devices and roster version")
+    if not v.verify_embedded(e, pk_pub=ws.members[a["id"]].pk_pub):
+        return Refusal(Code.DEVICE_CERT, "the certificate or the rotation is not signed by the person key")
+    ws.devices[dev] = Device(dev, a["id"], copy.deepcopy(e["cert"]))
+    old.removed = True
+    return None
+
+
 def device_removed(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
     dev = ws.devices.get(e["device"])
     if dev is None:

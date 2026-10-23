@@ -959,6 +959,59 @@
           "$ref": "https://schemas.orch.dev/v2/common#/$defs/hubUserId"
         }
       ]
+    },
+    "deviceRotation": {
+      "type": "object",
+      "properties": {
+        "o": {
+          "type": "object",
+          "properties": {
+            "v": {
+              "const": 2
+            },
+            "suite": {
+              "const": 2
+            },
+            "kind": {
+              "const": "device_rotation"
+            },
+            "workspace_id": {
+              "$ref": "https://schemas.orch.dev/v2/common#/$defs/hex32"
+            },
+            "person_id": {
+              "$ref": "https://schemas.orch.dev/v2/common#/$defs/hex32"
+            },
+            "old": {
+              "$ref": "https://schemas.orch.dev/v2/common#/$defs/hex32"
+            },
+            "new": {
+              "$ref": "https://schemas.orch.dev/v2/common#/$defs/hex32"
+            },
+            "roster_v": {
+              "$ref": "https://schemas.orch.dev/v2/common#/$defs/nonNegInt"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "v",
+            "suite",
+            "kind",
+            "workspace_id",
+            "person_id",
+            "old",
+            "new",
+            "roster_v"
+          ]
+        },
+        "sig": {
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/sig"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "o",
+        "sig"
+      ]
     }
   }
 }

@@ -178,6 +178,17 @@ _SPECS = [
         "build yet are not signable here either.",
     ),
     _e(
+        "sign.key_exposed",
+        3,
+        False,
+        "this device key was in one-click custody, so it cannot do this: make a new key with your recovery code",
+        "orch keys custody passphrase --rotate --workspace W (needs your recovery code; works while the hub is down)",
+        ["orch", "keys", "custody", "passphrase", "--rotate"],
+        "#1097: a device key with signed evidence of convenience custody (a device.exposed mark, or a line it signed "
+        "with auth convenience) cannot enter full hub mode, leave a hub on its own, re-affirm full mode or rotate "
+        "the workspace key, because a process of yours may hold a copy. Only a new key (device.rotated) clears it.",
+    ),
+    _e(
         "relay.pair_open",
         3,
         False,
@@ -623,6 +634,8 @@ GLOBAL_ERRORS = (
     "sign.convenience_unavailable",
     # V3 C11 (D78/D81): any person op signed locally is refused while the workspace is in full hub mode
     "sign.hub_only",
+    # #1097: a gated act signed by a device key that was in convenience custody (hub join/leave/mode, keys.rotate)
+    "sign.key_exposed",
 )
 
 

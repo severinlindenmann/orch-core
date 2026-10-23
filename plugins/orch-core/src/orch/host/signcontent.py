@@ -68,6 +68,8 @@ SHOWN: dict[str, frozenset[str]] = {
     "artifact.added": frozenset({"name", "kind", "label", "ac", "task", "ref", "addon", "bytes", "sha256"}),
     "artifact.replaced": frozenset({"name", "kind", "label", "ac", "task", "replaces", "bytes", "sha256"}),
     "device.added": frozenset({"device", "cert"}),
+    "device.exposed": frozenset({"device", "reason"}),
+    "device.rotated": frozenset({"old", "device", "cert", "rotation"}),
     "gate.approved": frozenset({"gate", "source_sha"}),
     "gate.changes_requested": frozenset({"gate", "text"}),
     "verdict.given": frozenset({"outcome", "text", "source_sha"}),
@@ -1318,6 +1320,25 @@ def _event(
         _row(out, "device", ev.get("device"))
         _cert_rows(out, "certificate", ev.get("cert"))
         return "Add a paired device to your devices"
+    if typ == "device.exposed":  # #1097: the mark written before a key enters one-click custody
+        _row(out, "device", ev.get("device"))
+        _row(out, "reason", ev.get("reason"))
+        out.setdefault("notes", []).append(
+            "This is recorded in the workspace log for good: a program running as you may keep a copy of this key. "
+            "From now on it cannot start full hub mode or leave a hub on its own; a new key (your recovery code) "
+            "clears that. This only takes authority away from the key."
+        )
+        return "Record that your device key was in one-click custody"
+    if typ == "device.rotated":  # #1097: the guided rotation, signed by the new key
+        _row(out, "old device", ev.get("old"))
+        _row(out, "new device", ev.get("device"))
+        _cert_rows(out, "certificate", ev.get("cert"))
+        _row(out, "recovery key statement", _fp(ev.get("rotation")))
+        out.setdefault("notes", []).append(
+            "The old key stops signing in every mode, also while a hub is down. The new key is signed by your "
+            "recovery key for this workspace only. Nothing is re-shared with a hub."
+        )
+        return "Replace your device key with a new one"
     if typ == "question.asked":
         out.setdefault("sections", []).append({"id": "question", "title": "Question", "text": _s(ev.get("question"))})
         _row(out, "question id", ev.get("qid"))

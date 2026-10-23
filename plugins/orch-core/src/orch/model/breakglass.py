@@ -11,6 +11,13 @@ table is fail closed: adding a verb is adding a row.
 not the event-type check below. ``hub.repin`` is listed so the set is complete; its op is not built yet, and it is
 ``pk`` only (the matrix test already refuses it by a device key).
 
+**Key exposure (#1097).** A device key with *positive evidence* of convenience custody has the signer kind ``exposed``
+(:func:`signer_kind`): a signed ``device.exposed`` mark, or any admitted line of that device with ``auth:
+"convenience"`` (the model sets ``Device.exposed``; nothing clears it, only a new key does). No row allows ``exposed``,
+so a copy of such a key cannot sign ``hub.left``, the ``hub.mode`` reaffirmation or a full ``hub.joined``, whatever
+``auth`` label it writes: ``sign.key_exposed``. The one exception is the mark itself (``device.mark_exposed``), which
+only removes authority and so may land in full mode. Keys with no such evidence count as clean.
+
 Model rule (:func:`local_refusal`, called from ``authz.authorize_person`` at append and on replay): in a joined
 **full**-mode position every person event that is not ``auth: "hub"`` is refused with ``sign.hub_only``, except the
 event types of ``BREAK_GLASS``, which also need an owner actor and a signer that is allowed. Exclusion never applies:
@@ -27,10 +34,10 @@ from .types import WsCore, ts
 
 __all__ = [
     "BREAK_GLASS", "BreakGlass", "SIGNER_KINDS", "agent_refusal", "allowed", "event_types", "human_only_types",
-    "is_recovery", "local_refusal", "signer_kind",
+    "is_recovery", "is_rotation", "local_refusal", "signer_kind",
 ]  # fmt: skip
 
-SIGNER_KINDS = ("owner_device_key", "pk", "click", "convenience", "agent", "hub", "relay")
+SIGNER_KINDS = ("owner_device_key", "pk", "click", "convenience", "agent", "hub", "relay", "exposed")
 
 
 class BreakGlass:
@@ -78,6 +85,14 @@ BREAK_GLASS: Mapping[str, BreakGlass] = {
     # binding and triggers the cut-over. The event is a hub.joined, but the model admits one in a joined position only
     # in exactly that shape (same hub, root and binding_seq, no aliases): `workspace.hub_joined`.
     "hub.mode": BreakGlass("hub.joined", ("owner_device_key",), reaffirms_full),
+    # #1097: the guided rotation: the NEW device signs its own ``device.rotated`` (cert and rotation by the person key),
+    # and the old device goes in the same event. ``pk`` only, so a copied (exposed) key cannot reach it and it works
+    # with the hub down; the model checks the shape (:func:`is_rotation`) and the rotation's bindings.
+    "device.rotate": BreakGlass("device.rotated", ("pk",)),
+    # #1097: the mark that a key was in convenience custody. Signed by the device being marked (the handler checks),
+    # never by the hub, a relay or an agent; it only removes authority, so it also lands in full mode, even from an
+    # exposed key.
+    "device.mark_exposed": BreakGlass("device.exposed", ("owner_device_key", "convenience", "exposed")),
 }
 
 
@@ -105,11 +120,25 @@ def is_recovery(ws: WsCore, e: Mapping[str, Any]) -> bool:
     return not person_has_valid_device(ws, a.get("id"), ts(e["at"]))
 
 
+def is_rotation(ws: WsCore, e: Mapping[str, Any]) -> bool:
+    """The #1097 rotation shape, the ONE predicate (``authz.authorize_person`` and :func:`signer_kind` both use it): a
+    ``device.rotated`` signed by the new device itself, which the roster does not know. The line then carries the
+    certificate (``cert``) and the fresh rotation signature (``rotation``), both by the person key."""
+    a = e.get("actor", {})
+    return (
+        e.get("type") == "device.rotated"
+        and e.get("device") == a.get("device")
+        and a.get("device") not in ws.devices
+        and isinstance(e.get("cert"), Mapping)
+    )
+
+
 def signer_kind(ws: WsCore, e: Mapping[str, Any]) -> str:
     """The kind of signer of a person event, read from the line and the roster, **fail closed**: only a passphrase (or
     unlabelled) event with no ``signed_by`` is ever the owner's device key (a device of this actor's own) or the
-    recovery key. Every other label, a device of someone else, or a device the roster does not know is ``other``,
-    which no row of :data:`BREAK_GLASS` allows."""
+    recovery key. A device key with evidence of convenience custody is ``exposed`` instead (#1097). Every other label, a
+    device of someone else, or a device the roster does not know is ``other``, which no row of :data:`BREAK_GLASS`
+    allows."""
     a = e.get("actor", {})
     if a.get("kind") == "agent":
         return "agent"
@@ -121,10 +150,12 @@ def signer_kind(ws: WsCore, e: Mapping[str, Any]) -> str:
         return "relay"
     if e.get("auth") not in (None, "passphrase"):
         return "other"  # a phone's label, webauthn, ...: not the terminal
-    if is_recovery(ws, e):
+    if is_recovery(ws, e) or is_rotation(ws, e):
         return "pk"
     dev = ws.devices.get(a.get("device"))
-    return "owner_device_key" if dev is not None and dev.person == a.get("id") else "other"
+    if dev is None or dev.person != a.get("id"):
+        return "other"
+    return "exposed" if dev.exposed else "owner_device_key"
 
 
 # ``other`` is deliberately not a member of SIGNER_KINDS: nothing allows it.
@@ -159,15 +190,26 @@ def local_refusal(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
     """The model's D78 rule for one person event (see the module docstring). ``None``: not in a joined full-mode
     position, or a break-glass event done as allowed."""
     h = ws.hub
+    typ = e["type"]
+    if (
+        typ == "hub.joined"
+        and e.get("mode") == "full"
+        and e.get("auth") != "hub"
+        and e["actor"].get("kind") == "person"
+        and signer_kind(ws, e) in ("exposed", "convenience")
+    ):  # #1097 E2: full-mode entry (first join, selective -> full, reaffirmation) never from a convenience key
+        return Refusal(Code.SIGN_KEY_EXPOSED, "full hub mode needs a device key that was never in one-click custody")
     if not h or h.get("status") != "joined" or h.get("mode") != "full" or e.get("auth") == "hub":
         return None
-    typ = e["type"]
     row = next((r for r in BREAK_GLASS.values() if r.matches(ws, e)), None)
     if row is None:
         return Refusal(Code.SIGN_HUB_ONLY, f"{typ} is signed through the hub in a full-mode workspace")
     m = ws.members.get(e["actor"]["id"])
     if m is None or m.role != "owner":
         return Refusal(Code.SIGN_HUB_ONLY, f"{typ} is break-glass: the owner only")
-    if signer_kind(ws, e) not in row.signers:
+    kind = signer_kind(ws, e)
+    if kind not in row.signers:
+        if kind == "exposed":
+            return Refusal(Code.SIGN_KEY_EXPOSED, f"{typ} is break-glass: this device key was in one-click custody")
         return Refusal(Code.SIGN_HUB_ONLY, f"{typ} is break-glass: not by this way of signing")
     return None

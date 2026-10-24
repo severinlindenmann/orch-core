@@ -26,6 +26,7 @@ from typing import Any
 
 from orch import canon
 
+from . import sealed
 from . import view as views
 from .protocol import (
     CONTRACT,
@@ -114,6 +115,13 @@ class Approval:
     log: list[str] = field(default_factory=list)
     #: v1.6: prepared in deposit-only grant mode (D-P2-27); the hand-over's settled outcome once known
     deposit: bool = False
+    #: #1198 C7: prepared to show the grant secret once in the page, sealed to the page's key (``reveal_key`` at sign)
+    reveal: bool = False
+    #: the sealed envelope of this approval's secret and the page key it is sealed to: held (ciphertext only, useless
+    #: without the page's private key) so a lost answer or a retried submit delivers the same envelope, never a second
+    #: sealing; the secret itself is never kept
+    reveal_pk: str | None = None
+    reveal_env: dict[str, Any] | None = None
     deposit_result: dict[str, Any] | None = None
     #: R3 part B: the bytes of the pasted screenshots of a sequence by name, held HERE (verified against the intent)
     images: dict[str, bytes] | None = None
@@ -164,6 +172,8 @@ class ClickSigner:
         self.stash_: dict[tuple[str, str], dict[str, Any]] = {}
         self.conns: dict[str, Any] = {}
         self.busy = False
+        #: page keys a grant secret was sealed to in this process: one key, one sign call (sealed-field contract §3)
+        self._reveal_keys: set[str] = set()
         #: ``(workspace_id, request_id)`` whose signing started in this process: defence in depth against a claim
         #: record deleted from outside after a failed or interrupted signature (the claim file alone is not trusted)
         #: Kept for the whole signer process lifetime, never pruned: memory is bounded by the sign budget (30/min,
@@ -350,6 +360,7 @@ class ClickSigner:
             device=device,
             files=approval.files,
             deposit=approval.deposit,
+            reveal=approval.reveal,
         )
         return prepared
 
@@ -380,10 +391,15 @@ class ClickSigner:
                     raise ClickError("invalid.input", "the first step names a screenshot the review does not carry")
                 files = {"path": {"b64": base64.b64encode(first).decode()}}
                 send_files = self._host_files(entry, first)
+        reveal = op == "grant" and not deposit
         if deposit:  # v1.6 (D-P2-27): the one click grant, handed straight to the runner, never shown
             if op != "grant":
                 raise ClickError("invalid.input", "deposit is for grant only")
             inner = self._deposit_args(entry, inner)
+        elif reveal:  # #1198 C7: the secret is shown once in the page, sealed to a key it sends at sign
+            if seq is not None or files:
+                raise ClickError("invalid.input", "a grant takes no sequence and no files")
+            inner = self._reveal_args(inner)
         elif op_class(op, args=inner) == "terminal":
             raise refused("terminal_only", f"{op} is signed in the terminal (orch sign CODE)")
         if len(self.approvals) >= MAX_APPROVALS:
@@ -413,6 +429,7 @@ class ClickSigner:
             device=device,
             files=files,
             deposit=deposit,
+            reveal=reveal,
         )
         key = (entry["workspace_id"], rid)
         if key not in self.approvals:  # an idem retry returns the same request: keep its record
@@ -430,11 +447,12 @@ class ClickSigner:
                 expires_at=expires_at,
                 files=files or None,
                 deposit=deposit,
+                reveal=reveal,
                 images=images or None,
                 image_digests=tuple(sorted({canon.artifact_digest(b) for b in images.values()})) if images else (),
             )
         approval = self.approvals[key]
-        if approval.deposit != deposit:
+        if approval.deposit != deposit or approval.reveal != reveal:
             raise ClickError("idem.conflict", "this idem named a request prepared in another mode")
         self._note("prepared", workspace=entry["workspace_id"], request=rid, op=op)
         return {"request_id": rid, "expires_at": approval.expires_at, "op": op, "confirm": approval.kind}
@@ -617,6 +635,7 @@ class ClickSigner:
             expires_at=approval.expires_at,
             artifacts=artifacts,
             deposit=approval.deposit,
+            reveal=approval.reveal,
         )
 
     def sign(self, args: Mapping[str, Any]) -> dict[str, Any]:
@@ -642,18 +661,23 @@ class ClickSigner:
         vd = args.get("view_digest")
         if type(vd) is not str or not HASH.fullmatch(vd):
             raise ClickError("invalid.input", "view_digest is a sha256 hash")
+        reveal_key = self._reveal_key_arg(args)  # syntax only, before anything else; whether one is needed: below
         rec = self._record(entry["workspace_id"], rid)  # first, before the registry: it survives a restart
         if rec is not None:
-            return self._deposited(entry, rec["op"], rid, self._replay(entry, rec, vd))
+            res = self._deposited(entry, rec["op"], rid, self._replay(entry, rec, vd))
+            held = self.approvals.get((entry["workspace_id"], rid))
+            return res if held is None else self._revealed(held, reveal_key, res)
         entry, approval = self._approval(args)
         if approval.signed is not None:  # the in-memory guard stays, also when the record was lost
             if vd != approval.view_digest:
                 raise refused("already_signed", "this request was already signed for another review")
             if approval.result is not None:
-                return self._deposited(entry, approval.op, rid, {"result": approval.result, "duplicate": True})
-            self._rerecord(approval)
-            # the identical events and idem, never a new signature
-            return self._deposited(entry, approval.op, rid, self._submit(entry, approval, None))
+                res = self._deposited(entry, approval.op, rid, {"result": approval.result, "duplicate": True})
+            else:
+                self._rerecord(approval)
+                # the identical events and idem, never a new signature
+                res = self._deposited(entry, approval.op, rid, self._submit(entry, approval, None))
+            return self._revealed(approval, reveal_key, res)
         if (approval.workspace_id, approval.request_id) in self._attempted:
             # signing started here, and neither a record nor cached events exist: the claim was removed from outside
             raise refused(
@@ -663,6 +687,12 @@ class ClickSigner:
         if self._expired(approval):
             self.approvals.pop((approval.workspace_id, approval.request_id), None)
             raise refused("expired", "the request expired; prepare it again")
+        if approval.reveal != (reveal_key is not None):  # before anything is claimed or signed
+            raise ClickError("invalid.input", "a grant shown in the page takes reveal_key; no other request does")
+        if "sealed" in args:  # no review asks for a typed secret yet (C10, C12, C13 and C16 add them)
+            raise ClickError("invalid.input", "this review asks for no sealed value")
+        if reveal_key is not None and reveal_key in self._reveal_keys:
+            raise ClickError("invalid.input", "reveal_key was used for another signature; make a new key")
         if approval.view_digest is None or vd != approval.view_digest:
             raise refused("view_changed", "that is not the review this signer built for the request")
         if approval.built_at is None or self.mono() - approval.built_at < DWELL_SECONDS:
@@ -704,8 +734,10 @@ class ClickSigner:
         signed = host_signer.sign(stored, backend=backend, key_id=KEY_ID, workspace_id=approval.workspace_id)
         # the secret (a deposit grant only) stays in this frame: never in the approval, a record, a log or a result
         secret = signed.secret
-        if secret is not None and not approval.deposit:  # a grant is refused earlier; never near the channel
+        if secret is not None and not (approval.deposit or approval.reveal):  # refused earlier; never near the channel
             raise refused("terminal_only", "a request that draws a secret is signed in the terminal")
+        if approval.reveal:  # sealed to the page's key before anything else happens: no clear copy leaves this frame
+            self._seal(approval, reveal_key, secret)
         approval.signed, approval.idem = signed.events, idem  # in memory at once: a retry resends, never re-signs
         try:
             try:  # durable before the signature leaves: a crash after this resends these events, never signs again
@@ -714,7 +746,7 @@ class ClickSigner:
                 raise refused("record_unavailable", f"{exc}; nothing was submitted") from None
             self._note("signed", workspace=approval.workspace_id, request=approval.request_id)
             res = self._replay(entry, rec, approval.view_digest)  # the commit first, then the hand-over
-            return self._deposited(entry, approval.op, rid, res, secret)
+            return self._revealed(approval, reveal_key, self._deposited(entry, approval.op, rid, res, secret))
         finally:
             del secret, signed  # best effort: Python cannot wipe a str; nothing keeps a reference to it
 
@@ -893,10 +925,10 @@ class ClickSigner:
         """A deposit grant's answer gains ``deposit``, ``deposit_id`` (the request's ULID) and ``grant``. With the
         secret (this very signature): ``grant.deposit`` on the signer's own connection, after the commit. Without
         it (a repeated ``sign``, a restart): the settled outcome, else ``grant.deposit_status`` once."""
-        if op != "grant":
-            return res
         wid = entry["workspace_id"]
         approval = self.approvals.get((wid, rid))
+        if op != "grant" or (approval is not None and approval.reveal):  # a reveal grant has no runner hand-over
+            return res
         if approval is not None and approval.deposit_result is not None:
             return {**res, **approval.deposit_result}
         did = rid[3:]
@@ -915,6 +947,58 @@ class ClickSigner:
         if approval is not None and outcome in ("confirmed", "rejected"):
             approval.deposit_result = out
         return {**res, **out}
+
+    # -- the grant secret shown once in the page (#1198 C7, sealed-field contract section 3) -------------------------
+    @staticmethod
+    def _reveal_key_arg(args: Mapping[str, Any]) -> str | None:
+        """``reveal_key``: the page's P-256 public key (65-byte point, base64url), or absent. Syntax only."""
+        key = args.get("reveal_key")
+        if key is None:
+            return None
+        try:
+            sealed.decode_public(key, "reveal_key")
+        except sealed.SealedError:
+            raise ClickError("invalid.input", "reveal_key is a P-256 public key (base64url)") from None
+        return key
+
+    def _seal(self, approval: Approval, reveal_key: str | None, secret: str | None) -> None:
+        """Seal the secret to the page's key, bound to this workspace, request and review. At most once per approval.
+        Only the ciphertext is kept; the secret never leaves this frame. A failure here leaves the claim: the request
+        fails closed, nothing was submitted."""
+        if reveal_key is None or secret is None or approval.view_digest is None or approval.reveal_env is not None:
+            raise refused("check_failed", "the secret cannot be sealed for this request")
+        ctx = sealed.Context("grant.secret", approval.workspace_id, approval.request_id, approval.view_digest)
+        try:
+            env = sealed.seal(reveal_key, secret, ctx)
+        except sealed.SealedError as exc:
+            raise refused("check_failed", f"the secret cannot be sealed ({exc.reason})") from None
+        self._reveal_keys.add(reveal_key)
+        approval.reveal_pk, approval.reveal_env = reveal_key, env
+
+    def _revealed(self, approval: Approval, reveal_key: str | None, res: dict[str, Any]) -> dict[str, Any]:
+        """A reveal grant's answer gains ``reveal`` {purpose, envelope}: the envelope sealed at the signature, to the
+        same key (a retry with another key, or a signer that restarted, has none: the secret is not kept anywhere)."""
+        if not approval.reveal or approval.reveal_env is None:
+            return res
+        if reveal_key != approval.reveal_pk:
+            raise ClickError("invalid.input", "reveal_key is not the key this request was sealed to")
+        return {**res, "reveal": {"purpose": "grant.secret", "envelope": approval.reveal_env}}
+
+    def _reveal_args(self, inner: dict[str, Any]) -> dict[str, Any]:
+        """A shown grant's arguments: ``hours`` 1..168 (default 8), ``scope`` and an optional short ``label``; verbs are
+        ``agent``. Not a runner grant (that one is the deposit mode)."""
+        unknown = set(inner) - {"hours", "scope", "label"}
+        hours, scope, label = inner.get("hours", 8), inner.get("scope", "workable"), inner.get("label")
+        if unknown or type(hours) is not int or scope not in ("all", "workable"):
+            raise ClickError("invalid.input", "a shown grant takes hours (a whole number), scope and a label")
+        if not 1 <= hours <= DEPOSIT_MAX_HOURS:
+            raise refused("terminal_only", f"a click grant lasts at most {DEPOSIT_MAX_HOURS} hours; use the terminal")
+        out: dict[str, Any] = {"hours": hours, "scope": scope, "verbs": "agent"}
+        if label is not None:
+            if type(label) is not str or not 1 <= len(label) <= 40 or label.strip().lower() == "runner":
+                raise ClickError("invalid.input", "label is 1 to 40 characters and is not runner")
+            out["label"] = label
+        return out
 
     def _hand_over(self, entry: dict[str, Any], deposit_id: str, secret: str) -> tuple[str, str | None]:
         """``(outcome, reason)``: ``reason`` is the host's refusal code (mapped to the closed set by the caller)."""

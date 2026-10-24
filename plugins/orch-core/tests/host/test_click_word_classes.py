@@ -63,7 +63,7 @@ def test_every_former_word_op_is_a_plain_click(op):
     assert op_class(op) == "click"
 
 
-@pytest.mark.parametrize("op", ["grant", "device.rotate", "unknown.op", "hub.join"])
+@pytest.mark.parametrize("op", ["device.rotate", "unknown.op", "hub.join"])
 def test_terminal_only_ops_are_still_refused_on_click(op):
     assert op_class(op) == "terminal"
 

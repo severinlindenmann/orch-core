@@ -11,9 +11,19 @@ from typing import Any
 from orch import canon
 from orch.host import signcontent, signer
 
-from .protocol import DEPOSIT_LINE, DEPOSIT_MAX_HOURS, DEPOSIT_RISK, RISK, op_class, refused
+from . import sealed
+from .protocol import DEPOSIT_LINE, DEPOSIT_MAX_HOURS, DEPOSIT_RISK, REVEAL_LINE, RISK, op_class, refused
 
-__all__ = ["MAX_EVENTS", "MAX_VIEW_BYTES", "build", "check_prepared", "deposit_checks", "digest", "invariant"]
+__all__ = [
+    "MAX_EVENTS",
+    "MAX_VIEW_BYTES",
+    "build",
+    "check_prepared",
+    "deposit_checks",
+    "digest",
+    "invariant",
+    "reveal_checks",
+]
 
 MAX_EVENTS = 16
 MAX_VIEW_BYTES = 1024 * 1024
@@ -60,6 +70,28 @@ def deposit_checks(prepared: Mapping[str, Any]) -> None:
         )
 
 
+def reveal_checks(prepared: Mapping[str, Any]) -> None:
+    """#1198 C7: a grant whose secret is shown once in the page: exactly one ``grant.issued``, ``verbs:"agent"``, 1 to
+    168 hours, no ``runner`` label (a runner grant is handed to the runner, never shown), no revoke leg. Anything else
+    is ``terminal_only``."""
+    events = prepared.get("events")
+    ok = (
+        prepared.get("op") == "grant"
+        and isinstance(events, list)
+        and len(events) == 1
+        and isinstance(events[0], Mapping)
+        and events[0].get("type") == "grant.issued"
+        and events[0].get("verbs") == "agent"
+        and events[0].get("label") != "runner"
+        and type(events[0].get("hours")) is int
+        and 1 <= events[0]["hours"] <= DEPOSIT_MAX_HOURS
+    )
+    if not ok:
+        raise refused(
+            "terminal_only", "only an agent grant of 1 to 168 hours is shown in the dashboard; use the terminal"
+        )
+
+
 def check_prepared(
     prepared: Mapping[str, Any],
     *,
@@ -68,10 +100,13 @@ def check_prepared(
     device: str,
     files: Mapping[str, Any] | None,
     deposit: bool = False,
+    reveal: bool = False,
 ) -> str:
     """Every §0.8.1 signer check, then the click rules; returns the op class (``click``). Raises
     ``human.click_refused`` (``check_failed`` or ``terminal_only``). ``deposit``: the request was prepared in
-    deposit-only grant mode; only :func:`deposit_checks`' grant passes then."""
+    deposit-only grant mode; only :func:`deposit_checks`' grant passes then. ``reveal``: prepared to show the secret
+    once in the page; only :func:`reveal_checks`' grant passes then. Any other request with a ``grant.issued`` is
+    terminal-only."""
     if not isinstance(prepared, Mapping) or prepared.get("workspace_id") != workspace_id:
         raise refused("check_failed", "the host answered for another workspace")
     events = prepared.get("events")
@@ -85,6 +120,9 @@ def check_prepared(
         raise refused("check_failed", str(exc)) from None
     if deposit:
         deposit_checks(prepared)
+        kind = "click"
+    elif reveal:
+        reveal_checks(prepared)
         kind = "click"
     else:
         kind = op_class(str(prepared["op"]), events)
@@ -104,10 +142,13 @@ def build(
     expires_at: str,
     artifacts: str | None,
     deposit: bool = False,
+    reveal: bool = False,
 ) -> dict[str, Any]:
     """The View (after :func:`check_prepared`). ``checks`` are listed apart from ``lines`` so their time can change
     without changing :func:`digest`. A deposit grant (and only one) gets ``deposit: true`` and ``deposit_line``, and
-    its ``lines`` end with the tier-A sentence and that line."""
+    its ``lines`` end with the tier-A sentence and that line. A reveal grant (and only one) gets ``seal`` (the sealed
+    field's ``grant.secret`` purpose, no key: the page brings its own, sealed-field contract section 7) and
+    ``reveal_line``, which its ``lines`` end with; ``view_digest`` covers both."""
     known = workspace(prepared["workspace_id"])
     if known is None:
         raise refused("check_failed", "this workspace is not in your own registry")
@@ -147,6 +188,11 @@ def build(
         view["lines"] = [*view["lines"], "", DEPOSIT_RISK, DEPOSIT_LINE]
         view["deposit"] = True
         view["deposit_line"] = DEPOSIT_LINE
+    if reveal:
+        reveal_checks(prepared)
+        view["lines"] = [*view["lines"], "", REVEAL_LINE]
+        view["seal"] = {"v": sealed.VERSION, "alg": sealed.ALG, "purposes": ["grant.secret"]}
+        view["reveal_line"] = REVEAL_LINE
     if content is not None:
         view["headline"], view["content"] = content["headline"], content
     if len(canon.dumps(view)) > MAX_VIEW_BYTES:

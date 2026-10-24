@@ -19,6 +19,7 @@ __all__ = [
     "DEPOSIT_MAX_HOURS",
     "DEPOSIT_RISK",
     "OPS",
+    "REVEAL_LINE",
     "REASONS",
     "REFUSALS",
     "CONTRACT",
@@ -48,6 +49,9 @@ DEPOSIT_RISK = (
     "Anything that takes over the dashboard can give agents standing authority to act for you on tickets for as long "
     "as the grant lasts (up to 7 days, the length you choose); you can stop it at any time."
 )
+#: #1198 C7: the View of a grant whose secret is shown once in the page (sealed to the page's key) carries this line
+#: (and in ``lines``) and ``seal.purposes == ["grant.secret"]``
+REVEAL_LINE = "The secret is shown once, on this page, only to you. orch keeps only a fingerprint of it"
 #: a deposit grant lasts at most this many hours (D-P2-27)
 DEPOSIT_MAX_HOURS = GRANT_MAX_HOURS
 OPS = ("prepare", "view", "sign", "cancel", "status", "custody_on", "custody_off", "stash")
@@ -55,8 +59,9 @@ OPS = ("prepare", "view", "sign", "cancel", "status", "custody_on", "custody_off
 #: the dashboard's click-to-sign switch (§0.8.6 item 3a); ``sequence`` is ``prepare {sequence}``: one review, N
 #: signatures (batch 11); an older signer has no ``features`` and no switch, and ignores ``sequence`` (never asked)
 #: ``images`` is ``stash`` (a pasted screenshot, in chunks, held by the signer) and ``prepare {sequence}`` naming it
-#: (R3 part B)
-FEATURES = ("custody", "sequence", "images")
+#: (R3 part B); ``reveal`` (#1198 C7) is a ``grant`` without ``deposit``: ``sign`` takes ``reveal_key`` and answers
+#: ``reveal`` (the secret sealed to the page's key); a signer without it answers ``terminal_only`` for that grant
+FEATURES = ("custody", "sequence", "images", "reveal")
 #: the host's ``sign.convenience_unavailable`` reasons (orch-v2-host §0.8.6 item 1), from the host's closed schema
 REASONS: tuple[str, ...] = tuple(_HOST_DETAIL["sign.convenience_unavailable"]["reason"])  # type: ignore[arg-type]
 #: ``human.click_refused`` reasons (§0.8.6 item 5)
@@ -125,6 +130,7 @@ CLICK_OPS = frozenset(
         "artifact.replace",
         "apply",
         "grant.revoke",
+        "grant",  # #1198 C7: with the secret sealed to the page (``reveal_key``), or deposited (``deposit``)
         "addon.disable",
         "settings.set",
         "addon.grant",  # every add-on, publish included (#1198 C2); the review lists what is signed
@@ -138,7 +144,7 @@ CLICK_OPS = frozenset(
         "people.set",  # B12D: who owns, works on or reviews a ticket decides who may act on it
     }
 )
-#: ``grant`` and every op not in :data:`CLICK_OPS` is terminal-only (fail closed for ops added later)
+#: every op not in :data:`CLICK_OPS` is terminal-only (fail closed for ops added later)
 
 
 #: ``settings.set`` keys that need more than a click: none (#1198 C2). ``publish`` (where shared files go) is a click

@@ -28,6 +28,10 @@ class Auth:
         # The exact file handed out per code, so later directory resolution can never change what is deleted.
         self.files: dict[str, Path] = {}
         self.sessions: dict[str, tuple[float, float]] = {}
+        # How each session was opened. Every launch code is made by `orch dashboard` on this computer, so a session is
+        # "local"; a hub or remote sign-in would pass its own kind to `exchange` (the page shows "Log out" only for
+        # those).
+        self.kinds: dict[str, str] = {}
         self.setup_sessions: dict[str, str] = {}
         self.attempts = deque()
         self.lock = threading.Lock()
@@ -102,7 +106,7 @@ class Auth:
             self._forget(found)  # single use, whether or not it is still alive
             return now < until
 
-    def exchange(self, code):
+    def exchange(self, code, kind="local"):
         with self.lock:
             now = self.clock()
             if code in self.setup_codes:
@@ -115,6 +119,7 @@ class Auth:
             self._forget(code)
             token = secrets.token_urlsafe(32)
             self.sessions[token] = now, now
+            self.kinds[token] = kind
             return {"token": token, "expires_at": datetime.fromtimestamp(now + 86400, UTC).isoformat()}, 200
 
     def valid(self, token, touch=True):
@@ -126,6 +131,7 @@ class Auth:
                 for t, (born, last) in self.sessions.items()
                 if now - born < 86400 and now - last < 43200
             }
+            self.kinds = {t: k for t, k in self.kinds.items() if t in self.sessions}
             if token not in self.sessions:
                 return False
             born, _ = self.sessions[token]
@@ -133,9 +139,15 @@ class Auth:
                 self.sessions[token] = born, now
             return True
 
+    def login_kind(self, token):
+        """How this session was opened (``"local"``), or None for a session this server does not know."""
+        with self.lock:
+            return self.kinds.get(token) if token in self.sessions else None
+
     def logout(self, token):
         with self.lock:
             self.sessions.pop(token, None)
+            self.kinds.pop(token, None)
 
     def bind_setup(self, token, setup_id):
         """Setup scope only. Core owns the 30 s single-use claim and 10 min idle/run-aware lifetime.

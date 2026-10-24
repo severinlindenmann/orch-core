@@ -83,7 +83,7 @@ describe('accessibility smoke (axe, no serious or critical violations)', () => {
     ['/', /^Today$/, /need you/],
     ['/board', /^Board$/, /Backlog/],
     ['/tickets', /^Tickets$/, /All tickets/],
-    ['/tickets/new', /^New ticket$/, /Out of scope/],
+    ['/tickets/new', /^New ticket$/, /What should be true/],
     ['/agents', /^Agents$/, /Issue grant/],
     ['/settings/general', /^Settings$/, /Key fingerprint/],
     ['/settings/members', /^Settings$/, /Add member/],

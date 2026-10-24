@@ -33,7 +33,6 @@ failures never lock out another. ``human.get`` with ``signer`` binds the request
 from __future__ import annotations
 
 import base64
-import contextlib
 import copy
 import logging
 import os
@@ -46,8 +45,9 @@ from typing import TYPE_CHECKING, Any
 from jsonschema import Draft202012Validator
 
 from orch import canon
+from orch.addons.settings_value import KEY as ADDONS_KEY
 
-from . import convenience, hubsign, review
+from . import convenience, hubsign, marketinstall, review
 from .errors import HostError
 from .outcomes import Planned, request_idem
 from .requests import (
@@ -322,11 +322,6 @@ class HumanOps:
             if same is not None:
                 return same  # the same request, in its current state
         try:
-            if handoff:  # §0.8.6 item 8: the flag check and the request file are one step against `convenience on`
-                svc = call.service
-                with convenience.workspace_lock(svc.state_dir, svc.workspace_id, svc.host_uid):
-                    convenience.refuse_handoff(svc)
-                    return self._prepare(call, args, dry_run, intent)
             return self._prepare(call, args, dry_run, intent)
         except BaseException:
             if intent is not None:
@@ -432,6 +427,7 @@ class HumanOps:
             dry_run=dry_run,
         )
         capture.dry_run = dry_run
+        capture.market_files = marketinstall.files_of(service)
         if args.get("sequence") is not None and name == "artifact.add":
             self._check_pasted_image(inner, files)
         meta = self._sequence(call, name, inner, args, person, store, dry_run)
@@ -517,6 +513,7 @@ class HumanOps:
             "extras": extras,
             # H12d-2: the readers the request admits, with their verified declarations (not signed, not material)
             "readers": capture.readers,
+            "staged": capture.staged,  # V3 G3: the stage an addon.grant installs from (None: plain grant)
             "sequence": meta,
             "result": template,
             "submit": None,
@@ -565,6 +562,11 @@ class HumanOps:
         elif op == "settings.set":
             if (why := settings_needs.clear_refusal(events[0].get("set") or {}, ws.addons)) is not None:
                 raise HostError("invalid.input", why)
+            if ADDONS_KEY in (events[0].get("set") or {}):  # G6: the granted schema, again on the re-read state
+                from orch.addons import settings_value
+
+                if (why := settings_value.check_granted(store, events[0]["set"][ADDONS_KEY])) is not None:
+                    raise HostError("invalid.input", f"add-on settings: {why}")
 
     @staticmethod
     def _sequence(
@@ -778,6 +780,9 @@ class HumanOps:
                 for key, value in (ev.get("set") or {}).items():  # the host's current values, unsigned (§0.8.1)
                     if key == "repos":
                         now = {name: thaw(current.repos.get(name)) for name in value}
+                    elif key == ADDONS_KEY and isinstance(value, dict):  # G6: the host's value of each named add-on
+                        held = current.settings.get(ADDONS_KEY) or {}
+                        now = {name: thaw(held.get(name)) for name in value}
                     else:
                         now = thaw(current.settings.get(key))  # a tuple (sign_methods) is a list on the wire
                     before.setdefault(key, now)
@@ -791,6 +796,8 @@ class HumanOps:
                 for gid in taken
                 if (g := known.get(gid)) is not None and isinstance(g.scope, str) and isinstance(g.expires_at, str)
             }
+        if capture.market is not None and "addon.granted" in types:
+            material["market"] = copy.deepcopy(capture.market)  # V3 G3: the host's word on the source, not signed
         seq = getattr(capture, "sequence", None)
         if seq is not None and seq["step"] == 0:  # the whole intent is in the material: bound by review_digest
             material["sequence"] = {"digest": seq["digest"], "of": seq["of"], "intent": copy.deepcopy(seq["intent"])}
@@ -828,8 +835,7 @@ class HumanOps:
             events=record["prepared"]["events"],
             readers=record.get("readers") or [],
         )
-        if record.get("code"):  # §0.8.6 item 8: a hand-off request is dead once click-to-sign is on
-            convenience.refuse_handoff(call.service)
+        convenience.refuse_hub_op(record["op"], signer["auth"])  # #1170: a hub op is never bound to the one-click key
         if record.get("sequence") is not None and signer["auth"] not in ("passphrase", "convenience"):
             # a sequence is bound to the passphrase or one-click custody only, here as at prepare (not the phone)
             raise HostError("invalid.input", "a sequence is signed with the passphrase or one-click custody only")
@@ -1072,6 +1078,9 @@ class HumanOps:
                 if log not in ("workspace", view.uid) or (log == "workspace" and record["op"] != "grant"):
                     raise HostError("human.request_mismatch", "the ticket changed while signing, review again")
             self._recheck_needs(store, record, events)
+            marketinstall.recheck(
+                service, record, events
+            )  # V3 G3 C2: the install record as it is now, before the journal
             if (refused := hubsign.refusal(service, events, None)) is not None:
                 raise refused  # V3 C11: before the journal write; a join after the prepare lands here
             for e in events:
@@ -1087,30 +1096,19 @@ class HumanOps:
                 events=record["prepared"]["events"],
                 readers=record.get("readers") or [],
             )
-            with contextlib.ExitStack() as stack:
-                if record.get("code"):  # §0.8.6 item 8: the flag read and the journal write are one step against
-                    # `convenience on`. Lock order: submit takes store -> convenience, while prepare takes
-                    # convenience -> store. Safe: both run on the workspace's single worker thread, and the other
-                    # processes (the CLI, direct mode) take only one of the two; the 2 s wait is the backstop
-                    # (lock.busy, never a deadlock)
-                    stack.enter_context(
-                        convenience.workspace_lock(service.state_dir, service.workspace_id, service.host_uid)
-                    )
-                    convenience.refuse_handoff(service)
-                git = service.caps_for(call.principal).git
-                self._judge(store, record, events, git)
-                log = record["prepared"]["log"]
-                view = store.ticket(log) if log != "workspace" else None
-                key = view.key if view is not None else None
-                outcomes = service.outcomes
-                outcomes.plan(intent, [Planned(log, e["id"], e["type"], e["actor"]) for e in events], key)
-                record = {
-                    **record,
-                    "submit": {"events": events, "outcome_key": intent.key},
-                    "submitted_at": requests.clock(),
-                }
-                requests.write(record)  # fsync before the first append: a crash after it is rolled forward at start
-                stack.close()  # the flag can no longer be read as off by a submit that is already journalled
+            git = service.caps_for(call.principal).git
+            self._judge(store, record, events, git)
+            log = record["prepared"]["log"]
+            view = store.ticket(log) if log != "workspace" else None
+            key = view.key if view is not None else None
+            outcomes = service.outcomes
+            outcomes.plan(intent, [Planned(log, e["id"], e["type"], e["actor"]) for e in events], key)
+            record = {
+                **record,
+                "submit": {"events": events, "outcome_key": intent.key},
+                "submitted_at": requests.clock(),
+            }
+            requests.write(record)  # fsync before the first append: a crash after it is rolled forward at start
             return finish(service, requests, record)
 
     @staticmethod
@@ -1580,10 +1578,11 @@ def finish(service: WorkspaceService, requests: RequestStore, record: dict[str, 
     ``seq`` s that landed; it is never ``partial``. Returns the result; raises the stored error for a failed one."""
     store = service.store
     log = record["prepared"]["log"]
+    signed = record["submit"]["events"]
     landed, error = append_signed(
         service,
         log,
-        record["submit"]["events"],
+        signed,
         record["extras"],
         signed_by=None,
         readers=record.get("readers") or [],
@@ -1596,6 +1595,9 @@ def finish(service: WorkspaceService, requests: RequestStore, record: dict[str, 
         outcome = {"state": "failed", "error": failed.error(), "exit": failed.exit, "seqs": landed}
         requests.write({**record, "state": "submitted", "done_at": now, "outcome": outcome})
         raise _Stored(failed) if landed else failed
+    marketinstall.after_grant(
+        service, record, signed
+    )  # V3 G3 C3: the swap and the records, idempotent, also at roll-forward
     template = record.get("result") or {}
     view = store.ticket(log) if log != "workspace" else None
     result = ok_result(template.get("data") or {}, seq=max(landed))

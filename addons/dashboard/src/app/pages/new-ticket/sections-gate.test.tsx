@@ -15,8 +15,9 @@ describe('which approval needs a section (N3)', () => {
     expect(neededBefore('feature', 'verification')).toBeNull() // no gate asks for it before the verdict
   })
   it('the form says so', async () => {
-    renderApp('/tickets/new')
+    const { user } = renderApp('/tickets/new')
     await screen.findByLabelText('Title')
+    await user.click(screen.getByRole('button', { name: /More options/ })) // the rest of the sections sit in the fold
     expect(screen.getAllByText('needed before the requirements gate')).toHaveLength(2) // context, out of scope
     expect(screen.getAllByText('needed before the plan gate')).toHaveLength(2) // plan, decisions
     expect(screen.queryByText(/plan gate/, { selector: '#nothing' })).toBeNull()

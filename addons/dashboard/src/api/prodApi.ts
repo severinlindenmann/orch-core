@@ -13,6 +13,7 @@ import type { ClickAction, ClickCard, ClickState, ClickPrepared, ClickSigned, Cl
 import type { HostGrant, HostReaders, HostSettings, RosterMember } from './settings'
 import type { QuickPage, QuickParams, RecordsRun, RecordsStatus } from './quickRecords'
 import { activityQuery, type ActivityPage, type ActivityParams } from './activity'
+import type { MarketList, MarketInstalled, StageInput, StageResult } from './market'
 import { uploadFor, type ArtifactImage, type PastedRef } from './pasteImage'
 import {
   ApiError,
@@ -175,7 +176,7 @@ export const SESSION_READ_MS = 20_000
 export const session = async (cancel?: AbortSignal) => {
   const stop = cancel ? AbortSignal.any([cancel, AbortSignal.timeout(SESSION_READ_MS)]) : AbortSignal.timeout(SESSION_READ_MS)
   try {
-    return await call<{ features: string[]; workspaces: Record<string, string[]> }>('/api/session', 'GET', undefined, stop)
+    return await call<{ features: string[]; workspaces: Record<string, string[]>; login?: string }>('/api/session', 'GET', undefined, stop)
   } catch (e) {
     if (e instanceof ApiError || cancel?.aborted) throw e
     throw new ApiError(0, { code: 'host.unavailable', message: 'It did not answer in time. Try again.', retryable: true })
@@ -217,16 +218,20 @@ const reads = {
   getAddOns: (ws: string) => call<import('./addOnSwitches').AddOnsData>(`${w(ws)}/add-ons`),
   getReaders: (ws: string) => call<HostReaders>(`${w(ws)}/readers`),
   listHostGrants: (ws: string, active = true) => call<HostGrant[]>(`${w(ws)}/grants?active=${active}`),
-  // Quick tasks and records (M6). The limits are this browser's own setting; the server saves nothing.
+  // Quick tasks and records (M6). The host measures how big a quick task has grown.
   getQuick: (ws: string, p: QuickParams = {}) => {
     const q = new URLSearchParams()
     for (const s of p.status ?? []) q.append('status', s)
-    if (p.max_commits !== undefined) q.set('max_commits', String(p.max_commits))
-    if (p.max_files !== undefined) q.set('max_files', String(p.max_files))
     q.set('limit', String(p.limit ?? 200))
     if (p.page) q.set('page', p.page)
     return call<QuickPage>(`${w(ws)}/quick?${q.toString()}`)
   },
+  marketList: (ws: string) => call<MarketList>(`${w(ws)}/market`),
+  marketInstalled: (ws: string) => call<MarketInstalled>(`${w(ws)}/market/installed`),
+  marketStage: (ws: string, input: StageInput) => call<StageResult>(`${w(ws)}/market/stage`, 'POST', input),
+  marketUnstage: (ws: string, stage: string) => call<{ removed: boolean }>(`${w(ws)}/market/stage/${encodeURIComponent(stage)}`, 'DELETE'),
+  marketUninstall: (ws: string, name: string) => call<{ name: string; removed: boolean }>(`${w(ws)}/market/uninstall`, 'POST', { name }),
+  marketRefresh: (ws: string, input: { url?: string } = {}) => call<unknown>(`${w(ws)}/market/refresh`, 'POST', input),
   getActivity: (ws: string, p: ActivityParams = {}) => call<ActivityPage>(`${w(ws)}/activity?${activityQuery(p)}`),
   getRecordsCurrent: (ws: string) => call<RecordsStatus>(`${w(ws)}/records/current`),
   getRecords: (ws: string) => call<RecordsStatus>(`${w(ws)}/records`),

@@ -14,13 +14,16 @@ import type { ClickCard, ClickSwitch } from '@/api/click'
 import { convenienceOffCommand, convenienceOnCommand, custodyPassphraseCommand } from '@/api/pairing'
 import { DEV_HOST_SENTENCE, DEV_REFUSED, devRefusedSentence, signerProblem } from '@/api/refusals'
 import { ApiError, type Workspace } from '@/api/types'
-import { ClickRisk } from '@/components/sign/ClickSignPanel'
+import { CLICK_RISK } from '@/api/click'
+import { Switch } from '@/components/ui/switch'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { CopyButton } from '../../ticket/Header'
 import { Section } from '../../ticket/shared'
 import { fmtDateTime } from '@/lib/time'
+
+const CLICK_RISK_SHORT = 'One click signs for you from this browser on this computer; anyone using this browser session, and agents running as you, could approve. You can turn it off any time.'
 
 /** Refusals after which nothing changed: the signer said so before (or instead of) moving anything. */
 /** The shortest passphrase core accepts (custody/strength.py MIN_CHARS); core still judges the strength. */
@@ -113,6 +116,7 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
   const terminalOn = !!card && !on && card.custody === 'convenience'
   // Off with a key in the key store moves it back under a new passphrase (V3-D31); with another custody it is the flag only.
   const moveBack = !!card && card.custody === 'convenience'
+  const canFlip = owner && !!card && card.problem !== 'dev_host' && card.switchable !== false && !terminalOn
   const newOk = [...pass].length >= MIN_NEW_PASSPHRASE && pass === pass2
   const submit = async (body: ClickSwitch) => {
     if (inFlight.current) return
@@ -138,16 +142,31 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
   }
 
   return (
-    <Section title="Sign in the dashboard">
+    <Section title="Approving">
       <div data-testid="workspace-card-signing" className="space-y-3 text-[13px]">
-        <ClickRisk />
-        {card?.risk_ack && <p>Risk notice acknowledged on <time dateTime={card.risk_ack}>{fmtDateTime(card.risk_ack)}</time></p>}
-        <p data-testid="signing-state">
+        <div className="flex items-start gap-3">
+          <div className="min-w-0 flex-1 space-y-1">
+            <p id="one-click-label" className="text-[14px] font-medium">Approve with one click on this computer</p>
+            <p data-testid="click-risk" className="text-text-muted">{CLICK_RISK_SHORT}</p>
+          </div>
+          <Switch
+            checked={on}
+            aria-labelledby="one-click-label"
+            disabled={!canFlip || mode !== 'idle'}
+            onCheckedChange={() => open(on ? 'off' : 'on')}
+          />
+        </div>
+        <details className="text-[12px] text-text-muted">
+          <summary className="cursor-pointer">Details</summary>
+          <p className="mt-1" data-testid="click-risk-full">{CLICK_RISK}</p>
+        </details>
+        {card?.risk_ack && <p className="text-text-muted">Risk notice acknowledged on <time dateTime={card.risk_ack}>{fmtDateTime(card.risk_ack)}</time></p>}
+        <p data-testid="signing-state" className={on && card?.available ? "sr-only" : "text-text-muted"}>
           {on && card?.available
-            ? 'On: actions can be signed here with one click. Hosts with approval settings offer other allowed methods under Other ways.'
+            ? 'On: you approve here with one click.'
             : on
-              ? `On, but not available now.${card?.problem ? ` ${signerProblem(card.problem)}` : ''} Sign in the terminal.`
-              : 'Off: every signature is made in the terminal with your passphrase.'}
+              ? `On, but not available now.${card?.problem ? ` ${signerProblem(card.problem)}` : ''} Approve in the terminal.`
+              : 'Off: you approve in the terminal with your passphrase.'}
         </p>
         {card?.problem === 'dev_host' && (
           <p data-testid="signing-dev-host" className="rounded-md border border-danger/40 bg-danger-soft px-3 py-2 text-danger">
@@ -156,8 +175,8 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
         )}
         {card?.problem === 'readers_old' && (
           <p data-testid="signing-readers-old">
-            <Link to="/settings/$tab" params={{ tab: 'devices' }} className="text-brand underline underline-offset-2 hover:no-underline">
-              See which devices need an update
+            <Link to="/settings/$tab" params={{ tab: 'members' }} className="text-brand underline underline-offset-2 hover:no-underline">
+              A device needs an update
             </Link>
           </p>
         )}
@@ -165,27 +184,15 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
           <p className="text-text-muted">Only an owner switches this.</p>
         ) : card && card.switchable === false ? (
           <p data-testid="signing-update" className="text-text-muted">
-            This orch version cannot switch it here. Update orch-core, or use the terminal:{' '}
+            This version of orch cannot switch it here. Update orch, or use the terminal:{' '}
             <Command command={on ? convenienceOffCommand(workspace.prefix) : convenienceOnCommand(workspace.prefix)} what={`orch host convenience ${on ? 'off' : 'on'}`} />
           </p>
         ) : terminalOn ? (
           <p data-testid="signing-terminal-on" className="text-text-muted">
-            Your key is already in this computer's key store, so there is no passphrase to check here. Switch it on in the terminal:{' '}
+            Your key is already saved on this computer, so there is no passphrase to check here. Switch it on in the terminal:{' '}
             <Command command={convenienceOnCommand(workspace.prefix)} what="orch host convenience on" />
           </p>
-        ) : mode === 'idle' ? (
-          <div className="flex justify-end">
-            {on ? (
-              <Button type="button" variant="outline" onClick={() => open('off')}>
-                Turn off
-              </Button>
-            ) : (
-              <Button type="button" onClick={() => open('on')}>
-                Turn on…
-              </Button>
-            )}
-          </div>
-        ) : mode === 'on' ? (
+        ) : mode === 'idle' ? null : mode === 'on' ? (
           <form
             className="space-y-2"
             onSubmit={(e) => {
@@ -201,7 +208,7 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
               <dt className="text-text-muted">Device key</dt>
               <dd className="min-w-0 break-all font-mono">{card?.device ?? "this computer's key for this workspace"}</dd>
               <dt className="text-text-muted">Change</dt>
-              <dd className="min-w-0">Moves to convenience custody: from your passphrase into this computer's key store</dd>
+              <dd className="min-w-0">Your key moves from passphrase protection to this computer's saved keys</dd>
             </dl>
             <Label htmlFor="signing-passphrase">Your passphrase for this workspace</Label>
             <p className="text-text-muted">Asked once, to prove the key is yours. It is not kept.</p>
@@ -290,7 +297,7 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
               </>
             ) : (
               <>
-                <p className="text-text-muted">Your key stays in this computer's key store; nothing here can sign while signing is off.</p>
+                <p className="text-text-muted">Your key stays saved on this computer; nothing here can sign while signing is off.</p>
                 <p data-testid="signing-move-back" className="text-text-muted">
                   To move it back under a passphrase, run in the terminal:{' '}
                   <Command command={custodyPassphraseCommand(workspace.prefix)} what="orch keys custody passphrase --in-place" />

@@ -24,7 +24,9 @@ __all__ = [
     "MAX_TOTAL_BYTES",
     "Package",
     "PackageError",
+    "check_listing",
     "check_path",
+    "from_files",
     "package_digest",
     "read_package",
 ]
@@ -86,6 +88,50 @@ def _check_file_name(name: str, shown: str) -> None:
         raise PackageError(f"{ascii(shown)}: compiled files ({', '.join(REFUSED_SUFFIXES)}) are not allowed")
 
 
+def check_listing(sizes: dict[str, int]) -> None:
+    """The §8.1 rules on a listing ``{path: size}`` (a git tree, or the files of a read package) before any content is
+    read: every path valid, no two names equal when case is ignored in one directory, no name both a file and a
+    directory, files and directories within the count cap, every size and the total within the caps, the manifest at
+    the top and small enough. Raises :class:`PackageError`. Pure: nothing is opened."""
+    if MANIFEST_FILE not in sizes:  # also an empty package
+        raise PackageError(f"no {MANIFEST_FILE} at the top of the package")
+    dirs: set[str] = set()
+    children: dict[str, set[str]] = {}
+    total = 0
+    for rel, size in sizes.items():
+        check_path(rel)
+        parts = rel.split("/")
+        for i in range(1, len(parts)):
+            dirs.add("/".join(parts[:i]))
+        if size > MAX_FILE_BYTES:
+            raise PackageError(f"{ascii(rel)}: larger than {MAX_FILE_BYTES} bytes")
+        total += size
+        if total > MAX_TOTAL_BYTES:
+            raise PackageError(f"more than {MAX_TOTAL_BYTES} bytes in all")
+    if len(sizes) + len(dirs) > MAX_FILES:
+        raise PackageError(f"more than {MAX_FILES} files and directories")
+    if dirs & set(sizes):
+        raise PackageError("a name is both a file and a directory")
+    for rel in [*sizes, *dirs]:
+        parent, _, name = rel.rpartition("/")
+        children.setdefault(parent, set()).add(name)
+    for parent, names in children.items():
+        if len({n.casefold() for n in names}) != len(names):
+            raise PackageError(f"{parent or './'}: two names equal when case is ignored")
+    if sizes[MANIFEST_FILE] > MAX_MANIFEST_BYTES:
+        raise PackageError(f"{MANIFEST_FILE}: larger than {MAX_MANIFEST_BYTES} bytes")
+
+
+def from_files(files: dict[str, bytes]) -> Package:
+    """The package of an in-memory ``{path: bytes}`` map under the rules of §8.1 (the same verdict as
+    :func:`read_package` gives for a directory with these files), or :class:`PackageError`. The map is copied."""
+    if not all(isinstance(p, str) and isinstance(b, bytes) for p, b in files.items()):
+        raise PackageError("a package maps paths to bytes")
+    check_listing({p: len(b) for p, b in files.items()})
+    copy = dict(files)
+    return Package(copy, package_digest(copy))
+
+
 def _open_dir(path: str, dir_fd: int | None) -> int:
     flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
     return os.open(path, flags, dir_fd=dir_fd)
@@ -145,11 +191,7 @@ def read_package(directory: str | os.PathLike[str], *, dir_fd: int | None = None
         for dfd, _, _ in stack:
             if dfd != fd:
                 os.close(dfd)
-    if MANIFEST_FILE not in files:
-        raise PackageError(f"no {MANIFEST_FILE} at the top of the package")
-    if len(files[MANIFEST_FILE]) > MAX_MANIFEST_BYTES:
-        raise PackageError(f"{MANIFEST_FILE}: larger than {MAX_MANIFEST_BYTES} bytes")
-    return Package(files, package_digest(files))
+    return from_files(files)  # the rules that need no directory are one function, so both give the same verdict
 
 
 def _read_file(name: str, dfd: int, shown: str) -> bytes:

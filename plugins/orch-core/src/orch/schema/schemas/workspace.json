@@ -302,6 +302,23 @@
               "type": "null"
             }
           ]
+        },
+        "addons": {
+          "type": "object",
+          "description": "G6: the signed settings of installed add-ons, by add-on name.",
+          "propertyNames": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/addonName"
+          },
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
         }
       },
       "additionalProperties": false,

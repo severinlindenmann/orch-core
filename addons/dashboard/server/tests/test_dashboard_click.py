@@ -1300,21 +1300,13 @@ def test_already_signed_and_an_unreadable_record_never_cancel_or_forget_the_requ
     assert client.post(url(stub, "state"), json={"request_id": REQ}, headers=hdr(token)).json()["state"] == "submitted"
 
 
-# -- ONE signing path per workspace (owner decision, 12 Oct 2026) -----------------------------------------------
+# -- the terminal hand-off stays available where click-to-sign is on (#1170) -----------------------------------------
 
 
-def test_a_click_workspace_prepares_no_terminal_handoff(client, token, stub, script, rich):
+def test_a_click_workspace_still_prepares_a_terminal_handoff(client, token, stub, script, rich):
     res = client.post(f"/api/w/{stub.ws}/handoff", json=comment(1), headers=hdr(token))
-    err = res.json()["error"]
-    assert res.status_code == 409 and err["code"] == "sign.click_only"
-    assert "convenience off" in err["message"] and "Sign" in err["message"]
-    assert client.app.state.handoffs.active == {}
-
-
-def test_an_enabled_but_unavailable_signer_is_still_click_only(client, token, stub, script, rich):
-    script.available = False  # e.g. no key right now: an honest error, never a hand-off
-    res = client.post(f"/api/w/{stub.ws}/handoff", json=comment(1), headers=hdr(token))
-    assert res.json()["error"]["code"] == "sign.click_only"
+    assert res.status_code == 200, res.text
+    assert res.json().get("code")  # the code for `orch sign`
 
 
 def test_the_flag_flipped_off_ends_the_open_click_request(client, token, stub, script, host_check, rich):
@@ -1625,12 +1617,6 @@ def test_runner_grant_prepares_a_deposit_grant_with_hours_and_scope_only(client,
 def test_runner_grant_bodies_are_closed(client, token, stub, deposits, body):
     assert prepare(client, token, stub, body).status_code == 400
     assert [c for cl in deposits.clients for c in cl.calls if c[0] == "prepare"] == []
-
-
-def test_runner_grant_handoff_is_refused_where_the_workspace_signs_by_one_click(client, token, stub, deposits):
-    # B11-P1: the terminal hand-off exists for terminal-approval workspaces; a one-click workspace keeps its refusal.
-    res = client.post(f"/api/w/{stub.ws}/handoff", json=runner_grant(), headers=hdr(token))
-    assert res.status_code == 409 and res.json()["error"]["code"] == "sign.click_only"
 
 
 def test_runner_grant_view_is_checked_against_the_callers_grant(client, token, stub, deposits, host_check):
@@ -1963,6 +1949,86 @@ def test_a_stopped_sequence_says_which_ticket_exists_and_that_the_agent_access_i
     host_check.key = None
     plain = client.post(url(stub, "state"), json={"request_id": rid}, headers=hdr(token)).json()
     assert "key" not in plain and "progress" not in plain
+
+
+def test_a_sequence_that_ends_in_the_agent_access_still_answers_its_ticket_key(client, token, stub, script, host_check):
+    """The page starts the agent for exactly the ticket this signature created: its key must reach it when the sequence
+    ends in a deposit (the access), as it does when there is none. The deposit fields stay the closed set."""
+    script.features = ["custody", "sequence"]
+    res = prepare(client, token, stub, {**SEQUENCE, "agent": {"hours": 24}})
+    assert res.status_code == 200, res.text
+    rid = res.json()["request_id"]
+    base = script.handler
+
+    def handler(op, args):
+        if op == "sign":
+            script.states[args["request_id"]] = "submitted"
+            return {
+                "result": {"key": "DEMO-0044", "seq": 7, "secret": SECRET},
+                "duplicate": False,
+                "deposit": "confirmed",
+                "deposit_id": rid[3:],
+                "grant": GRANT,
+            }
+        return base(op, args)
+
+    script.clients[0].handler = handler
+    signed = client.post(url(stub, "sign"), json={"request_id": rid, "view_digest": HASH}, headers=hdr(token))
+    assert signed.status_code == 200, signed.text
+    body = signed.json()
+    assert body["key"] == "DEMO-0044" and body["seq"] == 7 and body["deposit"] == "confirmed"
+    assert SECRET not in signed.text and "result" not in body
+
+
+def test_the_key_comes_from_the_hosts_row_when_the_last_steps_result_has_none(client, token, stub, script, host_check):
+    """The deposit's result is the grant's: it carries no ticket key. The host's own row of the request does."""
+    script.features = ["custody", "sequence"]
+    rid = prepare(client, token, stub, {**SEQUENCE, "agent": {"hours": 24}}).json()["request_id"]
+    base = script.clients[0].handler
+
+    def handler(op, args):
+        if op == "sign":
+            script.states[args["request_id"]] = "submitted"
+            return {
+                "result": {"data": {"grant": GRANT}},
+                "duplicate": False,
+                "deposit": "confirmed",
+                "deposit_id": rid[3:],
+                "grant": GRANT,
+            }
+        return base(op, args)
+
+    script.clients[0].handler = handler
+    host_check.key = "DEMO-0045"
+    signed = client.post(url(stub, "sign"), json={"request_id": rid, "view_digest": HASH}, headers=hdr(token))
+    assert signed.status_code == 200, signed.text
+    assert signed.json()["key"] == "DEMO-0045" and signed.json()["deposit"] == "confirmed"
+
+
+def test_an_odd_ticket_key_or_seq_is_not_passed_on(client, token, stub, script, host_check):
+    """The key must be a ticket key (from the result and from the host's row alike); seq must be a real integer."""
+    script.features = ["custody", "sequence"]
+    rid = prepare(client, token, stub, {**SEQUENCE, "agent": {"hours": 24}}).json()["request_id"]
+    base = script.clients[0].handler
+    answer = {}
+
+    def handler(op, args):
+        if op == "sign":
+            script.states[args["request_id"]] = "submitted"
+            return {
+                "result": answer,
+                "duplicate": False,
+                "deposit": "confirmed",
+                "deposit_id": rid[3:],
+                "grant": GRANT,
+            }
+        return base(op, args)
+
+    script.clients[0].handler = handler
+    answer.update(key="demo-1; rm", seq=True)
+    host_check.key = "not a key"
+    body = client.post(url(stub, "sign"), json={"request_id": rid, "view_digest": HASH}, headers=hdr(token)).json()
+    assert "key" not in body and "seq" not in body
 
 
 # --- R3 part B: pasted screenshots ---------------------------------------------------------------------------------

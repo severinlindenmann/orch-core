@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from orch.addons.settings_value import KEY as ADDONS_KEY
+
 # a stdlib-only leaf (no custody, no I/O): the dashboard side may import it (§0.8.6 "Packaging and versions")
 from orch.host.errors import DETAIL_KEYS as _HOST_DETAIL
 from orch.host.errors import DEVICE_ID, DEVICES_MAX
@@ -143,11 +145,12 @@ WORD_OPS = frozenset(
 
 
 #: ``settings.set`` keys that need more than a click. ``publish`` decides where shared files go: terminal only (the
-#: dashboard signs it through ``orch sign CODE``). ``repos``, ``sign_methods`` and ``grant_hours`` need the typed word.
+#: dashboard signs it through ``orch sign CODE``). ``repos``, ``sign_methods`` and ``grant_hours`` need the typed word,
+#: and so does ``addons`` (free-form values an add-on reads; owner choice, G6).
 #: ``models`` (a pick from a closed list, no authority change) is a click (run 8, owner item 1.6).
 #: ``icon`` (the workspace icon) is deliberately in none of the sets: a closed-list cosmetic choice, signed by a click.
 SETTINGS_TERMINAL_KEYS = frozenset({"publish"})
-SETTINGS_WORD_KEYS = frozenset({"repos", "sign_methods", "grant_hours"})
+SETTINGS_WORD_KEYS = frozenset({"repos", "sign_methods", "grant_hours", ADDONS_KEY})
 _RANK = {"click": 0, "word": 1, "terminal": 2}
 
 

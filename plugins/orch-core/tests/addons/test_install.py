@@ -9,7 +9,7 @@ from orch import canon
 from orch.addons import install
 from orch.addons.install import load_registry
 from orch.addons.package import read_package
-from tests.addons.helpers import make_package, manifest
+from tests.addons.helpers import installed_package, manifest, record_install
 from tests.ops.humans import agent, hws, me  # noqa: F401  (fixtures)
 
 
@@ -36,7 +36,7 @@ def addons(hws):
 def test_list_shows_installed_packages_that_are_not_granted(hws, me):
     r = me("addon", "list")
     assert r.code == 0 and r.first == "ok addon.list 0"
-    make_package(hws.store_dir)
+    installed_package(hws)
     r = me("addon", "list", "--json")
     assert r.doc["data"]["addons"] == [{"name": "echo", "version": "1.0.0", "enabled": False, "state": "not_granted"}]
     assert "echo 1.0.0 not granted" in me("addon", "list").out
@@ -44,7 +44,7 @@ def test_list_shows_installed_packages_that_are_not_granted(hws, me):
 
 
 def test_the_owner_grants_a_package_and_the_event_carries_digest_capabilities_and_binds(hws, me):
-    d = make_package(hws.store_dir)
+    d = installed_package(hws)
     r = me("addon", "grant", "echo")
     assert r.code == 0, r.err
     assert r.first.startswith("ok addon.granted echo seq=")
@@ -81,7 +81,7 @@ def test_the_owner_grants_a_package_and_the_event_carries_digest_capabilities_an
 
 
 def test_an_agent_cannot_grant_disable_or_purge(hws, me, agent):
-    make_package(hws.store_dir)
+    installed_package(hws)
     for verb in ("grant", "disable", "purge"):
         r = agent("addon", verb, "echo", "--json")
         assert r.code != 0 and r.err_code == "human_only", (verb, r.out, r.err)
@@ -89,7 +89,7 @@ def test_an_agent_cannot_grant_disable_or_purge(hws, me, agent):
 
 
 def test_only_an_owner_may_grant(hws, me):
-    make_package(hws.store_dir)
+    installed_package(hws)
     m = hws.add_member("maria", "maintainer")
     hws.act_as(m)
     r = me("addon", "grant", "echo", "--json")
@@ -106,7 +106,7 @@ def test_a_missing_package_and_a_bad_name(hws, me):
 
 
 def test_a_package_that_breaks_a_rule_is_not_granted(hws, me, tmp_path):
-    d = make_package(hws.store_dir)
+    d = installed_package(hws)
     secret = tmp_path / "secret"
     secret.write_text("s")
     os.symlink(secret, d / "link")
@@ -123,7 +123,7 @@ def test_a_package_that_breaks_a_rule_is_not_granted(hws, me, tmp_path):
 
 
 def test_disable_keeps_the_grant_and_a_new_grant_enables_it_again(hws, me):
-    make_package(hws.store_dir)
+    installed_package(hws)
     assert me("addon", "grant", "echo").code == 0
     r = me("addon", "disable", "echo")
     assert r.code == 0 and r.first.startswith("ok addon.disabled echo seq=")
@@ -135,7 +135,7 @@ def test_disable_keeps_the_grant_and_a_new_grant_enables_it_again(hws, me):
 
 
 def test_purge_then_grant_starts_again(hws, me):
-    make_package(hws.store_dir)
+    installed_package(hws)
     me("addon", "grant", "echo")
     r = me("addon", "purge", "echo")
     assert r.code == 0 and r.first.startswith("ok addon.purged echo seq=")
@@ -147,7 +147,7 @@ def test_purge_then_grant_starts_again(hws, me):
 
 
 def test_a_package_changed_after_the_grant_is_listed_as_changed_and_registers_nothing(hws, me):
-    d = make_package(hws.store_dir)
+    d = installed_package(hws)
     me("addon", "grant", "echo")
     (d / "addon.py").write_text("print('evil')\n")
     assert "echo 1.0.0 changed" in me("addon", "list").out
@@ -159,7 +159,7 @@ def test_a_package_changed_after_the_grant_is_listed_as_changed_and_registers_no
 
 
 def test_a_dry_run_signs_nothing(hws, me):
-    make_package(hws.store_dir)
+    installed_package(hws)
     n = len(hws.read_events("workspace"))
     r = me("addon", "grant", "echo", "--dry-run")
     assert r.code == 0 and "dry-run" in r.out
@@ -174,7 +174,7 @@ def test_the_grant_changes_the_gate_hash_of_a_bound_gate_and_purge_restores_it(h
     uid = s.uid_of(key)
     before = s.ticket(uid).gates["plan"].hash
     s.close()
-    make_package(hws.store_dir)
+    installed_package(hws)
     me("addon", "grant", "echo")
     s = hws.other()
     granted = s.ticket(uid).gates["plan"].hash
@@ -193,7 +193,7 @@ def test_the_owner_reads_what_runs_before_the_passphrase(hws, me):
         needs=[{"id": "big", "when": ["gt", ["field", "points"], 3], "who": ["owner"], "text": "large"}],
     )
     man["entry"] = {"cmd": ["python3", "{pkg}/addon.py", "--flag", "a b"]}
-    make_package(hws.store_dir, man=man)
+    installed_package(hws, man=man)
     assert me("addon", "grant", "echo").code == 0
     text = hws.reviews[-1]
     assert hws.expects[-1] == "echo"  # the owner types the addon's name
@@ -213,7 +213,7 @@ def test_the_owner_reads_what_runs_before_the_passphrase(hws, me):
 
 
 def test_a_declined_review_signs_nothing(hws, me):
-    make_package(hws.store_dir)
+    installed_package(hws)
     hws.confirm = False
     r = me("addon", "grant", "echo", "--json")
     assert r.code != 0 and "nothing was signed" in r.doc["error"]["message"]
@@ -221,13 +221,14 @@ def test_a_declined_review_signs_nothing(hws, me):
 
 
 def test_the_review_of_a_regrant_says_what_changed(hws, me):
-    d = make_package(hws.store_dir)
+    d = installed_package(hws)
     me("addon", "grant", "echo")
     (d / "addon.py").write_text((d / "addon.py").read_text() + "\n# changed\n")
     man = manifest(version="1.1.0", capabilities=["serve_http", "network"])
     man["fields"]["points"]["set_by"] = ["owner"]
     del man["fields"]["done"]
     (d / "orch-addon.json").write_text(__import__("json").dumps(man))
+    record_install(hws)  # the update is installed (what a signed update leaves)
     assert me("addon", "grant", "echo").code == 0
     text = hws.reviews[-1]
     assert "previous grant: 1.0.0" in text
@@ -245,7 +246,7 @@ def test_text_from_the_package_is_shown_as_escaped_ascii(hws, me):
     man = manifest()
     man["needs"] = [{"id": "r", "when": True, "who": ["owner"], "text": "caf\u00e9 \u0430 look-alike"}]
     man["entry"] = {"cmd": ["python3", "{pkg}/caf\u00e9"]}
-    make_package(hws.store_dir, man=man)
+    installed_package(hws, man=man)
     assert me("addon", "grant", "echo").code == 0
     text = hws.reviews[-1]
     assert text.isascii() and "caf\\xe9" in text and "\\u0430" in text
@@ -254,29 +255,30 @@ def test_text_from_the_package_is_shown_as_escaped_ascii(hws, me):
 def test_a_control_character_in_the_manifest_never_reaches_the_prompt(hws, me):
     man = manifest()
     man["needs"] = [{"id": "r", "when": True, "who": ["owner"], "text": "evil \x1b[31m text"}]
-    make_package(hws.store_dir, man=man)
+    installed_package(hws, man=man)
     r = me("addon", "grant", "echo", "--json")
     assert r.code != 0 and r.err_code == "invalid.input" and not hws.reviews
 
 
 def test_a_heading_taken_by_another_granted_addon_is_refused(hws, me):
-    make_package(hws.store_dir)
+    installed_package(hws)
     assert me("addon", "grant", "echo").code == 0
     other = manifest(name="other", title="Other")
     other["fields"] = {}
     other["sections"] = [{"id": "n", "heading": "echo  notes".replace("  ", " "), "after": "plan", "types": ["bug"]}]
     other["sections"][0]["heading"] = "ECHO NOTES"
     other["needs"] = []
-    make_package(hws.store_dir, "other", man=other)
+    installed_package(hws, "other", man=other)
     r = me("addon", "grant", "other", "--json")
     assert r.code != 0 and r.err_code == "invalid.input" and "already used" in r.doc["error"]["message"]
     other["sections"][0]["heading"] = "Other notes"
     (hws.store_dir / "addons" / "other" / "orch-addon.json").write_text(__import__("json").dumps(other))
+    record_install(hws, "other")  # the corrected package is installed again
     assert me("addon", "grant", "other").code == 0
 
 
 def test_disable_and_purge_are_idempotent_and_purge_says_what_it_removed(hws, me):
-    make_package(hws.store_dir)
+    installed_package(hws)
     me("addon", "grant", "echo")
     uid = hws.new_ticket("t")
     hws.store.refresh()
@@ -303,7 +305,7 @@ def test_disable_and_purge_are_idempotent_and_purge_says_what_it_removed(hws, me
 
 
 def test_list_says_the_state_and_what_to_do_about_a_changed_package(hws, me):
-    d = make_package(hws.store_dir)
+    d = installed_package(hws)
     me("addon", "grant", "echo")
     (d / "addon.py").write_text("# other\n")
     r = me("addon", "list", "--json")
@@ -399,7 +401,7 @@ def test_a_builtin_that_needs_settings_is_not_granted_until_they_are_set(hws, me
 
 
 def test_preview_is_read_only_and_equals_the_grant_that_follows(hws, me):
-    d = make_package(hws.store_dir)
+    d = installed_package(hws)
     before = me("addon", "preview", "echo", "--json")
     assert before.code == 0 and before.doc["data"]["on"] is False and before.doc["data"]["needs"] is None
     assert not ws_events(hws, "addon.granted")

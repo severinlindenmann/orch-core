@@ -62,6 +62,7 @@ def status(code: str) -> int:
         "peer.denied",
         "host.required",
         "sign.hub_only",
+        "market.actor_refused",
     } or code.startswith("grant."):
         return 403
     if code in {"intent.ended", "intent.done", "intent.expired"}:
@@ -104,7 +105,7 @@ def response(code: str, http: int):
     return JSONResponse({"ok": False, "error": {"code": code, "message": code, "retryable": False}}, status_code=http)
 
 
-FIX_COMMAND_CODES = ("sign.convenience_readers", "sign.click_only")
+FIX_COMMAND_CODES = ("sign.convenience_readers",)
 
 
 def plain_argv(fix) -> bool:

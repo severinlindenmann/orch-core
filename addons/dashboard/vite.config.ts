@@ -105,6 +105,7 @@ export default defineConfig(({ command }) => ({
     globals: true,
     setupFiles: ['./src/test-setup.ts'],
     css: false,
+    exclude: ['**/node_modules/**', '**/dist/**', 'e2e/**'], // the Playwright specs run under playwright, not vitest
     // Headroom for loaded machines: jsdom renders are CPU-bound, and with several runs/CPU-starved workers even 300 ms tests passed 5 s.
     testTimeout: 10000,
   },

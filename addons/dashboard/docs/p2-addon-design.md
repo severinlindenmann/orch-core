@@ -256,12 +256,8 @@ person. The dashboard adds:
   means a different path or signer binding. `human.pending` determines whether an op+key request is open:
   if so, show its expiry; otherwise offer explicit "Start again" with a prior-signature warning.
   Neither dashboard nor signer sends `auth.session`, so a restart preserves the host binding.
-  **One signing path per workspace (owner decision, 12 Oct 2026, via orch-d6; coordination.md line 166; host side core
-  #434).** Where click-to-sign is ON (the signer's flag for that workspace), the dashboard offers only Sign: there is no
-  "Sign in the terminal instead", and `/handoff` prepares are refused with `sign.click_only` ("This workspace signs in the
-  dashboard"; the host refuses them too once #434 is in). If the signer cannot sign there (`record_unavailable`, no key,
-  helper down) the dialog says so honestly and names `orch host convenience off --workspace W`; it never falls back to a
-  hand-off. Where it is OFF, the terminal hand-off works as before and the click routes have nothing to do. The intent
+  **One signing path per workspace: withdrawn (owner, 24 Oct 2026, #1170).** Where click-to-sign is ON the dashboard signs
+  by click; the Terminal hand-off stays available for terminal-only ops and as a backup. The intent
   function is the same on both workspace types (no path offset); `retry` advances only on "Do it again" / "Start again".
   Flag flip: before a click prepare, `human.pending` (no arguments, our link) is read for an open (prepared or bound)
   hand-off request that has a code, with the same op and key; if one exists the prepare is refused ("An attempt from the

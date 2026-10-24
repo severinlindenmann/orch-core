@@ -8,7 +8,8 @@ import { addonActive } from '@/api/addons'
 import { AddonBadge, useAddons, useRunAddonAction } from '@/addon-ui'
 import { canSpawnAgent } from '@/addon-ui/capabilities'
 import { hasFeature, isRealHost } from '@/api/features'
-import { StartAgentDialog } from '@/app/terminal/real/StartAgentDialog'
+import { StartAgentDialog, lastHarness } from '@/app/terminal/real/StartAgentDialog'
+import { StartAgentSplit } from '@/app/terminal/real/StartAgentSplit'
 import { precheckReason } from '@/addon-ui/SpawnConfirm'
 import { useWorkspace } from '@/app/workspace'
 import { workspaceOfTicket } from '@/api/workspaces'
@@ -76,6 +77,8 @@ export interface StartAgent {
   /** The primary button may offer it: nothing blocks it and the ticket is in a state an agent works on. */
   startable: boolean
   run: () => void
+  /** A real host: the same dialog in choose mode ("Change agent or model"). Absent in the mock, where the add-on has its own flow. */
+  choose?: () => void
   /** The start-agent addon's own title, for its badge in the mock (none on a real host). */
   addon?: { name: string; title?: string }
   node: React.ReactNode
@@ -89,7 +92,7 @@ function useStartAgent(ticket: TicketDocument, viewer: Viewer): StartAgent {
   const { workspace } = useWorkspace()
   const { data: addons } = useAddons()
   const r = useRunAddonAction(ticket.key)
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState<'start' | 'choose' | null>(null)
   const real = isRealHost()
   const pkg = addons?.find((a) => a.name === START_AGENT)
   const finished = ticket.status === 'done' || ticket.status === 'closed'
@@ -98,15 +101,16 @@ function useStartAgent(ticket: TicketDocument, viewer: Viewer): StartAgent {
     : !!workspace && addonActive(workspace, START_AGENT) && canSpawnAgent(pkg, workspace.addons[START_AGENT]) && !finished
   const roleBlocked = real ? !can(viewer.role, 'ticket.act') : !r.allowed(START_AGENT, 'start')
   const reason = roleBlocked ? VIEWER_REASON : agentWorks(ticket) ? WORKING_REASON : real ? null : precheckReason(ticket, viewer.name)
-  const run = () => (real ? setOpen(true) : r.run(START_AGENT, 'start'))
+  const run = () => (real ? setOpen('start') : r.run(START_AGENT, 'start'))
+  const choose = real ? () => setOpen('choose') : undefined
   const startable = shown && !reason && ticket.status !== 'testing'
   const node = (
     <>
       {r.dialog}
-      {open && workspace && <StartAgentDialog ws={workspace.id} ticket={ticket.key} open onClose={() => setOpen(false)} />}
+      {open && workspace && <StartAgentDialog key={open} ws={workspace.id} ticket={ticket.key} open choose={open === 'choose'} onClose={() => setOpen(null)} />}
     </>
   )
-  return { shown, reason, startable, run, node, addon: real ? undefined : { name: START_AGENT, title: pkg?.title } }
+  return { shown, reason, startable, run, choose, node, addon: real ? undefined : { name: START_AGENT, title: pkg?.title } }
 }
 
 /** " · why it is their turn", or nothing when the host gave no reason (no dangling separator). */
@@ -183,6 +187,12 @@ export function ActionsMenu({ ticket, viewer, sign, jump, start, signing = false
             </span>
           </DropdownMenuItem>
         )}
+        {start.shown && start.choose && (
+          <DropdownMenuItem disabled={!!start.reason} onSelect={start.choose} data-testid="real-start-agent-choose-item">
+            <Bot />
+            Change agent or model…
+          </DropdownMenuItem>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   )
@@ -190,6 +200,7 @@ export function ActionsMenu({ ticket, viewer, sign, jump, start, signing = false
 
 /** The header's one primary button: what the viewer should do next (a quiet status when an agent works and nothing waits). */
 function PrimaryButton({ ticket, viewer, sign, jump, start, signing }: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void; start: StartAgent; signing: boolean }) {
+  const { workspace } = useWorkspace()
   const av = availableActions(ticket, viewer)
   const blocked = blockedApproval(ticket, viewer)
   // A gate that waits for someone else (shown disabled below) comes before offering to start an agent.
@@ -221,6 +232,8 @@ function PrimaryButton({ ticket, viewer, sign, jump, start, signing }: { ticket:
     else if (p.kind === 'start') start.run()
     else sign({ kind: 'approve', gate: p.gate })
   }
+  // A real host: Start agent is a split button, the main part starts at once, the chevron changes the agent or model first.
+  if (p.kind === 'start' && start.choose && workspace) return <StartAgentSplit harness={lastHarness(workspace.id)} onStart={start.run} onChoose={start.choose} />
   return (
     <Button size="sm" onClick={run}>
       {p.kind === 'answer' ? <CircleHelp /> : p.kind === 'start' ? <Bot /> : <Check />}

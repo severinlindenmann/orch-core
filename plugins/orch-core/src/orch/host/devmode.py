@@ -101,6 +101,8 @@ class DevHost:
     sandbox_id: str
     person_id: str
     relay_origin: str
+    #: the sandbox's test marketplace ``(url, keys)`` from ``dev.json`` (V3 G3, C5), or ``None``
+    market: tuple[str, tuple[str, ...]] | None = None
 
     @property
     def id8(self) -> str:
@@ -234,7 +236,9 @@ def prove(state_dir: Path, env: Mapping[str, str]) -> DevHost:
             raise refused("no_person", "the manifest names no sandbox person (person_id, written after orch init)")
         if _custody_convenience(state):
             raise refused("custody_convenience", "a person custody selects convenience: the dev path never mixes it in")
-        return DevHost(root, (st.st_dev, st.st_ino), manifest["id"], person, dev["relay_origin"])
+        m = dev.get("market")
+        market = None if m is None else (m["url"], tuple(m["keys"]))
+        return DevHost(root, (st.st_dev, st.st_ino), manifest["id"], person, dev["relay_origin"], market)
     finally:
         for d in (hfd, sfd, fd):
             if d >= 0:
@@ -340,6 +344,16 @@ def dev_gate(service: Any) -> DevGate | None:
     if reason is not None:
         return None
     return DevGate(dev.sandbox_id, service.workspace_id)
+
+
+def test_market(service: Any) -> tuple[str, tuple[str, ...]] | None:
+    """The test marketplace ``(url, keys)`` of a sandbox workspace on a dev host (C5), or ``None``. Only a dev host that
+    read the entry from its own ``dev.json`` AND serves a workspace that passes S1 to S6 now has one; a normal host, a
+    dev host without the key and every real workspace get ``None``. Runs on the workspace's worker thread."""
+    dev = getattr(service, "dev", None)
+    if dev is None or dev.market is None or dev_gate(service) is None:
+        return None
+    return dev.market
 
 
 def gated(service: Any) -> bool:

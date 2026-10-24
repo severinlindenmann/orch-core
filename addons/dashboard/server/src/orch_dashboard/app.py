@@ -19,6 +19,7 @@ from . import (
     handoff,
     hub,
     hubapprove,
+    market_routes,
     phone,
     reads,
     riskack,
@@ -57,8 +58,6 @@ SETTINGS_TABS = (
     "gates",
     "grants",
     "addons",
-    "records",
-    "devices",
     "hub",
 )  # HOST_TABS (settings/tabs.ts)
 SPA_ROUTES = (
@@ -77,6 +76,7 @@ SPA_ROUTES = (
     "worktrees",
     "terminals",
     "explorer",
+    "addons",
     "shares",
     "activity",
     "usage",
@@ -186,9 +186,11 @@ def create_app(port: int, gateway=None, auth=None, static=None, setup_proxy=None
         return {"sub_cursor": gateway.call(ws, "ticket.query", {"limit": 1})["sub_cursor"]}
 
     @app.get("/api/session")
-    def session_info():
+    def session_info(request: Request):
         workspaces = gateway.workspaces()
         return {
+            # How this browser session was opened: "local" (a launch code from this computer; the page hides Log out).
+            "login": auth.login_kind(request.state.token) or "unknown",
             "features": sorted({f for ws in workspaces for f in ws.features}),
             "workspaces": {ws.id: ws.features for ws in workspaces},
         }
@@ -242,6 +244,7 @@ def create_app(port: int, gateway=None, auth=None, static=None, setup_proxy=None
     riskack.register(app, gateway)
     phone.register(app, gateway)
     addon_routes.register(app, gateway)
+    market_routes.register(app, gateway)
     activity_routes.register(app, gateway)
     terminals.register(app, gateway, tickets)
     agents.register(app, gateway)

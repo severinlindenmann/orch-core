@@ -25,6 +25,7 @@ from __future__ import annotations
 from typing import Any
 
 from orch import repopaths
+from orch.addons.settings_value import KEY as ADDONS_KEY
 from orch.canon import HashError, canonical_policy
 from orch.model import claims
 from orch.model.types import GRANT_MAX_HOURS
@@ -128,6 +129,13 @@ _SET = {
             ]
         },
         "models": _MODELS,
+        ADDONS_KEY: {  # G6: the settings of ONE add-on (checked by the host against its granted manifest)
+            "type": "object",
+            "minProperties": 1,
+            "maxProperties": 1,
+            "propertyNames": {"pattern": r"^[a-z][a-z0-9-]{0,39}(?![\s\S])"},
+            "additionalProperties": {"oneOf": [{"type": "object"}, {"type": "null"}]},
+        },
         "icon": _ICON,
         "repos": {
             "type": "object",
@@ -237,13 +245,20 @@ def _enabling_routing(ctx: Context) -> bool:
 
 
 def handle_settings(ctx: Context, args: dict[str, Any]) -> Result:
-    from orch.addons import settings_needs
+    from orch.addons import settings_needs, settings_value
 
     h = _Human(ctx, "settings.set")
     _owner(h, "settings.set")
     changes = args["set"]
     if changes.get("models") is not None and not _routing_on(h) and not _enabling_routing(ctx):
         raise OrchError("invalid.input", "model routing is off: turn it on in Settings, Add-ons first")
+    if ADDONS_KEY in changes:  # G6: the general bounds, then the granted schema, on the state as it is now
+        if len(changes) != 1:
+            raise OrchError("invalid.input", "add-on settings are changed on their own")
+        with h.store.locked():
+            why = settings_value.check_granted(h.store, changes[ADDONS_KEY])
+        if why is not None:
+            raise OrchError("invalid.input", f"add-on settings: {why}")
     refusal = settings_needs.clear_refusal(changes, h.store.state.workspace.addons)  # AE4: never on without settings
     if refusal is not None:
         raise OrchError("invalid.input", refusal)

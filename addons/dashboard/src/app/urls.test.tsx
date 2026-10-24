@@ -13,6 +13,7 @@ describe('permanent URLs: the address <-> in-app path mapping', () => {
   const ROUTES: [inApp: string, address: string][] = [
     ['/', '/w/DEMO'],
     ['/board', '/w/DEMO/board'],
+    ['/addons', '/w/DEMO/addons'],
     ['/tickets', '/w/DEMO/tickets'],
     ['/tickets/new', '/w/DEMO/tickets/new'],
     ['/artifacts', '/w/DEMO/artifacts'],
@@ -212,9 +213,9 @@ describe('permanent URLs in the app', () => {
     const { router, address } = renderApp('/w/DEMO/board', { viewer: 'p_sev' })
     await screen.findByRole('heading', { level: 1, name: 'Board' }, T)
     await act(async () => void router.history.push('/w/CLI/board'))
-    await waitFor(() => expect(within(switcher()).getByText('CLI')).toBeInTheDocument(), T)
+    await waitFor(() => expect(switcher()).toHaveTextContent(/\(CLI\)/), T)
     await act(async () => router.history.back())
-    await waitFor(() => expect(within(switcher()).getByText('DEMO')).toBeInTheDocument(), T)
+    await waitFor(() => expect(switcher()).toHaveTextContent(/\(DEMO\)/), T)
     expect(address()).toBe('/w/DEMO/board')
   })
 

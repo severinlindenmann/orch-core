@@ -99,6 +99,12 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/model-routing",
         "/api/w/{ws}/widgets/catalog",  # Widgets add-on (#763): built-in template pins
         "/widget-frame/{rest:path}",  # sandboxed widget frame, own CSP, exact-match only (#763, Opus Tier A+)
+        "/api/w/{ws}/market",  # V3 A10: the Add-ons page
+        "/api/w/{ws}/market/installed",
+        "/api/w/{ws}/market/stage",
+        "/api/w/{ws}/market/stage/{stage_id}",
+        "/api/w/{ws}/market/uninstall",
+        "/api/w/{ws}/market/refresh",
         "/api/w/{ws}/runner",
         "/api/w/{ws}/runner/deposits/{deposit_id}",
         "/api/w/{ws}/runner/forget",
@@ -176,7 +182,6 @@ def test_shell_p1_reads(client, token, stub):
         "/w/DEMO/settings/general",
         "/w/DEMO/settings/grants",
         "/w/DEMO/settings/addons",  # R2-2: the Add-ons tab
-        "/w/DEMO/settings/records",  # M6: a reload or pasted link of the records tab (e2e found a 404)
         "/w/DEMO/quick",
         "/w/DEMO/activity",
         "/w/DEMO/usage",

@@ -78,7 +78,12 @@ def catalog(manifest: Callable[[str], bytes] | None = None, *, optional: bool = 
 
     read = manifest or builtin.manifest_bytes
     texts = {
-        "start-agent": ("Start agents", "Start an agent from the dashboard. It runs on this computer, as you.", True, False),
+        "start-agent": (
+            "Start agents",
+            "Start an agent from the dashboard. It runs on this computer, as you.",
+            True,
+            False,
+        ),
         "terminals": ("Terminals", "Open a terminal on this computer from the dashboard. It runs as you.", True, True),
         "worktrees": (
             "Worktrees",

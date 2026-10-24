@@ -1529,7 +1529,7 @@ Rules:
 | `fields.<name>` | `type`: `string` (one line, `max_len` ≤ 200), `text` (multi-line, ≤ 4 KB), `integer` (`min`, `max`), `boolean`, `enum` (`values`: [token]), `string_list` (`max_items`), `person` (person id); `set_by`: approver tokens, `agent`, `addon` (a human token means the write is a signed person event); `gate?`: [gate]; `show?`, `filter?`: bool |
 | `sections[]` | `id` (token), `heading` (1–40 chars), `after` (a core section id), `gate?`: [gate], `types`: [ticket type] |
 | `artifact_kinds[]` | `{kind: token, label: str}`; a core kind name is refused |
-| `capabilities` | tokens from a closed list: `serve_http`, `spawn_agent`, `pty`, `network`, `git_push` |
+| `capabilities` | tokens from a closed list: `serve_http`, `spawn_agent`, `pty`, `network`, `git_push`, `choose_model`, `credential` (addon-api 1.1) |
 
 The host derives `addon.granted` (§5.4.2) from the manifest's `fields` (without `show` and `filter`), `sections` and
 `artifact_kinds`; replay uses only that event, never the manifest.
@@ -2412,7 +2412,7 @@ Every string in `ticket.json`, `body.md` and events:
 | grant verbs | `"agent"` or a list of operation names |
 | core artifact kind | `screenshot`, `log`, `report`, `link`, `dataset`, `build`, `diagram`, `receipt`, `feedback`, `other` |
 | manifest field type | `string`, `text`, `integer`, `boolean`, `enum`, `string_list`, `person` |
-| addon capability | `serve_http`, `spawn_agent`, `pty`, `network`, `git_push` |
+| addon capability | `serve_http`, `spawn_agent`, `pty`, `network`, `git_push`, `choose_model`, `credential` |
 
 ### 11.5 Frozen in P1, and the test vectors
 

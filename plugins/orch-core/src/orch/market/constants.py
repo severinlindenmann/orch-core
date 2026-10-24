@@ -19,9 +19,10 @@ CASE_INSENSITIVE_HOSTS = ("github.com", "gitlab.com", "bitbucket.org")
 AGENT_MIN_INTERVAL = 300
 MAX_INDEX_BYTES = 1 << 20
 
-#: Ids of add-ons the official marketplace ships (reserved for it: a non-official marketplace cannot claim them, spec
-#: 5 step 6). A constant of this release; EMPTY until the first official add-on exists.
-OFFICIAL_IDS: tuple[str, ...] = ()
+#: Ids reserved for the official marketplace (a non-official marketplace cannot claim them, spec 5 step 6). A constant
+#: of this release (G6, addon-api 1.1): ``github`` and ``landing`` are reserved ahead of their packages;
+#: ``model-routing`` ships first.
+OFFICIAL_IDS: tuple[str, ...] = ("github", "landing", "model-routing")
 #: Built-in ids that moved to the official marketplace (G6): only the official marketplace may list these.
 MOVED_IDS: tuple[str, ...] = ()
 #: A staged package is kept this long before the review is signed (design G3 section 2).

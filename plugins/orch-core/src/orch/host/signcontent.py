@@ -1359,6 +1359,8 @@ _CAPABILITY_WORDS = {
     "pty": "open terminals on this computer, as you",
     "network": "use the internet",
     "git_push": "push your code to remote repositories",
+    "choose_model": "choose the model for agent starts (you still see it before each start)",
+    "credential": "get the key you store for this add-on with 'orch addon login' and send it over the internet",
 }
 _ADDON_NAME = re.compile(r"[a-z][a-z0-9_-]{0,63}")
 _VERSION = re.compile(r"[0-9][0-9A-Za-z.+-]{0,31}")

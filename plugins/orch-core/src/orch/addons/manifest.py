@@ -27,10 +27,11 @@ __all__ = [
     "load_package_manifest",
 ]
 
-ADDON_API = "1.0"  # the add-on API this core implements, major.minor (docs/architecture/addon-api.md)
+ADDON_API = "1.1"  # the add-on API this core implements, major.minor (docs/architecture/addon-api.md)
 LEGACY_API = ">=1.0,<2"  # what an orch.addon/2 manifest (no api key) is read as
 
-CAPABILITIES = ("serve_http", "spawn_agent", "pty", "network", "git_push")  # the closed list (§11.4)
+# the closed list (§11.4; addon-api 1.1 adds choose_model and credential; credential needs network)
+CAPABILITIES = ("serve_http", "spawn_agent", "pty", "network", "git_push", "choose_model", "credential")
 _PERSON = re.compile(r"p_[a-z0-9_]{1,64}(?![\s\S])")
 
 

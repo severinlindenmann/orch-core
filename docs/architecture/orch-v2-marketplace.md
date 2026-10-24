@@ -87,7 +87,7 @@ Entry (required unless noted):
 | `source.subdir` (optional) | relative path to the package directory; every segment follows the §8.1 file-name rule, so no `..`, no leading dot |
 | `commit` | a **full** git object id (40 or 64 lower-case hex). A branch, a tag or an abbreviation is `market.unpinned` |
 | `package_sha256` | the §8.1 package digest (`sha256:` + 64 lower-case hex) of the directory `source.subdir` at `commit`. A malformed value is `market.bad_digest_format` |
-| `capabilities` | exactly the manifest's capabilities, sorted, from the closed list (`git_push`, `network`, `pty`, `serve_http`, `spawn_agent`) |
+| `capabilities` | exactly the manifest's capabilities, sorted, from the closed list (`choose_model`, `credential`, `git_push`, `network`, `pty`, `serve_http`, `spawn_agent`) |
 | `min_orch` | lowest orch core version that runs it, grammar of `min_core` in addon-api §2. Must equal the manifest's `min_core` |
 | `api` (optional) | display copy of the manifest's api range. The manifest decides |
 | `runtime` (optional) | `{kind, lock}`: the lockfile kind (`python-requirements` or `node-package-lock`) and its path inside the package. **A display copy:** the manifest's `runtime` is the truth and the two MUST be equal, both present or both absent (`market.manifest_mismatch`, §8.1) |

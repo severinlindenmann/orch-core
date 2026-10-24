@@ -20,6 +20,9 @@ DOC = Path(__file__).parents[4] / "docs/architecture/orch-v2-marketplace.md"
 
 # codes the doc defines that need a network, git or a running host, so there is no pure vector for them here
 NO_VECTOR = {"market.commit_mismatch", "market.fetch_failed", "market.staged_changed"}
+# D14 (orch-core#927): the hub policy codes are covered by the shared vectors_hub_policy.json (tests/hub/vectors,
+# `evaluate` cases); G7 (#928) replaces this file's old hub-policy reference with them
+NO_VECTOR |= {"market.addon_not_allowed", "market.publisher_unpinned"}
 
 
 def doc_codes() -> set[str]:

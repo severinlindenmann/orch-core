@@ -231,9 +231,15 @@ def _forms(secret: str | None) -> tuple[str, ...]:
     return () if not secret else (secret, json.dumps(secret)[1:-1])
 
 
-def _redact(text: str, secret: str | None) -> str:
-    for form in _forms(secret):
+def _redact(text: str, secret: str | None, truncated: bool = False) -> str:
+    """Every full copy of ``secret`` (raw and JSON-escaped) becomes ``[redacted]``. When ``truncated`` (the collection
+    stopped at its cap, so a copy may have been cut), a trailing text that is a prefix of any form is dropped too."""
+    forms = _forms(secret)
+    for form in forms:
         text = text.replace(form, "[redacted]")
+    if truncated:
+        longest = max((k for f in forms for k in range(len(f) - 1, 0, -1) if text.endswith(f[:k])), default=0)
+        text = text[: len(text) - longest]
     return text
 
 
@@ -355,7 +361,8 @@ def call(
         slack = max((len(f.encode()) for f in _forms(secret)), default=0)  # a cut must not leave a prefix of it
         out, err, overflow = _converse(proc, request, deadline, limits, slack)
         _kill(proc)  # the group is killed; a process that left it (setsid) is not tracked in P1
-        errtext = _redact(_text(err), secret)[: limits.max_stderr]
+        # redact first (whole copies), then drop a trailing partial copy, and only then cut to the cap
+        errtext = _redact(_text(err), secret, len(err) >= limits.max_stderr + slack)[: limits.max_stderr]
         if overflow == "timeout":
             raise RunnerError("addon.timeout", f"no complete answer within {limits.timeout:g} s", errtext)
         if overflow == "output":

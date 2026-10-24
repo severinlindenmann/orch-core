@@ -206,9 +206,24 @@ def test_stderr_is_redacted_when_the_call_fails(tmp_path):
     assert SECRET not in e.stderr and "[redacted]" in e.stderr
 
 
-def test_a_secret_cut_at_the_stderr_cap_leaves_no_prefix(tmp_path):
+def test_redact_secret_straddling_the_collection_boundary_at_every_offset():
+    forms = (SECRET, json.dumps(SECRET)[1:-1])
+    for secret in (SECRET, 'a"b\\c-secret'):
+        slack = max(len(f) for f in runner._forms(secret))  # noqa: SLF001
+        for cap in (0, 5, 16):
+            for pad in range(0, 3 * slack):
+                collected = ("x" * pad + secret + "tail")[: cap + slack]  # what _converse keeps
+                truncated = len("x" * pad + secret + "tail") > cap + slack
+                out = runner._redact(collected, secret, truncated)[:cap]  # noqa: SLF001
+                for f in runner._forms(secret):  # noqa: SLF001
+                    for k in range(2, len(f) + 1):
+                        assert f[:k] not in out, (pad, cap, k)
+    assert forms
+
+
+def test_a_secret_cut_at_the_stderr_cap_leaves_no_prefix_end_to_end(tmp_path):
     package, granted = make(tmp_path, caps=("credential", "network"))
-    for cap in range(0, 40, 3):
+    for cap in range(0, 60, 4):
         e = refused(
             "addon.crashed",
             call,
@@ -219,7 +234,7 @@ def test_a_secret_cut_at_the_stderr_cap_leaves_no_prefix(tmp_path):
             Limits(max_stderr=cap),
             credential=lambda: SECRET,
         )
-        assert SECRET[:5] not in e.stderr and len(e.stderr) <= cap
+        assert SECRET[:3] not in e.stderr and len(e.stderr) <= cap
 
 
 def test_the_request_is_never_in_an_error(tmp_path):

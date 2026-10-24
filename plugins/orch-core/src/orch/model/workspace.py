@@ -703,7 +703,7 @@ def hub_joined(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
     h = ws.hub
     if e["mode"] not in HUB_MODES:
         return Refusal(Code.HUB_INVALID, "unknown hub mode")
-    if h and h["status"] == "joined":
+    if h and h.get("status") == "joined":
         switch = h["mode"] == "selective" and e["mode"] == "full" and e["hub_id"] == h["hub_id"]
         if not switch or e["hk_root_pub"] != h["hk_root_pub"]:
             return Refusal(Code.HUB_INVALID, "this workspace is already joined to a hub; leave it first")
@@ -766,7 +766,7 @@ def hub_left(ws: WsCore, e: dict[str, Any], core: Core | None = None) -> Refusal
     if (r := _owner_only(ws, e)) is not None:
         return r
     h = ws.hub
-    if not h or h["status"] != "joined":
+    if not h or h.get("status") != "joined":
         return Refusal(Code.HUB_INVALID, "this workspace is not joined to a hub")
     if e["hub_id"] != h["hub_id"] or e["binding_seq"] != h["binding_seq"]:
         return Refusal(Code.HUB_INVALID, "hub.left must name the hub and binding that are joined")
@@ -777,6 +777,7 @@ def hub_left(ws: WsCore, e: dict[str, Any], core: Core | None = None) -> Refusal
             **{k: v for k, v in h.items() if k != "member"},
             "status": "left",
             "owner_proof": None,
+            "invalid": False,
         }  # the hub member goes with the leave
         for grant in ws.grants.values():
             if grant.hub_id == hub_id:

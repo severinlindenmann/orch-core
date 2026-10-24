@@ -85,6 +85,8 @@ def log_hub_only(ws: Any) -> bool:
     :func:`~orch.host.hubops.signing_mode` that needs no ``hub.json``: what direct mode (no host, no host state) can
     see, so it can only be looser than the host's answer, never different in kind."""
     model = dict(ws.hub)
+    if model.get("invalid"):
+        return True  # a refused owner hub event: unknown counts as full (#1198 C9)
     return bool(model) and model.get("status") == "joined" and model.get("mode") != "selective"
 
 

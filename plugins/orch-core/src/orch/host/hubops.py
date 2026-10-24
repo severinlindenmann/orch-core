@@ -382,6 +382,8 @@ def signing_mode(service: WorkspaceService) -> str:
         model = dict(store.state.workspace.hub)
     except Exception:  # noqa: BLE001 - the log cannot be read just now: fail closed
         return "unknown"
+    if model.get("invalid"):
+        return "unknown"  # the log holds an owner hub event the model refused (#1198 C9): never standalone
     if not model or model.get("status") != "joined":
         return "standalone"
     mode = model.get("mode")

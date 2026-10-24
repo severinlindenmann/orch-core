@@ -190,8 +190,7 @@ def refuse_turn_on(state_dir: Path, entry: dict[str, Any], host_uid: int, *, per
     if me is None:
         me = ((entry.get("peers") or {}).get(str(os.getuid())) or {}).get("person")
     try:
-        # hub_dev: see refuse_full_mode_entry (a refusal check, so a dev hub join counts as a join)
-        store = Store.open(entry["root"], expected_workspace_id=wid, host_state_dir=None, load="lazy", hub_dev=True)
+        store = Store.open(entry["root"], expected_workspace_id=wid, host_state_dir=None, load="lazy")
     except StoreError as exc:
         raise HostError(exc.code, exc.detail or exc.code) from None
     except (OSError, KeyError) as exc:
@@ -240,11 +239,7 @@ def refuse_full_mode_entry(state_dir: Path, entry: dict[str, Any], host_uid: int
     from orch.store import Store, StoreError
 
     try:
-        # hub_dev: a refusal check counts a dev hub join as a join (it can only refuse more; a dev proof must not read
-        # as "standalone" here just because this reader has no dev state of its own, #1198 C9)
-        store = Store.open(
-            entry["root"], expected_workspace_id=entry["workspace_id"], host_state_dir=None, load="lazy", hub_dev=True
-        )
+        store = Store.open(entry["root"], expected_workspace_id=entry["workspace_id"], host_state_dir=None, load="lazy")
     except (StoreError, OSError, KeyError) as exc:
         raise HostError("host.unavailable", f"the workspace log could not be read ({type(exc).__name__})") from None
     try:

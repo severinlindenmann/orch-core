@@ -1,7 +1,7 @@
 """The hub pages of Mission Control (V3 A7, orch-core #859; mockups v3-a5-mode and v3-a3-flows).
 
-Mission Control explains and shows exactly what will change; **the owner signs in the Terminal**. So this module has
-read routes that relay the host's own reads through a closed shape, and one route that builds the Terminal command for
+Mission Control explains and shows exactly what will change; **the owner signs in the terminal**. So this module has
+read routes that relay the host's own reads through a closed shape, and one route that builds the terminal command for
 a change. It signs nothing, holds no hub credential, opens no connection to a hub and sends no hub write to the host
 (`hub.join`, `hub.mode`, `hub.leave`, `hub.connect`, `hub.unbind` and the `share.*` writes are run by `orch hub ...`
 in the owner's Terminal, which refuses agents). It imports no hub code (D79).
@@ -12,7 +12,7 @@ in the owner's Terminal, which refuses agents). It imports no hub code (D79).
 * `GET  /hub/share`          `share.rules` + `share.preview {}`: the rules, what each matches now, the tickets the hub
                              has (by key, for the Tickets column).
 * `POST /hub/share/preview`  `share.preview {add | remove}`: what the hub would see after ONE rule change.
-* `POST /hub/command`        the exact command to run in the Terminal for one change. Closed bodies, every value
+* `POST /hub/command`        the exact command to run in the terminal for one change. Closed bodies, every value
                              checked and shell-quoted; a value with a hidden character is refused, never repaired.
 
 Host text is display-only: hidden characters are withheld, never repaired.
@@ -118,7 +118,7 @@ class CommandBody(BaseModel):
 
 
 def command_of(body: CommandBody) -> str:
-    """The one line to run in the Terminal. Every value is closed above and quoted here."""
+    """The one line to run in the terminal. Every value is closed above and quoted here."""
     k = body.kind
     if k == "join":
         return (

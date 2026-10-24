@@ -32,7 +32,7 @@ describe('the hand-off dialog (real host)', () => {
     expect(within(dialog).getByTestId('handoff-command')).toHaveTextContent(`orch sign ${CODE}`)
     expect(within(dialog).getByTestId('handoff-fingerprint')).toHaveTextContent(request.fingerprint)
     expect(within(dialog).getByTestId('handoff-fingerprint')).toBeVisible()
-    expect(dialog).toHaveTextContent('matches the one in Terminal')
+    expect(dialog).toHaveTextContent('matches the one in the terminal')
     expect(dialog).toHaveTextContent(/This page never sees your passphrase or your key/)
     expect(dialog).toHaveTextContent('Preview. Your terminal shows what you sign.')
     expect(dialog).toHaveTextContent('Content hash')

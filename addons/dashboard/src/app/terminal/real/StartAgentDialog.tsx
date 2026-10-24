@@ -444,7 +444,7 @@ function RiskNotice({ startFull, loginFull, loginNotice, onAcknowledge, single, 
         </div>
       )}
       <details className="group/risk" data-testid="agent-details">
-        <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 text-text-muted underline-offset-4 before:size-1.5 before:shrink-0 before:rotate-45 before:border-t before:border-r before:border-current hover:underline [&::-webkit-details-marker]:hidden group-open/risk:before:rotate-[135deg]">{startFull ? 'Details' : <>Runs as you on this Mac <span aria-hidden>·</span> Details</>}</summary>
+        <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 text-text-muted underline-offset-4 before:size-1.5 before:shrink-0 before:rotate-45 before:border-t before:border-r before:border-current hover:underline [&::-webkit-details-marker]:hidden group-open/risk:before:rotate-[135deg]">{startFull ? 'Details' : <>Runs as you on this computer <span aria-hidden>·</span> Details</>}</summary>
         <div className="mt-2 space-y-2">
           {(!startFull || !loginFull) && <div className="space-y-1 text-text-muted">{!startFull && start}{!loginFull && login}</div>}
           {children}
@@ -621,7 +621,7 @@ export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initi
           {grantFull ? (
             <div role="note" className="space-y-2 rounded-md border border-border bg-surface px-3 py-2"><p>{riskText}</p><Button size="xs" variant="outline" data-testid="grant-risk-ack" onClick={() => void ackGrant()}>I understand</Button></div>
           ) : (
-            <details data-testid="grant-risk-details"><summary className="cursor-pointer text-text-muted">Runs as you on this Mac <span aria-hidden>·</span> Details</summary><p className="mt-1 text-text-muted">{riskText}</p></details>
+            <details data-testid="grant-risk-details"><summary className="cursor-pointer text-text-muted">Runs as you on this computer <span aria-hidden>·</span> Details</summary><p className="mt-1 text-text-muted">{riskText}</p></details>
           )}
         </div>
       ) : <p role="note" data-testid="runner-grant-risk" className="text-warning">{riskText}</p>}

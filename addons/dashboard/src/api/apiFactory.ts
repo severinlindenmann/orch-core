@@ -143,7 +143,7 @@ export function createApi(transport: Transport) {
       call<ClickSigned>('POST', `/api/w/${ws}/click/sign`, { request_id: requestId, view_digest: viewDigest, ...(revealKey ? { reveal_key: revealKey } : {}), ...(sealed ? { sealed } : {}) }),
     stateClick: (ws: string, requestId: string) => call<ClickState>('POST', `/api/w/${ws}/click/state`, { request_id: requestId }),
     hubSign: (ws: string, body: import('./hubsign').HubSignRequest) => call<import('./hubsign').HubSignInfo>('POST', `/api/w/${ws}/hubsign`, body),
-    /** V3 A7: the hub pages' reads and the Terminal command of a change (the server signs nothing and sends no hub write). */
+    /** V3 A7: the hub pages' reads and the terminal command of a change (the server signs nothing and sends no hub write). */
     getHubStatus: (ws: string) => call<import('./hub').HubStatus>('GET', `/api/w/${ws}/hub`),
     getHubShare: (ws: string) => call<import('./hub').HubShare>('GET', `/api/w/${ws}/hub/share`),
     getHubPreview: (ws: string, body: { add?: import('./hub').HubRule; remove?: import('./hub').HubRule }) =>
@@ -169,7 +169,7 @@ export function createApi(transport: Transport) {
     listHostGrants: (ws: string, active = true) => call<HostGrant[]>('GET', `/api/w/${ws}/grants?active=${active}`),
     /** Quick tasks of a real host (M6): `available: false` without `quick/1`. */
     getQuick: (ws: string, _p: QuickParams = {}) => call<QuickPage>('GET', `/api/w/${ws}/quick`),
-    /** Marketplace reads and owner-only writes; approval uses the Terminal hand-off. */
+    /** Marketplace reads and owner-only writes; approval uses the terminal hand-off. */
     marketList: (ws: string) => call<MarketList>('GET', `/api/w/${ws}/market`),
     marketInstalled: (ws: string) => call<MarketInstalled>('GET', `/api/w/${ws}/market/installed`),
     marketStage: (ws: string, input: StageInput) => call<StageResult>('POST', `/api/w/${ws}/market/stage`, input),

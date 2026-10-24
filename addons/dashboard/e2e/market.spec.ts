@@ -36,7 +36,7 @@ test('browse -> review -> Review installation -> installed', async ({ page }) =>
   await expect(page.getByText('7F3K-Q2MA')).toBeVisible()
   expect(fake.posts('/handoff')[0].body).toMatchObject({ action: 'market_grant', name: 'jira', staged: STAGE })
   await page.screenshot({ path: path.join(SHOTS, 'a10-terminal.png') })
-  fake.signLast() // the mocked human.submit: the person approved in the Terminal
+  fake.signLast() // the mocked human.submit: the person approved in the terminal
   await expect(jira).toContainText('Off', { timeout: 20_000 })
   await expect(page.getByText('Waiting for your signature')).toHaveCount(0)
   await page.screenshot({ path: path.join(SHOTS, 'a10-installed.png') })

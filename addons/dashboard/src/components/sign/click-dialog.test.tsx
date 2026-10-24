@@ -110,7 +110,7 @@ describe('the action dialog with click-to-sign', () => {
     const bad: string[] = []
     const look = () => {
       for (const d of document.querySelectorAll('[data-handoff-dialog]')) {
-        const signs = [...d.querySelectorAll('button')].filter((b) => /^Sign( in Terminal)?$/.test(b.textContent?.trim() ?? ''))
+        const signs = [...d.querySelectorAll('button')].filter((b) => /^Sign( in a terminal)?$/.test(b.textContent?.trim() ?? ''))
         if (signs.length && !d.querySelector('[data-testid="click-panel"], [data-testid="handoff-command"]')) bad.push(d.textContent ?? '')
       }
     }
@@ -165,7 +165,7 @@ it('has no "Other ways": the method follows My settings, with the phone as the o
   s.get.mockResolvedValue(state(fakeRequest()))
   const { dialog } = await toPanel()
   expect(within(dialog).queryByText('Other ways')).toBeNull()
-  expect(within(dialog).queryByRole('button', { name: 'Sign in Terminal' })).toBeNull()
+  expect(within(dialog).queryByRole('button', { name: 'Sign in a terminal' })).toBeNull()
   expect(within(dialog).queryByRole('button', { name: 'Use my phone instead' })).toBeNull() // no phone paired
   expect(s.prepare).not.toHaveBeenCalled()
 })

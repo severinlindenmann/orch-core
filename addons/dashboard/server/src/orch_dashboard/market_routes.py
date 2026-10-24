@@ -14,7 +14,7 @@ The host is the authority for who may do what; this module only fixes the op, cl
 `market.add` is not served until "Add marketplace" ships.
 
 Nothing here signs. Installing is the signature of `addon.grant {name, staged}` (`MarketGrant` in handoff.py): one
-click where click-to-sign is on (V3-D38), the Terminal hand-off where it is off. All text the host returns about a
+click where click-to-sign is on (V3-D38), the terminal hand-off where it is off. All text the host returns about a
 marketplace or an add-on is untrusted data: this module passes it on unchanged and the page shows it inside
 `AddonFrame` only.
 

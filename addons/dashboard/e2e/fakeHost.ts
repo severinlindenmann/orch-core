@@ -105,12 +105,12 @@ function clickView(name: string) {
 export class FakeServer {
   calls: Call[] = []
   requests = new Map<string, HandoffRequest>()
-  /** Hand-off ids "signed in the Terminal": the test flips this (the mocked human.submit). */
+  /** Hand-off ids "signed in the terminal": the test flips this (the mocked human.submit). */
   submitted = new Set<string>()
   installedNames = new Set<string>()
   server: http.Server
   port = 0
-  /** One click switched on for the workspace (V3-D38): the page signs through /click/* instead of the Terminal hand-off. */
+  /** One click switched on for the workspace (V3-D38): the page signs through /click/* instead of the terminal hand-off. */
   clickOn = false
   clickSigned = new Set<string>()
   clickRequests = new Map<string, { name: string; staged: string }>()
@@ -123,7 +123,7 @@ export class FakeServer {
     return `http://127.0.0.1:${this.port}`
   }
   stop() { this.server.close() }
-  /** The mocked `human.submit`: the person approved in the Terminal. */
+  /** The mocked `human.submit`: the person approved in the terminal. */
   signLast() { const id = [...this.requests.keys()].pop(); if (id) this.submitted.add(id) }
   posts = (suffix: string) => this.calls.filter((c) => c.method === 'POST' && c.path.endsWith(suffix))
 

@@ -118,7 +118,7 @@ OPS = {
         "share.rules",
         "share.preview",
         # V3 A10 (design-g3 4.2): the Add-ons page. Reads: market.list, market.installed. Person writes (owner role, the
-        # host refuses an agent): stage, unstage, uninstall, refresh. Every install is a Terminal hand-off.
+        # host refuses an agent): stage, unstage, uninstall, refresh. Every install is a terminal hand-off.
         *MARKET_OPS,
     )
 }

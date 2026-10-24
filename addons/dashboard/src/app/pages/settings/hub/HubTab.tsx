@@ -25,7 +25,7 @@ export function HubTab({ workspace }: { workspace: Workspace }) {
     {flow === 'share' && s.mode === 'selective' ? <ShareRules ws={ws} onBack={() => setFlow(undefined)} /> : <>
       {s.not_told && <NotTold ws={ws} />}
       <HubBanner ws={ws} />
-      {(s.reseal_needed || s.key_change_pending || s.log_sync_stuck || s.link === 'joining' || s.link === 'switching') && <Panel title="Hub needs attention" tone="border-warning/40 bg-warning-soft"><p>The hub connection has work pending. Check its state in Terminal before making changes.</p></Panel>}
+      {(s.reseal_needed || s.key_change_pending || s.log_sync_stuck || s.link === 'joining' || s.link === 'switching') && <Panel title="Hub needs attention" tone="border-warning/40 bg-warning-soft"><p>The hub connection has work pending. Check its state in a terminal before making changes.</p></Panel>}
       {s.mode === 'standalone' && <StandalonePage onJoin={() => setFlow('join')} />}
       {s.mode === 'selective' && <SelectivePage ws={ws} onShare={() => setFlow('share')} onFull={() => setFlow('full')} onLeave={() => setFlow('leave')} />}
       {s.mode === 'full' && <FullPage status={s} onLeave={() => setFlow('leave')} />}
@@ -38,7 +38,7 @@ export function HubTab({ workspace }: { workspace: Workspace }) {
 }
 export function StandalonePage({ onJoin }: { onJoin: () => void }) {
   return <><Panel title="Hub"><p><strong>Not connected.</strong> This workspace works on its own. Connect a hub to use your phone, publish files and hand work to other workspaces.</p>
-    <p className="text-text-muted">You need an invite code and a hub card file from a hub admin. You confirm the connection in Terminal.</p>
+    <p className="text-text-muted">You need an invite code and a hub card file from a hub admin. You confirm the connection in a terminal.</p>
     <Action id="hub-connect" onClick={onJoin}>Connect a hub</Action>
   </Panel><Panel title="What stays the same"><p>Your tickets, agents and keys stay on this computer.</p><p>You can leave the hub at any time and keep working.</p></Panel></>
 }
@@ -53,8 +53,8 @@ export function SelectivePage({ ws, onShare, onFull, onLeave }: { ws: string; on
       </>}
       {share.data?.available !== false && <Action id="hub-choose-share" onClick={onShare}>Choose what to share</Action>}
     </Panel>
-    <Panel title="Let the hub read everything"><p>The hub will read every ticket, file and note. Hub admins become admins here. Going back requires leaving and rejoining. You review the change here and confirm it in your Terminal.</p><Action id="hub-full-switch" onClick={onFull}>Let the hub read everything</Action></Panel>
-    <Panel title="Leave the hub"><p>Keep working locally. Phone access, publishing and handoffs through the hub stop. You confirm in your Terminal.</p><Action id="hub-leave" onClick={onLeave}>Leave the hub</Action></Panel>
+    <Panel title="Let the hub read everything"><p>The hub will read every ticket, file and note. Hub admins become admins here. Going back requires leaving and rejoining. You review the change here and confirm it in your terminal.</p><Action id="hub-full-switch" onClick={onFull}>Let the hub read everything</Action></Panel>
+    <Panel title="Leave the hub"><p>Keep working locally. Phone access, publishing and handoffs through the hub stop. You confirm in your terminal.</p><Action id="hub-leave" onClick={onLeave}>Leave the hub</Action></Panel>
   </>
 }
 export function FullPage({ status, onLeave }: { status: HubStatus; onLeave: () => void }) {
@@ -63,6 +63,6 @@ export function FullPage({ status, onLeave }: { status: HubStatus; onLeave: () =
       {(['read', 'edit', 'admin'] as const).map(role => <div key={role} className="flex flex-wrap justify-between gap-2 border-t border-border py-2"><span>{role === 'read' ? 'Can read' : role === 'edit' ? 'Can edit' : 'Admins'}</span><span>{status.groups ? status.groups[role] + ' people' : 'Count not available'}</span></div>)}
     </Panel>
     <Panel title="Share only some things instead"><p>Leave this hub, then rejoin and choose “Only what I choose”. What the hub has already read cannot be taken back.</p></Panel>
-    <Panel title="Leave the hub"><p>Your work stays on this computer. Hub members lose access through the hub. You confirm in your Terminal.</p><Action id="hub-leave" onClick={onLeave}>Leave the hub</Action></Panel>
+    <Panel title="Leave the hub"><p>Your work stays on this computer. Hub members lose access through the hub. You confirm in your terminal.</p><Action id="hub-leave" onClick={onLeave}>Leave the hub</Action></Panel>
   </>
 }

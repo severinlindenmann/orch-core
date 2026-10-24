@@ -160,7 +160,7 @@ it('with an agent runner and no access the review carries the access length as a
   expect(within(select).getAllByRole('option').map((o) => o.textContent)).toEqual(['8 hours', '1 day', '3 days'])
   expect(state.host.posts()).toEqual([]) // on the terminal path nothing is prepared until the choice is made
   await user.selectOptions(select, '24')
-  await user.click(within(dialog).getByRole('button', { name: /Sign in Terminal|Start task|Sign and start/ }))
+  await user.click(within(dialog).getByRole('button', { name: /Sign in a terminal|Start task|Sign and start/ }))
   await waitFor(() => expect(state.host.posts().length).toBeGreaterThan(0), T)
   expect(state.host.posts()[0].body).toEqual({ action: 'quick_start', title: 'Water the plants', agent: { hours: 24 } })
 }, 30000)

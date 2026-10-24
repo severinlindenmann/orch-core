@@ -29,7 +29,7 @@ export function plainReason(code: string): string {
   if (code === 'session.required' || code === 'session.expired') return 'This page no longer has its link to your terminal. This happens after a reload or when the session ran out.'
   if (code === 'setup.ended') return 'This setup was already finished or stopped.'
   if (code === 'setup.token' || code === 'setup.unavailable') return 'The link to your terminal could not be used.'
-  if (code.startsWith('client:') || code.startsWith('http.')) return 'The page could not reach orch on this Mac.'
+  if (code.startsWith('client:') || code.startsWith('http.')) return 'The page could not reach orch on this computer.'
   return 'Setup could not go on.'
 }
 function Reason({ reason }: { reason: string }) {
@@ -76,8 +76,8 @@ export function summarize(review: Review): { lines: string[]; unknown: boolean }
     else if (item.id === 'runner_grant' && item.type === 'grant.issued' && f && typeof f.hours === 'number' && typeof f.scope === 'string' && typeof f.verbs === 'string')
       // the ordinary grant in words (scope and verbs are in the technical details); any other scope or verbs keeps the raw values
       lines.push(f.scope === 'workable' && f.verbs === 'agent'
-        ? `This Mac’s agent runner may work on any ticket you can see, as you, for ${duration(f.hours)}`
-        : `This Mac’s agent runner gets agent access for ${duration(f.hours)} (scope ${f.scope}, verbs ${f.verbs})`)
+        ? `This computer’s agent runner may work on any ticket you can see, as you, for ${duration(f.hours)}`
+        : `This computer’s agent runner gets agent access for ${duration(f.hours)} (scope ${f.scope}, verbs ${f.verbs})`)
     else if (item.type === 'settings.changed' && only('set') && f?.set && typeof f.set === 'object' && !Array.isArray(f.set)) {
       const set = f.set as Record<string, unknown>
       const okHours = !('grant_hours' in set) || typeof set.grant_hours === 'number'
@@ -168,9 +168,9 @@ function FinishChoices({
         <dd>{on.map((a) => a.title).join(', ')}</dd>
         <dt>Agents may work for</dt>
         <dd>{hoursText(current.agent_hours)}</dd>
-        <dt>Agent execution on this Mac</dt>
+        <dt>Agent execution on this computer</dt>
         <dd>{yesNo(current.runner.enabled)}</dd>
-        <dt>Agent access for this Mac’s runner</dt>
+        <dt>Agent access for this computer’s runner</dt>
         <dd>{current.runner_grant ? 'Given before' : 'Not given'}</dd>
         <dt>You approve with</dt>
         <dd>{current.method === 'click' ? 'One click on this computer' : 'Terminal'}</dd>
@@ -201,7 +201,7 @@ function FinishChoices({
               <label className="toggle">
                 <span>
                   <strong>{label('runner_grant')}</strong>
-                  <small>The runner is the program on this Mac that starts your agents. Its access key never goes into this page.</small>
+                  <small>The runner is the program on this computer that starts your agents. Its access key never goes into this page.</small>
                 </span>
                 <input
                   type="checkbox"
@@ -853,9 +853,9 @@ export function Setup({ api }: { api: SetupAPI }) {
               ) : (
                 <label className="toggle">
                   <span>
-                    Let this Mac’s agent runner start agents now
+                    Let this computer’s agent runner start agents now
                     <small>
-                      The runner is the program on this Mac that starts your agents. Its access key stays with it and
+                      The runner is the program on this computer that starts your agents. Its access key stays with it and
                       never goes into this page.
                     </small>
                   </span>
@@ -1009,8 +1009,8 @@ export function Setup({ api }: { api: SetupAPI }) {
                 <div className="warning">
                   <p>
                     {review.flags.some((f) => f.id === 'custody')
-                      ? 'One-click approval and dashboard agents act as you on this Mac.'
-                      : 'Dashboard agents act as you on this Mac.'}{' '}
+                      ? 'One-click approval and dashboard agents act as you on this computer.'
+                      : 'Dashboard agents act as you on this computer.'}{' '}
                     Only continue on a computer you trust.
                   </p>
                   <details>

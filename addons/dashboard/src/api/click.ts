@@ -250,7 +250,7 @@ export function clickProblem(e: unknown): ClickProblem {
     case 'sign.convenience_unavailable': {
       const r = refusalOf(e)!
       // The switch moved after the page chose its way: nothing is wrong, the next try follows the host's current answer.
-      if (r.reason === 'disabled') return { title: 'Click-to-sign was switched off', body: `${refusalSentence(r)} To sign in the Terminal, the key must first move back to a passphrase: "orch keys custody passphrase --workspace <prefix> --in-place". Try again makes a new request for the Terminal.`, next: 'retry', stale: true, devices: r.devices }
+      if (r.reason === 'disabled') return { title: 'Click-to-sign was switched off', body: `${refusalSentence(r)} To sign in the terminal, the key must first move back to a passphrase: "orch keys custody passphrase --workspace <prefix> --in-place". Try again makes a new request for the terminal.`, next: 'retry', stale: true, devices: r.devices }
       return { title: 'Click-to-sign is not available here', body: r.reason === 'dev_host' ? refusalSentence(r) : `${refusalSentence(r)}${OFF}`, next: 'terminal', devices: r.devices }
     }
     case DEV_REFUSED:
@@ -267,8 +267,6 @@ export function clickProblem(e: unknown): ClickProblem {
       return { title: 'Busy', body: 'The host is busy. Try again shortly.', next: 'retry' }
     case 'intent.expired':
       return { title: 'This attempt is too old; start again', body: e.message, next: 'prepare' }
-    case 'intent.ended':
-      return { title: 'The earlier attempt ended', body: `${e.message} Nothing was signed. Start again to make a new request.`, next: 'prepare' }
     case 'intent.blocked':
       return { title: 'The earlier attempt ended', body: e.message, next: 'prepare' }
     case 'intent.open':
@@ -283,7 +281,7 @@ export function clickProblem(e: unknown): ClickProblem {
     case 'rate.limited':
       return { title: 'Too many signatures', body: `The signing helper allows only so many signatures per minute and hour. Try again in ${Math.max(1, Math.ceil((e.retry_after_ms ?? 1000) / 1000))} s.`, next: 'retry', waitMs: e.retry_after_ms ?? 1000 }
     case 'custody.no_key':
-      return { title: 'No key on this computer', body: 'There is no signing key on this computer. Nothing was signed. Turn One click off and on again, or sign in Terminal.'+OFF, next: 'terminal' }
+      return { title: 'No key on this computer', body: 'There is no signing key on this computer. Nothing was signed. Turn One click off and on again, or sign in a terminal.'+OFF, next: 'terminal' }
     case 'custody.unavailable':
       return { title: 'The key store is not available', body: 'The key store is locked or refused access. Unlock it.'+OFF, next: 'terminal' }
     case 'host.version_mismatch':

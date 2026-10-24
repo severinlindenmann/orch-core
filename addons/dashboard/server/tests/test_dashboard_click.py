@@ -2421,7 +2421,7 @@ def test_agent_access_is_refused_on_any_session_that_is_not_a_local_one(client, 
 
 def test_c21_a_missing_key_at_sign_is_a_definite_refusal_not_uncertain(client, token, stub, script):
     prepare(client, token, stub, comment(1))
-    msg = "There is no signing key on this computer. Turn One click off and on again, or sign in Terminal."
+    msg = "There is no signing key on this computer. Turn One click off and on again, or sign in a terminal."
     script.refuse["sign"] = ClickError("custody.no_key", msg)
     res = sign_lost(client, token, stub)
     err = res.json()["error"]

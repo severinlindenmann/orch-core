@@ -822,8 +822,8 @@ function install() {
     available: true,
     add_ons: [
       { id: 'dashboard', title: 'Dashboard', desc: "This workspace's dashboard (locked on).", state: 'on', locked: 'The dashboard is always on: it is what shows this workspace.', blocked: null },
-      { id: 'start-agent', title: 'Start agents', desc: 'Start an agent from the dashboard. It runs on this Mac, as you.', state: 'on', locked: null, blocked: 'Stop first: an agent of yours is running right now.' },
-      { id: 'terminals', title: 'Terminals', desc: 'Open a terminal on this Mac from the dashboard. It runs as you.', state: 'off', locked: null, blocked: 'Needs dashboard execution first. In your terminal run: orch runner enable' },
+      { id: 'start-agent', title: 'Start agents', desc: 'Start an agent from the dashboard. It runs on this computer, as you.', state: 'on', locked: null, blocked: 'Stop first: an agent of yours is running right now.' },
+      { id: 'terminals', title: 'Terminals', desc: 'Open a terminal on this computer from the dashboard. It runs as you.', state: 'off', locked: null, blocked: 'Needs dashboard execution first. In your terminal run: orch runner enable' },
       { id: 'worktrees', title: 'Worktrees', desc: 'Each ticket gets its own copy of your project folder, so agents do not overwrite each other.', state: 'off', locked: null, blocked: null },
       { id: 'publish', title: 'Publish', desc: 'Share files of a ticket with a link.', state: current.startsWith('addons-publish') ? 'on' : 'off', locked: null, blocked: null },
       { id: 'quick', title: 'Quick tasks', desc: 'Small one-off tasks. Always available; there is nothing to switch on.', state: 'on', locked: 'Always available. There is nothing to switch.', blocked: null },

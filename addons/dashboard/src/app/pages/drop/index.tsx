@@ -118,7 +118,7 @@ function Drop({ ws, preview }: { ws: string; preview?: DropPreviewStart }) {
   return (
     <>
       <p className="text-[13px] text-text-muted">
-        Files between this workspace and its members&apos; devices, end-to-end encrypted. This Mac&apos;s host seals what you send and opens what you
+        Files between this workspace and its members&apos; devices, end-to-end encrypted. This computer&apos;s host seals what you send and opens what you
         receive; the relay only stores ciphertext. Up to <span data-testid="drop-limit">{fmtBytes(limits.max_bytes)}</span> per file; files expire after 7 days.
       </p>
       <Upload ws={ws} info={limits} onSent={refresh} initial={preview?.upload} />
@@ -145,7 +145,7 @@ function Drop({ ws, preview }: { ws: string; preview?: DropPreviewStart }) {
       )}
       {typeof list.data?.pending_others === 'number' && list.data.pending_others > 0 && (
         <p data-testid="drop-pending-others" className="rounded-md border border-border px-3 py-2 text-[13px] text-text-muted">
-          {list.data.pending_others === 1 ? '1 item from others awaits' : `${list.data.pending_others} items from others await`} review at the Mac&apos;s terminal.
+          {list.data.pending_others === 1 ? '1 item from others awaits' : `${list.data.pending_others} items from others await`} review at this computer&apos;s terminal.
         </p>
       )}
 
@@ -666,7 +666,7 @@ function UploadStatus({ phase, onCancel, conflict }: { phase: Phase; onCancel: (
       return (
         <div data-testid="drop-progress" className="space-y-1">
           <p className="[overflow-wrap:anywhere]">
-            Uploading {name} to this Mac: <span data-testid="drop-progress-text">{fmtBytes(phase.sent)} of {fmtBytes(phase.total)} ({pct} %)</span>
+            Uploading {name} to this computer: <span data-testid="drop-progress-text">{fmtBytes(phase.sent)} of {fmtBytes(phase.total)} ({pct} %)</span>
           </p>
           <div className="flex items-center gap-2">
             <progress aria-label="Upload progress" max={phase.total || 1} value={phase.total === 0 ? 1 : phase.sent} className="h-2 min-w-0 flex-1" />
@@ -680,7 +680,7 @@ function UploadStatus({ phase, onCancel, conflict }: { phase: Phase; onCancel: (
     case 'sealing':
       return (
         <p role="status" data-testid="drop-sealing" className="[overflow-wrap:anywhere]">
-          Sealing and sending {name}… (this Mac&apos;s host encrypts it and sends it to the relay)
+          Sealing and sending {name}… (this computer&apos;s host encrypts it and sends it to the relay)
         </p>
       )
     case 'done':

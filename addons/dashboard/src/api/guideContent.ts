@@ -113,7 +113,7 @@ Before you approve, the dashboard shows exactly what you are approving, in plain
 
 ## Ways to approve
 
-- **In the Terminal**: always works. The dashboard prepares the request and shows a short code and a command, such as \`orch sign CODE\`. Copy it, paste it into your terminal, check the code matches, and type your secret words. The dashboard follows along and shows when it is signed. Only sign a code you created yourself.
+- **In the terminal**: always works. The dashboard prepares the request and shows a short code and a command, such as \`orch sign CODE\`. Copy it, paste it into your terminal, check the code matches, and type your secret words. The dashboard follows along and shows when it is signed. Only sign a code you created yourself.
 - **One click on this computer**: if you switched it on, you approve with a button in the dashboard. It is convenient and a little less safe, because this computer holds your key. A notice explains the risk once.
 - **Phone**: coming later, with the relay add-on.
 

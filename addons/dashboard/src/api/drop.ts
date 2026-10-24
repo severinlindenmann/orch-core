@@ -84,7 +84,7 @@ export type DropCanRetire = 'self' | 'handoff'
 export interface DropListPage {
   items: DropItem[]
   next: string | null
-  /** H6: how many unclaimed uploads of OTHER people await review at the Mac's terminal. A count only. */
+  /** H6: how many unclaimed uploads of OTHER people await review at this computer's terminal. A count only. */
   pending_others?: number
 }
 
@@ -241,8 +241,8 @@ const QUOTAS: Record<string, { what: string; count?: string }> = {
   drop_doc_versions: { what: "this document's versions", count: 'versions' },
 }
 
-/** H4: the existing hand-off path (a person confirms at the Mac's terminal). */
-export const HANDOFF_TEXT = "Confirm at the Mac's terminal: deleting this item needs your person key there."
+/** H4: the existing hand-off path (a person confirms at this computer's terminal). */
+export const HANDOFF_TEXT = "Confirm at this computer's terminal: deleting this item needs your person key there."
 
 /** H2: plain words for `unclaimed_reason`; an unknown value (or none) gets the generic text. */
 export function unclaimedText(reason: string | null | undefined): string {
@@ -250,7 +250,7 @@ export function unclaimedText(reason: string | null | undefined): string {
     case 'author_revoked':
       return 'Not claimed: the phone was removed before this was claimed, so the file can’t be claimed.'
     case 'needs_handoff':
-      return 'Not claimed yet: claiming it needs a confirmation at the Mac’s terminal.'
+      return 'Not claimed yet: claiming it needs a confirmation at this computer’s terminal.'
     default: // awaiting_claim, and any value the page doesn't know
       return 'Not claimed yet: until this workspace’s host claims it, only the host and the sender can open it.'
   }

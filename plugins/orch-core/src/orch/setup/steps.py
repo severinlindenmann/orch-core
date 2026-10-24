@@ -879,7 +879,7 @@ class Creator:
 
         raw = str(getattr(e, "message", None) or e or "").strip()
         if not raw:
-            return "this Mac refused (" + (type(e).__name__ if e is not None else "unknown") + ")"
+            return "this computer refused (" + (type(e).__name__ if e is not None else "unknown") + ")"
         if self._safe(raw) == HIDDEN_REASON:
             return HIDDEN_REASON
         text = " ".join(canon.clean(raw).split())

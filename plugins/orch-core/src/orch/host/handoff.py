@@ -303,9 +303,9 @@ def _find(entries: list[dict[str, Any]], code: str, run: Path | None, state: Pat
         raise
     if unreachable:
         errors.append(
-            "1 other workspace on this Mac is not reachable"
+            "1 other workspace on this computer is not reachable"
             if unreachable == 1
-            else f"{unreachable} other workspaces on this Mac are not reachable"
+            else f"{unreachable} other workspaces on this computer are not reachable"
         )
     if len(matches) == 1:
         if errors:

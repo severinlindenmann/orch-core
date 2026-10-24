@@ -884,7 +884,7 @@ it('reviews the exact task edit and relays that action through the existing hand
   const prepare = vi.spyOn(api, 'prepareHandoff').mockResolvedValue(request)
   vi.spyOn(api, 'getHandoff').mockResolvedValue(state(request))
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SignPopover ws={ws} title="Edit task" action={action} onClose={() => {}} /></QueryClientProvider>)
-  const button = await screen.findByRole('button', { name: 'Sign in Terminal' })
+  const button = await screen.findByRole('button', { name: 'Sign in a terminal' })
   await waitFor(() => expect(button).toBeEnabled())
   button.click()
   await waitFor(() => expect(prepare).toHaveBeenCalled())
@@ -914,7 +914,7 @@ describe('manual acceptance signing paths', () => {
     const dialog = await screen.findByRole('dialog')
     expect(dialog).toHaveTextContent(kind === 'done' ? task.text : ac.text)
     if (kind !== 'done') await user.type(within(dialog).getByRole('textbox'), ' Checked personally ')
-    const button = await within(dialog).findByRole('button', { name: 'Sign in Terminal' })
+    const button = await within(dialog).findByRole('button', { name: 'Sign in a terminal' })
     await waitFor(() => expect(button).toBeEnabled())
     await user.click(button)
     const expected = kind === 'done' ? { action: 'mark_task_done', key: ticket.key, task: 'T2' }
@@ -946,7 +946,7 @@ it('market approval (terminal fallback) displays the exact package name and stag
   expect(clickEligible({ ...action, name: 'publish' })).toBe(true)
 })
 
-it('a Terminal-only action with One click on shows the Terminal hand-off: why line, exact command, pending, no click prepare', async () => {
+it('a terminal-only action with One click on shows the terminal hand-off: why line, exact command, pending, no click prepare', async () => {
   const { workspaceRequest } = await import('./hostHarness')
   const { state } = await import('./handoffHarness')
   const ws = 'b'.repeat(32)
@@ -961,9 +961,9 @@ it('a Terminal-only action with One click on shows the Terminal hand-off: why li
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SignPopover ws={ws} title="Turn on Publish" action={action} autoStart onClose={() => {}} /></QueryClientProvider>)
   await waitFor(() => expect(prepare).toHaveBeenCalledWith(ws, action, 0))
   expect(clickPrepare).not.toHaveBeenCalled()
-  expect(await screen.findByTestId('terminal-why')).toHaveTextContent('One click can\u2019t approve this one. Approve it in Terminal on this Mac.')
+  expect(await screen.findByTestId('terminal-why')).toHaveTextContent('One click can\u2019t approve this one. Approve it in a terminal on this computer.')
   expect(screen.getByTestId('handoff-command')).toHaveTextContent(`orch sign ${request.code}`)
   expect(screen.getByRole('button', { name: 'Copy command' })).toBeVisible()
-  expect(screen.getByText('Waiting for approval in Terminal…')).toBeVisible()
+  expect(screen.getByText('Waiting for approval in a terminal…')).toBeVisible()
   expect(document.body).not.toHaveTextContent(/convenience off|turn One click off/i)
 })

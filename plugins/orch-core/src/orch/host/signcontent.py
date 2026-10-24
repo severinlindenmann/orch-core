@@ -277,7 +277,7 @@ _GRANT_INFO = frozenset({"label", "scope", "expires_at", "person"})
 def _grant_words(ev: Mapping[str, Any], ctx: _Ctx) -> tuple[str, bool]:
     """Which access an event takes back, in words and by the host's word (``material["grants"]``, labelled "per host,
     not signed" where it is shown):
-    ``("agent access for this Mac's runner, until Sun 00:37", True)`` for the person's own
+    ``("agent access for this computer's runner, until Sun 00:37", True)`` for the person's own
     runner access, ``(.., False)`` for any other own access. The id is never in the words (it is in the technical
     details). Anything that cannot be said distinctly (no host word, a malformed one, an access of another person, no
     end time) raises :class:`PlainUnavailable`: the caller then shows the full review, with the ids."""
@@ -291,7 +291,7 @@ def _grant_words(ev: Mapping[str, Any], ctx: _Ctx) -> tuple[str, bool]:
     if info["person"] != (ev.get("actor") or {}).get("id"):
         raise PlainUnavailable("the access to be taken back is not the signer's own")
     if info["label"] == "runner" and info["scope"] == "workable":
-        return f"agent access for this Mac's runner, until {until}", True
+        return f"agent access for this computer's runner, until {until}", True
     label = f' "{one(info["label"])}"' if info["label"] else ""
     return f"agent access{label} (tickets: {one(info['scope'])}), until {until}", False
 
@@ -328,7 +328,7 @@ def _extend_summary(events: list[Mapping[str, Any]], ctx: _Ctx) -> dict[str, Any
     ]
     # the headline is all the terminal's plain view prints first: it keeps the length and the end; the ids of the new
     # and the replaced access are in the technical details (the full review), never in the plain words
-    head = f"Extend agent access for this Mac's runner, for {span(hours)}" + (
+    head = f"Extend agent access for this computer's runner, for {span(hours)}" + (
         f" (until {until}, your time)" if until else ""
     )
     return {"title": "Extend agent access", "lines": lines, "headline": head}

@@ -59,7 +59,7 @@ export function WorkspaceStopped({ workspace }: { workspace: Workspace }) {
         <ServerOff className="mx-auto size-7 text-text-muted" aria-hidden />
         <h1 className="mt-3 text-lg font-semibold">The dashboard is not switched on yet</h1>
         <p className="mt-1.5 text-[13px] text-text-muted">
-          Switching it on needs your approval on the computer where orch runs. Open a Terminal window there, run this
+          Switching it on needs your approval on the computer where orch runs. Open a terminal window there, run this
           command and, when asked, enter your orch passphrase:
         </p>
         <p className="mt-3 overflow-x-auto rounded bg-surface-3 px-3 py-2 font-mono text-xs whitespace-nowrap select-all">

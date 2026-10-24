@@ -272,7 +272,7 @@ describe('compare the code', () => {
     const { user } = open('pair-pending')
     await user.click(await screen.findByRole('button', { name: 'Reject' }, T))
     await waitFor(() => expect(pairPreviewForTests.fixture()!.calls.find((c) => c.op === 'answer')?.args).toEqual(['7'.repeat(32), false]))
-    expect(await screen.findByTestId('pair-end-rejected', {}, T)).toHaveTextContent('Rejected on this Mac.')
+    expect(await screen.findByTestId('pair-end-rejected', {}, T)).toHaveTextContent('Rejected on this computer.')
   })
 
   it('checkSas: base32, case-insensitive, spaces and dashes ignored', () => {

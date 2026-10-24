@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button'
 import { Section } from '../../ticket/shared'
 import { OwnerNote } from '../OwnerNote'
 import { useSettingsHandoff } from './useSettingsHandoff'
+import { AgentName } from '@/components/agents/AgentIcon'
 
 const DEFAULT = ''
 const wide = () => typeof window === 'undefined' || !window.matchMedia || window.matchMedia('(min-width: 640px)').matches
@@ -92,7 +93,7 @@ export function ModelRoutingForm({ choices, draft, setDraft, canEdit }: { choice
     <>
       {choices.harnesses.map((h, i) => (
         <details key={h.id} className="space-y-1 rounded-md border border-border px-3 py-2" data-testid={`routing-${h.id}`} open={openAgents[h.id] ?? (i === 0 || wide())} onToggle={(e) => { const o = (e.currentTarget as HTMLDetailsElement).open; setOpenAgents((p) => (p[h.id] === o ? p : { ...p, [h.id]: o })) }}>
-          <summary className="cursor-pointer font-medium">{plain(h.label)}</summary>
+          <summary className="cursor-pointer font-medium">{h.id === 'claude-code' || h.id === 'codex' ? <AgentName harness={h.id} /> : plain(h.label)}</summary>
           <dl className="mt-2 grid grid-cols-1 gap-x-3 gap-y-1.5 sm:grid-cols-[minmax(0,15rem)_minmax(0,1fr)] sm:items-center">
             {choices.modes.map((m) => {
               const id = `route-${h.id}-${m.id}`

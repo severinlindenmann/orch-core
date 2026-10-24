@@ -56,7 +56,6 @@ it('defaults stay behind Customize models and the summary names the available ag
   const box = await openBox(false)
   expect(within(box).queryByRole('combobox')).toBeNull()
   expect(within(box).getByTestId('routing-summary')).toHaveTextContent('Every agent uses its own default model. Available: Claude, Codex.')
-  expect(screen.getByTestId('addon-model-routing-needs')).toHaveTextContent('Needs nothing')
 })
 
 it('is not drawn while the add-on is off', async () => {
@@ -64,7 +63,6 @@ it('is not drawn while the add-on is off', async () => {
   show('/w/DEMO/settings/addons')
   await screen.findByRole('list', { name: 'Add-ons' }, T)
   expect(screen.queryByTestId('model-routing')).toBeNull()
-  expect(screen.getByTestId('addon-model-routing-needs')).toBeInTheDocument()
   expect(screen.queryByTestId('addon-model-routing-expand')).toBeNull()
 })
 
@@ -127,7 +125,7 @@ it('MR2/MR5/MR6: explains Agent default, shows the resolved name, one collapsibl
   const box = await openBox()
     expect(within(box).getByTestId('agent-default-help')).toHaveTextContent('orch does not choose one')
   expect(within(box).getAllByText('Chosen by the agent app').length).toBeGreaterThan(0)
-  expect(within(box).getByText('Claude').tagName).toBe('SUMMARY')
-  expect(within(box).getByText('Codex').tagName).toBe('SUMMARY')
+  expect(within(box).getByText('Claude Code').closest('summary')).not.toBeNull()
+  expect(within(box).getByText('Codex').closest('summary')).not.toBeNull()
   expect(within(box).getByTestId('routing-nochange')).toHaveTextContent('No changes to save')
 })

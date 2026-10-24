@@ -17,13 +17,20 @@ export interface AgentChoiceValue {
 
 export const DEFAULT_CHOICE: AgentChoiceValue = { harness: 'claude-code', mode: 'work', model: '' }
 
-/** A runner grant counts as usable for a start only with at least this long left. */
-export const MIN_GRANT_MS = 15 * 60_000
+/**
+ * A runner grant counts as startable by the host's own rule (`whoami.runner.grant.startable`, with `startable_until`):
+ * the floor, member scope, a revoked grant and a role change are the host's to judge. A host that does not say yet is
+ * read with a 20-minute floor, failing toward asking for access.
+ */
+export const MIN_GRANT_MS = 20 * 60_000
 
-/** Is there a grant the start can use (not expiring within 15 minutes)? Unknown counts as no grant. */
 export function usableGrant(runner: Pick<RunnerInfo, 'grant'> | null | undefined, now: number): { id: string; until: string } | null {
   const g = runner?.grant
   if (!g) return null
+  if (typeof g.startable === 'boolean') {
+    const stop = g.startable_until ? Date.parse(g.startable_until) : null
+    return g.startable && (stop === null || !Number.isFinite(stop) || stop > now) ? { id: g.id, until: g.until } : null
+  }
   const end = Date.parse(g.until)
   return Number.isFinite(end) && end - now >= MIN_GRANT_MS ? { id: g.id, until: g.until } : null
 }

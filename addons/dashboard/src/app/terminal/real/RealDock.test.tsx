@@ -192,6 +192,20 @@ describe('the real dock', () => {
     expect(pre).toHaveBeenCalledWith(WS, expect.objectContaining({ ticket: 'DEMO-1' }))
   })
 
+  it('the dock menu also offers "Change agent or model…" next to Start agent, on a ticket page only', async () => {
+    dock.ticket = 'DEMO-1'
+    const { agentsApi } = await import('@/api/agents')
+    setFeatures({ features: ['terminals', 'terminals_page', 'agent_start'], workspaces: { [WS]: ['terminals', 'terminals_page', 'agent_start'] } })
+    vi.spyOn(agentsApi, 'preview').mockResolvedValue({ spec: 'f'.repeat(64), ticket: null, display: 'codex', display_hidden: false, cwd: { kind: 'workspace' },
+      cwd_path: '/w', cwd_path_hidden: false, will_create_worktree: false, login_shell: false, env: [], grant: null, blocked: null, warnings: [] })
+    vi.spyOn(agentsApi, 'runner').mockResolvedValue({ runner: { connected: true, enabled: true, terminals: true, grant: null } })
+    mount()
+    await screen.findByText(/No terminal is open/)
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'New terminal' }), { button: 0, pointerType: 'mouse' })
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Change agent or model…' }))
+    expect(await screen.findByTestId('agent-preview')).toBeInTheDocument()
+  })
+
   it('M-6: with the Terminals add-on off the dock lists no shells and does not offer a new one', async () => {
     setFeatures({ features: ['terminals'], workspaces: { [WS]: ['terminals'] } })
     list = { ...list, runs: [run('SH', { state: 'exited', exit: { code: 0, reason: 'exited', cleanup: 'complete' } as never })] }

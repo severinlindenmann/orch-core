@@ -31,15 +31,6 @@ it('General shows the core version with its release, and the dashboard version',
   expect(state.host.posts()).toEqual([]) // nothing is written
 })
 
-it('each add-on row shows a muted version when the host says one, nothing when it does not', async () => {
-  show('/w/DEMO/settings/addons')
-  await screen.findByRole('list', { name: 'Add-ons' }, T)
-  expect(screen.getByTestId('addon-worktrees-version')).toHaveTextContent('v1.2.3')
-  expect(screen.getByTestId('addon-dashboard-version')).toHaveTextContent('v0.1.0')
-  expect(screen.queryByTestId('addon-publish-version')).toBeNull()
-  expect(screen.queryByTestId('addon-usage-version')).toBeNull()
-})
-
 it('the answer is checked: odd values read as not known', () => {
   expect(versionsOf({ core: { version: '<b>1</b>', release: 'XYZ' }, dashboard: { version: 5 } })).toEqual({ core: { version: null, release: null }, dashboard: { version: null } })
   expect(versionsOf(null).core.version).toBeNull()

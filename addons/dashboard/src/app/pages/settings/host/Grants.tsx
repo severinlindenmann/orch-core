@@ -5,7 +5,7 @@ import { canRevokeHostGrant, type HostGrant } from '@/api/settings'
 import { hasFeature } from '@/api/features'
 import type { Workspace } from '@/api/types'
 import { LoadFailed } from '@/components/LoadFailed'
-import { HandoffDialog } from '@/components/sign/HandoffDialog'
+import { SignPopover } from '@/components/sign/SignPopover'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -25,7 +25,7 @@ function RevokeDialog({ ws, grant, name, onClose }: { ws: string; grant: HostGra
   const [reason, setReason] = useState('')
   const text = reason.trim()
   return (
-    <HandoffDialog
+    <SignPopover
       title={`Revoke the grant of ${visible(name)}`}
       ws={ws}
       action={{ action: 'grant_revoke', grant: grant.id, ...(text ? { reason: text } : {}) }}
@@ -39,7 +39,7 @@ function RevokeDialog({ ws, grant, name, onClose }: { ws: string; grant: HostGra
           One line, at most 200 characters. Every agent session using this grant ends. 
         </p>
       </div>
-    </HandoffDialog>
+    </SignPopover>
   )
 }
 

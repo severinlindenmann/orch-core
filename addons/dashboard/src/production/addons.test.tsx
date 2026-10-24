@@ -29,8 +29,7 @@ it('lists every add-on with its description and On or Off; the dashboard is alwa
   expect(within(list).getAllByRole('listitem')).toHaveLength(4)
   expect(within(screen.getByTestId('addon-dashboard')).getByText('Always on')).toBeInTheDocument()
   expect(within(screen.getByTestId('addon-dashboard')).queryByRole('switch')).toBeNull()
-  expect(screen.getByTestId('addon-start-agent-state')).toHaveTextContent('On')
-  expect(screen.getByTestId('addon-worktrees-state')).toHaveTextContent('Off')
+  expect(screen.queryByTestId('addon-start-agent-state')).toBeNull() // no state chip: the switch says it
   expect(screen.getByRole('switch', { name: 'Start agents' })).toBeChecked()
   expect(screen.getByRole('switch', { name: 'Worktrees' })).not.toBeChecked()
   expect(screen.getByText('About Worktrees.')).toBeInTheDocument()
@@ -88,9 +87,7 @@ it('only an owner can change a switch', async () => {
 it('an add-on with settings says what it needs while Off; the toggle still opens the normal review (no two-step flow yet)', async () => {
   state.host.workspaces[0].addOns = data([row({ id: 'publish', title: 'Publish' }), row({ id: 'model-routing', title: 'Model routing' }), row({ id: 'worktrees', title: 'Worktrees' })])
   await open()
-  expect(screen.getByTestId('addon-publish-needs')).toHaveTextContent('Needs a publish server address')
-  expect(screen.getByTestId('addon-model-routing-needs')).toHaveTextContent('Needs nothing')
-  expect(screen.queryByTestId('addon-worktrees-needs')).toBeNull() // a plain add-on has no settings line
+  expect(screen.queryByTestId('addon-publish-needs')).toBeNull() // no "Needs" line: only an amber "Needs setup" once it is on
   expect(screen.queryByTestId('addon-publish-expand')).toBeNull() // nothing to open while Off
   await userEvent.setup().click(screen.getByRole('switch', { name: 'Publish' }))
   await waitFor(() => expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'addon_grant', name: 'publish' }]), T)

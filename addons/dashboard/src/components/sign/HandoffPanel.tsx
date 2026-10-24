@@ -174,19 +174,19 @@ export function CommandLine({ code }: { code: string }) {
   return <ExactCommandLine command={signCommand(code)} />
 }
 
-/** Copy the server's exact command without constructing or signing anything in the browser. */
+/** Copy the server's exact command without constructing or signing anything in the browser. The field and the Copy button are one bordered row. */
 export function ExactCommandLine({ command, testId = 'handoff-command' }: { command: string; testId?: string }) {
   const [copied, setCopied] = useState(false)
   return (
-    <div className="flex items-center gap-2 rounded-md border border-border bg-bg px-3 py-2">
-      <Terminal className="size-4 shrink-0 text-text-muted" aria-hidden />
-      <code data-testid={testId} className="min-w-0 flex-1 break-all font-mono text-[14px] text-text">
+    <div className="flex items-stretch overflow-hidden rounded-md border border-border bg-bg">
+      <Terminal className="my-auto ml-3 size-4 shrink-0 text-text-muted" aria-hidden />
+      <code data-testid={testId} className="min-w-0 flex-1 break-all px-3 py-2.5 font-mono text-[14px] text-text">
         <Raw>{command}</Raw>
       </code>
       <Button
         type="button"
         variant="ghost"
-        size="icon-sm"
+        className="h-auto min-h-11 rounded-none border-l border-border px-4 text-[13px]"
         aria-label="Copy command"
         data-testid={testId + '-copy'}
         onClick={() => {
@@ -199,14 +199,14 @@ export function ExactCommandLine({ command, testId = 'handoff-command' }: { comm
           )
         }}
       >
-        {copied ? <Check /> : <Copy />}
+        {copied ? <><Check aria-hidden /> Copied</> : <><Copy aria-hidden /> Copy</>}
       </Button>
     </div>
   )
 }
 
 /** The open request: command, fingerprint, content hash, countdown and the preview. Cancel lives in the dialog footer. */
-export function HandoffPanel({ request, workspace = null }: { request: HandoffRequest; workspace?: { prefix: string; id: string } | null }) {
+export function HandoffPanel({ request, workspace = null, why, whyAction }: { request: HandoffRequest; workspace?: { prefix: string; id: string } | null; /** Why this is signed in the terminal and not with one click: the operation is terminal-only, or One click is off here. */ why?: 'terminal_only' | 'click_off'; /** What the person can do about it (a link to the setting). */ whyAction?: ReactNode }) {
   const remaining = useRemaining(request.expires_at)
   const { material } = request
   const word = material.ticket ? (sequenceWord(material) ?? confirmWord(material.ticket.key, material.ticket.uid)) : workspaceConfirmWord(request, workspace)
@@ -261,8 +261,9 @@ export function HandoffPanel({ request, workspace = null }: { request: HandoffRe
   return (
     <div data-handoff-panel className="space-y-3">
       {request.content && <SignContent content={request.content} ws={workspace?.id} technical={technical} />}
-      <p className="text-[13px] text-text">
-        Sign in your terminal. This dashboard is not where you sign: it never sees your passphrase or your key.
+      <p data-testid="terminal-why" className="text-[13px] font-medium text-text">
+        {why === 'terminal_only' ? 'This one is done in your terminal.' : why === 'click_off' ? 'One click is off, so sign in Terminal on this Mac.' : 'Sign in your terminal.'}
+        {why === 'click_off' && whyAction && <span className="ml-2 font-normal">{whyAction}</span>}
       </p>
       {runnerGrant && (
         <div data-testid="handoff-runner-note" className="space-y-1 text-[13px] text-text">
@@ -271,7 +272,7 @@ export function HandoffPanel({ request, workspace = null }: { request: HandoffRe
         </div>
       )}
       {request.code ? <>
-        <p className="text-[13px] font-medium text-text">Copy this command into Terminal</p>
+        <p className="text-[13px] text-text-muted">Copy this command into Terminal</p>
         <CommandLine code={request.code} />
       </> : <p className="text-[13px] text-warning">This request has no code any more.</p>}
       <p className="text-[12px] text-text-muted">
@@ -280,10 +281,10 @@ export function HandoffPanel({ request, workspace = null }: { request: HandoffRe
       </p>
       {request.content && word && <p className="text-[12px] text-text-muted">In your terminal you type <Raw>{word}</Raw> to continue.</p>}
       {request.op === 'grant' && <p className="text-[12px] text-text-muted" data-testid="grant-handoff-note">After you sign, the terminal asks what to do with the new access. Press r to hand it to the orch runner, otherwise the runner has no access and agents stay off.</p>}
-      {request.content && hostStated && <p role="note" className="text-[12px] text-warning">Some values come from orch on this Mac (see details)</p>}
+      {request.content && hostStated && <p role="note" className="text-[12px] text-text-muted">Some values come from orch on this Mac (see details)</p>}
       {!request.content && <SignDetails>{technical}</SignDetails>}
       {!request.content && preview}
-      <p className="text-[12px] text-text-muted">Only sign a code you created yourself. This page follows the request and shows when it is signed.</p>
+      <p className="text-[12px] text-text-muted">Your terminal shows the same review. This dashboard is not where you sign: it never sees your passphrase or your key. Only sign a code you created yourself; this page follows the request and shows when it is signed.</p>
     </div>
   )
 }

@@ -2345,3 +2345,25 @@ def test_expected_admits_only_the_callers_agent_access():
     for bad in ({"label": "runner"}, {"label": None}, {"verbs": ["log"]}, {"hours": 9}, {"scope": "all"}, {"extra": 1}):
         assert not check([{**good, **bad}]), bad
     assert not check([good, good])
+
+
+def test_a_new_page_key_is_a_new_request_and_the_same_key_the_same_one():
+    from orch_dashboard.handoff import AgentAccess
+
+    other = "E" + "A" * 86
+    a = AgentAccess(action="agent_access", reveal_key=PAGE_KEY)
+    b = AgentAccess(action="agent_access", reveal_key=other)
+    from orch_dashboard.handoff import intent_idem
+
+    def idem(body):
+        return intent_idem(
+            "p_" + "1" * 32,
+            "0" * 32,
+            "grant",
+            {"hours": 8, "scope": "workable"},
+            {"reveal_key": body.reveal_key},
+            None,
+            0,
+        )
+
+    assert idem(a) == idem(a) and idem(a) != idem(b)

@@ -1393,6 +1393,10 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
         digest = sequence.digest_of(ws, person, intent)
         meta = {"step": 0, "of": 2, "digest": digest, "intent": intent}
         base = {"sequence": digest, "addon": switch_base}
+    if isinstance(body, AgentAccess):
+        base = {
+            "reveal_key": body.reveal_key
+        }  # a new page key is a new request: one key, one grant (the idem keeps it)
     return Plan(op, args, host_files(body), base, person, meta)
 
 

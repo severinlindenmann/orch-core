@@ -21,13 +21,12 @@ lab, served, human = human_helpers.lab, human_helpers.served, human_helpers.huma
 
 
 @pytest.fixture
-def world(served, human):
-    w = World(served, human, join=False)
+def world(served, human, monkeypatch):
+    w = World(served, human, monkeypatch, join=False)
     w.addon()
     w.configure()
     w.hub_server = w.server  # orch-publish behind the hub; there is no other server (V3-D36)
-    yield w
-    w.close()
+    return w
 
 
 def joined(w, human, served):

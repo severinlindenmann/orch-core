@@ -13,6 +13,7 @@ import type { ClickAction, ClickCard, ClickState, ClickPrepared, ClickSigned, Cl
 import type { HostGrant, HostReaders, HostSettings, RosterMember } from './settings'
 import type { QuickPage, QuickParams, RecordsRun, RecordsStatus } from './quickRecords'
 import { activityQuery, type ActivityPage, type ActivityParams } from './activity'
+import type { MarketList, MarketInstalled, StageInput, StageResult } from './market'
 import { uploadFor, type ArtifactImage, type PastedRef } from './pasteImage'
 import {
   ApiError,
@@ -225,6 +226,12 @@ const reads = {
     if (p.page) q.set('page', p.page)
     return call<QuickPage>(`${w(ws)}/quick?${q.toString()}`)
   },
+  marketList: (ws: string) => call<MarketList>(`${w(ws)}/market`),
+  marketInstalled: (ws: string) => call<MarketInstalled>(`${w(ws)}/market/installed`),
+  marketStage: (ws: string, input: StageInput) => call<StageResult>(`${w(ws)}/market/stage`, 'POST', input),
+  marketUnstage: (ws: string, stage: string) => call<{ removed: boolean }>(`${w(ws)}/market/stage/${encodeURIComponent(stage)}`, 'DELETE'),
+  marketUninstall: (ws: string, name: string) => call<{ name: string; removed: boolean }>(`${w(ws)}/market/uninstall`, 'POST', { name }),
+  marketRefresh: (ws: string, input: { url?: string } = {}) => call<unknown>(`${w(ws)}/market/refresh`, 'POST', input),
   getActivity: (ws: string, p: ActivityParams = {}) => call<ActivityPage>(`${w(ws)}/activity?${activityQuery(p)}`),
   getRecordsCurrent: (ws: string) => call<RecordsStatus>(`${w(ws)}/records/current`),
   getRecords: (ws: string) => call<RecordsStatus>(`${w(ws)}/records`),

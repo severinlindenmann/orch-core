@@ -19,6 +19,7 @@ from . import (
     handoff,
     hub,
     hubapprove,
+    market_routes,
     phone,
     reads,
     riskack,
@@ -75,6 +76,7 @@ SPA_ROUTES = (
     "worktrees",
     "terminals",
     "explorer",
+    "addons",
     "shares",
     "activity",
     "usage",
@@ -242,6 +244,7 @@ def create_app(port: int, gateway=None, auth=None, static=None, setup_proxy=None
     riskack.register(app, gateway)
     phone.register(app, gateway)
     addon_routes.register(app, gateway)
+    market_routes.register(app, gateway)
     activity_routes.register(app, gateway)
     terminals.register(app, gateway, tickets)
     agents.register(app, gateway)

@@ -49,6 +49,30 @@ def _no_plain_review_leak():
     passphrase._PLAIN_REVIEW.update(shown=False, hint=True)
 
 
+def hub_seams() -> dict[str, object]:
+    """The process-wide seams the host's hub code reads: a test that swaps one by plain assignment and does not put it
+    back makes every later hub test in the same xdist worker talk to its stub (``bad_signature`` on the first reply)."""
+    from orch.host import breakglass, hubops
+
+    return {
+        "hubops.TRANSPORT": (hubops, "TRANSPORT"), "hubops.CARD_SOURCE": (hubops, "CARD_SOURCE"),
+        "hubops.workspace_dev": (hubops, "workspace_dev"), "breakglass.TRANSPORT": (breakglass, "TRANSPORT"),
+    }  # fmt: skip
+
+
+@pytest.fixture(autouse=True)
+def _hub_seams_never_leak():
+    """Every hub seam is the same object after a test as before it. The leak is repaired (so the next test is clean)
+    and the leaking test fails, by name. Set seams with ``monkeypatch``, never by assignment."""
+    seams = hub_seams()
+    before = {k: getattr(m, a) for k, (m, a) in seams.items()}
+    yield
+    leaked = [k for k, (m, a) in seams.items() if getattr(m, a) is not before[k]]
+    for k in leaked:
+        setattr(seams[k][0], seams[k][1], before[k])
+    assert not leaked, f"this test left a hub seam swapped (use monkeypatch.setattr): {leaked}"
+
+
 @pytest.fixture(autouse=True, scope="session")
 def _never_the_real_keychain():
     """No test may reach the owner's real keychains (H5c): the store, ``_open`` and every keychain test helper refuse

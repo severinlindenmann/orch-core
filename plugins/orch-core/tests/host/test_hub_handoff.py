@@ -94,21 +94,18 @@ def test_a_status_move_has_no_hash(served, full):
     assert data["short_hash"] is None and data["summary"]["status"] == view(served, key).status
 
 
-def test_i3_the_hand_off_writes_nothing_and_never_touches_the_link(served, full, stub):
+def test_i3_the_hand_off_writes_nothing_and_never_touches_the_link(served, full, stub, monkeypatch):
     uid, key = full
     sent, before = list(stub.sent), marks(served, uid)
     seen = []
     old = hubops.TRANSPORT
-    hubops.TRANSPORT = lambda *a, **k: seen.append(a) or old(*a, **k)
-    try:
-        for args in (
-            {"kind": "gate", "ticket": key, "gate": "plan"},
-            {"kind": "status", "ticket": key},
-            {"kind": "gate", "ticket": key, "gate": "code"},
-        ):
-            ok(handoff(served, args))
-    finally:
-        hubops.TRANSPORT = old
+    monkeypatch.setattr(hubops, "TRANSPORT", lambda *a, **k: seen.append(a) or old(*a, **k))
+    for args in (
+        {"kind": "gate", "ticket": key, "gate": "plan"},
+        {"kind": "status", "ticket": key},
+        {"kind": "gate", "ticket": key, "gate": "code"},
+    ):
+        ok(handoff(served, args))
     assert seen == [] and stub.sent == sent and marks(served, uid) == before
     assert "hub.handoff" not in hubops.NETWORK_OPS
 

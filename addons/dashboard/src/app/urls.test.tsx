@@ -13,6 +13,7 @@ describe('permanent URLs: the address <-> in-app path mapping', () => {
   const ROUTES: [inApp: string, address: string][] = [
     ['/', '/w/DEMO'],
     ['/board', '/w/DEMO/board'],
+    ['/addons', '/w/DEMO/addons'],
     ['/tickets', '/w/DEMO/tickets'],
     ['/tickets/new', '/w/DEMO/tickets/new'],
     ['/artifacts', '/w/DEMO/artifacts'],

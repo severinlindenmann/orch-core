@@ -175,7 +175,7 @@ export function SignPopover(p: SignPopoverProps) {
     // person never sees a Sign button before the host's content (WYSIWYS).
     if (!viaHub && autoNow && p.action && !started.current && p.ws && !known.isPending && !methods.loading) {
       started.current = true
-      // A click request that ended earlier (cancelled, expired) must not block a fresh open: this open is a new intent.
+      // A new opening is a new intent: the server steps past an attempt that ended (cancelled, expired) and starts a fresh request.
       if (method === 'click') void click.start(p.action)
       else void run.prepare(p.action)
     }

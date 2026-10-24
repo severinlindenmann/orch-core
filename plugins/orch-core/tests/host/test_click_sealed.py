@@ -71,7 +71,7 @@ def _seal_vector(name: str, purpose: str, text: str) -> dict[str, Any]:
     ctxd = _ctxd(purpose)
     ctx = _ctx(ctxd)
     rpk = sealed.encode_public(rcpt.public_key())
-    env = seal(rpk, text, ctx, ephemeral=eph)
+    env = sealed._seal_with(eph, rpk, text, ctx)
     epk_raw, rpk_raw = sealed._unb64url(env["epk"], "epk"), sealed._unb64url(rpk, "rpk")
     shared = eph.exchange(ec.ECDH(), rcpt.public_key())
     ad = sealed.aad(ctx, epk_raw, rpk_raw)
@@ -100,18 +100,37 @@ def _flip(b64: str, index: int) -> str:
     return b64url(bytes(raw))
 
 
+def _negate(epk: str) -> str:
+    """-E: the same x coordinate (so the same ECDH secret), the other y; only E in the AAD tells them apart."""
+    raw = sealed._unb64url(epk, "epk")
+    p = 2**256 - 2**224 + 2**192 + 2**96 - 1
+    return b64url(raw[:33] + (p - int.from_bytes(raw[33:], "big")).to_bytes(32, "big"))
+
+
+_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+
+
+def _noncanonical(text: str) -> str:
+    """The same bytes with an unused low bit of the last character set (a second spelling a lax decoder accepts)."""
+    assert len(text) % 4 in (2, 3)
+    return text[:-1] + _ALPHABET[_ALPHABET.index(text[-1]) | 1]
+
+
 def _open_cases(seals: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     cases: list[dict[str, Any]] = []
 
     def add(name: str, base: str, *, expect: str, envelope: Any = None, context: dict[str, str] | None = None,
-            recipient: dict[str, str] | None = None, direction: str | None = None) -> None:  # fmt: skip
+            recipient: dict[str, str] | None = None, direction: str | None = None,
+            bound: dict[str, str] | None = None) -> None:  # fmt: skip
         b = seals[base]
+        ctxd = context or b["context"]
         cases.append({
             "name": name,
             "base": base,
             "direction": direction or b["direction"],
             "recipient_jwk": recipient or b["recipient_jwk"],
-            "context": context or b["context"],
+            "bound": bound or {"workspace_id": ctxd["workspace_id"], "request_id": ctxd["request_id"]},
+            "context": ctxd,
             "envelope": envelope if envelope is not None else b["envelope"],
             "expect": expect,
         })  # fmt: skip
@@ -123,6 +142,10 @@ def _open_cases(seals: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
         add(f"{base}/other_request", base, expect="open_failed", context=_ctxd(p, rid=RID2))
         add(f"{base}/other_view_digest", base, expect="open_failed", context=_ctxd(p, vd=VD2))
         add(f"{base}/other_workspace", base, expect="open_failed", context=_ctxd(p, ws=WS2))
+        add(f"{base}/bound_to_other_request", base, expect="context",
+            bound={"workspace_id": WS, "request_id": RID2})  # fmt: skip
+        add(f"{base}/bound_to_other_workspace", base, expect="context",
+            bound={"workspace_id": WS2, "request_id": RID})  # fmt: skip
         add(f"{base}/other_recipient", base, expect="open_failed", recipient=_jwk(_key(base + "/someone-else")))
         add(f"{base}/ct_bit_flipped", base, expect="open_failed", envelope={**env, "ct": _flip(env["ct"], 0)})
         add(f"{base}/tag_bit_flipped", base, expect="open_failed", envelope={**env, "ct": _flip(env["ct"], -1)})
@@ -136,6 +159,11 @@ def _open_cases(seals: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
         add(f"{base}/epk_off_curve", base, expect="malformed", envelope={**env, "epk": _flip(env["epk"], 64)})
         add(f"{base}/epk_other_key", base, expect="open_failed",
             envelope={**env, "epk": sealed.encode_public(_key(base + "/mallory").public_key())})  # fmt: skip
+        add(f"{base}/epk_negated", base, expect="open_failed", envelope={**env, "epk": _negate(env["epk"])})
+        add(f"{base}/epk_noncanonical_last_char", base, expect="malformed",
+            envelope={**env, "epk": _noncanonical(env["epk"])})  # fmt: skip
+        add(f"{base}/ct_noncanonical_last_char", base, expect="malformed",
+            envelope={**env, "ct": _noncanonical(env["ct"])})  # fmt: skip
         add(f"{base}/epk_is_recipient", base, expect="malformed", envelope={**env, "epk": b["recipient_public"]})
         add(f"{base}/extra_field", base, expect="malformed", envelope={**env, "purpose": p})
         add(f"{base}/missing_alg", base, expect="malformed", envelope={k: v for k, v in env.items() if k != "alg"})
@@ -189,9 +217,11 @@ def build_vectors() -> dict[str, Any]:
             "Keys are JWK (P-256); public keys and envelope fields are base64url without padding.",
             "seal: with ephemeral_jwk fixed, sealing plaintext to recipient_public for context gives exactly "
             "envelope; every intermediate (shared_secret, aad, key, nonce, padded) is given.",
-            "open: the recipient (direction in = the signer, out = the browser) opens envelope for context; expect is "
-            "'ok' (the plaintext of the base seal vector) or a refusal reason.",
-            "replay is stateful (a second open of the same epk is 'replay') and is not a vector.",
+            "open: the recipient (direction in = the signer, out = the browser), bound to bound.workspace_id and "
+            "bound.request_id when it was made, opens envelope for context; expect is 'ok' (the plaintext of the base "
+            "seal vector) or a refusal reason.",
+            "replay and the view_digest pin are stateful (a second open of the same epk is 'replay'; after a first "
+            "open, another view_digest is 'context') and are not vectors.",
         ],
         "seal": list(seals.values()),
         "open": _open_cases(seals),
@@ -229,7 +259,7 @@ def test_seal_vectors_reproduce(vectors):
         ctx = _ctx(v["context"])
         eph, rcpt = _private(v["ephemeral_jwk"]), _private(v["recipient_jwk"])
         assert sealed.encode_public(rcpt.public_key()) == v["recipient_public"]
-        assert seal(v["recipient_public"], v["plaintext"], ctx, ephemeral=eph) == v["envelope"], v["name"]
+        assert sealed._seal_with(eph, v["recipient_public"], v["plaintext"], ctx) == v["envelope"], v["name"]
         shared = rcpt.exchange(ec.ECDH(), eph.public_key())  # the recipient side derives the same x coordinate
         assert shared.hex() == v["shared_secret_hex"]
         epk_raw = sealed._unb64url(v["envelope"]["epk"], "epk")
@@ -242,7 +272,9 @@ def test_seal_vectors_reproduce(vectors):
 def test_open_vectors(vectors):
     plain = {v["name"]: v["plaintext"] for v in vectors["seal"]}
     for case in vectors["open"]:
-        rcpt = Recipient(case["direction"], private_key=_private(case["recipient_jwk"]))
+        b = case["bound"]
+        key = _private(case["recipient_jwk"])
+        rcpt = Recipient._for_vectors(case["direction"], b["workspace_id"], b["request_id"], key)
         try:
             got = rcpt.open(case["envelope"], _ctx(case["context"]))
         except SealedError as exc:
@@ -257,8 +289,25 @@ def test_open_vectors(vectors):
 
 def _pair(purpose: str = "github.token", secret: str = "s3cret") -> tuple[Recipient, dict[str, Any], Context]:
     ctx = Context(purpose, WS, RID, VD)
-    rcpt = Recipient(ctx.direction)
+    rcpt = Recipient(ctx.direction, workspace_id=WS, request_id=RID)
     return rcpt, seal(rcpt.public, secret, ctx), ctx
+
+
+def _rcpt(direction: str) -> Recipient:
+    return Recipient(direction, workspace_id=WS, request_id=RID)
+
+
+def test_no_way_to_pass_a_key_in():
+    """Finding 3: the public API makes every key itself (a reused ephemeral key reuses key and nonce)."""
+    import inspect
+
+    assert list(inspect.signature(seal).parameters) == ["recipient_public", "secret", "ctx"]
+    assert set(inspect.signature(Recipient).parameters) == {"direction", "workspace_id", "request_id"}
+
+
+def test_unpad_returns_a_wipeable_slice():
+    out = sealed.unpad(sealed.pad(b"hello"))
+    assert type(out) is bytearray and out == bytearray(b"hello")
 
 
 def test_round_trip_both_directions():
@@ -269,7 +318,7 @@ def test_round_trip_both_directions():
 
 
 def test_every_seal_uses_a_fresh_ephemeral_key():
-    rcpt, ctx = Recipient("in"), Context("hub.backup_key", WS, RID, VD)
+    rcpt, ctx = _rcpt("in"), Context("hub.backup_key", WS, RID, VD)
     a, b = seal(rcpt.public, "same", ctx), seal(rcpt.public, "same", ctx)
     assert a["epk"] != b["epk"] and a["ct"] != b["ct"]
     assert rcpt.open(a, ctx) == rcpt.open(b, ctx) == bytearray(b"same")
@@ -286,19 +335,48 @@ def test_replay_is_refused():
 def test_a_failed_open_does_not_burn_the_envelope():
     rcpt, env, ctx = _pair()
     with pytest.raises(SealedError):
-        rcpt.open(env, Context("github.token", WS, RID2, VD))
+        rcpt.open({**env, "ct": _flip(env["ct"], 0)}, ctx)
+    with pytest.raises(SealedError):
+        rcpt.open(env, Context("github.token", WS, RID, VD2))  # no pin yet: the AAD refuses it
     assert rcpt.open(env, ctx) == bytearray(b"s3cret")
 
 
 def test_envelope_of_another_request_does_not_open():
-    """Two approvals, two keys: an envelope for request 1 neither opens at request 2's key nor with its context."""
+    """Two approvals, two keys: an envelope for request 1 does not open at request 2's key, and a recipient refuses
+    any context but its own request's, whatever its caller passes (the C10 wiring-bug case)."""
     r1, env1, ctx1 = _pair()
-    r2 = Recipient("in")
+    r2 = Recipient("in", workspace_id=WS, request_id=RID2)
     ctx2 = Context("github.token", WS, RID2, VD2)
-    for rcpt, ctx in ((r2, ctx2), (r2, ctx1), (r1, ctx2)):
+    for rcpt, ctx, reason in ((r2, ctx2, "open_failed"), (r2, ctx1, "context"), (r1, ctx2, "context")):
         with pytest.raises(SealedError) as exc:
             rcpt.open(env1, ctx)
-        assert exc.value.reason == "open_failed"
+        assert exc.value.reason == reason
+    r3 = Recipient("in", workspace_id=WS2, request_id=RID)
+    with pytest.raises(SealedError) as exc:
+        r3.open(seal(r3.public, "x", ctx1), ctx1)  # sealed to r3's key, but for another workspace's request
+    assert exc.value.reason == "context"
+
+
+def test_the_first_open_pins_the_view_digest():
+    rcpt, ctx = _rcpt("in"), Context("hub.backup_key", WS, RID, VD)
+    assert rcpt.view_digest is None
+    rcpt.open(seal(rcpt.public, "a", ctx), ctx)
+    assert rcpt.view_digest == VD
+    other = Context("custody.passphrase", WS, RID, VD2)
+    with pytest.raises(SealedError) as exc:
+        rcpt.open(seal(rcpt.public, "b", other), other)  # sealed correctly, but for another review of the request
+    assert exc.value.reason == "context"
+    retry = Context("hub.backup_key", WS, RID, VD)
+    assert rcpt.open(seal(rcpt.public, "c", retry), retry) == bytearray(b"c")  # a retyped value, same review
+
+
+def test_recipient_binding_is_validated():
+    for ws, rid in ((WS.upper(), RID), (WS, "hr_short"), (None, RID), (WS, None)):
+        with pytest.raises(SealedError) as exc:
+            Recipient("in", workspace_id=ws, request_id=rid)
+        assert exc.value.reason == "context"
+    with pytest.raises(TypeError):
+        Recipient("in")  # a recipient always belongs to one request
 
 
 def test_closed_recipient_refuses():
@@ -312,7 +390,7 @@ def test_closed_recipient_refuses():
 
 def test_direction_is_structural():
     """The signer's input key never opens a grant secret, the browser's key never an input secret."""
-    sig, br = Recipient("in"), Recipient("out")
+    sig, br = _rcpt("in"), _rcpt("out")
     out_ctx, in_ctx = Context("grant.secret", WS, RID, VD), Context("custody.passphrase", WS, RID, VD)
     for rcpt, ctx in ((sig, out_ctx), (br, in_ctx)):
         env = seal(rcpt.public, "x", ctx)
@@ -320,7 +398,7 @@ def test_direction_is_structural():
             rcpt.open(env, ctx)
         assert exc.value.reason == "context"
     with pytest.raises(ValueError):
-        Recipient("both")
+        _rcpt("both")
 
 
 @pytest.mark.parametrize(
@@ -341,7 +419,7 @@ def test_context_is_validated(fields):
 
 
 def test_size_limits():
-    rcpt, ctx = Recipient("in"), Context("custody.passphrase", WS, RID, VD)
+    rcpt, ctx = _rcpt("in"), Context("custody.passphrase", WS, RID, VD)
     with pytest.raises(SealedError) as exc:
         seal(rcpt.public, "", ctx)
     assert exc.value.reason == "malformed"
@@ -354,14 +432,14 @@ def test_size_limits():
 
 
 def test_length_is_hidden_within_a_block():
-    rcpt, ctx = Recipient("in"), Context("custody.passphrase", WS, RID, VD)
+    rcpt, ctx = _rcpt("in"), Context("custody.passphrase", WS, RID, VD)
     sizes = {len(seal(rcpt.public, "a" * n, ctx)["ct"]) for n in (1, 8, 100, 254)}
     assert len(sizes) == 1
 
 
 def test_seal_refuses_a_bad_recipient_key():
     ctx = Context("grant.secret", WS, RID, VD)
-    good = Recipient("out").public
+    good = _rcpt("out").public
     for bad in (good[:-2], good + "A", "", 7, _flip(good, 64), b64url(b"\x04" + b"\x00" * 64)):
         with pytest.raises(SealedError) as exc:
             seal(bad, "x", ctx)

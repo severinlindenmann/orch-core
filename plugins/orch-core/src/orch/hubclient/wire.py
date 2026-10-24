@@ -1,10 +1,11 @@
 """The workspace side of the hub contract H0 (orch-hub ``docs/protocol.md``), from the text: ids, the hub card and its
-op certificate (section 5, 4.1), building and signing ``hub.binding`` / ``hub.unbound`` (9.2, 9.3), the ``hub.joined``
-and ``hub.left`` payloads (9.1) and the binding store (9.4). Pure functions; every check fails closed with
-:class:`HubRefused`."""
+op certificate (section 5, 4.1) with its signed reader level, building and signing ``hub.binding`` / ``hub.unbound``
+(9.2, 9.3), the ``hub.joined`` and ``hub.left`` payloads (9.1), the binding store (9.4) and the owner proof of a hub op
+(9.6, #1198 C8). Pure functions; every check fails closed with :class:`HubRefused`."""
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -19,6 +20,16 @@ SUITE_ID = _suite.SUITE_ID
 HV = 0
 CLOCK_SKEW_MS = 300_000
 MODES = ("selective", "full")
+#: section 5: a card's reader level is a uint31 (orch-v2-host §0.8.6 item 9 levels; 1 = understands auth convenience)
+READER_MAX = 2**31 - 1
+#: section 9.6: the hub ops an owner proof authorises, its longest life, the host request id it names
+OWNER_PROOF_OPS = ("hub.join", "hub.mode", "hub.leave")
+OWNER_PROOF_MAX_MS = 600_000
+REQUEST_ID = re.compile(r"hr_[0-7][0-9A-HJKMNP-TV-Z]{25}")
+JOINED_KEYS = frozenset({"hub_id", "hk_root_pub", "mode", "binding_seq", "aliases"})
+LEFT_KEYS = frozenset({"hub_id", "binding_seq"})
+#: section 9.6 "Readers": the ops whose proof a recorded event may carry
+RECORDED_OPS: Mapping[str, tuple[str, ...]] = {"hub.joined": ("hub.join", "hub.mode"), "hub.left": ("hub.leave",)}
 _CanonError = (JcsError, EncodingError)
 
 SIG_OP_CERT = b"orch/v2/hub-op-cert|"
@@ -31,6 +42,7 @@ SIG_BINDING = b"orch/v2/sig/hub-binding|"
 SIG_UNBOUND = b"orch/v2/sig/hub-unbound|"
 SIG_LINK = b"orch/v2/sig/hub-link|"
 SIG_ROUTE = b"orch/v2/hub-route|"
+SIG_OWNER_PROOF = b"orch/v2/sig/hub-owner-proof|"  # section 9.6: signed by the person key PK, never a device key
 _H_HUB_ID = b"orch/v2/id/hub|"
 _H_PERSON_ID = b"orch/v2/id/person|"
 _H_CHANNEL_ID = b"orch/v2/id/channel|"
@@ -152,7 +164,18 @@ _FIELDS: dict[str, dict[str, Callable[[Any], bool]]] = {
         "relay_url": _relay_url,
         "tls_spki_sha256": _b64u_n(32),
         "card_seq": _int_min(1),
+        "reader": lambda x: type(x) is int and 0 <= x <= READER_MAX,
         "issued_ms": _int_min(0),
+        "dev": lambda x: type(x) is bool,
+    },
+    "hub.owner_proof": {
+        "workspace_id": hex16,
+        "person_id": hex16,
+        "op": lambda x: type(x) is str and x in OWNER_PROOF_OPS,
+        "payload": lambda x: type(x) is dict,
+        "request_id": lambda x: type(x) is str and REQUEST_ID.fullmatch(x) is not None,
+        "issued_ms": _int_min(0),
+        "expires_ms": _int_min(1),
         "dev": lambda x: type(x) is bool,
     },
     "hub.space": {
@@ -304,7 +327,19 @@ def verify_card(
                 raise HubRefused("stale_card")
             if o["card_seq"] == held["card"]["card_seq"] and cj(card) != cj(held["signed"]):
                 raise HubRefused("stale_card")
+        if o["reader"] < held["card"]["reader"]:
+            raise HubRefused("reader_downgrade")  # #1198 C8: a hub never lowers its signed reader level
     return {"card": o, "op_cert": op, "hk_op_pub": hk_op, "hk_root_pub": root, "signed": card}
+
+
+def check_hub_reader(held: Mapping[str, Any], required: int) -> int:
+    """Section 5 "Reader level" (#1198 C8): the host's gate before ``hub.join`` / ``hub.mode`` binds the workspace.
+    ``held`` is a :func:`verify_card` result, ``required`` the workspace's ``required_reader`` (§0.8.6 item 9.4). A card
+    below it is ``hub_too_old`` (the host reports ``sign.convenience_readers`` reason ``hub_too_old``)."""
+    level = held["card"]["reader"]
+    if type(required) is not int or required < 0 or level < required:
+        raise HubRefused("hub_too_old")
+    return level
 
 
 def channel_id(key_pub: bytes) -> str:
@@ -494,3 +529,187 @@ def left_payload(*, hub_id_: str, binding_seq: int) -> dict[str, Any]:
     if not hex16(hub_id_) or type(binding_seq) is not int or binding_seq < 1:
         raise HubRefused("malformed")
     return {"hub_id": hub_id_, "binding_seq": binding_seq}
+
+
+# --- the owner proof of a hub op (section 9.6, #1198 C8) ---------------------------------------------------------
+
+
+def _joined_shape(p: Any) -> bool:
+    if not (
+        type(p) is dict
+        and set(p) == JOINED_KEYS
+        and is_pub(p["hk_root_pub"])
+        and hex16(p["hub_id"])
+        and p["mode"] in MODES
+        and type(p["binding_seq"]) is int
+        and p["binding_seq"] >= 1
+        and type(p["aliases"]) is list
+    ):
+        return False
+    if p["hub_id"] != hub_id(unb64u(p["hk_root_pub"], 65)):
+        return False
+    pids = []
+    for a in p["aliases"]:
+        if type(a) is not dict or set(a) != {"person_id", "user_id"}:
+            return False
+        if not (hex16(a["person_id"]) and hex16(a["user_id"])):
+            return False
+        pids.append(a["person_id"])
+    return pids == sorted(set(pids))
+
+
+def _left_shape(p: Any) -> bool:
+    return (
+        type(p) is dict
+        and set(p) == LEFT_KEYS
+        and hex16(p["hub_id"])
+        and type(p["binding_seq"]) is int
+        and p["binding_seq"] >= 1
+    )
+
+
+def _proof_payload_ok(op: str, p: Any) -> bool:
+    """The payload has the exact shape of its event's payload without ``owner_proof``; ``hub.mode`` only to full."""
+    if op == "hub.leave":
+        return _left_shape(p)
+    return _joined_shape(p) and (op != "hub.mode" or p["mode"] == "full")
+
+
+def build_owner_proof(
+    *,
+    workspace_id: str,
+    pk_pub: bytes,
+    op: str,
+    payload: Mapping[str, Any],
+    request_id: str,
+    issued_ms: int,
+    expires_ms: int,
+    dev: bool,
+    sign: Sign,
+) -> dict[str, Any]:
+    """Section 9.6: the proof object, signed by ``sign`` (the person key ``PK``, held only for this call by the signer,
+    C10). ``payload`` is the event payload WITHOUT its ``owner_proof`` member. Refuses (``malformed``) anything the
+    verifier would refuse, so a signer never signs a proof that cannot verify."""
+    o = {
+        **_head("hub.owner_proof"),
+        "workspace_id": workspace_id,
+        "person_id": person_id(pk_pub),
+        "op": op,
+        "payload": dict(payload),
+        "request_id": request_id,
+        "issued_ms": issued_ms,
+        "expires_ms": expires_ms,
+        "dev": dev,
+    }
+    try:
+        _fields(o, "hub.owner_proof")
+        cj(o)
+    except (HubRefused, *_CanonError):
+        raise HubRefused("malformed") from None
+    if not _proof_payload_ok(op, o["payload"]) or not issued_ms < expires_ms <= issued_ms + OWNER_PROOF_MAX_MS:
+        raise HubRefused("malformed")
+    return _signed(o, SIG_OWNER_PROOF, sign)
+
+
+def _owner_proof(signed: Any, pk_pub: Any) -> dict[str, Any]:
+    """Section 9.6 steps 1-3: one code, ``proof_invalid``, for every way the object itself is wrong."""
+    try:
+        if type(pk_pub) is not bytes:
+            raise HubRefused("malformed")
+        _suite.validate_public_key(pk_pub)
+        o = _envelope(signed, "hub.owner_proof")
+        _signature(signed, SIG_OWNER_PROOF, pk_pub)
+        _fields(o, "hub.owner_proof")
+    except (HubRefused, _suite.CryptoError):
+        raise HubRefused("proof_invalid") from None
+    if o["person_id"] != person_id(pk_pub) or not _proof_payload_ok(o["op"], o["payload"]):
+        raise HubRefused("proof_invalid")
+    if not o["issued_ms"] < o["expires_ms"] <= o["issued_ms"] + OWNER_PROOF_MAX_MS:
+        raise HubRefused("proof_invalid")
+    return o
+
+
+def _same(a: Any, b: Any) -> bool:
+    try:
+        return cj(a) == cj(b)
+    except _CanonError:
+        return False
+
+
+def check_owner_proof(
+    signed: Any,
+    *,
+    pk_pub: bytes,
+    workspace_id: str,
+    op: str,
+    payload: Mapping[str, Any],
+    request_id: str,
+    now_ms: int,
+    dev_mode: bool,
+) -> dict[str, Any]:
+    """Section 9.6 "At the host" (C9 calls it at binding and again at submit, under the store lock): ``pk_pub`` the
+    acting owner's ``PK`` from the roster, ``payload`` the event payload without ``owner_proof``, ``request_id`` the
+    request being bound or submitted. Every argument is required: nothing is skipped."""
+    o = _owner_proof(signed, pk_pub)
+    if o["workspace_id"] != workspace_id or o["op"] != op or o["request_id"] != request_id:
+        raise HubRefused("proof_invalid")
+    if not _same(o["payload"], dict(payload)):
+        raise HubRefused("proof_invalid")
+    if o["issued_ms"] > now_ms + CLOCK_SKEW_MS:
+        raise HubRefused("proof_invalid")
+    if now_ms >= o["expires_ms"]:
+        raise HubRefused("proof_expired")
+    check_dev(o["dev"], dev_mode)
+    return o
+
+
+def check_recorded_owner_proof(
+    event_type: str,
+    payload: Mapping[str, Any],
+    *,
+    auth: Any,
+    signer_exposed: Any,
+    at_ms: Any,
+    prior_binding_seq: Any,
+    workspace_id: str,
+    actor_person_id: str,
+    pk_pub: bytes | None,
+    dev_mode: bool,
+) -> dict[str, Any] | None:
+    """Section 9.6 "Readers": a ``hub.joined`` / ``hub.left`` on the workspace log. The deciding inputs are the
+    reader's own facts, never fields the signer chose: ``signer_exposed`` (the roster's convenience-custody evidence for
+    the signing device, ``exposed`` #1097; unknown device = True), ``at_ms`` (the host-assigned append time),
+    ``prior_binding_seq`` (the last ``hub.joined`` / ``hub.left`` before it, 0 if none), ``pk_pub`` (the actor's ``PK``
+    from the roster, ``None``: refused). Steps: the event's place (``stale_binding``); a ``null`` proof only with
+    ``auth: "passphrase"`` and a signer that is not exposed (``proof_missing``); the proof itself; the append time
+    inside the proof's life (``proof_expired``); the dev marker."""
+    allowed = RECORDED_OPS.get(event_type)
+    if allowed is None or type(payload) is not dict or "owner_proof" not in payload:
+        raise HubRefused("malformed")
+    ints = (at_ms, prior_binding_seq)
+    if type(signer_exposed) is not bool or any(type(x) is not int or x < 0 for x in ints):
+        raise HubRefused("malformed")
+    seq = payload.get("binding_seq")
+    if type(seq) is not int:
+        raise HubRefused("malformed")
+    if event_type == "hub.joined" and seq != prior_binding_seq + 1:
+        raise HubRefused("stale_binding")
+    if event_type == "hub.left" and (prior_binding_seq < 1 or seq != prior_binding_seq):
+        raise HubRefused("stale_binding")
+    proof = payload["owner_proof"]
+    if proof is None:
+        if auth == "passphrase" and signer_exposed is False:
+            return None
+        raise HubRefused("proof_missing")
+    if pk_pub is None:
+        raise HubRefused("proof_invalid")
+    o = _owner_proof(proof, pk_pub)
+    rest = {k: v for k, v in payload.items() if k != "owner_proof"}
+    if o["workspace_id"] != workspace_id or o["person_id"] != actor_person_id or o["op"] not in allowed:
+        raise HubRefused("proof_invalid")
+    if not _same(o["payload"], rest):
+        raise HubRefused("proof_invalid")
+    if not o["issued_ms"] - CLOCK_SKEW_MS <= at_ms <= o["expires_ms"]:
+        raise HubRefused("proof_expired")
+    check_dev(o["dev"], dev_mode)
+    return o

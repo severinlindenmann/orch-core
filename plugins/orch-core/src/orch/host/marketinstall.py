@@ -579,6 +579,14 @@ def _recheck(service: WorkspaceService, record: dict[str, Any], ev: dict[str, An
     staged = record.get("staged")
     if staged is None:  # C1 again at submit: built-in bytes or the bytes of the install record
         gate_plain(files, ev)
+        pol = hubpolicy.stored(
+            service
+        )  # the same grant-stage evaluation as a staged grant, on the then-pinned snapshot
+        rec = files.installs()[ADDONS].get(ev.get("name"))  # none for a built-in: block and ceiling only
+        policy.check_run(
+            pol, name=ev.get("name"), version=ev.get("version"), capabilities=ev.get("capabilities") or [],
+            origin=None if rec is None else rec["origin"], key=None if rec is None else rec["publisher_key"],
+        )  # fmt: skip
         return
     doc, pkg, _ = staged_package(files, ev["name"], staged["stage"], service.clock())
     if pkg.digest != ev["package_sha256"] or doc["version"] != ev["version"]:

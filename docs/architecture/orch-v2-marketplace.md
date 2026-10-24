@@ -818,6 +818,10 @@ add-ons run with the host interpreter and `-S`), D8 (`python-requirements` is `u
   included. `market.installed` shows the cause: per add-on `paused: {code, cause: policy | unverified, reconnect}` and
   `hub: {state: standalone | verified | unverified, reconnect: "orch hub refresh"}`; `hub.refresh` (with a new card) is
   never gated by this policy.
+- **Every path that runs an add-on asks one helper, `hubpolicy.running(service, name)`** (granted, on, not paused): start-agent and
+  model routing (`agents._addon`), terminals (`terms.addon_granted`) and Publish (`publishing._gate`, via `hubpolicy.allowed`).
+  `runner.call(gate=...)` takes `hubpolicy.run_gate(service)`. A plain `addon.grant` (re-enable of a built-in or of the install
+  record's bytes) runs the same `grant` evaluation in `_recheck`, with the record's origin and key.
 - **Not done / follow-up:** the host wiring that calls `runner.call` with the gate is the add-on runner's (it is not
   called anywhere in core yet; any new caller MUST pass the gate on a hub-joined host); the dashboard page for
   `paused` and the `pinned` publisher wording.

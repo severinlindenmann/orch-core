@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 
     from .workspace import Call, WorkspaceService
 
-__all__ = ["UNREADABLE", "facts", "paused", "refresh_now", "run_gate", "stored", "view"]
+__all__ = ["UNREADABLE", "facts", "paused", "allowed", "refresh_now", "run_gate", "running", "stored", "view"]
 
 
 class _Unreadable:
@@ -129,6 +129,30 @@ def run_gate(service: WorkspaceService) -> Callable[[Any], None]:
         )  # fmt: skip
 
     return gate
+
+
+def running(service: WorkspaceService, name: str) -> bool:
+    """THE one answer to "is this add-on on, for any host feature that runs it?": granted, enabled, not purged, and not
+    paused by the hub policy now (:func:`run_gate`; an unverifiable hub pauses every add-on). Every host path that
+    uses an add-on (start-agent and model routing, terminals, publish) asks this, never the grant alone."""
+    from orch.addons.install import as_addons
+
+    try:
+        found = as_addons(service.store.state.workspace.addons).get(name)
+    except (AttributeError, KeyError, TypeError):
+        return False
+    if found is None or not found.enabled or found.purged:
+        return False
+    return allowed(service, found)
+
+
+def allowed(service: WorkspaceService, granted: Any) -> bool:
+    """Does the hub policy let this grant (``name``, ``version``, ``capabilities``) run now? Fail closed."""
+    try:
+        run_gate(service)(granted)
+    except MarketError:
+        return False
+    return True
 
 
 def paused(service: WorkspaceService, pol: MarketPolicy | None | _Unreadable, rec: dict[str, Any] | None, model: Any,

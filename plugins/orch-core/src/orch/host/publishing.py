@@ -43,6 +43,7 @@ import stat
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 from jsonschema import Draft202012Validator
@@ -204,7 +205,17 @@ def _epoch(text: Any) -> float | None:
 def _gate(call: Call) -> None:
     """The ``publish`` add-on is granted and on, else ``runner.disabled`` (``missing: addon``) like the worktrees."""
     addon = call.service.store.state.workspace.addons.get(ADDON)
-    if addon is None or not addon["enabled"] or addon["purged"]:
+    from . import hubpolicy
+
+    if (
+        addon is None
+        or not addon["enabled"]
+        or addon["purged"]
+        or not hubpolicy.allowed(
+            call.service,
+            SimpleNamespace(name=ADDON, version=addon.get("version"), capabilities=addon.get("capabilities") or ()),
+        )
+    ):
         raise HostError(
             "runner.disabled",
             "Publish is off: turn it on in Settings, Add-ons (missing: addon)",

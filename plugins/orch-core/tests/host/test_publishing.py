@@ -21,7 +21,7 @@ import pytest
 
 from orch import crypto
 from orch.crypto import suite as S
-from orch.host import hubops, publishing, signcontent
+from orch.host import hubops, hubpolicy, publishing, signcontent
 from orch.host.publishing import PUBLISH_OPS
 from orch.publishclient import approval, flow
 from tests.host import human_helpers
@@ -185,6 +185,7 @@ class World:
         monkeypatch.setattr(hubops, "TRANSPORT", lambda service, hub_id: self.hub)
         monkeypatch.setattr(hubops, "CARD_SOURCE", lambda service: card)
         monkeypatch.setattr(hubops, "workspace_dev", lambda service: True)
+        monkeypatch.setattr(hubpolicy, "stored", lambda service: None)  # the Publish tests are not about the hub policy
         if join:
             self.join()
 

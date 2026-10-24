@@ -338,3 +338,40 @@ def test_the_view_says_standalone_verified_or_unverified():
     assert hubpolicy.view(hubpolicy.UNREADABLE) == {
         "state": "unverified", "code": "market.not_allowed", "reconnect": "orch hub refresh",
     }  # fmt: skip
+
+
+# ------------------------------------------------------------------------------------------------ sibling paths
+def test_a_plain_regrant_of_a_blocked_or_over_ceiling_addon_is_refused(served, human, hub, ready):
+    install(served, human)
+    for kw, code in (({"block": ["standup"]}, "market.blocked"), ({"ceiling": []}, "market.capability_ceiling"),
+                     ({"allow": ["other"]}, "market.addon_not_allowed")):  # fmt: skip
+        hub.set(**kw)
+        prepared = human.prepare("addon.grant", {"name": "standup"})
+        signed = human.sign(prepared)
+        assert err(human.submit_res(prepared["request"]["id"], signed.events)) == code, kw
+    hub.set()
+
+
+def test_host_features_see_a_paused_addon_as_off(served, human, hub, ready, monkeypatch):
+    from orch.host import agents, terms
+
+    install(served, human)
+    service = served.service
+    on = lambda name: M.on_worker(served, lambda: hubpolicy.running(service, name))  # noqa: E731
+    assert on("standup") is True
+    hub.set(block=["standup"])
+    assert on("standup") is False
+    from orch.addons import install as addon_install
+    from orch.model.types import Addon
+
+    builtins = {n: Addon(n, "0.1.0", "sha256:" + "0" * 64, (), {}, [], []) for n in (terms.ADDON, agents.ROUTING)}
+    monkeypatch.setattr(addon_install, "as_addons", lambda view: builtins)
+    assert M.on_worker(served, lambda: terms.addon_granted(service)) is True
+    assert M.on_worker(served, lambda: agents._addon(service, agents.ROUTING)) is True  # noqa: SLF001
+    hub.set(block=[terms.ADDON, agents.ROUTING])  # a blocked built-in is off for the host features that use it
+    assert M.on_worker(served, lambda: terms.addon_granted(service)) is False
+    assert M.on_worker(served, lambda: agents._addon(service, agents.ROUTING)) is False  # noqa: SLF001
+    hub.pol = None  # an unverifiable hub pauses them all
+    assert M.on_worker(served, lambda: terms.addon_granted(service)) is False
+    hub.set()  # undone: on again
+    assert M.on_worker(served, lambda: terms.addon_granted(service)) is True

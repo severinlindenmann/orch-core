@@ -605,10 +605,15 @@ def _market(material: Mapping[str, Any], events: list[Mapping[str, Any]]) -> Non
     short = lambda v, n: isinstance(v, str) and len(v) <= n  # noqa: E731
     ok = (
         short(block["url"], 200)
-        and block["class"] in ("official", "dev")
+        and block["class"] in ("official", "dev", "dev-folder")
         and isinstance(block["commit"], str)
         and re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", block["commit"]) is not None
-        and block["source_note"] == "source as claimed by the marketplace"
+        and block["source_note"]
+        == (
+            "a local folder at this commit (orch addon dev), not a marketplace"
+            if block["class"] == "dev-folder"
+            else "source as claimed by the marketplace"
+        )
         and (pub["fingerprint"] is None or short(pub["fingerprint"], 60))
         and pub["tofu"] in _TOFU
         and type(block["index_version"]) is int
@@ -903,6 +908,14 @@ def render(
         pub = market["publisher"]
         who = {"unsigned": "unsigned (no publisher key)", "new": "first use: remembered when you sign",
                "known": "same publisher as before"}[pub["tofu"]]  # fmt: skip
+        if market["class"] == "dev-folder":
+            commit = _clean(market["commit"])
+            out.append(
+                f"DEV add-on from a local folder, not from a marketplace (per host, not signed): commit {commit}"
+            )
+            out.append(f"source (per host, not signed): {_clean(market['source_note'])}")
+            market = None
+    if market is not None:
         out.append(f"marketplace (per host, not signed): {_clean(market['url'])} ({_clean(market['class'])})")
         out.append(f"marketplace commit (per host, not signed): {_clean(market['commit'])}")
         out.append(f"source (per host, not signed): {_clean(market['source_note'])}")

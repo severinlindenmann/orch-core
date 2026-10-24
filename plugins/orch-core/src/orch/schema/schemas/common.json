@@ -318,7 +318,9 @@
         "spawn_agent",
         "pty",
         "network",
-        "git_push"
+        "git_push",
+        "choose_model",
+        "credential"
       ]
     },
     "coreArtifactKind": {

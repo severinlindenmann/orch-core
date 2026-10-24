@@ -19,7 +19,7 @@ def load(caps):
 
 def test_the_list_is_closed_and_equals_the_schemas():
     assert set(CAPABILITIES) == set(schema.load("common")["$defs"]["capability"]["enum"])
-    assert CAPABILITIES == ("serve_http", "spawn_agent", "pty", "network", "git_push")
+    assert CAPABILITIES == ("serve_http", "spawn_agent", "pty", "network", "git_push", "choose_model", "credential")
     for bad in ("root", "fs_write", "NETWORK", "keys", "sign", "append", ""):
         with pytest.raises(ManifestError):
             load([bad])

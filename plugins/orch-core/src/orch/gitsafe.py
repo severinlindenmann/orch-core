@@ -93,6 +93,9 @@ dashboard dev host ``devhost/reads.diff``
 ``gitsafe.market_export_package`` (V3 G3, ``orch      the same environment and settings: ``ls-tree -r -z -l`` judged
 addon install``: an add-on's files at a commit)         whole, then ONE ``cat-file --batch`` with listed sizes; no
                                                         checkout, the package exists only in memory
+``gitsafe.market_local_export`` (V3 G5, ``orch addon     :func:`gate` on the author's repository, then the same
+pack`` / ``addon dev``: a commit of a LOCAL repo)        closed environment as the row above; no network, no
+                                                        checkout, scratch space is a fresh private directory
 ``gitread/*`` (host mode)                               no git process (a pure-Python reader in a sandbox child)
 ======================================================  ===========================================================
 
@@ -131,7 +134,7 @@ __all__ = [
     "NetSpec", "Op", "Unsafe", "command", "pinned", "config_env", "config_files", "exec_risk", "gate", "isolated_env",
     "land_check", "land_init", "local_config", "target_tracking_ref",
     "MARKET_FETCH_SECONDS", "MARKET_MAX_PACK", "MARKET_PACKAGE_PACK", "MarketGitError", "market_export_package",
-    "market_fetch", "market_fetch_argv", "market_read_blob",
+    "market_fetch", "market_fetch_argv", "market_local_export", "market_read_blob",
 ]  # fmt: skip
 
 INVARIANT = (
@@ -1272,8 +1275,16 @@ def market_export_package(staging: str, commit: str, subdir: str | None) -> dict
     2. ONE ``cat-file --batch`` for all the listed blobs; its output is capped at the listed total plus the batch
        headers, and each blob's reported type and size must equal the listing. A blob is never written to a path
        from the tree."""
+    return _export_package(staging, staging, commit, subdir)
+
+
+def _export_package(repo: str, work: str, commit: str, subdir: str | None) -> dict[str, bytes]:
+    """The body of :func:`market_export_package`. ``repo`` is the git directory read; ``work`` is the private scratch
+    directory used as ``HOME`` and watched for size (the same directory for a fetched staging repository, a fresh one
+    for a local repository, which must not be walked)."""
     from orch.addons import package
 
+    staging = repo
     if not staging.startswith("/") or "\0" in staging or _OBJECT_ID.fullmatch(commit) is None:
         raise Unsafe("invalid operand")
     parts = [] if subdir is None else subdir.split("/")
@@ -1285,8 +1296,8 @@ def market_export_package(staging: str, commit: str, subdir: str | None) -> dict
     # a listing is bounded by the entry cap: no tree that big is listed (a longer output kills the command)
     row_cap = (package.MAX_FILES + 1) * (package.MAX_DEPTH * 66 + 160)
     try:
-        listing = _market_run([_git_exe(), "-C", staging, *_MARKET_C, "ls-tree", "-r", "-z", "-l", treeish], staging,
-                              staging, timeout=10, cap=MARKET_MAX_PACK, stdout_cap=row_cap)  # fmt: skip
+        listing = _market_run([_git_exe(), "-C", staging, *_MARKET_C, "ls-tree", "-r", "-z", "-l", treeish], work,
+                              work, timeout=10, cap=MARKET_MAX_PACK, stdout_cap=row_cap)  # fmt: skip
     except MarketGitError as exc:
         raise MarketGitError("package" if exc.kind == "too_big" else exc.kind) from None
     rows = [r for r in listing.split(b"\0") if r]
@@ -1310,7 +1321,7 @@ def market_export_package(staging: str, commit: str, subdir: str | None) -> dict
         raise MarketGitError("package") from None
     wanted = b"".join(oid.encode("ascii") + b"\n" for oid, _ in oids)
     total = sum(size for _, size in oids)
-    blobs = _market_run([_git_exe(), "-C", staging, *_MARKET_C, "cat-file", "--batch"], staging, staging,
+    blobs = _market_run([_git_exe(), "-C", staging, *_MARKET_C, "cat-file", "--batch"], work, work,
                         timeout=30, cap=MARKET_MAX_PACK, stdout_cap=total + len(oids) * 160, stdin=wanted)  # fmt: skip
     out: dict[str, bytes] = {}
     pos = 0
@@ -1327,3 +1338,76 @@ def market_export_package(staging: str, commit: str, subdir: str | None) -> dict
     if pos != len(blobs):
         raise MarketGitError("failed")
     return out
+
+
+_LOCAL_REV = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64}|[A-Za-z0-9][A-Za-z0-9._/-]{0,99})(?![\s\S])")
+
+
+def _plain_dot_git(repo: str) -> str:
+    """``realpath(<repo>/.git)`` when ``<repo>/.git`` is a real directory of its own (not a link, not a gitfile) with no
+    alternate object store; else :class:`Unsafe`. A folder whose ``.git`` points elsewhere, or whose objects come from
+    another repository, would export bytes the person did not name."""
+    path = os.path.join(os.path.realpath(repo), ".git")
+    try:
+        st = os.lstat(path)
+    except OSError:
+        raise Unsafe("the folder is not the root of a git repository") from None
+    if not stat.S_ISDIR(st.st_mode):
+        raise Unsafe("the folder's .git is a link or a file; orch reads only a repository with its own .git directory")
+    try:
+        os.lstat(os.path.join(path, "objects", "info", "alternates"))
+    except FileNotFoundError:
+        return path
+    except OSError:
+        raise Unsafe("the repository's object store cannot be checked") from None
+    raise Unsafe("the repository borrows objects from another one (objects/info/alternates); orch does not read it")
+
+
+def market_local_export(repo: str, rev: str | None, subdir: str | None) -> tuple[str, dict[str, bytes]]:
+    """``(full commit id, package files)`` of a commit of the LOCAL repository ``repo`` (an absolute path), for
+    ``orch addon pack`` and ``orch addon dev`` (V3 G5): the same plumbing-only export as :func:`market_export_package`,
+    so an author's digest is the digest an install of that commit will compute (no checkout: ``autocrlf``, LFS smudge
+    and ``export-ignore`` never touch a byte). ``rev`` is ``None`` (``HEAD``), a full object id or a plain branch or
+    tag name; anything else is :class:`Unsafe`.
+
+    The repository is the author's, so it is held to the same rule as every local repository: :func:`gate` first (its
+    own config sets no key outside the allow-list, its config files are this user's), then the closed marketplace
+    environment (no global or system config, no replace refs, no grafts, no hooks, no filters). Scratch space is a
+    fresh private directory, deleted before this returns; nothing is written into ``repo``."""
+    import shutil
+    import tempfile
+
+    if not repo.startswith("/") or "\0" in repo:
+        raise Unsafe("invalid repository path")
+    if rev is not None and (_LOCAL_REV.fullmatch(rev) is None or ".." in rev or rev.endswith((".lock", "/", "."))):
+        raise Unsafe("invalid revision")
+    own = {"PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin"}
+    dot_git = _plain_dot_git(repo)  # before ANY git process: only this folder's own object store is read
+    entries = gate(repo, own)
+    for _scope, key, _value in entries:  # L1: a lazy fetch (partial clone) would make the export touch the network
+        k = key.lower()
+        promisor = k.startswith("remote.") and k.endswith((".promisor", ".partialclonefilter"))
+        if k == "extensions.partialclone" or promisor:
+            raise Unsafe("this repository is a partial clone; orch reads only complete local repositories")
+    work = tempfile.mkdtemp(prefix="orch-pack-")  # 0700; HOME and scratch of the git commands below
+    try:
+        # RACE NOTE (G5): the gate above and the git processes below are not atomic, as for every gated call. The
+        # window is benign: plumbing only (rev-parse, ls-tree, cat-file --batch) runs no filter, hook or program,
+        # and the command-scope pins in _MARKET_C (core.fsmonitor=false, core.hooksPath=/dev/null, credential.helper=,
+        # no global or system config) override a local key written after the gate. ``work`` is a fresh 0700
+        # directory; ``repo`` is never walked or written.
+        where = [_git_exe(), "-C", repo, *_MARKET_C, "rev-parse", "--path-format=absolute", "--git-common-dir"]
+        dirs = _market_run([*where, "--git-dir"], work, work, timeout=10, cap=MARKET_MAX_PACK)
+        dirs = dirs.decode("utf-8", "surrogateescape")
+        found = dirs.splitlines()
+        if len(found) != 2 or any(os.path.realpath(d) != dot_git for d in found):
+            raise Unsafe("the repository's git directory is not the folder's own .git")
+        want = f"{rev or 'HEAD'}^{{commit}}"
+        out = _market_run([_git_exe(), "-C", repo, *_MARKET_C, "rev-parse", "--verify", "--quiet", want], work, work,
+                          timeout=10, cap=MARKET_MAX_PACK)  # fmt: skip
+        commit = out.decode("ascii", "replace").strip()
+        if _OBJECT_ID.fullmatch(commit) is None:
+            raise MarketGitError("failed")
+        return commit, _export_package(repo, work, commit, subdir)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)

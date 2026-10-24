@@ -64,7 +64,7 @@ SHOWN: dict[str, frozenset[str]] = {
     "addon.disabled": frozenset({"name"}),
     "addon.purged": frozenset({"name"}),
     "addon.granted": frozenset(
-        {"name", "version", "package_sha256", "capabilities", "artifact_kinds", "fields", "sections"}
+        {"name", "version", "package_sha256", "capabilities", "artifact_kinds", "fields", "sections", "runtime"}
     ),
     "artifact.added": frozenset({"name", "kind", "label", "ac", "task", "ref", "addon", "bytes", "sha256"}),
     "artifact.replaced": frozenset({"name", "kind", "label", "ac", "task", "replaces", "bytes", "sha256"}),
@@ -1122,10 +1122,28 @@ def _payload(
         tofu = {"new": "first use of this publisher key", "known": "same publisher as before"}.get(
             _s(market["publisher"].get("tofu")), "unsigned"
         )
+        warn = ""  # one click has no typed word: what the person must not miss sits in the plain note itself
+        if market.get("stale") is True:
+            warn += " STALE: the marketplace index is past its expiry (per host, not signed)."
+        if market.get("class") == "dev-folder":
+            warn += " DEV: a local folder, not a marketplace package (per host, not signed)."
         out.setdefault("notes", []).append(
             f"Where it comes from (per host, not signed): {_s(market.get('url'))}, {tofu}. "
-            "A key shows the same publisher as last time, not who they are."
+            "A key shows the same publisher as last time, not who they are." + warn
         )
+    deps = material.get("deps")
+    if deps is not None:
+        _row(out, "packages (listed by this computer from the lockfile; covered by the digest)", _deps_words(deps))
+        diff = deps.get("diff") if isinstance(deps, Mapping) else None
+        if isinstance(diff, Mapping) and isinstance(diff.get("lines"), list):
+            if len(diff["lines"]) > 1000:  # too long for the short view: the full review shows every line
+                raise PlainUnavailable("the plain view does not show this many dependency changes")
+            _row(
+                out,
+                "dependency changes (host-derived, not signed)",
+                ("WIDENED: " if diff.get("widened") is True else "not widened: ")
+                + "; ".join(one(x) for x in diff["lines"]),
+            )
     issued = [ev.get("grant") for ev in events if ev.get("type") == "grant.issued"]
     revoked = [ev.get("grant") for ev in events if ev.get("type") == "grant.revoked"]
     if issued and revoked:  # an Extend: the access it replaces must be another one than the new access
@@ -1415,7 +1433,7 @@ def _addon(typ: str, ev: Mapping[str, Any], out: dict[str, Any]) -> str:
         return f"Purge the add-on {name}"
     version = ev.get("version")
     words = _capability_words(ev.get("capabilities"))
-    declares = any(ev.get(k) not in (None, [], {}) for k in ("fields", "sections", "artifact_kinds"))
+    declares = any(ev.get(k) not in (None, [], {}) for k in ("fields", "sections", "artifact_kinds", "runtime"))
     if named and words is not None and not declares and isinstance(version, str) and _VERSION.fullmatch(version):
         _row(out, "add-on", name)
         _row(out, "version", version)
@@ -1435,7 +1453,53 @@ def _addon(typ: str, ev: Mapping[str, Any], out: dict[str, Any]) -> str:
     for k in ("capabilities", "artifact_kinds", "fields", "sections"):
         if ev.get(k) is not None:
             _row(out, k.replace("_", " "), ev[k])
+    if ev.get("runtime") is not None:
+        runtime = ev["runtime"]
+        _row(out, "dependencies", runtime)
+        out.setdefault("notes", []).append(_runtime_words(runtime))
     return f"Grant the add-on {name}"
+
+
+_DEP_NOTES = {
+    None: "", "compiled": " (compiled code)", "other_platform": " (not on this computer)",
+    "dev": " (development, not installed)",
+}  # fmt: skip
+
+
+def _deps_words(deps: Any) -> str:
+    """``material["deps"]`` (the host's list of the packages an add-on installs, checked by the signer) as one row:
+    every package, in lockfile order. A shape this view does not know is the full review."""
+    rows = deps.get("rows") if isinstance(deps, Mapping) else None
+    if (
+        not isinstance(rows, list)
+        or len(rows) > 1000
+        or not all(
+            isinstance(r, Mapping) and r.get("note") in _DEP_NOTES and isinstance(r.get("name"), str) for r in rows
+        )
+    ):
+        raise PlainUnavailable("the plain view does not know these packages")
+    return "; ".join(f"{one(r['name'])} {one(r.get('version'))}{_DEP_NOTES[r['note']]}" for r in rows)
+
+
+_RUNTIME_KINDS = {"python-requirements": "Python", "node-package-lock": "Node"}
+
+
+def _runtime_words(runtime: Any) -> str:
+    """V3 G4 (D6): the signed ``runtime`` of an ``addon.granted`` in words; any other shape is the full review."""
+    if (
+        not isinstance(runtime, Mapping)
+        or set(runtime) != {"kind", "lock", "packages"}
+        or runtime["kind"] not in _RUNTIME_KINDS
+        or not isinstance(runtime["lock"], str)
+        or type(runtime["packages"]) is not int
+        or runtime["packages"] < 1
+    ):
+        raise PlainUnavailable("the plain view does not know this runtime")
+    n = runtime["packages"]
+    return (
+        f"Also installs {n} {_RUNTIME_KINDS[runtime['kind']]} package{'' if n == 1 else 's'} listed in "
+        f"{one(runtime['lock'])} after you sign; no package scripts run."
+    )
 
 
 def _cert_rows(out: dict[str, Any], label: str, cert: Any) -> None:

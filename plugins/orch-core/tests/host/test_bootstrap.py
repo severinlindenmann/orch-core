@@ -842,3 +842,24 @@ def test_clean_root_removes_only_recorded_entries(tmp_path):
     recorded = {"events": [os.lstat(root / "events").st_dev, os.lstat(root / "events").st_ino]}
     Control._clean_root(str(root), recorded, None)
     assert not (root / "events").exists() and (root / "tickets" / "mine").exists()
+
+
+def test_connect_host_honours_the_run_directory_of_the_environment(tmp_path, monkeypatch):
+    """#1193: setup and the hosted create find the host where every other host command does."""
+    seen = []
+
+    class Recorder:
+        def __init__(self, path, timeout=None):
+            seen.append(Path(path))
+
+    monkeypatch.setattr("orch.host.control_client.ControlClient", Recorder)
+    state, run = tmp_path / "state", tmp_path / "elsewhere"
+    wi.connect_host(state, {"ORCH_HOST_RUN_DIR": str(run)})
+    wi.connect_host(state, {})
+    monkeypatch.setenv("ORCH_HOST_RUN_DIR", str(run))
+    wi.connect_host(state)
+    assert seen == [
+        run / "control" / "host.sock",
+        state / "run" / "control" / "host.sock",
+        run / "control" / "host.sock",
+    ]

@@ -287,7 +287,11 @@ def test_the_official_key_list_is_the_only_verifier_input():
 
     import orch.market as pkg
 
-    src = "".join(p.read_text() for p in Path(pkg.__file__).parent.glob("*.py"))
-    assert "os.environ" not in src and "getenv" not in src and "import os" not in src
+    files = sorted(Path(pkg.__file__).parent.glob("*.py"))
+    src = "".join(p.read_text() for p in files)
+    assert "os.environ" not in src and "getenv" not in src
+    # the dependency fetcher and unpacker (V3 G4) open sockets and files by descriptor; they never see a key list
+    plain = "".join(p.read_text() for p in files if p.name not in ("download.py", "untar.py"))
+    assert "import os" not in plain
     assert inspect.getsource(index.official_keys).count("constants.OFFICIAL_KEYS") == 1
     assert len(constants.OFFICIAL_KEYS) in (0, 2)  # no key yet (index_unsigned) or the current and next key

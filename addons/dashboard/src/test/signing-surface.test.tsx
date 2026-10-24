@@ -931,7 +931,7 @@ describe('manual acceptance signing paths', () => {
   })
 })
 
-it('market approval is Terminal only and displays the exact package name and stage sent', async () => {
+it('market approval (terminal fallback) displays the exact package name and stage sent; it is click-eligible, except Publish', async () => {
   const { workspaceRequest } = await import('./hostHarness')
   const { state } = await import('./handoffHarness')
   const { clickEligible } = await import('@/api/click')
@@ -947,7 +947,8 @@ it('market approval is Terminal only and displays the exact package name and sta
   await waitFor(() => expect(prepare).toHaveBeenCalledWith('a'.repeat(32), action, 0))
   expect(await screen.findByText(visible(action.staged), { exact: false })).toBeVisible()
   expect(screen.getAllByText(action.name, { exact: false }).length).toBeGreaterThan(0)
-  expect(clickEligible(action)).toBe(false)
+  expect(clickEligible(action)).toBe(true) // V3-D38: one click where click-to-sign is on, this Terminal review where it is off
+  expect(clickEligible({ ...action, name: 'publish' })).toBe(false)
 })
 
 it('a Terminal-only action with One click on shows the Terminal hand-off: why line, exact command, pending, no click prepare', async () => {

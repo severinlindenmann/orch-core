@@ -653,8 +653,8 @@ def test_publish_is_never_turned_on_by_a_click_whatever_the_route(click, served,
 
     assert protocol.op_class("addon.grant", args={"name": "publish"}) == "terminal"
     assert protocol.op_class("addon.grant", events=[{"name": "publish"}]) == "terminal"
-    assert protocol.op_class("addon.grant", args={"name": "usage"}) == "word"
-    assert protocol.op_class("addon.grant", events=[{"name": "usage"}]) == "word"
+    assert protocol.op_class("addon.grant", args={"name": "usage"}) == "click"
+    assert protocol.op_class("addon.grant", events=[{"name": "usage"}]) == "click"
     # at prepare: the plain grant of Publish is refused before the host is asked
     human.run("settings.set", {"set": {"publish": PUBLISH}})
     refused(lambda: click.prepare("addon.grant", {"name": "publish"}), "human.click_refused", "terminal_only")

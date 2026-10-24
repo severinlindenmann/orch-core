@@ -30,7 +30,7 @@ MATERIAL_KEYS = {
     "question": ({"kind", "ticket", "question", "review"},) * 2,
     "payload": (
         {"kind", "ticket", "review"},
-        {"kind", "ticket", "review", "texts", "before", "sequence", "statement", "grants", "market"},
+        {"kind", "ticket", "review", "texts", "before", "sequence", "statement", "grants", "market", "deps"},
     ),
 }
 #: the only ops whose material may carry a manual acceptance `statement` (core signer `_person_op`)

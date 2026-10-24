@@ -558,6 +558,7 @@ def addon_event(core: Core, e: dict[str, Any]) -> Refusal | None:
             copy.deepcopy(e["fields"]),
             copy.deepcopy(e["sections"]),
             list(e["artifact_kinds"]),
+            runtime=copy.deepcopy(e.get("runtime")),
         )
         named |= generations.addon_binds_gates(new.binds)
 

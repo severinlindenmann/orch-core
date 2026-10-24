@@ -750,9 +750,10 @@ StageId = Annotated[str, StringConstraints(pattern=r"^st_[0-9a-f]{32}$")]
 
 class MarketGrant(Action):
     """`addon.grant {name, staged}`: install or update the package the host staged and the person reviewed (A10).
-    Exactly these two keys (`extra="forbid"`). **Terminal only, never one click**: the click route refuses it
-    (`click.prepare`), and it has no agent route (the dashboard session is the person's). The host re-reads the stage
-    and judges it again when the signed request is submitted."""
+    Exactly these two keys (`extra="forbid"`). **One click** where click-to-sign is on (V3-D38, owner 24 Oct: the
+    signer shows the whole review, the marketplace lines "per host, not signed" included), the terminal hand-off where
+    it is off. `publish` is terminal only (`click.prepare` refuses it). It has no agent route (the dashboard session
+    is the person's). The host re-reads the stage and judges it again when the signed request is submitted."""
 
     action: Literal["market_grant"]
     name: MarketName

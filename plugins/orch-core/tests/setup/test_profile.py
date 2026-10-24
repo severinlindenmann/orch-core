@@ -214,12 +214,6 @@ def test_a_projects_own_dot_orch_is_a_named_collision(tmp):
     assert "already has its own .orch/" in e.message and "never writes into a project's folder" in e.message
 
 
-def test_orch_own_init_lock_refuses_as_orch(tmp):
-    (tmp.work / ".orch-init.lock").mkdir()
-    e = refused(tmp, tmp.work)
-    assert "orch's own .orch-init.lock" in e.message
-
-
 def test_existing_project_dir_is_fine(tmp):
     (tmp.work / "README.md").write_text("x")
     (tmp.work / "src").mkdir()

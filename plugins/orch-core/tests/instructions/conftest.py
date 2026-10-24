@@ -1,4 +1,4 @@
-"""Fixtures of the instruction and ``orch init`` tests: a scripted terminal and a cheap-scrypt backend."""
+"""Fixtures of the instruction and ``orch setup`` tests: a scripted terminal and a cheap-scrypt backend."""
 
 from __future__ import annotations
 
@@ -120,7 +120,7 @@ def where(tmp_path: Path) -> dict[str, Path]:
 
 
 def init_ctx(where: dict[str, Path], *, grant: str | None = None, human: bool = True, **env_extra: str):
-    """The Context ``orch init`` gets from the CLI, for a workspace to be created in ``where['root']``."""
+    """The Context ``orch setup`` gets from the CLI, for a workspace to be created in ``where['root']``."""
     from orch.ops.base import Context
     from orch.ops.runtime import Workspace
 

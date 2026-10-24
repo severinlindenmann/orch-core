@@ -320,13 +320,6 @@
         "summary": "Change a member's role."
       },
       {
-        "name": "init",
-        "cli": "init",
-        "group": "Admin",
-        "who": "human",
-        "summary": "Create a workspace here: the genesis event, the workspace key and the instructions."
-      },
-      {
         "name": "doctor",
         "cli": "doctor",
         "group": "Admin",

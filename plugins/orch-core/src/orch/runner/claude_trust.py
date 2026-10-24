@@ -13,7 +13,7 @@ of a linked repository. Claude Code's include approval is one boolean per projec
 entry is that single folder, whose only external import is the workspace's ``AGENTS.md`` (through the root's
 ``CLAUDE.md``); the approval reaches no other project.
 
-**Consent.** The owner agreed when creating the workspace: ``orch init`` / setup writes the marker
+**Consent.** The owner agreed when creating the workspace: ``orch setup`` / setup writes the marker
 ``<root>/.orch/claude-trust`` (:func:`record_consent`). Without it (an older workspace, or a folder that merely
 looks like one) nothing is written.
 

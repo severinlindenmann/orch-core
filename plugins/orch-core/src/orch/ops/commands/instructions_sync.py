@@ -39,6 +39,6 @@ OP = operation(
     pre=("workspace_exists",),
     text="ok instructions.sync {version}\nnext: {next}",
     data=obj({"version": STR, "files": arr(STR)}),
-    errors=(err("not_found", "run orch init in a workspace", ["orch", "describe", "init"]),),
+    errors=(err("not_found", "run it in a workspace folder (orch setup makes one)", ["orch", "help"]),),
     handler=handle,
 )

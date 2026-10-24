@@ -4,8 +4,8 @@
 workspace is in the person's own registry (``<state>/host/workspaces.json``) or in the root-owned pin of this agent UID.
 Then the call is a request on the workspace socket and **never** a direct write; if the host is down the answer is
 ``host.unavailable`` (exit 9, with the fix), not a silent fallback. A workspace the host does not serve runs in direct
-mode as before. ``help``/``describe`` are answered locally in both modes, and so are ``init`` and ``import v1`` (the
-host does not serve them; the direct-mode guard still answers ``host.required`` for a registered workspace).
+mode as before. ``help``/``describe`` are answered locally in both modes, and so is ``import v1`` (the
+host does not serve it; the direct-mode guard still answers ``host.required`` for a registered workspace).
 
 **Rendering.** A registry op is sent with its parsed arguments and the answer's ``result`` is rendered by the same
 renderer as direct mode (:func:`result_from` rebuilds ``orch.ops.Result``), so text and ``--json`` are byte-identical.
@@ -49,7 +49,7 @@ from orch.ops.errors import OrchError
 __all__ = ["HostFailure", "Target", "dry_text", "execute", "locate", "result_from", "workspace_socket"]
 
 #: registry ops the host does not serve (``dispatch.NOT_SERVED``): they stay local, the direct-mode guard decides
-LOCAL_OPS = frozenset({"help", "describe", "init", "import.v1"})
+LOCAL_OPS = frozenset({"help", "describe", "import.v1"})
 FilesFn = Callable[[Any, str], dict[str, Any] | None]  # (connection, "first" | "digest" | "fresh")
 WAIT_MARGIN = 30.0
 #: attempts of a write (the first call and two retries with the same idem)

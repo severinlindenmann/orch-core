@@ -110,7 +110,7 @@ def test_dry_run_stores_nothing_and_has_no_request(human, served):
 
 def test_only_person_ops_are_prepared(human, served):
     _, key = human.ticket()
-    for op in ("claim", "task.done", "show", "init", "import.v1", "nonsense"):
+    for op in ("claim", "task.done", "show", "import.v1", "nonsense"):
         assert err(human.prepare_res(op, {})) == "op.not_allowed", op
     assert err(human.c.req("human.prepare", {"op": "log", "args": {"ref": key, "text": "x"}})) == "invalid.input"
     both = {"op": "log", "args": {"ref": key, "text": "x"}, "signer": human.signer, "handoff": True}

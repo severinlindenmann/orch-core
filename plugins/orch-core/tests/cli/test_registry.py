@@ -18,7 +18,7 @@ SECTION_10_3 = [
     *(f"artifact {v}" for v in "add replace list".split()),
     "log", "apply", "approve", "request-changes", "verdict", "answer", "close", "reopen",
     "grant", "grant revoke", "member add", "member remove", "member role",
-    "init", "doctor", "check", "instructions sync", "instructions hook", "import v1",
+    "doctor", "check", "instructions sync", "instructions hook", "import v1",
     *(f"addon {v}" for v in "list grant preview disable purge".split()),
     "widgets check",
     "widgets types",
@@ -166,6 +166,8 @@ def test_operation_errors_are_declared_once_known_and_complete():
     later = {c for c in ERRORS if c.startswith("market.")} - used
     # R6c: returned by the host's control op host.relay_pair_offer (orch host relay pair), not by a registry op
     control_only = {"relay.pair_open", "relay.no_primary", "relay.quota"}
+    # V3-D38: no registry op creates a workspace any more; these come from the genesis library `orch setup` uses
+    control_only |= {"host.busy", "custody.unsafe_mode", "host.unavailable"}
     unused = (
         set(ERRORS) - used - set(GLOBAL_ERRORS) - {"wait.timeout", "quick.unlabelled"} - control_only - later
     )  # the latter: the CLI composite `quick add` (H11f)

@@ -7,5 +7,5 @@ args:
   --dry-run  say what would be written, write nothing
   --force  overwrite a built-in skill that was edited by hand
 errors:
-  not_found (exit 2): run orch init in a workspace | fix: orch describe init
+  not_found (exit 2): run it in a workspace folder (orch setup makes one) | fix: orch help
 out: ok instructions.sync {version} / next: {next}

@@ -348,3 +348,30 @@ def test_a_run_that_landed_the_event_and_stopped_is_finished_by_the_next_begin(c
     out = begin(click, served)
     assert out["done"] is True and out["old"] == owner.device and out["new"] == offer["view"]["new"]
     assert key_pub(click) != owner.sig_pub
+
+
+@pytest.mark.parametrize("why", ["weak", "not_text", "too_long", "wrong_person", "not_a_code", "plan_fails"])
+def test_every_refusal_zeroises_both_opened_secrets(click, served, monkeypatch, why):
+    """The opened recovery code and passphrase are bytearrays the signer wipes on every path, refusals included."""
+    seen: list[bytearray] = []
+    real = sealed.Recipient.open
+
+    def spy(self, envelope, ctx):
+        out = real(self, envelope, ctx)
+        seen.append(out)
+        return out
+
+    monkeypatch.setattr(sealed.Recipient, "open", spy)
+    offer = begin(click, served)
+    kw = {"weak": {"pw": "password"}, "wrong_person": {"code": OTHER}, "not_a_code": {"code": "one two three"}}.get(
+        why, {}
+    )
+    if why == "not_text":
+        kw = {"pw": b"\xff\xfe\xfd"}
+    if why == "too_long":
+        kw = {"pw": "x" * 2000}
+    if why == "plan_fails":  # the person's key file vanishes after the review: rotate raises before the code is used
+        (click.keys / human.KEY_FILE).unlink()
+    with pytest.raises(Exception):  # noqa: B017 - which static refusal is not the point here
+        go(click, served, offer, seal(offer, served, **kw))
+    assert len(seen) == 2 and all(len(b) > 0 and not any(b) for b in seen)

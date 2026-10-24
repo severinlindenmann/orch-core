@@ -1761,15 +1761,13 @@ class ClickSigner:
             # both envelopes opened: the offer is used up, whatever happens next (a new offer is needed)
             self._rotations.pop((wid, rid))
             used = True
-            code = opened.pop("device.recovery_code")
-            raw = opened.pop("custody.passphrase")
+            # both secrets stay in ``opened`` until the outer ``finally`` zeroises them, whatever refuses first (the
+            # passphrase checks run before the recovery code is handed to the person-key source)
+            code = opened["device.recovery_code"]
             try:
-                passphrase = bytes(raw).decode("utf-8")
+                passphrase = bytes(opened["custody.passphrase"]).decode("utf-8")
             except UnicodeDecodeError:
                 raise ClickError("invalid.input", "passphrase is text") from None
-            finally:
-                for i in range(len(raw)):
-                    raw[i] = 0
             if not 0 < len(passphrase) <= PASSPHRASE_MAX:
                 raise ClickError("invalid.input", "passphrase is text")
             try:

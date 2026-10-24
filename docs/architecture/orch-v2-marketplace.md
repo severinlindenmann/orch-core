@@ -178,7 +178,9 @@ repository can never hold two TOFU slots, two rollback floors, two origins, or s
 | other | any other marketplace or direct source | refused unless OS-user isolation is in place (§10); a `publisher` is optional |
 
 The pinned official URL and key are constants of the core release, not read from disk or from any index. Changing them
-is a core release.
+is a core release. The release pins two keys, current first and next (`OFFICIAL_KEYS` in `orch/market/constants.py`; V3-D39):
+`BFh8x9dLhMubfTXleS0Bt6Ix-yu9ZiE18B0xRUUNWqsgZdOwt5DZX_Gqs5Ri3p2coFdLk9GhA-Q5WV8Ee0e05l4` (current) and
+`BM-BTpDMGAU68ywX392c5JuCjjwOkkdccxmNiOTvcX2GzIgEM2FjFH56hihyYn7pepkd8HYMolWSzM01L_B0Udw` (next).
 
 ### 4.3 Publisher signature
 

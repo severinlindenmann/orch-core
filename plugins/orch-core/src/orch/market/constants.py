@@ -6,10 +6,13 @@ from __future__ import annotations
 OFFICIAL_URL = "https://github.com/severinlindenmann/orch-marketplace"
 
 #: Canonical unpadded base64url P-256 public keys (65-byte uncompressed points): the current and the next official
-#: marketplace key (rotation without an emergency release). EMPTY until the release step has created the
-#: ``purpose: "marketplace"`` key and signs the index: with no key nothing can verify, so the official index is
-#: ``market.index_unsigned`` (fail closed). The only verifier input is this tuple (see ``index.verify_official``).
-OFFICIAL_KEYS: tuple[str, ...] = ()
+#: marketplace key (rotation without an emergency release), CURRENT FIRST. Made by orch-marketplace
+#: ``scripts/gen-index-keys`` (M#3, owner decision V3-D39); the private halves are never in a repository. The only
+#: verifier input is this tuple (``index.official_keys``); any other signer gives ``market.index_unsigned``.
+OFFICIAL_KEYS: tuple[str, ...] = (
+    "BFh8x9dLhMubfTXleS0Bt6Ix-yu9ZiE18B0xRUUNWqsgZdOwt5DZX_Gqs5Ri3p2coFdLk9GhA-Q5WV8Ee0e05l4",  # current
+    "BM-BTpDMGAU68ywX392c5JuCjjwOkkdccxmNiOTvcX2GzIgEM2FjFH56hihyYn7pepkd8HYMolWSzM01L_B0Udw",  # next
+)
 
 #: Hosts an add-on repository may live on besides the marketplace's own host (spec 5.1). G3 uses it.
 DEFAULT_GIT_HOSTS = ("github.com", "gitlab.com")

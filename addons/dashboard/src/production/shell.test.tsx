@@ -1,6 +1,7 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import { QueryClientProvider } from '@tanstack/react-query'
 import userEvent from '@testing-library/user-event'
+import { toast } from 'sonner'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { setFeatures } from '@/api/features'
 import { invalidateLive, useLiveUpdates } from '@/api/useLiveUpdates'
@@ -48,6 +49,8 @@ beforeEach(() => {
   localStorage.clear()
 })
 afterEach(() => {
+  // A toast lives in sonner's module state, not in the rendered tree: without this it shows in the next test's page.
+  toast.dismiss()
   setFeatures(null)
   queryClient.clear()
   vi.unstubAllGlobals()
@@ -172,6 +175,8 @@ it('a gone for another ticket leaves the open ticket page in place', async () =>
   expect(await screen.findByText('Real P1 ticket')).toBeInTheDocument()
   await waitFor(() => expect(vi.mocked(useLiveUpdates).mock.calls.at(-1)?.[0]).toBe(ws))
   const close = vi.mocked(useLiveUpdates).mock.calls.at(-1)![1]!
+  // The test before closes this same ticket with a toast; a dismissed toast takes a moment to leave the page.
+  await waitFor(() => expect(screen.queryByText(/no longer visible to you/)).not.toBeInTheDocument())
   act(() => invalidateLive(queryClient, ws, 'items', [{ id: '9.g', uid: 'ULID-OTHER', gone: true }], close))
   await new Promise((r) => setTimeout(r, 50))
   expect(location.pathname).toBe('/w/DEMO/ticket/DEMO-0001')

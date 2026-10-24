@@ -51,7 +51,7 @@ export function AgentPick({ harness, mode, onHarness, onMode, idPrefix = 'agent'
   )
 }
 
-/** The model of the agent: empty = the host picks (from Settings when model routing is on). Grid rows as well. */
+/** The model of the agent: empty = the host picks (when a model add-on picks it). Grid rows as well. */
 export function ModelPick({ models, model, onModel, emptyLabel = 'As set for this kind of work', idPrefix = 'agent' }: { models: ModelChoice[]; model: string; onModel: (m: string) => void; emptyLabel?: string; idPrefix?: string }): ReactNode {
   return (
     <>

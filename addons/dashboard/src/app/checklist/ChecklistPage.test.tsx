@@ -29,7 +29,7 @@ describe('run 4 data', () => {
     const ids = ALL_STEPS.map((s) => s.id)
     expect(new Set(ids).size).toBe(ids.length)
     for (const id of ids) expect(id).toMatch(/^[A-Z][0-9]{1,2}(\.[0-9]{1,2})?$/)
-    expect(RUN2_SECTIONS.map((s) => s.id)).toEqual(['A', 'B', 'C', 'D', 'E', 'F', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'U', 'V', 'W', 'X', 'Y', 'Z', 'S', 'T'])
+    expect(RUN2_SECTIONS.map((s) => s.id)).toEqual(['A', 'B', 'C', 'D', 'E', 'F', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'R', 'U', 'V', 'W', 'X', 'Y', 'Z', 'S', 'T'])
     for (const id of ['A1', 'A2', 'B1.1', 'B1.7', 'B2.8', 'B3.9', 'C1', 'C8', 'D6', 'E6', 'F8']) expect(ids).toContain(id)
   })
   it('holds no secret material; A1 names no fake install command and no placeholder', () => {
@@ -42,7 +42,7 @@ describe('run 4 data', () => {
     expect(a1.text).toContain('orch host enable')
     expect(a1.text).toContain('orch dashboard restart')
     expect(JSON.stringify(ALL_STEPS)).not.toContain('model the model')
-    expect(JSON.stringify(ALL_STEPS.find((s) => s.id === 'H1'))).toContain('Model routing')
+    expect(JSON.stringify(ALL_STEPS.find((s) => s.id === 'H1'))).toContain('File Explorer')
   })
 })
 

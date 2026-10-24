@@ -18,7 +18,7 @@
       "properties": {
         "repair": {
           "type": "boolean",
-          "description": "do the safe repairs: answer external edits, rebuild the index, drop dead init keys"
+          "description": "do the safe repairs: answer external edits, rebuild the index"
         }
       },
       "required": [],

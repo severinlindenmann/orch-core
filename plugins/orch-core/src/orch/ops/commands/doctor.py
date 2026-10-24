@@ -88,7 +88,7 @@ OP = operation(
     "Verify the logs, signatures, checkpoints, pins and files; reports and changes nothing unless --repair, which "
     "only does the safe repairs through the store.",
     who="read",
-    props={"repair": B("do the safe repairs: answer external edits, rebuild the index, drop dead init keys")},
+    props={"repair": B("do the safe repairs: answer external edits, rebuild the index")},
     pre=("workspace_exists",),
     text="ok doctor {problems}\nnext: {next}",
     data=obj({"problems": INT, "findings": arr(obj({"where": STR, "what": STR, "level": STR}))}),

@@ -141,7 +141,7 @@ front-page warning name both. That is why the split layout is the recommendation
   identity check (D59 "never the assignee", gate quorums, the ticket-format delegation check `actor.id ==
   "p_"+owner_person_id`) compares canonical identities, so `p_x` and `u_x` count as one person.
 - **Every workspace has an owner `PK`.** A workspace created by a hub user who has no `p_` identity still gets one:
-  `orch init` shows the recovery code to the creator, as today. `PK` signs the delegation (§5.3) and is aliased to the
+  `orch setup` shows the recovery code to the creator, as today. `PK` signs the delegation (§5.3) and is aliased to the
   creator's `user_id`. It is the break-glass key (§8).
 - **The hub signs only what it builds (prepare → recompute → sign).** Only a channel can start a signature. The hub
   builds the event from its own `WK_e` view of the workspace: the ticket, the gate hash material, the host-chain head.

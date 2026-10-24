@@ -4,8 +4,8 @@
 * ``host.wsk_create``: a new workspace id and key, ``O_CREAT|O_EXCL`` in a fresh 0700 directory; never replaces a key.
 * ``host.register``: adopt a workspace (D-P2-18): ownership lock, registration, serving, unlock.
 * ``host.unregister``: stop serving and remove the registration, which restores direct mode.
-* ``host.bootstrap``: append a signed genesis with the new key as ``seq`` 1, then register (the ``init`` composite,
-  whose client side is :func:`orch.ops.workspace_init.create_workspace_hosted`).
+* ``host.bootstrap``: append a signed genesis with the new key as ``seq`` 1, then register (the hosted create of ``orch setup``,
+  whose client side is :func:`orch.ops.workspace_init._hosted_bootstrap`).
 * ``host.outcome``: the stored outcome of a control write.
 * ``host.restart``: drain (D-P2-4).
 The three writes are control writes: ``opts.idem`` is required, an intent is fsynced before anything changes, and
@@ -664,7 +664,7 @@ class ControlOps:
 
     @staticmethod
     def _foreign_root(root: str, workspace_id: str, planned_id: str) -> bool:
-        """Did another workspace take over ``root`` after the host died? A direct ``orch setup`` may have: a
+        """Did another workspace take over ``root`` after the host died? Another host's ``orch setup`` may have: a
         ``config.json`` that does not name ``workspace_id`` (unreadable counts), or an ``events/workspace.jsonl``
         whose first line is a genesis other than the planned one (``config.json`` is installed only after that line).
         Its files are not ours to delete."""
@@ -689,7 +689,7 @@ class ControlOps:
             with open(store / "events" / "workspace.jsonl", "rb") as handle:
                 first = json.loads(handle.readline(1 << 20))
         except (OSError, ValueError):
-            return False  # no first line, or a torn one: nothing a direct init finished
+            return False  # no first line, or a torn one: nothing another creator finished
         return isinstance(first, dict) and first.get("id") != planned_id
 
     @staticmethod

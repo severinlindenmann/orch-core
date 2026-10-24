@@ -4,8 +4,8 @@ What is here: the person's terminal (:class:`Terminal`, :data:`TERMINAL`, the on
 the hosted bootstrap loop (:func:`_hosted_bootstrap`: ``host.wsk_create``, a genesis signed on the person's side with a
 person key derived from the recovery code and dropped at once, ``host.bootstrap``, with the reconnect and
 unknown-outcome rules of §0.7), the device key's backend (:func:`open_backend`), the reserved-prefix rule
-(:func:`check_reserved_prefix`: ``SBX`` only for a fresh dev-pair sandbox person) and the cleanup of keys left by a
-bootstrap that died (:func:`_sweep_orphans`, used by ``orch doctor --repair``).
+(:func:`check_reserved_prefix`: ``SBX`` only for a fresh dev-pair sandbox person). A setup that dies mid-way
+is cleaned up by the host (its bootstrap intent and start-up recovery), not by a marker file.
 
 Specs: core §2, ticket-format §5.4.2 and §5.11, portable-custody D63-D66, identity D49-D51. The test seams are the
 module attributes :data:`TERMINAL` and :func:`open_backend`, which the tests replace; no option, argument or
@@ -36,7 +36,6 @@ from orch.identity import (
 )
 from orch.identity import certs as identity_certs
 from orch.ops.base import Context
-from orch.ops.caps import Files
 from orch.ops.errors import OrchError
 
 __all__ = [
@@ -52,7 +51,6 @@ __all__ = [
 
 WORKSPACE_KEY = "wsk"
 DEVICE_KEY = "dk"
-MARKER = ".init-incomplete"
 CLEAR_SCREEN = "\033[3J\033[2J\033[H"
 
 
@@ -223,38 +221,6 @@ def _fresh_person(sd: Path) -> bool:
 
 
 # ------------------------------------------------------------------------------------------------------ housekeeping
-
-
-def _alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except OSError:
-        return True
-    return True
-
-
-def _sweep_orphans(sd: Path, files: Files) -> list[Path]:
-    """Remove the key directories of an init that died (SIGKILL, power loss): marked by a process that is gone."""
-    hosts = sd / "hosts"
-    failed: list[Path] = []
-    if not hosts.is_dir():
-        return failed
-    for d in hosts.iterdir():
-        marker = d / MARKER
-        try:
-            if d.is_symlink() or not marker.is_file() or (d / "genesis").exists():
-                continue  # a pinned genesis means a workspace exists for these keys: never swept
-            pid = int(files.read_text(marker).strip() or "0")
-        except (OSError, ValueError):
-            continue
-        if pid and not _alive(pid):
-            try:
-                files.rmtree(d)
-            except OSError:
-                failed.append(d)  # said so, never swallowed: the caller reports what it could not remove
-    return failed
 
 
 @contextlib.contextmanager
@@ -462,7 +428,7 @@ def _hosted_bootstrap(
     st: BootstrapState,
     backend_factory: Any = None,
 ) -> None:
-    """The ``host.wsk_create`` + ``host.bootstrap`` loop of :func:`create_workspace_hosted`, shared with ``orch setup``
+    """The ``host.wsk_create`` + ``host.bootstrap`` loop of ``orch setup``
     (``backend_factory`` opens the device key's backend; ``None`` is :func:`open_backend`, which asks the terminal).
     State for the caller's cleanup is in ``st``; on a refusal the device key of an undecided outcome is kept."""
     from orch.host.control_client import new_idem

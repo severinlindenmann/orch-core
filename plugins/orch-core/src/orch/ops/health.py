@@ -8,7 +8,7 @@ edits), the signed checkpoints and the host's pins with the logs.
 
 ``check`` is the fast subset for a hook or CI (chain, projections, instructions). ``doctor`` is all of it, and with
 ``--repair`` does the documented safe repairs *through the store*: it answers external edits with the host events
-format section 5.8 names, rebuilds the derived index, and removes the key folders of an init that died. It never repairs
+format section 5.8 names and rebuilds the derived index. It never repairs
 a chain, a signature or a divergent checkpoint: only an owner-signed ``restore`` can.
 A missing ticket checkpoint can be written only for the last recorded append, after replay verifies.
 """
@@ -145,7 +145,7 @@ def inspect(
     store_pin: StorePin | None = None,
 ) -> tuple[list[Finding], Store | None]:
     """Every finding about the workspace at ``root``. ``fast`` leaves out the checks that only ``doctor`` makes
-    (checkpoint presence, pins, index, repositories, orphan keys).
+    (checkpoint presence, pins, index, repositories).
 
     Host mode (H4a1) passes ``store`` (the host's own; it is used as it is, never closed here, and no second store is
     opened, no ``config.json`` and no state directory read) and ``sees`` (the viewer's visibility test). Every finding
@@ -203,8 +203,6 @@ def inspect(
             out += _pins(s, state_dir, wid)
             out += _index(s)
             out += _repos(s, root, caps)
-            if not hosted:  # the host's state directory is not a handler's (a control op of the host, later)
-                out += _orphans(state_dir, wid, caps)  # type: ignore[arg-type]
         for f in instructions or []:
             out.append(Finding("warn", f["where"], "instructions.stale", f["what"], None))
     except StoreError as e:  # a directory swapped for a symlink while the checks ran (#516): a finding, not a crash
@@ -469,35 +467,6 @@ def _repos(s: InspectStore, root: Path, caps: Capabilities) -> list[Finding]:
     return out
 
 
-def _orphans(state_dir: Path, wid: str, caps: Capabilities) -> list[Finding]:
-    """Key folders of an init that died: the ones ``--repair`` can remove (a marker of a process that is gone)."""
-    from orch.ops.workspace_init import MARKER, _alive
-
-    hosts = state_dir / "hosts"
-    out: list[Finding] = []
-    if not hosts.is_dir():
-        return out
-    for d in [hosts / n for n in sorted(caps.files.listdir(hosts))]:
-        marker = d / MARKER
-        try:
-            if d.name == wid or d.is_symlink() or not marker.is_file() or (d / "genesis").exists():
-                continue
-            pid = int(caps.files.read_text(marker).strip() or "0")
-        except (OSError, ValueError):
-            continue
-        if pid and not _alive(pid):
-            out.append(
-                Finding(
-                    "warn",
-                    f"keys/{d.name[:40]}",
-                    "keys.orphan",
-                    "keys of an init that died before it finished",
-                    "orphans",
-                )
-            )
-    return out
-
-
 # ---------------------------------------------------------------------------------------------------- repair
 
 
@@ -524,13 +493,6 @@ def repair(
     if "index" in wanted:
         ws.store.rebuild_index()
         did.append("rebuilt the index")
-    if "orphans" in wanted:
-        from orch.ops.workspace_init import _sweep_orphans
-
-        failed = _sweep_orphans(ws.state_dir, caps.files)
-        did.append(
-            f"could not remove the keys of {len(failed)} dead inits" if failed else "removed the keys of dead inits"
-        )
     return did
 
 

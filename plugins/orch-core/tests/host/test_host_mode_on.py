@@ -6,7 +6,7 @@
   person whose device key is on this machine;
 * ``orch host status``: the host, the service, the workspaces (state, socket, person, click-to-sign) and the mode of
   the current directory, with the problems and their fixes;
-* end to end from a fresh workspace: ``orch init`` → ``orch host register`` → the CLI (person and agent commands,
+* end to end from a fresh workspace: its genesis → ``orch host register`` → the CLI (person and agent commands,
   ``wait``) and the dashboard's host link both work, and with the host gone the CLI answers ``host.unavailable``,
   never a direct write.
 
@@ -218,7 +218,7 @@ def test_enable_on_a_platform_without_a_user_service_stays_direct_and_installs_n
 @pytest.fixture
 def world(tmp_path, monkeypatch, fake):
     """A fresh directory, a state dir, a temporary HOME, a short run directory, the scripted terminal and the
-    cheap-scrypt passphrase backend for both ``init`` and the signer."""
+    cheap-scrypt passphrase backend for both the genesis and the signer."""
     from orch.custody import KdfParams, PassphraseBackend
     from orch.ops import human
     from orch.ops import workspace_init as wi
@@ -288,7 +288,7 @@ def cli(env: dict[str, str], *argv: str) -> tuple[int, dict[str, Any]]:
 
 
 @pytest.mark.slow
-def test_a_fresh_workspace_init_register_then_the_cli_and_the_dashboard_work(world):
+def test_a_fresh_workspace_register_then_the_cli_and_the_dashboard_work(world):
     env, root, fake = world["env"], world["root"], world["fake"]
     code, doc = init_ws(world)
     assert code == 0, doc
@@ -300,7 +300,7 @@ def test_a_fresh_workspace_init_register_then_the_cli_and_the_dashboard_work(wor
     assert rep["here"] == {"root": str(root), "mode": "direct"} and rep["workspaces"] == []
     assert rep["host"]["answers"] is False and rep["ok"] is True
 
-    # register: no host answers, so the service is installed and started; the UID maps to the init's person
+    # register: no host answers, so the service is installed and started; the UID maps to the owner person
     code, out = host(["register", str(root), "--dev"], env)
     res = json.loads(out)
     assert code == 0 and res["ok"] is True, res

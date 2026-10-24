@@ -226,6 +226,9 @@ class WorkspaceService:
 
                     self.requests.open()
                     recover(self)  # a crash between two appends of a human submission rolls forward (§0.8.1)
+                    from . import marketinstall
+
+                    marketinstall.recover(self)  # V3 G3 C3: a grant whose swap did not finish is finished here
                 self.blobs.open()
                 if self.requests is not None:  # the stored requests' file bytes count again (F9)
                     for rid, principal, size in self.requests.held():

@@ -467,7 +467,7 @@ _MATERIAL_KEYS = {
     "question": ({"kind", "ticket", "question", "review"}, {"kind", "ticket", "question", "review"}),
     "payload": (
         {"kind", "ticket", "review"},
-        {"kind", "ticket", "review", "texts", "before", "sequence", "statement", "grants"},
+        {"kind", "ticket", "review", "texts", "before", "sequence", "statement", "grants", "market"},
     ),
 }
 
@@ -512,6 +512,7 @@ def _hashes(prepared: Mapping[str, Any], workspace_id: str) -> None:
         _question(material, events[0], workspace_id, log)
     _before(material, events)
     _grants(material, events)
+    _market(material, events)
 
 
 def _gate(material: Mapping[str, Any], ev: Mapping[str, Any], workspace_id: str, log: str) -> None:
@@ -577,6 +578,46 @@ def _grants(material: Mapping[str, Any], events: list[Mapping[str, Any]]) -> Non
             or not all(isinstance(v, str) and len(v) <= 200 for v in info.values())
         ):
             _refuse("material.grants is malformed")
+
+
+_MARKET_KEYS = {"url", "class", "commit", "source_note", "publisher", "index_version", "stale", "summary", "replaces"}
+_TOFU = ("unsigned", "new", "known")
+
+
+def _market(material: Mapping[str, Any], events: list[Mapping[str, Any]]) -> None:
+    """``material["market"]`` (V3 G3, C4) is the host's word about where an add-on came from: the marketplace, its
+    class, the commit, the publisher key's fingerprint and first-use status, the index version and a display summary. It is NOT
+    signed and the review says so. Exactly these keys and these shapes, only on a request that signs one
+    ``addon.granted``; anything else (an unknown key, a number where a string belongs, a long text) is refused. No
+    capability, field or section travels here: those come from the signed event."""
+    block = material.get("market")
+    if block is None:
+        return
+    pub = block.get("publisher") if isinstance(block, dict) else None
+    if (
+        not isinstance(block, dict)
+        or set(block) != _MARKET_KEYS
+        or [e.get("type") for e in events] != ["addon.granted"]
+        or not isinstance(pub, dict)
+        or set(pub) != {"fingerprint", "tofu"}
+    ):
+        _refuse("material.market is malformed")
+    short = lambda v, n: isinstance(v, str) and len(v) <= n  # noqa: E731
+    ok = (
+        short(block["url"], 200)
+        and block["class"] in ("official", "dev")
+        and isinstance(block["commit"], str)
+        and re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", block["commit"]) is not None
+        and block["source_note"] == "source as claimed by the marketplace"
+        and (pub["fingerprint"] is None or short(pub["fingerprint"], 60))
+        and pub["tofu"] in _TOFU
+        and type(block["index_version"]) is int
+        and type(block["stale"]) is bool
+        and (block["summary"] is None or short(block["summary"], 300))
+        and (block["replaces"] is None or short(block["replaces"], 80))
+    )
+    if not ok:
+        _refuse("material.market is malformed")
 
 
 def _before(material: Mapping[str, Any], events: list[Mapping[str, Any]]) -> None:
@@ -857,6 +898,26 @@ def render(
             f"access {_clean(gid)} taken back (per host, not signed): label {_clean(info['label']) or '(none)'}, "
             f"tickets {_clean(info['scope'])}, ends {_clean(info['expires_at'])}, person {_clean(info['person'])}"
         )
+    market = material.get("market")
+    if market is not None:  # the host's word, labelled; nothing here is signed (C4)
+        pub = market["publisher"]
+        who = {"unsigned": "unsigned (no publisher key)", "new": "first use: remembered when you sign",
+               "known": "same publisher as before"}[pub["tofu"]]  # fmt: skip
+        out.append(f"marketplace (per host, not signed): {_clean(market['url'])} ({_clean(market['class'])})")
+        out.append(f"marketplace commit (per host, not signed): {_clean(market['commit'])}")
+        out.append(f"source (per host, not signed): {_clean(market['source_note'])}")
+        out.append(
+            f"publisher (per host, not signed): {_clean(pub['fingerprint']) if pub['fingerprint'] else 'none'}, {who}; "
+            "a key proves it is the same publisher as last time, not who they are"
+        )
+        out.append(
+            f"index version (per host, not signed): {int(market['index_version'])}"
+            + (" (STALE: past its expiry)" if market["stale"] else "")
+        )
+        if market["replaces"]:
+            out.append(f"replaces package (per host, not signed): {_clean(market['replaces'])}")
+        if market["summary"]:
+            out.append(f"summary from the marketplace (per host, not signed): {_clean(market['summary'])}")
     for path, value in sorted((material.get("before") or {}).items()):
         label = "current value according to the host, not signed" if not path.startswith(("ticket.", "body.")) else ""
         out.append(f"before {_clean(path)}{' (' + label + ')' if label else ''}:")

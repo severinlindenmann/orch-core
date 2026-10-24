@@ -47,7 +47,7 @@ from jsonschema import Draft202012Validator
 
 from orch import canon
 
-from . import convenience, hubsign, review
+from . import convenience, hubsign, marketinstall, review
 from .errors import HostError
 from .outcomes import Planned, request_idem
 from .requests import (
@@ -517,6 +517,7 @@ class HumanOps:
             "extras": extras,
             # H12d-2: the readers the request admits, with their verified declarations (not signed, not material)
             "readers": capture.readers,
+            "staged": capture.staged,  # V3 G3: the stage an addon.grant installs from (None: plain grant)
             "sequence": meta,
             "result": template,
             "submit": None,
@@ -791,6 +792,8 @@ class HumanOps:
                 for gid in taken
                 if (g := known.get(gid)) is not None and isinstance(g.scope, str) and isinstance(g.expires_at, str)
             }
+        if getattr(capture, "market", None) is not None and "addon.granted" in types:
+            material["market"] = copy.deepcopy(capture.market)  # V3 G3: the host's word on the source, not signed
         seq = getattr(capture, "sequence", None)
         if seq is not None and seq["step"] == 0:  # the whole intent is in the material: bound by review_digest
             material["sequence"] = {"digest": seq["digest"], "of": seq["of"], "intent": copy.deepcopy(seq["intent"])}
@@ -1072,6 +1075,9 @@ class HumanOps:
                 if log not in ("workspace", view.uid) or (log == "workspace" and record["op"] != "grant"):
                     raise HostError("human.request_mismatch", "the ticket changed while signing, review again")
             self._recheck_needs(store, record, events)
+            marketinstall.recheck(
+                service, record, events
+            )  # V3 G3 C2: the install record as it is now, before the journal
             if (refused := hubsign.refusal(service, events, None)) is not None:
                 raise refused  # V3 C11: before the journal write; a join after the prepare lands here
             for e in events:
@@ -1596,6 +1602,7 @@ def finish(service: WorkspaceService, requests: RequestStore, record: dict[str, 
         outcome = {"state": "failed", "error": failed.error(), "exit": failed.exit, "seqs": landed}
         requests.write({**record, "state": "submitted", "done_at": now, "outcome": outcome})
         raise _Stored(failed) if landed else failed
+    marketinstall.after_grant(service, record)  # V3 G3 C3: the swap and the records, idempotent, also at roll-forward
     template = record.get("result") or {}
     view = store.ticket(log) if log != "workspace" else None
     result = ok_result(template.get("data") or {}, seq=max(landed))

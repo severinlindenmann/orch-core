@@ -384,7 +384,8 @@ def write_manifest(
 def write_dev_json(
     root: str | os.PathLike[str], sandbox_id: str, relay_origin: str, market: dict[str, Any] | None = None
 ) -> dict[str, Any]:
-    """Write ``<root>/state/host/dev.json`` (the directories must exist); ``market`` is the optional test marketplace."""
+    """Write ``<root>/state/host/dev.json`` (the directories must exist); ``market`` is the optional
+    test marketplace of the sandbox (C5)."""
     doc = {
         "v": 1,
         "sim_convenience": True,

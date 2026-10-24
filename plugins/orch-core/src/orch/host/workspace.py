@@ -191,6 +191,8 @@ class WorkspaceService:
             except LayoutError as exc:
                 raise StoreError("validation.path", str(exc)) from None
             check_workspace_files(self.state_dir, wid, Path(self.entry.root), self.host_uid)
+            from . import hubops
+
             pin = HostPins(self.state_dir, wid).genesis()
             if pin is None:
                 raise HostError("trust.genesis_mismatch", "no genesis pin for this workspace")
@@ -207,7 +209,7 @@ class WorkspaceService:
                 load="lazy",
                 # C3b 15.3: a dev host serves sandbox workspaces only (11A.17.2 check 4), so its replay may verify dev
                 # hub material; a normal host never does
-                hub_dev=getattr(self, "dev", None) is not None and not getattr(self.dev, "pending", False),
+                hub_dev=hubops.dev_host(self),
             )
         except (HostError, StoreError, OSError, ValueError, KeyError) as exc:
             self._unavailable(f"{getattr(exc, 'code', type(exc).__name__)}: {exc}")

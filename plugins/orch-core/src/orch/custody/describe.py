@@ -88,8 +88,8 @@ EVENT_FIELDS: dict[str, tuple[str, ...]] = {
     ),
     "addon.disabled": ("name",),
     "addon.purged": ("name",),
-    "hub.joined": ("hub_id", "hk_root_pub", "mode", "binding_seq", "aliases"),
-    "hub.left": ("hub_id", "binding_seq"),
+    "hub.joined": ("hub_id", "hk_root_pub", "mode", "binding_seq", "aliases", "owner_proof"),
+    "hub.left": ("hub_id", "binding_seq", "owner_proof"),
 }
 _WORKSPACE_ONLY = frozenset(
     {
@@ -130,6 +130,8 @@ _SIGNED_OBJECT_FIELDS: dict[str, tuple[str, ...]] = {
     "reader_decl": ("workspace_id", "device_id", "dk_hash", "who", "reader", "kat", "bind", "created_ms"),
     # B1 (11A.2, relay.genesis_pin): the pin an owner device signs for a first link, every field shown
     "genesis_pin": ("workspace_id", "wsk_pub", "genesis"),
+    # #1198 C9 (hub contract 9.6): the owner proof inside a hub.joined / hub.left, every field shown
+    "hub.owner_proof": ("workspace_id", "person_id", "op", "payload", "request_id", "issued_ms", "expires_ms", "dev"),
 }
 _OBJECT_LABEL_KIND = {
     "sig_device_cert": "device_cert",
@@ -144,6 +146,7 @@ _EMBEDDED = {
     "cert": "device_cert",
     "revocation": "revocation",
     "rotation": "device_rotation",
+    "owner_proof": "hub.owner_proof",
 }
 
 
@@ -192,7 +195,7 @@ def _object_lines(prefix: str, kind: str, signed: Any, out: list[tuple[str, str]
     if not isinstance(signed, dict) or set(signed) != {"o", "sig"} or not isinstance(signed["o"], dict):
         _refuse(f"{prefix} is not a signed object")
     o = signed["o"]
-    allowed = set(_SIGNED_OBJECT_FIELDS[kind]) | {"v", "suite", "kind", "label_sealed"}
+    allowed = set(_SIGNED_OBJECT_FIELDS[kind]) | {"v", "suite", "kind", "label_sealed", "hv"}
     if o.get("kind") != kind or set(o) - allowed:
         _refuse(f"{prefix} is not a plain {kind}")
     for f in _SIGNED_OBJECT_FIELDS[kind]:

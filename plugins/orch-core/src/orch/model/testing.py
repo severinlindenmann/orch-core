@@ -26,6 +26,8 @@ class FakeVerifier:
     pin_codes: dict[str, str] = field(default_factory=dict)  # str(object kind or "kind:version") -> refusal code
     actor_codes: dict[str, str] = field(default_factory=dict)  # event id -> refusal code
     pin_calls: list[dict[str, Any]] = field(default_factory=list)
+    proof_codes: dict[str, str] = field(default_factory=dict)  # event id -> owner-proof refusal code (#1198 C9)
+    proof_calls: list[dict[str, Any]] = field(default_factory=list)
     actor_calls: list[dict[str, Any]] = field(default_factory=list)
 
     def verify_person(self, event: Mapping[str, Any], context: SigContext) -> bool:
@@ -61,3 +63,7 @@ class FakeVerifier:
     def verify_hub_actor(self, event: Mapping[str, Any], **kw: Any) -> str | None:
         self.actor_calls.append({"event": event, **kw})
         return self.actor_codes.get(event["id"])
+
+    def verify_hub_owner_proof(self, event: Mapping[str, Any], **kw: Any) -> str | None:
+        self.proof_calls.append({"event": event, **kw})
+        return self.proof_codes.get(event["id"])

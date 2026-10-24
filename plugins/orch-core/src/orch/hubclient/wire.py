@@ -507,8 +507,11 @@ def joined_payload(
     binding_seq: int,
     aliases: list[dict[str, str]],
     prior_aliases: Mapping[str, str] = {},
+    owner_proof: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """The exact members of ``hub.joined``; aliases sorted and unique, never re-pointed (``alias_repointed``)."""
+    """The exact members of ``hub.joined``; aliases sorted and unique, never re-pointed (``alias_repointed``).
+    ``owner_proof`` (#1198 C9) is ``None`` in a prepared event: the signer fills it after the review (like a grant's
+    ``secret_hash``); the proof itself is over :func:`without_proof` of this payload."""
     if mode not in MODES or type(binding_seq) is not int or binding_seq < 1 or not is_pub(b64u(hk_root_pub)):
         raise HubRefused("malformed")
     out, users, pids = dict(prior_aliases), {u: p for p, u in prior_aliases.items()}, []
@@ -532,13 +535,23 @@ def joined_payload(
         "mode": mode,
         "binding_seq": binding_seq,
         "aliases": [{"person_id": a["person_id"], "user_id": a["user_id"]} for a in aliases],
+        "owner_proof": None if owner_proof is None else dict(owner_proof),
     }
 
 
-def left_payload(*, hub_id_: str, binding_seq: int) -> dict[str, Any]:
+def left_payload(*, hub_id_: str, binding_seq: int, owner_proof: Mapping[str, Any] | None = None) -> dict[str, Any]:
     if not hex16(hub_id_) or type(binding_seq) is not int or binding_seq < 1:
         raise HubRefused("malformed")
-    return {"hub_id": hub_id_, "binding_seq": binding_seq}
+    return {
+        "hub_id": hub_id_,
+        "binding_seq": binding_seq,
+        "owner_proof": None if owner_proof is None else dict(owner_proof),
+    }
+
+
+def without_proof(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """The payload an owner proof is over: the event's members without ``owner_proof`` (9.6)."""
+    return {k: v for k, v in payload.items() if k != "owner_proof"}
 
 
 # --- the owner proof of a hub op (section 9.6, #1198 C8) ---------------------------------------------------------

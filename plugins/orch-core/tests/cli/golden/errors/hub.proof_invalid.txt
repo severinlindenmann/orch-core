@@ -1,0 +1,1 @@
+err hub.proof_invalid the hub step is not backed by your backup key · retry:false · next: sign it again with your backup key at the terminal: orch sign · fix: orch sign

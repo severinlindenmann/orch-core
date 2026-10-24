@@ -1,0 +1,15 @@
+{
+  "ok": false,
+  "error": {
+    "code": "hub.proof_invalid",
+    "message": "the hub step is not backed by your backup key",
+    "hint": "sign it again with your backup key at the terminal: orch sign",
+    "fix": {
+      "argv": [
+        "orch",
+        "sign"
+      ]
+    },
+    "retryable": false
+  }
+}

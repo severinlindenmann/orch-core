@@ -142,7 +142,7 @@ def test_keys_rotate_is_refused_to_agents_and_to_the_click_signer(served):
         "human_only",
     )
     with pytest.raises(Exception, match="terminal"):
-        convenience.refuse_hub_op("keys.rotate", "convenience")
+        convenience.refuse_terminal_op("keys.rotate", "convenience")
 
 
 def test_keys_rotate_makes_the_owner_a_new_epoch(served, monkeypatch):

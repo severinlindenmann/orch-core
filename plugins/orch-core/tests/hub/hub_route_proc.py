@@ -18,6 +18,16 @@ from orch_hub.router import Limits, RouteQueue, Router  # noqa: E402
 
 from conftest import Invites  # noqa: E402
 
+
+def proof(o: dict, ws: str, pk: str = "pk_alice") -> dict:
+    """#1198 C9: the owner proof (protocol 9.6) the real hub wants with a join, made now (its clock is real)."""
+    import time
+
+    now = int(time.time() * 1000)
+    payload = {k: o[k] for k in ("hub_id", "hk_root_pub", "mode", "binding_seq")} | {"aliases": []}
+    return G.owner_proof("hub.join", payload, pk=pk, workspace_id=ws, issued_ms=now - 1_000, expires_ms=now + 300_000)
+
+
 with tempfile.TemporaryDirectory() as d:
     keys = HubKeys.init(Path(d) / "hub")
     ident = TlsIdentity.generate()
@@ -25,7 +35,12 @@ with tempfile.TemporaryDirectory() as d:
     queue = RouteQueue(str(Path(d) / "q.db"), Limits())
     router = Router(reg, queue, None, keys._now)
     srv = LinkServer.from_keys(
-        keys, identity=ident, registry=reg, invites=Invites(invA=None, invB=None), router=router
+        keys,
+        identity=ident,
+        registry=reg,
+        invites=Invites(invA=None, invB=None),
+        router=router,
+        dev_mode=True,
     ).start()
     card = keys.card()
 
@@ -39,6 +54,7 @@ with tempfile.TemporaryDirectory() as d:
                 "card": G.v2_card(ws=w, wsk=wsk),
                 "pk_pub": b64u(G.K.pub["pk_alice"]),
                 "binding": G.signed(wsk, "sig_hub_binding", o),
+                "owner_proof": proof(o, w),
             },
         }
 

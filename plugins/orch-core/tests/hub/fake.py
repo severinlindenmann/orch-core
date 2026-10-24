@@ -56,6 +56,35 @@ def sign_with(key, label: str, o: Json) -> Json:
     return {"o": o, "sig": b64u(S.sign(key, H.signing_bytes(H.L[label], o)))}
 
 
+def owner_proof_for(binding: Json, workspace_id: str, op: str, now_ms: int, *, request_id: str | None = None) -> Json:
+    """A valid owner proof (protocol 9.6) of the vector owner ``PK`` for ``binding`` (a ``hub.binding``'s ``o``)."""
+    from orch.hubclient import wire
+
+    payload = {
+        "hub_id": binding["hub_id"], "hk_root_pub": binding["hk_root_pub"], "mode": binding["mode"],
+        "binding_seq": binding["binding_seq"], "aliases": [],
+    }  # fmt: skip
+    return wire.build_owner_proof(
+        workspace_id=workspace_id, pk_pub=unb64u(V["keys"]["pk_alice"]["pub"], 65), op=op, payload=payload,
+        request_id=request_id or V["objects"]["owner_proof_join_a"]["o"]["request_id"], issued_ms=now_ms - 1_000,
+        expires_ms=now_ms + 300_000, dev=True, sign=lambda msg: S.sign(private_key("pk_alice"), msg),
+    )  # fmt: skip
+
+
+def host_join_proof(
+    state: Any, *, now_ms: int, mode: str = "selective", binding_seq: int | None = None, workspace_id: str | None = None
+) -> Json:
+    """The ``hub.join`` proof a host's ``join_*`` call sends for the binding it is about to make (``state``: the host's
+    ``HubState`` or ``None``; a pending join resumes with its own binding)."""
+    card = V["objects"]["card"]["o"]
+    if state is not None and state.status == "joining":
+        mode, seq = state.mode, state.binding_seq
+    else:
+        seq = binding_seq or (1 if state is None else state.binding_seq + 1)
+    o = {"hub_id": card["hub_id"], "hk_root_pub": card["hk_root_pub"], "mode": mode, "binding_seq": seq}
+    return owner_proof_for(o, workspace_id or V["ids"]["workspace_a"], "hub.join", now_ms)
+
+
 def vector_join_body(invite: str = "invite-1") -> Json:
     """The ``join`` body of vector workspace A: its v2 card, the owner's PK and its selective binding (seq 1)."""
     return {
@@ -63,6 +92,7 @@ def vector_join_body(invite: str = "invite-1") -> Json:
         "card": V["objects"]["v2_card_a"],
         "pk_pub": V["keys"]["pk_alice"]["pub"],
         "binding": V["objects"]["binding_a_1"],
+        "owner_proof": V["objects"]["owner_proof_join_a"],  # #1198 C9: the owner's PK signs the join (protocol 9.6)
     }
 
 
@@ -288,6 +318,10 @@ class FakeHub:
             )
         b = body["binding"]["o"]
         state = H.apply_binding(None if ws is None else ws.binding, b)
+        H.check_join_proof(  # #1198 C9: the hub always wants the proof, whatever the host sends (protocol 9.6)
+            body["owner_proof"], pk_pub=unb64u(body["pk_pub"], 65), workspace_id=ws_id, hub_id_=self.hub_id,
+            binding=b, op="hub.join", now_ms=self.now_ms, dev_mode=self.dev_mode,
+        )  # fmt: skip
         if ws is None:
             ws = _Ws(
                 workspace_id=ws_id,
@@ -343,6 +377,19 @@ class FakeHub:
             if b["hub_id"] != self.hub_id:
                 raise H.Refused("other_hub")
             state = H.apply_binding(ws.binding, b)
+            if state != ws.binding:  # new or mode-switching (a re-sent identical binding takes none): the owner's proof
+                held = ws.binding
+                switch = (
+                    held is not None
+                    and held["status"] == "bound"
+                    and held["binding"]["mode"] == "selective"
+                    and b["mode"] == "full"
+                    and held["binding"]["hub_id"] == b["hub_id"]
+                )
+                H.check_join_proof(
+                    body["owner_proof"], pk_pub=ws.pk_pub, workspace_id=ws_id, hub_id_=self.hub_id, binding=b,
+                    op="hub.mode" if switch else "hub.join", now_ms=self.now_ms, dev_mode=self.dev_mode,
+                )  # fmt: skip
             ws.mode = state["binding"]["mode"]
         elif kind == "hub.unbound":
             u = H.verify_unbound(obj, workspace_id=ws_id, wsk_pub=ws.wsk_pub, dev_mode=self.dev_mode)
@@ -467,9 +514,37 @@ class HostLink:
         self.hk_op_pub = hk_op_pub or hub.hk_op_pub  # what the host holds from the verified card
         self.seq = 0
 
+    def _with_proof(self, op: str, body: Json) -> Json:
+        """#1198 C9: the owner proof (protocol 9.6) every ``join`` and every new or mode-switching ``binding_put``
+        carries. A test that names ``owner_proof`` itself gets exactly that; the others get a good one (made by the
+        vector owner ``PK``), for a ``binding_put`` the op the hub will want."""
+        if "owner_proof" in body or op not in ("join", "binding_put"):
+            return body
+        try:
+            if op == "join":
+                return body
+            obj = body["object"]
+            o = obj["o"]
+            proof = None
+            if o["kind"] == "hub.binding":
+                ws = self.hub.workspaces.get(self.workspace_id)
+                held = None if ws is None else ws.binding
+                if not (held is not None and held["status"] == "bound" and held["binding_seq"] == o["binding_seq"]):
+                    switch = (
+                        held is not None
+                        and held["status"] == "bound"
+                        and held["binding"]["mode"] == "selective"
+                        and o["mode"] == "full"
+                    )
+                    proof = owner_proof_for(o, self.workspace_id, "hub.mode" if switch else "hub.join", self.hub.now_ms)
+            return {**body, "owner_proof": proof}
+        except (KeyError, TypeError, AttributeError):
+            return {**body, "owner_proof": None}
+
     def message(
         self, op: str, body: Json, *, seq: int | None = None, ts_ms: int | None = None, re: int | None = None
     ) -> Json:
+        body = self._with_proof(op, body)
         if seq is None:
             self.seq += 1
             seq = self.seq

@@ -134,3 +134,30 @@ class HubModelChecks:
         except Exception:  # noqa: BLE001
             return "malformed"
         return None
+
+    def verify_hub_owner_proof(
+        self,
+        event: Mapping[str, Any],
+        *,
+        workspace_id: str,
+        actor_person_id: str,
+        pk_pub: str | None,
+        prior: Any,
+        at_ms: int,
+        dev: bool,
+    ) -> str | None:
+        """Hub contract 9.6 "Readers" (#1198 C9) over :func:`wire.check_recorded_owner_proof`: the proof, its place
+        after the prior hub event, the host-signed append time, the dev marker. Fail closed."""
+        try:
+            keys = wire.JOINED_KEYS if event["type"] == "hub.joined" else wire.LEFT_KEYS
+            payload = {k: event[k] for k in (*keys, "owner_proof") if k in event}
+            wire.check_recorded_owner_proof(
+                event["type"], payload, at_ms=at_ms, prior=prior, workspace_id=workspace_id,
+                actor_person_id=actor_person_id, pk_pub=None if pk_pub is None else unb64u(pk_pub, 65),
+                dev_mode=dev,
+            )  # fmt: skip
+        except HubRefused as e:
+            return e.code
+        except Exception:  # noqa: BLE001
+            return "malformed"
+        return None

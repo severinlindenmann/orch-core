@@ -14,7 +14,7 @@ from orch.crypto import suite as S
 from orch.crypto.encoding import b64u, unb64u
 
 from . import contract as H
-from .fake import FakeHub, HostLink, HubError, sign_with, vector_join_body
+from .fake import FakeHub, HostLink, HubError, owner_proof_for, sign_with, vector_join_body
 from .vec import V, private_key, pub
 
 WS = V["ids"]["workspace_a"]
@@ -460,7 +460,9 @@ def test_rejoin_with_an_older_or_conflicting_card_is_refused(joined: HostLink, h
     same_seq = {**base, "card": next_card(2, relay_url=None)}
     assert code(joined, "join", same_seq) == "stale_card"
     assert hub.published_cards[WS] == next_card(2) or hub.published_cards[WS]["o"]["card_seq"] == 2
-    assert joined.call("join", {**base, "card": next_card(3), "binding": binding(2)}) == {}
+    b2 = binding(2)
+    proof = owner_proof_for(b2["o"], WS, "hub.join", hub.now_ms)
+    assert joined.call("join", {**base, "card": next_card(3), "binding": b2, "owner_proof": proof}) == {}
     assert hub.published_cards[WS]["o"]["card_seq"] == 3
 
 
@@ -484,3 +486,39 @@ def test_error_reply_to_an_unknown_op_never_echoes_it(joined: HostLink, hub: Fak
 def test_known_ops_are_echoed_and_correlated_by_re(joined: HostLink):
     r = joined.request("wk_seal", {"epoch": 1, "wrap": "AA"})
     assert r["op"] == "wk_seal" and r["body"] == {"error": "wrong_mode"} and r["re"] == joined.seq
+
+
+# --- #1198 C9: the owner proof (protocol 9.6 "At the hub") ------------------------------------------------
+
+
+def test_join_without_the_owner_proof_is_proof_missing_and_nothing_is_pinned(hub: FakeHub):
+    link = HostLink(hub)
+    assert code(link, "join", {**vector_join_body(), "owner_proof": None}) == "proof_missing"
+    assert hub.workspaces == {} and hub.pins == {}
+
+
+def test_join_with_a_proof_of_another_person_or_binding_is_proof_invalid(hub: FakeHub):
+    link = HostLink(hub)
+    body = vector_join_body()
+    other_seq = owner_proof_for(binding(2)["o"], WS, "hub.join", hub.now_ms)
+    assert code(link, "join", {**body, "owner_proof": other_seq}) == "proof_invalid"  # names binding_seq 2
+    full = owner_proof_for({**binding(1)["o"], "mode": "full"}, WS, "hub.join", hub.now_ms)
+    assert code(link, "join", {**body, "owner_proof": full}) == "proof_invalid"  # the binding is selective
+
+
+def test_a_mode_switch_and_a_rejoin_need_the_proof_and_a_re_sent_binding_does_not(joined: HostLink, hub: FakeHub):
+    sw = binding(2, "full")
+    assert code(joined, "binding_put", {"object": sw, "owner_proof": None}) == "proof_missing"
+    assert hub.workspaces[WS].mode == "selective"
+    assert code(
+        joined, "binding_put", {"object": sw, "owner_proof": owner_proof_for(sw["o"], WS, "hub.join", hub.now_ms)}
+    ) == ("proof_invalid")  # a selective-to-full switch is a hub.mode proof
+    assert (
+        joined.call("binding_put", {"object": sw, "owner_proof": owner_proof_for(sw["o"], WS, "hub.mode", hub.now_ms)})
+        == {}
+    )
+    assert joined.call("binding_put", {"object": sw, "owner_proof": None}) == {}  # identical: no proof
+    assert joined.call("binding_put", {"object": unbound(2), "owner_proof": None}) == {}  # a leave: none
+    re = binding(3)
+    assert code(joined, "binding_put", {"object": re, "owner_proof": None}) == "proof_missing"
+    assert joined.call("binding_put", {"object": re}) == {}  # the helper makes the rejoin proof

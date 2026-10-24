@@ -47,7 +47,7 @@ from jsonschema import Draft202012Validator
 from orch import canon
 from orch.addons.settings_value import KEY as ADDONS_KEY
 
-from . import convenience, hubsign, marketinstall, review
+from . import convenience, hubproof, hubsign, marketinstall, review
 from .errors import HostError
 from .outcomes import Planned, request_idem
 from .requests import (
@@ -108,7 +108,7 @@ _SCHEMAS = {
     },
     "human.get": {
         "type": "object",
-        "properties": {"request_id": _REQ, "signer": _SIGNER},
+        "properties": {"request_id": _REQ, "signer": _SIGNER, "owner_proof": {"type": ["object", "null"]}},
         "required": ["request_id"],
         "additionalProperties": False,
     },
@@ -192,6 +192,8 @@ def _unsigned(event: dict[str, Any], *, grant: bool) -> dict[str, Any]:
     out = {k: v for k, v in event.items() if k != "sig"}
     if grant and out.get("type") == "grant.issued":
         out.pop("secret_hash", None)
+    if grant and out.get("type") in review.OWNER_PROOF_TYPES:
+        out.pop("owner_proof", None)  # the signer fills it after the review; the submit checks it (hubproof)
     return out
 
 
@@ -402,8 +404,8 @@ class HumanOps:
         store.refresh()
         if name != "member.add":  # after the handler, with the reader's declaration (H12d-2)
             convenience.refuse_reader_op(service, name)  # §0.8.6: no new reader while convenience signing is on
-        if signer is not None:
-            convenience.refuse_hub_op(name, signer["auth"])  # V3 C2a: a hub op is never click-to-sign
+        if signer is not None and name in hubproof.OPS and signer["auth"] == "convenience":
+            raise hubproof.refusal("proof_missing")  # #1198 C9: a One-click key cannot make the proof; none, no bind
         if signer is not None and signer["auth"] == "convenience":
             convenience.check(service, person, signer["device"])  # the owner's condition, at prepare
         if signer is not None and name != ROTATE_OP:
@@ -440,6 +442,9 @@ class HumanOps:
             from . import hubops
 
             capture.hub = hubops.facts_for(service)
+            convenience.refuse_hub_reader(
+                service, name, inner.get("hub_card"), now_ms=capture.hub.now_ms, dev_mode=capture.hub.dev_mode
+            )  # #1198 C9: the hub's card declares a reader level the log's history needs
             if name == "hub.mode" or inner.get("mode") == "full":  # V3 C11: a full join leaves click-to-sign off
                 hubsign.refuse_full_while_click_on(service)
         ctx = self.backend._context(call, None, False, files, prepare=capture)
@@ -465,6 +470,10 @@ class HumanOps:
                 store, person, signer["device"], now, operate=_operate([c.event["type"] for c in capture.events])
             )
         prepared, extras = self._build(call, name, log, capture, store, now)
+        if name in hubproof.OPS:  # #1198 C9: what the signer needs to make the owner proof (the host's own dev state)
+            from . import hubops
+
+            prepared["owner_proof"] = {"dev": bool(hubops.workspace_dev(service))}
         # H12d-2 (§0.8.6 item 9.4): the new reader's declaration against required_reader, early, with a good message
         built = prepared["events"]
         convenience.refuse_reader_op(service, name, events=built, readers=capture.readers)
@@ -837,7 +846,13 @@ class HumanOps:
             events=record["prepared"]["events"],
             readers=record.get("readers") or [],
         )
-        convenience.refuse_hub_op(record["op"], signer["auth"])  # #1170: a hub op is never bound to the one-click key
+        if record["op"] in hubproof.OPS:  # #1198 C9: a proof sent with the bind is checked now; One-click needs one
+            sent = args.get("owner_proof")
+            if sent is not None or signer["auth"] == "convenience":
+                hubproof.check(
+                    call.service, person=record["person"], op=record["op"], request_id=record["id"],
+                    event=record["prepared"]["events"][0], proof=sent,
+                )  # fmt: skip
         if record.get("sequence") is not None and signer["auth"] not in ("passphrase", "convenience"):
             # a sequence is bound to the passphrase or one-click custody only, here as at prepare (not the phone)
             raise HostError("invalid.input", "a sequence is signed with the passphrase or one-click custody only")
@@ -1085,8 +1100,12 @@ class HumanOps:
             )  # V3 G3 C2: the install record as it is now, before the journal
             if (refused := hubsign.refusal(service, events, None)) is not None:
                 raise refused  # V3 C11: before the journal write; a join after the prepare lands here
-            for e in events:
-                convenience.refuse_hub_op(record["op"], e.get("auth"))  # V3 C2a, again at submit
+            if record["op"] in hubproof.OPS:  # #1198 C9: every hub event carries a valid proof, checked under the lock
+                for e in events:
+                    hubproof.check(
+                        service, person=record["person"], op=record["op"], request_id=record["id"],
+                        event=e, proof=e.get("owner_proof"),
+                    )  # fmt: skip
             if any(e.get("auth") == "convenience" for e in events):  # §0.8.6: the condition, again at submit
                 convenience.check(service, record["person"], events[0]["actor"]["device"])
             # §0.8.6: a reader is never added to a history with convenience signatures, nor while the flag is on,

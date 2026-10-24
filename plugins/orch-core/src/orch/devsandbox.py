@@ -193,10 +193,13 @@ def check_manifest(root: str | os.PathLike[str]) -> dict[str, Any]:
 
 
 def parse_dev_json(raw: bytes) -> dict[str, Any]:
-    """``dev.json``, exactly its five keys (the origin's syntax is checked by the host)."""
+    """``dev.json``, exactly its five keys and the optional ``market`` (the origin's syntax is checked by the host)."""
     doc = _json(raw, "sandbox host config")
-    if set(doc) != {"v", "sim_convenience", "sandbox_id", "root", "relay_origin"}:
+    base = {"v", "sim_convenience", "sandbox_id", "root", "relay_origin"}
+    if not base <= set(doc) <= base | {"market"}:
         raise SandboxRefused("dev.json has unexpected keys")
+    if "market" in doc:
+        _check_market(doc["market"])
     if doc["v"] != 1 or doc["sim_convenience"] is not True:
         raise SandboxRefused("dev.json is not v1 with sim_convenience true")
     if type(doc["sandbox_id"]) is not str or not SANDBOX_ID.fullmatch(doc["sandbox_id"]):
@@ -206,6 +209,29 @@ def parse_dev_json(raw: bytes) -> dict[str, Any]:
     if type(doc["relay_origin"]) is not str or not 1 <= len(doc["relay_origin"]) <= 512:
         raise SandboxRefused("dev.json's relay_origin is not a string")
     return doc
+
+
+def _check_market(m: Any) -> None:
+    """``market: {url, keys}``: the sandbox's test marketplace (V3 G3, C5): a canonical https URL and one to three
+    publisher/index keys (65-byte uncompressed P-256 points, unpadded base64url). Nothing else."""
+    from orch.crypto.encoding import EncodingError, unb64u
+    from orch.market import MarketError
+    from orch.market.url import canonical_market_url
+
+    if not isinstance(m, dict) or set(m) != {"url", "keys"}:
+        raise SandboxRefused("dev.json's market is not {url, keys}")
+    try:
+        canonical_market_url(m["url"])
+    except MarketError:
+        raise SandboxRefused("dev.json's market url is not a canonical marketplace URL") from None
+    keys = m["keys"]
+    if not isinstance(keys, list) or not 1 <= len(keys) <= 3 or len(set(map(str, keys))) != len(keys):
+        raise SandboxRefused("dev.json's market keys are one to three distinct keys")
+    for k in keys:
+        try:
+            unb64u(k, 65)
+        except (EncodingError, TypeError, ValueError):
+            raise SandboxRefused("dev.json's market key is not a P-256 public key") from None
 
 
 def find_sandbox_root(path: str | os.PathLike[str]) -> Path | None:
@@ -355,8 +381,10 @@ def write_manifest(
     return doc
 
 
-def write_dev_json(root: str | os.PathLike[str], sandbox_id: str, relay_origin: str) -> dict[str, Any]:
-    """Write ``<root>/state/host/dev.json`` (the directories must exist)."""
+def write_dev_json(
+    root: str | os.PathLike[str], sandbox_id: str, relay_origin: str, market: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Write ``<root>/state/host/dev.json`` (the directories must exist); ``market`` is the optional test marketplace."""
     doc = {
         "v": 1,
         "sim_convenience": True,
@@ -364,6 +392,9 @@ def write_dev_json(root: str | os.PathLike[str], sandbox_id: str, relay_origin: 
         "root": _ident(root),
         "relay_origin": relay_origin,
     }
+    if market is not None:
+        _check_market(market)
+        doc["market"] = market
     _write(Path(root) / "state" / "host" / DEV_JSON, doc)
     return doc
 

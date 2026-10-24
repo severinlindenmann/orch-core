@@ -161,7 +161,7 @@ it('with One click on, stale, dev and widened warnings stay visible above the si
   const lead = await screen.findByTestId('sign-lead', {}, T)
   expect(within(lead).getByRole('alert')).toHaveTextContent('This update asks for more than before.')
   expect(lead).toHaveTextContent('out of date')
-  expect(lead).toHaveTextContent('local development folder')
+  expect(lead).toHaveTextContent('test marketplace (dev sandbox only)')
   expect(lead).toHaveTextContent('not signed')
   expect(lead).toHaveTextContent('not verified')
 })

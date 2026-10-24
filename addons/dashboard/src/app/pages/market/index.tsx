@@ -495,7 +495,7 @@ function MarketWorkspace() {
               <p className="text-text-muted">The marketplace lines below are shown by this computer, are not signed and are not verified. Your approval does not cover them.</p>
               {widened(handoff) && <p role="alert" className="font-medium text-warning">This update asks for more than before.</p>}
               {handoff.market.stale && <p className="text-warning">This review is out of date: the marketplace may have changed. Cancel and review again.</p>}
-              {handoff.market.class === 'dev' && <p className="text-warning">This is a local development folder, not a marketplace package.</p>}
+              {handoff.market.class === 'dev' && <p className="text-warning">This comes from a test marketplace (dev sandbox only).</p>}
             </div>
           }
           onClose={() => {

@@ -1,6 +1,7 @@
 // Terminals on a real host (add-on): every terminal and agent session of yours in one list. It reads the same `runs`
 // list as the dock and uses the dock's own routes (open = select it in the dock, stop, New terminal with its preview);
 // nothing here talks to the host differently. The bottom dock keeps working as before.
+import { RunnerSwitch } from '@/components/RunnerSwitch'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { Plus } from 'lucide-react'
@@ -129,9 +130,10 @@ export function TerminalsPage() {
         Your terminals and the agents you started, in one place. Open one to see it in the terminal panel at the bottom; it opens read only, and you take control there. A terminal runs on this computer, as you.
       </p>
       {off && (
-        <p role="status" className="text-[13px] text-text-muted">
-          Terminals are switched off for this workspace on this machine. Turn them on in your terminal with <code className="font-mono">orch runner enable</code>.
-        </p>
+        <div role="status" className="flex flex-wrap items-center gap-2 text-[13px] text-text-muted">
+          Terminals are switched off for this workspace on this machine.
+          <RunnerSwitch ws={ws} on testId="terminals-runner" variant="secondary" />
+        </div>
       )}
       {error && (
         <p role="alert" className="text-[13px] text-danger">

@@ -3,6 +3,7 @@
 // mockup's dock (header, tabs, resize edge). Start agent (M7b) opens core's Start agent dialog when the host serves it
 // (feature `agent_start`); the agent's run then appears here like a shell and attaches the same way.
 
+import { RunnerSwitch } from '@/components/RunnerSwitch'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { MoreHorizontal, PanelBottomClose, X, PanelRightClose, Plus, SquareTerminal, Square } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
@@ -165,7 +166,7 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
       )}
       {error && <p role="alert" className="shrink-0 border-b border-danger/40 bg-danger-soft px-3 py-1 text-xs text-danger">{error}</p>}
       {!termsOn && ws && <p role="status" data-terminals-off className="shrink-0 border-b border-border bg-surface px-3 py-1 text-xs text-text-muted">Terminals are switched off in this workspace. Switch them on in Settings, under Add-ons.</p>}
-      {termsOn && off && <p role="status" className="shrink-0 border-b border-border bg-surface px-3 py-1 text-xs text-text-muted">Terminals are switched off for this workspace on this machine. Turn them on in your terminal with <code className="font-mono">orch runner enable</code>.</p>}
+      {termsOn && off && ws && <div role="status" className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-surface px-3 py-1 text-xs text-text-muted">Terminals are switched off for this workspace on this machine.<RunnerSwitch ws={ws} on testId="dock-runner" variant="secondary" /></div>}
       {current && current.grant_state === 'ended' && current.state === 'running' && (
         <p role="status" className="shrink-0 border-b border-border bg-surface px-3 py-1 text-xs text-warning" data-grant-ended>This agent's runner grant ended: the host refuses its writes. Stop it when you are done reading.</p>
       )}

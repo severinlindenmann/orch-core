@@ -1839,6 +1839,72 @@ class ClickSigner:
         return {"done": True, "old": out["old"], "new": out["device"], **self._row(entry)}
 
     # -- bookkeeping ---------------------------------------------------------------------------------------------------
+    # -- dashboard execution on or off (#1198 C14) ---------------------------------------------------------------------
+    #
+    # The switch is the host-local file of ``orch runner enable|disable`` plus the runner service; no signed event.
+    # So it is a signer op like the custody switches, and the work is the CLI's own (``orch.runner.cli.enable`` with the
+    # prompt already answered, ``enablement.set_enabled(False)``), never a second implementation. The person's click is
+    # the confirmation, given on the review ``{review: true, on}`` returns: ``{on, terminals, view_digest}`` is acted on
+    # only when the digest is that review's (what the person read is what is switched). Who may ask for ON (a dashboard
+    # opened on this computer, until the passkey step-up exists) is the dashboard server's rule; OFF only takes
+    # authority away and is a plain click everywhere.
+    def _runner_view(self, entry: dict[str, Any], on: bool, terminals: bool) -> dict[str, Any]:
+        from orch.runner import enablement
+
+        wid = entry["workspace_id"]
+        known = self._names(entry)(wid)
+        if known is None:
+            raise ClickError("custody.unavailable", "this workspace is not in your own registry")
+        text = enablement.risk_text(known[1] or wid[:8], wid, terminals) if on else ""
+        return views.runner_switch(
+            workspace={"id": wid, "name": known[0], "prefix": known[1]}, on=on, terminals=terminals, text=text
+        )
+
+    def runner(self, args: Mapping[str, Any]) -> dict[str, Any]:
+        """``{workspace_id, review: true, on, terminals?}`` answers the View and its digest. ``{workspace_id, on,
+        terminals?, view_digest}`` switches dashboard execution; the answer is ``{enabled, terminals}`` of the
+        workspace. ON installs the runner service as ``orch runner enable`` does and may fail with its codes
+        (``host.busy``, ``invalid.input`` for dev code, ``runner.unavailable``); nothing secret is involved."""
+        import argparse
+
+        from orch.runner import cli as runner_cli
+        from orch.runner import enablement
+
+        entry = self._entry(args.get("workspace_id"))
+        wid, uid = self._tier_a(entry)
+        on, terminals = args.get("on"), args.get("terminals", True)
+        review = args.get("review") is True
+        allowed = {"workspace_id", "on", "terminals", "review"} | (set() if review else {"view_digest"})
+        if type(on) is not bool or type(terminals) is not bool or set(args) - allowed or (review != ("review" in args)):
+            raise ClickError(
+                "invalid.input", "runner takes workspace_id, on, optional terminals and a review or digest"
+            )
+        v = self._runner_view(entry, on, terminals)
+        digest = views.digest(v)
+        if review:
+            return {"view": v, "view_digest": digest}
+        if args.get("view_digest") != digest:
+            raise ClickError("invalid.input", "the review changed; read it again")
+        if self.busy:
+            raise refused("busy", "another signature is in progress")
+        if not on:
+            enablement.set_enabled(self.state, wid, False, uid)
+            self._note("runner_off", workspace=wid)
+            return {"workspace_id": wid, **enablement.state_of(self.state, wid, uid)}
+        ns = argparse.Namespace(
+            workspace=wid, no_terminals=not terminals, replace=False, dev=False, state=self.state, run=None, json=False
+        )
+        self.busy = True
+        try:
+            done = runner_cli.enable(ns, dict(os.environ, ORCH_STATE_DIR=str(self.state)), None, confirmed=True)
+        finally:
+            self.busy = False
+        if not done.get("ok"):
+            err = done.get("error") or {}
+            raise ClickError(str(err.get("code") or "internal"), str(err.get("message") or "")[:400])
+        self._note("runner_on", workspace=wid)
+        return {"workspace_id": wid, **enablement.state_of(self.state, wid, uid)}
+
     def _drop(self, approval: Approval) -> None:
         self.approvals.pop((approval.workspace_id, approval.request_id), None)
         if approval.seal is not None:
@@ -1880,6 +1946,7 @@ class ClickSigner:
             "custody_on": self.custody_on,
             "custody_off": self.custody_off,
             "rotate": self.rotate,
+            "runner": self.runner,
             "stash": self.stash,
         }.get(op)
         if op == "status":

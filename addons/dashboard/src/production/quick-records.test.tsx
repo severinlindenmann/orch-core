@@ -443,13 +443,13 @@ it('the card shows the D-P2-31 line verbatim whenever runner.enabled, whatever t
   }
 })
 
-it('runner disabled: no execution line, the command to turn it on is shown as text', async () => {
+it('runner disabled: no execution line, a button turns it on (no terminal command)', async () => {
   state.host.workspaces[0].runner = { connected: false, enabled: false, terminals: false }
   show('/w/DEMO/settings/general')
   const card = await screen.findByTestId('workspace-card-runner', {}, T)
   expect(screen.queryByTestId('runner-execution-line')).toBeNull()
-  expect(card).toHaveTextContent('orch runner enable')
-  expect(within(card).queryByRole('button')).toBeNull()
+  expect(card).not.toHaveTextContent('orch runner')
+  expect(within(card).getByTestId('card-runner')).toHaveTextContent('Turn on dashboard execution')
 })
 
 it('a host that says nothing about the runner draws nothing (never a guess)', async () => {

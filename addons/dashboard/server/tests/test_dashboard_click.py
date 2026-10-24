@@ -46,6 +46,7 @@ class Script:
         self.refuse: dict[str, ClickError] = {}
         self.offer: dict = {}  # the answer to `custody_off {begin}`
         self.rotation: dict = {}  # the answer to `rotate {begin}`
+        self.runner_on = False  # dashboard execution, as the fake signer holds it (#1198 C14)
         self.view = {"view": {"risk": RISK, "lines": [CANARY], "op": "approve"}, "view_digest": HASH}
         self.prepared = 0
         self.intents: dict[str, dict] = {}  # the host's idem record: idem -> {binding, request id, state}
@@ -74,6 +75,16 @@ class Script:
             return out
         if op == "stash":
             return {"state": "complete"}
+        if op == "runner":
+            on = args["on"]
+            if args.get("review"):
+                lines = [f"Turn {'on' if on else 'off'} dashboard execution for demo."]
+                lines += ["Agents may run commands on this computer as you when you start them."] if on else []
+                view = {"op": f"runner.{'on' if on else 'off'}", "workspace": {"id": self.ws}, "on": on,
+                        "confirm": {"kind": "click"}, "lines": lines}  # fmt: skip
+                return {"view": view, "view_digest": HASH}
+            self.runner_on = on
+            return {"workspace_id": self.ws, "enabled": on, "terminals": on and args["terminals"]}
         if op == "rotate":
             if args.get("begin"):
                 return self.rotation
@@ -2933,3 +2944,74 @@ def test_c13_sign_bodies_are_closed_and_never_echoed(client, token, stub, script
     res = client.post(url(stub, "rotate"), json=body, headers=hdr(token))
     assert res.status_code == 400 and res.json()["error"]["code"] == "invalid.input" and "CANARY" not in res.text
     assert rotate_calls(script) == []
+
+
+def runner_calls(script):
+    return [c for cl in script.clients for c in cl.calls if c[0] == "runner"]
+
+
+def test_c14_review_then_on_for_an_owner_on_a_local_session(client, token, stub, script, local):
+    script.features = ["custody", "runner_switch"]
+    res = client.post(url(stub, "runner/review"), json={"on": True}, headers=hdr(token))
+    assert res.status_code == 200 and res.json()["view_digest"] == HASH
+    assert "Agents may run commands on this computer as you when you start them." in res.json()["view"]["lines"]
+    res = client.post(
+        url(stub, "runner"), json={"on": True, "terminals": False, "view_digest": HASH}, headers=hdr(token)
+    )
+    assert res.status_code == 200 and res.json() == {"enabled": True, "terminals": False}
+    assert runner_calls(script)[-1] == (
+        "runner", {"workspace_id": stub.ws, "on": True, "terminals": False, "view_digest": HASH}
+    )  # fmt: skip
+
+
+def test_c14_on_is_local_only_and_off_is_a_plain_click_anywhere(client, token, stub, script, monkeypatch):
+    from orch_dashboard.auth import Auth
+
+    script.features = ["custody", "runner_switch"]
+    monkeypatch.setattr(Auth, "login_kind", lambda self, token: "remote", raising=False)
+    for path in ("runner/review", "runner"):
+        res = client.post(url(stub, path), json={"on": True, "view_digest": HASH}, headers=hdr(token))
+        assert res.status_code == 409 and res.json()["error"]["reason"] == "check_failed"
+    assert runner_calls(script) == []
+    assert client.post(url(stub, "runner/review"), json={"on": False}, headers=hdr(token)).status_code == 200
+    res = client.post(url(stub, "runner"), json={"on": False, "view_digest": HASH}, headers=hdr(token))
+    assert res.status_code == 200 and res.json() == {"enabled": False, "terminals": False}
+
+
+def test_c14_needs_an_owner_the_feature_and_a_digest(client, token, stub, script, local, monkeypatch):
+    from orch_dashboard import adapters
+
+    body = {"on": True, "view_digest": HASH}
+    script.features = ["custody", "runner_switch"]
+    assert (
+        client.post(url(stub, "runner"), json={"on": True}, headers=hdr(token)).json()["error"]["code"]
+        == "invalid.input"
+    )
+    real = adapters.members
+    monkeypatch.setattr(adapters, "members", lambda d: [m.model_copy(update={"role": "maintainer"}) for m in real(d)])
+    for path in ("runner/review", "runner"):
+        assert client.post(url(stub, path), json=body, headers=hdr(token)).json()["error"]["code"] == "role.denied"
+    assert runner_calls(script) == []
+
+
+def test_c14_an_older_signer_cannot_switch(client, token, stub, script, local):
+    script.features = ["custody"]
+    for path in ("runner/review", "runner"):
+        res = client.post(url(stub, path), json={"on": True, "view_digest": HASH}, headers=hdr(token))
+        assert res.json()["error"]["code"] == "click.contract"
+    assert runner_calls(script) == []
+
+
+def test_c14_a_review_that_is_not_the_one_asked_for_is_not_shown(client, token, stub, script, local, monkeypatch):
+    script.features = ["custody", "runner_switch"]
+    real = script.handler
+
+    def odd(op, args):
+        got = real(op, args)
+        if op == "runner" and args.get("review"):
+            got["view"]["lines"] = ["Turn on dashboard execution."]  # core's runner line is missing
+        return got
+
+    script.handler = odd
+    res = client.post(url(stub, "runner/review"), json={"on": True}, headers=hdr(token))
+    assert res.status_code == 409 and res.json()["error"]["reason"] == "check_failed"

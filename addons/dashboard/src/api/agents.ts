@@ -67,6 +67,11 @@ export interface Runner extends RunnerInfo {
   grant: RunnerGrant | null
 }
 
+export interface RunnerSwitchBody { on: boolean; terminals?: boolean }
+export interface RunnerReview { view: { op: string; on: boolean; lines: string[] }; view_digest: string }
+/** Core's RUNNER_LINE: the sentence a review of turning dashboard execution ON must carry, or it is not shown. */
+export const RUNNER_LINE = 'Agents may run commands on this computer as you when you start them.'
+
 const w = (ws: string) => `/api/w/${encodeURIComponent(ws)}`
 
 export const agentsApi = {
@@ -74,6 +79,10 @@ export const agentsApi = {
   /** Exactly the preview's values plus its `spec`, with the dialog's one idem (a retry returns the same run). */
   start: (ws: string, args: AgentArgs, spec: string, idem: string) => call<{ run: Run }>('POST', `${w(ws)}/agents/start`, { ...args, spec, idem }),
   runner: (ws: string) => call<{ runner: Runner | null }>('GET', `${w(ws)}/runner`),
+  /** #1198 C14: core's review of turning dashboard execution on or off (its own words, relayed), then the switch itself. */
+  runnerReview: (ws: string, body: RunnerSwitchBody) => call<RunnerReview>('POST', `${w(ws)}/click/runner/review`, body),
+  runnerSwitch: (ws: string, body: RunnerSwitchBody & { view_digest: string }) =>
+    call<{ enabled: boolean; terminals: boolean }>('POST', `${w(ws)}/click/runner`, body),
   depositStatus: (ws: string, depositId: string) =>
     call<{ deposit: DepositOutcome | 'none'; reason?: DepositReason }>('GET', `${w(ws)}/runner/deposits/${encodeURIComponent(depositId)}`),
   forget: (ws: string, grant: string, idem: string) => call<{ forgotten: boolean }>('POST', `${w(ws)}/runner/forget`, { grant, idem }),
@@ -94,7 +103,7 @@ export const worktreeLine = (key: string, repo: string, path: string) => `A work
 /** The approved words for `cwd.kind` "repo". */
 export const SHARED_COPY = "the repository's shared working copy (not a separate worktree)"
 
-export const TERMINAL_ONLY = 'Turn on dashboard execution (orch runner enable) or use the terminal.'
+export const TERMINAL_ONLY = 'Turn on dashboard execution first.'
 export const TERMINAL_GRANT = 'Run `orch grant --runner` in your terminal.'
 export const DEPOSIT_UNKNOWN = 'The grant may or may not be with your runner. Revoke it to be sure.'
 
@@ -126,8 +135,8 @@ export function blockedText(b: AgentBlocked): string | null {
     case 'runner.disabled':
       return b.detail.missing === 'addon'
         ? 'The start-agent addon is not granted in this workspace.'
-        : 'Dashboard execution is off on this machine. Turn it on in your terminal: orch runner enable.'
-    case 'runner.unavailable': return 'No runner is connected. Start it in your terminal: orch runner enable.'
+        : 'Dashboard execution is off on this machine. Turn it on first.'
+    case 'runner.unavailable': return 'No runner is connected. Turning dashboard execution on starts it.'
     case 'runner.stale': return 'The agent runner is from an older orch version. Restart it in your terminal: orch host enable.'
     case 'launch.claimed': return 'An agent session already claims this ticket.'
     case 'launch.no_grant': return noGrantText(b.detail.reason)

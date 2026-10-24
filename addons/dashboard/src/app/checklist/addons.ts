@@ -30,8 +30,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'H4',
         title: 'Terminals or Start agents with execution off',
         text: 'Look at Terminals or Start agents while running work from the dashboard is still switched off.',
-        commands: ['orch runner enable'],
-        see: 'The switch is greyed and the line beside it says to run "orch runner enable" in your Terminal first.',
+        see: 'The switch is greyed and the line beside it has a "Turn on dashboard execution" button. It shows what it allows first; one click turns it on.',
       },
       {
         id: 'H5',

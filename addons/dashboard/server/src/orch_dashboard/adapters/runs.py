@@ -146,7 +146,7 @@ def agent_preview(data):
         "display": text(data.get("display")),
         "model": model if isinstance(model, str) and MODEL_NAME.fullmatch(model) else None,
         "model_source": source if source in ("chosen", "addon", "default") else None,
-        "model_by": text(data.get("model_by"), 60) if source == "addon" else None,  # the add-on's signed name only (a package's own title is not signed): data
+        "model_by": text(data.get("model_by"), 60) if source == "addon" else None,  # the signed add-on name only: data
         "display_hidden": isinstance(data.get("display"), str) and text(data.get("display")) is None,
         "cwd": shown,
         "cwd_path": text(data.get("cwd_path")),

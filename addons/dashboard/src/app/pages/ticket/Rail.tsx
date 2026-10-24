@@ -143,7 +143,7 @@ function Details({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewer })
   )
 }
 
-/** Branches, and pull requests when the GitHub addon does not show them (one place per PR). */
+/** Branches, and pull requests (one place per PR). */
 function Code({ ticket, prs }: { ticket: TicketDocument; prs: boolean }) {
   const branches = Object.entries(ticket.links.branches)
   const pulls = prs ? ticket.links.prs : []

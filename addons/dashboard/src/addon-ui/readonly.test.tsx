@@ -35,8 +35,8 @@ describe('addon contributions follow the viewer role', () => {
   })
 
   it('a viewer gets addon nav page buttons disabled', async () => {
-    renderApp('/addon/github/reviews', { viewer: 'p_tom' })
-    const refresh = await screen.findByRole('button', { name: 'Refresh from GitHub' })
+    renderApp('/addon/terminals/sessions', { viewer: 'p_tom' })
+    const refresh = await screen.findByRole('button', { name: 'New terminal' })
     await new Promise((r) => setTimeout(r, 50))
     expect(refresh).toBeDisabled()
   })
@@ -55,13 +55,6 @@ describe('addon contributions follow the viewer role', () => {
     await screen.findByRole('heading', { level: 1 })
     await user.keyboard('{Control>}k{/Control}')
     expect(await screen.findByRole('option', { name: /Share current ticket/ })).toBeInTheDocument()
-  })
-
-  it('a viewer cannot import from the board lane', async () => {
-    renderApp('/board', { viewer: 'p_tom' })
-    const lane = await screen.findByRole('region', { name: /GitHub issues/ })
-    const buttons = within(lane).getAllByRole('button', { name: /Import as ticket/ })
-    for (const b of buttons) expect(b).toBeDisabled()
   })
 
   it('a viewer gets Today addon card controls disabled', async () => {

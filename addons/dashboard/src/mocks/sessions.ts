@@ -19,7 +19,7 @@ export interface LaunchRequest {
   where: LaunchWhere
 }
 
-/** What a `launch` addon (model routing) adds to a start. Empty: the harness default. */
+/** What a `launch` addon adds to a start. Empty: the harness default. */
 export interface LaunchPlan {
   model?: string
   tier?: string

@@ -1,4 +1,4 @@
-import { screen, within } from '@testing-library/react'
+import { screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api, mockStore } from '@/api/client'
 import type { MockStore } from '@/mocks/store'
@@ -13,18 +13,17 @@ afterEach(() => vi.restoreAllMocks())
 
 describe('inactive addons', () => {
   it('hides every contribution of a disabled addon', async () => {
-    renderApp('/board', { setup: disable('github') })
+    renderApp('/board', { setup: disable('estimate') })
     await screen.findByTestId('card-DEMO-0043')
-    expect(screen.queryByRole('link', { name: /Code reviews/ })).toBeNull()
-    expect(document.querySelector('[aria-label="From addon: github"]')).toBeNull()
+    expect(document.querySelector('[aria-label="From addon: estimate"]')).toBeNull()
   })
 
   it('does not fetch state for inactive addons', async () => {
     const spy = vi.spyOn(api, 'getAddonState')
-    renderApp('/board', { setup: disable('github') })
+    renderApp('/board', { setup: disable('estimate') })
     await screen.findByTestId('card-DEMO-0043')
     await vi.waitFor(() => expect(spy.mock.calls.length).toBeGreaterThan(0))
-    expect(spy.mock.calls.some(([, name]) => name === 'github')).toBe(false)
+    expect(spy.mock.calls.some(([, name]) => name === 'estimate')).toBe(false)
     expect(spy.mock.calls.length).toBeGreaterThan(0)
   })
 
@@ -49,11 +48,10 @@ describe('inactive addons', () => {
     expect(screen.queryByRole('link', { name: 'Open the addon manager' })).toBeNull()
   })
 
-  it('the board lane import passes the workspace id', async () => {
-    const spy = vi.spyOn(api, 'runAddonAction')
-    const { user } = renderApp('/board')
-    const lane = await screen.findByRole('region', { name: /GitHub issues/ })
-    await user.click(within(lane).getAllByRole('button', { name: /Import as ticket/ })[0])
+  it('an addon page action passes the workspace id', async () => {
+    const spy = vi.spyOn(api, 'runAddonAction').mockResolvedValue({ ok: true, message: 'done' })
+    const { user } = renderApp('/addon/terminals/sessions')
+    await user.click(await screen.findByRole('button', { name: 'New terminal' }))
     await vi.waitFor(() => expect(spy).toHaveBeenCalled())
     expect(spy.mock.calls[0][0]).toBe(mockStore.workspaces[0].id)
   })

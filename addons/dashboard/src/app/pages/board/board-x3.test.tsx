@@ -64,12 +64,6 @@ describe('board X3: 3-line cards, Display popover, role-aware moves', () => {
     mockStore.sim.stopAll()
   })
 
-  it('the jump nav lists the addon lanes, so they are discoverable at every width', async () => {
-    renderApp('/board')
-    const nav = await screen.findByRole('navigation', { name: 'Jump to column' }, T)
-    expect(await within(nav).findByRole('button', { name: /GitHub issues/ }, T)).toBeInTheDocument()
-  })
-
   it('m on a focused card opens Move to, choosing Open moves it, the toast offers Undo', async () => {
     const { user } = renderApp('/board')
     const card = await screen.findByTestId('card-DEMO-0043', {}, T)

@@ -21,12 +21,7 @@ const manifest = (addon: string, action: string, meta: ActionMeta) => (s: MockSt
   pkg.actions = { ...pkg.actions, [action]: meta }
 }
 
-async function laneImport(viewer: string, setup?: (s: MockStore) => void) {
-  const r = renderApp('/board', { viewer, setup })
-  const lane = await screen.findByRole('region', { name: /GitHub issues/ }, T)
-  const [button] = await within(lane).findAllByRole('button', { name: 'Import as ticket' }, T)
-  return { ...r, button }
-}
+const withActivity = (s: MockStore) => installAndGrant(s, s.workspaces[0].id, 'activity')
 
 async function openPalette(path: string, viewer: string, setup?: (s: MockStore) => void) {
   const r = renderApp(path, { viewer, setup })
@@ -36,50 +31,34 @@ async function openPalette(path: string, viewer: string, setup?: (s: MockStore) 
   return r
 }
 
-describe('board lane actions use the manifest', () => {
-  it('a viewer gets a member action disabled, with the reason', async () => {
-    const { button } = await laneImport('p_tom')
-    expect(button).toBeDisabled()
-    expect(button).toHaveAccessibleDescription('Viewers cannot do this.')
-  })
-  it('a viewer runs an action the manifest opens to viewers', async () => {
-    const post = vi.spyOn(api, 'runAddonAction').mockResolvedValue({ ok: true, message: 'imported' })
-    const { user, button } = await laneImport('p_tom', manifest('github', 'import', { minRole: 'viewer' }))
-    expect(button).toBeEnabled()
-    await user.click(button)
-    await waitFor(() => expect(post).toHaveBeenCalled(), T)
-    expect(post.mock.calls[0][2]).toBe('import')
-  })
-  it('a signed action opens core\'s signing prompt before anything is posted', async () => {
-    const post = vi.spyOn(api, 'runAddonAction')
-    const { user, button } = await laneImport('p_sev', manifest('github', 'import', { minRole: 'member', confirm: 'sign', label: 'Import' }))
-    await user.click(button)
-    expect(await screen.findByRole('dialog', { name: 'Sign: Import (import) · GitHub (github)' }, T)).toBeInTheDocument()
-    expect(post).not.toHaveBeenCalled()
-  })
-})
-
 describe('palette addon commands use the manifest', () => {
   it('a viewer sees the viewer-level commands only', async () => {
-    await openPalette('/', 'p_tom')
+    await openPalette('/', 'p_tom', (s) => {
+      withActivity(s)
+      manifest('activity', 'clear_filters', { minRole: 'member' })(s)
+    })
     const group = await screen.findByRole('group', { name: 'Addon commands' }, T)
     expect(within(group).getByText('Open terminal')).toBeInTheDocument()
-    expect(within(group).queryByText('Refresh pull requests')).toBeNull()
+    expect(within(group).queryByText('Clear activity filters')).toBeNull()
   })
   it('a member does not see a maintainer-only command', async () => {
     await openPalette('/', 'p_sev', (s) => {
-      manifest('github', 'refresh', { minRole: 'maintainer' })(s)
+      withActivity(s)
+      manifest('activity', 'clear_filters', { minRole: 'maintainer' })(s)
       const sev = s.workspaces[0].members.find((m) => m.person === 'p_sev')!
       sev.role = 'member'
     })
     const group = await screen.findByRole('group', { name: 'Addon commands' }, T)
-    expect(within(group).queryByText('Refresh pull requests')).toBeNull()
+    expect(within(group).queryByText('Clear activity filters')).toBeNull()
   })
   it('a signed command opens core\'s signing prompt instead of posting', async () => {
     const post = vi.spyOn(api, 'runAddonAction')
-    const { user } = await openPalette('/', 'p_sev', manifest('github', 'refresh', { minRole: 'member', confirm: 'sign', label: 'Refresh' }))
-    await user.click(await screen.findByRole('option', { name: /Refresh pull requests/ }, T))
-    expect(await screen.findByRole('dialog', { name: 'Sign: Refresh (refresh) · GitHub (github)' }, T)).toBeInTheDocument()
+    const { user } = await openPalette('/', 'p_sev', (s) => {
+      withActivity(s)
+      manifest('activity', 'clear_filters', { minRole: 'member', confirm: 'sign', label: 'Clear' })(s)
+    })
+    await user.click(await screen.findByRole('option', { name: /Clear activity filters/ }, T))
+    expect(await screen.findByRole('dialog', { name: /^Sign: Clear/ }, T)).toBeInTheDocument()
     expect(post).not.toHaveBeenCalled()
   })
 })

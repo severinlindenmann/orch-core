@@ -2,7 +2,6 @@ import { screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api, mockStore, resetMockStoreForTests } from '@/api/client'
 import { ApiError } from '@/api/types'
-import { installAndGrant } from '@/test/installAddon'
 import { renderApp } from '@/test/renderApp'
 
 afterEach(() => vi.restoreAllMocks())
@@ -97,16 +96,16 @@ describe('Settings', () => {
     await waitFor(() => expect(within(screen.getByRole('row', { name: /^Estimate \d/ })).getByRole('button', { name: 'Settings' })).toHaveFocus())
   })
   it('the footer Save is the form submit (form=id), and the form draws no button of its own', async () => {
-    const { user } = renderApp('/settings/addon/models', { setup: (st) => installAndGrant(st, st.workspaces[0].id, 'models') })
-    const field = await screen.findByRole('textbox', { name: 'Standard model' })
+    const { user } = renderApp('/settings/addon/usage')
+    const field = await screen.findByLabelText(/Monthly budget/)
     expect(screen.getAllByRole('button', { name: 'Save' })).toHaveLength(1) // the form draws no button of its own
-    expect(screen.getByRole('button', { name: 'Save' })).toHaveAttribute('form', 'addon-settings-models')
+    expect(screen.getByRole('button', { name: 'Save' })).toHaveAttribute('form', 'addon-settings-usage')
     await user.clear(field)
-    await user.type(field, 'haiku') // Enter in a field is native browser behaviour (jsdom/user-event does not follow `form=`): checked in the browser
+    await user.type(field, '75') // Enter in a field is native browser behaviour (jsdom/user-event does not follow `form=`): checked in the browser
     await user.click(screen.getByRole('button', { name: 'Save' }))
-    await waitFor(async () => expect(((await api.getAddonState(mockStore.workspaces[0].id, 'models')).settings as { standard: string }).standard).toBe('haiku'))
+    await waitFor(async () => expect(((await api.getAddonState(mockStore.workspaces[0].id, 'usage')).settings as { budget_chf: number }).budget_chf).toBe(75))
     // A successful save closes the panel and says so (the toast outlives the route change); no "discard?" question.
-    await waitFor(() => expect(screen.queryByRole('region', { name: /Standard model|models settings/i })).toBeNull())
+    await waitFor(() => expect(screen.queryByRole('region', { name: /Monthly budget|usage settings/i })).toBeNull())
     expect(await screen.findByText(/settings saved$/)).toBeInTheDocument()
     expect(screen.queryByRole('dialog', { name: 'Discard unsaved changes?' })).toBeNull()
     expect(screen.getByRole('heading', { name: 'Addons' })).toBeInTheDocument()

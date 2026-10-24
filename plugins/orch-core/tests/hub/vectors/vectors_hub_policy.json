@@ -1,5 +1,7 @@
 {
  "capabilities": [
+  "choose_model",
+  "credential",
   "git_push",
   "network",
   "pty",
@@ -139,6 +141,8 @@
       "block": []
      },
      "ceiling": [
+      "choose_model",
+      "credential",
       "git_push",
       "network",
       "pty",
@@ -157,7 +161,7 @@
    "check": "policy",
    "expect": {
     "ok": true,
-    "policy_hash": "DzfR4ThPf9X_vEqASDNX_Nbjk0GhDa4nuDjkfhpqVcQ"
+    "policy_hash": "F_g8Oo8JCcKxhnRTnGHVS3GtL4RTROFXGTccP2rHzJw"
    },
    "name": "policy_ceiling_all"
   },
@@ -2603,6 +2607,8 @@
       ]
      },
      "ceiling": [
+      "choose_model",
+      "credential",
       "git_push",
       "network",
       "pty",
@@ -2744,7 +2750,7 @@
    "check": "policy",
    "expect": {
     "ok": true,
-    "policy_hash": "65PqUy1WE091rxZJWfJHSw4DfuCxpzSc6k48uo_Jc8k"
+    "policy_hash": "hdWjgqb5RUDEDCsPHtEpk_92dsO-gDhn7QczUzOx9yw"
    },
    "name": "policy_max_size"
   },

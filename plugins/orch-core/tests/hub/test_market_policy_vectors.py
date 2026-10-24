@@ -17,6 +17,12 @@ DOC = json.loads((VECTORS_DIR / "vectors_hub_policy.json").read_text())
 POLICY = [c for c in DOC["cases"] if c["check"] == "policy"]
 
 
+def test_the_vector_file_states_core_capability_list():
+    from orch.addons.manifest import CAPABILITIES
+
+    assert sorted(DOC["capabilities"]) == sorted(CAPABILITIES) and len(DOC["capabilities"]) == 7
+
+
 def test_file_shape_and_constants_match_core():
     assert DOC["official_url"] == OFFICIAL_URL
     assert len(POLICY) >= 50 and any(c["check"] == "evaluate" for c in DOC["cases"])

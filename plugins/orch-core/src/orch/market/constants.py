@@ -6,9 +6,12 @@ from __future__ import annotations
 OFFICIAL_URL = "https://github.com/severinlindenmann/orch-marketplace"
 
 #: Canonical unpadded base64url P-256 public keys (65-byte uncompressed points): the current and the next official
-#: marketplace key (rotation without an emergency release). EMPTY until the release step has created the
-#: ``purpose: "marketplace"`` key and signs the index: with no key nothing can verify, so the official index is
-#: ``market.index_unsigned`` (fail closed). The only verifier input is this tuple (see ``index.verify_official``).
+#: marketplace key (rotation without an emergency release), CURRENT FIRST. EMPTY until the operator has run
+#: orch-marketplace ``scripts/gen-index-keys`` (M#3, docs/signing.md): with no key nothing can verify, so the official
+#: index is ``market.index_unsigned`` (fail closed). The only verifier input is this tuple (``index.official_keys``).
+#: TODO(M#3, operator): paste the two public halves printed by gen-index-keys here, replacing ``()`` by
+#:     ("<current public key>", "<next public key>")
+#: Public keys only; never a private key. tests/market/test_pinned_keys.py checks the shape once they are set.
 OFFICIAL_KEYS: tuple[str, ...] = ()
 
 #: Hosts an add-on repository may live on besides the marketplace's own host (spec 5.1). G3 uses it.

@@ -2,14 +2,13 @@
 // requirements and plan (made from the checks) in ONE signature, and then starts an agent with the defaults. The review
 // opens next to the button (SignPopover); access is a select inside it only when there is none or it is nearly over.
 // "Create without starting" is the same signature without the agent. No size is asked: the host measures it later.
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQueryClient } from '@tanstack/react-query'
 import { ChevronRight } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { HARNESSES } from '@/api/agents'
 import type { HandoffAction } from '@/api/handoff'
 import { runnerLengths } from '@/api/grants'
-import { queries } from '@/api/queries'
 import { newIdem } from '@/api/runs'
 import { useMe } from '@/app/useMe'
 import { useWorkspace } from '@/app/workspace'
@@ -73,7 +72,6 @@ export function AddQuick({ ws, onCreated, onStartFailed, onStartDone }: { ws: st
   const me = useMe(ws).data
   const plan = useStartPlan(workspace!, me?.person ?? '')
   const after = useStartAfterCreate()
-  const hostSettings = useQuery({ ...queries.hostSettings(ws), retry: false })
   const [text, setText] = useState('')
   const [details, setDetails] = useState('')
   const [steps, setSteps] = useState<Step[]>([{ text: '', cmd: '' }])
@@ -108,7 +106,7 @@ export function AddQuick({ ws, onCreated, onStartFailed, onStartDone }: { ws: st
     if (!action || !title) return
     // A quick task is a piece of work: the agent does it (not "write the requirements"), with the defaults of this workspace.
     const choice = { harness: plan.pref.harness, mode: 'work' as const, model: plan.pref.model }
-    const reviewed: Reviewed = { choice, model: shownModel(choice, hostSettings.data?.models, plan.routing), grantId: fresh?.id ?? null }
+    const reviewed: Reviewed = { choice, model: shownModel(choice), grantId: fresh?.id ?? null }
     setAnchor(el)
     setPending({ n: (pending?.n ?? 0) + 1, action, startNow, withAccess, title, reviewed, idem: newIdem(), priorGrantIds: plan.priorGrantIds })
   }

@@ -1,7 +1,7 @@
 """Add-ons that need a workspace setting before they can be on (AE4 of the ``addon_enable`` design, 19 Oct 2026).
 
-Publish needs the address of its server (``settings.publish``) and Model routing its table of models
-(``settings.models``). The ONE rule: an add-on of :data:`NEEDS_SETTINGS` is never on while its setting is unset.
+Publish needs the address of its server (``settings.publish``). The ONE rule: an add-on of
+:data:`NEEDS_SETTINGS` is never on while its setting is unset.
 Every path reads this module, so the CLI (``orch addon grant``), the dashboard and the signer's sequence all hold:
 
 * ``addon.grant`` of such an add-on is refused while its setting is unset (:func:`grant_refusal`);
@@ -29,14 +29,14 @@ __all__ = [
 ]
 
 #: add-on name -> the ``settings.set`` key it needs
-NEEDS_SETTINGS: dict[str, str] = {"publish": "publish", "model-routing": "models"}
+NEEDS_SETTINGS: dict[str, str] = {"publish": "publish"}
 #: the words a person reads (the same titles as the setup catalog; a test pins the equality)
-TITLES: dict[str, str] = {"publish": "Publish", "model-routing": "Model routing"}
+TITLES: dict[str, str] = {"publish": "Publish"}
 
 
 def _empty(value: Any) -> bool:
-    """Nothing set: ``None``, or a table of models with no model chosen (every mode of every harness cleared)."""
-    return value is None or (isinstance(value, Mapping) and not any(value.values()))
+    """Nothing set: ``None``."""
+    return value is None
 
 
 def is_set(settings: Mapping[str, Any], name: str) -> bool:
@@ -61,8 +61,8 @@ def grant_refusal(settings: Mapping[str, Any], name: str) -> str | None:
 
 
 def clear_refusal(changes: Mapping[str, Any], addons: Mapping[str, Any]) -> str | None:
-    """The reason a ``settings.set`` of ``changes`` is refused, or ``None``: it clears the setting (``null``, or no
-    model chosen) of an add-on that is on (AE4). Clearing while the add-on is off is allowed."""
+    """The reason a ``settings.set`` of ``changes`` is refused, or ``None``: it clears the setting (``null``) of an
+    add-on that is on (AE4). Clearing while the add-on is off is allowed."""
     for name, key in NEEDS_SETTINGS.items():
         if key in changes and _empty(changes[key]) and is_on(addons, name):
             return f"{TITLES[name]} is on and needs this setting: turn it off first"

@@ -6,6 +6,7 @@ import { GATE_LABEL } from '@/api/settings'
 import { Pictures } from './Pictures'
 import { Inline, Prose, Raw } from './visible'
 import { alsoSigned, type AlsoSigned, type QuickTyped } from './alsoSigned'
+import { SignedTextView } from './SignedTextView'
 
 export function SignDetails({ children }: { children: ReactNode }) {
   return <details className="space-y-3 text-[12px] text-text-muted"><summary className="cursor-pointer">Technical details</summary>{children}</details>
@@ -154,6 +155,47 @@ export function compactAnswer(content: Content | null | undefined) {
   return { ticket: content.ticket, choice, question, notes: content.sections?.filter(s => s.id === 'answer') ?? [] }
 }
 
+/** A deny-list, never an allow-list: in a gate review every section except core's own is ticket text (the ticket's section keys, `findings`, an add-on's) and sits in the agent frame. */
+const CORE_SECTIONS = ['comment'] // sections core writes itself (the signer's own comment): every OTHER section of a gate review is agent text
+/** orch's own words for the known section ids (renaming is presentation); an unknown id shows core's title. */
+const PLAIN_TITLES: Record<string, string> = { context: 'What it is about', requirements: 'What will be built', out_of_scope: 'Out of scope', plan: 'Steps' }
+const SHOW_RAW_KEY = 'orch.sign.showRaw'
+let showRawNow = false
+try { showRawNow = sessionStorage.getItem(SHOW_RAW_KEY) === '1' } catch { /* no storage: the default */ }
+
+/**
+ * Requirements and plan, easier to read and still exactly what is signed: one labelled frame "Written by the agent" holds
+ * every agent-written section, each line restyled by its leading marker only (SignedTextView); "Show exactly as written"
+ * swaps in core's own text per section. The frame label, section titles and "What happens when you sign" are orch's words.
+ */
+function GateText({ sections, acceptance, tasks, approving, others }: { sections: NonNullable<Content['sections']>; acceptance?: ReactNode; tasks?: ReactNode; approving: boolean; others?: ReactNode }) {
+  const [raw, setRaw] = useState(showRawNow)
+  const toggle = (v: boolean) => { showRawNow = v; setRaw(v); try { sessionStorage.setItem(SHOW_RAW_KEY, v ? '1' : '0') } catch { /* no storage */ } }
+  return <div className="space-y-3">
+    <section role="group" aria-label="Written by the agent" data-testid="agent-frame" className="space-y-4 rounded-md border border-border-strong bg-surface p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-[12px] font-medium text-text-muted">Written by the agent: {approving ? 'this is what you approve' : 'this is what your decision covers'}</p>
+        <label className="flex cursor-pointer items-center gap-1.5 text-[12px] text-text-muted"><input type="checkbox" checked={raw} onChange={e => toggle(e.target.checked)} />Show exactly as written</label>
+      </div>
+      {sections.map(s => <section key={s.id} data-section={s.id}>
+        <h3 className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-text-muted">{PLAIN_TITLES[s.id] ?? <Inline>{s.title}</Inline>}</h3>
+        {raw ? <Prose className="rounded-md bg-surface-2 p-2 font-mono text-[12px] leading-relaxed text-text">{s.text}</Prose> : <SignedTextView text={s.text} />}
+      </section>)}
+      {acceptance}
+      {tasks}
+    </section>
+    {others}
+    {approving && <section aria-label="What happens when you sign" className="space-y-1 text-[12px] text-text-muted">
+      <h3 className="font-medium text-text">What happens when you sign</h3>
+      <ul className="list-disc space-y-0.5 pl-5">
+        <li>Your signature is tied to exactly what is shown in this review.</li>
+        <li>If the agent changes it later, this approval no longer counts and you are asked again.</li>
+        <li>Only you can sign with your key. The agent cannot sign for you.</li>
+      </ul>
+    </section>}
+  </div>
+}
+
 /** `technical`: more facts for the ONE "Technical details" expander of the review (the panel's own: action, fingerprint, device). */
 /** A row of the quick-task review: a label and the text signed for it (one line stays a line, several keep their breaks). */
 function SignedRow({ label, text, members }: { label: string; text: string; /** With members: the text is a person id. */ members?: Member[] }) {
@@ -193,13 +235,20 @@ export function SignContent({ content, ws, technical, compact = false, quick }: 
   // (it signs the key and the title) has them under Technical details only.
   const ticketLine = content.ticket && content.ticket.new !== true
   const also = quick && !content.summary ? alsoSigned(content, quick) : null
+  // core sets fields_title 'Applies under' only on a gate review (signcontent.py _gate): the structural mark, not the headline wording.
+  const gate = content.fields_title === 'Applies under' && !!content.sections?.length
+  const gateSections = content.sections?.filter(s => !CORE_SECTIONS.includes(s.id)) ?? []
+  const otherSections = content.sections?.filter(s => CORE_SECTIONS.includes(s.id)).map(s => <section key={s.id}><h3 className="mb-2 text-[13px] font-medium text-text"><Inline>{s.title}</Inline></h3><Prose className="font-sans leading-relaxed text-text">{s.text}</Prose></section>)
+  const acceptanceEl = !!content.acceptance?.length && <section><h3 className="mb-2 text-[13px] font-medium text-text">{gate ? 'How we know it is done' : 'Acceptance criteria'}</h3><ul className="space-y-2 leading-relaxed">{content.acceptance.map(a => <li key={a.id}><span aria-label={a.checked ? 'Checked' : 'Unchecked'}>{a.checked ? '☑' : '☐'}</span> <Inline>{a.text}</Inline> <span className="text-[12px] text-text-muted [&_bdi]:text-text-muted"><Raw>{a.id}</Raw></span>{a.manual && <p className="text-[12px] text-text-muted"><Inline>{a.manual}</Inline></p>}</li>)}</ul></section>
+  const tasksEl = !!content.tasks?.length && <section><h3 className="mb-2 text-[13px] font-medium text-text">{gate ? 'Steps' : 'Plan tasks'}</h3><ol className="list-decimal space-y-3 pl-5 leading-relaxed">{content.tasks.map(t => <li key={t.n} value={t.n}><Inline>{t.title}</Inline> <span className="text-[12px] text-text-muted [&_bdi]:text-text-muted"><Raw>{t.id}</Raw></span>{t.verify?.map((v,i) => <p key={i} className="mt-1 font-mono text-[12px] leading-relaxed text-text-muted [&_bdi]:text-text-muted">Verify: <Value>{v}</Value></p>)}</li>)}</ol></section>
   const rest = <>
     {also && quick && <QuickSigned typed={quick} also={also} members={members} />}
     {ticketLine && content.ticket && <p data-testid="sign-ticket" className="text-[12px] text-text-muted"><Raw>{content.ticket.key}</Raw> (key per host) · signed id …<Raw>{content.ticket.uid_tail}</Raw></p>}
-    {!also && content.sections?.map(s => <section key={s.id}><h3 className="mb-2 text-[13px] font-medium text-text"><Inline>{s.title}</Inline></h3><Prose className="font-sans leading-relaxed text-text">{s.text}</Prose></section>)}
+    {gate ? <GateText sections={gateSections} approving={/^Approve /.test(content.headline ?? '')} acceptance={acceptanceEl} tasks={tasksEl} others={otherSections} /> : null}
+    {!gate && !also && content.sections?.map(s => <section key={s.id}><h3 className="mb-2 text-[13px] font-medium text-text"><Inline>{s.title}</Inline></h3><Prose className="font-sans leading-relaxed text-text">{s.text}</Prose></section>)}
     <Pictures images={content.images} />
-    {!also && !!content.acceptance?.length && <section><h3 className="mb-2 text-[13px] font-medium text-text">Acceptance criteria</h3><ul className="space-y-2 leading-relaxed">{content.acceptance.map(a => <li key={a.id}><span aria-label={a.checked ? 'Checked' : 'Unchecked'}>{a.checked ? '☑' : '☐'}</span> <Inline>{a.text}</Inline> <span className="text-[12px] text-text-muted [&_bdi]:text-text-muted"><Raw>{a.id}</Raw></span>{a.manual && <p className="text-[12px] text-text-muted"><Inline>{a.manual}</Inline></p>}</li>)}</ul></section>}
-    {!also && !!content.tasks?.length && <section><h3 className="mb-2 text-[13px] font-medium text-text">Plan tasks</h3><ol className="list-decimal space-y-3 pl-5 leading-relaxed">{content.tasks.map(t => <li key={t.n} value={t.n}><Inline>{t.title}</Inline> <span className="text-[12px] text-text-muted [&_bdi]:text-text-muted"><Raw>{t.id}</Raw></span>{t.verify?.map((v,i) => <p key={i} className="mt-1 font-mono text-[12px] leading-relaxed text-text-muted [&_bdi]:text-text-muted">Verify: <Value>{v}</Value></p>)}</li>)}</ol></section>}
+    {!gate && !also && acceptanceEl}
+    {!gate && !also && tasksEl}
     {!also && !!content.fields_changed?.length && <section><h3 className="mb-2 text-[13px] font-medium text-text"><Inline>{content.fields_title ?? 'Changed fields'}</Inline></h3><dl className="space-y-3">{content.fields_changed.map(f => <div key={f.field} className="grid min-w-0 grid-cols-1 gap-x-4 gap-y-1 sm:grid-cols-[7rem_minmax(0,1fr)]"><dt className="text-text-muted"><Inline>{`${cap(f.field)}:`}</Inline></dt> <dd className="min-w-0 text-text [&_bdi]:font-sans [&_bdi]:text-[13px]">{(content.fields_title || /: (add|remove)$/.test(f.field) || / \(unchanged, per host\)$/.test(f.field)) && f.before == null ? null : <><Shown plain value={f.before} members={members} />{f.before_note && <span className="text-text-muted"> (<Raw>{f.before_note}</Raw>)</span>} → </>}<Shown plain value={f.field === 'type' && f.after ? (TYPE_WORDS[f.after] ?? f.after) : f.after} members={members} empty="(not set)" /></dd></div>)}</dl></section>}
     {cancels.length > 0 && <section aria-label="Signing cancels">
       <h3 className="text-[13px] font-medium">Signing cancels:</h3>

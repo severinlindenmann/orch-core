@@ -3,24 +3,24 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { StartAgentSplit } from './StartAgentSplit'
 
-// The dialog itself is tested in StartAgentDialog.test.tsx: here only which mode the two parts open it in.
-vi.mock('./StartAgentDialog', () => ({
-  lastHarness: () => 'codex',
-  StartAgentDialog: ({ ticket, choose }: { ticket: string; choose?: boolean }) => <div data-testid="dialog">{ticket}:{choose ? 'choose' : 'start'}</div>,
-}))
-
 afterEach(cleanup)
 
 describe('Start agent split button', () => {
-  it('the main part starts at once (no choose mode) and carries the mark of the agent last used', async () => {
-    render(<StartAgentSplit ws="w1" ticket="DEMO-1" />)
+  it('the main part starts at once and carries the mark of the agent last used', async () => {
+    const onStart = vi.fn()
+    const onChoose = vi.fn()
+    render(<StartAgentSplit harness="codex" onStart={onStart} onChoose={onChoose} />)
     expect(document.querySelector('[data-agent-icon="codex"]')).not.toBeNull()
     await userEvent.click(screen.getByRole('button', { name: 'Start agent' }))
-    expect(screen.getByTestId('dialog')).toHaveTextContent('DEMO-1:start')
+    expect(onStart).toHaveBeenCalledTimes(1)
+    expect(onChoose).not.toHaveBeenCalled()
   })
-  it('"Change agent or model" opens the dialog in choose mode', async () => {
-    render(<StartAgentSplit ws="w1" ticket="DEMO-1" />)
+  it('"Change agent or model" is the chevron and opens choose mode', async () => {
+    const onStart = vi.fn()
+    const onChoose = vi.fn()
+    render(<StartAgentSplit harness="claude-code" onStart={onStart} onChoose={onChoose} />)
     await userEvent.click(screen.getByRole('button', { name: 'Change agent or model' }))
-    expect(screen.getByTestId('dialog')).toHaveTextContent('DEMO-1:choose')
+    expect(onChoose).toHaveBeenCalledTimes(1)
+    expect(onStart).not.toHaveBeenCalled()
   })
 })

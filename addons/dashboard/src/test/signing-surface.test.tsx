@@ -673,7 +673,7 @@ describe('signing surface: these dialogs show exactly what is signed, in core\'s
     const title = within(dialog).getAllByRole('heading')[0].textContent ?? ''
     const covers = within(dialog).queryByText('Covers')?.nextElementSibling?.textContent ?? ''
     const texts = textsOf(dialog)
-    const regions = [...dialog.querySelectorAll('[aria-label^="From addon"], [aria-label^="From the addon"]')]
+    const regions = [...dialog.querySelectorAll('[aria-label^="From addon"], [aria-label^="From the addon"], [aria-label^="Written by the agent"]')]
     const args = new Map([...dialog.querySelectorAll('[data-arg-key]')].map((e) => [e.getAttribute('data-arg-key')!, e.getAttribute('data-arg-value')!]))
     for (const r of regions) expect(r.querySelector('[data-arg-key]'), 'an arg line sits inside the addon region').toBeNull()
 

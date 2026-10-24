@@ -249,3 +249,23 @@
   .hub-chip-long { display: none; }
   .hub-chip-short { display: inline; }
 }
+
+/* Code token colours (github-dark-default palette) used by the file previews: classes, never inline styles. */
+:root {
+  --tok-keyword: #ff7b72;
+  --tok-const: #79c0ff;
+  --tok-string: #a5d6ff;
+  --tok-tag: #7ee787;
+  --tok-func: #d2a8ff;
+  --tok-name: #ffa657;
+  --tok-comment: #8b949e;
+  --tok-invalid: #ffa198;
+}
+.tok-keyword { color: var(--tok-keyword); }
+.tok-const { color: var(--tok-const); }
+.tok-string { color: var(--tok-string); }
+.tok-tag { color: var(--tok-tag); }
+.tok-func { color: var(--tok-func); }
+.tok-name { color: var(--tok-name); }
+.tok-comment { color: var(--tok-comment); }
+.tok-invalid { color: var(--tok-invalid); }

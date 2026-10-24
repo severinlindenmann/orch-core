@@ -6,7 +6,7 @@ import { Fingerprint, Loader2, ShieldCheck } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '@/api/client'
-import { ApiError, type ActionRequest, type GateName, type TicketDocument } from '@/api/types'
+import { ApiError, type ActionRequest, type Artifact, type GateName, type TicketDocument } from '@/api/types'
 import { ConfirmHelper, SignDetails, TOUCH_ID_MS } from '@/components/sign/SignPrompt'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -18,7 +18,7 @@ import { gateActionName, policyText } from './actions'
 import type { HumanAction } from './shared'
 import { queries } from '@/api/queries'
 import { handoffMode } from '@/api/features'
-import { VerdictEvidence } from './EvidenceView'
+import { CommitLine, VerdictEvidence, VerdictPreview } from './EvidenceView'
 import { HandoffSignDialog } from './HandoffSignDialog'
 
 type Described = { title: string; gate?: GateName; hash: string; covers: string[]; policy?: string }
@@ -152,6 +152,7 @@ function SimulatedSignDialog({ ticket, action, onClose, onOpenEvidence, onOpenCh
   const [text, setText] = useState('')
   const [result, setResult] = useState<'pass' | 'fail' | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [preview, setPreview] = useState<{ artifact: Artifact; acId: string } | null>(null)
   const workspaces = useQuery(queries.workspaces())
   const members = workspaceOfTicket(ticket.key, workspaces.data ?? [])?.members ?? []
   const personName = (id: string) => (workspaces.data ? (members.find((m) => m.person === id)?.name ?? id) : '…') // not the raw id while the workspaces load
@@ -169,6 +170,7 @@ function SimulatedSignDialog({ ticket, action, onClose, onOpenEvidence, onOpenCh
     setText('')
     setResult(null)
     setError(null)
+    setPreview(null)
   }, [action])
 
   if (!action) return null
@@ -193,11 +195,10 @@ function SimulatedSignDialog({ ticket, action, onClose, onOpenEvidence, onOpenCh
       : needsText && !text.trim()
         ? 'Say what should change to continue'
         : null
-  const blocked = busy || !!hint
+  const blocked = busy || !!hint || !!preview
 
   // The commit a verdict or code review signs: the branch head when the dialog opened, in full (owner decision 2026-10-10).
   const head = opened.branch.head
-  const shownBranch = opened.branch
   const passLabel = `Pass on ${visible(head)} · ${diffstat(opened.branch)}: the evidence is enough`
   const proven = ticket.acceptance_state.filter((a) => a.state === 'proven').length
   const receipts = ticket.tasks_state.filter((t) => t.receipt).length
@@ -290,7 +291,8 @@ function SimulatedSignDialog({ ticket, action, onClose, onOpenEvidence, onOpenCh
           </p>
         )}
 
-        {action.kind === 'verdict' && (
+        {action.kind === 'verdict' && preview && <VerdictPreview ticket={opened} artifact={preview.artifact} onBack={() => setPreview(null)} />}
+        {action.kind === 'verdict' && !preview && (
           <>
             <p className="flex flex-wrap items-center gap-x-3 text-[13px] text-text-muted">
               <span>
@@ -302,12 +304,8 @@ function SimulatedSignDialog({ ticket, action, onClose, onOpenEvidence, onOpenCh
               </Button>
               {changesLink}
             </p>
-            <VerdictEvidence ticket={opened} />
-            <section aria-label="Commit" className="rounded-md border border-border bg-bg px-3 py-2 text-[13px]">
-              <h3 className="mb-0.5 text-[12px] font-medium text-text-muted">The verdict signs this commit</h3>
-              <p className="break-words font-mono text-[12px] text-text">{visible(commitCover(shownBranch))}</p>
-              <p className="mt-1 text-[12px] text-text-muted">A new commit on the branch after the verdict voids it; the ticket goes back to testing.</p>
-            </section>
+            <VerdictEvidence ticket={opened} onPreview={setPreview} name={personName} />
+            <CommitLine ticket={opened} />
             <ManualAcceptanceReview ticket={opened} name={personName} />
             <fieldset className="grid gap-2" disabled={busy}>
               <legend className="sr-only">Verdict</legend>
@@ -326,10 +324,11 @@ function SimulatedSignDialog({ ticket, action, onClose, onOpenEvidence, onOpenCh
                 </label>
               ))}
             </fieldset>
+            <p className="text-[12px] text-text-muted">Pass accepts all {ticket.acceptance_state.length} criteria with the files and code shown.</p>
           </>
         )}
 
-        {(needsText || action.kind === 'verdict') && (
+        {(needsText || action.kind === 'verdict') && !preview && (
           <div className="space-y-1.5">
             <Label htmlFor="sign-text">{needsText ? 'What should change? (required)' : 'Note (optional)'}</Label>
             <Textarea id="sign-text" value={text} onChange={(e) => setText(e.target.value)} disabled={busy} rows={3} />

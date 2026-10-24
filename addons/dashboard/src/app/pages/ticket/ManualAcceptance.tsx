@@ -34,7 +34,7 @@ export function ManualButtons({ ac, task }: { ac?: AcceptanceStatus; task?: Task
   if (task) return task.state !== 'done' && task.state !== 'skipped' ? <Button variant="ghost" size="sm" onClick={() => choose({ kind: 'done', task })}>Mark done</Button> : null
   if (!ac) return null
   return <>
-    {(!ac.accepted || ac.accepted_stale) && <Button variant="ghost" size="sm" onClick={() => choose({ kind: 'accept', ac })}>{ac.accepted_stale ? 'Accept again' : 'Accept manually'}</Button>}
+    {(!ac.accepted || ac.accepted_stale) && (ac.accepted_stale || !ac.evidence?.length) && <Button variant="ghost" size="sm" onClick={() => choose({ kind: 'accept', ac })}>{ac.accepted_stale ? 'Accept again' : 'Accept manually'}</Button>}
     {ac.accepted && <Button variant="ghost" size="sm" onClick={() => choose({ kind: 'withdraw', ac })}>Withdraw</Button>}
   </>
 }

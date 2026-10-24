@@ -125,8 +125,8 @@ def test_assignees_claim_tasks_criteria_and_blocking_questions(w):
     agent(w, "task.add", {"ref": key, "text": "one"})
     agent(w, "task.add", {"ref": key, "text": "two"})
     agent(w, "task.skip", {"task": "T2", "reason": "no"})
-    agent(w, "ask", {"ref": key, "text": "which?", "options": ["a", "b"]})
-    agent(w, "ask", {"ref": key, "text": "later?", "non_blocking": True})
+    agent(w, "ask", {"ref": key, "text": "which?", "option": ["a | a", "b | b"]})
+    agent(w, "ask", {"ref": key, "text": "later?", "text_question": True, "non_blocking": True})
     (row,) = query(w)["rows"]
     assert row["status"] == "in_progress"
     taken = next(e for e in w.lab.ws.events(key) if e["type"] == "claim.taken")
@@ -238,8 +238,8 @@ def test_parent_or_epic_naming_a_ticket_the_viewer_cannot_see_is_not_found(wq):
 def test_needs_me_keeps_rows_with_a_need_of_the_viewer(w):
     _, a = mk(w, "asked")
     _, b = mk(w, "quiet")
-    agent(w, "ask", {"ref": a, "text": "owner?", "to": "ticket_owner"})
-    agent(w, "ask", {"ref": b, "text": "quinn?", "to": w.quinn.ref})
+    agent(w, "ask", {"ref": a, "text": "owner?", "text_question": True, "to": "ticket_owner"})
+    agent(w, "ask", {"ref": b, "text": "quinn?", "text_question": True, "to": w.quinn.ref})
     assert keys(query(w, {"needs_me": True})) == [a]  # the owner is the viewer; b's question is quinn's
     assert query(w, {"needs_me": True}, grant=w.grant, session=SESSION)["total"] == 1  # G: the grant's person
     as_agent_class(w)
@@ -248,8 +248,8 @@ def test_needs_me_keeps_rows_with_a_need_of_the_viewer(w):
 
 def test_a_row_needs_are_the_distinct_kinds_of_the_needs_op_in_the_models_order(w):
     uid, key = mk(w, "gates and questions")
-    agent(w, "ask", {"ref": key, "text": "one?"})
-    agent(w, "ask", {"ref": key, "text": "two?"})
+    agent(w, "ask", {"ref": key, "text": "one?", "text_question": True})
+    agent(w, "ask", {"ref": key, "text": "two?", "text_question": True})
     on_store(w, lambda ws: ws.fill(uid))
     (row,) = query(w)["rows"]
     assert row["needs"] == ["question", "approve"]  # distinct, question before approve
@@ -479,7 +479,7 @@ def hidden_busy_ticket(w: World) -> tuple[str, str]:
     agent(w, "claim", {"ref": key})
     agent(w, "ac.add", {"ref": key, "text": "zebracorn criterion"})
     agent(w, "task.add", {"ref": key, "text": "zebracorn task"})
-    agent(w, "ask", {"ref": key, "text": "zebracorn?", "to": w.lab.owner})
+    agent(w, "ask", {"ref": key, "text": "zebracorn?", "text_question": True, "to": w.lab.owner})
     w.restrict(uid, [w.lab.owner])
     return uid, key
 
@@ -627,7 +627,7 @@ def test_gates_of_a_closed_ticket_stay_as_the_model_derives_them(w):
 
 def test_an_open_question_on_a_closed_ticket_still_counts_for_the_row(w):
     uid, key = mk(w, "closed with a question")
-    agent(w, "ask", {"ref": key, "text": "still open?"})
+    agent(w, "ask", {"ref": key, "text": "still open?", "text_question": True})
     close_ticket(w, uid)
     (row,) = query(w, {"status": ["closed"]})["rows"]
     assert row["needs"] == ["question"] and row["blocking_questions"] == 1

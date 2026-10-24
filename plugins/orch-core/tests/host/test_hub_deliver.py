@@ -261,7 +261,11 @@ def sel(served, human, stub):  # noqa: F811
     env = Env(served, human, mode="selective")
     ok(
         served.client().req(
-            "ask", {"ref": env.key, "text": "which one?"}, grant=served.grant, session=SESSION, idem=True
+            "ask",
+            {"ref": env.key, "text": "which one?", "text_question": True},
+            grant=served.grant,
+            session=SESSION,
+            idem=True,
         )
     )
     return env
@@ -371,7 +375,11 @@ def test_a_full_mode_aliased_addressee_with_hub_role_edit_answers_a_question(ser
     env = Env(served, human, alias=True, role=role)
     ok(
         served.client().req(
-            "ask", {"ref": env.key, "text": "which one?"}, grant=served.grant, session=SESSION, idem=True
+            "ask",
+            {"ref": env.key, "text": "which one?", "text_question": True},
+            grant=served.grant,
+            session=SESSION,
+            idem=True,
         )
     )
     h = next(e["hash"] for e in env.lines(env.uid) if e["type"] == "question.asked")
@@ -385,7 +393,11 @@ def test_an_unaliased_hub_editor_is_not_the_ticket_owner_and_cannot_answer_its_q
     env = Env(served, human, alias=False, role="edit")
     ok(
         served.client().req(
-            "ask", {"ref": env.key, "text": "which one?"}, grant=served.grant, session=SESSION, idem=True
+            "ask",
+            {"ref": env.key, "text": "which one?", "text_question": True},
+            grant=served.grant,
+            session=SESSION,
+            idem=True,
         )
     )
     h = next(e["hash"] for e in env.lines(env.uid) if e["type"] == "question.asked")

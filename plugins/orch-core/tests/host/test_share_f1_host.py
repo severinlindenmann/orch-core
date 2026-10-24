@@ -44,7 +44,7 @@ def test_the_put_carries_the_roster_version_and_the_question_hash(world, hub):
     from orch import canon
 
     _, key = world.ticket("Savings")
-    ok(agent(world, "ask", {"ref": key, "text": "which bank?"}))
+    ok(agent(world, "ask", {"ref": key, "text": "which bank?", "text_question": True}))
     assert confirm_sync(world)["put"] == 2  # the needs-you summary (no f1) and the question item
     (item,) = [i for i in hub.opened if i["item_kind"] == "question"]
     roster = world.service.store.state.workspace.roster_v
@@ -57,7 +57,7 @@ def test_the_put_carries_the_roster_version_and_the_question_hash(world, hub):
 
 def test_a_member_change_re_puts_every_item_under_a_higher_version(world, hub):
     _, key = world.ticket("Savings")
-    ok(agent(world, "ask", {"ref": key, "text": "which bank?"}))
+    ok(agent(world, "ask", {"ref": key, "text": "which bank?", "text_question": True}))
     rule = {"kind": "questions"}
     plan = ok(req(world, "share.preview", {"add": rule}))["data"]["plan"]
     ok(req(world, "share.rule_add", {"rule": rule, "expect": plan}))

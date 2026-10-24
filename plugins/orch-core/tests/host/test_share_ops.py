@@ -150,7 +150,7 @@ def test_an_agent_cannot_read_or_change_the_rules(served, selective):
 
 def test_default_shares_only_needs_you_summaries(served, selective):
     uid, key = labelled(served, "Public note", "public")
-    ok(agent(served, "ask", {"ref": key, "text": "which bank?"}))
+    ok(agent(served, "ask", {"ref": key, "text": "which bank?", "text_question": True}))
     prev = ok(req(served, "share.preview"))["data"]
     assert sorted(i["kind"] for i in prev["items"]) == ["question", "summary"]
     assert "Public note" not in str(prev["items"])
@@ -236,7 +236,7 @@ def test_revoke_withdraws_one_item_and_it_stays_withdrawn(served, selective, mon
 
 def test_a_question_to_the_owner_is_a_summary_and_with_a_rule_the_full_question(served, selective, monkeypatch):
     _, key = served.ticket("Savings")
-    ok(agent(served, "ask", {"ref": key, "text": "which bank?"}))
+    ok(agent(served, "ask", {"ref": key, "text": "which bank?", "text_question": True}))
     got = sync_shown(served)
     # V3-D31: the needs-you summary has no f1 (never answerable); the question item carries the full text and the f1
     assert got["put"] == 2
@@ -439,7 +439,9 @@ def test_a_ticket_that_starts_matching_after_the_confirmation_is_not_auto_shared
     _, plain = served.ticket("Plain note")
     ok(agent(served, "set", {"ref": plain, "pairs": ["labels=public"]}))  # starts matching: an agent widens
     labelled(served, "Brand new public", "public")  # a new ticket that matches
-    ok(agent(served, "ask", {"ref": plain, "text": "which bank?"}))  # a new needs-you summary (default rule)
+    ok(
+        agent(served, "ask", {"ref": plain, "text": "which bank?", "text_question": True})
+    )  # a new needs-you summary (default rule)
     ok(agent(served, "set", {"ref": shared, "pairs": ["title=Renamed"]}))  # the one thing the pass may send
     settle(served, quick_auto)
     assert [i["content"]["title"] for i in selective.opened] == ["Public note", "Renamed"]

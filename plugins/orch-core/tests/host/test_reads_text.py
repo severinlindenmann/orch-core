@@ -67,7 +67,7 @@ def test_every_pair_of_the_table_serves_the_stored_text(w):
     agent_ev(w, uid2, "task.blocked", task="T1", reason="blocked é")
     agent_ev(w, uid2, "task.reopened", task="T1", reason="again €")
     agent_ev(w, uid2, "task.skipped", task="T1", reason="skipped 😀")
-    h.agent("ask", {"ref": key2, "text": "free answer?"})
+    h.agent("ask", {"ref": key2, "text": "free answer?", "text_question": True})
     h.run("answer", {"ref": key2, "question": "Q1", "message": "an answer é"})
     g = get(h.c, key2)["gates"]["requirements"]
     w.person_event(

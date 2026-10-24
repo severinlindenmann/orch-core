@@ -85,7 +85,7 @@ def _leaves(o):
 
 def _prepared_with(human, q):
     _, key = human.ticket()
-    human.agent("ask", {"ref": key, "text": "q?", "options": ["a", "b"]})
+    human.agent("ask", {"ref": key, "text": "q?", "option": ["a | a", "b | b"]})
     p = copy.deepcopy(human.prepare("answer", {"ref": key, "question": "Q1", "option": "a"}))
     p["material"]["question"] = copy.deepcopy(q)
     return p

@@ -318,7 +318,7 @@ def test_a_decision_and_an_answer_round_trip_with_their_material(human, served):
     assert prepared["events"][0]["hash"] == canon.gate_hash(m["input"])
     assert m["review"][0]["derived"] == {"ticket_key": key}
     assert res["data"] == {"gate": "requirements"} and logged(served, key)[-1]["type"] == "gate.approved"
-    human.agent("ask", {"ref": key, "text": "which one?", "options": ["a", "b"]})
+    human.agent("ask", {"ref": key, "text": "which one?", "option": ["a | a", "b | b"]})
     prepared, res, _ = human.run("answer", {"ref": key, "question": "Q1", "option": "a"})
     assert prepared["material"]["kind"] == "question" and prepared["material"]["question"]["text"] == "which one?"
     assert logged(served, key)[-1]["type"] == "question.answered"
@@ -609,7 +609,7 @@ def test_every_person_version_of_an_agent_op_round_trips(human, served):
         ("ac.add", {"ref": key, "text": "it works"}, None, "ticket.updated"),
         ("ac.edit", {"ref": key, "ac": "AC1", "text": "it really works"}, None, "ticket.updated"),
         ("log", {"ref": key, "text": "a note"}, None, "log.added"),
-        ("ask", {"ref": key, "text": "ok?", "options": ["y", "n"]}, None, "question.asked"),
+        ("ask", {"ref": key, "text": "ok?", "option": ["y | y", "n | n"]}, None, "question.asked"),
         ("artifact.add", {"ref": key, "path": "proof.txt"}, {"path": {"b64": b64}}, "artifact.added"),
         (
             "artifact.replace",

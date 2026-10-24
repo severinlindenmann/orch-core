@@ -112,7 +112,7 @@ def test_the_gate_and_question_hashes_are_recomputed_from_the_material(human, se
     bad = copy.deepcopy(p)
     bad["events"][0]["policy_hash"] = H1
     refused(bad, human, "policy hash")
-    human.agent("ask", {"ref": key, "text": "which?", "options": ["a", "b"]})
+    human.agent("ask", {"ref": key, "text": "which?", "option": ["a | a", "b | b"]})
     q = human.prepare("answer", {"ref": key, "question": "Q1", "option": "a"})
     human.check(q)
     bad = copy.deepcopy(q)

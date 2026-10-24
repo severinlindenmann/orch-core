@@ -67,7 +67,7 @@ def test_the_clear_screen_probe_is_refused_before_rendering(human, served):
 def test_every_identifier_from_the_material_is_checked_against_its_format(human, served, where):
     _, key = human.ticket()
     if where == "question":
-        human.agent("ask", {"ref": key, "text": "q?", "options": ["a", "b"]})
+        human.agent("ask", {"ref": key, "text": "q?", "option": ["a | a", "b | b"]})
         p = human.prepare("answer", {"ref": key, "question": "Q1", "option": "a"})
         p["material"]["question"]["id"] = "Q1\x1b[2J"
     elif where == "section":
@@ -365,7 +365,7 @@ def test_the_composite_checks_artifacts_against_the_bytes_it_uploaded(human, ser
 
 def test_the_answer_header_shows_the_chosen_option(human, served):
     _, key = human.ticket()
-    human.agent("ask", {"ref": key, "text": "deploy?", "options": ["yes", "no"]})
+    human.agent("ask", {"ref": key, "text": "deploy?", "option": ["yes | yes", "no | no"]})
     p = human.prepare("answer", {"ref": key, "question": "Q1", "option": "no"})
     head = signer.header(p, REG)
     assert head[1].endswith("with option no")
@@ -462,7 +462,7 @@ def test_a_grant_request_expires_before_f1s_issued_at_skew(human, served):
 
 def test_a_question_changed_between_prepare_and_submit_is_question_stale(human, served):
     uid, key = human.ticket()
-    human.agent("ask", {"ref": key, "text": "deploy?", "options": ["yes", "no"]})
+    human.agent("ask", {"ref": key, "text": "deploy?", "option": ["yes | yes", "no | no"]})
     p = human.prepare("answer", {"ref": key, "question": "Q1", "option": "yes"})
     ws = served.lab.ws
     q = {
@@ -560,7 +560,7 @@ def test_a_refused_submit_leaves_the_request_bound_and_pending_shows_the_code_on
 def test_a_material_key_outside_the_schema_is_refused(human, served):
     _, key = human.ticket()
     ready(human, key)
-    human.agent("ask", {"ref": key, "text": "q?", "options": ["a", "b"]})
+    human.agent("ask", {"ref": key, "text": "q?", "option": ["a | a", "b | b"]})
     for op, args in (
         ("log", {"ref": key, "text": "x"}),
         ("approve", {"ref": key, "gate": "requirements"}),

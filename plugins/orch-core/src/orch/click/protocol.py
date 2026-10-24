@@ -25,14 +25,16 @@ __all__ = [
     "FEATURES",
     "ClickError",
     "RISK",
-    "WORD_OPS",
     "click_detail",
     "op_class",
 ]
 
+#: 3 (#1198 C1, C2): no typed-word class: every op that was a word op is a click, Publish (``settings.set`` publish,
+#: ``addon.grant`` of publish, ``publish.share``) included; ``sign`` reads no ``word`` and the ``word`` refusal is
+#: gone; a client reads ``status.contract`` and sends nothing typed.
 #: 2 (H11c-2): deposit support (``deposit`` on ``prepare``, ``deposit``/``deposit_reason`` on ``sign``); a contract-1
 #: signer answers ``terminal_only`` for every ``grant``, so a client reads ``status.contract`` to tell the two apart
-CONTRACT = 2
+CONTRACT = 3
 #: the closed set of ``sign``'s ``deposit_reason`` (static codes, never host text; anything else is ``other``)
 DEPOSIT_REASONS = frozenset(
     {"grant.forgotten", "grant.not_runner", "grant.verbs", "grant.expiring", "rate.limited", "runner.unavailable",
@@ -64,7 +66,6 @@ REFUSALS = (
     "expired",
     "view_changed",
     "too_soon",
-    "word",
     "custody_changed",
     "busy",
     "check_failed",
@@ -126,11 +127,9 @@ CLICK_OPS = frozenset(
         "grant.revoke",
         "addon.disable",
         "settings.set",
-    }
-)
-#: §0.8.6 item 6: ops that change who or what may act: click plus the typed word
-WORD_OPS = frozenset(
-    {
+        "addon.grant",  # every add-on, publish included (#1198 C2); the review lists what is signed
+        "publish.share",  # #1198 C2: the staged copy's own words are the review; the person clicks
+        # #1198 C1: these were the typed-word class; the person reads the review and clicks, nothing is typed
         "member.add",
         "member.role",
         "member.remove",
@@ -139,51 +138,30 @@ WORD_OPS = frozenset(
         "people.set",  # B12D: who owns, works on or reviews a ticket decides who may act on it
     }
 )
-#: ``grant`` and every op in neither set is terminal-only (fail closed for ops added later)
+#: ``grant`` and every op not in :data:`CLICK_OPS` is terminal-only (fail closed for ops added later)
 
 
-#: ``settings.set`` keys that need more than a click. ``publish`` decides where shared files go: terminal only (the
-#: dashboard signs it through ``orch sign CODE``). ``repos``, ``sign_methods`` and ``grant_hours`` need the typed word.
-#: (``addons``, the values an add-on reads, is a click too: owner V3-D38, 24 Oct.)
-#: ``icon`` (the workspace icon) is deliberately in none of the sets: a closed-list cosmetic choice, signed by a click.
-SETTINGS_TERMINAL_KEYS = frozenset({"publish"})
-SETTINGS_WORD_KEYS = frozenset({"repos", "sign_methods", "grant_hours"})
-_RANK = {"click": 0, "word": 1, "terminal": 2}
+#: ``settings.set`` keys that need more than a click: none (#1198 C2). ``publish`` (where shared files go) is a click
+#: too, because its View lists both servers in words; ``repos``, ``sign_methods`` and ``grant_hours`` lost their typed
+#: word in C1. (``addons``, the values an add-on reads, is a click: owner V3-D38, 24 Oct.) ``icon`` (cosmetic) is a
+#: click as well.
+SETTINGS_TERMINAL_KEYS: frozenset[str] = frozenset()
 
 
 def _settings_class(changes: list[Any]) -> str:
-    out = "click"
     for changed in changes:
         if not isinstance(changed, dict):
-            return "word"  # not a plain settings map: fail closed to the stronger confirmation
-        for k in changed:
-            head = str(k).split(".")[0]
-            kind = "terminal" if head in SETTINGS_TERMINAL_KEYS else "word" if head in SETTINGS_WORD_KEYS else "click"
-            out = max(out, kind, key=_RANK.__getitem__)
-    return out
-
-
-def _grant_class(events: list[dict[str, Any]] | None, args: dict[str, Any] | None) -> str:
-    """``addon.grant``: ``publish`` decides where files go, so it is terminal only, however it is asked (args at
-    prepare, the signed event at sign time, which wins). Every other add-on is ONE CLICK (owner V3-D38, 24 Oct:
-    installing is always one click in the browser), whatever its capabilities: the signed capability list, the package
-    digest and the marketplace block ("per host, not signed") are in the review the person reads before the click, and
-    the signer checks the event against the host's material first. Malformed events fail closed in the signer's own
-    checks, not here."""
-    if events is None:
-        return "terminal" if (args or {}).get("name") == "publish" else "click"
-    return "terminal" if any(ev.get("name") == "publish" for ev in events) else "click"
+            return "terminal"  # not a plain settings map: fail closed
+        if any(str(k).split(".")[0] in SETTINGS_TERMINAL_KEYS for k in changed):
+            return "terminal"
+    return "click"
 
 
 def op_class(op: str, events: list[dict[str, Any]] | None = None, args: dict[str, Any] | None = None) -> str:
-    """``click``, ``word`` or ``terminal``. ``settings.set`` is classed by the keys it changes (see the key sets above),
+    """``click`` or ``terminal``. ``settings.set`` is classed by the keys it changes (see the key sets above),
     from the signed events when there are any (**the class at sign time, which wins**), else from the request's
     ``args["set"]`` (the early check, before prepare); with neither it counts as a click op. A class the early check
     gives can only be raised by the sign-time check, never lowered."""
-    if op == "addon.grant":
-        return _grant_class(events, args)
-    if op in WORD_OPS:
-        return "word"
     if op == "settings.set" and (events is not None or args is not None):
         if events is not None:
             return _settings_class([ev.get("set") for ev in events])

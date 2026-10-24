@@ -25,7 +25,7 @@ _FRAME_OWN = frozenset(
     }
 )
 TERM_PATH = "/term"
-# Bodies of the sign routes are tiny (ids, a hash, a typed word, the switch's passphrase of at most 1024 characters);
+# Bodies of the sign routes are tiny (ids, a hash, the switch's passphrase of at most 1024 characters);
 # everything else keeps the general bound.
 CLICK_BODY_LIMIT = 16_384
 CLICK_STEP = ("/view", "/sign", "/cancel", "/state", "/custody")

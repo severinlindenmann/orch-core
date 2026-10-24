@@ -36,6 +36,12 @@ Still open:
 in a pipe or a log); elsewhere it refuses with one line and exit 1. `orch addon grant dashboard` asks you to type
 `dashboard` + Enter at the review before the passphrase: that is the normal signing review, not a gap (step 4b).
 
+On a headless machine (a VPS) the dashboard listens on the fixed loopback port 47821 (or the number in
+`<state>/dashboard/port`), and `--print-url` also prints the `ssh -o ExitOnForwardFailure=yes -L ...` line to run on your own
+computer; its link lives 5 min. **A page that did not come from a fresh `--print-url` link is not orch.** After the
+dashboard stops, another user on the same machine can bind the fixed port, so an old tunnel or bookmark may reach their
+page. Always start from a new link. HTTPS with a passkey login (remote mode, #1198 R1) closes this later.
+
 ## Before you start
 
 - **Python 3.14 or newer** (both packages say `requires-python >=3.14`). macOS ships older; use Homebrew:

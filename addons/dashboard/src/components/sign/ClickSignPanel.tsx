@@ -3,8 +3,7 @@ import { SignContent, SignDetails } from './SignContent'
 // The click-to-sign panel (host contract section 0.8.6 item 7): it shows ONLY the signer's View, nothing of this page's
 // own preview, the host's fingerprint or a cached ticket. `lines` are core's terminal
 // review, already escaped, and are text here, never HTML. Sign is armed after 1 s of visible presentation.
-// A word op (grant, policy, members) is confirmed by typing the View's word next to Sign (Sign stays off until it matches); every
-// other op signs on one click. The risk notice lives in Settings; the custody is a technical fact under Technical details.
+// Every op signs on one plain click after the review; nothing is typed. The risk notice lives in Settings; the custody is a technical fact under Technical details.
 import { Loader2, ShieldAlert } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { CLICK_RISK, type ClickProblem, type ClickViewAnswer } from '@/api/click'
@@ -13,7 +12,7 @@ import { Button } from '@/components/ui/button'
 import { Raw } from './visible'
 import { ClickProblemBox } from './RefusalDevices'
 import { useActivation, useArming } from './useArming'
-import { TypedWord, WhatNext } from './SignAside'
+import { AgentAccess, WhatNext } from './SignAside'
 import type { SignStory } from './story'
 import { fmtClock } from '@/lib/time'
 import { STICKY_FOOTER } from './SignShell'
@@ -40,7 +39,7 @@ interface Props {
   /** The explanation of a refusal that left the request open (try again), shown above the buttons. */
   problem: ClickProblem | null
   signing: boolean
-  onSign: (word?: string) => void
+  onSign: () => void
   onCancel: () => void
   /** Rate limit: the time (ms since epoch) before which Sign stays off. */
   waitUntil?: number
@@ -115,21 +114,18 @@ export function TechnicalFacts({ view }: { view: ClickViewAnswer['view'] }) {
 function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil, ws, story }: Omit<Props, 'answer'> & { view: ClickViewAnswer['view']; digest: string; waitUntil: number }) {
   const armed = useArming(digest)
   const [now, setNow] = useState(() => Date.now())
-  const [typed, setTyped] = useState('')
   useEffect(() => {
     if (waitUntil <= Date.now()) return
     const t = setInterval(() => setNow(Date.now()), 250)
     return () => clearInterval(t)
   }, [waitUntil])
   const waiting = waitUntil > now
-  const word = view.confirm.kind === 'word' ? view.confirm.word : null
-  const wordOk = word === null || typed === word
-  const activation = useActivation(armed && wordOk) // a press that began before the word was typed never counts
+  const activation = useActivation(armed)
   const picturesOk = usePicturesOk(view.content?.images) // R3 part B: a picture that is not the pasted file switches Sign off
-  const can = armed && !signing && !waiting && wordOk && picturesOk
+  const can = armed && !signing && !waiting && picturesOk
   const go = () => {
     if (!activation.take() || !can) return
-    onSign(word ?? undefined)
+    onSign()
   }
   const technical = <TechnicalFacts view={view} />
   const label = story?.signLabel ?? 'Sign'
@@ -137,7 +133,7 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
     <section data-testid="click-panel" aria-label="Review before signing" className="space-y-3">
       {view.content && <SignContent content={view.content} ws={view.workspace?.id} technical={technical} compact={story?.compact} quick={story?.quick} />}
       {story?.scope && <p data-testid="sign-scope" className="text-[13px] text-text">{story.scope}</p>}
-      {word !== null && <TypedWord word={word} story={story ?? null} value={typed} onChange={setTyped} disabled={signing} />}
+      <AgentAccess story={story ?? null} />
       {story && <WhatNext story={story} />}
       {view.checks.filter(c => !c.clean).map((c, i) => <p key={i} role="note" className="text-[13px] text-warning">Repository <Raw>{c.repo}</Raw>: not clean</p>)}
       {view.artifacts === 'unseen' && <p data-testid="click-artifacts" role="note" className="text-[13px] text-warning">The signer did not see the artifact bytes: only their hash is signed.</p>}
@@ -146,7 +142,6 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
       {problem && <ClickProblemBox problem={{ ...problem, next: undefined, signedAt: undefined }} ws={ws} />}
       <div className={STICKY_FOOTER} data-testid="sign-footer">
         <p data-testid="sign-method" className="text-[12px] text-text-muted">On this computer</p>
-        {word !== null && !wordOk && armed && <p data-testid="word-hint" className="text-[12px] text-text-muted">Type {word} above to continue.</p>}
         <div className="flex flex-wrap items-center justify-end gap-2">
           <Button type="button" variant="ghost" onClick={onCancel} disabled={signing}>
             Cancel

@@ -6,6 +6,7 @@ symlink out, network at run time."""
 # ruff: noqa: F811
 from __future__ import annotations
 
+import functools
 import json
 import os
 import socket
@@ -14,7 +15,8 @@ from types import SimpleNamespace
 import pytest
 
 from orch.addons import envtree, install
-from orch.addons.runner import RunnerError, propose
+from orch.addons.runner import RunnerError
+from orch.addons.runner import propose as _propose
 from orch.host import addonenv
 from orch.market import download
 from tests.host import dep_helpers as D
@@ -24,11 +26,13 @@ from tests.host.dep_helpers import NODE, PY, dep_files, node_lock, py_lock
 from tests.host.market_helpers import add_market, agent, err, ok, on_worker, person, stage
 
 net = M.net
+propose = functools.partial(_propose, gate=None)  # standalone: not about the hub policy
 registry = D.registry
 lab, served, human = human_helpers.lab, human_helpers.served, human_helpers.human
 
 PY_MAIN = b"""import json, sys
 import idna
+
 sys.stdin.readline()
 print(json.dumps({"jsonrpc": "2.0", "id": 1, "result": {"value": idna.VALUE}}))
 """

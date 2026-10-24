@@ -221,12 +221,13 @@ network and write nothing; the first network access is step 11.
 | # | Step | Refusal |
 |---|---|---|
 | 0 | The caller is the human: no `ORCH_GRANT`/`ORCH_SESSION`, a terminal or a device key, not a mandate | `market.actor_refused` |
+| P0 | Hub policy, when a hub is joined (§9), **before** the index is read or its signature checked and before any network access: a fresh `snapshot_get`, and the marketplace is listed in the hub policy (the official one too). No cached fallback; a joined host that cannot verify a snapshot is refused | `market.not_allowed` |
 | 1 | Read the cached index with the strict parser. The pin and digest fields are checked first (a missing or non-hex `commit`, a bad `package_sha256`), then the schema, then sorted capabilities and unique ids | `market.unpinned`, `market.bad_digest_format`, `market.malformed`, `market.duplicate_id` |
 | 2 | `source.git` of the index equals the URL it was added from. For the official index (and for any index that carries one) the index signature, `expires_at` and key are verified now, before anything is taken from the index | `market.source_mismatch`, `market.index_unsigned` |
 | 3 | `version` is not lower than the last version of a *verified* index for this URL | `market.rollback` |
 | 4 | Class (§4.2): an "other" marketplace needs OS-user isolation (§10) | `market.community_unisolated` |
-| 5 | Hub policy, when a hub is joined (§9), before any network access: the marketplace is listed in the hub policy | `market.not_allowed` |
-| 6 | Select the entry by `id`; the index does not list `id@version` as revoked; its git host is the marketplace's host or on the allow list (§5.1); reserved ids; an installed add-on of this id came from this URL; the entry's `version` is not lower than the installed one or the highest seen for this `(URL, id)` | `market.unknown_addon`, `market.revoked`, `market.host_not_allowed`, `market.reserved_id`, `market.origin_changed`, `market.rollback` |
+| 5 | (the hub listing is P0 above; nothing is checked here) | |
+| 6 | Select the entry by `id`; the index does not list `id@version` as revoked; its git host is the marketplace's host or on the allow list (§5.1); reserved ids; an installed add-on of this id came from this URL; the entry's `version` is not lower than the installed one or the highest seen for this `(URL, id)`; then the hub's `addons.block` and `addons.allow` (§9) | `market.unknown_addon`, `market.revoked`, `market.host_not_allowed`, `market.reserved_id`, `market.origin_changed`, `market.rollback`, `market.blocked`, `market.addon_not_allowed` |
 | 7 | Publisher: official key rule, signature, TOFU (§4); for a hub-listed company marketplace the entry's publisher key must be one the hub pins (§9) and replaces TOFU | `market.official_unsigned`, `market.bad_signature`, `market.publisher_key_changed`, `market.publisher_unpinned` |
 | 8 | Hub capability ceiling (§9): entry capabilities ⊆ ceiling | `market.capability_ceiling` |
 | 9 | `min_orch` ≤ the running core version (a `.devN` build sorts before its release; an unparsable version fails) | `market.min_orch` |
@@ -518,14 +519,14 @@ hub but whose hub record is missing or unreadable is *not* standalone; it refuse
 | Rule | |
 |---|---|
 | Without a hub the policy is `none` and the owner decides alone (D79). Standalone must not call a hub; core imports no hub code | |
-| With a hub, a marketplace that is not in `markets` is refused, **including the official one**; step 5 needs a fresh snapshot (`snapshot_get`) and has no cached fallback | `market.not_allowed` |
+| With a hub, a marketplace that is not in `markets` is refused, **including the official one**; P0 needs a fresh snapshot (`snapshot_get`) and has no cached fallback | `market.not_allowed` |
 | A `company` marketplace's index must be signed by one of its pinned `keys` (step 2) | `market.index_unsigned` |
 | A listed `official` or `company` marketplace passes step 4 without OS-user isolation (V3-D32, §15.3 Option B); any other marketplace is `market.community_unisolated` | `market.community_unisolated` |
 | After the entry is selected (step 6): the `id` or `id@version` is in `addons.block` | `market.blocked` |
 | `addons.allow` is not `null` and the `id` is not in it | `market.addon_not_allowed` |
 | Step 7, company marketplace: the entry's publisher key must be one of the pinned `keys`; the hub pin replaces TOFU for that URL (no TOFU read or write) | `market.publisher_unpinned` |
 | `ceiling` is checked on the index entry (step 8) **and again, with block and allow, on the staged manifest and on the grant event** at step 17/18, under the store lock, against the then-pinned snapshot. The index is only a claim | `market.capability_ceiling` |
-| **Run time:** before each run of every add-on (built-ins too, §15.2 point 4) the runner checks, on the pinned snapshot without network, that the origin marketplace is still listed (marketplace add-ons), the block list and the ceiling; a refused add-on is "paused by hub policy", and undoing the policy change un-pauses it (the grant is untouched) | `market.not_allowed`, `market.blocked`, `market.capability_ceiling` |
+| **Run time:** before each run of every add-on (built-ins too, §15.2 point 4) the runner checks, on the pinned snapshot without network, that the origin marketplace is still listed (marketplace add-ons), the block list, `allow` and, for a company marketplace, the pinned publisher key (marketplace add-ons), and the ceiling; a refused add-on is "paused by hub policy", and undoing the policy change un-pauses it (the grant is untouched) | `market.not_allowed`, `market.blocked`, `market.addon_not_allowed`, `market.publisher_unpinned`, `market.capability_ceiling` |
 | A hub never installs or grants for a workspace; it can only refuse | |
 | Policy does not override the human gate: even an allowed marketplace needs the signed grant | |
 
@@ -790,3 +791,37 @@ add-ons run with the host interpreter and `-S`), D8 (`python-requirements` is `u
 - **Not done / residual:** native builds are refused (O7); an add-on without `network` can still connect until #287
   (O5); Node resolves packages above the run root only in Tier A terms (O4); the full tree hash per run costs about half
   a second at the cap (O2).
+
+## 18. Hub policy as built (V3 G7, #928)
+
+- **Where:** `orch/market/policy.py` is the one rule table (`evaluate(stage, policy, req)`, stages `add`, `index`, `entry`,
+  `publisher`, `manifest`, `install`, `grant`, `run`; first failing check wins) and the class gate (`gate`: `official`,
+  `company`, `dev`, else `market.community_unisolated`). `orch/host/hubpolicy.py` reads the policy: `stored` (worker, no
+  network; `None` only when the signed log also says no hub is joined, so a deleted or rewritten `hub.json` on a joined
+  host raises `market.not_allowed`), `refresh_now` (the fresh `snapshot_get`, off the worker), `run_gate`, `paused`, `view`.
+  The shared `evaluate` vectors of D14 (`tests/hub/vectors/vectors_hub_policy.json`) are run by the product and by the
+  independent reference `tests/addons/market_ref.evaluate`.
+- **Fresh read:** `market.add`, `market.refresh` and `market.stage` on a hub-joined host answer `defer` from the worker,
+  the host does the `snapshot_get` off the worker, then plans again on the worker from the newly pinned snapshot. A failed
+  fresh read is `market.not_allowed` with nothing read and nothing fetched.
+- **Company marketplace:** class `company` (the URL is in `markets` with `class: company`): the index must be signed by a
+  pinned key and carry `expires_at` (as the official one), every entry by a pinned key (`market.publisher_unpinned`), the
+  review says "key pinned by your hub", **no TOFU key is read or written**, no OS-user isolation is required (V3-D32).
+- **Re-checks:** `market.stage` re-evaluates block, allow, pin and ceiling on the manifest of the bytes that were read;
+  `recheck` (step 18, under the store lock) re-reads the class and the policy from the then-pinned snapshot, without
+  network, and evaluates `grant`.
+- **Run time and the pause:** `orch.addons.runner.call(..., gate=hubpolicy.run_gate(service))` asks before anything is
+  staged or started, on the last pinned snapshot: block and ceiling for every add-on (built-ins too); for a marketplace
+  add-on also that its origin is still listed, `allow`, and (company) that the key its install record holds is still
+  pinned. The refusal is `RunnerError(code, "paused by hub policy")`; the grant is untouched and undoing the policy
+  change un-pauses it. A joined host with no verifiable snapshot (an expired card) pauses **every** add-on, the dashboard
+  included. `market.installed` shows the cause: per add-on `paused: {code, cause: policy | unverified, reconnect}` and
+  `hub: {state: standalone | verified | unverified, reconnect: "orch hub refresh"}`; `hub.refresh` (with a new card) is
+  never gated by this policy.
+- **Every path that runs an add-on asks one helper, `hubpolicy.running(service, name)`** (granted, on, not paused): start-agent and
+  model routing (`agents._addon`), terminals (`terms.addon_granted`) and Publish (`publishing._gate`, via `hubpolicy.allowed`).
+  `runner.call(gate=...)` takes `hubpolicy.run_gate(service)`. A plain `addon.grant` (re-enable of a built-in or of the install
+  record's bytes) runs the same `grant` evaluation in `_recheck`, with the record's origin and key.
+- **Not done / follow-up:** the host wiring that calls `runner.call` with the gate is the add-on runner's (it is not
+  called anywhere in core yet; any new caller MUST pass the gate on a hub-joined host); the dashboard page for
+  `paused` and the `pinned` publisher wording.

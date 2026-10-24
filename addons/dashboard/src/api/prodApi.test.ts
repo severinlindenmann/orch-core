@@ -110,8 +110,8 @@ it('speaks the four click routes with POST bodies and keeps reason and wait on a
     [`/api/w/${ws}/click/view`, 'POST', { request_id: 'hr_1' }],
     [`/api/w/${ws}/click/cancel`, 'POST', { request_id: 'hr_1' }],
   ])
-  await expect(api.signClick(ws, 'hr_1', 'sha256:' + 'a'.repeat(64), '  word ')).rejects.toMatchObject({ code: 'rate.limited', retry_after_ms: 4200, reason: 'x' })
-  expect(JSON.parse(String((answers.mock.calls[4][1] as RequestInit).body))).toEqual({ request_id: 'hr_1', view_digest: 'sha256:' + 'a'.repeat(64), word: '  word ' })
+  await expect(api.signClick(ws, 'hr_1', 'sha256:' + 'a'.repeat(64))).rejects.toMatchObject({ code: 'rate.limited', retry_after_ms: 4200, reason: 'x' })
+  expect(JSON.parse(String((answers.mock.calls[4][1] as RequestInit).body))).toEqual({ request_id: 'hr_1', view_digest: 'sha256:' + 'a'.repeat(64) })
 })
 
 it('offers a workspace the click card only when the server lists the click feature', async () => {

@@ -18,7 +18,7 @@ import { useViewerRole } from './useViewerRole'
 
 function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="grid grid-cols-[140px_1fr] items-start gap-3 py-1.5 text-[13px]">
+    <div className="grid grid-cols-[minmax(0,120px)_minmax(0,1fr)] items-start gap-3 py-1.5 text-[13px]">
       <dt className="text-text-muted">{label}</dt>
       <dd className="min-w-0 break-words">{children}</dd>
     </div>
@@ -61,9 +61,10 @@ export function RunFailure({ error }: { error: ApiError }) {
   return (
     <div role="alert" data-testid="records-failure" className="space-y-1 rounded-md border border-danger/40 px-3 py-2 text-[13px]">
       <p>
-        <span className="font-medium text-danger">Not done.</span> <Mono>{error.code}</Mono>
+        <span className="font-medium text-danger">{error.code === 'records.not_dedicated' ? "The records folder isn't set up yet." : 'Not done.'}</span>
       </p>
-      {!error.message_hidden && error.message !== error.code && (
+      <details><summary className="cursor-pointer">Details</summary><Mono>{error.code}</Mono></details>
+      {error.code !== 'records.not_dedicated' && !error.message_hidden && error.message !== error.code && (
         <div className="text-text-muted" aria-label="Output of the records tool">
           <p className="font-medium">Output of the records tool</p>
           <p><Inline>{error.message}</Inline></p>
@@ -176,7 +177,7 @@ function Status({ data, workspace }: { data: RecordsStatus; workspace: Workspace
   )
 }
 
-export function HostRecords({ workspace }: { workspace: Workspace }) {
+export function RecordsBlock({ workspace }: { workspace: Workspace }) {
   const role = useViewerRole(workspace)
   const qc = useQueryClient()
   const allowed = atLeast(role, 'maintainer')
@@ -194,16 +195,7 @@ export function HostRecords({ workspace }: { workspace: Workspace }) {
     onError: () => void qc.invalidateQueries({ queryKey: ['records', workspace.id] }),
   })
   if (role === undefined) return <p role="status" className="text-[13px] text-text-muted">Reading your role…</p>
-  if (!allowed) {
-    return (
-      <div className="space-y-4">
-        <h2 className="text-base font-semibold">Records</h2>
-        <p data-testid="records-role" className="text-[13px] text-text-muted">
-          Records are for owners and maintainers: a push publishes every ticket, restricted ones included.
-        </p>
-      </div>
-    )
-  }
+  if (!allowed) return <p data-testid="records-role" className="text-[13px] text-text-muted">Records are for owners and maintainers: a push publishes every ticket, restricted ones included.</p>
   const data = status.data
   const refused = status.error instanceof ApiError ? status.error : null
   if (status.isError && !refused) return <LoadFailed what="records" onRetry={() => void status.refetch()} />
@@ -215,8 +207,7 @@ export function HostRecords({ workspace }: { workspace: Workspace }) {
 
   return (
     <div className="space-y-4">
-      <h2 className="text-base font-semibold">Records</h2>
-      <p className="text-[13px] text-text-muted">The workspace's tickets and events as a git repository you own. Committing is local; pushing sends them to the remote configured in the records repository.</p>
+      <h4 className="font-semibold">Records</h4>
 
       {refused ? (
         <p role="alert" data-testid="records-refused" className="rounded-md border border-border px-3 py-2 text-[13px] text-text-muted">
@@ -232,56 +223,67 @@ export function HostRecords({ workspace }: { workspace: Workspace }) {
         </p>
       ) : (
         <>
-          <Section title="Status">
-            {/* `configured` means "the workspace records repository exists" (core #454: ok, index_differs and unsafe count, even before a commit). */}
-            {data.configured === false && (
-              <p data-testid="records-not-configured" className="mb-3 text-[13px] text-text-muted">
-                No records repository yet; the first commit creates it.
-              </p>
-            )}
-            <Status data={data} workspace={workspace} />
-          </Section>
+          <p data-testid="records-summary" className="text-[13px]">
+            {data.configured === false || !data.repo
+              ? 'Your tickets and history are not saved yet.'
+              : <>{data.auto?.on ? 'Your tickets and history are saved automatically on this computer.' : 'Your tickets and history are saved only when you press Save now.'} {data.last ? `Last saved ${fmtDateTime(data.last.at)}.` : 'Nothing saved yet.'}</>}
+            {data.pending && data.pending.events > 0 && ` ${plural(data.pending.events, 'change')} are waiting to be saved.`}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {(data.configured === false || !data.repo) && <Button disabled={busy} onClick={() => run.mutate('commit')}>Set up</Button>}
+            <Button disabled={busy} onClick={() => run.mutate('commit')}>Save now</Button>
+            {run.error instanceof ApiError && run.error.code === 'records.not_dedicated' && <Button disabled={busy} onClick={() => run.mutate('commit')}>Set up records</Button>}
+          </div>
+          {busy && (
+            <p role="status" className="text-[12px] text-text-muted">
+              Running… this stops after 60 seconds.
+            </p>
+          )}
+          {run.error instanceof ApiError && <RunFailure error={run.error} />}
+          {run.error && !(run.error instanceof ApiError) && <p role="alert" className="text-[13px] text-danger">The request failed. Nothing is known about the outcome; reload the status.</p>}
+          {result && <RunResult run={result} />}
+          <details className="space-y-3">
+            <summary className="cursor-pointer text-text-muted">For advanced users</summary>
+            <Section title="Status">
+              {/* `configured` means "the workspace records repository exists" (core #454: ok, index_differs and unsafe count, even before a commit). */}
+              {data.configured === false && (
+                <p data-testid="records-not-configured" className="mb-3 text-[13px] text-text-muted">
+                  No records repository yet; the first commit creates it.
+                </p>
+              )}
+              <Status data={data} workspace={workspace} />
+            </Section>
 
-          <Section title="Run now">
-              <div className="space-y-3">
-                {pushConfigured && <ExportWarning url={url} />}
-                <div className="flex flex-wrap gap-2">
-                  <Button disabled={busy} onClick={() => run.mutate('commit')}>
-                    Commit now
-                  </Button>
-                  {canPush && (
-                    <Button variant="outline" disabled={busy} onClick={() => { current.reset(); current.mutate(); setConfirmPush(true) }}>
-                      Commit and push
-                    </Button>
-                  )}
-                  {data.auto?.on && (
-                    <Button variant="outline" disabled={busy} onClick={() => run.mutate('auto-off')}>
-                      Turn automatic commits off
-                    </Button>
-                  )}
+            <Section title="Run now">
+                <div className="space-y-3">
+                  {pushConfigured && <ExportWarning url={url} />}
+                  <div className="flex flex-wrap gap-2">
+                    {canPush && (
+                      <Button variant="outline" disabled={busy} onClick={() => { current.reset(); current.mutate(); setConfirmPush(true) }}>
+                        Commit and push
+                      </Button>
+                    )}
+                    {data.auto?.on && (
+                      <Button variant="outline" disabled={busy} onClick={() => run.mutate('auto-off')}>
+                        Turn automatic commits off
+                      </Button>
+                    )}
+                  </div>
                 </div>
-                {busy && (
-                  <p role="status" className="text-[12px] text-text-muted">
-                    Running… this stops after 60 seconds.
-                  </p>
-                )}
-                {run.error instanceof ApiError && <RunFailure error={run.error} />}
-                {run.error && !(run.error instanceof ApiError) && <p role="alert" className="text-[13px] text-danger">The request failed. Nothing is known about the outcome; reload the status.</p>}
-                {result && <RunResult run={result} />}
-              </div>
-          </Section>
+            </Section>
 
-          <Section title="In your terminal">
-            <div className="space-y-2">
-              <p className="text-[13px] text-text-muted">These change who can read your records or what runs on your machine, so the dashboard has no button for them. Run them yourself.</p>
-              <ul className="space-y-2">
-                <Command what="Mark the remote as one only you read (it asks you first).">{TERMINAL_COMMANDS.remotePrivate}</Command>
-                <Command what="Commit on a timer, locally.">{TERMINAL_COMMANDS.autoOn}</Command>
-                <Command what="Commit and push on a timer.">{TERMINAL_COMMANDS.autoOnPush}</Command>
-                <Command what="Create the remote branch the first time.">{TERMINAL_COMMANDS.pushInitial}</Command>
-              </ul>
-            </div>
-          </Section>
+            <Section title="In your terminal">
+              <div className="space-y-2">
+                <p className="text-[13px] text-text-muted">These change who can read your records or what runs on your machine, so the dashboard has no button for them. Run them yourself.</p>
+                <ul className="space-y-2">
+                  <Command what="Mark the remote as one only you read (it asks you first).">{TERMINAL_COMMANDS.remotePrivate}</Command>
+                  <Command what="Commit on a timer, locally.">{TERMINAL_COMMANDS.autoOn}</Command>
+                  <Command what="Commit and push on a timer.">{TERMINAL_COMMANDS.autoOnPush}</Command>
+                  <Command what="Create the remote branch the first time.">{TERMINAL_COMMANDS.pushInitial}</Command>
+                </ul>
+              </div>
+            </Section>
+          </details>
         </>
       )}
 

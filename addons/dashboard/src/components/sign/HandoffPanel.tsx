@@ -221,7 +221,7 @@ export function HandoffPanel({ request, workspace = null, why, whyAction }: { re
       <p>The ticket key is host-local, not proven; the signed ticket id identifies the ticket. The requester’s client name is self-declared, unverified.</p>
       <p>Request <Raw>{request.id}</Raw> · Workspace <Raw>{workspace?.id ?? ''}</Raw></p>
       <dl className="grid grid-cols-[auto_1fr] items-baseline gap-x-3 gap-y-1 text-[13px]">
-        <dt className="text-text-muted">Verification fingerprint</dt>
+        <dt className="text-text-muted">Verification code</dt>
         <dd>
           <code className="font-mono text-[14px] text-text">
             {request.fingerprint}
@@ -262,7 +262,7 @@ export function HandoffPanel({ request, workspace = null, why, whyAction }: { re
     <div data-handoff-panel className="space-y-3">
       {request.content && <SignContent content={request.content} ws={workspace?.id} technical={technical} />}
       <p data-testid="terminal-why" className="text-[13px] font-medium text-text">
-        {why === 'terminal_only' ? 'This one is done in your terminal.' : why === 'click_off' ? 'One click is off, so sign in Terminal on this Mac.' : 'Sign in your terminal.'}
+        {why === 'terminal_only' ? 'One click can\u2019t approve this one. Approve it in Terminal on this Mac.' : why === 'click_off' ? 'One click is off, so sign in Terminal on this Mac.' : 'Sign in your terminal.'}
         {why === 'click_off' && whyAction && <span className="ml-2 font-normal">{whyAction}</span>}
       </p>
       {runnerGrant && (
@@ -272,19 +272,18 @@ export function HandoffPanel({ request, workspace = null, why, whyAction }: { re
         </div>
       )}
       {request.code ? <>
-        <p className="text-[13px] text-text-muted">Copy this command into Terminal</p>
+        <p className="text-[13px] text-text-muted">1. Copy this command.</p>
         <CommandLine code={request.code} />
       </> : <p className="text-[13px] text-warning">This request has no code any more.</p>}
-      <p className="text-[12px] text-text-muted">
-        Verification fingerprint: <code data-testid="handoff-fingerprint" className="font-mono text-[13px] text-text">{request.fingerprint}</code>.
-        {' '}Check that this matches the fingerprint in your terminal.
+      <p className="text-[13px] text-text-muted">2. Paste it into Terminal and press Return.</p>
+      <p className="text-[13px] text-text-muted">
+        3. Check that the verification code <code data-testid="handoff-fingerprint" className="font-mono text-[13px] text-text">{request.fingerprint}</code> matches the one in Terminal, read what Terminal shows (that is what you approve), then type{request.content && word ? <> <span className="whitespace-nowrap"><Raw>{word}</Raw></span></> : ' the word shown'}.
       </p>
-      {request.content && word && <p className="text-[12px] text-text-muted">In your terminal you type <Raw>{word}</Raw> to continue.</p>}
       {request.op === 'grant' && <p className="text-[12px] text-text-muted" data-testid="grant-handoff-note">After you sign, the terminal asks what to do with the new access. Press r to hand it to the orch runner, otherwise the runner has no access and agents stay off.</p>}
       {request.content && hostStated && <p role="note" className="text-[12px] text-text-muted">Some values come from orch on this Mac (see details)</p>}
       {!request.content && <SignDetails>{technical}</SignDetails>}
       {!request.content && preview}
-      <p className="text-[12px] text-text-muted">Your terminal shows the same review. This dashboard is not where you sign: it never sees your passphrase or your key. Only sign a code you created yourself; this page follows the request and shows when it is signed.</p>
+      <p className="text-[12px] text-text-muted">This page never sees your passphrase or your key. Only approve a code you started yourself.</p>
     </div>
   )
 }

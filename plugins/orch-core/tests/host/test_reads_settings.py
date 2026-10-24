@@ -13,6 +13,7 @@ from tests.host.dispatch_helpers import UID, err
 from tests.host.live_helpers import SESSION, world
 from tests.host.live_helpers import ok as ok_
 from tests.host.test_dispatch_matrix import as_agent_class, wrong_secret
+from tests.tamper import tamper_text
 
 OK_REMOTE = "https://example.org/team/proj"
 
@@ -340,7 +341,7 @@ def test_a_page_token_that_is_forged_altered_foreign_or_old_is_page_expired(w):
     assert err(c.req("workspace.settings", {"page": "garbage"})) == "page.expired"
     body, _, mac = token.rpartition(".")
     assert err(c.req("workspace.settings", {"page": body + "." + mac[::-1]})) == "page.expired"
-    assert err(c.req("workspace.settings", {"page": body[:-2] + "AA." + mac})) == "page.expired"
+    assert err(c.req("workspace.settings", {"page": tamper_text(body) + "." + mac})) == "page.expired"
     # another principal (the owner's grant is another principal than the person's connection)
     assert err(c.req("workspace.settings", {"page": token}, grant=w.grant, session=SESSION)) == "page.expired"
     # a token this host issued for another op (ticket.query's), for this very principal

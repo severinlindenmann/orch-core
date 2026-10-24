@@ -1,6 +1,6 @@
 // Core H12d-2 in the production app on a fake server: the signer's `readers_old` on Settings → General, a terminal
 // hand-off refused with `sign.convenience_readers` (its reason in plain words, its device by name, never by id), and
-// Settings → Devices reading `/readers`.
+// the Phone row of Add-ons (Manage devices) reading `/readers`.
 import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
@@ -16,14 +16,14 @@ const T = { timeout: 5000 }
 const MARA_DEVICE = 'd_' + '2'.repeat(32)
 const state = useFakeHost(() => [workspace({ id: A, features: [...READS, ...DO, 'actions', 'readers'] })])
 
-it('readers_old: the Signing card says why in its own sentence and links to Settings → Devices', async () => {
+it('readers_old: the Signing card says why in its own sentence and links to Settings → Members', async () => {
   state.host.workspaces[0].click = { custody: 'convenience', enabled: true, available: false, problem: 'readers_old' }
   show('/w/DEMO/settings/general')
   const card = await screen.findByTestId('workspace-card-signing', {}, T)
   expect(card).toHaveTextContent(SIGNER_PROBLEM_SENTENCE.readers_old)
   expect(card).not.toHaveTextContent('(readers_old)')
-  const link = within(card).getByRole('link', { name: 'See which devices need an update' })
-  expect(link.getAttribute('href')).toMatch(/\/settings\/devices$/)
+  const link = within(card).getByRole('link', { name: 'A device needs an update' })
+  expect(link.getAttribute('href')).toMatch(/\/settings\/members$/)
 })
 
 it('a hand-off refused with sign.convenience_readers says the reason in plain words and names the device, not its id', async () => {
@@ -36,9 +36,9 @@ it('a hand-off refused with sign.convenience_readers says the reason in plain wo
       : undefined
   const user = userEvent.setup()
   show('/w/DEMO/settings/general')
-  const input = await screen.findByRole('button', { name: '1 day' }, T)
-  await user.click(input)
-  await user.click(screen.getByRole('button', { name: 'Save settings' }))
+  const input = await screen.findByRole('combobox', { name: 'Longest agent access you can give' }, T)
+  await user.selectOptions(input, '24')
+  await user.click(screen.getByRole('button', { name: 'Save' }))
   const dialog = await screen.findByRole('dialog', {}, T)
   const end = await within(dialog).findByText(READERS_SENTENCE.reader_too_old, {}, T)
   const box = end.closest('[data-handoff-end]') as HTMLElement
@@ -60,7 +60,8 @@ it('Settings → Devices reads /readers: levels, required_reader and the device 
           ],
         })
       : undefined
-  show('/w/DEMO/settings/devices')
+  show('/w/DEMO/settings/addons')
+  await userEvent.setup().click(await screen.findByTestId('addon-phone-devices', {}, T))
   const rows = await screen.findAllByTestId('reader-row', {}, T)
   expect(rows.map((r) => r.dataset.below)).toEqual(['true', 'false'])
   expect(rows[0]).toHaveTextContent('Mara’s device (unnamed)')

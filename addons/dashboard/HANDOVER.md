@@ -982,11 +982,7 @@ stops this process from cancelling the request or replacing the signer under it 
 the host through our link). A sign whose answer is lost is retried through the signer (identical events, never a new signature);
 `already_signed` (signed with another View) and `record_unavailable` (the signer's record is unreadable, fail closed: use the terminal path)
 are mapped. A dashboard restart loses the in-memory parts and the session binding of the host's idem: a repeat prepare is then `intent.open`
-until the old request settles (at most about 10 minutes); the ticket's activity shows a submit that landed. **One signing path per workspace** (owner decision
-12 Oct ~19:45 via orch-d6, coordination.md line 166, host side core #434): with the signer's flag ON the dashboard offers only Sign; `/handoff`
-prepares are refused (`sign.click_only`, `Gateway.one_path_is_click`), the dialog has no terminal button, and a signer that cannot sign
-(record_unavailable, no key) is an honest error naming `orch host convenience off --workspace W`, never a hand-off. Flag OFF: the terminal
-hand-off as before. The intent function is identical on both (no path offset). A click prepare first lists `human.pending` and refuses if a
+until the old request settles (at most about 10 minutes); the ticket's activity shows a submit that landed. **One signing path per workspace** (owner decision 12 Oct, withdrawn 24 Oct by the owner, #1170): with the signer's flag ON the dashboard signs by click, and the Terminal hand-off (`orch sign CODE`) stays available for the ops One click never signs (terminal-only) and as a backup; `Gateway.one_click_on` only picks the default sign method. The intent function is identical on both (no path offset). A click prepare first lists `human.pending` and refuses if a
 terminal hand-off (it has a code) of the same op and key is still open (`intent.open`, with its expiry); a flag flipped off ends open click
 requests (the signer refuses with `disabled`; the server cancels them).
 
@@ -1016,8 +1012,7 @@ its own link to retrieve the exact existing record, not an arbitrary op+key matc
 from that record's material review. `human.request_state` at sign reads pending/get before offering a repeat.
 
 **F4 merge prerequisite: host PR #434 must merge before M5.** The existing local fail-open behavior is unchanged:
-when signer status is unavailable, `one_path_is_click` can permit a hand-off even on a click-enabled workspace.
-Host #434 enforces one signing path and refuses unsafe flag changes. The dashboard's shared idem and op+key
+(the one-signing-path rule this section guarded was withdrawn 24 Oct, #1170: a hand-off on a click-enabled workspace is allowed). The dashboard's shared idem and op+key
 pre-check remain defence in depth; they are not a replacement for this host prerequisite.
 
 **Known limits after the final Opus re-check (13 Oct, all LOW, none can produce a second signature):**

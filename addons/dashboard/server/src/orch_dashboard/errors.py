@@ -105,7 +105,7 @@ def response(code: str, http: int):
     return JSONResponse({"ok": False, "error": {"code": code, "message": code, "retryable": False}}, status_code=http)
 
 
-FIX_COMMAND_CODES = ("sign.convenience_readers", "sign.click_only")
+FIX_COMMAND_CODES = ("sign.convenience_readers",)
 
 
 def plain_argv(fix) -> bool:

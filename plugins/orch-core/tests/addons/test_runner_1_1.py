@@ -160,7 +160,7 @@ def test_a_float_or_nan_in_params_is_not_strict_json(tmp_path):
 # credential ---------------------------------------------------------------------------------------------------------
 
 
-def cred(tmp_path, params, caps=("credential", "network"), provider=lambda: SECRET, **kw):
+def cred(tmp_path, params, caps=("credential", "network"), provider=lambda _n: SECRET, **kw):
     package, granted = make(tmp_path, caps=caps)
     return call(package, granted, "propose", params, credential=provider, **kw)
 
@@ -168,7 +168,7 @@ def cred(tmp_path, params, caps=("credential", "network"), provider=lambda: SECR
 def test_the_credential_goes_in_params_only_and_only_with_credential_and_network(tmp_path):
     seen = []
 
-    def provider():
+    def provider(_n):
         seen.append(1)
         return SECRET
 
@@ -178,7 +178,7 @@ def test_the_credential_goes_in_params_only_and_only_with_credential_and_network
         seen.clear()
         out = cred(tmp_path / f"n{i}", {"mode": "params"}, caps=caps, provider=provider)
         assert "credential" not in out["params"] and seen == []  # the provider is not even asked
-    assert "credential" not in cred(tmp_path / "none", {"mode": "params"}, provider=lambda: None)["params"]
+    assert "credential" not in cred(tmp_path / "none", {"mode": "params"}, provider=lambda _n: None)["params"]
 
 
 def test_the_credential_is_never_in_env_or_argv(tmp_path):
@@ -189,7 +189,7 @@ def test_the_credential_is_never_in_env_or_argv(tmp_path):
 def test_the_caller_cannot_pass_a_credential_and_a_bad_provider_value_is_refused(tmp_path):
     refused("addon.bad_request", cred, tmp_path / "a", {"mode": "params", "credential": "x"})
     for v in ("", 5, b"x"):
-        refused("addon.bad_request", cred, tmp_path / f"b{v!r}", {"mode": "params"}, provider=lambda v=v: v)
+        refused("addon.bad_request", cred, tmp_path / f"b{v!r}", {"mode": "params"}, provider=lambda _n, v=v: v)
 
 
 @pytest.mark.parametrize("mode", ["echo_credential", "echo_credential_escaped", "echo_credential_key"])
@@ -201,24 +201,49 @@ def test_an_answer_that_holds_the_credential_is_refused_and_not_returned(tmp_pat
 def test_stderr_is_redacted_when_the_call_fails(tmp_path):
     package, granted = make(tmp_path, caps=("credential", "network"))
     e = refused(
-        "addon.crashed", call, package, granted, "propose", {"mode": "crash_credential"}, credential=lambda: SECRET
+        "addon.crashed", call, package, granted, "propose", {"mode": "crash_credential"}, credential=lambda _n: SECRET
     )
     assert SECRET not in e.stderr and "[redacted]" in e.stderr
 
 
-def test_redact_secret_straddling_the_collection_boundary_at_every_offset():
-    forms = (SECRET, json.dumps(SECRET)[1:-1])
-    for secret in (SECRET, 'a"b\\c-secret'):
-        slack = max(len(f) for f in runner._forms(secret))  # noqa: SLF001
-        for cap in (0, 5, 16):
-            for pad in range(0, 3 * slack):
-                collected = ("x" * pad + secret + "tail")[: cap + slack]  # what _converse keeps
-                truncated = len("x" * pad + secret + "tail") > cap + slack
-                out = runner._redact(collected, secret, truncated)[:cap]  # noqa: SLF001
-                for f in runner._forms(secret):  # noqa: SLF001
-                    for k in range(2, len(f) + 1):
-                        assert f[:k] not in out, (pad, cap, k)
-    assert forms
+def _no_part_of_it(out: str, secret: str, minimum: int = 2) -> None:
+    for form in runner._forms(secret):  # noqa: SLF001
+        for k in range(minimum, len(form) + 1):
+            assert form[:k] not in out, (form[:k], out)
+
+
+def test_safe_text_leaks_no_part_of_the_secret_at_any_cut_offset_or_cap():
+    for secret in (SECRET, 'a"b\\c-secret', "Zq9"):
+        for around in ("", "é", "日本", "\U0001f680"):
+            full = (around + "x" + secret + around + "tail " + secret + around).encode()
+            for cut in range(len(full) + 1):  # the pipe ended (EOF, kill, timeout, slack boundary) at every offset
+                for cap in (0, 1, 3, 8, 16, 1000):
+                    out = runner._safe_text(full[:cut], secret, cap)  # noqa: SLF001
+                    assert len(out.encode()) <= cap + 3 * out.count("\ufffd")
+                    _no_part_of_it(out, secret)
+
+
+def test_safe_text_keeps_the_rest_and_marks_whole_copies():
+    assert runner._safe_text(f"a {SECRET} b".encode(), SECRET, 100) == "a [redacted] b"  # noqa: SLF001
+    assert runner._safe_text(b"plain text", None, 100) == "plain text"  # noqa: SLF001
+    assert runner._safe_text(b"plain text", None, 5) == "plain"  # noqa: SLF001
+    assert runner._safe_text(b"caf\xc3\xa9", None, 4) == "caf\ufffd"  # noqa: SLF001
+
+
+def test_a_killed_child_leaves_no_partial_secret_in_stderr(tmp_path):
+    package, granted = make(tmp_path, caps=("credential", "network"))
+    e = refused(
+        "addon.timeout",
+        call,
+        package,
+        granted,
+        "propose",
+        {"mode": "stderr_then_hang"},
+        Limits(timeout=1),
+        credential=lambda _n: SECRET,
+    )
+    assert "\u00e9" in e.stderr or e.stderr == ""
+    assert SECRET[:2] not in e.stderr
 
 
 def test_a_secret_cut_at_the_stderr_cap_leaves_no_prefix_end_to_end(tmp_path):
@@ -232,7 +257,7 @@ def test_a_secret_cut_at_the_stderr_cap_leaves_no_prefix_end_to_end(tmp_path):
             "propose",
             {"mode": "crash_credential"},
             Limits(max_stderr=cap),
-            credential=lambda: SECRET,
+            credential=lambda _n: SECRET,
         )
         assert SECRET[:3] not in e.stderr and len(e.stderr) <= cap
 
@@ -241,7 +266,7 @@ def test_the_request_is_never_in_an_error(tmp_path):
     package, granted = make(tmp_path, caps=("credential", "network"))
     for mode in ("crash_credential", "echo_credential"):
         with pytest.raises(RunnerError) as e:
-            call(package, granted, "propose", {"mode": mode}, credential=lambda: SECRET)
+            call(package, granted, "propose", {"mode": mode}, credential=lambda _n: SECRET)
         assert SECRET not in str(e.value) and SECRET not in repr(e.value.__dict__)
 
 
@@ -261,3 +286,17 @@ def test_child_env_has_no_credential_key_whatever_the_capabilities():
 
 def test_the_oversized_request_with_a_credential_is_refused_before_start(tmp_path):
     refused("addon.bad_request", cred, tmp_path, {"mode": "params", "pad": "x" * (70 << 10)})
+
+
+def test_a_provider_of_another_addon_is_refused_and_nothing_is_sent(tmp_path):
+    asked = []
+
+    def alpha_provider(name):
+        asked.append(name)
+        if name != "alpha":
+            raise PermissionError("not for this add-on")  # what credential.py's reader does
+        return SECRET
+
+    package, granted = make(tmp_path, caps=("credential", "network"))  # this add-on is "m11", not alpha
+    e = refused("addon.bad_request", call, package, granted, "propose", {"mode": "params"}, credential=alpha_provider)
+    assert asked == ["m11"] and SECRET not in repr(e) and SECRET not in e.stderr

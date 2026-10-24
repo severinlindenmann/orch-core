@@ -63,6 +63,12 @@ elif mode == "stderr_cut":
 elif mode == "crash_credential":
     sys.stderr.write("boom " + json.dumps(params["credential"]) + "\n")
     sys.exit(3)
+elif mode == "stderr_then_hang":
+    sys.stderr.write("é" + params["credential"][:7])
+    sys.stderr.flush()
+    import time
+
+    time.sleep(60)
 elif mode == "env_args":
     reply({"env": dict(os.environ), "argv": sys.argv})
 else:

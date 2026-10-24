@@ -231,16 +231,44 @@ def _forms(secret: str | None) -> tuple[str, ...]:
     return () if not secret else (secret, json.dumps(secret)[1:-1])
 
 
-def _redact(text: str, secret: str | None, truncated: bool = False) -> str:
-    """Every full copy of ``secret`` (raw and JSON-escaped) becomes ``[redacted]``. When ``truncated`` (the collection
-    stopped at its cap, so a copy may have been cut), a trailing text that is a prefix of any form is dropped too."""
-    forms = _forms(secret)
-    for form in forms:
-        text = text.replace(form, "[redacted]")
-    if truncated:
-        longest = max((k for f in forms for k in range(len(f) - 1, 0, -1) if text.endswith(f[:k])), default=0)
-        text = text[: len(text) - longest]
-    return text
+def _strip_partial(raw: bytes, forms: Sequence[bytes]) -> bytes:
+    """Drop a trailing run of bytes that is a prefix of any form (a copy cut short, whatever cut it)."""
+    longest = max((k for f in forms for k in range(len(f) - 1, 0, -1) if raw.endswith(f[:k])), default=0)
+    return raw[: len(raw) - longest]
+
+
+def _cover(raw: bytes, forms: Sequence[bytes]) -> bytes:
+    """Every byte inside ANY occurrence of ANY form (overlapping, at every start) is covered; each covered run becomes
+    one ``[redacted]``. Sequential ``replace`` per form leaves bytes when one form sits inside another (a key holding
+    a backslash or a quote) or copies overlap."""
+    hit = bytearray(len(raw))
+    for f in forms:
+        i = raw.find(f)
+        while i != -1:
+            hit[i : i + len(f)] = b"\x01" * len(f)
+            i = raw.find(f, i + 1)
+    out, i = bytearray(), 0
+    while i < len(raw):
+        if hit[i]:
+            while i < len(raw) and hit[i]:
+                i += 1
+            out += b"[redacted]"
+        else:
+            out.append(raw[i])
+            i += 1
+    return bytes(out)
+
+
+def _safe_text(raw: bytes, secret: str | None, cap: int) -> str:
+    """The ONE way child stderr becomes text: from raw bytes, with the secret's forms (raw and JSON-escaped) and nothing
+    else. Whole copies become ``[redacted]``; a trailing partial copy is always dropped (the pipe may have ended early,
+    been cut, killed or timed out); then the text is cut to ``cap`` bytes and a partial copy dropped again; decoding
+    last, so a split UTF-8 character can only become U+FFFD."""
+    forms = [f.encode() for f in _forms(secret)]
+    raw = _cover(raw, forms)
+    raw = _strip_partial(raw, forms)
+    raw = _strip_partial(raw[:cap], forms)
+    return raw.decode("utf-8", errors="replace")
 
 
 def _holds(doc: Any, secret: str) -> bool:
@@ -261,13 +289,15 @@ def call(
     params: Mapping[str, Any],
     limits: Limits | None = None,
     *,
-    credential: Callable[[], str | None] | None = None,
+    credential: Callable[[str], str | None] | None = None,
 ) -> Any:
     """Run the addon once with ``method`` and ``params`` (built by core) and return the ``result`` of its response; the
     caller checks it per method. ``granted`` is the replayed grant (the ACTIVE one: disabled or purged is refused) and
-    must hold the capability ``METHODS[method]`` names. ``credential`` is a provider called just before the call and
-    only when the grant holds ``credential`` and ``network``; its string goes in ``params.credential`` and nowhere else.
-    ``params`` must not itself contain ``credential``. Raises :class:`RunnerError`."""
+    must hold the capability ``METHODS[method]`` names. ``credential`` is a provider, called as
+    ``credential(granted.name)`` just before the call and only when the grant holds ``credential`` and ``network``:
+    the runner names the add-on, so a provider built for another add-on must refuse the name (it raises; the call
+    fails and nothing is sent). Its string goes in ``params.credential`` and nowhere else. ``params`` must not itself
+    contain ``credential``. Raises :class:`RunnerError`."""
     if method not in METHODS:
         raise RunnerError("addon.bad_request", "unknown method")
     if "credential" in params:
@@ -302,7 +332,10 @@ def call(
     full = dict(params)
     secret: str | None = None
     if "credential" in manifest.capabilities and "network" in manifest.capabilities and credential is not None:
-        value = credential()  # read just before the call, by the caller's single reader
+        try:
+            value = credential(granted.name)  # read just before the call, by the caller's single reader
+        except Exception:
+            raise RunnerError("addon.bad_request", "the credential is not available for this add-on") from None
         if value is not None:
             if type(value) is not str or not value:
                 raise RunnerError("addon.bad_request", "the credential is not a non-empty string")
@@ -361,8 +394,7 @@ def call(
         slack = max((len(f.encode()) for f in _forms(secret)), default=0)  # a cut must not leave a prefix of it
         out, err, overflow = _converse(proc, request, deadline, limits, slack)
         _kill(proc)  # the group is killed; a process that left it (setsid) is not tracked in P1
-        # redact first (whole copies), then drop a trailing partial copy, and only then cut to the cap
-        errtext = _redact(_text(err), secret, len(err) >= limits.max_stderr + slack)[: limits.max_stderr]
+        errtext = _safe_text(err, secret, limits.max_stderr)
         if overflow == "timeout":
             raise RunnerError("addon.timeout", f"no complete answer within {limits.timeout:g} s", errtext)
         if overflow == "output":
@@ -442,10 +474,6 @@ def _converse(
         return bytes(out), bytes(err), ""
     finally:
         sel.close()
-
-
-def _text(raw: bytes) -> str:
-    return raw.decode("utf-8", errors="replace")
 
 
 def _parse(raw: bytes, stderr: str) -> Any:

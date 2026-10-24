@@ -1834,24 +1834,34 @@ def build() -> dict[str, Any]:
     case("join_proof_expired", "owner_proof_join", {**jp, "now_ms": NOW + 300_000, "signed": owner_proof()},
          {"error": "proof_expired"}, 5)  # fmt: skip
 
-    # readers of the workspace log (9.6 "Readers"): no clock, the proof is bound to its binding_seq
+    # readers of the workspace log (9.6 "Readers"): the verifier's own facts (signer custody, append time, prior
+    # binding_seq) decide, never the event's auth label alone
     rp = {"dev_mode": True, "event_type": "hub.joined", "workspace_id": WS_A, "actor_person_id": P_ALICE,
-          "pk_pub": K.b("pk_alice"), "auth": "convenience"}  # fmt: skip
+          "pk_pub": K.b("pk_alice"), "auth": "convenience", "signer_exposed": True, "at_ms": NOW,
+          "prior_binding_seq": 0}  # fmt: skip
+    clean = {"auth": "passphrase", "signer_exposed": False}
     joined_with = {**JOINED_PAYLOAD, "owner_proof": owner_proof()}
     case("recorded_convenience_with_proof", "owner_proof_recorded", {**rp, "payload": joined_with},
          {"ok": {"proof": "hub.join"}}, 5)  # fmt: skip
     case("recorded_convenience_without_proof", "owner_proof_recorded", {**rp, "payload": pay},
          {"error": "proof_missing"}, 5, "the One-click key alone never binds a workspace to a hub")  # fmt: skip
-    case("recorded_passphrase_without_proof", "owner_proof_recorded", {**rp, "auth": "passphrase", "payload": pay},
-         {"ok": {"proof": None}}, 5, "the terminal path: the passphrase key's signature is the proof")  # fmt: skip
-    case("recorded_no_auth_without_proof", "owner_proof_recorded", {**rp, "auth": None, "payload": pay},
-         {"ok": {"proof": None}}, 5)  # fmt: skip
-    case("recorded_hub_auth_without_proof", "owner_proof_recorded", {**rp, "auth": "hub", "payload": pay},
-         {"error": "proof_missing"}, 5)  # fmt: skip
-    case("recorded_unknown_auth_without_proof", "owner_proof_recorded", {**rp, "auth": "webauthn", "payload": pay},
-         {"error": "proof_missing"}, 5, "fail closed: only absent or passphrase may go without")  # fmt: skip
+    case("recorded_passphrase_without_proof", "owner_proof_recorded", {**rp, **clean, "payload": pay},
+         {"ok": {"proof": None}}, 5,
+         "the terminal path: a passphrase key with no One-click history; its signature is the proof")  # fmt: skip
+    case("recorded_passphrase_label_by_exposed_key_without_proof", "owner_proof_recorded",
+         {**rp, **clean, "signer_exposed": True, "payload": pay}, {"error": "proof_missing"}, 5,
+         "the auth label is the signer's own claim: a key with One-click history needs the proof")  # fmt: skip
+    case("recorded_no_auth_without_proof", "owner_proof_recorded",
+         {**rp, **clean, "auth": None, "payload": pay}, {"error": "proof_missing"}, 5,
+         "an absent auth never skips the proof")  # fmt: skip
+    case("recorded_hub_auth_without_proof", "owner_proof_recorded",
+         {**rp, **clean, "auth": "hub", "payload": pay}, {"error": "proof_missing"}, 5)  # fmt: skip
+    case("recorded_unknown_auth_without_proof", "owner_proof_recorded",
+         {**rp, **clean, "auth": "webauthn", "payload": pay}, {"error": "proof_missing"}, 5)  # fmt: skip
+    case("recorded_signer_exposed_not_a_bool", "owner_proof_recorded",
+         {**rp, **clean, "signer_exposed": None, "payload": pay}, {"error": "malformed"}, 5)  # fmt: skip
     case("recorded_passphrase_with_bad_proof", "owner_proof_recorded",
-         {**rp, "auth": "passphrase", "payload": {**JOINED_PAYLOAD, "owner_proof": owner_proof(pk="pk_mallory")}},
+         {**rp, **clean, "payload": {**JOINED_PAYLOAD, "owner_proof": owner_proof(pk="pk_mallory")}},
          bad, 5, "a proof that is there is always checked")  # fmt: skip
     case("recorded_payload_differs_from_proof", "owner_proof_recorded",
          {**rp, "payload": {**joined_with, "aliases": [{"person_id": P_ALICE, "user_id": U_BOB}]}}, bad, 5)  # fmt: skip
@@ -1863,18 +1873,35 @@ def build() -> dict[str, Any]:
     case("recorded_unknown_person_key", "owner_proof_recorded", {**rp, "pk_pub": None, "payload": joined_with}, bad,
          5)  # fmt: skip
     case("recorded_mode_proof_on_joined", "owner_proof_recorded",
-         {**rp, "payload": {**full2, "owner_proof": owner_proof("hub.mode", full2)}},
+         {**rp, "prior_binding_seq": 1, "payload": {**full2, "owner_proof": owner_proof("hub.mode", full2)}},
          {"ok": {"proof": "hub.mode"}}, 5)  # fmt: skip
+    left_with = {**left_pay, "owner_proof": owner_proof("hub.leave", left_pay)}
     case("recorded_left_valid", "owner_proof_recorded",
-         {**rp, "event_type": "hub.left", "payload": {**left_pay, "owner_proof": owner_proof("hub.leave", left_pay)}},
+         {**rp, "event_type": "hub.left", "prior_binding_seq": 1, "payload": left_with},
          {"ok": {"proof": "hub.leave"}}, 5)  # fmt: skip
+    case("recorded_left_without_a_binding", "owner_proof_recorded",
+         {**rp, "event_type": "hub.left", "payload": left_with}, {"error": "stale_binding"}, 5)  # fmt: skip
     case("recorded_join_proof_on_left", "owner_proof_recorded",
-         {**rp, "event_type": "hub.left", "payload": {**left_pay, "owner_proof": owner_proof()}}, bad, 5)  # fmt: skip
+         {**rp, "event_type": "hub.left", "prior_binding_seq": 1, "payload": {**left_pay, "owner_proof": owner_proof()}},
+         bad, 5)  # fmt: skip
+    case("recorded_replayed_proof_on_later_event", "owner_proof_recorded",
+         {**rp, "prior_binding_seq": 1, "payload": joined_with}, {"error": "stale_binding"}, 5,
+         "binding_seq 1 is taken: the proof for it can never land again")  # fmt: skip
+    case("recorded_proof_skips_a_binding_seq", "owner_proof_recorded",
+         {**rp, "payload": {**full2, "owner_proof": owner_proof("hub.mode", full2)}}, {"error": "stale_binding"}, 5,
+         "hub.joined names exactly the next binding_seq")  # fmt: skip
+    case("recorded_abandoned_proof_replayed_after_expiry", "owner_proof_recorded",
+         {**rp, "at_ms": NOW + 300_001, "payload": joined_with}, {"error": "proof_expired"}, 5,
+         "the event's host-assigned time must fall inside the proof's life")  # fmt: skip
+    case("recorded_event_at_proof_expiry", "owner_proof_recorded",
+         {**rp, "at_ms": NOW + 300_000, "payload": joined_with}, {"ok": {"proof": "hub.join"}}, 5)  # fmt: skip
+    case("recorded_event_long_before_proof", "owner_proof_recorded",
+         {**rp, "at_ms": NOW - 1_000 - 300_001, "payload": joined_with}, {"error": "proof_expired"}, 5)  # fmt: skip
+    case("recorded_event_within_skew_before_proof", "owner_proof_recorded",
+         {**rp, "at_ms": NOW - 1_000 - 300_000, "payload": joined_with}, {"ok": {"proof": "hub.join"}}, 5,
+         "append times are whole seconds; the signer's clock may lead the host's")  # fmt: skip
     case("recorded_other_workspace", "owner_proof_recorded", {**rp, "workspace_id": WS_B, "payload": joined_with},
          bad, 5)  # fmt: skip
-    case("recorded_long_after_expiry", "owner_proof_recorded",
-         {**rp, "payload": {**JOINED_PAYLOAD, "owner_proof": owner_proof(issued_ms=1_000, expires_ms=2_000)}},
-         {"ok": {"proof": "hub.join"}}, 5, "readers never use a clock")  # fmt: skip
     case("recorded_real_proof_at_dev_reader", "owner_proof_recorded",
          {**rp, "payload": {**JOINED_PAYLOAD, "owner_proof": owner_proof(dev=False)}}, {"error": "dev_mismatch"},
          5)  # fmt: skip

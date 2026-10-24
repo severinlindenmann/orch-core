@@ -135,7 +135,8 @@ def test_hub_joined_bytes():
     # #1198 C8: a One-click (convenience) hub.joined carries the owner's PK proof, and readers accept it
     assert e["auth"] == "convenience"
     o = H.check_recorded_owner_proof(
-        "hub.joined", payload, auth=e["auth"], workspace_id=V["ids"]["workspace_a"],
+        "hub.joined", payload, auth=e["auth"], signer_exposed=True, at_ms=V["now_ms"], prior_binding_seq=0,
+        workspace_id=V["ids"]["workspace_a"],
         actor_person_id=V["ids"]["person_alice"], pk_pub=pub("pk_alice"), dev_mode=True,
     )  # fmt: skip
     assert o is not None and o["op"] == "hub.join"

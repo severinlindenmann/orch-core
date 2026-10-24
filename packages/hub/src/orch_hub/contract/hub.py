@@ -1225,22 +1225,41 @@ def check_recorded_owner_proof(
     payload: Mapping[str, Any],
     *,
     auth: Any,
+    signer_exposed: Any,
+    at_ms: Any,
+    prior_binding_seq: Any,
     workspace_id: str,
     actor_person_id: str,
     pk_pub: bytes | None,
     dev_mode: bool,
 ) -> dict[str, Any] | None:
     """§9.6 "Readers": a ``hub.joined`` / ``hub.left`` on the workspace log (the host model, another member's core,
-    the hub's log view). ``payload`` is the event's payload with ``owner_proof``; ``auth`` the event's ``auth``;
-    ``pk_pub`` the actor's person key from the roster (``None`` when unknown: refused). A ``null`` proof is allowed
-    only when ``auth`` is absent or ``"passphrase"`` (fail closed: ``convenience``, ``hub`` and every unknown value
-    need one). No clock: a proof is bound to its ``binding_seq``, which never repeats (§9.2)."""
+    the hub's log view). ``payload`` is the event's payload with ``owner_proof``; ``auth`` the event's ``auth``.
+    The verifier's own facts, never fields of the event: ``signer_exposed`` (the roster holds evidence that the signing
+    device key was ever in One-click custody, or does not know the device: core's ``exposed``, #1097), ``at_ms`` (the
+    event's host-assigned append time), ``prior_binding_seq`` (the ``binding_seq`` of the last ``hub.joined`` /
+    ``hub.left`` before it, 0 if none), ``pk_pub`` (the actor's ``PK`` from the roster, ``None`` when unknown).
+
+    The event's place first: ``hub.joined`` must name ``prior + 1``, ``hub.left`` exactly ``prior`` (≥ 1), else
+    ``stale_binding``. A ``null`` proof only when ``auth`` is ``"passphrase"`` AND the signer is not exposed: the label
+    alone never decides it, an absent ``auth`` never skips it (``proof_missing``). A present proof is always checked
+    and must cover the event's time: ``issued_ms - 300 s <= at_ms <= expires_ms`` (``proof_expired``), so a proof for
+    an abandoned attempt dies with its lifetime and a used one dies with its ``binding_seq``."""
     allowed = RECORDED_OPS.get(event_type)
     if allowed is None or type(payload) is not dict or "owner_proof" not in payload:
         raise Refused("malformed")
+    if type(signer_exposed) is not bool or not _int_min(0)(at_ms) or not _int_min(0)(prior_binding_seq):
+        raise Refused("malformed")
+    seq = payload.get("binding_seq")
+    if type(seq) is not int:
+        raise Refused("malformed")
+    if event_type == "hub.joined" and seq != prior_binding_seq + 1:
+        raise Refused("stale_binding")
+    if event_type == "hub.left" and (prior_binding_seq < 1 or seq != prior_binding_seq):
+        raise Refused("stale_binding")
     proof = payload["owner_proof"]
     if proof is None:
-        if auth is None or auth == "passphrase":
+        if auth == "passphrase" and signer_exposed is False:
             return None
         raise Refused("proof_missing")
     if pk_pub is None:
@@ -1255,6 +1274,8 @@ def check_recorded_owner_proof(
         same = False
     if not same:
         raise Refused("proof_invalid")
+    if not o["issued_ms"] - CLOCK_SKEW_MS <= at_ms <= o["expires_ms"]:
+        raise Refused("proof_expired")
     _dev(o, dev_mode)
     return o
 

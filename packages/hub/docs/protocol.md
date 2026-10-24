@@ -937,9 +937,10 @@ verbs at the host terminal (`orch hub join`, `orch hub leave`); never an agent, 
 `hub.left` payload, exactly: `{hub_id, binding_seq, owner_proof}`.
 
 - `owner_proof` (#1198 C8) is a required member: the signed `hub.owner_proof` of §9.6, or `null`. `null` is allowed
-  only when the event's `auth` is absent or `"passphrase"` (the owner's own key at the terminal; its signature is the
-  proof). Every other `auth` (`"convenience"`, `"hub"`, any unknown value) needs a proof → `proof_missing`. A proof
-  that is present is always verified, whatever the `auth` (§9.6 "Readers").
+  only when the event's `auth` is `"passphrase"` **and** the verifier's own roster shows that the signing device key
+  was never in One-click custody (core's `exposed` mark, #1097; an unknown device counts as exposed). The `auth` label
+  is the signer's own claim, so it never decides this alone; an absent `auth` never skips the proof. Every other case
+  needs a proof → `proof_missing`. A proof that is present is always verified (§9.6 "Readers").
 
 - `hub_id == hub_id(hk_root_pub)` → `hub_id_mismatch`; this is where the host pins `HK_root`.
 - `binding_seq` is the `binding_seq` of the `hub.binding` the host signs next (§9.2); `hub.left` names the binding it
@@ -1106,17 +1107,35 @@ hub's clock. The hub has no request id and no alias book to compare, and does no
 readers do.
 
 **Readers** (the host model, another member's core, the hub's `log_sync` view; reference
-`check_recorded_owner_proof`, vectors `recorded_*`), for every `hub.joined` / `hub.left` on the workspace log: the
-`owner_proof` member as in §9.1 (`null` only with `auth` absent or `"passphrase"`, else `proof_missing`); a present
-proof passes steps 1–4 with `pk_pub` the actor's `PK` from the roster (unknown → `proof_invalid`), `workspace_id`
-this workspace, `person_id` the actor's, `op` `hub.join` or `hub.mode` on `hub.joined` and `hub.leave` on
-`hub.left`, and `cj(payload)` equal to the event's payload without `owner_proof`; then the dev marker. **No clock:**
-a recorded proof is bound to its `binding_seq`, which never repeats in a workspace (§9.2), and the host checked its
-freshness when it appended the event (vector `recorded_long_after_expiry`).
+`check_recorded_owner_proof`, vectors `recorded_*`), for every `hub.joined` / `hub.left` on the workspace log. The
+inputs that decide are the reader's own facts, never fields the signer chose: `signer_exposed` (the roster's
+custody evidence for the signing device), `at_ms` (the event's host-assigned append time `at`), `prior_binding_seq`
+(the `binding_seq` of the last `hub.joined` / `hub.left` before it, `0` if none) and the actor's `PK` from the
+roster. In order:
 
-**The terminal path.** `orch hub join / mode / leave` at the terminal, signed with the passphrase device key, needs
-no proof (`owner_proof: null`): the owner's own key is the proof. It may still ask for the recovery code and attach
-one; then it is checked like any other.
+1. the event's place: a `hub.joined` names exactly `prior_binding_seq + 1`, a `hub.left` exactly `prior_binding_seq`
+   (≥ 1) → `stale_binding` (the host assigns them so, §9.2: join and mode switch take the next one, leave names the
+   one it ends);
+2. the `owner_proof` member as in §9.1: `null` only with `auth: "passphrase"` and a signer that is not exposed, else
+   `proof_missing`;
+3. a present proof passes steps 1–4 with `pk_pub` the actor's `PK` (unknown → `proof_invalid`), `workspace_id` this
+   workspace, `person_id` the actor's, `op` `hub.join` or `hub.mode` on `hub.joined` and `hub.leave` on `hub.left`,
+   and `cj(payload)` equal to the event's payload without `owner_proof`;
+4. the proof covers the event's time without a reader clock: `issued_ms − 300 s ≤ at_ms ≤ expires_ms` →
+   `proof_expired` (append times are whole seconds and the signer's clock may lead the host's);
+5. the dev marker.
+
+**Replay.** Steps 1 and 4 together close it without a clock: a proof that landed is dead, because its `binding_seq`
+is taken and every later `hub.joined` must name a higher one (vector `recorded_replayed_proof_on_later_event`); a
+proof for an abandoned attempt dies with its ≤ 600 s life, because the event's append time must fall inside it
+(vector `recorded_abandoned_proof_replayed_after_expiry`); at the host the `request_id` also ties it to one request.
+
+**The terminal path.** `orch hub join / mode / leave` at the terminal, signed with a passphrase device key that was
+never in One-click custody, needs no proof (`owner_proof: null`): the owner's own key is the proof. A key that was
+(the `exposed` mark) needs the proof like a click (vector `recorded_passphrase_label_by_exposed_key_without_proof`).
+At the host the rule is decided by custody, not by the label: a hub op needs a proof unless the signing device's
+custody is a passphrase now and the roster has no convenience evidence for it. The terminal may always ask for the
+recovery code and attach one; then it is checked like any other.
 
 **Rollout.** The card's `reader` ships now on both sides (it changes the signed card, so hub and core deploy
 together; a dev hub re-issues its card, `reissue_card`, to get one). The `owner_proof` payload member, the `join` and
@@ -2186,8 +2205,8 @@ v2 codes keep their meaning (v2 §14). New in H0:
 | `wsk_mismatch`, `not_yet_valid`, `binding_conflict`, `stale_binding`, `unbound` | binding store | §9 |
 | `alias_repointed` | `hub.joined` | §9.1 |
 | `proof_invalid` | owner proof | §9.6: the proof does not verify under the owner's `PK`, names another workspace, person, op, payload or request, lives longer than 600 s, or is issued in the future; one code for all of them |
-| `proof_expired` | owner proof | §9.6: `now ≥ expires_ms` at the host or the hub (readers use no clock) |
-| `proof_missing` | owner proof | §9.1, §9.6: a `hub.joined` / `hub.left` (or the op that would append one) with `auth` other than absent or `"passphrase"` and no proof |
+| `proof_expired` | owner proof | §9.6: `now ≥ expires_ms` at the host or the hub; at readers, the event's append time is outside the proof's life (step 4) |
+| `proof_missing` | owner proof | §9.1, §9.6: a `hub.joined` / `hub.left` (or the op that would append one) with no proof, unless `auth` is `"passphrase"` and the signing key has no One-click history |
 | `reader_downgrade` | card | §5 step 7: a newer card declares a lower `reader` than the held one |
 | `hub_too_old` | card at join (host) | §5 "Reader level": the card's `reader` is below the workspace's `required_reader`; the host's `sign.convenience_readers` reason |
 | `unknown_op`, `wrong_mode` | link | §10 |
@@ -2268,7 +2287,7 @@ link errors travel as `{"error": code}` reply bodies; host-side refusals are loc
 | `phase4` | p4: the `log_sync` lines, heads, view key, AAD and one sealed page; a ticket projection `proj_ticket`, a ticket page carrying it and its plaintext bytes (D15b); a prepared context and digest; a relay request and its bytes; the relay routes' request bytes and one sealed push payload (`relay_routes`); the custodial type table; the `space.accept` built from the vector proposal |
 | `share_item_f1` | C3b addendum: a ticket item with an `f1` block and its `item_hash` (§10.2b, §8.6) |
 | `phase4.channel_api` | B stream: a pairing link and its fingerprint, a signed `hub.api_origin`, a `session_ref`, a signed `hub.channel_auth` and `hub.channel_push`, a channel → relay request with its signed bytes, the mailbox list answer |
-| `cases` | 1048 cases (269 positive, 779 negative; 128 of them phase 5: §8.8, and #1198 C8 §5 and §9.6): `check`, `args`, `expect` (`{"ok": …}` or `{"error": code}`), `phase` |
+| `cases` | 1056 cases (269 positive, 787 negative; 136 of them phase 5: §8.8, and #1198 C8 §5 and §9.6): `check`, `args`, `expect` (`{"ok": …}` or `{"error": code}`), `phase` |
 
 The negative cases cover, per object where it applies: wrong domain, wrong signer, expired, binding for another
 workspace, unbound after leave, missing dev marker, dev at a real verifier, extra or unknown field, non-canonical

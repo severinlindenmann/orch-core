@@ -87,6 +87,21 @@ export function grantRequest(name: string, staged: string, serial: number): Hand
   } as unknown as HandoffRequest
 }
 
+/** The signer's View of a market grant, as core renders it: the signed event line by line, then the marketplace block. */
+function clickView(name: string) {
+  return {
+    risk: 'Convenience signing: agents running as you, or anything that takes over this dashboard, could sign.', op: 'addon.grant',
+    workspace: { id: WS, name: 'Dev workspace', prefix: 'DEMO' }, fingerprint: '5b9f4bcf5cca',
+    lines: [
+      `workspace: Dev workspace (DEMO) ${WS}`, `op: addon.grant: grant addon ${name}`, '', '--- event 1 of 1: addon.granted ---', 'artifact_kinds: []', 'capabilities: ["network"]', 'fields: {}',
+      `name: ${name}`, 'package_sha256: sha256:' + '4'.repeat(64), 'sections: []', 'version: 1.2.0',
+      'marketplace (per host, not signed): https://github.com/severinlindenmann/orch-marketplace (official)', 'marketplace commit (per host, not signed): ' + 'd'.repeat(40),
+      'source (per host, not signed): source as claimed by the marketplace', 'publisher (per host, not signed): SHA256:7F3Aexample, first use: remembered when you sign', 'index version (per host, not signed): 7',
+    ],
+    checks: [], confirm: { kind: 'click' }, expires_at: new Date(Date.now() + 600_000).toISOString().replace(/\.\d+Z$/, 'Z'), auth: 'convenience', device: 'd_' + '1'.repeat(32), artifacts: null,
+  }
+}
+
 export class FakeServer {
   calls: Call[] = []
   requests = new Map<string, HandoffRequest>()
@@ -95,6 +110,10 @@ export class FakeServer {
   installedNames = new Set<string>()
   server: http.Server
   port = 0
+  /** One click switched on for the workspace (V3-D38): the page signs through /click/* instead of the Terminal hand-off. */
+  clickOn = false
+  clickSigned = new Set<string>()
+  clickRequests = new Map<string, { name: string; staged: string }>()
   constructor(private dist: string) {
     this.server = http.createServer((req, res) => void this.handle(req, res))
   }
@@ -131,8 +150,9 @@ export class FakeServer {
       return
     }
     if (p === '/api/host') return json({})
-    if (p === '/api/session') return json({ features: FEATURES, workspaces: { [WS]: FEATURES } })
-    if (p === '/api/workspaces') return json([{ id: WS, prefix: 'DEMO', name: 'Dev workspace', members: [{ person: OWNER, name: 'Sev', role: 'owner', devices: 1 }], needs_you: 0, host_state: 'ok', features: FEATURES, click: null }])
+    const features = this.clickOn ? [...FEATURES, 'click'] : FEATURES
+    if (p === '/api/session') return json({ features, workspaces: { [WS]: features } })
+    if (p === '/api/workspaces') return json([{ id: WS, prefix: 'DEMO', name: 'Dev workspace', members: [{ person: OWNER, name: 'Sev', role: 'owner', devices: 1 }], needs_you: 0, host_state: 'ok', features, click: this.clickOn ? { custody: 'convenience', enabled: true, available: true, switchable: true } : null }])
     if (p === '/api/me') return json([{ person: OWNER, name: 'Sev', role: 'owner', tier: 'A', workspace: WS }])
     const m = /^\/api\/w\/[0-9a-f]{32}\/(.*)$/.exec(p)
     const rest = m?.[1] ?? ''
@@ -157,9 +177,23 @@ export class FakeServer {
       return r ? json({ id: r.id, state: signed ? 'submitted' : 'prepared', op: r.op, key: null, expires_at: r.expires_at, event_ids: signed ? ['01J9ZP0000000000000000SIGN'] : [], seq: signed ? 7 : null }) : json({ ok: false, error: { code: 'not_found', message: 'x', retryable: false } }, 404)
     }
     if (h && method === 'DELETE') return json({ id: h[1], state: 'cancelled' })
-    if (rest === 'me/sign_default') return json({ method: 'terminal', is_default: true, allowed: ['terminal'] })
+    if (rest === 'click/prepare' && method === 'POST' && this.clickOn) {
+      const id = 'hr_' + '0'.repeat(22) + String(this.clickRequests.size + 1).padStart(4, '0')
+      this.clickRequests.set(id, { name: String(body?.name), staged: String(body?.staged) })
+      return json({ request_id: id, expires_at: new Date(Date.now() + 600_000).toISOString().replace(/\.\d+Z$/, 'Z'), op: 'addon.grant', confirm: 'click' })
+    }
+    const c = /^click\/(view|sign|state|cancel)$/.exec(rest)
+    if (c && method === 'POST' && this.clickOn) {
+      const rid = String(body?.request_id); const r = this.clickRequests.get(rid)
+      if (!r) return json({ ok: false, error: { code: 'not_found', message: 'x', retryable: false } }, 404)
+      if (c[1] === 'view') return json({ view_digest: 'sha256:' + 'e'.repeat(64), view: clickView(r.name) })
+      if (c[1] === 'sign') { this.clickSigned.add(rid); this.installedNames.add(r.name); return json({ state: 'submitted', duplicate: false, seq: 7 }) }
+      if (c[1] === 'cancel') return json({ id: rid, state: 'cancelled' })
+      return json({ id: rid, state: this.clickSigned.has(rid) ? 'submitted' : 'prepared' })
+    }
+    if (rest === 'me/sign_default') return json(this.clickOn ? { method: 'click', is_default: true, allowed: ['terminal', 'click'] } : { method: 'terminal', is_default: true, allowed: ['terminal'] })
     if (rest === 'identity') return json({ uuid: WS, prefix: 'DEMO', genesis: 'sha256:' + 'f'.repeat(64), epoch: 3, key_fingerprint: 'AB12 CD34', created_at: null, tier: 'A', me: { person: OWNER, name: 'Sev', role: 'owner', tier: 'A', workspace: WS } })
-    if (rest === 'settings') return json({ gates: {}, sign_methods: ['terminal'], grant_hours: 8, claim_ttl_min: 60, lease_ttl_min: 60 })
+    if (rest === 'settings') return json({ gates: {}, sign_methods: this.clickOn ? ['terminal', 'click'] : ['terminal'], grant_hours: 8, claim_ttl_min: 60, lease_ttl_min: 60 })
     if (rest === 'members') return json([{ person: OWNER, name: 'Sev', role: 'owner', devices: [] }])
     if (rest === 'today') return json(fixture('today.json'))
     if (rest === 'board' || rest === 'tickets') return json({ ...fixture('board-page.json'), next_page: null })

@@ -8,3 +8,4 @@ server/src/orch_dashboard/static/
 __pycache__/
 *.pyc
 server/src/orch_dashboard/orch-addon.json
+test-results/

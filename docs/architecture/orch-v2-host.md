@@ -2794,13 +2794,13 @@ to your orch runner on this machine and is never shown") only then, with the per
 
 | Class | Ops |
 |---|---|
-| **Click** | `approve`, `request_changes`, `verdict`, `answer`, `close`, `reopen`, `new`, `set`, `section.set`, `ac.add`, `ac.edit`, `task.add`, `task.edit`, `task.block`, `task.done`, `task.reopen`, `task.skip`, `task.start`, `ac.accept`, `ac.unaccept`, `task.mark_done`, `log`, `ask`, `claim`, `release`, `handoff`, `submit`, `move`, `artifact.add`, `artifact.replace`, `apply`, `grant.revoke`, `addon.disable`, `settings.set` without `repos` |
-| **Click + typed word** | `relay.pair_device` (the last eight hex of the device id; B10), `member.add`, `member.role`, `member.remove` (word: the person id, unique already), `addon.grant`, `addon.purge` (`<name>~<WS8>`: addon names repeat across workspaces), workspace `policy.set` (`<PREFIX>~<WS8>/POLICY`), `settings.set` with `repos` (`<PREFIX>~<WS8>/SETTINGS`: it changes the repo path and remote that D58's source checks read); a ticket-scope op keeps `KEY/FRAG`. `WS8` is the last 8 characters of the workspace id and `PREFIX` the prefix, both from the signer's own registry (orch-52 decision, 12 Oct 2026, shared with #404's terminal signer) |
+| **Click** | `approve`, `request_changes`, `verdict`, `answer`, `close`, `reopen`, `new`, `set`, `section.set`, `ac.add`, `ac.edit`, `task.add`, `task.edit`, `task.block`, `task.done`, `task.reopen`, `task.skip`, `task.start`, `ac.accept`, `ac.unaccept`, `task.mark_done`, `log`, `ask`, `claim`, `release`, `handoff`, `submit`, `move`, `artifact.add`, `artifact.replace`, `apply`, `grant.revoke`, `addon.disable`, `addon.grant` (any add-on except `publish`, which is terminal only; V3-D38: one click, the review shows the capabilities and the marketplace block), `settings.set` without `repos`, `sign_methods`, `grant_hours` and `publish` (so `addons` is a click, V3-D38) |
+| **Click + typed word** | `relay.pair_device` (the last eight hex of the device id; B10), `member.add`, `member.role`, `member.remove` (word: the person id, unique already), `addon.purge` (`<name>~<WS8>`: addon names repeat across workspaces), workspace `policy.set` (`<PREFIX>~<WS8>/POLICY`), `settings.set` with `repos` (`<PREFIX>~<WS8>/SETTINGS`: it changes the repo path and remote that D58's source checks read); a ticket-scope op keeps `KEY/FRAG`. `WS8` is the last 8 characters of the workspace id and `PREFIX` the prefix, both from the signer's own registry (orch-52 decision, 12 Oct 2026, shared with #404's terminal signer) |
 | **Click + word, deposit only** (v1.6) | `grant` with `deposit:true` and `label:"runner"`, at most 168 h and the workspace `grant_hours` (word `<PREFIX>~<WS8>/GRANT`; the secret goes only to the runner; owner decision of 12 Oct 2026, §12.4.2) |
 | **Terminal only** | `grant` without `deposit:true`, and every op not listed above |
 
 Daily operations use click confirmation as a phase-1 usability decision. A later event may supersede their recorded
-state but may not reverse external effects. Typed words on member, addon-grant/purge, policy and repo-settings
+state but may not reverse external effects. Typed words on member, addon-purge, policy and repo-settings
 operations reduce accidental confirmation; they are neither authentication factors nor protection against
 script-driven signing (the word is in the View). Framing defences address clickjacking separately. The grant secret
 stays off the HTTP path (F1, D-P2-16): a terminal `grant` shows it only on the terminal, and a click deposit grant
@@ -4866,7 +4866,7 @@ it can see (D65's stated limit); presence returns with H9 and tier B in phase 3.
 |---|---|---|---|
 | CLI (`orch approve`) | `human.prepare` with `signer` | `/dev/tty`: header, then review from `material`, confirmation word, `tcflush` (C7) | passphrase, fields from the signing bytes |
 | CLI (`orch sign CODE`) | `human.pending` + `human.get` (binds the device) | the same | the same |
-| H5c click signer (`python -I -m orch.click`, beside the dashboard, auth `convenience`, phase 1) | its own `human.prepare` with `signer` (bound at prepare), then `human.get` | the dashboard's sign panel shows the signer's View (the terminal review line for line, the risk line), §0.8.6 | a click; a typed word for member, addon-grant/purge, policy and repo-settings ops; none on the key |
+| H5c click signer (`python -I -m orch.click`, beside the dashboard, auth `convenience`, phase 1) | its own `human.prepare` with `signer` (bound at prepare), then `human.get` | the dashboard's sign panel shows the signer's View (the terminal review line for line, the risk line), §0.8.6 | a click; a typed word for member, addon-purge, policy and repo-settings ops (V3-D38: `addon.grant`, except `publish`, and `settings.set` with `addons` are one click; the click review lists every line and the marketplace block "per host, not signed"); none on the key |
 | H9 `orch-signer` (macOS, Swift, Secure Enclave P-256, auth `secure-enclave`) | `human.get` (binds the device) | its own native window: header, then review from `material` after recomputing the hashes | Touch ID; the LocalAuthentication reason is built from the signing bytes; non-person labels refused |
 
 WebAuthn (D64) needs a new signature contract and is deferred past P2 (H0 records this).
@@ -5388,7 +5388,7 @@ alternative:
   guarantees; `file` collides with the file tier), or reusing `passphrase` (would hide the missing factor).
 - **Same device on conversion; downgrade in place only with `--in-place`** (Codex 4, Opus R10). *Alternative:* a new
   device for every custody change. That is `--rotate`, designed for when device ops exist.
-- **Click for daily ops; a typed word for member, addon-grant/purge, policy and repo-settings ops; `grant` and unknown
+- **Click for daily ops; a typed word for member, addon-purge, policy and repo-settings ops; `grant` and unknown
   ops terminal-only** (Codex 10, Opus R8; v1.6 adds the deposit-only runner grant, click + word, §10 entry 8 and
   D-P2-27). *Alternatives:* click for everything (the grant secret would cross the HTTP
   process); a word for every op (the owner wants it easy).

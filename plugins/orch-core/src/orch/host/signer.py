@@ -25,6 +25,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from orch import canon
+from orch.addons.settings_value import KEY as ADDONS_KEY
 
 from . import review, signcontent
 
@@ -241,7 +242,17 @@ _MOVE_TO = frozenset({"backlog", "open"})
 _GATES = frozenset({"requirements", "plan", "verify", "code"})
 _PEOPLE_ROLES = ("owner", "assignees", "reviewers")  # watchers: not offered by the dashboard yet
 _SETTINGS_KEYS = frozenset(
-    {"grant_hours", "claim_ttl_min", "lease_ttl_min", "sign_methods", "repos", "publish", "models", "icon"}
+    {
+        "grant_hours",
+        "claim_ttl_min",
+        "lease_ttl_min",
+        "sign_methods",
+        "repos",
+        "publish",
+        "models",
+        "icon",
+        ADDONS_KEY,
+    }  # fmt: skip
 )
 
 
@@ -353,6 +364,10 @@ def _person_op(prepared: Mapping[str, Any]) -> None:
             sets = e.get("set")
             ok = e["type"] == "settings.changed" and log == "workspace" and isinstance(sets, dict) and bool(sets)
             ok = ok and set(sets) <= _SETTINGS_KEYS
+            if ok and ADDONS_KEY in sets:  # G6: one add-on, alone, within the general bounds (rendered from the event)
+                from orch.addons import settings_value
+
+                ok = len(sets) == 1 and settings_value.check_changes(sets[ADDONS_KEY]) is None
         else:
             return
         if not ok:

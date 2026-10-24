@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from hypothesis import given, settings
+from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
 from orch.addons import runner as r
@@ -18,7 +18,7 @@ def pipeline(stream: bytes, secret: str, cap: int) -> str:
 FORMS = st.sampled_from(["S", "E"])
 
 
-@settings(max_examples=800, deadline=None)
+@settings(max_examples=800, deadline=None, derandomize=True)
 @given(
     secret=st.text(alphabet='QW\\"', min_size=1, max_size=12),
     parts=st.lists(st.one_of(st.text(alphabet="xyz\n[]é日", max_size=30), FORMS), max_size=40),
@@ -33,7 +33,8 @@ def test_whole_copies_leave_no_secret_letter(secret, parts, cap):
     assert len(out.encode()) <= cap + 3 * 0 or out.endswith("�") or len(out.encode()) <= cap
 
 
-@settings(max_examples=800, deadline=None)
+@settings(max_examples=800, deadline=None, derandomize=True)
+@example(secret="QQQ\\\\\\", parts=["S", "E", "E", "E"], cap=22)
 @given(
     secret=st.text(alphabet='QW\\"', min_size=1, max_size=12),
     parts=st.lists(st.one_of(st.text(alphabet="xyz", max_size=30), FORMS), max_size=40),
@@ -46,7 +47,7 @@ def test_whole_copies_leave_no_escape_residue(secret, parts, cap):
     assert set(rest) - set("[redacted]") <= set("xyz"), (secret, stream, cap, rest)
 
 
-@settings(max_examples=800, deadline=None)
+@settings(max_examples=800, deadline=None, derandomize=True)
 @given(
     secret=st.text(alphabet='QW\\"', min_size=1, max_size=8),
     noise=st.text(alphabet='QW\\"x', max_size=200),
@@ -59,7 +60,7 @@ def test_no_whole_form_and_no_trailing_prefix(secret, noise, cap):
     assert len(out.encode()) <= cap
 
 
-@settings(max_examples=500, deadline=None)
+@settings(max_examples=500, deadline=None, derandomize=True)
 @given(
     secret=st.text(alphabet=st.characters(min_codepoint=33, max_codepoint=126), min_size=1, max_size=40),
     pre=st.binary(max_size=50),

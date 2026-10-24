@@ -103,7 +103,7 @@ person can configure. `schema` is a closed JSON-Schema subset, checked when the 
 (`orch.addons.settings_schema`); anything else is refused:
 
 - the root is `type: "object"`; `type` is one of `object`, `string`, `integer`, `boolean`, `array`;
-- object: `properties` (at most 64, names `[a-z0-9][a-z0-9._-]{0,63}`), `additionalProperties: false` (required),
+- object: `properties` (at most 64, names `[a-z0-9][a-z0-9_-]{0,63}`, no dot), `additionalProperties: false` (required),
   `required` (names of properties), `maxProperties` (0 to 64);
 - string: `enum` (1 to 64 distinct printable strings of at most 64 characters), `maxLength` (1 to 200);
 - integer: `minimum`, `maximum` (whole numbers, `minimum <= maximum`); no floats anywhere;

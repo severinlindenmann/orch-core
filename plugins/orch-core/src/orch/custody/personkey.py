@@ -73,6 +73,7 @@ __all__ = [
     "PersonMismatch",
     "PublicKeyUnknown",
     "RecoveryCodeSource",
+    "TypedCodeSource",
     "check_granted",
     "check_labels",
     "check_payload",
@@ -522,3 +523,67 @@ class RecoveryCodeSource:
     def derive_label_key(self) -> bytes:
         self._key()
         return crypto.hkdf(bytes(self._live[1]), b"", LABEL_KEY_INFO)
+
+
+class TypedCodeSource(RecoveryCodeSource):
+    """The person key from a recovery code the click signer opened from the sealed field (#1198 C10, purpose
+    ``hub.backup_key``), for one proof. The same lifecycle and checks as :class:`RecoveryCodeSource` (the code is
+    parsed and the key derived by the one existing path; the derived person must be ``person_id``/``pk_pub`` before
+    anything is signed; only the granted labels sign; no raw-sign call; one use), but the code arrives as bytes, not as
+    a prompt on ``/dev/tty``. **It takes ownership of ``code`` (a ``bytearray``) and wipes it on entering**, whatever
+    happens; the scalar is wiped on exit. Under ``ORCH_GRANT`` it refuses, like its sibling: an agent never holds PK."""
+
+    __slots__ = ("_code",)
+
+    def __init__(
+        self,
+        code: bytearray,
+        *,
+        labels: Iterable[str],
+        person_id: bytes | None = None,
+        pk_pub: bytes | None = None,
+        action: str = "",
+    ) -> None:
+        try:
+            super().__init__(labels=labels, person_id=person_id, pk_pub=pk_pub, action=action)
+        except BaseException:
+            _zeroise(code)
+            raise
+        self._code: bytearray | None = code
+
+    def __enter__(self) -> TypedCodeSource:
+        typed, self._code = self._code, None
+        scalar = bytearray()
+        opened = False
+        try:
+            if self._state != "new" or typed is None:
+                raise PersonKeyClosed("a recovery code source serves one command; make a new one")
+            self._state = "closed"
+            if os.environ.get("ORCH_GRANT") is not None:
+                raise HumanOnly("the recovery code is never used under ORCH_GRANT: an agent never holds PK")
+            key = _unlock(typed, scalar)
+            pub = crypto.public_bytes(key)
+            if not hmac.compare_digest(crypto.person_id(pub), self._person_id) or (
+                self._pk_pub is not None and not hmac.compare_digest(pub, self._pk_pub)
+            ):
+                key = None
+                raise PersonMismatch(
+                    f"that recovery code is not the one of p_{self._person_id.hex()}; nothing was signed"
+                )
+            self._pk_pub = pub
+            self._live[:] = [key, scalar]
+            self._state = "open"
+            opened = True
+            return self
+        finally:
+            if typed is not None:
+                _zeroise(typed)
+            if not opened:
+                self._live.clear()
+                _zeroise(scalar)
+
+    def __del__(self) -> None:
+        code, self._code = getattr(self, "_code", None), None
+        if code is not None:
+            _zeroise(code)
+        super().__del__()

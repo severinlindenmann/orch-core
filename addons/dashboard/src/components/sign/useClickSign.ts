@@ -35,7 +35,7 @@ export interface ClickRun {
   /** Read the View again (it changed). The same request. */
   review: () => Promise<void>
   /** `revealKey`: a shown-secret grant only (the page key its review was made for). */
-  sign: (revealKey?: string) => Promise<void>
+  sign: (revealKey?: string, sealed?: Record<string, import('@/api/sealed').Envelope>) => Promise<void>
   cancel: () => Promise<void>
   /**
    * "Try again" / "Prepare again" / "Do it again": a request that is still open is cancelled first (no leaked slot) and
@@ -170,13 +170,13 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
   }, [read, fail])
 
   const sign = useCallback(
-    async (revealKey?: string) => {
+    async (revealKey?: string, sealed?: Record<string, import('@/api/sealed').Envelope>) => {
       const { prepared: open, ws: where } = live.current
       if (!open || !where || !view || busy.current || live.current.phase !== 'ready') return
       busy.current = true
       setPhase('signing')
       try {
-        const got = await api.signClick(where, open.request_id, view.view_digest, revealKey)
+        const got = await (sealed ? api.signClick(where, open.request_id, view.view_digest, revealKey, sealed) : api.signClick(where, open.request_id, view.view_digest, revealKey))
         if (!mounted.current) return
         setSigned(got)
         setPhase('done')

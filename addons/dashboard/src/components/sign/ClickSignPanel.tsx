@@ -5,7 +5,7 @@ import { SignContent, SignDetails } from './SignContent'
 // review, already escaped, and are text here, never HTML. Sign is armed after 1 s of visible presentation.
 // Every op signs on one plain click after the review; nothing is typed. The risk notice lives in Settings; the custody is a technical fact under Technical details.
 import { Loader2, ShieldAlert } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { CLICK_RISK, type ClickProblem, type ClickViewAnswer } from '@/api/click'
 import { uuid8 } from '@/api/workspaces'
 import { Button } from '@/components/ui/button'
@@ -47,12 +47,16 @@ interface Props {
   ws?: string
   /** What this signature leads to (button label, steps, access): derived from the action. */
   story?: SignStory | null
+  /** A field the review needs before Sign (the hub step's backup key), shown above the buttons. */
+  extra?: ReactNode
+  /** False while that field is empty: Sign stays off. */
+  ready?: boolean
 }
 
-export function ClickSignPanel({ answer, problem, signing, onSign, onCancel, waitUntil = 0, ws, story }: Props) {
+export function ClickSignPanel({ answer, problem, signing, onSign, onCancel, waitUntil = 0, ws, story, extra, ready = true }: Props) {
   const { view, view_digest: digest } = answer
   // A new View (a new digest) is a new confirmation: the timer, a half-done hold and any half-begun press start over.
-  return <Presented key={digest} view={view} digest={digest} problem={problem} signing={signing} onSign={onSign} onCancel={onCancel} waitUntil={waitUntil} ws={ws} story={story} />
+  return <Presented key={digest} view={view} digest={digest} problem={problem} signing={signing} onSign={onSign} onCancel={onCancel} waitUntil={waitUntil} ws={ws} story={story} extra={extra} ready={ready} />
 }
 
 /** What the one "Technical details" expander of the review holds besides the content's own ids (action, workspace, fingerprint, device, the signer's lines and checks). */
@@ -111,7 +115,7 @@ export function TechnicalFacts({ view }: { view: ClickViewAnswer['view'] }) {
   )
 }
 
-function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil, ws, story }: Omit<Props, 'answer'> & { view: ClickViewAnswer['view']; digest: string; waitUntil: number }) {
+function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil, ws, story, extra, ready = true }: Omit<Props, 'answer'> & { view: ClickViewAnswer['view']; digest: string; waitUntil: number }) {
   const armed = useArming(digest)
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
@@ -122,7 +126,7 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
   const waiting = waitUntil > now
   const activation = useActivation(armed)
   const picturesOk = usePicturesOk(view.content?.images) // R3 part B: a picture that is not the pasted file switches Sign off
-  const can = armed && !signing && !waiting && picturesOk
+  const can = armed && !signing && !waiting && picturesOk && ready
   const go = () => {
     if (!activation.take() || !can) return
     onSign()
@@ -140,6 +144,7 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
       {!view.content && <SignDetails>{technical}</SignDetails>}
       {!view.content && <div data-testid="click-lines" className="max-h-64 overflow-auto rounded-md border border-border bg-bg p-3 font-mono text-[12px]">{view.lines.map((line, i) => <div key={i} className="whitespace-pre-wrap break-all">{line || " "}</div>)}</div>}
       {problem && <ClickProblemBox problem={{ ...problem, next: undefined, signedAt: undefined }} ws={ws} />}
+      {extra}
       <div className={STICKY_FOOTER} data-testid="sign-footer">
         <p data-testid="sign-method" className="text-[12px] text-text-muted">On this computer</p>
         <div className="flex flex-wrap items-center justify-end gap-2">

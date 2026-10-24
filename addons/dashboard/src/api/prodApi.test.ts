@@ -140,3 +140,14 @@ it('asks the server where a click request stands (the answer to an unknown outco
   expect(await api.stateClick(ws, 'hr_1')).toEqual({ id: 'hr_1', state: 'bound' })
   expect(String(answers.mock.calls[0][0])).toBe(`/api/w/${ws}/click/state`)
 })
+
+it('sends a sealed hub backup key with the sign call, and nothing sealed otherwise (#1198 C10)', async () => {
+  const answers = vi.fn(async () => Response.json({ state: 'submitted', duplicate: false }))
+  vi.stubGlobal('fetch', answers)
+  const env = { v: 1 as const, alg: 'P256-HKDF-SHA256-A256GCM' as const, epk: 'A'.repeat(87), ct: 'B'.repeat(363) }
+  const d = 'sha256:' + 'a'.repeat(64)
+  await api.signClick(ws, 'hr_1', d, undefined, { 'hub.backup_key': env })
+  await api.signClick(ws, 'hr_1', d)
+  const bodies = (answers.mock.calls as unknown as [string, RequestInit][]).map((c) => JSON.parse(String(c[1].body)))
+  expect(bodies).toEqual([{ request_id: 'hr_1', view_digest: d, sealed: { 'hub.backup_key': env } }, { request_id: 'hr_1', view_digest: d }])
+})

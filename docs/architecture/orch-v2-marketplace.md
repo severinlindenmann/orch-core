@@ -223,9 +223,9 @@ network and write nothing; the first network access is step 11.
 | 2 | `source.git` of the index equals the URL it was added from. For the official index (and for any index that carries one) the index signature, `expires_at` and key are verified now, before anything is taken from the index | `market.source_mismatch`, `market.index_unsigned` |
 | 3 | `version` is not lower than the last version of a *verified* index for this URL | `market.rollback` |
 | 4 | Class (§4.2): an "other" marketplace needs OS-user isolation (§10) | `market.community_unisolated` |
-| 5 | Hub policy, when a hub is joined (§9): block list, then allow list | `market.blocked`, `market.not_allowed` |
+| 5 | Hub policy, when a hub is joined (§9), before any network access: the marketplace is listed in the hub policy | `market.not_allowed` |
 | 6 | Select the entry by `id`; the index does not list `id@version` as revoked; its git host is the marketplace's host or on the allow list (§5.1); reserved ids; an installed add-on of this id came from this URL; the entry's `version` is not lower than the installed one or the highest seen for this `(URL, id)` | `market.unknown_addon`, `market.revoked`, `market.host_not_allowed`, `market.reserved_id`, `market.origin_changed`, `market.rollback` |
-| 7 | Publisher: official key rule, signature, TOFU (§4) | `market.official_unsigned`, `market.bad_signature`, `market.publisher_key_changed` |
+| 7 | Publisher: official key rule, signature, TOFU (§4); for a hub-listed company marketplace the entry's publisher key must be one the hub pins (§9) and replaces TOFU | `market.official_unsigned`, `market.bad_signature`, `market.publisher_key_changed`, `market.publisher_unpinned` |
 | 8 | Hub capability ceiling (§9): entry capabilities ⊆ ceiling | `market.capability_ceiling` |
 | 9 | `min_orch` ≤ the running core version (a `.devN` build sorts before its release; an unparsable version fails) | `market.min_orch` |
 | 10 | (the checks above need no package) | |
@@ -439,38 +439,54 @@ A failure at any step leaves no environment and no running add-on; the grant sta
 remove. Having dependencies does not change the add-on's capabilities: `network` stays a capability, and installing
 dependencies is the host's act, not available to the add-on.
 
-## 9. Hub policy hook (interface only)
+## 9. Hub policy (D14, orch-core#927; enforcement G7, #928)
 
-With a hub joined, the workspace host MUST ask the hub's policy before any marketplace use. The hub side is D14 (#927),
-the enforcement in core is G7 (#928); this section fixes only what the policy looks like so the vectors and the order of
-checks are stable.
+With a hub joined, the workspace host MUST ask the hub's policy before any marketplace use. The hub side (D14) is built:
+the policy is one hub-wide object that the hub admin edits in the hub's admin console and that `HK_op` signs inside
+**every `hub.snapshot`** as the required field `market_policy` (orch-hub `docs/protocol.md` 7.1; there is no snapshot
+without it and no older shape, V3-D36). Core reads it only from a verified, pinned snapshot (`orch.hubclient.snapshot.hub_market_policy`,
+a read-only accessor that verifies again on every read and gives `None` on any failure) and can only refuse by it.
+The vectors are `vectors_hub_policy.json` (`policy` and `evaluate` cases); hub and core run the same file.
 
-The policy object is **`orch.hub-policy/1`**, strict: exactly these three keys, no others.
+The policy object is **`orch.hub-policy/1`**, strict: exactly these keys at every level, no others.
 
 ```
-{ "allow":   [<canonical marketplace URL>, …],
-  "block":   [<canonical marketplace URL>, …],
+{ "markets": [ {"url": <canonical URL §4.1>, "class": "official" | "company", "keys": [<P-256 key>, …]}, … ],
+  "addons":  {"allow": [<id>, …] | null, "block": [<id> | <id>@<semver>, …]},
   "ceiling": [<capability>, …] | null }          // null = no ceiling
 ```
 
-`allow` and `block` are lists of canonical URLs (§4.1) and membership is equality of a URL with a list element: never a
-substring test, never a prefix. A missing key, a wrong type, an unknown key, a non-canonical URL or an unknown
-capability makes the **whole policy malformed**, and a malformed policy is an empty allow list (`market.not_allowed`).
-The same policy also gates `market add` and `market refresh`: no network access to a blocked or unlisted marketplace.
+- `markets` (0 to 16, sorted by `url`, unique) is the list of marketplaces the workspace may use, **including the
+  official one**. `class` is recomputed, never trusted: `official` exactly when `url` is the core constant `OFFICIAL_URL`
+  and then `keys` is `[]` (the official key is pinned in core; a hub can neither add nor replace it); `company` for any
+  other URL with 1 or 2 pinned keys (current and next).
+- `addons.allow` `null` = any id; else a sorted unique id list. `addons.block` = ids (every version) or `id@version`
+  (exact). Ids are global across marketplaces. `ceiling` `null` = none; `[]` = capability-free add-ons only.
+- Lists must already be sorted and unique (one form, one hash); a missing key, a wrong type, an unknown key, a
+  non-canonical URL, a wrong class or key set, an unknown capability makes the **whole policy malformed**, and a malformed
+  or unreadable policy is **an empty marketplace list** (`market.not_allowed`).
+- A new hub starts with the official marketplace only, `allow: null`, `block: []`, `ceiling: null`.
+
 "A hub is joined" is read from the workspace's signed log, not from a local file: a workspace whose log says it joined a
-hub but whose hub record is missing or unreadable is *not* standalone; it refuses (fail closed).
+hub but whose hub record is missing or unreadable is *not* standalone; it refuses (fail closed). The policy also gates
+`market add` and `market refresh`: no network access to an unlisted marketplace. The checks, first failing one wins:
 
 | Rule | |
 |---|---|
-| Without a hub the policy is `none` and the owner decides alone (D79). Standalone must not call a hub | |
-| With a hub, a marketplace that is not in `allow` is refused, **including the official one** | `market.not_allowed` |
-| `block` beats `allow` | `market.blocked` |
-| A policy that cannot be read, is expired or is malformed is **an empty allow list** (fail closed) | `market.not_allowed` |
-| `ceiling` is checked on the index entry (step 8) **and again on the staged manifest and on the grant event** at step 17/18. The index is only a claim | `market.capability_ceiling` |
+| Without a hub the policy is `none` and the owner decides alone (D79). Standalone must not call a hub; core imports no hub code | |
+| With a hub, a marketplace that is not in `markets` is refused, **including the official one**; step 5 needs a fresh snapshot (`snapshot_get`) and has no cached fallback | `market.not_allowed` |
+| A `company` marketplace's index must be signed by one of its pinned `keys` (step 2) | `market.index_unsigned` |
+| A listed `official` or `company` marketplace passes step 4 without OS-user isolation (V3-D32, §15.3 Option B); any other marketplace is `market.community_unisolated` | `market.community_unisolated` |
+| After the entry is selected (step 6): the `id` or `id@version` is in `addons.block` | `market.blocked` |
+| `addons.allow` is not `null` and the `id` is not in it | `market.addon_not_allowed` |
+| Step 7, company marketplace: the entry's publisher key must be one of the pinned `keys`; the hub pin replaces TOFU for that URL (no TOFU read or write) | `market.publisher_unpinned` |
+| `ceiling` is checked on the index entry (step 8) **and again, with block and allow, on the staged manifest and on the grant event** at step 17/18, under the store lock, against the then-pinned snapshot. The index is only a claim | `market.capability_ceiling` |
+| **Run time:** before each run of every add-on (built-ins too, §15.2 point 4) the runner checks, on the pinned snapshot without network, that the origin marketplace is still listed (marketplace add-ons), the block list and the ceiling; a refused add-on is "paused by hub policy", and undoing the policy change un-pauses it (the grant is untouched) | `market.not_allowed`, `market.blocked`, `market.capability_ceiling` |
 | A hub never installs or grants for a workspace; it can only refuse | |
 | Policy does not override the human gate: even an allowed marketplace needs the signed grant | |
 
-Whether the ceiling also applies to built-in add-ons and to grants that already exist is a D14/G7 decision; the spec's provisional answer is yes (§15.2, point 4).
+A compromised hub signs the snapshots and can therefore set any policy: it can deny service, and it can pin its own key
+for a "company" marketplace, so unisolated code becomes installable; it still needs the person's own review and grant.
 
 ## 10. Community marketplaces
 
@@ -551,8 +567,10 @@ are new in the v1 catalog; G2/G3 declare them per op and regenerate the CLI gold
 | `market.index_unsigned` | the official index has no valid signature by the pinned key or no `expires_at`, or a signature present on another index does not verify | 2 |
 | `market.rollback` | index version lower than the last seen, or entry version lower than the installed or highest seen one | 3, 6 |
 | `market.community_unisolated` | a non-official marketplace or direct source without OS-user isolation | 4 |
-| `market.blocked` | the hub's block list names this marketplace | 5 |
-| `market.not_allowed` | with a hub, the marketplace is not on the allow list (or the policy is unreadable) | 5 |
+| `market.blocked` | the hub policy blocks this add-on id or `id@version` | 6 |
+| `market.not_allowed` | with a hub, the marketplace is not listed in the hub policy (or the policy is unreadable); at run time, the origin marketplace is no longer listed | 5 |
+| `market.addon_not_allowed` | the hub policy has an `allow` list and the add-on id is not in it | 6 |
+| `market.publisher_unpinned` | a hub-listed company marketplace's entry is published by a key the hub does not pin | 7 |
 | `market.unknown_addon` | the id is not in the index | 6 |
 | `market.revoked` | the signed index lists this `id@version` as revoked | 6 |
 | `market.host_not_allowed` | the entry's git host is neither the marketplace's host nor on the host allow list | 6 |
@@ -653,5 +671,5 @@ These are the spec's answers; each is marked **provisional** until the owner con
       digest. The residual risk is a compromised company publisher key or a hostile admin, and the tier-A agent
       limits of §15.1 do not apply to a key the hub pins.
 
-    The spec, schema and vectors implement Option A. Option B adds one field to `orch.hub-policy/1`
-    (`pinned_keys: {url -> key}`) and one branch at step 4; it needs no change to the index format.
+    **Decided for the hub policy (D14):** the policy's `markets[].keys` is that pin. A hub-listed `official` or `company`
+    marketplace passes step 4 without isolation; the spec, schema and vectors otherwise implement Option A (no hub: refuse).

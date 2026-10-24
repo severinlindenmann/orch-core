@@ -4,6 +4,7 @@ restart; a replayed older snapshot, a conflicting one and one under a revoked op
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from typing import Any
 
@@ -317,3 +318,46 @@ def test_a_revoked_new_card_and_a_stale_one_are_refused():
     with pytest.raises(HubRefused) as e:
         snap.adopt_card(r2.state, V["objects"]["card"], now_ms=NOW, dev_mode=True)  # op_seq 1 after 2
     assert e.value.code == "stale_op_cert"
+
+
+# --- the hub marketplace policy (D14, orch-core#927) ----------------------------------------------------------------
+
+COMPANY_POLICY = {
+    "markets": [
+        {"url": "https://git.acme.example/tools/orch-market", "class": "company", "keys": [V["keys"]["hk_op"]["pub"]]},
+        {"url": "https://github.com/severinlindenmann/orch-marketplace", "class": "official", "keys": []},
+    ],
+    "addons": {"allow": ["wiki"], "block": ["wiki@1.0.0"]},
+    "ceiling": ["pty"],
+}
+COMPANY_POLICY["markets"].sort(key=lambda m: m["url"])
+
+
+def _policy(r: Rig) -> Any:
+    return snap.hub_market_policy(r.state, now_ms=NOW, dev_mode=True)
+
+
+def test_the_pinned_policy_is_read_only_and_fails_closed():
+    r = Rig()
+    assert _policy(r) is None  # no snapshot pinned yet
+    r.hub.set_snapshot(WS, {ADMIN: "admin"}, market_policy=COMPANY_POLICY)
+    r.refresh()
+    version, pol = _policy(r)
+    assert version == 2 and pol.allow == ("wiki",) and pol.block == ("wiki@1.0.0",) and pol.ceiling == ("pty",)
+    assert [m.cls for m in pol.markets] == ["company", "official"] and pol.market(pol.markets[0].url).keys
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        pol.allow = ()  # type: ignore[misc]
+    assert snap.hub_market_policy(None, now_ms=NOW, dev_mode=True) is None
+    assert snap.hub_market_policy(r.state, now_ms=NOW, dev_mode=False) is None  # dev marker mismatch
+    r.state.status = "unbound"
+    assert _policy(r) is None
+
+
+def test_a_snapshot_without_or_with_a_bad_policy_is_refused_and_the_pin_stays():
+    r = Rig()
+    r.refresh()
+    for bad in (None, {}, {"allow": [], "block": [], "ceiling": []}, {**COMPANY_POLICY, "extra": 1}):
+        r.hub.set_snapshot(WS, {ADMIN: "admin"}, market_policy=bad if bad is not None else {"markets": None})
+        with pytest.raises(HubRefused) as e:
+            r.refresh()
+        assert e.value.code == "malformed" and snap.pinned_view(r.state)["version"] == 1

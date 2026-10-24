@@ -17,9 +17,10 @@ from typing import Any
 from . import wire
 from .errors import HubRefused
 from .link import HubLink
+from .marketpolicy import MarketPolicy, parse_policy
 from .service import HubState
 
-__all__ = ["ROLES", "hub_role", "pinned_view", "record_revoked_op", "refresh", "verify_snapshot"]
+__all__ = ["ROLES", "hub_market_policy", "hub_role", "pinned_view", "record_revoked_op", "refresh", "verify_snapshot"]
 
 ROLES = ("read", "edit", "admin")
 
@@ -175,3 +176,22 @@ def hub_role(state: HubState | None, user_id: str, *, now_ms: int, dev_mode: boo
     except (HubRefused, KeyError, TypeError):
         return None
     return o["roles"].get(user_id)
+
+
+def hub_market_policy(state: HubState | None, *, now_ms: int, dev_mode: bool) -> tuple[int, MarketPolicy] | None:
+    """``(snapshot version, policy)`` of the hub marketplace policy in the pinned snapshot, or ``None``: no hub, not
+    bound, no snapshot, or anything that does not verify now (card expired or revoked, signature, dev marker,
+    workspace, malformed policy). The read-only accessor of the market package (D14): the card and the snapshot are
+    verified again on every read, as in :func:`hub_role`, so the caller sees either a verified policy or nothing and
+    refuses on nothing (fail closed). Never fetches; a caller that needs a fresh one calls :func:`refresh` first."""
+    if state is None or state.snapshot is None or state.status != "bound":
+        return None
+    try:
+        held = _held(state, now_ms, dev_mode)
+        o = verify_snapshot(
+            state.snapshot, held, workspace_id=state.binding["o"]["workspace_id"], dev_mode=dev_mode, pinned=None,
+            revoked_op_certs=frozenset(state.revoked_op_certs),
+        )  # fmt: skip
+        return o["version"], parse_policy(o["market_policy"])
+    except (HubRefused, KeyError, TypeError):
+        return None

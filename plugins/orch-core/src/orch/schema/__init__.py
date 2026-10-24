@@ -580,6 +580,7 @@ def _check_manifest(obj: dict[str, Any]) -> None:
             raise SchemaError("addon-manifest", where, f"heading {h!r} is taken (a core section or another section)")
         seen_headings.add(heading_key(h))
     _check_manifest_needs(obj)
+    _check_manifest_api_1_1(obj)
     line = obj.get("agents_md", "")
     if line and (not _AGENTS_LINE.fullmatch(line) or _AGENTS_BAD & set(line)):
         raise SchemaError(
@@ -587,6 +588,26 @@ def _check_manifest(obj: dict[str, Any]) -> None:
             "/agents_md",
             "printable ASCII, starts with a letter or digit, none of < > [ ] ` * |, no list marker",
         )
+
+
+def _check_manifest_api_1_1(obj: dict[str, Any]) -> None:
+    """addon-api 1.1 (section 8 of ``docs/architecture/addon-api.md``): ``{python}`` is the whole of ``entry.cmd[0]``
+    and nowhere else; ``settings.schema`` is in the closed subset."""
+    from orch.addons.settings_schema import SettingsSchemaError, check_settings_schema
+
+    for i, arg in enumerate(obj["entry"]["cmd"]):
+        if "{python}" in arg and (i != 0 or arg != "{python}"):
+            raise SchemaError(
+                "addon-manifest", _pointer(["entry", "cmd", i]), "{python} is only allowed as the whole of cmd[0]"
+            )
+    if "settings" in obj:
+        flagged = suspicious(obj["settings"]["title"])
+        if flagged:
+            raise SchemaError("addon-manifest", "/settings/title", "invisible character in title")
+        try:
+            check_settings_schema(obj["settings"]["schema"])
+        except SettingsSchemaError as e:
+            raise SchemaError("addon-manifest", _pointer(["settings", "schema", *e.path]), str(e)) from None
 
 
 _AGENTS_LINE = re.compile(r"(?![0-9]+[.)] )[A-Za-z0-9][\x20-\x7e]{0,199}(?![\s\S])")

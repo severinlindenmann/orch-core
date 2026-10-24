@@ -19,7 +19,7 @@ first.
   the declarations. The registry (`orch/addons/registry.py`) reports `changed` when the package on disk differs from
   the grant (digest, version or name). Only `active` add-ons run. So **a changed package already stops running until
   someone grants it again**.
-- Capabilities form a closed list: `serve_http`, `spawn_agent`, `pty`, `network`, `git_push` (`manifest.py`).
+- Capabilities form a closed list: `serve_http`, `spawn_agent`, `pty`, `network`, `git_push`, and since addon-api 1.1 `choose_model`, `credential` (`manifest.py`).
 - The 11 first-party add-ons are **manifest-only** (D-P2-36). Their behaviour is core code (ops) plus dashboard code:
   the UI in `addons/dashboard/src/…` and server modules in `orch_dashboard/` (`wiki/`, `explorer/`, `terminals.py`,
   `worktrees.py`, `usage.py`, …). D-P2-20: add-on code runs only under the worker UID, which tier A does not have.

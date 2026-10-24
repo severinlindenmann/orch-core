@@ -841,3 +841,14 @@ def test_c12_nothing_secret_in_the_written_log(switch):
     on(signer, provider.passphrase)
     off(signer, passphrase=STRONG)
     assert STRONG not in (log.root / "click.jsonl").read_text()
+
+
+def test_c12_the_log_says_the_key_moved_only_when_it_did(switch):
+    signer, state, provider, _, _, log = switch
+    on(signer, provider.passphrase)
+    off(signer, passphrase=STRONG)
+    assert ("custody_off", {"workspace": WS, "moved": "true"}) in log.lines
+    text = (log.root / "click.jsonl").read_text()
+    assert '"moved": "true"' in text and STRONG not in text
+    on2 = signer.handle("custody_off", {"workspace_id": WS})  # flag only, key already under a passphrase
+    assert on2 and log.lines[-1] == ("custody_off", {"workspace": WS})

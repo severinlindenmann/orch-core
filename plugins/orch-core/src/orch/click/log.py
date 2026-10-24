@@ -41,6 +41,7 @@ _SAFE = {
     "request": re.compile(r"hr_[0-7][0-9A-HJKMNP-TV-Z]{25}"),
     "op": re.compile(r"[a-z][a-z_]*(\.[a-z_]+)*"),
     "code": re.compile(r"[a-z][a-z0-9_.]{0,79}"),
+    "moved": re.compile(r"true"),  # #1198 C12: custody_off moved the key under a new passphrase (never the passphrase)
 }
 
 

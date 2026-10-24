@@ -1515,7 +1515,7 @@ class ClickSigner:
         except (BackendUnavailable, CustodyError) as exc:
             raise ClickError("custody.unavailable", str(exc)) from None
         self.problems.pop(wid, None)
-        self._note("custody_off", workspace=wid)
+        self._note("custody_off", workspace=wid, **({"moved": "true"} if pw is not None else {}))
         return self._row(entry)
 
     def _passphrase_offer(self, wid: str, args: Mapping[str, Any]) -> dict[str, Any]:

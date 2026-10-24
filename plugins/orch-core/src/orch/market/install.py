@@ -10,14 +10,14 @@ functions give the answer ``tests/addons/market_ref.install`` gives on the same 
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from orch import canon
 from orch.addons import builtin
 from orch.addons.install import read_lock
-from orch.addons.lockfile import Lock
+from orch.addons.lockfile import Planned
 from orch.addons.manifest import Manifest, ManifestError, _core_key, declarations, incompatibility, load_manifest
 from orch.addons.package import MANIFEST_FILE, Package
 
@@ -147,8 +147,8 @@ def diff(
     new: Manifest,
     prev: Mapping[str, Any],
     facts: Facts,
-    old_lock: Lock | None = None,
-    new_lock: Lock | None = None,
+    old_plan: Sequence[Planned] | None = None,
+    new_plan: Sequence[Planned] | None = None,
 ) -> dict[str, Any]:
     """What the update changes against the add-on that is installed (``old``, read from its directory; ``None`` when it
     cannot be read: everything then counts as widened) and the install record ``prev``. ``changes`` are lines for a
@@ -156,7 +156,8 @@ def diff(
     ``set_by`` or gate change), a section or a wider ticket-type list, a needs rule, a CLI or agent hint, an artifact
     kind, a new entry command or skills, or a publisher key seen for the first time, or (V3 G4, C6) a dependency
     runtime that is added or changes kind, or any locked package that is added or re-versioned (removals do not widen).
-    ``old_lock``/``new_lock`` are the checked lockfiles of each side (``None``: no lock, or the old one is unreadable).
+    ``old_plan``/``new_plan`` are the planned rows of each side for this computer (``None``: no lock, or the old one is
+    unreadable); a package whose install status or flags change counts as changed, not unchanged.
     The host labels it as index-derived where it comes from the index."""
     ev_new = declarations(new)
     added: dict[str, list[str]] = {k: [] for k in ("capabilities", "fields", "sections", "needs", "artifact_kinds")}
@@ -198,9 +199,9 @@ def diff(
         widened = widened or any(added[k] for k in ("capabilities", "fields", "sections", "needs", "artifact_kinds"))
     dep = deps.diff(
         None if old is None or old.runtime is None else old.runtime["kind"],
-        old_lock,
+        old_plan,
         None if new.runtime is None else new.runtime["kind"],
-        new_lock,
+        new_plan,
     )
     changes += dep["lines"]
     widened = widened or dep["widened"]

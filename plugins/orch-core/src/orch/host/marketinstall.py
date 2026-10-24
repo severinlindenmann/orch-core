@@ -310,21 +310,21 @@ def _stage(service: WorkspaceService, plan: dict[str, Any], call: Call | None = 
     pkg = fetch.fetch_package(entry)
     manifest = mi.check_package(facts, pkg, CORE_VERSION)  # steps 13 to 16, the lockfile (15) included
     event = install.grant_event(manifest, pkg)
-    lock, dep_view = _dependencies(manifest, pkg)
+    planned, dep_view = _dependencies(manifest, pkg)
     review = install.review_lines(manifest, pkg, event, plan["previous"], dep_view)
     change = None
     if prior is not None:
-        old_lock = None
+        old_plan = None
         try:
             opkg, old = install.read_installed(plan["root"], name)
             if plan["previous"] is None or opkg.digest != plan["previous"].package_sha256:
                 old = None  # not the bytes of the signed grant: everything counts as widened (review F1)
             elif old.runtime is not None:
                 with contextlib.suppress(MarketError):  # unreadable old lock: every row of the new one counts as new
-                    old_lock = install.read_lock(old, opkg)
+                    old_plan = lockfile.plan(install.read_lock(old, opkg), lockfile.current_host())
         except (PackageError, ManifestError):
             old = None
-        change = mi.diff(old, manifest, prior, facts, old_lock, lock)
+        change = mi.diff(old, manifest, prior, facts, old_plan, planned)
         review += [f"update: {x}" for x in change["changes"]]
         review.append("widened: yes, read all of it" if change["widened"] else "widened: no")
     stage = "st_" + secrets.token_hex(16)
@@ -358,14 +358,14 @@ def _stage(service: WorkspaceService, plan: dict[str, Any], call: Call | None = 
 
 
 def _dependencies(manifest: Any, pkg: Any) -> tuple[Any, dict[str, Any] | None]:
-    """``(Lock, deps view)`` of a package that declares ``runtime`` (the lock was checked at step 15), else
+    """``(planned rows, deps view)`` of a package that declares ``runtime`` (the lock was checked at step 15), else
     ``(None, None)``. The plan decides what this computer installs: a lock that cannot be installed here is refused
     now (``market.env_failed``), before the person signs."""
     if manifest.runtime is None:
         return None, None
     lock = install.read_lock(manifest, pkg)
     planned = lockfile.plan(lock, lockfile.current_host())
-    return lock, deps.view(manifest.runtime["lock"], lock, planned, None)
+    return planned, deps.view(manifest.runtime["lock"], lock, planned, None)
 
 
 # ------------------------------------------------------------------------------------------------ read the stage

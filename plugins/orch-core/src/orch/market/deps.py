@@ -66,10 +66,21 @@ def _ident(row: Any) -> tuple[str, str]:
     return (row.key or row.name, row.marker or "")
 
 
-def diff(old_kind: str | None, old: Lock | None, new_kind: str | None, new: Lock | None) -> dict[str, Any]:
+def _shape(p: Planned) -> tuple[Any, ...]:
+    """What decides whether a package is installed on this computer: the row's flags and the plan's verdict."""
+    r = p.row
+    return (p.install, p.note, r.dev, r.optional, r.os, r.cpu, r.marker)
+
+
+def diff(
+    old_kind: str | None, old: Sequence[Planned] | None, new_kind: str | None, new: Sequence[Planned] | None
+) -> dict[str, Any]:
     """The dependency part of an update: ``{runtime, added, removed, changed, lines, widened}`` where ``runtime`` is
-    ``added``, ``removed``, ``kind_changed`` or ``None``. ``old``/``new`` are ``None`` when that side has no lockfile
-    (or the old one cannot be read: every row then counts as new)."""
+    ``added``, ``removed``, ``kind_changed`` or ``None``. ``old``/``new`` are the PLANNED rows for this computer
+    (``None`` when that side has no lockfile, or the old one cannot be read: every row then counts as new). A row is
+    ``changed`` when its version or hash differs, or its install status or flags do (dev, optional, os, cpu, marker),
+    so a package that keeps its version but becomes installed here is never unchanged (C6). ``widened``: runtime added
+    or kind changed, any row added or changed; removals do not widen."""
     runtime = None
     if new_kind is not None and old_kind is None:
         runtime = "added"
@@ -77,15 +88,15 @@ def diff(old_kind: str | None, old: Lock | None, new_kind: str | None, new: Lock
         runtime = "removed"
     elif new_kind != old_kind:
         runtime = "kind_changed"
-    old_rows = {_ident(r): r for r in (old.rows if old and old_kind == new_kind else ())}
-    new_rows = {_ident(r): r for r in (new.rows if new else ())}
-    added = [{"name": row_name(r), "version": r.version} for k, r in new_rows.items() if k not in old_rows]
-    removed = [{"name": row_name(r), "version": r.version} for k, r in old_rows.items() if k not in new_rows]
-    changed = [
-        {"name": row_name(r), "from": old_rows[k].version, "to": r.version}
-        for k, r in new_rows.items()
-        if k in old_rows and (old_rows[k].version != r.version or old_rows[k].hashes != r.hashes)
-    ]
+    old_rows = {_ident(p.row): p for p in (old if old and old_kind == new_kind else ())}
+    new_rows = {_ident(p.row): p for p in (new or ())}
+    added = [{"name": row_name(p.row), "version": p.row.version} for k, p in new_rows.items() if k not in old_rows]
+    removed = [{"name": row_name(p.row), "version": p.row.version} for k, p in old_rows.items() if k not in new_rows]
+    changed = []
+    for k, p in new_rows.items():
+        o = old_rows.get(k)
+        if o is not None and (o.row.version != p.row.version or o.row.hashes != p.row.hashes or _shape(o) != _shape(p)):
+            changed.append({"name": row_name(p.row), "from": o.row.version, "to": p.row.version})
     out = []
     if runtime == "added":
         out.append(f"+ dependencies ({KIND_WORDS[new_kind or '']}, new)")
@@ -94,12 +105,19 @@ def diff(old_kind: str | None, old: Lock | None, new_kind: str | None, new: Lock
     elif runtime == "kind_changed":
         out.append(f"~ dependencies {KIND_WORDS[old_kind or '']} -> {KIND_WORDS[new_kind or '']}")
     out += [f"+ dep {a['name']} {a['version']} (new)" for a in added]
-    out += [
-        f"~ dep {c['name']} {c['from']} -> {c['to']}" + (" (contents changed)" if c["from"] == c["to"] else "")
-        for c in changed
-    ]
+    for c in changed:
+        suffix = " (contents changed)" if c["from"] == c["to"] else ""
+        if c["from"] == c["to"]:
+            o, p = old_rows[_key(c, new_rows)], new_rows[_key(c, new_rows)]
+            if o.row.hashes == p.row.hashes:
+                suffix = " (install status changed)"
+        out.append(f"~ dep {c['name']} {c['from']} -> {c['to']}{suffix}")
     out += [f"- dep {x['name']} (removed)" for x in removed]
     return {
         "runtime": runtime, "added": added, "removed": removed, "changed": changed, "lines": out,
         "widened": runtime in ("added", "kind_changed") or bool(added) or bool(changed),
     }  # fmt: skip
+
+
+def _key(c: Mapping[str, str], rows: Mapping[Any, Planned]) -> Any:
+    return next(k for k, p in rows.items() if row_name(p.row) == c["name"])

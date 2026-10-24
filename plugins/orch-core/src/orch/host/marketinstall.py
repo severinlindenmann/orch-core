@@ -109,6 +109,11 @@ def _files(service: WorkspaceService) -> MarketFiles:
     return MarketFiles(Path(service.state_dir), service.workspace_id, service.host_uid)
 
 
+def files_of(service: WorkspaceService) -> MarketFiles:
+    """The marketplace records of this workspace (what a prepared ``addon.grant`` reads through its capture)."""
+    return _files(service)
+
+
 def _refuse(op: str, code: str) -> HostError:
     from .marketops import _refuse as refuse
 
@@ -166,7 +171,10 @@ def serve(call: Call, op: str, args: dict[str, Any]) -> dict[str, Any]:
 
 def _plan_stage(call: Call, args: dict[str, Any]) -> dict[str, Any]:
 
+    from . import marketops
+
     service = call.service
+    policy.evaluate("add", policy.current(hub_joined=marketops.hub_joined(service)), {})  # P0: a joined hub, no read
     files = _files(service)
     records = files.load()
     installs = files.installs()
@@ -257,7 +265,7 @@ def _stage(service: WorkspaceService, plan: dict[str, Any], call: Call | None = 
         if rec is None:
             raise MarketError("market.state_invalid")
         if not rec["pinned"]:  # an update refreshes the index of its origin (a person's, so no agent interval)
-            marketops._refresh(files, url, None, False, service.clock)  # noqa: SLF001
+            marketops._refresh(files, url, None, False, service.clock, cls, keys)  # noqa: SLF001
     rec = files.load().get(url)
     if rec is None:
         raise MarketError("market.state_invalid")
@@ -325,11 +333,10 @@ def _stage(service: WorkspaceService, plan: dict[str, Any], call: Call | None = 
 
 
 # ------------------------------------------------------------------------------------------------ read the stage
-def staged_package(service_state: Path, workspace_id: str, host_uid: int, name: str, stage: str, now: float) -> Any:
+def staged_package(files: MarketFiles, name: str, stage: str, now: float) -> Any:
     """For ``addon.grant {staged}``: ``(stage doc, Package, Manifest)`` re-read from the stage file once, or
     ``market.staged_changed``. The digest must equal the stored one, the manifest must agree with the stored entry
     facts (steps 14 and 16 again on these bytes), the stage must be the add-on's and not expired."""
-    files = MarketFiles(service_state, workspace_id, host_uid)
     doc = files.read_stage(stage)
     if doc is None or doc.get("name") != name or not isinstance(doc.get("expires_at"), (int, float)):
         raise MarketError("market.staged_changed")
@@ -367,9 +374,7 @@ def _recheck(service: WorkspaceService, record: dict[str, Any], ev: dict[str, An
     if staged is None:  # C1 again at submit: built-in bytes or the bytes of the install record
         gate_plain(files, ev)
         return
-    doc, pkg, _ = staged_package(
-        Path(service.state_dir), service.workspace_id, service.host_uid, ev["name"], staged["stage"], service.clock()
-    )
+    doc, pkg, _ = staged_package(files, ev["name"], staged["stage"], service.clock())
     if pkg.digest != ev["package_sha256"] or doc["version"] != ev["version"]:
         raise MarketError("market.staged_changed")
     installs = files.installs()

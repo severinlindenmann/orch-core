@@ -35,8 +35,11 @@ def _install_builtin(h: Human, root: Any, name: str) -> None:
 
 
 def _market_files(h: Human) -> Any:
+    """The host's records: through the capture under the host, from the state directory in direct mode."""
     from orch.host.marketstate import MarketFiles
 
+    if h.ctx.prepare is not None and h.ctx.prepare.market_files is not None:
+        return h.ctx.prepare.market_files
     return MarketFiles(h.call.ws.state_dir, h.workspace_id, os.getuid())
 
 
@@ -57,9 +60,7 @@ def _staged(h: Human, ctx: Context, name: str, stage: str) -> tuple[Any, Any, An
     if ctx.prepare is None:
         raise OrchError("invalid.input", "a staged package is signed through the host: orch addon install NAME")
     try:
-        doc, package, manifest = marketinstall.staged_package(
-            Path(h.call.ws.state_dir), h.workspace_id, os.getuid(), name, stage, ctx.now()
-        )
+        doc, package, manifest = marketinstall.staged_package(_market_files(h), name, stage, ctx.now())
     except MarketError as e:
         raise _market_refusal(e) from None
     key = doc["publisher_key"]

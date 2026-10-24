@@ -586,8 +586,8 @@ _TOFU = ("unsigned", "new", "known")
 
 def _market(material: Mapping[str, Any], events: list[Mapping[str, Any]]) -> None:
     """``material["market"]`` (V3 G3, C4) is the host's word about where an add-on came from: the marketplace, its
-    class, the commit, the publisher key's fingerprint and first-use status, the index version and a display summary. It is NOT
-    signed and the review says so. Exactly these keys and these shapes, only on a request that signs one
+    class, the commit, the publisher key's fingerprint and first-use status, the index version and a display summary.
+    It is NOT signed and the review says so. Exactly these keys and these shapes, only on a request that signs one
     ``addon.granted``; anything else (an unknown key, a number where a string belongs, a long text) is refused. No
     capability, field or section travels here: those come from the signed event."""
     block = material.get("market")

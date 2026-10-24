@@ -432,6 +432,7 @@ class HumanOps:
             dry_run=dry_run,
         )
         capture.dry_run = dry_run
+        capture.market_files = marketinstall.files_of(service)
         if args.get("sequence") is not None and name == "artifact.add":
             self._check_pasted_image(inner, files)
         meta = self._sequence(call, name, inner, args, person, store, dry_run)

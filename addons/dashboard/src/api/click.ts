@@ -19,6 +19,8 @@ export interface ClickCard {
   enabled: boolean
   available: boolean
   problem?: string
+  /** C17: the configured idle limit in hours, on or off (One click switches itself off after this long without use). */
+  idle_hours?: number
   switchable?: boolean
   /** The device key (`d_` + 32 hex) the switch would move into this computer's key store. */
   device?: string
@@ -31,6 +33,7 @@ export interface ClickCard {
  */
 export type ClickSwitch =
   | { on: true; passphrase: string }
+  | { on: true; resume: true }
   | { on: false }
   | { on: false; request_id: string; view_digest: string; sealed: { 'custody.passphrase': import('./sealed').Envelope } }
 
@@ -164,6 +167,31 @@ export const backupViewOk = (view: ClickView, ws: string): boolean =>
   view.seal?.purposes?.length === 1 && view.seal.purposes[0] === 'hub.backup_key' && typeof view.seal.pk === 'string' && view.seal.pk.length === 87 &&
   view.lines.includes(BACKUP_KEY_LINE) && view.backup_key_line === BACKUP_KEY_LINE
 
+/** #1198 C13: the signer's review of "Replace this device's key" and its one-use key for the two typed secrets. */
+export const ROTATE_LINE =
+  'This step also needs your recovery code and a passphrase for the new key. You type them once here; orch does not keep them'
+export interface RotateOffer {
+  request_id: string
+  view_digest: string
+  expires_in: number
+  view: {
+    op: 'device.rotate'
+    workspace: { id: string; name: string; prefix: string }
+    old: string
+    new: string
+    lines: string[]
+    confirm: { kind: 'click' }
+    rotate_line: string
+    seal: { v: 1; alg: string; pk: string; purposes: string[] }
+  }
+}
+/** The server answers `{ done: true, ...card }` instead when an earlier run had landed the event and only the install was left. */
+export type RotateBegin = RotateOffer | ({ done: true } & ClickCard)
+export const rotateOfferOk = (o: RotateBegin, ws: string): o is RotateOffer =>
+  !('done' in o) && o.view?.op === 'device.rotate' && o.view.workspace?.id === ws && o.view.confirm?.kind === 'click' &&
+  o.view.seal?.pk?.length === 87 && o.view.seal.purposes.length === 2 && o.view.seal.purposes[0] === 'device.recovery_code' &&
+  o.view.seal.purposes[1] === 'custody.passphrase' && o.view.lines.includes(ROTATE_LINE) && o.view.old !== o.view.new
+
 /** The flag of a workspace: the signer says click-to-sign is on and it can sign there now (real host only). */
 export const clickReady = (w: Pick<Workspace, 'click'> | undefined | null): boolean => !!w?.click && w.click.enabled && w.click.available
 
@@ -174,7 +202,7 @@ export const clickReady = (w: Pick<Workspace, 'click'> | undefined | null): bool
 const CLICK_ACTIONS: ReadonlySet<string> = new Set<ClickAction['action']>([
   'accept_criterion', 'withdraw_acceptance', 'mark_task_done',
   'approve', 'request_changes', 'verdict', 'answer', 'comment', 'label', 'close', 'reopen', 'move', 'new', 'new_sequence', 'edit_sequence', 'quick_start', 'details', 'section',
-  'settings_set', 'icon_set', 'repo_set', 'repo_remove', 'policy_set', 'member_add', 'member_role', 'member_remove', 'grant_revoke', 'runner_grant', 'agent_access', 'hub_join', 'hub_leave', 'addon_grant', 'market_grant', 'addon_disable', 'addon_enable', 'publish_setup', 'publish_share',
+  'settings_set', 'icon_set', 'repo_set', 'repo_remove', 'policy_set', 'member_add', 'member_role', 'member_remove', 'device_remove', 'grant_revoke', 'runner_grant', 'agent_access', 'hub_join', 'hub_leave', 'addon_grant', 'market_grant', 'addon_disable', 'addon_enable', 'publish_setup', 'publish_share',
 ])
 export const clickEligible = (a: ClickAction | null): boolean => !!a && CLICK_ACTIONS.has(a.action)
 

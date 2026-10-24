@@ -378,9 +378,6 @@ function postSettings(store: MockStore, ctx: RouteContext): TransportResponse {
       if (b.gate === 'code') store.recheckCodeReview(wsId)
       return done()
     }
-    case 'archive':
-      if (b.prefix !== ws.prefix) return fail(400, 'validation.prefix', `Type ${ws.prefix} to confirm.`)
-      return fail(409, 'cli_only', 'Archiving is CLI-only: `orch workspace archive`', 'Run it in a terminal; the dashboard cannot archive.')
     default:
       return fail(400, 'validation', `Unknown op ${(b as { op: string }).op}`)
   }

@@ -10,8 +10,9 @@ import { useHub } from '../hub/shared'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { encode } from 'uqr'
-import { checkSas, convenienceOffCommand, normaliseSas, SAS_ATTEMPTS, SIGN_COMMAND, pairingApi, pairQueries, pairServed, PAIR_UNAVAILABLE, primaryCommand, type PairBlocked, deviceRemoveCommand, pairedDevices, type PairDevice, type PairOffer, type PairOfferStatus, type PairPreview } from '@/api/pairing'
+import { checkSas, convenienceOffCommand, normaliseSas, SAS_ATTEMPTS, SIGN_COMMAND, pairingApi, pairQueries, pairServed, PAIR_UNAVAILABLE, primaryCommand, type PairBlocked, pairedDevices, type PairDevice, type PairOffer, type PairOfferStatus, type PairPreview } from '@/api/pairing'
 import { ApiError, type Workspace } from '@/api/types'
+import { hasFeature } from '@/api/features'
 import { LoadFailed } from '@/components/LoadFailed'
 import { Inline, Prose } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
@@ -20,6 +21,7 @@ import { fmtDateTime } from '@/lib/time'
 import { Mono, Pill } from '../../ticket/shared'
 import { useSettingsHandoff } from './useSettingsHandoff'
 import { ReaderLevels } from './Readers'
+import { ReplaceKey } from './ReplaceKey'
 import { refusalOf, refusalSentence } from '@/api/refusals'
 import { RefusalDevices } from '@/components/sign/RefusalDevices'
 
@@ -69,6 +71,7 @@ export function HostDevices({ workspace }: { workspace: Workspace }) {
       ) : (
         <Pairing workspace={workspace} />
       )}
+      <ReplaceKey workspace={workspace} />
       <ReaderLevels ws={workspace.id} />
     </div>
   )
@@ -593,6 +596,8 @@ function OfferView(p: {
 }
 
 function DeviceList({ workspace, devices, failed }: { workspace: Workspace; devices: PairDevice[] | null; failed: boolean }) {
+  const qc = useQueryClient()
+  const handoff = useSettingsHandoff(workspace.id, () => qc.invalidateQueries({ queryKey: ['pair', workspace.id] }))
   return (
     <section className="space-y-3" aria-labelledby="devices-heading">
       <h2 id="devices-heading" className="text-base font-semibold">
@@ -629,19 +634,32 @@ function DeviceList({ workspace, devices, failed }: { workspace: Workspace; devi
                     <div>
                       <Mono className="break-all text-text-muted"><Inline>{String(d.id)}</Inline></Mono>
                     </div>
-                    <details data-testid="device-remove" className="mt-1 text-[12px]">
-                      <summary className="cursor-pointer text-text-muted">Remove this device</summary>
-                      <div className="mt-1 space-y-1">
-                        <p className="text-text-muted">Removing needs your person key, so it is done in a terminal on this computer (you type your recovery code). It also rotates the relay keys.</p>
-                        {deviceRemoveCommand(String(d.id), workspace.prefix) !== null ? (
-                          <CopyText label="Command to remove this device" testId="device-remove-command">
-                            {deviceRemoveCommand(String(d.id), workspace.prefix)!}
-                          </CopyText>
-                        ) : (
-                          <p role="alert" data-testid="device-remove-unsafe" className="text-warning">This device&apos;s id has characters that can&apos;t be put in a command safely. Don&apos;t remove it from here; ask for help.</p>
-                        )}
-                      </div>
-                    </details>
+                    {hasFeature('do:device.remove', workspace.id) ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        data-testid="device-remove"
+                        className="mt-1 text-danger"
+                        onClick={() =>
+                          handoff.ask({
+                            title: 'Remove this device',
+                            action: { action: 'device_remove', device: String(d.id) },
+                            autoStart: true,
+                            confirmLabel: 'Remove device',
+                            summary: (
+                              <div data-testid="device-remove-summary" className="space-y-1">
+                                <p>
+                                  <DeviceLabel label={d.label} named={false} /> of <Inline>{d.name}</Inline>
+                                </p>
+                                <p>This device will no longer be able to approve changes for this workspace. Pair it again to restore that.</p>
+                              </div>
+                            ),
+                          })
+                        }
+                      >
+                        Remove
+                      </Button>
+                    ) : null}
                   </TableCell>
                   <TableCell className="whitespace-normal">
                     <Inline>{d.name}</Inline>
@@ -656,6 +674,7 @@ function DeviceList({ workspace, devices, failed }: { workspace: Workspace; devi
           </Table>
         </div>
       )}
+      {handoff.dialog}
     </section>
   )
 }

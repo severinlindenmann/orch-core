@@ -10,13 +10,11 @@ export const EXPORT_WARNING = { before: 'Push publishes every ticket in this wor
 /** The private-remote line, the same way. */
 export const PRIVATE_REMOTE = { before: 'orch trusts your word that only you read ', after: '.' } as const
 
-/** What the person must type in a terminal: the dashboard has no button for these (12.11, G12). */
+/** What the person must type in a terminal (12.11, G12). #1198 C15: the records steps are buttons now, with a review. */
 export const TERMINAL_COMMANDS = {
   runnerEnable: 'orch runner enable',
-  remotePrivate: 'orch records remote private',
   autoOn: 'orch records auto on',
   autoOnPush: 'orch records auto on --push',
-  pushInitial: 'orch records push --initial',
 } as const
 
 export const QUICK_LABEL = 'quick'

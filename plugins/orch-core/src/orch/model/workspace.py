@@ -218,8 +218,31 @@ def device_removed(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
         return Refusal(Code.DEVICE_UNKNOWN, e["device"])
     if e["actor"]["id"] != dev.person and _role(ws, e) != "owner":
         return Refusal(Code.ROLE_DENIED, "a device is removed by its person or an owner")
+    holder = ws.members.get(dev.person)
+    if holder is not None and holder.role == "owner" and device_signs_now(ws, dev, ts(e["at"])):
+        # #1198 C15, under the store lock: removing this device must not leave its owner without one that signs
+        others = [d for d in ws.devices.values() if d is not dev and d.person == dev.person]
+        if not any(device_signs_now(ws, d, ts(e["at"])) for d in others):
+            return Refusal(
+                Code.DEVICE_LOCKOUT,
+                "This is the last working device of an owner. Removing it would lock that owner out for good. Pair or "
+                "add another device first.",
+            )
     dev.removed = True
     return None
+
+
+def device_signs_now(ws: WsCore, dev: Device, at: int) -> bool:
+    """A device that can sign at ``at`` (seconds): not removed or revoked, certificate not expired, with ``decide``, and
+    held by a current member. The one predicate of the lockout guard (the host's op handler uses it too)."""
+    from orch.identity.certs import person_scope_ok
+
+    if dev.removed or dev.revoked or dev.person not in ws.members:
+        return False
+    o = dev.cert["o"]
+    if o["expires_ms"] is not None and o["expires_ms"] <= at * 1000:
+        return False
+    return person_scope_ok({"scopes_max": list(o["scopes_max"])})
 
 
 def device_revoked(core: Core, e: dict[str, Any], v: Verifier) -> Refusal | None:

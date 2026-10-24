@@ -12,7 +12,6 @@ import { Label } from '@/components/ui/label'
 import { fmtTime, Mono, Section } from '../ticket/shared'
 import { grantDefaultHours, GRANT_MAX_HOURS } from '@/api/grants'
 import { plural } from '@/lib/time'
-import { DangerZone } from './DangerZone'
 import { OwnerNote } from './OwnerNote'
 import { toastApiError } from '@/app/toast'
 import { useSettingsSign } from './useSettingsSign'
@@ -158,7 +157,6 @@ export function General({ workspace, canEdit }: { workspace: Workspace; canEdit:
         </div>
       </Section>
 
-      <DangerZone workspace={workspace} identity={id} canEdit={canEdit} />
       {prompt}
     </div>
   )

@@ -753,7 +753,6 @@ export type SettingsRequest =
   | { op: 'icon'; icon: { icon: string; colour: string } | null }
   /** Format §5.4.2 `settings.changed` `set.repos`: repo name → entry, or null to remove it (signed in the UI). */
   | { op: 'repos'; set: Record<string, WorkspaceRepo | null> }
-  | { op: 'archive'; prefix: string }
 
 /** POST /api/workspaces/:ws/addons/:name. Owner only; grant and update are signed in the UI. */
 export type AddonOpRequest =

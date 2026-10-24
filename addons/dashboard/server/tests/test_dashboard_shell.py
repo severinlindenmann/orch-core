@@ -47,6 +47,8 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/click/custody",
         "/api/w/{ws}/click/custody/seal",
         "/api/w/{ws}/click/images",  # R3 part B: pasted-screenshot chunks relayed to the signer (digest-checked)
+        "/api/w/{ws}/click/rotate",
+        "/api/w/{ws}/click/rotate/seal",
         "/api/w/{ws}/settings",
         "/api/w/{ws}/add-ons",
         "/api/w/{ws}/versions",
@@ -87,6 +89,9 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/records",
         "/api/w/{ws}/records/commit",
         "/api/w/{ws}/records/auto-off",
+        "/api/w/{ws}/records/init",
+        "/api/w/{ws}/records/remote",
+        "/api/w/{ws}/records/push-initial",
         "/api/w/{ws}/records/current",
         "/api/w/{ws}/runs",
         "/api/w/{ws}/terminals/preview",
@@ -147,7 +152,15 @@ def test_shell_p1_reads(client, token, stub):
         "read_ext2",
         *(
             f"do:{op}"
-            for op in ("settings.set", "policy.set", "member.add", "member.role", "member.remove", "grant.revoke")
+            for op in (
+                "settings.set",
+                "policy.set",
+                "member.add",
+                "member.role",
+                "member.remove",
+                "device.remove",
+                "grant.revoke",
+            )
         ),
     ]
     assert workspaces[0]["features"] == every

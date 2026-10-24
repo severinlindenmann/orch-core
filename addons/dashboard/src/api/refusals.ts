@@ -4,7 +4,7 @@
 // names the devices by their label where it knows them (never by raw id), and shows nothing it does not know.
 import { ApiError } from './types'
 
-export const UNAVAILABLE_REASONS = ['disabled', 'relay_paired', 'other_member', 'phone_device', 'reader_version', 'pair_device', 'dev_host'] as const
+export const UNAVAILABLE_REASONS = ['idle', 'disabled', 'relay_paired', 'other_member', 'phone_device', 'reader_version', 'pair_device', 'dev_host'] as const
 export const READERS_REASONS = ['no_declaration', 'reader_too_old', 'declaration_unknown', 'relay_too_old', 'hub_too_old', 'unknown_readers'] as const
 export type UnavailableReason = (typeof UNAVAILABLE_REASONS)[number]
 export type ReadersReason = (typeof READERS_REASONS)[number]
@@ -19,6 +19,7 @@ export const DEV_HOST_SENTENCE =
 
 /** `sign.convenience_unavailable`: the host refuses a click-signed (convenience) signature, first match wins. */
 export const UNAVAILABLE_SENTENCE: Record<UnavailableReason, string> = {
+  idle: 'One click switched itself off after a while without use. Turn it on again to continue; until then, approve in the terminal.',
   disabled: 'Click-to-sign is switched off for this workspace.',
   relay_paired:
     'Click-to-sign is refused because the relay’s side of this workspace has not declared that it reads click-signed entries. Update the relay, or sign in the terminal.',
@@ -54,6 +55,7 @@ export const DECL_INVALID_SENTENCE =
 
 /** The click signer's per-workspace `problem` (status card), for the values it names. */
 export const SIGNER_PROBLEM_SENTENCE: Record<string, string> = {
+  idle: 'One click switched itself off after a while without use. Turn it on again to continue; until then, approve in the terminal.',
   readers_old:
     'Click-to-sign is paused: another device or member of this workspace has an orch app too old to read click-signed entries. Update orch there (it then declares what it reads) or remove that device; Settings → Devices shows which. Until then, sign in the terminal.',
   disabled: 'Click-to-sign is switched off for this workspace.',

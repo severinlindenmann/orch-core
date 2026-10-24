@@ -118,7 +118,19 @@ class Security:
             return await reject("invalid.input", 400)  # every browser mutation is bounded JSON
         click_step = path.startswith("/api/w/") and "/click/" in path and path.endswith(CLICK_STEP)
         records_step = path.startswith("/api/w/") and path.endswith(("/records/commit", "/records/auto-off"))
-        limit = 1024 if path == "/auth/session" or records_step else CLICK_BODY_LIMIT if click_step else 1_048_576
+        # #1198 C15: a records admin step carries at most one address (2048 characters, JSON-escaped)
+        records_admin = path.startswith("/api/w/") and path.endswith(
+            ("/records/init", "/records/remote", "/records/push-initial")
+        )
+        limit = (
+            1024
+            if path == "/auth/session" or records_step
+            else 8192
+            if records_admin
+            else CLICK_BODY_LIMIT
+            if click_step
+            else 1_048_576
+        )
         if method == "POST" and path.startswith("/api/testrun/") and path.endswith("/images"):
             limit = UPLOAD_LIMIT  # a screenshot of the tester's checklist (base64 of at most 5 MB)
         if setup:

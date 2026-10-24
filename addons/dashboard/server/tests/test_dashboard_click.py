@@ -45,6 +45,7 @@ class Script:
         self.features: list | None = None  # `status.features`: ["custody"] for a signer with the switch
         self.refuse: dict[str, ClickError] = {}
         self.offer: dict = {}  # the answer to `custody_off {begin}`
+        self.rotation: dict = {}  # the answer to `rotate {begin}`
         self.view = {"view": {"risk": RISK, "lines": [CANARY], "op": "approve"}, "view_digest": HASH}
         self.prepared = 0
         self.intents: dict[str, dict] = {}  # the host's idem record: idem -> {binding, request id, state}
@@ -73,6 +74,10 @@ class Script:
             return out
         if op == "stash":
             return {"state": "complete"}
+        if op == "rotate":
+            if args.get("begin"):
+                return self.rotation
+            return {"workspace_id": self.ws, "custody": "passphrase", "enabled": False, "done": True}
         if op == "custody_off" and args.get("begin"):
             return self.offer
         if op in ("custody_on", "custody_off"):
@@ -2748,3 +2753,183 @@ def test_a_sealed_sign_on_a_non_local_session_never_reaches_the_signer(client, t
     res = sign_hub(client, token, stub, sealed={"hub.backup_key": BACKUP_ENV})
     assert res.status_code == 409 and res.json()["error"]["reason"] == "check_failed"
     assert sent_of(backup, "sign") == []
+
+
+def test_c17_a_plain_click_resumes_one_click_from_a_local_dashboard(client, token, stub, script, auth):
+    script.features = ["custody"]
+    script.enabled = script.available = False
+    auth.kinds[token] = "local"
+    res = switch(client, token, stub, {"on": True, "resume": True})
+    assert res.status_code == 200, res.text
+    assert res.json()["enabled"] is True
+    calls = [c for c in script.clients[-1].calls if c[0].startswith("custody")]
+    assert calls == [("custody_on", {"workspace_id": stub.ws, "resume": True})]
+
+
+def test_c17_a_resume_from_any_other_session_keeps_the_terminal_command(client, token, stub, script, auth):
+    script.features = ["custody"]
+    script.enabled = script.available = False
+    for kind in ("remote", "passkey", None):
+        auth.kinds[token] = kind
+        res = switch(client, token, stub, {"on": True, "resume": True})
+        assert res.json()["error"]["code"] == "custody.terminal_needed", res.text
+        assert "orch host convenience on --workspace" in res.json()["error"]["message"]
+    assert not any(c[0] == "custody_on" for cl in script.clients for c in cl.calls)
+
+
+def test_c17_resume_is_on_without_a_passphrase_only(client, token, stub, script, auth):
+    script.features = ["custody"]
+    auth.kinds[token] = "local"
+    sealed = {"request_id": "hr_" + "0" * 26, "view_digest": "0" * 64}
+    for body in (
+        {"on": False, "resume": True},
+        {"on": True, "resume": True, "passphrase": PASSPHRASE},
+        {"on": True, "resume": True, **sealed},
+    ):
+        res = switch(client, token, stub, body)
+        assert res.json()["error"]["code"] == "invalid.input" and PASSPHRASE not in res.text
+    assert not any(c[0] == "custody_on" for cl in script.clients for c in cl.calls)
+
+
+# -- #1198 C13: replace this computer's device key ---------------------------------------------------------------------
+OLD, NEW = "d_" + "1" * 32, "d_" + "2" * 32
+ROTATE_OFFER_FIELDS = {
+    "request_id": "hr_" + "0" * 25 + "2",
+    "view_digest": HASH,
+    "expires_in": 300,
+}
+
+
+def rotate_offer(ws, **over):
+    seal = {
+        "v": 1,
+        "alg": "P256-HKDF-SHA256-A256GCM",
+        "pk": "B" + "Q" * 86,
+        "purposes": ["device.recovery_code", "custody.passphrase"],
+    }
+    view = {
+        "op": "device.rotate",
+        "workspace": {"id": ws, "name": "demo", "prefix": "DEMO"},
+        "old": OLD,
+        "new": NEW,
+        "lines": ["Replace the signing key of this computer for demo.", f"old device: {OLD}", f"new device: {NEW}"],
+        "confirm": {"kind": "click"},
+        "seal": seal,
+    }
+    return {**ROTATE_OFFER_FIELDS, "view": {**view, **over}}
+
+
+def rotate_body(**over):
+    return {
+        "request_id": ROTATE_OFFER_FIELDS["request_id"],
+        "view_digest": HASH,
+        "sealed": {"device.recovery_code": PASS_ENV, "custody.passphrase": PASS_ENV},
+        **over,
+    }
+
+
+def rotate_calls(script):
+    return [c for cl in script.clients for c in cl.calls if c[0] == "rotate"]
+
+
+def test_c13_the_review_is_relayed_for_an_owner_on_a_local_session(client, token, stub, script, local):
+    script.features = ["custody", "device_rotate"]
+    script.rotation = rotate_offer(stub.ws)
+    res = client.post(url(stub, "rotate/seal"), json={}, headers=hdr(token))
+    assert res.status_code == 200 and res.json() == script.rotation
+    assert rotate_calls(script) == [("rotate", {"workspace_id": stub.ws, "begin": True})]
+
+
+def test_c13_begin_and_sign_are_local_owner_only_and_need_the_feature(client, token, stub, script, monkeypatch):
+    from orch_dashboard import adapters
+    from orch_dashboard.auth import Auth
+
+    script.rotation = rotate_offer(stub.ws)
+    script.features = ["custody", "device_rotate"]
+    monkeypatch.setattr(Auth, "login_kind", lambda self, token: "remote", raising=False)
+    assert client.post(url(stub, "rotate/seal"), json={}, headers=hdr(token)).status_code == 409
+    assert client.post(url(stub, "rotate"), json=rotate_body(), headers=hdr(token)).status_code == 409
+    monkeypatch.setattr(Auth, "login_kind", lambda self, token: "local", raising=False)
+    script.features = ["custody"]
+    for path, body in (("rotate/seal", {}), ("rotate", rotate_body())):
+        assert client.post(url(stub, path), json=body, headers=hdr(token)).json()["error"]["code"] == "click.contract"
+    script.features = ["custody", "device_rotate"]
+    real = adapters.members
+    monkeypatch.setattr(adapters, "members", lambda d: [m.model_copy(update={"role": "maintainer"}) for m in real(d)])
+    for path, body in (("rotate/seal", {}), ("rotate", rotate_body())):
+        assert client.post(url(stub, path), json=body, headers=hdr(token)).json()["error"]["code"] == "role.denied"
+    assert rotate_calls(script) == []
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"op": "approve"},
+        {"old": "x"},
+        {"new": OLD},
+        {"workspace": {"id": "0" * 32}},
+        {"confirm": {"kind": "word"}},
+        {"seal": {"v": 1, "alg": "P256-HKDF-SHA256-A256GCM", "pk": "B" + "Q" * 86, "purposes": ["custody.passphrase"]}},
+        {
+            "seal": {
+                "v": 1,
+                "alg": "P256-HKDF-SHA256-A256GCM",
+                "pk": "short",
+                "purposes": ["device.recovery_code", "custody.passphrase"],
+            }
+        },
+    ],
+)
+def test_c13_an_odd_review_from_the_signer_is_not_passed_on(client, token, stub, script, local, over):
+    script.features = ["custody", "device_rotate"]
+    script.rotation = rotate_offer(stub.ws, **over)
+    assert client.post(url(stub, "rotate/seal"), json={}, headers=hdr(token)).status_code == 409
+
+
+def test_c13_a_finished_earlier_run_answers_done(client, token, stub, script, local):
+    script.features = ["custody", "device_rotate"]
+    script.rotation = {"done": True, "old": OLD, "new": NEW, "custody": "passphrase", "enabled": False}
+    res = client.post(url(stub, "rotate/seal"), json={}, headers=hdr(token))
+    assert res.status_code == 200 and res.json()["done"] is True and res.json()["custody"] == "passphrase"
+
+
+def test_c13_sign_relays_ciphertext_only(client, token, stub, script, local, caplog, capfd):
+    script.features = ["custody", "device_rotate"]
+    caplog.set_level(logging.DEBUG)
+    res = client.post(url(stub, "rotate"), json=rotate_body(), headers=hdr(token))
+    assert res.status_code == 200 and res.json()["done"] is True and res.json()["custody"] == "passphrase"
+    assert rotate_calls(script) == [
+        (
+            "rotate",
+            {
+                "workspace_id": stub.ws,
+                "request_id": ROTATE_OFFER_FIELDS["request_id"],
+                "view_digest": HASH,
+                "sealed": {"device.recovery_code": PASS_ENV, "custody.passphrase": PASS_ENV},
+            },
+        )
+    ]
+    out, err = capfd.readouterr()
+    assert PASS_ENV["ct"] not in caplog.text + out + err + res.text
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        rotate_body(extra=1),
+        rotate_body(passphrase="CANARY-clear"),
+        rotate_body(sealed={"device.recovery_code": PASS_ENV}),
+        rotate_body(sealed={"custody.passphrase": PASS_ENV}),
+        rotate_body(sealed={"device.recovery_code": PASS_ENV, "custody.passphrase": {**PASS_ENV, "v": 2}}),
+        rotate_body(
+            sealed={"device.recovery_code": PASS_ENV, "custody.passphrase": PASS_ENV, "hub.backup_key": PASS_ENV}
+        ),
+        rotate_body(request_id="nope"),
+        rotate_body(view_digest="sha256:short"),
+    ],
+)
+def test_c13_sign_bodies_are_closed_and_never_echoed(client, token, stub, script, local, body):
+    script.features = ["custody", "device_rotate"]
+    res = client.post(url(stub, "rotate"), json=body, headers=hdr(token))
+    assert res.status_code == 400 and res.json()["error"]["code"] == "invalid.input" and "CANARY" not in res.text
+    assert rotate_calls(script) == []

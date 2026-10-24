@@ -165,15 +165,6 @@ describe('Settings', () => {
     expect(await screen.findByText('6f1c0d2e-8b4a-4e1f-9c3d-2a7b5e9f0c11')).toBeInTheDocument()
     expect(await screen.findByText(/epoch 1/i)).toBeInTheDocument() // the identity loads after the workspace id
   })
-  it('archiving needs the prefix and then the mock refuses', async () => {
-    const { user } = renderApp('/settings/general')
-    await user.click(await screen.findByRole('button', { name: 'Archive workspace' }))
-    const confirm = screen.getByRole('button', { name: 'Archive' })
-    expect(confirm).toBeDisabled()
-    await user.type(screen.getByLabelText(/Type DEMO to confirm/), 'DEMO')
-    await user.click(confirm)
-    expect(await screen.findByText(/Archiving is CLI-only: `orch workspace archive`/)).toBeInTheDocument()
-  })
   it('adds a member after signing', async () => {
     const { user } = renderApp('/settings/members')
     await user.click(await screen.findByRole('button', { name: 'Add member' }))
@@ -274,8 +265,6 @@ describe('Settings', () => {
   it('a maintainer sees why controls are disabled', async () => {
     renderApp('/settings/general', { viewer: 'p_mara' })
     expect((await screen.findAllByText('Only owners can save.')).length).toBe(3) // the name, the icon and the agent grant length
-    expect(screen.getByRole('button', { name: /Export workspace/ })).toBeDisabled()
-    expect(screen.getByText('Only owners can export.')).toBeInTheDocument()
   })
   it('/settings/addons/<name> redirects to the addon settings route', async () => {
     renderApp('/settings/addons/estimate')

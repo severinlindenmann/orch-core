@@ -565,16 +565,23 @@ def added_readers(events: Iterable[dict[str, Any]], ws: Any = None) -> list[str]
 
 
 def below_level(
-    ws: Any, lv: dict[str, int | None], person: str, device: str, relay_level: int | None
+    ws: Any,
+    lv: dict[str, int | None],
+    person: str,
+    device: str,
+    relay_level: int | None,
+    removing: frozenset[str] = frozenset(),
 ) -> tuple[str, list[str]] | None:
     """The relaxed readers condition (9.9) for a convenience signature of ``device`` (``person``'s): the first reason
     and the readers below level 1, or ``None``. ``relay_level`` is the relay's last verified level, ``None`` when the
-    workspace never had a relay (H12d-3 fills it from ``GET /v2/relay-info``; until then a pairing counts as 0)."""
+    workspace never had a relay (H12d-3 fills it from ``GET /v2/relay-info``; until then a pairing counts as 0).
+    ``removing`` (#1198 C15): the devices a ``device.removed`` being signed takes away. They are judged as gone (the
+    rule runs on the state AFTER the removal), so a click may remove exactly the reader that fails it, nothing else."""
     if relay_level is not None and relay_level < 1:
         return "relay_paired", []
     others, mine = [], []
     for dev in current_devices(ws):
-        if dev.id == device or (lv.get(dev.id) or 0) >= 1:
+        if dev.id == device or dev.id in removing or (lv.get(dev.id) or 0) >= 1:
             continue
         (mine if dev.person == person else others).append(dev.id)
     if others:
@@ -634,7 +641,12 @@ def check_readers(
         if not isinstance(e, dict) or e.get("auth") != "convenience":
             continue
         actor = e.get("actor") if isinstance(e.get("actor"), dict) else {}
-        why = below_level(ws, lv, str(actor.get("id")), str(actor.get("device")), relay_level)
+        gone = (
+            frozenset([e["device"]])
+            if e.get("type") == "device.removed" and isinstance(e.get("device"), str)
+            else frozenset()
+        )
+        why = below_level(ws, lv, str(actor.get("id")), str(actor.get("device")), relay_level, gone)
         if why is not None:
             reason, devices = why
             named = f" ({', '.join(devices)})" if devices else ""

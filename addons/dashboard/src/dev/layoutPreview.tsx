@@ -37,7 +37,7 @@ import { StartAgentDialog } from '@/app/terminal/real/StartAgentDialog'
 import { AgentAccess } from '@/app/shell/AgentAccess'
 import { ConfirmWords } from '@/setup/Setup'
 import { nowMs } from '@/lib/time'
-import { clickProblem, CLICK_RISK, type ClickCard, type ClickViewAnswer } from '@/api/click'
+import { clickProblem, CLICK_RISK, ROTATE_LINE, type ClickCard, type ClickViewAnswer } from '@/api/click'
 import { pastedIn } from '@/api/pasteImage'
 import { Section } from '@/app/pages/new-ticket/SectionsEditor'
 import { ClickSignPanel } from '@/components/sign/ClickSignPanel'
@@ -104,6 +104,7 @@ export const LAYOUT_SCENARIOS = [
   'signing-on',
   'signing-off',
   'signing-terminal-on',
+  'signing-idle-off', // #1198 C17: One click switched itself off; a plain click turns it on again
   'signing-unsafe',
   'signing-unknown',
   // Core D1 (#582): the dev sandbox host. The DEV SANDBOX badge (normal and with a long workspace name), the alarms list,
@@ -150,8 +151,13 @@ const LONG_WORD = 'U'.repeat(90)
 const PLACEHOLDER_DEVICE = 'd_' + '0123456789abcdef'.repeat(2)
 const SIGNING_LONG_NAME = 'The quarterly orchestration workspace of the very long named organisation ' + LONG_WORD
 const SIGNING_LONG_PREFIX = 'LONGPREFIX-' + 'WORKSPACE-'.repeat(5) + 'END' // 64 characters at most: a safe shell word
+let idleResumed = false // the signing-idle-off fixture after its plain click
 const signingCard = (scenario: LayoutScenario): ClickCard =>
-  scenario === 'signing-dev-host'
+  scenario === 'signing-idle-off'
+    ? idleResumed
+      ? { custody: 'convenience', enabled: true, available: true, switchable: true, device: PLACEHOLDER_DEVICE }
+      : { custody: 'convenience', enabled: false, available: false, problem: 'idle', idle_hours: 12, switchable: true, device: PLACEHOLDER_DEVICE }
+    : scenario === 'signing-dev-host'
     ? { custody: 'passphrase', enabled: false, available: false, problem: 'dev_host', switchable: true, device: PLACEHOLDER_DEVICE }
     : scenario === 'signing-on' || scenario === 'signing-unknown'
     ? { custody: 'passphrase', enabled: false, available: false, problem: 'not_convenience', switchable: true, device: PLACEHOLDER_DEVICE }
@@ -721,6 +727,7 @@ const originals = new Map<string, unknown>()
 
 /** Test cleanup: undo every mock api swap before another test uses the shared client. */
 export function resetLayoutPreview() {
+  idleResumed = false
   const a = api as unknown as Record<string, unknown>
   const r = runsApi as unknown as Record<string, unknown>
   for (const [name, fn] of originals) {
@@ -801,6 +808,9 @@ function install() {
     return { ok: true, commit: 'd'.repeat(40), pushed: push, url: push ? LONG_URL : null }
   })
   set('recordsAutoOff', async () => ({ ok: true }))
+  set('recordsInit', async () => ({ ok: true }))
+  set('recordsMark', async () => ({ ok: true }))
+  set('recordsPushInitial', async (_ws: string, url: string) => ({ ok: true, commit: 'd'.repeat(40), pushed: true, url }))
   set('getIdentity', async (...args: never[]) => ({ ...((await (original.getIdentity as (...a: never[]) => Promise<object>)(...args)) as object), runner: { connected: true, enabled: current === 'runner-on', terminals: true } }))
   // The signing card: the same card on every read; a switch answers with "result unknown" (the card's own reload follows).
   // Only the signing-* scenarios answer from the fixture; every other scenario keeps the api's own method.
@@ -815,8 +825,25 @@ function install() {
     if (!current.startsWith('signing-')) return (original.custodySeal as (...a: never[]) => Promise<object>)(...args)
     throw new ApiError(409, { code: 'human.click_refused', message: 'fixture', retryable: false })
   })
+  // #1198 C13: Settings → Devices shows "This computer's key"; the review answers from a fixture (the seal itself is
+  // covered by ReplaceKey.test.tsx: the fixture's workspace id is not a real one).
+  set('rotateSeal', async (ws: string) => ({
+    request_id: 'hr_01M5PVRB46WS3X8H5X2RQK04S9',
+    view_digest: `sha256:${'a'.repeat(64)}`,
+    expires_in: 300,
+    view: {
+      op: 'device.rotate', workspace: { id: ws, name: 'billing', prefix: 'DEMO' },
+      old: `d_${'1'.repeat(32)}`, new: `d_${'2'.repeat(32)}`, confirm: { kind: 'click' },
+      lines: ['Replace the signing key of this computer for billing.', 'The old key stops signing everywhere, also while a hub is down. The new key is signed by your recovery code for this workspace only; nothing is re-shared with a hub.', `old device: d_${'1'.repeat(32)}`, `new device: d_${'2'.repeat(32)}`, ROTATE_LINE],
+      rotate_line: ROTATE_LINE, seal: { v: 1, alg: 'P256-HKDF-SHA256-A256GCM', pk: `B${'Q'.repeat(86)}`, purposes: ['device.recovery_code', 'custody.passphrase'] },
+    },
+  }))
   set('switchClick', async (...args: never[]) => {
     if (!current.startsWith('signing-')) return original.switchClick(...args)
+    if (current === 'signing-idle-off') {
+      idleResumed = true
+      return signingCard(current)
+    }
     throw new TypeError('fixture: the connection was lost')
   })
   set('prepareHandoff', async (_ws: string, action: Record<string, unknown>) => {

@@ -255,6 +255,30 @@ class Workspace:
         if not self.host_answers():
             raise RuntimeError("orch setup needs the host: call start_host() first")
         setup_driver(self)
+        self.stop_dashboard()  # `orch setup` leaves the wizard's dashboard server running: no caller may inherit it
+
+    @property
+    def dashboard_ctl(self) -> Path:
+        return self.state / "dashboard" / "ctl.sock"
+
+    def stop_dashboard(self, wait: float = 15.0) -> None:
+        """Stop the dashboard server `orch setup` started for its wizard, through the server's own `stop` command (its
+        control socket under this workspace's state dir: no pkill, no PIDs guessed), and wait until the socket is gone.
+        That server's signer uses the keychain store, not the kit's file store, so a later caller that signs through
+        it gets KeyNotFound (a 409 "uncertain"). Fails loudly if it does not stop."""
+        venv = ADDON / "server" / ".venv" / "bin" / "python"
+        env = {**self.env(), "PYTHONPATH": str(ADDON / "server" / "src")}
+        done = subprocess.run(
+            [str(venv) if venv.exists() else sys.executable, "-m", "orch_dashboard", "stop"],
+            env=env, cwd=self.root, capture_output=True, text=True, timeout=30, check=False,
+        )  # fmt: skip
+        deadline = time.monotonic() + wait
+        while self.dashboard_ctl.exists() and time.monotonic() < deadline:
+            time.sleep(0.1)
+        if self.dashboard_ctl.exists():
+            raise RuntimeError(
+                f"the setup dashboard did not stop (exit {done.returncode}): {(done.stdout + done.stderr)[-400:]}"
+            )
 
     @property
     def config(self) -> dict:

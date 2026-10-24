@@ -632,7 +632,7 @@ H12b") and are never sent on a socket. A workspace op that meets one maps it to 
 can never delete a person's files. Rollback removes only the five store names (`config.json`, `keys.jsonl`, `events`, `tickets`,
 `.state`), never the root and never any other file. So `root` may be an existing project with files as long as none of those
 names (nor `.orch`) is already there, which the host checks before any write; otherwise `invalid.input` `<root> already holds orch
-files (...)`. The D-P2-17 owner and ancestor checks are unchanged. `orch init --host` makes the same check on the client first.
+files (...)`. The D-P2-17 owner and ancestor checks are unchanged. `orch setup` makes the same check on the client first.
 
 `custody.unsafe_mode` (exit 3, not retryable, stays): the root or an ancestor fails the D-P2-17 checks.
 
@@ -722,7 +722,7 @@ state**:
 
 - **A rolled-back bootstrap restarts from `host.wsk_create`.** The id and key are gone, and the genesis signs both
   `workspace_id` and `wsk_pub`, so the client gets a new id and key, signs a new genesis, and calls `host.bootstrap`
-  with a new idem. The CLI's `init` composite does this by itself after one confirmation on the person's terminal,
+  with a new idem. The hosted create of `orch setup` does this by itself after one confirmation on the person's terminal,
   because the device key signs again.
 - `control.rolled_back` (exit 9, retryable, connection stays) is only ever a stored answer. A same-key retry gets it
   again; it never runs the op a second time.
@@ -793,8 +793,8 @@ parsed CLI arguments), its handler and its `Result`. The changes from P1:
   In tier B (agent UIDs, #287) it would let one agent UID plant a command another agent UID of the same person (or the
   person, with a grant) runs, crossing the boundary tier B enforces: there "own" must mean the same grant (or the same
   agent UID class), not the same person. A phase-3 follow-up (§9 item 10).
-- `import.v1` and `init` are not served (D-P2-9). `import.v1` runs in direct mode before registration. `init` is the
-  `host.wsk_create` + `host.bootstrap` composite.
+- `import.v1` is not served (D-P2-9); it runs in direct mode before registration. (V3-D38: `init` is gone; `orch setup` is the
+  `host.wsk_create` + `host.bootstrap` composite and runs on the person's side.)
 - `help` and `describe` are answered by the client from its own registry. The host serves them too.
 - The `show` data is unchanged, so the goldens stay byte-identical. UIs use `ticket.get` (R1).
 
@@ -1763,7 +1763,7 @@ change only where marked: gate `material.texts`, and `op` in the fingerprint inp
    An unreadable registry or pin counts as registered. A
    registered workspace whose host is down answers `host.unavailable` (exit 9, retryable, the catalog entry that already
    existed for `init`), never a direct write for the same state dir (an agent pointed at another `ORCH_STATE_DIR` is
-   the accepted H2a limit: it holds no workspace key there). `help`, `describe`, `init` and `import v1` are always local (the host does
+   the accepted H2a limit: it holds no workspace key there). `help`, `describe` and `import v1` are always local (the host does
    not serve them; the direct-mode guard still answers `host.required` for the last two on a registered workspace).
    `task done --run` in host mode runs `verify.cmd` on the client (see §0.8, `task.done`) and sends a receipt; it never
    forwards `run`.
@@ -1862,11 +1862,11 @@ change only where marked: gate `material.texts`, and `op` in the fingerprint inp
 2. **Registration turns host mode on.** `orch host register DIR` first checks the control socket; a host that answers
    (the service, or a dev host from `orch host run --foreground`) is used as it is, otherwise the service is enabled as
    above (`--no-service` never touches it). `--peer` is now optional: by default this UID maps to the person whose device
-   key for the workspace is on this machine, in either custody (the passphrase key `orch init` made, or the convenience
+   key for the workspace is on this machine, in either custody (the passphrase key `orch setup` made, or the convenience
    key after click-to-sign: `custody.select.device_backend`, public key only), matched against the workspace's devices. A
    removed, revoked or expired key, one without `decide`, or one whose person left counts as none: then `--peer` is
    required. The host checks the mapping again (F8). From then on the thin CLI (H4b) and the dashboard serve the workspace through the
-   host; `orch init` itself stays direct (see §3), and `orch init --host` remains for a new directory or an existing project
+   host; `orch setup` is the only way to create a workspace, for a new directory or an existing project
    (**As built in B5:** see the note under `host.bootstrap` below).
 3. **`orch host status`** (alias `doctor`, `--json` for the document): the service (unit present, current, loaded,
    running, or none on this platform), whether a host answers on the control socket, every registered workspace (the
@@ -1998,7 +1998,7 @@ host.restart    {} → {draining:true}
 | Op | Rules |
 |---|---|
 | `host.wsk_create` | The host draws a new workspace id and creates `hosts/<id>/keys/wsk` with `O_CREAT\|O_EXCL` in a fresh 0700 directory. It never takes an id from the caller and never replaces a key. A key with no genesis after 1 h is deleted. |
-| `host.bootstrap` | The `init` composite. `events[0]` is the signed genesis `workspace.created` (F1 §5.4.2: `workspace_id`, `prefix`, `host_id`, `wsk_pub`, `owner`, `delegation`, `device_cert`; `roster_v: 0`). Its `workspace_id` and `wsk_pub` must equal what `wsk_create` returned. `root` is a new empty directory owned by the host UID that passes the D-P2-17 ancestor check. The host validates the event with the model (the six genesis checks, F1 §5.11), appends it with that workspace's WSK as `seq` 1, writes the files, pins the genesis and registers the workspace as `host.register` does. **Refused (`host.busy`) when the workspace id already has a genesis or a registration (N5).** |
+| `host.bootstrap` | The hosted create of `orch setup`. `events[0]` is the signed genesis `workspace.created` (F1 §5.4.2: `workspace_id`, `prefix`, `host_id`, `wsk_pub`, `owner`, `delegation`, `device_cert`; `roster_v: 0`). Its `workspace_id` and `wsk_pub` must equal what `wsk_create` returned. `root` is a new empty directory owned by the host UID that passes the D-P2-17 ancestor check. The host validates the event with the model (the six genesis checks, F1 §5.11), appends it with that workspace's WSK as `seq` 1, writes the files, pins the genesis and registers the workspace as `host.register` does. **Refused (`host.busy`) when the workspace id already has a genesis or a registration (N5).** |
 | `host.register` | The one op besides `bootstrap` that opens a client-named path. `root` is resolved with `realpath`, must be owned by the host UID and pass the D-P2-17 ancestor check. The workspace id comes from its verified genesis and must match the pinned genesis. A UID with a root-owned agent or worker pin can never be mapped as `person`. A `person` mapping must name a member with a valid `decide` device. Takes the ownership lock (D-P2-18). |
 | `host.unregister` | stops serving and restores direct mode |
 | `host.restart` | D-P2-4 |
@@ -2478,8 +2478,8 @@ envelope.
   `/dev/tty`, then the destination is written durably, read back, its public key and a test signature are verified,
   the selection is updated recoverably (`transition` records the step), and only then the passphrase file is removed.
   The device id and certificate do not change (custody is per event, F1 O1). It refuses unless the workspace's flag is
-  on; the host checks the readers condition at every convenience signature. Creating a convenience key at `orch init`/`join`/pairing is not offered in phase 1:
-  a workspace is registered (and its flag set) after `init`.
+  on; the host checks the readers condition at every convenience signature. Creating a convenience key at `orch setup`/`join`/pairing is not offered in phase 1:
+  a workspace is registered (and its flag set) after `orch setup`.
 - `orch keys custody passphrase --workspace W --in-place` moves the same key back under a new passphrase (14+
   characters, the strength check). It warns: "Later signatures will say passphrase, but anyone who copied the key can
   still sign with any label; use --rotate for a clean break." Without `--in-place` it refuses and names `--rotate`.
@@ -3595,6 +3595,161 @@ methods).** Presentation only: the signed events, `material`, `review_digest` an
    signatures (the second request is prepared after the first lands and checked against the review the person
    confirmed). The dashboard keeps its two hand-offs until one is chosen.
 
+**10. Remote dashboard (#1198 R1, owner decisions of 24 Oct 2026).** A dashboard on a headless Linux server (a VPS)
+is reached over HTTPS on the server's own web name, and people log in with a passkey. Off unless configured; Windows
+and macOS keep the loopback dashboard only. Design: `design-r1-remote-dashboard.md` (kit state). The SSH tunnel to the
+loopback listener stays the IT and break-glass path. A hub's browser channel is the company path; a workspace in hub
+mode may keep remote mode on, but remote mode signs nothing for the hub (D81).
+
+**10.1 Threat model.** The dashboard can start terminals and drive the click signer, so it is a shell on the server
+with signing authority. Remote mode adds one new surface: the front socket is reachable from the internet before
+login.
+
+| Threat | Answer |
+|---|---|
+| Anyone on the internet, before login | Only the pre-login surface of 10.3 answers; passkeys cannot be guessed; per-source rate limits; every parse error fails closed. Pre-login code is kept small and fuzzed (R1-3). |
+| Phishing site with a look-alike name | The passkey is bound to the RP ID; a different name gets no assertion. |
+| DNS hijack or a mis-issued certificate for the real name | Not ours to stop; reduced by a CAA record (setup prints it as advice) and HSTS. A passkey does not help against a valid certificate for the same name. |
+| A TLS-terminating proxy in between (NetBird proxy, Cloudflare, a provider's load balancer) | Forbidden (10.2). Whoever serves the page's JavaScript can change it, read every typed secret before the sealed field encrypts it and click Sign. The start refuses any front other than the configured local socket. |
+| The enrollment link leaks | At least 128 random bits, single use, 15 min, first browser wins; 5 wrong codes in total kill every open link. Anyone on the internet can use that to kill open links without logging in (accepted: a denial of service only; IT makes a new link over SSH). The terminal and the dashboard show "A passkey was added: <name>, <time>" and list all passkeys with Remove; IT can reset over SSH. |
+| Stolen bearer (XSS, an extension, a copied tab) | As in item 8, plus 2 h idle and 12 h absolute life, and step-up (10.5) for each listed action: one assertion per op, bound to that op's review. |
+| Stolen laptop with a passkey | User verification is required (device unlock). Remove the passkey from another device or over SSH. |
+| Lockout by brute-force traffic | Per-source buckets (IPv4 /32, IPv6 /64), so one source's traffic does not use the owner's budget. A distributed flood that reaches the global CPU cap can delay remote login; then the SSH tunnel is the fallback. |
+| Replay of a WebAuthn response | Single-use challenge, 120 s, bound to its ceremony. A step-up nonce is minted, held and consumed by the click signer and bound to the request and its `view_digest` (10.5), so not even the dashboard server can replay one. |
+| Cloned passkey | The sign counter is not relied on (synced passkeys report 0); it is recorded and shown only. |
+| Host header or listener confusion | The policy belongs to the listener (10.2); no header switches it. |
+| Another local user | Cannot open the front socket (peer UID check); reaches loopback HTTP and needs a bearer, as today. |
+| Same-UID agent on the server | Can write the passkey store and add its own login, as it can already sign with the One-click key. **Isolation depends on #1198 H1 (agents as their own OS user):** with H1 the store, the signer and the front socket are out of the agent's reach. Until H1 is built and active on the server, setup and Settings say "Agents on this server can act as you", and remote mode is not offered by default. |
+| Root on the server | Out of scope: root holds the keys. |
+
+**10.2 The front and the listeners.**
+
+- **Never behind a third-party TLS terminator.** TLS ends on the server itself, in the front. No NetBird reverse proxy,
+  CDN, tunnel service or provider load balancer may terminate TLS for the dashboard. A future TLS passthrough name (the
+  edge routes by SNI and sees only ciphertext) does not break this rule; it is not specified here.
+- **The front is Caddy**, installed and configured by one admin step (`orch remote enable --name <name>`, run with
+  sudo): its own system user `orch-front`, a generated Caddyfile that only does `reverse_proxy` to the front socket,
+  ACME for the configured name, TLS 1.2 or later (1.3 preferred), HSTS `max-age=31536000` (no preload), a 10 s header
+  timeout and at most 32 open unauthenticated connections. Port 80 answers only the ACME challenge and a redirect. The
+  front runs on the same machine as root-installed infrastructure, inside the server's trust boundary like sshd.
+- **Own domain only.** No "no domain" quick start through a public wildcard DNS service (sslip.io, nip.io): that
+  service could point the name elsewhere. `orch remote enable` checks that the name resolves to this server and that
+  ports 80 and 443 are reachable, and stops before changing anything if not (`remote.name_mismatch`).
+- **Two listeners, one frozen policy each**, built once at start. A header never changes which policy applies.
+  - Loopback TCP, `127.0.0.1:<port>`, unchanged: exact Host `127.0.0.1:<port>`, Origin `http://127.0.0.1:<port>`,
+    launch codes. A request carrying the public name is refused here. Headless installs get a fixed port
+    (`dashboard.port`) so the printed `ssh -L` line stays true.
+  - The front socket, a Unix socket `<run>/dashboard/front.sock`. The server checks the peer UID of every connection
+    against the configured front UID and closes any other. Every request on it is remote. Host must be exactly the
+    configured name (port 443 implied, no other spelling); Origin must be exactly `https://<name>` on every non-GET and
+    every `/api` call that carries one; a mutation without Origin is refused; Fetch Metadata applies as on loopback. A
+    loopback Host is refused here. The client address is read from the single header `X-Orch-Client` that the front
+    sets, only on this socket; generic proxy headers stay off.
+- **CSP** on the front: as item 7, with `connect-src 'self' wss://<name>` and `frame-src https://<name>/widget-frame/`.
+- **Missing any of these keeps remote mode off.** The server refuses to open the front socket and names what is
+  missing (`remote.not_configured`).
+
+**10.3 Login and enrollment.**
+
+- **Session = passkey.** WebAuthn with RP ID = the configured name, origin exactly `https://<name>`,
+  `userVerification: "required"`, discoverable credentials (`residentKey: "required"`), `attestation: "none"`,
+  `pubKeyCredParams` ES256 (-7) and EdDSA (-8) only. The verification contract is 10.6. After success the server mints
+  a bearer as today (tab memory or `sessionStorage`; never a cookie, never in a URL). **Launch codes are refused on the
+  front**: they are a local credential.
+- **Remote session kind**: 12 h absolute, 2 h idle (local keeps 24 h / 12 h). Logout ends it at once; Settings has "Log
+  out everywhere"; a restart of the dashboard ends every session.
+- **Rate limits** for passkey login, in buckets of their own: 20 per minute per source, the source being the client's
+  IPv4 address (/32) or its IPv6 /64 prefix. A global cap of 600 per minute only guards the CPU, far above any single
+  source; when a distributed flood reaches it, remote login waits and the SSH tunnel is the fallback. The loopback
+  launch limiter stays as it is, so internet traffic cannot lock out the local owner.
+- **Enrollment.** `orch remote enable` (and later "Add a device" in Settings, a step-up action) prints or shows one link
+  `https://<name>/#enroll=<code>`: the code is at least 128 random bits (`secrets.token_urlsafe(16)` or longer) and is
+  compared in constant time; single use, 15 min, the first browser that completes a registration wins; 5 wrong codes in
+  total kill every open link (`enroll.expired`). The fragment never reaches a server log.
+- **The passkey store** `<state>/dashboard/passkeys.json`: mode 0600, owned by the person UID, holding per passkey the
+  credential id, the user handle, the COSE public key, its algorithm, the backup-eligible flag of the registration, a
+  name ("MacBook, Chrome"), created, last used and the last sign count. No secret is in it, but writing it adds a login,
+  so it is read with the `O_NOFOLLOW`, owner and mode checks of the pins file and fails closed.
+- **Pre-login surface**: the app shell and its assets, `/auth/passkey/*` and `/auth/enroll/*`. Nothing else answers
+  without a remote session; `/setup` and `/api/setup/*` need a remote session (the setup token stays, on top).
+- **Terminals are off remotely by default.** `/term` on the front needs the bearer ticket, Origin `https://<name>`
+  (`wss://<name>` connection) and the Settings switch "Terminals over remote access", which is off after enable. A
+  terminal is a shell on the server.
+
+**10.4 What makes a plain click the owner's.** All of 10.2 and 10.3, plus: no ambient credential (no cookie), so a
+cross-site request carries nothing; exact Origin; JSON bodies only; no CORS; `frame-ancestors 'none'`. Every admin action
+stays a plain click after the shown review (owner decision of 24 Oct 2026); the listed few add a fingerprint touch
+(10.5), never typing.
+
+**10.5 Step-up (owner decision of 24 Oct 2026, "all as recommended": exactly this list).** On a remote session each of
+these actions needs its own passkey assertion:
+
+1. turning One click on (the custody switch of item 3a);
+2. a hub join or a hub mode change;
+3. `device.rotate`;
+4. a grant whose secret is revealed;
+5. turning dashboard execution on;
+6. adding a passkey or a device (the "Add a device" link);
+7. removing a passkey.
+
+Everything else, including turning things off and turning remote access off, is a plain click. The step-up rule does not
+apply on loopback, where the person is at the machine or behind the SSH tunnel.
+
+- **One assertion per op, no elevation.** A step-up covers exactly one listed op: it is made for that op's View, used
+  once when that op is signed, and at most 120 s after its challenge was issued. There is no session-wide "recently
+  verified" state (no `last_uv_at`): a step-up never covers another op, another View or a later click.
+- **The signer owns the nonce (R1-6).** When the sign panel shows the View of a listed op on a remote session, the
+  dashboard server asks the click signer for a step-up challenge for that request. The signer draws `nonce` (32 random
+  bytes), keeps `(nonce, request_id, view_digest, issued at)` in memory (monotonic clock) and returns the challenge
+  `SHA-256("orch/v2/dash-stepup|" || nonce || vd)`, where `vd` is the 32 raw bytes of the `view_digest` (`sha256:<hex>`)
+  of the View it built. The browser runs `navigator.credentials.get` with that challenge; the server passes the response
+  on with the sign call.
+- **The signer checks it.** It signs a listed op from a remote session only if the nonce is one it issued for this
+  request and this View, unused and issued at most 120 s ago, and the assertion verifies (10.6) against the passkey
+  store, which the signer reads itself with the store's checks. It marks the nonce used before anything else, whatever
+  the outcome; a restart forgets every nonce, so a new challenge is needed. Otherwise the answer is
+  `passkey.stepup_required`. So a buggy server, or an attacker who only drives its HTTP workflow, cannot replay an old
+  assertion, even when two Views of the same op have the same `view_digest` (code execution as the person is item 0's
+  accepted boundary). The server may check the assertion too, for an early answer; the signer's check
+  is the one that counts.
+
+**10.6 WebAuthn verification contract (`orch_dashboard.passkeys`, vectors `addons/dashboard/server/tests/vectors/webauthn_*.json`).**
+An own small verifier on `cryptography` (already a core dependency), not the `webauthn` PyPI package: it would add
+`cbor2`, `asn1crypto` and every attestation format (TPM, Android, Apple, packed with x5c) to an internet-facing pre-login
+path, and its defaults (user verification preferred, RSA allowed) would have to be overridden at every call. The verifier
+accepts exactly what 10.3 asks for and nothing else. Any failure raises `PasskeyError` (catalog code `passkey.invalid`)
+with an internal reason that is logged, never sent before login.
+
+- **Inputs** are the decoded bytes of the browser's response (strict base64url: no padding, URL-safe alphabet, zero
+  trailing bits) with size limits: `clientDataJSON` 4 KiB, `attestationObject` 8 KiB, `authenticatorData` 4 KiB,
+  signature 128 bytes, credential id 16 to 1023 bytes.
+- **RP ID and origin.** The RP ID is a lower-case DNS name with at least two labels, not an IP address; the expected
+  origin is exactly `https://` + RP ID.
+- **clientDataJSON**: UTF-8 JSON object, duplicate keys refused; `type` exactly `webauthn.create` (registration) or
+  `webauthn.get` (assertion); `challenge` a strict base64url string equal (constant time) to the expected challenge;
+  `origin` exactly the expected origin; `crossOrigin`, if present, `false`; `topOrigin` absent; `tokenBinding.status`
+  not `present`. Other keys are ignored (browsers add some on purpose).
+- **authenticatorData**: `rpIdHash` equal to SHA-256(RP ID); flags UP and UV both set; BS set without BE is refused;
+  the 4-byte sign count is returned, never enforced. Registration: AT set, the attested credential data parses exactly
+  (AAGUID, credential id length and id, one COSE key), an ED extension map if flagged, and nothing after. Assertion: AT
+  not set; without ED the data is exactly 37 bytes, with ED one extension map and nothing after.
+- **CBOR**: a strict subset (unsigned and negative integers, byte and text strings, arrays, maps, `true`/`false`);
+  shortest-form lengths, definite lengths only, no tags, no floats, no null or undefined, unique map keys, map keys
+  integers or text, depth at most 8, no trailing bytes.
+- **attestationObject**: a map with exactly `fmt`, `attStmt` and `authData`; `fmt` must be `"none"` and `attStmt` an
+  empty map. The credential id in it must equal the id the browser reported.
+- **COSE keys**, exactly these labels: ES256 `{1: 2, 3: -7, -1: 1, -2: x(32), -3: y(32)}`, a point on P-256; EdDSA
+  `{1: 1, 3: -8, -1: 6, -2: x(32)}`, Ed25519, not one of the 14 encodings of small-order points (libsodium's blocklist,
+  non-canonical spellings included). Any other algorithm, curve or label is refused.
+- **Signature** over `authenticatorData || SHA-256(clientDataJSON)`: ES256 in strict DER (re-encoding must give the same
+  bytes), EdDSA as 64 raw bytes.
+- **Ceremonies.** Login and enrollment challenges are 32 random bytes, stored server-side with their ceremony kind, 120
+  s, single use (R1-5); step-up nonces are the signer's (10.5). The caller finds the credential by its id; the verifier
+  then checks that a `userHandle` in the response, if present, equals the stored one, and that the BE flag equals the
+  one stored at registration (it never changes for a credential).
+- The hub's planned `webauthn` channel contract (orch-hub #908) should reuse these vectors; core imports no hub code
+  (D79).
+
 **As built in H5c** (the core PR #407 and its follow-ups; the wire schemas above are unchanged):
 
 1. The click signer is `orch.click` (`signer`, `view`, `server`, `spawn`, `client`, `protocol`, `log`), run as
@@ -4286,7 +4441,7 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     lands first):** `orch.custody.personkey`: the `PersonKeySource` protocol (`person_id`, `pk_pub`,
     `sign(label, payload)`, `signer(label)`, `derive_label_key()`, a context manager) and `RecoveryCodeSource`, which
     asks for the recovery code on `/dev/tty` once per command, checks it with the existing parser, derives `PK` as
-    `orch init` does, refuses another person's code before any signature and zeroises (best effort) when the block
+    `orch setup` does, refuses another person's code before any signature and zeroises (best effort) when the block
     ends. It signs only the labels its command names (`labels=`, required; a subset of device certificates, cert
     challenges, rejections and revocations, never `sig_ws_delegation`). New custody codes `custody.recovery_code`
     (with the parser's reason), `custody.person_mismatch`, `custody.person_key_closed`, `custody.person_key`,
@@ -4404,7 +4559,7 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     `auth:"convenience"` only for `question.answered` on an `SBX` sandbox workspace passing S1 to S6 (P5 cached gate,
     L2 fresh gate, L8 token plus fresh gate). One registry choke point `orch.host.registry.admit`; normal hosts refuse
     every `SBX` workspace (register, bootstrap, link, records push) and skip plus alarm one already registered; the
-    dev host refuses the click signer (`dev_host`); `orch init`/`host.bootstrap` reserve `SBX`. New code
+    dev host refuses the click signer (`dev_host`); `orch setup`/`host.bootstrap` reserve `SBX`. New code
     `host.dev_refused` (§0.6, both catalogs); additive fields `host.status.dev`, column-R `whoami.relay.dev`,
     `host.list.dev`/`sandbox`/`alarms` (absent elsewhere); the alarm `dev_convenience_refused`; one R2 vector.
     `dev-pair` (D2) and the phone part are not in it.
@@ -4455,7 +4610,7 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     `orch-relay-push-<id8>` as a worker companion with the 404, 409 `stale_epoch`, 409 `fenced` classes and the host
     budgets) and the `push` relay-hook seam (`host/relaypush.py`). `host.status.relay` gains a `push` block (additive).
     Kinds `question` and `question.closed`. No wire, hash, F1 or error-code change.
-69. **B5: `init --host` in an existing project (16 Oct 2026; §3 "As built in B5"):** `host.bootstrap` accepts a root that
+69. **B5: `orch setup` in an existing project (16 Oct 2026; §3 "As built in B5"):** `host.bootstrap` accepts a root that
     already holds files; it refuses only a root holding a store name (`config.json`, `keys.jsonl`, `events`, `tickets`,
     `.state`) or `.orch`. The 24-word recovery code is shown numbered (4 rows of 6) and the input accepts the plain or the
     numbered form. No wire, hash, F1 or error-code change.
@@ -4474,7 +4629,7 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     made a way it excludes (`sign.method`, by the state at the event's position).
 
 71. **B7: skills in `.agents/skills`, `AGENTS.md` block, `CLAUDE.md` imports, structured `AGENTS.orch.md` (owner decisions
-    A and B of 16 Oct 2026; ticket format §10.2 "Files written", harnesses §2):** `orch init` and `orch instructions sync`
+    A and B of 16 Oct 2026; ticket format §10.2 "Files written", harnesses §2):** `orch setup` and `orch instructions sync`
     write the skills to `.agents/skills/<name>/` (canonical) and always a generated copy in `.claude/skills` (never
     deleted). `AGENTS.md` gets one `<!-- orch:begin -->`..`<!-- orch:end -->` block, `CLAUDE.md` the lines `@AGENTS.md` and
     `@AGENTS.orch.md`; the old pointer line is migrated. A skill folder without a sidecar is the user's unless it is the
@@ -4483,7 +4638,7 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     instructions sync`. No wire, hash, F1 or error-code change.
 73. **B9: `orch setup` (16 Oct 2026; "As built in B9" at the end of this document; the number may be renumbered when a parallel change lands first):** a
     CLI-side command, not a host op: it serves the onboarding page over `<state>/setup/setup.sock` (HTTP, 0600), generates the passphrase and the recovery code
-    itself, and signs in-process through the existing host ops. No new host op, frame or error code; one hosted-bootstrap helper is shared with `orch init --host`.
+    itself, and signs in-process through the existing host ops. No new host op, frame or error code; one hosted-bootstrap helper is shared with `orch setup`.
 
 72. **B8: agent access 1 / 3 / 7 days (owner decision D of 16 Oct 2026; D60, D-P2-27):** `grant_hours` (workspace setting) and
     every grant range 1 to 168 h (`GRANT_MAX_HOURS`; schemas `grant.issued`, `settings.changed`, `workspace`); owners and
@@ -4757,15 +4912,14 @@ audit hook before it reads anything.
 
 - The check-and-run core of `cli.main.run` moves into `orch.host.dispatch` and serves both modes. That covers input
   validation, the who-check, the grant check, the stop rule, dedup and declared errors.
-- **`init`** (composite):
+- **`orch setup`** (hosted create, V3-D38):
   1. the person's TTY steps (passphrase, recovery code; device key made locally);
   2. `host.wsk_create` → `{workspace_id, wsk_pub}`;
   3. the client signs the delegation and `workspace.created` locally;
   4. `host.bootstrap` appends the genesis and registers the workspace.
 
-  `orch init --host` runs it (H3b3). Since H7 host mode is the default for a registered workspace, and registration
-  starts the per-user service; `orch init` itself still creates the workspace in direct mode, then `orch host register`
-  hands it to the host (see "As built in H7"). The directory must be empty; the peers map
+  `orch setup` runs it (H3b3). Since H7 host mode is the default for a registered workspace, and registration
+  starts the per-user service; `orch setup` creates the workspace through the host (V3-D38: `orch init` and direct creation are gone), (see "As built in H7"). The directory must be empty; the peers map
   is the caller's UID as the genesis owner (agents and the worker are added later by `unregister` + `register`). The
   device key is kept under `hosts/<ws>/person` as in direct mode. Once the genesis is in the log, a failure to finish
   the bootstrap is answered `outcome.unknown`, never a refusal. The client treats `outcome.unknown`, `host.restarting`
@@ -5168,7 +5322,7 @@ dispatch is turned on.
 | **H3a Handler capabilities** | `Context` capabilities; handlers lose env, path and exec access; direct mode unchanged | goldens unchanged; with the audit hook in host mode, no open outside the roots and no spawn except the launcher | Codex |
 | **H3b1 git reader and `diff`** | `orch.gitread`, the launcher, pins, refs, extensions, identity, `diff` | a malicious `.git/config` runs nothing; a `.git` file or symlinked `objects/` pointing elsewhere is refused; a 1 GB zlib bomb is refused within the limits; reftable is unavailable; the `gitdir` profile cannot open a worktree file and the `worktree` profile cannot open outside its three pins (audit hook); `diff` is a valid unified diff that `git apply` accepts, reproducing the head exactly; identical to `git diff --no-ext-diff --no-textconv --no-renames` on simple fixtures; hunk placement may differ where git uses its heuristics; the F7 cases (changed `origin` against a declared `remote`, a `.git` file planted before the repo is added, a swapped `commondir`, loose/packed disagreement, case-colliding refs, `worktreeConfig`); at most 4 children under a burst of 100 `diff` calls (F10) | Opus |
 | **H3b2 Client receipts** | `task.done` contract 2, client-side `verify.cmd`, `attested_by` | `run:true` refused by the host; a receipt with a `cmd` other than `verify.cmd` refused; the output file goes through `files`; the receipt is labelled | Codex |
-| **H3b3 Bootstrap** | `host.bootstrap`, the `init` composite | `init` through the host yields the same genesis bytes as direct mode; `bootstrap` refuses a non-empty root, a foreign owner, or an id not from `wsk_create`; a second `bootstrap` for an id that has a genesis or a registration is `host.busy` (N5); a bootstrap killed after the append is finished at restart, and one killed before it leaves no root, key or id behind | Opus |
+| **H3b3 Bootstrap** | `host.bootstrap`, the hosted create of `orch setup` | the hosted create yields the genesis bytes of the old direct mode (direct mode is gone); `bootstrap` refuses a non-empty root, a foreign owner, or an id not from `wsk_create`; a second `bootstrap` for an id that has a genesis or a registration is `host.busy` (N5); a bootstrap killed after the append is finished at restart, and one killed before it leaves no root, key or id behind | Opus |
 | **H3c Agent and worker users (#287)** | the macOS and Linux setup helper: users outside `staff`, groups, root-owned `orch` directories, `<run>`, pins, workspace modes, the worker LaunchDaemon | e2e `keys-isolation` and `mac-agent-uid`: the agent cannot read `wsk` or `dk` but can call `status`; the helper refuses a pre-existing foreign `/Users/Shared/orch` (`needs_os_users`, real foreign owner) | Opus |
 | **H4a1 Dispatcher** | policy matrix, principals, auth and the reads rule, `whoami`, `host.status`, error catalog and disposition | closed list (registry × column of §0.5); no key material in any response (property test); grant in args refused; invalid grant on a read gives workspace tickets; another person's grant id with a wrong secret cannot reach outcomes, blobs or notes (F4); the F6 visibility cases (`total`, `next_page`, `needs {person}` from an agent, `session.list` claims, `diff` on an unlinked repo, `artifact.get` with `../x`, `sub.open ticket:<restricted>` gives `not_found`) | Opus |
 | **H4a2 Files and blobs** | `files`, `blob.*`, `artifact.get`, quotas | chunk retry with the same bytes accepted, with different bytes refused; a wrong final digest refused; use across principals and workspaces gives `blob.invalid`; the per-UID quota and the person reserve (F9); consumed on commit, kept after a refusal or dry run, expired after 10 min; `x-file` without `files` refused; a lost first-chunk response is recovered with the same `upload_key`; a zero-byte blob; a repeated final chunk returns the same result | Opus |
@@ -8125,7 +8279,7 @@ with one correction (below):
 | `WK_e` (one per epoch, ever) | R6, `membership/keys/` (11A.15.3) | grants (sealed), `K_bridge(e)` through `EpochKeySource` | **must be added** |
 | `WXK_v`, `CK_s` | R6, `membership/keys/` | the card (`wxk_pub`, `ck_commit`) and the card-key wraps | **must be added**; R1's `LinkSteps.card()` already needs them (conflict C6) |
 | `S`, `sas_nonce` (per offer) | R6, the offer record | `K_pair`, the SAS | **must be added** |
-| `PK` (person) | **not stored**: `orch init` derives it from the recovery code and drops it (C8, `ops/workspace_init.py`) | the primary signs certificates, cert challenges and rejections with it (§5.2, §8.4), and derives the label key from it | **conflict C1**; the source is the owner decision Q1 (11A.15.16) |
+| `PK` (person) | **not stored**: `orch setup` derives it from the recovery code and drops it (C8, `ops/workspace_init.py`) | the primary signs certificates, cert challenges and rejections with it (§5.2, §8.4), and derives the label key from it | **conflict C1**; the source is the owner decision Q1 (11A.15.16) |
 | primary `dk_sig` | the person path (passphrase backend now, Secure Enclave later) | relay login as a device (D(p) session on the cert queue) | **must be added** (H12c item 9) |
 | primary `dk_kx` (private) | the person path, **kept**, key type `kx` | opening the sealed `cert_request` inner (purpose `cert-request` only) | **must be added** (conflict C2) |
 | the Mac's per-workspace `dk_sig` (F1 device) | the person path | signing F1 `device.added` for the phone (F1 §5.3: an existing device of the same person) | exists |
@@ -8901,7 +9055,7 @@ S1/S2 (N6, 15 Oct 2026; 11A.15.15).**
   label policy every source applies.
 - **Labels (JUDGEMENT CALL).** `SIGN_LABELS` = `sig_device_cert`, `sig_cert_challenge`, `sig_cert_rejection`,
   `sig_revocation`: a subset of `PERSON_KEY_LABELS` **without `sig_ws_delegation`**. The delegation is signed once
-  by `orch init` from the code it has just shown; adding and revoking devices never need it, and a source that cannot
+  by `orch setup` from the code it has just shown; adding and revoking devices never need it, and a source that cannot
   sign one cannot delegate a workspace to another `WSK`. Same set as 11A.15.16 fixes for A'.
 - **`RecoveryCodeSource(labels=…, person_id=… | pk_pub=…, action=…)`** (Q1 = B). `labels` is **required** (least
   privilege, review of #519, Opus F4): a non-empty subset of `SIGN_LABELS`; adding a device names
@@ -9136,7 +9290,7 @@ code (N6, 15 Oct 2026):** `tests/relay/owner.py` and the product inline primary 
      `{http://127.0.0.1:*, http://localhost:*, https://relay.dev.severin.io}`.
    - The origin stored in `link.json`, the one the host signs and the one the relay was started with are the **same
      literal** (`http://127.0.0.1:P`, not `localhost`).
-4. **Identity and workspace.** `orch init` runs in `<root>/ws` through a **pseudo-terminal** (stdlib `pty`). The script
+4. **Identity and workspace.** `orch setup` runs in `<root>/ws` through a **pseudo-terminal** (stdlib `pty`). The script
    feeds a fresh random passphrase and confirms the generated recovery code, both kept in `<root>/secrets/` (0600). No
    test seam is added to production code: the dev path drives the real TTY prompts. **pty transcripts are captured
    privately** (into memory, never echoed or logged, also on failure; Opus L12c, Codex 4).
@@ -10280,7 +10434,7 @@ no secret in the state directory, the CLI), `tests/relay_owner/test_inline.py` (
 deadline, Ctrl-C), `tests/host/test_relay_pair_cli.py` (the attach loop with the inline primary, defaults of `link` and
 `primary set`, the QR and its erasure), `tests/relay/test_owner_phone_kit.py` (the sandbox owner on the product step),
 and the T2 test `tests/relay/t2/test_b1b_owner_pairing_real_relay.py`: the **product CLI under a pty** against the real
-relay (no manifest, no dev-pair, no `owner.py`): `orch init`, host, account, link, `primary set`, a wrong `cert_code`
+relay (no manifest, no dev-pair, no `owner.py`): `orch setup`, host, account, link, `primary set`, a wrong `cert_code`
 three times (rejection, the phone is refused), a kill at the recovery prompt then `--resume` to `approved` with the phone's
 column-R read, a wrong recovery code three times (nothing signed, offer cancelled), and the 409 join of a second
 install. The run takes about 20 s.
@@ -11423,7 +11577,7 @@ checked at registration, at host start, and again by `dev_gate` inside the colum
 |---|---|---|
 | S1 | the workspace root is `<root>/ws` (or `<root>/ws-<n>`), reached from the pinned root descriptor without following a link, and its `st_dev`/`st_ino` equal the pair the manifest recorded for this workspace id | a copy or a move breaks it (17.3 "Copies") |
 | S2 | the manifest lists this workspace id under `workspaces`, written by `dev-pair` right after `orch setup` in that root | the sandbox owns the workspace, not the other way round |
-| S3 | the signed genesis `workspace.created` has `prefix` = `SBX`, `owner.name` = exactly `orch dev sandbox <id8>`, with `id8` = the first 8 characters of the manifest id (the manifest id is 8 or more lowercase hex characters, `^[0-9a-f]{8,}$`; DECIDED (orch-07), D4), and `owner.person` = the manifest's sandbox person (DECIDED (orch-52), O5; strengthened by DECIDED (orch-07), F1: `SBX` is a **reserved** prefix, see "Creation") | an immutable, signed, creation-time marker without an F1 change. Because production `orch init` gives `SBX` only to a fresh throwaway person, no real workspace has an `SBX` genesis, and a forged manifest cannot change a signed genesis |
+| S3 | the signed genesis `workspace.created` has `prefix` = `SBX`, `owner.name` = exactly `orch dev sandbox <id8>`, with `id8` = the first 8 characters of the manifest id (the manifest id is 8 or more lowercase hex characters, `^[0-9a-f]{8,}$`; DECIDED (orch-07), D4), and `owner.person` = the manifest's sandbox person (DECIDED (orch-52), O5; strengthened by DECIDED (orch-07), F1: `SBX` is a **reserved** prefix, see "Creation") | an immutable, signed, creation-time marker without an F1 change. Because production `orch setup` gives `SBX` only to a fresh throwaway person, no real workspace has an `SBX` genesis, and a forged manifest cannot change a signed genesis |
 | S4 | the member list holds exactly one person, the sandbox person; no `member.added` in the merged history | a sandbox workspace has no other reader whose history we would poison |
 | S5 | the workspace-local marker `<ws>/.state/dev-sandbox.json` (0600) exists and names the same `sandbox_id` and workspace id | an extra check (DECIDED (orch-07), F2). It travels with a file copy, but not through a records repo or a relay restore (`.state/` is rebuilt), so the primary marker on normal hosts is the `SBX` genesis |
 | S6 | the workspace's `link.json` origin equals `dev.json`'s `relay_origin` byte for byte, or there is no link (DECIDED (orch-52), O2: no hard-coded allow-list in production code; `dev.json` is read only under the flag and a matching manifest, so a stray file cannot widen anything) | a sandbox talks only to the relay `dev-pair` chose |
@@ -11455,7 +11609,7 @@ checked at registration, at host start, and again by `dev_gate` inside the colum
   is neither registered nor served. On a normal host its `SBX` genesis makes `admit` refuse it, whether it arrives as a
   file copy, a records-repo checkout or a relay restore, with or without the marker. Test
   `sbx_genesis_without_marker_refused_on_normal_host` (records rebuild, `.state/` removed, relay restore).
-- **Creation (V3-D38, amended).** `orch init` is gone; `orch setup` (hosted: `host.wsk_create` + `host.bootstrap`) is the
+- **Creation (V3-D38, amended).** `orch setup` is gone; `orch setup` (hosted: `host.wsk_create` + `host.bootstrap`) is the
   only genesis. `dev-pair up --sim-convenience` and the kit therefore work in four phases: (1) write the manifest with
   `id` and `root` only (no `person_id`, no `workspaces`) and `dev.json`, and start a **pending dev host**; (2) run
   `orch setup --prefix SBX` (owner name `orch dev sandbox <id8>`, passphrase custody) in `<root>/ws`, which bootstraps and
@@ -11471,9 +11625,9 @@ checked at registration, at host start, and again by `dev_gate` inside the colum
   root `<root>/ws` or `<root>/ws-<n>` directly below the pinned root. `host.register` and every further bootstrap on a
   pending host are `not_sandbox`. Its status line reads `DEV HOST (pending genesis, no dev powers)`. Dev powers exist
   only on a host that has proven the bound person, workspace row and marker at its own start.
-- **`SBX` is a reserved prefix (DECIDED (orch-07), F1).** Production `orch init` and `host.bootstrap` accept
+- **`SBX` is a reserved prefix (DECIDED (orch-07), F1).** Production `orch setup` and `host.bootstrap` accept
   `--prefix SBX` only when the init **creates a fresh person** (no person identity in `HOME` yet, so the person owns
-  nothing else), **this `orch init` run generates the recovery code itself** (never a typed, restored or imported
+  nothing else), **this `orch setup` run generates the recovery code itself** (never a typed, restored or imported
   code; DECIDED (orch-07), D1), **and** the owner name is exactly `orch dev sandbox <id8>`, with `id8` = the first 8 characters of the manifest id (the manifest id is 8 or more lowercase hex characters, `^[0-9a-f]{8,}$`; DECIDED (orch-07), D4).
   Otherwise `invalid.input` (`detail.prefix`, "SBX is reserved for dev-pair sandboxes"). An `SBX` genesis therefore
   always belongs to a throwaway person. **Existing use (grep of `docs/` and `plugins/orch-core/tests/` on 15 Oct 2026):**
@@ -11607,7 +11761,7 @@ checked at registration, at host start, and again by `dev_gate` inside the colum
 
 | PR | Owner | Content | Estimate |
 |---|---|---|---|
-| core D1 | orch-52 (Sonnet, Opus review) | `orch.devsandbox` (manifest check moved from the test tree, shared with `dev-pair`), `orch.host.devmode.prove`, the `--dev-sim-convenience` flag and its refusal in the unit writers, `dev_gate`, P5/L2/L8/`_signed_by`/`convenience.check`/`required_reader` changes, the narrowing marker on normal hosts, `host.status.dev`, `whoami.relay.dev`, the log lines and the alarm, the R2 vectors, new codes in §0.6 (`host.dev_refused`); after the review: the reserved `SBX` prefix in `orch init`/`host.bootstrap`, the `SBX` refusal on normal hosts, the `admit` choke point, the `dev_host` refusals of the click signer, the `HOME` pin, the `--dev-runner`-style service detection | 2 to 2.5 days |
+| core D1 | orch-52 (Sonnet, Opus review) | `orch.devsandbox` (manifest check moved from the test tree, shared with `dev-pair`), `orch.host.devmode.prove`, the `--dev-sim-convenience` flag and its refusal in the unit writers, `dev_gate`, P5/L2/L8/`_signed_by`/`convenience.check`/`required_reader` changes, the narrowing marker on normal hosts, `host.status.dev`, `whoami.relay.dev`, the log lines and the alarm, the R2 vectors, new codes in §0.6 (`host.dev_refused`); after the review: the reserved `SBX` prefix in `orch setup`/`host.bootstrap`, the `SBX` refusal on normal hosts, the `admit` choke point, the `dev_host` refusals of the click signer, the `HOME` pin, the `--dev-runner`-style service detection | 2 to 2.5 days |
 | core D2 | orch-29 | `dev-pair up --sim-convenience`: `--prefix SBX`, the manifest's `person_id` and `workspaces`, the workspace marker, `dev.json` with `relay_origin`, `orch keys reader declare` for the sandbox device, a level-1 `reader_decl` for the sandbox primary (O4), the flag on `orch host run`, `ORCH_NO_CONVENIENCE` omitted for the host only; `down` unchanged | 0.5 day |
 | relay | orch-29 | none: the pinned relay and `relay.dev.severin.io` serve level 1 (O1, resolved) | 0 |
 | core follow-up | core | the F1 checkpoint vectors and `reader_kat_1` convenience cases (9.8 rollout step 2); not needed for the sandbox flow | separate |
@@ -11715,13 +11869,13 @@ that is core's), the R2 vector `answer_convenience_refused`.
 - `<root>/.orch-dev-sandbox`: `{"id": "<8 to 128 lowercase hex>", "root": {"st_dev": int, "st_ino": int},
   "person_id": "p_<32 hex>", "workspaces": [{"id": "<32 hex>", "st_dev": int, "st_ino": int}]}`. `root` is
   `<root>`'s own identity, each `workspaces` row the identity of `<root>/ws` (or `ws-<n>`); other keys are ignored.
-  `person_id` and `workspaces` are added after `orch init`, before the host starts.
+  `person_id` and `workspaces` are added after `orch setup`, before the host starts.
 - `<root>/state/host/dev.json`: exactly `{"v": 1, "sim_convenience": true, "sandbox_id": "<manifest id>",
   "root": {"st_dev": int, "st_ino": int}, "relay_origin": "<scheme://host[:port]>"}` (`<root>/state/host` 0700).
 - `<ws>/.state/dev-sandbox.json`: exactly `{"v": 1, "sandbox_id": "<manifest id>", "workspace_id": "<32 hex>"}`.
 - The start: `HOME=<root>/home ORCH_STATE_DIR=<root>/state orch host run --foreground --dev-sim-convenience`
   (`ORCH_NO_CONVENIENCE` unset for this process only; any non-empty value turns the gate off). Then
-  `orch host register <root>/ws`. The order of 17.3 "Creation" holds: `orch init --prefix SBX` (owner name
+  `orch host register <root>/ws`. The order of 17.3 "Creation" holds: `orch setup` (prefix `SBX`) (owner name
   `orch dev sandbox <id8>`, a fresh state directory) in `<root>/ws` with the manifest already in `<root>`, then the
   marker, the manifest's `person_id` and `workspaces`, `dev.json`, the host, the registration.
 
@@ -11731,7 +11885,7 @@ that is core's), the R2 vector `answer_convenience_refused`.
    three callers: `host.register`, `host.bootstrap` and its start-up recovery (`registry_add_paths_table` pins
    them; `Registry.add` is called only by `admit`). `host.bootstrap` also runs the admit check in its validation,
    before the genesis is appended. A dev host therefore refuses every bootstrap (a new root is in no manifest):
-   `dev-pair` creates the sandbox with a direct-mode `orch init` and registers it.
+   `dev-pair` creates the sandbox with `orch setup` on a pending dev host (V3-D38, 17.3 "Creation") and binds it.
 2. **The SBX init rules.** "No person identity in `HOME`" is checked as: the state directory holds no
    `<state>/person/` entry and no `<state>/hosts/*/person/` device key. "The recovery code this init generated" is
    structural: `_signed_genesis` refuses `SBX` unless its caller passes `generated=True`, which only the two init paths
@@ -11773,7 +11927,7 @@ that is core's), the R2 vector `answer_convenience_refused`.
 - `relayr6._convenience_block` passes the stored relay level like `relayhook.convenience_block`; a level drop does not
   halt the worker (the alarm `relay_reader_old` is the rule, §11A.6 "Foreign appends").
 - `Registry._save` adds a new entry only by consuming the spent `AdmitToken` of `_add` (a direct `_save` cannot).
-- `orch init` declares `host.dev_refused` and passes the host's refusal through as it is (the P1 catalog entry, the
+- `orch setup` passes `host.dev_refused` and passes the host's refusal through as it is (the P1 catalog entry, the
   CLI goldens). The other refusing paths (`host.register`, `host.bootstrap`, `relay.link`, a records push) are host
   ops, not P1 operations, so the code is in the host table and §0.6 for them.
 - `convenience.flag_or_gate` also decides `refuse_reader_op`'s "convenience on" refusal and `observe_relay_level`'s
@@ -13124,7 +13278,7 @@ sets `RLIMIT_CORE=0`, serves `<state>/setup/setup.sock` and stays until the page
   signing". R2: typed word `GRANT` (any runner grant) or `AGENTS` (more than 8 hours); R3: the three-word fingerprint is
   also asked on the setup terminal for Finish setup, a runner grant and execution add-ons.
 * **Create** (`steps.Creator`): terminal confirm (R3), then genesis through `workspace_init._hosted_bootstrap` (the B5 path,
-  shared with `init --host`), add-on manifests, runner flags, the runner hello wait (R4: no hello, no grant), then the batch.
+  shared with `orch setup`), add-on manifests, runner flags, the runner hello wait (R4: no hello, no grant), then the batch.
   `human.prepare` is **one operation per request**, so a dependent chain cannot be prepared in one bundle; the written
   fallback is used: prepare every request, check each with `host.signer.check` and against the review (`check_prepared`,
   R1: every event equals its reviewed rows except the coded volatile fields), and only then ONE

@@ -131,7 +131,7 @@ _SPECS = [
         3,
         False,
         "no device key of yours here",
-        "orch init sets up your device key",
+        "orch setup sets up your device key",
         ["orch", "help"],
         "The key file of the person's device is missing; a human signature needs it (D65).",
     ),
@@ -244,7 +244,7 @@ _SPECS = [
         3,
         False,
         "this key backend cannot sign a reviewed batch",
-        "use a passphrase device key (orch init sets one up)",
+        "use a passphrase device key (orch setup sets one up)",
         ["orch", "help"],
         "orch import v1 signs a reviewed batch under one unlock; a key backend that asks per signature cannot, so "
         "nothing is signed (F1 10.4a, 14.2).",
@@ -393,7 +393,7 @@ _SPECS = [
         "the host is already creating or serving this workspace",
         "orch host list",
         ["orch", "host", "list"],
-        "init --host: the root or the workspace id is already registered, has a genesis or is being bootstrapped (N5).",
+        "orch setup: the root or the workspace id is already registered, has a genesis or is being bootstrapped (N5).",
     ),
     _e(
         "custody.unsafe_mode",
@@ -402,7 +402,7 @@ _SPECS = [
         "the directory or one of its parents is not safe for the host",
         "use a directory owned by you whose parents only you or root can change",
         ["orch", "describe", "{cmd}"],
-        "init --host: the root or an ancestor fails the host's ownership and mode checks (D-P2-17).",
+        "orch setup: the root or an ancestor fails the host's ownership and mode checks (D-P2-17).",
     ),
     _e(
         "host.unavailable",
@@ -411,7 +411,7 @@ _SPECS = [
         "the orch host cannot be reached",
         "start the host service, then retry",
         ["orch", "host", "list"],
-        "init --host: no host answers on the control socket, or the connection dropped (§0.6, raised by the client).",
+        "orch setup: no host answers on the control socket, or the connection dropped (§0.6, raised by the client).",
     ),
     # 5 validation
     _e(

@@ -511,7 +511,7 @@ class PassphraseBackend:
         recipient: bytes | None,
     ) -> bytes:
         """Create the key. ``passphrase`` is for a caller that has already asked the person itself on the terminal
-        (``orch init`` offers a generated one); without it the backend's own prompt asks (twice). Either way the text
+        (``orch setup`` offers a generated one); without it the backend's own prompt asks (twice). Either way the text
         must pass :func:`orch.custody.strength.check_strength`.
 
         ``role="kx"`` makes a key-exchange key: ``purposes`` (a subset of :data:`KX_PURPOSES`) and ``recipient`` (the
@@ -735,7 +735,7 @@ class PassphraseBackend:
         """The primary key pair under one passphrase (the backend's own prompt, once, asked twice): ``sig_key_id``
         (role ``primary``) and ``kx_key_id`` (role ``kx``, ``purposes``, recipient = the protocol device id of the
         signing key). If the second key cannot be made, the first is removed. Returns ``(dk_sig_pub, dk_kx_pub)``.
-        No caller supplies the passphrase (only ``orch init`` does that, for the workspace key)."""
+        No caller supplies the passphrase (only ``orch setup`` does that, for the workspace key)."""
         check_key_id(sig_key_id)
         check_key_id(kx_key_id)
         if sig_key_id == kx_key_id:

@@ -310,7 +310,7 @@ def write_workspace_files(
     """Write the instruction files into ``root``. Returns ``(changed, kept)``: the relative paths that changed (or
     would, with ``dry_run``) and a line for each file left alone and why.
 
-    ``pointers`` also creates the ``AGENTS.md`` block and the ``CLAUDE.md`` imports (``orch init`` does); without it
+    ``pointers`` also creates the ``AGENTS.md`` block and the ``CLAUDE.md`` imports (``orch setup`` does); without it
     (``instructions sync``) an existing block, old pointer or old import is still brought up to date, nothing else is
     added. ``AGENTS.md`` and ``CLAUDE.md`` are read and checked first: an unsafe one fails before anything is written,
     except a ``CLAUDE.md`` that links to ``AGENTS.md``, which is skipped with a note. The skills are written to

@@ -11,7 +11,7 @@ from pathlib import Path
 import orch.ops
 
 OPS = Path(orch.ops.__file__).parent
-#: caps.py is the capability implementation. workspace_init.py is ``orch init``: never served by the host (D-P2-9),
+#: caps.py is the capability implementation. workspace_init.py is ``orch setup``: never served by the host (D-P2-9),
 #: it runs in direct mode only, before any workspace exists.
 EXEMPT = {"caps.py", "workspace_init.py"}
 

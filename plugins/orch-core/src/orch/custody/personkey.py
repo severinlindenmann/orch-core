@@ -1,7 +1,7 @@
 """The person key ``PK`` as a pluggable source (orch-v2-host 11A.15.10 item 10; owner decision Q1 = B, 11A.15.16).
 
 ``PK`` is the person's **permanent** identity key: ``person_id = id(PK)``, there is no rotation, and a stolen copy
-stays valid. ``orch init`` derives it from the 24-word recovery code and drops it (core rule C8). Adding a device
+stays valid. ``orch setup`` derives it from the 24-word recovery code and drops it (core rule C8). Adding a device
 (the certificate, the cert challenge or the rejection of §8.4) and revoking one need it again. A
 :class:`PersonKeySource` is what those commands get instead of a key:
 
@@ -15,14 +15,14 @@ stays valid. ``orch init`` derives it from the 24-word recovery code and drops i
   ends, however it ends; ``sign`` after the block is :class:`PersonKeyClosed`.
 
 **``sig_ws_delegation`` is not signed here (JUDGEMENT CALL, H12c-d).** The delegation of a workspace key is signed
-once, by ``orch init``, from the code it has just shown. Adding and revoking devices (R6, revocation) never need it,
+once, by ``orch setup``, from the code it has just shown. Adding and revoking devices (R6, revocation) never need it,
 and a source that cannot sign one cannot be talked into delegating a workspace to an attacker's ``WSK``. This is the
 same set 11A.15.16 fixes for the A' option. A future caller that needs it adds it with its own review.
 
 :class:`RecoveryCodeSource` is the production source under Q1 = B: the code is typed on ``/dev/tty`` (never stdin;
 refused without a terminal, :class:`~orch.custody.base.NoPrompt`, and under ``ORCH_GRANT``, :class:`HumanOnly`)
 **once** for the command, checked by the existing parser (:func:`orch.identity.recovery.check_recovery_code`, the
-BIP-39 checksum), derived exactly as ``orch init`` derives it (:func:`orch.identity.recovery.derive_person_scalar`),
+BIP-39 checksum), derived exactly as ``orch setup`` derives it (:func:`orch.identity.recovery.derive_person_scalar`),
 and matched against the expected person (the workspace owner's pinned ``pk_pub`` or ``person_id``) **before** any
 signature (:class:`PersonMismatch`). Nothing is written to disk; the code and the key are never logged, never in an
 exception text, an exception chain or its frames, or a ``repr``. The terminal is opened first; from then, before the
@@ -231,7 +231,7 @@ def _expected(person_id: object, pk_pub: object) -> tuple[bytes, bytes | None]:
 
 
 def _derive_scalar(text: str) -> int:
-    """The person scalar of a checked code: ``orch init``'s derivation (production scrypt parameters). Tests replace
+    """The person scalar of a checked code: ``orch setup``'s derivation (production scrypt parameters). Tests replace
     it with the low-N seam; nothing in production does."""
     return recovery.derive_person_scalar(text)
 
@@ -300,7 +300,7 @@ def _read_code(r: int, w: int, prompt: str, buf: bytearray) -> bool:
 
 
 def _unlock(typed: bytearray, scalar: bytearray, derive: Callable[[str], int] | None = None) -> Any:
-    """Check ``typed`` with the existing parser, derive the person key as ``orch init`` does, write its 32-byte scalar
+    """Check ``typed`` with the existing parser, derive the person key as ``orch setup`` does, write its 32-byte scalar
     into the caller's ``scalar`` and return the key object. Shared by every source that starts from a code.
 
     **No typed text survives in an exception (Opus F1).** A parser refusal records only its reason inside the

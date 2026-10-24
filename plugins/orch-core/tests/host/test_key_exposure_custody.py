@@ -225,7 +225,7 @@ def backend_over(directory):
 
 @pytest.fixture
 def old_key_on_disk(served):
-    """The owner's device key as a passphrase key file at the place ``orch init`` puts it."""
+    """The owner's device key as a passphrase key file at the place ``orch setup`` puts it."""
     owner = served.lab.ws.owner
     directory = keyfile_of(served)
     directory.parent.mkdir(parents=True, exist_ok=True)

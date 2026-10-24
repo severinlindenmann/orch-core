@@ -12,7 +12,7 @@ CFG = json.dumps({"schema": "orch.workspace/2", "workspace": {"id": "w"}})
 
 
 def _free(root: Path) -> str | None:
-    return rootclaim.refusal(rootclaim.inspect(root), init_lock_ok=True)
+    return rootclaim.refusal(rootclaim.inspect(root))
 
 
 def test_a_projects_generic_names_are_no_collision(tmp_path: Path) -> None:
@@ -48,9 +48,7 @@ def test_a_projects_own_dot_orch_is_a_named_collision_not_orch(tmp_path: Path) -
     assert not rootclaim.inspect(link).orch and "own .orch/" in (rootclaim.refusal(rootclaim.inspect(link)) or "")
 
 
-def test_an_init_in_progress_is_a_named_marker(tmp_path: Path) -> None:
+def test_an_old_init_lock_file_is_a_projects_own_name(tmp_path: Path) -> None:
     (tmp_path / ".orch-migrating").mkdir()  # nothing of orch's any more: a project's own name
+    (tmp_path / ".orch-init.lock").write_text("")  # orch init is gone (V3-D38): its lock is nothing special
     assert _free(tmp_path) is None
-    (tmp_path / ".orch-init.lock").write_text("")
-    assert _free(tmp_path) is None  # init's own lock is fine for init
-    assert "orch init" in (rootclaim.refusal(rootclaim.inspect(tmp_path)) or "")

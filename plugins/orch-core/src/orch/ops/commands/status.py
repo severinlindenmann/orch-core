@@ -99,6 +99,6 @@ OP = operation(
         },
         optional=("grant", "grant_local", "claim", "new_events", "state_dir", "pin"),
     ),
-    errors=(err("not_found", "run orch init in a workspace", ["orch", "describe", "init"]),),
+    errors=(err("not_found", "run it in a workspace folder (orch setup makes one)", ["orch", "help"]),),
     handler=handle,
 )

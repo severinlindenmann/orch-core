@@ -1,6 +1,6 @@
 # orch keeps its workspace in `.orch/`
 
-**What changes.** New workspaces (`orch init`, `orch setup`, `host.bootstrap`) put everything orch owns in one hidden
+**What changes.** New workspaces (`orch setup`, `host.bootstrap`) put everything orch owns in one hidden
 folder, `<project>/.orch/`: `config.json`, `keys.jsonl`, `AGENTS.orch.md`, `events/`, `tickets/`, `addons/` and
 `.state/`. The project root keeps only the files other tools read there: `AGENTS.md` (with the orch block, now pointing
 at `.orch/AGENTS.orch.md`), `CLAUDE.md` (`@AGENTS.md`), `.agents/skills/orch-*`, `.claude/skills/orch-*` and a

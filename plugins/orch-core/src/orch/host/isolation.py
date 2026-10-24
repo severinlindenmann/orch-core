@@ -203,9 +203,16 @@ def _policy(facts: OsFacts, name: str, pin: dict) -> list[Reason]:
     sudo and sshd themselves, taken by the setup step, plus the stat signature of each policy file. Here we only check
     that the verdict is good and that nothing changed since (size, mtime, inode, and the set of files in the drop-in
     directories). Anything else, including a missing field, asks for the admin step again. Limits: a file that sudo or
-    sshd include from outside these paths is not watched; sudo rules from LDAP or sssd are not seen; where a policy
-    directory is unreadable to this process (RHEL: 0750/0700) a new file inside is caught through the directory's own
-    signature, and an unstat-able entry reads as changed."""
+    sshd include from outside these paths is not watched; sudo rules from LDAP or sssd are not seen.
+
+    Folders this process cannot search (Ubuntu and RHEL: ``/etc/sudoers.d`` is 0750 root): root's setup step records
+    only the folder's own signature, not the entries inside (``assess_policy(host_uid=…)``), because the host could
+    never stat them. An entry added, removed or renamed there moves the folder's signature and shows as changed. An
+    in-place edit of an existing file inside such a folder, with no rename, is NOT seen by this unprivileged check
+    (it needs root; §13.9); the root-side recheck at each runner start (L3, ``--recheck``) is planned to close it.
+    A folder the person can list but not search is also covered by the folder signature; if one of its entries was
+    not recorded, ``listdir`` shows it as new and the check refuses ("is new"). That is acceptable: it fails closed.
+    An entry the host cannot stat that was recorded (for example a symlink to a root-only target) reads as changed."""
 
     def bad(what: str = "") -> Reason:
         return Reason(

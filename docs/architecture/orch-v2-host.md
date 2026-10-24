@@ -13635,6 +13635,17 @@ first failed fact named.
 | **Another local user** | As §0.8.6 item 8 | Same; plus L8 drops their loopback connections to the dashboard on Linux |
 | **Root** | Out of scope | Out of scope |
 
+**Sudo and SSH policy check, and its limit (L2/L11).** The root-owned pin records the verdict of `sudo -l -U` and
+`sshd -T` taken at setup, plus the stat signature of each policy file. The unprivileged host compares signatures on
+every `detect()`. Where the person cannot search a policy folder (Ubuntu and RHEL: `/etc/sudoers.d` is 0750 root), only
+the folder's own signature is recorded: an entry added, removed or renamed is seen, but an **in-place edit of an existing
+file inside that folder is not**, because only root can stat it (the edit needs root as well, so this sits inside the
+"Root: out of scope" row). A folder the person can list but not search refuses with "is new" for any entry that was not
+recorded; that fails closed and is accepted. A recorded entry the host cannot stat (a symlink to a root-only target)
+reads as changed. **Planned (L3):** the runner unit gets `ExecStartPre=+… --recheck %i`, which asks `sudo -l -U` and
+`sshd -T` again at each runner start as root, refuses the start if an answer changed and rewrites the pin without a
+verdict; that closes the gap.
+
 **What tier A honestly loses.** Without isolation, anything an agent runs can sign with One click and read every file
 of the person, including SSH keys and tokens; the column split of §0.5 is policy, not a boundary; community add-ons
 stay refused. The dashboard shows the red line "Agents run as you" and One click is off by default. An unprivileged

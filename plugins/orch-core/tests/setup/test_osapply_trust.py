@@ -368,3 +368,24 @@ def test_osinstall_script_refuses_a_staging_parent_others_can_write(tmp_path) ->
     finally:
         parent.chmod(0o755)
     assert done.returncode == 2 and "can be written by others" in done.stderr
+
+
+def test_can_stat_asks_about_the_entry_not_its_target(tmp_path) -> None:
+    """A symlinked drop-in pointing into a root-only folder stays 'statable' by its own name: it is recorded, the host
+    then fails on the target and reads it as changed (fail closed)."""
+    from orch.setup.osfacts import RealOsFacts
+
+    open_dir = tmp_path / "open"
+    open_dir.mkdir(mode=0o755)
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    (locked / "target").write_text("x")
+    (open_dir / "link").symlink_to(locked / "target")
+    locked.chmod(0o000)
+    try:
+        facts = RealOsFacts()
+        assert facts.can_stat(ME or 1, str(open_dir / "link")) is True or ME == 0
+        assert facts.can_stat(ME or 1, str(locked / "target")) is False or ME == 0  # the folder itself is closed
+        assert facts.file_sig(str(open_dir / "link")) == (-1, -1, -1, -1)  # the host cannot follow it
+    finally:
+        locked.chmod(0o700)

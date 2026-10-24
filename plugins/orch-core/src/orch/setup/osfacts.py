@@ -263,7 +263,10 @@ class RealOsFacts:
         info = self.user_by_uid(uid)
         gids = info.gids if info else frozenset()
         try:
-            for anc in self._ancestors(os.path.realpath(path)):
+            # the folders above the ENTRY (not what it points to): a symlinked drop-in is still stat-ed by its own name,
+            # and the host then fails on a root-only target, so it stays recorded and reads as changed (fail closed)
+            entry = os.path.join(os.path.realpath(os.path.dirname(path)), os.path.basename(path))
+            for anc in self._ancestors(entry):
                 if not self._perm(os.stat(anc), str(anc), uid, gids) & 0o1:
                     return False
         except (OSError, _Unprovable):

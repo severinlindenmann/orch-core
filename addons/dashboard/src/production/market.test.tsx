@@ -36,6 +36,24 @@ it('shows a source on every card, states and a permanent nav link', async () => 
   for (const card of screen.getAllByRole('article')) expect(within(card).getByText('official - demo-example/market - 1.2.0')).toBeInTheDocument()
   expect(screen.getByRole('link', { name: 'Add-ons' })).toHaveAttribute('href', '/w/DEMO/addons')
 })
+// Security review (UI provenance): publisher/marketplace text may only appear inside core's AddonFrame, never as bare core-looking UI.
+const inFrame = (el: HTMLElement) => expect(el.closest('[data-addon]')).not.toBeNull()
+it('shows publisher text only inside the AddonFrame: Browse, review, update diff, marketplaces', async () => {
+  show('/w/DEMO/addons')
+  inFrame(await screen.findByText('Connect calendars to tickets.', {}, T))
+  await userEvent.click(screen.getByRole('button', { name: 'Marketplaces' }))
+  inFrame(await screen.findByText('Official marketplace', { selector: 'span *, span' }, T))
+})
+it('the review summary sits inside the AddonFrame', async () => {
+  const d = await openReview()
+  inFrame(within(d).getByText('Calendar integration'))
+})
+it('update diff values from the package sit inside the AddonFrame', async () => {
+  ws().marketStage = updateStage(true)
+  const d = await openReview('installed')
+  inFrame(within(d).getByText('+ fields:', { exact: false }))
+  inFrame(within(d).getByText('- fields:', { exact: false }))
+})
 it('stages the exact source, hands off in Terminal and refreshes after submission', async () => {
   const d = await openReview()
   expect(state.host.calls.find((c) => c.path.endsWith('/market/stage'))?.body).toEqual({ id: 'calendar', url: market().url })

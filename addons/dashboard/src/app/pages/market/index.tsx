@@ -91,20 +91,22 @@ function Review({
             <p>
               <Inline>{s.update.from.version}</Inline> → <Inline>{s.version}</Inline>
             </p>
-            {s.update.changes.filter((line) => !/^version\b/i.test(line)).map((line, i) => (
-              <p key={i}>
-                <Inline>{line}</Inline>
-              </p>
-            ))}
-            {(['added', 'removed'] as const).map((kind) =>
-              Object.entries(s.update![kind]).map(([group, values]) =>
-                values.map((value) => (
-                  <p key={`${kind}-${group}-${value}`} className={kind === 'added' ? 'text-success' : 'line-through text-text-muted'}>
-                    {kind === 'added' ? '+' : '-'} {group}: <Inline>{group === 'capabilities' ? permissionEffect(value) : value}</Inline>
-                  </p>
-                )),
-              ),
-            )}
+            <AddonFrame addon={s.name} title="From the addon" compact className="flex-col items-start">
+              {s.update.changes.filter((line) => !/^version\b/i.test(line)).map((line, i) => (
+                <p key={i}>
+                  <Inline>{line}</Inline>
+                </p>
+              ))}
+              {(['added', 'removed'] as const).map((kind) =>
+                Object.entries(s.update![kind]).map(([group, values]) =>
+                  values.map((value) => (
+                    <p key={`${kind}-${group}-${value}`} className={kind === 'added' ? 'text-success' : 'line-through text-text-muted'}>
+                      {kind === 'added' ? '+' : '-'} {group}: <Inline>{group === 'capabilities' ? permissionEffect(value) : value}</Inline>
+                    </p>
+                  )),
+                ),
+              )}
+            </AddonFrame>
             <p>Publisher: {s.update.publisher === 'same' ? 'Matches remembered key' : s.update.publisher === 'first_use' ? publisherWording('new') : 'Unsigned'}</p>
           </section>
         )}
@@ -260,7 +262,7 @@ function MarketWorkspace() {
                   <option value="">All sources</option>
                   {markets.map((m) => (
                     <option key={m.url} value={m.url}>
-                      {visible(m.from_marketplace.name)}
+                      {visible(m.url.replace(/^https:\/\/github\.com\//, ''))}
                     </option>
                   ))}
                 </select>
@@ -301,10 +303,10 @@ function MarketWorkspace() {
                         <Inline>{`${m.class === 'official' ? 'official - ' : ''}${m.url.replace(/^https:\/\/github\.com\//, '')} - ${a.version}`}</Inline>
                       </p>
                       {m.class === 'official' && <p className="text-xs">Official marketplace</p>}
-                      <div className="flex-1 text-sm">
-                        <p className="text-[11px] text-text-faint">From the add-on, per host, not signed</p>
+                      <AddonFrame addon={a.id} title="From the addon" compact className="flex-1 items-start text-sm">
                         <Inline>{a.from_marketplace.summary}</Inline>
-                      </div>
+                      </AddonFrame>
+                      <p className="text-[11px] text-text-faint">The text above is from the add-on's package, per host, not signed.</p>
                       <div className="flex flex-wrap gap-1">
                         {a.capabilities.map((p) => (
                           <span className="rounded-full border border-border px-2 text-xs" key={p}>
@@ -393,7 +395,9 @@ function MarketWorkspace() {
                   {markets.map((m) => (
                     <tr key={m.url} className="@max-[800px]:block @max-[800px]:py-3">
                       <td className={cell} data-label="Marketplace">
-                        <Inline>{m.from_marketplace.title || m.from_marketplace.name}</Inline>
+                        <AddonFrame addon="marketplace" title="From the marketplace" compact>
+                          <Inline>{m.from_marketplace.title || m.from_marketplace.name}</Inline>
+                        </AddonFrame>
                         {m.cache === 'invalid' ? <p>Needs refresh</p> : m.stale && <p>Out of date - refresh</p>}
                       </td>
                       <td className={`${cell} font-mono text-xs`} data-label="Repo">

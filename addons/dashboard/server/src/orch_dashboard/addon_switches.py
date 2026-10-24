@@ -33,7 +33,6 @@ LOCKED = {
     "dashboard": "The dashboard is always on: it is what shows this workspace.",
     "quick": "Always available. There is nothing to switch.",
 }
-RUNNER_ENABLE = "orch runner enable"
 _VERSION = re.compile(r"^[0-9A-Za-z][0-9A-Za-z.+_-]{0,39}$")
 _RELEASE = re.compile(r"^[0-9a-f]{12}$")
 
@@ -107,10 +106,16 @@ def needs(name: str, runner: dict | None) -> str | None:
         if runner is None:
             return "This host does not report dashboard execution, which this add-on needs."
         if not runner["enabled"]:
-            return f"Needs dashboard execution first. In your terminal run: {RUNNER_ENABLE}"
+            return "Needs dashboard execution first. Turn it on here, then switch this on."
         if name == "terminals" and not runner["terminals"]:
-            return f"Terminals are not turned on in dashboard execution here. In your terminal run: {RUNNER_ENABLE}"
+            return "Terminals are not turned on in dashboard execution here. Turn them on here, then switch this on."
     return None
+
+
+def runner_fix(name: str, runner: dict | None) -> bool:
+    """Whether what ``needs`` says is missing is the dashboard-execution switch, which the page now offers to turn on
+    (#1198 C14, ``POST /click/runner``)."""
+    return runner is not None and needs(name, runner) is not None and name in ("start-agent", "terminals")
 
 
 def register(app: FastAPI, gateway: Gateway) -> None:
@@ -146,6 +151,7 @@ def register(app: FastAPI, gateway: Gateway) -> None:
                         "set_up": True,
                         "locked": LOCKED[info.id],
                         "blocked": None,
+                        "runner_switch": False,
                         # always-on parts ship with the install: the dashboard's own package, quick tasks are core
                         "version": own["dashboard"]["version"] if info.id == "dashboard" else own["core"]["version"],
                     }
@@ -175,6 +181,7 @@ def register(app: FastAPI, gateway: Gateway) -> None:
                     "set_up": set_up,
                     "locked": None,
                     "blocked": blocked,
+                    "runner_switch": (not on) and can_sign and runner_fix(info.id, runner),
                     "version": clean_version(got.get("version")) if got else None,
                 }
             )

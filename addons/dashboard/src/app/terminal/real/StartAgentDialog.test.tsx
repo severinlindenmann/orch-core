@@ -256,7 +256,7 @@ describe('the runner grant', () => {
   it('no grant: Issue is gated on dashboard execution', async () => {
     s.preview.mockResolvedValue(noGrant())
     await mountCard({ enabled: false })
-    expect(await screen.findByTestId('runner-grant-off', {}, T)).toHaveTextContent('Turn on dashboard execution (orch runner enable) or use the terminal.')
+    expect(await screen.findByTestId('runner-grant-off', {}, T)).toHaveTextContent('Turn on dashboard execution first.')
     expect(screen.getByTestId('runner-grant-issue')).toBeDisabled()
   })
 
@@ -358,7 +358,7 @@ describe('the runner grant', () => {
   })
 
   it.each([
-    [{ code: 'human.click_refused', reason: 'terminal_only' }, 'Turn on dashboard execution (orch runner enable) or use the terminal.'],
+    [{ code: 'human.click_refused', reason: 'terminal_only' }, 'Turn on dashboard execution first.'],
     [{ code: 'click.unavailable' }, 'Run `orch grant --runner` in your terminal.'],
   ])('refusal %o says %s', async (err, text) => {
     s.preview.mockResolvedValue(noGrant())
@@ -558,12 +558,13 @@ describe('a short, calm dialog (U6)', () => {
     expect(s.start).not.toHaveBeenCalled()
   })
 
-  it('the runner is off: one plain sentence and a copyable command, no signing', async () => {
+  it('the runner is off: one plain sentence and a Turn on button, no terminal command, no signing', async () => {
     s.runner.mockResolvedValue({ runner: runner({ enabled: false }) })
     s.preview.mockResolvedValue(preview({ spec: null, grant: null, blocked: { code: 'runner.disabled', message: null, detail: {} } }))
     mount()
-    expect(await screen.findByTestId('agent-runner-off', {}, T)).toHaveTextContent('The runner is off. Turn it on in your terminal.')
-    expect(screen.getByTestId('runner-enable-command')).toHaveTextContent('orch runner enable')
+    expect(await screen.findByTestId('agent-runner-off', {}, T)).toHaveTextContent('Dashboard execution is off, so agents cannot start yet.')
+    expect(screen.getByTestId('runner-enable')).toHaveTextContent('Turn on dashboard execution')
+    expect(screen.getByTestId('agent-runner-off')).not.toHaveTextContent('orch runner')
     expect(screen.queryByTestId('agent-access')).toBeNull()
   })
 

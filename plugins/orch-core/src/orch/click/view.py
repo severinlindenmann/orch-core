@@ -23,6 +23,8 @@ from .protocol import (
     ROTATE_LINE,
     ROTATE_OP,
     ROTATE_PURPOSES,
+    RUNNER_LINE,
+    RUNNER_OFF_LINE,
     SEALED_OPS,
     op_class,
     refused,
@@ -39,6 +41,7 @@ __all__ = [
     "reveal_checks",
     "single_event",
     "rotation",
+    "runner_switch",
 ]
 
 MAX_EVENTS = 16
@@ -279,4 +282,24 @@ def rotation(*, workspace: Mapping[str, str], old: str, new: str, pk: str) -> di
         "confirm": {"kind": "click"},
         "seal": {"v": sealed.VERSION, "alg": sealed.ALG, "pk": pk, "purposes": list(ROTATE_PURPOSES)},
         "rotate_line": ROTATE_LINE,
+    }
+
+
+def runner_switch(*, workspace: Mapping[str, str], on: bool, terminals: bool, text: str) -> dict[str, Any]:
+    """#1198 C14: the review of dashboard execution on or off, from core's own words (``enablement.risk_text``: the
+    terminal shows the same). The page shows ``lines``; the signer acts only on this View's digest."""
+    name = signer._clean(workspace["name"])
+    if on:
+        rest = [x.strip() for x in text.splitlines()[1:] if x.strip()]
+        lines = [f"Turn on dashboard execution for {name}.", RUNNER_LINE, *rest]
+    else:
+        lines = [f"Turn off dashboard execution for {name}.", RUNNER_OFF_LINE]
+    return {
+        "op": "runner.on" if on else "runner.off",
+        "workspace": {k: signer._clean(v) for k, v in workspace.items()},
+        "on": on,
+        "terminals": bool(terminals) if on else False,
+        "lines": [str(x)[:400] for x in lines],
+        "confirm": {"kind": "click"},
+        "runner_line": RUNNER_LINE,
     }

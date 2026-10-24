@@ -49,6 +49,8 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/click/images",  # R3 part B: pasted-screenshot chunks relayed to the signer (digest-checked)
         "/api/w/{ws}/click/rotate",
         "/api/w/{ws}/click/rotate/seal",
+        "/api/w/{ws}/click/runner",
+        "/api/w/{ws}/click/runner/review",
         "/api/w/{ws}/settings",
         "/api/w/{ws}/add-ons",
         "/api/w/{ws}/versions",

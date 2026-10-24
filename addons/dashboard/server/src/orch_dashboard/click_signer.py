@@ -32,6 +32,7 @@ TIMEOUT = {
     "stash": 30.0,
     "custody_on": 60.0,
     "custody_off": 60.0,
+    "runner": 120.0,  # on installs the runner release and service, as `orch runner enable` does
     "rotate": 120.0,  # the recovery code is stretched (scrypt) and the host signs the rotation
 }
 #: the signer can switch click-to-sign on and off (`custody_on`/`custody_off`, section 0.8.6 item 3a)
@@ -43,6 +44,7 @@ SEALED_PASSPHRASE_FEATURE = (
     "sealed_passphrase"  # `custody_off {begin}`, then `{sealed}`: the new passphrase sealed (core C12)
 )
 ROTATE_FEATURE = "device_rotate"  # `rotate {begin}`, then `{sealed}`: a new device key for this computer (core C13)
+RUNNER_FEATURE = "runner_switch"  # `runner {review}`, then `runner {on, view_digest}`: dashboard execution (core C14)
 SEQUENCE_FEATURE = "sequence"  # `prepare {sequence}`: one review, N signatures (core batch 11)
 
 
@@ -208,6 +210,15 @@ class Signer:
             except HostError:
                 return False
             return ROTATE_FEATURE in self.features
+
+    def runner_switches(self) -> bool:
+        """Can the running signer switch dashboard execution on and off (`runner`)? Never raises."""
+        with self.lock:
+            try:
+                self._ensure()
+            except HostError:
+                return False
+            return RUNNER_FEATURE in self.features
 
     def images(self) -> bool:
         """Can the running signer hold a pasted screenshot (`stash`)? An older one would ignore `images` of the intent

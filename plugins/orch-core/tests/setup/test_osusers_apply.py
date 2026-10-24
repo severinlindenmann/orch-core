@@ -606,3 +606,81 @@ def test_every_fact_detect_reads_after_apply_is_reachable_by_the_person() -> Non
     # and the model really can say no: the agent's folder without the ACL stops the person
     facts.__dict__["acls"].clear()
     assert _person_can_traverse(facts, "/var/lib/orch/agents/orch-agent-sev/state", UID) is not None
+
+
+class _TwoViews(FakeOsFacts):
+    """Root's view while applying; the person's view afterwards (folders it cannot search hide their entries)."""
+
+    host_view = False
+
+    def listdir(self, path):
+        if self.host_view and path in self.unsearchable:
+            return []
+        return super().listdir(path)
+
+    def file_sig(self, path):
+        from orch.setup.osfacts import UNREADABLE
+
+        if self.host_view and any(path.startswith(d + "/") for d in self.unsearchable):
+            return UNREADABLE  # PermissionError inside a 0750 root folder
+        return super().file_sig(path)
+
+
+def _applied_world():
+    from orch.host.isolation import detect  # noqa: F401
+
+    facts = _TwoViews()
+    facts.add_user(PERSON, UID, home="/home/sev")
+    facts.add_path("/opt/orch/release", kind="dir", mode=0o755)
+    facts.add_path("/etc/sudoers.d", mode=0o750, kind="dir")  # Ubuntu: 0750 root
+    facts.add_path("/etc/sudoers.d/runner")
+    facts.sigs["/etc/sudoers"] = (900, 2, 3, 4)
+    facts.sigs["/etc/sudoers.d"] = (60, 2, 3, 4)
+    facts.sigs["/etc/sudoers.d/runner"] = (30, 2, 3, 5)
+    facts.unsearchable = {"/etc/sudoers.d"}
+    assert apply(facts, FakeExec(facts), PERSON, UID, is_root=True).ok
+    facts.host_view = True
+    return facts
+
+
+def _policy_codes(facts, state="/home/sev/.local/state/orch"):
+    from orch.host.isolation import detect
+
+    facts.add_path(state, uid=UID, gid=UID, mode=0o700, kind="dir")
+    return {r.code: r.message for r in detect(facts, PERSON, UID, state, []).reasons}
+
+
+def test_detect_right_after_apply_sees_the_policy_unchanged_even_with_a_root_only_sudoers_folder() -> None:
+    facts = _applied_world()
+    uid = facts.users["orch-agent-sev"].uid
+    assert "/etc/sudoers.d/runner" not in facts.pins[uid]["policy"]["files"]  # the host could never stat it
+    assert "/etc/sudoers.d" in facts.pins[uid]["policy"]["files"]
+    assert "policy_changed_since_setup" not in _policy_codes(facts)
+
+
+def test_a_real_change_still_shows_and_names_the_path() -> None:
+    facts = _applied_world()
+    facts.sigs["/etc/sudoers.d"] = (90, 9, 9, 4)  # a file was added: the folder's own signature moved
+    msg = _policy_codes(facts)["policy_changed_since_setup"]
+    assert "/etc/sudoers.d differs in size, modification time, change time" in msg
+    facts = _applied_world()
+    facts.sigs["/etc/sudoers"] = (900, 7, 3, 4)
+    assert "/etc/sudoers differs in modification time" in _policy_codes(facts)["policy_changed_since_setup"]
+    facts = _applied_world()
+    facts.sigs["/etc/doas.conf"] = (5, 1, 1, 1)
+    assert "/etc/doas.conf appeared" in _policy_codes(facts)["policy_changed_since_setup"]
+
+
+def test_a_readable_folder_entry_is_recorded_and_watched() -> None:
+    facts = _TwoViews()
+    facts.add_user(PERSON, UID, home="/home/sev")
+    facts.add_path("/opt/orch/release", kind="dir", mode=0o755)
+    facts.add_path("/etc/sudoers.d", mode=0o755, kind="dir")
+    facts.add_path("/etc/sudoers.d/90-x")
+    facts.sigs["/etc/sudoers.d/90-x"] = (30, 2, 3, 5)
+    facts.sigs["/etc/sudoers.d"] = (60, 2, 3, 4)
+    assert apply(facts, FakeExec(facts), PERSON, UID, is_root=True).ok
+    facts.host_view = True
+    assert "/etc/sudoers.d/90-x" in facts.pins[facts.users["orch-agent-sev"].uid]["policy"]["files"]
+    facts.sigs["/etc/sudoers.d/90-x"] = (31, 2, 3, 5)  # edited in place
+    assert "90-x differs in size" in _policy_codes(facts)["policy_changed_since_setup"]

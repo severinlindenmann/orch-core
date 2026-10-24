@@ -206,28 +206,43 @@ def _policy(facts: OsFacts, name: str, pin: dict) -> list[Reason]:
     sshd include from outside these paths is not watched; sudo rules from LDAP or sssd are not seen; where a policy
     directory is unreadable to this process (RHEL: 0750/0700) a new file inside is caught through the directory's own
     signature, and an unstat-able entry reads as changed."""
-    bad = Reason(
-        "policy_changed_since_setup",
-        f"The sudo or SSH rules may have changed since setup for '{name}'. Run the admin step again.",
-    )
+
+    def bad(what: str = "") -> Reason:
+        return Reason(
+            "policy_changed_since_setup",
+            f"The sudo or SSH rules may have changed since setup for '{name}'{what}. Run the admin step again.",
+        )
+
     pol = pin.get("policy")
     if not isinstance(pol, dict) or pol.get("sudo") != "none" or pol.get("ssh") != "denied":
-        return [bad]
+        return [bad(" (the recorded check is missing or not clean)")]
     files = pol.get("files")
     if pol.get("ssh_dropin") is not True or not isinstance(files, dict) or not set(POLICY_FILES) <= set(files):
-        return [bad]
+        return [bad(" (the recorded check is incomplete)")]
     now = {p: facts.file_sig(p) for p in files}
     for path, recorded in files.items():
         sig = now[path]
         if sig == UNREADABLE or recorded == list(UNREADABLE):  # a failed stat never matches, even another failed stat
-            return [bad]
-        if (None if sig is None else list(sig)) != recorded:
-            return [bad]
+            return [bad(f": {path} cannot be read")]
+        have = None if sig is None else list(sig)
+        if have != recorded:
+            return [bad(f": {path} {_what_differs(recorded, have)}")]
     for folder in (p for p in POLICY_FILES if p.endswith(".d")):  # a file added since: not in the record
         for entry in facts.listdir(folder):
             if f"{folder}/{entry}" not in files:
-                return [bad]
+                return [bad(f": {folder}/{entry} is new")]
     return []
+
+
+def _what_differs(recorded: object, have: list[int] | None) -> str:
+    if recorded is None:
+        return "appeared"
+    if have is None:
+        return "disappeared"
+    names = ("size", "modification time", "change time", "inode")
+    if not isinstance(recorded, list) or len(recorded) != len(names):
+        return "has a malformed record"
+    return "differs in " + ", ".join(n for n, a, b in zip(names, recorded, have, strict=True) if a != b)
 
 
 def _run_tree(facts: OsFacts, root: str, person_uid: int, agent_gid: int) -> list[Reason]:

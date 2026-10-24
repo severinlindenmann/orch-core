@@ -525,7 +525,9 @@ class _Apply:
             return
         if uid is None:
             return
-        verdict = assess_policy(self.facts, agent.name, dropin_text=self.ex.read_file(SSHD_DROPIN))
+        verdict = assess_policy(
+            self.facts, agent.name, dropin_text=self.ex.read_file(SSHD_DROPIN), host_uid=p.person_uid
+        )
         self.res.policy_ok = verdict.ok
         if not verdict.ok:
             self.res.fail(why_not_ok(verdict, agent.name))

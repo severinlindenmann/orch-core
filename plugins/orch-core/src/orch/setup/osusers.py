@@ -311,9 +311,15 @@ class PolicyVerdict:
         return {"sudo": self.sudo, "ssh": self.ssh, "ssh_dropin": self.ssh_dropin, "files": self.files}
 
 
-def assess_policy(facts: OsFacts, user: str, *, dropin_text: str | None = None) -> PolicyVerdict:
+def assess_policy(
+    facts: OsFacts, user: str, *, dropin_text: str | None = None, host_uid: int | None = None
+) -> PolicyVerdict:
     """Run as root (the setup apply step, after the user and the sshd drop-in exist): ask sudo and sshd themselves for
-    ``user`` and take the stat signatures of the policy files. Never parses policy text."""
+    ``user`` and take the stat signatures of the policy files. Never parses policy text. With ``host_uid`` (the person
+    whose host will compare later), an entry inside a folder that person cannot search (Ubuntu: ``/etc/sudoers.d`` is
+    0750 root) is not recorded on its own: the host can never stat it, so recording it would make every later check
+    fail. The folder's own signature stays recorded and catches an entry added, removed or renamed; an in-place edit of
+    such a file is the documented limit (it needs root, §13.9)."""
     sudo = facts.sudo_allows(user)
     ports = facts.sshd_ports()
     answers = (
@@ -328,6 +334,8 @@ def assess_policy(facts: OsFacts, user: str, *, dropin_text: str | None = None) 
         files[path] = None if sig is None else list(sig)
     for folder in _POLICY_DIRS:
         for entry in facts.listdir(folder):
+            if host_uid is not None and not facts.can_stat(host_uid, f"{folder}/{entry}"):
+                continue
             sig = facts.file_sig(f"{folder}/{entry}")
             files[f"{folder}/{entry}"] = None if sig is None else list(sig)
     doas = files.get("/etc/doas.conf") is not None  # doas rules are not checked with doas itself: refuse while present

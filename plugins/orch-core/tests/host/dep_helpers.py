@@ -127,6 +127,16 @@ class Registry:
         )
         return name, version, sha
 
+    def raw_wheel(self, name: str, version: str, data: bytes, filename: str | None = None) -> tuple[str, str, str]:
+        """Register exactly these bytes as the wheel (a hostile or odd zip); returns the row like :meth:`py`."""
+        filename = filename or f"{name}-{version}-py3-none-any.whl"
+        sha = hashlib.sha256(data).hexdigest()
+        self.blobs[self.FILES + filename] = data
+        self.projects.setdefault(name, []).append(
+            {"filename": filename, "url": self.FILES + filename, "hashes": {"sha256": sha}}
+        )
+        return name, version, sha
+
     def node(self, name: str, version: str, files: dict[str, bytes | None] | None = None,
              extra: list | None = None) -> tuple[str, str, bytes]:  # fmt: skip
         """Register an npm tarball; returns ``(name, version, tarball bytes)`` for ``node_lock``."""

@@ -366,3 +366,121 @@ def test_disable_keeps_the_environment_and_uninstall_removes_it(served, human, n
     assert t.exists()
     ok(person(served, "market.uninstall", {"name": "standup"}))
     assert not t.exists() and not t.parent.exists()
+
+
+# ------------------------------------------------------------------------------------------------ review fix round
+def test_a_wheel_that_zipfile_would_read_differently_is_refused_at_stage(served, net, ready, registry):
+    """The zip64 polyglot of the Opus review: orch's directory and pip's differ; the lists must be identical."""
+    from tests.market.test_review_g4_adversarial import polyglot, polyglot_slack
+
+    for blob in (polyglot(), polyglot_slack()):
+        row = registry.raw_wheel("idna", "3.10", blob)
+        net.add("standup", "1.0.0", pkg=dep_files("standup", "1.0.0", py_lock(row), PY), runtime=PY)
+        net.version += 1
+        ok(person(served, "market.refresh"))
+        r = stage(served)
+        assert err(r) == "market.env_failed" and r["error"]["detail"] == {"reason": "package"}
+
+
+def test_pip_runs_with_a_file_size_limit_and_no_config_files(served, human, net, ready, registry, monkeypatch):
+    seen = {}
+    real = addonenv.subprocess.Popen
+
+    def spy(argv, **kw):
+        seen["env"], seen["argv"] = kw["env"], argv
+        return real(argv, **kw)
+
+    monkeypatch.setattr(addonenv.subprocess, "Popen", spy)
+    publish_py(served, net, registry)
+    M.install(served, human)
+    ok(build(served))
+    assert seen["env"]["PIP_CONFIG_FILE"] == os.devnull
+    assert set(seen["env"]) == {"PATH", "HOME", "TMPDIR", "LANG", "PIP_CONFIG_FILE"}  # made from nothing
+    assert "-c" in seen["argv"] and "RLIMIT_FSIZE" in addonenv._FSIZE_TRAMPOLINE and "--no-index" in seen["argv"]
+
+
+def test_a_file_bigger_than_the_limit_stops_pip_and_the_build_fails_typed(
+    served, human, net, ready, registry, monkeypatch
+):
+    publish_py(served, net, registry, files={"idna/__init__.py": "VALUE = 1\n", "idna/big.bin": "x" * 20000})
+    M.install(served, human)
+    monkeypatch.setattr(addonenv.untar, "MAX_FILE", 4096)  # pip may write no file over this
+    r = build(served)
+    assert err(r) == "market.env_failed" and r["error"]["detail"] == {"reason": "installer"}
+    assert not env_path(served).exists()
+
+
+def test_the_tree_size_watch_counts_without_following_links(tmp_path):
+    (tmp_path / "a").mkdir()
+    (tmp_path / "a/f").write_bytes(b"x" * 100)
+    os.symlink("/etc", tmp_path / "link")
+    assert addonenv._tree_size(tmp_path, 1 << 30) == 100
+    assert addonenv._tree_size(tmp_path, 10) > 10  # stops as soon as the limit is passed
+
+
+def test_a_node_package_with_its_own_node_modules_is_refused_at_stage_and_by_the_runner(served, net, ready, registry):
+    row = registry.node("ms", "2.1.3")
+    pkg = dep_files("standup", "1.0.0", node_lock(row), NODE, main=NODE_MAIN)
+    pkg["node_modules"] = b"a file with the name of the link"
+    net.add("standup", "1.0.0", pkg=pkg, runtime=NODE)
+    net.version += 1
+    ok(person(served, "market.refresh"))
+    assert err(stage(served)) == "market.package_invalid"
+
+
+def test_the_node_modules_link_failing_is_a_typed_runner_error(tmp_path):
+    from orch.addons import runner
+
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "node_modules").mkdir()
+    with pytest.raises(RunnerError) as e:
+        runner._link_node_modules(str(pkg), str(tmp_path / "env"))
+    assert e.value.code == "addon.start_failed"
+
+
+def test_the_stage_block_is_used_only_when_it_matches_the_lock_it_was_made_from():
+    from orch.market import deps
+
+    fresh = {
+        "kind": "python-requirements", "lock": "requirements.txt", "count": 2, "bytes": 0,
+        "rows": [
+            {"name": "a", "version": "1", "installs": True, "note": None},
+            {"name": "w", "version": "1", "installs": False, "note": "other_platform"},
+        ],
+    }  # fmt: skip
+    import copy
+
+    kept = copy.deepcopy(fresh)
+    kept["bytes"] = 1234
+    kept["rows"][0]["note"] = "compiled"  # the one thing the plan cannot know
+    assert deps.consistent(kept, fresh)
+
+    def bad(fn):
+        k = copy.deepcopy(kept)
+        fn(k)
+        assert not deps.consistent(k, fresh)
+
+    bad(lambda k: k["rows"][1].update(note="compiled"))  # not installed here, so it cannot be compiled
+    bad(lambda k: k["rows"][1].update(note=None))  # a note the plan gives is not droppable
+    bad(lambda k: k["rows"][0].update(note="dev"))
+    bad(lambda k: k["rows"][0].update(version="2"))
+    bad(lambda k: k["rows"][0].update(extra=1))
+    bad(lambda k: k.update(bytes=-1))
+    bad(lambda k: k.update(bytes=1 << 40))
+    bad(lambda k: k.update(bytes="1"))
+    bad(lambda k: k.update(count=3))
+    bad(lambda k: k["rows"].pop())
+    bad(lambda k: k.update(extra=1))
+    assert not deps.consistent(None, fresh)
+
+
+def test_a_runtime_grant_inside_a_batch_is_refused_by_the_signer():
+    from orch.host import signer
+
+    grant = {"type": "addon.granted", "runtime": {"kind": "python-requirements", "lock": "r.txt", "packages": 1}}
+    with pytest.raises(signer.SignerRefused):
+        signer._deps({}, [grant, {"type": "log.added"}])
+    with pytest.raises(signer.SignerRefused):
+        signer._deps({}, [{"type": "log.added"}, grant])
+    signer._deps({}, [{"type": "addon.granted"}, {"type": "log.added"}])  # no runtime: nothing to require

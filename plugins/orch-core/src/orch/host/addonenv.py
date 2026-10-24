@@ -38,6 +38,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import zipfile
 from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -148,8 +149,15 @@ def scan_zip(fd: int, budget: envtree.Budget) -> list[tuple[str, int]]:
         struct.unpack("<H", tail[at + 10 : at + 12])[0],
         *struct.unpack("<LL", tail[at + 12 : at + 20]),
     )
-    if count == 0xFFFF or 0xFFFFFFFF in (cd_size, cd_off) or cd_off + cd_size > tail_at + at:
-        raise TreeError("package")  # zip64, or a directory that does not lie before its end record
+    eocd = tail_at + at
+    if (
+        count == 0xFFFF
+        or 0xFFFFFFFF in (cd_size, cd_off)
+        or cd_off + cd_size != eocd  # the directory ends EXACTLY at the end record: no slack for a second directory
+        or b"PK\x06\x07" in tail[max(at - 20, 0) : at]  # a zip64 locator before the end record
+        or b"PK\x06\x06" in tail  # a zip64 end record anywhere near it
+    ):
+        raise TreeError("package")  # zip64, or a directory that zipfile (and so pip) could read differently
     out: list[tuple[str, int]] = []
     pos, end, buf = cd_off, cd_off + cd_size, b""
     while pos < end or buf:
@@ -180,7 +188,23 @@ def scan_zip(fd: int, budget: envtree.Budget) -> list[tuple[str, int]]:
         buf = buf[need:]
     if len(out) != count:
         raise TreeError("package")
+    _agree_with_zipfile(fd, out)
     return out
+
+
+def _agree_with_zipfile(fd: int, ours: list[tuple[str, int]]) -> None:
+    """The invariant (see :class:`envtree.Budget`): what orch judged is exactly what pip will write. pip lists the wheel
+    with the standard library's ``zipfile``; so do we, now that our own walk has bounded what it can hold, and the two
+    lists must be identical. Any parser differential, known or not, is refused here."""
+    try:
+        with os.fdopen(os.dup(fd), "rb") as f, zipfile.ZipFile(f) as z:
+            theirs = [(i.filename, i.file_size) for i in z.infolist()]
+    except (zipfile.BadZipFile, OSError, ValueError, NotImplementedError, EOFError):
+        raise TreeError("package") from None
+    finally:
+        os.lseek(fd, 0, os.SEEK_SET)  # the dup shares the offset: the caller copies and hashes from the start
+    if theirs != ours:
+        raise TreeError("package")
 
 
 def _judge_wheel(fd: int, budget: envtree.Budget) -> None:
@@ -299,13 +323,15 @@ def _build_python(
     (build_dir / "home").mkdir(0o700)
     (build_dir / "tmp").mkdir(0o700)
     argv = [
-        sys.executable, "-I", "-m", "pip", "install", "--isolated", "--no-index", "--find-links", str(wheels),
+        sys.executable, "-I", "-S", "-c", _FSIZE_TRAMPOLINE, str(untar.MAX_FILE), sys.executable, "-I", "-m", "pip",
+        "install", "--isolated", "--no-index", "--find-links", str(wheels),
         "--require-hashes", "--no-deps", "--only-binary=:all:", "--no-compile", "--no-cache-dir", "--no-input",
         "--disable-pip-version-check", "--target", str(build_dir / "env"), "-r", str(build_dir / "req.txt"),
     ]  # fmt: skip
     # the installer's environment is made from nothing: no PIP_*, no proxy, no PYTHON*, no per-user config
     child = {
         "PATH": "/usr/bin:/bin", "HOME": str(build_dir / "home"), "TMPDIR": str(build_dir / "tmp"), "LANG": "C.UTF-8",
+        "PIP_CONFIG_FILE": os.devnull,  # --isolated skips the user config; this skips the global and site files too
     }  # fmt: skip
     log = build_dir / "pip.log"
     with open(log, "wb") as out:
@@ -319,7 +345,11 @@ def _build_python(
                 code = proc.wait(timeout=1)
                 break
             except subprocess.TimeoutExpired:
-                if time.monotonic() > end or os.fstat(out.fileno()).st_size > PIP_LOG_MAX:
+                if (
+                    time.monotonic() > end
+                    or os.fstat(out.fileno()).st_size > PIP_LOG_MAX
+                    or _tree_size(build_dir / "env", envtree.MAX_BYTES) > envtree.MAX_BYTES
+                ):  # the disk is never filled by an installer that is merely slow
                     with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
                         os.killpg(proc.pid, 9)
                     proc.wait()
@@ -330,6 +360,35 @@ def _build_python(
             tail = f.read(1500).decode("utf-8", "replace")
         LOG.warning("addon env: pip failed (%s): %s", code, tail)
         raise _failed("installer")
+
+
+#: sets the file size limit (the largest file pip may write) and replaces itself with pip: no ``preexec_fn`` in a
+#: threaded host (the runner's trampoline, same shape)
+_FSIZE_TRAMPOLINE = """
+import os, resource, sys
+n = int(sys.argv[1])
+resource.setrlimit(resource.RLIMIT_FSIZE, (n, n))
+os.execv(sys.argv[2], sys.argv[2:])
+"""
+
+
+def _tree_size(path: Path, limit: int) -> int:
+    """The bytes below ``path`` (links not followed), stopping as soon as ``limit`` is passed."""
+    total = 0
+    stack = [str(path)]
+    while stack:
+        try:
+            with os.scandir(stack.pop()) as it:
+                for e in it:
+                    if e.is_dir(follow_symlinks=False):
+                        stack.append(e.path)
+                    elif e.is_file(follow_symlinks=False):
+                        total += e.stat(follow_symlinks=False).st_size
+                        if total > limit:
+                            return total
+        except OSError:
+            continue
+    return total
 
 
 def _copy_verified(fd: int, dest: Path, src: download.Source) -> None:

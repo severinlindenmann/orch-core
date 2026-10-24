@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "market.not_installed",
+    "message": "this add-on was not installed from a marketplace",
+    "hint": "orch addon install ID",
+    "fix": {
+      "argv": [
+        "orch",
+        "market",
+        "list"
+      ]
+    },
+    "retryable": false
+  }
+}

@@ -7,7 +7,7 @@ import { addonActive } from '@/api/addons'
 import { can } from '@/api/permissions'
 import { handoffMode } from '@/api/features'
 import type { HandoffAction } from '@/api/handoff'
-import { HandoffDialog } from '@/components/sign/HandoffDialog'
+import { SignPopover } from '@/components/sign/SignPopover'
 import { visible as showHidden } from '@/components/sign/visible'
 import { api } from '@/api/client'
 import { STATUSES, type ActionRequest, type Status } from '@/api/types'
@@ -471,7 +471,7 @@ export function CommandPalette() {
         </CommandList>
       </CommandDialog>
       {ticket.data && <SignDialog ticket={ticket.data} action={signing} onClose={() => setSigning(null)} />}
-      {handoff && workspace && <HandoffDialog title={handoff.title} ws={workspace.id} action={handoff.action} autoStart onClose={() => setHandoff(null)} />}
+      {handoff && workspace && <SignPopover title={handoff.title} ws={workspace.id} action={handoff.action} autoStart onClose={() => setHandoff(null)} />}
       {runAddon.dialog}
     </>
   )

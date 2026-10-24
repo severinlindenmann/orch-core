@@ -12,8 +12,11 @@ import type { QuickRow, RecordsStatus } from '@/api/quickRecords'
 import { ApiError } from '@/api/types'
 import { SettingsFrame } from '@/app/pages/settings'
 import { HostGeneral } from '@/app/pages/settings/host/General'
-import { HostRecords } from '@/app/pages/settings/host/Records'
+import { RecordsBlock } from '@/app/pages/settings/host/Records'
 import { HostAddOns } from '@/app/pages/settings/host/AddOns'
+import { HostGates } from '@/app/pages/settings/host/Gates'
+import { HostGrants } from '@/app/pages/settings/host/Grants'
+import { HostMembers } from '@/app/pages/settings/host/Members'
 import { HostDevices } from '@/app/pages/settings/host/Devices'
 import { createPairFixture, installPairFixture, type PairFixture, type PairFixtureOptions } from './pairFixture'
 import type { MemberDevice, PairMember, PairOfferStatus } from '@/api/pairing'
@@ -40,10 +43,10 @@ import { Section } from '@/app/pages/new-ticket/SectionsEditor'
 import { ClickSignPanel } from '@/components/sign/ClickSignPanel'
 import { storyOf } from '@/components/sign/story'
 import { signerProblem } from '@/api/refusals'
-import type { RosterMember } from '@/api/settings'
+import type { HostGrant, HostPolicy, PolicyGate, RosterMember } from '@/api/settings'
 import type { Workspace } from '@/api/types'
 import { ClickProblemBox } from '@/components/sign/RefusalDevices'
-import { readersOf, readersRoster, refusalSamples } from './readersFixture'
+import { ME as READER_ME, MARA, readersOf, readersRoster, refusalSamples } from './readersFixture'
 import { setFeatures } from '@/api/features'
 import { NewTicketPage } from '@/app/pages/new-ticket'
 import { TicketPage } from '@/app/pages/ticket'
@@ -76,7 +79,6 @@ export const LAYOUT_SCENARIOS = [
   'agent-dialog-acked',
   'agent-blocked',
   'agent-grant',
-  'agent-outcomes',
   // Model routing: the Start agent dialog with a model chosen by the workspace, and Settings > Add-ons with the box.
   'agent-model',
   'addons-model-routing',
@@ -122,6 +124,13 @@ export const LAYOUT_SCENARIOS = [
   'drop-errors',
   'drop-versions',
   'drop-phone',
+  // Run 8 V1: the final Settings pages (General, People, Approvals, Agent access) with fixture answers.
+  'settings-general',
+  'settings-members',
+  'settings-approvals',
+  'settings-approvals-stuck',
+  'settings-access',
+  'settings-access-empty',
   // B11 (finding 9): the New ticket form with a signed hand-off; Create opens ONE review of the ticket and its text.
   'new-sequence',
   // U4: the same form on a host that can start agents: with a usable agent access, and without one.
@@ -213,11 +222,27 @@ const quickRows = (scenario: LayoutScenario): QuickRow[] =>
     ? Array.from({ length: 60 }, (_, i) => quickRow(i, { title: i % 7 === 0 ? `Fix ${LONG_URL}` : `Quick task number ${i} with a title that goes on for a while to see how a row wraps`, labels: i % 3 === 0 ? ['quick', 'docs'] : ['quick'], quick: { commits: i % 5 === 0 ? null : i, files: i % 4 === 0 ? null : i * 2, over: i % 6 === 0 ? true : i % 5 === 0 ? null : false } }))
     : [
         quickRow(1, { title: `Read ${LONG_URL} and fix the link`, labels: ['quick', 'docs', 'a-rather-long-label-name', 'web'], quick: { commits: 4, files: 7, over: true } }),
-        quickRow(2, { title: LONG_WORD, status: 'in-progress' }),
-        quickRow(3, { title: 'No repository is linked yet', status: 'backlog', quick: { commits: null, files: null, over: null } }),
+        quickRow(2, { title: LONG_WORD, status: 'in-progress', claim: { agent: 'claude-code', for: 'p_sev', session: 's1', live: true } }),
+        quickRow(3, { title: 'No repository is linked yet', status: 'backlog', quick: { commits: null, files: null, over: null }, awaiting_gate: 'verify' }),
         quickRow(4, { title: 'Fix the typo in CONTRIBUTING' }),
+        quickRow(5, { title: 'Choose a photo format', open_questions: 1, claim: { agent: 'codex', for: 'p_sev', session: 's2', live: true } }),
       ]
 
+const gatePolicy = (over: Partial<HostPolicy> = {}): HostPolicy => ({ approvers: ['owner'], count: 1, not: [], applies: 'all', independent: false, ...over })
+/** The three questions, one of each kind: a preset, another preset, a custom rule (and, when stuck, a count nobody can meet). */
+const settingsGates = (scenario: LayoutScenario): Record<PolicyGate, HostPolicy> => ({
+  requirements: gatePolicy(),
+  plan: scenario === 'settings-approvals-stuck' ? gatePolicy({ approvers: ['owner', 'maintainer'], count: 9 }) : gatePolicy({ approvers: ['maintainer', 'owner'] }),
+  verify: gatePolicy({ approvers: ['reviewers'], not: ['assignees'] }),
+  code: gatePolicy({ approvers: ['maintainer', 'owner'], not: ['assignees'], applies: 'off', independent: true }),
+})
+const accessGrants = (scenario: LayoutScenario): HostGrant[] =>
+  scenario === 'settings-access-empty'
+    ? []
+    : [
+        { id: 'gr_' + '0'.repeat(25) + 'A', person: READER_ME, scope: 'workable', verbs: 'agent', issued_at: '2026-10-23T08:00:00Z', expires_at: new Date(Date.now() + 3 * 86_400_000).toISOString(), revoked: null, sessions: 2, session_ids: [], sessions_more: null, label: 'runner' },
+        { id: 'gr_' + '0'.repeat(25) + 'B', person: MARA, scope: 'workable', verbs: 'agent', issued_at: '2026-10-20T08:00:00Z', expires_at: new Date(Date.now() - 86_400_000).toISOString(), revoked: { at: '2026-10-21T09:00:00Z', by: READER_ME, seq: 4 }, sessions: 0, session_ids: [], sessions_more: null, label: null },
+      ]
 const records = (scenario: LayoutScenario): RecordsStatus => {
   const base: RecordsStatus = {
     available: true,
@@ -508,7 +533,7 @@ const agentPreview = (scenario: LayoutScenario): AgentPreview => {
   }
   if (scenario === 'agent-model') return { ...base, display: `claude --model sonnet 'Run orch status, then work on ticket DEMO-0043.'`, model: 'sonnet', model_source: 'workspace' }
   if (scenario === 'agent-blocked') return { ...base, grant: null, blocked: { code: 'runner.disabled', message: `dashboard execution is off for this workspace on this machine ${LONG_WORD}`, detail: { missing: 'machine' } } }
-  if (scenario === 'agent-grant' || scenario === 'agent-outcomes') return { ...base, grant: null, blocked: { code: 'launch.no_grant', message: 'no usable runner grant', detail: { reason: 'expiring' } } }
+  if (scenario === 'agent-grant') return { ...base, grant: null, blocked: { code: 'launch.no_grant', message: 'no usable runner grant', detail: { reason: 'expiring' } } }
   return base
 }
 /** What a shell with colours prints: ls, git status and diff, a failing test, all 16 ANSI colours (layout preview only). */
@@ -587,6 +612,7 @@ const pairOptions = (scenario: LayoutScenario): PairFixtureOptions => {
 /** The roster a scenario reads: the pair fixture's members for `pair-*`, else the readers fixture. */
 function rosterFor(scenario: LayoutScenario): RosterMember[] {
   if (scenario.startsWith('pair-')) return ({ ...pairOptions(scenario), ...pairOverride }.members ?? []) as RosterMember[]
+  if (scenario === 'settings-approvals-stuck') return readersRoster().slice(0, 1)
   return readersRoster()
 }
 const DAY = 86_400_000
@@ -816,8 +842,8 @@ function install() {
     claim_ttl_min: 120,
     lease_ttl_min: 60,
     defaults: ['claim_ttl_min', 'lease_ttl_min'],
-    gates: {},
-    repos: [{ name: 'code', default_branch: 'main', remote: LONG_URL }],
+    gates: current.startsWith('settings-approvals') ? settingsGates(current) : {},
+    repos: current === 'settings-general' ? [] : [{ name: 'code', default_branch: 'main', remote: LONG_URL }],
     repos_more: false,
     models: current.startsWith('new-sequence-start') ? { 'claude-code': { work: 'opus' } } : current.startsWith('addons-model-routing') ? { 'claude-code': { work: 'sonnet', refine: 'opus', context: 'haiku' }, codex: { fix: 'gpt-5.4' } } : null,
     settings_at: null,
@@ -825,7 +851,8 @@ function install() {
   }))
   // H12d-2: `/members` and `/readers` in the real shape. The pair scenarios read the pair fixture's members.
   set('getRoster', async () => rosterFor(current))
-  set('getReaders', async () => readersOf(rosterFor(current), current === 'readers-devices' ? 1 : 0))
+  set('listHostGrants', async (_ws: string, active: boolean) => accessGrants(current).filter((g) => !active || (!g.revoked && Date.parse(g.expires_at) > Date.now())))
+  set('getReaders', async () => readersOf(rosterFor(current), current === 'readers-devices' || current === 'settings-members' ? 1 : 0))
   set('getHandoff', async (_ws: string, id: string): Promise<HandoffState> => ({ id, state: 'prepared', op: opOf.get(id) ?? 'new', key: null, expires_at: new Date(Date.now() + 600_000).toISOString(), event_ids: [], seq: null }))
   set('cancelHandoff', async (_ws: string, id: string) => ({ id, state: 'cancelled' }))
 }
@@ -868,8 +895,7 @@ export function LayoutPreview({ name }: { name: string }) {
     return <div className="p-4"><AgentAccess ws={workspace.id} previewStopped={scenario === 'agent-pill-stopped'} /></div>
   if (scenario.startsWith('agent-'))
     return (
-      <StartAgentDialog ws={workspace.id} ticket="DEMO-0043" open onClose={() => {}}
-        grantStep={scenario === 'agent-outcomes' ? { kind: 'unknown', grant: AGENT_GRANT } : undefined} />
+      <StartAgentDialog ws={workspace.id} ticket="DEMO-0043" open choose onClose={() => {}} />
     )
   if (scenario.startsWith('drop-'))
     return (
@@ -926,10 +952,14 @@ export function LayoutPreview({ name }: { name: string }) {
         {scenario.endsWith('-open') && <OpenAddOnPanel customize={scenario === 'addons-model-routing-open'} />}
       </SettingsFrame>
     )
+  if (scenario === 'settings-general') return <SettingsFrame current="general" addon={undefined} ws={workspace.id} tabs={HOST_TABS}><HostGeneral workspace={{ ...workspace, click: signingCard('signing-off'), icon_known: true }} /></SettingsFrame>
+  if (scenario === 'settings-members') return <SettingsFrame current="members" addon={undefined} ws={workspace.id} tabs={HOST_TABS}><HostMembers workspace={workspace} /></SettingsFrame>
+  if (scenario.startsWith('settings-approvals')) return <SettingsFrame current="gates" addon={undefined} ws={workspace.id} tabs={HOST_TABS}><HostGates workspace={workspace} /></SettingsFrame>
+  if (scenario.startsWith('settings-access')) return <SettingsFrame current="grants" addon={undefined} ws={workspace.id} tabs={HOST_TABS}><HostGrants workspace={workspace} /></SettingsFrame>
   if (scenario.startsWith('records-'))
     return (
       <SettingsFrame current="records" addon={undefined} ws={workspace.id} tabs={HOST_TABS}>
-        <HostRecords workspace={workspace} />
+        <RecordsBlock workspace={workspace} />
       </SettingsFrame>
     )
   return (
@@ -1041,7 +1071,7 @@ function SignBPreview({ scenario, ws }: { scenario: string; ws: string }) {
     : kind === 'plan' ? { action: 'approve', key: 'TESTOR-0007', gate: 'plan' }
     : { action: 'runner_grant', hours: 72, scope: 'workable', extend: 'gr_old' }) as import('@/api/click').ClickAction
   const answer: import('@/api/click').ClickViewAnswer = { view_digest: 'sha256:' + 'a'.repeat(64), view: { risk: CLICK_RISK, op: 'x', workspace: { id: ws, name: 'Sevi’s workspace', prefix: 'TESTOR' }, fingerprint: '7d8b2e954b7d', lines: ['x'], checks: [], confirm: word ? { kind: 'word', word } : { kind: 'click' }, expires_at: new Date(nowMs() + 600_000).toISOString(), auth: 'convenience', device: 'Sevi’s MacBook · local signing key', artifacts: null, content } }
-  return <div className="mx-auto max-w-lg space-y-4 rounded-lg border border-border bg-surface p-4"><h2 className="text-base font-semibold">{content.title}</h2><ClickSignPanel ws={ws} answer={answer} problem={null} signing={false} onSign={() => {}} onCancel={() => {}} story={storyOf(action)} onPhone={kind === 'plan' ? () => {} : undefined} /></div>
+  return <div className="mx-auto max-w-lg space-y-4 rounded-lg border border-border bg-surface p-4"><h2 className="text-base font-semibold">{content.title}</h2><ClickSignPanel ws={ws} answer={answer} problem={null} signing={false} onSign={() => {}} onCancel={() => {}} story={storyOf(action)} /></div>
 }
 
 /** Preview only: opens the one add-on that is On (the person's click on its title, then on Customize models). */

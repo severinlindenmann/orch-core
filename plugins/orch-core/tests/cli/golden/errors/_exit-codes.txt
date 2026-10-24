@@ -104,3 +104,6 @@ market.actor_refused 3 retry:false
 market.state_invalid 5 retry:false
 market.refresh_running 9 retry:true
 market.already_added 3 retry:false
+market.not_installed 3 retry:false
+market.ambiguous_addon 3 retry:false
+market.still_enabled 3 retry:false

@@ -80,6 +80,15 @@ WRITE_OPS = (
 )
 
 
+#: what the Add-ons page calls (all of it)
+MARKET_PAGE_OPS = (
+    "market.list",
+    "market.installed",
+    "market.stage",
+    "market.unstage",
+    "market.uninstall",
+    "market.refresh",
+)
 #: the host ops the Publish page and box need (shares.py); all under cap `publish/1`
 PUBLISH_FEATURE_OPS = (
     "publish.list",
@@ -309,6 +318,8 @@ class Gateway:
                 ("grant.forget", "run/1"),
                 ("whoami", "ops/1"),
             ],
+            # V3 A10: the Add-ons page (Browse, Installed, Marketplaces); every install is a Terminal hand-off
+            "market": [(op, "ops/1") for op in MARKET_PAGE_OPS],
             # V3 A7: the Hub tab, the top-bar chip and the Tickets column (reads; every change is a Terminal command).
             "hub": [
                 ("hub.status", "hub/1")
@@ -347,9 +358,9 @@ class Gateway:
                 features.append("move")  # the board's move action (H6b): backlog <-> open through a hand-off
         return features
 
-    def one_path_is_click(self, ws) -> bool:
-        """Is click-to-sign switched ON for this workspace (the signer's flag)? Then it is the ONE signing path: the
-        dashboard prepares no terminal hand-off there (owner decision, 12 Oct 2026)."""
+    def one_click_on(self, ws) -> bool:
+        """Is click-to-sign switched ON for this workspace (the signer's flag)? Only the default sign method follows
+        it: the terminal hand-off stays available either way (#1170)."""
         card = self.click.status().get(ws)
         return isinstance(card, dict) and card.get("enabled") is True
 

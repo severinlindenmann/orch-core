@@ -1,5 +1,5 @@
 import { ChevronRight, Eye, ImagePlus, Pencil, Plus, X } from 'lucide-react'
-import { useId, useRef, useState, type ClipboardEvent, type DragEvent, type MutableRefObject } from 'react'
+import { useId, useRef, useState, type ClipboardEvent, type DragEvent, type MutableRefObject, type ReactNode } from 'react'
 import { ArtifactImagesContext } from '@/addon-ui/artifactImagesContext'
 import { MAX_IMAGES, PasteError, pastedIn, pastedUrls, preparePaste, referenceFor } from '@/api/pasteImage'
 import { SECTIONS_BY_TYPE, SECTION_ORDER, neededBefore, requiredAtCreation, sectionLabel, type SectionName } from '@/api/sections'
@@ -60,7 +60,8 @@ export function Section({ type, name, value, onChange, error }: { type: TicketTy
     e.preventDefault()
     void take(files)
   }
-  const label = sectionLabel(type, name)
+  const everyday = name === 'requirements' && type !== 'spike'
+  const label = everyday ? 'What should be true when this is done?' : sectionLabel(type, name)
   const needGate = neededBefore(type, name)
   const atCreation = requiredAtCreation(type).includes(name)
   return (
@@ -94,7 +95,7 @@ export function Section({ type, name, value, onChange, error }: { type: TicketTy
           onChange={(e) => onChange(e.target.value)}
           onPaste={onPaste}
           onDrop={onDrop}
-          placeholder={HINT[name]}
+          placeholder={everyday ? 'Describe the result you want. One line per thing works well.' : HINT[name]}
           aria-describedby={error ? `${id}-need ${id}-error` : `${id}-need`}
           aria-required={atCreation}
           aria-invalid={!!error || undefined}
@@ -148,6 +149,7 @@ export function SectionsEditor({
   invalid,
   collapsible = false,
   flushRef,
+  extra,
 }: {
   type: TicketType
   sections: BodySections
@@ -160,6 +162,8 @@ export function SectionsEditor({
   collapsible?: boolean
   /** E-7: the owner of the form asks for a criterion typed but not yet added (returned trimmed, and cleared here). */
   flushRef?: MutableRefObject<(() => string) | null>
+  /** More choices (priority, labels, people ...) shown inside the same "More options" fold. */
+  extra?: ReactNode
 }) {
   const [next, setNext] = useState('')
   const pending = useRef('')
@@ -191,10 +195,7 @@ export function SectionsEditor({
           className="flex w-full min-w-0 items-center gap-1.5 rounded-md text-left text-[13px] font-medium text-text-muted outline-none hover:text-text focus-visible:ring-2 focus-visible:ring-brand"
         >
           <ChevronRight aria-hidden className={`size-4 transition-transform motion-reduce:transition-none ${more ? 'rotate-90' : ''}`} />
-          <span className="shrink-0">More sections</span>
-          <span className="min-w-0 truncate font-normal text-text-faint">
-            {rest.map((n) => sectionLabel(type, n)).join(', ')}, acceptance criteria
-          </span>
+          <span className="shrink-0">More options</span>
         </button>
       )}
       {more && (
@@ -239,6 +240,7 @@ export function SectionsEditor({
               </Button>
             </div>
           </section>
+          {extra}
         </div>
       )}
     </div>

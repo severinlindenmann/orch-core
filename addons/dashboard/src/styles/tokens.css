@@ -196,7 +196,23 @@
   }
 }
 
+@keyframes orch-nav-slide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(300%);
+  }
+}
+
 @media (prefers-reduced-motion: no-preference) {
+  /* The loading bar: it appears after a moment (an instant page change never shows it) and keeps moving. */
+  .orch-nav-bar {
+    animation: orch-fade-in 120ms var(--ease-out) 80ms both;
+  }
+  .orch-nav-bar-fill {
+    animation: orch-nav-slide 1.1s var(--ease-out) infinite;
+  }
   /* The card in the drag overlay: picked up (scale 1.02, tilt under 1 degree). */
   .orch-lift {
     animation: orch-lift 120ms var(--ease-out) forwards;
@@ -216,6 +232,11 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  /* The loading bar stands still: a plain bar, no movement. */
+  .orch-nav-bar-fill {
+    width: 100%;
+    opacity: 0.5;
+  }
   *,
   ::before,
   ::after {
@@ -249,3 +270,23 @@
   .hub-chip-long { display: none; }
   .hub-chip-short { display: inline; }
 }
+
+/* Code token colours (github-dark-default palette) used by the file previews: classes, never inline styles. */
+:root {
+  --tok-keyword: #ff7b72;
+  --tok-const: #79c0ff;
+  --tok-string: #a5d6ff;
+  --tok-tag: #7ee787;
+  --tok-func: #d2a8ff;
+  --tok-name: #ffa657;
+  --tok-comment: #8b949e;
+  --tok-invalid: #ffa198;
+}
+.tok-keyword { color: var(--tok-keyword); }
+.tok-const { color: var(--tok-const); }
+.tok-string { color: var(--tok-string); }
+.tok-tag { color: var(--tok-tag); }
+.tok-func { color: var(--tok-func); }
+.tok-name { color: var(--tok-name); }
+.tok-comment { color: var(--tok-comment); }
+.tok-invalid { color: var(--tok-invalid); }

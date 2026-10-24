@@ -132,6 +132,14 @@ def agent_preview(data):
             shown[key] = value
     ticket, spec = data.get("ticket"), data.get("spec")
     model, source = data.get("model"), data.get("model_source")
+    # A ticket without a codebase runs in its work folder: whether it exists and is empty. The page starts a NEW
+    # ticket's agent unattended only in a new or empty folder, so a missing answer must read as "not known".
+    folder = data.get("workdir")
+    workdir = (
+        {"exists": folder["exists"], "empty": folder["empty"]}
+        if isinstance(folder, dict) and type(folder.get("exists")) is bool and type(folder.get("empty")) is bool
+        else None
+    )
     return {
         "spec": spec if isinstance(spec, str) and re.fullmatch(r"[0-9a-f]{64}", spec) else None,
         "ticket": ticket if isinstance(ticket, str) and KEY.fullmatch(ticket) else None,
@@ -143,6 +151,7 @@ def agent_preview(data):
         "cwd_path": text(data.get("cwd_path")),
         "cwd_path_hidden": isinstance(data.get("cwd_path"), str) and text(data.get("cwd_path")) is None,
         "will_create_worktree": data.get("will_create_worktree") is True,
+        **({"workdir": workdir} if workdir is not None else {}),
         "login_shell": data.get("login_shell") is True,
         "env": [name for name in data.get("env") or [] if text(name, 128)][:64],
         "grant": runner_grant(data.get("grant")),

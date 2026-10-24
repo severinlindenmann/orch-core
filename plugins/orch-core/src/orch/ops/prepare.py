@@ -68,6 +68,13 @@ class Capture:
     hub: Any = None
     #: batch 11 (finding 9): the checked ``sequence`` meta of ``human.prepare`` (one step of a signer's sequence)
     sequence: dict[str, Any] | None = None
+    #: V3 G3: ``addon.grant {staged}``: the stage the grant is for, ``{stage, name}`` (kept on the request record, not
+    #: signed), and the marketplace block of the review (``material["market"]``: per host, not signed)
+    staged: dict[str, Any] | None = None
+    market: dict[str, Any] | None = None
+    #: V3 G3: the host's marketplace records of this workspace (``orch.host.marketstate.MarketFiles``), set by the host
+    #: before the handler runs: a handler has no state directory of its own under the host
+    market_files: Any = None
 
     statement: str | None = None
 

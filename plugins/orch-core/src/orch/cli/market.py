@@ -73,6 +73,9 @@ def _text(op: str, data: dict[str, Any]) -> str:
             )
         for a in r.get(ADDONS, []):
             tags = (" REVOKED" if a["revoked"] else "") + ("" if a["publisher"] else " unsigned")
+            if a.get("installed"):  # G3: what is installed from this marketplace, and whether a newer entry exists
+                tags += f" [installed {a['installed']['version']}, {a['installed']['state']}]"
+                tags += " UPDATE" if a.get("update") else ""
             out.append(f"  {a['id']} {a['version']} [{','.join(a['capabilities'])}]{tags}")
     return "ok market " + op + "\n" + "\n".join(out)
 

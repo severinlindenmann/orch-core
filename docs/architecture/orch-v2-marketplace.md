@@ -87,7 +87,7 @@ Entry (required unless noted):
 | `source.subdir` (optional) | relative path to the package directory; every segment follows the §8.1 file-name rule, so no `..`, no leading dot |
 | `commit` | a **full** git object id (40 or 64 lower-case hex). A branch, a tag or an abbreviation is `market.unpinned` |
 | `package_sha256` | the §8.1 package digest (`sha256:` + 64 lower-case hex) of the directory `source.subdir` at `commit`. A malformed value is `market.bad_digest_format` |
-| `capabilities` | exactly the manifest's capabilities, sorted, from the closed list (`git_push`, `network`, `pty`, `serve_http`, `spawn_agent`) |
+| `capabilities` | exactly the manifest's capabilities, sorted, from the closed list (`choose_model`, `credential`, `git_push`, `network`, `pty`, `serve_http`, `spawn_agent`) |
 | `min_orch` | lowest orch core version that runs it, grammar of `min_core` in addon-api §2. Must equal the manifest's `min_core` |
 | `api` (optional) | display copy of the manifest's api range. The manifest decides |
 | `runtime` (optional) | `{kind, lock}`: the lockfile kind (`python-requirements` or `node-package-lock`) and its path inside the package. **A display copy:** the manifest's `runtime` is the truth and the two MUST be equal, both present or both absent (`market.manifest_mismatch`, §8.1) |
@@ -178,7 +178,9 @@ repository can never hold two TOFU slots, two rollback floors, two origins, or s
 | other | any other marketplace or direct source | refused unless OS-user isolation is in place (§10); a `publisher` is optional |
 
 The pinned official URL and key are constants of the core release, not read from disk or from any index. Changing them
-is a core release.
+is a core release. The release pins two keys, current first and next (`OFFICIAL_KEYS` in `orch/market/constants.py`; V3-D39):
+`BFh8x9dLhMubfTXleS0Bt6Ix-yu9ZiE18B0xRUUNWqsgZdOwt5DZX_Gqs5Ri3p2coFdLk9GhA-Q5WV8Ee0e05l4` (current) and
+`BM-BTpDMGAU68ywX392c5JuCjjwOkkdccxmNiOTvcX2GzIgEM2FjFH56hihyYn7pepkd8HYMolWSzM01L_B0Udw` (next).
 
 ### 4.3 Publisher signature
 
@@ -655,3 +657,34 @@ These are the spec's answers; each is marked **provisional** until the owner con
 
     The spec, schema and vectors implement Option A. Option B adds one field to `orch.hub-policy/1`
     (`pinned_keys: {url -> key}`) and one branch at step 4; it needs no change to the index format.
+
+## 16. Install, update and remove as built (V3 G3, #921)
+
+Design note `state/design-g3.md`; conditions C1 to C6. What the code does, where it lives:
+
+- **Fetch and export:** `gitsafe.market_export_package` runs `ls-tree -r -z -l` on the commit (or `commit:subdir`), judges the whole
+  listing (modes, `check_path`, case twins, file/directory clash, counts, sizes, manifest on top) before it reads a blob, then reads
+  every blob with ONE `cat-file --batch` whose output is capped at the listed total. The package fetch has its own pack cap
+  (`MARKET_PACKAGE_PACK`), never the index's. `fetch.fetch_package` resolves and checks the entry host like the index fetch.
+- **Stage:** `market.stage {id, url?, update?}` (human, owner) runs steps 0 to 16 and writes ONE stage file
+  `<state>/hosts/<ws>/market/staged/<stage>.json` (the package in memory form as base64, digest, origin, commit, publisher key, TOFU
+  status; 30 minutes; one live stage per add-on name). Nothing is written to `addons/` and no record changes.
+- **Grant:** `addon.grant {name, staged}`. The package comes from the stage file (read once, digest and manifest agreement
+  checked again), the signed body is only `grant_event`, the marketplace block travels as `material["market"]` and is shown "per
+  host, not signed". Under the store lock, before the journal write, `marketinstall.recheck` judges the stage and the install record
+  as they are now (C2). After the append, `human.finish` calls `marketinstall.after_grant`: the directory is swapped by digest
+  (`.<name>.new-*`, `.<name>.old-*`; a crash is finished by `marketinstall.recover` at start), then `installs.json` gets the
+  origin, `seen` is raised and the publisher key is remembered (C3). `installs.json` changes nowhere else.
+- **Plain grant (C1):** `addon.grant` without `staged` signs only the bytes of a built-in add-on or the bytes the install record of
+  that name holds (a re-enable). A folder copied into `addons/` is `market.not_installed`.
+- **Remove:** `market.uninstall {name}` refuses while the add-on is enabled (`market.still_enabled`), deletes the package, drops
+  the origin; `seen` and the publisher key stay. `orch addon remove` signs `addon.disable` first.
+- **Sandbox marketplace (C5):** `<root>/state/host/dev.json` may carry `market: {url, keys}`. Only a dev host reads it, and only a
+  workspace that passes S1 to S6 now gets class `dev` for that URL (the official rules with those keys, reserved ids as for any
+  non-official marketplace). Every address rule applies unchanged.
+- **Signer (C4):** `material.market` has exactly the keys `url, class, commit, source_note, publisher{fingerprint, tofu},
+  index_version, stale, summary, replaces` and only on a request that signs one `addon.granted`; it is rendered under "per host, not
+  signed".
+- **Host-derived preview:** the update diff and `widened` come from the host (the staged bytes against the signed grant; when the
+  installed folder is not the granted bytes everything counts as widened). They are for previews only: no client may shorten the
+  signed view because of them, and the signer always renders every signed capability, field, section and artifact kind.

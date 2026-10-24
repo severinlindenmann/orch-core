@@ -71,10 +71,20 @@ describe('pictures: an <img> from digest-checked bytes, never markup', () => {
 })
 
 describe('text-like files', () => {
-  it('JSON is pretty-printed', async () => {
+  it('JSON shows the file\'s own text, never re-parsed (a short file is not reformatted)', async () => {
     show('r.json', { text: '{"a":1,"b":[2,3]}' })
     const pre = await screen.findByLabelText('JSON of r.json')
-    expect(pre.textContent).toContain('{\n  "a": 1,')
+    expect(pre.textContent).toBe('{"a":1,"b":[2,3]}')
+  })
+  it('JSON with a duplicate key shows both keys; a minified file offers a labelled reformatted view, Raw is the file as it is', async () => {
+    const long = '{"a":1,"a":2,"pad":"' + 'x'.repeat(220) + '"}'
+    show('m.json', { text: long })
+    const pre = await screen.findByLabelText('JSON of m.json')
+    expect(screen.getByText(/Reformatted view for reading/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Raw' })).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Raw' }))
+    expect((await screen.findByLabelText('JSON of m.json')).textContent).toBe(long)
+    expect(pre).toBeDefined()
   })
   it('a small CSV is a table', async () => {
     show('t.csv', { text: 'name,kwh\nA,1\nB,2\n' })
@@ -184,5 +194,29 @@ describe('a drawer opened by a link holds SVG and GIF too', () => {
     )
     expect(await screen.findByRole('button', { name: 'Show SVG picture' })).toBeInTheDocument()
     expect(screen.queryByRole('img', { name: /Picture/ })).toBeNull()
+  })
+})
+
+import { reformatJson } from './Artifacts'
+import { prose } from '@/components/sign/visible'
+describe('reformatted JSON is bounded', () => {
+  it('skips a deeply nested or amplifying file, and a short file', () => {
+    expect(reformatJson('['.repeat(5000) + ']'.repeat(5000))).toBeUndefined()
+    expect(reformatJson('{"a":1}')).toBeUndefined()
+    const wide = '[' + Array.from({ length: 30000 }, () => '[1]').join(',') + ']'
+    expect(reformatJson(wide)).toBeUndefined()
+    expect(reformatJson('{"pad":"' + 'x'.repeat(250) + '"}')).toContain('"pad"')
+  })
+  it('re-indents without parsing: duplicate keys, 1e400 and big integers stay byte for byte', () => {
+    const pad = 'x'.repeat(250)
+    const src = String.raw`{"a":1,"a":2,"big":1e400,"n":12345678901234567890123,"s":"q\"u, ] }","pad":"${pad}","e":{},"l":[1,[2]]}`
+    const out = reformatJson(src)!
+    expect(out).toContain('"a": 1,')
+    expect(out).toContain('"a": 2,')
+    expect(out).toContain('1e400')
+    expect(out).toContain('12345678901234567890123')
+    expect(out).toContain('"e": {}')
+    // only white space between tokens changed (the page shows it through prose(), as for every text)
+    expect(out.replace(/\n */g, '').replace(/": /g, '":')).toBe(prose(src))
   })
 })

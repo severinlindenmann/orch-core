@@ -25,6 +25,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from orch import canon
+from orch.addons.settings_value import KEY as ADDONS_KEY
 
 from . import review, signcontent
 
@@ -241,7 +242,17 @@ _MOVE_TO = frozenset({"backlog", "open"})
 _GATES = frozenset({"requirements", "plan", "verify", "code"})
 _PEOPLE_ROLES = ("owner", "assignees", "reviewers")  # watchers: not offered by the dashboard yet
 _SETTINGS_KEYS = frozenset(
-    {"grant_hours", "claim_ttl_min", "lease_ttl_min", "sign_methods", "repos", "publish", "models", "icon"}
+    {
+        "grant_hours",
+        "claim_ttl_min",
+        "lease_ttl_min",
+        "sign_methods",
+        "repos",
+        "publish",
+        "models",
+        "icon",
+        ADDONS_KEY,
+    }  # fmt: skip
 )
 
 
@@ -353,6 +364,10 @@ def _person_op(prepared: Mapping[str, Any]) -> None:
             sets = e.get("set")
             ok = e["type"] == "settings.changed" and log == "workspace" and isinstance(sets, dict) and bool(sets)
             ok = ok and set(sets) <= _SETTINGS_KEYS
+            if ok and ADDONS_KEY in sets:  # G6: one add-on, alone, within the general bounds (rendered from the event)
+                from orch.addons import settings_value
+
+                ok = len(sets) == 1 and settings_value.check_changes(sets[ADDONS_KEY]) is None
         else:
             return
         if not ok:
@@ -467,7 +482,7 @@ _MATERIAL_KEYS = {
     "question": ({"kind", "ticket", "question", "review"}, {"kind", "ticket", "question", "review"}),
     "payload": (
         {"kind", "ticket", "review"},
-        {"kind", "ticket", "review", "texts", "before", "sequence", "statement", "grants"},
+        {"kind", "ticket", "review", "texts", "before", "sequence", "statement", "grants", "market"},
     ),
 }
 
@@ -512,6 +527,7 @@ def _hashes(prepared: Mapping[str, Any], workspace_id: str) -> None:
         _question(material, events[0], workspace_id, log)
     _before(material, events)
     _grants(material, events)
+    _market(material, events)
 
 
 def _gate(material: Mapping[str, Any], ev: Mapping[str, Any], workspace_id: str, log: str) -> None:
@@ -577,6 +593,51 @@ def _grants(material: Mapping[str, Any], events: list[Mapping[str, Any]]) -> Non
             or not all(isinstance(v, str) and len(v) <= 200 for v in info.values())
         ):
             _refuse("material.grants is malformed")
+
+
+_MARKET_KEYS = {"url", "class", "commit", "source_note", "publisher", "index_version", "stale", "summary", "replaces"}
+_TOFU = ("unsigned", "new", "known")
+
+
+def _market(material: Mapping[str, Any], events: list[Mapping[str, Any]]) -> None:
+    """``material["market"]`` (V3 G3, C4) is the host's word about where an add-on came from: the marketplace, its
+    class, the commit, the publisher key's fingerprint and first-use status, the index version and a display summary.
+    It is NOT signed and the review says so. Exactly these keys and these shapes, only on a request that signs one
+    ``addon.granted``; anything else (an unknown key, a number where a string belongs, a long text) is refused. No
+    capability, field or section travels here: those come from the signed event."""
+    block = material.get("market")
+    if block is None:
+        return
+    pub = block.get("publisher") if isinstance(block, dict) else None
+    if (
+        not isinstance(block, dict)
+        or set(block) != _MARKET_KEYS
+        or [e.get("type") for e in events] != ["addon.granted"]
+        or not isinstance(pub, dict)
+        or set(pub) != {"fingerprint", "tofu"}
+    ):
+        _refuse("material.market is malformed")
+    short = lambda v, n: isinstance(v, str) and len(v) <= n  # noqa: E731
+    ok = (
+        short(block["url"], 200)
+        and block["class"] in ("official", "dev", "dev-folder")
+        and isinstance(block["commit"], str)
+        and re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", block["commit"]) is not None
+        and block["source_note"]
+        == (
+            "a local folder at this commit (orch addon dev), not a marketplace"
+            if block["class"] == "dev-folder"
+            else "source as claimed by the marketplace"
+        )
+        and (pub["fingerprint"] is None or short(pub["fingerprint"], 60))
+        and pub["tofu"] in _TOFU
+        and type(block["index_version"]) is int
+        and type(block["stale"]) is bool
+        and (block["summary"] is None or short(block["summary"], 300))
+        and (block["replaces"] is None or re.fullmatch(r"sha256:[0-9a-f]{64}", str(block["replaces"])) is not None)
+    )
+    if not ok:
+        _refuse("material.market is malformed")
 
 
 def _before(material: Mapping[str, Any], events: list[Mapping[str, Any]]) -> None:
@@ -857,6 +918,34 @@ def render(
             f"access {_clean(gid)} taken back (per host, not signed): label {_clean(info['label']) or '(none)'}, "
             f"tickets {_clean(info['scope'])}, ends {_clean(info['expires_at'])}, person {_clean(info['person'])}"
         )
+    market = material.get("market")
+    if market is not None:  # the host's word, labelled; nothing here is signed (C4)
+        pub = market["publisher"]
+        who = {"unsigned": "unsigned (no publisher key)", "new": "first use: remembered when you sign",
+               "known": "same publisher as before"}[pub["tofu"]]  # fmt: skip
+        if market["class"] == "dev-folder":
+            commit = _clean(market["commit"])
+            out.append(
+                f"DEV add-on from a local folder, not from a marketplace (per host, not signed): commit {commit}"
+            )
+            out.append(f"source (per host, not signed): {_clean(market['source_note'])}")
+            market = None
+    if market is not None:
+        out.append(f"marketplace (per host, not signed): {_clean(market['url'])} ({_clean(market['class'])})")
+        out.append(f"marketplace commit (per host, not signed): {_clean(market['commit'])}")
+        out.append(f"source (per host, not signed): {_clean(market['source_note'])}")
+        out.append(
+            f"publisher (per host, not signed): {_clean(pub['fingerprint']) if pub['fingerprint'] else 'none'}, {who}; "
+            "a key proves it is the same publisher as last time, not who they are"
+        )
+        out.append(
+            f"index version (per host, not signed): {int(market['index_version'])}"
+            + (" (STALE: past its expiry)" if market["stale"] else "")
+        )
+        if market["replaces"]:
+            out.append(f"replaces package (per host, not signed): {_clean(market['replaces'])}")
+        if market["summary"]:
+            out.append(f"summary from the marketplace (per host, not signed): {_clean(market['summary'])}")
     for path, value in sorted((material.get("before") or {}).items()):
         label = "current value according to the host, not signed" if not path.startswith(("ticket.", "body.")) else ""
         out.append(f"before {_clean(path)}{' (' + label + ')' if label else ''}:")
@@ -921,7 +1010,7 @@ def plain(
         return Review(prefix + full)
     # The dashboard says "check that this matches the fingerprint in your terminal": the same 12 hex it shows, on a
     # labelled line under the headline (before the first blank line). The full review's `fingerprint:` line stays too.
-    fp = f"Verification fingerprint: {_clean(prepared['fingerprint'])}"
+    fp = f"Verification code: {_clean(prepared['fingerprint'])}"
     lines.insert(lines.index("") if "" in lines else len(lines), fp)
     if artifacts in ("unseen", "checked") and any(e["type"] in ARTIFACT_TYPES for e in prepared["events"]):
         lines += [_clean(UNSEEN if artifacts == "unseen" else SEEN), ""]

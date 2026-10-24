@@ -187,45 +187,39 @@ def person_env(w):
     return {**w.served.lab.ws.env(session=None, grant=False), "ORCH_HOST_RUN_DIR": str(w.served.lab.run)}
 
 
-def test_prepare_list_and_discard_through_the_real_host(served, human_fx):
-    w = World(served, human_fx)
-    try:
-        w.append_workspace("addon.granted", **ADDON)
-        w.configure()
-        uid, key = w.ticket_with(**{"report.md": REPORT})
-        env = person_env(w)
-        code, out = run(["prepare", key, "report.md"], env)
-        assert code == 0, out
-        staged = re.search(r"ps_[0-9a-f]{32}", out).group(0)
-        assert f"orch publish share {staged}" in out
-        code, out = run(["list"], env)
-        assert code == 0 and f"staged {staged} {key} secret 1 file(s) by you" in out
-        code, out = run(["list", "--json"], env)
-        data = json.loads(out)["data"]
-        assert data["configured"] and data["staged"][0]["staged_id"] == staged
-        code, out = run(["discard", staged], env)
-        assert code == 0 and out.strip() == f"ok publish discarded {staged}"
-        assert run(["list"], env)[1].strip() == "nothing staged or shared"
-        code, out = run(["discard", staged], env)
-        assert code == 2 and out.startswith("error not_found")
-        assert w.server.requests == []
-    finally:
-        w.close()
+def test_prepare_list_and_discard_through_the_real_host(served, human_fx, monkeypatch):
+    w = World(served, human_fx, monkeypatch)
+    w.append_workspace("addon.granted", **ADDON)
+    w.configure()
+    uid, key = w.ticket_with(**{"report.md": REPORT})
+    env = person_env(w)
+    code, out = run(["prepare", key, "report.md"], env)
+    assert code == 0, out
+    staged = re.search(r"ps_[0-9a-f]{32}", out).group(0)
+    assert f"orch publish share {staged}" in out
+    code, out = run(["list"], env)
+    assert code == 0 and f"staged {staged} {key} secret 1 file(s) by you" in out
+    code, out = run(["list", "--json"], env)
+    data = json.loads(out)["data"]
+    assert data["configured"] and data["staged"][0]["staged_id"] == staged
+    code, out = run(["discard", staged], env)
+    assert code == 0 and out.strip() == f"ok publish discarded {staged}"
+    assert run(["list"], env)[1].strip() == "nothing staged or shared"
+    code, out = run(["discard", staged], env)
+    assert code == 2 and out.startswith("error not_found")
+    assert w.server.requests == []
 
 
-def test_the_cli_reaches_the_host_only_through_orch_main(served, human_fx, capsys):
-    w = World(served, human_fx)
-    try:
-        w.append_workspace("addon.granted", **ADDON)
-        w.configure()
-        out, err = io.StringIO(), io.StringIO()
-        code = orch_main(["publish", "list"], env=person_env(w), stdout=out, stderr=err)
-        assert code == 0 and out.getvalue().strip() == "nothing staged or shared"
-        code = orch_main(["publish", "revoke", "0" * 32], env={**person_env(w), "ORCH_GRANT": "gr_x"}, stdout=out,
-                         stderr=err)  # fmt: skip
-        assert code == 3 and "op.not_allowed" in out.getvalue()
-    finally:
-        w.close()
+def test_the_cli_reaches_the_host_only_through_orch_main(served, human_fx, capsys, monkeypatch):
+    w = World(served, human_fx, monkeypatch)
+    w.append_workspace("addon.granted", **ADDON)
+    w.configure()
+    out, err = io.StringIO(), io.StringIO()
+    code = orch_main(["publish", "list"], env=person_env(w), stdout=out, stderr=err)
+    assert code == 0 and out.getvalue().strip() == "nothing staged or shared"
+    code = orch_main(["publish", "revoke", "0" * 32], env={**person_env(w), "ORCH_GRANT": "gr_x"}, stdout=out,
+                     stderr=err)  # fmt: skip
+    assert code == 3 and "op.not_allowed" in out.getvalue()
 
 
 def test_without_a_host_the_command_says_so(tmp_path):

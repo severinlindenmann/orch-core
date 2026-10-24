@@ -37,6 +37,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from orch import canon
+from orch.addons.settings_value import KEY as ADDONS_KEY
 
 __all__ = ["DETAILS_ONLY", "SHOWN", "TECHNICAL_KEYS", "PlainUnavailable", "build", "clean_tree", "headline", "text"]
 
@@ -511,6 +512,53 @@ def _models_rows(out: dict[str, Any], value: Any, before: Any, ctx: Any) -> bool
         "Start agent uses these models for new agents. You still see the model before each start."
     )
     return True
+
+
+def _leaf_word(v: Any) -> str:
+    """A leaf as canonical JSON on one line: strings quoted, ``true``/``false``/``null`` bare, ``{}`` and ``[]``
+    literal, so ``true`` and ``"true"``, ``5`` and ``"5"`` differ and no text can pass for the ``(removed)`` marker."""
+    return one(canon.dumps(v).decode("utf-8"))
+
+
+def _addons_rows(out: dict[str, Any], value: Any, before: Any, ctx: Any) -> str | None:
+    """``settings.changed`` ``set.addons`` (G6): ONE add-on's settings, one row per leaf (``path = value``), nothing
+    folded, a leaf that goes away shown as removed. The name is the signed one; the host's current values are labelled
+    ``per host, not signed``. The headline when it is plain, else ``None`` (the caller raises: no plain view)."""
+    from orch.addons import settings_value as sv
+
+    if sv.check_changes(value) is not None:
+        return None
+    ((name, new),) = value.items()
+    old = before.get(name) if isinstance(before, Mapping) else None
+    if sv.check_shape(old) is not None:
+        old = None  # not plain data: show nothing of it rather than guess
+    new_leaves = sv.leaves(new) if new is not None else []
+    old_leaves = sv.leaves(old) if old is not None else []
+    now, was = dict(new_leaves), dict(old_leaves)
+    if len(now) != len(new_leaves) or len(was) != len(old_leaves):
+        return None  # two leaves on one path would show one row: no plain view at all
+    if new is None:
+        _row(
+            out,
+            one(name),
+            "(removed: the add-on uses its defaults)",
+            "(set)" if old is not None else None,
+            ctx.note(False),
+        )
+    for path in sorted(set(now) | set(was)):
+        label = f"{name}: {path}" if path else name
+        _row(
+            out,
+            label,
+            _leaf_word(now[path]) if path in now else "(removed)",
+            _leaf_word(was[path]) if path in was else None,
+            ctx.note(False),
+        )
+    out.setdefault("notes", []).append(
+        "Stored in the workspace as plain text: people and agents who can read the workspace can see them. "
+        f"{one(name)} gets exactly these values when orch runs it; keys go through 'orch addon login', not here."
+    )
+    return f"Settings of {one(name)} (add-on)"
 
 
 def _icon_word(v: Any) -> str | None:
@@ -1113,6 +1161,15 @@ def _payload(
             raise PlainUnavailable(f"the plain view does not know the event type {typ}")
         _check_keys(typ, ev, SHOWN[typ], TECHNICAL_KEYS)
         heads.append(_event(typ, ev, ref, out, before, texts, ctx))
+    market = material.get("market")
+    if isinstance(market, Mapping) and isinstance(market.get("publisher"), Mapping):  # V3 G3: the host's word, labelled
+        tofu = {"new": "first use of this publisher key", "known": "same publisher as before"}.get(
+            _s(market["publisher"].get("tofu")), "unsigned"
+        )
+        out.setdefault("notes", []).append(
+            f"Where it comes from (per host, not signed): {_s(market.get('url'))}, {tofu}. "
+            "A key shows the same publisher as last time, not who they are."
+        )
     issued = [ev.get("grant") for ev in events if ev.get("type") == "grant.issued"]
     revoked = [ev.get("grant") for ev in events if ev.get("type") == "grant.revoked"]
     if issued and revoked:  # an Extend: the access it replaces must be another one than the new access
@@ -1210,6 +1267,13 @@ def _event(
             _row(out, "reason", ev["reason"])
         return "Take back agent access"  # signed words only: which access is in the labelled row (the host's word)
     if typ == "settings.changed":
+        if ADDONS_KEY in (ev.get("set") or {}):
+            if len(ev["set"]) != 1:
+                raise PlainUnavailable("add-on settings are signed on their own")
+            head = _addons_rows(out, ev["set"][ADDONS_KEY], before.get(ADDONS_KEY), ctx)
+            if head is None:
+                raise PlainUnavailable("the add-on settings are not plain data")
+            return head
         for key, value in sorted((ev.get("set") or {}).items()):
             if key == "repos" and _repo_rows(out, value, before.get(key), ctx):
                 continue
@@ -1347,6 +1411,8 @@ _CAPABILITY_WORDS = {
     "pty": "open terminals on this computer, as you",
     "network": "use the internet",
     "git_push": "push your code to remote repositories",
+    "choose_model": "choose the model for agent starts (you still see it before each start)",
+    "credential": "get the key you store for this add-on with 'orch addon login' and send it over the internet",
 }
 _ADDON_NAME = re.compile(r"[a-z][a-z0-9_-]{0,63}")
 _VERSION = re.compile(r"[0-9][0-9A-Za-z.+-]{0,31}")

@@ -56,7 +56,7 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
   const [doubt, setDoubt] = useState<Record<string, boolean>>({})
   const [preview, setPreview] = useState<{ args: { ticket?: string }; data: TermPreview | null; error: string; idem: string } | null>(null)
   const [busy, setBusy] = useState(false)
-  const [agent, setAgent] = useState(false)
+  const [agent, setAgent] = useState<'start' | 'choose' | null>(null)
   const agents = !!ws && hasFeature('agent_start', ws)
   const [error, setError] = useState('')
   const current = shown.find((r) => r.run === selected) ?? shown.find((r) => r.state === 'running') ?? shown[0]
@@ -132,7 +132,8 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
             {ticket && <DropdownMenuItem disabled={!termsOn} onSelect={() => void ask(true)}>Shell for {ticket}</DropdownMenuItem>}
             <DropdownMenuSeparator />
             {/* agent.preview needs a ticket (contract §12.3): without one the host refuses "args is not valid" */}
-            <DropdownMenuItem disabled={!agents || !ticket} onSelect={() => setAgent(true)}>{ticket ? `Start agent on ${ticket}` : 'Start agent'}{!agents ? ' — not available on this host' : !ticket && ' — open a ticket first'}</DropdownMenuItem>
+            <DropdownMenuItem disabled={!agents || !ticket} onSelect={() => setAgent('start')}>{ticket ? `Start agent on ${ticket}` : 'Start agent'}{!agents ? ' — not available on this host' : !ticket && ' — open a ticket first'}</DropdownMenuItem>
+            {agents && ticket && <DropdownMenuItem onSelect={() => setAgent('choose')}>Change agent or model…</DropdownMenuItem>}
           </DropdownMenuContent>
         </DropdownMenu>
         {current && current.state === 'running' && (
@@ -182,7 +183,7 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
             </div>
           ) : ws ? <RealTerminal key={current.run} ws={ws} run={current} initial={opened === current.run ? 'write' : 'read'} /> : null}
       </div>
-      {ws && agents && ticket && <StartAgentDialog ws={ws} ticket={ticket} open={agent} onClose={() => setAgent(false)} onStarted={(run) => setSelected(run.run)} />}
+      {ws && agents && ticket && <StartAgentDialog key={agent ?? 'none'} ws={ws} ticket={ticket} open={!!agent} choose={agent === 'choose'} onClose={() => setAgent(null)} onStarted={(run) => setSelected(run.run)} />}
       <PreviewDialog preview={preview} busy={busy} onClose={() => setPreview(null)} onConfirm={() => void confirm()} />
     </section>
   )

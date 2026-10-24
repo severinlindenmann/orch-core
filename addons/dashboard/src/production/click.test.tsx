@@ -17,9 +17,9 @@ const ON = { custody: 'convenience', enabled: true, available: true } as const
 const state = useFakeHost(() => [workspace({ id: A, features: [...READS, ...DO, 'actions', 'click'], click: ON })])
 
 const save = async (user: ReturnType<typeof userEvent.setup>) => {
-  const input = await screen.findByRole('button', { name: '1 day' }, T)
-  await user.click(input)
-  await user.click(screen.getByRole('button', { name: 'Save settings' }))
+  const input = await screen.findByRole('combobox', { name: 'Longest agent access you can give' }, T)
+  await user.selectOptions(input, '24')
+  await user.click(screen.getByRole('button', { name: 'Save' }))
   return screen.findByRole('dialog', {}, T)
 }
 const press = (b: HTMLElement) => {
@@ -60,7 +60,8 @@ it('click-to-sign end to end: Sign, the signer’s View only, 500 ms, Sign, Sign
   expect(sign).toBeDisabled()
   await waitFor(() => expect(sign).toBeEnabled(), { timeout: ARM_MS + 3000 })
   press(sign)
-  await within(dialog).findByText('Signed', {}, T)
+  await waitFor(() => expect(state.host.clickSigned).toHaveLength(1), T)
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull(), T) // closes by itself; one toast says it
   expect(state.host.clickSigned).toEqual([{ request_id: 'hr_' + '1'.padStart(26, '0'), view_digest: 'sha256:' + '9'.repeat(64) }])
   expect(state.host.clickCancelled).toEqual([])
 })
@@ -81,9 +82,9 @@ it('each workspace has its own person and role: the second workspace draws its a
   state.host.workspaces.push(second)
   const user = userEvent.setup()
   show(`/w/DEMO/settings/general?ws=${uuid8(B)}`)
-  const input = await screen.findByRole('button', { name: '1 day' }, T)
+  const input = await screen.findByRole('combobox', { name: 'Longest agent access you can give' }, T)
   expect(input).toBeEnabled()
-  await user.click(input)
-  expect(screen.getByRole('button', { name: 'Save settings' })).toBeEnabled() // an owner there, though not under the first workspace's person id
+  await user.selectOptions(input, '24')
+  expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled() // an owner there, though not under the first workspace's person id
   expect(OWNER).not.toBe(MARA)
 })

@@ -5,7 +5,7 @@
 import { useState } from 'react'
 import type { FollowUpAction } from '@/api/handoff'
 import { sectionLabel, type SectionName } from '@/api/sections'
-import { HandoffDialog } from '@/components/sign/HandoffDialog'
+import { SignPopover } from '@/components/sign/SignPopover'
 
 /** What a step will set, as short lines for the person (the values they typed, nothing from the host). */
 export function stepLines(a: FollowUpAction): string[] {
@@ -29,7 +29,7 @@ export function CompleteDetails({ ws, ticketKey, steps, onFinish, title }: { ws:
   const lines = stepLines(action)
   const last = index === steps.length - 1
   return (
-    <HandoffDialog
+    <SignPopover
       key={index}
       title={title ?? (steps.length > 1 ? `Complete details (${index + 1} of ${steps.length})` : 'Complete details')}
       ws={ws}
@@ -54,6 +54,6 @@ export function CompleteDetails({ ws, ticketKey, steps, onFinish, title }: { ws:
           ))}
         </ul>
       </div>
-    </HandoffDialog>
+    </SignPopover>
   )
 }

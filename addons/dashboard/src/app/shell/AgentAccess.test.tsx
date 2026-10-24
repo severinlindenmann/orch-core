@@ -8,7 +8,7 @@ import { setClock } from '@/lib/time'
 
 vi.mock('@/app/useMe', () => ({ useMe: () => ({ data: { person: 'me' } }) }))
 vi.mock('@/app/terminal/real/StartAgentDialog', () => ({ RunnerGrantCard: (p: { extend?: { id: string }; onOutcome: () => void }) => <button onClick={p.onOutcome}>Complete {p.extend?.id ?? 'new grant'}</button> }))
-vi.mock('@/components/sign/HandoffDialog', () => ({ HandoffDialog: (p: { action: { grant: string }; summary: React.ReactNode; onInterrupted: () => void; onClose: () => void; onSettled: (phase: string) => void }) => <div>{p.summary}<button onClick={() => p.onSettled('done')}>Sign stop {p.action.grant}</button><button onClick={() => p.onSettled('cancelled')}>Reject stop</button><button onClick={p.onClose}>Close stop</button><button onClick={p.onInterrupted}>Reject click stop</button></div> }))
+vi.mock('@/components/sign/SignPopover', () => ({ SignPopover: (p: { action: { grant: string }; summary: React.ReactNode; onInterrupted: () => void; onClose: () => void; onSettled: (phase: string) => void }) => <div>{p.summary}<button onClick={() => p.onSettled('done')}>Sign stop {p.action.grant}</button><button onClick={() => p.onSettled('cancelled')}>Reject stop</button><button onClick={p.onClose}>Close stop</button><button onClick={p.onInterrupted}>Reject click stop</button></div> }))
 const now = Date.parse('2026-10-16T12:00:00Z')
 let runner: Runner
 beforeEach(() => {

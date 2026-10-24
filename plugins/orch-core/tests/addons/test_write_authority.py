@@ -13,14 +13,14 @@ import pytest
 from orch import canon
 from orch.schema import SchemaError, validate
 from orch.store import StoreError
-from tests.addons.helpers import make_package
+from tests.addons.helpers import installed_package
 from tests.ops.humans import agent, hws, make_ticket, me  # noqa: F401
 
 PERSON = "p_" + "a" * 32
 
 
 def granted(hws, me):
-    make_package(hws.store_dir)
+    installed_package(hws)
     assert me("addon", "grant", "echo").code == 0
     return hws.new_ticket("t")
 
@@ -149,7 +149,7 @@ def test_undeclared_sections_are_refused(hws, me):
 
 
 def test_no_cli_operation_can_name_an_addon_path(hws, me, agent):
-    make_package(hws.store_dir)
+    installed_package(hws)
     me("addon", "grant", "echo")
     key = make_ticket(agent)
     for argv in (("set", key, "addons.echo.points=3"), ("set", key, "ticket.addons.echo.points=3")):

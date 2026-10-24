@@ -10,7 +10,7 @@ import { useMe } from '@/app/useMe'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { HandoffDialog } from '@/components/sign/HandoffDialog'
+import { SignPopover } from '@/components/sign/SignPopover'
 import { RunnerGrantCard } from '@/app/terminal/real/StartAgentDialog'
 
 /** How long is left, in the words the pill uses: "3 days left", "5 hours left", "20 min left". */
@@ -103,7 +103,7 @@ export function AgentAccess({ ws, previewStopped = false }: { ws: string; /** De
     {askStop && <Dialog open onOpenChange={open => { if (!open) setAskStop(false) }}><DialogContent><DialogHeader><DialogTitle>Stop agents working for you?</DialogTitle><DialogDescription>This ends your runner access and all your other listed active agent access. Review and sign each stop separately. An agent that is already running can no longer save changes, but it keeps running until you press Stop on it in the agents dock.</DialogDescription></DialogHeader>
       {error && <p role="alert">{error}</p>}<Button variant="ghost" onClick={() => setAskStop(false)}>Cancel</Button><Button disabled={grants.isFetching} onClick={() => void stop()}>Stop agent access</Button>
     </DialogContent></Dialog>}
-    {queue[done] && <HandoffDialog key={queue[done].id} ws={ws} title="Stop agent access" action={{ action: 'grant_revoke', grant: queue[done].id }} autoStart summary={<><p role="status">Stopping access {done + 1} of {queue.length}. {done} stopped.</p><p>This ends the agent access for {me.data?.name ?? 'you'}{queue[done].until ? <>, which runs until <time dateTime={queue[done].until}>{fmtSlot(queue[done].until!)}</time></> : ''}.</p><details className="text-text-muted"><summary className="cursor-pointer">Technical details</summary><p>Access id: {queue[done].id}</p></details></>} onSettled={phase => {
+    {queue[done] && <SignPopover key={queue[done].id} ws={ws} title="Stop agent access" action={{ action: 'grant_revoke', grant: queue[done].id }} autoStart summary={<><p role="status">Stopping access {done + 1} of {queue.length}. {done} stopped.</p><p>This ends the agent access for {me.data?.name ?? 'you'}{queue[done].until ? <>, which runs until <time dateTime={queue[done].until}>{fmtSlot(queue[done].until!)}</time></> : ''}.</p><details className="text-text-muted"><summary className="cursor-pointer">Technical details</summary><p>Access id: {queue[done].id}</p></details></>} onSettled={phase => {
       if (phase !== 'done') {
         if (phase !== 'unknown' && phase !== 'attempt_open') interrupted()
         return

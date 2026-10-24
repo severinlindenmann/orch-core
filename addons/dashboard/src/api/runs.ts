@@ -47,7 +47,7 @@ export interface RunnerInfo {
   enabled: boolean
   terminals: boolean
   /** M7b: the caller's runner grant (never its secret). */
-  grant?: { id: string; until: string; scope: 'all' | 'workable' } | null
+  grant?: { id: string; until: string; scope: 'all' | 'workable'; startable?: boolean; startable_until?: string | null } | null
 }
 
 export interface RunList {

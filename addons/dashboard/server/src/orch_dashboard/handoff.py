@@ -767,6 +767,22 @@ class AddonGrant(Action):
     name: AddonName
 
 
+MarketName = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9-]{0,39}$")]
+#: core `marketstate._STAGE`: the host's own stage id
+StageId = Annotated[str, StringConstraints(pattern=r"^st_[0-9a-f]{32}$")]
+
+
+class MarketGrant(Action):
+    """`addon.grant {name, staged}`: install or update the package the host staged and the person reviewed (A10).
+    Exactly these two keys (`extra="forbid"`). **Terminal only, never one click**: the click route refuses it
+    (`click.prepare`), and it has no agent route (the dashboard session is the person's). The host re-reads the stage
+    and judges it again when the signed request is submitted."""
+
+    action: Literal["market_grant"]
+    name: MarketName
+    staged: StageId
+
+
 class AddonDisable(Action):
     """`addon.disable {name}`: turn it off. Its data stays; refused while its work is running."""
 
@@ -937,6 +953,7 @@ PrepareBody = Annotated[
     | MemberRole
     | MemberRemove
     | AddonGrant
+    | MarketGrant
     | AddonDisable
     | PublishSetup
     | AddonEnable
@@ -1107,6 +1124,8 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
             return "member.remove", {"person": action.person}
         case AddonGrant():
             return "addon.grant", {"name": action.name}
+        case MarketGrant():
+            return "addon.grant", {"name": action.name, "staged": action.staged}
         case AddonDisable():
             return "addon.disable", {"name": action.name}
         case GrantRevoke():
@@ -1235,6 +1254,8 @@ def expected(action: Action, person: str | None = None):
             return lambda ev: one(ev, "member.removed", person=action.person)
         case AddonGrant():
             return lambda ev: one(ev, "addon.granted", name=action.name)
+        case MarketGrant():
+            return lambda ev: one(ev, "addon.granted", name=action.name)
         case AddonDisable():
             return lambda ev: one(ev, "addon.disabled", name=action.name)
         case GrantRevoke():
@@ -1350,6 +1371,9 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
             base = question_base(data, body.question)
     if addon_base_ is not None:
         base = addon_base_
+    if isinstance(body, MarketGrant):
+        # one intent per stage: a new stage (a new review) is a new request, the same stage is one
+        base = {"addon": body.name, "staged": body.staged}
     person = link.welcome["peer"]["person"]
     meta = None
     if isinstance(body, NewTicketSequence | QuickStart | EditTicket):
@@ -1372,14 +1396,6 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
         meta = {"step": 0, "of": 2, "digest": digest, "intent": intent}
         base = {"sequence": digest, "addon": switch_base}
     return Plan(op, args, host_files(body), base, person, meta)
-
-
-CLICK_ONLY = (
-    "This workspace now signs with one click: use Sign in the dashboard (the page is updating; press Try "
-    "again). To sign in "
-    "the terminal instead, run `orch host convenience off --workspace {ws}` and then move the key back with "
-    "`orch keys custody passphrase --workspace {ws} --in-place`."
-)
 
 
 #: How many earlier ENDED (cancelled, expired) attempts of one action a single press steps past. The cap bounds the
@@ -1731,10 +1747,6 @@ def register(app: FastAPI, gateway: Gateway):
     def prepare(body: PrepareBody, request: Request, ws: str = Depends(workspace)):
         token = request.state.token
         gateway.enabled(ws)
-        if gateway.one_path_is_click(ws):
-            raise HostError(
-                {"code": "sign.click_only", "message": CLICK_ONLY.format(ws=ws), "retryable": False}, exit=3
-            )
         with handoffs.lock:
             handoffs.reserve(token)  # checks and takes a slot atomically: concurrent prepares cannot overshoot
         try:

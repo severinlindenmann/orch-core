@@ -25,11 +25,12 @@ import {
   FolderGit2,
   FolderTree,
   Gauge,
+  Puzzle,
   Share2,
   SquareTerminal,
 } from 'lucide-react'
 import { api } from '@/api/client'
-import { hasFeature, isRealHost } from '@/api/features'
+import { hasFeature, isRealHost, showsLogout } from '@/api/features'
 import { logout } from '@/api/prodApi'
 import { activeGrantOf } from '@/api/grants'
 import { roleOf } from '@/api/permissions'
@@ -363,7 +364,7 @@ export function Sidebar() {
             </a>
           </RailTip>
 
-          {hasFeature('grants') && <RailTip label={grant ? `Agents granted until ${grantTime}` : 'No grant · run orch grant'}>
+          {hasFeature('grants') && <RailTip label={grant ? `Agents can work until ${grantTime}` : 'Agents have no access. Give access in Settings, Agent access.'}>
             <div
               className={cn(
                 'flex items-center gap-2 py-1 text-[11px]',
@@ -372,7 +373,7 @@ export function Sidebar() {
               )}
             >
               {grant ? <ShieldCheck className="size-3.5 shrink-0" /> : <ShieldOff className="size-3.5 shrink-0" />}
-              <span className={label}>{grant ? `agents granted until ${grantTime}` : 'no grant · run orch grant'}</span>
+              <span className={label}>{grant ? `Agents can work until ${grantTime}` : 'Agents have no access'}</span>
             </div>
           </RailTip>}
 
@@ -385,13 +386,16 @@ export function Sidebar() {
                 <span className="block truncate text-[13px] text-text">{me?.name}</span>
                 <span className="block truncate text-[11px] text-text-faint">{role}</span>
               </span>
-              <button
-                type="button"
-                onClick={() => void logout().then(() => qc.clear())}
-                className={cn('rounded-md px-1.5 py-1 text-[11px] text-text-muted outline-none hover:bg-surface-2 hover:text-text focus-visible:ring-2 focus-visible:ring-brand', collapsed && 'hidden')}
-              >
-                Log out
-              </button>
+              {/* A session opened from this computer has nothing to log out of; only a hub or remote sign-in shows it. */}
+              {showsLogout() && (
+                <button
+                  type="button"
+                  onClick={() => void logout().then(() => qc.clear())}
+                  className={cn('rounded-md px-1.5 py-1 text-[11px] text-text-muted outline-none hover:bg-surface-2 hover:text-text focus-visible:ring-2 focus-visible:ring-brand', collapsed && 'hidden')}
+                >
+                  Log out
+                </button>
+              )}
             </div>
           ) : (
           <DropdownMenu>
@@ -457,6 +461,8 @@ const CORE_NAV = [
   { to: '/terminals', label: 'Terminals', icon: SquareTerminal, feature: 'terminals_page', real: true },
   /** Files (File Explorer add-on): owners only, listed only while the add-on is ON (the server adds `explorer` then). */
   { to: '/explorer', label: 'Files', icon: FolderTree, feature: 'explorer', real: true },
+  /** Add-ons (marketplace): listed only when the host serves the market ops (the server adds `market`). */
+  { to: '/addons', label: 'Add-ons', icon: Puzzle, feature: 'market', real: true },
   /** Shares (Publish add-on): listed only while the add-on is ON for this workspace (the server adds `publish` then). */
   { to: '/shares', label: 'Shares', icon: Share2, feature: 'publish', real: true },
   /** Usage (add-on): agent time per ticket; listed only while the add-on is ON (the server adds `usage` then). */

@@ -1188,16 +1188,6 @@ class ClickSigner:
             raise ClickError("invalid.input", "passphrase is text")
         return pw
 
-    @staticmethod
-    def _refuse_pending(convenience: Any, state: Path, wid: str, uid: int, clock: Callable[[], float]) -> None:
-        waiting = convenience.pending_handoffs(state, wid, uid, clock=clock)
-        if waiting:
-            raise ClickError(
-                "sign.click_only",
-                f"{len(waiting)} terminal hand-off request(s) are pending for this workspace: let them expire "
-                "(10 minutes), then switch click-to-sign on",
-            )
-
     def _tier_a(self, entry: dict[str, Any]) -> tuple[str, int]:
         """The switch is tier A only (§0.8.6 item 3a): in tier B the host's flag file belongs to another UID."""
         wid, uid = entry["workspace_id"], int(entry["host_uid"])
@@ -1245,7 +1235,6 @@ class ClickSigner:
             ) from None
         try:
             before = select.read_selection(self.state, wid)
-            self._refuse_pending(convenience, self.state, wid, uid, self.wall)  # early; checked again under the lock
             try:
                 staged = select.stage_convenience(self.state, wid, prefix=str(entry.get("prefix") or ""), passphrase=pw)
             except WrongPassphrase:
@@ -1254,11 +1243,6 @@ class ClickSigner:
             finished = False
             try:
                 with convenience.workspace_lock(self.state, wid, uid):
-                    try:
-                        self._refuse_pending(convenience, self.state, wid, uid, self.wall)
-                    except ClickError:
-                        select.undo_staged(self.state, wid, staged, before)
-                        raise
                     select.finish_convenience(self.state, wid, staged)
                     finished = True
                     convenience.set_enabled(self.state, wid, True, uid)  # last: no error after the flag changed

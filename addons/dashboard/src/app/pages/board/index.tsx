@@ -19,7 +19,7 @@ import { useNavigate } from '@tanstack/react-router'
 import { toast } from 'sonner'
 import { handoffMode } from '@/api/features'
 import { can } from '@/api/permissions'
-import { HandoffDialog } from '@/components/sign/HandoffDialog'
+import { SignPopover } from '@/components/sign/SignPopover'
 import { useRole } from '@/app/useRole'
 import { api } from '@/api/client'
 import { STATUSES, type Status, type TicketSummary } from '@/api/types'
@@ -441,7 +441,7 @@ export function BoardPage() {
         </DndContext>
       )}
       {handoffMove && (
-        <HandoffDialog
+        <SignPopover
           title={`Move ${handoffMove.key} to ${STATUS_LABEL[handoffMove.to]}`}
           ws={wsId}
           action={{ action: 'move', key: handoffMove.key, to: handoffMove.to }}

@@ -11,7 +11,7 @@ import type { Viewer } from './shared'
 import { clickEligible } from '@/api/click'
 import { eventDetail } from './History'
 
-vi.mock('@/components/sign/HandoffDialog', () => ({ HandoffDialog: (p: { action: unknown; hint?: string; children: ReactNode }) => <div><pre data-testid="action">{JSON.stringify(p.action)}</pre><p>{p.hint}</p>{p.children}</div> }))
+vi.mock('@/components/sign/SignPopover', () => ({ SignPopover: (p: { action: unknown; hint?: string; children: ReactNode }) => <div><pre data-testid="action">{JSON.stringify(p.action)}</pre><p>{p.hint}</p>{p.children}</div> }))
 vi.mock('@/api/features', async orig => ({ ...(await orig<typeof import('@/api/features')>()), handoffMode: () => true }))
 afterEach(() => { cleanup(); vi.restoreAllMocks() })
 const ac: AcceptanceStatus = { id: 'AC2', text: 'The exact criterion', state: 'unproven', evidence: [], proof: 'accepted', accepted: { by: 'p_a', at: '2026-10-19T12:02:00Z' } }

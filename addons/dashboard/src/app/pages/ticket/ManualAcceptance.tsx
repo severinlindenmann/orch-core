@@ -5,7 +5,7 @@ import { workspaceOfTicket } from '@/api/workspaces'
 import { handoffMode } from '@/api/features'
 import type { HandoffAction } from '@/api/handoff'
 import type { AcceptanceStatus, TaskStatus, TicketDocument } from '@/api/types'
-import { HandoffDialog } from '@/components/sign/HandoffDialog'
+import { SignPopover } from '@/components/sign/SignPopover'
 import { Prose, Raw } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -34,7 +34,7 @@ export function ManualButtons({ ac, task }: { ac?: AcceptanceStatus; task?: Task
   if (task) return task.state !== 'done' && task.state !== 'skipped' ? <Button variant="ghost" size="sm" onClick={() => choose({ kind: 'done', task })}>Mark done</Button> : null
   if (!ac) return null
   return <>
-    {(!ac.accepted || ac.accepted_stale) && <Button variant="ghost" size="sm" onClick={() => choose({ kind: 'accept', ac })}>{ac.accepted_stale ? 'Accept again' : 'Accept manually'}</Button>}
+    {(!ac.accepted || ac.accepted_stale) && (ac.accepted_stale || !ac.evidence?.length) && <Button variant="ghost" size="sm" onClick={() => choose({ kind: 'accept', ac })}>{ac.accepted_stale ? 'Accept again' : 'Accept manually'}</Button>}
     {ac.accepted && <Button variant="ghost" size="sm" onClick={() => choose({ kind: 'withdraw', ac })}>Withdraw</Button>}
   </>
 }
@@ -45,7 +45,7 @@ export function ManualDialog({ ticket, choice, ws, onClose }: { ticket: TicketDo
   const action: HandoffAction = choice.kind === 'done' ? { action: 'mark_task_done', key: ticket.key, task: choice.task.id }
     : choice.kind === 'accept' ? { action: 'accept_criterion', key: ticket.key, ac: choice.ac.id, ...(note ? { note } : {}) }
     : { action: 'withdraw_acceptance', key: ticket.key, ac: choice.ac.id, reason: note }
-  return <HandoffDialog title={title} ws={ws} action={action} confirmLabel={title} onClose={onClose}
+  return <SignPopover title={title} ws={ws} action={action} confirmLabel={title} onClose={onClose}
     hint={choice.kind === 'withdraw' && !note ? 'Give a reason to continue' : note.length > 1000 ? 'Use at most 1000 characters' : null}>
     <Prose>{choice.kind === 'done' ? choice.task.text : choice.ac.text}</Prose>
     {choice.kind === 'done' ? <>
@@ -56,7 +56,7 @@ export function ManualDialog({ ticket, choice, ws, onClose }: { ticket: TicketDo
       <Label htmlFor="manual-note">{choice.kind === 'accept' ? 'Note (optional)' : 'Reason (required)'}</Label>
       <Textarea id="manual-note" maxLength={1000} value={text} onChange={e => setText(e.target.value)} />
     </>}
-  </HandoffDialog>
+  </SignPopover>
 }
 
 /** Ticket context before choosing a verdict; host material remains the signing authority. */

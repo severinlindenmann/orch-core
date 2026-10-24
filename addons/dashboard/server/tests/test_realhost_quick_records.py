@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import time
 import uuid
+from pathlib import Path
 
 import pytest
 from conftest import ORIGIN, PORT
@@ -41,7 +42,14 @@ def seeding(ws: Workspace) -> dict:
 
 def git(*args, cwd, check=True):
     # Local git only, with a disposable HOME so no person's configuration is read.
-    env = {"PATH": os.environ["PATH"], "HOME": str(cwd), "GIT_CONFIG_NOSYSTEM": "1", "LC_ALL": "C"}
+    env = {
+        "PATH": os.environ["PATH"],
+        "HOME": str(cwd),
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "LC_ALL": "C",
+        # never discover an enclosing repository (the test HOME sits inside ~/orch-dev, itself a git repo): #1192
+        "GIT_CEILING_DIRECTORIES": str(Path(cwd).resolve().parent),
+    }
     done = subprocess.run(["git", *args], cwd=cwd, env=env, capture_output=True, text=True, timeout=60)
     if check:
         assert done.returncode == 0, done.stdout + done.stderr
@@ -170,7 +178,7 @@ def test_a_commit_into_the_disposable_records_repository(world, api):
     assert res.status_code == 200, res.text
     out = res.json()
     assert out["ok"] is True and SHA.match(out["commit"]) and not out.get("pushed")
-    log = git("log", "-1", "--format=%H %s", cwd=world.ws.root).stdout.strip()
+    log = git("log", "-1", "--format=%H %s", cwd=world.ws.root / ".orch").stdout.strip()
     assert log.startswith(out["commit"]) and re.search(r"orch: records .*ws_seq \d+$", log), log
     status = api.get("/records").json()
     assert (
@@ -194,7 +202,7 @@ def test_the_body_is_strict_and_auto_off_takes_none(api):
 def test_a_push_to_a_local_bare_remote_is_refused_and_publishes_nothing(world, api):
     bare = world.root / "remote.git"
     git("init", "--bare", str(bare), cwd=world.root)
-    git("remote", "add", "origin", str(bare), cwd=world.ws.root)
+    git("remote", "add", "origin", str(bare), cwd=world.ws.root / ".orch")
     world.ws.agent("new", "Something new to commit", "--type", "chore")  # a commit needs something pending
     res = api.post("/records/commit", {"push": True})
     # A local path is not an allowed push protocol (https and ssh only) and a first push needs --initial:

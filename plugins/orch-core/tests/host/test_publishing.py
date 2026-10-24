@@ -1069,14 +1069,15 @@ def test_a_server_that_forgot_the_workspace_drops_the_cached_registration(w):
     ok(w.send(staged))  # allowed again: the copy goes, registering first
 
 
-def test_everything_that_sends_or_redirects_is_terminal_only_never_click_or_word():
+def test_publish_is_a_click_and_only_the_non_human_ops_stay_terminal():
     from orch.click.protocol import op_class
 
-    for op in ("publish.share", "publish.send", "publish.revoke", "publish.register"):
+    assert op_class("publish.share") == "click"  # #1198 C2: the View lists files and both servers
+    for op in ("publish.send", "publish.revoke", "publish.register"):  # not human ops: never signed by click
         assert op_class(op) == "terminal", op
     for changed in ({"publish": {"server": SERVER, "share": SHARE}}, {"publish": None}, {"publish": None, "repos": {}}):
-        assert op_class("settings.set", [{"set": changed}]) == "terminal", changed  # at sign time
-        assert op_class("settings.set", None, {"set": changed}) == "terminal", changed  # early, before prepare
+        assert op_class("settings.set", [{"set": changed}]) == "click", changed  # at sign time
+        assert op_class("settings.set", None, {"set": changed}) == "click", changed  # early, before prepare
     assert op_class("settings.set", None, {"set": {"repos": {}}}) == "click"
     assert op_class("settings.set", None, {"set": {"sign_methods": ["terminal"]}}) == "click"
     assert op_class("settings.set", [{"set": {"claim_ttl_min": 30}}]) == "click"  # other settings keep their class

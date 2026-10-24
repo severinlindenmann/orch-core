@@ -68,7 +68,6 @@ HOST_CODES: dict[str, tuple[int, bool]] = {
     "human.request_state": (3, False),
     "repo.remote_mismatch": (3, False),
     "sign.convenience_unavailable": (3, False),  # H5c: with a reason first in the message (§0.8.6 item 1)
-    "sign.click_only": (3, False),  # H5c follow-up: no hand-off request while click-to-sign is on (§0.8.6 item 8)
     "reader.decl_invalid": (3, False),  # H12d-2: a reader declaration that does not verify (§0.8.6 item 9.3)
     "sign.convenience_readers": (3, False),  # H5c: also in the P1 catalog (member.add refuses it in both modes)
     # H11a, the runner (addons design §9.2)

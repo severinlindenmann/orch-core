@@ -20,7 +20,7 @@ import fcntl
 import os
 import stat
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -41,10 +41,8 @@ __all__ = [
     "check",
     "enabled",
     "flag_path",
-    "pending_handoffs",
     "read",
     "reason",
-    "refuse_handoff",
     "readers_error",
     "recheck_readers",
     "refuse_reader_op",
@@ -571,15 +569,6 @@ READER_UPGRADE = (
 )
 
 
-# -- one signing path per workspace (§0.8.6 item 8, owner decision of 12 Oct 2026)
-
-CLICK_ONLY_TEXT = (
-    "click-to-sign is on for this workspace: use Sign in the dashboard. To sign in the terminal instead, turn "
-    "convenience off with `orch host convenience off --workspace {ws}` and move the key back with "
-    "`orch keys custody passphrase --workspace {ws} --in-place`"
-)
-
-
 LOCK_WAIT = 2.0  # seconds a lock is waited for before ``lock.busy``: a stopped process must not wedge the host
 
 
@@ -616,46 +605,3 @@ def workspace_lock(state_dir: Path, workspace_id: str, host_uid: int) -> context
     """An exclusive ``flock`` on ``<state>/host/convenience-<ws>.lock``: it serializes, across processes (the host and
     ``orch host convenience on``), a hand-off prepare against switching the flag on, so exactly one wins."""
     return _flock(state_dir, f"convenience-{workspace_id}.lock", host_uid)
-
-
-def refuse_handoff(service: Any) -> None:
-    """``sign.click_only`` while the flag is on: a hand-off request (one with a code) is not prepared, bound or
-    submitted. Call it under :func:`workspace_lock` at prepare."""
-    if enabled(service.state_dir, service.workspace_id, service.host_uid):
-        raise HostError(
-            "sign.click_only",
-            CLICK_ONLY_TEXT.format(ws=service.workspace_id),
-            hint="sign in the dashboard, or: orch host convenience off --workspace W, then "
-            "orch keys custody passphrase --workspace W --in-place",
-            fix=["orch", "host", "convenience", "off", "--workspace", service.workspace_id],
-        )
-
-
-_SUBMIT_GRACE = 60.0
-
-
-def pending_handoffs(
-    state_dir: Path, workspace_id: str, host_uid: int, *, clock: Callable[[], float] = time.time
-) -> list[dict[str, Any]]:
-    """The workspace's pending (``prepared`` or ``bound``, not expired) hand-off requests, as stored. A bound request
-    counts a minute past its expiry as defence in depth: the host's submit holds the workspace lock from its flag
-    check to its journal write, so ``on`` cannot interleave with it whatever the timing. A request file that cannot be
-    read is ``custody.unsafe_mode`` (switching on must not guess about it)."""
-    from .requests import PENDING, RequestStore
-
-    store = RequestStore(state_dir, workspace_id, host_uid, clock=clock)
-    out = []
-    for rid in store.ids():
-        try:
-            rec = store.read(rid)
-        except HostError as exc:
-            raise unsafe(f"request {rid} cannot be read ({exc.message}); fix or remove it first") from None
-        if rec is None or not rec.get("code") or rec.get("state") not in PENDING:
-            continue
-        try:
-            if store.lapsed(rec, _SUBMIT_GRACE if rec.get("state") == "bound" else 0.0):
-                continue
-        except (KeyError, TypeError, ValueError):  # no usable ``expires``: unreadable, switching on must not guess
-            raise unsafe(f"request {rid} has no valid expiry; fix or remove it first") from None
-        out.append(rec)
-    return out

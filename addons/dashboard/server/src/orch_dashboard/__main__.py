@@ -4,6 +4,7 @@ import argparse
 import errno
 import fcntl
 import functools
+import getpass
 import hashlib
 import hmac
 import html
@@ -25,7 +26,7 @@ from pathlib import Path
 import uvicorn
 
 from .app import create_app
-from .auth import CODE_TTL, SETUP_CODE_TTL, Auth
+from .auth import CODE_TTL, SETUP_CODE_TTL, TUNNEL_CODE_TTL, Auth
 from .gateway import Gateway, RunDirectoryError, run_dir, state_dir
 from .hostlink import check_uid, encode, receive
 
@@ -37,6 +38,11 @@ AGENT_ENV = ("ORCH_GRANT", "ORCH_SESSION")
 # Seconds before the code's expiry after which the launcher writes no redirect file (and removes one it just wrote):
 # covers the gap between the server's monotonic timer and the wall clock both sides read.
 EXPIRY_MARGIN = 1
+#: the port a headless machine listens on unless told otherwise, so the printed `ssh -L` line stays true across
+#: restarts (#1198 R1-1). A desktop keeps a random port: nobody types it. Loopback only in both cases.
+HEADLESS_PORT = 47821
+#: file in the dashboard state directory that fixes the port (one decimal number), on any machine
+PORT_FILE = "port"
 
 
 class AgentRefused(RuntimeError):
@@ -165,18 +171,74 @@ def sweep_redirects(directory, now=None):
             path.unlink(missing_ok=True)
 
 
-def serve(lock_held=False):
+def is_headless(environ=None, platform=None):
+    """No desktop to open a browser on: Linux or macOS reached over SSH, or Linux with no display."""
+    environ = os.environ if environ is None else environ
+    platform = sys.platform if platform is None else platform
+    if environ.get("SSH_CONNECTION") and platform in ("linux", "darwin"):
+        return True
+    return platform.startswith("linux") and not (environ.get("DISPLAY") or environ.get("WAYLAND_DISPLAY"))
+
+
+def listen_port(directory, headless=None, port=None):
+    """The loopback port to bind: ``port`` (``serve --port``), else the number in ``<dashboard>/port``, else
+    HEADLESS_PORT on a headless machine, else 0 (the system picks). A bad file is an error, never a silent fallback."""
+    if port is None:
+        path = directory / PORT_FILE
+        try:
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        except FileNotFoundError:
+            fd = None
+        except OSError:
+            raise RuntimeError(f"cannot read {path}: it must be a plain file") from None
+        if fd is not None:
+            with os.fdopen(fd) as file:
+                st = os.fstat(file.fileno())
+                if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid() or st.st_mode & 0o022:
+                    raise RuntimeError(f"{path} must be your own file, not writable by others")
+                text = file.read(32).strip()
+            try:
+                port = int(text)
+            except ValueError:
+                raise RuntimeError(f"{path} must hold one port number") from None
+    if port is None:
+        return HEADLESS_PORT if (is_headless() if headless is None else headless) else 0
+    if not 1024 <= port <= 65535:
+        raise RuntimeError("the dashboard port must be between 1024 and 65535")
+    return port
+
+
+def tunnel_line(port, environ=None, user=None, host=None):
+    """The command to run on the person's own computer: ``ssh -L <port>:127.0.0.1:<port> <user>@<host>``. The host is
+    the address this very SSH session reached us on when there is one, else this machine's name."""
+    environ = os.environ if environ is None else environ
+    if host is None:
+        parts = (environ.get("SSH_CONNECTION") or "").split()
+        host = parts[2] if len(parts) == 4 else ""
+        if not _plain(host):
+            host = socket.getfqdn() or socket.gethostname()
+    user = user or getpass.getuser()
+    if not (_plain(host) and _plain(user)):
+        raise RuntimeError("cannot name this machine or user for an ssh command; build the tunnel line yourself")
+    return f"ssh -L {port}:127.0.0.1:{port} {user}@{host}"
+
+
+def _plain(value):
+    return bool(value) and all(c.isalnum() or c in "-_.:" for c in value)
+
+
+def serve(lock_held=False, port=None):
     refuse_agent()
     run_dir(state_dir())
     directory = state_dir() / "dashboard"
     with private_directory(directory) as fd:
         if not lock_held:
             with locked(fd) as lock_fd:
-                return _serve(directory, lock_fd=lock_fd)
-        return _serve(directory)
+                return _serve(directory, lock_fd=lock_fd, port=port)
+        return _serve(directory, port=port)
 
 
-def _serve(directory, lock_fd=None):
+def _serve(directory, lock_fd=None, port=None):
     # The digest of the code this process LOADED, taken now and never again: an in-place reinstall changes the files
     # on disk, and a server that hashed them at request time would report the new release while running the old code.
     release = code_digest()
@@ -190,7 +252,15 @@ def _serve(directory, lock_fd=None):
         sweep_redirects(redirects)
     auth = Auth(directory=redirects)
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    listener.bind(("127.0.0.1", 0))
+    wanted = listen_port(directory, port=port)
+    try:
+        listener.bind(("127.0.0.1", wanted))
+    except OSError as exc:
+        if wanted and exc.errno == errno.EADDRINUSE:
+            raise RuntimeError(
+                f"port {wanted} is already in use; free it or set another in {directory / PORT_FILE}"
+            ) from None
+        raise
     listener.listen(128)
     port = listener.getsockname()[1]
     config = uvicorn.Config(
@@ -237,6 +307,8 @@ def _serve(directory, lock_fd=None):
                     req = receive(conn)
                     if req == {"command": "launch"}:
                         conn.sendall(encode({**auth.launch(port), "redirect": str(redirects)}))
+                    elif req == {"command": "launch", "kind": "tunnel"}:
+                        conn.sendall(encode({**auth.launch(port, tunnel=True), "redirect": str(redirects)}))
                     elif req == {"command": "launch", "kind": "setup"}:
                         conn.sendall(encode({**auth.launch(port, setup=True), "redirect": str(redirects)}))
                     elif req == {"command": "hello"}:
@@ -353,6 +425,9 @@ def open_dashboard(path="/", print_url=False, emit_url_fd=None, no_browser=False
     refuse_agent()  # before anything is started or minted
     path = safe_path(path)
     kind = "setup" if path == "/setup" else None  # setup's nonce opens no normal session
+    headless = is_headless()
+    if kind is None and print_url and headless:
+        kind = "tunnel"  # a 5 min code: the person needs time to open the tunnel
     if emit_url_fd is not None:
         check_url_fd(emit_url_fd)  # before anything is started or minted
     if no_browser and emit_url_fd is None:
@@ -411,7 +486,15 @@ def open_dashboard(path="/", print_url=False, emit_url_fd=None, no_browser=False
     fragment = urllib.parse.urlencode({"launch": launch["code"], "to": path})
     url = f"http://127.0.0.1:{launch['port']}/#{fragment}"
     if print_url:
-        print("Single-use dashboard link; expires in 30 s.")
+        ttl = CODE_TTL if kind is None else TUNNEL_CODE_TTL  # setup's nonce lives as long as the tunnel one
+        print(
+            f"Single-use dashboard link; expires in {ttl // 60} min."
+            if ttl >= 60
+            else f"Single-use dashboard link; expires in {ttl} s."
+        )
+        if headless:
+            print(f"On your own computer, first run:  {tunnel_line(launch['port'])}")
+            print("then open this link in its browser:")
         print(url)
         return
     if emit_url_fd is not None:
@@ -504,9 +587,16 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("command", nargs="?", choices=["open", "launch", "serve", "stop", "restart"], default="open")
     parser.add_argument("path", nargs="?", default="/")
-    parser.add_argument("--print-url", action="store_true", help="print a single-use 30 s URL to a terminal")
+    parser.add_argument(
+        "--print-url",
+        action="store_true",
+        help="print a single-use URL to a terminal (30 s; 5 min on a headless machine, with the ssh -L line)",
+    )
     parser.add_argument("--emit-url-fd", type=int, help=argparse.SUPPRESS)  # the caller's pipe gets the URL
     parser.add_argument("--no-browser", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--port", type=int, help="serve on this loopback port (default: the port file, else fixed when headless)"
+    )
     parser.add_argument("--stop", action="store_true")
     parser.add_argument("--launcher-lock", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -514,7 +604,7 @@ def main():
         if not (args.stop or args.command == "stop"):
             refuse_agent()  # stop passes: it mints nothing and only ends the person's own server
         if args.command == "serve" and not args.stop:
-            return serve(args.launcher_lock)
+            return serve(args.launcher_lock, port=args.port)
         if args.stop or args.command == "stop":
             control(state_dir() / "dashboard/ctl.sock", "stop")
         elif args.command == "restart":

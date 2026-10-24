@@ -1,7 +1,7 @@
 // A6 in a real browser: the person home (needs-you left, workspaces and signing places right) and the admin console.
 // Driven by tests/test_browser_a6.py (HUB_URL, HUB_USER, HUB_PW, CODE_SIGNIN, optional SHOT_DIR). Run under the playwright lease.
 import { createRequire } from "node:module";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 
 const { chromium } = createRequire(import.meta.url)("playwright");
 const { HUB_URL, HUB_USER, HUB_PW, CODE_SIGNIN, SHOT_DIR } = process.env;
@@ -10,13 +10,15 @@ const assert = (c, m) => { if (!c) throw new Error("A6: " + m); };
 const browser = await chromium.launch();
 const page = await (await browser.newContext({ viewport: { width: 1400, height: 900 } })).newPage();
 const problems = [];
-page.on("console", (m) => { if (/Content Security Policy|Trusted Type/i.test(m.text())) problems.push(m.text()); });
-page.on("pageerror", (e) => problems.push(String(e)));
+page.on("console", (m) => { if (/LOADERR/.test(m.text())) console.log(m.text()); if (/Content Security Policy|Trusted Type/i.test(m.text())) problems.push(m.text()); });
+page.on("pageerror", (e) => { console.log("PAGEERROR", String(e)); problems.push(String(e)); });
 const shot = async (name) => {
   if (!SHOT_DIR) return;
   mkdirSync(SHOT_DIR, { recursive: true });
   for (const width of [1400, 390]) {
     await page.setViewportSize({ width, height: width < 600 ? 844 : 900 });
+    // scroll through once so every tile of a tall page is painted before the full-page capture
+    await page.evaluate(async () => { for (let y = 0; y < document.body.scrollHeight; y += 500) { window.scrollTo(0, y); await new Promise((r) => setTimeout(r, 40)); } window.scrollTo(0, 0); });
     await page.screenshot({ path: `${SHOT_DIR}/a6-${name}-${width}.png`, fullPage: true });
     const wide = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
     assert(!wide, `${name} at ${width}px scrolls horizontally`);
@@ -53,19 +55,71 @@ try {
     await page.getByRole("heading", { name: heading, exact: true }).waitFor();
     await shot("admin-" + tab.toLowerCase());
   }
-  // D14: the hub marketplace policy: block one add-on, the version rises
+  // D14: the hub marketplace policy (one draft, one Save; every write is the whole object with its base version)
+  const KEY = JSON.parse(readFileSync(new URL("../../vectors/vectors_hub_policy.json", import.meta.url), "utf8")).keys.company_1;
+  const COMPANY = "https://git.acme.example/tools/orch-market";
   await page.getByRole("tab", { name: "Marketplaces" }).click();
-  await page.getByText("Official", { exact: true }).first().waitFor();
-  await page.getByLabel("Never allow these add-ons").fill("wiki@1.0.0");
-  await page.getByRole("button", { name: "Save add-on rules" }).click();
-  await page.getByText("Saved").waitFor();
-  await page.getByText(/Version 2\./).waitFor();
+  await page.getByText("Official marketplace", { exact: true }).first().waitFor();
+  await page.getByText("Rules version 1.").waitFor();
+  assert(await page.getByRole("button", { name: "Save rules" }).isDisabled(), "Save is disabled without changes");
+  // block one add-on: the version rises
+  await page.getByLabel("Blocked add-ons").fill("wiki@1.0.0");
+  await page.getByRole("button", { name: "Save rules" }).click();
+  await page.getByText(/^Saved\./).waitFor();
+  await page.getByText("Rules version 2.").waitFor();
+  // the official address in the company form is routed to the official action, never asked for a key
+  await page.getByLabel("Marketplace repository address").fill("https://github.com/severinlindenmann/orch-marketplace");
+  await page.getByLabel("Current public key").fill(KEY);
+  await page.getByRole("button", { name: "Add marketplace" }).click();
+  await page.getByText(/That is the official marketplace/).waitFor();
+  assert((await page.getByRole("article").count()) === 1, "no row was added for the official address");
+  // add a company marketplace (staged), save it
+  await page.getByLabel("Marketplace repository address").fill(COMPANY);
+  await page.getByLabel("Current public key").fill("");
+  await page.getByRole("button", { name: "Add marketplace" }).click();
+  await page.getByText(/Paste the public key/).waitFor();
+  await page.getByLabel("Current public key").fill(KEY);
+  await page.getByRole("button", { name: "Add marketplace" }).click();
+  await page.getByText("1 accepted public key").waitFor();
+  await page.getByText("Unsaved changes").waitFor();
+  await page.getByLabel("Marketplace repository address").fill("git.example/x");
+  await page.getByLabel("Current public key").fill("abc");
+  await shot("admin-marketplaces-draft");
+  await page.getByRole("button", { name: "Save rules" }).click();
+  await page.getByText("Rules version 3.").waitFor();
+  // the same address again never silently replaces its keys
+  await page.getByLabel("Marketplace repository address").fill(COMPANY);
+  await page.getByLabel("Current public key").fill(KEY);
+  await page.getByRole("button", { name: "Add marketplace" }).click();
+  await page.getByText(/already in the list/).waitFor();
+  // a stale version is a conflict: a second browser page changes the rules first
+  const other = await page.context().newPage();
+  await other.goto(HUB_URL + "/");
+  await other.getByRole("link", { name: "Admin" }).click();
+  await other.getByRole("tab", { name: "Marketplaces" }).click();
+  await other.getByLabel("Blocked add-ons").fill("wiki@1.0.0 notes");
+  await other.getByRole("button", { name: "Save rules" }).click();
+  await other.getByText("Rules version 4.").waitFor();
+  await other.close();
+  await page.getByLabel("Blocked add-ons").fill("wiki@1.0.0 other");
+  await page.getByRole("button", { name: "Save rules" }).click();
+  await page.getByText(/Someone else changed these rules/).waitFor();
+  assert((await page.getByLabel("Blocked add-ons").inputValue()) === "wiki@1.0.0 other", "the conflict keeps my edits");
+  await page.getByRole("button", { name: "Save rules" }).click();  // on top of the latest
+  await page.getByText("Rules version 5.").waitFor();
+  // remove the company marketplace: the confirmation names it and is hub-wide
+  await page.getByRole("button", { name: /^Remove https:/ }).click();
+  await page.getByText(/for every workspace on this hub/).waitFor();
+  await page.getByRole("button", { name: "Remove from all workspaces" }).click();
+  await page.getByRole("button", { name: "Save rules" }).click();
+  await page.getByText("Rules version 6.").waitFor();
+  assert((await page.getByRole("article").count()) === 1, "only the official marketplace is left");
   await shot("admin-marketplaces-saved");
   // add a person, then remove them with the two-step button
   await page.getByRole("tab", { name: "People & groups" }).click();
   await page.getByLabel("Name", { exact: true }).fill("Jonas");
   await page.getByRole("button", { name: "Add person" }).click();
-  await page.getByText("Saved").waitFor();
+  await page.getByText("Saved", { exact: true }).waitFor();
   await page.locator("b", { hasText: "Jonas" }).first().waitFor();
 
   assert(problems.length === 0, "CSP/Trusted Types violations: " + problems.join(" | "));

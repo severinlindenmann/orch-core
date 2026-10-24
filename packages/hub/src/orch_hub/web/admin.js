@@ -60,6 +60,7 @@ export function adminView(d) {
       if (failed) { error(failed.body?.error ?? "unavailable"); panels.replaceChildren(h("button", { text: "Try again", onclick: load })); return; }
       data = Object.fromEntries(keys.map((key, i) => [key, key === "audit" || key === "market-policy" ? responses[i].body : responses[i].body[key]]));
       data.policy = data["market-policy"];
+      syncMp();
       if (data.audit.head?.seq > Math.max(0, ...(data.audit.records ?? []).map((r) => r.seq))) {
         const recent = await d.api("GET", "/admin/audit?since=" + Math.max(0, data.audit.head.seq - 100));
         if (current !== generation) return;
@@ -157,56 +158,147 @@ export function adminView(d) {
       !data.workspaces.length ? p("No workspaces yet.") : null];
   }
   const CAPS = [["git_push", "Push code to git"], ["network", "Use the network"], ["pty", "Run terminal sessions"], ["serve_http", "Serve web pages"], ["spawn_agent", "Start other agents"]];
+  const MAX_COMPANY = 16;
   const official = () => data.policy.official_url;
   const ids = (text) => [...new Set(text.split(/[\s,]+/).filter(Boolean))].sort();
-  function marketplaces() {
-    const cur = data.policy.policy;
-    const url = h("input", { required: true, maxlength: 300, autocomplete: "off", placeholder: "Address of the marketplace repository" });
-    const key1 = h("input", { required: true, maxlength: 100, autocomplete: "off", "aria-label": "Current public key" });
-    const key2 = h("input", { maxlength: 100, autocomplete: "off", "aria-label": "Next public key (optional)" });
-    const anyAddon = h("input", { type: "radio", name: "allow", checked: cur.addons.allow === null });
-    const onlyAddon = h("input", { type: "radio", name: "allow", checked: cur.addons.allow !== null });
-    const allow = h("textarea", { rows: 2, maxlength: 4000, "aria-label": "Allowed add-ons" }); allow.value = (cur.addons.allow ?? []).join(" ");
-    const block = h("textarea", { rows: 2, maxlength: 4000 }); block.value = cur.addons.block.join(" ");
-    const limit = h("input", { type: "checkbox", checked: cur.ceiling !== null });
-    const caps = CAPS.map(([id, name]) => [id, h("input", { type: "checkbox", checked: (cur.ceiling ?? CAPS.map((c) => c[0])).includes(id) }), name]);
-    const write = (policy, button) => change(button, "PUT", "/admin/market-policy", { base_version: data.policy.version, policy });
-    const edit = (button, fn) => { const next = JSON.parse(JSON.stringify(cur)); fn(next); return write(next, button); };
-    const rows = cur.markets.map((m) => h("article", { class: "list-row row" },
-      h("div", { class: "grow" }, h("b", { text: txt(m.url) }),
-        h("div", { class: "row" }, chip(m.class === "official" ? "Official" : "Company", m.class === "official" ? "ok" : ""),
-          m.class === "company" ? chip(m.keys.length + (m.keys.length === 1 ? " key pinned" : " keys pinned")) : null)),
-      remove("Remove", "PUT", "/admin/market-policy", { base_version: data.policy.version, policy: { ...cur, markets: cur.markets.filter((x) => x.url !== m.url) } })));
-    const hasOfficial = cur.markets.some((m) => m.url === official());
-    return [h("h2", { text: "Marketplaces" }),
-      p("What the people in your workspaces may install. Changes reach every connected workspace within moments; installing still needs a person's review. Version " + data.policy.version + "."),
-      h("section", { class: "card" }, h("h3", { text: "Allowed marketplaces" }), rows.length ? rows : p("None: nothing can be installed from a marketplace."),
-        !hasOfficial ? h("button", { type: "button", text: "Allow the official marketplace", onclick: (ev) => edit(ev.currentTarget, (n) => { n.markets.push({ url: official(), class: "official", keys: [] }); n.markets.sort((a, b) => (a.url < b.url ? -1 : 1)); }) }) : null),
+  const byUrl = (a, b) => (a.url < b.url ? -1 : 1);
+  const canon = (v) => JSON.stringify(v, (k, x) => (x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => (a < b ? -1 : 1))) : x));
+  // One draft of the whole policy for the Marketplaces tab: it survives redraws until it is saved or discarded, and
+  // one Save sends it as the whole object with the version it was based on (a stale version is a conflict).
+  let ui = null, mpNote = null, mpFocus = null, mpBusy = false;
+  const mpRoot = h("div", {});
+  const fromPolicy = (pol) => ({
+    markets: JSON.parse(JSON.stringify(pol.markets)),
+    onlyAddons: pol.addons.allow !== null, allow: (pol.addons.allow ?? []).join(" "), block: pol.addons.block.join(" "),
+    limit: pol.ceiling !== null, caps: new Set(pol.ceiling ?? []),
+    confirm: null, editKeys: null, err: null, form: { addr: "", k1: "", k2: "" },
+  });
+  const toPolicy = () => ({
+    markets: [...ui.markets].sort(byUrl),
+    addons: { allow: ui.onlyAddons ? ids(ui.allow) : null, block: ids(ui.block) },
+    ceiling: ui.limit ? [...ui.caps].sort() : null,
+  });
+  const mpDirty = () => ui !== null && canon(toPolicy()) !== canon(data.policy.policy);
+  const syncMp = () => { if (ui === null || !mpDirty()) ui = fromPolicy(data.policy.policy); };
+  const mpPaint = () => {
+    mpRoot.replaceChildren(...buildMp());
+    if (mpFocus) { document.getElementById(mpFocus)?.focus(); mpFocus = null; }
+  };
+  const mpFail = (field, msg) => { ui.err = { field, msg }; mpFocus = "mp-" + field; mpPaint(); };
+  const bad = (field) => (ui.err?.field === field ? { "aria-invalid": "true", "aria-describedby": "mp-err" } : {});
+  async function saveMp() {
+    mpBusy = true; mpPaint();
+    try {
+      const r = await d.api("PUT", "/admin/market-policy", { base_version: data.policy.version, policy: toPolicy() });
+      if (r.status === 200) {
+        data.policy = { ...data.policy, ...r.body }; ui = fromPolicy(data.policy.policy);
+        mpNote = { kind: "ok", text: "Saved. Every connected workspace gets the new rules (version " + r.body.version + ")." };
+        await load();
+      } else if (r.status === 409) {
+        const g = await d.api("GET", "/admin/market-policy");
+        if (g.status === 200) data.policy = g.body;
+        mpNote = { kind: "warn", conflict: true, text: "Someone else changed these rules in the meantime (they are now version " + data.policy.version + "). Your edits are still here. Check them and save again to apply them on top, or load the latest rules and drop your edits." };
+      } else if (r.status === 400) {
+        mpNote = { kind: "bad", text: "The hub did not accept these rules. Check the marketplace addresses and public keys (a key is 87 characters). Nothing was changed." };
+      } else mpNote = { kind: "bad", text: d.say(r.body?.error ?? "unavailable") };
+    } catch { mpNote = { kind: "bad", text: d.say("unavailable") }; }
+    mpBusy = false; mpFocus = "mp-note"; mpPaint();
+  }
+  function mpRow(m, i) {
+    const isOff = m.class === "official", name = isOff ? "official marketplace" : txt(m.url);
+    const editing = ui.editKeys?.url === m.url, confirming = ui.confirm === m.url;
+    return h("article", { class: "list-row" },
+      h("div", { class: "row" },
+        h("div", { class: "grow" }, h("b", { text: isOff ? "Official marketplace" : txt(m.url) }), isOff ? h("p", { class: "small muted", text: txt(m.url) }) : null,
+          h("div", { class: "row" }, chip(isOff ? "Official" : "Company", isOff ? "ok" : ""),
+            isOff ? null : chip(m.keys.length + (m.keys.length === 1 ? " accepted public key" : " accepted public keys")))),
+        confirming ? null : h("div", { class: "row" },
+          isOff ? null : h("button", { type: "button", text: "Edit keys", "aria-label": "Edit keys of " + name, onclick: () => { ui.editKeys = { url: m.url, k1: m.keys[0] ?? "", k2: m.keys[1] ?? "" }; mpFocus = "mp-ek1"; mpPaint(); } }),
+          h("button", { type: "button", class: "danger", text: "Remove", "aria-label": "Remove " + name, id: "mp-rm-" + i, onclick: () => { ui.confirm = m.url; mpFocus = "mp-rm-yes"; mpPaint(); } }))),
+      confirming ? h("div", { class: "banner warn", role: "alert" },
+        p("Remove the " + name + " for every workspace on this hub? Nobody can install from it once you save."),
+        h("div", { class: "row" },
+          h("button", { type: "button", class: "danger", id: "mp-rm-yes", text: "Remove from all workspaces", onclick: () => { ui.markets = ui.markets.filter((x) => x.url !== m.url); ui.confirm = null; mpFocus = "mp-add-official"; mpPaint(); } }),
+          h("button", { type: "button", text: "Cancel", onclick: () => { ui.confirm = null; mpFocus = "mp-rm-" + i; mpPaint(); } }))) : null,
+      editing ? h("form", { onsubmit: (ev) => {
+        ev.preventDefault();
+        const keys = [...new Set([ui.editKeys.k1.trim(), ui.editKeys.k2.trim()].filter(Boolean))].sort();
+        if (!keys.length) { ui.err = { field: "ek1", msg: "A company marketplace needs at least one public key." }; mpFocus = "mp-ek1"; mpPaint(); return; }
+        ui.markets = ui.markets.map((x) => (x.url === m.url ? { ...x, keys } : x)); ui.editKeys = null; ui.err = null; mpFocus = "mp-rm-" + i; mpPaint();
+      } },
+        h("div", { class: "form-grid mp-keys" },
+          field("Current public key", h("input", { id: "mp-ek1", maxlength: 100, autocomplete: "off", value: ui.editKeys.k1, ...bad("ek1"), oninput: (ev) => { ui.editKeys.k1 = ev.target.value; } })),
+          field("Next public key (optional; both are accepted while you change keys)", h("input", { id: "mp-ek2", maxlength: 100, autocomplete: "off", value: ui.editKeys.k2, oninput: (ev) => { ui.editKeys.k2 = ev.target.value; } })),
+          h("button", { class: "pri", type: "submit", text: "Use these keys" }),
+          h("button", { type: "button", text: "Cancel", onclick: () => { ui.editKeys = null; ui.err = null; mpFocus = "mp-rm-" + i; mpPaint(); } })),
+        ui.err?.field === "ek1" ? h("p", { id: "mp-err", class: "small", role: "alert", text: ui.err.msg }) : null) : null);
+  }
+  function buildMp() {
+    const company = ui.markets.filter((m) => m.class === "company");
+    const hasOfficial = ui.markets.some((m) => m.url === official());
+    const atLimit = company.length >= MAX_COMPANY;
+    const dirty = mpDirty();
+    const radio = (name, checked, label, onchange, id) => h("label", { class: "check" }, h("input", { type: "radio", name, checked, id, onchange }), label);
+    const area = (id, label, key, help, disabled) => [h("label", { for: id, text: label }),
+      h("textarea", { id, rows: 2, maxlength: 4000, disabled, oninput: (ev) => { ui[key] = ev.target.value; if (key === "block") warn(); touch(); } }), p(help)];
+    const warnEl = h("div", {});
+    const saveBtn = h("button", { class: "pri", type: "button", id: "mp-save", text: "Save rules", disabled: !dirty || mpBusy, onclick: () => void saveMp() });
+    const dirtyBox = h("span", {});
+    const touch = () => { const now = mpDirty(); saveBtn.disabled = !now || mpBusy; dirtyBox.replaceChildren(...(now ? [chip("Unsaved changes", "warn")] : [])); };
+    const warn = () => {
+      const blocksDashboard = ids(ui.block).some((x) => x === "dashboard" || x.startsWith("dashboard@"));
+      warnEl.replaceChildren(blocksDashboard ? h("div", { class: "banner warn", role: "alert", text: "This blocks the dashboard. It stops working in every workspace on this hub until you remove the rule." })
+        : p("Blocking a built-in add-on such as the dashboard pauses it in every workspace until the rule is removed."));
+    };
+    const allowArea = area("mp-allow", "Allowed add-on names", "allow", "Names separated by spaces or commas, for example: wiki notes. An empty list permits no add-on. A blocked add-on stays blocked even if it is listed here.", !ui.onlyAddons);
+    const blockArea = area("mp-block", "Blocked add-ons", "block", "Add-on names, or name@1.2.3 for one version, separated by spaces or commas. Example: wiki wiki@1.2.3", false);
+    allowArea[1].value = ui.allow; blockArea[1].value = ui.block; warn(); touch();
+    const note = mpNote ? h("div", { class: "banner " + mpNote.kind, id: "mp-note", tabindex: "-1", role: mpNote.kind === "ok" ? "status" : "alert" },
+      h("div", { text: mpNote.text }),
+      mpNote.conflict ? h("button", { type: "button", text: "Load latest rules and drop my edits", onclick: () => { ui = fromPolicy(data.policy.policy); mpNote = null; mpFocus = "mp-add-addr"; mpPaint(); } }) : null) : null;
+    return [note,
+      p("These rules apply to every workspace connected to this hub. Installing an add-on still needs a person's review and signature. A signature on a marketplace shows who published it, not that the code is safe."),
+      h("section", { class: "card" }, h("h3", { text: "Allowed marketplaces" }),
+        ui.markets.length ? ui.markets.map(mpRow) : p("No marketplaces are allowed. Nothing can be installed from a marketplace until you allow one."),
+        !hasOfficial ? h("button", { type: "button", id: "mp-add-official", text: "Allow the official marketplace", onclick: () => { ui.markets.push({ url: official(), class: "official", keys: [] }); mpFocus = "mp-add-official"; mpPaint(); } }) : null),
       h("section", { class: "card" }, h("h3", { text: "Add your company marketplace" }),
-        p("Paste the address and the public key your marketplace signs with. Only add-ons signed with that key are accepted."),
-        form("Add marketplace", [field("Address", url), field("Public key", key1), field("Next public key (optional)", key2)], "PUT", "/admin/market-policy", () => {
-          const next = JSON.parse(JSON.stringify(cur));
-          next.markets = next.markets.filter((x) => x.url !== url.value.trim());
-          next.markets.push({ url: url.value.trim(), class: url.value.trim() === official() ? "official" : "company", keys: url.value.trim() === official() ? [] : [...new Set([key1.value.trim(), key2.value.trim()].filter(Boolean))].sort() });
-          next.markets.sort((a, b) => (a.url < b.url ? -1 : 1));
-          return { base_version: data.policy.version, policy: next };
-        })),
+        p("Ask whoever runs your marketplace for the address of its repository and the public key it signs with. Only add-ons signed with an accepted key are installable. Allowing a company marketplace here does not make it installable in workspaces where outside marketplaces are not available."),
+        p(company.length + " of " + MAX_COMPANY + " company marketplaces." + (atLimit ? " The limit is reached; remove one to add another." : "")),
+        h("form", { onsubmit: (ev) => {
+          ev.preventDefault();
+          const addr = ui.form.addr.trim(), keys = [...new Set([ui.form.k1.trim(), ui.form.k2.trim()].filter(Boolean))].sort();
+          if (!addr) return mpFail("add-addr", "Enter the address of the marketplace repository.");
+          if (addr === official()) return mpFail("add-addr", "That is the official marketplace, which needs no key. Use \"Allow the official marketplace\" above.");
+          if (ui.markets.some((m) => m.url === addr)) return mpFail("add-addr", "This address is already in the list. Use Edit keys on its row to change its keys.");
+          if (!keys.length) return mpFail("add-k1", "Paste the public key this marketplace signs with.");
+          ui.markets.push({ url: addr, class: "company", keys }); ui.form = { addr: "", k1: "", k2: "" }; ui.err = null; mpFocus = "mp-add-addr"; mpPaint();
+        } },
+          h("div", { class: "form-grid mp-form" },
+            field("Marketplace repository address", h("input", { id: "mp-add-addr", maxlength: 300, autocomplete: "off", value: ui.form.addr, ...bad("add-addr"), oninput: (ev) => { ui.form.addr = ev.target.value; } })),
+            field("Current public key", h("input", { id: "mp-add-k1", maxlength: 100, autocomplete: "off", value: ui.form.k1, ...bad("add-k1"), oninput: (ev) => { ui.form.k1 = ev.target.value; } })),
+            field("Next public key (optional)", h("input", { id: "mp-add-k2", maxlength: 100, autocomplete: "off", value: ui.form.k2, oninput: (ev) => { ui.form.k2 = ev.target.value; } })),
+            h("button", { class: "pri", type: "submit", text: "Add marketplace", disabled: atLimit })),
+          p("A public key is 87 characters. The optional second key is for a key change: both are accepted."),
+          ui.err && ui.err.field.startsWith("add-") ? h("p", { id: "mp-err", class: "small bad-text", role: "alert", text: ui.err.msg }) : null)),
       h("section", { class: "card" }, h("h3", { text: "Add-ons and permissions" }),
-        h("form", { onsubmit: (ev) => { ev.preventDefault(); const button = ev.currentTarget.querySelector("button[type=submit]");
-          void edit(button, (n) => {
-            n.addons.allow = onlyAddon.checked ? ids(allow.value) : null;
-            n.addons.block = ids(block.value);
-            n.ceiling = limit.checked ? caps.filter(([, box]) => box.checked).map(([id]) => id).sort() : null;
-          }); } },
-          h("fieldset", {}, h("legend", { text: "Which add-ons may be installed" }),
-            h("label", { class: "check" }, anyAddon, " Any add-on from an allowed marketplace"),
-            h("label", { class: "check" }, onlyAddon, " Only these add-ons (names, separated by spaces)"), allow),
-          h("label", {}, "Never allow these add-ons (a name, or name@1.2.3 for one version)", block),
-          h("fieldset", {}, h("legend", { text: "Permissions an add-on may ask for" }),
-            h("label", { class: "check" }, limit, " Limit the permissions to the ticked ones"),
-            caps.map(([, box, name]) => h("label", { class: "check" }, box, " " + name))),
-          h("button", { class: "pri", type: "submit", text: "Save add-on rules" })),
-        p("Blocking a built-in add-on such as the dashboard pauses it in every workspace until the rule is removed."))];
+        h("fieldset", {}, h("legend", { text: "Which add-ons may be installed" }),
+          radio("allow", !ui.onlyAddons, "Any add-on from an allowed marketplace", () => { ui.onlyAddons = false; mpFocus = "mp-any"; mpPaint(); }, "mp-any"),
+          radio("allow", ui.onlyAddons, "Only these add-ons", () => { ui.onlyAddons = true; mpFocus = "mp-allow"; mpPaint(); }, "mp-only"), ...allowArea),
+        h("fieldset", {}, h("legend", { text: "Add-ons that are never allowed" }), ...blockArea, warnEl),
+        h("fieldset", {}, h("legend", { text: "Permissions an add-on may ask for" }),
+          radio("limit", !ui.limit, "No permission limit", () => { ui.limit = false; mpFocus = "mp-nolimit"; mpPaint(); }, "mp-nolimit"),
+          radio("limit", ui.limit, "Allow only the selected permissions", () => { ui.limit = true; mpFocus = "mp-limit"; mpPaint(); }, "mp-limit"),
+          CAPS.map(([id, name]) => h("label", { class: "check" }, h("input", { type: "checkbox", checked: ui.caps.has(id), disabled: !ui.limit, onchange: (ev) => { if (ev.target.checked) ui.caps.add(id); else ui.caps.delete(id); mpPaint(); } }), name)),
+          p("With a limit and nothing ticked, no add-on may use any of these permissions. Ticking a permission only makes it possible: a person still has to grant it."))),
+      h("div", { class: "row" },
+        saveBtn,
+        dirty ? h("button", { type: "button", text: "Discard changes", onclick: () => { ui = fromPolicy(data.policy.policy); mpNote = null; mpPaint(); } }) : null,
+        dirtyBox),
+      p("Rules version " + data.policy.version + ".")];
+  }
+  function marketplaces() {
+    mpPaint();
+    return [h("h2", { text: "Marketplaces" }), mpRoot];
   }
   function audit() {
     const records = [...(data.audit.records ?? [])].sort((a, b) => b.seq - a.seq);

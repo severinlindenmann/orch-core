@@ -135,6 +135,8 @@ def _link_node_modules(pkg: str, env_path: str) -> None:
     os.chmod(pkg, 0o700)
     try:
         os.symlink(os.path.join(env_path, "node_modules"), os.path.join(pkg, "node_modules"))
+    except OSError:
+        raise RunnerError("addon.start_failed", "the node_modules link could not be made") from None
     finally:
         os.chmod(pkg, 0o500)
 
@@ -285,6 +287,8 @@ def call(
         if py_env is not None:  # the interpreter that chose the wheels, without ``site``: no ``.pth``, no orch packages
             argv = [sys.executable, "-S", "-B", *argv[1:]]
         if rt is not None and rt["kind"] == "node-package-lock":
+            if any(p.split("/")[0] == "node_modules" for p in package.files):
+                raise RunnerError("addon.start_failed", "a Node add-on ships its own node_modules")
             _link_node_modules(pkg, env_path or "")
             exe = shutil.which("node", path=NODE_DIRS)
         else:

@@ -128,6 +128,10 @@ def check_package(facts: Facts, pkg: Package, core_version: str) -> Manifest:
         raise MarketError("market.manifest_mismatch")
     if manifest.runtime is not None:
         read_lock(manifest, pkg)  # step 15: MarketError lock_missing / lock_invalid
+        if manifest.runtime["kind"] == "node-package-lock" and any(
+            p.split("/")[0] == "node_modules" for p in pkg.files
+        ):
+            raise MarketError("market.package_invalid")  # bundled code is code the lock does not list
     if incompatibility(manifest, core_version) is not None:
         raise MarketError("market.manifest_mismatch")
     return manifest

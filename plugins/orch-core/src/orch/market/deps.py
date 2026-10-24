@@ -46,6 +46,34 @@ def view(lock_path: str, lock: Lock, planned: Sequence[Planned], found: Mapping[
     return {"kind": lock.kind, "lock": lock_path, "count": len(rows), "bytes": total, "rows": rows}
 
 
+def consistent(kept: Any, fresh: Mapping[str, Any]) -> bool:
+    """Is ``kept`` (the block a stage file holds: it also knows the download size and which wheels are compiled) the
+    block recomputed now from the lockfile of this package? Names, versions, install flags, kind, lock and count must be
+    equal; a note must be the plan's, or ``compiled`` on a row that installs (the one fact the plan cannot know);
+    ``bytes`` must be a plain size within the download cap. Anything else is not used."""
+    from .download import MAX_TOTAL
+
+    if not isinstance(kept, dict) or set(kept) != set(fresh):
+        return False
+    rows = kept["rows"]
+    if (
+        not isinstance(rows, list)
+        or (kept["kind"], kept["lock"], kept["count"]) != (fresh["kind"], fresh["lock"], fresh["count"])
+        or len(rows) != len(fresh["rows"])
+        or type(kept["bytes"]) is not int
+        or not 0 <= kept["bytes"] <= MAX_TOTAL
+    ):
+        return False
+    for k, f in zip(rows, fresh["rows"], strict=True):
+        if not isinstance(k, dict) or set(k) != set(f):
+            return False
+        if (k["name"], k["version"], k["installs"]) != (f["name"], f["version"], f["installs"]):
+            return False
+        if k["note"] != f["note"] and not (f["note"] is None and k["note"] == "compiled" and f["installs"]):
+            return False
+    return True
+
+
 def lines(v: Mapping[str, Any], show: Any = lambda x: ascii(str(x))[1:-1]) -> list[str]:
     """The review lines of a ``view`` (text from the package is escaped to printable ASCII by ``show``)."""
     n = v["count"]

@@ -184,3 +184,34 @@ def test_plan_node_dev_optional_and_platform():
     with pytest.raises(MarketError) as e:
         lockfile.plan(hard, HOST)
     assert (e.value.code, e.value.reason) == ("market.env_failed", "platform")
+
+
+# ---- review fix round: linear parsing
+
+
+def test_long_runs_of_spaces_and_hash_tokens_are_judged_in_linear_time():
+    import time
+
+    h = " --hash=sha256:" + "0" * 64
+    for data in (
+        b"a" + b" " * ((1 << 20) - 2) + b"b",  # one run of spaces
+        ("a==1" + h * 12000 + " x").encode(),  # hashes, then junk
+        (b"\\\n" + b" " * 1000) * 500 + b"x",  # continuations and spaces
+        (b"a " * ((1 << 19) - 1)),
+    ):
+        t = time.monotonic()
+        assert verdict("python-requirements", data) == {"refuse": "market.lock_invalid"}
+        assert time.monotonic() - t < 2.0
+
+
+def test_continuation_lines_and_a_lone_carriage_return():
+    h = "a" * 64
+    ok = f"idna==3.10 \\\n    --hash=sha256:{h} \\\n    --hash=sha256:{'b' * 64}\n"
+    assert verdict("python-requirements", ok) == {"ok": {}}
+    assert verdict("python-requirements", ok.replace("\n", "\r\n")) == {"ok": {}}
+    assert verdict("python-requirements", f"idna==3.10 --hash=sha256:{h}\rsix==1 --hash=sha256:{h}") == {
+        "refuse": "market.lock_invalid"
+    }
+    assert verdict("python-requirements", f"idna==3.10 --hash=sha256:{h} --hash=sha256:zz") == {
+        "refuse": "market.lock_invalid"
+    }

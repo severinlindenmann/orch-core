@@ -42,8 +42,8 @@ MAX_LOCK_BYTES = 1 << 20
 MAX_ROWS = 1000
 NODE_HOSTS = ("registry.npmjs.org",)  # the one registry a node lockfile may name (constants.DEP_HOSTS repeats it)
 
-_PY_LINE = re.compile(r"(?P<req>\S.*?)(?P<hashes>(?: +--hash=sha256:[0-9a-f]{64})+)")
-_PY_HASH = re.compile(r"--hash=sha256:([0-9a-f]{64})")
+_PY_HASH = re.compile(r"--hash=sha256:([0-9a-f]{64})")  # one whole token; matched with fullmatch, never searched
+MAX_LINE = 64 << 10  # one logical requirement line (a name, a marker and its hashes)
 _NPM_NAME = r"(?:@[a-z0-9~-][a-z0-9._~-]*/)?[a-z0-9~-][a-z0-9._~-]*"
 _NODE_KEY = re.compile(rf"node_modules/{_NPM_NAME}(?:/node_modules/{_NPM_NAME})*")
 _NODE_VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]{1,40})?(?:\+[0-9A-Za-z.-]{1,40})?")
@@ -122,6 +122,30 @@ def check(kind: str, data: bytes, budget: Budget | None = None) -> Lock:
 # ------------------------------------------------------------------------------------------------ python
 
 
+def _logical_lines(text: str) -> list[str]:
+    """The requirement lines of a requirements file: ``\\``-newline continues a line (spaces next to it collapse to
+    one), blank lines and ``#`` comments are dropped. One pass, no regular expression over the whole text (a long run of
+    spaces cannot make it quadratic); a lone carriage return is refused."""
+    text = text.replace("\r\n", "\n")
+    if "\r" in text:
+        raise _invalid()
+    lines: list[str] = []
+    pieces: list[str] = []
+    for raw in text.split("\n"):
+        body = raw.rstrip(" ")
+        cont = body.endswith("\\")
+        pieces.append((body[:-1] if cont else raw).strip(" "))
+        if not cont:
+            line = " ".join(p for p in pieces if p)
+            pieces = []
+            if line and not line.startswith("#"):
+                lines.append(line)
+    tail = " ".join(p for p in pieces if p)
+    if tail and not tail.startswith("#"):
+        lines.append(tail)
+    return lines
+
+
 def _python(text: str) -> list[Row]:
     from packaging.requirements import InvalidRequirement, Requirement
     from packaging.utils import canonicalize_name
@@ -129,24 +153,25 @@ def _python(text: str) -> list[Row]:
 
     if _BAD_TEXT.search(text):
         raise _invalid()
-    logical = re.sub(r" *\\\n *", " ", text)
-    lines = [ln.strip() for ln in logical.splitlines() if ln.strip() and not ln.strip().startswith("#")]
+    lines = _logical_lines(text)
     if len(lines) > MAX_ROWS:  # a count cap before any line is parsed
         raise _invalid()
     rows = []
     for ln in lines:
-        m = _PY_LINE.fullmatch(ln)
-        if m is None:
+        # linear: split at the FIRST " --hash=", then every remaining token must be exactly one hash option
+        at = ln.find(" --hash=")
+        tokens = [t for t in ln[at:].split(" ") if t] if at > 0 else []
+        if at <= 0 or len(ln) > MAX_LINE or not tokens or not all(_PY_HASH.fullmatch(t) for t in tokens):
             raise _invalid()
         try:
-            r = Requirement(m["req"])
+            r = Requirement(ln[:at])
             specs = list(r.specifier)
             if r.url is not None or len(specs) != 1 or specs[0].operator != "==" or "*" in specs[0].version:
                 raise _invalid()
             version = str(Version(specs[0].version))
         except (InvalidRequirement, InvalidVersion):
             raise _invalid() from None
-        hashes = tuple(sorted(set(_PY_HASH.findall(m["hashes"]))))
+        hashes = tuple(sorted({t[len("--hash=sha256:") :] for t in tokens}))
         rows.append(Row(canonicalize_name(r.name), version, hashes, None if r.marker is None else str(r.marker)))
     return rows
 

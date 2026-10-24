@@ -85,7 +85,8 @@ def _staged(h: Human, ctx: Context, name: str, stage: str) -> tuple[Any, Any, An
 def _dependencies(ctx: Context, manifest: Any, package: Any, stage_doc: Any) -> None:
     """The package list of the review (``material["deps"]``). From the stage when there is one (it also knows the
     download sizes and which wheels are compiled); else from the checked lockfile alone (a re-enable). Either way every
-    name and version comes from the lockfile of THIS package: a stage block that does not match it is not used."""
+    name, version and note comes from the lockfile of THIS package; the stage block is used only when it matches it
+    (:func:`orch.market.deps.consistent`), and only for the download size and the compiled flag."""
     from orch.addons import lockfile
     from orch.market import deps
 
@@ -95,13 +96,7 @@ def _dependencies(ctx: Context, manifest: Any, package: Any, stage_doc: Any) -> 
     planned = lockfile.plan(lock, lockfile.current_host())
     fresh = deps.view(manifest.runtime["lock"], lock, planned, None)
     kept = stage_doc.get("deps") if stage_doc is not None else None
-    same = (
-        isinstance(kept, dict)
-        and [(r["name"], r["version"], r["installs"]) for r in kept.get("rows", ())]
-        == [(r["name"], r["version"], r["installs"]) for r in fresh["rows"]]
-        and (kept["kind"], kept["lock"]) == (fresh["kind"], fresh["lock"])
-    )
-    ctx.prepare.deps = kept if same else fresh
+    ctx.prepare.deps = kept if deps.consistent(kept, fresh) else fresh
 
 
 def handle(ctx: Context, args: dict[str, Any]) -> Result:

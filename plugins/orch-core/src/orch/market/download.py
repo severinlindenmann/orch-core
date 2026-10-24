@@ -33,6 +33,7 @@ import secrets
 import socket
 import ssl
 import stat
+import threading
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -60,6 +61,7 @@ MAX_ARTIFACT = 64 << 20  # one wheel or tarball
 MAX_TOTAL = 256 << 20  # all artifacts of one add-on
 MAX_INDEX = 8 << 20  # the JSON index of one Python project
 PYPI_INDEX = "https://pypi.org/simple/{name}/"
+WHEEL_HOST = "files.pythonhosted.org"
 PEP691 = "application/vnd.pypi.simple.v1+json"
 _TIMEOUT = 10.0  # one socket operation
 _CHUNK = 1 << 16
@@ -104,14 +106,17 @@ def _split(url: str, kind: str) -> tuple[str, str]:
     """``(host, path)`` of an ``https`` URL on the standard port whose host is on the list for ``kind``."""
     if not isinstance(url, str) or len(url) > 2048 or not url.isascii() or not url.isprintable() or " " in url:
         raise _failed("download")
-    u = urlsplit(url)
-    host = u.hostname
+    try:
+        u = urlsplit(url)
+        host, port = u.hostname, u.port  # ``.port`` raises ValueError on ``:abc`` or ``:99999``
+    except ValueError:
+        raise _failed("download") from None
     if (
         u.scheme != "https"
         or host is None
         or u.username is not None
         or u.password is not None
-        or u.port is not None
+        or port is not None
         or u.query
         or not u.path.startswith("/")
         or "\\" in u.path
@@ -132,6 +137,10 @@ def get(url: str, kind: str, cap: int, deadline: float, sink: Callable[[bytes], 
     if not addresses:
         raise _failed("download")
     conn = _Conn(host, addresses[0], min(max(left, 0.1), _TIMEOUT))
+    # a watchdog closes the socket at the deadline: no read, header or status line can hold the call past it
+    dog = threading.Timer(max(deadline - time.monotonic(), 0.01), _cut, [conn])
+    dog.daemon = True
+    dog.start()
     try:
         conn.request(
             "GET", path,
@@ -152,7 +161,7 @@ def get(url: str, kind: str, cap: int, deadline: float, sink: Callable[[bytes], 
                 raise _failed("download")
             if conn.sock is not None:
                 conn.sock.settimeout(min(left, _TIMEOUT))
-            chunk = resp.read(_CHUNK)
+            chunk = resp.read1(_CHUNK)  # one recv per call: the deadline is looked at between recvs
             if not chunk:
                 break
             size += len(chunk)
@@ -165,7 +174,16 @@ def get(url: str, kind: str, cap: int, deadline: float, sink: Callable[[bytes], 
     except (OSError, ssl.SSLError, http.client.HTTPException, ValueError):
         raise _failed("download") from None
     finally:
+        dog.cancel()
         conn.close()
+
+
+def _cut(conn: http.client.HTTPSConnection) -> None:
+    """The watchdog: shut the connection down so a blocked recv returns now."""
+    sock = conn.sock
+    if sock is not None:
+        with contextlib.suppress(OSError):
+            sock.shutdown(socket.SHUT_RDWR)
 
 
 def fetch_bytes(url: str, kind: str, cap: int, deadline: float, accept: str = "*/*") -> bytes:
@@ -317,6 +335,8 @@ def choose_wheel(doc: Any, row: Any, supported: Mapping[Any, int], index_url: st
         if rank is None:
             continue
         url = urljoin(index_url, f["url"])
+        if urlsplit(url).hostname != WHEEL_HOST:
+            continue  # a wheel is only ever fetched from the file host, never from the index host or another one
         if best is None or rank < best[0]:
             compiled = not all(t.abi == "none" and t.platform == "any" for t in tags)
             best = (rank, Source("python-requirements", url, "sha256", sha, filename, compiled))

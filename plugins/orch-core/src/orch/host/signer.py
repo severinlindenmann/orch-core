@@ -639,7 +639,10 @@ def _deps(material: Mapping[str, Any], events: list[Mapping[str, Any]]) -> None:
     keys and shapes; ``kind``, ``lock`` and the package count must equal the SIGNED ``runtime``. Every name and version
     is a short plain token: nothing here can carry a line break or a command."""
     block = material.get("deps")
-    signed = events[0].get("runtime") if [e.get("type") for e in events] == ["addon.granted"] else None
+    with_runtime = [e for e in events if e.get("type") == "addon.granted" and e.get("runtime") is not None]
+    if with_runtime and len(events) != 1:
+        _refuse("an add-on that installs dependencies is signed alone, not in a batch")
+    signed = with_runtime[0]["runtime"] if with_runtime else None
     if block is None:
         if signed is not None:
             _refuse("material.deps is missing for an add-on that installs dependencies")

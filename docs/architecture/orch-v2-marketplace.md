@@ -747,9 +747,18 @@ add-ons run with the host interpreter and `-S`), D8 (`python-requirements` is `u
   package that keeps its version and hash but starts to be installed here is changed; `widened` is set by runtime added
   or changed, and by any package added or changed (removals do not widen).
 - **One mechanism for every cap:** `envtree.Budget` (bytes and entries) is the only way a parser consumes input. One
-  budget is shared by everything one operation reads (every wheel and tarball of one environment, every file of one
-  walk, every download of one add-on), so N archives cannot add up to N times what one may use; a parser takes the
+  budget is shared by everything one operation reads (every wheel and tarball of one environment build or stage, every
+  file of one walk, every download of one build or stage: a new budget per operation), so N archives cannot add up to N times what one may use; a parser takes the
   budget as a parameter, so a new one cannot forget it.
+- **The invariant (stated once, in `envtree.Budget`):** what orch judged is exactly what gets written, and every written
+  byte comes out of a Budget. Where orch and the consumer both parse a format they must agree: a wheel is listed by orch's
+  own walk of its central directory (the directory must end exactly at the end record, no zip64 record or locator) and
+  then by `zipfile`, which is what pip uses, and the two lists must be identical; a tarball with any sparse member
+  (old GNU type or PAX `GNU.sparse.*`) is refused, so no hole is ever expanded into bytes nobody counted. pip runs with a
+  file size limit, `PIP_CONFIG_FILE=/dev/null` (no global or site config either) and a size watch on the environment it
+  writes; the tree walk after it is the last gate. Directory walks and unpacking hold only the chain of parent
+  descriptors, never one per directory, so a package with hundreds of sibling directories works under a 256-descriptor
+  limit. A wheel is only taken from `files.pythonhosted.org`.
 - **Caps, every one checked before the allocation it guards:** lockfile 1 MiB and 1000 rows (counted before rows are
   parsed); download 64 MiB per artifact (the `Content-Length` before the body, the count per chunk), 256 MiB per
   add-on, 8 MiB index; wheel central directory walked by orch entry by entry (20 000 entries and 256 MiB declared in all, drawn before each

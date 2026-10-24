@@ -306,7 +306,7 @@ def test_choose_wheel():
     # a wheel for another platform is not a candidate
     alien = doc(("idna-3.10-cp39-cp39-win_amd64.whl", U + "w.whl", H1))
     assert pick(alien, row("idna", "3.10", H1)) == ("market.env_failed", "no_binary")
-    # compiled wheels are flagged, and the file URL may be relative
+    # compiled wheels are flagged, and the file URL may be scheme-relative
     py = __import__("sys").version_info
     tag = (
         f"cp{py.major}{py.minor}-abi3-" + next(t.platform for t in TAGS if t.platform != "any" and t.abi == "abi3")
@@ -314,10 +314,23 @@ def test_choose_wheel():
         else None
     )
     if tag:
-        c = doc((f"idna-3.10-{tag}.whl", "../../x/w.whl", H1))
+        c = doc((f"idna-3.10-{tag}.whl", "//files.pythonhosted.org/x/w.whl", H1))
         assert pick(c, row("idna", "3.10", H1)).compiled is True
     assert pick({"files": "x"}, row("idna", "3.10", H1)) == ("market.env_failed", "download")
     assert pick({"files": [{"filename": 1}]}, row("idna", "3.10", H1)) == ("market.env_failed", "no_binary")
+
+
+def test_a_wheel_url_on_any_host_but_the_file_host_is_not_a_candidate():
+    for url in ("https://pypi.org/packages/idna.whl", "https://evil.example/idna.whl", "/simple/idna/idna.whl"):
+        assert pick(doc(("idna-3.10-py3-none-any.whl", url, H1)), row("idna", "3.10", H1)) == (
+            "market.env_failed",
+            "no_binary",
+        )
+
+
+def test_a_url_with_a_bad_port_is_a_typed_refusal(server):
+    for url in ("https://pypi.org:abc/ok", "https://pypi.org:99999/ok"):
+        refused(url, "market.env_failed", "download")
 
 
 def test_a_file_url_on_another_host_is_refused_when_it_is_fetched(server, cache):

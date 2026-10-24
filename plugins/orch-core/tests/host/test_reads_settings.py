@@ -78,6 +78,7 @@ def test_the_defaults_are_marked_and_the_four_gates_are_given(w):
         "gates",
         "defaults",
         "sign_methods",
+        "addons",
         "icon",
         "models",
         "publish",
@@ -403,3 +404,11 @@ def test_the_publish_server_is_read_by_a_person_and_not_by_an_agent(w):
     assert ok(c.req("workspace.settings"))["publish"] == value
     as_agent_class(w)
     assert "publish" not in ok(c.req("workspace.settings"))
+
+
+def test_an_agent_with_a_grant_reads_add_on_settings_and_a_no_person_reader_does_not(w):
+    """G6 ruling 5: add-on settings are not secret; an agent with a grant (column G) reads them, column N does not."""
+    c = w.client()
+    assert ok(c.req("workspace.settings", grant=w.grant, session=SESSION))["addons"] == {}
+    as_agent_class(w)
+    assert "addons" not in ok(c.req("workspace.settings", grant=wrong_secret(w.grant)))

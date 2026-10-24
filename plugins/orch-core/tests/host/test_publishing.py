@@ -171,28 +171,26 @@ class PublishHub:
 
 class World:
     """A served workspace that has joined a hub (``join=False``: a workspace alone). ``server`` is orch-publish behind
-    the hub; ``hub`` is the link to it. ``close()`` puts the module seams back."""
+    the hub; ``hub`` is the link to it. The module seams are set through ``monkeypatch``, so they are back whenever
+    the test ends, closed or not (a raw swap that one test never undid made every later hub test in that xdist worker
+    talk to this stale hub and fail ``bad_signature``)."""
 
-    def __init__(self, served, human: Human, *, join: bool = True) -> None:
+    def __init__(self, served, human: Human, monkeypatch, *, join: bool = True) -> None:
         self.served, self.human, self.ws = served, human, served.lab.ws
         self.c = human.c
         genesis = self._genesis()
         self.server = FakeServer(crypto.unb64u(genesis["wsk_pub"]))
         self.hub = PublishHub(self.server)
-        self._saved = (hubops.TRANSPORT, hubops.CARD_SOURCE, hubops.workspace_dev)
         card = {"delegation": {"o": {"wsk_pub": genesis["wsk_pub"]}}, "o": {}, "sig": "", "sealed": ""}
-        hubops.TRANSPORT = lambda service, hub_id: self.hub
-        hubops.CARD_SOURCE = lambda service: card
-        hubops.workspace_dev = lambda service: True
+        monkeypatch.setattr(hubops, "TRANSPORT", lambda service, hub_id: self.hub)
+        monkeypatch.setattr(hubops, "CARD_SOURCE", lambda service: card)
+        monkeypatch.setattr(hubops, "workspace_dev", lambda service: True)
         if join:
             self.join()
 
     def join(self) -> None:
         self.human.run("hub.join", join_args())
         ok(self.served.client().req("hub.connect", connect_args(), idem=True))
-
-    def close(self) -> None:
-        hubops.TRANSPORT, hubops.CARD_SOURCE, hubops.workspace_dev = self._saved
 
     def _genesis(self) -> dict[str, Any]:
         store = self.ws.other()
@@ -256,19 +254,16 @@ class World:
 
 
 @pytest.fixture
-def w(served, human):
-    world = World(served, human)
+def w(served, human, monkeypatch):
+    world = World(served, human, monkeypatch)
     world.addon()
     world.configure()
-    yield world
-    world.close()
+    return world
 
 
 @pytest.fixture
-def bare(served, human):
-    world = World(served, human)
-    yield world
-    world.close()
+def bare(served, human, monkeypatch):
+    return World(served, human, monkeypatch)
 
 
 REPORT = b"# Report\nthe numbers are fine\n"
@@ -1020,13 +1015,13 @@ def test_an_old_approval_among_many_other_events_is_still_found_and_a_stale_one_
     assert err(w.send(staged)) == "publish.not_approved"
 
 
-def test_a_member_or_viewer_cannot_sign_a_share_through_the_real_path(tmp_path):
+def test_a_member_or_viewer_cannot_sign_a_share_through_the_real_path(tmp_path, monkeypatch):
     from tests.host.live_helpers import world
 
     wd = world(tmp_path, map_to="quinn")
     try:
         quinn = Human(wd, wd.quinn)
-        w = World(wd, quinn, join=False)  # quinn's own connection (only an owner joins a hub)
+        w = World(wd, quinn, monkeypatch, join=False)  # quinn's own connection (only an owner joins a hub)
         w.addon()
         w.configure()
         uid, key = w.ticket_with(**{"report.md": REPORT})  # made by the owner's agent: quinn does not own it

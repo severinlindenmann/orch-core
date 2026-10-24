@@ -135,3 +135,8 @@ def install(served, human, name="standup", **more):
 
 def addon_dir(served, name="standup") -> Path:
     return Path(served.service.store.layout.store) / "addons" / name
+
+
+def on_worker(served, fn):
+    """Run ``fn`` on the workspace's worker thread (the store's sqlite handles belong to it), as start-up does."""
+    return served.service.executor.submit(fn).result()

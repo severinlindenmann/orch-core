@@ -126,3 +126,54 @@ class SbxLab:
     def register(self, client: ControlClient, idem: str | None = None, **kw: Any) -> dict[str, Any]:
         args = {"root": kw.pop("root", self.root), "peers": kw.pop("peers", None) or self.peers()}
         return client.call("host.register", args, idem=idem or new_idem(), **kw)
+
+
+class PendingSbx:
+    """A sandbox root BEFORE its workspace exists (V3-D38): the manifest holds only ``id`` and ``root``, ``dev.json`` is
+    written, no workspace. ``lab.host(dev=lab.dev())`` is a pending dev host; ``bind()`` is what the kit does after
+    ``orch setup``: the person, the workspace row and the marker, ready for the full dev host."""
+
+    def __init__(self, tmp_path: Path, *, origin: str = ORIGIN) -> None:
+        self.tmp = Path(os.path.realpath(tmp_path))
+        self.sroot = self.tmp / "sbx"
+        os.mkdir(self.sroot, 0o700)
+        os.chmod(self.sroot, 0o700)
+        self.sandbox_id = secrets.token_hex(16)
+        self.state = self.sroot / "state"
+        self.home = self.sroot / "home"
+        for d in (self.state, self.home, self.state / "host"):
+            os.makedirs(d, 0o700, exist_ok=True)
+            os.chmod(d, 0o700)
+        devsandbox.write_manifest(self.sroot, self.sandbox_id)
+        devsandbox.write_dev_json(self.sroot, self.sandbox_id, origin)
+        self.short = short_dir()
+        self.run = self.short / "r"
+        self.pins_dir = self.tmp / "pins"
+        self.pins_dir.mkdir()
+        self.pins = AgentPins(self.pins_dir, owner=UID)
+
+    def env(self, **extra: str) -> dict[str, str]:
+        return {"HOME": str(self.home), **extra}
+
+    def dev(self) -> DevHost:
+        return prove(self.state, self.env())
+
+    def host(self, **kw: Any) -> HostThread:
+        kw.setdefault("pins", self.pins)
+        return HostThread(self.state, self.run, **kw)
+
+    def new_root(self, name: str = "ws") -> Path:
+        root = self.sroot / name
+        os.mkdir(root, 0o700)
+        return Path(os.path.realpath(root))
+
+    def owner_name(self) -> str:
+        return devsandbox.owner_name(self.sandbox_id)
+
+    def bind(self, person: str, workspace_id: str, ws_root: Path) -> None:
+        """The kit's step after setup, with the host stopped: person, workspace row, marker (``dev.json`` stays)."""
+        devsandbox.write_manifest(self.sroot, self.sandbox_id, person_id=person, workspaces=[(workspace_id, ws_root)])
+        devsandbox.write_marker(ws_root, self.sandbox_id, workspace_id)
+
+    def close(self) -> None:
+        remove_tree(self.short)

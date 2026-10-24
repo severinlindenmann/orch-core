@@ -857,6 +857,8 @@ class RegistryBackend:
             dev = getattr(call.service, "dev", None)
             if dev is not None:  # §11A.17.2: only on a dev host (absent, not false, elsewhere)
                 data["dev"] = {"sim_convenience": True, "sandbox": dev.id8}
+                if dev.pending:
+                    data["dev"]["pending"] = True
         return data
 
     # -- registry ops

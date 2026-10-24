@@ -40,6 +40,9 @@ CAPS = [
     "workdir/1",
     "publish/1",
 ]
+MARKET_READS = ("market.list", "market.installed")
+MARKET_WRITES = ("market.stage", "market.unstage", "market.uninstall", "market.add", "market.refresh")
+MARKET_OPS = (*MARKET_READS, *MARKET_WRITES)
 OPS = {
     name: 1
     for name in (
@@ -114,6 +117,9 @@ OPS = {
         "hub.handoff",
         "share.rules",
         "share.preview",
+        # V3 A10 (design-g3 4.2): the Add-ons page. Reads: market.list, market.installed. Person writes (owner role, the
+        # host refuses an agent): stage, unstage, uninstall, add, refresh. Every install is a Terminal hand-off.
+        *MARKET_OPS,
     )
 }
 RUN_OPS = {"run.sub", "run.list", "run.stop", "agent.preview", "agent.start", "grant.deposit_status", "grant.forget"}

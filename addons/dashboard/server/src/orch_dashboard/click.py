@@ -31,6 +31,7 @@ from .handoff import (
     AddonEnable,
     AddonGrant,
     EditTicket,
+    MarketGrant,
     NewTicketSequence,
     PrepareBody,
     PublishSetup,
@@ -293,7 +294,7 @@ def register(app: FastAPI, gateway: Gateway):
         token = request.state.token
         gateway.enabled(ws)  # pinned workspace, dashboard addon enabled in it (the hand-off's `human()` does this)
         refuse_if_hub_only(gateway, ws)  # V3 C11: full hub mode takes no click signature (the host refuses it too)
-        if isinstance(body, PublishSetup | PublishShare) or (
+        if isinstance(body, MarketGrant | PublishSetup | PublishShare) or (
             isinstance(body, AddonEnable | AddonGrant) and body.name == "publish"
         ):
             # Where files go, and the signature that lets them leave: terminal only, never one click. Refused here,

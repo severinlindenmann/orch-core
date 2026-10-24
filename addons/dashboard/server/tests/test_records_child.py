@@ -418,7 +418,11 @@ def test_status_error_catalog():
     "action,url,command",
     [
         ("init", None, ["init"]),
-        ("mark", "https://git.example.test/r", ["remote-private", "--yes", "--expect-url", "https://git.example.test/r"]),
+        (
+            "mark",
+            "https://git.example.test/r",
+            ["remote-private", "--yes", "--expect-url", "https://git.example.test/r"],
+        ),
         ("unmark", None, ["remote-private", "--off"]),
         (
             "push-initial",
@@ -431,7 +435,9 @@ def test_c15_admin_actions_are_fixed_argv(spawn, monkeypatch, tmp_path, action, 
     calls, processes, kills = spawn
     processes.append(Process(b'{"ok":true}\n'))
     monkeypatch.setattr(rc.os, "environ", {"HOME": str(tmp_path), "PATH": "/bin"})
-    assert rc.RecordsChild().run(WS, action=action, url=url, state=tmp_path / "s", run_dir=tmp_path / "r") == {"ok": True}
+    assert rc.RecordsChild().run(WS, action=action, url=url, state=tmp_path / "s", run_dir=tmp_path / "r") == {
+        "ok": True
+    }
     assert calls[0][0] == ([sys.executable, "-I", "-m", "orch.records", *command, "--workspace", WS, "--json"],)
 
 

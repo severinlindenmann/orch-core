@@ -31,7 +31,9 @@ def second_owner(lab):
     store = ws.other()
     ws.store = store
     try:
-        store.append(ws.person_event(ws.owner, "workspace", "role.changed", person=p.ref, role="owner"), log="workspace")
+        store.append(
+            ws.person_event(ws.owner, "workspace", "role.changed", person=p.ref, role="owner"), log="workspace"
+        )
     finally:
         store.close()
         ws.store = None

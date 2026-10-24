@@ -1357,7 +1357,7 @@ def _event(
         _row(out, "device", ev.get("device"))
         _cert_rows(out, "certificate", ev.get("cert"))
         return "Add a paired device to your devices"
-    if typ == "device.removed":  # #1198 C15: one click; the guards (not your own device, not an owner's last) are the host's
+    if typ == "device.removed":  # #1198 C15: one click; the lockout guards are the host's and the signer's
         _row(out, "device", ev.get("device"))
         if ev.get("reason") is not None:
             _row(out, "reason", ev.get("reason"))

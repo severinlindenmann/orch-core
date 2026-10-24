@@ -119,7 +119,9 @@ class Security:
         click_step = path.startswith("/api/w/") and "/click/" in path and path.endswith(CLICK_STEP)
         records_step = path.startswith("/api/w/") and path.endswith(("/records/commit", "/records/auto-off"))
         # #1198 C15: a records admin step carries at most one address (2048 characters, JSON-escaped)
-        records_admin = path.startswith("/api/w/") and path.endswith(("/records/init", "/records/remote", "/records/push-initial"))
+        records_admin = path.startswith("/api/w/") and path.endswith(
+            ("/records/init", "/records/remote", "/records/push-initial")
+        )
         limit = (
             1024
             if path == "/auth/session" or records_step

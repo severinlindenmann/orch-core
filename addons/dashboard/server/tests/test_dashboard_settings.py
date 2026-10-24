@@ -268,7 +268,15 @@ def test_the_session_lists_the_settings_features(worlds, team):
         assert feature in got
     assert {f for f in got if f.startswith("do:")} == {
         f"do:{op}"
-        for op in ("settings.set", "policy.set", "member.add", "member.role", "member.remove", "device.remove", "grant.revoke")
+        for op in (
+            "settings.set",
+            "policy.set",
+            "member.add",
+            "member.role",
+            "member.remove",
+            "device.remove",
+            "grant.revoke",
+        )
     }
 
 

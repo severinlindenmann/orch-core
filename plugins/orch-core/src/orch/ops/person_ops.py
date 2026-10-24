@@ -458,8 +458,8 @@ def handle_device_rotate(ctx: Context, args: dict[str, Any]) -> Result:
 
 
 def handle_device_remove(ctx: Context, args: dict[str, Any]) -> Result:
-    """``device.remove {device}`` (#1198 C15): a device stops signing for the workspace (``device.removed``). Done by the
-    device's own person or an owner (the model's rule, ``workspace.device_removed``). Two lockout guards, in plain
+    """``device.remove {device}`` (#1198 C15): a device stops signing for the workspace (``device.removed``). Done by
+    the device's own person or an owner (the model's rule, ``workspace.device_removed``). Two lockout guards, in plain
     words (``device.lockout``): never the device that signs this very removal (once it is known: a bound click or
     terminal signer; the signer re-checks it when it signs), and never the last working device of an owner, whoever
     asks, because that owner could then never sign again."""

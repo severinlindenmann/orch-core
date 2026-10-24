@@ -280,7 +280,10 @@ def test_c15_records_admin_actions_carry_the_reviewed_address(client, token, stu
         ("push-initial", {"url": url, "remote": "other"}),
     ]
     for suffix, body in bad:
-        assert client.post(f"{base}/{suffix}", json=body, headers=headers(token)).status_code in (400, 422), (suffix, body)
+        assert client.post(f"{base}/{suffix}", json=body, headers=headers(token)).status_code in (400, 422), (
+            suffix,
+            body,
+        )
     assert len(calls) == n
     # a host without the owner's mark op cannot be asked to mark
     del link.welcome["ops"]["records.remote_private"]

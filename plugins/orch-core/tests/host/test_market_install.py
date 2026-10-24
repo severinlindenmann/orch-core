@@ -13,6 +13,7 @@ from orch.addons import package
 from orch.host import marketops
 from orch.market import MarketError
 from tests.host import human_helpers
+from tests.host import market_helpers as M  # noqa: E402
 from tests.host.market_helpers import (
     add_market,
     addon_dir,  # noqa: F401
@@ -27,6 +28,7 @@ from tests.host.market_helpers import (
 )  # fmt: skip
 from tests.market import helpers as H
 
+net = M.net  # the fake network (a fixture)
 lab, served, human = human_helpers.lab, human_helpers.served, human_helpers.human
 
 
@@ -322,3 +324,14 @@ def test_a_builtin_is_granted_plainly_and_a_disabled_install_is_re_enabled_from_
     assert again["events"][0]["package_sha256"] == mfiles(served).installs()["addons"]["standup"]["package_sha256"]
     (addon_dir(served) / "main.py").write_bytes(b"print('tampered')\n")
     assert err(human.prepare_res("addon.grant", {"name": "standup"})) == "market.not_installed"
+
+
+def test_a_fetch_leaves_a_recognisable_host_line_and_an_agent_leaves_none(served, ready, caplog):
+    import logging
+
+    caplog.set_level(logging.WARNING, logger="orch.host.marketinstall")
+    err(agent(served, "market.stage", {"id": "standup"}))
+    assert not [r for r in caplog.records if "market.stage fetch" in r.getMessage()]
+    ok(stage(served))
+    lines = [r.getMessage() for r in caplog.records if "market.stage fetch" in r.getMessage()]
+    assert lines == ["market.stage fetch standup@1.0.0 from https://github.com/acme/standup"]

@@ -60,13 +60,16 @@ def _lines(stage: dict[str, Any]) -> list[str]:
     pub = market["publisher"]
     who = {"unsigned": "unsigned", "new": "first use (remembered when you sign)", "known": "same publisher as before"}
     out = [f"{stage['name']} {stage['version']}  package {stage['package_sha256']}", *stage["review"]]
+    note = "(per host, not signed)"
     out += [
-        "from the host, not signed:",
-        f"  marketplace {market['url']} ({market['class']}), index v{market['index_version']}"
-        + (" STALE" if market["stale"] else ""),
-        f"  commit {market['commit']} ({market['source_note']})",
-        f"  publisher {pub['fingerprint'] or 'none'}: {who[pub['tofu']]}",
+        f"marketplace {market['url']} ({market['class']}), index v{market['index_version']}"
+        + (" STALE" if market["stale"] else "")
+        + f" {note}",
+        f"commit {market['commit']}, {market['source_note']} {note}",
+        f"publisher {pub['fingerprint'] or 'none'}: {who[pub['tofu']]} {note}",
     ]
+    if market["summary"]:
+        out.append(f"summary from the marketplace: {market['summary']} {note}")
     return out
 
 
@@ -106,6 +109,9 @@ def main(
     from orch.ops.errors import ERRORS
 
     try:
+        if "--help" in argv or "-h" in argv:  # usage is not a refusal
+            out.write(_USAGE + "\n\n" + (__doc__ or "").split("\n\n", 1)[0] + "\n")
+            return 0
         a = _parser().parse_intermixed_args(argv)
         want = {"install": (1, 1), "update": (0, 1), "remove": (1, 1)}[a.cmd]
         if not want[0] <= len(a.rest) <= want[1] or (a.cmd == "update" and not a.check and not a.rest):

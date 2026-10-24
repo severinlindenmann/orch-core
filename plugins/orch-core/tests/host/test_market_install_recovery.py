@@ -13,6 +13,7 @@ from orch.addons import install, package
 from orch.host import human as host_human
 from orch.host import marketinstall
 from tests.host import human_helpers
+from tests.host import market_helpers as M  # noqa: E402
 from tests.host.market_helpers import (  # noqa: F401
     add_market,
     addon_dir,
@@ -26,6 +27,7 @@ from tests.host.market_helpers import (  # noqa: F401
 )  # fmt: skip
 from tests.market import helpers as H
 
+net = M.net  # the fake network (a fixture)
 lab, served, human = human_helpers.lab, human_helpers.served, human_helpers.human
 
 

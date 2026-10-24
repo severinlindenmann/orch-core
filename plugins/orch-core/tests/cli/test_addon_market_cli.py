@@ -84,3 +84,10 @@ def test_usage_errors_touch_nothing(host, argv):
 def test_a_person_without_a_host_gets_a_plain_error(host):
     code, out = run(["install", "standup"])
     assert code == 9 and json.loads(out)["code"] == "host.unavailable"
+
+
+def test_help_is_not_a_refusal_and_needs_no_host(host):
+    for sub in ("install", "update", "remove"):
+        code, out = run([sub, "--help"], as_json=False)
+        assert code == 0 and "usage: orch addon" in out and sub in out
+    assert host.called == [] and host.connected == []

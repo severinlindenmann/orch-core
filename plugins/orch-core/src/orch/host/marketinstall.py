@@ -291,7 +291,7 @@ def _stage(service: WorkspaceService, plan: dict[str, Any], call: Call | None = 
     ):
         return {"up_to_date": True, "name": name, "version": entry["version"]}
     policy.evaluate("entry", None, {"url": url, "id": name, "version": entry["version"]})
-    LOG.info("market.stage fetch %s@%s from %s", name, entry["version"], entry["source"]["git"])  # S13 greps this
+    LOG.warning("market.stage fetch %s@%s from %s", name, entry["version"], entry["source"]["git"])  # S13 greps this
     pkg = fetch.fetch_package(entry)
     manifest = mi.check_package(facts, pkg, CORE_VERSION)
     event = install.grant_event(manifest, pkg)

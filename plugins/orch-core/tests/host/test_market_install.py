@@ -335,3 +335,13 @@ def test_a_fetch_leaves_a_recognisable_host_line_and_an_agent_leaves_none(served
     ok(stage(served))
     lines = [r.getMessage() for r in caplog.records if "market.stage fetch" in r.getMessage()]
     assert lines == ["market.stage fetch standup@1.0.0 from https://github.com/acme/standup"]
+
+
+def test_replaces_must_be_a_digest(served, human, ready):
+    from orch.host import signer
+
+    st = ok(stage(served))["data"]
+    prepared = human.prepare("addon.grant", {"name": "standup", "staged": st["stage"]})
+    prepared["material"]["market"]["replaces"] = "not a digest"
+    with pytest.raises(signer.SignerRefused):
+        human.check(prepared)

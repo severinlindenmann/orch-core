@@ -78,7 +78,7 @@ OP_CODES: dict[str, tuple[str, ...]] = {
 GRANT_CODES = (
     "market.staged_changed", "market.not_installed", "market.manifest_mismatch", "market.origin_changed",
     "market.version_reused", "market.rollback", "market.publisher_key_changed", "market.capability_ceiling",
-    "market.not_allowed", "market.state_invalid",
+    "market.not_allowed", "market.state_invalid", "market.revoked",
 )  # fmt: skip
 _NAME = {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$"}
 SCHEMAS: dict[str, dict[str, Any]] = {
@@ -174,7 +174,8 @@ def _plan_stage(call: Call, args: dict[str, Any]) -> dict[str, Any]:
     from . import marketops
 
     service = call.service
-    policy.evaluate("add", policy.current(hub_joined=marketops.hub_joined(service)), {})  # P0: a joined hub, no read
+    pol = policy.current(hub_joined=marketops.hub_joined(service))
+    policy.evaluate("add", pol, {})  # P0: a joined hub, no read
     files = _files(service)
     records = files.load()
     installs = files.installs()
@@ -199,6 +200,7 @@ def _plan_stage(call: Call, args: dict[str, Any]) -> dict[str, Any]:
         "op": "market.stage", "url": url, "id": name, "update": update or prior is not None, "cls": cls, "keys": keys,
         "root": str(_store_root(service)), "now": service.clock(), "previous": _model_addon(service, name),
         "person": call.viewer,
+        "policy": pol,
     }  # fmt: skip
 
 
@@ -272,7 +274,7 @@ def _stage(service: WorkspaceService, plan: dict[str, Any], call: Call | None = 
     raw = files.read_cache(url)
     if raw is None or marketops._sha(raw) != rec["index_sha256"]:  # noqa: SLF001
         raise MarketError("market.malformed")
-    policy.evaluate("index", None, {"url": url})
+    policy.evaluate("index", plan.get("policy"), {"url": url})
     v = verdict(raw, url, cls, keys, now)
     index.check_floor(rec["last_version"], rec["payload_sha256"], v)
     installs = files.installs()
@@ -290,7 +292,7 @@ def _stage(service: WorkspaceService, plan: dict[str, Any], call: Call | None = 
         and prior["package_sha256"] == entry["package_sha256"]
     ):
         return {"up_to_date": True, "name": name, "version": entry["version"]}
-    policy.evaluate("entry", None, {"url": url, "id": name, "version": entry["version"]})
+    policy.evaluate("entry", plan.get("policy"), {"url": url, "id": name, "version": entry["version"]})
     LOG.warning("market.stage fetch %s@%s from %s", name, entry["version"], entry["source"]["git"])  # S13 greps this
     pkg = fetch.fetch_package(entry)
     manifest = mi.check_package(facts, pkg, CORE_VERSION)
@@ -299,7 +301,9 @@ def _stage(service: WorkspaceService, plan: dict[str, Any], call: Call | None = 
     change = None
     if prior is not None:
         try:
-            old = install.read_installed(plan["root"], name)[1]
+            opkg, old = install.read_installed(plan["root"], name)
+            if plan["previous"] is None or opkg.digest != plan["previous"].package_sha256:
+                old = None  # not the bytes of the signed grant: everything counts as widened (review F1)
         except (PackageError, ManifestError):
             old = None
         change = mi.diff(old, manifest, prior, facts)
@@ -377,9 +381,19 @@ def _recheck(service: WorkspaceService, record: dict[str, Any], ev: dict[str, An
     doc, pkg, _ = staged_package(files, ev["name"], staged["stage"], service.clock())
     if pkg.digest != ev["package_sha256"] or doc["version"] != ev["version"]:
         raise MarketError("market.staged_changed")
+    url, version = doc["origin"], ev["version"]
+    from . import marketops  # the index and the class as they are now (review F2)
+
+    rec, raw = files.load().get(url), files.read_cache(url)
+    if rec is None or raw is None or marketops._sha(raw) != rec["index_sha256"]:  # noqa: SLF001
+        raise MarketError("market.staged_changed")
+    cls, keys = market_class(service, url)
+    if cls != doc.get("class"):
+        raise MarketError("market.staged_changed")
+    if f"{ev['name']}@{version}" in verdict(raw, url, cls, keys, service.clock()).doc.get("revoked", []):
+        raise MarketError("market.revoked")
     installs = files.installs()
     prior = installs[ADDONS].get(ev["name"])
-    url, version = doc["origin"], ev["version"]
     if prior is not None:
         if prior["origin"] != url:
             raise MarketError("market.origin_changed")
@@ -566,7 +580,7 @@ def _rmtree(d: _Dir, name: str) -> None:
         with contextlib.suppress(OSError):
             os.unlink(name, dir_fd=d.fd)
         return
-    shutil.rmtree(d.path / name, ignore_errors=True)
+    shutil.rmtree(name, ignore_errors=True, dir_fd=d.fd)
 
 
 def _sweep(d: _Dir, name: str) -> None:

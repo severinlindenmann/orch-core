@@ -109,17 +109,6 @@
         ]
       },
       {
-        "code": "market.manifest_mismatch",
-        "exit": 3,
-        "retryable": false,
-        "hint": "the entry is refused",
-        "fix": [
-          "orch",
-          "market",
-          "list"
-        ]
-      },
-      {
         "code": "market.not_installed",
         "exit": 3,
         "retryable": false,
@@ -146,6 +135,17 @@
         "exit": 3,
         "retryable": false,
         "hint": "orch market trust --replace",
+        "fix": [
+          "orch",
+          "market",
+          "list"
+        ]
+      },
+      {
+        "code": "market.revoked",
+        "exit": 3,
+        "retryable": false,
+        "hint": "pick another version",
         "fix": [
           "orch",
           "market",

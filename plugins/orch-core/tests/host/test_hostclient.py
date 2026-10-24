@@ -235,8 +235,10 @@ def test_files_go_inline_or_as_a_blob_and_the_grant_never_in_args(lab, tmp_path)
 
 def test_an_addon_grant_finds_the_device_key_where_init_put_it(lab, monkeypatch, tmp_path):
     from orch.host.marketstate import MarketFiles
+    from orch.market import constants
     from tests.host.lifecycle_helpers import UID
-    from tests.host.market_helpers import write_stage
+    from tests.host.market_helpers import seed_market, write_stage
+    from tests.market import helpers as H
 
     served = hosted(lab)
     try:
@@ -251,7 +253,10 @@ def test_an_addon_grant_finds_the_device_key_where_init_put_it(lab, monkeypatch,
         keys = ops_human.keys_dir(lab.state, served.wid)
         keys.mkdir(parents=True)
         (keys / ops_human.KEY_FILE).write_text("{}")
-        stage = write_stage(MarketFiles(lab.state, served.wid, UID), "lint")  # what `orch addon install` leaves
+        monkeypatch.setattr(constants, "OFFICIAL_KEYS", (H.KEY_B64,))
+        files = MarketFiles(lab.state, served.wid, UID)
+        seed_market(files)
+        stage = write_stage(files, "lint")  # what `orch addon install` leaves
         r = hcli(lab, grant=False).j("addon", "grant", "lint", "--staged", stage)
         assert r.code == 0, r.out
     finally:

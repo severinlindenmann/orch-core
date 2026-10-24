@@ -156,11 +156,11 @@ OP = operation(
         err("not_found"),
         err("market.not_installed"),
         err("market.staged_changed"),
-        err("market.manifest_mismatch"),
         err("market.origin_changed"),
         err("market.version_reused"),
         err("market.rollback"),
         err("market.publisher_key_changed"),
+        err("market.revoked"),
     ),
     handler=handle,
 )

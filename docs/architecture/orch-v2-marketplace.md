@@ -683,3 +683,6 @@ Design note `state/design-g3.md`; conditions C1 to C6. What the code does, where
 - **Signer (C4):** `material.market` has exactly the keys `url, class, commit, source_note, publisher{fingerprint, tofu},
   index_version, stale, summary, replaces` and only on a request that signs one `addon.granted`; it is rendered under "per host, not
   signed".
+- **Host-derived preview:** the update diff and `widened` come from the host (the staged bytes against the signed grant; when the
+  installed folder is not the granted bytes everything counts as widened). They are for previews only: no client may shorten the
+  signed view because of them, and the signer always renders every signed capability, field, section and artifact kind.

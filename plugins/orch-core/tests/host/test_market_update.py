@@ -4,6 +4,8 @@ a new grant is always needed, and a widened update says so."""
 # ruff: noqa: F811
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from orch.addons import install, package
@@ -128,3 +130,40 @@ def test_a_changed_publisher_key_is_refused(served, human, net, v1, monkeypatch)
     publish(served, net, "1.1.0", key=(other, other_b64))
     assert err(stage(served, update=True)) == "market.publisher_key_changed"
     assert mfiles(served).installs()["keys"] == {f"{H.OFFICIAL}|standup": H.KEY_B64}  # the remembered key stays
+
+
+def test_widened_is_not_fooled_by_a_tampered_installed_directory(served, human, net, v1):
+    """Review F1: a same-user agent rewrites the installed manifest so the OLD package already "declares" spawn_agent.
+    The old side of the diff is the signed grant: bytes that are not it make everything count as widened."""
+    d = addon_dir(served)
+    doc = json.loads((d / "orch-addon.json").read_bytes())
+    doc["capabilities"] = sorted({*doc["capabilities"], "spawn_agent"})
+    (d / "orch-addon.json").write_bytes(json.dumps(doc, sort_keys=True).encode())
+    publish(served, net, "1.1.0", ("network", "spawn_agent"))
+    assert ok(stage(served, update=True))["data"]["update"]["widened"] is True
+
+
+def test_a_version_revoked_after_staging_cannot_be_granted(served, human, net, v1):
+    """Review F2: the index is read again at submit."""
+    publish(served, net, "1.1.0")
+    st = ok(stage(served, update=True))["data"]
+    prepared = human.prepare("addon.grant", {"name": "standup", "staged": st["stage"]})
+    real = net.doc
+    net.doc = lambda **more: real(revoked=["standup@1.1.0"], **more)
+    net.version += 1
+    ok(person(served, "market.refresh"))
+    res = human.submit_res(prepared["request"]["id"], human.sign(prepared).events)
+    assert err(res) == "market.revoked"
+    assert mfiles(served).installs()["addons"]["standup"]["version"] == "1.0.0"
+
+
+def test_a_stage_whose_class_is_gone_cannot_be_granted(served, human, net, v1):
+    publish(served, net, "1.1.0")
+    st = ok(stage(served, update=True))["data"]
+    prepared = human.prepare("addon.grant", {"name": "standup", "staged": st["stage"]})
+    f = mfiles(served)
+    path = f.dir / "staged" / f"{st['stage']}.json"
+    doc = f.read_stage(st["stage"])
+    path.write_bytes(json.dumps({**doc, "class": "dev"}).encode())
+    path.chmod(0o600)
+    assert err(human.submit_res(prepared["request"]["id"], human.sign(prepared).events)) == "market.staged_changed"

@@ -163,3 +163,25 @@ def write_stage(f: MarketFiles, name: str = "standup", version: str = "1.0.0", p
         }
     )  # fmt: skip
     return stage
+
+
+def seed_market(f: MarketFiles, now: float = 1_790_000_000) -> None:
+    """The record and cached index of the official marketplace, as ``market.add`` leaves them (the caller sets
+    ``constants.OFFICIAL_KEYS`` to ``(H.KEY_B64,)``): what ``recheck`` reads again at submit."""
+    import hashlib
+
+    from orch.market import index
+
+    raw = H.raw(H.index(1, addons=[]))
+    v = index.evaluate(raw, H.OFFICIAL, official=True, now=now)
+    with f.commit() as write:
+        write(
+            {
+                H.OFFICIAL: {
+                    "class": "official", "added_at": int(now), "index_commit": H.COMMIT_A,
+                    "index_sha256": hashlib.sha256(raw).hexdigest(), "pinned": False, "last_version": 1,
+                    "payload_sha256": v.payload_sha256, "sig_key": None,
+                }
+            },
+            {H.OFFICIAL: raw},
+        )  # fmt: skip

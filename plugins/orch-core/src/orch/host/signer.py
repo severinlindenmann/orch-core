@@ -614,7 +614,7 @@ def _market(material: Mapping[str, Any], events: list[Mapping[str, Any]]) -> Non
         and type(block["index_version"]) is int
         and type(block["stale"]) is bool
         and (block["summary"] is None or short(block["summary"], 300))
-        and (block["replaces"] is None or short(block["replaces"], 80))
+        and (block["replaces"] is None or re.fullmatch(r"sha256:[0-9a-f]{64}", str(block["replaces"])) is not None)
     )
     if not ok:
         _refuse("material.market is malformed")

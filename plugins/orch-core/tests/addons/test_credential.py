@@ -80,7 +80,7 @@ def test_a_file_stored_for_another_addon_is_skipped(state):
     (other / "credential").write_bytes(file_of(state).read_bytes())  # copied: addon says "demo"
     os.chmod(other / "credential", 0o600)
     assert cr.load(state, "ws", UID, "other") is None
-    assert cr.provider(state, "ws", UID, "other", ["credential", "network"])() is None
+    assert cr.provider(state, "ws", UID, "other", ["credential", "network"])("other") is None
 
 
 @pytest.mark.parametrize("problem", ["file_mode", "dir_mode", "file_link", "dir_link", "hardlink", "owner", "junk"])
@@ -115,7 +115,7 @@ def test_custody_refusals(state, tmp_path, problem):
 
 def test_provider_c2_needs_credential_and_network_in_the_active_grant(state):
     put(state)
-    ask = lambda caps, **kw: cr.provider(state, "ws", UID, "demo", caps, **kw)()  # noqa: E731
+    ask = lambda caps, **kw: cr.provider(state, "ws", UID, "demo", caps, **kw)("demo")  # noqa: E731
     assert ask(["credential", "network"]) == VALUE
     assert ask(["credential"]) is None
     assert ask(["network"]) is None
@@ -251,3 +251,11 @@ def test_a_link_or_file_planted_as_the_entry_is_unlinked_not_followed(state, tmp
     (base / "vialink").symlink_to(outside)
     assert cr.sweep(state, "ws", keep=["keep"]) == ["viafile", "vialink"]
     assert outside.read_text() == "precious" and sorted(p.name for p in base.iterdir()) == ["keep"]
+
+
+def test_a_provider_is_bound_to_its_addon(state):
+    put(state)
+    read = cr.provider(state, "ws", UID, "demo", ["credential", "network"])
+    assert read("demo") == VALUE
+    with pytest.raises(ValueError):
+        read("other")

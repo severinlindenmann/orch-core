@@ -49,8 +49,12 @@ def test_the_add_on_gets_its_key_only_with_credential_and_network(tmp_path, stat
 
 def test_another_addons_call_never_gets_the_key(tmp_path, state):
     package, granted = make(tmp_path, caps=("credential", "network"))
-    out = call(package, granted, "propose", {"mode": "params"}, credential=provider(state, granted, name="other"))
-    assert "credential" not in out["params"]
+    cr.store(state, "ws", UID, "other", cr.Secret("other-key-0123456789"), 1.0)
+    e = refused(
+        "addon.bad_request", call, package, granted, "propose", {"mode": "params"},
+        credential=provider(state, granted, name="other"),
+    )  # fmt: skip
+    assert "other-key" not in str(e) and SECRET not in str(e)
 
 
 def test_the_key_is_never_in_env_argv_logs_or_state_files(tmp_path, state, caplog):

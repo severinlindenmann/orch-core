@@ -48,6 +48,8 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
         row: dict[str, Any] = {
             "name": name, "version": granted[name].version, "enabled": state == "active", "state": state,
         }  # fmt: skip
+        if state == "active":
+            row["capabilities"] = sorted(granted[name].capabilities)  # the grant's own, for a capability gate
         if pause is not None:
             row["paused"] = {k: v for k, v in pause.items() if v is not None}
         held = _credential(c, name, state, granted[name].capabilities)
@@ -93,9 +95,10 @@ OP = operation(
                         "enabled": BOOL,
                         "state": STR,
                         "credential": STR,
+                        "capabilities": arr(STR),
                         "paused": obj({"code": STR, "cause": STR, "reconnect": STR}, optional=("reconnect",)),
                     },
-                    optional=("credential", "paused"),
+                    optional=("credential", "capabilities", "paused"),
                 )
             ),
         }

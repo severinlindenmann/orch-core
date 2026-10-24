@@ -35,7 +35,7 @@ const posted = () => calls('/handoff').filter((c) => c.method === 'POST')
 
 const setup = (name: 'publish', on = false, setUp: boolean | null = false) => {
   route(null, on)
-  state.host.workspaces[0].addOns = { available: true, add_ons: [{ id: name, title: name === 'publish' ? 'Publish' : 'Model routing', desc: 'Settings for this workspace.', state: on ? 'on' : 'off', locked: null, blocked: null, needs: name === 'publish' ? 'publish' : 'models', set_up: setUp }] } as never
+  state.host.workspaces[0].addOns = { available: true, add_ons: [{ id: name, title: 'Publish', desc: 'Settings for this workspace.', state: on ? 'on' : 'off', locked: null, blocked: null, needs: 'publish', set_up: setUp }] } as never
 }
 
 it.each(['publish'] as const)('off %s opens settings and sends one enable action', async (name) => {

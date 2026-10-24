@@ -216,15 +216,9 @@ describe('ticket page structure: next action first, gates as a stepper, a rail t
     expect(screen.getByTestId('agent-status')).toHaveTextContent('No agent is working on this ticket')
   })
 
-  it('a pull request appears once in the rail: the GitHub panel when it is active, core otherwise', async () => {
+  it('a pull request appears once in the rail', async () => {
     vi.stubGlobal('innerWidth', 1440)
-    const { user, unmount } = renderApp('/ticket/DEMO-0043', { viewer: 'p_sev' })
-    const panel = await openTicketPanel(user, 'Pull request')
-    expect(await within(panel).findByText('#31', {}, T)).toBeInTheDocument()
-    expect(within(await findRail()).getAllByText(/#31/)).toHaveLength(1)
-    unmount()
-
-    renderApp('/ticket/DEMO-0043', { viewer: 'p_sev', setup: (s) => s.appendWs(s.workspaces[0].id, { type: 'addon.disabled', name: 'github' }) })
+    renderApp('/ticket/DEMO-0043', { viewer: 'p_sev' })
     const rail = await findRail()
     expect(await within(rail).findAllByText(/#31/, {}, T)).toHaveLength(1)
   })

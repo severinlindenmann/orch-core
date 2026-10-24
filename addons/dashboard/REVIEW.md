@@ -124,7 +124,7 @@ Every addon page, panel and Today card, each marked with the orange A.
 - [ ] **Records** — Record changes, push twice (rejected: pull first), pull, push. Page: `/addon/records/records`, Busy day.
 - [ ] **Activity** — Filters and Show older. Page: `/addon/activity/activity`, Busy day.
 - [ ] **Widgets in tickets** — DEMO-0043, DEMO-0046 and DEMO-0047 (the last one has refused blocks). Page: `/ticket/DEMO-0047`.
-- [ ] **Start agent and model routing** — The model line in the start dialog; an invalid model name in Model routing blocks starts. Page: `/addon/start-agent/start`, Busy day.
+- [ ] **Start agent** — The start dialog shows the exact command; a model add-on, when one is on, names the model it picked. Page: `/addon/start-agent/start`, Busy day.
 - [ ] **Guide** — Press ? on several pages: the help follows the page. Page: `/addon/guide/guide`.
 - [ ] **AI Factory** — Run demo activity, a permit, Pause and Resume (signed). Page: `/addon/factory/factory`, Busy day.
 - [ ] **Schedules** — Enable a schedule (signed), Run now, file the finding. Page: `/addon/schedules/schedules`, Busy day.

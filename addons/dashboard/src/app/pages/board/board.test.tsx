@@ -23,11 +23,4 @@ describe('board page', () => {
     expect(after).toBeGreaterThan(0)
     expect(after).toBeLessThan(before)
   })
-
-  it('shows the github lane with the addon badge and import buttons', async () => {
-    renderApp('/board')
-    const lane = await screen.findByRole('region', { name: /GitHub issues/ })
-    expect(within(lane).getByRole('img', { name: 'From addon: github' })).toBeInTheDocument()
-    expect(await within(lane).findAllByRole('button', { name: /Import as ticket/ })).toHaveLength(8)
-  })
 })

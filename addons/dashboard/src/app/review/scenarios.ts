@@ -100,7 +100,7 @@ export const SCENARIOS: TourScenario[] = [
     { title: 'Records', detail: 'Record changes, push twice (rejected: pull first), pull, push.', go: { path: '/addon/records/records', dataset: 'busy' } },
     { title: 'Activity', detail: 'Filters and Show older.', go: { path: '/addon/activity/activity', dataset: 'busy' } },
     { title: 'Widgets in tickets', detail: 'DEMO-0043, DEMO-0046 and DEMO-0047 (the last one has refused blocks).', go: { path: '/ticket/DEMO-0047' } },
-    { title: 'Start agent and model routing', detail: 'The model line in the start dialog; an invalid model name in Model routing blocks starts.', go: { path: '/addon/start-agent/start', dataset: 'busy' } },
+    { title: 'Start agent', detail: 'The start dialog shows the exact command; a model add-on, when one is on, names the model it picked.', go: { path: '/addon/start-agent/start', dataset: 'busy' } },
     { title: 'Guide', detail: 'Press ? on several pages: the help follows the page.', go: { path: '/addon/guide/guide' } },
     { title: 'AI Factory', detail: 'Run demo activity, a permit, Pause and Resume (signed).', go: { path: '/addon/factory/factory', dataset: 'busy' } },
     { title: 'Schedules', detail: 'Enable a schedule (signed), Run now, file the finding.', go: { path: '/addon/schedules/schedules', dataset: 'busy' } },

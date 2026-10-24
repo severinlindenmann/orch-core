@@ -16,7 +16,7 @@ describe('action ids', () => {
 })
 
 describe('tables that are often empty say so', () => {
-  it('worktrees, start-agent Running, github and records tables carry an `empty` text', async () => {
+  it('worktrees, start-agent Running and records tables carry an `empty` text', async () => {
     const { default: addons } = await import('@/mocks/fixtures/addons.json')
     const { default: catalog } = await import('@/mocks/fixtures/catalog.json')
     const tables: Record<string, string[]> = {}
@@ -29,7 +29,7 @@ describe('tables that are often empty say so', () => {
       }
     }
     for (const a of [...addons, ...catalog] as { name: string; contributions: { node: unknown }[] }[]) for (const c of a.contributions) walk(a.name, c.node)
-    for (const name of ['worktrees', 'start-agent', 'github', 'records']) {
+    for (const name of ['worktrees', 'start-agent', 'records']) {
       expect(tables[name]?.length, name).toBeGreaterThan(0)
       for (const e of tables[name]) expect(e, name).not.toBe('')
     }

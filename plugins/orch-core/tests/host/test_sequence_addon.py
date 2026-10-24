@@ -148,6 +148,8 @@ def test_the_whole_sequence_lands_settings_first_then_the_grant(human, tmp_path,
     assert types == ["settings.changed", "addon.granted"]
     assert settings_of(human)[needs.NEEDS_SETTINGS[name]] == FLAT[name][needs.NEEDS_SETTINGS[name]]
     assert on(human, name)
+    row = next(r for r in ok(human.c.req("addon.list"))["data"]["addons"] if r["name"] == name)
+    assert row["capabilities"] == sorted(rig.intent["grant"]["capabilities"])  # for a capability gate
     granted = rig.submitted[1][1][0]
     assert {k: v for k, v in granted.items() if k in rig.intent["grant"]} == rig.intent["grant"]
     rec = rig.sessions.get(rig.wid, rig.driver().digest)

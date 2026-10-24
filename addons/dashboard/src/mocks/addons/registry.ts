@@ -1,6 +1,5 @@
 import { PACKAGE_NAME, validTerms } from '@/api/addons'
 import type { AddonActionResult, AddonDecision } from '@/api/types'
-import type { LaunchPlan, LaunchRequest } from '../sessions'
 import type { Rng } from '../busy/rng'
 import type { MockStore, StoreFailure } from '../store'
 
@@ -76,11 +75,6 @@ export interface MockAddon {
    */
   decisions?(state: Record<string, unknown>, pkg: AddonDecision[], ctx: Omit<AddonCtx, 'body' | 'state'>): AddonDecision[]
   /**
-   * `launch` capability: what this addon adds to an agent start (model, subagent model, a preview line, or a blocking
-   * error). Core calls it, only while the addon is active with `launch` granted, for the preview and for the start
-   * (`commit: true`, where one-shot choices may be used up). `lastTier` is the tier of the last start on that ticket.
-   */
-  /**
    * A signed charter this addon holds over an epic (the AI Factory): which epic, who signed it, and whether it is in
    * force now (started, not paused or stopped). Core's `store.autoApprove` reads it; nothing else may auto-approve.
    */
@@ -94,7 +88,6 @@ export interface MockAddon {
   saveOnSeed?: boolean
   /** State saved under an older `stateVersion`: the migrated state, or null to drop it and seed again. */
   migrate?(state: Record<string, unknown>, fromVersion: number): Record<string, unknown> | null
-  launch?(state: Record<string, unknown>, req: LaunchRequest, ctx: Omit<AddonCtx, 'body' | 'state'> & { commit: boolean; lastTier?: string }): LaunchPlan
   actions: Record<string, AddonAction>
 }
 

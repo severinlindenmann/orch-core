@@ -11,7 +11,6 @@ describe('app shell', () => {
     renderApp('/')
     expect(await screen.findByRole('heading', { name: 'Today' })).toBeInTheDocument()
     expect(await screen.findByRole('link', { name: /Board/ })).toBeInTheDocument()
-    expect(await screen.findByRole('link', { name: /Code reviews/ })).toBeInTheDocument()
     // The sidebar entry (Today's Glance also has "Open Apps & shares").
     expect(await screen.findByRole('link', { name: /^Apps & shares/ })).toBeInTheDocument()
     expect((await screen.findAllByRole('img', { name: /From addon:/ })).length).toBeGreaterThanOrEqual(5)
@@ -41,8 +40,8 @@ describe('app shell', () => {
     const ok = vi.spyOn(toast, 'success')
     renderApp('/')
     await screen.findByRole('heading', { name: 'Today' })
-    await screen.findByRole('link', { name: /Code reviews/ })
-    window.dispatchEvent(new CustomEvent('orch:pin-addon-page', { detail: 'github/reviews' }))
+    await screen.findByRole('link', { name: /^Apps & shares/ })
+    window.dispatchEvent(new CustomEvent('orch:pin-addon-page', { detail: 'publish/shares' }))
     expect(msg).toHaveBeenCalledWith('Already pinned')
     expect(ok).not.toHaveBeenCalledWith('Pinned to the sidebar')
     msg.mockRestore()
@@ -70,7 +69,7 @@ describe('app shell', () => {
     await user.keyboard('{Control>}k{/Control}')
     expect(await screen.findByPlaceholderText(/Search tickets/)).toBeInTheDocument()
     expect(await screen.findByText('New ticket', { selector: '[cmdk-item] *, [cmdk-item]' })).toBeInTheDocument()
-    expect(await screen.findByText('Refresh pull requests')).toBeInTheDocument()
+    expect(await screen.findByText('Open terminal')).toBeInTheDocument()
   })
 
   it('toggles the sidebar between wide and narrow with the button and with [', async () => {

@@ -1,6 +1,6 @@
 // Agent sessions started from the dashboard (core, not an addon): the launch resolver that builds the exact command,
 // the fold of agent.started / agent.stopped workspace events, and the simulated run core plays on the ticket.
-import { TICKET_KEY, isModelName, type LaunchSpec } from '@/api/launch'
+import { TICKET_KEY, type LaunchSpec } from '@/api/launch'
 import type { Actor, LaunchHarness, LaunchMode, LaunchWhere, TicketDocument, WorkspaceEvent } from '@/api/types'
 import type { SimStep } from './sim'
 import type { MockStore } from './store'
@@ -19,33 +19,19 @@ export interface LaunchRequest {
   where: LaunchWhere
 }
 
-/** What a `launch` addon (model routing) adds to a start. Empty: the harness default. */
-export interface LaunchPlan {
-  model?: string
-  tier?: string
-  subagentModel?: string
-  /** One line for the preview: "Model · work runs on standard: Standard (sonnet); subagents on haiku". */
-  line?: string
-  /** A sentence that blocks the start (a setting that is not a model name). */
-  error?: string
-  /** The addon that made this plan (set by core). */
-  by?: string
-}
-
 /**
- * What core runs for a request and plan, as argv + env (never a shell string). Every value is checked here, whoever
+ * What core runs for a request, as argv + env (never a shell string). Every value is checked here, whoever
  * produced it: the ticket key format, mode/harness/where in their sets, model names against the shared allowlist.
- * Throws on anything else; callers validate first and turn a bad model into a blocking sentence.
+ * Throws on anything else; callers validate first.
  */
-export function launchSpec(req: LaunchRequest, plan: LaunchPlan): LaunchSpec {
+export function launchSpec(req: LaunchRequest): LaunchSpec {
   if (!TICKET_KEY.test(req.ticket) || !MODES.includes(req.mode) || !HARNESSES.includes(req.harness) || !WHERES.includes(req.where)) throw new Error('invalid launch request')
-  if ((plan.model !== undefined && !isModelName(plan.model)) || (plan.subagentModel !== undefined && !isModelName(plan.subagentModel))) throw new Error('invalid model name')
   const prompt = `/orch:${req.mode} ${req.ticket}` // one argv element
   const claude = req.harness === 'claude-code'
-  const tool = claude ? ['claude', ...(plan.model ? ['--model', plan.model] : []), prompt] : ['codex', prompt]
+  const tool = claude ? ['claude', prompt] : ['codex', prompt]
   return {
     argv: ['orch', 'session', 'start', '--in', req.where, req.ticket, '--', ...tool],
-    env: claude && plan.subagentModel ? { CLAUDE_CODE_SUBAGENT_MODEL: plan.subagentModel } : {},
+    env: {},
   }
 }
 

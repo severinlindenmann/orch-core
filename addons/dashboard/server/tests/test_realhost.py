@@ -552,7 +552,6 @@ def test_record_real_host_goldens(world):
 @pytest.mark.parametrize(
     "body",
     [
-        {"action": "addon_enable", "name": "model-routing", "models": {"claude-code": {"work": "opus"}}},
         {
             "action": "addon_enable",
             "name": "publish",

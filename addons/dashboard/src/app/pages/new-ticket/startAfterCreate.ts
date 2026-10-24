@@ -7,7 +7,7 @@ import { LOGIN_NOTICE, type AgentArgs, type AgentMode, type AgentPreview, type H
 import { MAX_SEQUENCE_STEPS } from '@/api/handoff'
 import type { RunnerInfo } from '@/api/runs'
 
-/** The choice behind "Agent: Claude Code · Do the work · Opus". `model` is empty when the host picks it from Settings. */
+/** The choice behind "Agent: Claude Code · Do the work · Opus". `model` is empty when a model add-on picks it. */
 export interface AgentChoiceValue {
   harness: Harness
   mode: AgentMode

@@ -25,7 +25,7 @@ describe('Settings › Skills', () => {
     expect(within(workspace).getByRole('row', { name: /dbt-seeds/ })).toHaveTextContent('orch.skill.json')
     expect(within(workspace).getByRole('row', { name: /naming-conventions/ })).toHaveTextContent('invalid sidecar')
     expect(within(workspace).getByRole('row', { name: /tariff-feed/ })).toHaveTextContent('TARIFF_WEBHOOK_SECRET· needs grant')
-    expect(screen.getByRole('table', { name: 'Built in skills' })).toHaveTextContent('github-prs')
+    expect(screen.getByRole('table', { name: 'Built in skills' })).toHaveTextContent('orch-evidence')
     expect(screen.getByText('P6 · Preview')).toBeInTheDocument()
     expect(screen.getByText(/Org skills come with the relay in P6/)).toBeInTheDocument()
   })

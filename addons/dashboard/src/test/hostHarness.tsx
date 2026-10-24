@@ -196,8 +196,6 @@ function prepare(body: Record<string, unknown>): HandoffRequest {
       return workspaceRequest('member.remove', { type: 'member.removed', person: body.person })
     case 'icon_set':
       return workspaceRequest('settings.set', { type: 'settings.changed', set: { icon: body.icon } })
-    case 'models_set':
-      return workspaceRequest('settings.set', { type: 'settings.changed', set: { models: Object.keys(body.models as object).length ? body.models : null } })
     case 'publish_setup':
       return workspaceRequest('settings.set', { type: 'settings.changed', set: { publish: { server: body.server, share: body.share } } })
     case 'publish_share':

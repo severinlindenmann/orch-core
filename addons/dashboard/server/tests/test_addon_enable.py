@@ -136,3 +136,30 @@ def test_plan_reads_the_preview_over_the_real_host_link(gateway, stub, p1, name,
     assert planned.sequence["intent"] == body.intent(grant)
     assert planned.sequence["intent"]["grant"]["name"] == name
     assert planned.base["addon"] == {"addon": name, "head": None}
+
+
+def test_the_model_choice_is_offered_by_the_choose_model_capability_not_by_the_name(gateway, stub, monkeypatch):
+    class Link:
+        welcome = {"workspace": {"id": "w_cap"}}
+
+        def has(self, cap):
+            return False
+
+        def supports(self, op, cap):
+            return True
+
+        def call(self, op, args=None, **kw):
+            return {"addons": self.rows}
+
+    link = Link()
+    monkeypatch.setattr(gateway, "enabled", lambda ws: link)
+    link.rows = [{"name": "my-picker", "state": "active", "capabilities": ["choose_model"]}]
+    assert "model_routing" in gateway.features(stub.ws)
+    for rows in (
+        [{"name": "model-routing", "state": "active", "capabilities": ["network"]}],  # the name alone decides nothing
+        [{"name": "model-routing", "state": "active"}],
+        [{"name": "my-picker", "state": "disabled", "capabilities": ["choose_model"]}],
+        [],
+    ):
+        link.rows = rows
+        assert "model_routing" not in gateway.features(stub.ws)

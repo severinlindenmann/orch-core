@@ -13,7 +13,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'H1',
         title: 'Look at the list',
         text: 'Open Settings, then Add-ons.',
-        see: 'A list of 10 add-ons: Dashboard (Always on), Start agents, Terminals, Worktrees, Quick tasks (Always on), Publish, Usage, Estimate, File Explorer and Model routing, each with one plain line and On or Off.',
+        see: 'A list of 9 add-ons: Dashboard (Always on), Start agents, Terminals, Worktrees, Quick tasks (Always on), Publish, Usage, Estimate and File Explorer, each with one plain line and On or Off.',
       },
       {
         id: 'H2',
@@ -406,49 +406,6 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         title: 'Longer than a week',
         text: 'Look at the Last 30 days box a day or more after you first opened Usage.',
         see: 'If the page cannot vouch for the whole 30 days it says "Counted since <date>". Runs older than that are not counted.',
-      },
-    ],
-  },
-  {
-    id: 'Q',
-    title: 'Model routing',
-    where: 'Browser; Settings, Add-ons; a test workspace with Start agents on',
-    steps: [
-      {
-        id: 'Q1',
-        title: 'Switch Model routing on',
-        text: 'Open Settings, then Add-ons, and switch Model routing on.',
-        see: 'The usual review and typed word. Afterwards a "Default models" box appears under the list: for Claude and Codex, one row per kind of work (Do the work, Write requirements and plan, Fix what was sent back, Continue, Read and answer), each set to "Agent default".',
-      },
-      {
-        id: 'Q2',
-        title: 'Choose a model for one kind of work',
-        text: 'Set Claude, "Do the work", to Sonnet and press Continue to sign.',
-        see: 'A review with one row per kind of work and agent: Sonnet for the one you changed, "Harness default" for the others, each with what it was before. You type the word shown, and the box shows Sonnet after signing.',
-      },
-      {
-        id: 'Q3',
-        title: 'Start agent preselects it',
-        text: 'Open a ticket, press Start agent, keep "Do the work" and look at the Model line.',
-        see: 'The Model line says "Sonnet (set for this kind of work in Settings)". Under Details the command contains --model sonnet. Choosing "Fix what was sent back" shows "the agent\'s own default" (nothing is set for it).',
-      },
-      {
-        id: 'Q4',
-        title: 'Pick another model for this start only',
-        text: 'In the same dialog choose Haiku under Model.',
-        see: 'The preview asks you to preview again; afterwards the Model line says "Haiku (your choice)". Settings still shows Sonnet.',
-      },
-      {
-        id: 'Q5',
-        title: 'A failing check suggests a stronger model',
-        text: 'On a ticket with a task whose check failed, open Start agent.',
-        see: 'A line "A check on this ticket is failing. A stronger model may do better." with a button. Nothing changes until you press it and start; it is only a suggestion.',
-      },
-      {
-        id: 'Q6',
-        title: 'Switch it off',
-        text: 'Switch Model routing off in Add-ons, then open Start agent on the same ticket.',
-        see: 'The Model line says "the agent\'s own default" and the command has no --model. The saved choices are kept for when you switch it on again.',
       },
     ],
   },
@@ -901,15 +858,9 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
   },
   {
     id: 'S',
-    title: 'Add-ons, Publish and models',
+    title: 'Add-ons and Publish',
     where: 'Browser and Terminal; test workspace on this Mac',
     steps: [
-      {
-        id: 'S1',
-        title: 'Turn on Model routing in one review',
-        text: 'Settings, Add-ons: switch on "Model routing". It first opens its models table. Choose a model for at least one kind of work and press "Turn on".',
-        see: 'The review is titled "Turn on Model routing", shows your choices in words and what the add-on may do, and says "Settings are signed first, then the add-on is turned on". Sign once. Both changes land: Model routing shows "On" and your choices.',
-      },
       {
         id: 'S2',
         title: 'Turn on Publish in one review',
@@ -921,12 +872,6 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         title: 'Stop halfway',
         text: 'Start the Publish steps again for a second workspace, and at the passphrase press Ctrl-C.',
         see: 'Nothing changed, the add-on stays Off and no addresses are saved.',
-      },
-      {
-        id: 'S4',
-        title: 'Settings of an add-on that is On',
-        text: 'In Model routing press "Turn off", then clear every model choice.',
-        see: 'While it is On the page says "Model routing needs at least one model chosen. To use the agent defaults for everything, turn it off." (the host itself refuses with "...is on and needs this setting: turn it off first"). After "Turn off" you can clear them, and "Turn on" asks for the table again.',
       },
       {
         id: 'S5',
@@ -944,7 +889,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
       {
         id: 'S7',
         title: 'Open and close add-on settings',
-        text: 'Settings, Add-ons, with Publish and Model routing On: click the arrow beside the name. Click again.',
+        text: 'Settings, Add-ons, with Publish On: click the arrow beside the name. Click again.',
         see: 'Its settings open under the row and close again.',
       },
       {
@@ -966,28 +911,16 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         see: 'Edit server opens the two addresses, then the normal signing review. Open Shares goes to the Shares page.',
       },
       {
-        id: 'S11',
-        title: 'Model routing panel',
-        text: 'Model routing (On): look at the panel, press Customize models, change a choice and press Review and sign.',
-        see: 'The panel says "Needs nothing: every agent uses its own default model until you customize them." Known: it does not name the agents found, and it still says this while "1 model choice saved". Customize models shows the choices; Review and sign changes them.',
-      },
-      {
         id: 'S12',
         title: 'A plain add-on',
         text: 'Switch Worktrees (or another plain add-on) on or off.',
         see: 'The toggle still opens the normal small review.',
       },
       {
-        id: 'S13',
-        title: 'Default models section',
-        text: 'Settings, Add-ons, Default models: open the section. Then pick a model for one kind of work and press "Review and sign".',
-        see: 'It says what "Agent default" means; each row says "Chosen by the agent app" or shows the model name; Claude and Codex fold open and closed. With no change "Review and sign" is greyed and "No changes to save." shows. After a change the review lists every row again and says "review and sign" (no "typed word" jargon).',
-      },
-      {
         id: 'S14',
         title: 'Start agent dialog labels',
         text: 'Open a ticket, Actions, Start agent. Open "More choices". Do it again at phone width (about 390 px).',
-        see: 'The dialog checks the settings by itself ("Checking…", then "Ready to start."). Known: there is no "Will use" line yet, and the model chosen by Model routing is not shown (the Model field says "As set for this kind of work"). The labels read "Project folder" with the box "Use this ticket\'s separate project folder when it has a branch", and (under "More choices", Claude Code only) "Model for helper agents" with "Chosen by the agent app". The button reads "Start agent". On the phone the labels sit above their boxes.',
+        see: 'The dialog checks the settings by itself ("Checking…", then "Ready to start."). Known: there is no "Will use" line yet, and a model chosen by a model add-on is shown as "Chosen by the model add-on". The labels read "Project folder" with the box "Use this ticket\'s separate project folder when it has a branch", and (under "More choices", Claude Code only) "Model for helper agents" with "Chosen by the agent app". The button reads "Start agent". On the phone the labels sit above their boxes.',
       },
       {
         id: 'S15',

@@ -19,7 +19,7 @@ const raw = (name: string, x = s) => x.store.addonState(x.ws, name) as Record<st
 describe('busy day: addons are installed and filled', () => {
   it('installs the catalog addons in DEMO, active, with a grant', () => {
     const ws = s.store.workspaces.find((w) => w.id === s.ws)!
-    for (const n of ['activity', 'records', 'worktrees', 'quick', 'models', 'schedules', 'factory']) expect(addonActive(ws, n), n).toBe(true)
+    for (const n of ['activity', 'records', 'worktrees', 'quick', 'schedules', 'factory']) expect(addonActive(ws, n), n).toBe(true)
     const normal = make('normal')
     expect(addonActive(normal.store.workspaces.find((w) => w.id === normal.ws)!, 'worktrees')).toBe(false)
   })
@@ -27,10 +27,6 @@ describe('busy day: addons are installed and filled', () => {
   it('publish: 12 apps and 40 shares', () => {
     expect((raw('publish').apps as Rows).length).toBe(12)
     expect((raw('publish').shares as Rows).length).toBe(40)
-  })
-  it('github: 30 pull requests and 25 issues', () => {
-    expect((raw('github').prs as Rows).length).toBe(30)
-    expect((raw('github').issues as Rows).length).toBe(25)
   })
   it('usage grows with the busy day: more cost, busy tickets in By ticket, more sessions (R-g)', async () => {
     type Usage = { weekCents: number; cost30Cents: number; ticketRows: { ticket: string }[]; agentRows: { sessions: number }[]; budgetChf: number; budgetPct: number }
@@ -93,7 +89,7 @@ describe('busy day: addons are installed and filled', () => {
 })
 
 describe('busy day: every addon answers for every viewer', () => {
-  const ADDONS = ['publish', 'github', 'usage', 'wiki', 'estimate', 'terminals', 'worktrees', 'quick', 'records', 'activity', 'start-agent', 'models', 'factory', 'schedules', 'widgets', 'guide']
+  const ADDONS = ['publish', 'usage', 'wiki', 'estimate', 'terminals', 'worktrees', 'quick', 'records', 'activity', 'start-agent', 'factory', 'schedules', 'widgets', 'guide']
   for (const viewer of ['p_sev', 'p_mara', 'p_tom'])
     it(`${viewer}: all addon states load, and quickly`, async () => {
       const x = make('busy', viewer)
@@ -117,7 +113,7 @@ describe('busy day: restricted tickets stay out of addon views', () => {
     const visibleTitles = new Set(visible.map((t) => t.title))
     const hiddenTitles = hidden.map((t) => t.title).filter((t) => !visibleTitles.has(t))
     expect(hiddenTitles.length).toBeGreaterThanOrEqual(3)
-    for (const name of ['publish', 'github', 'usage', 'wiki', 'estimate', 'terminals', 'worktrees', 'quick', 'records', 'activity', 'start-agent', 'models', 'factory', 'schedules']) {
+    for (const name of ['publish', 'usage', 'wiki', 'estimate', 'terminals', 'worktrees', 'quick', 'records', 'activity', 'start-agent', 'factory', 'schedules']) {
       const json = JSON.stringify(await x.api.getAddonState(x.ws, name))
       for (const t of hidden) expect(json, `${name} leaks ${t.key}`).not.toContain(t.key)
       for (const title of hiddenTitles) expect(json, `${name} leaks "${title}"`).not.toContain(title)
@@ -125,9 +121,9 @@ describe('busy day: restricted tickets stay out of addon views', () => {
     const decisions = JSON.stringify(await x.api.getAddonDecisions(x.ws))
     for (const t of hidden) expect(decisions).not.toContain(t.key)
   }
-  it('control: Severin does see restricted tickets in publish, github, worktrees and quick (so the sweep tests something)', async () => {
+  it('control: Severin does see restricted tickets in publish, worktrees and quick (so the sweep tests something)', async () => {
     const restricted = s.store.listTickets(s.ws).filter((t) => t.restricted).map((t) => t.key)
-    for (const name of ['publish', 'github', 'worktrees', 'quick', 'wiki']) {
+    for (const name of ['publish', 'worktrees', 'quick', 'wiki']) {
       const json = JSON.stringify(await s.api.getAddonState(s.ws, name))
       expect(restricted.some((k) => json.includes(k)), name).toBe(true)
     }

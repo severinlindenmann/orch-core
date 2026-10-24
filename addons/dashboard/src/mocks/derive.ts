@@ -534,8 +534,6 @@ export function describeEvent(e: Pick<OrchEvent, 'type'> & Record<string, unknow
       return 'changed the people on the ticket'
     case 'github.pr_linked':
       return e.number ? `linked PR #${t(e.number, '')}` : 'linked a pull request'
-    case 'github.imported':
-      return `imported ${t(e.external, 'an issue')} from GitHub`
     case 'publish.shared':
       return 'shared a secret link'
     case 'publish.revoked':

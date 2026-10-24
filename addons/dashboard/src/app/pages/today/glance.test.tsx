@@ -11,7 +11,7 @@ describe('Today: Glance', () => {
     const glance = await screen.findByRole('region', { name: 'Glance' }, T)
     const items = await within(glance).findAllByRole('listitem', {}, T)
     const headed = items.filter((li) => li.querySelector(':scope > div > h3'))
-    expect(headed.map((li) => li.querySelector('h3')!.textContent)).toEqual(['Apps & shares', 'PRs needing review · 3', 'Agent spend', 'Repos'])
+    expect(headed.map((li) => li.querySelector('h3')!.textContent)).toEqual(['Apps & shares', 'Agent spend', 'Repos'])
     for (const li of headed) expect(within(li).getAllByRole('img', { name: /^From the .* addon$/ })).toHaveLength(1)
     // No orange frame and no boxed stat inside the list.
     expect(glance.querySelector('.border-addon-border')).toBeNull()
@@ -27,7 +27,6 @@ describe('Today: Glance', () => {
     // Agent spend: one line with a sparkline of the last 7 days.
     expect(within(glance).getByRole('img', { name: /^Trend over 7 values/ })).toBeInTheDocument()
     expect(within(glance).getByRole('link', { name: 'Open Apps & shares' })).toHaveAttribute('href', '/w/DEMO/addon/publish/shares')
-    expect(within(glance).getByRole('link', { name: 'Open PRs needing review' })).toHaveAttribute('href', '/w/DEMO/addon/github/reviews')
     expect(within(glance).getByRole('link', { name: 'Open Agent spend' })).toHaveAttribute('href', '/w/DEMO/addon/usage/overview')
   })
 })

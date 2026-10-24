@@ -205,8 +205,8 @@ def _gates(x: Any) -> bool:
     return type(x) is dict and len(x) >= 1 and all(g in POLICY_GATES and _gate_policy(g)(v) for g, v in x.items())
 
 
-#: ``settings.changed`` ``set``: only these three keys (``sign_methods``, ``repos``, ``models`` and the rest stay off
-#: the channel, V3-D29)
+#: ``settings.changed`` ``set``: only these three keys (``sign_methods``, ``repos``, an add-on's own settings and the
+#: rest stay off the channel, V3-D29)
 SETTINGS_SET: dict[str, Check] = {
     "grant_hours": _int_in(1, 168),
     "claim_ttl_min": _int_in(15, 1440),

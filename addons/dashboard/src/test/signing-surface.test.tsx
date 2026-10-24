@@ -12,9 +12,9 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { wordsAndId } from '@/addon-ui/SignConfirm'
 import { api } from '@/api/client'
 import { approversText } from '@/api/gates'
-import { getAddon } from '@/mocks/addons'
 import { seedRuns, DEMO_REQUEST } from '@/mocks/addons/factory-runs'
 import type { MockStore } from '@/mocks/store'
+import { offerUpdate } from '@/test/offerUpdate'
 import { installAndGrant } from '@/test/installAddon'
 import { renderApp } from '@/test/renderApp'
 import { openTicketPanel } from '@/test/ticketPanels'
@@ -82,7 +82,6 @@ const addonOpShown = (name: string): Record<string, Shown> => ({
   capabilities: line('Capabilities:', (v) => v),
   viewer_actions: line('Viewers can:', (v) => wordsAndId(v)),
 })
-const LINE = 'Routing picked this model for you, LINE-MARK'
 
 const CASES: Case[] = [
   {
@@ -429,9 +428,6 @@ const CASES: Case[] = [
     wide: true,
     setup: (s) => {
       void s.revokeGrant(wsOf(s), 'gr_01J9Z8', { kind: 'person', id: 'p_sev' })
-      installAndGrant(s, wsOf(s), 'models')
-      // The model-routing addon's line: its own words, shown in the start dialog.
-      vi.spyOn(getAddon('models')!, 'launch').mockReturnValue({ line: LINE })
     },
     open: async (user) => {
       await openTicketPanel(user, 'Start agent')
@@ -441,7 +437,6 @@ const CASES: Case[] = [
     confirm: press('Sign and start'),
     method: 'issueGrant',
     arg: 1,
-    addon: [LINE],
     shown: grantShown,
     then: {
       method: 'runAddonAction',
@@ -529,19 +524,19 @@ const CASES: Case[] = [
     name: 'addon update',
     path: '/settings/addons',
     setup: (s) => {
-      const gh = s.addons.find((a) => a.name === 'github')!
-      gh.update!.actions = { ...gh.actions, refresh: { minRole: 'viewer', label: 'Refresh pull requests' } }
+      const est = offerUpdate(s)
+      est.update!.actions = { ...est.actions, peek: { minRole: 'viewer', label: 'Peek at estimates' } }
     },
     open: async (user) => {
-      await user.click(within(await screen.findByRole('row', { name: /GitHub/ }, T)).getByRole('button', { name: /Update to 0\.6\.0/ }))
-      return dialogNamed(/^Update GitHub \(github\) to 0\.6\.0/)
+      await user.click(within(await screen.findByRole('row', { name: /Estimate/ }, T)).getByRole('button', { name: /Update to 0\.6\.0/ }))
+      return dialogNamed(/^Update Estimate \(estimate\) to 0\.6\.0/)
     },
     confirm: press('Update'),
     method: 'postAddonOp',
     arg: 2,
-    addon: ['Review requests can now start an agent session', 'Refresh pull requests'],
+    addon: ['Can now start an agent session', 'Peek at estimates'],
     skip: ['op'],
-    shown: addonOpShown('github'),
+    shown: addonOpShown('estimate'),
   },
   {
     name: 'relay connect',

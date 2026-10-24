@@ -557,7 +557,7 @@ export type LaunchWhere = 'terminals' | 'background'
 
 /**
  * What core will start for one ticket, as the start-agent addon's state carries it (`previews[ticket]`): the labels
- * of the person's choice, the exact command and, when model routing is on, its one-line model summary. Core's
+ * of the person's choice, the exact command and, when a model add-on picks it, its one-line model summary. Core's
  * start dialog shows this; the start itself resolves it again with the same resolver.
  */
 export interface LaunchPreview {
@@ -567,7 +567,7 @@ export interface LaunchPreview {
   harness: string
   where: string
   command: string
-  /** "Model · work runs on standard: Standard (sonnet); subagents on haiku" (model routing on). */
+  /** "Model · work runs on standard: Standard (sonnet); subagents on haiku" (a model add-on picks it). */
   model?: string
   /** Why Start is blocked (a setting that is not a model name), as one sentence. */
   blocked?: string

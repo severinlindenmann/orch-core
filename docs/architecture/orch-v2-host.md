@@ -3678,18 +3678,18 @@ cross-site request carries nothing; exact Origin; JSON bodies only; no CORS; `fr
 stays a plain click after the shown review (owner decision of 24 Oct 2026); the listed few add a fingerprint touch
 (10.5), never typing.
 
-**10.5 Step-up (owner decision of 24 Oct 2026, exactly this list).** On a remote session these actions need a
-passkey assertion bound to the review shown, made within the last 10 minutes:
+**10.5 Step-up (owner decision of 24 Oct 2026, "all as recommended": exactly this list).** On a remote session
+these actions need a passkey assertion bound to the review shown, made within the last 10 minutes:
 
 1. turning One click on (the custody switch of item 3a);
 2. a hub join or a hub mode change;
 3. `device.rotate`;
 4. a grant whose secret is revealed;
 5. turning dashboard execution on;
-6. adding a passkey or a device (the "Add a device" link).
+6. adding a passkey or a device (the "Add a device" link);
+7. removing a passkey.
 
-Everything else, including turning things off, removing a passkey and turning remote access off, is a plain click. The
-step-up WebAuthn challenge is `SHA-256("orch/v2/dash-stepup|" || nonce || vd)`, where `nonce` is 32 fresh random bytes
+Everything else, including turning things off and turning remote access off, is a plain click. The step-up WebAuthn challenge is `SHA-256("orch/v2/dash-stepup|" || nonce || vd)`, where `nonce` is 32 fresh random bytes
 kept server-side for 120 s, single use, and `vd` is the 32 raw bytes of the request's `view_digest` (`sha256:<hex>`).
 The server answers a listed op without a fresh step-up with `passkey.stepup_required`. The click signer refuses a listed
 op from a remote session unless the server hands it the assertion, which the signer verifies itself against the passkey

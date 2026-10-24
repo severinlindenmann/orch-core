@@ -2,7 +2,7 @@
   "_about": "One list of (request, typed word) pairs. orch-core's tests/host/test_confirm_words.py asserts the terminal signer and the click view produce `word`; the dashboard's handoff.test.ts asserts the hand-off page shows the same `word`. Change a word in core: this file fails on both sides.",
   "workspace": { "id": "0123456789abcdef0123456789abcdef", "prefix": "DEMO" },
   "cases": [
-    { "op": "addon.grant", "event": { "name": "model-routing" }, "word": "model-routing~89abcdef" },
+    { "op": "addon.grant", "event": { "name": "publish" }, "word": "publish~89abcdef" },
     { "op": "addon.grant", "event": { "name": "terminals" }, "word": "terminals~89abcdef" },
     { "op": "addon.disable", "event": { "name": "terminals" }, "word": "terminals" },
     { "op": "addon.purge", "event": { "name": "terminals" }, "word": "terminals~89abcdef" },

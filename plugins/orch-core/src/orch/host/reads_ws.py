@@ -456,7 +456,6 @@ def _snapshot(ctx: ReadCtx, limit: int) -> dict[str, Any]:
         "gates": {g: canonical_policy(thaw(ws.policies[g])) for g in GATES},
         "defaults": [k for k in SETTINGS if k not in named],
         "sign_methods": sign_methods(ctx.service, ws),
-        "models": thaw(ws.settings["models"]) if "models" in ws.settings else None,
         "icon": thaw(ws.settings["icon"]) if "icon" in ws.settings else None,
         "publish": thaw(ws.settings["publish"]) if "publish" in ws.settings else None,
         ADDONS_KEY: thaw(ws.settings[ADDONS_KEY]) if ADDONS_KEY in ws.settings else {},
@@ -515,7 +514,6 @@ def workspace_settings(ctx: ReadCtx) -> dict[str, Any]:
         "gates": data["gates"],
         "defaults": data["defaults"],
         "sign_methods": data["sign_methods"],
-        "models": data["models"],
         "icon": data["icon"],  # always present (null: none signed): the key means "this host knows the icon setting"
         "sub_cursor": data["sub_cursor"],
     }

@@ -6,7 +6,6 @@ import { clickEligible } from '@/api/click'
 it('settings actions the signer serves by click are click-eligible', () => {
   expect(clickEligible({ action: 'icon_set', icon: { icon: 'cloud', colour: 'teal' } })).toBe(true)
   expect(clickEligible({ action: 'icon_set', icon: null })).toBe(true)
-  expect(clickEligible({ action: 'models_set', models: {} })).toBe(true)
   expect(clickEligible({ action: 'repo_set', name: 'a', path: '/x' })).toBe(true)
   expect(clickEligible({ action: 'settings_set', sign_methods: ['terminal', 'click'] })).toBe(true) // #1161: core classes it click
   expect(clickEligible({ action: 'repo_remove', name: 'a' })).toBe(true)
@@ -14,7 +13,7 @@ it('settings actions the signer serves by click are click-eligible', () => {
 it('Publish is click-eligible (#1198 C2)', () => {
   expect(clickEligible({ action: 'publish_setup', server: 'https://a.test', share: 'https://b.test' })).toBe(true)
   expect(clickEligible({ action: 'publish_share', key: 'DEMO-1', staged_id: 's' })).toBe(true)
-  expect(clickEligible({ action: 'addon_enable', name: 'publish' })).toBe(true)
+  expect(clickEligible({ action: 'addon_enable', name: 'publish', publish: { server: 'https://a.test', share: 'https://b.test' } })).toBe(true)
 })
 
 import { DEPOSIT_LINE, DEPOSIT_RISK, depositViewOk, type ClickView } from './click'

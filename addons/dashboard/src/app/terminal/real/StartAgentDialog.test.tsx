@@ -48,7 +48,6 @@ const CHOICES: RoutingChoices = {
     { id: 'claude-code', label: 'Claude', models: [{ id: 'fable', label: 'Fable' }, { id: 'opus', label: 'Opus' }, { id: 'sonnet', label: 'Sonnet' }, { id: 'haiku', label: 'Haiku' }] },
     { id: 'codex', label: 'Codex', models: [{ id: 'gpt-5.4', label: 'GPT-5.4' }, { id: 'o3', label: 'o3' }] },
   ],
-  modes: [{ id: 'work', label: 'Do the work' }],
 }
 
 let s: Record<string, ReturnType<typeof vi.spyOn>>
@@ -139,11 +138,11 @@ describe('start settings wording and layout (MR3/MR4)', () => {
   })
 })
 
-describe('model routing', () => {
-  it('shows the model the workspace chose, says who chose it, and keeps the command behind Details', async () => {
-    s.preview.mockResolvedValue(preview({ model: 'sonnet', model_source: 'workspace' }))
+describe('the model of a start', () => {
+  it('shows the model an add-on chose, says who chose it, and keeps the command behind Details', async () => {
+    s.preview.mockResolvedValue(preview({ model: 'sonnet', model_source: 'addon', model_by: 'model-routing' }))
     mount()
-    expect(await screen.findByTestId('agent-model-line', {}, T)).toHaveTextContent('Sonnet (set for this kind of work in Settings)')
+    expect(await screen.findByTestId('agent-model-line', {}, T)).toHaveTextContent('Sonnet (chosen by model-routing)')
     expect(screen.getByTestId('agent-details')).not.toHaveAttribute('open')
   })
 
@@ -511,7 +510,7 @@ describe('a short, calm dialog (U6)', () => {
 
   it.each([
     ['the command changed', preview({ display: 'claude --other' })],
-    ['the model changed', preview({ model: 'haiku', model_source: 'workspace' })],
+    ['the model changed', preview({ model: 'haiku', model_source: 'addon', model_by: 'model-routing' })],
     ['a new warning appeared', preview({ warnings: ['A new thing to read.'] })],
     ['a new environment name appeared', preview({ env: ['NEW_SECRET_NAME'] })],
     ['an unread login-shell notice appeared', preview({ warnings: [LOGIN_NOTICE] })],

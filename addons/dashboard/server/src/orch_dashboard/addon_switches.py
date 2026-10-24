@@ -26,7 +26,6 @@ SWITCHABLE = (
     "usage",
     "estimate",
     "explorer",
-    "model-routing",
     "wiki",
 )
 #: what the dashboard cannot turn off or on at all
@@ -162,18 +161,10 @@ def register(app: FastAPI, gateway: Gateway) -> None:
                 blocked = "This host cannot change add-ons from the dashboard yet."
             else:
                 blocked = busy(info.id, runs) if on else needs(info.id, runner)
-            setting = {"publish": "publish", "model-routing": "models"}.get(info.id)
+            setting = {"publish": "publish"}.get(info.id)
             set_up = True
             if setting:
-                set_up = (
-                    None
-                    if settings is None
-                    else (
-                        isinstance(settings.get("publish"), dict)
-                        if setting == "publish"
-                        else isinstance(settings.get("models"), dict) and any(settings["models"].values())
-                    )
-                )
+                set_up = None if settings is None else isinstance(settings.get("publish"), dict)
             rows.append(
                 {
                     "id": info.id,

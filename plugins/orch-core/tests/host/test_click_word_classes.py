@@ -47,7 +47,6 @@ def test_publish_is_a_click_whatever_the_capabilities():
 
 def test_settings_classes():
     sets = lambda **kw: op_class("settings.set", args={"set": kw})  # noqa: E731
-    assert sets(models={"codex": {"work": "x"}}) == "click"
     assert sets(addons={"demo": {"mode": "fast"}}) == "click"  # V3-D38
     for key in ("repos", "grant_hours", "sign_methods"):  # were the typed word
         assert sets(**{key: None}) == "click"

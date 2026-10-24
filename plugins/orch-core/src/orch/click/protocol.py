@@ -143,8 +143,8 @@ CLICK_OPS = frozenset(
 
 #: ``settings.set`` keys that need more than a click: none (#1198 C2). ``publish`` (where shared files go) is a click
 #: too, because its View lists both servers in words; ``repos``, ``sign_methods`` and ``grant_hours`` lost their typed
-#: word in C1. (``addons``, the values an add-on reads, is a click: owner V3-D38, 24 Oct.) ``models`` (a closed list)
-#: and ``icon`` (cosmetic) are clicks as well.
+#: word in C1. (``addons``, the values an add-on reads, is a click: owner V3-D38, 24 Oct.) ``icon`` (cosmetic) is a
+#: click as well.
 SETTINGS_TERMINAL_KEYS: frozenset[str] = frozenset()
 
 

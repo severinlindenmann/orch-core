@@ -1444,8 +1444,12 @@ def _deps_words(deps: Any) -> str:
     """``material["deps"]`` (the host's list of the packages an add-on installs, checked by the signer) as one row:
     every package, in lockfile order. A shape this view does not know is the full review."""
     rows = deps.get("rows") if isinstance(deps, Mapping) else None
-    if not isinstance(rows, list) or not all(
-        isinstance(r, Mapping) and r.get("note") in _DEP_NOTES and isinstance(r.get("name"), str) for r in rows
+    if (
+        not isinstance(rows, list)
+        or len(rows) > 1000
+        or not all(
+            isinstance(r, Mapping) and r.get("note") in _DEP_NOTES and isinstance(r.get("name"), str) for r in rows
+        )
     ):
         raise PlainUnavailable("the plain view does not know these packages")
     return "; ".join(f"{one(r['name'])} {one(r.get('version'))}{_DEP_NOTES[r['note']]}" for r in rows)

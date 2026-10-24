@@ -38,6 +38,7 @@ from orch.market import install as mi
 from orch.market.url import canonical_market_url
 from orch.ops.errors import ERRORS
 
+from . import addonenv
 from .errors import HostError
 from .marketstate import MarketFiles
 
@@ -66,10 +67,12 @@ __all__ = [
 ]
 
 LOG = logging.getLogger("orch.host.marketinstall")
-MARKET_OPS: dict[str, int] = {"market.stage": 1, "market.unstage": 1, "market.installed": 1, "market.uninstall": 1}
+MARKET_OPS: dict[str, int] = {
+    "market.stage": 1, "market.unstage": 1, "market.installed": 1, "market.uninstall": 1, "market.env_build": 1,
+}  # fmt: skip
 READS = frozenset({"market.installed"})
-NETWORK_OPS = frozenset({"market.stage"})  # the fetch: off the workspace worker, no lock held
-HUMAN_ONLY = frozenset({"market.stage", "market.unstage", "market.uninstall"})
+NETWORK_OPS = frozenset({"market.stage", "market.env_build"})  # the fetch: off the workspace worker, no lock held
+HUMAN_ONLY = frozenset({"market.stage", "market.unstage", "market.uninstall", "market.env_build"})
 SOURCE_NOTE = "source as claimed by the marketplace"
 _STAGE_CODES = (
     "market.actor_refused", "market.state_invalid", "market.malformed", "market.community_unisolated",
@@ -87,6 +90,16 @@ OP_CODES: dict[str, tuple[str, ...]] = {
     "market.stage": _STAGE_CODES,
     "market.unstage": ("market.actor_refused", "market.state_invalid", "market.malformed"),
     "market.installed": ("market.state_invalid", "market.malformed"),
+    "market.env_build": (
+        "market.actor_refused",
+        "market.state_invalid",
+        "market.not_installed",
+        "market.env_failed",
+        "market.lock_missing",
+        "market.lock_invalid",
+        "market.address_refused",
+        "market.fetch_failed",
+    ),
     "market.uninstall": (
         "market.actor_refused",
         "market.state_invalid",
@@ -113,6 +126,9 @@ SCHEMAS: dict[str, dict[str, Any]] = {
         "additionalProperties": False,
     },
     "market.installed": {"type": "object", "additionalProperties": False},
+    "market.env_build": {
+        "type": "object", "properties": {"name": _NAME}, "required": ["name"], "additionalProperties": False
+    },
     "market.uninstall": {
         "type": "object", "properties": {"name": _NAME}, "required": ["name"], "additionalProperties": False
     },
@@ -178,9 +194,23 @@ def serve(call: Call, op: str, args: dict[str, Any]) -> dict[str, Any]:
             return ok_result({"removed": _files(service).drop_stage(args["stage"])})
         if op == "market.uninstall":
             return ok_result(_uninstall(service, args["name"]))
+        if op == "market.env_build":
+            return {"plan": _plan_build(service, args["name"])}
         return {"plan": _plan_stage(call, args)}
     except MarketError as exc:
         raise _refuse(op, exc.code, exc.reason) from None
+
+
+def _plan_build(service: WorkspaceService, name: str) -> dict[str, Any]:
+    """``market.env_build``, worker half: the latest grant of ``name`` (on, with ``runtime``) under the store lock."""
+    from . import addonenv
+
+    return {
+        "op": "market.env_build",
+        "id": name,
+        "grant": addonenv.snapshot(service, name),
+        "root": str(_store_root(service)),
+    }
 
 
 def _plan_stage(call: Call, args: dict[str, Any]) -> dict[str, Any]:
@@ -253,12 +283,27 @@ def run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
     from .workspace import ok_result
 
     service = call.service
+    if plan["op"] == "market.env_build":
+        return _env_build(call, plan)
     try:
         out = _stage(service, plan, call)
     except MarketError as exc:
         _audit(call, "market.stage.refused", id=plan["id"], code=exc.code)
         raise _refuse("market.stage", exc.code, exc.reason) from None
     _audit(call, "market.stage", id=plan["id"], stage=out.get("stage"), up_to_date=out.get("up_to_date", False))
+    return ok_result(out)
+
+
+def _env_build(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
+    from . import addonenv
+    from .workspace import ok_result
+
+    try:
+        out = addonenv.build(call.service, plan["id"], plan["grant"], plan["root"])
+    except MarketError as exc:
+        _audit(call, "market.env_build.refused", id=plan["id"], code=exc.code, reason=exc.reason or "")
+        raise _refuse("market.env_build", exc.code, exc.reason) from None
+    _audit(call, "market.env_build", id=plan["id"], count=out["count"])
     return ok_result(out)
 
 
@@ -310,7 +355,7 @@ def _stage(service: WorkspaceService, plan: dict[str, Any], call: Call | None = 
     pkg = fetch.fetch_package(entry)
     manifest = mi.check_package(facts, pkg, CORE_VERSION)  # steps 13 to 16, the lockfile (15) included
     event = install.grant_event(manifest, pkg)
-    planned, dep_view = _dependencies(manifest, pkg)
+    planned, dep_view = _dependencies(service, manifest, pkg)
     review = install.review_lines(manifest, pkg, event, plan["previous"], dep_view)
     change = None
     if prior is not None:
@@ -357,7 +402,7 @@ def _stage(service: WorkspaceService, plan: dict[str, Any], call: Call | None = 
     }  # fmt: skip
 
 
-def _dependencies(manifest: Any, pkg: Any) -> tuple[Any, dict[str, Any] | None]:
+def _dependencies(service: WorkspaceService, manifest: Any, pkg: Any) -> tuple[Any, dict[str, Any] | None]:
     """``(planned rows, deps view)`` of a package that declares ``runtime`` (the lock was checked at step 15), else
     ``(None, None)``. The plan decides what this computer installs: a lock that cannot be installed here is refused
     now (``market.env_failed``), before the person signs."""
@@ -365,7 +410,8 @@ def _dependencies(manifest: Any, pkg: Any) -> tuple[Any, dict[str, Any] | None]:
         return None, None
     lock = install.read_lock(manifest, pkg)
     planned = lockfile.plan(lock, lockfile.current_host())
-    return planned, deps.view(manifest.runtime["lock"], lock, planned, None)
+    found = addonenv.stage_fetch(service, lock, planned)  # D3: download and verify now, before the signature
+    return planned, deps.view(manifest.runtime["lock"], lock, planned, found)
 
 
 # ------------------------------------------------------------------------------------------------ read the stage
@@ -651,6 +697,7 @@ def recover(service: WorkspaceService) -> None:
                     g = _model_addon(service, name)
                     if g is not None and _digest_of(d, name) == g.package_sha256:
                         _rmtree(d, n)  # debris of a finished swap; an unfinished one is handled above
+    addonenv.recover(service)  # then the debris of a crashed environment build
 
 
 # ------------------------------------------------------------------------------------------------ installed, uninstall
@@ -693,6 +740,7 @@ def _installed(service: WorkspaceService) -> dict[str, Any]:
                 "state": state,
                 "publisher": None if key is None else marketops.fingerprint(key),
                 "available": avail,
+                "env": addonenv.env_row(service, name, model),
             }  # fmt: skip
         )
     return {ADDONS: rows}
@@ -715,6 +763,7 @@ def _uninstall(service: WorkspaceService, name: str) -> dict[str, Any]:
                 with _addons_dir(root / install.ADDONS_DIR) as d:
                     _rmtree(d, name)
                     _sweep(d, name)
+            addonenv.remove(service, name)  # its dependency environment goes with it
             del cur[ADDONS][name]  # the rollback floor ("seen") and the publisher key stay
             write(cur)
     return {"name": name, "removed": True}

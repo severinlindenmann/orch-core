@@ -35,7 +35,7 @@ def host(monkeypatch):
 @pytest.mark.parametrize(
     "argv",
     [["install", "standup"], ["install", "standup", "--from", "https://github.com/a/b"], ["update", "standup"],
-     ["remove", "standup"]],
+     ["remove", "standup"], ["setup", "standup"]],
 )  # fmt: skip
 @pytest.mark.parametrize("env", [{"ORCH_GRANT": "g"}, {"ORCH_SESSION": "s"}])
 def test_an_agent_is_refused_before_the_host_is_asked(host, argv, env):
@@ -72,7 +72,7 @@ def test_check_text_marks_a_newer_and_a_revoked_version(host):
     "argv",
     [
         ["install"], ["install", "a", "b"], ["update"], ["remove"], ["remove", "a", "--check"],
-        ["update", "a", "--from", "u"],
+        ["update", "a", "--from", "u"], ["setup"], ["setup", "a", "b"], ["setup", "a", "--check"],
     ],
 )  # fmt: skip
 def test_usage_errors_touch_nothing(host, argv):
@@ -91,3 +91,33 @@ def test_help_is_not_a_refusal_and_needs_no_host(host):
         code, out = run([sub, "--help"], as_json=False)
         assert code == 0 and "usage: orch addon" in out and sub in out
     assert host.called == [] and host.connected == []
+
+
+def test_setup_asks_the_host_to_build_and_install_prints_what_it_did(monkeypatch):
+    calls = []
+
+    class Conn:
+        def call(self, op, args, timeout=None):
+            calls.append((op, args))
+            if op == "market.env_build":
+                return {"data": {"name": "standup", "state": "ready", "count": 7, "bytes": 1}}
+            if op == "market.stage":
+                return {"data": {"name": "standup", "version": "1.0.0", "stage": "st_" + "0" * 32, "review": [],
+                                 "grant": {"runtime": {"kind": "python-requirements", "lock": "r.txt", "packages": 1}},
+                                 "market": {"url": "u", "class": "official", "index_version": 1, "stale": False,
+                                            "commit": "a" * 40, "source_note": "n", "summary": None,
+                                            "publisher": {"fingerprint": None, "tofu": "unsigned"}},
+                                 "package_sha256": "sha256:" + "0" * 64}}  # fmt: skip
+            raise AssertionError(op)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(am, "_connect", lambda *a: (Conn(), None, "d", "w", "p", ("l", "P")))
+    monkeypatch.setattr(am, "_sign", lambda *a: None)
+    code, out = run(["setup", "standup"], as_json=False)
+    assert code == 0 and "7 files of dependencies" in out and calls == [("market.env_build", {"name": "standup"})]
+    calls.clear()
+    code, out = run(["install", "standup"], as_json=False)
+    assert code == 0 and "dependencies installed (7 files)" in out
+    assert [c[0] for c in calls] == ["market.stage", "market.env_build"]  # after the signature, never before

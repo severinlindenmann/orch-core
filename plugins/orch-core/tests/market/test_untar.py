@@ -141,3 +141,45 @@ def test_the_output_directory_is_not_followed_through_a_planted_link(tmp_path):
         os.close(fd)
         os.close(dfd)
     assert list(elsewhere.iterdir()) == []
+
+
+def test_a_gzip_bomb_is_stopped_by_the_decompressed_byte_count(tmp_path, monkeypatch):
+    """One 5 MiB file of zeros compresses to a few KiB; the cap is on what comes OUT of the decompressor."""
+    monkeypatch.setattr(untar, "MAX_FILE", 1 << 30)  # the member cap alone would let it through
+    monkeypatch.setattr(untar, "MAX_BYTES", 1 << 30)
+    blob = tgz(("package/zeros", b"\0" * (5 << 20), None))
+    assert len(blob) < 20_000
+    monkeypatch.setattr(untar, "MAX_BYTES", 1 << 20)
+    monkeypatch.setattr(untar, "MAX_ENTRIES", 10)  # the per-member allowance is 20 KiB
+    assert reason(tmp_path, blob) == "too_large"
+    # and a file whose header LIES about its size cannot make tarfile inflate more than the limit either
+    monkeypatch.setattr(untar, "MAX_BYTES", 1 << 30)
+    monkeypatch.setattr(untar, "MAX_ENTRIES", 20_000)
+    info, _ = run(tmp_path, tgz(("package/ok", b"x" * 1000, None)))
+    assert info.bytes == 1000
+
+
+def test_an_oversized_pax_or_long_name_header_is_refused_before_it_is_read(tmp_path):
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz", format=tarfile.PAX_FORMAT) as t:
+        ti = tarfile.TarInfo("package/a")
+        ti.pax_headers = {"comment": "x" * 50_000}
+        ti.size = 1
+        t.addfile(ti, io.BytesIO(b"1"))
+    assert reason(tmp_path, buf.getvalue()) == "too_large"
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz", format=tarfile.GNU_FORMAT) as t:
+        ti = tarfile.TarInfo("package/" + "d/" * 20_000 + "f")  # a long-name header of 40 KB
+        ti.size = 1
+        t.addfile(ti, io.BytesIO(b"1"))
+    assert reason(tmp_path, buf.getvalue()) == "too_large"
+
+
+def test_too_many_members_including_empty_directories(tmp_path, monkeypatch):
+    monkeypatch.setattr(untar, "MAX_ENTRIES", 10)
+    assert reason(tmp_path, tgz(*[(f"package/d{i}/", None, None) for i in range(25)])) == "too_large"
+
+
+def test_a_sparse_member_is_refused(tmp_path):
+    blob = tgz(("package/s", None, {"type": tarfile.GNUTYPE_SPARSE}))
+    assert reason(tmp_path, blob) in ("link", "package")

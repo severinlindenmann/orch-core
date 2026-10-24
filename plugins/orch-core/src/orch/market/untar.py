@@ -16,12 +16,15 @@ import re
 import tarfile
 import zlib
 from dataclasses import dataclass
+from typing import Any
 
 from orch.addons.envtree import MAX_BYTES, MAX_DEPTH, MAX_ENTRIES, MAX_PATH, TreeError
 
-__all__ = ["MAX_FILE", "Unpacked", "unpack"]
+__all__ = ["MAX_FILE", "MAX_HEADER", "Unpacked", "unpack"]
 
 MAX_FILE = 64 << 20
+MAX_HEADER = 8 << 10  # a PAX or long-name header body (the path of one member): a few KiB is plenty
+HEADER_ALLOWANCE = 2048  # per member: its header block, padding and a PAX header, on top of the file bytes
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f  ]")
 _DIR = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 
@@ -52,6 +55,61 @@ def _rel(name: str) -> list[str]:
     return rest
 
 
+class _Gunzip:
+    """The decompressed stream of a gzip file, read in bounded pieces and COUNTED: once more than the limit has come out
+    (``MAX_BYTES`` of file data plus a small allowance per member), :class:`TreeError` ``too_large`` is raised, so a
+    gzip bomb is stopped after about the limit, never after it has been inflated into memory. ``tarfile`` is given
+    this object, not the file."""
+
+    def __init__(self, fd: int) -> None:
+        self._fd = fd
+        self._d = zlib.decompressobj(wbits=31)  # gzip framing
+        self._tail = b""
+        self._out = 0
+        self._eof = False
+
+    def read(self, n: int = -1) -> bytes:
+        if n is None or n < 0 or n > 1 << 20:
+            n = 1 << 20  # never inflate more than a megabyte per call
+        limit = MAX_BYTES + MAX_ENTRIES * HEADER_ALLOWANCE
+        got = bytearray()
+        while len(got) < n and not self._eof:
+            raw = self._tail or os.read(self._fd, 1 << 16)
+            if not raw and not self._d.unconsumed_tail:
+                if not self._d.eof:
+                    raise TreeError("package")  # truncated
+                self._eof = True
+                break
+            piece = self._d.decompress(raw, n - len(got))
+            self._tail = self._d.unconsumed_tail
+            self._out += len(piece)
+            if self._out > limit:
+                raise TreeError("too_large")
+            got += piece
+            if self._d.eof:
+                self._eof = True
+        return bytes(got)
+
+
+class _Info(tarfile.TarInfo):
+    """A member header whose extension bodies (PAX, GNU long name) are capped before ``tarfile`` reads them."""
+
+    def _cap(self) -> None:
+        if self.size > MAX_HEADER:
+            raise TreeError("too_large")
+
+    def _proc_gnulong(self, tarfile: Any) -> Any:
+        self._cap()
+        return super()._proc_gnulong(tarfile)
+
+    def _proc_pax(self, tarfile: Any) -> Any:
+        self._cap()
+        return super()._proc_pax(tarfile)
+
+    def _proc_sparse(self, tarfile: Any) -> Any:
+        raise TreeError("link")  # sparse members are never accepted
+
+
 def unpack(fd: int, dest_fd: int | None) -> Unpacked:
     """Unpack the gzip tarball open at ``fd`` below the directory ``dest_fd`` (or only judge it when ``None``).
     Raises :class:`orch.addons.envtree.TreeError` (``link``, ``path_escape``, ``too_large``, ``package``)."""
@@ -63,8 +121,12 @@ def unpack(fd: int, dest_fd: int | None) -> Unpacked:
     compiled = False
     f = os.fdopen(os.dup(fd), "rb")
     try:
-        with tarfile.open(fileobj=f, mode="r|gz") as tar:
+        with tarfile.open(fileobj=_Gunzip(f.fileno()), mode="r|", tarinfo=_Info) as tar:
+            members = 0
             for m in tar:
+                members += 1
+                if members > MAX_ENTRIES:  # every member counts, the root entry and skipped ones too
+                    raise TreeError("too_large")
                 if m.isdir():
                     kind = "d"
                 elif m.isreg():

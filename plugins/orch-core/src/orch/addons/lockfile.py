@@ -125,6 +125,8 @@ def _python(text: str) -> list[Row]:
         raise _invalid()
     logical = re.sub(r" *\\\n *", " ", text)
     lines = [ln.strip() for ln in logical.splitlines() if ln.strip() and not ln.strip().startswith("#")]
+    if len(lines) > MAX_ROWS:  # a count cap before any line is parsed
+        raise _invalid()
     rows = []
     for ln in lines:
         m = _PY_LINE.fullmatch(ln)
@@ -171,6 +173,8 @@ def _node(text: str) -> list[Row]:
             text, object_pairs_hook=_strict_pairs, parse_float=_refuse_value, parse_constant=_refuse_value
         )
         pkgs = lock["packages"]
+        if not isinstance(pkgs, dict) or len(pkgs) > MAX_ROWS + 1:  # a count cap before any entry is judged
+            raise _invalid()
         root = pkgs[""]
         if not (
             type(lock["lockfileVersion"]) is int

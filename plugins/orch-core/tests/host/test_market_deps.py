@@ -10,15 +10,15 @@ import json
 import pytest
 
 from orch.host import signer
+from tests.host import dep_helpers as D
 from tests.host import human_helpers
 from tests.host import market_helpers as M
 from tests.host.dep_helpers import NODE, PY, dep_files, node_lock, py_lock
 from tests.host.market_helpers import add_market, err, ok, person, stage
 
 net = M.net
+registry = D.registry
 lab, served, human = human_helpers.lab, human_helpers.served, human_helpers.human
-IDNA = ("idna", "3.10", "a" * 64)
-SIX = ("six", "1.16.0", "b" * 64)
 
 
 def publish(served, net, version="1.0.0", lock=None, runtime=PY, **kw):
@@ -28,13 +28,15 @@ def publish(served, net, version="1.0.0", lock=None, runtime=PY, **kw):
 
 
 @pytest.fixture
-def ready(served, net):
+def ready(served, net, registry):
     add_market(served, net)
+    registry.IDNA = registry.py("idna", "3.10")
+    registry.SIX = registry.py("six", "1.16.0")
     return served
 
 
-def test_stage_lists_the_packages_and_the_signed_grant_names_runtime(served, human, net, ready):
-    publish(served, net, lock=py_lock(IDNA, SIX))
+def test_stage_lists_the_packages_and_the_signed_grant_names_runtime(served, human, net, ready, registry):
+    publish(served, net, lock=py_lock(registry.IDNA, registry.SIX))
     st = ok(stage(served))["data"]
     d = st["deps"]
     assert (d["kind"], d["lock"], d["count"]) == ("python-requirements", "requirements.txt", 2)
@@ -57,7 +59,7 @@ def test_stage_lists_the_packages_and_the_signed_grant_names_runtime(served, hum
     assert "dep idna 3.10" in shown and "dep six 1.16.0" in shown and "runtime: " in shown
 
 
-def test_a_package_without_runtime_has_no_deps_anywhere(served, human, net, ready):
+def test_a_package_without_runtime_has_no_deps_anywhere(served, human, net, ready, registry):
     net.add("standup", "1.0.0")
     net.version += 1
     ok(person(served, "market.refresh"))
@@ -76,13 +78,13 @@ def test_a_package_without_runtime_has_no_deps_anywhere(served, human, net, read
         (b'{"lockfileVersion": 2, "packages": {}}', NODE, "market.lock_invalid"),
     ],
 )
-def test_step_15_refuses_a_bad_lock_before_anything_is_staged(served, net, ready, lock, runtime, code):
+def test_step_15_refuses_a_bad_lock_before_anything_is_staged(served, net, ready, registry, lock, runtime, code):
     publish(served, net, lock=lock, runtime=runtime)
     assert err(stage(served)) == code
     assert M.mfiles(served).stages() == []
 
 
-def test_the_index_copy_of_runtime_must_equal_the_manifest(served, net, ready):
+def test_the_index_copy_of_runtime_must_equal_the_manifest(served, net, ready, registry):
     net.add("standup", "1.0.0", pkg=dep_files("standup", "1.0.0"), runtime={**PY, "lock": "other.txt"})
     net.version += 1
     ok(person(served, "market.refresh"))
@@ -93,15 +95,15 @@ def test_the_index_copy_of_runtime_must_equal_the_manifest(served, net, ready):
     assert err(stage(served)) == "market.manifest_mismatch"
 
 
-def test_a_lock_that_this_computer_cannot_install_is_refused_at_stage(served, net, ready):
+def test_a_lock_that_this_computer_cannot_install_is_refused_at_stage(served, net, ready, registry):
     lock = node_lock(("fsevents", "2.3.3", b"x"), extra={"fsevents": {"os": ["win32"]}})
     publish(served, net, lock=lock, runtime=NODE)
     r = stage(served)
     assert err(r) == "market.env_failed" and r["error"]["detail"] == {"reason": "platform"}
 
 
-def test_the_signer_refuses_material_deps_that_disagree_with_the_signed_runtime(served, human, net, ready):
-    publish(served, net, lock=py_lock(IDNA, SIX))
+def test_the_signer_refuses_material_deps_that_disagree_with_the_signed_runtime(served, human, net, ready, registry):
+    publish(served, net, lock=py_lock(registry.IDNA, registry.SIX))
     st = ok(stage(served))["data"]
     prepared = human.prepare("addon.grant", {"name": "standup", "staged": st["stage"]})
 
@@ -144,11 +146,11 @@ def install_v1(served, human, net, lock):
     return M.install(served, human)[0]
 
 
-def update(served, net, version, lock, runtime=PY, *, with_runtime=True):
+def update(served, net, version, lock, runtime=PY, *, with_runtime=True, registry=None):
     if with_runtime:
         publish(served, net, version, lock, runtime)
     else:
-        pkg = dep_files("standup", version, py_lock(IDNA))
+        pkg = dep_files("standup", version, py_lock(registry.IDNA))
         m = json.loads(pkg["orch-addon.json"])
         del m["runtime"], pkg["requirements.txt"]
         pkg["orch-addon.json"] = json.dumps(m, sort_keys=True).encode()
@@ -158,9 +160,11 @@ def update(served, net, version, lock, runtime=PY, *, with_runtime=True):
     return ok(stage(served, update=True))["data"]
 
 
-def test_an_update_that_adds_or_reversions_a_package_is_widened_and_shows_the_lines(served, human, net, ready):
-    install_v1(served, human, net, py_lock(IDNA))
-    u = update(served, net, "1.1.0", py_lock(("idna", "3.11", "c" * 64), SIX))["update"]
+def test_an_update_that_adds_or_reversions_a_package_is_widened_and_shows_the_lines(
+    served, human, net, ready, registry
+):
+    install_v1(served, human, net, py_lock(registry.IDNA))
+    u = update(served, net, "1.1.0", py_lock(registry.py("idna", "3.11"), registry.SIX))["update"]
     assert u["widened"] is True
     assert u["deps"] == {
         "runtime": None,
@@ -171,32 +175,32 @@ def test_an_update_that_adds_or_reversions_a_package_is_widened_and_shows_the_li
     assert "+ dep six 1.16.0 (new)" in u["changes"] and "~ dep idna 3.10 -> 3.11" in u["changes"]
 
 
-def test_an_update_that_only_removes_a_package_is_not_widened(served, human, net, ready):
-    install_v1(served, human, net, py_lock(IDNA, SIX))
-    u = update(served, net, "1.0.1", py_lock(IDNA))["update"]
+def test_an_update_that_only_removes_a_package_is_not_widened(served, human, net, ready, registry):
+    install_v1(served, human, net, py_lock(registry.IDNA, registry.SIX))
+    u = update(served, net, "1.0.1", py_lock(registry.IDNA))["update"]
     assert u["widened"] is False and u["deps"]["removed"] == [{"name": "six", "version": "1.16.0"}]
     assert "- dep six (removed)" in u["changes"]
 
 
-def test_an_update_with_the_same_lock_is_not_widened_by_dependencies(served, human, net, ready):
-    install_v1(served, human, net, py_lock(IDNA))
-    u = update(served, net, "1.0.1", py_lock(IDNA))["update"]
+def test_an_update_with_the_same_lock_is_not_widened_by_dependencies(served, human, net, ready, registry):
+    install_v1(served, human, net, py_lock(registry.IDNA))
+    u = update(served, net, "1.0.1", py_lock(registry.IDNA))["update"]
     assert u["widened"] is False and u["deps"] == {"runtime": None, "added": [], "removed": [], "changed": []}
 
 
-def test_a_changed_hash_at_the_same_version_counts_as_changed(served, human, net, ready):
-    install_v1(served, human, net, py_lock(IDNA))
-    u = update(served, net, "1.0.1", py_lock(("idna", "3.10", "d" * 64)))["update"]
+def test_a_changed_hash_at_the_same_version_counts_as_changed(served, human, net, ready, registry):
+    install_v1(served, human, net, py_lock(registry.IDNA))
+    u = update(served, net, "1.0.1", py_lock(registry.py("idna", "3.10", {"idna/__init__.py": "x = 2\n"})))["update"]
     assert u["widened"] is True and u["deps"]["changed"] == [{"name": "idna", "from": "3.10", "to": "3.10"}]
     assert "~ dep idna 3.10 -> 3.10 (contents changed)" in u["changes"]
 
 
-def test_runtime_added_is_widened_and_removed_is_not(served, human, net, ready):
+def test_runtime_added_is_widened_and_removed_is_not(served, human, net, ready, registry):
     net.add("standup", "1.0.0")  # no dependencies at first
     net.version += 1
     ok(person(served, "market.refresh"))
     M.install(served, human)
-    u = update(served, net, "1.1.0", py_lock(IDNA))["update"]
+    u = update(served, net, "1.1.0", py_lock(registry.IDNA))["update"]
     assert (
         u["widened"] is True
         and u["deps"]["runtime"] == "added"
@@ -205,8 +209,8 @@ def test_runtime_added_is_widened_and_removed_is_not(served, human, net, ready):
     assert "+ dependencies (Python, new)" in u["changes"]
 
 
-def test_runtime_removed_and_a_changed_kind(served, human, net, ready):
-    install_v1(served, human, net, py_lock(IDNA))
-    u = update(served, net, "1.1.0", None, with_runtime=False)["update"]
+def test_runtime_removed_and_a_changed_kind(served, human, net, ready, registry):
+    install_v1(served, human, net, py_lock(registry.IDNA))
+    u = update(served, net, "1.1.0", None, with_runtime=False, registry=registry)["update"]
     assert u["deps"]["runtime"] == "removed" and u["widened"] is False  # a removal alone does not widen
     assert "- dependencies (Python, removed)" in u["changes"]

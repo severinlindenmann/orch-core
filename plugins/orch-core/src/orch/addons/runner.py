@@ -48,13 +48,18 @@ from typing import Any
 
 from orch import __version__ as CORE_VERSION
 from orch import canon
+from orch.addons import envtree
 from orch.addons.manifest import ManifestError, incompatibility, load_manifest
 from orch.addons.package import MANIFEST_FILE, Package, PackageError, check_path, package_digest, read_package
+from orch.market import MarketError
 from orch.model.types import Addon
 
 __all__ = ["Limits", "RunnerError", "call", "child_env"]
 
 PATH = "/usr/local/bin:/usr/bin:/bin"
+#: where a Node add-on's ``node`` is looked for (V3 G4): fixed system directories, never a path the add-on or the
+#: dependency environment names
+NODE_DIRS = "/opt/homebrew/bin:/usr/local/bin:/usr/bin"
 MAX_REQUEST = 64 << 10
 
 
@@ -82,15 +87,18 @@ class Limits:
             raise ValueError("limits out of range (timeout 0..60 s)")
 
 
-def child_env(name: str, capabilities: Sequence[str], work: str, pkg: str) -> dict[str, str]:
-    """The whole environment of an addon process (§8.1). Built from nothing, never from the host's."""
+def child_env(
+    name: str, capabilities: Sequence[str], work: str, pkg: str, env_path: str | None = None
+) -> dict[str, str]:
+    """The whole environment of an addon process (§8.1). Built from nothing, never from the host's. ``env_path`` (V3 G4)
+    is the verified dependency environment of a Python add-on: it follows the package on ``PYTHONPATH``."""
     return {
         "PATH": PATH,
         "LANG": "C.UTF-8",
         "HOME": work,
         "TMPDIR": work,
         "PYTHONDONTWRITEBYTECODE": "1",
-        "PYTHONPATH": pkg,
+        "PYTHONPATH": pkg if env_path is None else f"{pkg}:{env_path}",
         "ORCH_ADDON": name,
         "ORCH_ADDON_CAPABILITIES": ",".join(capabilities),
     }
@@ -118,6 +126,17 @@ def _stage(package: Package, root: str) -> str:
     for d in reversed(dirs):
         os.chmod(d, 0o500)
     return pkg
+
+
+def _link_node_modules(pkg: str, env_path: str) -> None:
+    """``<pkg>/node_modules`` -> ``<env>/node_modules``, made by orch after the digest check of the copy, so Node
+    (CommonJS and ESM both walk up from the file) finds exactly the verified packages. The package directory is the
+    runner's own."""
+    os.chmod(pkg, 0o700)
+    try:
+        os.symlink(os.path.join(env_path, "node_modules"), os.path.join(pkg, "node_modules"))
+    finally:
+        os.chmod(pkg, 0o500)
 
 
 _TRAMPOLINE = """
@@ -173,10 +192,14 @@ def call(
     trigger: str,
     ticket: Any,
     limits: Limits | None = None,
+    env: envtree.EnvLocation | None = None,
 ) -> Any:
     """Run the addon once with method ``propose`` and return the ``result`` of its response (validate it with
     ``Registry.check_proposal``). ``granted`` is the replayed grant; ``ticket`` is a ``TicketView``, of which only the
-    key, type, status and this addon's own fields are sent. Raises :class:`RunnerError`."""
+    key, type, status and this addon's own fields are sent. ``env`` (V3 G4, C1) says where the host keeps environments:
+    an add-on whose manifest declares ``runtime`` runs only if :func:`orch.addons.envtree.verify` passes HERE, inside
+    this call (``market.env_changed`` otherwise, never a rebuild); one without ``runtime`` is refused an ``env``
+    (``addon.bad_request``). Raises :class:`RunnerError`."""
     if not granted.enabled or granted.purged:
         raise RunnerError("addon.inactive", "the addon is disabled or purged")
     if ticket.visibility != "workspace":
@@ -201,6 +224,18 @@ def call(
     if why is not None:
         raise RunnerError("addon.incompatible", why)
     granted_digest = granted.package_sha256
+    rt = manifest.runtime
+    env_path: str | None = None
+    if rt is None:
+        if env is not None:
+            raise RunnerError("addon.bad_request", "an environment was given to an add-on without dependencies")
+    else:
+        if env is None or granted.runtime is None or {k: granted.runtime.get(k) for k in ("kind", "lock")} != rt:
+            raise RunnerError("market.env_changed", "the granted dependencies are not the manifest's")
+        try:  # before the call deadline: the hashing is not part of the add-on's time
+            env_path = str(envtree.verify(env.state, env.ws, granted.name, granted_digest, rt["kind"]))
+        except MarketError as e:
+            raise RunnerError("market.env_changed", e.reason or "changed") from None
     try:
         request = canon.dumps(
             {
@@ -244,9 +279,16 @@ def call(
                 raise RunnerError("addon.digest_mismatch", "the staged copy differs from the granted package")
         except PackageError:
             raise RunnerError("addon.digest_mismatch", "the staged copy is not a valid package") from None
-        env = child_env(granted.name, sorted(granted.capabilities), work, pkg)
+        py_env = env_path if rt is not None and rt["kind"] == "python-requirements" else None
+        child = child_env(granted.name, sorted(granted.capabilities), work, pkg, py_env)
         argv = [a.replace("{pkg}", pkg) for a in manifest.entry_cmd]
-        exe = argv[0] if os.sep in argv[0] else shutil.which(argv[0], path=PATH)
+        if py_env is not None:  # the interpreter that chose the wheels, without ``site``: no ``.pth``, no orch packages
+            argv = [sys.executable, "-S", "-B", *argv[1:]]
+        if rt is not None and rt["kind"] == "node-package-lock":
+            _link_node_modules(pkg, env_path or "")
+            exe = shutil.which("node", path=NODE_DIRS)
+        else:
+            exe = argv[0] if os.sep in argv[0] else shutil.which(argv[0], path=PATH)
         if exe is None:
             raise RunnerError("addon.start_failed", "the command is not found")
         argv[0] = exe
@@ -258,7 +300,7 @@ def call(
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 cwd=work,
-                env=env,
+                env=child,
                 close_fds=True,
                 start_new_session=True,
             )

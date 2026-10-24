@@ -201,7 +201,12 @@ export function HostGeneral({ workspace }: { workspace: Workspace }) {
                   {runner.connected ? 'The runner on this machine is connected' : 'The runner on this machine is not connected'}
                   {runner.enabled ? `; terminals are ${runner.terminals ? 'available' : 'not available'}.` : '.'}
                 </p>
-                {role === 'owner' && <RunnerSwitch ws={workspace.id} on={!runner.enabled} testId="card-runner" variant="secondary" />}
+                {role === 'owner' && (
+                  <div className="flex flex-wrap items-start gap-2">
+                    <RunnerSwitch ws={workspace.id} on={!runner.enabled} testId="card-runner" variant="secondary" />
+                    {runner.enabled && !runner.terminals && <RunnerSwitch ws={workspace.id} on initialTerminals label="Turn on terminals" testId="card-runner-terminals" variant="secondary" />}
+                  </div>
+                )}
               </div>
             </div>
           )}

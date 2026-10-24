@@ -1838,7 +1838,6 @@ class ClickSigner:
         self._note("rotated", workspace=wid)
         return {"done": True, "old": out["old"], "new": out["device"], **self._row(entry)}
 
-    # -- bookkeeping ---------------------------------------------------------------------------------------------------
     # -- dashboard execution on or off (#1198 C14) ---------------------------------------------------------------------
     #
     # The switch is the host-local file of ``orch runner enable|disable`` plus the runner service; no signed event.
@@ -1911,6 +1910,7 @@ class ClickSigner:
         self._note("runner_on", workspace=wid)
         return {"workspace_id": wid, **enablement.state_of(self.state, wid, uid)}
 
+    # -- bookkeeping ---------------------------------------------------------------------------------------------------
     def _drop(self, approval: Approval) -> None:
         self.approvals.pop((approval.workspace_id, approval.request_id), None)
         if approval.seal is not None:

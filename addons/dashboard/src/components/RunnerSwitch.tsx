@@ -12,18 +12,22 @@ import { Button } from '@/components/ui/button'
 
 const said = (e: unknown) => (e instanceof ApiError ? e.message : 'The dashboard server did not answer.')
 
-export function RunnerSwitch({ ws, on, terminals: withTerminals = true, testId = 'runner-switch', variant = 'default' }: {
+export function RunnerSwitch({ ws, on, terminals: withTerminals = true, initialTerminals = false, label, testId = 'runner-switch', variant = 'default' }: {
   ws: string
   /** What the button does: turn dashboard execution on (true) or off (false). */
   on: boolean
   /** On only: offer the choice to keep terminals off (it is the CLI's `--no-terminals`). */
   terminals?: boolean
+  /** On only: the terminals box starts ticked (places whose whole purpose is terminals). Default: unticked. */
+  initialTerminals?: boolean
+  /** The button's words when they differ from the default. */
+  label?: string
   testId?: string
   variant?: 'default' | 'secondary'
 }) {
   const qc = useQueryClient()
   const [open, setOpen] = useState(false)
-  const [terminals, setTerminals] = useState(false)
+  const [terminals, setTerminals] = useState(initialTerminals)
   const [review, setReview] = useState<RunnerReview | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -37,7 +41,7 @@ export function RunnerSwitch({ ws, on, terminals: withTerminals = true, testId =
     try {
       const got = await agentsApi.runnerReview(ws, { on, terminals: t })
       if (seq.current !== mine) return
-      if (on && !got.view.lines.includes(RUNNER_LINE)) throw new ApiError(409, { code: 'human.click_refused', message: 'The review is not what it should be. Nothing changed.', retryable: false })
+      if (on && (!got.view.lines.includes(RUNNER_LINE) || got.view.terminals !== t)) throw new ApiError(409, { code: 'human.click_refused', message: 'The review is not what it should be. Nothing changed.', retryable: false })
       setReview(got)
     } catch (e) {
       if (seq.current === mine) setError(said(e))
@@ -45,7 +49,7 @@ export function RunnerSwitch({ ws, on, terminals: withTerminals = true, testId =
   }
   useEffect(() => () => { seq.current++ }, [])
 
-  const start = () => { setOpen(true); setTerminals(false); void read(false) }
+  const start = () => { setOpen(true); setTerminals(initialTerminals); void read(initialTerminals) }
   const close = () => { seq.current++; setOpen(false); setReview(null); setError(null) }
   const confirm = async () => {
     if (!review || busy) return
@@ -63,7 +67,7 @@ export function RunnerSwitch({ ws, on, terminals: withTerminals = true, testId =
     }
   }
 
-  if (!open) return <Button size="sm" variant={variant} data-testid={testId} onClick={start}>{on ? 'Turn on dashboard execution' : 'Turn off dashboard execution'}</Button>
+  if (!open) return <Button size="sm" variant={variant} data-testid={testId} onClick={start}>{label ?? (on ? 'Turn on dashboard execution' : 'Turn off dashboard execution')}</Button>
   return (
     <div data-testid={`${testId}-review`} className="w-full space-y-2 rounded-md border border-border bg-surface p-3 text-[13px]">
       {review ? (

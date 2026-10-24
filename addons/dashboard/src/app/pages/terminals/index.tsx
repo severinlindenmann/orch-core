@@ -132,7 +132,7 @@ export function TerminalsPage() {
       {off && (
         <div role="status" className="flex flex-wrap items-center gap-2 text-[13px] text-text-muted">
           Terminals are switched off for this workspace on this machine.
-          <RunnerSwitch ws={ws} on testId="terminals-runner" variant="secondary" />
+          <RunnerSwitch ws={ws} on initialTerminals testId="terminals-runner" variant="secondary" />
         </div>
       )}
       {error && (

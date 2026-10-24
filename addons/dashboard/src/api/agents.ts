@@ -68,7 +68,7 @@ export interface Runner extends RunnerInfo {
 }
 
 export interface RunnerSwitchBody { on: boolean; terminals?: boolean }
-export interface RunnerReview { view: { op: string; on: boolean; lines: string[] }; view_digest: string }
+export interface RunnerReview { view: { op: string; on: boolean; terminals?: boolean; lines: string[] }; view_digest: string }
 /** Core's RUNNER_LINE: the sentence a review of turning dashboard execution ON must carry, or it is not shown. */
 export const RUNNER_LINE = 'Agents may run commands on this computer as you when you start them.'
 

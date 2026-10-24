@@ -95,7 +95,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
     title: 'Worktrees',
     where: 'Browser; the Worktrees page',
     intro:
-      'A worktree is a ticket\'s own folder, so agents on different tickets do not disturb each other. Needs the Worktrees add-on on, "orch runner enable" done, and a ticket linked to a repo with a branch (see E1).',
+      'A worktree is a ticket\'s own folder, so agents on different tickets do not disturb each other. Needs the Worktrees add-on on, dashboard execution turned on, and a ticket linked to a repo with a branch (see E1).',
     steps: [
       {
         id: 'J1',

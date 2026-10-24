@@ -129,7 +129,7 @@ export function HostAddOns({ workspace }: { workspace: Workspace }) {
                       </div>
                       <p className="text-text-muted"><Inline>{row.desc}</Inline></p>
                       {why && <OwnerNote id={`addon-${row.id}-why`}>{why}</OwnerNote>}
-                      {owner && !on && row.runner_switch && <div className="mt-1.5"><RunnerSwitch ws={workspace.id} on testId={`addon-${row.id}-runner`} variant="secondary" /></div>}
+                      {owner && !on && row.runner_switch && <div className="mt-1.5"><RunnerSwitch ws={workspace.id} on initialTerminals={row.id === 'terminals'} testId={`addon-${row.id}-runner`} variant="secondary" /></div>}
                       {row.state === 'attention' && !why && (
                         <p className="text-[12px] text-text-muted">Its files changed since you approved it. Turn it on again to approve what it is now.</p>
                       )}

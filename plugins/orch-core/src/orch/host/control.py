@@ -459,7 +459,7 @@ class ControlOps:
                 raise
             # Only now may recovery undo anything, and only what this bootstrap creates from here on.
             try:
-                self._claim_pending_genesis()
+                self._claim_pending_genesis(workspace_id)
             except BaseException:
                 self.intents.abandon(intent)
                 raise
@@ -524,26 +524,33 @@ class ControlOps:
         )
         devmode.check_admit(self.host.dev, workspace_id, root, _genesis_view(event), fresh=True)  # nothing appended
         self._check_reserved_prefix(event)
-        self._check_pending_free()
+        self._check_pending_free(workspace_id)
         return peers, backend
 
-    def _check_pending_free(self) -> None:
-        """Read-only half of the pending rule (the validation runs twice per bootstrap): a pending dev host (V3-D38)
-        admits ONE genesis per process, and only into an empty registry."""
+    def _pending_free(self, workspace_id: str) -> bool:
+        """The pending rule (V3-D38): a pending dev host admits ONE genesis per process, only into an empty
+        registry. Free when the claim is unclaimed or held by this very workspace id (a retry or the recovery of the
+        same bootstrap)."""
+        held = self.host.pending_claim
+        return not self.host.registry.entries() and held in (None, workspace_id)
+
+    def _check_pending_free(self, workspace_id: str) -> None:
+        """Read-only half (the validation runs twice per bootstrap)."""
         dev = self.host.dev
-        if dev is not None and dev.pending and (self.host.pending_admitted or self.host.registry.entries()):
+        if dev is not None and dev.pending and not self._pending_free(workspace_id):
             raise devmode.refused("not_sandbox", "a pending dev host admits one fresh SBX genesis per process")
 
-    def _claim_pending_genesis(self) -> None:
-        """The claim, made once the second validation passed and before anything is appended, atomically with the check:
-        a second bootstrap (even a racing one) is ``not_sandbox``. A bootstrap that fails after this leaves the claim
-        taken; restart the host to try again."""
+    def _claim_pending_genesis(self, workspace_id: str) -> None:
+        """The claim, taken under a lock atomically with the check, before anything is appended and again before
+        every admission (``_finish_bootstrap``: live, same-key resume and start-up recovery), so no path admits a
+        second genesis. It records the workspace id, so finishing the claimed bootstrap again is allowed. A bootstrap
+        that fails after this leaves the claim taken; restart the host to try again."""
         dev = self.host.dev
         if dev is None or not dev.pending:
             return
         with self.host.pending_lock:
-            self._check_pending_free()
-            self.host.pending_admitted = True
+            self._check_pending_free(workspace_id)
+            self.host.pending_claim = workspace_id
 
     def _check_reserved_prefix(self, event: dict[str, Any]) -> None:
         """``SBX`` is reserved for dev-pair sandboxes (§11A.17.3 F1): ``host.bootstrap`` accepts it only for a fresh
@@ -630,6 +637,7 @@ class ControlOps:
                 peers,
             )
             with OwnershipLock(self.state_dir, workspace_id).exclusive(self.host.lock_wait):
+                self._claim_pending_genesis(workspace_id)  # also on resume and start-up recovery (one per process)
                 admit(self.host, entry, _genesis_view(event), fresh=True)  # the one choke point (§11A.17.3 R5)
                 self.host.serve_from_thread(entry)
         result = ok_result({"workspace_id": workspace_id, "seq": 1}, seq=1)

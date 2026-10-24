@@ -859,7 +859,7 @@ def test_a_pending_host_refuses_any_other_genesis_and_changes_nothing(pending, w
         res = c.call("host.bootstrap", _sbx_args(created, root, owner, name, prefix), idem=new_idem())
         assert not res["ok"]
         assert res["error"]["detail"]["reason"] == "not_sandbox"
-        assert h.host.registry.entries() == [] and h.host.pending_admitted is False  # a refusal does not use the claim
+        assert h.host.registry.entries() == [] and h.host.pending_claim is None  # a refusal does not use the claim
         assert os.listdir(root) == []
 
 
@@ -913,7 +913,7 @@ def test_bind_and_restart_gives_the_full_dev_host_and_only_then_dev_powers(pendi
     with pending.host(dev=dev) as h:
         service = h.host.services[wid]
         assert service.dev_ok is True and devmode.dev_gate(service) == devmode.DevGate(pending.sandbox_id, wid)
-        assert h.host.pending_admitted is False
+        assert h.host.pending_claim is None
         res = h.client().call(
             "host.bootstrap",
             _sbx_args(
@@ -935,3 +935,64 @@ def test_a_normal_host_still_refuses_an_sbx_bootstrap(pending):
             "host.bootstrap", _sbx_args(created, pending.new_root(), Person(), pending.owner_name()), idem=new_idem()
         )
         assert not res["ok"] and h.host.registry.entries() == []
+
+
+def test_start_up_recovery_on_a_pending_host_admits_at_most_one_genesis(pending, monkeypatch):  # noqa: F811
+    """One admission per process (design point 3): start-up recovery finishes a landed bootstrap through
+    ``_finish_bootstrap`` -> ``admit(fresh=True)`` without the pending claim or the empty-registry check, so two
+    bootstraps left ``started`` by earlier pending processes are both admitted in one pending process."""
+    from orch.host.control import ControlOps
+    from tests.identity.helpers import Person
+
+    real_finish = ControlOps._finish_bootstrap
+    real_landed = ControlOps._genesis_landed
+    roots = [pending.new_root("ws"), pending.new_root("ws-2")]
+
+    def boom(self, *a, **k):
+        raise RuntimeError("crash after the append")
+
+    # process 1: A's genesis lands, finishing it fails (the intent stays started)
+    monkeypatch.setattr(ControlOps, "_finish_bootstrap", boom)
+    with pending.host(dev=pending.dev()) as h, h.client() as c:
+        a = ok(c.call("host.wsk_create"))["data"]
+        assert not c.call("host.bootstrap", _sbx_args(a, roots[0], Person(), pending.owner_name()), idem=new_idem())[
+            "ok"
+        ]
+    # process 2: A's log cannot be read at recovery (stays started); B lands, finishing it fails too
+    monkeypatch.setattr(
+        ControlOps,
+        "_genesis_landed",
+        staticmethod(lambda r, i: None if r == str(roots[0]) else real_landed(r, i)),
+    )
+    with pending.host(dev=pending.dev()) as h, h.client() as c:
+        assert h.host.registry.entries() == []
+        b = ok(c.call("host.wsk_create"))["data"]
+        assert not c.call("host.bootstrap", _sbx_args(b, roots[1], Person(), pending.owner_name()), idem=new_idem())[
+            "ok"
+        ]
+    monkeypatch.setattr(ControlOps, "_finish_bootstrap", real_finish)
+    monkeypatch.setattr(ControlOps, "_genesis_landed", staticmethod(real_landed))
+    # process 3: one pending process; recovery finishes both
+    h = pending.host(dev=pending.dev())
+    admitted = None
+    try:
+        h.__enter__()
+        admitted = len(h.host.registry.entries())
+    except HostError:
+        admitted = 0  # refusing the start would also be fail closed
+    finally:
+        h.stop()
+    assert admitted <= 1, f"a pending host process admitted {admitted} genesis events"
+
+
+def test_a_pending_host_has_no_hub_dev_material_in_its_replay(pending):
+    """F2: ``hub_dev`` (dev hub material accepted in the replay) is for a full dev host only."""
+    from tests.identity.helpers import Person
+
+    with pending.host(dev=pending.dev()) as h, h.client() as c:
+        created = ok(c.call("host.wsk_create"))["data"]
+        root = pending.new_root()
+        ok(c.call("host.bootstrap", _sbx_args(created, root, Person(), pending.owner_name()), idem=new_idem()))
+        service = h.host.services[created["workspace_id"]]
+        assert service.dev is not None and service.dev.pending is True
+        assert service.store is not None and service.store.hub_dev is False

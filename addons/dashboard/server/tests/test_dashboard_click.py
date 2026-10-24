@@ -2775,7 +2775,12 @@ def test_c17_a_resume_from_any_other_session_keeps_the_terminal_command(client, 
 def test_c17_resume_is_on_without_a_passphrase_only(client, token, stub, script, auth):
     script.features = ["custody"]
     auth.kinds[token] = "local"
-    for body in ({"on": False, "resume": True}, {"on": True, "resume": True, "passphrase": PASSPHRASE}):
+    sealed = {"request_id": "hr_" + "0" * 26, "view_digest": "0" * 64}
+    for body in (
+        {"on": False, "resume": True},
+        {"on": True, "resume": True, "passphrase": PASSPHRASE},
+        {"on": True, "resume": True, **sealed},
+    ):
         res = switch(client, token, stub, body)
         assert res.json()["error"]["code"] == "invalid.input" and PASSPHRASE not in res.text
     assert not any(c[0] == "custody_on" for cl in script.clients for c in cl.calls)

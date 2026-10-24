@@ -10,6 +10,7 @@
 import { sha256Hex } from './sha256'
 
 export type HandoffAction =
+  | { action: 'market_grant'; name: string; staged: string }
   | { action: 'accept_criterion'; key: string; ac: string; note?: string }
   | { action: 'withdraw_acceptance'; key: string; ac: string; reason: string }
   | { action: 'mark_task_done'; key: string; task: string }

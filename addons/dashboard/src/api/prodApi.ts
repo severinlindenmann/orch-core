@@ -1,3 +1,4 @@
+import type { MarketList, MarketInstalled, StageInput, StageResult } from './market'
 // The production `api`: the same object the mockup's pages use, behind the fetch transport to the dashboard server
 // (design 7). Reads the server serves are mapped to the UI's types; what a read-only M2 host does not serve answers
 // neutrally (an empty list) where a page needs an answer to draw, and with `op.unsupported` everywhere else. Nothing
@@ -227,6 +228,13 @@ const reads = {
     if (p.page) q.set('page', p.page)
     return call<QuickPage>(`${w(ws)}/quick?${q.toString()}`)
   },
+  marketList: (ws: string) => call<MarketList>(`${w(ws)}/market`),
+  marketInstalled: (ws: string) => call<MarketInstalled>(`${w(ws)}/market/installed`),
+  marketStage: (ws: string, input: StageInput) => call<StageResult>(`${w(ws)}/market/stage`, 'POST', input),
+  marketUnstage: (ws: string, stage: string) => call<{ removed: boolean }>(`${w(ws)}/market/stage/${encodeURIComponent(stage)}`, 'DELETE'),
+  marketUninstall: (ws: string, name: string) => call<{ name: string; removed: boolean }>(`${w(ws)}/market/uninstall`, 'POST', { name }),
+  marketAdd: (ws: string, input: { url: string; commit?: string }) => call<unknown>(`${w(ws)}/market/add`, 'POST', input),
+  marketRefresh: (ws: string, input: { url?: string } = {}) => call<unknown>(`${w(ws)}/market/refresh`, 'POST', input),
   getActivity: (ws: string, p: ActivityParams = {}) => call<ActivityPage>(`${w(ws)}/activity?${activityQuery(p)}`),
   getRecordsCurrent: (ws: string) => call<RecordsStatus>(`${w(ws)}/records/current`),
   getRecords: (ws: string) => call<RecordsStatus>(`${w(ws)}/records`),

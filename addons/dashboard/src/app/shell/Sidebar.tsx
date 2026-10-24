@@ -458,6 +458,7 @@ const CORE_NAV = [
   /** Files (File Explorer add-on): owners only, listed only while the add-on is ON (the server adds `explorer` then). */
   { to: '/explorer', label: 'Files', icon: FolderTree, feature: 'explorer', real: true },
   /** Shares (Publish add-on): listed only while the add-on is ON for this workspace (the server adds `publish` then). */
+  { to: '/addons', label: 'Add-ons', icon: Share2, feature: 'market', real: true },
   { to: '/shares', label: 'Shares', icon: Share2, feature: 'publish', real: true },
   /** Usage (add-on): agent time per ticket; listed only while the add-on is ON (the server adds `usage` then). */
   { to: '/usage', label: 'Usage', icon: Gauge, feature: 'usage', real: true },

@@ -1,3 +1,4 @@
+import { queries } from '@/api/queries'
 import type { QueryClient } from '@tanstack/react-query'
 import { createBrowserHistory, createMemoryHistory, createRootRouteWithContext, createRoute, createRouter, Outlet, redirect, useRouterState } from '@tanstack/react-router'
 import { Shell } from './shell/Shell'
@@ -28,6 +29,7 @@ const ChecklistPage = lazyPage(() => import('./checklist/ChecklistPage'), 'Check
 // The feedback page: also its own page without the shell (saved in the browser, asks the host for nothing).
 const FeedbackPage = lazyPage(() => import('./feedback/FeedbackPage'), 'FeedbackPage')
 const GuidePage = lazyPage(() => import('./pages/guide'), 'GuidePage')
+const MarketPage = lazyPage(() => import('./pages/market'), 'MarketPage')
 const SharesPage = lazyPage(() => import('./pages/shares'), 'SharesPage')
 const WorktreesPage = lazyPage(() => import('./pages/worktrees'), 'WorktreesPage')
 const ExplorerPage = lazyPage(() => import('./pages/explorer'), 'ExplorerPage')
@@ -195,7 +197,19 @@ const explorerRoute = createRoute({
   loader: pageLoader(() => [], [ExplorerPage.preload]),
   component: ExplorerPage,
 })
-/** Shares of a real host (Publish add-on): listed only while the add-on is ON; the mock keeps its own addon page. */
+/** Owner marketplace, served only by a real host advertising market. */
+const marketRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'addons',
+  validateSearch: (s: Record<string, unknown>): { tab: 'browse' | 'installed' | 'marketplaces' } => ({ tab: s.tab === 'installed' || s.tab === 'marketplaces' ? s.tab : 'browse' }),
+  beforeLoad: () => {
+    if (!isRealHost()) throw redirect({ to: '/' })
+    serves('market')()
+  },
+  loader: pageLoader(({ qc, ws }) => hasFeature('market', ws.id) ? [qc.ensureQueryData(queries.marketList(ws.id))] : [], [MarketPage.preload]),
+  component: MarketPage,
+})
+/** Shares of a real host (Publish add-on): listed only while the add-on is ON. */
 const sharesRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'shares',
@@ -308,7 +322,7 @@ const addonRoute = createRoute({
   },
 })
 
-const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, newTicketRoute, ticketRoute, artifactsRoute, agentsRoute, quickRoute, dropRoute, checklistRoute, feedbackRoute, worktreesRoute, terminalsRoute, explorerRoute, sharesRoute, activityRoute, usageRoute, guideRoute, layoutPreviewRoute, settingsRoute, settingsTabRoute, settingsAddonRoute, settingsAddonsAliasRoute, addonRoute])
+const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, newTicketRoute, ticketRoute, artifactsRoute, agentsRoute, quickRoute, dropRoute, checklistRoute, feedbackRoute, worktreesRoute, terminalsRoute, explorerRoute, marketRoute, sharesRoute, activityRoute, usageRoute, guideRoute, layoutPreviewRoute, settingsRoute, settingsTabRoute, settingsAddonRoute, settingsAddonsAliasRoute, addonRoute])
 
 /**
  * The app's router. Without `initialPath` it owns the address bar (browser history); tests pass an in-app or

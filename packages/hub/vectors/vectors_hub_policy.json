@@ -1,0 +1,3978 @@
+{
+ "capabilities": [
+  "git_push",
+  "network",
+  "pty",
+  "serve_http",
+  "spawn_agent"
+ ],
+ "cases": [
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "ok": true,
+    "policy_hash": "B5e1voCVSwzIgiAQOyCcTIxDiwmkRNii3mm3Of9DMlg"
+   },
+   "name": "policy_default"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "markets": []
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "ok": true,
+    "policy_hash": "azrwjtXCGlthZe0HeuKg84olg7ZcLQamPksuPzB09Vw"
+   },
+   "name": "policy_no_markets"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/tools/orch-market"
+      },
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "ok": true,
+    "policy_hash": "G2-hZUyvgzqzRyfBneeL0cxd1302sJYFyw93NvizCyA"
+   },
+   "name": "policy_company_one_key"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "company",
+       "keys": [
+        "BCejTh71Baqz1ZiwUP6MfSMzpAhmNCYgRu7diVR6q7r10oB62H52URuEgZq1cS22QE5nE1ng5c-97yvbCheugys",
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/tools/orch-market"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "ok": true,
+    "policy_hash": "4W1s0FenLJC2Ed7bFrBycQTypVkmJT4ZzGAcoHZTLfw"
+   },
+   "name": "policy_company_two_keys"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": [],
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "ok": true,
+    "policy_hash": "BtU9fG_DIaehLUlmOtpDZ0XqLFQHowwfAYmNECKLnn0"
+   },
+   "name": "policy_ceiling_empty"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": [
+      "git_push",
+      "network",
+      "pty",
+      "serve_http",
+      "spawn_agent"
+     ],
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "ok": true,
+    "policy_hash": "DzfR4ThPf9X_vEqASDNX_Nbjk0GhDa4nuDjkfhpqVcQ"
+   },
+   "name": "policy_ceiling_all"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": [],
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "ok": true,
+    "policy_hash": "LDJxTXjEdV87XKGXvtElnnwPTVRqzPGDzGwNE28KfVQ"
+   },
+   "name": "policy_allow_empty"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": [
+       "github",
+       "landing"
+      ],
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "ok": true,
+    "policy_hash": "4AHyYh6F7bxyJ8XOP-OHeP6ROksuW8t3UPMxWyNQGVQ"
+   },
+   "name": "policy_allow_list"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": [
+       "foo",
+       "landing@1.2.0"
+      ]
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "ok": true,
+    "policy_hash": "rk4dIw_m5NjIf10kelcRa0GmCJ79aie9eku8WwKrnZs"
+   },
+   "name": "policy_block_id_and_version"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/m00"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/m01"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/m02"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/m03"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/m04"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/m05"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/m06"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/m07"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/m08"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/m09"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/m10"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/m11"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/m12"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/m13"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/m14"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/m15"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "ok": true,
+    "policy_hash": "mjI7_sNFj1t0mtkRDaafecP3qokt-dh-U9rV_baMR0U"
+   },
+   "name": "policy_16_markets"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": [
+       "a000",
+       "a001",
+       "a002",
+       "a003",
+       "a004",
+       "a005",
+       "a006",
+       "a007",
+       "a008",
+       "a009",
+       "a010",
+       "a011",
+       "a012",
+       "a013",
+       "a014",
+       "a015",
+       "a016",
+       "a017",
+       "a018",
+       "a019",
+       "a020",
+       "a021",
+       "a022",
+       "a023",
+       "a024",
+       "a025",
+       "a026",
+       "a027",
+       "a028",
+       "a029",
+       "a030",
+       "a031",
+       "a032",
+       "a033",
+       "a034",
+       "a035",
+       "a036",
+       "a037",
+       "a038",
+       "a039",
+       "a040",
+       "a041",
+       "a042",
+       "a043",
+       "a044",
+       "a045",
+       "a046",
+       "a047",
+       "a048",
+       "a049",
+       "a050",
+       "a051",
+       "a052",
+       "a053",
+       "a054",
+       "a055",
+       "a056",
+       "a057",
+       "a058",
+       "a059",
+       "a060",
+       "a061",
+       "a062",
+       "a063",
+       "a064",
+       "a065",
+       "a066",
+       "a067",
+       "a068",
+       "a069",
+       "a070",
+       "a071",
+       "a072",
+       "a073",
+       "a074",
+       "a075",
+       "a076",
+       "a077",
+       "a078",
+       "a079",
+       "a080",
+       "a081",
+       "a082",
+       "a083",
+       "a084",
+       "a085",
+       "a086",
+       "a087",
+       "a088",
+       "a089",
+       "a090",
+       "a091",
+       "a092",
+       "a093",
+       "a094",
+       "a095",
+       "a096",
+       "a097",
+       "a098",
+       "a099",
+       "a100",
+       "a101",
+       "a102",
+       "a103",
+       "a104",
+       "a105",
+       "a106",
+       "a107",
+       "a108",
+       "a109",
+       "a110",
+       "a111",
+       "a112",
+       "a113",
+       "a114",
+       "a115",
+       "a116",
+       "a117",
+       "a118",
+       "a119",
+       "a120",
+       "a121",
+       "a122",
+       "a123",
+       "a124",
+       "a125",
+       "a126",
+       "a127",
+       "a128",
+       "a129",
+       "a130",
+       "a131",
+       "a132",
+       "a133",
+       "a134",
+       "a135",
+       "a136",
+       "a137",
+       "a138",
+       "a139",
+       "a140",
+       "a141",
+       "a142",
+       "a143",
+       "a144",
+       "a145",
+       "a146",
+       "a147",
+       "a148",
+       "a149",
+       "a150",
+       "a151",
+       "a152",
+       "a153",
+       "a154",
+       "a155",
+       "a156",
+       "a157",
+       "a158",
+       "a159",
+       "a160",
+       "a161",
+       "a162",
+       "a163",
+       "a164",
+       "a165",
+       "a166",
+       "a167",
+       "a168",
+       "a169",
+       "a170",
+       "a171",
+       "a172",
+       "a173",
+       "a174",
+       "a175",
+       "a176",
+       "a177",
+       "a178",
+       "a179",
+       "a180",
+       "a181",
+       "a182",
+       "a183",
+       "a184",
+       "a185",
+       "a186",
+       "a187",
+       "a188",
+       "a189",
+       "a190",
+       "a191",
+       "a192",
+       "a193",
+       "a194",
+       "a195",
+       "a196",
+       "a197",
+       "a198",
+       "a199",
+       "a200",
+       "a201",
+       "a202",
+       "a203",
+       "a204",
+       "a205",
+       "a206",
+       "a207",
+       "a208",
+       "a209",
+       "a210",
+       "a211",
+       "a212",
+       "a213",
+       "a214",
+       "a215",
+       "a216",
+       "a217",
+       "a218",
+       "a219",
+       "a220",
+       "a221",
+       "a222",
+       "a223",
+       "a224",
+       "a225",
+       "a226",
+       "a227",
+       "a228",
+       "a229",
+       "a230",
+       "a231",
+       "a232",
+       "a233",
+       "a234",
+       "a235",
+       "a236",
+       "a237",
+       "a238",
+       "a239",
+       "a240",
+       "a241",
+       "a242",
+       "a243",
+       "a244",
+       "a245",
+       "a246",
+       "a247",
+       "a248",
+       "a249",
+       "a250",
+       "a251",
+       "a252",
+       "a253",
+       "a254",
+       "a255"
+      ],
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "ok": true,
+    "policy_hash": "yJuiZnBkvm-QcNn0UzZ4_1EmprNEfAcVTdmMcQ_xgjI"
+   },
+   "name": "policy_256_allow"
+  },
+  {
+   "args": {
+    "policy": null
+   },
+   "check": "policy",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "policy_null"
+  },
+  {
+   "args": {
+    "policy": []
+   },
+   "check": "policy",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "policy_not_object"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "extra": 1,
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "policy_unknown_top_key"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "policy_missing_ceiling"
+  },
+  {
+   "args": {
+    "policy": {
+     "allow": [
+      "https://github.com/severinlindenmann/orch-marketplace"
+     ],
+     "block": [],
+     "ceiling": null
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "policy_old_spec_shape"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "name": "official",
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "policy_market_unknown_key"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "official",
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "policy_market_missing_keys"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": [],
+      "pin": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "policy_addons_unknown_key"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "policy_addons_missing_block"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/tools/orch-market"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "policy_markets_unsorted"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/tools/orch-market"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BCejTh71Baqz1ZiwUP6MfSMzpAhmNCYgRu7diVR6q7r10oB62H52URuEgZq1cS22QE5nE1ng5c-97yvbCheugys"
+       ],
+       "url": "https://git.acme.example/tools/orch-market"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "policy_markets_duplicate_url"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/tools/orch-market.git"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "policy_url_dot_git"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/tools/orch-market/"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "policy_url_trailing_slash"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "http://git.acme.example/tools/orch-market"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "policy_url_http"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example:8443/tools/m"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "policy_url_port"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://github.com/ACME/market"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "policy_url_upper_github_path"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://Git.acme.example/tools/m"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "policy_url_upper_host"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://10.0.0.1/tools/m"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "policy_url_ip_literal"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/tools/orch-market?x=1"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "policy_url_query"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "official",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "policy_official_with_keys"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "policy_official_url_as_company"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/someone/market"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "policy_other_url_as_official"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "community",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://github.com/someone/market"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "policy_unknown_class"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "company",
+       "keys": [],
+       "url": "https://git.acme.example/tools/orch-market"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "policy_company_no_keys"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "company",
+       "keys": [
+        "BCejTh71Baqz1ZiwUP6MfSMzpAhmNCYgRu7diVR6q7r10oB62H52URuEgZq1cS22QE5nE1ng5c-97yvbCheugys",
+        "BGwzK0_5TTeTK2OY6qUNlVRZe5WIYpx--32RlO2gX5LMCg2r0LghKuhJ1Szxq8nrso67y-DmuJTmYXu6mbbDLOY",
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/tools/orch-market"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "policy_company_three_keys"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns",
+        "BCejTh71Baqz1ZiwUP6MfSMzpAhmNCYgRu7diVR6q7r10oB62H52URuEgZq1cS22QE5nE1ng5c-97yvbCheugys"
+       ],
+       "url": "https://git.acme.example/tools/orch-market"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "policy_company_keys_unsorted"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns",
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/tools/orch-market"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "policy_company_keys_duplicate"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns="
+       ],
+       "url": "https://git.acme.example/tools/orch-market"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "policy_key_padded"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rV"
+       ],
+       "url": "https://git.acme.example/tools/orch-market"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "policy_key_short"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3As"
+       ],
+       "url": "https://git.acme.example/tools/orch-market"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "policy_key_not_on_curve"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "company",
+       "keys": [
+        "+KkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/tools/orch-market"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "policy_key_std_alphabet"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": [
+      "network",
+      "root"
+     ],
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "policy_unknown_capability"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": [
+      "pty",
+      "network"
+     ],
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "policy_ceiling_unsorted"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": [
+      "network",
+      "network"
+     ],
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "policy_ceiling_duplicate"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": "network",
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "policy_ceiling_string"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": [
+       "landing",
+       "github"
+      ],
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "policy_allow_unsorted"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": [
+       "Github"
+      ],
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "policy_allow_bad_id"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": [
+       "github@1.0.0"
+      ],
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "policy_allow_with_version"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": [
+       "foo@1.0"
+      ]
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "policy_block_bad_semver"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": [
+       "foo@1.0.0-rc1"
+      ]
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "policy_block_prerelease"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": [
+       "zed",
+       "foo"
+      ]
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "policy_block_unsorted"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": null
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "policy_block_null"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/m00"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/m01"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/m02"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/m03"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/m04"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/m05"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/m06"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/m07"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/m08"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/m09"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/m10"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/m11"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/m12"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/m13"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/m14"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/m15"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/m16"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "policy_17_markets"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": [
+       "a000",
+       "a001",
+       "a002",
+       "a003",
+       "a004",
+       "a005",
+       "a006",
+       "a007",
+       "a008",
+       "a009",
+       "a010",
+       "a011",
+       "a012",
+       "a013",
+       "a014",
+       "a015",
+       "a016",
+       "a017",
+       "a018",
+       "a019",
+       "a020",
+       "a021",
+       "a022",
+       "a023",
+       "a024",
+       "a025",
+       "a026",
+       "a027",
+       "a028",
+       "a029",
+       "a030",
+       "a031",
+       "a032",
+       "a033",
+       "a034",
+       "a035",
+       "a036",
+       "a037",
+       "a038",
+       "a039",
+       "a040",
+       "a041",
+       "a042",
+       "a043",
+       "a044",
+       "a045",
+       "a046",
+       "a047",
+       "a048",
+       "a049",
+       "a050",
+       "a051",
+       "a052",
+       "a053",
+       "a054",
+       "a055",
+       "a056",
+       "a057",
+       "a058",
+       "a059",
+       "a060",
+       "a061",
+       "a062",
+       "a063",
+       "a064",
+       "a065",
+       "a066",
+       "a067",
+       "a068",
+       "a069",
+       "a070",
+       "a071",
+       "a072",
+       "a073",
+       "a074",
+       "a075",
+       "a076",
+       "a077",
+       "a078",
+       "a079",
+       "a080",
+       "a081",
+       "a082",
+       "a083",
+       "a084",
+       "a085",
+       "a086",
+       "a087",
+       "a088",
+       "a089",
+       "a090",
+       "a091",
+       "a092",
+       "a093",
+       "a094",
+       "a095",
+       "a096",
+       "a097",
+       "a098",
+       "a099",
+       "a100",
+       "a101",
+       "a102",
+       "a103",
+       "a104",
+       "a105",
+       "a106",
+       "a107",
+       "a108",
+       "a109",
+       "a110",
+       "a111",
+       "a112",
+       "a113",
+       "a114",
+       "a115",
+       "a116",
+       "a117",
+       "a118",
+       "a119",
+       "a120",
+       "a121",
+       "a122",
+       "a123",
+       "a124",
+       "a125",
+       "a126",
+       "a127",
+       "a128",
+       "a129",
+       "a130",
+       "a131",
+       "a132",
+       "a133",
+       "a134",
+       "a135",
+       "a136",
+       "a137",
+       "a138",
+       "a139",
+       "a140",
+       "a141",
+       "a142",
+       "a143",
+       "a144",
+       "a145",
+       "a146",
+       "a147",
+       "a148",
+       "a149",
+       "a150",
+       "a151",
+       "a152",
+       "a153",
+       "a154",
+       "a155",
+       "a156",
+       "a157",
+       "a158",
+       "a159",
+       "a160",
+       "a161",
+       "a162",
+       "a163",
+       "a164",
+       "a165",
+       "a166",
+       "a167",
+       "a168",
+       "a169",
+       "a170",
+       "a171",
+       "a172",
+       "a173",
+       "a174",
+       "a175",
+       "a176",
+       "a177",
+       "a178",
+       "a179",
+       "a180",
+       "a181",
+       "a182",
+       "a183",
+       "a184",
+       "a185",
+       "a186",
+       "a187",
+       "a188",
+       "a189",
+       "a190",
+       "a191",
+       "a192",
+       "a193",
+       "a194",
+       "a195",
+       "a196",
+       "a197",
+       "a198",
+       "a199",
+       "a200",
+       "a201",
+       "a202",
+       "a203",
+       "a204",
+       "a205",
+       "a206",
+       "a207",
+       "a208",
+       "a209",
+       "a210",
+       "a211",
+       "a212",
+       "a213",
+       "a214",
+       "a215",
+       "a216",
+       "a217",
+       "a218",
+       "a219",
+       "a220",
+       "a221",
+       "a222",
+       "a223",
+       "a224",
+       "a225",
+       "a226",
+       "a227",
+       "a228",
+       "a229",
+       "a230",
+       "a231",
+       "a232",
+       "a233",
+       "a234",
+       "a235",
+       "a236",
+       "a237",
+       "a238",
+       "a239",
+       "a240",
+       "a241",
+       "a242",
+       "a243",
+       "a244",
+       "a245",
+       "a246",
+       "a247",
+       "a248",
+       "a249",
+       "a250",
+       "a251",
+       "a252",
+       "a253",
+       "a254",
+       "a255",
+       "a256"
+      ],
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "policy_257_allow"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": [
+       "a000xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a001xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a002xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a003xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a004xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a005xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a006xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a007xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a008xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a009xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a010xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a011xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a012xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a013xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a014xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a015xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a016xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a017xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a018xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a019xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a020xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a021xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a022xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a023xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a024xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a025xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a026xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a027xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a028xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a029xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a030xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a031xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a032xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a033xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a034xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a035xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a036xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a037xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a038xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a039xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a040xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a041xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a042xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a043xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a044xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a045xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a046xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a047xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a048xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a049xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a050xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a051xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a052xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a053xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a054xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a055xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a056xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a057xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a058xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a059xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a060xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a061xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a062xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a063xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a064xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a065xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a066xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a067xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a068xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a069xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a070xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a071xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a072xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a073xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a074xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a075xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a076xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a077xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a078xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a079xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a080xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a081xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a082xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a083xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a084xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a085xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a086xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a087xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a088xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a089xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a090xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a091xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a092xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a093xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a094xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a095xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a096xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a097xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a098xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a099xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a100xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a101xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a102xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a103xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a104xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a105xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a106xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a107xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a108xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a109xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a110xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a111xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a112xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a113xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a114xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a115xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a116xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a117xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a118xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a119xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a120xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a121xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a122xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a123xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a124xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a125xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a126xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a127xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a128xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a129xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a130xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a131xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a132xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a133xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a134xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a135xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a136xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a137xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a138xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a139xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a140xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a141xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a142xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a143xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a144xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a145xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a146xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a147xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a148xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a149xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a150xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a151xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a152xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a153xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a154xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a155xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a156xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a157xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a158xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a159xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a160xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a161xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a162xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a163xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a164xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a165xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a166xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a167xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a168xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a169xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a170xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a171xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a172xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a173xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a174xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a175xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a176xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a177xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a178xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a179xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a180xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a181xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a182xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a183xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a184xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a185xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a186xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a187xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a188xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a189xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a190xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a191xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a192xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a193xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a194xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a195xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a196xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a197xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a198xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a199xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a200xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a201xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a202xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a203xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a204xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a205xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a206xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a207xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a208xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a209xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a210xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a211xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a212xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a213xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a214xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a215xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a216xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a217xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a218xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a219xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a220xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a221xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a222xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a223xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a224xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a225xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a226xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a227xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a228xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a229xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a230xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a231xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a232xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a233xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a234xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a235xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a236xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a237xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a238xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a239xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a240xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a241xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a242xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a243xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a244xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a245xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a246xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a247xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a248xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a249xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a250xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a251xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a252xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a253xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a254xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+       "a255xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      ],
+      "block": [
+       "b000xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b001xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b002xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b003xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b004xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b005xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b006xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b007xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b008xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b009xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b010xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b011xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b012xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b013xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b014xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b015xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b016xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b017xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b018xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b019xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b020xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b021xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b022xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b023xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b024xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b025xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b026xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b027xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b028xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b029xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b030xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b031xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b032xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b033xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b034xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b035xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b036xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b037xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b038xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b039xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b040xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b041xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b042xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b043xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b044xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b045xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b046xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b047xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b048xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b049xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b050xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b051xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b052xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b053xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b054xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b055xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b056xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b057xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b058xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b059xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b060xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b061xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b062xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b063xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b064xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b065xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b066xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b067xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b068xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b069xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b070xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b071xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b072xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b073xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b074xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b075xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b076xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b077xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b078xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b079xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b080xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b081xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b082xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b083xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b084xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b085xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b086xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b087xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b088xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b089xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b090xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b091xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b092xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b093xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b094xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b095xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b096xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b097xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b098xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b099xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b100xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b101xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b102xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b103xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b104xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b105xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b106xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b107xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b108xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b109xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b110xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b111xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b112xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b113xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b114xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b115xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b116xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b117xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b118xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b119xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b120xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b121xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b122xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b123xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b124xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b125xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b126xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b127xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b128xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b129xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b130xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b131xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b132xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b133xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b134xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b135xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b136xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b137xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b138xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b139xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b140xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b141xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b142xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b143xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b144xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b145xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b146xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b147xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b148xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b149xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b150xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b151xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b152xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b153xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b154xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b155xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b156xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b157xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b158xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b159xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b160xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b161xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b162xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b163xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b164xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b165xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b166xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b167xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b168xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b169xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b170xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b171xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b172xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b173xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b174xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b175xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b176xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b177xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b178xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b179xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b180xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b181xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b182xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b183xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b184xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b185xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b186xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b187xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b188xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b189xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b190xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b191xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b192xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b193xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b194xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b195xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b196xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b197xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b198xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b199xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b200xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b201xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b202xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b203xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b204xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b205xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b206xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b207xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b208xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b209xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b210xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b211xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b212xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b213xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b214xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b215xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b216xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b217xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b218xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b219xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b220xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b221xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b222xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b223xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b224xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b225xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b226xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b227xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b228xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b229xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b230xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b231xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b232xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b233xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b234xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b235xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b236xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b237xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b238xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b239xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b240xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b241xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b242xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b243xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b244xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b245xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b246xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b247xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b248xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b249xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b250xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b251xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b252xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b253xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b254xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000",
+       "b255xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@1000.1000.1000"
+      ]
+     },
+     "ceiling": [
+      "git_push",
+      "network",
+      "pty",
+      "serve_http",
+      "spawn_agent"
+     ],
+     "markets": [
+      {
+       "class": "company",
+       "keys": [
+        "BCejTh71Baqz1ZiwUP6MfSMzpAhmNCYgRu7diVR6q7r10oB62H52URuEgZq1cS22QE5nE1ng5c-97yvbCheugys",
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt/m00"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BCejTh71Baqz1ZiwUP6MfSMzpAhmNCYgRu7diVR6q7r10oB62H52URuEgZq1cS22QE5nE1ng5c-97yvbCheugys",
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt/m01"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BCejTh71Baqz1ZiwUP6MfSMzpAhmNCYgRu7diVR6q7r10oB62H52URuEgZq1cS22QE5nE1ng5c-97yvbCheugys",
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt/m02"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BCejTh71Baqz1ZiwUP6MfSMzpAhmNCYgRu7diVR6q7r10oB62H52URuEgZq1cS22QE5nE1ng5c-97yvbCheugys",
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt/m03"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BCejTh71Baqz1ZiwUP6MfSMzpAhmNCYgRu7diVR6q7r10oB62H52URuEgZq1cS22QE5nE1ng5c-97yvbCheugys",
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt/m04"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BCejTh71Baqz1ZiwUP6MfSMzpAhmNCYgRu7diVR6q7r10oB62H52URuEgZq1cS22QE5nE1ng5c-97yvbCheugys",
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt/m05"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BCejTh71Baqz1ZiwUP6MfSMzpAhmNCYgRu7diVR6q7r10oB62H52URuEgZq1cS22QE5nE1ng5c-97yvbCheugys",
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt/m06"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BCejTh71Baqz1ZiwUP6MfSMzpAhmNCYgRu7diVR6q7r10oB62H52URuEgZq1cS22QE5nE1ng5c-97yvbCheugys",
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt/m07"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BCejTh71Baqz1ZiwUP6MfSMzpAhmNCYgRu7diVR6q7r10oB62H52URuEgZq1cS22QE5nE1ng5c-97yvbCheugys",
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt/m08"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BCejTh71Baqz1ZiwUP6MfSMzpAhmNCYgRu7diVR6q7r10oB62H52URuEgZq1cS22QE5nE1ng5c-97yvbCheugys",
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt/m09"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BCejTh71Baqz1ZiwUP6MfSMzpAhmNCYgRu7diVR6q7r10oB62H52URuEgZq1cS22QE5nE1ng5c-97yvbCheugys",
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt/m10"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BCejTh71Baqz1ZiwUP6MfSMzpAhmNCYgRu7diVR6q7r10oB62H52URuEgZq1cS22QE5nE1ng5c-97yvbCheugys",
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt/m11"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BCejTh71Baqz1ZiwUP6MfSMzpAhmNCYgRu7diVR6q7r10oB62H52URuEgZq1cS22QE5nE1ng5c-97yvbCheugys",
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt/m12"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BCejTh71Baqz1ZiwUP6MfSMzpAhmNCYgRu7diVR6q7r10oB62H52URuEgZq1cS22QE5nE1ng5c-97yvbCheugys",
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt/m13"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BCejTh71Baqz1ZiwUP6MfSMzpAhmNCYgRu7diVR6q7r10oB62H52URuEgZq1cS22QE5nE1ng5c-97yvbCheugys",
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt/m14"
+      },
+      {
+       "class": "company",
+       "keys": [
+        "BCejTh71Baqz1ZiwUP6MfSMzpAhmNCYgRu7diVR6q7r10oB62H52URuEgZq1cS22QE5nE1ng5c-97yvbCheugys",
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt/m15"
+      }
+     ]
+    }
+   },
+   "check": "policy",
+   "expect": {
+    "ok": true,
+    "policy_hash": "65PqUy1WE091rxZJWfJHSw4DfuCxpzSc6k48uo_Jc8k"
+   },
+   "name": "policy_max_size"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    },
+    "req": {
+     "capabilities": [
+      "network"
+     ],
+     "id": "github",
+     "index_key": null,
+     "market_url": "https://github.com/severinlindenmann/orch-marketplace",
+     "publisher_key": null,
+     "stage": "install",
+     "version": "1.2.0"
+    }
+   },
+   "check": "evaluate",
+   "expect": {
+    "ok": true
+   },
+   "name": "eval_default_official_ok"
+  },
+  {
+   "args": {
+    "policy": null,
+    "req": {
+     "capabilities": [],
+     "id": "github",
+     "index_key": null,
+     "market_url": "https://github.com/severinlindenmann/orch-marketplace",
+     "publisher_key": null,
+     "stage": "install",
+     "version": "1.2.0"
+    }
+   },
+   "check": "evaluate",
+   "expect": {
+    "error": "market.not_allowed"
+   },
+   "name": "eval_policy_unreadable"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "extra": 1,
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    },
+    "req": {
+     "capabilities": [],
+     "id": "github",
+     "index_key": null,
+     "market_url": "https://github.com/severinlindenmann/orch-marketplace",
+     "publisher_key": null,
+     "stage": "install",
+     "version": "1.2.0"
+    }
+   },
+   "check": "evaluate",
+   "expect": {
+    "error": "market.not_allowed"
+   },
+   "name": "eval_policy_malformed"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "markets": []
+    },
+    "req": {
+     "capabilities": [],
+     "id": "github",
+     "index_key": null,
+     "market_url": "https://github.com/severinlindenmann/orch-marketplace",
+     "publisher_key": null,
+     "stage": "install",
+     "version": "1.2.0"
+    }
+   },
+   "check": "evaluate",
+   "expect": {
+    "error": "market.not_allowed"
+   },
+   "name": "eval_official_not_listed"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    },
+    "req": {
+     "capabilities": [],
+     "id": "github",
+     "index_key": "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns",
+     "market_url": "https://git.acme.example/tools/orch-market",
+     "publisher_key": "BCejTh71Baqz1ZiwUP6MfSMzpAhmNCYgRu7diVR6q7r10oB62H52URuEgZq1cS22QE5nE1ng5c-97yvbCheugys",
+     "stage": "install",
+     "version": "1.2.0"
+    }
+   },
+   "check": "evaluate",
+   "expect": {
+    "error": "market.not_allowed"
+   },
+   "name": "eval_company_not_listed"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "company",
+       "keys": [
+        "BCejTh71Baqz1ZiwUP6MfSMzpAhmNCYgRu7diVR6q7r10oB62H52URuEgZq1cS22QE5nE1ng5c-97yvbCheugys",
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/tools/orch-market"
+      },
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    },
+    "req": {
+     "capabilities": [],
+     "id": "github",
+     "index_key": "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns",
+     "market_url": "https://github.com/someone/market",
+     "publisher_key": "BCejTh71Baqz1ZiwUP6MfSMzpAhmNCYgRu7diVR6q7r10oB62H52URuEgZq1cS22QE5nE1ng5c-97yvbCheugys",
+     "stage": "install",
+     "version": "1.2.0"
+    }
+   },
+   "check": "evaluate",
+   "expect": {
+    "error": "market.not_allowed"
+   },
+   "name": "eval_other_url_never_allowed"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "company",
+       "keys": [
+        "BCejTh71Baqz1ZiwUP6MfSMzpAhmNCYgRu7diVR6q7r10oB62H52URuEgZq1cS22QE5nE1ng5c-97yvbCheugys",
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/tools/orch-market"
+      },
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    },
+    "req": {
+     "capabilities": [],
+     "id": "acme-tool",
+     "index_key": "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns",
+     "market_url": "https://git.acme.example/tools/orch-market",
+     "publisher_key": "BCejTh71Baqz1ZiwUP6MfSMzpAhmNCYgRu7diVR6q7r10oB62H52URuEgZq1cS22QE5nE1ng5c-97yvbCheugys",
+     "stage": "install",
+     "version": "1.2.0"
+    }
+   },
+   "check": "evaluate",
+   "expect": {
+    "ok": true
+   },
+   "name": "eval_company_ok"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "company",
+       "keys": [
+        "BCejTh71Baqz1ZiwUP6MfSMzpAhmNCYgRu7diVR6q7r10oB62H52URuEgZq1cS22QE5nE1ng5c-97yvbCheugys",
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/tools/orch-market"
+      },
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    },
+    "req": {
+     "capabilities": [],
+     "id": "github",
+     "index_key": null,
+     "market_url": "https://git.acme.example/tools/orch-market",
+     "publisher_key": "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns",
+     "stage": "install",
+     "version": "1.2.0"
+    }
+   },
+   "check": "evaluate",
+   "expect": {
+    "error": "market.index_unsigned"
+   },
+   "name": "eval_company_index_unsigned"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "company",
+       "keys": [
+        "BCejTh71Baqz1ZiwUP6MfSMzpAhmNCYgRu7diVR6q7r10oB62H52URuEgZq1cS22QE5nE1ng5c-97yvbCheugys",
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/tools/orch-market"
+      },
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    },
+    "req": {
+     "capabilities": [],
+     "id": "github",
+     "index_key": "BMw6sSHtXsD4XiAl4_-dVjUbVsY5psaD0T6leF7Qr3PK7zBc5c2wsrcfZcE8h-KkYavBxOJg6fb-MTDjEloefSo",
+     "market_url": "https://git.acme.example/tools/orch-market",
+     "publisher_key": "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns",
+     "stage": "install",
+     "version": "1.2.0"
+    }
+   },
+   "check": "evaluate",
+   "expect": {
+    "error": "market.index_unsigned"
+   },
+   "name": "eval_company_index_other_key"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "company",
+       "keys": [
+        "BCejTh71Baqz1ZiwUP6MfSMzpAhmNCYgRu7diVR6q7r10oB62H52URuEgZq1cS22QE5nE1ng5c-97yvbCheugys",
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/tools/orch-market"
+      },
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    },
+    "req": {
+     "capabilities": [],
+     "id": "github",
+     "index_key": "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns",
+     "market_url": "https://git.acme.example/tools/orch-market",
+     "publisher_key": null,
+     "stage": "install",
+     "version": "1.2.0"
+    }
+   },
+   "check": "evaluate",
+   "expect": {
+    "error": "market.publisher_unpinned"
+   },
+   "name": "eval_company_publisher_unsigned"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "company",
+       "keys": [
+        "BCejTh71Baqz1ZiwUP6MfSMzpAhmNCYgRu7diVR6q7r10oB62H52URuEgZq1cS22QE5nE1ng5c-97yvbCheugys",
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/tools/orch-market"
+      },
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    },
+    "req": {
+     "capabilities": [],
+     "id": "github",
+     "index_key": "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns",
+     "market_url": "https://git.acme.example/tools/orch-market",
+     "publisher_key": "BMw6sSHtXsD4XiAl4_-dVjUbVsY5psaD0T6leF7Qr3PK7zBc5c2wsrcfZcE8h-KkYavBxOJg6fb-MTDjEloefSo",
+     "stage": "install",
+     "version": "1.2.0"
+    }
+   },
+   "check": "evaluate",
+   "expect": {
+    "error": "market.publisher_unpinned"
+   },
+   "name": "eval_company_publisher_other_key"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": [
+       "github"
+      ]
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    },
+    "req": {
+     "capabilities": [],
+     "id": "github",
+     "index_key": null,
+     "market_url": "https://github.com/severinlindenmann/orch-marketplace",
+     "publisher_key": null,
+     "stage": "install",
+     "version": "1.2.0"
+    }
+   },
+   "check": "evaluate",
+   "expect": {
+    "error": "market.blocked"
+   },
+   "name": "eval_blocked_id"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": [
+       "github@1.2.0"
+      ]
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    },
+    "req": {
+     "capabilities": [],
+     "id": "github",
+     "index_key": null,
+     "market_url": "https://github.com/severinlindenmann/orch-marketplace",
+     "publisher_key": null,
+     "stage": "install",
+     "version": "1.2.0"
+    }
+   },
+   "check": "evaluate",
+   "expect": {
+    "error": "market.blocked"
+   },
+   "name": "eval_blocked_id_version"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": [
+       "github@1.1.0"
+      ]
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    },
+    "req": {
+     "capabilities": [],
+     "id": "github",
+     "index_key": null,
+     "market_url": "https://github.com/severinlindenmann/orch-marketplace",
+     "publisher_key": null,
+     "stage": "install",
+     "version": "1.2.0"
+    }
+   },
+   "check": "evaluate",
+   "expect": {
+    "ok": true
+   },
+   "name": "eval_block_other_version_ok"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": [
+       "git"
+      ]
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    },
+    "req": {
+     "capabilities": [],
+     "id": "github",
+     "index_key": null,
+     "market_url": "https://github.com/severinlindenmann/orch-marketplace",
+     "publisher_key": null,
+     "stage": "install",
+     "version": "1.2.0"
+    }
+   },
+   "check": "evaluate",
+   "expect": {
+    "ok": true
+   },
+   "name": "eval_block_prefix_not_match"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": [
+       "github"
+      ],
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    },
+    "req": {
+     "capabilities": [],
+     "id": "github",
+     "index_key": null,
+     "market_url": "https://github.com/severinlindenmann/orch-marketplace",
+     "publisher_key": null,
+     "stage": "install",
+     "version": "1.2.0"
+    }
+   },
+   "check": "evaluate",
+   "expect": {
+    "ok": true
+   },
+   "name": "eval_allow_listed_ok"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": [
+       "landing"
+      ],
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    },
+    "req": {
+     "capabilities": [],
+     "id": "github",
+     "index_key": null,
+     "market_url": "https://github.com/severinlindenmann/orch-marketplace",
+     "publisher_key": null,
+     "stage": "install",
+     "version": "1.2.0"
+    }
+   },
+   "check": "evaluate",
+   "expect": {
+    "error": "market.addon_not_allowed"
+   },
+   "name": "eval_allow_not_listed"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": [],
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    },
+    "req": {
+     "capabilities": [],
+     "id": "github",
+     "index_key": null,
+     "market_url": "https://github.com/severinlindenmann/orch-marketplace",
+     "publisher_key": null,
+     "stage": "install",
+     "version": "1.2.0"
+    }
+   },
+   "check": "evaluate",
+   "expect": {
+    "error": "market.addon_not_allowed"
+   },
+   "name": "eval_allow_empty"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": [
+      "network",
+      "pty"
+     ],
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    },
+    "req": {
+     "capabilities": [
+      "network"
+     ],
+     "id": "github",
+     "index_key": null,
+     "market_url": "https://github.com/severinlindenmann/orch-marketplace",
+     "publisher_key": null,
+     "stage": "install",
+     "version": "1.2.0"
+    }
+   },
+   "check": "evaluate",
+   "expect": {
+    "ok": true
+   },
+   "name": "eval_ceiling_ok"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": [
+      "pty"
+     ],
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    },
+    "req": {
+     "capabilities": [
+      "network",
+      "pty"
+     ],
+     "id": "github",
+     "index_key": null,
+     "market_url": "https://github.com/severinlindenmann/orch-marketplace",
+     "publisher_key": null,
+     "stage": "install",
+     "version": "1.2.0"
+    }
+   },
+   "check": "evaluate",
+   "expect": {
+    "error": "market.capability_ceiling"
+   },
+   "name": "eval_ceiling_exceeded"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": [],
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    },
+    "req": {
+     "capabilities": [],
+     "id": "github",
+     "index_key": null,
+     "market_url": "https://github.com/severinlindenmann/orch-marketplace",
+     "publisher_key": null,
+     "stage": "install",
+     "version": "1.2.0"
+    }
+   },
+   "check": "evaluate",
+   "expect": {
+    "ok": true
+   },
+   "name": "eval_ceiling_empty_no_caps_ok"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": [],
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    },
+    "req": {
+     "capabilities": [
+      "pty"
+     ],
+     "id": "github",
+     "index_key": null,
+     "market_url": "https://github.com/severinlindenmann/orch-marketplace",
+     "publisher_key": null,
+     "stage": "install",
+     "version": "1.2.0"
+    }
+   },
+   "check": "evaluate",
+   "expect": {
+    "error": "market.capability_ceiling"
+   },
+   "name": "eval_ceiling_empty_refuses_any"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": [
+       "github"
+      ]
+     },
+     "ceiling": [],
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    },
+    "req": {
+     "capabilities": [
+      "network"
+     ],
+     "id": "github",
+     "index_key": null,
+     "market_url": "https://github.com/severinlindenmann/orch-marketplace",
+     "publisher_key": null,
+     "stage": "install",
+     "version": "1.2.0"
+    }
+   },
+   "check": "evaluate",
+   "expect": {
+    "error": "market.blocked"
+   },
+   "name": "eval_order_blocked_before_ceiling"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": [
+       "github"
+      ]
+     },
+     "ceiling": null,
+     "markets": []
+    },
+    "req": {
+     "capabilities": [],
+     "id": "github",
+     "index_key": null,
+     "market_url": "https://github.com/severinlindenmann/orch-marketplace",
+     "publisher_key": null,
+     "stage": "install",
+     "version": "1.2.0"
+    }
+   },
+   "check": "evaluate",
+   "expect": {
+    "error": "market.not_allowed"
+   },
+   "name": "eval_order_not_allowed_before_blocked"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": [],
+     "markets": [
+      {
+       "class": "company",
+       "keys": [
+        "BCejTh71Baqz1ZiwUP6MfSMzpAhmNCYgRu7diVR6q7r10oB62H52URuEgZq1cS22QE5nE1ng5c-97yvbCheugys",
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/tools/orch-market"
+      },
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    },
+    "req": {
+     "capabilities": [
+      "network"
+     ],
+     "id": "github",
+     "index_key": "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns",
+     "market_url": "https://git.acme.example/tools/orch-market",
+     "publisher_key": "BMw6sSHtXsD4XiAl4_-dVjUbVsY5psaD0T6leF7Qr3PK7zBc5c2wsrcfZcE8h-KkYavBxOJg6fb-MTDjEloefSo",
+     "stage": "install",
+     "version": "1.2.0"
+    }
+   },
+   "check": "evaluate",
+   "expect": {
+    "error": "market.publisher_unpinned"
+   },
+   "name": "eval_order_unpinned_before_ceiling"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": [
+       "x"
+      ],
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "company",
+       "keys": [
+        "BCejTh71Baqz1ZiwUP6MfSMzpAhmNCYgRu7diVR6q7r10oB62H52URuEgZq1cS22QE5nE1ng5c-97yvbCheugys",
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/tools/orch-market"
+      },
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    },
+    "req": {
+     "capabilities": [],
+     "id": "github",
+     "index_key": "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns",
+     "market_url": "https://git.acme.example/tools/orch-market",
+     "publisher_key": "BMw6sSHtXsD4XiAl4_-dVjUbVsY5psaD0T6leF7Qr3PK7zBc5c2wsrcfZcE8h-KkYavBxOJg6fb-MTDjEloefSo",
+     "stage": "install",
+     "version": "1.2.0"
+    }
+   },
+   "check": "evaluate",
+   "expect": {
+    "error": "market.addon_not_allowed"
+   },
+   "name": "eval_order_allow_before_unpinned"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": [
+      "pty"
+     ],
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    },
+    "req": {
+     "capabilities": [
+      "network"
+     ],
+     "id": "github",
+     "index_key": null,
+     "market_url": "https://github.com/severinlindenmann/orch-marketplace",
+     "publisher_key": null,
+     "stage": "grant",
+     "version": "1.2.0"
+    }
+   },
+   "check": "evaluate",
+   "expect": {
+    "error": "market.capability_ceiling"
+   },
+   "name": "eval_grant_ceiling_rechecked"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": [
+       "github"
+      ]
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    },
+    "req": {
+     "capabilities": [],
+     "id": "github",
+     "index_key": null,
+     "market_url": "https://github.com/severinlindenmann/orch-marketplace",
+     "publisher_key": null,
+     "stage": "grant",
+     "version": "1.2.0"
+    }
+   },
+   "check": "evaluate",
+   "expect": {
+    "error": "market.blocked"
+   },
+   "name": "eval_grant_blocked_rechecked"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": [
+       "terminals"
+      ]
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    },
+    "req": {
+     "capabilities": [],
+     "id": "terminals",
+     "index_key": null,
+     "market_url": "",
+     "publisher_key": null,
+     "stage": "run",
+     "version": "0.3.0"
+    }
+   },
+   "check": "evaluate",
+   "expect": {
+    "error": "market.blocked"
+   },
+   "name": "eval_run_blocked_builtin"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": [],
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    },
+    "req": {
+     "capabilities": [
+      "pty"
+     ],
+     "id": "terminals",
+     "index_key": null,
+     "market_url": "",
+     "publisher_key": null,
+     "stage": "run",
+     "version": "1.2.0"
+    }
+   },
+   "check": "evaluate",
+   "expect": {
+    "error": "market.capability_ceiling"
+   },
+   "name": "eval_run_over_ceiling"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    },
+    "req": {
+     "capabilities": [
+      "pty"
+     ],
+     "id": "terminals",
+     "index_key": null,
+     "market_url": "",
+     "publisher_key": null,
+     "stage": "run",
+     "version": "1.2.0"
+    }
+   },
+   "check": "evaluate",
+   "expect": {
+    "ok": true
+   },
+   "name": "eval_run_unblocked_ok"
+  },
+  {
+   "args": {
+    "policy": null,
+    "req": {
+     "capabilities": [],
+     "id": "terminals",
+     "index_key": null,
+     "market_url": "",
+     "publisher_key": null,
+     "stage": "run",
+     "version": "1.2.0"
+    }
+   },
+   "check": "evaluate",
+   "expect": {
+    "error": "market.not_allowed"
+   },
+   "name": "eval_run_policy_unreadable"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    },
+    "req": {
+     "capabilities": [],
+     "id": "acme-tool",
+     "index_key": null,
+     "market_url": "https://git.acme.example/tools/orch-market",
+     "publisher_key": null,
+     "stage": "run",
+     "version": "1.2.0"
+    }
+   },
+   "check": "evaluate",
+   "expect": {
+    "error": "market.not_allowed"
+   },
+   "name": "eval_run_company_market_removed"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "company",
+       "keys": [
+        "BCejTh71Baqz1ZiwUP6MfSMzpAhmNCYgRu7diVR6q7r10oB62H52URuEgZq1cS22QE5nE1ng5c-97yvbCheugys",
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/tools/orch-market"
+      },
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    },
+    "req": {
+     "capabilities": [],
+     "id": "acme-tool",
+     "index_key": null,
+     "market_url": "https://git.acme.example/tools/orch-market",
+     "publisher_key": null,
+     "stage": "run",
+     "version": "1.2.0"
+    }
+   },
+   "check": "evaluate",
+   "expect": {
+    "ok": true
+   },
+   "name": "eval_run_company_market_listed_ok"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "markets": []
+    },
+    "req": {
+     "capabilities": [],
+     "id": "github",
+     "index_key": null,
+     "market_url": "https://github.com/severinlindenmann/orch-marketplace",
+     "publisher_key": null,
+     "stage": "run",
+     "version": "1.2.0"
+    }
+   },
+   "check": "evaluate",
+   "expect": {
+    "error": "market.not_allowed"
+   },
+   "name": "eval_run_official_market_removed"
+  }
+ ],
+ "comment": "D14 orch-core#927, design-d14.md. FAKE keys (seed = SHA-256('FAKE orch v2 test vector: hub/' || name)). check=policy: the validator (ok + policy_hash, or malformed). check=evaluate: the hub-policy steps of the install flow; policy null = unreadable; index_key/publisher_key = the key whose signature verified (null = none); signature checks themselves are the marketplace vectors' job.",
+ "default_policy": {
+  "addons": {
+   "allow": null,
+   "block": []
+  },
+  "ceiling": null,
+  "markets": [
+   {
+    "class": "official",
+    "keys": [],
+    "url": "https://github.com/severinlindenmann/orch-marketplace"
+   }
+  ]
+ },
+ "format": "orch.hub-policy/1 vectors",
+ "hash_label": "orch/v2/hub-market-policy|",
+ "keys": {
+  "attacker": "BMw6sSHtXsD4XiAl4_-dVjUbVsY5psaD0T6leF7Qr3PK7zBc5c2wsrcfZcE8h-KkYavBxOJg6fb-MTDjEloefSo",
+  "company_1": "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns",
+  "company_2": "BCejTh71Baqz1ZiwUP6MfSMzpAhmNCYgRu7diVR6q7r10oB62H52URuEgZq1cS22QE5nE1ng5c-97yvbCheugys",
+  "company_3": "BGwzK0_5TTeTK2OY6qUNlVRZe5WIYpx--32RlO2gX5LMCg2r0LghKuhJ1Szxq8nrso67y-DmuJTmYXu6mbbDLOY"
+ },
+ "limits": {
+  "ids": 256,
+  "keys": 2,
+  "markets": 16
+ },
+ "official_url": "https://github.com/severinlindenmann/orch-marketplace"
+}

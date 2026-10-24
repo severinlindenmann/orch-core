@@ -1013,9 +1013,9 @@ def test_c21_a_brief_store_lock_does_not_leave_one_click_unavailable(click, serv
 
 
 def test_device_remove_is_a_click_and_the_view_names_the_device(click, served, human, lab):
-    """#1198 C15: removing a device is a plain click; the View names the device, whose it is and what follows.
-    The device that signs the click itself is refused with its own plain reason (the lockout guard). The reader that fails the
-    readers condition may be removed by click: the rule runs on the state after the removal."""
+    """#1198 C15: removing a device is a plain click. The View names the device, whose it is and what follows. The device
+    that signs the click is refused with its own plain reason (the lockout guard). The reader that fails the readers
+    condition may be removed by click: the rule runs on the state after the removal."""
     member = lab.add_member()  # has not declared that it knows convenience signatures: it fails the readers rule
     other = member.device
     p = click.prepare("device.remove", {"device": other})

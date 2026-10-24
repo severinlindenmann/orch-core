@@ -37,8 +37,8 @@ class Link:
     def supports(self, op, cap="ops/1"):
         return op in self.answers
 
-    def call(self, op, args=None):
-        self.calls.append((op, args))
+    def call(self, op, args=None, **kw):
+        self.calls.append((op, args) if not kw else (op, args, kw))
         got = self.answers[op]
         if isinstance(got, Exception):
             raise got
@@ -205,7 +205,8 @@ def test_module_never_names_a_hub_write():
 
     src = Path(hub.__file__).read_text()
     calls = re.findall(r"\.call\(\s*\"([a-z_.]+)\"", src)
-    assert set(calls) <= {"hub.status", "share.rules", "share.preview"}
+    assert set(calls) <= {"hub.status", "share.rules", "share.preview", "hub.connect"}  # connect: C11's one write
+    assert src.count("write=True") == 1
     assert "hubclient" not in src and "import orch" not in src
 
 
@@ -225,3 +226,91 @@ def test_a_host_without_share_ops_degrades_instead_of_failing():
 def test_share_is_available_when_the_host_has_it():
     got = client(Link({"share.rules": RULES, "share.preview": PREVIEW})).get(f"/api/w/{WS}/hub/share").json()
     assert got["available"] is True
+
+
+# -- #1198 C11: the second half of a join by click --------------------------------------------------------------------
+
+HUB32 = "9f3c1ab277de40c8aa11bb22cc33dd44"
+CARD = '{"o": {"hub_id": "' + HUB32 + '"}, "sig": "x"}'
+IDEM = "a_01M5PVRB46WS3X8H5X2RQK04S9"
+
+
+class Auth:
+    def __init__(self, kind):
+        self.kind = kind
+
+    def login_kind(self, token):
+        return self.kind
+
+
+def connect_client(link, kind="local"):
+    app = FastAPI()
+    app.state.auth = Auth(kind)
+    hub.register(app, Gw(link))
+
+    @app.middleware("http")
+    async def token(request, call_next):
+        request.state.token = "t"
+        return await call_next(request)
+
+    @app.exception_handler(HostError)
+    def _(request, exc):
+        return host_response(exc)
+
+    return TestClient(app)
+
+
+def connect(c, **over):
+    return c.post(f"/api/w/{WS}/hub/connect", json={"idem": IDEM, "invite": "7QK2M9XD", "hub_card": CARD, **over})
+
+
+def test_connect_relays_the_invite_and_card_to_the_host_as_one_write():
+    link = Link({"hub.connect": {"hub_id": HUB32, "status": "bound", "mode": "selective", "binding_seq": 1}})
+    got = connect(connect_client(link))
+    assert got.status_code == 200 and got.json() == {"connected": True, "mode": "selective"}
+    assert link.calls == [
+        (
+            "hub.connect",
+            {"hub_card": {"o": {"hub_id": HUB32}, "sig": "x"}, "invite": "7QK2M9XD"},
+            {"write": True, "idem": IDEM},
+        )
+    ]
+    assert "7QK2M9XD" not in got.text  # the answer never repeats the invite
+
+
+def test_connect_strips_the_hub_id_of_a_full_invite_and_refuses_another_hubs():
+    link = Link({"hub.connect": {"mode": "selective"}})
+    c = connect_client(link)
+    assert connect(c, invite=f"{HUB32}:7QK2M9XD").status_code == 200
+    assert link.calls[0][1]["invite"] == "7QK2M9XD"
+    other = connect(c, invite="0" * 32 + ":7QK2M9XD")
+    assert other.status_code == 400 and len(link.calls) == 1  # nothing was sent
+
+
+def test_connect_is_for_a_dashboard_on_this_computer():
+    link = Link({"hub.connect": {"mode": "selective"}})
+    res = connect(connect_client(link, kind="remote"))
+    assert res.status_code in (403, 409) and link.calls == []
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"invite": "ab"},
+        {"invite": " 7QK2M9XD"},
+        {"hub_card": "not json"},
+        {"hub_card": "[]"},
+        {"idem": "x"},
+        {"extra": 1},
+    ],
+)
+def test_connect_refuses_malformed_bodies(over):
+    link = Link({"hub.connect": {"mode": "selective"}})
+    assert connect(connect_client(link), **over).status_code in (400, 422) and link.calls == []
+
+
+def test_connect_failure_is_the_hosts_own_answer_and_never_says_connected():
+    link = Link({"hub.connect": fail("hub.unreachable")})
+    res = connect(connect_client(link))
+    assert res.status_code >= 400 and "connected" not in res.text.lower().replace("not connected", "")
+    assert res.json()["error"]["code"] == "hub.unreachable"

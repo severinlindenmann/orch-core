@@ -137,3 +137,22 @@ describe('a hub step by click', () => {
     expect(screen.getByRole('button', { name: 'Sign and leave the hub' })).toBeInTheDocument()
   })
 })
+
+describe('the sticky sign bar', () => {
+  it('scrolls the dialog on focus so the field block ends above the bar', async () => {
+    mount()
+    const el = await input()
+    const block = screen.getByTestId('hub-backup')
+    const bar = screen.getByTestId('sign-footer')
+    const scroller = document.createElement('div')
+    Object.defineProperty(scroller, 'scrollHeight', { value: 900 })
+    Object.defineProperty(scroller, 'clientHeight', { value: 700 })
+    scroller.style.overflowY = 'auto'
+    block.closest('[data-testid="click-panel"]')!.parentElement!.parentElement!.appendChild(scroller)
+    scroller.appendChild(block.closest('[data-testid="click-panel"]')!)
+    block.getBoundingClientRect = () => ({ bottom: 760 }) as DOMRect
+    bar.getBoundingClientRect = () => ({ top: 690 }) as DOMRect
+    fireEvent.focus(el)
+    expect(scroller.scrollTop).toBe(78) // 760 - 690 + 8
+  })
+})

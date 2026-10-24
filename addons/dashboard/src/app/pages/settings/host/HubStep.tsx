@@ -22,9 +22,21 @@ export interface HubStepProps {
   doneText?: string
 }
 
+/** The sign bar sticks to the bottom of the dialog and would cover the help text under the field: scroll the dialog just
+ * far enough that the whole field block ends above the bar. Nothing changes for other sign panels. */
+function clearOfSignBar(block: HTMLElement | null) {
+  const bar = block?.closest('[data-testid="click-panel"]')?.querySelector('[data-testid="sign-footer"]')
+  if (!block || !bar) return
+  let scroller: HTMLElement | null = block.parentElement
+  while (scroller && !(scroller.scrollHeight > scroller.clientHeight && /auto|scroll/.test(getComputedStyle(scroller).overflowY))) scroller = scroller.parentElement
+  const over = block.getBoundingClientRect().bottom - bar.getBoundingClientRect().top + 8
+  if (scroller && over > 0) scroller.scrollTop += over
+}
+
 export function HubStep({ ws, action, onClose, onChanged, doneText }: HubStepProps) {
   const click = useClickSign(ws)
   const field = useRef<HTMLInputElement>(null)
+  const box = useRef<HTMLDivElement>(null)
   const started = useRef(false)
   const [filled, setFilled] = useState(false)
   const [sealing, setSealing] = useState(false)
@@ -85,7 +97,7 @@ export function HubStep({ ws, action, onClose, onChanged, doneText }: HubStepPro
           onSign={() => void sign()}
           onCancel={cancel}
           extra={
-            <div className="space-y-2" data-testid="hub-backup">
+            <div className="space-y-2" data-testid="hub-backup" ref={box}>
               <label className="block text-[13px] font-medium text-text" htmlFor="hub-backup-key">
                 <KeyRound className="mr-1 inline size-4" aria-hidden />Backup key (from setup)
               </label>
@@ -98,6 +110,7 @@ export function HubStep({ ws, action, onClose, onChanged, doneText }: HubStepPro
                 autoCapitalize="off"
                 spellCheck={false}
                 data-testid="hub-backup-input"
+                onFocus={() => clearOfSignBar(box.current)}
                 onChange={(e) => setFilled(e.currentTarget.value.trim().length > 0)}
                 className="min-h-11 w-full rounded-md border border-border bg-bg px-3 text-[14px] text-text"
                 aria-describedby="hub-backup-help"

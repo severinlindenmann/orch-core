@@ -14,11 +14,21 @@ export function useHub(ws?: string) {
 }
 /** Is One click on in this workspace? `unknown` until the signer answers (or when it cannot): never guessed. */
 export type OneClick = 'on' | 'off' | 'unknown' | 'checking'
+function useClickCard(ws: string) {
+  return useQuery({ queryKey: ['click-status', ws], queryFn: () => api.clickStatus(ws), retry: false })
+}
 export function useOneClick(ws: string): OneClick {
-  const status = useQuery({ queryKey: ['click-status', ws], queryFn: () => api.clickStatus(ws), retry: false })
+  const status = useClickCard(ws)
   if (status.isPending) return 'checking'
   if (!status.data) return 'unknown'
   return status.data.enabled && status.data.available ? 'on' : 'off'
+}
+/** May the person switch this workspace to full hub mode? The host refuses it while One click is on or the key is in
+ * One click custody (human.py refuse_full_while_click_on), in a terminal too: only One click off with the key under a
+ * passphrase works. Not known counts as no. */
+export function useFullAllowed(ws: string): boolean {
+  const card = useClickCard(ws).data
+  return !!card && !card.enabled && card.custody === 'passphrase'
 }
 /** After a hub step is signed: read the hub state again (the page behind the dialog changes). */
 export function useHubRefresh(ws: string) {
@@ -27,6 +37,9 @@ export function useHubRefresh(ws: string) {
 }
 export function SettingsLink({ children }: { children: ReactNode }) {
   return <Link to="/settings/$tab" params={{ tab: 'general' }} className="underline" data-testid="hub-settings-link">{children}</Link>
+}
+export function StrictNeeds({ testId }: { testId?: string }) {
+  return <p data-testid={testId}>Strict hub mode needs One click off and your key back under a passphrase. Do that first in <SettingsLink>Settings</SettingsLink>.</p>
 }
 /** Shown instead of a click step when One click is not on: say so plainly and offer the honest way on. */
 export function NoOneClick({ state, what, children }: { state: OneClick; what: string; children?: ReactNode }) {

@@ -1,5 +1,6 @@
 // A simulated hub for the mockup and its tests (V3 A7). Scenario by address: `?hub=standalone|selective|full|offline|nottold`
-// (kept for the tab). Everything is read-only here: like the real pages, changes are Terminal commands, never done in the page.
+// (kept for the tab). Reads are fixed by the scenario. Share and mode changes are Terminal commands (`hub/command`); a
+// join and a leave are signed by One click with the backup key and change the scenario (see the click routes below).
 import type { HubCommand, HubCommandRequest, HubPreview, HubRule, HubShare, HubStatus } from '@/api/hub'
 import { BACKUP_KEY_LINE, CLICK_RISK, type ClickViewAnswer } from '@/api/click'
 import { fail, ok, type MockRouter } from './router'
@@ -121,9 +122,14 @@ export function registerHubRoutes(r: MockRouter) {
 // The One click path of the hub pages (#1198 C11), for the mockup and tests: prepare, review and sign a hub join or leave
 // with a backup key. The key is sealed by the page for real; this mock has no private half and never opens it.
 let oneClickOn = true
-/** Tests and the dev switch: is One click on in the mock workspace? */
+let connectError: string | null = null
+/** Tests and the dev switch: is One click on in the mock workspace? (Off means the key is back under a passphrase.) */
 export const setMockOneClick = (on: boolean) => {
   oneClickOn = on
+}
+/** Tests: make the hub refuse the connect after a join (the host's plain message). `null`: it works. */
+export const setMockConnectError = (message: string | null) => {
+  connectError = message
 }
 const SIGNER_PK = 'BABS9E022fzn3B-vMJGezPNuQW1z-oyas3W9A_ddxudSTZvCUQxuuTtcP1R8LE_ZJ7UrTnxyss6LZ8YgRK_YMpU' // a fixed public point
 const open = new Map<string, { op: 'hub.join' | 'hub.leave'; hubId: string }>()
@@ -144,7 +150,7 @@ function mockView(ws: string, id: string): ClickViewAnswer | null {
 }
 
 export function registerHubClickRoutes(r: MockRouter) {
-  r.add('GET', '/api/w/:ws/click/status', () => ok({ custody: 'convenience', enabled: oneClickOn, available: true, switchable: true }))
+  r.add('GET', '/api/w/:ws/click/status', () => ok({ custody: oneClickOn ? 'convenience' : 'passphrase', enabled: oneClickOn, available: true, switchable: true }))
   r.add('POST', '/api/w/:ws/click/prepare', (_s, c) => {
     const b = c.body as { action?: string; hub_id?: string } | null
     if (!oneClickOn) return fail(409, 'human.click_refused', 'One click is off in this workspace.')
@@ -170,6 +176,12 @@ export function registerHubClickRoutes(r: MockRouter) {
     const id = (c.body as { request_id?: string } | null)?.request_id ?? ''
     open.delete(id)
     return ok({ id, state: 'cancelled' })
+  })
+  r.add('POST', '/api/w/:ws/hub/connect', (_s, c) => {
+    const b = c.body as { invite?: string; hub_card?: string } | null
+    if (!b?.invite || !b.hub_card) return fail(400, 'invalid.input', 'Needs an invite and a card.')
+    if (connectError) return fail(502, 'hub.unreachable', connectError, undefined, true)
+    return ok({ connected: true, mode: 'selective' })
   })
   r.add('POST', '/api/w/:ws/click/state', (_s, c) => ok({ id: (c.body as { request_id?: string } | null)?.request_id ?? '', state: 'prepared' }))
 }

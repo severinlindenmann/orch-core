@@ -207,7 +207,7 @@ class WorkspaceService:
                 load="lazy",
                 # C3b 15.3: a dev host serves sandbox workspaces only (11A.17.2 check 4), so its replay may verify dev
                 # hub material; a normal host never does
-                hub_dev=getattr(self, "dev", None) is not None,
+                hub_dev=getattr(self, "dev", None) is not None and not getattr(self.dev, "pending", False),
             )
         except (HostError, StoreError, OSError, ValueError, KeyError) as exc:
             self._unavailable(f"{getattr(exc, 'code', type(exc).__name__)}: {exc}")

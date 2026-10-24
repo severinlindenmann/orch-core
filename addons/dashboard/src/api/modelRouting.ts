@@ -1,10 +1,9 @@
-// Model routing of a real host: which model each Start agent mode starts on, per agent. The lists come from the
-// dashboard server (core's closed lists, `GET /model-routing`); the choice itself is a signed settings change
-// (`models_set`, the typed word). Real host only (the mockup keeps its own `models` add-on).
+// The models a start can name, per agent. The lists come from the dashboard server (core's closed lists,
+// `GET /model-routing`). Which model an add-on that holds `choose_model` picks is core's answer in the start preview.
 
 import { queryOptions } from '@tanstack/react-query'
 import { call } from './runs'
-import type { AgentMode, Harness } from './agents'
+import type { Harness } from './agents'
 
 export interface ModelChoice {
   id: string
@@ -12,10 +11,7 @@ export interface ModelChoice {
 }
 export interface RoutingChoices {
   harnesses: { id: Harness; label: string; models: ModelChoice[] }[]
-  modes: { id: AgentMode; label: string }[]
 }
-/** The signed table: agent -> mode -> model. A mode that is not named uses the agent's own default. */
-export type ModelTable = Partial<Record<Harness, Partial<Record<AgentMode, string>>>>
 
 export const routingApi = {
   choices: (ws: string) => call<RoutingChoices>('GET', `/api/w/${encodeURIComponent(ws)}/model-routing`),
@@ -33,13 +29,3 @@ export function modelLabel(choices: RoutingChoices | undefined, harness: Harness
 
 /** The models offered as a failing task's stronger choice, in order of preference (a suggestion only, never automatic). */
 export const STRONG_MODELS: Partial<Record<Harness, string[]>> = { 'claude-code': ['fable', 'opus'], codex: ['gpt-5.4'] }
-
-/** A table without empty cells, or `{}` when nothing is chosen (which clears the setting). */
-export function cleanTable(t: ModelTable): ModelTable {
-  const out: ModelTable = {}
-  for (const [h, per] of Object.entries(t) as [Harness, Partial<Record<AgentMode, string>>][]) {
-    const kept = Object.fromEntries(Object.entries(per ?? {}).filter(([, m]) => m)) as Partial<Record<AgentMode, string>>
-    if (Object.keys(kept).length) out[h] = kept
-  }
-  return out
-}

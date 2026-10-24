@@ -92,7 +92,7 @@ def make_card(hub: TlsHub, now: int, hxk=None) -> dict:
     o = {
         "v": 2, "suite": 2, "kind": "hub.card", "hv": 0, "hub_id": hub.hub_id, "hk_root_pub": crypto.b64u(root_pub),
         "hxk_pub": crypto.b64u(suite.public_bytes(hxk or suite.generate_private_key())), "relay_url": None,
-        "tls_spki_sha256": hub.spki, "card_seq": 1, "issued_ms": now - 1000, "dev": True,
+        "tls_spki_sha256": hub.spki, "card_seq": 1, "reader": 1, "issued_ms": now - 1000, "dev": True,
     }  # fmt: skip
     return {
         "o": o,

@@ -94,6 +94,7 @@ class Security:
             return await reject("not_found", 404)  # off means off, before and after login
         if not self.policy.pre_login(path, scope.get("raw_path"), method):
             # Before login only the policy's routes answer; everything else needs a session of this listener.
+            # Until R1-4 wires the remote listener, a remote session is checked by its bearer token only.
             auth = values(b"authorization")
             bearer = auth[0][7:] if len(auth) == 1 and auth[0].startswith("Bearer ") else ""
             if not self.session_ok(bearer):

@@ -38,7 +38,7 @@ def clean_path(path: str) -> list[str] | None:
     """The segments of a path that is plain: absolute, ASCII graphic only, no percent escape, backslash, semicolon,
     empty segment (a double slash), dot segment or trailing slash. Anything else is None (fail closed); the root is
     an empty list."""
-    if not path.startswith("/") or not path.isascii() or any(c in path for c in "%\;?#") or not path.isprintable():
+    if not path.startswith("/") or not path.isascii() or any(c in path for c in "%\\;?#") or not path.isprintable():
         return None
     if path == "/":
         return []

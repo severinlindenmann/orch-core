@@ -50,7 +50,8 @@ class Net:
 
     def add(self, name: str = "standup", version: str = "1.0.0", caps: tuple[str, ...] = ("network",), *,
             commit: str | None = None, signed: bool = True, digest: str | None = None, entry_caps=None,
-            min_orch: str = "2.0.0.dev0", pkg: dict[str, bytes] | None = None, key=None, **more) -> dict[str, Any]:  # fmt: skip
+            min_orch: str = "2.0.0.dev0", pkg: dict[str, bytes] | None = None, key=None,
+            **more) -> dict[str, Any]:  # fmt: skip
         pkg = pkg if pkg is not None else files(name, version, caps)
         commit = commit or (f"{abs(hash((name, version, tuple(sorted(pkg)), tuple(pkg.values())))):040x}")[-40:]
         entry: dict[str, Any] = {
@@ -156,7 +157,8 @@ def write_stage(f: MarketFiles, name: str = "standup", version: str = "1.0.0", p
             "v": 1, "stage": stage, "name": name, "version": version, "digest": digest, "origin": H.OFFICIAL,
             "commit": "a" * 40, "publisher_key": None, "tofu": "unsigned", "index_version": 1, "prev_digest": None,
             "created_at": now, "expires_at": now + 10_000_000_000, "class": "official", "summary": None,
-            "stale": False, "entry": {"id": name, "version": version, "capabilities": ["network"], "min_orch": "2.0.0.dev0"},
+            "stale": False,
+            "entry": {"id": name, "version": version, "capabilities": ["network"], "min_orch": "2.0.0.dev0"},
             "files": {p: base64.b64encode(b).decode() for p, b in pkg.items()},
         }
     )  # fmt: skip

@@ -9,7 +9,7 @@ from orch import canon
 from orch.addons import install
 from orch.addons.install import load_registry
 from orch.addons.package import read_package
-from tests.addons.helpers import installed_package, make_package, manifest, record_install
+from tests.addons.helpers import installed_package, manifest, record_install
 from tests.ops.humans import agent, hws, me  # noqa: F401  (fixtures)
 
 

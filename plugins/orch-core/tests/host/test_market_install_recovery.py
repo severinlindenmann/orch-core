@@ -2,6 +2,7 @@
 converges (idempotent). The registry fails closed meanwhile: a directory whose digest is not the grant's is
 ``changed``."""
 
+# ruff: noqa: F811
 from __future__ import annotations
 
 import os
@@ -13,7 +14,15 @@ from orch.host import human as host_human
 from orch.host import marketinstall
 from tests.host import human_helpers
 from tests.host.market_helpers import (  # noqa: F401
-    addon_dir, add_market, err, mfiles, net, ok, on_worker, person, stage,
+    add_market,
+    addon_dir,
+    err,
+    mfiles,
+    net,
+    ok,
+    on_worker,
+    person,
+    stage,
 )  # fmt: skip
 from tests.market import helpers as H
 

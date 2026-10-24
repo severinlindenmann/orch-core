@@ -70,7 +70,10 @@ def test_check_text_marks_a_newer_and_a_revoked_version(host):
 
 @pytest.mark.parametrize(
     "argv",
-    [["install"], ["install", "a", "b"], ["update"], ["remove"], ["remove", "a", "--check"], ["update", "a", "--from", "u"]],
+    [
+        ["install"], ["install", "a", "b"], ["update"], ["remove"], ["remove", "a", "--check"],
+        ["update", "a", "--from", "u"],
+    ],
 )  # fmt: skip
 def test_usage_errors_touch_nothing(host, argv):
     code, out = run(argv)

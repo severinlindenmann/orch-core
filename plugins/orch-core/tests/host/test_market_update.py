@@ -1,6 +1,7 @@
 """V3 G3 (#921): ``orch addon update``: the origin is pinned, the old version keeps running until the new grant lands,
 a new grant is always needed, and a widened update says so."""
 
+# ruff: noqa: F811
 from __future__ import annotations
 
 import pytest
@@ -9,8 +10,20 @@ from orch.addons import install, package
 from orch.market import constants
 from tests.host import human_helpers
 from tests.host.market_helpers import (  # noqa: F401
-    addon_dir, add_market, err, files, install as do_install, mfiles, net, ok, on_worker, person, stage,
+    add_market,
+    addon_dir,
+    err,
+    files,
+    mfiles,
+    net,
+    ok,
+    on_worker,
+    person,
+    stage,
 )  # fmt: skip
+from tests.host.market_helpers import (
+    install as do_install,
+)
 from tests.market import helpers as H
 
 lab, served, human = human_helpers.lab, human_helpers.served, human_helpers.human

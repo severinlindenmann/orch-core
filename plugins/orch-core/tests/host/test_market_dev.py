@@ -2,6 +2,7 @@
 ``dev.json`` names it; a real workspace, a normal host and a dev host without the entry get ``community_unisolated``.
 No address rule is relaxed anywhere (the fetch tests in tests/market cover the address checks)."""
 
+# ruff: noqa: F811
 from __future__ import annotations
 
 import dataclasses
@@ -12,7 +13,6 @@ import pytest
 from orch import devsandbox
 from orch.host import devmode
 from orch.market import address, constants, fetch
-from tests.host import human_helpers
 from tests.host.devgate_helpers import SbxLab
 from tests.host.dispatch_helpers import Served
 from tests.host.lifecycle_helpers import Lab
@@ -63,8 +63,9 @@ def test_the_dev_class_wants_the_dev_keys_not_just_any_signature(tmp_path, fakes
     try:
         served = Served(lab, dev=lab.dev())
         try:
-            other = H.index(1, url=URL, key=__import__("cryptography").hazmat.primitives.asymmetric.ec.generate_private_key(
-                __import__("cryptography").hazmat.primitives.asymmetric.ec.SECP256R1()))  # fmt: skip
+            from cryptography.hazmat.primitives.asymmetric import ec
+
+            other = H.index(1, url=URL, key=ec.generate_private_key(ec.SECP256R1()))
             fakes.fetch_index = lambda url, commit: (H.COMMIT_A, H.raw(other))
             import orch.market.fetch as f
 

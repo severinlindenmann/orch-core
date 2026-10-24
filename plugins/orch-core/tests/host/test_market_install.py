@@ -2,6 +2,7 @@
 grant installs, and that nothing changes before the signature. The network and the packages are fakes
 (``tests/host/market_helpers.py``); the git and address mechanics have their own tests (``tests/market``)."""
 
+# ruff: noqa: F811
 from __future__ import annotations
 
 import json
@@ -13,7 +14,16 @@ from orch.host import marketops
 from orch.market import MarketError
 from tests.host import human_helpers
 from tests.host.market_helpers import (
-    addon_dir, add_market, agent, err, files, install, mfiles, net, ok, person, stage,  # noqa: F401
+    add_market,
+    addon_dir,  # noqa: F401
+    agent,
+    err,
+    files,
+    install,
+    mfiles,
+    ok,
+    person,
+    stage,
 )  # fmt: skip
 from tests.market import helpers as H
 

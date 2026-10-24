@@ -1256,7 +1256,7 @@ def market_read_blob(staging: str, commit: str, path: str, limit: int) -> bytes:
     return data
 
 
-_LS_ROW = re.compile(rb"(\d{6}) (blob|commit|tree) ([0-9a-f]{40}|[0-9a-f]{64}) +(\d+|-)\t([^\0]+)", re.S)
+_LS_ROW = re.compile(rb"(\d{6}) (blob|commit|tree) ([0-9a-f]{40}|[0-9a-f]{64}) +(\d+)\t([^\0]+)", re.S)
 _SUBDIR_SEGMENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 
 

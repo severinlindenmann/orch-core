@@ -167,3 +167,19 @@ def test_a_stage_whose_class_is_gone_cannot_be_granted(served, human, net, v1):
     path.write_bytes(json.dumps({**doc, "class": "dev"}).encode())
     path.chmod(0o600)
     assert err(human.submit_res(prepared["request"]["id"], human.sign(prepared).events)) == "market.staged_changed"
+
+
+def test_a_hub_joined_between_stage_and_submit_refuses_the_grant_and_changes_nothing(
+    served, human, net, v1, monkeypatch
+):
+    from orch.host import marketops
+
+    publish(served, net, "1.1.0")
+    st = ok(stage(served, update=True))["data"]
+    prepared = human.prepare("addon.grant", {"name": "standup", "staged": st["stage"]})
+    signed = human.sign(prepared)
+    before = mfiles(served).installs()
+    monkeypatch.setattr(marketops, "hub_joined", lambda s: True)
+    assert err(human.submit_res(prepared["request"]["id"], signed.events)) == "market.not_allowed"
+    assert mfiles(served).installs() == before  # TOFU key, seen and the record are untouched by a refused recheck
+    assert package.read_package(addon_dir(served)).digest == v1["package_sha256"]

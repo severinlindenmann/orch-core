@@ -161,6 +161,7 @@ OP = operation(
         err("market.rollback"),
         err("market.publisher_key_changed"),
         err("market.revoked"),
+        err("market.not_allowed"),
     ),
     handler=handle,
 )

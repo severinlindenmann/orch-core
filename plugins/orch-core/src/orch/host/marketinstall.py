@@ -44,7 +44,26 @@ from .marketstate import MarketFiles
 if TYPE_CHECKING:
     from .workspace import Call, WorkspaceService
 
-__all__ = ["MARKET_OPS", "NETWORK_OPS", "OP_CODES", "READS", "after_grant", "recheck", "recover", "run", "serve"]
+__all__ = [
+    "HUMAN_ONLY",
+    "MARKET_OPS",
+    "NETWORK_OPS",
+    "OP_CODES",
+    "READS",
+    "SCHEMAS",
+    "SOURCE_NOTE",
+    "after_grant",
+    "files_of",
+    "gate_plain",
+    "market_class",
+    "recheck",
+    "recover",
+    "run",
+    "serve",
+    "staged_package",
+    "state_of",
+    "verdict",
+]
 
 LOG = logging.getLogger("orch.host.marketinstall")
 MARKET_OPS: dict[str, int] = {"market.stage": 1, "market.unstage": 1, "market.installed": 1, "market.uninstall": 1}
@@ -74,12 +93,6 @@ OP_CODES: dict[str, tuple[str, ...]] = {
         "market.still_enabled",
     ),
 }
-#: what ``addon.grant`` adds to its own declaration (the staged path and the install-record gate)
-GRANT_CODES = (
-    "market.staged_changed", "market.not_installed", "market.manifest_mismatch", "market.origin_changed",
-    "market.version_reused", "market.rollback", "market.publisher_key_changed", "market.capability_ceiling",
-    "market.not_allowed", "market.state_invalid", "market.revoked",
-)  # fmt: skip
 _NAME = {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$"}
 SCHEMAS: dict[str, dict[str, Any]] = {
     "market.stage": {
@@ -170,7 +183,6 @@ def serve(call: Call, op: str, args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _plan_stage(call: Call, args: dict[str, Any]) -> dict[str, Any]:
-
     from . import marketops
 
     service = call.service
@@ -261,7 +273,8 @@ def _stage(service: WorkspaceService, plan: dict[str, Any], call: Call | None = 
 
     files = _files(service)
     url, name, cls, keys, now = plan["url"], plan["id"], plan["cls"], tuple(plan["keys"]), plan["now"]
-    prior_installed = files.installs()[ADDONS].get(name)
+    installs = files.installs()
+    prior_installed = installs[ADDONS].get(name)
     if plan["update"] and prior_installed is not None:
         rec = files.load().get(url)
         if rec is None:
@@ -277,7 +290,6 @@ def _stage(service: WorkspaceService, plan: dict[str, Any], call: Call | None = 
     policy.evaluate("index", plan.get("policy"), {"url": url})
     v = verdict(raw, url, cls, keys, now)
     index.check_floor(rec["last_version"], rec["payload_sha256"], v)
-    installs = files.installs()
     ctx = mi.Ctx(
         url=url, cls=cls, keys=keys, core_version=CORE_VERSION, git_hosts=frozenset(constants.DEFAULT_GIT_HOSTS),
         installed=installs[ADDONS], known_keys=installs["keys"], seen=installs["seen"],

@@ -29,6 +29,7 @@ from jsonschema import Draft202012Validator
 
 from orch.market import ADDONS, MarketError, fetch, index
 from orch.market.constants import AGENT_MIN_INTERVAL
+from orch.market.install import semver
 from orch.ops.errors import ERRORS
 
 from . import marketinstall
@@ -46,7 +47,6 @@ MARKET_OPS: dict[str, int] = {"market.add": 1, "market.list": 1, "market.refresh
 NETWORK_OPS = frozenset({"market.add", "market.refresh"}) | marketinstall.NETWORK_OPS
 
 _COMMON = ("market.actor_refused", "market.state_invalid", "market.malformed")
-_DEV = ("market.community_unisolated",)
 #: the codes each op can raise (the per-op declaration; a test checks every raise site against it)
 OP_CODES: dict[str, tuple[str, ...]] = {
     "market.add": (
@@ -345,7 +345,7 @@ def _installed_row(service: WorkspaceService, name: str, rec: dict[str, Any] | N
 def _update_available(rec: dict[str, Any] | None, url: str, entry: dict[str, Any]) -> bool:
     if rec is None or rec["origin"] != url:
         return False
-    return marketinstall.mi.semver(entry["version"]) > marketinstall.mi.semver(rec["version"])
+    return semver(entry["version"]) > semver(rec["version"])
 
 
 def _list(service: WorkspaceService, entries: bool, now: float) -> dict[str, Any]:

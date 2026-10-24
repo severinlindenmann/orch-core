@@ -793,7 +793,7 @@ class HumanOps:
                 for gid in taken
                 if (g := known.get(gid)) is not None and isinstance(g.scope, str) and isinstance(g.expires_at, str)
             }
-        if getattr(capture, "market", None) is not None and "addon.granted" in types:
+        if capture.market is not None and "addon.granted" in types:
             material["market"] = copy.deepcopy(capture.market)  # V3 G3: the host's word on the source, not signed
         seq = getattr(capture, "sequence", None)
         if seq is not None and seq["step"] == 0:  # the whole intent is in the material: bound by review_digest

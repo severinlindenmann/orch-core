@@ -109,6 +109,17 @@
         ]
       },
       {
+        "code": "market.not_allowed",
+        "exit": 3,
+        "retryable": false,
+        "hint": "ask the hub admin",
+        "fix": [
+          "orch",
+          "market",
+          "list"
+        ]
+      },
+      {
         "code": "market.not_installed",
         "exit": 3,
         "retryable": false,

@@ -44,8 +44,18 @@ def root_machine():
     _sudo("install", "-d", "-m", "0755", f"{release}/current/bin")
     stub = tmp_stub()
     _sudo("install", "-m", "0755", stub, f"{release}/current/bin/orch-runner")
-    # the installer's step: the root-owned copy at its fixed path (here from the checkout under test)
-    done = _sudo(sys.executable, "-I", "-c", "from orch.setup.osinstall import install; print(install())", check=False)
+    # the installer's step: a sealed root staging directory (under root-only parents), then the documented command
+    staging = f"/var/lib/orch-ci-staging-{os.getpid()}"
+    _sudo("install", "-d", "-m", "0700", "-o", "root", staging)
+    copy = (
+        "import shutil, pathlib, sys; from orch.setup import oslauncher as o; "
+        "src = pathlib.Path(o.__file__).parents[2]; dst = pathlib.Path(sys.argv[1]); "
+        "[(dst / r).parent.mkdir(parents=True, exist_ok=True) or shutil.copyfile(src / r, dst / r) "
+        "for r in (*o.TRUSTED_FILES, 'orch/setup/osinstall.py')]"
+    )
+    assert _sudo(sys.executable, "-I", "-c", copy, staging, check=False).returncode == 0
+    _sudo("chmod", "-R", "go-rwx", staging)
+    done = _sudo("/usr/bin/python3", "-I", "-S", f"{staging}/orch/setup/osinstall.py", check=False)
     assert done.returncode == 0, done.stdout + done.stderr
     yield person, release
     names = [f"orch-agent-{person}", *[f"orch-addon-{n}" for n in range(1, 9)]]
@@ -57,7 +67,7 @@ def root_machine():
         except KeyError:
             pass
         _sudo("/usr/sbin/userdel", "--remove", name, check=False)
-    _sudo("rm", "-rf", "/usr/local/lib/orch/os-setup", check=False)
+    _sudo("rm", "-rf", "/usr/lib/orch/os-setup", staging, check=False)
     for path in (
         "/etc/tmpfiles.d/orch.conf",
         "/etc/ssh/sshd_config.d/10-orch-agents.conf",

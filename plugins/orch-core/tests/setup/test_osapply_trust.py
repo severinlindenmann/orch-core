@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
+import shutil
 import stat
+import subprocess
 import sys
 from pathlib import Path
 
@@ -11,15 +13,27 @@ import pytest
 
 from orch.setup import osapply, oslauncher
 from orch.setup.osapply import DirSpec, secure_dir
-from orch.setup.osinstall import install
+from orch.setup.osinstall import INSTALLER_FILE, InstallRefused, check_source, install
 
 ME = os.getuid()
+
+
+def _staging(tmp_path: Path) -> Path:
+    """A sealed staging directory (ours instead of root's) holding the release's orch tree."""
+    src = Path(oslauncher.__file__).parents[2]
+    staging = tmp_path / "staging"
+    for rel in (*oslauncher.TRUSTED_FILES, INSTALLER_FILE):
+        (staging / rel).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src / rel, staging / rel)
+    for p in [staging, *staging.rglob("*")]:
+        p.chmod(0o700 if p.is_dir() else 0o600)
+    return staging
 
 
 def _copy(tmp_path: Path) -> Path:
     dest = tmp_path / "os-setup"
     tmp_path.chmod(0o755)
-    install(dest=str(dest))
+    install(_staging(tmp_path), dest=str(dest), owner=ME)
     return dest
 
 
@@ -103,7 +117,7 @@ def test_admin_command_never_names_the_release() -> None:
     from tests.osfacts_fake import FakeOsFacts
 
     cmd = plan(FakeOsFacts(), "sev", 1000, release="/home/sev/.local/share/orch/releases/current").admin_command()
-    assert cmd.startswith("sudo /usr/local/lib/orch/os-setup/orch-os-setup ")
+    assert cmd.startswith("sudo /usr/lib/orch/os-setup/orch-os-setup ")
     assert "/bin/orch-os-setup" not in cmd
 
 
@@ -186,7 +200,9 @@ def _acl_for(uid: int) -> bytes:
 
 
 def test_secure_dir_compares_exact_acl_entries(tmp_path) -> None:
-    if not os.environ.get("CI") and not hasattr(os, "setxattr"):
+    if not hasattr(os, "setxattr"):
+        if os.environ.get("CI"):
+            pytest.fail("CI must run the exact-ACL test, but this system has no xattr support")
         pytest.skip("no xattrs here")
     base = tmp_path / "base"
     base.mkdir(mode=0o755)
@@ -202,3 +218,90 @@ def test_secure_dir_compares_exact_acl_entries(tmp_path) -> None:
     other = _acl_for(4243)
     changed, problem = secure_dir(str(base), _spec("a", allowed=0o710, acl=other), base_uid=ME)
     assert problem and "other ACL entries" in problem
+
+
+# the installer step ----
+def test_install_refuses_a_source_that_is_not_root_owned() -> None:
+    if ME == 0:
+        pytest.skip("running as root")
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as d:
+        staging = _staging(Path(d))
+        with pytest.raises(InstallRefused, match="owned by root"):
+            install(staging, dest=str(Path(d) / "dest"))  # owner defaults to root: our sealed dir is not root's
+        assert not (Path(d) / "dest").exists()
+
+
+def test_install_refuses_a_wide_or_unsealed_source(tmp_path) -> None:
+    staging = _staging(tmp_path)
+    staging.chmod(0o755)
+    with pytest.raises(InstallRefused, match="0700"):
+        install(staging, dest=str(tmp_path / "dest"), owner=ME)
+    staging.chmod(0o700)
+    (staging / "orch/setup/osapply.py").chmod(0o666)
+    with pytest.raises(InstallRefused, match="written by others"):
+        install(staging, dest=str(tmp_path / "dest"), owner=ME)
+    (staging / "orch/setup/osapply.py").chmod(0o600)
+    (staging / "orch/setup/extra.py").write_text("x = 1\n")
+    with pytest.raises(InstallRefused, match="unexpected code"):
+        check_source(staging, ME)
+    assert not (tmp_path / "dest").exists()
+
+
+def test_install_refuses_when_the_copy_does_not_match_the_source(tmp_path, monkeypatch) -> None:
+    staging = _staging(tmp_path)
+    real = shutil.copyfile
+
+    def corrupting(src, dst):
+        real(src, dst)
+        if str(dst).endswith("osusers.py"):
+            Path(dst).write_text("evil = 1\n")
+
+    monkeypatch.setattr(shutil, "copyfile", corrupting)
+    tmp_path.chmod(0o755)
+    with pytest.raises(InstallRefused, match="does not match"):
+        install(staging, dest=str(tmp_path / "dest"), owner=ME)
+    assert not (tmp_path / "dest").exists()
+    assert not list(tmp_path.glob("dest.*"))
+
+
+def test_install_refuses_a_destination_chain_others_can_write(tmp_path) -> None:
+    staging = _staging(tmp_path)
+    parent = tmp_path / "lib"
+    parent.mkdir(mode=0o775)
+    parent.chmod(0o775)
+    with pytest.raises(InstallRefused, match="trusted copy cannot live there"):
+        install(staging, dest=str(parent / "os-setup"), owner=ME)
+
+
+def test_osinstall_runs_as_a_script_under_isolated_python_without_site(tmp_path) -> None:
+    """Stdlib only: the documented command works (here it stops at 'must run as root')."""
+    if ME == 0:
+        pytest.skip("running as root")
+    staging = _staging(tmp_path)
+    done = subprocess.run(
+        [sys.executable, "-I", "-S", str(staging / INSTALLER_FILE)], capture_output=True, text=True, check=False
+    )
+    assert done.returncode == 2 and "must run as root" in done.stderr, done.stderr
+
+
+def test_osinstall_script_refuses_an_unsealed_staging_directory(tmp_path) -> None:
+    staging = _staging(tmp_path)
+    staging.chmod(0o755)
+    done = subprocess.run(
+        [sys.executable, "-I", "-S", str(staging / INSTALLER_FILE)], capture_output=True, text=True, check=False
+    )
+    assert done.returncode == 2 and "private (0700)" in done.stderr
+
+
+def test_secure_dir_reports_a_race_instead_of_raising(tmp_path, monkeypatch) -> None:
+    base = tmp_path / "base"
+    base.mkdir(mode=0o755)
+
+    def racing_mkdir(*a, **k):
+        raise FileExistsError(17, "File exists")
+
+    monkeypatch.setattr(os, "mkdir", racing_mkdir)
+    changed, problem = secure_dir(str(base), _spec("a"), base_uid=ME)
+    assert not changed and problem and "could not be created safely" in problem

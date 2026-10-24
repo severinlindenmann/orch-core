@@ -126,7 +126,7 @@ class UnitFile:
     name: str  # template file name, e.g. orch-runner@.service
     path: str
     content: str
-    instances: tuple[str, ...]  # instances to enable and start
+    instances: tuple[str, ...]  # instances to enable and start: the person (runner), the slot numbers (add-ons)
 
 
 @dataclass(frozen=True)
@@ -361,13 +361,15 @@ def _bad_person(facts: OsFacts, info: UserInfo) -> str:
     return ""
 
 
+# The unit instance is the bare person (runner) or slot number (add-on); the prefix lives in the template, so an
+# instance such as 'root' can never run as root.
 def unit_runner(release: str) -> UnitFile:
     content = f"""[Unit]
-Description=orch runner for %i
+Description=orch runner for %i (user orch-agent-%i)
 After=network.target
 
 [Service]
-User=%i
+User=orch-agent-%i
 Delegate=yes
 NoNewPrivileges=yes
 CapabilityBoundingSet=
@@ -375,11 +377,12 @@ AmbientCapabilities=
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths={AGENT_HOME_ROOT}/%i {AGENT_RUN_ROOT}/%i
+ReadWritePaths={AGENT_HOME_ROOT}/orch-agent-%i {AGENT_RUN_ROOT}/orch-agent-%i
 RestrictSUIDSGID=yes
 MemoryMax=80%
 TasksMax=4096
-ExecStart={release}/current/bin/orch-runner run --state {AGENT_HOME_ROOT}/%i/state --run {AGENT_RUN_ROOT}/%i
+ExecStart={release}/current/bin/orch-runner run \\
+  --state {AGENT_HOME_ROOT}/orch-agent-%i/state --run {AGENT_RUN_ROOT}/orch-agent-%i
 Restart=always
 
 [Install]
@@ -394,7 +397,7 @@ Description=orch add-on slot %i
 After=network.target
 
 [Service]
-User=%i
+User=orch-addon-%i
 Delegate=yes
 NoNewPrivileges=yes
 CapabilityBoundingSet=
@@ -402,7 +405,7 @@ AmbientCapabilities=
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=yes
-ReadWritePaths={SLOT_HOME_ROOT}/%i
+ReadWritePaths={SLOT_HOME_ROOT}/orch-addon-%i
 RestrictSUIDSGID=yes
 MemoryMax=2G
 TasksMax=512
@@ -494,10 +497,8 @@ def plan(facts: OsFacts, person: str, person_uid: int, *, release: str = "/opt/o
                 refusals.append(Refusal("foreign_user", u.name, f"'{u.name}' has the same UID as '{agent.name}'."))
     pins = tuple(PinEntry(u.name, u.role, person_uid_known, u.uid) for u in [agent, *slots])
     runner, addon = unit_runner(release), unit_addon(release)
-    runner = UnitFile(runner.name, runner.path, runner.content, (agent.name,))
-    addon = UnitFile(
-        addon.name, addon.path, addon.content, tuple(f"{SLOT_PREFIX}{n}" for n in range(1, SLOT_COUNT + 1))
-    )
+    runner = UnitFile(runner.name, runner.path, runner.content, (person,))
+    addon = UnitFile(addon.name, addon.path, addon.content, tuple(str(n) for n in range(1, SLOT_COUNT + 1)))
     run_dir = None if person_uid_known is None else f"/run/orch/{person_uid_known}"
     notes = ("The login was root: orch will run as a new normal user 'orch'.",) if create_person else ()
     return Plan(

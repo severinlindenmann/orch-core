@@ -226,8 +226,11 @@ def secure_dir(base: str, spec: DirSpec, *, base_uid: int = 0) -> tuple[bool, st
         try:
             fd = os.open(last, flags, dir_fd=cur)
         except FileNotFoundError:
-            os.mkdir(last, 0o700, dir_fd=cur)
-            fd, created = os.open(last, flags, dir_fd=cur), True
+            try:
+                os.mkdir(last, 0o700, dir_fd=cur)
+                fd, created = os.open(last, flags, dir_fd=cur), True
+            except OSError as exc:  # a race with the agent: a problem to report, never a traceback
+                return False, f"{name} could not be created safely ({exc.strerror}); setup stopped."
         except OSError:
             return False, f"{name} is a symlink or not a directory; setup will not follow or change it."
         fds.append(fd)
@@ -475,6 +478,27 @@ class _Apply:
                 if self.dry or self.ex.query([sysctl, "is-active", "--quiet", name]).rc != 0:
                     self.run([sysctl, "start", name])
 
+    def quarantine(self, p: Plan) -> None:
+        """The agent user no longer passes: drop any old verdict from its pin (the host then answers broken) and stop
+        its runner. Used when a re-run finds, for example, a new sudo rule. Never leaves a running runner behind."""
+        agent = p.agent
+        uid = None if agent is None else self.uid_of(agent.name)
+        if agent is None or agent.action != "keep" or uid is None:
+            return
+        entry = next(e for e in p.pins if e.user == agent.name)
+        base = PinEntry(entry.user, entry.cls, entry.host_uid, uid).document()
+        have = self.ex.read_file(f"{PIN_DIR}/{uid}.json")
+        if have is not None and have != _json(base):
+            self.put(f"{PIN_DIR}/{uid}.json", _json(base), 0o644, replace=True)
+        sysctl = BIN["systemctl"]
+        for unit in p.units:
+            if unit.name.startswith("orch-runner@"):
+                for inst in unit.instances:
+                    name = f"orch-runner@{inst}.service"
+                    if any(self.ex.query([sysctl, q, "--quiet", name]).rc == 0 for q in ("is-enabled", "is-active")):
+                        self.run([sysctl, "disable", "--now", name])
+                        self.res.notes.append(f"the runner of '{agent.name}' was stopped until the check passes again")
+
     def policy_pin(self, p: Plan) -> None:
         agent = p.agent
         if agent is None:
@@ -493,6 +517,7 @@ class _Apply:
         self.res.policy_ok = verdict.ok
         if not verdict.ok:
             self.res.fail(why_not_ok(verdict, agent.name))
+            self.quarantine(p)
             return
         entry = next(e for e in p.pins if e.user == agent.name)
         doc = PinEntry(entry.user, entry.cls, entry.host_uid, uid, verdict.document()).document()
@@ -529,6 +554,8 @@ def apply(
     if p.refusals:
         for r in p.refusals:
             res.fail(r.message)
+        if p.agent is not None and any(r.subject == p.agent.name for r in p.refusals):
+            _Apply(facts, ex, res).quarantine(p)  # a kept agent that now fails must not keep running
         return res
     rel = facts.stat(release)
     if rel is None or rel.is_symlink or not rel.is_dir or rel.uid != 0 or rel.mode & 0o022:

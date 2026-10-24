@@ -51,6 +51,9 @@ class FakeExec:
                     self.facts.add_path(ln.split()[1], kind="dir", mode=0o755)
         elif prog == BIN["systemctl"] and argv[1] == "start":
             self.active.add(argv[2])
+        elif prog == BIN["systemctl"] and argv[1] == "disable":
+            self.enabled.discard(argv[-1])
+            self.active.discard(argv[-1])
         elif prog == BIN["systemctl"] and argv[1] == "enable":
             self.enabled.add(argv[2])
         return RunResult(0)
@@ -150,7 +153,7 @@ def test_fresh_run_applies_everything_in_order_with_fixed_binaries() -> None:
     assert [BIN["sshd"], "-t"] in ex.commands
     assert order.index(BIN["sshd"]) < len(order) - 1
     assert [BIN["systemctl"], "daemon-reload"] in ex.commands
-    assert [BIN["systemctl"], "enable", "orch-runner@orch-agent-sev.service"] in ex.commands
+    assert [BIN["systemctl"], "enable", "orch-runner@sev.service"] in ex.commands
     assert not [c for c in ex.commands if "orch-addon@" in " ".join(c) and c[1] in ("enable", "start")]  # TODO(L3)
     secured = {path: spec for path, spec in ex.secures}
     repos = secured["/var/lib/orch/agents/orch-agent-sev/repos"]
@@ -171,7 +174,7 @@ def test_files_written_are_the_plans() -> None:
     assert "d /run/orch/1000 2750 sev orch-agent-sev -" in ex.files[osapply.TMPFILES_CONF]
     runner = ex.files["/etc/systemd/system/orch-runner@.service"]
     for line in ("NoNewPrivileges=yes", "CapabilityBoundingSet=\n", "AmbientCapabilities=\n", "ProtectSystem=strict",
-                 "ReadWritePaths=/var/lib/orch/agents/%i /run/orch/agents/%i"):  # fmt: skip
+                 "ReadWritePaths=/var/lib/orch/agents/orch-agent-%i /run/orch/agents/orch-agent-%i"):  # fmt: skip
         assert line in runner
     agent_uid = facts.users["orch-agent-sev"].uid
     pin = json.loads(ex.files[f"/etc/orch/pins/{agent_uid}.json"])
@@ -342,7 +345,7 @@ def test_dry_run_prints_exact_actions_and_changes_nothing(monkeypatch) -> None:
     text = res.report()
     assert text.startswith("Would do:")
     assert "/usr/sbin/useradd --system --user-group --home-dir /var/lib/orch/agents/orch-agent-sev/home" in text
-    assert f"write {SSHD_DROPIN}" in text and "systemctl enable orch-runner@orch-agent-sev.service" in text
+    assert f"write {SSHD_DROPIN}" in text and "systemctl enable orch-runner@sev.service" in text
     assert f.users.keys() == {PERSON}  # the fake world is untouched
 
 
@@ -366,7 +369,7 @@ def test_main_refuses_non_root_and_non_linux(monkeypatch, capsys) -> None:
 def test_main_runs_only_from_the_root_owned_copy(monkeypatch, capsys) -> None:
     monkeypatch.setattr(osapply.sys, "platform", "linux")
     monkeypatch.setattr(osapply.os, "geteuid", lambda: 0)
-    assert osapply.main(["--person", "sev"]) == 2  # this source tree is not /usr/local/lib/orch/os-setup
+    assert osapply.main(["--person", "sev"]) == 2  # this source tree is not /usr/lib/orch/os-setup
     assert "root-owned copy" in capsys.readouterr().err
 
 
@@ -374,9 +377,7 @@ def test_admin_command_is_the_fixed_path_and_quotes_the_release() -> None:
     from orch.setup.osusers import plan
 
     p = plan(FakeOsFacts(), PERSON, UID, release="/opt/orch/release")
-    assert p.admin_command() == (
-        "sudo /usr/local/lib/orch/os-setup/orch-os-setup --person sev --release /opt/orch/release"
-    )
+    assert p.admin_command() == ("sudo /usr/lib/orch/os-setup/orch-os-setup --person sev --release /opt/orch/release")
 
 
 @pytest.mark.parametrize(
@@ -435,7 +436,41 @@ def test_runner_unit_runs_the_real_launcher_and_addon_units_are_not_enabled() ->
     res, ex, _ = _go()
     unit = ex.files["/etc/systemd/system/orch-runner@.service"]
     assert (
-        "ExecStart=/opt/orch/release/current/bin/orch-runner run --state /var/lib/orch/agents/%i/state "
-        "--run /run/orch/agents/%i" in unit
+        "ExecStart=/opt/orch/release/current/bin/orch-runner run \\\n"
+        "  --state /var/lib/orch/agents/orch-agent-%i/state --run /run/orch/agents/orch-agent-%i" in unit
     )
     assert "/etc/systemd/system/orch-addon@.service" in ex.files
+
+
+def test_a_rerun_whose_policy_now_fails_stops_the_runner_and_drops_the_verdict() -> None:
+    res, ex, facts = _go()
+    assert res.ok and "orch-runner@sev.service" in ex.active
+    facts.sudo_answer = True  # a sudo rule appeared for the agent user
+    ex2 = FakeExec(facts)
+    ex2.files, ex2.active, ex2.enabled = dict(ex.files), set(ex.active), set(ex.enabled)
+    res2 = apply(facts, ex2, PERSON, UID, is_root=True)
+    assert not res2.ok
+    assert [BIN["systemctl"], "disable", "--now", "orch-runner@sev.service"] in ex2.commands
+    assert "orch-runner@sev.service" not in ex2.active
+    uid = facts.users["orch-agent-sev"].uid
+    assert "policy" not in json.loads(ex2.files[f"/etc/orch/pins/{uid}.json"])
+
+
+def test_a_rerun_with_a_failing_sshd_verdict_also_stops_the_runner() -> None:
+    res, ex, facts = _go()
+    facts.sshd_answer = False
+    ex2 = FakeExec(facts)
+    ex2.files, ex2.active, ex2.enabled = dict(ex.files), set(ex.active), set(ex.enabled)
+    res2 = apply(facts, ex2, PERSON, UID, is_root=True)
+    assert not res2.ok and "orch-runner@sev.service" not in ex2.active
+    uid = facts.users["orch-agent-sev"].uid
+    assert "policy" not in json.loads(ex2.files[f"/etc/orch/pins/{uid}.json"])
+
+
+def test_the_runner_instance_is_the_bare_person_and_the_prefix_is_in_the_template() -> None:
+    from orch.setup.osusers import plan
+
+    p = plan(FakeOsFacts(), PERSON, UID)
+    assert p.units[0].instances == ("sev",) and "User=orch-agent-%i" in p.units[0].content
+    assert p.units[1].instances == tuple("12345678") and "User=orch-addon-%i" in p.units[1].content
+    assert "User=%i" not in p.units[0].content + p.units[1].content

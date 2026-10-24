@@ -17,7 +17,8 @@ import os
 import stat
 import sys
 
-TRUSTED_ROOT = "/usr/local/lib/orch/os-setup"
+# /usr/lib, not /usr/local/lib: Debian ships /usr/local as 2775 root:staff, which this launcher must (and does) refuse.
+TRUSTED_ROOT = "/usr/lib/orch/os-setup"
 LAUNCHER_PATH = TRUSTED_ROOT + "/orch-os-setup"
 SHEBANG = "#!/usr/bin/python3 -I -S\n"
 # The only files the root process may import from orch (relative to TRUSTED_ROOT):

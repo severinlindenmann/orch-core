@@ -13430,10 +13430,22 @@ environment variable.
 ### 13.2 The one admin step: `orch-os-setup`
 
 Root is needed once, at install, never at run time: no setuid binary, no capabilities, no root daemon, no polkit rule.
-`orch-os-setup` is a short Python program in the release. The installer runs it when it is root (most VPSs); otherwise
-setup shows one line to copy, `sudo <release>/bin/orch-os-setup --person <user>`, with a "Check again" button. It
-computes a plan from OS facts, prints it, applies it, and may run again: it repairs, it never widens. It uses fixed
-absolute binaries.
+`orch-os-setup` is a short Python program, but **root never runs a file it does not own**: the person's release lives in
+the person's home, so it is not what root executes. The installer, as root, downloads the signed release into a root-owned
+0700 staging directory, verifies the signed manifest against the bytes there, and runs
+`/usr/bin/python3 -I -S <staging>/orch/setup/osinstall.py` (system interpreter, never the release venv, never `-m orch...`).
+That step re-checks the staging tree, copies the five stdlib-only setup modules and a launcher to the root-owned
+`/usr/lib/orch/os-setup/` (`/usr/lib`, not `/usr/local`: Debian's `/usr/local` can be group-writable), and re-hashes the copy
+against the source. The launcher `/usr/lib/orch/os-setup/orch-os-setup` has the shebang `#!/usr/bin/python3 -I -S`; before it
+imports anything of orch it checks that the interpreter, the standard library and the whole copy (and every directory above
+them) are root's and not writable by group or other, and afterwards that every loaded orch module came from the copy. The
+installer runs it when it is root (most VPSs); otherwise setup shows one line to copy,
+`sudo /usr/lib/orch/os-setup/orch-os-setup --person <user> --release <release>`, with a "Check again" button (the installer
+has put the copy there; the release path is validated: absolute, plain characters, root-owned). It computes a plan from OS
+facts, prints it, applies it (`--dry-run` prints the exact actions), and may run again: it repairs, it never widens. It uses
+fixed absolute binaries. Directories below an agent-owned one are only ever opened file-descriptor-relative with
+`O_NOFOLLOW` (never by path), so a symlink planted by the agent is refused. The agent's runner is started only after root
+has recorded the sudo/SSH verdict; a re-run whose verdict fails stops the runner and drops the verdict from the pin.
 
 1. **Users.** `useradd --system --user-group --home-dir /var/lib/orch/agents/orch-agent-<user>/home --create-home --shell
    /bin/bash orch-agent-<user>`, password locked; `orch-addon-1..8` with `/usr/sbin/nologin` and home
@@ -13457,9 +13469,9 @@ absolute binaries.
    `u:<agent>:x` on each ancestor of the release, the interpreter and each workspace repository inside the person's
    home; `u:<agent>:rX` plus a default ACL on the release tree and on `<repo>/.git` only. Each ACL is read back and
    verified.
-7. **Units.** `orch-runner@.service` (instance = the agent user) and `orch-addon@.service` (instance = the slot),
-   enabled and started: `User=%i` (the instance is the user name, e.g. `orch-runner@orch-agent-sev`), `Delegate=yes` (per-run cgroups, D-P2-29), `NoNewPrivileges=yes`, `PrivateTmp=yes`,
-   `ProtectSystem=strict`, `ProtectHome=read-only`, `ReadWritePaths=/var/lib/orch/agents/%i /run/orch/agents/%i`,
+7. **Units.** `orch-runner@.service` (instance = the person) and `orch-addon@.service` (instance = the slot number),
+   the runner enabled and started (add-on slot units are written but enabled by L3): `User=orch-agent-%i` (the instance is the bare person name, e.g. `orch-runner@sev`, so no instance such as `root` can ever run as root; slots: `orch-addon@<n>` with `User=orch-addon-%i`), `Delegate=yes` (per-run cgroups, D-P2-29), `NoNewPrivileges=yes`, `PrivateTmp=yes`,
+   `ProtectSystem=strict`, `ProtectHome=read-only`, `ReadWritePaths=/var/lib/orch/agents/orch-agent-%i /run/orch/agents/orch-agent-%i`,
    `RestrictSUIDSGID=yes`, `TasksMax=`, `MemoryMax=` (agent: 80 % of RAM by default; D-P2-29's "no limits in phase 2"
    was a tier-A limit). `ExecStart` is the person's `<release>/current`. On a new release the host sends
    `runner.restart`; the runner exits when idle and `Restart=always` starts the new code, so updates need no root.

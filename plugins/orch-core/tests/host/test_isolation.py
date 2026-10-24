@@ -13,7 +13,7 @@ from orch.setup.osusers import SSHD_DROPIN, assess_policy
 from tests.osfacts_fake import FakeOsFacts
 
 UID, AUID, AGID = 1000, 990, 990
-RUNNER = "orch-runner@orch-agent-sev.service"
+RUNNER = "orch-runner@sev.service"
 STATE = "/home/sev/.local/state/orch"
 KEY = f"{STATE}/person/key"
 
@@ -531,7 +531,7 @@ def test_real_cgroup_match_is_a_whole_path_segment(monkeypatch, tmp_path) -> Non
     def fake_open(text):
         return lambda *a, **k: io.StringIO(text)
 
-    unit = "orch-runner@orch-agent-sev.service"
+    unit = "orch-runner@sev.service"
     for text, want in [
         (f"0::/system.slice/{unit}\n", True),
         (f"0::/system.slice/{unit}/sub\n", True),

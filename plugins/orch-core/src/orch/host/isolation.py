@@ -163,7 +163,7 @@ def _detect(
 
 
 def _runner(facts: OsFacts, name: str, agent_uid: int, agent_gid: int, person_uid: int) -> list[Reason]:
-    unit = facts.unit_state(f"orch-runner@{name}.service")
+    unit = facts.unit_state(f"orch-runner@{name.removeprefix(AGENT_PREFIX)}.service")  # instance = the person
     if unit.state == "inactive":
         return [Reason("runner_down", "The agent service is not running.", AVAILABILITY)]
     out: list[Reason] = []

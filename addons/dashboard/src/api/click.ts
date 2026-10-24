@@ -19,6 +19,8 @@ export interface ClickCard {
   enabled: boolean
   available: boolean
   problem?: string
+  /** C17: One click switched itself off after this many hours without use. */
+  idle_hours?: number
   switchable?: boolean
   /** The device key (`d_` + 32 hex) the switch would move into this computer's key store. */
   device?: string

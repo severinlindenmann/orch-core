@@ -228,6 +228,15 @@ class ClickSigner:
         except (OSError, ValueError):
             return None
 
+    def _idle_off(self, entry: dict[str, Any]) -> int | None:
+        """#1198 C17: the hours the flag was idle for when it switched itself off, else ``None``."""
+        from orch.host.convenience import idle_off
+
+        try:
+            return idle_off(self.state, entry["workspace_id"], int(entry["host_uid"]))
+        except (OSError, ValueError):
+            return None
+
     def _default_execution(self, entry: dict[str, Any]) -> bool:
         from orch.runner import enablement
 
@@ -1295,6 +1304,11 @@ class ClickSigner:
             problem = "not_convenience"
         if problem is None and not row["enabled"]:
             problem = "disabled"
+        idle = self._idle_off(e)
+        if idle is not None:  # #1198 C17: say why it is off (the flag file still names the switch-on)
+            row["idle_hours"] = idle
+            if problem == "disabled":
+                problem = "idle"
         row["available"] = problem is None
         if problem is not None:
             row["problem"] = str(problem)[:200]

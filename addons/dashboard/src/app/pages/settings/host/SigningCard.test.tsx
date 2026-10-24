@@ -146,6 +146,12 @@ describe('Sign in the dashboard', () => {
     expect(sw).not.toHaveBeenCalled()
   })
 
+  it('says in plain words that One click switched itself off after idle hours', async () => {
+    mount({ custody: 'convenience', enabled: false, available: false, problem: 'idle', idle_hours: 12, switchable: true })
+    expect(await screen.findByTestId('signing-idle-off')).toHaveTextContent('One click switched itself off after 12 hours without use. Turn it on again to continue.')
+    expect(screen.getByTestId('signing-state')).toHaveTextContent('Off: you approve in the terminal')
+  })
+
   it('the on form shows what moves where, and the field asks for the current passphrase', async () => {
     mount({ ...OFF, device: 'd_' + '1'.repeat(32) })
     fireEvent.click(await openSwitch())

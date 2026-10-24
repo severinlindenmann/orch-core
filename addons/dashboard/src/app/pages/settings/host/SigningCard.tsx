@@ -167,6 +167,11 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
               ? `On, but not available now.${card?.problem ? ` ${signerProblem(card.problem)}` : ''} Approve in the terminal.`
               : 'Off: you approve in the terminal with your passphrase.'}
         </p>
+        {card?.problem === 'idle' && (
+          <p data-testid="signing-idle-off" className="text-text-muted">
+            {card.idle_hours ? `One click switched itself off after ${card.idle_hours} hours without use.` : 'One click switched itself off after a while without use.'} Turn it on again to continue.
+          </p>
+        )}
         {card?.problem === 'dev_host' && (
           <p data-testid="signing-dev-host" className="rounded-md border border-danger/40 bg-danger-soft px-3 py-2 text-danger">
             {DEV_HOST_SENTENCE}

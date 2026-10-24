@@ -292,7 +292,7 @@ function MarketWorkspace() {
                   .map(({ m, a }) => (
                     <article key={`${m.url}/${a.id}`} className="flex min-w-0 flex-col gap-3 rounded-lg border border-border bg-surface p-4" aria-label={a.id}>
                       <div className="flex items-center gap-3">
-                        <span className="rounded bg-surface-2 p-3 text-addon">
+                        <span className="rounded bg-surface-2 p-3 text-text-muted">
                           <Inline>{a.id.slice(0, 1).toUpperCase()}</Inline>
                         </span>
                         <h2 className="font-semibold">

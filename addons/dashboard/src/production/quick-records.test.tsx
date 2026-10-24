@@ -235,7 +235,7 @@ it('Make a normal ticket (in the row menu) reads fresh labels and sets exactly t
 
 // ---------------------------------------------------------------- records
 
-it('records: status, the export warning and the commands for the terminal-only actions, verbatim', async () => {
+it('records: status, the export warning and the commands for what only a terminal does, verbatim', async () => {
   show('/w/DEMO/settings/general')
   await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
   const advancedRecords = screen.queryByText('For advanced users')
@@ -245,9 +245,10 @@ it('records: status, the export warning and the commands for the terminal-only a
   expect(screen.queryByTestId('records-private-line')).toBeNull() // not marked private
   expect(screen.getByText('12 events in 1 ticket, plus 5 workspace events')).toBeInTheDocument()
   expect(screen.getByText('on, every 15 minutes, without push')).toBeInTheDocument()
-  for (const c of ['orch records remote private', 'orch records auto on', 'orch records auto on --push', 'orch records push --initial']) expect(screen.getByText(c)).toBeInTheDocument()
-  // Terminal-only means no button.
-  expect(screen.queryByRole('button', { name: /remote private|auto on|initial|runner enable/i })).toBeNull()
+  for (const c of ['orch records auto on', 'orch records auto on --push']) expect(screen.getByText(c)).toBeInTheDocument()
+  // #1198 C15: the remote steps are buttons with a review, not commands.
+  for (const c of ['orch records remote private', 'orch records push --initial']) expect(screen.queryByText(c)).toBeNull()
+  expect(screen.queryByRole('button', { name: /auto on|runner enable/i })).toBeNull()
 })
 
 it('records: a private remote is labelled as a historical note', async () => {
@@ -570,4 +571,67 @@ it.each([{ status: 'done', labels: ['quick'] }, { status: 'closed', labels: ['qu
   await user.click(await screen.findByRole('menuitem', { name: 'Make a normal ticket' }, T))
   await screen.findByRole('alert', {}, T)
   expect(state.host.posts()).toEqual([])
+})
+
+
+const openRecords = async () => {
+  show('/w/DEMO/settings/general')
+  await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
+  const advancedRecords = screen.queryByText('For advanced users')
+  if (advancedRecords) await userEvent.setup().click(advancedRecords)
+}
+const CURRENT = { available: true, remote: { url: URL_PUSH, url_hidden: false, private: false, export: 'ok', current_url: URL_PUSH, current_url_hidden: false, current_private: false, matches_last: true } }
+
+it('records C15: marking the remote private shows the exact address and one click sends exactly that address', async () => {
+  const user = userEvent.setup()
+  vi.spyOn(api, 'getRecordsCurrent').mockResolvedValue(CURRENT as never)
+  const mark = vi.spyOn(api, 'recordsMark').mockResolvedValue({ ok: true } as never)
+  await openRecords()
+  await user.click(await screen.findByRole('button', { name: 'Mark the remote as private' }, T))
+  const dialog = await screen.findByTestId('records-admin-dialog', {}, T)
+  await within(dialog).findByText(URL_PUSH, {}, T)
+  expect(dialog).toHaveTextContent('only you can read')
+  expect(within(dialog).queryByRole('textbox')).toBeNull() // nothing is typed
+  await user.click(within(dialog).getByRole('button', { name: 'Mark as private' }))
+  await waitFor(() => expect(mark).toHaveBeenCalledWith(A, URL_PUSH))
+})
+
+it('records C15: an address that cannot be shown cannot be clicked through', async () => {
+  const user = userEvent.setup()
+  vi.spyOn(api, 'getRecordsCurrent').mockResolvedValue({ available: true, remote: { ...CURRENT.remote, current_url: null, current_url_hidden: true } } as never)
+  const first = vi.spyOn(api, 'recordsPushInitial').mockResolvedValue({ ok: true } as never)
+  await openRecords()
+  await user.click(await screen.findByRole('button', { name: 'Create the remote branch' }, T))
+  const dialog = await screen.findByTestId('records-admin-dialog', {}, T)
+  await within(dialog).findByRole('alert', {}, T)
+  expect(within(dialog).getByRole('button', { name: 'Create branch and upload tickets' })).toBeDisabled()
+  expect(first).not.toHaveBeenCalled()
+})
+
+it('records C15: the first push says it uploads restricted tickets and sends the shown address', async () => {
+  const user = userEvent.setup()
+  vi.spyOn(api, 'getRecordsCurrent').mockResolvedValue(CURRENT as never)
+  const first = vi.spyOn(api, 'recordsPushInitial').mockResolvedValue({ ok: true, commit: 'd'.repeat(40), pushed: true, url: URL_PUSH } as never)
+  await openRecords()
+  await user.click(await screen.findByRole('button', { name: 'Create the remote branch' }, T))
+  const dialog = await screen.findByTestId('records-admin-dialog', {}, T)
+  await within(dialog).findByText(URL_PUSH, {}, T)
+  expect(dialog).toHaveTextContent('Restricted tickets are included')
+  await user.click(within(dialog).getByRole('button', { name: 'Create branch and upload tickets' }))
+  await waitFor(() => expect(first).toHaveBeenCalledWith(A, URL_PUSH))
+  expect(await screen.findByTestId('records-result', {}, T)).toHaveTextContent('pushed')
+})
+
+it('records C15: Set up runs init, and a private remote offers Remove the private mark', async () => {
+  const user = userEvent.setup()
+  state.host.workspaces[0].records = status({ configured: false, repo: null, remote: { url: URL_PUSH, url_hidden: false, private: true, export: 'ok' } })
+  const init = vi.spyOn(api, 'recordsInit').mockResolvedValue({ ok: true } as never)
+  const mark = vi.spyOn(api, 'recordsMark').mockResolvedValue({ ok: true } as never)
+  await openRecords()
+  await user.click(await screen.findByRole('button', { name: 'Set up' }, T))
+  await waitFor(() => expect(init).toHaveBeenCalledWith(A))
+  await user.click(await screen.findByRole('button', { name: 'Remove the private mark' }, T))
+  const dialog = await screen.findByTestId('records-admin-dialog', {}, T)
+  await user.click(within(dialog).getByRole('button', { name: 'Remove private label' }))
+  await waitFor(() => expect(mark).toHaveBeenCalledWith(A, null))
 })

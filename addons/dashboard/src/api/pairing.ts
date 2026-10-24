@@ -121,11 +121,6 @@ export const pairedDevices = (members: PairMember[]): PairDevice[] =>
 const SHELL_WORD = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
 export const shellWord = (value: unknown): value is string => typeof value === 'string' && SHELL_WORD.test(value)
 
-/** CLI-only removal (needs the person key; the recovery code is typed). ASSUMPTION: R6 names no command; this one is a guess.
- * Null when the device id or workspace prefix can't be put in a command safely. */
-export const deviceRemoveCommand = (device: string, ws: string): string | null =>
-  shellWord(device) && shellWord(ws) ? `orch device remove ${device} --workspace ${ws}` : null
-
 /** A `pair` sub item: no secrets, so the page doesn't poll. */
 export interface PairItem {
   t: 'pair'

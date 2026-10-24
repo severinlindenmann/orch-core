@@ -183,10 +183,17 @@ export function RecordsBlock({ workspace }: { workspace: Workspace }) {
   const allowed = atLeast(role, 'maintainer')
   const status = useQuery({ ...queries.records(workspace.id), enabled: allowed })
   const [confirmPush, setConfirmPush] = useState(false)
+  /** #1198 C15: the admin steps, each a review of the exact address and one click. */
+  const [admin, setAdmin] = useState<'mark' | 'unmark' | 'first' | null>(null)
   const current = useMutation({ mutationFn: () => api.getRecordsCurrent(workspace.id) })
   const [result, setResult] = useState<RecordsRun | null>(null)
   const run = useMutation({
-    mutationFn: (what: 'commit' | 'push' | 'auto-off') => (what === 'auto-off' ? api.recordsAutoOff(workspace.id) : api.recordsCommit(workspace.id, what === 'push')),
+    mutationFn: (what: 'commit' | 'push' | 'auto-off' | 'init' | { mark: string | null } | { first: string }) =>
+      what === 'auto-off' ? api.recordsAutoOff(workspace.id)
+      : what === 'init' ? api.recordsInit(workspace.id)
+      : typeof what === 'object' && 'mark' in what ? api.recordsMark(workspace.id, what.mark)
+      : typeof what === 'object' ? api.recordsPushInitial(workspace.id, what.first)
+      : api.recordsCommit(workspace.id, what === 'push'),
     onMutate: () => setResult(null),
     onSuccess: (r) => {
       setResult(r)
@@ -230,9 +237,9 @@ export function RecordsBlock({ workspace }: { workspace: Workspace }) {
             {data.pending && data.pending.events > 0 && ` ${plural(data.pending.events, 'change')} are waiting to be saved.`}
           </p>
           <div className="flex flex-wrap gap-2">
-            {(data.configured === false || !data.repo) && <Button disabled={busy} onClick={() => run.mutate('commit')}>Set up</Button>}
+            {(data.configured === false || !data.repo) && <Button disabled={busy} onClick={() => run.mutate('init')}>Set up</Button>}
             <Button disabled={busy} onClick={() => run.mutate('commit')}>Save now</Button>
-            {run.error instanceof ApiError && run.error.code === 'records.not_dedicated' && <Button disabled={busy} onClick={() => run.mutate('commit')}>Set up records</Button>}
+            {run.error instanceof ApiError && run.error.code === 'records.not_dedicated' && <Button disabled={busy} onClick={() => run.mutate('init')}>Set up records</Button>}
           </div>
           {busy && (
             <p role="status" className="text-[12px] text-text-muted">
@@ -263,6 +270,21 @@ export function RecordsBlock({ workspace }: { workspace: Workspace }) {
                         Commit and push
                       </Button>
                     )}
+                    {role === 'owner' && !!data.remote?.url && data.remote.private !== true && (
+                      <Button variant="outline" disabled={busy} onClick={() => { current.reset(); current.mutate(); setAdmin('mark') }}>
+                        Mark the remote as private
+                      </Button>
+                    )}
+                    {role === 'owner' && data.remote?.private === true && (
+                      <Button variant="outline" disabled={busy} onClick={() => setAdmin('unmark')}>
+                        Remove the private mark
+                      </Button>
+                    )}
+                    {!!data.remote?.url && (
+                      <Button variant="outline" disabled={busy} onClick={() => { current.reset(); current.mutate(); setAdmin('first') }}>
+                        Create the remote branch
+                      </Button>
+                    )}
                     {data.auto?.on && (
                       <Button variant="outline" disabled={busy} onClick={() => run.mutate('auto-off')}>
                         Turn automatic commits off
@@ -274,17 +296,51 @@ export function RecordsBlock({ workspace }: { workspace: Workspace }) {
 
             <Section title="In your terminal">
               <div className="space-y-2">
-                <p className="text-[13px] text-text-muted">These change who can read your records or what runs on your machine, so the dashboard has no button for them. Run them yourself.</p>
+                <p className="text-[13px] text-text-muted">These start something that keeps running on your machine, so the dashboard has no button for them. Run them yourself.</p>
                 <ul className="space-y-2">
-                  <Command what="Mark the remote as one only you read (it asks you first).">{TERMINAL_COMMANDS.remotePrivate}</Command>
                   <Command what="Commit on a timer, locally.">{TERMINAL_COMMANDS.autoOn}</Command>
                   <Command what="Commit and push on a timer.">{TERMINAL_COMMANDS.autoOnPush}</Command>
-                  <Command what="Create the remote branch the first time.">{TERMINAL_COMMANDS.pushInitial}</Command>
                 </ul>
               </div>
             </Section>
           </details>
         </>
+      )}
+
+      {admin && (
+        <Dialog open onOpenChange={(o) => !o && setAdmin(null)}>
+          <DialogContent className="max-w-lg gap-4 border-border bg-surface" data-testid="records-admin-dialog">
+            <DialogHeader>
+              <DialogTitle>{admin === 'mark' ? 'Mark the remote as private' : admin === 'unmark' ? 'Remove the private mark' : 'Create the remote branch'}</DialogTitle>
+              <DialogDescription>Check the address and what happens below, then confirm.</DialogDescription>
+            </DialogHeader>
+            {admin !== 'unmark' && current.isPending ? <p role="status">Checking the address…</p> : (() => {
+              const remote = current.data?.remote
+              const address = admin === 'unmark' ? (data?.remote?.url ?? null) : !current.isError && remote?.current_url != null && !remote.current_url_hidden ? remote.current_url : null
+              return (
+                <div className="space-y-2 text-[13px]" data-testid="records-admin-review">
+                  {admin === 'mark' && <p>You tell orch that only you can read <Raw>{address ?? 'the remote'}</Raw>. orch takes your word for it. With click-to-sign on, records can only be pushed to a remote marked like this.</p>}
+                  {admin === 'unmark' && <p>This removes orch's saved private label for <Raw>{address ?? 'the remote'}</Raw>. It does not change who can read that address. With click-to-sign on, records cannot be pushed there until it is marked again.</p>}
+                  {admin === 'first' && <p>This creates the records branch on <Raw>{address ?? 'the remote'}</Raw> and uploads every ticket in this workspace. <strong>Restricted tickets are included.</strong></p>}
+                  {address === null && <p role="alert" className="text-warning">The address cannot be shown here, so this cannot be done from the dashboard.</p>}
+                  <DialogFooter className="gap-2">
+                    <Button variant="ghost" onClick={() => setAdmin(null)}>Cancel</Button>
+                    <Button
+                      variant={admin === 'unmark' ? 'destructive' : 'default'}
+                      disabled={address === null}
+                      onClick={() => {
+                        setAdmin(null)
+                        run.mutate(admin === 'unmark' ? { mark: null } : admin === 'mark' ? { mark: address! } : { first: address! })
+                      }}
+                    >
+                      {admin === 'mark' ? 'Mark as private' : admin === 'unmark' ? 'Remove private label' : 'Create branch and upload tickets'}
+                    </Button>
+                  </DialogFooter>
+                </div>
+              )
+            })()}
+          </DialogContent>
+        </Dialog>
       )}
 
       {confirmPush && (

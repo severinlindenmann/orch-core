@@ -72,7 +72,9 @@ it('explains a missing records folder and keeps its error code under closed Deta
   expect(details).not.toHaveAttribute('open')
   expect(within(details).getByText('records.not_dedicated')).toBeInTheDocument()
   await user.click(screen.getByRole('button', { name: 'Set up records' }))
-  expect(state.host.calls.filter(c => c.method === 'POST' && c.path.endsWith('/records/commit')).map(c => c.body)).toEqual([{ push: false }, { push: false }])
+  expect(state.host.calls.filter(c => c.method === 'POST' && c.path.endsWith('/records/commit')).map(c => c.body)).toEqual([{ push: false }])
+  // #1198 C15: Set up records is the init step, not a second commit
+  expect(state.host.calls.filter(c => c.method === 'POST' && c.path.endsWith('/records/init')).map(c => c.body)).toEqual([{}])
 })
 
 it('saves agent access separately from changed reservation times', async () => {

@@ -98,7 +98,10 @@ def test_an_agent_is_refused_before_anything_is_read_or_fetched(served, ready):
 
 
 def test_an_agent_can_read_installed_and_list(served, ready):
-    assert ok(agent(served, "market.installed"))["data"] == {"addons": []}
+    assert ok(agent(served, "market.installed"))["data"] == {
+        "addons": [],
+        "hub": {"state": "standalone", "code": None, "reconnect": None},
+    }
     ok(agent(served, "market.list", {"entries": True}))
 
 

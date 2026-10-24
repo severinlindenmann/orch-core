@@ -117,16 +117,11 @@ def stop_op(op: str) -> bool:
 
 def addon_granted(service: WorkspaceService) -> bool:
     """The ``terminals`` addon is granted, enabled and not purged in this workspace (on the worker thread)."""
-    from orch.addons.install import as_addons
+    from . import hubpolicy
 
-    store = service.store
-    if store is None:
+    if service.store is None:
         return False
-    try:
-        found = as_addons(store.state.workspace.addons).get(ADDON)
-    except (AttributeError, KeyError, TypeError):
-        return False
-    return found is not None and found.enabled and not found.purged
+    return hubpolicy.running(service, ADDON)  # granted, on, and not paused by the hub policy
 
 
 def missing(service: WorkspaceService, hub: RunnerHub, *, addon: bool = True) -> str | None:

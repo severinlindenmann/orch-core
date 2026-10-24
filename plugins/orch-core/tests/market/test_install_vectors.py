@@ -1,6 +1,6 @@
 """V3 G3 (#921): the product's install checks (``index.evaluate``, ``install.check_entry``, ``install.check_package``)
-give the reference answer (``tests/addons/market_ref.install``) on every ``install`` vector. The hub (G7) rows are
-not the product's yet and are listed, not silently skipped. The lockfile rows (G4) run here too."""
+give the reference answer (``tests/addons/market_ref.install``) on every ``install`` vector. The hub policy has its own
+file (``test_policy_vectors.py``: the shared ``evaluate`` vectors). The lockfile rows (G4) run here too."""
 
 from __future__ import annotations
 
@@ -19,7 +19,6 @@ CASES = [
     for c in json.loads((Path(ref.__file__).parent / "vectors_market.json").read_text())["cases"]
     if c["check"] == "install"
 ]
-G7 = {c["name"] for c in CASES if c["args"]["ctx"]["hub"] is not None}
 G4 = {c["name"] for c in CASES if "lock" in json.dumps(c["expect"]) or "runtime" in json.dumps(c["args"]["files"])}
 assert G4  # the lockfile cases are in this file's scope since V3 G4
 
@@ -60,15 +59,9 @@ def product(a: dict, monkeypatch) -> dict:
 
 @pytest.mark.parametrize("case", CASES, ids=[c["name"] for c in CASES])
 def test_the_product_gives_the_reference_answer(case, monkeypatch):
-    if case["name"] in G7:
-        pytest.skip("hub policy is G7")
     want = ref.run_case(case)
     got = product(case["args"], monkeypatch)
     if "ok" in want:
         assert got["ok"] == {k: want["ok"][k] for k in ("id", "tofu", "package_sha256")}
     else:
         assert got == want
-
-
-def test_what_is_not_the_products_yet_is_named():
-    assert G7  # a case that moves into scope is a case that stops being skipped

@@ -22,7 +22,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from orch import canon
+from orch.market import MarketError
 from orch.modelchoices import MODEL_CHOICES
+
+from . import hubpolicy
 
 if TYPE_CHECKING:
     from .workspace import WorkspaceService
@@ -34,6 +37,7 @@ CAPABILITY = "choose_model"
 METHOD = "launch.model"
 TIMEOUT = 3.0
 UNANSWERED = "Model routing did not answer: pick a model or turn it off"
+PAUSED = "Model routing is paused by the hub policy: pick a model or turn it off"
 _TOO_MANY = "More than one add-on chooses models: turn all but one off, or pick a model"
 _MEMO_MAX = 64
 FAIL_SECONDS = 30.0
@@ -97,6 +101,11 @@ def _choose(service: WorkspaceService, harness: str, mode: str) -> Routed:
     if len(active) > 1:
         return Routed(problem=_TOO_MANY)
     granted = active[0]
+    gate = hubpolicy.run_gate(service)
+    try:  # before the memo and before any read of the package: a paused add-on is not asked and not remembered
+        gate(granted)
+    except MarketError:
+        return Routed(problem=PAUSED)
     try:
         package, manifest = install.read_installed(service.store.layout.store, granted.name)
     except (PackageError, ManifestError, OSError):
@@ -127,6 +136,7 @@ def _choose(service: WorkspaceService, harness: str, mode: str) -> Routed:
             METHOD,
             {"harness": harness, "mode": mode, "settings": settings},
             runner.Limits(timeout=TIMEOUT),
+            gate=gate,
         )
     except runner.RunnerError as exc:
         LOG.warning("model routing add-on %s: %s", granted.name, exc.code)

@@ -90,13 +90,9 @@ def _validate(op: str, args: Any) -> None:
 
 
 def _addon(service: WorkspaceService, name: str) -> bool:
-    from orch.addons.install import as_addons
+    from . import hubpolicy
 
-    try:
-        found = as_addons(service.store.state.workspace.addons).get(name)
-    except (AttributeError, KeyError, TypeError):
-        return False
-    return found is not None and found.enabled and not found.purged
+    return hubpolicy.running(service, name)  # granted, on, and not paused by the hub policy
 
 
 def agent_missing(service: WorkspaceService, hub: RunnerHub) -> str | None:

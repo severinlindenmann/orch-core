@@ -129,7 +129,6 @@ def ctx(**kw: Any) -> dict[str, Any]:
         "market_repo": OTHER,
         "isolation": True,
         "official": {"repo": OFFICIAL, "key": PUB["official"]},
-        "hub": None,
         "git_hosts": ["github.com", "gitlab.com"],
         "seen": {},
         "builtin": ["wiki", "terminals", "dashboard"],
@@ -319,12 +318,6 @@ def build() -> None:
         ok(id="github", version="1.0.0", package_sha256=ge["package_sha256"], **{"class": "official"}, tofu="new"),
     )
     add(
-        "install_ok_hub_allowed_in_ceiling",
-        "install",
-        inst(hub={"allow": [OTHER], "block": [], "ceiling": ["network", "serve_http"]}),
-        ok(id="standup", version="1.0.0", package_sha256=e["package_sha256"], **{"class": "other"}, tofu="unsigned"),
-    )
-    add(
         "install_ok_same_version_index",
         "install",
         inst(last_version=7),
@@ -358,18 +351,6 @@ def build() -> None:
         inst(fl={"main.py": "print('hello')\n"}),
         refuse("package_invalid"),
     )
-    add(
-        "install_capability_outside_ceiling",
-        "install",
-        inst(hub={"allow": [OTHER], "block": [], "ceiling": ["serve_http"]}),
-        refuse("capability_ceiling"),
-    )
-    add(
-        "install_empty_ceiling",
-        "install",
-        inst(hub={"allow": [OTHER], "block": [], "ceiling": []}),
-        refuse("capability_ceiling"),
-    )
     add("install_min_orch_too_high", "install", inst(core_version="1.9.0"), refuse("min_orch"))
     add("install_min_orch_dev_before_release", "install", inst(core_version="2.0.0.dev999"), refuse("min_orch"))
     add(
@@ -393,36 +374,6 @@ def build() -> None:
     forged["package_sha256"] = package_digest({p: t.encode() for p, t in jf101.items()})
     add("install_bad_signature", "install", inst(index(OTHER, [forged]), jf101, "jira"), refuse("bad_signature"))
     add("install_community_without_isolation", "install", inst(isolation=False), refuse("community_unisolated"))
-    add(
-        "install_hub_not_allowed",
-        "install",
-        inst(hub={"allow": ["https://github.com/other/market"], "block": [], "ceiling": None}),
-        refuse("not_allowed"),
-    )
-    add(
-        "install_hub_empty_allow_list",
-        "install",
-        inst(hub={"allow": [], "block": [], "ceiling": None}),
-        refuse("not_allowed"),
-    )
-    add(
-        "install_hub_block_beats_allow",
-        "install",
-        inst(hub={"allow": [OTHER], "block": [OTHER], "ceiling": None}),
-        refuse("blocked"),
-    )
-    add(
-        "install_hub_blocks_official_not_listed",
-        "install",
-        inst(
-            oindex(OFFICIAL, [ge], name="orch-marketplace"),
-            gf,
-            "github",
-            market_repo=OFFICIAL,
-            hub={"allow": [OTHER], "block": [], "ceiling": None},
-        ),
-        refuse("not_allowed"),
-    )
     add("install_index_rollback", "install", inst(last_version=8), refuse("rollback"))
     add(
         "install_source_mismatch",
@@ -1033,19 +984,7 @@ def build() -> None:
     other_signed["version"] = 8
     add("install_other_index_with_bad_signature", "install", inst(other_signed), refuse("index_unsigned"))
 
-    # ---- L2M-9: the hub policy is a strict object; L2M-10: one version, one digest
-    for nm, hub in (
-        ("allow_is_a_string", {"allow": OTHER + "-mirror", "block": [], "ceiling": None}),
-        ("allow_substring_url", {"allow": [OTHER + "-mirror"], "block": [], "ceiling": None}),
-        ("missing_keys", {"allow": [OTHER]}),
-        ("block_is_null", {"allow": [OTHER], "block": None, "ceiling": None}),
-        ("ceiling_is_a_string", {"allow": [OTHER], "block": [], "ceiling": "network"}),
-        ("ceiling_unknown_capability", {"allow": [OTHER], "block": [], "ceiling": ["root"]}),
-        ("unknown_key", {"allow": [OTHER], "block": [], "ceiling": None, "widen": ["pty"]}),
-        ("non_canonical_allow_url", {"allow": [OTHER + ".git"], "block": [], "ceiling": None}),
-        ("not_an_object", ["allow"]),
-    ):
-        add("install_hub_policy_malformed_" + nm, "install", inst(hub=hub), refuse("not_allowed"))
+    # ---- L2M-10: one version, one digest
     same = {"standup": {"origin": OTHER, "version": "1.0.0", "package_sha256": e["package_sha256"]}}
     add(
         "install_reinstall_same_version_same_digest_ok",

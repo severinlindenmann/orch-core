@@ -596,7 +596,7 @@ def _grants(material: Mapping[str, Any], events: list[Mapping[str, Any]]) -> Non
 
 
 _MARKET_KEYS = {"url", "class", "commit", "source_note", "publisher", "index_version", "stale", "summary", "replaces"}
-_TOFU = ("unsigned", "new", "known")
+_TOFU = ("unsigned", "new", "known", "pinned")
 
 
 def _market(material: Mapping[str, Any], events: list[Mapping[str, Any]]) -> None:
@@ -620,7 +620,7 @@ def _market(material: Mapping[str, Any], events: list[Mapping[str, Any]]) -> Non
     short = lambda v, n: isinstance(v, str) and len(v) <= n  # noqa: E731
     ok = (
         short(block["url"], 200)
-        and block["class"] in ("official", "dev", "dev-folder")
+        and block["class"] in ("official", "dev", "company", "dev-folder")
         and isinstance(block["commit"], str)
         and re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", block["commit"]) is not None
         and block["source_note"]
@@ -983,7 +983,7 @@ def render(
     if market is not None:  # the host's word, labelled; nothing here is signed (C4)
         pub = market["publisher"]
         who = {"unsigned": "unsigned (no publisher key)", "new": "first use: remembered when you sign",
-               "known": "same publisher as before"}[pub["tofu"]]  # fmt: skip
+               "known": "same publisher as before", "pinned": "key pinned by your hub"}[pub["tofu"]]  # fmt: skip
         if market["class"] == "dev-folder":
             commit = _clean(market["commit"])
             out.append(

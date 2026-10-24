@@ -21,7 +21,7 @@ from orch.addons.lockfile import Planned
 from orch.addons.manifest import Manifest, ManifestError, _core_key, declarations, incompatibility, load_manifest
 from orch.addons.package import MANIFEST_FILE, Package
 
-from . import ADDONS, MarketError, deps, index
+from . import ADDONS, MarketError, deps, index, policy
 from .url import host_of
 
 __all__ = ["Ctx", "Facts", "check_entry", "check_package", "diff", "semver"]
@@ -49,12 +49,13 @@ class Ctx:
     builtin: frozenset[str] = frozenset(builtin.NAMES)
     official_ids: frozenset[str] = frozenset()
     moved: frozenset[str] = frozenset()
+    hub: Any = None  # the hub's marketplace policy; ``None`` = standalone (D79)
 
 
 @dataclass(frozen=True)
 class Facts:
     entry: dict[str, Any]
-    tofu: str  # "unsigned" | "new" | "known"
+    tofu: str  # "unsigned" | "new" | "known" | "pinned" (a company key the hub pins: no TOFU)
     publisher_key: str | None
     prior: Mapping[str, Any] | None  # the install record of this name, if installed
 
@@ -89,17 +90,27 @@ def check_entry(ctx: Ctx, doc: Mapping[str, Any], addon_id: str) -> Facts:
     floor = [v for v in (prior and prior["version"], ctx.seen.get(f"{ctx.url}|{entry['id']}")) if v]
     if any(semver(entry["version"]) < semver(v) for v in floor):
         raise MarketError("market.rollback")
+    policy.evaluate("entry", ctx.hub, {"url": ctx.url, "id": entry["id"], "version": entry["version"]})  # block, allow
     pub = entry.get("publisher")
-    if pub is None and ctx.keys:
-        raise MarketError("market.official_unsigned")
-    if pub is not None and ctx.keys and pub["key"] not in ctx.keys:
-        raise MarketError("market.official_unsigned")
-    if pub is not None and not index.verify_entry(entry, ctx.url):
-        raise MarketError("market.bad_signature")
-    known = ctx.known_keys.get(f"{ctx.url}|{entry['id']}")
-    if known is not None and (pub is None or pub["key"] != known):
-        raise MarketError("market.publisher_key_changed")
-    tofu = "unsigned" if pub is None else ("known" if known is not None else "new")
+    if ctx.cls == "company":
+        if ctx.hub is None:
+            raise MarketError("market.not_allowed")  # a company class exists only under a hub policy
+        policy.evaluate("publisher", ctx.hub, {"url": ctx.url, "publisher_key": None if pub is None else pub["key"]})
+        if not index.verify_entry(entry, ctx.url):
+            raise MarketError("market.bad_signature")
+        tofu = "pinned"  # the hub's pin replaces TOFU for this URL: no TOFU read here, none written at the grant
+    else:
+        if pub is None and ctx.keys:
+            raise MarketError("market.official_unsigned")
+        if pub is not None and ctx.keys and pub["key"] not in ctx.keys:
+            raise MarketError("market.official_unsigned")
+        if pub is not None and not index.verify_entry(entry, ctx.url):
+            raise MarketError("market.bad_signature")
+        known = ctx.known_keys.get(f"{ctx.url}|{entry['id']}")
+        if known is not None and (pub is None or pub["key"] != known):
+            raise MarketError("market.publisher_key_changed")
+        tofu = "unsigned" if pub is None else ("known" if known is not None else "new")
+    policy.evaluate("manifest", ctx.hub, {"url": ctx.url, "capabilities": entry.get("capabilities", [])})  # step 8
     need, have = _core_key(entry["min_orch"]), _core_key(ctx.core_version)
     if need is None or have is None or have < need:
         raise MarketError("market.min_orch")
@@ -215,6 +226,8 @@ def diff(
     old_key = prev.get("publisher_key")
     if facts.tofu == "unsigned":
         publisher = "unsigned"
+    elif facts.tofu == "pinned":
+        publisher = "pinned"  # the hub pins the key: a change of key is the hub's, and shows as a refusal, not a diff
     elif old_key is None:
         publisher = "first_use"
         widened = True

@@ -78,7 +78,12 @@ def _parser() -> argparse.ArgumentParser:
 def _lines(stage: dict[str, Any]) -> list[str]:
     market = stage["market"]
     pub = market["publisher"]
-    who = {"unsigned": "unsigned", "new": "first use (remembered when you sign)", "known": "same publisher as before"}
+    who = {
+        "unsigned": "unsigned",
+        "new": "first use (remembered when you sign)",
+        "known": "same publisher as before",
+        "pinned": "key pinned by your hub",
+    }
     out = [f"{stage['name']} {stage['version']}  package {stage['package_sha256']}", *stage["review"]]
     note = "(per host, not signed)"
     out += [
@@ -93,16 +98,25 @@ def _lines(stage: dict[str, Any]) -> list[str]:
     return out
 
 
-def _installed_text(rows: list[dict[str, Any]]) -> str:
-    if not rows:
-        return "no add-ons installed from a marketplace"
+def _installed_text(rows: list[dict[str, Any]], hub: dict[str, Any] | None = None) -> str:
     out = []
+    if hub and hub.get("state") == "unverified":  # the cause of a pause that has no policy behind it, and the way out
+        out.append(
+            "hub policy cannot be verified: every add-on is paused (the hub card expired, or the hub is unreachable); "
+            f"reconnect to the hub: {hub['reconnect']}"
+        )
+    if not rows:
+        return "\n".join([*out, "no add-ons installed from a marketplace"])
     for r in rows:
         line = f"{r['name']} {r['version']} [{r['state']}] from {r['origin']}"
         a = r["available"]
         if a:
             added = f" (adds {', '.join(a['capabilities_added'])})" if a["capabilities_added"] else ""
             line += "  REVOKED" if a["revoked"] else f"  newer: {a['version']}{added}"
+        p = r.get("paused")
+        if p:
+            line += f"  PAUSED by hub policy ({p['code']})"
+            line += "; reconnect to the hub: " + p["reconnect"] if p["reconnect"] else "; ask the hub admin"
         out.append(line)
     return "\n".join(out)
 
@@ -159,7 +173,7 @@ def main(
             out.write(
                 json.dumps({"ok": True, "data": data}) + "\n"
                 if as_json
-                else "ok addon update --check\n" + _installed_text(data[ADDONS]) + "\n"
+                else "ok addon update --check\n" + _installed_text(data[ADDONS], data.get("hub")) + "\n"
             )
             return 0
         result = _signed(a, env, out, as_json)

@@ -101,13 +101,20 @@ def test_canonical_market_url_accepts_the_canonical_form():
 
 
 def test_E8_the_class_and_hub_gate():
-    assert policy.gate(constants.OFFICIAL_URL, hub_joined=False) == "official"
-    assert code_of(policy.gate, "https://github.com/acme/m", hub_joined=False) == "market.community_unisolated"
-    assert code_of(policy.gate, "https://github.com/acme/m", hub_joined=True) == "market.not_allowed"
-    assert (
-        code_of(policy.gate, constants.OFFICIAL_URL, hub_joined=True) == "market.not_allowed"
-    )  # policy unreadable: nothing
-    assert code_of(policy.gate, "http://github.com/acme/m", hub_joined=True) == "market.malformed"  # canonical first
+    listed = policy.from_raw(
+        {
+            "markets": [{"url": constants.OFFICIAL_URL, "class": "official", "keys": []}],
+            "addons": {"allow": None, "block": []},
+            "ceiling": None,
+        }
+    )
+    nothing = policy.from_raw({"markets": [], "addons": {"allow": None, "block": []}, "ceiling": None})
+    assert policy.gate(constants.OFFICIAL_URL, policy=None) == "official"
+    assert policy.gate(constants.OFFICIAL_URL, policy=listed) == "official"
+    assert code_of(policy.gate, "https://github.com/acme/m", policy=None) == "market.community_unisolated"
+    assert code_of(policy.gate, "https://github.com/acme/m", policy=listed) == "market.not_allowed"
+    assert code_of(policy.gate, constants.OFFICIAL_URL, policy=nothing) == "market.not_allowed"  # official too
+    assert code_of(policy.gate, "http://github.com/acme/m", policy=listed) == "market.malformed"  # canonical first
 
 
 # ------------------------------------------------------------------------------------------------ the signature

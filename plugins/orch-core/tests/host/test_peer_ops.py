@@ -47,7 +47,6 @@ PEER_CARD = _peer_card()
 @pytest.fixture(autouse=True)
 def dev_workspace(monkeypatch):
     monkeypatch.setattr(hubops, "workspace_dev", lambda service: True)
-    human_helpers.dev_hub_stores(monkeypatch)  # #1198 C9: the proof's dev marker vs the store's own
 
 
 def reply(h, o):

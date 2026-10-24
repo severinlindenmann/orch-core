@@ -27,7 +27,6 @@ CARD = V["objects"]["card"]
 @pytest.fixture(autouse=True)
 def dev_workspace(monkeypatch):
     monkeypatch.setattr(hubops, "workspace_dev", lambda service: True)
-    human_helpers.dev_hub_stores(monkeypatch)
 
 
 def join_args(**over):
@@ -302,3 +301,52 @@ def test_the_composite_asks_for_the_backup_key_after_the_confirmation(human, ser
     )  # fmt: skip
     assert order == ["confirm", "proof"] and calls[-1] == "human.submit"
     assert result["data"]["hub_id"]
+
+
+# --- the model through the real engine and the crypto verifier (no fake verifier) -------------------------
+
+
+def append_raw(served, typ, **fields):
+    """Append a hub event the owner's device signed, straight to the log: the host's own checks are bypassed, so what
+    refuses it is the model (``Store.append`` -> ``admit`` with the real ``CryptoVerifier``)."""
+
+    def run(store):
+        served.lab.ws.tick()
+        return store.append(
+            served.lab.ws.person_event(served.lab.ws.owner, "workspace", typ, **fields), log="workspace"
+        )
+
+    return served.append(run)
+
+
+def test_a_proof_replayed_into_a_later_event_is_stale_binding(human, served):
+    from orch.store import StoreError
+
+    human.run("hub.join", join_args())
+    hub = served.service.store.state.workspace.hub
+    proof = thaw(hub["owner_proof"])
+    joined = {k: hub[k] for k in ("hub_id", "hk_root_pub", "mode", "binding_seq")} | {"aliases": []}
+    with pytest.raises(StoreError) as e:  # the same join again while bound: the proof is genuine, its place is not
+        append_raw(served, "hub.joined", **joined, owner_proof=proof)
+    assert "stale_binding" in str(e.value)
+    human.run("hub.leave", {})
+    with pytest.raises(StoreError) as e:  # after the leave, the old join (binding 1) cannot come back either
+        append_raw(served, "hub.joined", **joined, owner_proof=proof)
+    assert "stale_binding" in str(e.value)
+
+
+def test_an_event_appended_after_the_proof_ran_out_is_proof_expired(human, served):
+    from orch.store import StoreError
+
+    human.run("hub.join", join_args())
+    prepared = human.prepare("hub.leave", {})
+    now = int(served.lab.ws.clock[0] * 1000)
+    short = human.owner_proof(prepared, issued_ms=now, expires_ms=now + 1_000)
+    body = hubproof.payload_of(prepared["events"][0])
+    served.lab.ws.clock[0] += 700  # the line's own time is past the proof's life
+    with pytest.raises(StoreError) as e:
+        append_raw(served, "hub.left", **body, owner_proof=short)
+    assert "proof_expired" in str(e.value)
+    served.lab.ws.clock[0] -= 700
+    ok_ = append_raw(served, "hub.left", **body, owner_proof=human.owner_proof(prepared))
+    assert ok_ is not None  # the same event with a live proof lands

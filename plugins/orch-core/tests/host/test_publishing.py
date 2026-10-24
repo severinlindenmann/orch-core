@@ -170,12 +170,6 @@ class PublishHub:
         return {"status": status, "body_hex": data.hex()}
 
 
-@pytest.fixture(autouse=True)
-def dev_hub(monkeypatch):
-    """#1198 C9: before ``served`` opens its store (the model checks a hub proof's dev marker against the store's)."""
-    human_helpers.dev_hub_stores(monkeypatch)
-
-
 class World:
     """A served workspace that has joined a hub (``join=False``: a workspace alone). ``server`` is orch-publish behind
     the hub; ``hub`` is the link to it. The module seams are set through ``monkeypatch``, so they are back whenever
@@ -192,6 +186,7 @@ class World:
         monkeypatch.setattr(hubops, "TRANSPORT", lambda service, hub_id: self.hub)
         monkeypatch.setattr(hubops, "CARD_SOURCE", lambda service: card)
         monkeypatch.setattr(hubops, "workspace_dev", lambda service: True)
+        human_helpers.sync_dev_store(served)  # #1198 C9: the store is dev when workspace_dev says so
         monkeypatch.setattr(hubpolicy, "stored", lambda service: None)  # the Publish tests are not about the hub policy
         if join:
             self.join()

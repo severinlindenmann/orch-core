@@ -123,6 +123,14 @@ class HubFacts:
     dev_mode: bool
 
 
+def dev_host(service: WorkspaceService) -> bool:
+    """Is this a dev host (full, not pending)? The ONE host-level source of the dev state: the store replays dev hub
+    material (and a hub proof's ``dev`` marker) only for it (C3b 15.3, #1198 C9), and :func:`workspace_dev` adds the
+    per-workspace sandbox proof on top."""
+    dev = getattr(service, "dev", None)
+    return dev is not None and not getattr(dev, "pending", False)
+
+
 def workspace_dev(service: WorkspaceService) -> bool:
     """Is this a dev workspace? Only a dev host (``--dev-sim-convenience``) that proves the workspace is its sandbox
     says yes; every doubt is no, so a real workspace refuses a dev hub (fail closed). Runs on the worker thread."""
@@ -130,7 +138,7 @@ def workspace_dev(service: WorkspaceService) -> bool:
 
     dev = getattr(service, "dev", None)
     store = getattr(service, "store", None)
-    if dev is None or store is None:
+    if not dev_host(service) or store is None:
         return False
     try:
         with store.locked():
@@ -581,6 +589,16 @@ def _refused(code: str) -> HostError:
     if code == "rotation_pending":
         return HostError(
             "hub.rotation_pending", "the workspace key of the hub you left is not replaced yet; try again shortly"
+        )
+    if code in ("proof_expired", "proof_invalid", "proof_missing"):
+        # #1198 C9: the owner proof of the join lives 10 minutes. The log already says joined, but the hub never took
+        # the binding; readers refuse a second join while bound, so the way out is a leave, then a new join.
+        return HostError(
+            "hub.refused",
+            f"the hub is refused: {code}: the proof of your backup key behind this join is too old or not valid, "
+            "so the hub did not take it",
+            hint="leave and join again with your backup key: orch hub leave, then orch hub join",
+            fix=["orch", "hub", "leave"],
         )
     return HostError("hub.refused", f"the hub is refused: {code}")
 

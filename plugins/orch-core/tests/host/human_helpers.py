@@ -119,13 +119,23 @@ def unsigned(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [{k: v for k, v in e.items() if k != "sig"} for e in copy.deepcopy(events)]
 
 
-def dev_hub_stores(monkeypatch: pytest.MonkeyPatch) -> None:
-    """#1198 C9: a test that signs a hub step as a dev workspace (``hubops.workspace_dev`` patched to True) needs the
-    store's replay to be dev too: the model checks the proof's ``dev`` marker against the store's own ``hub_dev``. A
-    data descriptor on the class wins over the instance attribute, so stores that are already open follow too."""
-    from orch.store import Store
+def sync_dev_store(served: Any) -> None:
+    """#1198 C9: one source for the dev state. When ``hubops.workspace_dev`` says the served workspace is a dev
+    workspace (a test patches it), its store replays as dev too (the model compares a hub proof's ``dev`` marker with
+    the store's own ``hub_dev``), and so do the test's own stores (``lab.ws.other()``). Per instance, no class patch."""
+    from orch.host import hubops
 
-    monkeypatch.setattr(Store, "hub_dev", property(lambda self: True, lambda self, value: None), raising=False)
+    service = served.service
+    if not hubops.workspace_dev(service):
+        return
+
+    def make_dev(store: Any) -> None:
+        store.hub_dev = True
+        store._needs_reload = True  # noqa: SLF001
+        store.refresh()
+
+    served.lab.ws.hub_dev = True
+    service.submit(make_dev, service.store).result()
 
 
 @pytest.fixture
@@ -147,6 +157,7 @@ def lab(tmp_path):
 def served(lab):
     s = Served(lab)
     try:
+        sync_dev_store(s)
         yield s
     finally:
         s.close()

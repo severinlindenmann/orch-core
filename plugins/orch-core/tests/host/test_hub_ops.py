@@ -25,7 +25,6 @@ ROOT = V["keys"]["hk_root"]["pub"]
 def dev_workspace(monkeypatch):
     """The lab is not a proven sandbox: tests that need a dev workspace say so here (the real proof is devmode's)."""
     monkeypatch.setattr(hubops, "workspace_dev", lambda service: True)
-    human_helpers.dev_hub_stores(monkeypatch)
 
 
 def join_args(**over):
@@ -680,3 +679,43 @@ def test_status_warns_when_a_routine_rotation_was_not_resealed(human, served, st
     ok(c.req("hub.connect", {"hub_card": copy.deepcopy(CARD)}, idem=True))
     assert ok(c.req("hub.status", {}, idem=False))["data"]["reseal_needed"] is False
     assert _unwrap([m for m in stub.sent if m["o"]["op"] == "wk_seal"][1], served.wid, 2) == keystore.wk(2)
+
+
+# --- #1198 C9: the proof ran out before the hub took the join -------------------------------------------------------
+
+
+class ExpiringHub(StubHub):
+    """A hub that refuses the link ``join`` with ``proof_expired`` while ``expired`` is set."""
+
+    expired = True
+
+    def send(self, message):
+        from tests.hub.fake import sign_with
+        from tests.hub.vec import private_key
+
+        reply = super().send(message)
+        m = message["o"]
+        if self.expired and m["op"] == "join":
+            o = {**reply["o"], "body": {"error": "proof_expired"}}
+            return sign_with(private_key("hk_op"), "sig_hub_route", o)
+        return reply
+
+
+def test_an_expired_proof_at_connect_leaves_a_way_out_leave_then_join_again(human, served, monkeypatch, stub):
+    from tests.host.dispatch_helpers import ok
+
+    hub = ExpiringHub()
+    monkeypatch.setattr(hubops, "TRANSPORT", lambda service, hub_id: hub)
+    c = served.client()
+    human.run("hub.join", join_args())
+    res = c.req("hub.connect", connect_args(), idem=True)
+    assert err(res) == "hub.refused"
+    assert "proof_expired" in res["error"]["message"] and "orch hub leave" in res["error"]["hint"]
+    assert hub_state(served)[0]["status"] == "joined"  # the log says joined, the hub never bound
+    assert err(human.prepare_res("hub.join", join_args())) == "hub.already_joined"  # so a second join is refused
+    human.run("hub.leave", {})  # the way out: leave (works with the hub down)
+    assert hub_state(served)[0]["status"] == "left"
+    hub.expired = False
+    human.run("hub.join", join_args())  # a new join: a new proof, binding 2
+    got = ok(c.req("hub.connect", connect_args(), idem=True))["data"]
+    assert got["status"] == "bound" and got["binding_seq"] == 2

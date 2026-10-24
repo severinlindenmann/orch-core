@@ -20,11 +20,6 @@ from tests.host.test_publishing import LINK, REPORT, World
 lab, served, human = human_helpers.lab, human_helpers.served, human_helpers.human
 
 
-@pytest.fixture(autouse=True)
-def dev_hub(monkeypatch):
-    human_helpers.dev_hub_stores(monkeypatch)  # #1198 C9: before ``served`` opens its store
-
-
 @pytest.fixture
 def world(served, human, monkeypatch):
     w = World(served, human, monkeypatch, join=False)

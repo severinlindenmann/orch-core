@@ -270,6 +270,11 @@ def _join(
         _owe(state, workspace_id, sign_wsk, now_ms, dev=bool(state.binding["o"]["dev"]))
         state.status = "unbound"
         save(state)
+    if state is not None and state.status == "joining" and binding_seq is not None and binding_seq > state.binding_seq:
+        # the log left and joined again (#1198 C9: the owner proof of the first join ran out before the hub took it):
+        # the hub never held that binding, so there is nothing to resume and nothing to unbind
+        state.status = "unbound"
+        save(state)
     if mode == "full":
         assert epochs is not None
         _epoch_ready(state, epochs)

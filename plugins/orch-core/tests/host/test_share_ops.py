@@ -54,6 +54,7 @@ def _join(served, human, mode):
     hub.workspace_id = served.wid
     hub.start()
     card = make_card(hub, now_ms(served), HXK)
+    human_helpers.sync_dev_store(served)  # the World of live_helpers does not come from the ``served`` fixture
     human.run("hub.join", {"hub_card": card, "mode": mode})
     args = {"invite": "invite-1", "hub_card": card, "addr": f"127.0.0.1:{hub.port}"}
     assert ok(served.client().req("hub.connect", args, idem=True))["data"]["status"] == "bound"
@@ -65,7 +66,6 @@ def dev_workspace(monkeypatch):
     from orch.host import hubops
 
     monkeypatch.setattr(hubops, "workspace_dev", lambda service: True)
-    human_helpers.dev_hub_stores(monkeypatch)  # #1198 C9: the proof's dev marker vs the store's own
 
 
 @pytest.fixture

@@ -1,0 +1,15 @@
+{
+  "schema": "orch.addon/3",
+  "name": "changelog",
+  "version": "0.3.1",
+  "title": "Changelog",
+  "api": ">=1.0,<2",
+  "min_core": "2.0.0.dev0",
+  "entry": {"cmd": ["python3", "{pkg}/changelog.py"]},
+  "capabilities": [],
+  "fields": {
+    "line": {"type": "string", "max_len": 200, "set_by": ["addon", "member"]},
+    "skip": {"type": "string", "max_len": 40, "set_by": ["member"]}
+  },
+  "agents_md": "Changelog: the field changelog.line is the user-facing summary of a finished feature. Keep it one sentence."
+}

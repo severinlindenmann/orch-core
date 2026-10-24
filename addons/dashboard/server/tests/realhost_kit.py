@@ -209,12 +209,23 @@ class Workspace:
         return run.output
 
     # -- bring-up ---------------------------------------------------------------------------------------------------
+    def host_answers(self) -> bool:
+        """Whether a host (this object's or another process's) answers on the control socket of this run directory."""
+        probe = socket.socket(socket.AF_UNIX)
+        try:
+            probe.connect(str(self.run / "control" / "host.sock"))
+            return True
+        except OSError:
+            return False
+        finally:
+            probe.close()
+
     def init(self) -> None:
         """Create the workspace with the real `orch setup --no-browser` (V3-D38: the only way). The host must be running
         (:meth:`start_host`): setup creates the workspace through it and registers it. A person's browser is played by
         :func:`setup_driver` over the setup socket; the terminal answers are typed in the pty."""
         self.make_dirs()
-        if self.host is None or self.host.poll() is not None:
+        if not self.host_answers():
             raise RuntimeError("orch setup needs the host: call start_host() first")
         setup_driver(self)
 

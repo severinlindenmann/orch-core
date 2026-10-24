@@ -272,7 +272,7 @@ def restart_if_stale(
     import shlex
     import time
 
-    if unit.kind == "systemd-system":
+    if getattr(unit, "kind", None) == "systemd-system":
         return None
     if manager.active() is not True:
         return None

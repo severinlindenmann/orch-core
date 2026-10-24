@@ -13454,7 +13454,7 @@ the person's home, so it is not what root executes. The installer, as root, down
 `/usr/bin/python3 -I -S <staging>/orch/setup/osinstall.py` (system interpreter, never the release venv, never `-m orch...`).
 That step re-checks the staging tree, copies the four stdlib-only setup modules (with the package `__init__` files) and a launcher to the root-owned
 `/usr/lib/orch/os-setup/` (`/usr/lib`, not `/usr/local`: Debian's `/usr/local` can be group-writable), and re-hashes the copy
-against the source. The launcher `/usr/lib/orch/os-setup/orch-os-setup` has the shebang `#!/usr/bin/python3 -I -S`; before it
+against the source. The launcher `/usr/lib/orch/os-setup/orch-os-setup` has the shebang `#!/usr/bin/python3 -IS` (one argument: Linux does not split shebang arguments); before it
 imports anything of orch it checks that the interpreter, the standard library and the whole copy (and every directory above
 them) are root's and not writable by group or other, and afterwards that every loaded orch module came from the copy. The
 installer runs it when it is root (most VPSs); otherwise setup shows one line to copy,
@@ -13491,8 +13491,22 @@ has recorded the sudo/SSH verdict; a re-run whose verdict fails stops the runner
    the runner enabled and started (add-on slot units are written but enabled by L3): `User=orch-agent-%i` (the instance is the bare person name, e.g. `orch-runner@sev`, so no instance such as `root` can ever run as root; slots: `orch-addon@<n>` with `User=orch-addon-%i`), `Delegate=yes` (per-run cgroups, D-P2-29), `NoNewPrivileges=yes`, `PrivateTmp=yes`,
    `ProtectSystem=strict`, `ProtectHome=read-only`, `ReadWritePaths=/var/lib/orch/agents/orch-agent-%i /run/orch/agents/orch-agent-%i`,
    `RestrictSUIDSGID=yes`, `TasksMax=`, `MemoryMax=` (agent: 80 % of RAM by default; D-P2-29's "no limits in phase 2"
-   was a tier-A limit). `ExecStart` is the person's `<release>/current`. On a new release the host sends
-   `runner.restart`; the runner exits when idle and `Restart=always` starts the new code, so updates need no root.
+   was a tier-A limit), plus `ProtectProc=invisible`, `ProtectKernelTunables/Modules/Logs`, `ProtectClock`,
+   `ProtectHostname`, `LockPersonality`, `RestrictRealtime` and `SystemCallArchitectures=native` (`ProtectControlGroups` stays
+   off: `Delegate=yes` needs a writable cgroup tree). `ReadWritePaths` is the agent's own tree (`home` for its
+   Claude/Codex login, `state`, `repos`) and its run directory; the state directory is the agent's, never the person's.
+   `ExecStart` is the person's `<release>/current/bin/orch-runner` (the release build writes it next to `orch-host`).
+   **Start check:** `ExecStartPre=+/usr/bin/python3 -I -S /usr/lib/orch/os-setup/orch-os-setup --recheck %i` runs as root
+   (the `+` prefix) from the trusted copy, never from the release, before every start, including every `Restart=always`
+   restart (`RestartSec=2`; the start limit then holds a unit that keeps failing). It asks `sudo -l -U` and `sshd -T`
+   again (authoritative, so LDAP and sssd are covered), runs setup's user, group and pin checks, and exits non-zero if
+   any answer changed: it drops the verdict from the pin (the host answers broken) and systemd refuses the start. It
+   never calls `systemctl` (stopping a unit from its own start job would wait on itself). When every answer still holds
+   it refreshes the pin's stat signatures, so a harmless edit elsewhere in `/etc/ssh` does not leave the host saying
+   "policy changed" until the next setup run. On a new release the host sends `runner.restart` (it notices at
+   `runner.hello` that the runner loaded another release, once per release); the runner exits when it has no live runs
+   (`force`: at once) and `Restart=always` starts the new code, so updates need no root. The person's CLI only reads the
+   unit (`is-active`, `show`); it never installs, starts or stops it.
 8. **Report.** It prints what it did. A root login: the installer creates the person user `orch` first and the tunnel
    line uses it. Running the dashboard as root would still separate agents, but a dashboard takeover would then be a
    takeover of the server.
@@ -13660,9 +13674,10 @@ the folder's own signature is recorded: an entry added, removed or renamed is se
 file inside that folder is not**, because only root can stat it (the edit needs root as well, so this sits inside the
 "Root: out of scope" row). A folder the person can list but not search refuses with "is new" for any entry that was not
 recorded; that fails closed and is accepted. A recorded entry the host cannot stat (a symlink to a root-only target)
-reads as changed. **Planned (L3):** the runner unit gets `ExecStartPre=+… --recheck %i`, which asks `sudo -l -U` and
+reads as changed. **Closed by L3:** the runner unit's `ExecStartPre=+… --recheck %i` (13.2 item 7) asks `sudo -l -U` and
 `sshd -T` again at each runner start as root, refuses the start if an answer changed and rewrites the pin without a
-verdict; that closes the gap.
+verdict. It runs at start, not continuously: a rule added while the runner runs is caught at its next start (or setup
+rerun), and the host's signature comparison covers the time in between.
 
 **What tier A honestly loses.** Without isolation, anything an agent runs can sign with One click and read every file
 of the person, including SSH keys and tokens; the column split of §0.5 is policy, not a boundary; community add-ons

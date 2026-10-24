@@ -135,3 +135,82 @@ def test_apply_creates_users_detect_says_isolated_and_rerun_is_a_noop(root_machi
     print(again.stdout, again.stderr)
     assert again.returncode == 0, again.stdout + again.stderr
     assert again.stdout.strip() == "Nothing to change."
+
+
+def _recheck_as_root(person: str) -> subprocess.CompletedProcess:
+    """What the unit's ``ExecStartPre=+`` runs: the same launcher, as root, with ``--recheck <person>``."""
+    from orch.setup.oslauncher import LAUNCHER_PATH
+
+    return _sudo("/usr/bin/python3", "-I", "-S", LAUNCHER_PATH, "--recheck", person, check=False)
+
+
+def _pin_policy(person: str) -> object:
+    import json
+
+    uid = pwd.getpwnam(f"orch-agent-{person}").pw_uid
+    return json.loads(_sudo("cat", f"/etc/orch/pins/{uid}.json").stdout).get("policy")
+
+
+def _wait(cond, seconds: float = 30.0) -> bool:
+    import time
+
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if cond():
+            return True
+        time.sleep(0.5)
+    return cond()
+
+
+def test_the_runner_unit_rechecks_sudo_as_root_at_every_start(root_machine, tmp_path) -> None:
+    """A sudo rule that appears for the agent user AFTER setup (here a drop-in in /etc/sudoers.d, a folder the person
+    cannot search on Ubuntu, so the host's signature check cannot see an in-place edit) must stop the next runner start:
+    ``ExecStartPre=+ ... --recheck`` asks ``sudo -l -U`` again as root, drops the verdict from the pin and exits 1, so
+    systemd refuses the start. Removing the rule and rechecking restores the verdict (with the new signatures)."""
+    from orch.host.isolation import detect
+    from orch.setup.osfacts import RealOsFacts
+
+    person, release = root_machine
+    assert _apply_as_root(person, release).returncode == 0
+    unit = f"orch-runner@{person}.service"
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+
+    def isolated() -> bool:
+        return detect(RealOsFacts(), person, os.getuid(), str(state), [str(state / "k")]).isolated
+
+    def active() -> bool:
+        return _sudo("/usr/bin/systemctl", "is-active", "--quiet", unit, check=False).returncode == 0
+
+    assert (
+        "ExecStartPre=+/usr/bin/python3 -I -S /usr/lib/orch/os-setup/orch-os-setup --recheck"
+        in _sudo("systemctl", "cat", unit).stdout
+    )
+    assert _wait(active) and _wait(isolated)
+    ok = _recheck_as_root(person)
+    assert ok.returncode == 0, ok.stdout + ok.stderr
+    from orch.setup.oslauncher import LAUNCHER_PATH
+
+    direct = _sudo(LAUNCHER_PATH, "--recheck", person, check=False)  # through the shebang, as `sudo <launcher>` does
+    assert direct.returncode == 0, direct.stdout + direct.stderr
+    assert _pin_policy(person)["sudo"] == "none"
+
+    rule = tmp_path / "99-orch-ci-agent"
+    rule.write_text(f"orch-agent-{person} ALL=(ALL) NOPASSWD: ALL\n")
+    target = "/etc/sudoers.d/99-orch-ci-agent"
+    _sudo("install", "-o", "root", "-g", "root", "-m", "0440", str(rule), target)
+    try:
+        bad = _recheck_as_root(person)
+        assert bad.returncode == 1 and "sudo" in bad.stderr, bad.stdout + bad.stderr
+        assert _pin_policy(person) is None  # the verdict is gone: the host answers broken
+        assert not isolated()
+        _sudo("/usr/bin/systemctl", "restart", unit, check=False)  # the unit's own check refuses this start
+        assert _wait(lambda: not active())
+    finally:
+        _sudo("rm", "-f", target, check=False)
+    good = _recheck_as_root(person)
+    assert good.returncode == 0, good.stdout + good.stderr
+    assert _pin_policy(person)["sudo"] == "none"  # restored, with the signatures of the folder as it is now
+    _sudo("/usr/bin/systemctl", "reset-failed", unit, check=False)
+    assert _sudo("/usr/bin/systemctl", "restart", unit, check=False).returncode == 0
+    assert _wait(active) and _wait(isolated)

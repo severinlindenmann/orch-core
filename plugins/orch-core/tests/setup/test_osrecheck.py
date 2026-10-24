@@ -34,7 +34,7 @@ def _systemctl(ex: FakeExec) -> list[list[str]]:
 
 def test_the_unit_rechecks_as_root_from_the_trusted_copy_before_every_start() -> None:
     unit = _go()[1].files[UNIT]
-    assert f"ExecStartPre=+{LAUNCHER_PATH} --recheck %i\n" in unit
+    assert f"ExecStartPre=+/usr/bin/python3 -I -S {LAUNCHER_PATH} --recheck %i\n" in unit
     pre, start = unit.index("ExecStartPre="), unit.index("ExecStart=")
     assert pre < start
     assert "/opt/orch/release" not in unit[pre:start]  # the person's release is never what root runs
@@ -212,3 +212,11 @@ def test_a_failed_disable_of_a_runner_that_is_not_running_is_fine() -> None:
     res2 = apply(facts, ex2, PERSON, UID, is_root=True)
     assert not any("could not be stopped" in p for p in res2.problems)
     assert any("was stopped" in n for n in res2.notes)
+
+
+def test_the_launcher_shebang_is_one_argument_so_linux_can_execute_it_directly() -> None:
+    from orch.setup.oslauncher import SHEBANG
+
+    interpreter, *rest = SHEBANG.strip().removeprefix("#!").split(" ")
+    assert interpreter == "/usr/bin/python3" and len(rest) == 1  # Linux passes "-I -S" as ONE argument: an error
+    assert set(rest[0].removeprefix("-")) == {"I", "S"}

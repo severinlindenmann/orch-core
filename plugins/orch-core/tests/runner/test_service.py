@@ -289,7 +289,7 @@ def test_tier_b_status_names_the_agent_user(env, tier_b, monkeypatch) -> None:
 def test_tier_b_unit_uses_the_trusted_copy_for_the_recheck() -> None:
     plan = service.plan_tier_b("sev", Path("/opt/orch/releases"), uid=1000, platform="linux")
     text = plan.content.decode()
-    assert f"ExecStartPre=+{LAUNCHER_PATH} --recheck %i" in text
+    assert f"ExecStartPre=+/usr/bin/python3 -I -S {LAUNCHER_PATH} --recheck %i" in text
     assert "ExecStart=/opt/orch/releases/current/bin/orch-runner run" in text
 
 

@@ -61,7 +61,8 @@ SLOT_SHELL = SLOT_SHELLS[0]
 SLOT_HOME_ROOT = "/var/lib/orch/" + "add" + "ons"
 AGENT_HOME_ROOT = "/var/lib/orch/agents"
 AGENT_RUN_ROOT = "/run/orch/agents"
-RECHECK_COMMAND = f"{LAUNCHER_PATH} --recheck"
+# the interpreter is named in the unit, not left to the launcher's shebang: root runs exactly this
+RECHECK_COMMAND = f"/usr/bin/python3 -I -S {LAUNCHER_PATH} --recheck"
 SSHD_DROPIN = "/etc/ssh/sshd_config.d/10-orch-agents.conf"
 SSHD_DROPIN_TEXT = f"DenyUsers {AGENT_PREFIX}* {SLOT_PREFIX}*\n"
 _PERSON_MIN_UID = 1000

@@ -1,6 +1,6 @@
 # ruff: noqa: F811
-"""V3 G3 (#921): ``orch addon remove`` host side (``market.uninstall``), and the signer's strict shape for the marketplace
-block of a review (C4)."""
+"""V3 G3 (#921): ``orch addon remove`` host side (``market.uninstall``), and the signer's strict shape for the
+marketplace block of a review (C4)."""
 
 from __future__ import annotations
 
@@ -11,8 +11,19 @@ import pytest
 from orch.host import signer
 from tests.host import human_helpers
 from tests.host.market_helpers import (  # noqa: F401
-    addon_dir, add_market, err, files, install as do_install, mfiles, net, ok, person, stage,
+    add_market,
+    addon_dir,
+    err,
+    files,
+    mfiles,
+    net,
+    ok,
+    person,
+    stage,
 )  # fmt: skip
+from tests.host.market_helpers import (
+    install as do_install,
+)
 from tests.market import helpers as H
 
 lab, served, human = human_helpers.lab, human_helpers.served, human_helpers.human

@@ -237,14 +237,35 @@ def _strip_partial(raw: bytes, forms: Sequence[bytes]) -> bytes:
     return raw[: len(raw) - longest]
 
 
+def _cover(raw: bytes, forms: Sequence[bytes]) -> bytes:
+    """Every byte inside ANY occurrence of ANY form (overlapping, at every start) is covered; each covered run becomes
+    one ``[redacted]``. Sequential ``replace`` per form leaves bytes when one form sits inside another (a key holding
+    a backslash or a quote) or copies overlap."""
+    hit = bytearray(len(raw))
+    for f in forms:
+        i = raw.find(f)
+        while i != -1:
+            hit[i : i + len(f)] = b"\x01" * len(f)
+            i = raw.find(f, i + 1)
+    out, i = bytearray(), 0
+    while i < len(raw):
+        if hit[i]:
+            while i < len(raw) and hit[i]:
+                i += 1
+            out += b"[redacted]"
+        else:
+            out.append(raw[i])
+            i += 1
+    return bytes(out)
+
+
 def _safe_text(raw: bytes, secret: str | None, cap: int) -> str:
     """The ONE way child stderr becomes text: from raw bytes, with the secret's forms (raw and JSON-escaped) and nothing
     else. Whole copies become ``[redacted]``; a trailing partial copy is always dropped (the pipe may have ended early,
     been cut, killed or timed out); then the text is cut to ``cap`` bytes and a partial copy dropped again; decoding
     last, so a split UTF-8 character can only become U+FFFD."""
     forms = [f.encode() for f in _forms(secret)]
-    for f in forms:
-        raw = raw.replace(f, b"[redacted]")
+    raw = _cover(raw, forms)
     raw = _strip_partial(raw, forms)
     raw = _strip_partial(raw[:cap], forms)
     return raw.decode("utf-8", errors="replace")
@@ -268,13 +289,15 @@ def call(
     params: Mapping[str, Any],
     limits: Limits | None = None,
     *,
-    credential: Callable[[], str | None] | None = None,
+    credential: Callable[[str], str | None] | None = None,
 ) -> Any:
     """Run the addon once with ``method`` and ``params`` (built by core) and return the ``result`` of its response; the
     caller checks it per method. ``granted`` is the replayed grant (the ACTIVE one: disabled or purged is refused) and
-    must hold the capability ``METHODS[method]`` names. ``credential`` is a provider called just before the call and
-    only when the grant holds ``credential`` and ``network``; its string goes in ``params.credential`` and nowhere else.
-    ``params`` must not itself contain ``credential``. Raises :class:`RunnerError`."""
+    must hold the capability ``METHODS[method]`` names. ``credential`` is a provider, called as
+    ``credential(granted.name)`` just before the call and only when the grant holds ``credential`` and ``network``:
+    the runner names the add-on, so a provider built for another add-on must refuse the name (it raises; the call
+    fails and nothing is sent). Its string goes in ``params.credential`` and nowhere else. ``params`` must not itself
+    contain ``credential``. Raises :class:`RunnerError`."""
     if method not in METHODS:
         raise RunnerError("addon.bad_request", "unknown method")
     if "credential" in params:
@@ -309,7 +332,10 @@ def call(
     full = dict(params)
     secret: str | None = None
     if "credential" in manifest.capabilities and "network" in manifest.capabilities and credential is not None:
-        value = credential()  # read just before the call, by the caller's single reader
+        try:
+            value = credential(granted.name)  # read just before the call, by the caller's single reader
+        except Exception:
+            raise RunnerError("addon.bad_request", "the credential is not available for this add-on") from None
         if value is not None:
             if type(value) is not str or not value:
                 raise RunnerError("addon.bad_request", "the credential is not a non-empty string")

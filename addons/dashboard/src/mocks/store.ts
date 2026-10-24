@@ -54,8 +54,8 @@ import { atLeast, can, canRevokeGrant, roleOf } from '@/api/permissions'
 import { Simulator } from './sim'
 import { activeGrantOf, grantTerms } from '@/api/grants'
 import { codeReviewApplies, codeReviewWaits, DEFAULT_CODE_POLICY } from '@/api/gates'
-import { isModelName, renderCommand, type LaunchSpec } from '@/api/launch'
-import { HARNESSES, HARNESS_LABEL, MODES, MODE_LABEL, WHERES, WHERE_LABEL, launchSpec, foldSessions, sessionScript, type LaunchPlan, type LaunchRequest, type StartedSession } from './sessions'
+import { renderCommand, type LaunchSpec } from '@/api/launch'
+import { HARNESSES, HARNESS_LABEL, MODES, MODE_LABEL, WHERES, WHERE_LABEL, launchSpec, foldSessions, sessionScript, type LaunchRequest, type StartedSession } from './sessions'
 import { clearPersisted, loadPersisted, savePersisted, type PersistedV2 } from './persist'
 import { foldGrants, foldViews, foldWorkspace } from './workspace-log'
 import { BUSY_SEED, generateBusy, type BusyData } from './busy/generate'
@@ -871,34 +871,10 @@ export class MockStore {
     return activeGrantOf(this.grants(wsId), person, Date.parse(this.now()))
   }
 
-  /**
-   * One resolver for the preview and the start: the plan of the active addon that holds a `launch` grant (model
-   * routing), then the exact command. `commit` is the real start (one-shot choices such as "next start on Strong" are used up).
-   */
-  resolveLaunch(wsId: string, req: LaunchRequest, commit = false): { plan: LaunchPlan; spec: LaunchSpec; command: string } {
-    const w = this.workspaces.find((x) => x.id === wsId)
-    let plan: LaunchPlan = {}
-    for (const pkg of this.addons) {
-      const mod = getAddon(pkg.name)
-      if (!mod?.launch || !addonActive(w, pkg.name) || !w?.addons[pkg.name]?.granted?.capabilities.includes('launch')) continue
-      const lastTier = this.startedSessions(wsId).filter((x) => x.ticket === req.ticket).at(-1)?.tier
-      plan = { ...mod.launch(this.addonState(wsId, pkg.name), req, { store: this, ws: wsId, viewer: this.viewer, commit, lastTier }), by: pkg.name }
-      break
-    }
-    // Core checks the addon's plan itself: model names against the shared allowlist (a bad one blocks the start and
-    // never reaches argv), the tier against the known tiers (anything else is dropped, never shown or recorded).
-    if (plan.tier !== undefined && !['light', 'standard', 'strong'].includes(plan.tier)) plan = { ...plan, tier: undefined }
-    const bad = [plan.model, plan.subagentModel].find((m) => m !== undefined && !isModelName(m))
-    if (bad !== undefined) {
-      const title = this.addons.find((a) => a.name === plan.by)?.title
-      const from = plan.by ? `${title ?? plan.by} (${plan.by})` : 'an addon'
-      plan = {
-        error: plan.error ?? `The model "${String(bad)}" from ${from} is not a model name (no spaces, no leading "-"). Start is blocked until it is fixed in the ${title ?? 'addon\'s'} settings.`,
-        by: plan.by,
-      }
-    }
-    const spec = launchSpec(req, plan)
-    return { plan, spec, command: renderCommand(spec) }
+  /** One resolver for the preview and the start: the exact command core runs for a request. */
+  resolveLaunch(req: LaunchRequest): { spec: LaunchSpec; command: string } {
+    const spec = launchSpec(req)
+    return { spec, command: renderCommand(spec) }
   }
 
   /**
@@ -912,7 +888,7 @@ export class MockStore {
     if (!MODES.includes(mode as LaunchMode) || !HARNESSES.includes(harness as LaunchHarness) || !WHERES.includes(where as LaunchWhere)) return refuse(400, 'validation', 'Pick a mode, a harness and where it runs.')
     if (typeof ticket !== 'string' || !this.hasTicket(ticket) || this.wsOfKey.get(ticket) !== wsId || !this.isVisible(ticket)) return refuse(404, 'not_found', `No ticket ${String(ticket)}`)
     const r: LaunchRequest = { ticket, mode: mode as LaunchMode, harness: harness as LaunchHarness, where: where as LaunchWhere }
-    const { plan, command } = this.resolveLaunch(wsId, r)
+    const { command } = this.resolveLaunch(r)
     return {
       ok: true,
       launch: {
@@ -923,11 +899,6 @@ export class MockStore {
         harness: HARNESS_LABEL[r.harness],
         where: WHERE_LABEL[r.where],
         command,
-        ...(plan.model ? { model: plan.model } : {}),
-        ...(plan.tier ? { tier: plan.tier } : {}),
-        ...(plan.subagentModel && r.harness === 'claude-code' ? { subagent_model: plan.subagentModel } : {}),
-        ...(plan.line ? { line: plan.line, line_by: plan.by } : {}),
-        ...(plan.error ? { blocked: plan.error, blocked_by: plan.by } : {}),
       },
     }
   }
@@ -953,15 +924,11 @@ export class MockStore {
       return refuse(409, 'claim.held', `${req.ticket} is claimed by ${doc.claim ? `${doc.claim.agent} (${doc.claim.session})` : `${pending!.name} (${pending!.session})`}.`, 'Stop that session first.')
     const grant = this.activeGrant(wsId, actor.id)
     if (!grant) return refuse(409, 'grant.none', 'You have no active grant in this workspace.', 'Sign one in the start dialog or on the Agents page.')
-    const blocked = this.resolveLaunch(wsId, req).plan.error
-    if (blocked) return refuse(409, 'launch.invalid_model', blocked, 'Fix the model names in the launch addon\'s settings.')
     // D57: last of the refusals (so a start refused for another reason records no check): the checks of the
     // connections this ticket needs run before the start; auth or identity failures refuse.
     const blockedBy = this.conn.precheck(wsId, req.ticket, 'session_start')
     if (blockedBy) return blockedBy
-    // The committing resolve is the one that counts: refuse if it blocks too (nothing is recorded or started then).
-    const { plan, spec, command } = this.resolveLaunch(wsId, req, true)
-    if (plan.error) return refuse(409, 'launch.invalid_model', plan.error, 'Fix the model names in the launch addon\'s settings.')
+    const { spec, command } = this.resolveLaunch(req)
     const session = 's_' + fnvHex(`${req.ticket}|${this.now()}|${this.wsEventsOf(wsId).length}|${this.cursor(wsId)}`, 8)
     this.appendWs(wsId, {
       type: 'agent.started',
@@ -973,8 +940,6 @@ export class MockStore {
       ticket: req.ticket,
       mode: req.mode,
       where: req.where,
-      ...(plan.model ? { model: plan.model } : {}),
-      ...(plan.tier ? { tier: plan.tier } : {}),
       argv: spec.argv,
       env: spec.env,
       command,

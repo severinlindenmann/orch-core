@@ -329,7 +329,9 @@ def admit(host: Any, entry: Entry, view: Any, *, fresh: bool = False) -> None:
     pins the callers as an extra check). A dev host admits sandbox workspaces only; a normal host refuses every
     ``SBX`` genesis and every workspace with the sandbox marker (``host.dev_refused``,
     :func:`orch.host.devmode.check_admit`). ``view`` is the workspace's :class:`orch.host.devmode.View`.
-    ``fresh`` is set by ``host.bootstrap`` only (a genesis this host just appended); only a pending dev host reads it (V3-D38)."""
+    ``fresh`` is set by ``host.bootstrap`` only (a genesis this host just appended); only a pending dev host reads
+    it (V3-D38).
+    """
     from .devmode import check_admit
 
     check_admit(getattr(host, "dev", None), entry.workspace_id, entry.root, view, fresh=fresh)

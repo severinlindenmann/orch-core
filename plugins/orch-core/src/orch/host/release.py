@@ -51,9 +51,6 @@ raise SystemExit(main(sys.argv[1:]))
 #: the runner's launcher (H11a, D-P2-24): the same release, its own entry point
 RUNNER_LAUNCHER = LAUNCHER.replace("from orch.host.cli import main", "from orch.runner.cli import main")
 
-#: the root-only OS-user setup (H1 L2, spec 13.2): ``sudo <release>/bin/orch-os-setup --person <user>``
-OS_SETUP_LAUNCHER = LAUNCHER.replace("from orch.host.cli import main", "from orch.setup.osapply import main")
-
 
 class ReleaseError(Exception):
     pass
@@ -132,7 +129,7 @@ def install_release(version: str | None = None, *, target: Path | None = None, s
             raise ReleaseError(f"{final} exists but has no readable manifest") from exc
         if have.get("files") != manifest or on_disk != manifest:
             raise ReleaseError(f"release {version} is already installed with other content; use a new version")
-        for name in ("orch-host", "orch-runner", "orch-os-setup"):  # the launchers' interpreter must be ours
+        for name in ("orch-host", "orch-runner"):  # the service runs under the launcher's interpreter: it must be ours
             try:
                 first = (final / "bin" / name).read_text().split("\n", 1)[0]
             except OSError as exc:
@@ -154,7 +151,6 @@ def install_release(version: str | None = None, *, target: Path | None = None, s
         (staging / "bin").mkdir()
         (staging / "bin" / "orch-host").write_text(f"#!{sys.executable} -I\n" + LAUNCHER)
         (staging / "bin" / "orch-runner").write_text(f"#!{sys.executable} -I\n" + RUNNER_LAUNCHER)
-        (staging / "bin" / "orch-os-setup").write_text(f"#!{sys.executable} -I\n" + OS_SETUP_LAUNCHER)
         (staging / "RELEASE.json").write_text(json.dumps({"version": version, "files": manifest}, sort_keys=True))
         _freeze(staging)
         os.rename(staging, final)  # atomic: a release appears complete or not at all

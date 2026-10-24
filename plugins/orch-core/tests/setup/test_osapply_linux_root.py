@@ -10,7 +10,6 @@ import os
 import pwd
 import subprocess
 import sys
-import textwrap
 from pathlib import Path
 
 import pytest
@@ -36,7 +35,7 @@ def root_machine():
         _unmet("these tests create system users; they run in CI only")
     if subprocess.run([*SUDO, "true"], capture_output=True).returncode != 0:
         _unmet("passwordless sudo is not available")
-    for binary in ("/usr/sbin/useradd", "/usr/bin/systemctl", "/usr/bin/setfacl", "/usr/bin/systemd-tmpfiles"):
+    for binary in ("/usr/sbin/useradd", "/usr/bin/systemctl", "/usr/bin/systemd-tmpfiles", "/usr/bin/python3"):
         if not os.path.exists(binary):
             _unmet(f"{binary} is missing")
     person = pwd.getpwuid(os.getuid()).pw_name
@@ -44,7 +43,10 @@ def root_machine():
     # outside /tmp: the units use PrivateTmp. A stand-in program that just stays up.
     _sudo("install", "-d", "-m", "0755", f"{release}/current/bin")
     stub = tmp_stub()
-    _sudo("install", "-m", "0755", stub, f"{release}/current/bin/orch")
+    _sudo("install", "-m", "0755", stub, f"{release}/current/bin/orch-runner")
+    # the installer's step: the root-owned copy at its fixed path (here from the checkout under test)
+    done = _sudo(sys.executable, "-I", "-c", "from orch.setup.osinstall import install; print(install())", check=False)
+    assert done.returncode == 0, done.stdout + done.stderr
     yield person, release
     names = [f"orch-agent-{person}", *[f"orch-addon-{n}" for n in range(1, 9)]]
     for unit in [f"orch-runner@orch-agent-{person}"] + [f"orch-addon@orch-addon-{n}" for n in range(1, 9)]:
@@ -55,6 +57,7 @@ def root_machine():
         except KeyError:
             pass
         _sudo("/usr/sbin/userdel", "--remove", name, check=False)
+    _sudo("rm", "-rf", "/usr/local/lib/orch/os-setup", check=False)
     for path in (
         "/etc/tmpfiles.d/orch.conf",
         "/etc/ssh/sshd_config.d/10-orch-agents.conf",
@@ -76,11 +79,10 @@ def tmp_stub() -> str:
 
 
 def _apply_as_root(person: str, release: str) -> subprocess.CompletedProcess:
-    code = textwrap.dedent(f"""
-        from orch.setup import osapply
-        raise SystemExit(osapply.main(["--person", {person!r}, "--release", {release!r}], _check_code=False))
-    """)
-    return _sudo(sys.executable, "-I", "-c", code, check=False)
+    """The documented command: the fixed launcher under the system interpreter, isolated and without site."""
+    from orch.setup.oslauncher import LAUNCHER_PATH
+
+    return _sudo("/usr/bin/python3", "-I", "-S", LAUNCHER_PATH, "--person", person, "--release", release, check=False)
 
 
 def test_apply_creates_users_detect_says_isolated_and_rerun_is_a_noop(root_machine, tmp_path) -> None:
@@ -88,6 +90,9 @@ def test_apply_creates_users_detect_says_isolated_and_rerun_is_a_noop(root_machi
     from orch.setup.osfacts import RealOsFacts
 
     person, release = root_machine
+    code = f"from orch.setup import osapply; raise SystemExit(osapply.main(['--person', {person!r}]))"
+    refused = _sudo(sys.executable, "-I", "-c", code, check=False)  # root never runs the person's tree
+    assert refused.returncode == 2 and "root-owned copy" in refused.stderr, refused.stderr
     first = _apply_as_root(person, release)
     print(first.stdout, first.stderr)
     assert first.returncode == 0, first.stdout + first.stderr

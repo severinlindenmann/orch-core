@@ -15,10 +15,12 @@ Rules the plan enforces (design-h1-agent-user §1.1, §7):
 from __future__ import annotations
 
 import re
+import shlex
 from dataclasses import dataclass, field
 from typing import Any
 
 from .osfacts import UNREADABLE, OsFacts, UserInfo
+from .oslauncher import LAUNCHER_PATH
 
 __all__ = [
     "AGENT_PREFIX",
@@ -62,6 +64,7 @@ _PERSON_MIN_UID = 1000
 _NOLOGIN_SHELLS = ("/usr/sbin/nologin", "/sbin/nologin", "/bin/false", "/usr/bin/false")
 _NAME = re.compile(r"^[a-z_][a-z0-9_-]*$")
 _MAX_NAME = 32
+_RELEASE = re.compile(r"^/[A-Za-z0-9_.+/-]*$")  # no whitespace, control characters, '%' or '$': it goes into unit text
 _SYSTEM_UID_MAX = 999  # useradd --system; a login-range UID is a person, never ours
 
 
@@ -201,7 +204,8 @@ class Plan:
         return out
 
     def admin_command(self) -> str:
-        return f"sudo {self.release}/bin/orch-os-setup --person {self.person}"
+        """The one line setup shows. Always the root-owned copy at a fixed path, never the person's release."""
+        return f"sudo {LAUNCHER_PATH} --person {shlex.quote(self.person)} --release {shlex.quote(self.release)}"
 
 
 def _expected_agent(person: str) -> UserPlan:
@@ -375,7 +379,7 @@ ReadWritePaths={AGENT_HOME_ROOT}/%i {AGENT_RUN_ROOT}/%i
 RestrictSUIDSGID=yes
 MemoryMax=80%
 TasksMax=4096
-ExecStart={release}/current/bin/orch runner serve
+ExecStart={release}/current/bin/orch-runner run --state {AGENT_HOME_ROOT}/%i/state --run {AGENT_RUN_ROOT}/%i
 Restart=always
 
 [Install]
@@ -402,13 +406,20 @@ ReadWritePaths={SLOT_HOME_ROOT}/%i
 RestrictSUIDSGID=yes
 MemoryMax=2G
 TasksMax=512
-ExecStart={release}/current/bin/orch addon-slot serve
+# TODO(L3): the slot runner launcher does not exist yet; setup writes this template but does not enable it.
+ExecStart={release}/current/bin/orch-addon-slot
 Restart=always
 
 [Install]
 WantedBy=multi-user.target
 """
     return UnitFile("orch-addon@.service", "/etc/systemd/system/orch-addon@.service", content, ())
+
+
+def _good_release(release: str) -> bool:
+    import posixpath
+
+    return bool(_RELEASE.match(release)) and posixpath.normpath(release) == release and release != "/"
 
 
 def plan(facts: OsFacts, person: str, person_uid: int, *, release: str = "/opt/orch/release") -> Plan:
@@ -431,6 +442,25 @@ def plan(facts: OsFacts, person: str, person_uid: int, *, release: str = "/opt/o
             release,
         )
     refusals: list[Refusal] = []
+    if not _good_release(release):
+        return Plan(
+            "linux",
+            person,
+            person_uid,
+            False,
+            None,
+            (),
+            (),
+            (),
+            (
+                Refusal(
+                    "bad_release",
+                    release,
+                    "The release path must be an absolute, plain path (letters, digits, . _ + -).",
+                ),
+            ),
+            release,
+        )
     create_person = person_uid == 0 or person == "root"
     if create_person:
         person, person_uid_known = NORMAL_PERSON, None

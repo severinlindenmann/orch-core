@@ -12,7 +12,6 @@ from orch.setup.osusers import SSHD_DROPIN
 from tests.osfacts_fake import FakeOsFacts
 
 PERSON, UID = "sev", 1000
-MUTATING = {"useradd", "usermod", "install", "setfacl", "tmpfiles"}
 
 
 class FakeExec:
@@ -29,6 +28,8 @@ class FakeExec:
         self.fail: set[str] = set()  # program names whose command fails
         self.active: set[str] = set()
         self.enabled: set[str] = set()
+        self.secures: list = []
+        self.acls: dict = facts.__dict__.setdefault("acls", {})  # world state, shared between runs
         self.next_uid = 990
 
     def run(self, argv):
@@ -48,10 +49,6 @@ class FakeExec:
             for ln in self.files[osapply.TMPFILES_CONF].splitlines():
                 if ln.startswith("d "):
                     self.facts.add_path(ln.split()[1], kind="dir", mode=0o755)
-        elif prog == BIN["setfacl"]:
-            import dataclasses
-
-            self.facts.paths[argv[-1]] = dataclasses.replace(self.facts.paths[argv[-1]], has_acl=True)
         elif prog == BIN["systemctl"] and argv[1] == "start":
             self.active.add(argv[2])
         elif prog == BIN["systemctl"] and argv[1] == "enable":
@@ -94,6 +91,30 @@ class FakeExec:
         self.files.pop(path, None)
         self.facts.sigs.pop(path, None)
 
+    def secure_dir(self, base, spec):
+        """Mirrors osapply.secure_dir on the fake world."""
+        path = "/".join((base, *spec.chain))
+        self.secures.append((path, spec))
+        st = self.facts.stat(path)
+        if st is None:
+            self.facts.add_path(path, uid=spec.uid, gid=spec.gid, kind="dir", mode=spec.mode)
+            self.acls[path] = (spec.acl_access, spec.acl_default)
+            return True, None
+        if st.is_symlink or not st.is_dir:
+            return False, f"{path} is a symlink or not a directory; setup will not follow or change it."
+        if spec.fresh:
+            self.facts.add_path(path, uid=spec.uid, gid=spec.gid, kind="dir", mode=spec.mode)
+            self.acls[path] = (spec.acl_access, spec.acl_default)
+            return True, None
+        if (st.uid, st.gid) != (spec.uid, spec.gid):
+            return False, f"{path} belongs to someone other than its user"
+        if (st.mode & 0o7777) & ~spec.allowed:
+            return False, f"{path} is more open than it should be"
+        have = self.acls.get(path, (None, None))
+        if have != (spec.acl_access, spec.acl_default):
+            return False, f"{path} has other ACL entries than orch sets"
+        return False, None
+
     def programs(self):
         names = {v: k for k, v in BIN.items()}
         return [names.get(c[0], c[0]) for c in self.commands]
@@ -103,6 +124,8 @@ def _go(facts=None, ex=None, **kw) -> tuple[ApplyResult, FakeExec, FakeOsFacts]:
     facts = facts or FakeOsFacts()
     if facts.user(PERSON) is None:
         facts.add_user(PERSON, UID, home="/home/sev")
+    if facts.stat("/opt/orch/release") is None:
+        facts.add_path("/opt/orch/release", kind="dir", mode=0o755)
     ex = ex or FakeExec(facts)
     return apply(facts, ex, PERSON, UID, is_root=kw.get("is_root", True)), ex, facts
 
@@ -128,11 +151,17 @@ def test_fresh_run_applies_everything_in_order_with_fixed_binaries() -> None:
     assert order.index(BIN["sshd"]) < len(order) - 1
     assert [BIN["systemctl"], "daemon-reload"] in ex.commands
     assert [BIN["systemctl"], "enable", "orch-runner@orch-agent-sev.service"] in ex.commands
-    assert [BIN["systemctl"], "start", "orch-addon@orch-addon-8.service"] in ex.commands
-    assert [BIN["setfacl"], "-m", "u:sev:rX,d:u:sev:rX", "/var/lib/orch/agents/orch-agent-sev/repos"] in ex.commands
-    assert [BIN["setfacl"], "-m", "u:sev:x", "/var/lib/orch/agents/orch-agent-sev"] in ex.commands
-    assert [BIN["install"], "-d", "-m", "0700", "-o", "orch-agent-sev", "-g", "orch-agent-sev",
-            "/var/lib/orch/agents/orch-agent-sev/state"] in ex.commands  # fmt: skip
+    assert not [c for c in ex.commands if "orch-addon@" in " ".join(c) and c[1] in ("enable", "start")]  # TODO(L3)
+    secured = {path: spec for path, spec in ex.secures}
+    repos = secured["/var/lib/orch/agents/orch-agent-sev/repos"]
+    assert repos.mode == 0o750 and repos.acl_access == repos.acl_default and repos.fresh
+    assert repos.uid == facts.users["orch-agent-sev"].uid and repos.acl_access is not None
+    assert secured["/var/lib/orch/agents/orch-agent-sev"].acl_access is not None  # the person may pass through
+    assert len(secured) == 4 + 8  # agent dir, home, state, repos + the eight slot homes
+    assert not any(c[0] == BIN["install"] and "orch-agent-sev" in c[-1] for c in ex.commands)  # never by path
+    assert order.index("/etc/orch/pins/991.json") < order.index(BIN["usermod"])  # base pin straight after useradd
+    pol = order.index("/etc/orch/pins/991.json", order.index(BIN["usermod"]))
+    assert pol < order.index(BIN["systemctl"], pol)  # the policy pin precedes enable/start of the runner
     assert res.policy_ok is True
 
 
@@ -160,7 +189,7 @@ def test_second_run_changes_nothing() -> None:
     res2 = apply(facts, ex2, PERSON, UID, is_root=True)
     assert res2.ok, res2.report()
     progs = set(ex2.programs())
-    assert not progs & {"useradd", "usermod", "install", "setfacl", "tmpfiles"}
+    assert not progs & {"useradd", "usermod", "install", "tmpfiles"}
     assert not [c for c in ex2.commands if c[0] == "write"]
 
 
@@ -294,6 +323,7 @@ def test_privileged_group_after_creation_stops_before_directories() -> None:
 
 def test_root_login_creates_orch_person_then_plans_again() -> None:
     f = FakeOsFacts()
+    f.add_path("/opt/orch/release", kind="dir", mode=0o755)
     ex = FakeExec(f)
     res = apply(f, ex, "root", 0, is_root=True)
     created = [c for c in ex.commands if c[0] == BIN["useradd"] and "--system" not in c]
@@ -304,6 +334,7 @@ def test_root_login_creates_orch_person_then_plans_again() -> None:
 def test_dry_run_prints_exact_actions_and_changes_nothing(monkeypatch) -> None:
     f = FakeOsFacts()
     f.add_user(PERSON, UID, home="/home/sev")
+    f.add_path("/opt/orch/release", kind="dir", mode=0o755)
     ex = DryRunExecutor()
     monkeypatch.setattr(ex, "query", lambda argv: RunResult(1))
     res = apply(f, ex, PERSON, UID, is_root=True)
@@ -332,15 +363,79 @@ def test_main_refuses_non_root_and_non_linux(monkeypatch, capsys) -> None:
     assert "root" in capsys.readouterr().err
 
 
-def test_main_refuses_code_root_does_not_own(monkeypatch, capsys) -> None:
+def test_main_runs_only_from_the_root_owned_copy(monkeypatch, capsys) -> None:
     monkeypatch.setattr(osapply.sys, "platform", "linux")
     monkeypatch.setattr(osapply.os, "geteuid", lambda: 0)
-    monkeypatch.setattr(osapply, "_code_is_root_trusted", lambda: False)
-    assert osapply.main(["--person", "sev"]) == 2
-    assert "not owned by root" in capsys.readouterr().err
+    assert osapply.main(["--person", "sev"]) == 2  # this source tree is not /usr/local/lib/orch/os-setup
+    assert "root-owned copy" in capsys.readouterr().err
 
 
-def test_release_ships_the_launcher(tmp_path) -> None:
-    from orch.host.release import OS_SETUP_LAUNCHER
+def test_admin_command_is_the_fixed_path_and_quotes_the_release() -> None:
+    from orch.setup.osusers import plan
 
-    assert "orch.setup.osapply" in OS_SETUP_LAUNCHER and "SystemExit(main(" in OS_SETUP_LAUNCHER
+    p = plan(FakeOsFacts(), PERSON, UID, release="/opt/orch/release")
+    assert p.admin_command() == (
+        "sudo /usr/local/lib/orch/os-setup/orch-os-setup --person sev --release /opt/orch/release"
+    )
+
+
+@pytest.mark.parametrize(
+    "bad", ["relative/path", "/opt/x\nExecStartPre=+/bin/sh", "/opt/a b", "/opt/../etc", "/opt/x/", "/opt/%i", "/"]
+)
+def test_release_path_is_validated(bad) -> None:
+    from orch.setup.osusers import plan
+
+    p = plan(FakeOsFacts(), PERSON, UID, release=bad)
+    assert not p.ok and p.refusals[0].code == "bad_release"
+
+
+def test_release_must_be_root_owned() -> None:
+    f = FakeOsFacts()
+    f.add_user(PERSON, UID, home="/home/sev")
+    f.add_path("/opt/orch/release", uid=UID, kind="dir", mode=0o755)
+    res, ex, _ = _go(facts=f)
+    assert not res.ok and "release directory" in res.problems[0] and ex.commands == []
+
+
+def test_symlinked_repos_stops_before_any_tool_touches_it() -> None:
+    res, ex, facts = _go()
+    assert res.ok
+    facts.add_path("/var/lib/orch/agents/orch-agent-sev/repos", uid=facts.users["orch-agent-sev"].uid, kind="link")
+    ex2 = FakeExec(facts)
+    ex2.files = dict(ex.files)
+    res2 = apply(facts, ex2, PERSON, UID, is_root=True)
+    assert not res2.ok and "symlink" in " ".join(res2.problems)
+    assert not [c for c in ex2.commands if c[0] in (BIN["install"], BIN["tmpfiles"])]
+    assert not [c for c in ex2.commands if c[0] == "write"]  # nothing after the failure
+
+
+def test_runner_is_not_started_when_the_policy_check_fails() -> None:
+    f = FakeOsFacts()
+    f.add_user(PERSON, UID, home="/home/sev")
+    f.sshd_answer = False
+    res, ex, _ = _go(facts=f)
+    assert not res.ok
+    assert not [c for c in ex.commands if c[:1] == [BIN["systemctl"]] and c[1] in ("enable", "start")]
+
+
+def test_base_pin_survives_a_failed_lock_and_the_rerun_adopts_the_user() -> None:
+    f = FakeOsFacts()
+    f.add_user(PERSON, UID, home="/home/sev")
+    ex = FakeExec(f)
+    ex.fail = {"usermod:--lock"}
+    res, _, _ = _go(facts=f, ex=ex)
+    assert not res.ok and 991 in f.pins
+    res2, ex2, _ = _go(facts=f)
+    assert "foreign" not in " ".join(res2.problems) and not [
+        c for c in ex2.commands if c[0] == BIN["useradd"] and c[-1] == "orch-agent-sev"
+    ]
+
+
+def test_runner_unit_runs_the_real_launcher_and_addon_units_are_not_enabled() -> None:
+    res, ex, _ = _go()
+    unit = ex.files["/etc/systemd/system/orch-runner@.service"]
+    assert (
+        "ExecStart=/opt/orch/release/current/bin/orch-runner run --state /var/lib/orch/agents/%i/state "
+        "--run /run/orch/agents/%i" in unit
+    )
+    assert "/etc/systemd/system/orch-addon@.service" in ex.files

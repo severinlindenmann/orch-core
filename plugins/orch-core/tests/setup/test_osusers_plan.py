@@ -33,7 +33,9 @@ def test_fresh_system_plans_agent_slots_pins_units() -> None:
     assert p.run_dir == "/run/orch/1000"
     assert {e.cls for e in p.pins} == {"agent", "addon"} and all(e.host_uid == UID for e in p.pins)
     assert p.pins[0].document() == {"class": "agent", "host_uid": UID, "workspaces": "*"}
-    assert p.admin_command() == "sudo /opt/orch/release/bin/orch-os-setup --person sev"
+    assert p.admin_command() == (
+        "sudo /usr/local/lib/orch/os-setup/orch-os-setup --person sev --release /opt/orch/release"
+    )
     assert any("orch-agent-sev" in s for s in p.steps())
 
 

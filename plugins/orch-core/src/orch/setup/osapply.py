@@ -18,17 +18,20 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import errno
+import json
 import os
 import pwd
 import secrets
 import stat
+import struct
 import subprocess
 import sys
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Protocol
 
-from .osfacts import UNREADABLE, OsFacts, RealOsFacts
+from .osfacts import UNREADABLE, GroupInfo, OsFacts, RealOsFacts
+from .oslauncher import TRUSTED_ROOT
 from .osusers import (
     AGENT_HOME_ROOT,
     NORMAL_PERSON,
@@ -42,16 +45,24 @@ from .osusers import (
     plan,
 )
 
-__all__ = ["BIN", "ApplyResult", "DryRunExecutor", "RealExecutor", "apply", "main", "why_not_ok"]
+__all__ = [
+    "BIN",
+    "ApplyResult",
+    "DirSpec",
+    "secure_dir",
+    "DryRunExecutor",
+    "RealExecutor",
+    "apply",
+    "main",
+    "why_not_ok",
+]
 
 BIN = {
     "useradd": "/usr/sbin/useradd",
-    "groupadd": "/usr/sbin/groupadd",
     "usermod": "/usr/sbin/usermod",
     "tmpfiles": "/usr/bin/systemd-tmpfiles",
     "systemctl": "/usr/bin/systemctl",
     "install": "/usr/bin/install",
-    "setfacl": "/usr/bin/setfacl",
     "sshd": "/usr/sbin/sshd",
 }
 _ALLOWED = frozenset(BIN.values())
@@ -75,6 +86,7 @@ class Executor(Protocol):
     def write_file(self, path: str, content: str, mode: int) -> None: ...  # root-owned, atomic
     def read_file(self, path: str) -> str | None: ...
     def remove(self, path: str) -> None: ...
+    def secure_dir(self, base: str, spec: DirSpec) -> tuple[bool, str | None]: ...
 
 
 def _spawn(argv: list[str]) -> RunResult:
@@ -124,6 +136,9 @@ class RealExecutor:
         with contextlib.suppress(FileNotFoundError):
             os.unlink(path)
 
+    def secure_dir(self, base: str, spec: DirSpec) -> tuple[bool, str | None]:
+        return secure_dir(base, spec)
+
 
 class DryRunExecutor(RealExecutor):
     """Records nothing itself (``apply`` records every action); changes nothing; queries and reads are real."""
@@ -141,6 +156,113 @@ class DryRunExecutor(RealExecutor):
 
     def remove(self, path: str) -> None:
         return None
+
+    def secure_dir(self, base: str, spec: DirSpec) -> tuple[bool, str | None]:
+        return False, None
+
+
+USER_OBJ, USER, GROUP_OBJ, MASK, OTHER = 0x01, 0x02, 0x04, 0x10, 0x20
+_GROUP_TAG = 0x08
+_UNDEF = 0xFFFFFFFF
+_ACL_NAMES = {"access": "system.posix_acl_access", "default": "system.posix_acl_default"}
+
+
+def _acl(entries: tuple[tuple[int, ...], ...]) -> bytes:
+    """A POSIX ACL in its xattr form (version 2): ``(tag, perm)`` or ``(tag, perm, id)`` entries in kernel order."""
+    out = struct.pack("<I", 2)
+    for entry in entries:
+        out += struct.pack("<HHI", entry[0], entry[1], entry[2] if len(entry) > 2 else _UNDEF)
+    return out
+
+
+@dataclass(frozen=True)
+class DirSpec:
+    chain: tuple[str, ...]  # path components below the root-owned base; the last one is the directory in question
+    uid: int
+    gid: int
+    mode: int  # the mode to set on a directory this run creates or owns the creation of
+    allowed: int  # an existing directory may have these bits at most (an ACL mask shows in the group bits)
+    acl_access: bytes | None  # the exact access ACL, or None for none
+    acl_default: bytes | None
+    fresh: bool  # the user was created by this run: set owner and mode outright (that only tightens)
+
+
+def _getx(fd: int, name: str) -> bytes:
+    if not hasattr(os, "getxattr"):
+        raise OSError(errno.ENOTSUP, "no extended attributes on this system")
+    return os.getxattr(fd, name)
+
+
+def _setx(fd: int, name: str, value: bytes) -> None:
+    if not hasattr(os, "setxattr"):
+        raise OSError(errno.ENOTSUP, "no extended attributes on this system")
+    os.setxattr(fd, name, value)
+
+
+def secure_dir(base: str, spec: DirSpec, *, base_uid: int = 0) -> tuple[bool, str | None]:
+    """Create or check ``spec.chain`` below ``base`` using only descriptors opened with O_NOFOLLOW from ``base``.
+    Returns ``(changed, problem)``. A symlink, a foreign owner, a wider mode or an ACL entry that differs is a problem;
+    nothing existing is loosened or silently changed."""
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    name = "/".join((base, *spec.chain))
+    fds: list[int] = []
+    changed = False
+    try:
+        try:
+            cur = os.open(base, flags)
+        except OSError as exc:
+            return False, f"{base} cannot be opened safely ({exc.strerror})."
+        fds.append(cur)
+        info = os.fstat(cur)
+        if info.st_uid != base_uid or info.st_mode & 0o022:
+            return False, f"{base} is not owned by root or can be written by others."
+        for part in spec.chain[:-1]:
+            try:
+                cur = os.open(part, flags, dir_fd=cur)
+            except OSError:
+                return False, f"{name} cannot be used: {part} is missing or not a plain directory."
+            fds.append(cur)
+        last, created = spec.chain[-1], False
+        try:
+            fd = os.open(last, flags, dir_fd=cur)
+        except FileNotFoundError:
+            os.mkdir(last, 0o700, dir_fd=cur)
+            fd, created = os.open(last, flags, dir_fd=cur), True
+        except OSError:
+            return False, f"{name} is a symlink or not a directory; setup will not follow or change it."
+        fds.append(fd)
+        info = os.fstat(fd)
+        if created or spec.fresh:
+            os.fchown(fd, spec.uid, spec.gid)
+            os.fchmod(fd, spec.mode)
+            changed = True
+        elif info.st_uid != spec.uid or info.st_gid != spec.gid:
+            return changed, f"{name} belongs to someone other than its user; setup will not change it."
+        elif stat.S_IMODE(info.st_mode) & ~spec.allowed:
+            return (
+                changed,
+                f"{name} is more open than it should be ({stat.S_IMODE(info.st_mode):04o}); setup will not fix it.",
+            )
+        for kind, want in (("access", spec.acl_access), ("default", spec.acl_default)):
+            try:
+                have = _getx(fd, _ACL_NAMES[kind])
+            except OSError as exc:
+                if exc.errno not in (errno.ENODATA, errno.ENOTSUP):
+                    return changed, f"{name}: the {kind} ACL could not be read ({exc.strerror})."
+                have = None
+            if have == want:
+                continue
+            if have is not None:
+                return changed, f"{name} has other ACL entries than orch sets; setup will not change them."
+            try:
+                _setx(fd, _ACL_NAMES[kind], want)
+            except OSError as exc:
+                return changed, f"{name}: the {kind} ACL could not be set ({exc.strerror})."
+            changed = True
+        return changed, None
+    finally:
+        for fd in fds:
+            os.close(fd)
 
 
 @dataclass
@@ -219,70 +341,92 @@ class _Apply:
         return None if u is None else u.uid
 
     # directories ----------------------------------------------------------------------------------------------
-    def dir(self, path: str, owner: str, mode: int, *, ours: bool = False) -> bool:
-        """Make sure ``path`` is a directory of ``owner`` with at most ``mode``. Returns True when created/tightened."""
+    def root_dir(self, path: str) -> None:
+        """A root-owned directory (never below anything an agent owns): created, or checked and left alone."""
         st = self.facts.stat(path)
-        want = ["-d", "-m", f"{mode:04o}", "-o", owner, "-g", owner, path]
-        if st is None or ours:
-            self.run([BIN["install"], *want])
-            return True
-        u, g = self.uid_of(owner), self.facts.group(owner)
-        if st.is_symlink or not st.is_dir:
+        if st is None:
+            self.run([BIN["install"], "-d", "-m", "0755", "-o", _ROOT, "-g", _ROOT, path])
+        elif st.is_symlink or not st.is_dir:
             self.res.fail(f"{path} exists but is not a plain directory; setup will not change it.")
-        elif owner == _ROOT and not (st.uid == 0 and st.mode & 0o022 == 0):
+        elif not (st.uid == 0 and st.mode & 0o022 == 0):
             self.res.fail(f"{path} exists but is not owned by root or can be written by others.")
-        elif owner != _ROOT and (st.uid != u or g is None or st.gid != g.gid):
-            self.res.fail(f"{path} exists but belongs to someone other than '{owner}'; setup will not change it.")
-        elif owner != _ROOT and st.mode & 0o7777 & ~mode:
-            self.res.fail(
-                f"{path} is more open than it should be ({stat.S_IMODE(st.mode):04o}); setup will not fix it."
-            )
-        return False
+
+    def secure(self, base: str, spec: DirSpec, what: str) -> bool:
+        """Directories below an agent- or slot-owned one are never touched by path: ``ex.secure_dir`` opens them
+        file-descriptor-relative from the root-owned ``base`` with O_NOFOLLOW, so a symlink planted by the agent is
+        refused instead of followed."""
+        self.res.actions.append(what)
+        changed, problem = self.ex.secure_dir(base, spec)
+        if problem:
+            self.res.fail(problem)
+        return changed
 
     # steps ----------------------------------------------------------------------------------------------------
     def common_dirs(self) -> None:
         for path in ("/var/lib/orch", AGENT_HOME_ROOT, SLOT_HOME_ROOT, "/etc/orch", PIN_DIR, "/etc/tmpfiles.d"):
-            self.dir(path, _ROOT, 0o755)
+            self.root_dir(path)
+            if not self.res.ok:
+                return
         if self.facts.sshd_installed():
-            self.dir("/etc/ssh/sshd_config.d", _ROOT, 0o755)
+            self.root_dir("/etc/ssh/sshd_config.d")
 
     def create_users(self, p: Plan) -> None:
         for u in p.all_users():
             if u.action != "create":
                 continue
             self.run([BIN["useradd"], *u.useradd_args()])
-            self.run([BIN["usermod"], "--lock", u.name])
             self.created.add(u.name)
-            if not self.dry and self.facts.user(u.name) is None:
-                self.res.fail(f"'{u.name}' does not exist after useradd.")
-
-    def base_pins(self, p: Plan) -> None:
-        for e in p.pins:
-            if e.user not in self.created:
-                continue  # adopted users already carry a pin: the plan required it
-            uid = self.uid_of(e.user)
-            where = f"{PIN_DIR}/{uid if uid is not None else '<uid of ' + e.user + '>'}.json"
+            if not self.res.ok:
+                return
+            uid = self.uid_of(u.name)
             if uid is None and not self.dry:
-                continue
-            doc = e.document()
-            self.put(where, _json(doc), 0o644)
+                self.res.fail(f"'{u.name}' does not exist after useradd.")
+                return
+            # the base pin goes in straight away: without it the next plan would call this user foreign
+            entry = next(e for e in p.pins if e.user == u.name)
+            where = f"{PIN_DIR}/{uid if uid is not None else '<uid of ' + u.name + '>'}.json"
+            self.put(where, _json(entry.document()), 0o644)
+            self.run([BIN["usermod"], "--lock", u.name])
+            if not self.res.ok:
+                return
 
     def agent_dirs(self, p: Plan, u: UserPlan) -> None:
-        ours = u.name in self.created
-        parent = f"{AGENT_HOME_ROOT}/{u.name}"
-        self.dir(parent, u.name, 0o700, ours=ours)
-        new_home = self.dir(u.home, u.name, 0o700, ours=ours)
-        new_state = self.dir(f"{parent}/state", u.name, 0o700, ours=ours)
-        new_repos = self.dir(f"{parent}/repos", u.name, 0o750, ours=ours)
-        person = p.person
-        if ours or new_repos or new_state or new_home or not (self.facts.stat(parent) or _NOACL).has_acl:
-            self.run([BIN["setfacl"], "-m", f"u:{person}:x", parent])
-        if ours or new_repos or not (self.facts.stat(f"{parent}/repos") or _NOACL).has_acl:
-            self.run([BIN["setfacl"], "-m", f"u:{person}:rX,d:u:{person}:rX", f"{parent}/repos"])
+        person = self.uid_of(p.person)
+        uid, grp_ = self.uid_of(u.name), self.facts.group(u.group)
+        if self.dry:
+            uid, grp_ = uid or -1, grp_ or GroupInfo(u.group, -1, frozenset())
+        if uid is None or grp_ is None or person is None:
+            self.res.fail(f"'{u.name}' or '{p.person}' could not be looked up.")
+            return
+        ours, gid = u.name in self.created, grp_.gid
+        x = _acl(((USER_OBJ, 7), (USER, 1, person), (GROUP_OBJ, 0), (MASK, 1), (OTHER, 0)))
+        rx = _acl(((USER_OBJ, 7), (USER, 5, person), (GROUP_OBJ, 5), (MASK, 5), (OTHER, 0)))
+        steps = (
+            ((u.name,), 0o700, 0o710, x, None, "directory with the person allowed to pass through"),
+            ((u.name, "home"), 0o700, 0o700, None, None, "home"),
+            ((u.name, "state"), 0o700, 0o700, None, None, "state"),
+            ((u.name, "repos"), 0o750, 0o750, rx, rx, "clones, readable by the person"),
+        )
+        for chain, mode, allowed, access, default, why in steps:
+            spec = DirSpec(chain, uid, gid, mode, allowed, access, default, ours)
+            self.secure(
+                AGENT_HOME_ROOT, spec, f"secure {AGENT_HOME_ROOT}/{'/'.join(chain)} ({u.name}, {mode:04o}; {why})"
+            )
+            if not self.res.ok:
+                return
 
     def slot_dirs(self, slots: list[UserPlan]) -> None:
         for u in slots:
-            self.dir(u.home, u.name, 0o700, ours=u.name in self.created)
+            uid, grp_ = self.uid_of(u.name), self.facts.group(u.group)
+            if self.dry:
+                uid, grp_ = uid or -1, grp_ or GroupInfo(u.group, -1, frozenset())
+            if uid is None or grp_ is None:
+                self.res.fail(f"'{u.name}' could not be looked up.")
+                return
+            spec = DirSpec((u.name,), uid, grp_.gid, 0o700, 0o700, None, None, u.name in self.created)
+            self.secure(SLOT_HOME_ROOT, spec, f"secure {u.home} ({u.name}, 0700)")
+            if not self.res.ok:
+                return
 
     def tmpfiles(self, p: Plan) -> None:
         text = p.tmpfiles()
@@ -311,16 +455,21 @@ class _Apply:
                     self.run([BIN["systemctl"], "reload", svc])
 
     def units(self, p: Plan) -> None:
+        """Write the templates. The runner is started only after the policy verdict (``start_runner``). The add-on
+        slot units stay off until L3 builds the slot launcher they run (TODO(L3): enable them there)."""
         for unit in p.units:
             if self.put(unit.path, unit.content, 0o644):
                 self.unit_written = True
         if self.unit_written and self.res.ok:
             self.run([BIN["systemctl"], "daemon-reload"])
+
+    def start_runner(self, p: Plan) -> None:
+        sysctl = BIN["systemctl"]
         for unit in p.units:
-            stem = unit.name.replace("@.service", "")
+            if not unit.name.startswith("orch-runner@"):
+                continue
             for inst in unit.instances:
-                name = f"{stem}@{inst}.service"
-                sysctl = BIN["systemctl"]
+                name = f"orch-runner@{inst}.service"
                 if self.dry or self.ex.query([sysctl, "is-enabled", "--quiet", name]).rc != 0:
                     self.run([sysctl, "enable", name])
                 if self.dry or self.ex.query([sysctl, "is-active", "--quiet", name]).rc != 0:
@@ -336,6 +485,7 @@ class _Apply:
                 f"record the sudo and SSH answers in {PIN_DIR}/<uid of {agent.name}>.json, only if sudo and sshd "
                 "say the agent user has no sudo rule and cannot log in"
             )
+            self.start_runner(p)
             return
         if uid is None:
             return
@@ -347,18 +497,11 @@ class _Apply:
         entry = next(e for e in p.pins if e.user == agent.name)
         doc = PinEntry(entry.user, entry.cls, entry.host_uid, uid, verdict.document()).document()
         self.put(f"{PIN_DIR}/{uid}.json", _json(doc), 0o644, replace=True)
-
-
-class _NoAcl:
-    has_acl = False
-
-
-_NOACL = _NoAcl()
+        if self.res.ok:
+            self.start_runner(p)  # only now: a runner never starts while the policy check fails
 
 
 def _json(doc: dict) -> str:
-    import json
-
     return json.dumps(doc, sort_keys=True, indent=2) + "\n"
 
 
@@ -387,6 +530,9 @@ def apply(
         for r in p.refusals:
             res.fail(r.message)
         return res
+    rel = facts.stat(release)
+    if rel is None or rel.is_symlink or not rel.is_dir or rel.uid != 0 or rel.mode & 0o022:
+        return res.fail(f"The release directory {release} must exist, be owned by root and not be writable by others.")
     st = _Apply(facts, ex, res)
     if p.create_person:
         st.run(
@@ -410,9 +556,6 @@ def apply(
     st.create_users(p)
     if not res.ok:
         return res
-    st.base_pins(p)
-    if not res.ok:
-        return res
     if not dry:
         p = plan(facts, person, person_uid, release=release)  # now the new users are pinned and adopted
         if p.refusals:
@@ -434,21 +577,37 @@ def apply(
 
 
 # command line -------------------------------------------------------------------------------------------------------
-def _code_is_root_trusted() -> bool:
-    """Root must not run code that anyone else could have changed: this file and all its ancestors are root's and
-    writable by root only."""
-    path = Path(__file__).resolve()
-    for node in (path, *path.parents):
+class _RootFacts(RealOsFacts):
+    """Root's view while setting up. The pin is read with the standard library only: ``orch.host.pins`` would pull
+    third-party code into the root process."""
+
+    def pin(self, uid: int) -> dict | None:
+        broken: dict = {"class": "agent", "workspaces": "*"}  # unreadable or foreign: never "no pin"
         try:
-            info = os.lstat(node)
+            fd = os.open(f"{PIN_DIR}/{int(uid)}.json", os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        except FileNotFoundError:
+            return None
         except OSError:
-            return False
-        if info.st_uid != 0 or info.st_mode & 0o022:
-            return False
-    return True
+            return broken
+        with os.fdopen(fd, "rb") as handle:
+            info = os.fstat(handle.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+                return broken
+            try:
+                doc = json.loads(handle.read(65536))
+            except ValueError:
+                return broken
+        return doc if isinstance(doc, dict) else broken
 
 
-def main(argv: list[str] | None = None, *, _check_code: bool = True) -> int:
+def _running_from_trusted_copy() -> bool:
+    """Defence in depth: ``oslauncher`` already checked the tree; this refuses a direct ``python -m`` from anywhere
+    else, such as the person's release."""
+    here = os.path.realpath(__file__)
+    return here.startswith(os.path.realpath(TRUSTED_ROOT) + os.sep)
+
+
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog="orch-os-setup", description="Create the OS users that agents and add-ons run as."
     )
@@ -462,10 +621,10 @@ def main(argv: list[str] | None = None, *, _check_code: bool = True) -> int:
     if os.geteuid() != 0:
         print("orch-os-setup must run as root (use sudo). Nothing was changed.", file=sys.stderr)
         return 2
-    if _check_code and not _code_is_root_trusted():
+    if not _running_from_trusted_copy():
         print(
-            "This copy of orch is not owned by root, so root will not run it. Install orch to a root-owned "
-            "location and run its orch-os-setup. Nothing was changed.",
+            f"orch-os-setup runs only from the root-owned copy ({TRUSTED_ROOT}); the installer puts it there. "
+            "Nothing was changed.",
             file=sys.stderr,
         )
         return 2
@@ -475,7 +634,7 @@ def main(argv: list[str] | None = None, *, _check_code: bool = True) -> int:
         print(f"There is no user named '{args.person}'. Nothing was changed.", file=sys.stderr)
         return 2
     ex: Executor = DryRunExecutor() if args.dry_run else RealExecutor()
-    res = apply(RealOsFacts(), ex, args.person, uid, release=args.release, is_root=True)
+    res = apply(_RootFacts(), ex, args.person, uid, release=args.release, is_root=True)
     print(res.report())
     return 0 if res.ok else 1
 

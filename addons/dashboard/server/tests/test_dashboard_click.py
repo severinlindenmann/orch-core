@@ -2417,3 +2417,16 @@ def test_agent_access_is_refused_on_any_session_that_is_not_a_local_one(client, 
     assert sent_of(reveals, "prepare") == []
     auth.kinds[token] = "local"
     assert prepare(client, token, stub, agent_access()).status_code == 200
+
+
+def test_c21_a_missing_key_at_sign_is_a_definite_refusal_not_uncertain(client, token, stub, script):
+    prepare(client, token, stub, comment(1))
+    msg = "There is no signing key on this computer. Turn One click off and on again, or sign in Terminal."
+    script.refuse["sign"] = ClickError("custody.no_key", msg)
+    res = sign_lost(client, token, stub)
+    err = res.json()["error"]
+    assert res.status_code == 409 and err["code"] == "custody.no_key" and err.get("reason") != "uncertain"
+    assert err["message"] == msg
+    assert client.app.state.handoffs.is_unsettled(REQ) is None  # nothing is unsettled: it can be tried again
+    del script.refuse["sign"]
+    assert sign_lost(client, token, stub).status_code == 200

@@ -334,6 +334,31 @@ class ClickSigner:
             )
         return backend, sel
 
+    def _key_ready(self, entry: dict[str, Any], backend: Any) -> None:
+        """The key can be read and signs for the selected device: the same load that signing does. Run BEFORE any claim,
+        so a missing or unreadable key is a definite refusal (provably nothing signed, the request stays signable once
+        the key is back) and never an ``uncertain`` request that stays ``bound`` for good."""
+        from orch.custody.base import CustodyError, KeyNotFound
+
+        wid = entry["workspace_id"]
+        try:
+            backend.verify_capability()
+        except KeyNotFound:
+            self._note("refused", workspace=wid, code="custody.no_key")
+            raise ClickError(
+                "custody.no_key",
+                "There is no signing key on this computer. Turn One click off and on again, or sign in Terminal.",
+            ) from None
+        except CustodyError:  # includes BackendUnavailable
+            self.problems[wid] = "custody_unavailable"
+            self._note("refused", workspace=wid, code="custody.unavailable")
+            raise ClickError(
+                "custody.unavailable",
+                "The signing key cannot be read on this computer. Unlock the key store, or sign in Terminal.",
+            ) from None
+        if self.problems.get(wid) == "custody_unavailable":  # the store works again: only this problem kind clears
+            self.problems.pop(wid, None)
+
     def _approval(self, args: Mapping[str, Any]) -> tuple[dict[str, Any], Approval]:
         entry = self._entry(args.get("workspace_id"))
         rid = args.get("request_id")
@@ -720,6 +745,7 @@ class ClickSigner:
             raise refused("view_changed", "the review changed since it was shown (a check or the registry); view again")
         if approval.deposit and not self._execution(entry):  # switched off since prepare: nothing is claimed or signed
             raise refused("terminal_only", "dashboard execution is off for this workspace on this machine")
+        self._key_ready(entry, backend)  # before every claim, on every sign path (single, sequence, deposit, reveal)
         stored = approval.prepared  # the immutable inputs validated at prepare (== prepared, checked above)
         if (stored.get("material") or {}).get("sequence") is not None:
             return self._sign_sequence(entry, approval, backend, sel, stored)

@@ -508,3 +508,15 @@ def test_reveal_seal_refuses_a_key_reserved_for_another_request(world):
     with pytest.raises(ClickError):
         click.signer._seal(approval, page.public, "gr_x.y")
     assert approval.reveal_env is None
+
+
+def test_c21_a_missing_key_refuses_a_deposit_before_the_claim(world):
+    served, click, runner, _ = world
+    execution(served)
+    p, v = flow(click, served)
+    gone = click.store.items.pop((served.wid, click.owner.device))
+    refused(lambda: click.sign(p["request_id"], v["view_digest"]), "custody.no_key")
+    assert click.signatures == 0 and runner.grants.report() == []
+    assert (served.wid, p["request_id"]) not in click.signer._attempted
+    click.store.items[(served.wid, click.owner.device)] = gone
+    assert click.sign(p["request_id"], v["view_digest"])["deposit"] == "confirmed"

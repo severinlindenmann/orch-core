@@ -219,6 +219,11 @@ front-page warning name both. That is why the split layout is the recommendation
 3. The owner's current key signs `hub.joined {hub_id, hk_root_pub, aliases}` into the ledger. The host pins
    `HK_root`, adds a member of the new kind `hub` to its `WSK`-signed member list (D39), and seals `WK_e` to `HXK`
    over the hub link. That link replaces the relay's `PUT membership` (§5.4) for this workspace.
+   **Owner proof (#1198 C8):** `hub.joined` and `hub.left` carry a required `owner_proof`, a `hub.owner_proof`
+   signed by the person key `PK` (derived from the recovery code, never stored) and bound to the host request and the
+   payload, so the One-click device key alone cannot hand the workspace to a hub. The hub card carries a signed
+   `reader` level; a card below the workspace's `required_reader` is refused (`hub_too_old`). Contract: orch-hub
+   `docs/protocol.md` §5 and §9.6; host side: orch-v2-host §0.8.6 item 6. *Enforced by the host from C9.*
 4. The host signs `hub.binding {workspace_id, hub_id, hk_root_pub, valid_from}` with `WSK`. The hub hands it to
    orch-publish and the relay (D76).
 5. The workspace switches to hub mode, but **only from step H5 on** (§10). Before H5, `hub join` is a dev and test step

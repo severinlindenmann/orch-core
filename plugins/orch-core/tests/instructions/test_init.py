@@ -18,7 +18,6 @@ from orch.cli.main import main
 from orch.custody import FileBackend
 from orch.identity import check_recovery_code, derive_person_key, new_ulid, person_ref, sign_person_event
 from orch.ops import workspace_init as wi
-from orch.ops.commands.init import OP
 from orch.ops.errors import OrchError
 from orch.store import BackendSigner, Store
 from tests.instructions.conftest import _BLOCKS, OWN, init_ctx
@@ -28,7 +27,7 @@ SESSION = "s_01J9ZP0000000000000000000S"
 
 
 def run_init(where, **kw):
-    return OP.handler(init_ctx(where, **kw), dict(ARGS))
+    return wi.create_workspace(init_ctx(where, **kw), dict(ARGS))
 
 
 def tree(root: Path) -> set[str]:
@@ -241,14 +240,14 @@ def test_an_agent_session_works_in_the_new_workspace(where, term, passphrases):
 
 
 def test_init_owner_name_defaults_to_the_user(where, term, passphrases):
-    OP.handler(init_ctx(where), {"prefix": "DEMO"})
+    wi.create_workspace(init_ctx(where), {"prefix": "DEMO"})
     assert config(where)["members"][0]["name"] == "severin"
 
 
 def test_dry_run_creates_nothing(where, term, passphrases):
     ctx = init_ctx(where)
     ctx.dry_run = True
-    res = OP.handler(ctx, dict(ARGS))
+    res = wi.create_workspace(ctx, dict(ARGS))
     assert res.lines and not term.shown and not passphrases.requests
     assert tree(where["root"]) == set() and not where["state"].exists()
 
@@ -344,7 +343,6 @@ def test_no_production_path_skips_the_prompts():
         text = path.read_text()
         offenders += [(path.name, s) for s in SEAMS if re.search(rf"(?<![A-Za-z0-9]){s}\b", text)]
     assert offenders == []
-    assert set(OP.input["properties"]) == {"prefix", "name", "host"}  # --host runs the same prompts (H3b3)
     assert wi.TERMINAL.__class__ is wi.Terminal  # the module default is the real /dev/tty terminal
 
 

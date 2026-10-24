@@ -1,10 +1,9 @@
-"""``orch init --host`` with the shipped default: the host bootstraps the workspace into ``<project>/.orch``,
+"""The hosted create with the shipped default: the host bootstraps the workspace into ``<project>/.orch``,
 registers it with ``store: ".orch"`` and serves it from there."""
 
 # ruff: noqa: F811
 from __future__ import annotations
 
-import io
 import json
 import os
 import stat
@@ -14,8 +13,9 @@ from pathlib import Path
 import pytest
 
 from orch.host.registry import registry_path
+from orch.ops import workspace_init as wi
 from tests.host.lifecycle_helpers import Lab
-from tests.host.test_bootstrap import fresh_root, ok, passphrases, recording, term  # noqa: F401  (fixtures)
+from tests.host.test_bootstrap import ctx_for, fresh_root, ok, passphrases, recording, term  # noqa: F401  (fixtures)
 
 pytestmark = [
     pytest.mark.skipif(sys.platform not in {"darwin", "linux"}, reason="Unix host"),
@@ -39,23 +39,12 @@ def test_init_through_the_host_bootstraps_into_dot_orch(
     passphrases,
     recording,  # noqa: F811
 ):
-    from orch.cli.main import main
-
     root = fresh_root(tmp_path, "work")
     (root / "config.json").write_text('{"name": "my own project file"}')  # no collision in the new layout
     monkeypatch.chdir(root)
-    env = {"ORCH_STATE_DIR": str(lab.state), "HOME": str(tmp_path / "home"), "USER": "severin"}
-    out = io.StringIO()
     with lab.host() as h:
-        code = main(
-            ["init", "--prefix", "DEMO", "--name", "Severin", "--host", "--json"],
-            env=env,
-            stdout=out,
-            stderr=io.StringIO(),
-        )
-        doc = json.loads(out.getvalue())
-        assert code == 0 and doc["ok"] is True, doc
-        wid = doc["data"]["workspace_id"]
+        res = wi.create_workspace_hosted(ctx_for(root, lab.state), {"prefix": "DEMO", "name": "Severin", "host": True})
+        wid = res.data["workspace_id"]
         store = root / ".orch"
         assert stat.S_IMODE(store.stat().st_mode) == 0o700
         assert json.loads((store / "config.json").read_text())["workspace"]["id"] == wid

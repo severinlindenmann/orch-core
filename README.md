@@ -119,7 +119,7 @@ orch doesn't depend on one harness. Every command is defined once, and gates and
 
 | | Claude Code | Codex CLI and others |
 |---|---|---|
-| Install | plugin marketplace | `uv tool install`, then `orch init` writes `AGENTS.orch.md` |
+| Install | plugin marketplace | `uv tool install`, then `orch setup` writes `AGENTS.orch.md` |
 | Instructions | `AGENTS.orch.md` and skills | `AGENTS.orch.md`, plus skills where the harness supports `SKILL.md` |
 | Gates and signatures | enforced by orch | enforced by orch |
 | Hand edits to ticket files | refused early by a guard hook | detected by `orch check` and `orch doctor`, or prevented by running agents under their own OS user |

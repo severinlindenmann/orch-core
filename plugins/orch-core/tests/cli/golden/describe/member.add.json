@@ -86,7 +86,7 @@
         "code": "custody.no_key",
         "exit": 3,
         "retryable": false,
-        "hint": "orch init sets up your device key",
+        "hint": "orch setup sets up your device key",
         "fix": [
           "orch",
           "help"

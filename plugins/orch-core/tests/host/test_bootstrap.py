@@ -39,7 +39,6 @@ from orch.identity.recovery import code_from_entropy
 from orch.ops import workspace_init as wi
 from orch.ops.base import Context
 from orch.ops.caps import Files
-from orch.ops.commands.init import OP
 from orch.ops.errors import OrchError
 from orch.ops.runtime import Workspace
 from tests.host.lifecycle_helpers import UID, Lab, genesis_for, host_process, wait_for_socket
@@ -227,7 +226,7 @@ def _scan(base: Path, needles: dict[str, bytes], skip: tuple[Path, ...] = ()) ->
     return found
 
 
-def test_cli_init_host_runs_the_composite_and_the_host_never_sees_the_person_key(
+def test_hosted_create_runs_the_composite_and_the_host_never_sees_the_person_key(
     lab, tmp_path, monkeypatch, term, passphrases, recording
 ):
     from orch.cli.main import main
@@ -235,17 +234,9 @@ def test_cli_init_host_runs_the_composite_and_the_host_never_sees_the_person_key
     root = fresh_root(tmp_path, "work")
     monkeypatch.chdir(root)
     env = {"ORCH_STATE_DIR": str(lab.state), "HOME": str(tmp_path / "home"), "USER": "severin"}
-    out = io.StringIO()
     with lab.host() as h:
-        code = main(
-            ["init", "--prefix", "DEMO", "--name", "Severin", "--host", "--json"],
-            env=env,
-            stdout=out,
-            stderr=io.StringIO(),
-        )
-        doc = json.loads(out.getvalue())
-        assert code == 0 and doc["ok"] is True, doc
-        wid = doc["data"]["workspace_id"]
+        res = wi.create_workspace_hosted(ctx_for(root, lab.state), {"prefix": "DEMO", "name": "Severin", "host": True})
+        wid = res.data["workspace_id"]
         # exactly the composite, and the host drew the id
         assert [f["op"] for f in recording.sent] == ["host.wsk_create", "host.bootstrap"]
         bootstrap = recording.sent[1]["args"]
@@ -308,7 +299,6 @@ def test_cli_init_host_without_a_host_is_host_unavailable_and_leaves_nothing(
         wi.create_workspace_hosted(ctx_for(root, lab.state), {"prefix": "DEMO", "host": True})
     assert e.value.code == "host.unavailable" and "nothing was created" in e.value.message
     assert os.listdir(root) == [] and sorted(os.listdir(lab.state / "hosts")) == before
-    assert "host.unavailable" in {x["code"] for x in OP.errors}
 
 
 def test_cli_init_host_passes_a_host_refusal_on_and_drops_its_device_key(

@@ -419,7 +419,7 @@ export function SignPopover(p: SignPopoverProps) {
       {footerShown && <div className={`${STICKY_FOOTER} flex flex-wrap items-center gap-2 sm:justify-between`} data-testid="sign-footer-row">
         <span aria-live="polite" className="text-[12px] text-text-muted">
           {phase === 'idle' && p.hint}
-          {phase === 'waiting' && 'Waiting for your signature'}
+          {phase === 'waiting' && 'Waiting for approval in Terminal…'}
         </span>
         <div className="flex flex-wrap gap-2">
           {phase === 'idle' && !clickOpen && !(autoNow && p.action) && (

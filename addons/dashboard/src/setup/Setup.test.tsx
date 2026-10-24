@@ -267,14 +267,14 @@ test('1236: a dev host greys out One click with a plain sentence, never the raw 
   render(<Setup api={fake({ clickOff: 'dev_host' }).api} />)
   await approval()
   expect(screen.getByLabelText(/One click on this computer/)).toBeDisabled()
-  expect(screen.getByText('One click is off on this test computer; you sign in a terminal.')).toBeInTheDocument()
+  expect(screen.getByText('One click is off on this test computer; you approve in your terminal.')).toBeInTheDocument()
   expect(screen.queryByText(/dev_host/)).not.toBeInTheDocument()
 })
 
 test('1236: an unknown or empty One click reason gets a generic plain sentence, never the raw code', async () => {
   render(<Setup api={fake({ clickOff: 'no_keychain' }).api} />)
   await approval()
-  expect(screen.getByText('One click is not available on this computer; you sign in a terminal.')).toBeInTheDocument()
+  expect(screen.getByText('One click is not available on this computer; you approve in your terminal.')).toBeInTheDocument()
   expect(screen.queryByText(/no_keychain/)).not.toBeInTheDocument()
 })
 

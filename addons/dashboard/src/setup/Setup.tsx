@@ -34,8 +34,8 @@ export function plainReason(code: string): string {
 }
 /** Why One click is greyed out, in plain words. Core sends a code (today only `dev_host`); an unknown one never shows raw. */
 export function clickOffText(code: string): string {
-  if (code === 'dev_host') return 'One click is off on this test computer; you sign in a terminal.'
-  return 'One click is not available on this computer; you sign in a terminal.'
+  if (code === 'dev_host') return 'One click is off on this test computer; you approve in your terminal.'
+  return 'One click is not available on this computer; you approve in your terminal.'
 }
 function Reason({ reason }: { reason: string }) {
   return (

@@ -317,13 +317,28 @@ def setup_driver(ws: Workspace, *, timeout: int = 180) -> None:
     """Run the real `orch setup --no-browser` in a pty and answer it like a person: read the single-use link from the
     terminal, claim it on the setup socket, then walk the same routes the page calls (profile, secrets, review, create,
     progress, finish). Test-only: the product has no scripted path. Sets ``ws.passphrase`` to the generated one."""
-    sys.path.insert(0, str(CORE / "tests" / "setup"))
-    try:
-        from helpers import call  # the unix-socket HTTP client of core's setup tests
-    finally:
-        sys.path.pop(0)
+    import importlib.util
 
-    rules = [(r"type (\S+): $", lambda m, t: m.group(1)), *ws.rules()]
+    spec = importlib.util.spec_from_file_location("orch_setup_test_helpers", CORE / "tests" / "setup" / "helpers.py")
+    assert spec is not None and spec.loader is not None
+    helpers = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(helpers)  # the unix-socket HTTP client of core's setup tests, loaded by path
+    call = helpers.call
+    fp: dict[str, list[str] | None] = {"words": None}  # the review's fingerprint, set after /review
+    problems: list[str] = []
+
+    def confirm_tty(m, text):
+        """R3: the person compares the three words on the terminal with the page's. Answer only if they are the same."""
+        words = fp["words"]
+        shown = re.findall(r"should show these three words:\n\n {4}(.+)\n", text)
+        if not words or not shown or shown[-1].split() != list(words):
+            problems.append(f"the terminal shows {shown[-1:] or 'no words'}, the review has {words}")
+            return "no"  # declines: nothing is created
+        return m.group(1)
+
+    rules: list[tuple[str, Callable]] = [
+        (r"If they match, type (\S+): $", confirm_tty)
+    ]  # the rest once the passphrase is known
     env = ws.env()
     if not (Path(sys.executable).parent / "orch-dashboard").is_file():
         # running outside the dashboard venv (the e2e kit uses the core venv): `orch setup` finds the dashboard on PATH
@@ -342,7 +357,8 @@ def setup_driver(ws: Workspace, *, timeout: int = 180) -> None:
     thread.start()
 
     def fail(what: str) -> RuntimeError:
-        return RuntimeError(f"orch setup: {what}\n{pty_run.output[-1500:]}")
+        extra = f" [{'; '.join(problems)}]" if problems else ""
+        return RuntimeError(f"orch setup: {what}{extra}\n{pty_run.output[-1500:]}")
 
     deadline = time.time() + timeout
     link = None
@@ -368,6 +384,18 @@ def setup_driver(ws: Workspace, *, timeout: int = 180) -> None:
             raise fail(f"{route} -> {status} {out}")
         return out
 
+    def shutdown() -> None:
+        with contextlib.suppress(Exception):  # best effort: do not leave the setup child waiting after a failure
+            call(sock, "POST", "/shutdown", {}, host=host)
+
+    try:
+        _walk(ws, post, get, fail, thread, box, pty_run, rules, fp, problems, deadline, port, code)
+    except BaseException:
+        shutdown()
+        raise
+
+
+def _walk(ws, post, get, fail, thread, box, pty_run, rules, fp, problems, deadline, port, code) -> None:
     token = post("/claim", {"code": code, "port": port})["token"]
     api = "/api/setup/"
     profile = {
@@ -380,7 +408,9 @@ def setup_driver(ws: Workspace, *, timeout: int = 180) -> None:
     if not post(api + "secrets/confirm", {"words": words}, token).get("ok"):
         raise fail("the recovery words were refused")
     ws.passphrase = secrets["passphrase"]
+    rules.extend(ws.rules())  # built after the passphrase is set (the same list object the Pty reads)
     review = post(api + "review", None, token)
+    fp["words"] = review["fingerprint"]
     create = {"review_id": review["review_id"], "digest": review["digest"]}
     if review.get("typed_word"):
         create["typed_word"] = review["typed_word"]
@@ -398,6 +428,8 @@ def setup_driver(ws: Workspace, *, timeout: int = 180) -> None:
     thread.join(30)
     if thread.is_alive():
         raise fail("orch setup did not exit")
+    if problems:
+        raise fail("; ".join(problems))
     if "exc" in box:
         raise fail(f"driver error {box['exc']!r}")
     if pty_run.code != 0:

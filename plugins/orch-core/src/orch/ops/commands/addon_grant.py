@@ -63,8 +63,10 @@ def _staged(h: Human, ctx: Context, name: str, stage: str) -> tuple[Any, Any, An
         doc, package, manifest = marketinstall.staged_package(_market_files(h), name, stage, ctx.now())
     except MarketError as e:
         raise _market_refusal(e) from None
-    key = doc["publisher_key"]
     ctx.prepare.staged = {"stage": stage, "name": name}
+    if doc.get("dev") is True:  # V3 G5: a dev folder has no marketplace, so there is no market block to show
+        return doc, package, manifest
+    key = doc["publisher_key"]
     ctx.prepare.market = {
         "url": doc["origin"], "class": doc["class"], "commit": doc["commit"], "source_note": marketinstall.SOURCE_NOTE,
         "publisher": {"fingerprint": None if key is None else marketops.fingerprint(key), "tofu": doc["tofu"]},

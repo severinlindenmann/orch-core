@@ -1,15 +1,27 @@
-"""``orch addon install | update | remove``: add-ons from a marketplace (V3 G3, #921; spec sections 5 to 7).
+"""``orch addon install | update | remove``: add-ons from a marketplace (V3 G3, #921; spec sections 5 to 7), and the
+author tools ``new | pack | dev`` (V3 G5, #923; spec 5.1.1 "Digest of the author's working tree").
 
     orch addon install ID [--from URL] [--workspace W] [--json]   fetch, review, sign: the add-on is installed
     orch addon update NAME [--workspace W] [--json]               the same for a newer entry of its origin
     orch addon update [NAME] --check [--json]                     what is installed and what is newer (read only)
     orch addon remove NAME [--workspace W] [--json]               turn it off (signed) and delete the package
+    orch addon new NAME [--json]                                  scaffold ./NAME (a manifest and a main file)
+    orch addon pack [PATH] [--commit REV] [--subdir D] [--git URL] [--json]
+                                                                  validate a commit, print digest and index entry
+    orch addon dev PATH [--commit REV] [--subdir D] [--workspace W] [--json]
+                                                                  try a local commit in a DEV workspace (not an install)
 
 Everything except ``update --check`` is a person's command: with ``ORCH_GRANT`` or ``ORCH_SESSION`` set it is refused
 (``market.actor_refused``) before the host is asked, so nothing is fetched on an agent's behalf; the host refuses an
 agent again. ``install`` and ``update`` end in the existing ``addon.grant`` review and signature at the person's
 terminal; the package is the one the host staged, never a folder. ``remove`` signs ``addon.disable`` when the add-on is
-on and then asks the host to delete the package; data stays until ``orch addon purge``."""
+on and then asks the host to delete the package; data stays until ``orch addon purge``.
+
+``new`` and ``pack`` are local and offline (no host, no key, nothing signed), so an agent may run them. ``pack`` hashes
+a COMMIT of a local git repository with the same closed export an install uses, never the working tree, so its digest is
+the digest of an install of that commit. ``dev`` is a person's command like ``install``; the host accepts it only for a
+dev sandbox workspace on a dev host (``host.dev_refused`` everywhere else), signs through the same ``addon.grant``
+review, and records no install."""
 
 from __future__ import annotations
 
@@ -26,7 +38,8 @@ from orch.market import ADDONS  # the store-layout lint matches the bare word
 __all__ = ["main"]
 
 _USAGE = (
-    "usage: orch addon {install ID [--from URL] | update NAME | update [NAME] --check | remove NAME} "
+    "usage: orch addon {install ID [--from URL] | update NAME | update [NAME] --check | remove NAME | new NAME | "
+    "pack [PATH] [--commit REV] [--subdir D] [--git URL] | dev PATH [--commit REV] [--subdir D]} "
     "[--workspace W] [--json]"
 )
 
@@ -44,10 +57,13 @@ class _Fail(Exception):
 
 def _parser() -> argparse.ArgumentParser:
     p = _Quiet(prog="orch addon", add_help=False)
-    p.add_argument("cmd", choices=("install", "update", "remove"))
+    p.add_argument("cmd", choices=("install", "update", "remove", "new", "pack", "dev"))
     p.add_argument("rest", nargs="*")
     p.add_argument("--from", dest="url")
     p.add_argument("--check", action="store_true")
+    p.add_argument("--commit")
+    p.add_argument("--subdir")
+    p.add_argument("--git")
     p.add_argument("--json", action="store_true")
     p.add_argument("--workspace")
     p.add_argument("--state", type=Path)
@@ -113,14 +129,26 @@ def main(
             out.write(_USAGE + "\n\n" + (__doc__ or "").split("\n\n", 1)[0] + "\n")
             return 0
         a = _parser().parse_intermixed_args(argv)
-        want = {"install": (1, 1), "update": (0, 1), "remove": (1, 1)}[a.cmd]
+        want = {"install": (1, 1), "update": (0, 1), "remove": (1, 1), "new": (1, 1), "pack": (0, 1), "dev": (1, 1)}[
+            a.cmd
+        ]
         if not want[0] <= len(a.rest) <= want[1] or (a.cmd == "update" and not a.check and not a.rest):
             raise _Fail("invalid.input", _USAGE, 2)
         if (a.check and a.cmd != "update") or (a.url and a.cmd != "install"):
             raise _Fail("invalid.input", _USAGE, 2)
+        if (a.commit or a.subdir) and a.cmd not in ("pack", "dev") or (a.git and a.cmd != "pack"):
+            raise _Fail("invalid.input", _USAGE, 2)
+        if a.cmd in ("new", "pack"):  # local and offline: no host, no key, nothing signed
+            data = _new(a) if a.cmd == "new" else _pack(a)
+            out.write(
+                json.dumps({"ok": True, "data": data}, sort_keys=True) + "\n" if as_json else _author_text(a, data)
+            )
+            return 0
         agent = bool(env.get("ORCH_GRANT") or env.get("ORCH_SESSION"))
         if agent and not a.check:  # before the host is asked: nothing is fetched on an agent's behalf
             raise _Fail("market.actor_refused", ERRORS["market.actor_refused"].message)
+        if a.cmd == "dev":  # a bad path is the author's mistake, said before the host is connected
+            a.rest[0] = _repo_root(a.rest[0])
         if a.check:
             data = _check(a, env)
             out.write(
@@ -140,7 +168,88 @@ def main(
         return fail(_Fail("host.unavailable", str(exc)[:300], 9))
 
 
+def _new(a: argparse.Namespace) -> dict[str, Any]:
+    """Write the scaffold into ``./NAME`` (a new directory: an existing one is refused, nothing is overwritten)."""
+    from orch.market import author
+
+    name = a.rest[0]
+    files = _author(author.scaffold, name)
+    target = Path.cwd() / name
+    try:
+        target.mkdir(mode=0o755)
+        for rel, data in sorted(files.items()):
+            fd = os.open(target / rel, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+            with os.fdopen(fd, "wb") as f:
+                f.write(data)
+    except FileExistsError:
+        raise _Fail("invalid.input", f"{target} already exists; nothing was written", 2) from None
+    except OSError as exc:
+        raise _Fail("invalid.input", f"cannot write {target}: {exc.strerror}", 2) from None
+    return {"name": name, "path": str(target), "files": sorted(files)}
+
+
+def _author(fn: Any, *args: Any, **kw: Any) -> Any:
+    from orch.market import author
+
+    try:
+        return fn(*args, **kw)
+    except author.AuthorError as exc:
+        raise _Fail(exc.code, exc.message, 2 if exc.code == "invalid.input" else 3) from None
+
+
+def _repo_root(raw: str | None) -> str:
+    """The repository directory named by the author: absolute, a real directory, the ROOT of a git repository (a package
+    inside one is ``--subdir``, so the digest is computed from the same tree an install reads)."""
+    path = os.path.realpath(raw or os.getcwd())
+    if not os.path.isdir(path):
+        raise _Fail("invalid.input", f"{path} is not a directory", 2)
+    if not os.path.lexists(os.path.join(path, ".git")):
+        raise _Fail(
+            "invalid.input",
+            f"{path} is not the root of a git repository (commit the add-on first; a package inside one is --subdir)",
+            2,
+        )
+    return path
+
+
+def _pack(a: argparse.Namespace) -> dict[str, Any]:
+    from orch.market import author
+
+    packed = _author(author.pack, _repo_root(a.rest[0] if a.rest else None), a.commit, subdir=a.subdir, git=a.git)
+    return {
+        "name": packed.entry["id"], "version": packed.entry["version"], "commit": packed.commit,
+        "package_sha256": packed.digest, "entry": packed.entry, "placeholder_git": packed.placeholder_git,
+    }  # fmt: skip
+
+
+def _author_text(a: argparse.Namespace, data: dict[str, Any]) -> str:
+    if a.cmd == "new":
+        return (
+            f"ok addon new {data['name']}: wrote {', '.join(data['files'])} to {data['path']}\n"
+            f"next: cd {data['name']} && git init && git add -A && git commit -m first && orch addon pack\n"
+        )
+    lines = [
+        f"ok addon pack {data['name']} {data['version']}",
+        f"commit {data['commit']}",
+        f"package_sha256 {data['package_sha256']}",
+        'index entry (paste into the "addons" list of your marketplace.json):',
+        json.dumps(data["entry"], indent=2, sort_keys=True),
+    ]
+    if data["placeholder_git"]:
+        lines.append('note: "source.git" is a placeholder; pass --git https://github.com/<you>/<repo> or edit it')
+    lines.append(
+        "note: the commit is what installs; push it so the marketplace can fetch it. Uncommitted files are not in it."
+    )
+    return "\n".join(lines) + "\n"
+
+
 def _done(a: argparse.Namespace, result: dict[str, Any]) -> str:
+    if a.cmd == "dev":
+        st = result["stage"]
+        return (
+            f"ok addon dev {st['name']} {st['version']}: signed and running from {st['commit'][:12]} "
+            "(a dev add-on, not an install: re-run orch addon dev after a change)\nnext: orch addon list\n"
+        )
     if result.get("up_to_date"):
         return f"ok addon update {result['name']}: already up to date ({result['version']})\n"
     if a.cmd == "remove":
@@ -217,6 +326,32 @@ def _signed(a: argparse.Namespace, env: Mapping[str, str], out: TextIO, as_json:
             if row["state"] == "enabled":
                 _sign(conn, backend, device, wid, person, label, "addon.disable", {"name": name})
             return conn.call("market.uninstall", {"name": name})["data"]
+        if a.cmd == "dev":
+            dev: dict[str, Any] = {"path": _repo_root(a.rest[0])}
+            if a.commit:
+                dev["rev"] = a.commit
+            if a.subdir:
+                dev["subdir"] = a.subdir
+            stage = conn.call("market.dev_stage", dev, timeout=120.0)["data"]
+            if not as_json:
+                out.write(f"DEV add-on from a local folder, not from a marketplace (commit {stage['commit']})\n")
+                out.write(
+                    "\n".join(
+                        [f"{stage['name']} {stage['version']}  package {stage['package_sha256']}", *stage["review"]]
+                    )
+                )
+                out.write("\n")
+            _sign(
+                conn,
+                backend,
+                device,
+                wid,
+                person,
+                label,
+                "addon.grant",
+                {"name": stage["name"], "staged": stage["stage"]},
+            )
+            return {"stage": stage, "installed": False}
         args: dict[str, Any] = {"id": a.rest[0]}
         if a.cmd == "update":
             args["update"] = True

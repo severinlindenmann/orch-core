@@ -19,6 +19,10 @@ request.
   nothing to run in the background and no write on a read. ``last_used`` is host wall-clock seconds, because the
   host, the CLI and the signer are separate processes and a monotonic clock does not compare between them; a
   ``last_used`` more than :data:`SKEW` seconds in the future counts as idle (fails closed).
+  This limits a forgotten session; it is not a boundary against other processes of the same user until agents run
+  as their own user (H1): such a process can edit the file or run ``orch host convenience on``.
+* Turning it on again (the dashboard's plain click, :meth:`orch.click.signer.ClickSigner.custody_on` with ``resume``)
+  goes through :func:`refuse_turn_on` and :func:`set_enabled`, which restarts the idle clock and the risk notice.
 """
 
 from __future__ import annotations
@@ -165,7 +169,11 @@ def touch(state_dir: Path, workspace_id: str, host_uid: int) -> None:
         with _flock(state_dir, "convenience.lock", host_uid):
             doc = _doc(state_dir, host_uid)
             current = doc["workspaces"].get(workspace_id)
-            if isinstance(current, dict) and current.get("enabled") is True:
+            if (
+                isinstance(current, dict)
+                and current.get("enabled") is True
+                and not _idle_expired(current, idle_hours(state_dir, workspace_id, host_uid), float(now))
+            ):  # again under the lock: right at the limit activity must not revive the flag
                 current["last_used"] = now
                 write_private(flag_path(state_dir), doc)
     except (HostError, OSError):
@@ -456,7 +464,7 @@ def unavailable(reason: str, devices: list[str], *, hours: int | None = None) ->
             "sign.convenience_unavailable",
             f"idle: {_TEXT['idle'].format(hours=hours)}.",
             hint="orch host convenience on --workspace W (or sign in your terminal with orch sign CODE meanwhile)",
-            detail={"reason": "idle", "devices": [], "hours": hours},
+            detail={"reason": "idle", "devices": []},  # the hours are in the message
         )
     if devices:
         hint = "update those readers and declare them (orch keys reader declare), or remove them; meanwhile " + hint

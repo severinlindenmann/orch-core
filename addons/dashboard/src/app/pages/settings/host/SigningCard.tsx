@@ -83,7 +83,7 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
   const status = useQuery({ queryKey: ['click-status', workspace.id], queryFn: () => api.clickStatus(workspace.id) })
   const card: ClickCard | null = status.data ?? workspace.click ?? null
   const on = !!card && card.enabled
-  const [mode, setMode] = useState<'idle' | 'on' | 'off'>('idle')
+  const [mode, setMode] = useState<'idle' | 'on' | 'off' | 'resume'>('idle')
   const [pass, setPass] = useState('')
   const [pass2, setPass2] = useState('')
   const [busy, setBusy] = useState(false)
@@ -102,7 +102,7 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
   // message and show the new state. The passphrase goes with it (#580).
   const cardState = card ? `${card.custody}|${card.enabled}|${card.available}|${card.switchable !== false}` : 'none'
   const openedOn = useRef<string | null>(null)
-  const open = (m: 'on' | 'off') => {
+  const open = (m: 'on' | 'off' | 'resume') => {
     openedOn.current = card ? cardState : null // opened before the first answer: that answer is not a change
     setMode(m)
   }
@@ -115,7 +115,7 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
   const terminalOn = !!card && !on && card.custody === 'convenience'
   // Off with a key in the key store moves it back under a new passphrase (V3-D31); with another custody it is the flag only.
   const moveBack = !!card && card.custody === 'convenience'
-  const canFlip = owner && !!card && card.problem !== 'dev_host' && card.switchable !== false && !terminalOn
+  const canFlip = owner && !!card && card.problem !== 'dev_host' && card.switchable !== false
   const newOk = [...pass].length >= MIN_NEW_PASSPHRASE && pass === pass2
   const submit = async (body: ClickSwitch) => {
     if (inFlight.current) return
@@ -152,7 +152,7 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
             checked={on}
             aria-labelledby="one-click-label"
             disabled={!canFlip || mode !== 'idle'}
-            onCheckedChange={() => open(on ? 'off' : 'on')}
+            onCheckedChange={() => open(on ? 'off' : terminalOn ? 'resume' : 'on')}
           />
         </div>
         <details className="text-[12px] text-text-muted">
@@ -191,12 +191,49 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
             This version of orch cannot switch it here. Update orch, or use the terminal:{' '}
             <Command command={on ? convenienceOffCommand(workspace.prefix) : convenienceOnCommand(workspace.prefix)} what={`orch host convenience ${on ? 'off' : 'on'}`} />
           </p>
-        ) : terminalOn ? (
+        ) : terminalOn && mode === 'idle' ? (
           <p data-testid="signing-terminal-on" className="text-text-muted">
-            Your key is already saved on this computer, so there is no passphrase to check here. Switch it on in the terminal:{' '}
+            Your key is already saved on this computer, so there is no passphrase to check. Use the switch to turn it on after a short review, or in the terminal:{' '}
             <Command command={convenienceOnCommand(workspace.prefix)} what="orch host convenience on" />
           </p>
-        ) : mode === 'idle' ? null : mode === 'on' ? (
+        ) : mode === 'idle' ? null : mode === 'resume' ? (
+          <form
+            className="space-y-2"
+            onSubmit={(e) => {
+              e.preventDefault()
+              void submit({ on: true, resume: true })
+            }}
+          >
+            <dl data-testid="signing-resume" className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
+              <dt className="text-text-muted">Workspace</dt>
+              <dd className="min-w-0 break-words">
+                {workspace.name} ({workspace.prefix})
+              </dd>
+              <dt className="text-text-muted">Change</dt>
+              <dd className="min-w-0">One click approves for you again. Your key stays where it is. It switches itself off again after {card?.idle_hours ?? 12} hours without use.</dd>
+            </dl>
+            <p data-testid="resume-risk" className="text-text-muted">{CLICK_RISK}</p>
+            {error && (
+              <p role="alert" id={errorId} data-testid="signing-error" className="text-warning">
+                {error.text}
+                {error.command && (
+                  <>
+                    {' '}
+                    <Command {...error.command} />
+                  </>
+                )}
+              </p>
+            )}
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="ghost" onClick={reset} disabled={busy}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={busy}>
+                {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null} Turn on
+              </Button>
+            </div>
+          </form>
+        ) : mode === 'on' ? (
           <form
             className="space-y-2"
             onSubmit={(e) => {

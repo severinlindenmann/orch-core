@@ -2617,3 +2617,34 @@ def test_a_sealed_sign_on_a_non_local_session_never_reaches_the_signer(client, t
     res = sign_hub(client, token, stub, sealed={"hub.backup_key": BACKUP_ENV})
     assert res.status_code == 409 and res.json()["error"]["reason"] == "check_failed"
     assert sent_of(backup, "sign") == []
+
+
+def test_c17_a_plain_click_resumes_one_click_from_a_local_dashboard(client, token, stub, script, auth):
+    script.features = ["custody"]
+    script.enabled = script.available = False
+    auth.kinds[token] = "local"
+    res = switch(client, token, stub, {"on": True, "resume": True})
+    assert res.status_code == 200, res.text
+    assert res.json()["enabled"] is True
+    calls = [c for c in script.clients[-1].calls if c[0].startswith("custody")]
+    assert calls == [("custody_on", {"workspace_id": stub.ws, "resume": True})]
+
+
+def test_c17_a_resume_from_any_other_session_keeps_the_terminal_command(client, token, stub, script, auth):
+    script.features = ["custody"]
+    script.enabled = script.available = False
+    for kind in ("remote", "passkey", None):
+        auth.kinds[token] = kind
+        res = switch(client, token, stub, {"on": True, "resume": True})
+        assert res.json()["error"]["code"] == "custody.terminal_needed", res.text
+        assert "orch host convenience on --workspace" in res.json()["error"]["message"]
+    assert not any(c[0] == "custody_on" for cl in script.clients for c in cl.calls)
+
+
+def test_c17_resume_is_on_without_a_passphrase_only(client, token, stub, script, auth):
+    script.features = ["custody"]
+    auth.kinds[token] = "local"
+    for body in ({"on": False, "resume": True}, {"on": True, "resume": True, "passphrase": PASSPHRASE}):
+        res = switch(client, token, stub, body)
+        assert res.json()["error"]["code"] == "invalid.input" and PASSPHRASE not in res.text
+    assert not any(c[0] == "custody_on" for cl in script.clients for c in cl.calls)

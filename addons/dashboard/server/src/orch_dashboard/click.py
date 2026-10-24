@@ -98,10 +98,15 @@ class CustodyBody(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     on: bool
     passphrase: Passphrase | None = None
+    #: #1198 C17: `on` without a passphrase, for a key already in this computer's key store (idle switch-off): a plain
+    #: click after the review; only from a dashboard opened on this computer (the route checks)
+    resume: bool = False
 
     @model_validator(mode="after")
     def _proof_only_to_switch_on(self):
-        if self.on and self.passphrase is None:
+        if self.resume and (not self.on or self.passphrase is not None):
+            raise ValueError("resume is on without a passphrase")
+        if self.on and self.passphrase is None and not self.resume:
             raise ValueError("on needs the passphrase")
         if not self.on and "passphrase" in self.model_fields_set and self.passphrase is None:
             raise ValueError("off takes a passphrase or none")
@@ -365,7 +370,7 @@ def register(app: FastAPI, gateway: Gateway):
         return any(m.person == me and m.role == "owner" for m in adapters.members(gateway.call(ws, "member.list")))
 
     @app.post("/api/w/{ws}/click/custody")
-    def custody(body: CustodyBody, ws: str = Depends(workspace)):
+    def custody(body: CustodyBody, request: Request, ws: str = Depends(workspace)):
         """Switch signing in the dashboard on or off (section 0.8.6 item 3a): owners only; the signer does the work
         (this process never opens a key) and answers the workspace's card. No route here changes a credential."""
         gateway.enabled(ws)
@@ -373,7 +378,18 @@ def register(app: FastAPI, gateway: Gateway):
             raise fail("role.denied", "Only an owner switches signing in the dashboard.", exit=3)
         if not signer.switchable():
             raise fail("click.contract", "Update orch-core: its signing helper cannot switch signing yet.", exit=9)
-        if body.on:  # the proof goes to the signer only; nothing here reads, keeps or logs it
+        if body.resume:
+            # no passphrase to prove: only a dashboard opened on this computer (the same gate as a shown secret), until
+            # the passkey step-up exists; anything else keeps the terminal command on the card
+            if app.state.auth.login_kind(request.state.token) not in REVEAL_SESSION_KINDS:
+                raise fail(
+                    "custody.terminal_needed",
+                    "Turning One click on again needs a dashboard opened on this computer. Use the terminal: "
+                    "orch host convenience on --workspace " + ws,
+                    exit=3,
+                )
+            row = signer.call("custody_on", {"workspace_id": ws, "resume": True})
+        elif body.on:  # the proof goes to the signer only; nothing here reads, keeps or logs it
             row = signer.call("custody_on", {"workspace_id": ws, "passphrase": body.passphrase})
         else:  # off: the flag; with a NEW passphrase the signer also moves the key back (V3-D31), only while on
             row = signer.call(

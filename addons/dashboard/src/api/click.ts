@@ -31,7 +31,7 @@ export interface ClickCard {
  * flag off and, with a NEW passphrase (V3-D31), moves the key back under it in the same step (core accepts it only
  * while signing is on).
  */
-export type ClickSwitch = { on: true; passphrase: string } | { on: false; passphrase?: string }
+export type ClickSwitch = { on: true; passphrase: string } | { on: true; resume: true } | { on: false; passphrase?: string }
 
 export interface ClickPrepared {
   request_id: string

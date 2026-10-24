@@ -1439,6 +1439,10 @@ class ClickSigner:
         from orch.host.errors import HostError
 
         entry = self._entry(args.get("workspace_id"))
+        if args.get("resume") is not None:
+            if args["resume"] is not True or "passphrase" in args:
+                raise ClickError("invalid.input", "resume is true and takes no passphrase")
+            return self._resume(entry)
         pw = self._passphrase(args)
         wid, uid = self._tier_a(entry)
         st = select.status(self.state, wid)
@@ -1489,6 +1493,42 @@ class ClickSigner:
             raise ClickError("custody.no_key", str(exc)) from None
         except (BackendUnavailable, CustodyError) as exc:
             raise ClickError("custody.unavailable", str(exc)) from None
+        self.problems.pop(wid, None)
+        self._note("custody_on", workspace=wid)
+        return self._row(entry)
+
+    def _resume(self, entry: dict[str, Any]) -> dict[str, Any]:
+        """#1198 C17: turn click-to-sign back on with a plain click, only when the key is already in convenience custody
+        (idle switch-off, or "Turn off" without a passphrase). There is no passphrase to check: a click proves what
+        ``orch host convenience on`` proves. The dashboard server decides who may ask (a dashboard opened on this
+        computer, an owner, after the review and the risk notice); here: the readers rule (:func:`refuse_turn_on`),
+        the dev-host fence and a quiet custody, then the flag under the lock (``set_enabled`` restarts the idle clock
+        and records the risk notice)."""
+        from orch.custody import select
+        from orch.host import convenience
+        from orch.host.errors import HostError
+
+        wid, uid = self._tier_a(entry)
+        st = select.status(self.state, wid)
+        if st.get("problem") is not None:
+            raise ClickError("custody.unavailable", f"{st['problem']}; see the terminal: orch keys custody status")
+        if st["custody"] != "convenience":
+            raise ClickError("invalid.input", "the key is not in one-click custody: switch it on with the passphrase")
+        if self._enabled(entry):
+            return self._row(entry)
+        try:
+            convenience.refuse_turn_on(self.state, entry, uid)
+            with convenience.workspace_lock(self.state, wid, uid):
+                convenience.set_enabled(self.state, wid, True, uid)  # refuses a dev host
+        except HostError as exc:
+            head = exc.message.split(":", 1)[0]
+            raise ClickError(
+                exc.code,
+                exc.message,
+                reason=head if head in REASONS else None,
+                detail=exc.detail,
+                retryable=exc.code == "lock.busy",
+            ) from None
         self.problems.pop(wid, None)
         self._note("custody_on", workspace=wid)
         return self._row(entry)

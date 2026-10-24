@@ -213,10 +213,11 @@ def propose(
     ticket: Any,
     limits: Limits | None = None,
     env: envtree.EnvLocation | None = None,
+    gate: Callable[[Addon], None] | None = None,
 ) -> Any:
     """:func:`call` with method ``propose``: ``ticket`` is a ``TicketView``, of which only the key, type, status and
     this addon's own fields are sent, and only for a ticket whose visibility is ``workspace``.
-    ``env`` is :func:`call`'s."""
+    ``env`` and ``gate`` are :func:`call`'s."""
     if not granted.enabled or granted.purged:
         raise RunnerError("addon.inactive", "the addon is disabled or purged")
     if ticket.visibility != "workspace":
@@ -233,7 +234,7 @@ def propose(
             "fields": _own_fields(ticket, granted.name),
         },
     }
-    return call(package, granted, "propose", params, limits, env=env)
+    return call(package, granted, "propose", params, limits, env=env, gate=gate)
 
 
 def _check_settings(manifest: Any, value: Any) -> None:
@@ -318,6 +319,7 @@ def call(
     *,
     credential: Callable[[str], str | None] | None = None,
     env: envtree.EnvLocation | None = None,
+    gate: Callable[[Addon], None] | None = None,
 ) -> Any:
     """Run the addon once with ``method`` and ``params`` (built by core) and return the ``result`` of its response; the
     caller checks it per method. ``granted`` is the replayed grant (the ACTIVE one: disabled or purged is refused) and
@@ -328,7 +330,9 @@ def call(
     contain ``credential``. ``env`` (V3 G4, C1) says where the host keeps dependency environments: an add-on whose
     manifest declares ``runtime`` runs only if :func:`orch.addons.envtree.verify` passes HERE, inside this call
     (``market.env_changed`` otherwise, never a rebuild); one without ``runtime`` is refused an ``env``
-    (``addon.bad_request``). Raises :class:`RunnerError`."""
+    (``addon.bad_request``). ``gate`` (V3 G7) is the host's hub-policy check, called with the grant before anything is
+    staged or started: a ``MarketError`` it raises is "paused by hub policy" (the code is the refusal's, the grant is
+    untouched); ``None`` is a host without a hub (D79). Raises :class:`RunnerError`."""
     if method not in METHODS:
         raise RunnerError("addon.bad_request", "unknown method")
     if "credential" in params:
@@ -338,6 +342,11 @@ def call(
     needed = METHODS[method]
     if needed is not None and needed not in granted.capabilities:
         raise RunnerError("addon.not_granted", f"the grant does not hold {needed}")
+    if gate is not None:
+        try:
+            gate(granted)
+        except MarketError as e:
+            raise RunnerError(e.code, "paused by hub policy") from None
     try:
         digest = package_digest(package.files)  # recomputed: the digest field of a Package is never trusted
     except PackageError:

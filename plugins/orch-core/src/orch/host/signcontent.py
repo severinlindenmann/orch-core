@@ -1163,9 +1163,11 @@ def _payload(
         heads.append(_event(typ, ev, ref, out, before, texts, ctx))
     market = material.get("market")
     if isinstance(market, Mapping) and isinstance(market.get("publisher"), Mapping):  # V3 G3: the host's word, labelled
-        tofu = {"new": "first use of this publisher key", "known": "same publisher as before"}.get(
-            _s(market["publisher"].get("tofu")), "unsigned"
-        )
+        tofu = {
+            "new": "first use of this publisher key",
+            "known": "same publisher as before",
+            "pinned": "publisher key pinned by your hub",
+        }.get(_s(market["publisher"].get("tofu")), "unsigned")
         warn = ""  # one click has no typed word: what the person must not miss sits in the plain note itself
         if market.get("stale") is True:
             warn += " STALE: the marketplace index is past its expiry (per host, not signed)."

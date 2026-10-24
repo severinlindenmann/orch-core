@@ -32,7 +32,7 @@ from orch.market.constants import AGENT_MIN_INTERVAL
 from orch.market.install import semver
 from orch.ops.errors import ERRORS
 
-from . import marketinstall
+from . import hubpolicy, marketinstall
 from .errors import HostError
 from .marketstate import MarketFiles
 
@@ -163,32 +163,45 @@ def _check(call: Call) -> tuple[str, dict[str, Any]]:
 
 
 def serve(call: Call) -> dict[str, Any]:
-    """The worker half: shape, who, the gates and the records (no network); the fetch runs in :func:`execute`."""
+    """The worker half: shape, who, the gates and the records (no network); the fetch runs in :func:`execute`. On a
+    hub-joined host the ops that reach a marketplace first need a fresh snapshot (spec 5 step 5, no cached fallback),
+    which is network: they answer ``{"defer": ...}`` here and are planned by :func:`execute` after the fresh read."""
+    op, args = _check(call)
+    if op in _POLICY_OPS:
+        facts = hubpolicy.facts(call.service)
+        if facts["joined"]:
+            return {"defer": facts}
+    return _serve_checked(call, op, args)
+
+
+def _serve_checked(call: Call, op: str, args: dict[str, Any], fresh: str | None = None) -> dict[str, Any]:
     from .workspace import ok_result
 
-    op, args = _check(call)
     service = call.service
+    if fresh is not None:  # the fresh read failed: no cached fallback (P0), so nothing is read and nothing connects
+        raise _refuse(op, "market.not_allowed")
     now = service.clock()
     if op in marketinstall.MARKET_OPS:
         return marketinstall.serve(call, op, args)
     try:
         if op == "market.list":
             return ok_result(_list(service, bool(args.get("entries")), now))
+        pol = hubpolicy.stored(service)
         files = _files(service)
         records = files.load()
         if op == "market.add":
-            classes = {args["url"]: marketinstall.market_class(service, args["url"])}
+            classes = {args["url"]: marketinstall.market_class(service, args["url"], pol)}
             if args["url"] in records:
                 raise MarketError("market.already_added")
             urls = [args["url"]]
         elif "url" in args:
-            classes = {args["url"]: marketinstall.market_class(service, args["url"])}
+            classes = {args["url"]: marketinstall.market_class(service, args["url"], pol)}
             if args["url"] not in records:
                 raise HostError("not_found", "that marketplace was not added: orch market list")
             urls = [args["url"]]
         else:
             urls = sorted(records)
-            classes = {u: marketinstall.market_class(service, u) for u in urls}
+            classes = {u: _class_or_error(service, u, pol) for u in urls}
     except MarketError as exc:
         raise _refuse(op, exc.code) from None
     return {
@@ -199,14 +212,38 @@ def serve(call: Call) -> dict[str, Any]:
     }  # fmt: skip
 
 
+def _class_or_error(service: WorkspaceService, url: str, pol: Any) -> Any:
+    """``refresh`` of every marketplace: one the hub no longer lists is that row's error, the others still refresh."""
+    try:
+        return marketinstall.market_class(service, url, pol)
+    except MarketError as exc:
+        return (exc.code, ())
+
+
+#: the ops that reach a marketplace: on a hub-joined host each needs a fresh snapshot first (spec 5 step 5)
+_POLICY_OPS = frozenset({"market.add", "market.refresh", "market.stage"})
+
+
 async def execute(call: Call, planned: dict[str, Any]) -> dict[str, Any]:
     import asyncio
 
+    if "defer" in planned:  # P0: the fresh snapshot_get, off the worker, before the plan (and so before any fetch)
+        failed = await asyncio.to_thread(hubpolicy.refresh_now, call, planned["defer"]["dev"])
+        planned = await call.service.call(_plan_after_fresh, call, failed)
     if "plan" not in planned:
         return planned
     if planned["plan"]["op"] in marketinstall.MARKET_OPS:
         return await marketinstall.execute(call, planned)
     return await asyncio.to_thread(_run, call, planned["plan"])
+
+
+def _plan_after_fresh(call: Call, failed: str | None) -> dict[str, Any]:
+    """The worker half again, now that the snapshot is as fresh as the hub could make it (re-checked: the state may have
+    moved while the link was out)."""
+    op, args = _check(call)
+    if failed is not None:
+        _audit(call, "market.policy_unavailable", op=op, code=failed)
+    return _serve_checked(call, op, args, failed)
 
 
 def _audit(call: Call, event: str, **more: Any) -> None:
@@ -224,6 +261,8 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
     for url in plan["urls"]:
         try:
             cls, keys = plan["classes"][url]
+            if cls.startswith("market."):  # the hub no longer lists this one: its row only
+                raise MarketError(cls)
             if op == "market.add":
                 row = _add(files, url, plan["commit"], service.clock(), cls, tuple(keys))
             else:
@@ -358,6 +397,10 @@ def _list(service: WorkspaceService, entries: bool, now: float) -> dict[str, Any
         records = files.load()
     except MarketError as exc:
         raise _refuse("market.list", exc.code) from None
+    try:  # no network: the policy of the pinned snapshot; one that cannot be read makes every row "invalid"
+        pol: Any = hubpolicy.stored(service)
+    except MarketError:
+        pol = hubpolicy.UNREADABLE
     rows = []
     for url in sorted(records):
         rec = records[url]
@@ -367,7 +410,7 @@ def _list(service: WorkspaceService, entries: bool, now: float) -> dict[str, Any
         }  # fmt: skip
         raw = files.read_cache(url)
         try:
-            cls, keys = marketinstall.market_class(service, url)  # the class is decided now, never read from the record
+            cls, keys = marketinstall.market_class(service, url, pol)  # decided now, never read from the record
             if raw is None or _sha(raw) != rec["index_sha256"] or cls != rec["class"]:
                 raise MarketError("market.malformed")
             v = marketinstall.verdict(raw, url, cls, keys, now)

@@ -83,6 +83,7 @@ class Auth:
         self.listeners: dict[str, str] = {}
         self.remote_sources: dict[str, deque] = {}
         self.remote_all = deque()
+        self.remote_swept = 0.0
         self.setup_sessions: dict[str, str] = {}
         self.attempts = deque()
         self.lock = threading.Lock()
@@ -189,6 +190,14 @@ class Auth:
         absolute = LIFETIMES[kind][0]
         return {"token": token, "expires_at": datetime.fromtimestamp(now + absolute, UTC).isoformat()}
 
+    def _sweep_remote(self, now):
+        """Hold ``self.lock``."""
+        self.remote_swept = now
+        for bucket in [self.remote_all, *self.remote_sources.values()]:
+            while bucket and bucket[0] <= now - 60:
+                bucket.popleft()
+        self.remote_sources = {k: b for k, b in self.remote_sources.items() if b}
+
     def remote_attempt(self, address):
         """One passkey-login attempt from ``address`` (the front's X-Orch-Client). False when the source's bucket
         (20 per minute) or the global one (600 per minute) is full; a refused attempt is not counted again.
@@ -198,10 +207,16 @@ class Auth:
             return False
         with self.lock:
             now = self.clock()
-            for bucket in [self.remote_all, *self.remote_sources.values()]:
+            while self.remote_all and self.remote_all[0] <= now - 60:  # amortised O(1)
+                self.remote_all.popleft()
+            if len(self.remote_all) >= REMOTE_GLOBAL:  # the cheapest check first: a flood costs one comparison
+                return False
+            if now - self.remote_swept >= 1:  # draining every bucket on every attempt would be work an attacker sets
+                self._sweep_remote(now)
+            elif key in self.remote_sources:
+                bucket = self.remote_sources[key]
                 while bucket and bucket[0] <= now - 60:
                     bucket.popleft()
-            self.remote_sources = {k: b for k, b in self.remote_sources.items() if b}
             if key not in self.remote_sources and len(self.remote_sources) >= REMOTE_MAX_SOURCES:
                 key = _OVERFLOW
             bucket = self.remote_sources.setdefault(key, deque())

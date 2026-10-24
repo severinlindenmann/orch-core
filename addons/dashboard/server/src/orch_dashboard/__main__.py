@@ -1,6 +1,7 @@
 """Private IPC launch, one random loopback listener, and port-ownership proof."""
 
 import argparse
+import asyncio
 import errno
 import fcntl
 import functools
@@ -280,6 +281,49 @@ def bind_front(path, front_uid):
     return sock
 
 
+def server_config(app, front=False):
+    """The one place that builds a uvicorn config, for the loopback server and the front alike. Both run on asyncio's
+    selector loop (`loop="asyncio"`, never uvloop): the front's `PeerChecked.accept` must run for every connection, and
+    `FrontServer` refuses to start on any other loop. The front adds its own limits (the front's Caddy already holds
+    unauthenticated connections to 32; these bound what gets past it)."""
+    extra = (
+        {
+            "lifespan": "off",  # the loopback server owns the app's lifespan
+            "limit_concurrency": 64,
+            "timeout_keep_alive": 5,
+            "h11_max_incomplete_event_size": 16384,
+        }
+        if front
+        else {}
+    )
+    return uvicorn.Config(
+        app,
+        proxy_headers=False,
+        access_log=False,
+        log_level="warning",
+        loop="asyncio",
+        # The terminal WebSocket (section 12.6.6): max_size 64 KiB, no permessage-deflate, no subprotocol.
+        ws="websockets",
+        ws_max_size=65536,
+        ws_per_message_deflate=False,
+        # A browser tab's live stream never ends by itself: after `stop`, cut open connections after GRACE seconds.
+        timeout_graceful_shutdown=GRACE,
+        **extra,
+    )
+
+
+def require_selector_loop(loop):
+    """The peer check lives in `socket.accept`, which only asyncio's selector loops call."""
+    if not isinstance(loop, asyncio.selector_events.BaseSelectorEventLoop):
+        raise RuntimeError("remote.not_configured: the front needs asyncio's selector event loop")
+
+
+class FrontServer(uvicorn.Server):
+    async def startup(self, sockets=None):
+        require_selector_loop(asyncio.get_running_loop())
+        await super().startup(sockets=sockets)
+
+
 def tunnel_line(port, environ=None, user=None, host=None):
     """The command to run on the person's own computer: ``ssh -L <port>:127.0.0.1:<port> <user>@<host>``. The host is
     the address this very SSH session reached us on when there is one, else this machine's name."""
@@ -337,7 +381,14 @@ def _serve(directory, lock_fd=None, port=None):
     if redirects != directory:
         sweep_redirects(redirects)
     auth = Auth(directory=redirects)
-    remote = remote_config(directory)  # before anything is bound: a bad remote.json refuses the start
+    # A wrong remote.json (or a front socket that cannot be opened) switches remote access off and says why
+    # (`remote.not_configured` in /api/session); the loopback dashboard keeps serving: the person at the machine must
+    # be able to see and fix it.
+    remote_problem = None
+    try:
+        remote = remote_config(directory)
+    except RuntimeError as exc:
+        remote, remote_problem = None, str(exc)
     wanted = listen_port(directory, port=port)
     try:
         listener = bind_listener(wanted)
@@ -351,42 +402,31 @@ def _serve(directory, lock_fd=None, port=None):
     port = listener.getsockname()[1]
     front = None
     try:
-        app = create_app(port, gateway=gateway, auth=auth, remote=remote_policy(remote[0]) if remote else None)
         if remote:
-            front_path = front_socket_path(run_dir(state_dir()))
-            front = bind_front(front_path, remote[1])
+            try:
+                front_path = front_socket_path(run_dir(state_dir()))
+                front = bind_front(front_path, remote[1])
+            except (RuntimeError, OSError) as exc:
+                remote, remote_problem = (
+                    None,
+                    str(exc)
+                    if "remote.not_configured" in str(exc)
+                    else (f"remote.not_configured: the front socket could not be opened ({exc.__class__.__name__})"),
+                )
+        app = create_app(
+            port,
+            gateway=gateway,
+            auth=auth,
+            remote=remote_policy(remote[0]) if remote else None,
+            remote_problem=remote_problem,
+        )
     except BaseException:
         listener.close()
         raise
-    config = uvicorn.Config(
-        app,
-        proxy_headers=False,
-        access_log=False,
-        log_level="warning",
-        # The terminal WebSocket (section 12.6.6): max_size 64 KiB, no permessage-deflate, no subprotocol.
-        ws="websockets",
-        ws_max_size=65536,
-        ws_per_message_deflate=False,
-        # A browser tab's live stream never ends by itself: after `stop`, cut open connections after GRACE seconds.
-        timeout_graceful_shutdown=GRACE,
-    )
-    server = uvicorn.Server(config)
+    server = uvicorn.Server(server_config(app))
     front_server = front_thread = None
     if front is not None:
-        front_server = uvicorn.Server(
-            uvicorn.Config(
-                Front(app),
-                proxy_headers=False,
-                access_log=False,
-                log_level="warning",
-                loop="asyncio",  # PeerChecked.accept must run: uvloop would accept in C and skip the peer check
-                lifespan="off",  # the loopback server owns the app's lifespan
-                ws="websockets",
-                ws_max_size=65536,
-                ws_per_message_deflate=False,
-                timeout_graceful_shutdown=GRACE,
-            )
-        )
+        front_server = FrontServer(server_config(Front(app), front=True))
     ctl = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     old = os.umask(0o177)
     try:
@@ -457,8 +497,9 @@ def _serve(directory, lock_fd=None, port=None):
                 if front_server.started or not front_thread.is_alive():
                     break
                 time.sleep(0.05)
-            if not front_server.started:
-                raise RuntimeError("remote.not_configured: the front socket did not start")
+            if not front_server.started:  # loopback keeps serving; remote access is off and says why
+                front_server.should_exit = True
+                app.state.remote_problem = "remote.not_configured: the front socket did not start"
         server.run(sockets=[listener])
     finally:
         server.should_exit = True

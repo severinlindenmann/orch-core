@@ -115,6 +115,8 @@ class Intent:
     from_: int | None
     generation: str
     expires: float
+    #: the listener the session (and so the ticket) belongs to; a ticket works on that listener's socket only
+    listener: str = "loopback"
 
 
 @dataclass
@@ -127,7 +129,9 @@ class Tickets:
     minted: dict[str, deque] = field(default_factory=dict)
     lock: threading.Lock = field(default_factory=threading.Lock)
 
-    def mint(self, token: str, ws: str, run: str, mode: str, take: bool, from_: int | None) -> tuple[str, float] | None:
+    def mint(
+        self, token: str, ws: str, run: str, mode: str, take: bool, from_: int | None, listener: str = "loopback"
+    ) -> tuple[str, float] | None:
         """A new ticket and its lifetime in seconds, or None when this session asked for 10 in the last minute."""
         with self.lock:
             now = self.clock()
@@ -141,7 +145,9 @@ class Tickets:
                 return None
             recent.append(now)
             raw = secrets.token_urlsafe(16)  # 128 bits
-            self.items[_digest(raw)] = Intent(token, ws, run, mode, take, from_, self.generation, now + TICKET_TTL)
+            self.items[_digest(raw)] = Intent(
+                token, ws, run, mode, take, from_, self.generation, now + TICKET_TTL, listener
+            )
             return raw, TICKET_TTL
 
     def redeem(self, raw: str) -> Intent | None:
@@ -224,8 +230,20 @@ def register(app: FastAPI, gateway: Gateway, tickets: Tickets) -> None:
     def preview(body: PreviewBody, ws: str = Depends(reads.workspace)):
         return project.preview(gateway.call(ws, "term.preview", body.host_args()))
 
+    def terminals_listener(request: Request) -> str:
+        """The listener of this request, if terminals are on there and the session belongs to it. A shell on the server
+        is off on the front unless switched on (host spec 10.3): nothing is opened or minted otherwise."""
+        listener = request.scope.get("orch_listener", "loopback")
+        policy = app.state.policies.get(listener)
+        if policy is None or not policy.terminals:
+            raise fail("not_found", "Terminals are not available on this connection.", exit=3)
+        if app.state.auth.listener_of(request.state.token) != listener:
+            raise fail("session.required", exit=3)
+        return listener
+
     @app.post("/api/w/{ws}/terminals/open")
-    def open_(body: OpenBody, ws: str = Depends(reads.workspace)):
+    def open_(body: OpenBody, request: Request, ws: str = Depends(reads.workspace)):
+        terminals_listener(request)
         args = {**body.host_args(), "spec": body.spec}
         args.update({k: v for k, v in (("cols", body.cols), ("rows", body.rows)) if v is not None})
         data = gateway.enabled(ws).call("term.open", args, write=True, idem=body.idem)
@@ -244,7 +262,8 @@ def register(app: FastAPI, gateway: Gateway, tickets: Tickets) -> None:
     def attach(run: RunId, body: AttachBody, request: Request, ws: str = Depends(reads.workspace)):
         """Step 1 of the lazy attach: a browser ticket bound to this session, workspace, run and request. Nothing is
         asked of the host here."""
-        minted = tickets.mint(request.state.token, ws, run, body.mode, body.take, body.from_)
+        listener = terminals_listener(request)
+        minted = tickets.mint(request.state.token, ws, run, body.mode, body.take, body.from_, listener)
         if minted is None:
             raise fail("rate.limited")
         raw, ttl = minted
@@ -502,7 +521,13 @@ class TermSocket:
         try:
             raw = await self.first_ticket()
             intent = self.tickets.redeem(raw)
-            if intent is None or not self.auth.valid(intent.token, touch=False):
+            listener = ws.scope.get("orch_listener", "loopback")
+            if (
+                intent is None
+                or not self.auth.valid(intent.token, touch=False)
+                or intent.listener != listener
+                or self.auth.listener_of(intent.token) != listener
+            ):
                 raise Closed("ticket.refused", silent=True, close=4401)
             self.intent = intent
             self.read_only = intent.mode == "read"

@@ -642,10 +642,164 @@ def test_the_server_opens_the_front_socket_only_when_configured_and_removes_it_a
     assert not front_path.exists()  # gone with the server
 
 
-def test_a_bad_remote_json_stops_the_server_before_anything_listens(state):
+def test_a_bad_remote_json_keeps_loopback_serving_without_a_front(state):
     import orch_dashboard.__main__ as cli
 
     write_remote(state / "dashboard", f'{{"name": "127.0.0.1", "front_uid": {os.getuid() + 1}}}')
-    with pytest.raises(RuntimeError, match="remote.not_configured"):
-        cli.serve()
-    assert not (state / "dashboard" / "ctl.sock").exists()
+    ctl = state / "dashboard" / "ctl.sock"
+    front_path = cli.run_dir(cli.state_dir()) / "dashboard" / "front.sock"
+    thread = threading.Thread(target=cli.serve, daemon=True)
+    thread.start()
+    for _ in range(300):
+        try:
+            launch = cli.control(ctl, "launch")
+            break
+        except OSError:
+            time.sleep(0.02)
+    else:
+        raise AssertionError("loopback did not start")
+    assert not front_path.exists()  # the front is not opened
+    import json as jsonlib
+    import urllib.request
+
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{launch['port']}/auth/session",
+        data=jsonlib.dumps({"code": launch["code"]}).encode(),
+        headers={"Content-Type": "application/json", "Origin": f"http://127.0.0.1:{launch['port']}"},
+    )
+    token = jsonlib.load(urllib.request.urlopen(req, timeout=5))["token"]
+    assert token  # a normal login on loopback works
+    cli.control(ctl, "stop")
+    thread.join(timeout=15)
+    assert not thread.is_alive()
+
+
+def test_the_remote_problem_is_shown_on_the_session(gateway, auth, tmp_path, local):
+    static = tmp_path / "static"
+    static.mkdir()
+    (static / "index.html").write_text("<html></html>")
+    app = create_app(PORT, gateway, auth, static, remote_problem="remote.not_configured: x")
+    got = TestClient(app, base_url=ORIGIN).get("/api/session", headers=bearer(local)).json()
+    assert got["remote_problem"] == "remote.not_configured: x"
+    app = create_app(PORT, gateway, auth, static)
+    assert "remote_problem" not in TestClient(app, base_url=ORIGIN).get("/api/session", headers=bearer(local)).json()
+
+
+def test_one_config_builder_pins_asyncio_for_both_servers_and_bounds_the_front():
+    import asyncio
+
+    import orch_dashboard.__main__ as cli
+
+    plain, front = cli.server_config(echo([])), cli.server_config(echo([]), front=True)
+    assert plain.loop == front.loop == "asyncio"
+    assert plain.proxy_headers is False and front.proxy_headers is False
+    assert front.lifespan == "off" and front.limit_concurrency == 64 and front.timeout_keep_alive == 5
+    assert front.h11_max_incomplete_event_size == 16384
+    assert plain.limit_concurrency is None
+    loop = asyncio.new_event_loop()
+    try:
+        cli.require_selector_loop(loop)  # asyncio's own selector loop passes
+    finally:
+        loop.close()
+    with pytest.raises(RuntimeError, match="selector"):
+        cli.require_selector_loop(object())  # uvloop and the like: the peer check would be skipped
+
+
+def test_the_front_server_refuses_to_start_on_a_foreign_loop(monkeypatch, socket_dir):
+    import orch_dashboard.__main__ as cli
+
+    def foreign(loop):
+        raise RuntimeError("remote.not_configured: foreign loop")
+
+    monkeypatch.setattr(cli, "require_selector_loop", foreign)
+    sock = cli.bind_front(socket_dir / "f.sock", os.getuid())
+    server = cli.FrontServer(cli.server_config(echo([]), front=True))
+    with pytest.raises(RuntimeError, match="foreign loop"):
+        server.run(sockets=[sock])
+    sock.close()
+
+
+def test_the_global_bucket_flood_costs_no_sweep_and_buckets_drain_once_a_second():
+    clock = Clock()
+    auth = Auth(clock=clock)
+    for n in range(REMOTE_GLOBAL):
+        assert auth.remote_attempt(f"198.51.{n // 250}.{n % 250}")
+    swept = auth.remote_swept
+    for _ in range(50):
+        assert not auth.remote_attempt("192.0.2.1")
+    assert auth.remote_swept == swept  # a refused flood never ran the full sweep
+    clock.now += 61
+    assert auth.remote_attempt("192.0.2.1") and auth.remote_swept > swept
+
+
+# ---- terminal tickets belong to a listener (security scan of 2beccad4) ----
+
+RUN = "r_" + "0" * 26
+
+
+def terminals_app(gateway, auth, tmp_path, on):
+    import dataclasses
+
+    static = tmp_path / "static"
+    (static / "assets").mkdir(parents=True)
+    (static / "index.html").write_text("<html></html>")
+    policy = dataclasses.replace(remote_policy(NAME), terminals=on)
+    return create_app(PORT, gateway, auth, static, remote=policy)
+
+
+def test_no_ticket_is_minted_on_a_listener_with_terminals_off(gateway, auth, tmp_path, stub, remote):
+    app = terminals_app(gateway, auth, tmp_path, on=False)
+    front = TestClient(Front(app), base_url=HTTPS, headers={"X-Orch-Client": SOURCE})
+    res = front.post(f"/api/w/{stub.ws}/runs/{RUN}/attach", json={}, headers=bearer(remote, HTTPS))
+    assert res.status_code == 404 and "ticket" not in res.text
+    assert app.state.term_tickets.items == {}
+
+
+def test_a_ticket_redeems_only_on_the_listener_it_was_minted_for(gateway, auth, tmp_path, stub, remote, local):
+    from starlette.websockets import WebSocketDisconnect
+
+    app = terminals_app(gateway, auth, tmp_path, on=True)
+    loop = TestClient(app, base_url=ORIGIN)
+    front = TestClient(Front(app), base_url=HTTPS, headers={"X-Orch-Client": SOURCE})
+    minted = loop.post(f"/api/w/{stub.ws}/runs/{RUN}/attach", json={}, headers=bearer(local, ORIGIN))
+    assert minted.status_code == 200
+    ticket = minted.json()["ticket"]
+    # the same ticket on the front's socket: refused (4401) whatever the front's terminal switch says
+    with front.websocket_connect("/term", headers={"host": NAME, "origin": HTTPS}) as ws:
+        ws.send_json({"ticket": ticket})
+        with pytest.raises(WebSocketDisconnect) as closed:
+            ws.receive_json()
+    assert closed.value.code == 4401
+    assert app.state.term_tickets.redeem(ticket) is None  # and it is spent
+    # a remote session can mint on the front when the switch is on; that ticket is dead on loopback
+    ticket = front.post(f"/api/w/{stub.ws}/runs/{RUN}/attach", json={}, headers=bearer(remote, HTTPS)).json()["ticket"]
+    with loop.websocket_connect("/term", headers={"host": f"127.0.0.1:{PORT}", "origin": ORIGIN}) as ws:
+        ws.send_json({"ticket": ticket})
+        with pytest.raises(WebSocketDisconnect) as closed:
+            ws.receive_json()
+    assert closed.value.code == 4401
+
+
+def test_a_ticket_whose_session_moved_listener_is_refused(gateway, auth, tmp_path, stub, local):
+    from starlette.websockets import WebSocketDisconnect
+
+    app = terminals_app(gateway, auth, tmp_path, on=True)
+    loop = TestClient(app, base_url=ORIGIN)
+    ticket = loop.post(f"/api/w/{stub.ws}/runs/{RUN}/attach", json={}, headers=bearer(local, ORIGIN)).json()["ticket"]
+    auth.listeners[local] = "remote"  # defence in depth: the session no longer belongs to the socket's listener
+    with loop.websocket_connect("/term", headers={"host": f"127.0.0.1:{PORT}", "origin": ORIGIN}) as ws:
+        ws.send_json({"ticket": ticket})
+        with pytest.raises(WebSocketDisconnect) as closed:
+            ws.receive_json()
+    assert closed.value.code == 4401
+
+
+def test_terminals_open_is_refused_on_a_listener_with_terminals_off(gateway, auth, tmp_path, stub, remote):
+    app = terminals_app(gateway, auth, tmp_path, on=False)
+    front = TestClient(Front(app), base_url=HTTPS, headers={"X-Orch-Client": SOURCE})
+    res = front.post(
+        f"/api/w/{stub.ws}/terminals/open",
+        json={"spec": "a" * 64, "idem": "a_" + "0" * 26},
+        headers=bearer(remote, HTTPS),
+    )
+    assert res.status_code == 404

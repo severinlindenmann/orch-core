@@ -120,7 +120,7 @@ SPA_PATH = re.compile(
 ROOT_FILES = frozenset({"favicon.svg", "loading.css"})
 
 
-def create_app(port: int, gateway=None, auth=None, static=None, setup_proxy=None, remote=None):
+def create_app(port: int, gateway=None, auth=None, static=None, setup_proxy=None, remote=None, remote_problem=None):
     """``remote``: the front listener's policy (`remote_policy`), or None when remote access is off. One app serves both
     listeners; the server that accepted the connection says which policy applies (`scope["orch_listener"]`, set by
     `front.Front`), never a header."""
@@ -145,6 +145,8 @@ def create_app(port: int, gateway=None, auth=None, static=None, setup_proxy=None
     app.state.auth = auth
     app.state.live = live
     app.state.term_tickets = tickets
+    app.state.remote_problem = remote_problem
+    app.state.policies = {p.name: p for p in (loopback_policy(port), *([remote] if remote else []))}
     app.add_middleware(Security, auth=auth, policy=loopback_policy(port), others=(remote,) if remote else ())
 
     @app.exception_handler(HostError)
@@ -197,6 +199,8 @@ def create_app(port: int, gateway=None, auth=None, static=None, setup_proxy=None
             "login": auth.login_kind(request.state.token) or "unknown",
             "features": sorted({f for ws in workspaces for f in ws.features}),
             "workspaces": {ws.id: ws.features for ws in workspaces},
+            # a wrong remote.json or an unopenable front socket: remote access is off and this says why
+            **({"remote_problem": app.state.remote_problem} if app.state.remote_problem else {}),
         }
 
     @app.get("/api/workspaces")

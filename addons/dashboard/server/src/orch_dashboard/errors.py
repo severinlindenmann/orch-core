@@ -164,7 +164,14 @@ DETAIL_KEYS: dict[str, dict[str, tuple[str, ...] | str]] = {
     },
     "market.env_changed": {"reason": ("missing", "changed", "digest", "abi")},
     "sign.convenience_readers": {
-        "reason": ("no_declaration", "reader_too_old", "declaration_unknown", "relay_too_old", "hub_too_old", "unknown_readers"),
+        "reason": (
+            "no_declaration",
+            "reader_too_old",
+            "declaration_unknown",
+            "relay_too_old",
+            "hub_too_old",
+            "unknown_readers",
+        ),  # fmt: skip
         "devices": DEVICES,
     },
     # core C9 (#1198): why the owner proof of a hub step (join, switch to full, leave) was refused

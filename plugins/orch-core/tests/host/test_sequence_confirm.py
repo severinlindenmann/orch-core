@@ -67,10 +67,10 @@ def test_a_people_edit_of_an_existing_ticket_is_a_click(role):
 
 
 def test_a_terminal_only_step_makes_the_sequence_terminal():
-    """The class of a step is that of its op with its args: Publish is the one terminal-only settings key."""
+    """The class of a step is that of its op with its args; Publish's settings are a click since #1198 C2."""
     intent = sequence.validate_intent(intent_of())
     assert sequence.confirm_kind(intent) == "click"
     from orch.click.protocol import op_class
 
-    assert op_class("settings.set", args={"set": {"publish": None}}) == "terminal"
+    assert op_class("settings.set", args={"set": {"publish": None}}) == "click"
     assert op_class("grant") == "terminal"  # an unknown or grant op fails closed

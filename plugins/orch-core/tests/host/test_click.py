@@ -296,16 +296,34 @@ def test_terminal_only_ops_are_refused_before_the_host_is_asked(click, served, h
     assert click.conns == []
 
 
-def test_publishing_and_the_publish_server_are_terminal_only_on_the_click_channel(click, served, human):
-    """P5: what sends data off the Mac or redirects where it goes is signed in the terminal (orch sign CODE), never by
-    click or one-click: refused before the host is asked (the early class sees the keys of settings.set)."""
+def test_the_publish_server_is_a_click_and_the_view_shows_where_files_go(click, served, human):
+    """#1198 C2: Publish's settings are a plain click; the View lists the server files are sent to and the address
+    links open at (both signed), so the person reads the destination before the click."""
     value = {"server": "http://127.0.0.1:8103", "share": "http://127.0.0.1:8104"}
-    refused(lambda: click.prepare("settings.set", {"set": {"publish": value}}), "human.click_refused", "terminal_only")
-    refused(lambda: click.prepare("settings.set", {"set": {"publish": None}}), "human.click_refused", "terminal_only")
-    refused(
-        lambda: click.prepare("publish.share", {"staged_id": "ps_" + "0" * 32}), "human.click_refused", "terminal_only"
-    )
-    assert click.conns == []
+    p = click.prepare("settings.set", {"set": {"publish": value}})
+    shown = click.view(p["request_id"])
+    v = shown["view"]
+    assert v["confirm"] == {"kind": "click"}
+    text = "\n".join(v["lines"])
+    assert value["server"] in text and value["share"] in text
+    rows = json.dumps(v["content"])
+    assert "Publish: files are sent to" in rows and value["server"] in rows
+    assert "Publish: links open at" in rows and value["share"] in rows
+    click.mono.t += 2
+    assert click.sign(p["request_id"], shown["view_digest"])["duplicate"] is False
+    assert click.signatures == 1
+    removed = click.prepare("settings.set", {"set": {"publish": None}})
+    assert "removed" in json.dumps(click.view(removed["request_id"])["view"]["content"])
+
+
+def test_publish_share_and_the_publish_grant_pass_the_early_class_check(click, served, human):
+    """#1198 C2: neither is refused as ``terminal_only`` any more; an unknown staged copy is the host's own refusal."""
+    with pytest.raises(ClickError) as info:
+        click.prepare("publish.share", {"staged_id": "ps_" + "0" * 32})
+    assert info.value.reason != "terminal_only"
+    with pytest.raises(ClickError) as info:
+        click.prepare("addon.grant", {"name": "publish"})
+    assert info.value.reason != "terminal_only"
 
 
 def test_an_expired_approval_is_refused(click, served, human):
@@ -374,7 +392,7 @@ def test_op_classes_fail_closed_and_every_former_word_op_is_a_click():
     assert op_class("settings.set", [{"type": "settings.changed", "set": {"grant_hours": 4}}]) == "click"  # B8
     assert op_class("settings.set", [{"type": "settings.changed", "set": {"claim_ttl_min": 30}}]) == "click"
     assert op_class("settings.set", [{"type": "settings.changed", "set": {"repos": {}}}]) == "click"
-    assert op_class("settings.set", [{"type": "settings.changed", "set": {"publish": {}}}]) == "terminal"
+    assert op_class("settings.set", [{"type": "settings.changed", "set": {"publish": {}}}]) == "click"
     assert op_class("settings.set", [{"type": "settings.changed", "set": "odd"}]) == "terminal"  # fails closed
 
 

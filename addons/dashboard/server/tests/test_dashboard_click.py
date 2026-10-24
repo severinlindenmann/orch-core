@@ -2441,7 +2441,7 @@ HUB_ID = "a" * 32
 
 
 def hub_join(**kw):
-    return {"action": "hub_join", "hub_card": '{"o":{"hub_id":"%s"}}' % HUB_ID, "hub_id": HUB_ID, **kw}
+    return {"action": "hub_join", "hub_card": '{"o":{"hub_id":"' + HUB_ID + '"}}', "hub_id": HUB_ID, **kw}
 
 
 def backup_view(**over):

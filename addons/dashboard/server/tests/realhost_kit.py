@@ -477,6 +477,7 @@ def _walk(ws, post, get, fail, thread, box, pty_run, rules, fp, problems, deadli
     if not post(api + "secrets/confirm", {"words": words}, token).get("ok"):
         raise fail("the recovery words were refused")
     ws.passphrase = secrets["passphrase"]
+    ws.recovery_code = " ".join(secrets["recovery_words"])  # the 24 words: hub join/mode/leave ask for them (C9 owner proof)
     rules.extend(ws.rules())  # built after the passphrase is set (the same list object the Pty reads)
     review = post(api + "review", None, token)
     fp["words"] = review["fingerprint"]

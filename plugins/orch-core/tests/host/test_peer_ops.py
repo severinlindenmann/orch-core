@@ -13,7 +13,7 @@ from tests.host.human_helpers import err
 from tests.host.test_hub_join_real import genesis, make_card, now_ms
 from tests.host.test_hub_ops import keystore  # noqa: F401
 from tests.hub.tlshub import TlsHub
-from tests.relay.corpus import IDS, priv, pub
+from tests.wsproto.corpus import IDS, priv, pub
 
 lab, served, human = human_helpers.lab, human_helpers.served, human_helpers.human
 
@@ -26,7 +26,7 @@ def _peer_card(wsk_name: str = "wsk_b.sig", wxk_name: str = "wxk_b_1.kx", seq: i
     from orch.crypto import suite
     from orch.hubclient import localcard
     from orch.identity import certs
-    from orch.relay.r6.firstcard import default_part
+    from orch.identity.epochs import default_part
 
     alice, wsk = priv("person_alice.sig"), priv(wsk_name)
     sign_w = lambda m: suite.sign(wsk, m)  # noqa: E731

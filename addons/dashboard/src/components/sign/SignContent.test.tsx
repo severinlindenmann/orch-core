@@ -108,6 +108,24 @@ it('shows a known member as name WITH short id; the full id and the key line onl
   expect(details()).toHaveTextContent('key per host, not proven')
 })
 
+it('answer rows are shown verbatim: an option title equal to a member id is not turned into a name', () => {
+  withMembers([{ person: SEV, name: 'Severin' }], [
+    { field: 'recommended', before: null, after: 'A · key a' },
+    { field: 'option a', before: null, after: 'A · key a' },
+    { field: 'option a title', before: null, after: SEV },
+    { field: 'option a text', before: null, after: SEV },
+    { field: 'option a fact 1', before: null, after: SEV },
+    { field: 'option a cost', before: null, after: SEV },
+    { field: 'question hash', before: null, after: SEV },
+  ])
+  for (const f of ['option a title', 'option a text', 'option a fact 1', 'option a cost', 'question hash']) {
+    expect(row(f)).toHaveTextContent(SEV)
+    expect(row(f)).not.toHaveTextContent('Severin')
+  }
+  expect(document.body).not.toHaveTextContent('Severin')
+  expect(screen.queryByText(/\(p_181d953f12ab…\) =/)).toBeNull() // not listed as a person id under Technical details
+})
+
 // One table: every way a person id can read. `name` null = no name shown; the id is always in the row (short) and, when not cut, in full under the details.
 const members: M[] = [
   { person: SEV, name: 'Severin' },

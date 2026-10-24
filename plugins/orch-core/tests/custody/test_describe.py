@@ -94,6 +94,28 @@ CASES: dict[str, tuple[str, dict]] = {
     "role.changed": ("workspace", {"person": PERSON, "role": "owner"}),
     "device.added": ("workspace", {"device": DEVICE, "cert": CERT2}),
     "device.removed": ("workspace", {"device": DEVICE, "reason": "retired laptop"}),
+    "device.exposed": ("workspace", {"device": DEVICE, "reason": "convenience"}),
+    "device.rotated": (
+        "workspace",
+        {
+            "old": "d_" + "cc" * 16,
+            "device": DEVICE,
+            "cert": CERT2,
+            "rotation": {
+                "o": {
+                    "v": 2,
+                    "suite": 2,
+                    "kind": "device_rotation",
+                    "workspace_id": "aa" * 16,
+                    "person_id": "bb" * 16,
+                    "old": "cc" * 16,
+                    "new": "dd" * 16,
+                    "roster_v": 3,
+                },
+                "sig": "A" * 86,
+            },
+        },
+    ),
     "device.revoked": ("workspace", {"device": DEVICE, "reason": "lost", "revocation": REV}),
     "settings.changed": (
         "workspace",
@@ -123,6 +145,7 @@ CASES: dict[str, tuple[str, dict]] = {
             "fields": {"risk": {"type": "integer", "set_by": ["owner"], "gate": ["plan"]}},
             "sections": [{"id": "dash.notes", "types": ["feature"], "gate": ["plan"]}],
             "artifact_kinds": ["chart"],
+            "runtime": {"kind": "python-requirements", "lock": "requirements.txt", "packages": 3},
         },
     ),
     "addon.disabled": ("workspace", {"name": "dash"}),
@@ -138,7 +161,6 @@ CASES: dict[str, tuple[str, dict]] = {
         },
     ),
     "hub.left": ("workspace", {"hub_id": "38d8abed52ccfb538da401fd54e64bdc", "binding_seq": 1}),
-    "relay.reopened": ("workspace", {"hub_id": "38d8abed52ccfb538da401fd54e64bdc"}),
     # A types a person signs through human.prepare (H5a: person versions of agent ops, and move)
     "ticket.moved": (TICKET, {"from": "in_progress", "to": "backlog", "reason": "parked"}),
     "ticket.created": (TICKET, {"key": "DEMO-0042", "ticket_type": "feature", "title": "Login", "owner": PERSON}),
@@ -218,7 +240,7 @@ def test_every_decisive_field_appears_in_the_prompt(etype):
     assert "auth: passphrase" in text and "roster_v: 7" in text
     assert f"actor.person: {PERSON}" in text and f"actor.device: {DEVICE}" in text
     for field, value in fields.items():
-        if field in ("delegation", "device_cert", "cert", "revocation"):
+        if field in ("delegation", "device_cert", "cert", "revocation", "rotation"):
             obj = value["o"]
             for f in (
                 "device_id",
@@ -233,6 +255,9 @@ def test_every_decisive_field_appears_in_the_prompt(etype):
                 "wsk_pub",
                 "dk_sig_pub",
                 "dk_kx_pub",
+                "old",
+                "new",
+                "roster_v",
             ):
                 if f in obj:
                     for leaf in leaves(obj[f]):

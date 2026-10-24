@@ -41,9 +41,11 @@ class Fake:
 
 class Script:
     def __init__(self, ws):
-        self.ws, self.enabled, self.available, self.contract = ws, True, True, 1
+        self.ws, self.enabled, self.available, self.contract = ws, True, True, 3
         self.features: list | None = None  # `status.features`: ["custody"] for a signer with the switch
         self.refuse: dict[str, ClickError] = {}
+        self.offer: dict = {}  # the answer to `custody_off {begin}`
+        self.rotation: dict = {}  # the answer to `rotate {begin}`
         self.view = {"view": {"risk": RISK, "lines": [CANARY], "op": "approve"}, "view_digest": HASH}
         self.prepared = 0
         self.intents: dict[str, dict] = {}  # the host's idem record: idem -> {binding, request id, state}
@@ -72,6 +74,12 @@ class Script:
             return out
         if op == "stash":
             return {"state": "complete"}
+        if op == "rotate":
+            if args.get("begin"):
+                return self.rotation
+            return {"workspace_id": self.ws, "custody": "passphrase", "enabled": False, "done": True}
+        if op == "custody_off" and args.get("begin"):
+            return self.offer
         if op in ("custody_on", "custody_off"):
             self.enabled = self.available = op == "custody_on"
             row = {"workspace_id": self.ws, "custody": "convenience", "enabled": self.enabled}
@@ -104,6 +112,8 @@ class Script:
         if op == "view":
             return self.view
         if op == "sign":
+            if self.states.get(args["request_id"]) != "bound":  # the signer signs only a bound request
+                raise ClickError("human.request_state", f"the request is {self.states.get(args['request_id'])}")
             self.states[args["request_id"]] = "submitted"
             return {"result": {"data": {"secret": "no"}, "key": "DEMO-0001", "seq": 7}, "duplicate": False}
         if op == "cancel":
@@ -236,9 +246,9 @@ def test_no_click_feature_unless_the_flag_is_on_and_the_signer_can_sign(
     assert ws["click"]["problem"] == "disabled"
 
 
-@pytest.mark.parametrize("contract", [3, 0, True, "2", None, 2.0])
+@pytest.mark.parametrize("contract", [1, 2, 4, 0, True, "3", None, 3.0])
 def test_a_signer_of_another_contract_is_refused(client, token, stub, script, contract):
-    script.contract = contract  # strict: only the ints 1 and 2 (True == 1 and 2.0 == 2 in Python must not pass)
+    script.contract = contract  # strict: only the int 3 (3.0 == 3 in Python must not pass)
     ws = client.get("/api/workspaces", headers=hdr(token, False)).json()[0]
     assert "click" not in ws["features"] and ws["click"] is None
     assert script.clients[0].closed  # that child is stopped
@@ -248,13 +258,13 @@ def test_a_signer_of_another_contract_is_refused(client, token, stub, script, co
     assert [c for c in script.clients[0].calls if c[0] == "prepare"] == []
 
 
-def test_a_contract_2_signer_is_accepted_and_remembered(client, token, stub, script, gateway):
-    script.contract = 2  # H11c-2: deposit-only grant mode
+def test_a_contract_3_signer_is_accepted_and_remembered(client, token, stub, script, gateway):
+    script.contract = 3
     ws = client.get("/api/workspaces", headers=hdr(token, False)).json()[0]
     assert "click" in ws["features"] and ws["click"]["available"] is True
     res = prepare(client, token, stub)
     assert res.status_code == 200, res.text
-    assert gateway.click.contract == 2
+    assert gateway.click.contract == 3
 
 
 def test_prepare_chooses_the_op_here_and_derives_the_idem_from_the_action(client, token, stub, script, auth):
@@ -324,26 +334,21 @@ def test_view_is_the_signers_view_unchanged(client, token, stub, script):
     assert call[1] == {"workspace_id": stub.ws, "request_id": REQ}
 
 
-def test_sign_sends_exactly_what_was_typed_and_answers_without_the_hosts_result(client, token, stub, script):
+def test_sign_sends_exactly_the_digest_and_answers_without_the_hosts_result(client, token, stub, script):
     prepare(client, token, stub)
-    body = {"request_id": REQ, "view_digest": HASH, "word": "  DEMO~ab  "}
+    body = {"request_id": REQ, "view_digest": HASH}
     res = client.post(url(stub, "sign"), json=body, headers=hdr(token))
     assert res.status_code == 200
     assert res.json() == {"state": "submitted", "duplicate": False, "key": "DEMO-0001", "seq": 7}
     sent = [c for c in script.clients[0].calls if c[0] == "sign"][0][1]
-    assert sent == {"workspace_id": stub.ws, "request_id": REQ, "view_digest": HASH, "word": "  DEMO~ab  "}
-    plain = {"request_id": "hr_" + "0" * 25 + "2", "view_digest": HASH}
-    prepare(client, token, stub, {**comment(2), "message": "another action"})
-    client.post(url(stub, "sign"), json=plain, headers=hdr(token))
-    assert "word" not in [c for c in script.clients[0].calls if c[0] == "sign"][1][1]
+    assert sent == {"workspace_id": stub.ws, "request_id": REQ, "view_digest": HASH}
 
 
 @pytest.mark.parametrize(
     "body",
     [
         {"request_id": REQ, "view_digest": "sha256:short"},
-        {"request_id": REQ, "view_digest": HASH, "word": ""},
-        {"request_id": REQ, "view_digest": HASH, "word": "x" * 129},
+        {"request_id": REQ, "view_digest": HASH, "word": "DEMO~ab"},  # no word field any more
         {"request_id": "not-a-request", "view_digest": HASH},
         {"request_id": REQ, "view_digest": HASH, "extra": 1},
     ],
@@ -496,9 +501,7 @@ def test_views_words_and_credentials_are_never_logged(client, token, stub, scrip
     caplog.set_level(logging.DEBUG)
     prepare(client, token, stub)
     client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token))
-    client.post(
-        url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH, "word": "TYPED-WORD"}, headers=hdr(token)
-    )
+    client.post(url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH}, headers=hdr(token))
     out = capfd.readouterr()
     for text in (caplog.text, out.out, out.err):
         assert CANARY not in text and "TYPED-WORD" not in text and token not in text
@@ -506,7 +509,7 @@ def test_views_words_and_credentials_are_never_logged(client, token, stub, scrip
 
 def test_the_sign_routes_take_small_bodies(client, token, stub, script):
     prepare(client, token, stub)
-    big = {"request_id": REQ, "view_digest": HASH, "word": "x" * 20000}
+    big = {"request_id": REQ, "view_digest": HASH, "pad": "x" * 20000}
     assert client.post(url(stub, "sign"), json=big, headers=hdr(token)).status_code == 413
 
 
@@ -1223,6 +1226,26 @@ def test_n15_a_cancelled_or_expired_attempt_is_ended_and_pressing_again_is_a_fre
     assert twin.json()["request_id"] == third.json()["request_id"] and script.prepared == 3
 
 
+@pytest.mark.parametrize("ended", ["cancelled", "expired"])
+def test_1087_an_ended_attempt_is_never_signed_later_and_pressing_again_is_a_fresh_request(
+    client, token, stub, script, rich, ended
+):
+    """#794 removed `intent.ended`: the server steps past an attempt that ended unsigned. The ended request stays
+    ended (a late sign of it is refused and changes nothing); only the fresh request can be signed, by its own sign."""
+    prepare(client, token, stub, comment(1))
+    if ended == "cancelled":
+        assert client.post(url(stub, "cancel"), json={"request_id": REQ}, headers=hdr(token)).status_code == 200
+    else:
+        script.states[REQ] = "expired"  # the host let it expire
+    late = client.post(url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH}, headers=hdr(token))
+    assert late.status_code != 200 and script.states[REQ] == ended, late.text
+    fresh = client.post(url(stub, "prepare"), json=comment(1), headers=hdr(token))
+    assert fresh.status_code == 200, fresh.text
+    rid = fresh.json()["request_id"]
+    assert rid != REQ and script.prepared == 2 and script.states[REQ] == ended
+    assert script.states[rid] == "bound"  # prepared, not signed: signing it is the person's own next click
+
+
 def test_794_a_signed_attempt_is_already_done_even_after_earlier_cancels(client, token, stub, script, rich):
     prepare(client, token, stub, comment(1))
     assert client.post(url(stub, "cancel"), json={"request_id": REQ}, headers=hdr(token)).status_code == 200
@@ -1300,21 +1323,13 @@ def test_already_signed_and_an_unreadable_record_never_cancel_or_forget_the_requ
     assert client.post(url(stub, "state"), json={"request_id": REQ}, headers=hdr(token)).json()["state"] == "submitted"
 
 
-# -- ONE signing path per workspace (owner decision, 12 Oct 2026) -----------------------------------------------
+# -- the terminal hand-off stays available where click-to-sign is on (#1170) -----------------------------------------
 
 
-def test_a_click_workspace_prepares_no_terminal_handoff(client, token, stub, script, rich):
+def test_a_click_workspace_still_prepares_a_terminal_handoff(client, token, stub, script, rich):
     res = client.post(f"/api/w/{stub.ws}/handoff", json=comment(1), headers=hdr(token))
-    err = res.json()["error"]
-    assert res.status_code == 409 and err["code"] == "sign.click_only"
-    assert "convenience off" in err["message"] and "Sign" in err["message"]
-    assert client.app.state.handoffs.active == {}
-
-
-def test_an_enabled_but_unavailable_signer_is_still_click_only(client, token, stub, script, rich):
-    script.available = False  # e.g. no key right now: an honest error, never a hand-off
-    res = client.post(f"/api/w/{stub.ws}/handoff", json=comment(1), headers=hdr(token))
-    assert res.json()["error"]["code"] == "sign.click_only"
+    assert res.status_code == 200, res.text
+    assert res.json().get("code")  # the code for `orch sign`
 
 
 def test_the_flag_flipped_off_ends_the_open_click_request(client, token, stub, script, host_check, rich):
@@ -1552,19 +1567,18 @@ def grant_view(**over):
         "lines": ["grant for Demo Owner", "", DEPOSIT_RISK, DEPOSIT_LINE],
         "deposit": True,
         "deposit_line": DEPOSIT_LINE,
-        "confirm": {"kind": "word", "word": f"DEMO~{GRANT_WS[-8:]}/GRANT"},
+        "confirm": {"kind": "click"},
     }
     return {"view": {**view, **over}, "view_digest": HASH}
 
 
 @pytest.fixture
 def deposits(script, monkeypatch, host_check):
-    """A contract-2 signer whose `sign` of a grant answers like core's: the deposit fields, plus things that must never
+    """A contract-3 signer whose `sign` of a grant answers like core's: the deposit fields, plus things that must never
     leave this server (the host's `result` with a secret in it, and an unknown field)."""
     global GRANT_WS
     GRANT_WS = script.ws
     host_check.verified = {"fingerprint": "0123456789ab"}
-    script.contract = 2  # accepted since #489
     script.sign_answer = {
         "result": {"data": {"grant": GRANT, "secret": f"{GRANT}.{SECRET}"}, "seq": 9},
         "duplicate": False,
@@ -1585,15 +1599,6 @@ def deposits(script, monkeypatch, host_check):
     script.handler = handler
     script.view = grant_view()
     return script
-
-
-def test_runner_grant_needs_a_contract_2_signer_else_update_orch(client, token, stub, script):
-    res = prepare(client, token, stub, runner_grant())
-    assert res.status_code == 409, res.text
-    err = res.json()["error"]
-    assert err["code"] == "human.click_refused" and err["reason"] == "terminal_only" and err["why"] == "update_orch"
-    assert err["message"] == "This orch version can't hand a grant to the runner; update orch."
-    assert [c for cl in script.clients for c in cl.calls if c[0] == "prepare"] == []
 
 
 def test_runner_grant_prepares_a_deposit_grant_with_hours_and_scope_only(client, token, stub, deposits):
@@ -1627,12 +1632,6 @@ def test_runner_grant_bodies_are_closed(client, token, stub, deposits, body):
     assert [c for cl in deposits.clients for c in cl.calls if c[0] == "prepare"] == []
 
 
-def test_runner_grant_handoff_is_refused_where_the_workspace_signs_by_one_click(client, token, stub, deposits):
-    # B11-P1: the terminal hand-off exists for terminal-approval workspaces; a one-click workspace keeps its refusal.
-    res = client.post(f"/api/w/{stub.ws}/handoff", json=runner_grant(), headers=hdr(token))
-    assert res.status_code == 409 and res.json()["error"]["code"] == "sign.click_only"
-
-
 def test_runner_grant_view_is_checked_against_the_callers_grant(client, token, stub, deposits, host_check):
     prepare(client, token, stub, runner_grant())
     res = client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token))
@@ -1648,10 +1647,9 @@ def test_runner_grant_view_is_checked_against_the_callers_grant(client, token, s
         {"deposit_line": "The secret is shown here"},
         {"lines": ["grant", DEPOSIT_LINE]},  # no risk sentence
         {"lines": ["grant", DEPOSIT_RISK]},  # no deposit line in the lines
-        {"confirm": {"kind": "click"}},
-        {"confirm": {"kind": "word", "word": "DEMO~0a1b2c3d"}},
-        # review L3: another workspace's word, or another workspace
-        {"confirm": {"kind": "word", "word": "DEMO~0a1b2c3d/GRANT"}},
+        {"confirm": {"kind": "word", "word": "DEMO~0a1b2c3d/GRANT"}},  # a typed word is no longer a confirmation
+        {"confirm": {}},
+        # review L3: another workspace
         {"workspace": {"id": "f" * 32, "name": "other", "prefix": "DEMO"}},
         # review I1: a View of another record than the one verified
         {"fingerprint": "ffffffffffff"},
@@ -1673,7 +1671,7 @@ def test_a_view_of_another_op_that_claims_a_deposit_is_not_shown(client, token, 
 
 def test_the_grant_sign_answer_is_the_deposit_fields_only_and_never_the_secret(client, token, stub, deposits):
     prepare(client, token, stub, runner_grant())
-    body = {"request_id": REQ, "view_digest": HASH, "word": "DEMO~0a1b2c3d/GRANT"}
+    body = {"request_id": REQ, "view_digest": HASH}
     res = client.post(url(stub, "sign"), json=body, headers=hdr(token))
     assert res.status_code == 200, res.text
     assert res.json() == {
@@ -1702,7 +1700,7 @@ def test_the_grant_sign_answer_is_the_deposit_fields_only_and_never_the_secret(c
 def test_each_deposit_field_is_checked(client, token, stub, deposits, answer, out):
     deposits.sign_answer = {**deposits.sign_answer, **answer}
     prepare(client, token, stub, runner_grant())
-    body = {"request_id": REQ, "view_digest": HASH, "word": "DEMO~0a1b2c3d/GRANT"}
+    body = {"request_id": REQ, "view_digest": HASH}
     got = client.post(url(stub, "sign"), json=body, headers=hdr(token)).json()
     for key, value in out.items():
         assert got[key] == value
@@ -1792,24 +1790,152 @@ def test_switching_on_sends_the_passphrase_to_the_signer_only(client, token, stu
     assert PASSPHRASE not in caplog.text + out + err + res.text
 
 
-def test_switching_off_needs_no_passphrase_but_may_carry_a_new_one(client, token, stub, script, caplog, capfd):
-    """V3-D31 (narrowing Opus H2 on #539): off without a passphrase is the flag only; a NEW passphrase is relayed to the
-    signer, which decides (only while the switch is on); an explicit null is invalid; never logged or echoed."""
-    script.features = ["custody"]
+SEAL_OFFER = {
+    "request_id": "hr_" + "0" * 25 + "1",
+    "view_digest": HASH,
+    "seal": {"v": 1, "alg": "P256-HKDF-SHA256-A256GCM", "pk": "B" + "Q" * 86, "purposes": ["custody.passphrase"]},
+    "expires_in": 300,
+}
+PASS_ENV = {"v": 1, "alg": "P256-HKDF-SHA256-A256GCM", "epk": "B" + "Q" * 86, "ct": "C" * 363}
+
+
+@pytest.fixture
+def local(monkeypatch):
+    from orch_dashboard.auth import Auth
+
+    monkeypatch.setattr(Auth, "login_kind", lambda self, token: "local", raising=False)
+
+
+def seal_post(client, token, stub):
+    return client.post(url(stub, "custody/seal"), json={}, headers=hdr(token))
+
+
+def sealed_off(**over):
+    return {
+        "on": False,
+        "request_id": SEAL_OFFER["request_id"],
+        "view_digest": HASH,
+        "sealed": {"custody.passphrase": PASS_ENV},
+        **over,
+    }
+
+
+def test_switching_off_is_the_flag_only_and_a_clear_passphrase_is_refused(client, token, stub, script, caplog, capfd):
+    """#1198 C12: off without a sealed passphrase is the flag only; a new passphrase in the clear is invalid and the
+    signer is never asked; an explicit null is invalid too; nothing is logged or echoed."""
+    script.features = ["custody", "sealed_passphrase"]
     res = switch(client, token, stub, {"on": False})
     assert res.status_code == 200 and res.json()["enabled"] is False and res.json()["problem"] == "disabled"
     caplog.set_level(logging.DEBUG)
-    bad = switch(client, token, stub, {"on": False, "passphrase": None})
-    assert bad.status_code == 400 and bad.json()["error"]["code"] == "invalid.input"
-    moved = switch(client, token, stub, {"on": False, "passphrase": PASSPHRASE})
-    assert moved.status_code == 200 and PASSPHRASE not in moved.text
+    for body in ({"on": False, "passphrase": None}, {"on": False, "passphrase": PASSPHRASE}):
+        bad = switch(client, token, stub, body)
+        assert bad.status_code == 400 and bad.json()["error"]["code"] == "invalid.input" and PASSPHRASE not in bad.text
     calls = [c for c in script.clients[-1].calls if c[0].startswith("custody")]
-    assert calls == [
-        ("custody_off", {"workspace_id": stub.ws}),
-        ("custody_off", {"workspace_id": stub.ws, "passphrase": PASSPHRASE}),
-    ]
+    assert calls == [("custody_off", {"workspace_id": stub.ws})]
     out, err = capfd.readouterr()
     assert PASSPHRASE not in caplog.text + out + err
+
+
+def test_c12_the_seal_offer_is_relayed_for_an_owner_on_a_local_session(client, token, stub, script, local):
+    script.features = ["custody", "sealed_passphrase"]
+    script.offer = SEAL_OFFER
+    res = seal_post(client, token, stub)
+    assert res.status_code == 200 and res.json() == SEAL_OFFER
+    assert [c for c in script.clients[-1].calls if c[0] == "custody_off"] == [
+        ("custody_off", {"workspace_id": stub.ws, "begin": True})
+    ]
+
+
+def test_c12_the_seal_offer_needs_a_local_session_and_an_owner(client, token, stub, script, monkeypatch):
+    from orch_dashboard import adapters
+    from orch_dashboard.auth import Auth
+
+    script.offer = SEAL_OFFER
+    script.features = ["custody", "sealed_passphrase"]
+    monkeypatch.setattr(Auth, "login_kind", lambda self, token: "remote", raising=False)
+    assert seal_post(client, token, stub).status_code == 409
+    monkeypatch.setattr(Auth, "login_kind", lambda self, token: "local", raising=False)
+    real = adapters.members
+    monkeypatch.setattr(adapters, "members", lambda d: [m.model_copy(update={"role": "maintainer"}) for m in real(d)])
+    assert seal_post(client, token, stub).json()["error"]["code"] == "role.denied"
+    assert not any(c[0] == "custody_off" for cl in script.clients for c in cl.calls)
+
+
+def test_c12_the_seal_offer_needs_a_signer_that_can(client, token, stub, script, local):
+    script.offer = SEAL_OFFER
+    script.features = ["custody"]
+    assert seal_post(client, token, stub).json()["error"]["code"] == "click.contract"
+    assert not any(c[0] == "custody_off" for cl in script.clients for c in cl.calls)
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"request_id": "x"},
+        {"seal": {"v": 1, "alg": "P256-HKDF-SHA256-A256GCM", "pk": "B" + "Q" * 86, "purposes": ["hub.backup_key"]}},
+        {"seal": {"v": 1, "alg": "P256-HKDF-SHA256-A256GCM", "pk": "short", "purposes": ["custody.passphrase"]}},
+        {"extra": 1},
+    ],
+)
+def test_c12_an_odd_offer_from_the_signer_is_not_passed_on(client, token, stub, script, local, over):
+    script.features = ["custody", "sealed_passphrase"]
+    script.offer = {**SEAL_OFFER, **over}
+    assert seal_post(client, token, stub).status_code == 409
+
+
+def test_c12_off_relays_the_sealed_passphrase_as_ciphertext_only(client, token, stub, script, local, caplog, capfd):
+    script.features = ["custody", "sealed_passphrase"]
+    caplog.set_level(logging.DEBUG)
+    res = switch(client, token, stub, sealed_off())
+    assert res.status_code == 200, res.text
+    assert [c for c in script.clients[-1].calls if c[0] == "custody_off"] == [
+        (
+            "custody_off",
+            {
+                "workspace_id": stub.ws,
+                "request_id": SEAL_OFFER["request_id"],
+                "view_digest": HASH,
+                "sealed": {"custody.passphrase": PASS_ENV},
+            },
+        )
+    ]
+    out, err = capfd.readouterr()
+    assert PASS_ENV["ct"] not in caplog.text + out + err + res.text
+
+
+def test_c12_sealed_off_needs_a_local_session(client, token, stub, script, monkeypatch):
+    from orch_dashboard.auth import Auth
+
+    script.features = ["custody", "sealed_passphrase"]
+    monkeypatch.setattr(Auth, "login_kind", lambda self, token: "remote", raising=False)
+    assert switch(client, token, stub, sealed_off()).status_code == 409
+    assert not any(c[0] == "custody_off" for cl in script.clients for c in cl.calls)
+
+
+def test_c12_sealed_off_needs_a_signer_that_takes_it(client, token, stub, script, local):
+    script.features = ["custody"]  # an older signer would take the passphrase in the clear: never asked
+    assert switch(client, token, stub, sealed_off()).json()["error"]["code"] == "click.contract"
+    assert not any(c[0] == "custody_off" for cl in script.clients for c in cl.calls)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"on": False, "request_id": SEAL_OFFER["request_id"]},
+        {"on": False, "sealed": {"custody.passphrase": PASS_ENV}},
+        sealed_off(extra=1),
+        sealed_off(sealed={"hub.backup_key": PASS_ENV}),
+        sealed_off(sealed={"custody.passphrase": {**PASS_ENV, "v": 2}}),
+        sealed_off(sealed={"custody.passphrase": {**PASS_ENV, "ct": "short"}}),
+        sealed_off(request_id="nope"),
+        {**sealed_off(), "on": True, "passphrase": PASSPHRASE},
+    ],
+)
+def test_c12_sealed_bodies_are_closed(client, token, stub, script, local, body):
+    script.features = ["custody", "sealed_passphrase"]
+    res = switch(client, token, stub, body)
+    assert res.status_code == 400 and res.json()["error"]["code"] == "invalid.input"
+    assert not any(c[0].startswith("custody") for cl in script.clients for c in cl.calls)
 
 
 @pytest.mark.parametrize(
@@ -1931,13 +2057,43 @@ def test_an_older_signer_is_never_asked_for_a_sequence(client, token, stub, scri
         },
     ],
 )
-def test_publish_setup_and_share_are_never_one_click(client, token, stub, script, host_check, rich, body):
-    # P6: terminal only. Refused before a slot is taken and before the signer is asked, whatever the flag says.
+def test_publish_setup_and_share_are_one_click(client, token, stub, script, host_check, rich, body):
+    # #1198 C2: Publish is a click like every other op; the signer is asked and a slot is taken.
     res = client.post(url(stub, "prepare"), json=body, headers=hdr(token))
-    err = res.json()["error"]
-    assert res.status_code == 409 and err["code"] == "human.click_refused" and err["reason"] == "terminal_only"
-    assert script.prepared == 0
-    assert client.app.state.handoffs.active == {}
+    # (the stub host lacks some of the ops, so only the old terminal-only refusal is asserted away)
+    assert res.json().get("error", {}).get("reason") != "terminal_only", res.text
+
+
+MARKET = {"action": "market_grant", "name": "echo", "staged": "st_" + "0" * 32}
+
+
+@pytest.fixture
+def host_serves_grant(monkeypatch):
+    """The test host's welcome does not list addon.grant (a real one does); the column check is not what is tested."""
+    from orch_dashboard import handoff
+
+    monkeypatch.setattr(handoff, "WORKSPACE_OPS", tuple(o for o in handoff.WORKSPACE_OPS if o != "addon.grant"))
+
+
+def test_a_market_install_is_one_click_and_the_signer_gets_the_host_review_material_only(
+    client, token, stub, script, rich, host_serves_grant
+):
+    """V3-D38: the grant of a staged marketplace package goes to the signer like any other action. The server names
+    the op and its two arguments; the review (capabilities, marketplace block) is the host's and the signer's."""
+    res = prepare(client, token, stub, MARKET)
+    assert res.status_code == 200, res.text
+    (op, args) = [c for c in script.clients[0].calls if c[0] == "prepare"][0]
+    assert args["op"] == "addon.grant" and args["args"] == {"name": "echo", "staged": MARKET["staged"]}
+    assert "sequence" not in args and "files" not in args
+    again = prepare(client, token, stub, MARKET)  # the same stage is the same request
+    assert again.json()["request_id"] == res.json()["request_id"] and script.prepared == 1
+    other = prepare(client, token, stub, {**MARKET, "staged": "st_" + "1" * 32})  # a new review is a new request
+    assert other.status_code == 200 and script.prepared == 2
+
+
+def test_a_market_install_for_publish_is_a_click_too(client, token, stub, script, rich, host_serves_grant):
+    res = prepare(client, token, stub, {**MARKET, "name": "publish"})
+    assert res.json().get("error", {}).get("reason") != "terminal_only", res.text
 
 
 def test_a_stopped_sequence_says_which_ticket_exists_and_that_the_agent_access_is_last(
@@ -1963,6 +2119,86 @@ def test_a_stopped_sequence_says_which_ticket_exists_and_that_the_agent_access_i
     host_check.key = None
     plain = client.post(url(stub, "state"), json={"request_id": rid}, headers=hdr(token)).json()
     assert "key" not in plain and "progress" not in plain
+
+
+def test_a_sequence_that_ends_in_the_agent_access_still_answers_its_ticket_key(client, token, stub, script, host_check):
+    """The page starts the agent for exactly the ticket this signature created: its key must reach it when the sequence
+    ends in a deposit (the access), as it does when there is none. The deposit fields stay the closed set."""
+    script.features = ["custody", "sequence"]
+    res = prepare(client, token, stub, {**SEQUENCE, "agent": {"hours": 24}})
+    assert res.status_code == 200, res.text
+    rid = res.json()["request_id"]
+    base = script.handler
+
+    def handler(op, args):
+        if op == "sign":
+            script.states[args["request_id"]] = "submitted"
+            return {
+                "result": {"key": "DEMO-0044", "seq": 7, "secret": SECRET},
+                "duplicate": False,
+                "deposit": "confirmed",
+                "deposit_id": rid[3:],
+                "grant": GRANT,
+            }
+        return base(op, args)
+
+    script.clients[0].handler = handler
+    signed = client.post(url(stub, "sign"), json={"request_id": rid, "view_digest": HASH}, headers=hdr(token))
+    assert signed.status_code == 200, signed.text
+    body = signed.json()
+    assert body["key"] == "DEMO-0044" and body["seq"] == 7 and body["deposit"] == "confirmed"
+    assert SECRET not in signed.text and "result" not in body
+
+
+def test_the_key_comes_from_the_hosts_row_when_the_last_steps_result_has_none(client, token, stub, script, host_check):
+    """The deposit's result is the grant's: it carries no ticket key. The host's own row of the request does."""
+    script.features = ["custody", "sequence"]
+    rid = prepare(client, token, stub, {**SEQUENCE, "agent": {"hours": 24}}).json()["request_id"]
+    base = script.clients[0].handler
+
+    def handler(op, args):
+        if op == "sign":
+            script.states[args["request_id"]] = "submitted"
+            return {
+                "result": {"data": {"grant": GRANT}},
+                "duplicate": False,
+                "deposit": "confirmed",
+                "deposit_id": rid[3:],
+                "grant": GRANT,
+            }
+        return base(op, args)
+
+    script.clients[0].handler = handler
+    host_check.key = "DEMO-0045"
+    signed = client.post(url(stub, "sign"), json={"request_id": rid, "view_digest": HASH}, headers=hdr(token))
+    assert signed.status_code == 200, signed.text
+    assert signed.json()["key"] == "DEMO-0045" and signed.json()["deposit"] == "confirmed"
+
+
+def test_an_odd_ticket_key_or_seq_is_not_passed_on(client, token, stub, script, host_check):
+    """The key must be a ticket key (from the result and from the host's row alike); seq must be a real integer."""
+    script.features = ["custody", "sequence"]
+    rid = prepare(client, token, stub, {**SEQUENCE, "agent": {"hours": 24}}).json()["request_id"]
+    base = script.clients[0].handler
+    answer = {}
+
+    def handler(op, args):
+        if op == "sign":
+            script.states[args["request_id"]] = "submitted"
+            return {
+                "result": answer,
+                "duplicate": False,
+                "deposit": "confirmed",
+                "deposit_id": rid[3:],
+                "grant": GRANT,
+            }
+        return base(op, args)
+
+    script.clients[0].handler = handler
+    answer.update(key="demo-1; rm", seq=True)
+    host_check.key = "not a key"
+    body = client.post(url(stub, "sign"), json={"request_id": rid, "view_digest": HASH}, headers=hdr(token)).json()
+    assert "key" not in body and "seq" not in body
 
 
 # --- R3 part B: pasted screenshots ---------------------------------------------------------------------------------
@@ -2048,26 +2284,652 @@ def test_pictures_need_a_signer_that_holds_them(client, token, stub, script):
     assert res.status_code >= 400 and "orch-core" in res.text
 
 
-@pytest.mark.parametrize("supports_sequence", [False, True])
-def test_model_routing_enable_is_a_click_sequence(
-    client, token, stub, script, gateway, monkeypatch, tmp_path, supports_sequence
-):
-    from orch.addons.settings_needs import preview_grant
-    from test_addon_enable import MODELS, Link
+# -- #1198 C7: agent access whose secret is shown once in the page, sealed to its own key -------------
 
-    link = Link()
-    monkeypatch.setattr(gateway, "link", lambda ws: link)
-    monkeypatch.setattr(gateway, "enabled", lambda ws: link)
-    monkeypatch.setattr(gateway, "call", lambda ws, op, args: {"grant": preview_grant(tmp_path, "model-routing")})
-    body = {"action": "addon_enable", "name": "model-routing", "models": MODELS}
-    script.features = ["custody", "sequence"] if supports_sequence else ["custody"]
-    res = prepare(client, token, stub, body)
-    if not supports_sequence:
-        assert res.json()["error"]["code"] == "click.contract"
-        assert script.prepared == 0
-        return
+PAGE_KEY = "B" + "A" * 86  # 87 base64url characters: the shape of a P-256 point; the server never decodes it
+REVEAL_LINE = "The secret is shown once, on this page, only to you. orch keeps only a fingerprint of it"
+REVEAL_RISK = "The secret will be shown once in this browser. Anyone who controls this dashboard could read it."
+ENVELOPE = {"v": 1, "alg": "P256-HKDF-SHA256-A256GCM", "epk": "C" + "A" * 86, "ct": "D" * 342}
+
+
+def agent_access(**kw):
+    return {"action": "agent_access", "reveal_key": PAGE_KEY, **kw}
+
+
+def reveal_view(**over):
+    import hashlib
+
+    seal = {
+        "v": 1,
+        "alg": "P256-HKDF-SHA256-A256GCM",
+        "purposes": ["grant.secret"],
+        "for": hashlib.sha256(PAGE_KEY.encode()).hexdigest(),
+    }
+    view = {
+        "risk": RISK,
+        "op": "grant",
+        "workspace": {"id": GRANT_WS, "name": "billing", "prefix": "DEMO"},
+        "fingerprint": "0123456789ab",
+        "lines": ["grant for Demo Owner", "", REVEAL_RISK, REVEAL_LINE],
+        "seal": seal,
+        "confirm": {"kind": "click"},
+    }
+    return {"view": {**view, **over}, "view_digest": HASH}
+
+
+@pytest.fixture
+def reveals(script, monkeypatch, host_check):
+    global GRANT_WS
+    GRANT_WS = script.ws
+    script.features = ["custody", "reveal"]
+    host_check.verified = {"fingerprint": "0123456789ab"}
+    script.sign_answer = {
+        "result": {"data": {"grant": GRANT, "secret": f"{GRANT}.{SECRET}"}, "seq": 9},
+        "duplicate": False,
+        "reveal": {"purpose": "grant.secret", "envelope": dict(ENVELOPE)},
+        "auth": {"grant": f"{GRANT}.{SECRET}"},
+    }
+    base = script.handler
+
+    def handler(op, args):
+        if op == "sign" and script.view["view"].get("op") == "grant":
+            script.states[args["request_id"]] = "submitted"
+            return dict(script.sign_answer)
+        return base(op, args)
+
+    script.handler = handler
+    script.view = reveal_view()
+    return script
+
+
+def sent_of(script, op):
+    return [c for cl in script.clients for c in cl.calls if c[0] == op]
+
+
+def test_agent_access_sends_the_page_key_at_prepare_and_the_grant_args_only(client, token, stub, reveals):
+    res = prepare(client, token, stub, agent_access(hours=24, scope="all", label="my tool"))
     assert res.status_code == 200, res.text
-    sent = [args for cl in script.clients for op, args in cl.calls if op == "prepare"][-1]
-    assert sent["op"] == "settings.set" and sent["args"] == {"set": {"models": MODELS}}
-    assert sent["sequence"]["of"] == 2
-    assert sent["sequence"]["intent"]["kind"] == "addon_enable"
+    sent = sent_of(reveals, "prepare")[0][1]
+    assert sent["op"] == "grant" and sent["args"] == {"hours": 24, "scope": "all", "label": "my tool"}
+    assert sent["reveal_key"] == PAGE_KEY and "deposit" not in sent
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        agent_access(hours=169),
+        agent_access(label="runner"),
+        agent_access(label="x" * 41),
+        agent_access(verbs="log"),
+        agent_access(runner=True),
+        agent_access(reveal_key="short"),
+        {"action": "agent_access"},  # no key
+    ],
+)
+def test_agent_access_bodies_are_closed(client, token, stub, reveals, body):
+    assert prepare(client, token, stub, body).status_code == 400
+    assert sent_of(reveals, "prepare") == []
+
+
+def test_agent_access_needs_a_signer_that_can_seal(client, token, stub, reveals):
+    reveals.features = ["custody"]
+    res = prepare(client, token, stub, agent_access())
+    assert res.status_code != 200 and sent_of(reveals, "prepare") == []
+
+
+def test_agent_access_is_not_a_terminal_hand_off(client, token, stub, reveals):
+    res = client.post(f"/api/w/{stub.ws}/handoff", json=agent_access(), headers=hdr(token))
+    assert res.status_code == 400
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"seal": None},
+        {"seal": {"v": 1, "alg": "x", "purposes": ["grant.secret"], "for": "0" * 64}},  # another key
+        {"seal": {"v": 1, "alg": "x", "purposes": ["grant.secret"], "for": "0" * 16}},  # a truncated fingerprint
+        {"seal": {"v": 1, "alg": "x", "purposes": ["hub.backup_key"], "for": "x"}},
+        {"lines": ["grant", REVEAL_LINE]},  # no risk line
+        {"lines": ["grant", REVEAL_RISK]},
+        {"deposit": True},
+        {"confirm": {}},
+        {"workspace": {"id": "f" * 32, "name": "other", "prefix": "DEMO"}},
+        {"fingerprint": "ffffffffffff"},
+    ],
+)
+def test_an_agent_access_view_without_the_reveal_parts_is_not_shown(client, token, stub, reveals, over):
+    reveals.view = reveal_view(**over)
+    prepare(client, token, stub, agent_access())
+    res = client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token))
+    assert res.status_code == 409 and res.json()["error"]["reason"] == "check_failed"
+
+
+def test_a_view_of_another_action_that_claims_a_seal_is_not_shown(client, token, stub, script):
+    script.view = {"view": {**script.view["view"], "seal": reveal_view()["view"]["seal"]}, "view_digest": HASH}
+    prepare(client, token, stub)
+    res = client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token))
+    assert res.status_code == 409 and res.json()["error"]["reason"] == "check_failed"
+
+
+def test_the_agent_access_view_is_shown_as_the_signer_made_it(client, token, stub, reveals):
+    prepare(client, token, stub, agent_access())
+    res = client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token))
+    assert res.status_code == 200, res.text
+    assert res.json() == reveals.view
+
+
+def test_the_agent_access_sign_answer_is_the_grant_id_and_the_sealed_envelope_only(client, token, stub, reveals):
+    prepare(client, token, stub, agent_access())
+    res = client.post(
+        url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH, "reveal_key": PAGE_KEY}, headers=hdr(token)
+    )
+    assert res.status_code == 200, res.text
+    assert res.json() == {
+        "state": "submitted",
+        "duplicate": False,
+        "grant": GRANT,
+        "reveal": {"purpose": "grant.secret", "envelope": ENVELOPE},
+    }
+    assert SECRET not in res.text and "auth" not in res.text and "result" not in res.json()
+    assert sent_of(reveals, "sign")[0][1]["reveal_key"] == PAGE_KEY
+
+
+def test_a_swapped_reveal_key_never_reaches_the_signer(client, token, stub, reveals):
+    prepare(client, token, stub, agent_access())
+    other = "E" + "A" * 86
+    for key in (other, None):
+        body = {"request_id": REQ, "view_digest": HASH} | ({"reveal_key": key} if key else {})
+        res = client.post(url(stub, "sign"), json=body, headers=hdr(token))
+        assert res.status_code in (400, 409), res.text
+    assert sent_of(reveals, "sign") == []
+
+
+def test_reveal_key_is_refused_on_any_other_sign(client, token, stub, script):
+    prepare(client, token, stub)
+    res = client.post(
+        url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH, "reveal_key": PAGE_KEY}, headers=hdr(token)
+    )
+    assert res.status_code in (400, 409) and sent_of(script, "sign") == []
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"v": 2},
+        {"alg": "x"},
+        {"epk": "short"},
+        {"ct": ""},
+        {"extra": 1},
+    ],
+)
+def test_a_malformed_envelope_is_dropped_not_repaired_and_the_secret_is_never_passed(client, token, stub, reveals, bad):
+    reveals.sign_answer = {
+        **reveals.sign_answer,
+        "reveal": {"purpose": "grant.secret", "envelope": {**ENVELOPE, **bad}},
+    }
+    prepare(client, token, stub, agent_access())
+    res = client.post(
+        url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH, "reveal_key": PAGE_KEY}, headers=hdr(token)
+    )
+    assert res.json()["reveal"] is None and res.json()["grant"] == GRANT
+    assert SECRET not in res.text
+
+
+def test_the_server_logs_never_hold_the_envelope_or_the_secret(client, token, stub, reveals, caplog):
+    import logging
+
+    caplog.set_level(logging.DEBUG)
+    prepare(client, token, stub, agent_access())
+    client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token))
+    client.post(
+        url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH, "reveal_key": PAGE_KEY}, headers=hdr(token)
+    )
+    assert SECRET not in caplog.text and ENVELOPE["ct"] not in caplog.text
+
+
+def test_expected_admits_only_the_callers_agent_access():
+    from orch_dashboard.handoff import AgentAccess, expected
+
+    me = "p_" + "1" * 32
+    good = {
+        "type": "grant.issued",
+        "verbs": "agent",
+        "hours": 8,
+        "scope": "workable",
+        "label": "tool",
+        "actor": {"kind": "person", "id": me, "device": None},
+    }
+    check = expected(AgentAccess(action="agent_access", reveal_key=PAGE_KEY, label="tool"), me)
+    assert check([good])
+    for bad in ({"label": "runner"}, {"label": None}, {"verbs": ["log"]}, {"hours": 9}, {"scope": "all"}, {"extra": 1}):
+        assert not check([{**good, **bad}]), bad
+    assert not check([good, good])
+
+
+def test_a_new_page_key_is_a_new_request_and_the_same_key_the_same_one():
+    from orch_dashboard.handoff import AgentAccess
+
+    other = "E" + "A" * 86
+    a = AgentAccess(action="agent_access", reveal_key=PAGE_KEY)
+    b = AgentAccess(action="agent_access", reveal_key=other)
+    from orch_dashboard.handoff import intent_idem
+
+    def idem(body):
+        return intent_idem(
+            "p_" + "1" * 32,
+            "0" * 32,
+            "grant",
+            {"hours": 8, "scope": "workable"},
+            {"reveal_key": body.reveal_key},
+            None,
+            0,
+        )
+
+    assert idem(a) == idem(a) and idem(a) != idem(b)
+
+
+def test_the_page_key_fingerprint_matches_the_golden_vectors_shared_with_core_and_the_page():
+    import json
+    from pathlib import Path
+
+    from orch_dashboard.click import key_fingerprint
+
+    path = Path(__file__).resolve().parents[4] / "plugins/orch-core/tests/click_reveal_fingerprint.json"
+    cases = json.loads(path.read_text())["cases"]
+    assert cases
+    for case in cases:
+        assert len(case["fingerprint"]) == 64 and key_fingerprint(case["key"]) == case["fingerprint"]
+
+
+def test_agent_access_is_refused_on_any_session_that_is_not_a_local_one(client, token, stub, reveals, auth):
+    """Until the passkey step-up (R1-6) exists, a remote or unknown session kind never prepares agent_access."""
+    from orch_dashboard.click import REVEAL_SESSION_KINDS
+
+    assert REVEAL_SESSION_KINDS == {"local"}
+    for kind in ("remote", "hub", "passkey", None):
+        auth.kinds[token] = kind
+        res = prepare(client, token, stub, agent_access())
+        assert res.status_code == 409, (kind, res.text)
+    assert sent_of(reveals, "prepare") == []
+    auth.kinds[token] = "local"
+    assert prepare(client, token, stub, agent_access()).status_code == 200
+
+
+def test_c21_a_missing_key_at_sign_is_a_definite_refusal_not_uncertain(client, token, stub, script):
+    prepare(client, token, stub, comment(1))
+    msg = "There is no signing key on this computer. Turn One click off and on again, or sign in a terminal."
+    script.refuse["sign"] = ClickError("custody.no_key", msg)
+    res = sign_lost(client, token, stub)
+    err = res.json()["error"]
+    assert res.status_code == 409 and err["code"] == "custody.no_key" and err.get("reason") != "uncertain"
+    assert err["message"] == msg
+    assert client.app.state.handoffs.is_unsettled(REQ) is None  # nothing is unsettled: it can be tried again
+    del script.refuse["sign"]
+    assert sign_lost(client, token, stub).status_code == 200
+
+
+# -- #1198 C10: hub steps by click, with the backup key sealed to the signer ----------------------------
+
+BACKUP_LINE = "This step also needs your backup key. You type it once here; orch does not keep it"
+SIGNER_PK = "B" + "Q" * 86
+BACKUP_ENV = {"v": 1, "alg": "P256-HKDF-SHA256-A256GCM", "epk": "C" + "A" * 86, "ct": "D" * 363}
+HUB_ID = "a" * 32
+
+
+def hub_join(**kw):
+    return {"action": "hub_join", "hub_card": '{"o":{"hub_id":"' + HUB_ID + '"}}', "hub_id": HUB_ID, **kw}
+
+
+def backup_view(**over):
+    seal = {"v": 1, "alg": "P256-HKDF-SHA256-A256GCM", "pk": SIGNER_PK, "purposes": ["hub.backup_key"]}
+    view = {
+        "risk": RISK,
+        "op": "hub.join",
+        "workspace": {"id": GRANT_WS, "name": "billing", "prefix": "DEMO"},
+        "fingerprint": "0123456789ab",
+        "lines": ["join the hub", "", BACKUP_LINE],
+        "seal": seal,
+        "backup_key_line": BACKUP_LINE,
+        "confirm": {"kind": "click"},
+    }
+    return {"view": {**view, **over}, "view_digest": HASH}
+
+
+@pytest.fixture
+def backup(script, monkeypatch, host_check):
+    global GRANT_WS
+    GRANT_WS = script.ws
+    script.features = ["custody", "backup_key"]
+    host_check.verified = {"fingerprint": "0123456789ab"}
+    monkeypatch.setattr(client_login_kind(), "login_kind", lambda self, token: "local", raising=False)
+    script.view = backup_view()
+    return script
+
+
+def client_login_kind():
+    from orch_dashboard.auth import Auth
+
+    return Auth
+
+
+def sign_hub(client, token, stub, **body):
+    return client.post(url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH, **body}, headers=hdr(token))
+
+
+def test_a_hub_join_prepares_the_hub_op_and_the_card_only(client, token, stub, backup):
+    res = prepare(client, token, stub, hub_join())
+    assert res.status_code == 200, res.text
+    sent = sent_of(backup, "prepare")[0][1]
+    assert sent["op"] == "hub.join" and sent["args"] == {
+        "hub_card": {"o": {"hub_id": HUB_ID}},
+        "hub_id": HUB_ID,
+        "mode": "selective",
+    }
+    assert "reveal_key" not in sent and "deposit" not in sent
+    left = prepare(client, token, stub, {"action": "hub_leave"})
+    assert sent_of(backup, "prepare")[-1][1]["op"] == "hub.leave" and left.status_code in (200, 409)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        hub_join(mode="full"),  # a full join needs the key in passphrase custody: the terminal's
+        hub_join(hub_id="XYZ"),
+        hub_join(hub_card="not json"),
+        hub_join(hub_card="[]"),
+        hub_join(extra=1),
+        {"action": "hub_leave", "hub_id": HUB_ID},
+    ],
+)
+def test_hub_bodies_are_closed(client, token, stub, backup, body):
+    assert prepare(client, token, stub, body).status_code == 400
+    assert sent_of(backup, "prepare") == []
+
+
+def test_a_hub_step_needs_a_signer_that_takes_the_backup_key_and_a_local_session(
+    client, token, stub, backup, monkeypatch
+):
+    backup.features = ["custody"]
+    res = prepare(client, token, stub, hub_join())
+    assert res.status_code != 200 and sent_of(backup, "prepare") == []
+    backup.features = ["custody", "backup_key"]
+    monkeypatch.setattr(client_login_kind(), "login_kind", lambda self, token: "remote", raising=False)
+    res = prepare(client, token, stub, hub_join())
+    assert res.status_code == 409 and sent_of(backup, "prepare") == []
+
+
+def test_a_hub_step_is_not_a_terminal_hand_off(client, token, stub, backup):
+    assert client.post(f"/api/w/{stub.ws}/handoff", json=hub_join(), headers=hdr(token)).status_code == 400
+    assert client.post(f"/api/w/{stub.ws}/handoff", json={"action": "hub_leave"}, headers=hdr(token)).status_code == 400
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"seal": None},
+        {"seal": {"v": 1, "alg": "P256-HKDF-SHA256-A256GCM", "pk": SIGNER_PK, "purposes": ["custody.passphrase"]}},
+        {
+            "seal": {
+                "v": 1,
+                "alg": "P256-HKDF-SHA256-A256GCM",
+                "pk": SIGNER_PK,
+                "purposes": ["hub.backup_key", "github.token"],
+            }
+        },
+        {"seal": {"v": 1, "alg": "P256-HKDF-SHA256-A256GCM", "purposes": ["hub.backup_key"], "for": "0" * 64}},
+        {"seal": {"v": 1, "alg": "P256-HKDF-SHA256-A256GCM", "pk": "short", "purposes": ["hub.backup_key"]}},
+        {"lines": ["join the hub"]},
+        {"backup_key_line": "something else"},
+        {"deposit": True},
+        {"confirm": {}},
+        {"workspace": {"id": "f" * 32, "name": "other", "prefix": "DEMO"}},
+    ],
+)
+def test_a_hub_view_without_the_backup_key_parts_is_not_shown(client, token, stub, backup, over):
+    backup.view = backup_view(**over)
+    prepare(client, token, stub, hub_join())
+    res = client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token))
+    assert res.status_code == 409 and res.json()["error"]["reason"] == "check_failed"
+
+
+def test_a_view_of_another_action_that_asks_for_the_backup_key_is_not_shown(client, token, stub, script):
+    script.view = {"view": {**script.view["view"], "seal": backup_view()["view"]["seal"]}, "view_digest": HASH}
+    prepare(client, token, stub)
+    res = client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token))
+    assert res.status_code == 409
+
+
+def test_the_hub_view_is_shown_as_the_signer_made_it(client, token, stub, backup):
+    prepare(client, token, stub, hub_join())
+    res = client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token))
+    assert res.status_code == 200, res.text
+    assert res.json() == backup.view
+
+
+def test_the_sealed_backup_key_is_relayed_as_it_came_and_not_kept(client, token, stub, backup, caplog):
+    prepare(client, token, stub, hub_join())
+    with caplog.at_level("DEBUG"):
+        res = sign_hub(client, token, stub, sealed={"hub.backup_key": BACKUP_ENV})
+    assert res.status_code == 200, res.text
+    assert sent_of(backup, "sign")[0][1]["sealed"] == {"hub.backup_key": BACKUP_ENV}
+    assert BACKUP_ENV["ct"] not in res.text and BACKUP_ENV["ct"] not in caplog.text
+    assert res.json() == {"state": "submitted", "duplicate": False} | {
+        k: v for k, v in res.json().items() if k in ("key", "seq")
+    }
+
+
+@pytest.mark.parametrize(
+    "sealed",
+    [
+        None,
+        {},
+        {"hub.backup_key": {**BACKUP_ENV, "extra": 1}},
+        {"hub.backup_key": {**BACKUP_ENV, "v": 2}},
+        {"hub.backup_key": {**BACKUP_ENV, "alg": "x"}},
+        {"hub.backup_key": {**BACKUP_ENV, "ct": "short"}},
+        {"hub.backup_key": BACKUP_ENV, "custody.passphrase": BACKUP_ENV},
+        {"custody.passphrase": BACKUP_ENV},
+        {"hub.backup_key": "plain words typed here"},
+    ],
+)
+def test_a_hub_sign_without_a_well_formed_sealed_key_never_reaches_the_signer(client, token, stub, backup, sealed):
+    prepare(client, token, stub, hub_join())
+    body = {} if sealed is None else {"sealed": sealed}
+    res = sign_hub(client, token, stub, **body)
+    assert res.status_code in (400, 409), res.text
+    assert sent_of(backup, "sign") == []
+
+
+def test_a_sealed_value_on_any_other_action_is_refused(client, token, stub, script):
+    prepare(client, token, stub)
+    res = sign_hub(client, token, stub, sealed={"hub.backup_key": BACKUP_ENV})
+    assert res.status_code == 400
+    assert sent_of(script, "sign") == []
+
+
+def test_a_sealed_sign_on_a_non_local_session_never_reaches_the_signer(client, token, stub, backup, monkeypatch):
+    prepare(client, token, stub, hub_join())
+    monkeypatch.setattr(client_login_kind(), "login_kind", lambda self, token: "remote", raising=False)
+    res = sign_hub(client, token, stub, sealed={"hub.backup_key": BACKUP_ENV})
+    assert res.status_code == 409 and res.json()["error"]["reason"] == "check_failed"
+    assert sent_of(backup, "sign") == []
+
+
+def test_c17_a_plain_click_resumes_one_click_from_a_local_dashboard(client, token, stub, script, auth):
+    script.features = ["custody"]
+    script.enabled = script.available = False
+    auth.kinds[token] = "local"
+    res = switch(client, token, stub, {"on": True, "resume": True})
+    assert res.status_code == 200, res.text
+    assert res.json()["enabled"] is True
+    calls = [c for c in script.clients[-1].calls if c[0].startswith("custody")]
+    assert calls == [("custody_on", {"workspace_id": stub.ws, "resume": True})]
+
+
+def test_c17_a_resume_from_any_other_session_keeps_the_terminal_command(client, token, stub, script, auth):
+    script.features = ["custody"]
+    script.enabled = script.available = False
+    for kind in ("remote", "passkey", None):
+        auth.kinds[token] = kind
+        res = switch(client, token, stub, {"on": True, "resume": True})
+        assert res.json()["error"]["code"] == "custody.terminal_needed", res.text
+        assert "orch host convenience on --workspace" in res.json()["error"]["message"]
+    assert not any(c[0] == "custody_on" for cl in script.clients for c in cl.calls)
+
+
+def test_c17_resume_is_on_without_a_passphrase_only(client, token, stub, script, auth):
+    script.features = ["custody"]
+    auth.kinds[token] = "local"
+    sealed = {"request_id": "hr_" + "0" * 26, "view_digest": "0" * 64}
+    for body in (
+        {"on": False, "resume": True},
+        {"on": True, "resume": True, "passphrase": PASSPHRASE},
+        {"on": True, "resume": True, **sealed},
+    ):
+        res = switch(client, token, stub, body)
+        assert res.json()["error"]["code"] == "invalid.input" and PASSPHRASE not in res.text
+    assert not any(c[0] == "custody_on" for cl in script.clients for c in cl.calls)
+
+
+# -- #1198 C13: replace this computer's device key ---------------------------------------------------------------------
+OLD, NEW = "d_" + "1" * 32, "d_" + "2" * 32
+ROTATE_OFFER_FIELDS = {
+    "request_id": "hr_" + "0" * 25 + "2",
+    "view_digest": HASH,
+    "expires_in": 300,
+}
+
+
+def rotate_offer(ws, **over):
+    seal = {
+        "v": 1,
+        "alg": "P256-HKDF-SHA256-A256GCM",
+        "pk": "B" + "Q" * 86,
+        "purposes": ["device.recovery_code", "custody.passphrase"],
+    }
+    view = {
+        "op": "device.rotate",
+        "workspace": {"id": ws, "name": "demo", "prefix": "DEMO"},
+        "old": OLD,
+        "new": NEW,
+        "lines": ["Replace the signing key of this computer for demo.", f"old device: {OLD}", f"new device: {NEW}"],
+        "confirm": {"kind": "click"},
+        "seal": seal,
+    }
+    return {**ROTATE_OFFER_FIELDS, "view": {**view, **over}}
+
+
+def rotate_body(**over):
+    return {
+        "request_id": ROTATE_OFFER_FIELDS["request_id"],
+        "view_digest": HASH,
+        "sealed": {"device.recovery_code": PASS_ENV, "custody.passphrase": PASS_ENV},
+        **over,
+    }
+
+
+def rotate_calls(script):
+    return [c for cl in script.clients for c in cl.calls if c[0] == "rotate"]
+
+
+def test_c13_the_review_is_relayed_for_an_owner_on_a_local_session(client, token, stub, script, local):
+    script.features = ["custody", "device_rotate"]
+    script.rotation = rotate_offer(stub.ws)
+    res = client.post(url(stub, "rotate/seal"), json={}, headers=hdr(token))
+    assert res.status_code == 200 and res.json() == script.rotation
+    assert rotate_calls(script) == [("rotate", {"workspace_id": stub.ws, "begin": True})]
+
+
+def test_c13_begin_and_sign_are_local_owner_only_and_need_the_feature(client, token, stub, script, monkeypatch):
+    from orch_dashboard import adapters
+    from orch_dashboard.auth import Auth
+
+    script.rotation = rotate_offer(stub.ws)
+    script.features = ["custody", "device_rotate"]
+    monkeypatch.setattr(Auth, "login_kind", lambda self, token: "remote", raising=False)
+    assert client.post(url(stub, "rotate/seal"), json={}, headers=hdr(token)).status_code == 409
+    assert client.post(url(stub, "rotate"), json=rotate_body(), headers=hdr(token)).status_code == 409
+    monkeypatch.setattr(Auth, "login_kind", lambda self, token: "local", raising=False)
+    script.features = ["custody"]
+    for path, body in (("rotate/seal", {}), ("rotate", rotate_body())):
+        assert client.post(url(stub, path), json=body, headers=hdr(token)).json()["error"]["code"] == "click.contract"
+    script.features = ["custody", "device_rotate"]
+    real = adapters.members
+    monkeypatch.setattr(adapters, "members", lambda d: [m.model_copy(update={"role": "maintainer"}) for m in real(d)])
+    for path, body in (("rotate/seal", {}), ("rotate", rotate_body())):
+        assert client.post(url(stub, path), json=body, headers=hdr(token)).json()["error"]["code"] == "role.denied"
+    assert rotate_calls(script) == []
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"op": "approve"},
+        {"old": "x"},
+        {"new": OLD},
+        {"workspace": {"id": "0" * 32}},
+        {"confirm": {"kind": "word"}},
+        {"seal": {"v": 1, "alg": "P256-HKDF-SHA256-A256GCM", "pk": "B" + "Q" * 86, "purposes": ["custody.passphrase"]}},
+        {
+            "seal": {
+                "v": 1,
+                "alg": "P256-HKDF-SHA256-A256GCM",
+                "pk": "short",
+                "purposes": ["device.recovery_code", "custody.passphrase"],
+            }
+        },
+    ],
+)
+def test_c13_an_odd_review_from_the_signer_is_not_passed_on(client, token, stub, script, local, over):
+    script.features = ["custody", "device_rotate"]
+    script.rotation = rotate_offer(stub.ws, **over)
+    assert client.post(url(stub, "rotate/seal"), json={}, headers=hdr(token)).status_code == 409
+
+
+def test_c13_a_finished_earlier_run_answers_done(client, token, stub, script, local):
+    script.features = ["custody", "device_rotate"]
+    script.rotation = {"done": True, "old": OLD, "new": NEW, "custody": "passphrase", "enabled": False}
+    res = client.post(url(stub, "rotate/seal"), json={}, headers=hdr(token))
+    assert res.status_code == 200 and res.json()["done"] is True and res.json()["custody"] == "passphrase"
+
+
+def test_c13_sign_relays_ciphertext_only(client, token, stub, script, local, caplog, capfd):
+    script.features = ["custody", "device_rotate"]
+    caplog.set_level(logging.DEBUG)
+    res = client.post(url(stub, "rotate"), json=rotate_body(), headers=hdr(token))
+    assert res.status_code == 200 and res.json()["done"] is True and res.json()["custody"] == "passphrase"
+    assert rotate_calls(script) == [
+        (
+            "rotate",
+            {
+                "workspace_id": stub.ws,
+                "request_id": ROTATE_OFFER_FIELDS["request_id"],
+                "view_digest": HASH,
+                "sealed": {"device.recovery_code": PASS_ENV, "custody.passphrase": PASS_ENV},
+            },
+        )
+    ]
+    out, err = capfd.readouterr()
+    assert PASS_ENV["ct"] not in caplog.text + out + err + res.text
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        rotate_body(extra=1),
+        rotate_body(passphrase="CANARY-clear"),
+        rotate_body(sealed={"device.recovery_code": PASS_ENV}),
+        rotate_body(sealed={"custody.passphrase": PASS_ENV}),
+        rotate_body(sealed={"device.recovery_code": PASS_ENV, "custody.passphrase": {**PASS_ENV, "v": 2}}),
+        rotate_body(
+            sealed={"device.recovery_code": PASS_ENV, "custody.passphrase": PASS_ENV, "hub.backup_key": PASS_ENV}
+        ),
+        rotate_body(request_id="nope"),
+        rotate_body(view_digest="sha256:short"),
+    ],
+)
+def test_c13_sign_bodies_are_closed_and_never_echoed(client, token, stub, script, local, body):
+    script.features = ["custody", "device_rotate"]
+    res = client.post(url(stub, "rotate"), json=body, headers=hdr(token))
+    assert res.status_code == 400 and res.json()["error"]["code"] == "invalid.input" and "CANARY" not in res.text
+    assert rotate_calls(script) == []

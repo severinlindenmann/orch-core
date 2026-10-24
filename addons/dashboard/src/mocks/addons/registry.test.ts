@@ -64,12 +64,11 @@ describe('addon registry', () => {
     store.appendWs(ws, { type: 'addon.disabled', name: 'wiki' })
     await expect(api.getAddonState(ws, 'wiki')).rejects.toMatchObject({ status: 409, code: 'addon.inactive' })
   })
-  it('keeps the six iteration-1 actions working', async () => {
+  it('keeps the iteration-1 actions working', async () => {
     const { api, ws, store } = setup()
     const calls = [
       ['publish', 'decide', { id: 'dec_publish_failed_build', confirmed: true, option: 'no' }],
       ['estimate', 'save_settings', {}],
-      ['github', 'refresh', {}],
       ['terminals', 'save_settings', {}],
       ['usage', 'save_settings', {}],
       ['wiki', 'open', { slug: 'glossary' }],

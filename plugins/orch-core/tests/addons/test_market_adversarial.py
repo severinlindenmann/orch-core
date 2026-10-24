@@ -187,37 +187,6 @@ def test_l2m3_alias_url_does_not_reset_the_rollback_floor():
     assert refused(res, "market.malformed", "market.rollback"), res
 
 
-# ------------------------------------------------------------------------------------------------ L2M-9 hub policy
-
-
-def test_l2m9_hub_allow_list_given_as_a_string_is_malformed_policy_not_a_substring_match():
-    """``repo in hub["allow"]`` on a string is a substring test: ``acme/orch-market`` is 'in'
-    ``acme/orch-market-mirror``. A malformed policy must count as an empty allow list (spec section 9)."""
-    f = mk.files_for("standup", caps=["network"])
-    e = mk.entry("standup", f, caps=["network"])
-    hub = {"allow": OTHER + "-mirror", "block": [], "ceiling": None}
-    assert install(mk.index(OTHER, [e]), f, "standup", hub=hub) == {"refuse": "market.not_allowed"}
-
-
-@pytest.mark.parametrize(
-    "hub",
-    [
-        {"allow": [OTHER]},  # no block, no ceiling key
-        {"allow": [OTHER], "block": None, "ceiling": None},
-        {"allow": [OTHER], "block": [], "ceiling": "network"},
-        {"allow": [OTHER], "block": [], "ceiling": None, "widen": ["pty"]},  # unknown key
-    ],
-)
-def test_l2m9_malformed_hub_policy_refuses_instead_of_crashing_or_passing(hub):
-    f = mk.files_for("standup", caps=["network"])
-    e = mk.entry("standup", f, caps=["network"])
-    try:
-        res = install(mk.index(OTHER, [e]), f, "standup", hub=hub)
-    except Exception as exc:  # noqa: BLE001  (a crash is not a refusal)
-        res = {"crash": type(exc).__name__}
-    assert res == {"refuse": "market.not_allowed"}
-
-
 # ------------------------------------------------------------------------------------------------ L2M-10 version reuse
 
 

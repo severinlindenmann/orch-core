@@ -4,15 +4,10 @@
 * ``host.wsk_create``: a new workspace id and key, ``O_CREAT|O_EXCL`` in a fresh 0700 directory; never replaces a key.
 * ``host.register``: adopt a workspace (D-P2-18): ownership lock, registration, serving, unlock.
 * ``host.unregister``: stop serving and remove the registration, which restores direct mode.
-* ``host.bootstrap``: append a signed genesis with the new key as ``seq`` 1, then register (the ``init`` composite,
-  whose client side is :func:`orch.ops.workspace_init.create_workspace_hosted`).
+* ``host.bootstrap``: append a signed genesis with the new key as ``seq`` 1, then register (the hosted create of
+  ``orch setup``, whose client side is :func:`orch.ops.workspace_init._hosted_bootstrap`).
 * ``host.outcome``: the stored outcome of a control write.
 * ``host.restart``: drain (D-P2-4).
-* ``host.relay_stop``, ``host.relay_start`` (H12a, §11A.4): keep a workspace's relay worker stopped (persisted, it
-  outlives a restart: the operator procedure after a state restore), or clear that stop. Idempotent; no idem.
-* ``host.relay_unlink`` (R5, §11A.6): stop the worker and rename ``link.json`` to ``unlinked-<linked_at>.json`` (the
-  reader reservation stays: never deleted). No idem; ``relay.not_linked`` when there is no link.
-
 The three writes are control writes: ``opts.idem`` is required, an intent is fsynced before anything changes, and
 :meth:`ControlOps.recover` finishes or rolls back every ``started`` intent at host start.
 """
@@ -137,65 +132,6 @@ _SCHEMAS = {
     "host.restart": _closed({}),
     "host.register": _closed({"root": _ROOT, "peers": _PEERS}),
     "host.unregister": _closed({"workspace_id": _WS}),
-    "host.relay_stop": _closed({"workspace_id": _WS}),
-    "host.relay_start": _closed({"workspace_id": _WS}),
-    "host.relay_unlink": _closed({"workspace_id": _WS}),
-    "host.relay_status": _closed({"workspace_id": _WS}),  # B1: host.status.relay over the control socket (the CLI link)
-    # B1 (11A.5 step 1): the reservation of a first link; human-only, no idem, no outcome record
-    "host.relay_link": {
-        "type": "object",
-        "properties": {
-            "workspace_id": _WS,
-            "origin": {"type": "string", "minLength": 8, "maxLength": 256},
-            "max_publication_bytes": {"type": "integer", "minimum": 1 << 20, "maximum": 1 << 30},
-            "ca_file": {"type": "string", "minLength": 1, "maxLength": 1024},
-            "proxy": {"type": "string", "minLength": 1, "maxLength": 512},
-        },
-        "required": ["workspace_id", "origin", "max_publication_bytes"],
-        "additionalProperties": False,
-    },
-    # R6c-2 (11A.15.9): relay pairing, human-only (the CLI refuses under ORCH_GRANT); none is a write (no idem, no
-    # outcome record): the offer's link exists only in its direct answer
-    "host.relay_pair_offer": {
-        "type": "object",
-        "properties": {
-            "workspace_id": _WS,
-            "scopes": {"type": "array", "minItems": 1, "maxItems": 2, "items": {"enum": ["look", "decide"]}},
-            "ttl_ms": {"type": "integer", "minimum": 60_000, "maximum": 600_000},
-        },
-        "required": ["workspace_id"],
-        "additionalProperties": False,
-    },
-    "host.relay_pair_show": _closed({"workspace_id": _WS, "offer_id": _OFFER}),
-    "host.relay_pair_list": _closed({"workspace_id": _WS}),
-    "host.relay_pair_answer": _closed(
-        {
-            "workspace_id": _WS,
-            "offer_id": _OFFER,
-            "code": {"type": "string", "maxLength": 32},
-            "approve": {"type": "boolean"},
-        }
-    ),  # fmt: skip
-    "host.relay_pair_cancel": _closed({"workspace_id": _WS, "offer_id": _OFFER}),
-    "host.relay_pair_abandon": _closed({"workspace_id": _WS, "offer_id": _OFFER}),
-    "host.relay_pair_cert": {
-        "type": "object",
-        "properties": {
-            "workspace_id": _WS,
-            "offer_id": _OFFER,
-            "cert": {"type": "object"},
-            "rejection": {"type": "object"},
-            "challenge": {"type": "object"},
-        },  # fmt: skip
-        "required": ["workspace_id", "offer_id"],
-        "additionalProperties": False,
-    },
-    "host.relay_primary_set": _closed(
-        {"workspace_id": _WS, "cert": {"type": "object"}, "label": {"type": "string", "minLength": 1, "maxLength": 200}}
-    ),
-    # B1 (11A.2): the genesis pin's person path; human-only like pairing, no idem, no outcome record
-    "host.relay_genesis_pin_facts": _closed({"workspace_id": _WS}),
-    "host.relay_genesis_pin_submit": _closed({"workspace_id": _WS, "pin": {"type": "object"}}),
     "host.outcome": _closed({"idem": {"type": "string", "pattern": r"^a_" + frames.ULID + "$"}}),
     "host.bootstrap": _closed(
         {
@@ -206,8 +142,6 @@ _SCHEMAS = {
         }
     ),
 }
-PAIR_OPS = frozenset(op for op in _SCHEMAS if op.startswith("host.relay_pair_") or op == "host.relay_primary_set")
-GENESIS_OPS = frozenset({"host.relay_genesis_pin_facts", "host.relay_genesis_pin_submit"})
 _VALIDATORS = {op: Draft202012Validator(schema) for op, schema in _SCHEMAS.items()}
 CONTROL_OPS = {op: 1 for op in _SCHEMAS}
 WRITES = CONTROL_WRITES
@@ -291,6 +225,8 @@ class ControlOps:
         data: dict[str, Any] = {"workspaces": rows}
         if self.host.dev is not None:  # absent, not false, on a normal host (goldens unchanged)
             data["dev"] = {"sim_convenience": True, "sandbox": self.host.dev.id8}
+            if self.host.dev.pending:
+                data["dev"]["pending"] = True
         if self.host.dev_alarms:  # §11A.17.3 D3: absent while there is none
             data["alarms"] = [dict(a) for a in self.host.dev_alarms]
         return ok_result(data)
@@ -438,12 +374,7 @@ class ControlOps:
             workspace_id, prefix, ws, genesis = self._inspect(root)
             if self.host.registry.get(workspace_id) is not None:
                 raise HostError("host.busy", f"workspace {workspace_id} is already registered")
-            view = devmode.View(
-                genesis,
-                frozenset(ws.members),
-                frozenset(ws.former),
-                devmode._link_origin(self.state_dir, workspace_id, self.host_uid),  # noqa: SLF001
-            )
+            view = devmode.View(genesis, frozenset(ws.members), frozenset(ws.former))
             devmode.check_admit(self.host.dev, workspace_id, root, view)  # §11A.17: before anything is touched
             now = self.host.clock()
             peers = validate_peers(
@@ -507,152 +438,6 @@ class ControlOps:
 
         return self._guarded(intent, run, lambda: False)
 
-    # -- host.relay_stop, host.relay_start (H12a)
-    def relay_stop(self, args: dict[str, Any]) -> dict[str, Any]:
-        from .relaylink import mark_stopped
-
-        workspace_id = args["workspace_id"]
-        if self.host.registry.get(workspace_id) is None:
-            raise HostError("not_found", f"workspace {workspace_id} is not registered")
-        service = self.host.services.get(workspace_id)
-        if service is not None:
-            worker = service.relay_stop()
-        else:
-            mark_stopped(self.state_dir, workspace_id, self.host_uid)
-            worker = "none"
-        return ok_result({"workspace_id": workspace_id, "stopped": True, "worker": worker})
-
-    def relay_start(self, args: dict[str, Any]) -> dict[str, Any]:
-        from .relaylink import clear_stopped, unlink_pending
-
-        workspace_id = args["workspace_id"]
-        if self.host.registry.get(workspace_id) is None:
-            raise HostError("not_found", f"workspace {workspace_id} is not registered")
-        service = self.host.services.get(workspace_id)
-        if service is not None:
-            worker = service.relay_start()
-        else:
-            if unlink_pending(self.state_dir, workspace_id):  # round 5 L3: never clear the marker under an intent
-                raise HostError("lock.busy", "unlink_pending: an unlink of this workspace has not finished yet")
-            clear_stopped(self.state_dir, workspace_id, self.host_uid)
-            worker = "none"
-        data: dict[str, Any] = {"workspace_id": workspace_id, "stopped": False, "worker": worker}
-        if service is not None and worker == "none":
-            data["reason"] = service.relay_reason  # why nothing started (the R6 gate, not linked, …): host.status
-        return ok_result(data)
-
-    def relay_unlink(self, args: dict[str, Any]) -> dict[str, Any]:
-        workspace_id = args["workspace_id"]
-        if self.host.registry.get(workspace_id) is None:
-            raise HostError("not_found", f"workspace {workspace_id} is not registered")
-        service = self.host.services.get(workspace_id)
-        if service is None:
-            raise HostError("workspace.unavailable", f"workspace {workspace_id} is not served")
-        name = service.relay_unlink()
-        return ok_result({"workspace_id": workspace_id, "unlinked": name})
-
-    def relay_status(self, args: dict[str, Any]) -> dict[str, Any]:
-        from .relayhook import status
-
-        workspace_id = args["workspace_id"]
-        service = self.host.services.get(workspace_id)
-        if self.host.registry.get(workspace_id) is None or service is None:
-            raise HostError("not_found", f"workspace {workspace_id} is not served")
-        return ok_result({"workspace_id": workspace_id, "relay": status(service)})
-
-    def relay_link(self, args: dict[str, Any]) -> dict[str, Any]:
-        """``orch host relay link`` step 1 (11A.5): ``GET /v2/relay-info`` for the reader level (on this thread, never
-        the workspace's worker thread), then the reservation as a worker job (``link.json``, state ``linking``; the
-        permanent reader reservation of 11A.6). It starts nothing: the owner signs the genesis pin, then
-        ``host.relay_start`` runs the first link."""
-        from orch.relay.http import TransportError
-        from orch.relay.retry import RelayRefused
-        from orch.relay.session import SessionError
-        from orch.store import StoreError
-
-        from .relayhook import link_step1
-
-        workspace_id = args["workspace_id"]
-        if self.host.registry.get(workspace_id) is None:
-            raise HostError("not_found", f"workspace {workspace_id} is not registered")
-        service = self.host.services.get(workspace_id)
-        if service is None:
-            raise HostError("workspace.unavailable", f"workspace {workspace_id} is not served")
-        from .relaypair import refuse_if_cut_over
-
-        refuse_if_cut_over(service)  # V3 C10
-        try:
-            link = link_step1(
-                service, origin=args["origin"], max_publication_bytes=args["max_publication_bytes"],
-                ca_file=args.get("ca_file"), proxy=args.get("proxy"),
-            )  # fmt: skip
-        except (TransportError, RelayRefused, SessionError, OSError) as exc:
-            raise HostError(
-                "invalid.input", f"the relay could not be read ({type(exc).__name__}); nothing was linked"
-            ) from None
-        except StoreError as exc:  # relay.link_exists (the permanent reservation), validation.relay_link
-            raise HostError("invalid.input", f"{exc.code}: {str(exc)[:160]}") from None
-        return ok_result({"workspace_id": workspace_id, "state": link["state"], "origin": link["origin"],
-                          "max_publication_bytes": link["max_publication_bytes"]})  # fmt: skip
-
-    # -- R6c-2: relay pairing (11A.15.9), thin wrappers over the internal API (relaypair.api)
-    def relay_pair(self, op: str, args: dict[str, Any]) -> dict[str, Any]:
-        from dataclasses import asdict
-
-        from . import relaypair
-
-        workspace_id = args["workspace_id"]
-        if self.host.registry.get(workspace_id) is None:
-            raise HostError("not_found", f"workspace {workspace_id} is not registered")
-        service = self.host.services.get(workspace_id)
-        if service is None:
-            raise HostError("workspace.unavailable", f"workspace {workspace_id} is not served")
-        relaypair.refuse_if_cut_over(service)  # V3 C10
-        data: dict[str, Any] = {"workspace_id": workspace_id}
-        if op == "host.relay_primary_set":
-            data["device_id"] = relaypair.primary_set(service, args["cert"], args["label"])
-        elif op == "host.relay_pair_offer":
-            h = relaypair.api(service, "offer", tuple(args.get("scopes") or ("look", "decide")),
-                              args.get("ttl_ms", 600_000))  # fmt: skip
-            data.update(h.public())
-            data["link"] = {"native": h.link.native, "https": h.link.https}  # the direct answer only
-        elif op == "host.relay_pair_list":
-            data["offers"] = [{**asdict(o), "scopes": list(o.scopes)} for o in relaypair.api(service, "list_offers")]
-        elif op == "host.relay_pair_show":
-            shown = relaypair.api(service, "show", args["offer_id"])
-            data["offer"] = {**asdict(shown), "scopes": list(shown.scopes)}
-        elif op == "host.relay_pair_answer":
-            state, left = relaypair.api(service, "answer", args["offer_id"], args["code"], args["approve"])
-            data.update(offer_id=args["offer_id"], state=state, attempts_left=left)
-        elif op == "host.relay_pair_cancel":
-            data.update(offer_id=args["offer_id"], state=relaypair.api(service, "cancel", args["offer_id"]))
-        elif op == "host.relay_pair_abandon":
-            data.update(offer_id=args["offer_id"], state=relaypair.api(service, "abandon", args["offer_id"]))
-        elif op == "host.relay_pair_cert":
-            state = relaypair.api(service, "pair_cert", args["offer_id"], cert=args.get("cert"),
-                                  rejection=args.get("rejection"), challenge=args.get("challenge"))  # fmt: skip
-            data.update(offer_id=args["offer_id"], state=state)
-        else:  # pragma: no cover - the schema table names every op
-            raise HostError("unknown_command", op)
-        return ok_result(data)
-
-    # -- B1: the genesis pin (11A.2)
-    def relay_genesis_pin(self, op: str, args: dict[str, Any]) -> dict[str, Any]:
-        from . import relaygenesis
-
-        workspace_id = args["workspace_id"]
-        if self.host.registry.get(workspace_id) is None:
-            raise HostError("not_found", f"workspace {workspace_id} is not registered")
-        service = self.host.services.get(workspace_id)
-        if service is None:
-            raise HostError("workspace.unavailable", f"workspace {workspace_id} is not served")
-        from .relaypair import refuse_if_cut_over
-
-        refuse_if_cut_over(service)  # V3 C10
-        if op == "host.relay_genesis_pin_facts":
-            return ok_result({"workspace_id": workspace_id, "facts": relaygenesis.facts(service)})
-        return ok_result(relaygenesis.submit(service, args["pin"]))
-
     # -- host.bootstrap
     def bootstrap(self, args: dict[str, Any], idem: str) -> dict[str, Any]:
         root = os.path.realpath(args["root"])
@@ -673,6 +458,11 @@ class ControlOps:
                 self.intents.abandon(intent)  # nothing was created: the same key may run again
                 raise
             # Only now may recovery undo anything, and only what this bootstrap creates from here on.
+            try:
+                self._claim_pending_genesis(workspace_id)
+            except BaseException:
+                self.intents.abandon(intent)
+                raise
             self.intents.update(intent, validated=True, validated_at=int(time.time()))
             return self._run_bootstrap(intent, root, peers, backend)
 
@@ -684,7 +474,7 @@ class ControlOps:
 
         # an existing project is fine; a name the store writes is not (rollback owns them, a project's file is never
         # written over): one rule for setup, init and here (rootclaim)
-        why = rootclaim.refusal(rootclaim.inspect(root), init_lock_ok=True)
+        why = rootclaim.refusal(rootclaim.inspect(root))
         if why is not None:
             raise HostError("invalid.input", f"{root}: {why}")
 
@@ -732,9 +522,35 @@ class ControlOps:
             pins=self.host.pins,
             person_valid=lambda person: person == owner and person_scope_ok(cert.get("o") or {}),
         )
-        devmode.check_admit(self.host.dev, workspace_id, root, _genesis_view(event))  # §11A.17: nothing appended
+        devmode.check_admit(self.host.dev, workspace_id, root, _genesis_view(event), fresh=True)  # nothing appended
         self._check_reserved_prefix(event)
+        self._check_pending_free(workspace_id)
         return peers, backend
+
+    def _pending_free(self, workspace_id: str) -> bool:
+        """The pending rule (V3-D38): a pending dev host admits ONE genesis per process, only into an empty
+        registry. Free when the claim is unclaimed or held by this very workspace id (a retry or the recovery of the
+        same bootstrap)."""
+        held = self.host.pending_claim
+        return not self.host.registry.entries() and held in (None, workspace_id)
+
+    def _check_pending_free(self, workspace_id: str) -> None:
+        """Read-only half (the validation runs twice per bootstrap)."""
+        dev = self.host.dev
+        if dev is not None and dev.pending and not self._pending_free(workspace_id):
+            raise devmode.refused("not_sandbox", "a pending dev host admits one fresh SBX genesis per process")
+
+    def _claim_pending_genesis(self, workspace_id: str) -> None:
+        """The claim, taken under a lock atomically with the check, before anything is appended and again before
+        every admission (``_finish_bootstrap``: live, same-key resume and start-up recovery), so no path admits a
+        second genesis. It records the workspace id, so finishing the claimed bootstrap again is allowed. A bootstrap
+        that fails after this leaves the claim taken; restart the host to try again."""
+        dev = self.host.dev
+        if dev is None or not dev.pending:
+            return
+        with self.host.pending_lock:
+            self._check_pending_free(workspace_id)
+            self.host.pending_claim = workspace_id
 
     def _check_reserved_prefix(self, event: dict[str, Any]) -> None:
         """``SBX`` is reserved for dev-pair sandboxes (§11A.17.3 F1): ``host.bootstrap`` accepts it only for a fresh
@@ -821,7 +637,8 @@ class ControlOps:
                 peers,
             )
             with OwnershipLock(self.state_dir, workspace_id).exclusive(self.host.lock_wait):
-                admit(self.host, entry, _genesis_view(event))  # the one choke point (§11A.17.3 R5)
+                self._claim_pending_genesis(workspace_id)  # also on resume and start-up recovery (one per process)
+                admit(self.host, entry, _genesis_view(event), fresh=True)  # the one choke point (§11A.17.3 R5)
                 self.host.serve_from_thread(entry)
         result = ok_result({"workspace_id": workspace_id, "seq": 1}, seq=1)
         return self.intents.complete(intent, result)["result"]
@@ -847,7 +664,7 @@ class ControlOps:
 
     @staticmethod
     def _foreign_root(root: str, workspace_id: str, planned_id: str) -> bool:
-        """Did another workspace take over ``root`` after the host died? A direct ``orch init`` may have: a
+        """Did another workspace take over ``root`` after the host died? Another host's ``orch setup`` may have: a
         ``config.json`` that does not name ``workspace_id`` (unreadable counts), or an ``events/workspace.jsonl``
         whose first line is a genesis other than the planned one (``config.json`` is installed only after that line).
         Its files are not ours to delete."""
@@ -872,7 +689,7 @@ class ControlOps:
             with open(store / "events" / "workspace.jsonl", "rb") as handle:
                 first = json.loads(handle.readline(1 << 20))
         except (OSError, ValueError):
-            return False  # no first line, or a torn one: nothing a direct init finished
+            return False  # no first line, or a torn one: nothing another creator finished
         return isinstance(first, dict) and first.get("id") != planned_id
 
     @staticmethod
@@ -1070,13 +887,6 @@ class ControlGate:
                 "host.unregister": lambda: ops.unregister(args, idem),
                 "host.bootstrap": lambda: ops.bootstrap(args, idem),
                 "host.outcome": lambda: ops.outcome(args),
-                "host.relay_stop": lambda: ops.relay_stop(args),
-                "host.relay_start": lambda: ops.relay_start(args),
-                "host.relay_unlink": lambda: ops.relay_unlink(args),
-                "host.relay_link": lambda: ops.relay_link(args),
-                "host.relay_status": lambda: ops.relay_status(args),
-                **{name: (lambda n=name: ops.relay_pair(n, args)) for name in PAIR_OPS},
-                **{name: (lambda n=name: ops.relay_genesis_pin(n, args)) for name in GENESIS_OPS},
             }[op]
             result = await asyncio.to_thread(call)
             session.respond(request, {"t": "res", "id": request.id, "ok": True, "result": result})

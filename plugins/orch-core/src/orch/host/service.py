@@ -167,6 +167,9 @@ class Host:
         #: §11A.17: the passed start-up proof of ``--dev-sim-convenience`` (:class:`orch.host.devmode.DevHost`), fixed
         #: for the life of the process; ``None`` on every normal host
         self.dev = dev
+        #: V3-D38: the workspace id a pending dev host (:attr:`dev` pending) admitted as its one genesis in this process
+        self.pending_claim: str | None = None
+        self.pending_lock = threading.Lock()
         #: §11A.17.3 D3: registered workspaces a normal host skipped at start (an ``SBX`` genesis), as alarms
         self.dev_alarms: list[dict[str, Any]] = []
         self._dev_logger: asyncio.Task[None] | None = None
@@ -436,10 +439,6 @@ class Host:
         service.runners = self.runners  # H11a: run.list / run.sub
         service.dev = self.dev  # §11A.17: the dev gate reads it; None on a normal host
         backend = self.backend_factory()
-        from .relayhook import install_seams, make_starter
-
-        install_seams()  # B1: the four relay seams (idempotent; the R6 gate is the separate switch)
-        service.relay_starter = make_starter(backend)  # R5: the open's hook starts the relay worker through it
         await service.call(service.open)
         if self.dev is not None:
             from .devmode import dev_gate

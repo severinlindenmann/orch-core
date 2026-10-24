@@ -29,6 +29,10 @@ export interface RunnerGrant {
   id: string
   until: string
   scope: 'all' | 'workable'
+  /** `whoami.runner.grant` only: the host's own launch rule (15-minute floor, member scope, revoked grant, role change). */
+  startable?: boolean
+  /** When the 15-minute floor is reached and the grant stops being startable; null when it is not startable now. */
+  startable_until?: string | null
 }
 
 export interface AgentBlocked {
@@ -41,9 +45,10 @@ export interface AgentPreview {
   spec: string | null
   ticket: string | null
   display: string | null
-  /** Model routing: the model this start would use (null: the agent's own default) and who chose it. */
+  /** The model this start would use (null: the agent's own default) and who chose it (`addon`: an add-on that holds choose_model, named by `model_by`). */
   model?: string | null
-  model_source?: 'chosen' | 'workspace' | 'default' | null
+  model_source?: 'chosen' | 'addon' | 'default' | null
+  model_by?: string | null
   display_hidden: boolean
   cwd: { kind: 'workspace' | 'repo' | 'worktree' | 'workdir' | null; repo?: string; ticket?: string }
   cwd_path: string | null
@@ -91,7 +96,6 @@ export const SHARED_COPY = "the repository's shared working copy (not a separate
 
 export const TERMINAL_ONLY = 'Turn on dashboard execution (orch runner enable) or use the terminal.'
 export const TERMINAL_GRANT = 'Run `orch grant --runner` in your terminal.'
-export const UPDATE_ORCH = "This orch version can't hand a grant to the runner; update orch."
 export const DEPOSIT_UNKNOWN = 'The grant may or may not be with your runner. Revoke it to be sure.'
 
 /** Each closed `deposit_reason` as one sentence; an unknown code reads as `other`. */

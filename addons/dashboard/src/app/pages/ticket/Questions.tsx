@@ -78,7 +78,7 @@ function AnswerForm({ q, sign, ticketKey, onViewQuestion }: { q: QuestionStatus;
   )
 }
 
-function QuestionCard({ q, viewer, sign, ticketKey }: { q: QuestionStatus; viewer: Viewer; sign: TabProps['sign']; ticketKey: string }) {
+function QuestionCard({ q, viewer, sign, ticketKey, agentLive }: { q: QuestionStatus; viewer: Viewer; sign: TabProps['sign']; ticketKey: string; agentLive: boolean }) {
   const [viewText, setViewText] = useState<string | null>(null)
   const open = q.state === 'open'
   const stale = q.state === 'stale'
@@ -130,7 +130,10 @@ function QuestionCard({ q, viewer, sign, ticketKey }: { q: QuestionStatus; viewe
 
       {answered && (
         <div className="mt-3 rounded-md border border-success/30 bg-success-soft px-3 py-2 text-[13px]">
-          <p className="font-medium text-text">{chosen ? chosen.label : answered.text}</p>
+          <p className="font-medium text-text" data-testid="answered-line">
+            Answered: {chosen ? chosen.label : answered.text}
+            {agentLive && ' · the agent continues'}
+          </p>
           {chosen && answered.text && <p className="mt-0.5 text-text-muted">{answered.text}</p>}
           <p className="mt-1 text-[12px] text-text-muted">
             {viewer.name(answered.by)}{answered.at ? ` · ${ago(answered.at)}` : ''}
@@ -156,7 +159,7 @@ export function Questions({ ticket, viewer, sign }: TabProps) {
   return (
     <ul className="space-y-3" aria-label="Questions">
       {ordered.map((q) => (
-        <QuestionCard key={q.id} q={q} viewer={viewer} sign={sign} ticketKey={ticket.key} />
+        <QuestionCard key={q.id} q={q} viewer={viewer} sign={sign} ticketKey={ticket.key} agentLive={!!ticket.claim && ticket.claim.live !== false} />
       ))}
     </ul>
   )

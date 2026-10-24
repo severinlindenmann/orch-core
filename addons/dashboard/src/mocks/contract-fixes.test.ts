@@ -21,6 +21,14 @@ const fail = async (p: Promise<unknown>) => {
   }
 }
 
+/** wiki offers `done` to viewers in a made-up update: the catalog ships no update, so a test sets one. */
+const VIEWER_WIKI = ['search', 'open', 'close', 'clear_search']
+const wikiUpdate = (store: ReturnType<typeof createMockStore>) => {
+  const wiki = store.addons.find((a) => a.name === 'wiki')!
+  wiki.update = { version: '0.2.0', capabilities: [], package_sha256: 'e'.repeat(64), changelog: 'x', actions: { ...wiki.actions, done: { minRole: 'viewer', label: 'Cancel editing', kind: 'navigation' } } }
+  return { op: 'update' as const, version: '0.2.0', package_sha256: 'e'.repeat(64), capabilities: [] as string[] }
+}
+
 describe('addon state view hides per-viewer keys', () => {
   it('does not return the raw nav map of wiki or terminals', async () => {
     const { api, ws } = setup()
@@ -78,11 +86,9 @@ describe('signed grant payload covers the viewer-level actions', () => {
   })
   it('refuses an update that does not list the new viewer action it adds', async () => {
     const { store, api, ws } = setup()
-    const gh = store.addons.find((a) => a.name === 'github')!
-    gh.update!.actions = { ...gh.actions, refresh: { minRole: 'viewer', label: 'Refresh' } }
-    const u = { op: 'update' as const, version: gh.update!.version, package_sha256: gh.update!.package_sha256, capabilities: gh.update!.capabilities }
-    expect(await fail(api.postAddonOp(ws, 'github', { ...u, viewer_actions: ['open'] }))).toMatchObject({ status: 409, code: 'addon.changed' })
-    expect(await api.postAddonOp(ws, 'github', { ...u, viewer_actions: ['open', 'refresh'] })).toMatchObject({ name: 'github' })
+    const u = wikiUpdate(store)
+    expect(await fail(api.postAddonOp(ws, 'wiki', { ...u, viewer_actions: VIEWER_WIKI }))).toMatchObject({ status: 409, code: 'addon.changed' })
+    expect(await api.postAddonOp(ws, 'wiki', { ...u, viewer_actions: [...VIEWER_WIKI, 'done'] })).toMatchObject({ name: 'wiki' })
   })
 })
 
@@ -102,16 +108,15 @@ describe('the signed manifest is the one enforced after an update', () => {
   })
   it('an update that adds one lets viewers run it after the re-grant, not before', async () => {
     const { store, api, ws } = setup()
-    const gh = store.addons.find((a) => a.name === 'github')!
-    gh.update!.actions = { ...gh.actions, refresh: { minRole: 'viewer', label: 'Refresh' } }
+    const base = wikiUpdate(store)
     store.setViewer('p_tom')
-    expect(await fail(api.runAddonAction(ws, 'github', 'refresh', {}))).toMatchObject({ status: 403 })
+    expect(await fail(api.runAddonAction(ws, 'wiki', 'done', {}))).toMatchObject({ status: 403 })
     store.setViewer('p_sev')
-    const u = { version: gh.update!.version, package_sha256: gh.update!.package_sha256, capabilities: gh.update!.capabilities, viewer_actions: ['open', 'refresh'] }
-    await api.postAddonOp(ws, 'github', { op: 'update', ...u })
-    await api.postAddonOp(ws, 'github', { op: 'grant', ...u })
+    const u = { ...base, viewer_actions: [...VIEWER_WIKI, 'done'] }
+    await api.postAddonOp(ws, 'wiki', u)
+    await api.postAddonOp(ws, 'wiki', { ...u, op: 'grant' })
     store.setViewer('p_tom')
-    expect(await ok(api.runAddonAction(ws, 'github', 'refresh', {}))).toBe('ok')
+    expect(await ok(api.runAddonAction(ws, 'wiki', 'done', {}))).toBe('ok')
   })
   it('a grant request without viewer_actions at all is refused (409)', async () => {
     const { store, api, ws } = setup()
@@ -121,12 +126,12 @@ describe('the signed manifest is the one enforced after an update', () => {
   })
   it('records the signed viewer_actions in addon.granted and addon.updated', async () => {
     const { store, api, ws } = setup()
-    const gh = store.addons.find((a) => a.name === 'github')!
-    const u = { version: gh.update!.version, package_sha256: gh.update!.package_sha256, capabilities: gh.update!.capabilities, viewer_actions: ['open'] }
-    await api.postAddonOp(ws, 'github', { op: 'update', ...u }) // one signature: the update is the grant of the new version
+    const u = { ...wikiUpdate(store), viewer_actions: [...VIEWER_WIKI, 'done'] }
+    await api.postAddonOp(ws, 'wiki', u) // one signature: the update is the grant of the new version
     const evs = store.wsEventsOf(ws).filter((e) => e.type === 'addon.updated' || e.type === 'addon.granted').slice(-2)
     expect(evs.map((e) => e.type)).toEqual(['addon.updated', 'addon.granted'])
-    for (const e of evs) expect(e.viewer_actions).toEqual(['open'])
+    for (const e of evs) expect(e.viewer_actions).toEqual([...VIEWER_WIKI, 'done'])
+    store.addons.find((a) => a.name === 'wiki')!.update = null
     const w = store.addons.find((a) => a.name === 'wiki')!
     store.appendWs(ws, { type: 'addon.updated', name: 'wiki', version: '0.1.4', package_sha256: 'c'.repeat(64), capabilities: [] })
     await api.postAddonOp(ws, 'wiki', { op: 'grant', version: '0.1.4', package_sha256: 'c'.repeat(64), capabilities: [], viewer_actions: viewerActions(w).map((a) => a.id) })

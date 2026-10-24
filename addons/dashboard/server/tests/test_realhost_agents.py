@@ -11,7 +11,7 @@ real runner, and core's real click signer.
   key, and the runner can only be admitted by a host in this process (`runner_identity`, see test_realhost_terminals).
 - Everything lives under pytest's tmp_path and core's short run directory: no launchd, no keychain, no ~/.config/orch.
 
-The flow: preview (no grant: `launch.no_grant`), issue the runner grant by click against core's contract-2 signer
+The flow: preview (no grant: `launch.no_grant`), issue the runner grant by click against core's contract-3 signer
 (deposit confirmed, the secret only at the runner), preview again, start a `codex` agent, see it in the run list, forget
 the grant; the page's live stream carries run.sub's `runner` item after the confirm and after the forget (H11c-2). A
 second grant, forgotten between its issue and its hand-over, is a real rejected deposit with `deposit_reason`
@@ -195,9 +195,6 @@ class AgentWorld:
     def post(self, path, body=None):
         return self.client.post(f"/api/w/{self.w.wid}{path}", content=json.dumps(body or {}), headers=self.headers())
 
-    def word(self):
-        return f"{self.w.service.entry.prefix}~{self.w.wid[-8:]}/GRANT"
-
     def tap(self):
         tap = LiveTap(self)
         self.taps.append(tap)
@@ -241,7 +238,7 @@ def core_contract() -> int:
 
 
 def issue_grant(aw, hours=8, scope="workable"):
-    """Prepare, view, step the dwell, sign with the typed word: the dashboard's click routes, core's signer."""
+    """Prepare, view, step the dwell, sign with one click: the dashboard's click routes, core's signer."""
     p = aw.post("/click/prepare", {"action": "runner_grant", "hours": hours, "scope": scope})
     assert p.status_code == 200, p.text
     rid = p.json()["request_id"]
@@ -249,7 +246,7 @@ def issue_grant(aw, hours=8, scope="workable"):
     assert v.status_code == 200, v.text
     view = v.json()["view"]
     aw.click.mono.t += 1.5
-    s = aw.post("/click/sign", {"request_id": rid, "view_digest": v.json()["view_digest"], "word": aw.word()})
+    s = aw.post("/click/sign", {"request_id": rid, "view_digest": v.json()["view_digest"]})
     assert s.status_code == 200, s.text
     return rid, view, s
 
@@ -263,11 +260,11 @@ def test_preview_grant_by_click_start_an_agent_and_forget(aw, caplog, capfd):
     assert aw.get("/runner").json()["runner"]["enabled"] is True
     assert aw.get("/runner").json()["runner"]["grant"] is None
 
-    assert core_contract() == 2  # H11c-2: the real deposit against the real contract-2 signer, no gate set aside
+    assert core_contract() == 3  # the real deposit against the real contract-3 signer, no gate set aside
     tap = aw.tap()  # the page's live stream, opened before anything changes (run.sub does not replay the grant)
 
     rid, view, signed = issue_grant(aw)
-    assert view["deposit"] is True and view["confirm"]["word"] == aw.word()
+    assert view["deposit"] is True and view["confirm"] == {"kind": "click"}
     body = signed.json()
     assert body["deposit"] == "confirmed" and body["deposit_id"] == rid[3:] and body["grant"].startswith("gr_")
     assert set(body) <= {"state", "duplicate", "deposit", "deposit_id", "grant", "deposit_reason"}
@@ -317,7 +314,7 @@ def test_a_grant_forgotten_before_its_hand_over_is_a_rejected_deposit_with_its_r
     `rejected`, names the grant (Revoke uses it) and the static reason, and never the secret."""
     from orch.host.control_client import new_idem
 
-    assert core_contract() == 2
+    assert core_contract() == 3
     forgotten = []
 
     def between(op, args, res):  # timing only: the host's answer is passed on unchanged
@@ -347,7 +344,7 @@ def test_an_unknown_deposit_resolves_to_rejected_with_the_reason_from_deposit_st
 
     from tests.host.test_runner_socket import GEN2, Runner
 
-    assert core_contract() == 2
+    assert core_contract() == 3
     aw.w.h.host.runners.command_timeout = 1.0
     aw.runner.link.drop_reports.add("grant.put")
     rid, _view, signed = issue_grant(aw)

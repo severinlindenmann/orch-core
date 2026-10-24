@@ -3,19 +3,19 @@ import { SignContent, SignDetails } from './SignContent'
 // The click-to-sign panel (host contract section 0.8.6 item 7): it shows ONLY the signer's View, nothing of this page's
 // own preview, the host's fingerprint or a cached ticket. `lines` are core's terminal
 // review, already escaped, and are text here, never HTML. Sign is armed after 1 s of visible presentation.
-// A word op (grant, policy, members) is confirmed by typing the View's word next to Sign (Sign stays off until it matches); every
-// other op signs on one click. The risk notice lives in Settings; the custody is a technical fact under Technical details.
+// Every op signs on one plain click after the review; nothing is typed. The risk notice lives in Settings; the custody is a technical fact under Technical details.
 import { Loader2, ShieldAlert } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { CLICK_RISK, type ClickProblem, type ClickViewAnswer } from '@/api/click'
 import { uuid8 } from '@/api/workspaces'
 import { Button } from '@/components/ui/button'
 import { Raw } from './visible'
 import { ClickProblemBox } from './RefusalDevices'
 import { useActivation, useArming } from './useArming'
-import { SignMethodLine, TypedWord, WhatNext } from './SignAside'
+import { AgentAccess, WhatNext } from './SignAside'
 import type { SignStory } from './story'
 import { fmtClock } from '@/lib/time'
+import { STICKY_FOOTER } from './SignShell'
 
 function RiskLine({ text }: { text: string }) {
   return (
@@ -39,7 +39,7 @@ interface Props {
   /** The explanation of a refusal that left the request open (try again), shown above the buttons. */
   problem: ClickProblem | null
   signing: boolean
-  onSign: (word?: string) => void
+  onSign: () => void
   onCancel: () => void
   /** Rate limit: the time (ms since epoch) before which Sign stays off. */
   waitUntil?: number
@@ -47,15 +47,16 @@ interface Props {
   ws?: string
   /** What this signature leads to (button label, steps, access): derived from the action. */
   story?: SignStory | null
-  /** The quiet phone link, only when a phone is paired and allowed. */
-  onPhone?: () => void
-  phoneDisabled?: boolean
+  /** A field the review needs before Sign (the hub step's backup key), shown above the buttons. */
+  extra?: ReactNode
+  /** False while that field is empty: Sign stays off. */
+  ready?: boolean
 }
 
-export function ClickSignPanel({ answer, problem, signing, onSign, onCancel, waitUntil = 0, ws, story, onPhone, phoneDisabled }: Props) {
+export function ClickSignPanel({ answer, problem, signing, onSign, onCancel, waitUntil = 0, ws, story, extra, ready = true }: Props) {
   const { view, view_digest: digest } = answer
   // A new View (a new digest) is a new confirmation: the timer, a half-done hold and any half-begun press start over.
-  return <Presented key={digest} view={view} digest={digest} problem={problem} signing={signing} onSign={onSign} onCancel={onCancel} waitUntil={waitUntil} ws={ws} story={story} onPhone={onPhone} phoneDisabled={phoneDisabled} />
+  return <Presented key={digest} view={view} digest={digest} problem={problem} signing={signing} onSign={onSign} onCancel={onCancel} waitUntil={waitUntil} ws={ws} story={story} extra={extra} ready={ready} />
 }
 
 /** What the one "Technical details" expander of the review holds besides the content's own ids (action, workspace, fingerprint, device, the signer's lines and checks). */
@@ -114,41 +115,38 @@ export function TechnicalFacts({ view }: { view: ClickViewAnswer['view'] }) {
   )
 }
 
-function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil, ws, story, onPhone, phoneDisabled }: Omit<Props, 'answer'> & { view: ClickViewAnswer['view']; digest: string; waitUntil: number }) {
+function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil, ws, story, extra, ready = true }: Omit<Props, 'answer'> & { view: ClickViewAnswer['view']; digest: string; waitUntil: number }) {
   const armed = useArming(digest)
   const [now, setNow] = useState(() => Date.now())
-  const [typed, setTyped] = useState('')
   useEffect(() => {
     if (waitUntil <= Date.now()) return
     const t = setInterval(() => setNow(Date.now()), 250)
     return () => clearInterval(t)
   }, [waitUntil])
   const waiting = waitUntil > now
-  const word = view.confirm.kind === 'word' ? view.confirm.word : null
-  const wordOk = word === null || typed === word
-  const activation = useActivation(armed && wordOk) // a press that began before the word was typed never counts
+  const activation = useActivation(armed)
   const picturesOk = usePicturesOk(view.content?.images) // R3 part B: a picture that is not the pasted file switches Sign off
-  const can = armed && !signing && !waiting && wordOk && picturesOk
+  const can = armed && !signing && !waiting && picturesOk && ready
   const go = () => {
     if (!activation.take() || !can) return
-    onSign(word ?? undefined)
+    onSign()
   }
   const technical = <TechnicalFacts view={view} />
   const label = story?.signLabel ?? 'Sign'
   return (
     <section data-testid="click-panel" aria-label="Review before signing" className="space-y-3">
-      {view.content && <SignContent content={view.content} ws={view.workspace?.id} technical={technical} compact={story?.compact} />}
+      {view.content && <SignContent content={view.content} ws={view.workspace?.id} technical={technical} compact={story?.compact} quick={story?.quick} />}
       {story?.scope && <p data-testid="sign-scope" className="text-[13px] text-text">{story.scope}</p>}
-      {word !== null && <TypedWord word={word} story={story ?? null} value={typed} onChange={setTyped} disabled={signing} />}
+      <AgentAccess story={story ?? null} />
       {story && <WhatNext story={story} />}
       {view.checks.filter(c => !c.clean).map((c, i) => <p key={i} role="note" className="text-[13px] text-warning">Repository <Raw>{c.repo}</Raw>: not clean</p>)}
       {view.artifacts === 'unseen' && <p data-testid="click-artifacts" role="note" className="text-[13px] text-warning">The signer did not see the artifact bytes: only their hash is signed.</p>}
       {!view.content && <SignDetails>{technical}</SignDetails>}
       {!view.content && <div data-testid="click-lines" className="max-h-64 overflow-auto rounded-md border border-border bg-bg p-3 font-mono text-[12px]">{view.lines.map((line, i) => <div key={i} className="whitespace-pre-wrap break-all">{line || " "}</div>)}</div>}
       {problem && <ClickProblemBox problem={{ ...problem, next: undefined, signedAt: undefined }} ws={ws} />}
-      <div className="space-y-2">
-        <SignMethodLine text="Sign on this computer" onPhone={onPhone} phoneDisabled={phoneDisabled || signing} />
-        {word !== null && !wordOk && armed && <p data-testid="word-hint" className="text-[12px] text-text-muted">Type {word} above to continue.</p>}
+      {extra}
+      <div className={STICKY_FOOTER} data-testid="sign-footer">
+        <p data-testid="sign-method" className="text-[12px] text-text-muted">On this computer</p>
         <div className="flex flex-wrap items-center justify-end gap-2">
           <Button type="button" variant="ghost" onClick={onCancel} disabled={signing}>
             Cancel

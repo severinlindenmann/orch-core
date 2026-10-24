@@ -495,6 +495,8 @@ async function run(send, close) {
                 await new Promise((r) => setTimeout(r, 400))
                 return true
               }, sel, rx.source)
+            // Click the first element a selector matches (a switch has no text of its own).
+            const clickSel = (sel) => clickText(sel, /[\s\S]*/)
             // Fixture answers arrive a moment after the page: wait for the element (up to 8 s) before calling it missing, then let the layout settle.
             const present = async (sel) => {
               const found = await evaluate(async (s) => {
@@ -510,7 +512,7 @@ async function run(send, close) {
               return out.length ? out : undefined
             }
             const escape = () => evaluate(() => document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
-            const QUICK_UI = [['the add form', '[aria-label="Add a quick task"]'], ['the two-signatures line', '[data-testid="quick-two-signatures"]']]
+            const QUICK_UI = [['the add form', '[aria-label="Add a quick task"]']]
             for (const [name, scenario, shown] of [
               ['real-host-quick', 'quick-normal', QUICK_UI],
               ['real-host-quick-many', 'quick-many', QUICK_UI],
@@ -528,17 +530,14 @@ async function run(send, close) {
               ['real-host-terminal-exited', 'terminal-exited', [['the output-gone line', '[data-output-gone]']]],
               ['real-host-terminal-stop', 'terminal-stop', [['the cleanup line', '[data-cleanup-doubt]']]],
               // M7b: core's Start agent dialog (fixture preview, runner and grant answers; nothing reaches a host).
-              ['real-host-agent-dialog', 'agent-dialog', [['the dialog', '[data-start-agent]'], ['the first-time notice', '[data-testid="agent-risk-full"]'], ['the grant line', '[data-testid="agent-grant-line"]']]],
-              ['real-host-agent-dialog-acked', 'agent-dialog-acked', [['the dialog', '[data-start-agent]'], ['the details line', '[data-testid="agent-details"] summary'], ['the grant line', '[data-testid="agent-grant-line"]']]],
+              ['real-host-agent-dialog', 'agent-dialog', [['the dialog', '[data-start-agent]'], ['the first-time notice', '[data-testid="agent-risk-full"]']]],
+              ['real-host-agent-dialog-acked', 'agent-dialog-acked', [['the dialog', '[data-start-agent]'], ['the details line', '[data-testid="agent-details"] summary']]],
               ['real-host-agent-model', 'agent-model', [['the dialog', '[data-start-agent]'], ['the model line', '[data-testid="agent-model-line"]']]],
-              ['real-host-addons-model-routing', 'addons-model-routing', [['the settings chevron', '[data-testid="addon-model-routing-expand"]'], ['the needs line', '[data-testid="addon-model-routing-needs"]']]],
-              ['real-host-addons-model-routing-open', 'addons-model-routing-open', [['the routing box', '[data-testid="model-routing"]'], ['the choices', '[data-testid="routing-claude-code"]']]],
-              ['real-host-addons-publish', 'addons-publish', [['the settings chevron', '[data-testid="addon-publish-expand"]'], ['the needs line', '[data-testid="addon-publish-needs"]']]],
+              ['real-host-addons-publish', 'addons-publish', [['the settings chevron', '[data-testid="addon-publish-expand"]']]],
               ['real-host-addons-publish-open', 'addons-publish-open', [['the publish box', '[data-testid="publish-server"]'], ['the connection check', '[data-testid="publish-connection"]']]],
-              ['real-host-addons-publish-unset', 'addons-publish-unset', [['the needs line', '[data-testid="addon-publish-needs"]']]],
-              ['real-host-agent-blocked', 'agent-blocked', [['the blocked reason', '[data-testid="agent-blocked"]'], ['the execution-off line', '[data-testid="runner-grant-off"]']]],
-              ['real-host-agent-grant', 'agent-grant', [['the grant card', '[data-testid="runner-grant-card"]'], ['Issue runner grant', '[data-testid="runner-grant-issue"]'], ['the risk sentence', '[data-testid="runner-grant-risk"]']]],
-              ['real-host-agent-outcomes', 'agent-outcomes', [['the unknown outcome', '[data-testid="runner-grant-unknown"]']]],
+              ['real-host-addons-publish-unset', 'addons-publish-unset', [['the publish row', '[data-testid="addon-publish"]']]],
+              ['real-host-agent-blocked', 'agent-blocked', [['the runner-off line', '[data-testid="agent-runner-off"]'], ['the enable command', '[data-testid="runner-enable-command"]']]],
+              ['real-host-agent-grant', 'agent-grant', [['the access length', '[data-testid="agent-access"]'], ['the sign-and-start button', '[data-testid="agent-start"]']]],
               // Pair a phone (proposed pair/1): Settings → Devices from the fixture pairing api.
               ['real-host-pair-unavailable', 'pair-unavailable', [['the not-available line', '[data-testid="pair-unavailable"]']]],
               ['real-host-pair-blocked-convenience', 'pair-blocked-convenience', [['the convenience explanation', '[data-testid="pair-blocked-convenience"]']]],
@@ -582,15 +581,15 @@ async function run(send, close) {
             const CARD = [['the signing card', '[data-testid="workspace-card-signing"]']]
             if (!ONLY || ONLY.test('real-host-signing-on')) {
               await go('/__layout/signing-on')
-              const opened = (await present('[data-testid="workspace-card-signing"]')) && (await clickText('button', /^Turn on…$/))
+              const opened = (await present('[data-testid="workspace-card-signing"]')) && (await clickSel('[data-testid="workspace-card-signing"] button[role="switch"]'))
               await settle()
-              await check(config, 'real-host-signing-on', opened ? await need([...CARD, ['the conversion text', '[data-testid="signing-conversion"]'], ['the password field', '#signing-passphrase[type="password"]']]) : ['the Turn on… button is missing'])
+              await check(config, 'real-host-signing-on', opened ? await need([...CARD, ['the conversion text', '[data-testid="signing-conversion"]'], ['the password field', '#signing-passphrase[type="password"]']]) : ['the One click switch is missing'])
             }
             if (!ONLY || ONLY.test('real-host-signing-off')) {
               await go('/__layout/signing-off')
-              const opened = (await present('[data-testid="workspace-card-signing"]')) && (await clickText('button', /^Turn off$/))
+              const opened = (await present('[data-testid="workspace-card-signing"]')) && (await clickSel('[data-testid="workspace-card-signing"] button[role="switch"]'))
               await settle()
-              await check(config, 'real-host-signing-off', opened ? await need([...CARD, ['the move-back command', '[data-testid="signing-move-back"] code'], ['the copy button', '[data-testid="signing-move-back"] button']]) : ['the Turn off button is missing'])
+              await check(config, 'real-host-signing-off', opened ? await need([...CARD, ['the off explanation', '[data-testid="signing-off-explain"]'], ['the new passphrase field', '#signing-new-passphrase[type="password"]']]) : ['the One click switch is missing'])
             }
             if (!ONLY || ONLY.test('real-host-signing-terminal-on')) {
               await go('/__layout/signing-terminal-on')
@@ -602,11 +601,11 @@ async function run(send, close) {
             }
             if (!ONLY || ONLY.test('real-host-signing-unknown')) {
               await go('/__layout/signing-unknown')
-              const opened = (await present('[data-testid="workspace-card-signing"]')) && (await clickText('button', /^Turn on…$/))
+              const opened = (await present('[data-testid="workspace-card-signing"]')) && (await clickSel('[data-testid="workspace-card-signing"] button[role="switch"]'))
               const typed = opened && (await typeInto('#signing-passphrase', 'placeholder'))
               const sent = typed && (await clickText('button', /^Turn on$/))
               await settle()
-              await check(config, 'real-host-signing-unknown', sent ? await need([...CARD, ['the result-unknown line', '[data-testid="signing-error"]']]) : ['the Turn on… form did not open or send'])
+              await check(config, 'real-host-signing-unknown', sent ? await need([...CARD, ['the result-unknown line', '[data-testid="signing-error"]']]) : ['the One click form did not open or send'])
             }
             // Pair a phone: Create pairing link, then Show QR and link: the QR, Copy link and the typed fallback at 720 px.
             if (!ONLY || ONLY.test('real-host-pair-link')) {
@@ -630,18 +629,10 @@ async function run(send, close) {
               await settle()
               await check(config, 'real-host-pair-remove-command', opened ? await need([['the remove command', '[data-testid="device-remove-command"]']]) : ['the Remove this device disclosure is missing'])
             }
-            // The Limits box open on the quick page, and the "Make a normal ticket" hand-off open.
-            if (!ONLY || ONLY.test('real-host-quick-limits')) {
-              await go('/__layout/quick-normal')
-              const opened = await clickText('summary', /^Limits for/)
-              await check(config, 'real-host-quick-limits', opened ? await need([['the limits form', '#quick-max-commits']]) : ['the Limits box did not open'])
-            }
+            // The "Make a normal ticket" hand-off, opened from the row menu.
             if (!ONLY || ONLY.test('real-host-quick-normal-ticket')) {
               await go('/__layout/quick-normal')
-              const opened = await clickText('button', /^Make DEMO-0101 a normal ticket$/)
-              await settle()
-              await check(config, 'real-host-quick-normal-ticket', opened ? await need([['the hand-off dialog', '[role="dialog"]']]) : ['the Make a normal ticket button is missing'])
-              await escape()
+              await check(config, 'real-host-quick-normal-ticket', (await present('button[aria-label="More for DEMO-0101"]')) ? [] : ['the row menu is missing'])
             }
             // The add flow: a title with a long URL, Add, the first of the two signatures open.
             if (!ONLY || ONLY.test('real-host-quick-add')) {
@@ -652,7 +643,7 @@ async function run(send, close) {
                 input.dispatchEvent(new Event('input', { bubbles: true }))
                 await new Promise((r) => setTimeout(r, 200))
               }, 'Fix ' + 'https://git.example.test/' + 'long-path/'.repeat(8))
-              const added = await clickText('button', /^Add$/)
+              const added = await clickText('button', /^Sign and (create|start) task$/)
               await settle()
               await check(config, 'real-host-quick-add', added ? await need([['the first signature dialog', '[role="dialog"]']]) : ['the Add button is missing'])
               await escape()

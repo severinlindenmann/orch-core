@@ -283,29 +283,47 @@ def test_sign_refusals_sign_nothing_and_do_not_cancel(click, served, human):
 
 def test_view_and_sign_refuse_a_request_the_signer_did_not_prepare(click, served, human):
     _, key = human.ticket()
-    h = human.prepare("log", {"ref": key, "text": "x"})  # a terminal request (hand-off is refused with the flag on)
+    h = human.prepare("log", {"ref": key, "text": "x"}, handoff=True)  # a terminal request: it has a code (#1170)
     rid = h["request"]["id"]
     refused(lambda: click.view(rid), "human.click_refused", "not_prepared_here")
     refused(lambda: click.sign(rid, "sha256:" + "0" * 64), "human.click_refused", "not_prepared_here")
-    assert pending(served, rid)["state"] == "bound"  # untouched: still the terminal's
+    assert pending(served, rid)["state"] == "prepared"  # untouched: still the terminal's
 
 
 def test_terminal_only_ops_are_refused_before_the_host_is_asked(click, served, human):
-    for op in ("grant", "frobnicate", "init", "member.rename"):
+    for op in ("frobnicate", "init", "member.rename"):
         refused(lambda op=op: click.prepare(op, {}), "human.click_refused", "terminal_only")
     assert click.conns == []
 
 
-def test_publishing_and_the_publish_server_are_terminal_only_on_the_click_channel(click, served, human):
-    """P5: what sends data off the Mac or redirects where it goes is signed in the terminal (orch sign CODE), never by
-    click or one-click: refused before the host is asked (the early class sees the keys of settings.set)."""
+def test_the_publish_server_is_a_click_and_the_view_shows_where_files_go(click, served, human):
+    """#1198 C2: Publish's settings are a plain click; the View lists the server files are sent to and the address
+    links open at (both signed), so the person reads the destination before the click."""
     value = {"server": "http://127.0.0.1:8103", "share": "http://127.0.0.1:8104"}
-    refused(lambda: click.prepare("settings.set", {"set": {"publish": value}}), "human.click_refused", "terminal_only")
-    refused(lambda: click.prepare("settings.set", {"set": {"publish": None}}), "human.click_refused", "terminal_only")
-    refused(
-        lambda: click.prepare("publish.share", {"staged_id": "ps_" + "0" * 32}), "human.click_refused", "terminal_only"
-    )
-    assert click.conns == []
+    p = click.prepare("settings.set", {"set": {"publish": value}})
+    shown = click.view(p["request_id"])
+    v = shown["view"]
+    assert v["confirm"] == {"kind": "click"}
+    text = "\n".join(v["lines"])
+    assert value["server"] in text and value["share"] in text
+    rows = json.dumps(v["content"])
+    assert "Publish: files are sent to" in rows and value["server"] in rows
+    assert "Publish: links open at" in rows and value["share"] in rows
+    click.mono.t += 2
+    assert click.sign(p["request_id"], shown["view_digest"])["duplicate"] is False
+    assert click.signatures == 1
+    removed = click.prepare("settings.set", {"set": {"publish": None}})
+    assert "removed" in json.dumps(click.view(removed["request_id"])["view"]["content"])
+
+
+def test_publish_share_and_the_publish_grant_pass_the_early_class_check(click, served, human):
+    """#1198 C2: neither is refused as ``terminal_only`` any more; an unknown staged copy is the host's own refusal."""
+    with pytest.raises(ClickError) as info:
+        click.prepare("publish.share", {"staged_id": "ps_" + "0" * 32})
+    assert info.value.reason != "terminal_only"
+    with pytest.raises(ClickError) as info:
+        click.prepare("addon.grant", {"name": "publish"})
+    assert info.value.reason != "terminal_only"
 
 
 def test_an_expired_approval_is_refused(click, served, human):
@@ -368,22 +386,14 @@ def test_view_digest_ignores_the_check_times_only():
     assert views.digest(v) != views.digest(w)
 
 
-def test_op_classes_fail_closed_and_repo_settings_need_the_word():
-    assert op_class("approve") == "click" and op_class("member.remove") == "word" and op_class("policy.set") == "word"
-    assert op_class("grant") == "terminal" and op_class("some.future.op") == "terminal"
-    assert op_class("settings.set", [{"type": "settings.changed", "set": {"grant_hours": 4}}]) == "word"  # B8
+def test_op_classes_fail_closed_and_every_former_word_op_is_a_click():
+    assert op_class("approve") == "click" and op_class("member.remove") == "click" and op_class("policy.set") == "click"
+    assert op_class("grant") == "click" and op_class("some.future.op") == "terminal"
+    assert op_class("settings.set", [{"type": "settings.changed", "set": {"grant_hours": 4}}]) == "click"  # B8
     assert op_class("settings.set", [{"type": "settings.changed", "set": {"claim_ttl_min": 30}}]) == "click"
-    assert op_class("settings.set", [{"type": "settings.changed", "set": {"repos": {}}}]) == "word"
-    assert op_class("settings.set", [{"type": "settings.changed", "set": "odd"}]) == "word"
-
-
-def test_workspace_scope_words_carry_the_prefix_and_the_workspace_fragment():
-    wid = "0123456789abcdef0123456789abcdef"
-    names = lambda w: ("acme", "DEMO") if w == wid else None  # noqa: E731
-    base = {"workspace_id": wid, "material": {}, "events": [{"name": "lint"}]}
-    assert views.word({**base, "op": "policy.set"}, names) == "DEMO~89abcdef/POLICY"
-    assert views.word({**base, "op": "settings.set"}, names) == "DEMO~89abcdef/SETTINGS"
-    assert views.word({**base, "op": "addon.grant"}, names) == "lint~89abcdef"
+    assert op_class("settings.set", [{"type": "settings.changed", "set": {"repos": {}}}]) == "click"
+    assert op_class("settings.set", [{"type": "settings.changed", "set": {"publish": {}}}]) == "click"
+    assert op_class("settings.set", [{"type": "settings.changed", "set": "odd"}]) == "terminal"  # fails closed
 
 
 def test_the_budget_counts_event_signatures_on_monotonic_time():
@@ -406,7 +416,7 @@ def test_the_budget_counts_event_signatures_on_monotonic_time():
 
 def test_status_reads_metadata_without_loading_a_key(click, served):
     out = click.signer.status({})
-    assert out["contract"] == 2 and out["core"]
+    assert out["contract"] == 3 and out["core"]
     (row,) = out["workspaces"]
     assert row["workspace_id"] == served.wid and row["enabled"] is True
     assert click.store.gets == 0
@@ -447,7 +457,7 @@ def test_the_real_child_answers_status_and_exits_when_the_channel_closes(tmp_pat
     client = spawn.start(env)
     try:
         out = client.call("status", {}, timeout=60)
-        assert out["contract"] == 2 and out["workspaces"] == []
+        assert out["contract"] == 3 and out["workspaces"] == []
         with pytest.raises(ClickError) as info:
             client.call("view", {"workspace_id": "0" * 32, "request_id": "hr_" + "0" * 26}, timeout=60)
         assert info.value.code == "not_found"
@@ -523,18 +533,14 @@ def test_a_member_add_signed_before_convenience_events_is_refused_at_submit(serv
         c.close()
 
 
-def test_the_typed_word_is_required_at_sign(click, served, human, monkeypatch):
-    monkeypatch.setattr(views, "op_class", lambda op, events=None: "word")  # log treated as a word op
+def test_every_view_confirms_by_a_click_and_a_stray_word_is_ignored(click, served, human):
     _, key = human.ticket()
     p = click.prepare("log", {"ref": key, "text": "x"})
+    assert p["confirm"] == "click"
     v = click.view(p["request_id"])
-    assert v["view"]["confirm"]["kind"] == "word"
-    word = v["view"]["confirm"]["word"]
+    assert v["view"]["confirm"] == {"kind": "click"}
     click.mono.t += 2
-    refused(lambda: click.sign(p["request_id"], v["view_digest"]), "human.click_refused", "word")
-    refused(lambda: click.sign(p["request_id"], v["view_digest"], word=word + "x"), "human.click_refused", "word")
-    assert click.signatures == 0
-    assert click.sign(p["request_id"], v["view_digest"], word=word)["result"]["key"] == key
+    assert click.sign(p["request_id"], v["view_digest"], word="whatever")["result"]["key"] == key  # not read
     assert click.signatures == 1
 
 
@@ -812,7 +818,7 @@ def test_the_forwarded_detail_follows_the_hosts_closed_schema():
 def test_any_other_code_drops_its_detail(click, served, human):
     e = _detail_from(click, human, "launch.no_grant", {"reason": "none"})
     assert e.detail is None and "detail" not in e.error()
-    e = _detail_from(click, human, "sign.click_only", {"reason": "disabled", "devices": [DEV]})
+    e = _detail_from(click, human, "lock.busy", {"reason": "disabled", "devices": [DEV]})
     assert e.detail is None and "detail" not in e.error()
     assert (
         ClickError("human.click_refused", "x", reason="busy", detail={"reason": "disabled"}).error().get("detail")
@@ -873,7 +879,7 @@ def test_the_signer_exits_when_its_parent_goes(tmp_path):
     b.close()
     pid = int(mid.stdout.readline().strip())
     try:
-        assert ClickClient(a).call("status", {}, timeout=60)["contract"] == 2  # running, its parent watch started
+        assert ClickClient(a).call("status", {}, timeout=60)["contract"] == 3  # running, its parent watch started
         mid.stdin.write("go\n")
         mid.stdin.flush()
         mid.wait(30)
@@ -948,3 +954,92 @@ def test_an_existing_workspace_with_convenience_history_counts_as_seen(click, se
         convenience.refuse_reader_op(service, "member.add", history=True)
     assert info.value.code == "sign.convenience_readers"
     assert path.exists()  # the scan that found them set the mark
+
+
+def test_c21_a_missing_key_refuses_before_the_claim_and_the_request_stays_signable(click, served, human):
+    _, key = human.ticket()
+    p = click.prepare("log", {"ref": key, "text": "key back"})
+    rid = p["request_id"]
+    v = click.view(rid)
+    click.mono.t += 2
+    gone = click.store.items.pop((served.wid, click.owner.device))
+    e = refused(lambda: click.sign(rid, v["view_digest"]), "custody.no_key")
+    assert "no signing key" in e.message
+    assert click.signatures == 0 and pending(served, rid)["state"] == "bound"
+    assert click.signer.records.get(served.wid, rid) is None  # nothing was claimed
+    assert (served.wid, rid) not in click.signer._attempted
+    click.store.items[(served.wid, click.owner.device)] = gone  # the key is back: the same request signs
+    res = click.sign(rid, v["view_digest"])
+    assert res["duplicate"] is False and click.signatures == 1
+
+
+def test_c21_an_unreadable_key_store_is_unavailable_not_uncertain(click, served, human, monkeypatch):
+    from orch.custody.base import CustodyError
+
+    _, key = human.ticket()
+    p = click.prepare("log", {"ref": key, "text": "locked"})
+    v = click.view(p["request_id"])
+    click.mono.t += 2
+
+    def locked(*a):
+        raise CustodyError("locked")
+
+    monkeypatch.setattr(click.store, "get", locked)
+    refused(lambda: click.sign(p["request_id"], v["view_digest"]), "custody.unavailable")
+    assert click.signatures == 0 and click.signer.records.get(served.wid, p["request_id"]) is None
+    monkeypatch.undo()
+    assert click.sign(p["request_id"], v["view_digest"])["duplicate"] is False
+
+
+def test_c21_a_brief_store_lock_does_not_leave_one_click_unavailable(click, served, human, monkeypatch):
+    from orch.custody.base import CustodyError
+
+    _, key = human.ticket()
+    p = click.prepare("log", {"ref": key, "text": "lock"})
+    v = click.view(p["request_id"])
+    click.mono.t += 2
+    ok_status = lambda st, w: {"custody": "convenience", "device": click.owner.device}  # noqa: E731
+    row = lambda: click.signer._row(click.entry, ok_status)  # noqa: E731
+
+    def locked(*a):
+        raise CustodyError("locked")
+
+    monkeypatch.setattr(click.store, "get", locked)
+    refused(lambda: click.sign(p["request_id"], v["view_digest"]), "custody.unavailable")
+    assert row()["available"] is False
+    monkeypatch.undo()
+    assert click.sign(p["request_id"], v["view_digest"])["duplicate"] is False
+    assert row()["available"] is True
+
+
+def test_device_remove_is_a_click_and_the_view_names_the_device(click, served, human, lab):
+    """#1198 C15: removing a device is a plain click. The View names the device, whose it is and what follows.
+    The device that signs the click is refused with its own plain reason (the lockout guard). The reader that fails
+    the readers condition may be removed by click: the rule runs on the state after the removal."""
+    member = lab.add_member()  # has not declared that it knows convenience signatures: it fails the readers rule
+    other = member.device
+    p = click.prepare("device.remove", {"device": other})
+    shown = click.view(p["request_id"])
+    v = shown["view"]
+    assert v["confirm"] == {"kind": "click"}
+    text = "\n".join(v["lines"]) + json.dumps(v["content"])
+    assert other in text and "can no longer sign" in text and "belongs to" in text and "quinn" in text
+    click.mono.t += 2
+    assert click.sign(p["request_id"], shown["view_digest"])["duplicate"] is False
+    with pytest.raises(ClickError) as info:
+        click.prepare("device.remove", {"device": click.owner.device})
+    assert info.value.code == "device.lockout" and "device you are signing with" in info.value.message
+
+
+def test_a_removal_cannot_clear_the_readers_rule_while_another_reader_still_fails_it(click, served, human, lab):
+    """Q1 (Opus): only the device being removed is judged as gone. Another undeclared reader still blocks the click,
+    and so does any other op."""
+    first, second = lab.add_member(), lab.add_member()
+    with pytest.raises(ClickError) as info:
+        click.prepare("device.remove", {"device": first.device})
+    assert info.value.code == "sign.convenience_unavailable" and second.device in (info.value.detail or {}).get(
+        "devices", []
+    )
+    _, key = human.ticket()
+    with pytest.raises(ClickError):  # no blanket exemption: other ops stay refused
+        click.prepare("log", {"ref": key, "text": "x"})

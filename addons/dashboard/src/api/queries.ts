@@ -10,18 +10,23 @@ import type { ArtifactQuery } from './types'
 import { running } from './workspaces'
 import { hostInfoOf } from './hostInfo'
 import type { HostGrant } from './settings'
-import type { QuickLimits } from './quickRecords'
 
 /** Query key of an addon's state; per-ticket requests sit under the addon's key, so invalidating it covers them. */
+/** Identity and the workspace list cost about ten host reads each (me, workspaces) and change only through events the live
+ * stream (or its poll fallback) turns into an invalidation, which ignores staleTime. Page changes must not re-read them. */
+const LIVE_STALE = 60_000
+
 export function addonStateKey(ws: string | undefined, name: string, ticket?: string): unknown[] {
   return ticket ? ['addon-state', ws, name, { ticket }] : ['addon-state', ws, name]
 }
 
 export const queries = {
+  marketList: (ws: string) => queryOptions({ queryKey: ['market', ws], queryFn: () => api.marketList(ws), retry: false }),
+  marketInstalled: (ws: string) => queryOptions({ queryKey: ['market-installed', ws], queryFn: () => api.marketInstalled(ws), retry: false }),
   /** Who the viewer is in `ws` (a person has a different id, name and role in each workspace); without `ws`, the first. */
-  me: (ws?: string) => queryOptions({ queryKey: ws ? ['me', ws] : ['me'], queryFn: () => api.getMe(ws) }),
+  me: (ws?: string) => queryOptions({ queryKey: ws ? ['me', ws] : ['me'], queryFn: () => api.getMe(ws), staleTime: LIVE_STALE }),
   /** The workspaces whose host answers. One cache entry: `workspacesAll` reads the same one and keeps the others. */
-  workspaces: () => queryOptions({ queryKey: ['workspaces'], queryFn: api.getWorkspaces, select: running }),
+  workspaces: () => queryOptions({ queryKey: ['workspaces'], queryFn: api.getWorkspaces, select: running, staleTime: LIVE_STALE }),
   workspacesAll: () => queryOptions({ queryKey: ['workspaces'], queryFn: api.getWorkspaces }),
   /** Core D1 (#582): is this host a dev sandbox host, and which alarms does it raise. Checked by `hostInfoOf`. */
   hostInfo: () => queryOptions({ queryKey: ['host-info'], queryFn: async () => hostInfoOf(await api.getHostInfo()), staleTime: 30_000, retry: false, refetchInterval: (q) => (q.state.status === 'error' ? 15_000 : false) }),
@@ -59,12 +64,11 @@ export const queries = {
    */
   hostGrants: (ws: string, active: boolean) =>
     queryOptions<HostGrant[]>({ queryKey: ['settings-grants', ws, active], queryFn: () => api.listHostGrants(ws, active), refetchInterval: 30_000, refetchOnWindowFocus: true }),
-  /** Quick tasks of a real host (M6): one group of statuses, with this browser's limits (they are part of the key). */
-  quick: (ws: string, statuses: string[], limits: QuickLimits) =>
+  /** Quick tasks of a real host (M6): one group of statuses; the host measures size (no limits here). */
+  quick: (ws: string, statuses: string[]) =>
     queryOptions({
-      queryKey: ['quick', ws, statuses.join(','), limits.max_commits, limits.max_files],
-      queryFn: () =>
-        api.getQuick(ws, { status: statuses, ...(limits.max_commits ? { max_commits: limits.max_commits } : {}), ...(limits.max_files ? { max_files: limits.max_files } : {}) }),
+      queryKey: ['quick', ws, statuses.join(',')],
+      queryFn: () => api.getQuick(ws, { status: statuses }),
     }),
   /** The Activity page of a real host: pages of the timeline, newest first; follows `next_page`. */
   activity: (ws: string, filters: Omit<ActivityParams, 'page' | 'limit'>) =>

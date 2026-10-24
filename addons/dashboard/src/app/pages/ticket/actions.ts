@@ -9,8 +9,15 @@ import type { Viewer } from './shared'
 export function canApproveGate(t: TicketDocument, gate: GateName, viewer: Viewer): boolean {
   const g = t.gates[gate]
   if (!can(viewer.role, 'ticket.act')) return false
-  if (g.approvers === 'reviewers' ? !t.people.reviewers.includes(viewer.person) : !roleMeets(viewer.role, g.approvers)) return false
-  if ((g.not === 'assignees' || gate === 'code') && t.people.assignees.includes(viewer.person)) return false
+  if (Array.isArray(g.eligible)) {
+    // The host's own list (core's may_decide, incl. the solo-owner rule) decides who may; the mirror below only runs without it.
+    if (!g.eligible.includes(viewer.person)) return false
+    // The independence rule of the code review is not relaxed by the list.
+    if (gate === 'code' && t.people.assignees.includes(viewer.person)) return false
+  } else {
+    if (g.approvers === 'reviewers' ? !t.people.reviewers.includes(viewer.person) : !roleMeets(viewer.role, g.approvers)) return false
+    if ((g.not === 'assignees' || gate === 'code') && t.people.assignees.includes(viewer.person)) return false
+  }
   if (g.approvals.some((a) => a.by === viewer.person)) return false
   // On a real host an approval binds the gate hash; with none (it cannot be computed now) nothing is offered to sign.
   if (isRealHost() && !g.hash) return false
@@ -76,7 +83,8 @@ export function availableActions(t: TicketDocument, viewer: Viewer): Available {
       requestChanges.push('plan')
     }
   }
-  const verdict = t.status === 'testing' && !t.verdict && canApproveGate(t, 'verify', viewer)
+  // A verdict the host marks stale (a fail followed by a resubmit, a new commit) does not count: a new one is due. A current verdict by someone else leaves the viewer's own to give (a verify gate with two people).
+  const verdict = t.status === 'testing' && t.gates.verify.state !== 'approved' && !(t.verdict && t.verdict.current !== false && t.verdict.by === viewer.person) && canApproveGate(t, 'verify', viewer)
   if (verdict) requestChanges.push('verify')
   // The code review (opt-in): after a pass verdict, by a person the policy names, never an assignee.
   if (codeReviewWaits(t) && canApproveGate(t, 'code', viewer)) {
@@ -87,17 +95,27 @@ export function availableActions(t: TicketDocument, viewer: Viewer): Available {
 }
 
 /** The one thing the viewer should do next on this ticket, shown as the header's primary button (null: nothing). */
-export type Primary = { kind: 'verdict' } | { kind: 'approve'; gate: 'requirements' | 'plan' | 'code' }
+export type Primary = { kind: 'verdict' } | { kind: 'approve'; gate: 'requirements' | 'plan' | 'code' } | { kind: 'answer'; question: string } | { kind: 'start' }
 
-/** Give the verdict > approve requirements > approve the plan. (A question is answered on the question itself.) */
-export function primaryAction(av: Available): Primary | null {
+/**
+ * A blocking question > give the verdict > approve requirements, plan, code review > any other question > start the agent.
+ * (A blocking question usually rewrites the requirements, so approving first is wasted work.) `start` is offered only when
+ * the caller says an agent may be started now and nothing else is on offer.
+ */
+export function primaryAction(av: Available, opts: { start?: boolean } = {}): Primary | null {
+  const blocking = av.answer.find((q) => q.blocking)
+  if (blocking) return { kind: 'answer', question: blocking.id }
   if (av.verdict) return { kind: 'verdict' }
   if (av.approve.length) return { kind: 'approve', gate: av.approve[0] }
+  if (av.answer.length) return { kind: 'answer', question: av.answer[0].id }
+  if (opts.start) return { kind: 'start' }
   return null
 }
 
-export function primaryLabel(p: Primary): string {
+export function primaryLabel(p: Primary, av?: Pick<Available, 'answer'>): string {
   if (p.kind === 'verdict') return 'Give verdict'
+  if (p.kind === 'start') return 'Start agent'
+  if (p.kind === 'answer') return av && av.answer.length > 1 ? `Answer questions (${av.answer.length})` : 'Answer question'
   return p.gate === 'requirements' ? 'Approve requirements' : p.gate === 'code' ? 'Approve code review' : 'Approve plan'
 }
 

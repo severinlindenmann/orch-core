@@ -22,12 +22,13 @@ from orch.hubclient import (
     settle_rotation,
     switch_full,
 )
-from tests.relay import r6kit
+from tests.wsproto import r6kit
 
-from .fake import FakeHub, HostLink
+from .fake import FakeHub, HostLink, host_join_proof, owner_proof_for
 from .vec import V, private_key, pub
 
 WS = V["ids"]["workspace_a"]
+OWNER = V["ids"]["person_alice"]
 HUB_ID = V["ids"]["hub"]
 NOW = V["now_ms"]
 WSK = private_key("wsk_a")
@@ -57,7 +58,15 @@ class Epochs:
     def __init__(self, mk, local_owner=None, sealed_epoch=None) -> None:
         from orch.host.hubops import _Epochs
 
-        self._e = _Epochs(mk, local_owner, sealed_epoch)
+        #: ``local_owner=None``: a rotation is only requested through the gate (it stays owed until it is made)
+        self._deferred = local_owner is None
+        self._e = _Epochs(mk, local_owner or OWNER, sealed_epoch)
+
+    def rotate(self):
+        if self._deferred:
+            self._e._mk.raise_gate("", "rotate")  # noqa: SLF001
+        else:
+            self._e.rotate()
 
     def __getattr__(self, name):
         return getattr(self._e, name)
@@ -65,12 +74,11 @@ class Epochs:
 
 @pytest.fixture
 def mk(tmp_path):
-    from orch.relay.r6.keystore import MembershipKeys
+    from orch.identity.epochs import MembershipKeys
 
     keys = MembershipKeys(tmp_path / "membership", WS, now_ms=lambda: NOW)
-    from orch.relay.r6.keystore import R6Gate
+    from orch.identity.epochs import MembershipKeys
 
-    R6Gate(keys).install(lambda: r6kit.KitStore())
     r6kit.rotate(keys)  # epoch 1 committed
     yield keys
     keys.close()
@@ -90,9 +98,21 @@ class Host:
         self.state = HubState.from_json(copy.deepcopy(s.to_json()))
 
     def common(self, **over: Any) -> dict[str, Any]:
-        return dict(state=self.state, transport=self.wire, save=self._save, **{**self.kw, **over})
+        kw = {**self.kw, **over}
+        kw.setdefault(
+            "owner_proof",
+            host_join_proof(
+                self.state, now_ms=NOW, mode=kw.get("mode", "selective"), binding_seq=kw.get("binding_seq"),
+                workspace_id=WS,
+            ),
+        )  # fmt: skip
+        return dict(state=self.state, transport=self.wire, save=self._save, **kw)
 
     def join_full(self, **over: Any):
+        over.setdefault(
+            "owner_proof",
+            host_join_proof(self.state, now_ms=NOW, mode="full", binding_seq=over.get("binding_seq"), workspace_id=WS),
+        )
         kw = self.common(**over)
         return join_full(
             epochs=self.epochs, record_joined=lambda p: self.log.append(("hub.joined", p)),
@@ -108,7 +128,12 @@ class Host:
     def switch(self, seq: int = 2, **over: Any):
         keep = {"state", "hub_card", "workspace_id", "wsk_pub", "sign_wsk", "dev_mode", "now_ms", "transport", "save"}
         kw = {k: v for k, v in self.common(**over).items() if k in keep}
-        return switch_full(binding_seq=seq, epochs=self.epochs, **kw)
+        card = V["objects"]["card"]["o"]
+        proof = over.get("owner_proof") or owner_proof_for(
+            {"hub_id": card["hub_id"], "hk_root_pub": card["hk_root_pub"], "mode": "full", "binding_seq": seq},
+            WS, "hub.mode", NOW,
+        )  # fmt: skip
+        return switch_full(binding_seq=seq, epochs=self.epochs, owner_proof=proof, **kw)
 
     def seal(self, **over: Any):
         return seal_to_hub(
@@ -172,10 +197,9 @@ def test_a_replayed_wk_seal_is_refused_by_the_hub(host, mk):
 
 
 def test_no_epoch_means_nothing_is_sent(tmp_path):
-    from orch.relay.r6.keystore import MembershipKeys, R6Gate
+    from orch.identity.epochs import MembershipKeys
 
     empty = MembershipKeys(tmp_path / "m2", WS, now_ms=lambda: NOW)
-    R6Gate(empty).install(lambda: r6kit.KitStore())
     h = Host(FakeHub(), empty)
     with pytest.raises(HubRefused) as e:
         h.join_full()
@@ -315,7 +339,7 @@ def test_only_the_committed_epoch_is_ever_sealed(host, mk):
     from orch.host.hubops import _Epochs
 
     r6kit.expose_rotation(mk)  # epoch 2 claimed and exposed, not committed
-    e = _Epochs(mk)
+    e = _Epochs(mk, OWNER)
     with pytest.raises(HubRefused):
         e.seal_to_hub(2, pub("hxk"), HUB_ID)
     assert e.seal_to_hub(1, pub("hxk"), HUB_ID)
@@ -345,10 +369,9 @@ class _nothing:
 
 
 def test_a_relay_less_workspace_makes_its_own_genesis_epoch_and_rotates_locally(tmp_path):
-    from orch.relay.r6.keystore import MembershipKeys, R6Gate
+    from orch.identity.epochs import MembershipKeys
 
     own = MembershipKeys(tmp_path / "m3", WS, now_ms=lambda: NOW)
-    R6Gate(own).install(lambda: r6kit.KitStore())
     owner = V["ids"]["person_alice"]
     h = Host(FakeHub(), own, local_owner=owner)
     with pytest.raises(HubRefused):  # without ensure_epoch there is nothing to seal
@@ -365,7 +388,7 @@ def test_a_relay_less_workspace_makes_its_own_genesis_epoch_and_rotates_locally(
 
 
 def test_a_relay_linked_key_store_never_makes_a_local_epoch(tmp_path):
-    from orch.relay.r6.keystore import CustodyRefused, MembershipKeys, MembershipUnsafe
+    from orch.identity.epochs import CustodyRefused, MembershipKeys, MembershipUnsafe
 
     linked = MembershipKeys(tmp_path / "m4", WS, now_ms=lambda: NOW, previously_linked=True)
     with pytest.raises((CustodyRefused, MembershipUnsafe)):  # a linked store with no head is unsafe too
@@ -374,7 +397,7 @@ def test_a_relay_linked_key_store_never_makes_a_local_epoch(tmp_path):
 
 
 def test_a_crash_between_expose_and_commit_is_completed_by_the_next_advance(tmp_path):
-    from orch.relay.r6.keystore import MembershipKeys, R6Gate
+    from orch.identity.epochs import MembershipKeys
 
     crash = {"on": True}
 
@@ -383,7 +406,6 @@ def test_a_crash_between_expose_and_commit_is_completed_by_the_next_advance(tmp_
             raise RuntimeError("crash")
 
     own = MembershipKeys(tmp_path / "m5", WS, now_ms=lambda: NOW, fault=fault)
-    R6Gate(own).install(lambda: r6kit.KitStore())
     owner = V["ids"]["person_alice"]
     with pytest.raises(RuntimeError):
         own.advance_local(owner)
@@ -396,7 +418,7 @@ def test_a_crash_between_expose_and_commit_is_completed_by_the_next_advance(tmp_
 
 
 def test_an_invalid_exposed_body_is_abandoned_and_a_new_epoch_follows(tmp_path):
-    from orch.relay.r6.keystore import MembershipKeys, R6Gate
+    from orch.identity.epochs import MembershipKeys
 
     crash = {"on": True}
 
@@ -405,7 +427,6 @@ def test_an_invalid_exposed_body_is_abandoned_and_a_new_epoch_follows(tmp_path):
             raise RuntimeError("crash")
 
     own = MembershipKeys(tmp_path / "m6", WS, now_ms=lambda: NOW, fault=fault)
-    R6Gate(own).install(lambda: r6kit.KitStore())
     owner = V["ids"]["person_alice"]
     with pytest.raises(RuntimeError):
         own.advance_local(owner)
@@ -414,25 +435,4 @@ def test_an_invalid_exposed_body_is_abandoned_and_a_new_epoch_follows(tmp_path):
     e = own.advance_local(owner)
     assert e == 2 and own.current_epoch() == 2 and own.head()["exposed"] is None  # epoch 1 burned, never used
     assert 1 in own.head()["burned"]["epochs"] or own.is_burned(1)
-    own.close()
-
-
-def test_a_relay_linked_later_in_the_process_stops_local_epochs(tmp_path):
-    from orch.relay.r6.keystore import CustodyRefused, MembershipKeys, R6Gate
-
-    linked = {"v": False}
-    own = MembershipKeys(tmp_path / "m7", WS, now_ms=lambda: NOW)
-    R6Gate(own).install(lambda: r6kit.KitStore())
-    own.link_probe = lambda: linked["v"]
-    owner = V["ids"]["person_alice"]
-    assert own.advance_local(owner) == 1 and own.has_local_epochs()
-    assert own.previously_linked is False
-    linked["v"] = True  # a relay is linked after the key store was opened
-    assert own.previously_linked is True
-    with pytest.raises(CustodyRefused):
-        own.advance_local(owner)
-    assert own.current_epoch() == 1
-    own.link_probe = lambda: (_ for _ in ()).throw(OSError("unreadable"))
-    with pytest.raises(CustodyRefused):  # an unreadable link state counts as linked
-        own.advance_local(owner)
     own.close()

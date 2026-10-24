@@ -10,7 +10,7 @@ import { Link } from '@tanstack/react-router'
 import { Check, Copy, Loader2 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { copyText } from '@/app/copyLink'
-import { HandoffDialog } from '@/components/sign/HandoffDialog'
+import { SignPopover } from '@/components/sign/SignPopover'
 import { Inline } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -298,7 +298,7 @@ export function ShareFlow({ ws, ticket, resume, onClose }: { ws: string; ticket:
   if (stage.at === 'sign') {
     const s = stage.staged
     return (
-      <HandoffDialog
+      <SignPopover
         title={`Share files of ${s.ticket ?? ticket.key}`}
         ws={ws}
         action={{ action: 'publish_share', key: s.ticket ?? ticket.key, staged_id: s.staged_id }}

@@ -1,18 +1,34 @@
 ok describe addon.grant
 Grant an addon its capabilities (owner only); also enables it.
-usage: orch addon grant NAME [--dry-run]
+usage: orch addon grant NAME [--staged STAGE] [--dry-run]
 who: human · emits: addon.granted
 pre: workspace_exists addon_exists role_allows user_presence
 args:
   NAME  addon name
+  --staged STAGE  the stage id that `orch addon install` or `update` made (the package comes from it, not from addons/)
   --dry-run  say what would happen, append nothing
 errors:
   not_found (exit 2): orch list
-  custody.no_key (exit 3): orch init sets up your device key | fix: orch help
+  custody.no_key (exit 3): orch setup sets up your device key | fix: orch help
   custody.no_prompt (exit 3): run this command yourself, in your own terminal | fix: orch help
   custody.wrong_passphrase (exit 3): run the command again and type your passphrase | fix: orch help
   human_only (exit 3): orch ask or orch wait | fix: orch describe ask
+  market.community_unisolated (exit 3): other marketplaces need per-add-on user isolation | fix: orch market list
+  market.manifest_mismatch (exit 3): the entry is refused | fix: orch market list
+  market.not_allowed (exit 3): ask the hub admin, or reconnect: orch hub status --refresh | fix: orch market list
+  market.not_installed (exit 3): orch addon install ID | fix: orch market list
+  market.official_unsigned (exit 3): wait | fix: orch market list
+  market.origin_changed (exit 3): orch addon list | fix: orch market list
+  market.publisher_key_changed (exit 3): orch market trust --replace | fix: orch market list
+  market.revoked (exit 3): pick another version | fix: orch market list
+  market.rollback (exit 3): an older index or entry is refused | fix: orch market list
+  market.staged_changed (exit 3): start again | fix: orch market list
+  market.version_reused (exit 3): raise the version | fix: orch market list
   role.denied (exit 3): ask an owner or maintainer | fix: orch status
   lock.busy (exit 4 retry): retry in a moment | fix: orch status
+  market.env_failed (exit 5): see the add-on's lockfile | fix: orch market list
+  market.lock_invalid (exit 5): fix the package | fix: orch market list
+  market.lock_missing (exit 5): fix the package | fix: orch market list
+  market.state_invalid (exit 5): the host does not guess: repair or remove the market directory | fix: orch market list
   members.stale (exit 9 retry): retry; the person re-signs | fix: orch status
 out: ok addon.granted {name} seq={seq} / next: {next}

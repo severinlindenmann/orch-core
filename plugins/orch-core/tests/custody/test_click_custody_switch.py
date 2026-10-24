@@ -7,6 +7,7 @@ import os
 
 import pytest
 
+from orch.click import sealed
 from orch.click.log import ClickLog
 from orch.click.protocol import FEATURES, OPS, ClickError
 from orch.click.signer import CUSTODY_TRIES, CUSTODY_WINDOW, ClickSigner
@@ -19,6 +20,14 @@ from tests.ops.humans import KDF, Provider
 WS = "0123456789abcdef0123456789abcdef"
 STRONG = "violet harbour 7 kettles juggle quietly!"
 TERMINAL = "custody.terminal_needed"
+
+
+@pytest.fixture(autouse=True)
+def _no_exposure_mark(monkeypatch):
+    """#1097 E3 needs a registered workspace and a running host (tests: test_key_exposure_custody.py)."""
+    from orch.custody import exposure
+
+    monkeypatch.setattr(exposure, "mark_before_move", lambda *a, **k: None)
 
 
 class Mono:
@@ -87,10 +96,16 @@ def test_the_signer_advertises_the_switch():
     assert {"custody_on", "custody_off"} <= set(OPS) and "custody" in FEATURES
 
 
+def test_the_signer_advertises_device_rotate():
+    assert "rotate" in OPS and "device_rotate" in FEATURES
+
+
 def test_status_lists_the_feature(switch):
     signer, *_ = switch
     out = signer.status({})
-    assert out["features"] == ["custody", "sequence", "images"]
+    assert out["features"] == [
+        *["custody", "sequence", "images", "reveal", "backup_key", "sealed_passphrase", "device_rotate"]
+    ]
     (row,) = out["workspaces"]
     assert row["custody"] == "passphrase" and row["enabled"] is False and row["problem"] == "not_convenience"
 
@@ -120,13 +135,6 @@ def test_wrong_passphrases_are_limited_then_the_window_passes(switch):
     assert not flag(state)
     mono.t += CUSTODY_WINDOW + 1
     assert on(signer, provider.passphrase)["enabled"] is True
-
-
-def test_on_waits_for_pending_terminal_handoffs(switch, monkeypatch):
-    signer, state, provider, *_ = switch
-    monkeypatch.setattr(convenience, "pending_handoffs", lambda *a, **k: [{"id": "hr_1", "op": "approve", "code": "x"}])
-    refused(lambda: on(signer, provider.passphrase), "sign.click_only")
-    assert not flag(state) and select.status(state, WS)["custody"] == "passphrase"
 
 
 def test_off_without_a_passphrase_keeps_the_key_in_the_store(switch):
@@ -162,7 +170,7 @@ def test_the_passphrase_never_reaches_the_log_or_an_answer(switch):
     signer, _, provider, _, _, log = switch
     refused(lambda: on(signer, "wrong secret words"), "custody.wrong_passphrase")
     row = on(signer, provider.passphrase)
-    refused(lambda: signer.handle("custody_off", {"workspace_id": WS, "passphrase": "x"}), "custody.unavailable")
+    refused(lambda: off(signer, passphrase="x"), "custody.unavailable")
     text = repr(log.lines) + repr(row)
     for secret in ("wrong secret words", provider.passphrase):
         assert secret not in text
@@ -181,7 +189,23 @@ def test_the_written_log_has_the_switch_and_no_passphrase(switch):
 # -- fix-forward of the Opus review of #539 (H1, H2, M1, M2, L1-L3) ------------------------------------------------
 
 
+def offer(signer):
+    return signer.handle("custody_off", {"workspace_id": WS, "begin": True})
+
+
+def sealed_for(got, secret, *, purpose="custody.passphrase", workspace=WS):
+    ctx = sealed.Context(purpose, workspace, got["request_id"], got["view_digest"])
+    return {
+        "request_id": got["request_id"],
+        "view_digest": got["view_digest"],
+        "sealed": {"custody.passphrase": sealed.seal(got["seal"]["pk"], secret, ctx)},
+    }
+
+
 def off(signer, **extra):
+    """Off as the dashboard does it: a passphrase goes through begin, then sealed to the offered key (#1198 C12)."""
+    if "passphrase" in extra:
+        extra = {**sealed_for(offer(signer), extra.pop("passphrase")), **extra}
     return signer.handle("custody_off", {"workspace_id": WS, **extra})
 
 
@@ -272,11 +296,12 @@ def test_off_with_a_weak_passphrase_changes_nothing_and_the_flag_stays_on(switch
     assert off(signer, passphrase=STRONG)["custody"] == "passphrase"  # the retry works
 
 
-@pytest.mark.parametrize("pw", ["", 7, None])
-def test_off_with_an_odd_passphrase_is_invalid_input(switch, pw):
+@pytest.mark.parametrize("pw", ["", 7, None, STRONG])
+def test_off_with_a_clear_passphrase_is_invalid_input(switch, pw):
+    """#1198 C12: the passphrase is never accepted in the clear, whatever it is."""
     signer, state, provider, *_ = switch
     on(signer, provider.passphrase)
-    refused(lambda: off(signer, passphrase=pw), "invalid.input")
+    refused(lambda: signer.handle("custody_off", {"workspace_id": WS, "passphrase": pw}), "invalid.input")
     assert flag(state)
 
 
@@ -476,38 +501,20 @@ def test_l3_the_slow_part_runs_outside_the_flag_lock(switch, monkeypatch):
     assert on(signer, provider.passphrase)["enabled"] is True and seen == ["free"]
 
 
-def test_l3_a_handoff_prepared_during_the_slow_part_undoes_the_move(switch, monkeypatch):
-    signer, state, provider, store, _, _ = switch
-    before = select.status(state, WS)
-    put = store.put
-
-    def put_then_a_handoff_arrives(*a, **k):
-        put(*a, **k)
-        monkeypatch.setattr(
-            convenience, "pending_handoffs", lambda *a, **k: [{"id": "hr_1", "op": "approve", "code": "x"}]
-        )
-
-    monkeypatch.setattr(store, "put", put_then_a_handoff_arrives)
-    refused(lambda: on(signer, provider.passphrase), "sign.click_only")
-    assert not flag(state)
-    assert select.status(state, WS) == before and legacy_file(state).exists()
-    assert not store.exists(WS, before["device"])
-
-
 def test_l3_a_custody_change_during_the_slow_part_is_not_overwritten(switch, monkeypatch):
     signer, state, provider, store, _, _ = switch
     calls = []
+    real = select.finish_convenience
 
-    def someone_else_changes_custody(*a, **k):  # the second call is the re-check under the lock, after staging
+    def someone_else_changes_custody(*a, **k):  # under the lock, after staging
         calls.append(1)
-        if len(calls) == 2:
-            sel = select.read_selection(state, WS)
-            select._write_selection(state, WS, {**sel, "gen": sel.gen + 5})
-        return []
+        sel = select.read_selection(state, WS)
+        select._write_selection(state, WS, {**sel, "gen": sel.gen + 5})
+        return real(*a, **k)
 
-    monkeypatch.setattr(convenience, "pending_handoffs", someone_else_changes_custody)
+    monkeypatch.setattr(select, "finish_convenience", someone_else_changes_custody)
     refused(lambda: on(signer, provider.passphrase), "custody.unavailable")
-    assert len(calls) == 2 and not flag(state)
+    assert len(calls) == 1 and not flag(state)
     assert select.read_selection(state, WS)["gen"] == 6  # the other change is kept, not overwritten
 
 
@@ -542,14 +549,14 @@ def test_f1_a_conversion_staged_meanwhile_is_not_resumed_with_a_dashboard_passph
     passphrase, so any string used to finish it and turn the flag on. Only the terminal resumes."""
     signer, state, provider, store, _, _ = switch
     staged = []
-    real = convenience.pending_handoffs
+    real = select.stage_convenience
 
     def the_terminal_stages_meanwhile(*a, **k):
         if not staged:
-            staged.append(select.stage_convenience(state, WS, store=store))  # orch keys custody convenience, cut short
+            staged.append(real(state, WS, store=store))  # orch keys custody convenience, cut short
         return real(*a, **k)
 
-    monkeypatch.setattr(convenience, "pending_handoffs", the_terminal_stages_meanwhile)
+    monkeypatch.setattr(select, "stage_convenience", the_terminal_stages_meanwhile)
     refused(lambda: on(signer, "not the passphrase"), "custody.unavailable")
     assert not flag(state)
     assert select.read_selection(state, WS) == staged[0]  # left for the terminal to finish
@@ -720,3 +727,199 @@ def test_the_leftover_sweep_runs_for_a_dashboard_off_without_a_passphrase(switch
     store.put(WS, device, b"\x01" * 32)  # what a crashed move left behind
     off(signer)
     assert not store.exists(WS, device)
+
+
+# --- #1198 C17: turning One click back on with a plain click, key already in convenience custody ---------------------
+
+
+def resume(signer, **extra):
+    return signer.handle("custody_on", {"workspace_id": WS, "resume": True, **extra})
+
+
+def test_c17_a_plain_click_turns_it_on_again_after_idle_and_restarts_the_clock(switch, monkeypatch):
+    signer, state, provider, *_ = switch
+    clock = Mono()
+    monkeypatch.setattr(convenience, "_now", clock)
+    on(signer, provider.passphrase)
+    clock.t += 13 * 3600
+    assert not flag(state) and convenience.idle_off(state, WS, os.getuid()) == 12
+    row = resume(signer)
+    assert row["enabled"] is True and row["custody"] == "convenience" and row["risk_ack"]
+    assert flag(state) and convenience.idle_off(state, WS, os.getuid()) is None
+    clock.t += 11 * 3600
+    assert flag(state)  # the clock restarted at the click
+
+
+def test_c17_a_plain_click_after_turn_off_without_passphrase(switch):
+    signer, state, provider, *_ = switch
+    on(signer, provider.passphrase)
+    off(signer)
+    assert resume(signer)["enabled"] is True and flag(state)
+
+
+def test_c17_resume_goes_through_the_readers_rule(switch, monkeypatch):
+    from orch.host.errors import HostError
+
+    signer, state, provider, *_ = switch
+    on(signer, provider.passphrase)
+    off(signer)
+
+    def refuse(*a, **k):
+        raise HostError("sign.convenience_unavailable", "other_member: a reader is too old")
+
+    monkeypatch.setattr(convenience, "refuse_turn_on", refuse)
+    err = refused(lambda: resume(signer), "sign.convenience_unavailable")
+    assert err.reason == "other_member" and not flag(state)
+
+
+def test_c17_resume_refuses_on_a_dev_host(switch, monkeypatch):
+    signer, state, provider, *_ = switch
+    on(signer, provider.passphrase)
+    off(signer)
+    monkeypatch.setattr(
+        convenience,
+        "refuse_dev_host",
+        lambda s, env=None: (_ for _ in ()).throw(convenience.unavailable("dev_host", [])),
+    )
+    refused(lambda: resume(signer), "sign.convenience_unavailable")
+    assert not flag(state)
+
+
+def test_c17_resume_needs_the_key_in_convenience_custody_and_no_passphrase(switch):
+    signer, state, provider, *_ = switch
+    refused(lambda: resume(signer), "invalid.input")  # the key is still under the passphrase
+    on(signer, provider.passphrase)
+    refused(lambda: resume(signer, passphrase="x"), "invalid.input")
+    refused(lambda: signer.handle("custody_on", {"workspace_id": WS, "resume": "yes"}), "invalid.input")
+    assert resume(signer)["enabled"] is True  # already on: nothing changes
+
+
+# -- #1198 C12: the new passphrase of "One click off" arrives sealed -------------------------------------------
+
+
+def test_c12_the_offer_carries_a_key_a_digest_and_nothing_secret(switch):
+    signer, *_ = switch
+    got = offer(signer)
+    assert set(got) == {"request_id", "view_digest", "seal", "expires_in"}
+    assert got["seal"]["purposes"] == ["custody.passphrase"] and got["seal"]["alg"] == sealed.ALG
+    assert "sealed_passphrase" in FEATURES
+
+
+def test_c12_a_sealed_passphrase_moves_the_key_and_leaves_no_trace(switch):
+    signer, state, provider, store, _, log = switch
+    on(signer, provider.passphrase)
+    got = offer(signer)
+    args = sealed_for(got, STRONG)
+    row = signer.handle("custody_off", {"workspace_id": WS, **args})
+    assert row["custody"] == "passphrase" and row["enabled"] is False
+    spilled = repr(log.lines) + repr(row) + repr(signer.__dict__.get("problems"))
+    assert STRONG not in spilled
+    for f in (state / "click").rglob("*") if (state / "click").exists() else []:
+        if f.is_file():
+            assert STRONG.encode() not in f.read_bytes()
+    assert not signer._offers  # the key was dropped with its use
+
+
+def test_c12_an_offer_is_used_once_a_replay_is_refused(switch):
+    signer, state, provider, *_ = switch
+    on(signer, provider.passphrase)
+    args = sealed_for(offer(signer), STRONG)
+    signer.handle("custody_off", {"workspace_id": WS, **args})
+    refused(lambda: signer.handle("custody_off", {"workspace_id": WS, **args}), "invalid.input")
+
+
+def test_c12_a_weak_passphrase_uses_up_the_offer_and_a_new_one_works(switch):
+    signer, state, provider, *_ = switch
+    on(signer, provider.passphrase)
+    args = sealed_for(offer(signer), "password1")
+    refused(lambda: signer.handle("custody_off", {"workspace_id": WS, **args}), "custody.unavailable")
+    assert flag(state)
+    refused(lambda: signer.handle("custody_off", {"workspace_id": WS, **args}), "invalid.input")
+    assert off(signer, passphrase=STRONG)["custody"] == "passphrase"
+
+
+def test_c12_wrong_binding_is_refused_and_does_not_burn_the_offer(switch):
+    signer, state, provider, *_ = switch
+    on(signer, provider.passphrase)
+    got = offer(signer)
+    # another request's context (the digest of a different offer), another purpose, a flipped bit: all refused
+    wrong_purpose = sealed_for(got, STRONG)
+    ctx = sealed.Context("hub.backup_key", WS, got["request_id"], got["view_digest"])
+    wrong_purpose["sealed"]["custody.passphrase"] = sealed.seal(got["seal"]["pk"], STRONG, ctx)
+    refused(lambda: signer.handle("custody_off", {"workspace_id": WS, **wrong_purpose}), "invalid.input")
+    good = sealed_for(got, STRONG)
+    flipped = {
+        **good,
+        "sealed": {
+            "custody.passphrase": {
+                **good["sealed"]["custody.passphrase"],
+                "ct": "A" + good["sealed"]["custody.passphrase"]["ct"][1:],
+            }
+        },
+    }
+    refused(lambda: signer.handle("custody_off", {"workspace_id": WS, **flipped}), "invalid.input")
+    assert flag(state)
+    assert signer.handle("custody_off", {"workspace_id": WS, **good})["custody"] == "passphrase"  # still opens
+
+
+def test_c12_another_digest_or_request_or_workspace_is_refused(switch):
+    signer, state, provider, *_ = switch
+    on(signer, provider.passphrase)
+    got = offer(signer)
+    args = sealed_for(got, STRONG)
+    refused(
+        lambda: signer.handle("custody_off", {"workspace_id": WS, **args, "view_digest": "sha256:" + "0" * 64}),
+        "invalid.input",
+    )
+    refused(
+        lambda: signer.handle("custody_off", {"workspace_id": WS, **args, "request_id": "hr_" + "0" * 26}),
+        "invalid.input",
+    )
+    refused(lambda: signer.handle("custody_off", {"workspace_id": "f" * 32, **args}), "not_found")
+    assert flag(state)
+
+
+def test_c12_a_newer_offer_drops_the_older_and_an_expired_one_is_refused(switch):
+    signer, state, provider, _, mono, _ = switch
+    on(signer, provider.passphrase)
+    first = sealed_for(offer(signer), STRONG)
+    second = offer(signer)
+    refused(lambda: signer.handle("custody_off", {"workspace_id": WS, **first}), "invalid.input")
+    late = sealed_for(second, STRONG)
+    mono.t += 400  # mono is the wall seam of this fixture; the offer's clock is the signer's mono
+    signer.mono = lambda: mono.t + 10_000
+    refused(lambda: signer.handle("custody_off", {"workspace_id": WS, **late}), "invalid.input")
+    assert flag(state)
+
+
+def test_c12_odd_sealed_shapes_and_begin_extras_are_invalid(switch):
+    signer, *_ = switch
+    got = offer(signer)
+    good = sealed_for(got, STRONG)
+    for bad in (
+        {**good, "sealed": {}},
+        {**good, "sealed": {"hub.backup_key": good["sealed"]["custody.passphrase"]}},
+        {**good, "extra": 1},
+        {"request_id": got["request_id"], "sealed": good["sealed"]},
+    ):
+        refused(lambda bad=bad: signer.handle("custody_off", {"workspace_id": WS, **bad}), "invalid.input")
+    refused(lambda: signer.handle("custody_off", {"workspace_id": WS, "begin": True, "x": 1}), "invalid.input")
+    refused(lambda: signer.handle("custody_off", {"workspace_id": WS, "begin": False}), "invalid.input")
+
+
+def test_c12_nothing_secret_in_the_written_log(switch):
+    signer, state, provider, _, _, log = switch
+    on(signer, provider.passphrase)
+    off(signer, passphrase=STRONG)
+    assert STRONG not in (log.root / "click.jsonl").read_text()
+
+
+def test_c12_the_log_says_the_key_moved_only_when_it_did(switch):
+    signer, state, provider, _, _, log = switch
+    on(signer, provider.passphrase)
+    off(signer, passphrase=STRONG)
+    assert ("custody_off", {"workspace": WS, "moved": "true"}) in log.lines
+    text = (log.root / "click.jsonl").read_text()
+    assert '"moved": "true"' in text and STRONG not in text
+    on2 = signer.handle("custody_off", {"workspace_id": WS})  # flag only, key already under a passphrase
+    assert on2 and log.lines[-1] == ("custody_off", {"workspace": WS})

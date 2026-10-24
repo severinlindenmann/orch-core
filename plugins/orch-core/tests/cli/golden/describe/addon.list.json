@@ -44,6 +44,34 @@
                 },
                 "state": {
                   "type": "string"
+                },
+                "credential": {
+                  "type": "string"
+                },
+                "capabilities": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "paused": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "cause": {
+                      "type": "string"
+                    },
+                    "reconnect": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "cause"
+                  ],
+                  "additionalProperties": false
                 }
               },
               "required": [

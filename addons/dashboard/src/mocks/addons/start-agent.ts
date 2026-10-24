@@ -61,7 +61,7 @@ const startable = (c: Ctx) =>
 function preview(c: Ctx, state: Record<string, unknown>, key: string, title: string): LaunchPreview {
   const choice = choiceOf(state, c.viewer, key)
   const req: LaunchRequest = { ticket: key, ...choice }
-  const { plan, command } = c.store.resolveLaunch(c.ws, req)
+  const { command } = c.store.resolveLaunch(req)
   return {
     ticket: key,
     title,
@@ -69,8 +69,6 @@ function preview(c: Ctx, state: Record<string, unknown>, key: string, title: str
     harness: HARNESS_LABEL[choice.harness],
     where: WHERE_LABEL[choice.where],
     command,
-    ...(plan.line ? { model: plan.line } : {}),
-    ...(plan.error ? { blocked: plan.error } : {}),
     request: { ...choice },
   }
 }

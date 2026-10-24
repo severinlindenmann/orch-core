@@ -11,7 +11,6 @@ from __future__ import annotations
 import ast
 import contextlib
 import dataclasses
-import json
 import os
 from pathlib import Path
 from typing import Any
@@ -704,12 +703,6 @@ def test_relay_paired_counts_a_dangling_link_and_an_unreadable_directory(tmp_pat
         os.chmod(d, 0o700)
 
 
-def test_relay_link_and_pair_are_reader_ops():
-    from orch.host.convenience import READER_OPS
-
-    assert {"relay.link", "relay.pair", "member.add"} <= READER_OPS
-
-
 # --- the relay-linked workspace cap and the link reservation -------------------------------------------------------
 
 
@@ -747,62 +740,6 @@ def _link(state: Path, ws: str, link_state: str = "linked") -> None:
     write_private(_relay_dir(state, ws) / "link.json", {"v": 1, "state": link_state})
 
 
-def test_the_ninth_relay_link_is_refused_with_host_limit(tmp_path):
-    from orch.host import relaylink
-
-    state = _state(tmp_path)
-    assert relaylink.MAX_LINKED == 8
-    for i in range(7):
-        _link(state, f"{i:032x}")
-    svc = LinkService(state, "f" * 32, ConvStore())
-    with relaylink.link_reservation(svc):
-        assert svc.store.lock_depth == 1  # under the store lock: the same critical section as link.json
-        _link(state, "f" * 32)
-    assert len(relaylink.linked_workspaces(state)) == 8
-    other = LinkService(state, "e" * 32, ConvStore())
-    with pytest.raises(HostError) as exc, relaylink.link_reservation(other):
-        pass
-    assert exc.value.code == "host.limit"
-    assert (exc.value.exit, exc.value.retryable) == (3, False)
-    with pytest.raises(HostError) as exc, relaylink.link_reservation(svc):  # no relink branch: the store refuses
-        pass  # an existing link anyway (relay.link_exists), so the guard just counts
-    assert exc.value.code == "host.limit"
-
-
-def test_a_linking_workspace_and_an_unlinked_one(tmp_path):
-    from orch.host import relaylink
-
-    state = _state(tmp_path)
-    for i in range(8):
-        _link(state, f"{i:032x}", "linking")  # a reservation counts
-    with pytest.raises(HostError), relaylink.link_reservation(LinkService(state, "e" * 32, ConvStore())):
-        pass
-    d = _relay_dir(state, f"{0:032x}")
-    (d / "link.json").rename(d / "unlinked-1.json")  # an unlinked workspace no longer counts toward the cap
-    with relaylink.link_reservation(LinkService(state, "e" * 32, ConvStore())):
-        pass
-
-
-def test_relay_link_is_refused_on_a_workspace_with_convenience_history(tmp_path):
-    from orch.host import relaylink
-
-    state = _state(tmp_path)
-    svc = LinkService(state, "e" * 32, ConvStore([{"type": "x", "auth": "convenience"}]))
-    with pytest.raises(HostError) as exc, relaylink.link_reservation(svc):
-        pytest.fail("reserved")
-    assert exc.value.code == "sign.convenience_readers"
-
-
-def test_relay_link_is_refused_while_the_convenience_flag_is_on(tmp_path):
-    from orch.host import convenience, relaylink
-
-    state = _state(tmp_path)
-    convenience.set_enabled(state, "e" * 32, True, UID)
-    with pytest.raises(HostError) as exc, relaylink.link_reservation(LinkService(state, "e" * 32, ConvStore())):
-        pytest.fail("reserved")
-    assert exc.value.code == "sign.convenience_readers"
-
-
 def test_host_limit_is_in_the_catalog():
     from orch.host.errors import HOST_CODES
 
@@ -812,121 +749,10 @@ def test_host_limit_is_in_the_catalog():
 # --- orch host relay stop: the persistent stop marker ----------------------------------------------------------------
 
 
-def test_the_stop_marker_is_private_and_blocks_a_start(tmp_path, monkeypatch):
-    from orch.host import relaylink
-    from orch.relay import worker as relay_worker
-
-    state = _state(tmp_path)
-    _link(state, WS)
-    monkeypatch.setattr(relay_worker, "R6_READY", False)
-    assert relaylink.may_start(state, WS, UID) is False  # R5: the R6 gate (11A.1) keeps every start dormant
-    assert relaylink.start_blocker(state, WS, UID) == relay_worker.R6_GATE_REASON
-    monkeypatch.setattr(relay_worker, "R6_READY", True)
-    assert relaylink.may_start(state, WS, UID) is True
-    relaylink.mark_stopped(state, WS, UID)
-    path = relaylink.stopped_path(state, WS)
-    assert (os.stat(path).st_mode & 0o777) == 0o600
-    assert relaylink.is_stopped(state, WS, UID) is True
-    assert relaylink.may_start(state, WS, UID) is False
-    relaylink.clear_stopped(state, WS, UID)
-    assert relaylink.may_start(state, WS, UID) is True
-
-
-def test_may_start_needs_a_link_and_fails_closed_on_an_unsafe_marker(tmp_path):
-    from orch.host import relaylink
-
-    state = _state(tmp_path)
-    assert relaylink.may_start(state, WS, UID) is False  # not linked
-    _link(state, WS)
-    marker = relaylink.stopped_path(state, WS)
-    marker.symlink_to(tmp_path / "elsewhere")
-    assert relaylink.is_stopped(state, WS, UID) is True  # a marker that cannot be read safely counts as stopped
-    assert relaylink.may_start(state, WS, UID) is False
-
-
-def test_a_null_marker_and_a_symlinked_relay_dir_fail_closed(tmp_path):
-    """Opus L5: the marker's existence means stopped, whatever its content; a relay dir that is not a private
-    directory never lets the worker start."""
-    from orch.host import relaylink
-    from orch.host.custody import write_private
-
-    state = _state(tmp_path)
-    _link(state, WS)
-    write_private(relaylink.stopped_path(state, WS), None)  # JSON null
-    assert relaylink.is_stopped(state, WS, UID) is True
-    assert relaylink.may_start(state, WS, UID) is False
-    other = "c" * 32
-    elsewhere = tmp_path / "elsewhere"
-    elsewhere.mkdir(mode=0o700)
-    write_private(elsewhere / "link.json", {"v": 1, "state": "linked"})
-    (state / "hosts" / other).mkdir(mode=0o700)
-    (state / "hosts" / other / "relay").symlink_to(elsewhere)
-    assert relaylink.is_stopped(state, other, UID) is True
-    assert relaylink.may_start(state, other, UID) is False
-
-
 def _short_run() -> Path:
     import tempfile
 
     return Path(tempfile.mkdtemp(prefix="rr", dir="/tmp"))
-
-
-def test_the_cli_relay_stop_writes_the_marker_with_the_host_down(tmp_path):
-    import io
-
-    from orch.host import relaylink
-    from orch.host.cli import main
-    from orch.host.custody import write_private
-    from orch.host.registry import registry_path
-
-    state = _state(tmp_path)
-    reg = registry_path(state)
-    reg.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    write_private(reg, {"v": 1, "workspaces": [{"workspace_id": WS, "prefix": "DEMO", "root": "/x"}]})
-    out = io.StringIO()
-    run = _short_run()  # no socket there: the host is confirmed not running
-    env = {"HOME": str(tmp_path), "ORCH_STATE_DIR": str(state), "ORCH_HOST_RUN_DIR": str(run)}
-    code = main(["relay", "stop", "--workspace", "DEMO", "--state", str(state)], env=env, out=out)
-    assert code == 0, out.getvalue()
-    assert relaylink.is_stopped(state, WS, UID)
-    doc = json.loads(out.getvalue().splitlines()[-1])
-    assert doc["ok"] is True and doc["data"]["stopped"] is True and doc["data"]["host"] == "not running"
-    # start is a person's decision: never under an agent grant
-    out = io.StringIO()
-    code = main(["relay", "start", "--workspace", WS, "--state", str(state)], env={**env, "ORCH_GRANT": "g"}, out=out)
-    assert code != 0 and relaylink.is_stopped(state, WS, UID)
-    out = io.StringIO()
-    code = main(["relay", "start", "--workspace", WS, "--state", str(state)], env=env, out=out)
-    assert code == 0, out.getvalue()
-    assert not relaylink.is_stopped(state, WS, UID)
-    run.rmdir()
-
-
-def test_the_cli_relay_stop_with_an_unreachable_host_keeps_the_marker_and_fails(tmp_path):
-    """Codex P2 #2, Opus L7: a host that cannot be reached (here an unsafe socket path) is not "not running"."""
-    import io
-
-    from orch.host import relaylink
-    from orch.host.cli import main
-    from orch.host.custody import write_private
-    from orch.host.registry import registry_path
-
-    state = _state(tmp_path)
-    reg = registry_path(state)
-    reg.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    write_private(reg, {"v": 1, "workspaces": [{"workspace_id": WS, "prefix": "DEMO", "root": "/x"}]})
-    long_run = tmp_path / ("r" * 120)  # over the 100-byte socket path limit
-    env = {"HOME": str(tmp_path), "ORCH_STATE_DIR": str(state), "ORCH_HOST_RUN_DIR": str(long_run)}
-    out = io.StringIO()
-    code = main(["relay", "stop", "--workspace", "DEMO", "--state", str(state)], env=env, out=out)
-    assert code != 0
-    doc = json.loads(out.getvalue().splitlines()[-1])
-    assert doc["ok"] is False and doc["error"]["code"] == "host.unavailable"
-    assert "marker is set" in doc["error"]["message"]
-    assert relaylink.is_stopped(state, WS, UID)  # kept
-    out = io.StringIO()
-    code = main(["relay", "start", "--workspace", "DEMO", "--state", str(state)], env=env, out=out)
-    assert code != 0 and relaylink.is_stopped(state, WS, UID)  # never cleared without the host's word
 
 
 # --- the relay worker lifecycle (Codex P2 #1, #3; Opus I3) -----------------------------------------------------------
@@ -958,67 +784,6 @@ def _service(tmp_path: Path) -> Any:
     state = _state(tmp_path)
     entry = Entry(workspace_id=WS, prefix="DEMO", root=str(tmp_path), host_uid=UID, group="staff", peers={})
     return WorkspaceService(entry, state, UID)
-
-
-def test_a_start_waits_for_a_stop_in_progress_and_the_stop_returns_after_shutdown(tmp_path, monkeypatch):
-    import threading
-
-    from orch.host import relaylink
-    from orch.relay import worker as relay_worker
-
-    monkeypatch.setattr(relay_worker, "R6_READY", True)  # R5's gate open: this tests H12a's start/stop ordering
-
-    svc = _service(tmp_path)
-    _link(svc.state_dir, WS)
-    svc.state = "ok"
-    release = threading.Event()
-    old = SlowWorker(release)
-    svc.relay = old
-    started: list[Any] = []
-    svc.relay_starter = lambda s: (started.append(old.stopped.is_set()), setattr(s, "relay", object()))
-    results: dict[str, Any] = {}
-    stopper = threading.Thread(target=lambda: results.__setitem__("stop", svc.relay_stop()))
-    stopper.start()
-    for _ in range(200):
-        if relaylink.is_stopped(svc.state_dir, WS, UID):
-            break
-        threading.Event().wait(0.01)
-    starter = threading.Thread(target=lambda: results.__setitem__("start", svc.relay_start()))
-    starter.start()
-    threading.Event().wait(0.2)
-    assert "stop" not in results and "start" not in results and started == []  # both wait for the shutdown
-    release.set()
-    stopper.join(10)
-    starter.join(10)
-    assert results["stop"] == "stopped" and old.joined  # acknowledged only after stop() and join()
-    assert results["start"] == "started" and started == [True]  # the new worker started after the old one stopped
-    svc.executor.shutdown(wait=False)
-
-
-def test_close_waits_for_surviving_relay_threads_bounded(tmp_path):
-    import threading
-
-    svc = _service(tmp_path)
-    release = threading.Event()
-    release.set()
-    stuck = SlowWorker(release, alive_after=True)
-    svc.relay = stuck
-    svc.relay_join_seconds = 0.05
-    svc.close()
-    assert stuck.stopped.is_set() and stuck.joined == [0.05]
-    assert svc.relay is None
-
-
-def test_relay_stop_reports_a_worker_that_did_not_end(tmp_path):
-    import threading
-
-    svc = _service(tmp_path)
-    release = threading.Event()
-    release.set()
-    svc.relay = SlowWorker(release, alive_after=True)
-    svc.relay_join_seconds = 0.05
-    assert svc.relay_stop() == "stuck"
-    svc.executor.shutdown(wait=False)
 
 
 # --- #441 / #454: the convenience_seen mark lives in append_signed -------------------------------------------------
@@ -1058,163 +823,6 @@ def test_append_signed_appends_nothing_when_the_mark_cannot_be_written(tmp_path)
 # --- review round 2 ---------------------------------------------------------------------------------------------------
 
 
-def test_a_repeated_stop_keeps_answering_stuck_while_the_stuck_workers_threads_live(tmp_path):
-    """Codex P2: "none" only when there is no worker at all, a retained stuck one included."""
-    import threading
-
-    svc = _service(tmp_path)
-    release = threading.Event()
-    release.set()
-    stuck = SlowWorker(release, alive_after=True)
-    svc.relay = stuck
-    svc.relay_join_seconds = 0.05
-    assert svc.relay_stop() == "stuck"
-    assert svc.relay_stop() == "stuck"  # its threads still run
-    stuck.alive_after = False  # they end
-    assert svc.relay_stop() == "none"
-    svc.executor.shutdown(wait=False)
-
-
-def test_a_stop_concurrent_with_a_stop_that_ends_stuck_answers_stuck(tmp_path):
-    import threading
-
-    svc = _service(tmp_path)
-    release = threading.Event()
-    stuck = SlowWorker(release, alive_after=True)
-    svc.relay = stuck
-    svc.relay_join_seconds = 0.05
-    results: dict[str, str] = {}
-    first = threading.Thread(target=lambda: results.__setitem__("a", svc.relay_stop()))
-    first.start()
-    for _ in range(200):
-        if svc.relay is None:
-            break
-        threading.Event().wait(0.01)
-    second = threading.Thread(target=lambda: results.__setitem__("b", svc.relay_stop()))
-    second.start()
-    threading.Event().wait(0.1)
-    release.set()
-    first.join(10)
-    second.join(10)
-    assert results == {"a": "stuck", "b": "stuck"}
-    svc.executor.shutdown(wait=False)
-
-
-def test_close_also_joins_a_retained_stuck_worker(tmp_path):
-    """Codex P2: close() waits (bounded) for a stuck worker's threads too, before the store closes."""
-    import threading
-
-    svc = _service(tmp_path)
-    release = threading.Event()
-    release.set()
-    stuck = SlowWorker(release, alive_after=True)
-    svc.relay = stuck
-    svc.relay_join_seconds = 0.05
-    assert svc.relay_stop() == "stuck"
-    stuck.joined.clear()
-    svc.close()
-    assert stuck.joined and stuck.joined[0] == 0.05
-
-
-def test_a_stuck_worker_stays_tracked_while_and_after_close_joins_it(tmp_path):
-    """Codex #455 delta 2: during close()'s join, and after a join that times out, relay_stop still answers "stuck"."""
-    import threading
-
-    svc = _service(tmp_path)
-    release = threading.Event()
-    release.set()
-    stuck = SlowWorker(release, alive_after=True)
-    svc.relay = stuck
-    svc.relay_join_seconds = 0.05
-    assert svc.relay_stop() == "stuck"
-    seen: list[str] = []
-    real_join = stuck.join
-
-    def join(timeout):
-        if timeout == svc.relay_join_seconds and not seen:  # close's join, not relay_stop's liveness probe
-            seen.append(svc.relay_stop())  # a stop racing close's join
-        return real_join(timeout)
-
-    stuck.join = join
-    svc.close()
-    assert seen == ["stuck"]
-    assert svc._relay_stuck is stuck  # the join timed out: still tracked
-    assert svc.relay_stop() == "stuck"
-
-
-def test_a_start_racing_close_never_starts_a_worker(tmp_path):
-    """Opus D1 (PoC test_poc3 inverted): close() sets closing under the lock before it takes the worker."""
-    import threading
-
-    svc = _service(tmp_path)
-    _link(svc.state_dir, WS)
-    svc.state = "ok"
-    release = threading.Event()
-    svc.relay = SlowWorker(release)
-    started: list[int] = []
-    svc.relay_starter = lambda s: (started.append(1), setattr(s, "relay", "NEW"))
-    closer = threading.Thread(target=svc.close)
-    closer.start()
-    threading.Event().wait(0.1)
-    res: dict[str, Any] = {}
-
-    def start() -> None:
-        try:
-            res["s"] = svc.relay_start()
-        except HostError as exc:
-            res["s"] = exc.code
-
-    st = threading.Thread(target=start)
-    st.start()
-    threading.Event().wait(0.1)
-    release.set()
-    closer.join(10)
-    st.join(10)
-    assert svc.closing is True and started == [] and svc.relay is None
-    assert res["s"] in {"none", "workspace.unavailable"}
-
-
-def test_store_relay_link_with_the_host_guard_refuses_cap_convenience_and_an_existing_link(tmp_path):
-    """Codex P2, Opus D2: ``store.relay_link(link, guard=lambda: link_reservation(service))`` is the only writer of
-    ``link.json``; the guard's refusals and the store's own existing-link refusal, end to end."""
-    from orch.host import relaylink
-    from orch.store import StoreError
-    from orch.store.convmark import ensure_convenience_mark
-    from tests.store.helpers import WS as SWS
-    from tests.store.helpers import Env
-
-    def setup(sub: str) -> tuple[Any, Any, Path]:
-        env = Env(tmp_path / sub)
-        env.bootstrap()
-        svc = LinkService(env.host_state, SWS, env.store)
-        return env, svc, relaylink.link_path(env.host_state, SWS)
-
-    link = {"v": 1, "workspace_id": SWS, "origin": "https://relay.example", "max_publication_bytes": 4194304}
-    # the cap: eight other relay-linked workspaces on this host
-    env, svc, path = setup("cap")
-    for i in range(8):
-        _link(env.host_state, f"{i:032x}")
-    with pytest.raises(HostError) as exc:
-        env.store.relay_link(dict(link), guard=lambda: relaylink.link_reservation(svc))
-    assert exc.value.code == "host.limit" and not os.path.lexists(path)
-    env.store.close()
-    # the durable convenience mark
-    env, svc, path = setup("conv")
-    ensure_convenience_mark(env.host_state, SWS, UID)
-    with pytest.raises(HostError) as exc:
-        env.store.relay_link(dict(link), guard=lambda: relaylink.link_reservation(svc))
-    assert exc.value.code == "sign.convenience_readers" and not os.path.lexists(path)
-    env.store.close()
-    # an existing link: written once, the second is the store's refusal
-    env, svc, path = setup("again")
-    env.store.relay_link(dict(link), guard=lambda: relaylink.link_reservation(svc))
-    assert json.loads(path.read_bytes())["state"] == "linking"
-    with pytest.raises(StoreError) as sexc:
-        env.store.relay_link(dict(link), guard=lambda: relaylink.link_reservation(svc))
-    assert sexc.value.code == "relay.link_exists"
-    env.store.close()
-
-
 def _unlink_cli_env(tmp_path, run):
     from orch.host import relaylink
     from orch.host.custody import write_private
@@ -1227,38 +835,3 @@ def _unlink_cli_env(tmp_path, run):
     _link(state, WS)
     env = {"HOME": str(tmp_path), "ORCH_STATE_DIR": str(state), "ORCH_HOST_RUN_DIR": str(run)}
     return state, env, relaylink.link_path(state, WS)
-
-
-def test_the_cli_relay_unlink_is_refused_to_an_agent_and_needs_the_host(tmp_path):
-    """R5 review R2 (C1, C2): ``orch host relay unlink`` is a person's decision (refused under ``ORCH_GRANT`` before
-    anything is touched), and the rename needs the store lock, so with no host it is refused, never done locally."""
-    import io
-
-    from orch.host.cli import main
-
-    run = _short_run()
-    state, env, link = _unlink_cli_env(tmp_path, run)
-    out = io.StringIO()
-    code = main(["relay", "unlink", "--workspace", "DEMO", "--state", str(state)], env={**env, "ORCH_GRANT": "g"},
-                out=out)  # fmt: skip
-    assert code != 0 and "an agent never runs orch host relay unlink" in out.getvalue() and link.exists()
-    out = io.StringIO()
-    code = main(["relay", "unlink", "--workspace", "DEMO", "--state", str(state)], env=env, out=out)
-    assert code != 0 and "unlink runs through the host" in out.getvalue()
-    assert link.exists() and not list(link.parent.glob("unlinked-*"))
-    run.rmdir()
-
-
-def test_the_cli_relay_unlink_with_an_unreachable_host_unlinks_nothing(tmp_path):
-    import io
-
-    from orch.host.cli import main
-
-    state, env, link = _unlink_cli_env(tmp_path, tmp_path / ("r" * 120))
-    out = io.StringIO()
-    code = main(["relay", "unlink", "--workspace", "DEMO", "--state", str(state)], env=env, out=out)
-    doc = json.loads(out.getvalue().splitlines()[-1])
-    assert (
-        code == 9 and doc["error"]["code"] == "host.unavailable" and "nothing was unlinked" in doc["error"]["message"]
-    )
-    assert link.exists() and not list(link.parent.glob("unlinked-*"))

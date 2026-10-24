@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, Request
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
 from . import adapters
 from .errors import HostError, fail
@@ -585,28 +585,6 @@ class SettingsSet(Action):
         return self
 
 
-class ModelsSet(Action):
-    """`settings.set {set:{models}}` (Model routing): for each harness and Start agent mode, the model a start uses; a
-    mode that is not named uses the harness default; an empty table clears every choice (sent as `null`). Every name is
-    checked against core's closed per-harness list here, and again by the host. Signed with the typed word."""
-
-    action: Literal["models_set"]
-    models: dict[str, dict[str, str]] = Field(default_factory=dict, max_length=2)
-
-    @model_validator(mode="after")
-    def closed(self):
-        from orch.modelchoices import MODEL_CHOICES, ROUTE_MODES
-
-        for harness, per in self.models.items():
-            if harness not in MODEL_CHOICES:
-                raise ValueError("models: an unknown agent")
-            for mode, name in per.items():
-                if mode not in ROUTE_MODES or name not in MODEL_CHOICES[harness]:
-                    raise ValueError("models: a mode or model that orch does not offer")
-        self.models = {h: dict(sorted(per.items())) for h, per in sorted(self.models.items()) if per}
-        return self
-
-
 class WorkspaceIcon(BaseModel):
     """An icon and a colour of core's closed lists (`orch.wsicons`); nothing else is accepted."""
 
@@ -753,10 +731,19 @@ class MemberRemove(Action):
     person: Person
 
 
+DeviceId = Annotated[str, StringConstraints(pattern=r"^d_[0-9a-f]{32}$")]
+
+
+class DeviceRemove(Action):
+    """#1198 C15, `device.remove {device}`: one click. Core refuses the device that signs the click and the last working
+    device of an owner (`device.lockout`); this server only relays the device id the page showed."""
+
+    action: Literal["device_remove"]
+    device: DeviceId
+
+
 # the dashboard add-on is always on; no other package is offered here
-AddonName = Literal[
-    "start-agent", "terminals", "worktrees", "publish", "usage", "estimate", "explorer", "model-routing", "wiki"
-]
+AddonName = Literal["start-agent", "terminals", "worktrees", "publish", "usage", "estimate", "explorer", "wiki"]
 
 
 class AddonGrant(Action):
@@ -765,6 +752,23 @@ class AddonGrant(Action):
 
     action: Literal["addon_grant"]
     name: AddonName
+
+
+MarketName = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9-]{0,39}$")]
+#: core `marketstate._STAGE`: the host's own stage id
+StageId = Annotated[str, StringConstraints(pattern=r"^st_[0-9a-f]{32}$")]
+
+
+class MarketGrant(Action):
+    """`addon.grant {name, staged}`: install or update the package the host staged and the person reviewed (A10).
+    Exactly these two keys (`extra="forbid"`). **One click** where click-to-sign is on (V3-D38, owner 24 Oct: the
+    signer shows the whole review, the marketplace lines "per host, not signed" included), the terminal hand-off where
+    it is off. `publish` is terminal only (`click.prepare` refuses it). It has no agent route (the dashboard session
+    is the person's). The host re-reads the stage and judges it again when the signed request is submitted."""
+
+    action: Literal["market_grant"]
+    name: MarketName
+    staged: StageId
 
 
 class AddonDisable(Action):
@@ -814,25 +818,11 @@ class PublishAddresses(BaseModel):
 
 class AddonEnable(Action):
     action: Literal["addon_enable"]
-    name: Literal["publish", "model-routing"]
-    publish: PublishAddresses | None = None
-    models: dict[str, dict[str, str]] | None = None
-
-    @model_validator(mode="after")
-    def settings_match(self):
-        if self.name == "publish":
-            if self.publish is None or self.models is not None:
-                raise ValueError("Publish needs exactly publish settings")
-        else:
-            if self.models is None or self.publish is not None:
-                raise ValueError("Model routing needs exactly models settings")
-            self.models = ModelsSet(action="models_set", models=self.models).models
-            if not self.models:
-                raise ValueError("choose at least one model")
-        return self
+    name: Literal["publish"]
+    publish: PublishAddresses
 
     def settings(self) -> dict:
-        return {"publish": self.publish.model_dump()} if self.publish is not None else {"models": self.models}
+        return {"publish": self.publish.model_dump()}
 
     def intent(self, grant: dict) -> dict:
         from orch.host import sequence
@@ -908,6 +898,52 @@ class RunnerGrant(Action):
     extend: Annotated[str, StringConstraints(pattern=r"^gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")] | None = None
 
 
+class AgentAccess(Action):
+    """#1198 C7, agent access for a tool outside the dashboard: a click request whose secret comes back sealed to the
+    page's own key and is shown once there. Click only (never a terminal hand-off); the signer fixes the verbs
+    (`agent`) and refuses a runner label, so neither is the browser's to send. A runner grant is `RunnerGrant`."""
+
+    action: Literal["agent_access"]
+    hours: Annotated[int, Field(ge=1, le=168)] = 8  # core GRANT_MAX_HOURS
+    scope: Literal["all", "workable"] = "workable"
+    label: Annotated[str, StringConstraints(min_length=1, max_length=40, strip_whitespace=True)] | None = None
+    #: the page's one-use P-256 public key (65-byte point, base64url): sent to the signer at prepare, so the review the
+    #: person approves is of this key; the dashboard server only relays it (it is public) and never holds a private key
+    reveal_key: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{87}$")]
+
+    @field_validator("label")
+    @classmethod
+    def _plain_label(cls, v):
+        if v is not None and (v.lower() == "runner" or any(ord(c) < 32 or ord(c) == 127 for c in v)):
+            raise ValueError("label is plain text and not runner")
+        return v
+
+
+MAX_HUB_CARD_BYTES = 16 * 1024
+
+
+class HubJoin(Action):
+    """#1198 C10, join a hub (selective only: a full join needs the key in passphrase custody, so it is the terminal's).
+    Click only: the backup key is typed once in the page, sealed to the signer, and makes the owner proof; never a
+    terminal hand-off. The card is the hub's own file, as text (strict JSON); the host verifies it, not this server."""
+
+    action: Literal["hub_join"]
+    hub_card: Annotated[str, StringConstraints(min_length=2, max_length=MAX_HUB_CARD_BYTES)]
+    hub_id: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{8,64}$")]
+    mode: Literal["selective"] = "selective"
+
+    @model_validator(mode="after")
+    def check_card(self):
+        _strict_json_object(self.hub_card)
+        return self
+
+
+class HubLeave(Action):
+    """#1198 C10, leave the hub this workspace is joined to. Click only, with the backup key sealed (see HubJoin)."""
+
+    action: Literal["hub_leave"]
+
+
 PrepareBody = Annotated[
     Approve
     | RequestChanges
@@ -928,7 +964,6 @@ PrepareBody = Annotated[
     | Details
     | WriteSection
     | SettingsSet
-    | ModelsSet
     | IconSet
     | RepoSet
     | RepoRemove
@@ -936,13 +971,18 @@ PrepareBody = Annotated[
     | MemberAdd
     | MemberRole
     | MemberRemove
+    | DeviceRemove
     | AddonGrant
+    | MarketGrant
     | AddonDisable
     | PublishSetup
     | AddonEnable
     | PublishShare
     | GrantRevoke
-    | RunnerGrant,
+    | RunnerGrant
+    | AgentAccess
+    | HubJoin
+    | HubLeave,
     Field(discriminator="action"),
 ]
 
@@ -1082,8 +1122,6 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
             return "section.set", {"ref": action.key, "section": action.section, "message": action.text}
         case SettingsSet():
             return "settings.set", {"set": action.model_dump(include={*DURATIONS, "sign_methods"}, exclude_none=True)}
-        case ModelsSet():
-            return "settings.set", {"set": {"models": action.models or None}}
         case IconSet():
             return "settings.set", {"set": {"icon": action.icon.model_dump() if action.icon else None}}
         case AddonEnable():
@@ -1105,8 +1143,12 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
             return "member.role", {"person": action.person, "role": action.role}
         case MemberRemove():
             return "member.remove", {"person": action.person}
+        case DeviceRemove():
+            return "device.remove", {"device": action.device}
         case AddonGrant():
             return "addon.grant", {"name": action.name}
+        case MarketGrant():
+            return "addon.grant", {"name": action.name, "staged": action.staged}
         case AddonDisable():
             return "addon.disable", {"name": action.name}
         case GrantRevoke():
@@ -1115,6 +1157,18 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
             return "grant", {"hours": action.hours, "scope": action.scope} | (
                 {"extend": action.extend} if action.extend else {}
             )
+        case AgentAccess():
+            return "grant", {"hours": action.hours, "scope": action.scope} | (
+                {"label": action.label} if action.label else {}
+            )
+        case HubJoin():
+            return "hub.join", {
+                "hub_card": _strict_json_object(action.hub_card),
+                "hub_id": action.hub_id,
+                "mode": "selective",
+            }
+        case HubLeave():
+            return "hub.leave", {}
     raise AssertionError("closed allowlist")  # pragma: no cover
 
 
@@ -1127,6 +1181,7 @@ WORKSPACE_OPS = (
     "member.add",
     "member.role",
     "member.remove",
+    "device.remove",
     "grant.revoke",
     "move",
     "addon.grant",
@@ -1189,7 +1244,7 @@ def expected(action: Action, person: str | None = None):
         return all(adapters.handoff.cj(events[0].get(k)) == adapters.handoff.cj(v) for k, v in fields.items())
 
     match action:
-        case SettingsSet() | ModelsSet() | IconSet() | RepoSet() | RepoRemove() | PublishSetup() | AddonEnable():
+        case SettingsSet() | IconSet() | RepoSet() | RepoRemove() | PublishSetup() | AddonEnable():
             _, args = host_call(action)
             return lambda ev: one(ev, "settings.changed", set=args["set"])
         case PublishShare():
@@ -1233,7 +1288,13 @@ def expected(action: Action, person: str | None = None):
             return lambda ev: one(ev, "role.changed", person=action.person, role=action.role)
         case MemberRemove():
             return lambda ev: one(ev, "member.removed", person=action.person)
+        case DeviceRemove():
+            return lambda ev: one(ev, "device.removed", device=action.device) and set(ev[0]) <= (
+                set(adapters.handoff.ENVELOPE) | {"device"}
+            )
         case AddonGrant():
+            return lambda ev: one(ev, "addon.granted", name=action.name)
+        case MarketGrant():
             return lambda ev: one(ev, "addon.granted", name=action.name)
         case AddonDisable():
             return lambda ev: one(ev, "addon.disabled", name=action.name)
@@ -1269,6 +1330,35 @@ def expected(action: Action, person: str | None = None):
                 and set(ev[0]) <= GRANT_ISSUED_KEYS
                 and type(ev[0].get("hours")) is int
                 and 1 <= ev[0]["hours"] <= 168
+                and person is not None
+                and isinstance(ev[0].get("actor"), dict)
+                and ev[0]["actor"].get("kind") == "person"
+                and ev[0]["actor"].get("id") == person
+            )
+        case AgentAccess():
+            # Exactly one `grant.issued` of verbs agent, the hours, scope and label asked for (no label when none was),
+            # nothing a future field could add, and the caller as its person. A runner label never passes.
+            return lambda ev: (
+                one(ev, "grant.issued", verbs="agent", hours=action.hours, scope=action.scope, label=action.label)
+                and set(ev[0]) <= GRANT_ISSUED_KEYS
+                and ev[0].get("label") != "runner"
+                and person is not None
+                and isinstance(ev[0].get("actor"), dict)
+                and ev[0]["actor"].get("kind") == "person"
+                and ev[0]["actor"].get("id") == person
+            )
+        case HubJoin():
+            # exactly one `hub.joined`: a selective binding to the hub the person was told, the caller as its person
+            return lambda ev: (
+                one(ev, "hub.joined", mode="selective", hub_id=action.hub_id)
+                and person is not None
+                and isinstance(ev[0].get("actor"), dict)
+                and ev[0]["actor"].get("kind") == "person"
+                and ev[0]["actor"].get("id") == person
+            )
+        case HubLeave():
+            return lambda ev: (
+                one(ev, "hub.left")
                 and person is not None
                 and isinstance(ev[0].get("actor"), dict)
                 and ev[0]["actor"].get("kind") == "person"
@@ -1350,6 +1440,9 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
             base = question_base(data, body.question)
     if addon_base_ is not None:
         base = addon_base_
+    if isinstance(body, MarketGrant):
+        # one intent per stage: a new stage (a new review) is a new request, the same stage is one
+        base = {"addon": body.name, "staged": body.staged}
     person = link.welcome["peer"]["person"]
     meta = None
     if isinstance(body, NewTicketSequence | QuickStart | EditTicket):
@@ -1371,15 +1464,11 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
         digest = sequence.digest_of(ws, person, intent)
         meta = {"step": 0, "of": 2, "digest": digest, "intent": intent}
         base = {"sequence": digest, "addon": switch_base}
+    if isinstance(body, AgentAccess):
+        base = {
+            "reveal_key": body.reveal_key
+        }  # a new page key is a new request: one key, one grant (the idem keeps it)
     return Plan(op, args, host_files(body), base, person, meta)
-
-
-CLICK_ONLY = (
-    "This workspace now signs with one click: use Sign in the dashboard (the page is updating; press Try "
-    "again). To sign in "
-    "the terminal instead, run `orch host convenience off --workspace {ws}` and then move the key back with "
-    "`orch keys custody passphrase --workspace {ws} --in-place`."
-)
 
 
 #: How many earlier ENDED (cancelled, expired) attempts of one action a single press steps past. The cap bounds the
@@ -1731,10 +1820,6 @@ def register(app: FastAPI, gateway: Gateway):
     def prepare(body: PrepareBody, request: Request, ws: str = Depends(workspace)):
         token = request.state.token
         gateway.enabled(ws)
-        if gateway.one_path_is_click(ws):
-            raise HostError(
-                {"code": "sign.click_only", "message": CLICK_ONLY.format(ws=ws), "retryable": False}, exit=3
-            )
         with handoffs.lock:
             handoffs.reserve(token)  # checks and takes a slot atomically: concurrent prepares cannot overshoot
         try:
@@ -1742,6 +1827,20 @@ def register(app: FastAPI, gateway: Gateway):
                 body, RepoSet
             ):  # the host's path check, before any request exists (plain refusal in the dialog)
                 gateway.check_repo_path(ws, body.path)
+            if isinstance(
+                body, AgentAccess
+            ):  # the secret is shown only in the page, sealed: a click request, never here
+                raise fail(
+                    "invalid.input",
+                    "Agent access with a shown secret is signed with one click in the dashboard.",
+                    exit=1,
+                )
+            if isinstance(body, HubJoin | HubLeave):  # the backup key is typed in the page and sealed: a click only
+                raise fail(
+                    "invalid.input",
+                    "A hub step is signed with one click in the dashboard, with your backup key.",
+                    exit=1,
+                )
             planned = plan(gateway, ws, body)
             if planned.sequence and planned.sequence["intent"].get("images"):
                 raise fail(

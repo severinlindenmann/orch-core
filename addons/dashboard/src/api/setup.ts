@@ -5,7 +5,7 @@ export interface SetupState {
   mode: 'new' | 'finish'
   dir: string
   dir_name: string
-  suggested: { name: string; prefix: string; agent_hours?: number; agent_grant?: boolean }
+  suggested: { name: string; prefix: string; method?: 'terminal' | 'click'; agent_hours?: number; agent_grant?: boolean }
   addons: {
     id: string
     title: string
@@ -18,6 +18,8 @@ export interface SetupState {
   methods: ('terminal' | 'click')[]
   click_available: boolean
   click_reason: string
+  /** Core's convenience-signing risk sentence, shown with the method choice before Continue. */
+  click_risk: string
   agent_hours: number[]
   relay: { available: boolean; enabled: boolean }
   /** The folder is (or lies in) a git working copy; absent in older cores (nothing is offered then). */
@@ -37,7 +39,7 @@ export interface SetupState {
   } | null
   /** Finish setup on a workspace that lacks nothing: the page offers only "Open dashboard" */
   complete?: boolean
-  /** step/item id -> words (`runner_grant`: "Agent access for this Mac's runner") */
+  /** step/item id -> words (`runner_grant`: "Agent access for this computer's runner") */
   labels?: Record<string, string>
 }
 export interface Profile {
@@ -50,6 +52,8 @@ export interface Profile {
   relay: boolean
   /** Make the folder a git repository (only with Worktrees, only where there is none). */
   git_init?: boolean
+  /** Keep a records history (own git repository, saved on this computer automatically; never pushed). New workspaces only. */
+  records?: boolean
 }
 export interface Secrets {
   passphrase: string | null
@@ -79,7 +83,6 @@ export interface Review {
   runner_grant: { hours: number; scope: string; holder: string } | null
   flags: { id: string; text: string }[]
   risk: { text: string; once: boolean } | null
-  typed_word: string | null
   tty_confirm: boolean
 }
 export interface Progress {

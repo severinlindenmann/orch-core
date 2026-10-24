@@ -71,15 +71,25 @@ EVENT_FIELDS: dict[str, tuple[str, ...]] = {
     "device.added": ("device", "cert"),
     "device.removed": ("device", "reason"),
     "device.revoked": ("device", "reason", "revocation"),
+    "device.exposed": ("device", "reason"),  # #1097
+    "device.rotated": ("old", "device", "cert", "rotation"),  # #1097
     "settings.changed": ("set",),
     "grant.issued": ("grant", "scope", "verbs", "issued_at", "hours", "expires_at", "secret_hash", "label"),
     "grant.revoked": ("grant", "reason"),
-    "addon.granted": ("name", "version", "package_sha256", "capabilities", "fields", "sections", "artifact_kinds"),
+    "addon.granted": (
+        "name",
+        "version",
+        "package_sha256",
+        "capabilities",
+        "fields",
+        "sections",
+        "artifact_kinds",
+        "runtime",
+    ),
     "addon.disabled": ("name",),
     "addon.purged": ("name",),
-    "hub.joined": ("hub_id", "hk_root_pub", "mode", "binding_seq", "aliases"),
-    "hub.left": ("hub_id", "binding_seq"),
-    "relay.reopened": ("hub_id",),  # V3 C10 M4
+    "hub.joined": ("hub_id", "hk_root_pub", "mode", "binding_seq", "aliases", "owner_proof"),
+    "hub.left": ("hub_id", "binding_seq", "owner_proof"),
 }
 _WORKSPACE_ONLY = frozenset(
     {
@@ -90,6 +100,8 @@ _WORKSPACE_ONLY = frozenset(
         "device.added",
         "device.removed",
         "device.revoked",
+        "device.exposed",
+        "device.rotated",
         "settings.changed",
         "grant.issued",
         "grant.revoked",
@@ -98,7 +110,6 @@ _WORKSPACE_ONLY = frozenset(
         "addon.purged",
         "hub.joined",
         "hub.left",
-        "relay.reopened",
     }
 )
 _TICKET_ONLY = frozenset(set(EVENT_FIELDS) - _WORKSPACE_ONLY - {"restore", "invalid.acknowledged", "policy.changed"})
@@ -113,11 +124,14 @@ _SIGNED_OBJECT_FIELDS: dict[str, tuple[str, ...]] = {
         "scopes_max",
     ),
     "revocation": ("person_id", "device_id", "revoked_ms", "reason"),
+    "device_rotation": ("workspace_id", "person_id", "old", "new", "roster_v"),  # #1097
     "ws_delegation": ("workspace_id", "wsk_pub", "owner_person_id", "client_hosted", "issued_ms"),
     # H12d-2 (orch-v2-host §0.8.6 item 9.3): the device's own reader declaration, every field shown
     "reader_decl": ("workspace_id", "device_id", "dk_hash", "who", "reader", "kat", "bind", "created_ms"),
     # B1 (11A.2, relay.genesis_pin): the pin an owner device signs for a first link, every field shown
     "genesis_pin": ("workspace_id", "wsk_pub", "genesis"),
+    # #1198 C9 (hub contract 9.6): the owner proof inside a hub.joined / hub.left, every field shown
+    "hub.owner_proof": ("workspace_id", "person_id", "op", "payload", "request_id", "issued_ms", "expires_ms", "dev"),
 }
 _OBJECT_LABEL_KIND = {
     "sig_device_cert": "device_cert",
@@ -131,6 +145,8 @@ _EMBEDDED = {
     "device_cert": "device_cert",
     "cert": "device_cert",
     "revocation": "revocation",
+    "rotation": "device_rotation",
+    "owner_proof": "hub.owner_proof",
 }
 
 
@@ -179,7 +195,7 @@ def _object_lines(prefix: str, kind: str, signed: Any, out: list[tuple[str, str]
     if not isinstance(signed, dict) or set(signed) != {"o", "sig"} or not isinstance(signed["o"], dict):
         _refuse(f"{prefix} is not a signed object")
     o = signed["o"]
-    allowed = set(_SIGNED_OBJECT_FIELDS[kind]) | {"v", "suite", "kind", "label_sealed"}
+    allowed = set(_SIGNED_OBJECT_FIELDS[kind]) | {"v", "suite", "kind", "label_sealed", "hv"}
     if o.get("kind") != kind or set(o) - allowed:
         _refuse(f"{prefix} is not a plain {kind}")
     for f in _SIGNED_OBJECT_FIELDS[kind]:

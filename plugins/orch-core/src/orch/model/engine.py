@@ -57,6 +57,19 @@ CROSS_TICKETS = frozenset(
 )
 
 
+#: the reserved genesis prefix of a throwaway dev-pair sandbox workspace (``orch.devsandbox.RESERVED_PREFIX``; a
+#: test pins the two together). The dev state of a workspace is part of its signed genesis, so EVERY reader derives
+#: the same answer from the log itself (#1198 C9): no opener can forget it, and a real workspace (never ``SBX``: a
+#: normal host refuses that genesis) is never read as dev.
+DEV_PREFIX = "SBX"
+
+
+def hub_dev_of(core: Core, ctx: Ctx) -> bool:
+    """Does this reader judge dev hub material and dev owner proofs? The workspace's own signed genesis says so
+    (``prefix == SBX``); the host's ``ctx.hub_dev`` can only add a dev host's sandbox on top (tests, dev-pair)."""
+    return ctx.hub_dev or core.ws.prefix == DEV_PREFIX
+
+
 @dataclass(frozen=True)
 class Ctx:
     verifier: Verifier
@@ -92,7 +105,7 @@ def _person_sig_check(core: Core, log: str, e: dict[str, Any], ctx: Ctx, genesis
         return None if ok else Refusal(Code.CHAIN_BROKEN, "the genesis signature does not verify")
     dev = ws.devices.get(a["device"])
     if dev is None:
-        if not (e["type"] == "device.added" and e.get("device") == a["device"]):
+        if not (e["type"] in ("device.added", "device.rotated") and e.get("device") == a["device"]):
             return Refusal(Code.CHAIN_BROKEN, "the actor's device has no certificate")
         cert = e["cert"]
     elif dev.person != a["id"]:
@@ -241,6 +254,8 @@ def _workspace_handler(core: Core, lc: LogCore, e: dict[str, Any], ctx: Ctx) -> 
         "device.added": lambda: workspace.device_added(core, e, v),
         "device.removed": lambda: workspace.device_removed(ws, e),
         "device.revoked": lambda: workspace.device_revoked(core, e, v),
+        "device.exposed": lambda: workspace.device_exposed(ws, e),
+        "device.rotated": lambda: workspace.device_rotated(core, e, v),
         "policy.changed": lambda: workspace.policy_changed(core, e),
         "settings.changed": lambda: workspace.settings_changed(ws, e),
         "grant.issued": lambda: workspace.grant_issued(ws, e),
@@ -250,10 +265,13 @@ def _workspace_handler(core: Core, lc: LogCore, e: dict[str, Any], ctx: Ctx) -> 
         "addon.granted": lambda: workspace.addon_event(core, e),
         "addon.disabled": lambda: workspace.addon_event(core, e),
         "addon.purged": lambda: workspace.addon_event(core, e),
-        "hub.joined": lambda: workspace.hub_joined(ws, e),
-        "hub.left": lambda: workspace.hub_left(ws, e, core),
-        "relay.reopened": lambda: workspace.relay_reopened(ws, e),
-        "hub.pinned": lambda: workspace.hub_pinned(core, e, v, dev=ctx.hub_dev),
+        "hub.joined": lambda: (
+            workspace.hub_owner_proof(ws, e, v, dev=hub_dev_of(core, ctx)) or workspace.hub_joined(ws, e)
+        ),
+        "hub.left": lambda: (
+            workspace.hub_owner_proof(ws, e, v, dev=hub_dev_of(core, ctx)) or workspace.hub_left(ws, e, core)
+        ),
+        "hub.pinned": lambda: workspace.hub_pinned(core, e, v, dev=hub_dev_of(core, ctx)),
         "restore": lambda: workspace.restore(core, lc, e, v),
         "invalid.acknowledged": lambda: _ack(ws, lc, e),
         "projection.repaired": lambda: None,
@@ -271,7 +289,7 @@ def _authorize(core: Core, log: str, t: TCore | None, e: dict[str, Any], ctx: Ct
     if not ws.created:
         return Refusal(Code.GENESIS_INVALID, "the first event of a workspace is workspace.created")
     if a["kind"] == "person" and "via" in a:
-        if (r := authz.authorize_hub(core, log, e, ctx.verifier, dev=ctx.hub_dev)) is not None:
+        if (r := authz.authorize_hub(core, log, e, ctx.verifier, dev=hub_dev_of(core, ctx))) is not None:
             return r
         # 15.4: the type rules read the actor through identity.signer / role_of (authz.HUB_TYPES is the closed list of
         # the types whose rules do); the viewer, roster_v and freeze checks run on the signer's role.
@@ -301,7 +319,6 @@ def _authorize(core: Core, log: str, t: TCore | None, e: dict[str, Any], ctx: Ct
 
 
 def _apply(core: Core, log: str, lc: LogCore, e: dict[str, Any], ctx: Ctx) -> Refusal | None:
-    """Authorize and apply ``e`` to ``core`` (a scratch copy). Mutates ``core`` even when it refuses midway."""
     typ, ws = e["type"], core.ws
     is_ws = log == WORKSPACE
     t = None if is_ws else core.tickets.get(log)
@@ -408,6 +425,8 @@ def apply_event(
             # taken on the new chain, so the same signed event appended again is a duplicate (admit and replay alike)
             lc.ids |= set(e["abandoned_decisions"])
     else:
+        if e["type"] in ("hub.joined", "hub.left"):
+            _mark_hub_unknown(core, e, cow)
         lc.invalid.append(
             InvalidEvent(
                 log, e["seq"], e["id"], e["type"], _head(e), r.code.value, r.detail, r.code != Code.FREEZE_ACTIVE
@@ -415,6 +434,21 @@ def apply_event(
         )
         _place(lc, e)
     return r
+
+
+def _mark_hub_unknown(core: Core, e: dict[str, Any], cow: bool) -> None:
+    """#1198 C9, fail closed: a ``hub.joined`` / ``hub.left`` of an OWNER that the model refuses (a proof or dev
+    mismatch, a place, a shape) leaves the hub state ``unknown`` (``ws.hub["invalid"]``), which every reader of the
+    signing mode treats as full: what the owner meant to sign can never read as standalone. A refused event of anyone
+    else (a member's bogus ``hub.left``) changes nothing: it could not have joined or left anything. A later valid
+    ``hub.joined`` or ``hub.left`` replaces the state and clears the mark."""
+    actor = e.get("actor") or {}
+    member = core.ws.members.get(actor.get("id")) if actor.get("kind") == "person" else None
+    if member is None or member.role != "owner":
+        return
+    ws = copy.copy(core.ws) if cow else core.ws
+    ws.hub = {**ws.hub, "invalid": True}
+    core.ws = ws
 
 
 def external_edit_voids(core: Core, uid: str, sections: dict[str, Any]) -> list[str] | Refusal:

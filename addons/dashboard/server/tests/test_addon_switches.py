@@ -71,7 +71,7 @@ def test_publish_is_a_shipped_addon_with_no_machine_precondition_and_plain_words
     assert busy("publish", [{"kind": "agent", "cwd": {"kind": "worktree"}}]) is None
     listed = {a.id: a for a in facts.catalog(optional=True)}
     assert "publish" in listed and listed["publish"].title == "Publish"
-    assert "nothing leaves this mac until you sign" in listed["publish"].desc.lower()
+    assert "nothing leaves this computer until you sign" in listed["publish"].desc.lower()
     assert "publish" not in {a.id for a in facts.catalog()}  # the setup wizard does not offer or nag about it
 
 

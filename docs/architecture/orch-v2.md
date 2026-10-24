@@ -139,7 +139,7 @@ suite and the same vectors. A single suite is used across all components, never 
 - AES-256-GCM, with AAD binding the object id, epoch and purpose.
 
 > **P1 deviation (C8, pending the owner's confirmation).** The `passphrase` backend of P1 has no hardware wrapping, so
-> `orch init` does **not** store the person key: it is derived from the recovery code, signs the first device certificate
+> `orch setup` does **not** store the person key: it is derived from the recovery code, signs the first device certificate
 > and the workspace delegation, and is dropped. The code is the only way back to `PK`; adding or revoking a device needs
 > it, typed on the terminal. Wrapping `PK` on the primary device comes with the Secure Enclave / TPM backend, when this
 > is revisited.
@@ -483,7 +483,13 @@ blobs per device and epoch), `drop_spaces`, `revocations`.
   | `spool:<path>` | Same machine, through the filesystem; tests and two local workspaces |
   | `relay:<url>` | Internal or public relay |
 
+  **V3 (D69, V3-D36):** a workspace never reaches a relay itself. `relay:` here means the hub's relay account (D76);
+  a workspace without a hub has only `spool:` and no phone. See `orch-v2-hub.md`.
+
 ## 10. orch-publish
+
+> **V3 (D68, D69, V3-D36):** a workspace does not publish directly. Requests go through its hub (`publish_out`); a
+> workspace without a hub cannot publish. The workspace-signed direct API below is superseded; see `orch-v2-hub.md` §10.
 
 - **API:** `https://pub.<domain>/v1/...`.
   - Every request is signed by the workspace's `WSK` (domain `orch/v2/publish`). The signature covers the method,

@@ -124,7 +124,7 @@ Every addon page, panel and Today card, each marked with the orange A.
 - [ ] **Records** — Record changes, push twice (rejected: pull first), pull, push. Page: `/addon/records/records`, Busy day.
 - [ ] **Activity** — Filters and Show older. Page: `/addon/activity/activity`, Busy day.
 - [ ] **Widgets in tickets** — DEMO-0043, DEMO-0046 and DEMO-0047 (the last one has refused blocks). Page: `/ticket/DEMO-0047`.
-- [ ] **Start agent and model routing** — The model line in the start dialog; an invalid model name in Model routing blocks starts. Page: `/addon/start-agent/start`, Busy day.
+- [ ] **Start agent** — The start dialog shows the exact command; a model add-on, when one is on, names the model it picked. Page: `/addon/start-agent/start`, Busy day.
 - [ ] **Guide** — Press ? on several pages: the help follows the page. Page: `/addon/guide/guide`.
 - [ ] **AI Factory** — Run demo activity, a permit, Pause and Resume (signed). Page: `/addon/factory/factory`, Busy day.
 - [ ] **Schedules** — Enable a schedule (signed), Run now, file the finding. Page: `/addon/schedules/schedules`, Busy day.
@@ -646,7 +646,7 @@ B10 phone approvals (phase 1): on a host with phone/1, pair a phone and allow Ph
 
 Open through `orch setup` after the parallel core branch is integrated. `/setup#launch=<single-use code>` uses the setup process, not mock workspace storage. A normal dashboard launch token is intentionally refused. In development, `/setup` uses the same API; tests provide an in-process fetch fake and a real private Unix socket contract fake.
 
-Review Welcome → You → Agents may → Approval → Secret words → Review, then progress and Done. Check One click disables relay with its reason, recovery words form a numbered four-column/six-row grid, Print includes only recovery words, and confirmed words disappear. Check three-day runner access requires the core's typed word and matching terminal fingerprint. Existing workspaces say “Finish setup” and skip secret screens. Failures show per-step status and a “Finish setup later” path.
+Review Welcome → You → Agents may → Approval → Secret words → Review, then progress and Done. Check One click disables relay with its reason, recovery words form a numbered four-column/six-row grid, Print includes only recovery words, and confirmed words disappear. Check three-day runner access is one plain click and needs the matching terminal fingerprint. Existing workspaces say “Finish setup” and skip secret screens. Failures show per-step status and a “Finish setup later” path.
 
 ### B9 core-aligned setup (2026-10-16)
 

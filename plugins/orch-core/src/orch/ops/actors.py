@@ -51,6 +51,8 @@ EVENT_ACTORS: dict[str, frozenset[str]] = {
         "device.added": "P",
         "device.removed": "P",
         "device.revoked": "PH",
+        "device.exposed": "P",
+        "device.rotated": "P",
         "settings.changed": "P",
         "grant.issued": "PH",
         "grant.requested": "P",
@@ -61,7 +63,6 @@ EVENT_ACTORS: dict[str, frozenset[str]] = {
         "addon.purged": "P",
         "hub.joined": "P",
         "hub.left": "P",
-        "relay.reopened": "P",
         "hub.pinned": "H",
     }.items()
 }

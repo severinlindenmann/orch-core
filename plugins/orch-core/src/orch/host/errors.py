@@ -68,7 +68,6 @@ HOST_CODES: dict[str, tuple[int, bool]] = {
     "human.request_state": (3, False),
     "repo.remote_mismatch": (3, False),
     "sign.convenience_unavailable": (3, False),  # H5c: with a reason first in the message (§0.8.6 item 1)
-    "sign.click_only": (3, False),  # H5c follow-up: no hand-off request while click-to-sign is on (§0.8.6 item 8)
     "reader.decl_invalid": (3, False),  # H12d-2: a reader declaration that does not verify (§0.8.6 item 9.3)
     "sign.convenience_readers": (3, False),  # H5c: also in the P1 catalog (member.add refuses it in both modes)
     # H11a, the runner (addons design §9.2)
@@ -110,10 +109,6 @@ HOST_CODES: dict[str, tuple[int, bool]] = {
     "keys.no_epoch": (3, False),  # V3 C8 (L2-C8i-2): keys.rotate on a workspace without a workspace key
     "keys.joined": (3, False),  # V3 C8: keys.rotate while joined to a hub in full mode
     "relay.local_epochs": (3, False),
-    "relay.cut_over": (3, False),  # V3 C10: the direct relay path is closing or closed (served by a hub)
-    "relay.not_cut_over": (3, False),  # V3 C10: relay reopen while the direct path is not closed
-    "hub.not_ready": (3, False),  # V3 C10: the cut-over preflight failed (link, card, or a snapshot with an admin)
-    "hub.cutover_unknown_hub": (3, False),  # V3 C10: the relay has no account for this hub; stay closing
     "hub.rotation_pending": (9, True),
     "hub.state_mismatch": (3, False),
     "hub.not_joined": (3, False),
@@ -132,7 +127,6 @@ HOST_CODES: dict[str, tuple[int, bool]] = {
     "relay.pair_open": (3, False),
     "relay.no_primary": (3, False),
     "relay.quota": (3, False),
-    "relay.pair_closed": (3, False),
     # H12e, phone person events over relay.submit (§11A.14): admission refusals core owns, all definite (class C)
     "event.expired": (3, False),
     "event.abandoned": (3, False),
@@ -186,9 +180,12 @@ DETAIL_KEYS: dict[str, dict[str, tuple[str, ...] | str | None]] = {
         )  # fmt: skip
     },
     "ticket.key_not_next": {"next_key": None},
+    # #1198 C9: why the owner proof of a hub step was refused (hub contract 9.6, section 14)
+    "hub.proof_invalid": {"reason": ("proof_invalid", "proof_expired", "proof_missing", "dev_mismatch", "dev_refused")},
     # H12d-2 (§0.8.6 item 9.9, 9.11): the closed reason and the readers below the level (``devices``: device ids)
     "sign.convenience_unavailable": {  # H12c-e; pair_device is no longer emitted (B10)
         "reason": (
+            "idle",
             "disabled",
             "relay_paired",
             "other_member",
@@ -219,8 +216,35 @@ DETAIL_KEYS: dict[str, dict[str, tuple[str, ...] | str | None]] = {
         ),
     },
     "sign.hub_only": {"reason": ("hub",)},  # V3 C11
+    # V3 G4 (design section 4): why a dependency environment was refused or no longer verifies (fixed words)
+    "market.env_failed": {
+        "reason": (
+            "no_binary",
+            "sdist_only",
+            "download",
+            "hash_mismatch",
+            "auto_run_file",
+            "path_escape",
+            "link",
+            "too_large",
+            "installer",
+            "package",
+            "superseded",
+            "lock",
+            "platform",
+            "network",
+        )  # fmt: skip
+    },
+    "market.env_changed": {"reason": ("missing", "changed", "digest", "abi")},
     "sign.convenience_readers": {
-        "reason": ("no_declaration", "reader_too_old", "declaration_unknown", "relay_too_old", "unknown_readers"),
+        "reason": (
+            "no_declaration",
+            "reader_too_old",
+            "declaration_unknown",
+            "relay_too_old",
+            "hub_too_old",
+            "unknown_readers",
+        ),
         "devices": DEVICES,
     },
 }

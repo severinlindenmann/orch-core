@@ -133,7 +133,7 @@ def test_one_click_on_makes_click_the_effective_default_until_a_choice_is_stored
     url = f"/api/w/{world.stub.ws}/me/sign_default"
     every = ["terminal", "click", "phone"]
     assert world.get(url).json()["method"] == "terminal"  # one click off: unchanged
-    monkeypatch.setattr(Gateway, "one_path_is_click", lambda self, ws: True)
+    monkeypatch.setattr(Gateway, "one_click_on", lambda self, ws: True)
     assert world.get(url).json() == {"method": "click", "is_default": True, "allowed": every}
     # a stored choice always wins
     assert world.put(url, {"method": "terminal"}).status_code == 200

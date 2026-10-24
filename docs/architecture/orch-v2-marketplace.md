@@ -87,7 +87,7 @@ Entry (required unless noted):
 | `source.subdir` (optional) | relative path to the package directory; every segment follows the §8.1 file-name rule, so no `..`, no leading dot |
 | `commit` | a **full** git object id (40 or 64 lower-case hex). A branch, a tag or an abbreviation is `market.unpinned` |
 | `package_sha256` | the §8.1 package digest (`sha256:` + 64 lower-case hex) of the directory `source.subdir` at `commit`. A malformed value is `market.bad_digest_format` |
-| `capabilities` | exactly the manifest's capabilities, sorted, from the closed list (`git_push`, `network`, `pty`, `serve_http`, `spawn_agent`) |
+| `capabilities` | exactly the manifest's capabilities, sorted, from the closed list (`choose_model`, `credential`, `git_push`, `network`, `pty`, `serve_http`, `spawn_agent`) |
 | `min_orch` | lowest orch core version that runs it, grammar of `min_core` in addon-api §2. Must equal the manifest's `min_core` |
 | `api` (optional) | display copy of the manifest's api range. The manifest decides |
 | `runtime` (optional) | `{kind, lock}`: the lockfile kind (`python-requirements` or `node-package-lock`) and its path inside the package. **A display copy:** the manifest's `runtime` is the truth and the two MUST be equal, both present or both absent (`market.manifest_mismatch`, §8.1) |
@@ -178,7 +178,9 @@ repository can never hold two TOFU slots, two rollback floors, two origins, or s
 | other | any other marketplace or direct source | refused unless OS-user isolation is in place (§10); a `publisher` is optional |
 
 The pinned official URL and key are constants of the core release, not read from disk or from any index. Changing them
-is a core release.
+is a core release. The release pins two keys, current first and next (`OFFICIAL_KEYS` in `orch/market/constants.py`; V3-D39):
+`BFh8x9dLhMubfTXleS0Bt6Ix-yu9ZiE18B0xRUUNWqsgZdOwt5DZX_Gqs5Ri3p2coFdLk9GhA-Q5WV8Ee0e05l4` (current) and
+`BM-BTpDMGAU68ywX392c5JuCjjwOkkdccxmNiOTvcX2GzIgEM2FjFH56hihyYn7pepkd8HYMolWSzM01L_B0Udw` (next).
 
 ### 4.3 Publisher signature
 
@@ -208,8 +210,13 @@ The store maps `(marketplace URL, add-on id)` to a publisher key.
 | no key stored, entry has one | install proceeds; the review shows the key's fingerprint (`SHA256:` of the 65 bytes, as `orch.land.key.fingerprint` does) and "first use: remembered when you sign". The key is stored only after the grant is signed |
 | key stored, entry has the same key | proceeds, review says "same publisher as before" |
 | key stored, entry has another key **or none** | `market.publisher_key_changed`. Only `orch market trust --replace <url> <id>` (human-only, shows both fingerprints, typed confirmation) changes it. Removing a key is a change, so a signature cannot be silently dropped |
+| official marketplace only: key stored, entry has another key that this core release pins (`OFFICIAL_KEYS`) | an official key rotation (#1191): proceeds, review shows the new key as "first use" and the update as widened; the stored key moves to the new one when the grant is signed. The old key need not still be pinned; a key this release does not pin is `market.official_unsigned` first, so a retired key is never taken back |
 
 A key proves continuity ("the same publisher as last time"), not identity. The review says so in those words.
+
+For the official marketplace the stored key restricts nothing (#1191): any key this release pins passes, so the record
+is information for the review, never a control. The control is the pin list in core (`OFFICIAL_KEYS`), checked at stage
+and again at submit (the staged key must be pinned now, and the current index must still name it as the publisher).
 
 ## 5. Install flow
 
@@ -219,13 +226,14 @@ network and write nothing; the first network access is step 11.
 | # | Step | Refusal |
 |---|---|---|
 | 0 | The caller is the human: no `ORCH_GRANT`/`ORCH_SESSION`, a terminal or a device key, not a mandate | `market.actor_refused` |
+| P0 | Hub policy, when a hub is joined (§9), **before** the index is read or its signature checked and before any network access: a fresh `snapshot_get`, and the marketplace is listed in the hub policy (the official one too). No cached fallback; a joined host that cannot verify a snapshot is refused | `market.not_allowed` |
 | 1 | Read the cached index with the strict parser. The pin and digest fields are checked first (a missing or non-hex `commit`, a bad `package_sha256`), then the schema, then sorted capabilities and unique ids | `market.unpinned`, `market.bad_digest_format`, `market.malformed`, `market.duplicate_id` |
 | 2 | `source.git` of the index equals the URL it was added from. For the official index (and for any index that carries one) the index signature, `expires_at` and key are verified now, before anything is taken from the index | `market.source_mismatch`, `market.index_unsigned` |
 | 3 | `version` is not lower than the last version of a *verified* index for this URL | `market.rollback` |
 | 4 | Class (§4.2): an "other" marketplace needs OS-user isolation (§10) | `market.community_unisolated` |
-| 5 | Hub policy, when a hub is joined (§9): block list, then allow list | `market.blocked`, `market.not_allowed` |
-| 6 | Select the entry by `id`; the index does not list `id@version` as revoked; its git host is the marketplace's host or on the allow list (§5.1); reserved ids; an installed add-on of this id came from this URL; the entry's `version` is not lower than the installed one or the highest seen for this `(URL, id)` | `market.unknown_addon`, `market.revoked`, `market.host_not_allowed`, `market.reserved_id`, `market.origin_changed`, `market.rollback` |
-| 7 | Publisher: official key rule, signature, TOFU (§4) | `market.official_unsigned`, `market.bad_signature`, `market.publisher_key_changed` |
+| 5 | (the hub listing is P0 above; nothing is checked here) | |
+| 6 | Select the entry by `id`; the index does not list `id@version` as revoked; its git host is the marketplace's host or on the allow list (§5.1); reserved ids; an installed add-on of this id came from this URL; the entry's `version` is not lower than the installed one or the highest seen for this `(URL, id)`; then the hub's `addons.block` and `addons.allow` (§9) | `market.unknown_addon`, `market.revoked`, `market.host_not_allowed`, `market.reserved_id`, `market.origin_changed`, `market.rollback`, `market.blocked`, `market.addon_not_allowed` |
+| 7 | Publisher: official key rule, signature, TOFU (§4); for a hub-listed company marketplace the entry's publisher key must be one the hub pins (§9) and replaces TOFU | `market.official_unsigned`, `market.bad_signature`, `market.publisher_key_changed`, `market.publisher_unpinned` |
 | 8 | Hub capability ceiling (§9): entry capabilities ⊆ ceiling | `market.capability_ceiling` |
 | 9 | `min_orch` ≤ the running core version (a `.devN` build sorts before its release; an unparsable version fails) | `market.min_orch` |
 | 10 | (the checks above need no package) | |
@@ -237,7 +245,7 @@ network and write nothing; the first network access is step 11.
 | 16 | Compatibility with this core (`incompatibility()` of addon-api §3) | existing `addon.incompatible` |
 | 17 | **Review**, then the human signs `addon.granted` for exactly `grant_event(manifest, package)` of the staged bytes | the owner declines |
 | 18 | Under the store lock, the host re-reads the staged package, checks its digest equals the digest in the signed grant, appends `addon.granted`, swaps the directory by rename, records origin and (now) the TOFU key | `market.staged_changed` |
-| 19 | If the granted manifest declares `runtime`: build the dependency environment (§8.2) from the lockfile bytes of the granted package. The add-on stays unavailable until this has succeeded; from then on the environment is re-verified before every run | `market.env_failed`, `market.env_changed` |
+| 19 | If the granted manifest declares `runtime`: build the dependency environment (§8.2) from the lockfile bytes of the granted package, by the human-only op `market.env_build {name}` (`orch addon install`, `update` and `setup` call it right after the signature). The add-on stays unavailable ("needs setup") until this has succeeded; from then on the environment is re-verified before every run | `market.env_failed`, `market.env_changed` |
 
 Steps 12 to 15 are repeated by the host at step 18 on the staged bytes; the checks of 13 and 18 are the safety, the
 others are early, readable errors.
@@ -354,7 +362,12 @@ Updates are never automatic. `orch market refresh` (read-only, allowed to agents
 
 5. A new grant is **always** needed: the digest changed, so the old grant no longer covers the bytes. There is no
    "update that keeps the grant".
-6. Steps 17 to 19 of §5. On failure at any step the old version stays installed and active.
+6. Steps 17 to 19 of §5. On failure at any step up to and including step 18 the old version stays installed and active.
+   **Step 19 is after the swap (G4, D5):** the signed grant and the new package are in place when the environment is
+   built, so a failure at step 19 (a dependency that was fine at stage time and is not now) leaves the new version
+   signed but "needs setup", not running; the old version does not come back by itself. Staging downloads and verifies
+   every artifact first (§8.2, D3), so this is rare: a missing or wrong dependency refuses the stage while the old
+   version still runs. The person retries with `orch addon setup NAME` or removes the add-on.
 
 **Several workspaces:** one grant per workspace, each its own review, as in addon-platform §4.
 
@@ -389,6 +402,15 @@ review line "installs these packages" is derived from the granted manifest and l
 | `python-requirements` | pip `requirements.txt` in hash mode (`uv export --format requirements-txt` produces it) | every logical line is a requirement followed by one or more `--hash=sha256:<64 hex>` and nothing else. The requirement part MUST parse as a real PEP 508 requirement (not a regular expression over text, so an option cannot hide in the marker): one name, exactly one specifier `==` with a full version (no `*`), an optional marker, no URL. Option lines (`--index-url`, `--extra-index-url`, `--find-links`, `-e`, `-r`) and VCS or URL requirements are therefore refused |
 | `node-package-lock` | `package-lock.json`, `lockfileVersion` the integer 3 (not `3.0`) | strict parse. Every package key is `node_modules/<name>` repeated for nesting (names by the npm grammar, so no `..`, no empty or dot segment, nothing outside `node_modules/`), has a `version`, is not a `link`, and its `resolved` is **exactly** `https://registry.npmjs.org/<name>/-/<basename>-<version>.tgz` for the key's name and the entry's version (registry host pinned in core per ecosystem). `integrity` is exactly one `sha512-` plus the base64 of a 64-byte digest, nothing more. The root entry (`""`, the add-on itself) MUST NOT name a `resolved`, `integrity`, `link` or `inBundle`, and every dependency it declares MUST be a locked entry. The names and versions the review shows are derived from these checked keys only |
 
+**One parser.** `orch.addons.lockfile.check` is the only code that reads a lockfile; it gives the verdict of the
+reference checker on every `lock` vector, and its rows (name, version, hashes, markers, flags) are the only source of
+what the review shows, what an update diff compares, what is downloaded and what is installed. Lock text never reaches
+an installer. Limits: the file at most 1 MiB of UTF-8 without control characters, at most 1000 rows. A `python-requirements`
+manifest's `entry.cmd[0]` is `{python}` (never a python found on PATH, for any add-on; needs add-on API 1.1) and a `node-package-lock` manifest's is `node` (the command the owner reads is the
+interpreter the dependencies were chosen for). The signed `addon.granted` carries `runtime {kind, lock, packages}`
+(D6: more code arrives after the signature, so the signature names it); the review lists every locked package, and
+whether it is compiled, not on this computer, or development only.
+
 **Scripts are not judged by the lockfile.** Flags such as `hasInstallScript` are the publisher's claim, so a lock is neither accepted nor refused for them. The rule is that no dependency script ever runs (§8.2).
 
 More kinds (other runtimes) are an additive change to the schema's enum with their own rules and vectors.
@@ -399,78 +421,122 @@ The package is verified on every run (the runner copies in-memory bytes into a f
 dependency environment is persistent code too, so it gets the same guarantee: **an environment runs only if it is
 exactly the tree the host built from the granted lockfile**, checked before every run.
 
-**Building** (step 19, after the signed grant, by the host and never by the add-on):
+**Staging (D3).** At `market.stage`, after step 16, the host plans the lock for this computer (Python markers for the
+interpreter that runs add-ons; Node `dev`, `optional`, `os` and `cpu`), then **downloads and verifies every artifact**
+(§5.1: one fetcher, `orch.market.download`) into a private cache. A package this computer cannot install, a
+source-only dependency, a hash the server does not deliver, a wheel that would put an auto-running file in the
+environment, a tarball with links or bundled code: each refuses the stage before the person signs, while the old
+version still runs. Nothing is unpacked yet.
 
-1. *Fresh and ours.* Create the environment in a new `mkdtemp` directory under `<state>/addon-env/` (host-user private,
-   outside workspace and package), install into it, then `rename` it to
-   `<state>/addon-env/<workspace id>/<name>/<package digest hex prefix>/`. If the target already exists it is refused
-   (`market.env_failed`) unless the host created it and its record says so: a directory an agent created beforehand at
-   the predictable path is never adopted. Not shared between add-ons, workspaces or versions.
-2. *Lock bytes from memory.* The lockfile fed to the installer is written from the verified in-memory `Package` that was
-   granted, never re-read from staging or from the installed package directory. Which file is the lockfile comes
-   from the granted manifest's `runtime` (§8.1).
-3. *Nothing resolves, nothing from a dependency runs.* Python: `pip install --isolated --require-hashes --no-deps
-   --only-binary=:all: --target <env>`, the index fixed by the installer (`https://pypi.org/simple`, files from
-   `files.pythonhosted.org`), never by the lockfile. Node: `npm ci --ignore-scripts --userconfig=/dev/null
-   --globalconfig=/dev/null`, the registry fixed by the installer. The installer's environment is scrubbed (no
-   `PIP_*`, `NPM_*`, `NODE_OPTIONS`, `PYTHON*`, proxy variables, no `HOME` config: a per-user `pip.conf` or `.npmrc` is
-   not read). Another package manager MUST use its equivalents: exact versions from the lock, hash verification, no
-   source builds, no lifecycle or install scripts, no resolution. Every artifact is hashed and compared with the
-   lockfile before it is unpacked, and every connection obeys §5.1. A dependency whose only form is a source
-   distribution is refused (`market.env_failed`), not built.
+**The fetcher.** Only `https` on port 443, the host compared whole against the list for the lock kind (Python:
+`pypi.org`, `files.pythonhosted.org`; Node: `registry.npmjs.org`). Every address a name resolves to is judged; the
+connection goes to the first checked address with the name as TLS server name and `Host`, with no second lookup; a
+redirect is `market.address_refused`. Each artifact streams to a fresh `O_EXCL` file, is hashed while it streams
+and is compared with the lock BEFORE it gets its name; a cache hit is hashed again on every use. Caps: 64 MiB per
+artifact, 256 MiB per add-on, 8 MiB for a Python project index, a deadline for the whole stage or build. For Python
+only a wheel of exactly the locked name and version, whose sha256 the lock lists and whose tags this interpreter
+supports, is chosen (none: `no_binary`; only source distributions: `sdist_only`).
+
+**Building** (step 19, after the signed grant, by the host and never by the add-on; `market.env_build`, human-only):
+
+1. *The grant and its bytes.* Under the store lock the latest grant (on, with `runtime`) is read, then the lock is
+   released. The package is read into memory from `addons/<name>` and its digest must equal the grant's: that
+   in-memory package is the only source of lock bytes, and no installer ever gets a path into the package or into
+   staging. One flock per workspace and add-on.
+2. *Fresh and ours.* The environment is built in a new `mkdtemp` directory under `<state>/addon-env/` (host-user
+   private, same file system) and `rename`d to `<state>/addon-env/<workspace id>/<name>/<package digest hex[:16]>/`
+   under the store lock and the flock, after the grant is read again: a changed grant discards the build
+   (`superseded`). **A target that already exists is removed, never adopted** (D4: refusing it would let anyone who can
+   create the directory block an add-on for ever): it is deleted through a directory descriptor and replaced. Not
+   shared between add-ons, workspaces or versions.
+3. *Nothing resolves, nothing from a dependency runs, nothing connects.* Python (D1): orch writes `req.txt` from the
+   checked rows (`name==version --hash=sha256:<chosen>`, no author text), copies the verified wheels into the build
+   directory and runs `pip install --isolated --no-index --find-links <wheels> --require-hashes --no-deps
+   --only-binary=:all: --no-compile --no-cache-dir --no-input --target <env>` with the host's own interpreter and an
+   environment made from nothing (fixed `PATH`, empty `HOME` and `TMPDIR`, no `PIP_*`, no proxy, no `PYTHON*`), a
+   time and output limit. Node (D2): orch unpacks each verified tarball itself (`orch.market.untar`): regular files and
+   directories only, the first path component dropped, no link of any kind, no `node_modules` segment inside a
+   tarball (bundled code is not in the lock), no case twins, limits on entries, file size, decompressed bytes and
+   header size, modes normalized; no npm, no `.bin` links, no script. A dependency whose only form is a source
+   distribution is refused, not built (`sdist_only`).
 4. *No interpreter ever starts inside the environment.* The host does not run `<env>/bin/python` or any tool from
-   the environment to build, check or stamp it. At run time, Python dependencies are put on the path with `PYTHONPATH`
-   pointing at the `--target` directory from the host's own interpreter, so no `site` directory is registered and no
-   `.pth` file is processed.
-5. *Auto-running files are refused.* After installing, the file list is checked: a path that leaves the environment
-   (absolute, `..`, empty or `.` segment, backslash), and, at the environment root, any `*.pth`, `sitecustomize` or
-   `usercustomize` (file or package, any case) fails the build (`market.env_failed`; vectors `env_paths_*`).
-6. *Stamp.* The host writes a stamp outside the environment: `{digest: <package digest>, tree: <tree hash>}`, where the
-   tree hash is `sha256:` over `<sha256>  <mode>  <path>` lines of every file in byte order of the path (the
-   same shape as the §8.1 package digest, plus the mode).
+   the environment to build, check or stamp it. At run time Python dependencies are put on the path with `PYTHONPATH`
+   and the interpreter runs with `-S` (no `site`, no `.pth`); Node finds them through a `node_modules` link made by
+   orch inside the runner's private copy of the package.
+5. *Auto-running files and escapes are refused.* After installing, the whole tree is walked without following a link:
+   regular files and directories only, one link each, no path that leaves the environment (absolute, `..`, empty or `.`
+   segment, backslash, control character), at the environment root no `*.pth`, `sitecustomize*` or `usercustomize*`
+   (any case), at most 20 000 entries, 256 MiB, 64 levels (`env_paths` vectors).
+6. *Stamp.* The host writes `<digest dir>.stamp.json` next to the environment (0600, atomic): `{v, ws, name,
+   digest, kind, tree, dirs, files, bytes, abi, built_at}`. `tree` is `sha256:` over `<sha256>  <mode>  <path>` lines
+   of every file in byte order of the path (the shape of the §8.1 package digest, plus the mode, the `env_stamp`
+   vectors), `dirs` the same over the directories (an added empty directory shows), `abi` the interpreter's cache tag and
+   best wheel tag, or the Node platform and architecture.
+7. *Tidy.* The name's other digest directories and the cache files this build used are removed. At start the host
+   removes every `.build-*`, an unstamped target, environments of uninstalled names and of old digests, and cache
+   files older than a day (`addonenv.recover`).
 
-**Checking** (before every start, in the runner, like the package): the stamp's `digest` is the package digest being
-run, and the tree on disk hashes to the stamp's `tree`; otherwise the add-on does not start (`market.env_changed`,
-shown as "environment changed" and offered a rebuild, which is the install again). Equivalent and allowed: copy the
+**Checking** (before every start, **inside `runner.call`**, like the package, C1): every component is opened without
+following a link, the stamp is the one for this workspace, add-on, package digest and kind, its `abi` is this
+computer's, and the walk of the tree hashes to the stamp's `tree`, `dirs`, file count and size; otherwise the add-on does
+not start (`market.env_changed`, reason `missing`, `changed`, `digest` or `abi`, shown as "needs setup" or
+"environment changed" and offered `orch addon setup`). Nothing is rebuilt and nothing connects at run time; Tier A
+(§15.1): a same-user process that forges both the tree and the stamp is the stated limit. Equivalent and allowed: copy the
 environment into the same fresh read-only directory as the package and hash the copy. A file planted before the build
 (refused by step 1), added, changed, removed or re-moded afterwards is caught here.
 
-A failure at any step leaves no environment and no running add-on; the grant stays signed, and the owner can retry or
-remove. Having dependencies does not change the add-on's capabilities: `network` stays a capability, and installing
+A failure at any step leaves no environment and no running add-on; the grant stays signed, and the owner can retry
+(`orch addon setup NAME`) or remove (which deletes the environment, §7). Having dependencies does not change the add-on's capabilities: `network` stays a capability, and installing
 dependencies is the host's act, not available to the add-on.
 
-## 9. Hub policy hook (interface only)
+## 9. Hub policy (D14, orch-core#927; enforcement G7, #928)
 
-With a hub joined, the workspace host MUST ask the hub's policy before any marketplace use. The hub side is D14 (#927),
-the enforcement in core is G7 (#928); this section fixes only what the policy looks like so the vectors and the order of
-checks are stable.
+With a hub joined, the workspace host MUST ask the hub's policy before any marketplace use. The hub side (D14) is built:
+the policy is one hub-wide object that the hub admin edits in the hub's admin console and that `HK_op` signs inside
+**every `hub.snapshot`** as the required field `market_policy` (orch-hub `docs/protocol.md` 7.1; there is no snapshot
+without it and no older shape, V3-D36). Core reads it only from a verified, pinned snapshot (`orch.hubclient.snapshot.hub_market_policy`,
+a read-only accessor that verifies again on every read: `None` only when the host is not hub-joined, `HubRefused` for every joined-but-unverifiable state) and can only refuse by it.
+The vectors are `vectors_hub_policy.json` (`policy` and `evaluate` cases); hub and core run the same file.
 
-The policy object is **`orch.hub-policy/1`**, strict: exactly these three keys, no others.
+The policy object is **`orch.hub-policy/1`**, strict: exactly these keys at every level, no others.
 
 ```
-{ "allow":   [<canonical marketplace URL>, …],
-  "block":   [<canonical marketplace URL>, …],
+{ "markets": [ {"url": <canonical URL §4.1>, "class": "official" | "company", "keys": [<P-256 key>, …]}, … ],
+  "addons":  {"allow": [<id>, …] | null, "block": [<id> | <id>@<semver>, …]},
   "ceiling": [<capability>, …] | null }          // null = no ceiling
 ```
 
-`allow` and `block` are lists of canonical URLs (§4.1) and membership is equality of a URL with a list element: never a
-substring test, never a prefix. A missing key, a wrong type, an unknown key, a non-canonical URL or an unknown
-capability makes the **whole policy malformed**, and a malformed policy is an empty allow list (`market.not_allowed`).
-The same policy also gates `market add` and `market refresh`: no network access to a blocked or unlisted marketplace.
+- `markets` (0 to 16, sorted by `url`, unique) is the list of marketplaces the workspace may use, **including the
+  official one**. `class` is recomputed, never trusted: `official` exactly when `url` is the core constant `OFFICIAL_URL`
+  and then `keys` is `[]` (the official key is pinned in core; a hub can neither add nor replace it); `company` for any
+  other URL with 1 or 2 pinned keys (current and next).
+- `addons.allow` `null` = any id; else a sorted unique id list. `addons.block` = ids (every version) or `id@version`
+  (exact). Ids are global across marketplaces. `ceiling` `null` = none; `[]` = capability-free add-ons only.
+- Lists must already be sorted and unique (one form, one hash); a missing key, a wrong type, an unknown key, a
+  non-canonical URL, a wrong class or key set, an unknown capability makes the **whole policy malformed**, and a malformed
+  or unreadable policy never becomes a policy: a snapshot whose `market_policy` is malformed is refused (`malformed`, the old pin stays), and a joined host with no verifiable pinned snapshot has **no policy** (`hub_market_policy` raises; `None` means only "not hub-joined"). Either way the marketplace is refused (`market.not_allowed`), never read as an empty list or as standalone.
+- A new hub starts with the official marketplace only, `allow: null`, `block: []`, `ceiling: null`.
+
 "A hub is joined" is read from the workspace's signed log, not from a local file: a workspace whose log says it joined a
-hub but whose hub record is missing or unreadable is *not* standalone; it refuses (fail closed).
+hub but whose hub record is missing or unreadable is *not* standalone; it refuses (fail closed). The policy also gates
+`market add` and `market refresh`: no network access to an unlisted marketplace. The checks, first failing one wins:
 
 | Rule | |
 |---|---|
-| Without a hub the policy is `none` and the owner decides alone (D79). Standalone must not call a hub | |
-| With a hub, a marketplace that is not in `allow` is refused, **including the official one** | `market.not_allowed` |
-| `block` beats `allow` | `market.blocked` |
-| A policy that cannot be read, is expired or is malformed is **an empty allow list** (fail closed) | `market.not_allowed` |
-| `ceiling` is checked on the index entry (step 8) **and again on the staged manifest and on the grant event** at step 17/18. The index is only a claim | `market.capability_ceiling` |
+| Without a hub the policy is `none` and the owner decides alone (D79). Standalone must not call a hub; core imports no hub code | |
+| With a hub, a marketplace that is not in `markets` is refused, **including the official one**; P0 needs a fresh snapshot (`snapshot_get`) and has no cached fallback | `market.not_allowed` |
+| A `company` marketplace's index must be signed by one of its pinned `keys` (step 2) | `market.index_unsigned` |
+| A listed `official` or `company` marketplace passes step 4 without OS-user isolation (V3-D32, §15.3 Option B); any other marketplace is `market.community_unisolated` | `market.community_unisolated` |
+| After the entry is selected (step 6): the `id` or `id@version` is in `addons.block` | `market.blocked` |
+| `addons.allow` is not `null` and the `id` is not in it | `market.addon_not_allowed` |
+| Step 7, company marketplace: the entry's publisher key must be one of the pinned `keys`; the hub pin replaces TOFU for that URL (no TOFU read or write) | `market.publisher_unpinned` |
+| `ceiling` is checked on the index entry (step 8) **and again, with block and allow, on the staged manifest and on the grant event** at step 17/18, under the store lock, against the then-pinned snapshot. The index is only a claim | `market.capability_ceiling` |
+| **Run time:** before each run of every add-on (built-ins too, §15.2 point 4) the runner checks, on the pinned snapshot without network, that the origin marketplace is still listed (marketplace add-ons), the block list, `allow` and, for a company marketplace, the pinned publisher key (marketplace add-ons), and the ceiling; a refused add-on is "paused by hub policy", and undoing the policy change un-pauses it (the grant is untouched) | `market.not_allowed`, `market.blocked`, `market.addon_not_allowed`, `market.publisher_unpinned`, `market.capability_ceiling` |
 | A hub never installs or grants for a workspace; it can only refuse | |
 | Policy does not override the human gate: even an allowed marketplace needs the signed grant | |
 
-Whether the ceiling also applies to built-in add-ons and to grants that already exist is a D14/G7 decision; the spec's provisional answer is yes (§15.2, point 4).
+A compromised hub signs the snapshots and can therefore set any policy: it can deny service, and it can pin its own key
+for a "company" marketplace, so unisolated code becomes installable; it still needs the person's own review and grant.
 
 ## 10. Community marketplaces
 
@@ -480,7 +546,9 @@ granted add-on today runs as the person, and a third-party add-on with `network`
 publisher's code with the person's files and keys within reach. A review cannot make that safe; isolation can.
 
 Isolation is a property core detects (a configured, working per-add-on user), not a setting the owner or an index can
-claim. (Whether a hub-pinned company marketplace may be allowed earlier is open point 12 in §15.3.) When #287 lands, G-follow-up #929 flips this check; the format and the flow do not change. The local folder used
+claim. (Whether a hub-pinned company marketplace may be allowed earlier is open point 12 in §15.3.) When #287 lands, G-follow-up #929 flips this check; the format and the flow do not change. The slot users, the facts
+`isolation.detect()` reads and the requirements R-M1 to R-M4 (hub policy first, env read-only for the slot, credential
+host-owned on stdin, `{python}` under the slot) are in orch-v2-host.md §13.6 and §13.8. The local folder used
 by `orch addon dev` is not a marketplace source: it works only in workspaces marked `dev`.
 
 ## 11. Who may do what
@@ -551,8 +619,10 @@ are new in the v1 catalog; G2/G3 declare them per op and regenerate the CLI gold
 | `market.index_unsigned` | the official index has no valid signature by the pinned key or no `expires_at`, or a signature present on another index does not verify | 2 |
 | `market.rollback` | index version lower than the last seen, or entry version lower than the installed or highest seen one | 3, 6 |
 | `market.community_unisolated` | a non-official marketplace or direct source without OS-user isolation | 4 |
-| `market.blocked` | the hub's block list names this marketplace | 5 |
-| `market.not_allowed` | with a hub, the marketplace is not on the allow list (or the policy is unreadable) | 5 |
+| `market.blocked` | the hub policy blocks this add-on id or `id@version` | 6 |
+| `market.not_allowed` | with a hub, the marketplace is not listed in the hub policy (or the policy is unreadable); at run time, the origin marketplace is no longer listed | 5 |
+| `market.addon_not_allowed` | the hub policy has an `allow` list and the add-on id is not in it | 6 |
+| `market.publisher_unpinned` | a hub-listed company marketplace's entry is published by a key the hub does not pin | 7 |
 | `market.unknown_addon` | the id is not in the index | 6 |
 | `market.revoked` | the signed index lists this `id@version` as revoked | 6 |
 | `market.host_not_allowed` | the entry's git host is neither the marketplace's host nor on the host allow list | 6 |
@@ -573,8 +643,8 @@ are new in the v1 catalog; G2/G3 declare them per op and regenerate the CLI gold
 | `market.lock_missing` | `runtime.lock` is not in the package | 15 |
 | `market.lock_invalid` | the lockfile breaks a rule of §8.1 | 15 |
 | `market.staged_changed` | the staged package no longer has the signed digest at grant time | 18 |
-| `market.env_failed` | the dependency environment could not be built: install failure, a source-only dependency, a path leaving the environment, an auto-running file (`.pth`, `sitecustomize`, `usercustomize`), or an existing target not created by the host | 19 |
-| `market.env_changed` | at run time, the environment no longer matches its stamp or the stamp is for another package digest | run |
+| `market.env_failed` | the dependency environment could not be built, or a dependency cannot be had (stage time and step 19). Fixed reason words: `no_binary`, `sdist_only`, `download`, `hash_mismatch`, `auto_run_file`, `path_escape`, `link`, `too_large`, `installer`, `package`, `superseded`, `lock` (two applicable lines of one name), `platform` (a required package that does not run here) | 16, 19 |
+| `market.env_changed` | at run time, the environment no longer matches its stamp or the stamp is for another package digest. Reasons: `missing`, `changed`, `digest`, `abi` | run |
 | `market.actor_refused` | an agent or mandate asked for a human-only action | 0 |
 
 Rows without a vector in `vectors_market.json` (`fetch_failed`, `commit_mismatch`, `staged_changed`, `env_failed`) need
@@ -604,7 +674,8 @@ The install record (TOFU keys, highest versions seen, origins, the host allow li
 isolation flag are files on the person's own account, and a same-user agent (tier A) can write them. For the official
 shelf that is harmless: the key is pinned in core, the digest binds the bytes, and the grant needs the person's
 signature. For any other marketplace (after #287) TOFU and `allow-host` are *advisory* against such an agent. Isolation
-(#287) MUST be detected from the operating system, never from a same-user-writable flag; a test keeps that.
+(#287) MUST be detected from the operating system, never from a same-user-writable flag; a test keeps that. With slot
+users (orch-v2-host.md §13.8) the credential reaches the add-on on stdin for one call only and this limit closes.
 
 Crash safety: between appending `addon.granted` and the directory rename (step 18) the registry sees `changed` and
 fails closed; recovery at start finishes or rolls the rename back by comparing digests with the last grant
@@ -618,6 +689,10 @@ These are the spec's answers; each is marked **provisional** until the owner con
    it. Revisit with G7 if the hub must audit origin. *Provisional.*
 2. **Official key:** the same root, its own certificate with `purpose: "marketplace"` and its own CI environment, never
    the catalog or core key. Core pins a list of two (current and next) so a rotation is not an emergency release.
+   Rotation (#1191): (a) a core release that accepts official key changes (§4.4) is out; (b) the operator re-signs the
+   index and every entry with the next key (`sign-index --rekey`, orch-marketplace docs/signing.md); (c) only after that
+   is on main, a core release pins (next, new next). Hosts on either release accept the re-signed index; a host on (c)
+   refuses anything still signed by the retired key.
    Revocation is through the signed index (§3.1). *Provisional.*
 3. **Catalog versus marketplace:** retire the signed add-on catalog for non-built-in add-ons once G6 lands, and only
    because the official index now has the catalog's guarantees (version, expiry, revocation: §3.1). Keep the bundled
@@ -653,5 +728,112 @@ These are the spec's answers; each is marked **provisional** until the owner con
       digest. The residual risk is a compromised company publisher key or a hostile admin, and the tier-A agent
       limits of §15.1 do not apply to a key the hub pins.
 
-    The spec, schema and vectors implement Option A. Option B adds one field to `orch.hub-policy/1`
-    (`pinned_keys: {url -> key}`) and one branch at step 4; it needs no change to the index format.
+    **Decided for the hub policy (D14):** the policy's `markets[].keys` is that pin. A hub-listed `official` or `company`
+    marketplace passes step 4 without isolation; the spec, schema and vectors otherwise implement Option A (no hub: refuse).
+
+## 16. Install, update and remove as built (V3 G3, #921)
+
+Design note `state/design-g3.md`; conditions C1 to C6. What the code does, where it lives:
+
+- **Fetch and export:** `gitsafe.market_export_package` runs `ls-tree -r -z -l` on the commit (or `commit:subdir`), judges the whole
+  listing (modes, `check_path`, case twins, file/directory clash, counts, sizes, manifest on top) before it reads a blob, then reads
+  every blob with ONE `cat-file --batch` whose output is capped at the listed total. The package fetch has its own pack cap
+  (`MARKET_PACKAGE_PACK`), never the index's. `fetch.fetch_package` resolves and checks the entry host like the index fetch.
+- **Stage:** `market.stage {id, url?, update?}` (human, owner) runs steps 0 to 16 and writes ONE stage file
+  `<state>/hosts/<ws>/market/staged/<stage>.json` (the package in memory form as base64, digest, origin, commit, publisher key, TOFU
+  status; 30 minutes; one live stage per add-on name). Nothing is written to `addons/` and no record changes.
+- **Grant:** `addon.grant {name, staged}`. The package comes from the stage file (read once, digest and manifest agreement
+  checked again), the signed body is only `grant_event`, the marketplace block travels as `material["market"]` and is shown "per
+  host, not signed". Under the store lock, before the journal write, `marketinstall.recheck` judges the stage and the install record
+  as they are now (C2). After the append, `human.finish` calls `marketinstall.after_grant`: the directory is swapped by digest
+  (`.<name>.new-*`, `.<name>.old-*`; a crash is finished by `marketinstall.recover` at start), then `installs.json` gets the
+  origin, `seen` is raised and the publisher key is remembered (C3). `installs.json` changes nowhere else.
+- **Plain grant (C1):** `addon.grant` without `staged` signs only the bytes of a built-in add-on or the bytes the install record of
+  that name holds (a re-enable). A folder copied into `addons/` is `market.not_installed`.
+- **Remove:** `market.uninstall {name}` refuses while the add-on is enabled (`market.still_enabled`), deletes the package, drops
+  the origin; `seen` and the publisher key stay. `orch addon remove` signs `addon.disable` first.
+- **Sandbox marketplace (C5):** `<root>/state/host/dev.json` may carry `market: {url, keys}`. Only a dev host reads it, and only a
+  workspace that passes S1 to S6 now gets class `dev` for that URL (the official rules with those keys, reserved ids as for any
+  non-official marketplace). Every address rule applies unchanged.
+- **Signer (C4):** `material.market` has exactly the keys `url, class, commit, source_note, publisher{fingerprint, tofu},
+  index_version, stale, summary, replaces` and only on a request that signs one `addon.granted`; it is rendered under "per host, not
+  signed".
+- **Host-derived preview:** the update diff and `widened` come from the host (the staged bytes against the signed grant; when the
+  installed folder is not the granted bytes everything counts as widened). They are for previews only: no client may shorten the
+  signed view because of them, and the signer always renders every signed capability, field, section and artifact kind.
+
+## 17. Dependencies as built (V3 G4, #922)
+
+Design note `state/design-g4.md`; conditions C1 to C7. Deviations from the first text of §6 and §8 are in the text
+above: D1 (orch downloads, installers run offline), D2 (no `npm ci`: orch unpacks), D3 (download and verify at stage),
+D4 (an existing target is removed, never adopted), D5 (§6 item 6), D6 (`runtime` in the signed grant), D7 (Python
+add-ons run with the host interpreter and `-S`), D8 (`python-requirements` is `uv export --format requirements-txt
+--no-dev` output).
+
+- **Code:** `orch/addons/lockfile.py` (the one parser and the plan), `orch/addons/envtree.py` (tree rules, walk, stamp,
+  `verify`), `orch/market/download.py` and `untar.py` (the fetcher and the unpacker), `orch/market/deps.py` (review block
+  and update diff), `orch/host/addonenv.py` (stage fetch, `market.env_build`, remove, recovery), `orch/addons/runner.py`
+  (the check inside every call; Python `-S -B`, Node from fixed system directories).
+- **Review and diff:** the review lists every package (compiled, not on this computer, development only) and the
+  download size; `material["deps"]` carries it, checked by the signer against the SIGNED `runtime` and labelled "listed
+  by this computer from the lockfile, covered by the digest". An update diff compares what this computer INSTALLS: a
+  package that keeps its version and hash but starts to be installed here is changed; `widened` is set by runtime added
+  or changed, and by any package added or changed (removals do not widen).
+- **One mechanism for every cap:** `envtree.Budget` (bytes and entries) is the only way a parser consumes input. One
+  budget is shared by everything one operation reads (every wheel and tarball of one environment build or stage, every
+  file of one walk, every download of one build or stage: a new budget per operation), so N archives cannot add up to N times what one may use; a parser takes the
+  budget as a parameter, so a new one cannot forget it.
+- **The invariant (stated once, in `envtree.Budget`):** what orch judged is exactly what gets written, and every written
+  byte comes out of a Budget. Where orch and the consumer both parse a format they must agree: a wheel is listed by orch's
+  own walk of its central directory (the directory must end exactly at the end record, no zip64 record or locator) and
+  then by `zipfile`, which is what pip uses, and the two lists must be identical; a tarball with any sparse member
+  (old GNU type or PAX `GNU.sparse.*`) is refused, so no hole is ever expanded into bytes nobody counted. pip runs with a
+  file size limit, `PIP_CONFIG_FILE=/dev/null` (no global or site config either) and a size watch on the environment it
+  writes; the tree walk after it is the last gate. Directory walks and unpacking hold only the chain of parent
+  descriptors, never one per directory, so a package with hundreds of sibling directories works under a 256-descriptor
+  limit. A wheel is only taken from `files.pythonhosted.org`.
+- **Caps, every one checked before the allocation it guards:** lockfile 1 MiB and 1000 rows (counted before rows are
+  parsed); download 64 MiB per artifact (the `Content-Length` before the body, the count per chunk), 256 MiB per
+  add-on, 8 MiB index; wheel central directory walked by orch entry by entry (20 000 entries and 256 MiB declared in all, drawn before each
+  entry is kept; an end record that lies about its count is refused at the first surplus entry); tarball 20 000 members counted as they stream, 64 MiB per file, decompressed bytes counted by
+  a reading wrapper (`MAX_BYTES` plus a small allowance per member), PAX and long-name headers 8 KiB, no sparse member;
+  environment tree 20 000 entries, 64 levels, 256 MiB, 240 characters per path; pip 300 s and 8 MiB of log; stamp 4 KiB.
+- **Run time:** Python is G6's interpreter line without `-E` (`-B -s -S`; `-E` would ignore the `PYTHONPATH=<package>:<environment>` that carries the dependencies, and the environment is built from nothing anyway); Node `node_modules` link to the environment,
+  `node` looked up in `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`.
+- **Not done / residual:** native builds are refused (O7); an add-on without `network` can still connect until #287
+  (O5); Node resolves packages above the run root only in Tier A terms (O4); the full tree hash per run costs about half
+  a second at the cap (O2).
+
+## 18. Hub policy as built (V3 G7, #928)
+
+- **Where:** `orch/market/policy.py` is the one rule table (`evaluate(stage, policy, req)`, stages `add`, `index`, `entry`,
+  `publisher`, `manifest`, `install`, `grant`, `run`; first failing check wins) and the class gate (`gate`: `official`,
+  `company`, `dev`, else `market.community_unisolated`). `orch/host/hubpolicy.py` reads the policy: `stored` (worker, no
+  network; `None` only when the signed log also says no hub is joined, so a deleted or rewritten `hub.json` on a joined
+  host raises `market.not_allowed`), `refresh_now` (the fresh `snapshot_get`, off the worker), `run_gate`, `paused`, `view`.
+  The shared `evaluate` vectors of D14 (`tests/hub/vectors/vectors_hub_policy.json`) are run by the product and by the
+  independent reference `tests/addons/market_ref.evaluate`.
+- **Fresh read:** `market.add`, `market.refresh` and `market.stage` on a hub-joined host answer `defer` from the worker,
+  the host does the `snapshot_get` off the worker, then plans again on the worker from the newly pinned snapshot. A failed
+  fresh read is `market.not_allowed` with nothing read and nothing fetched.
+- **Company marketplace:** class `company` (the URL is in `markets` with `class: company`): the index must be signed by a
+  pinned key and carry `expires_at` (as the official one), every entry by a pinned key (`market.publisher_unpinned`), the
+  review says "key pinned by your hub", **no TOFU key is read or written**, no OS-user isolation is required (V3-D32).
+- **Re-checks:** `market.stage` re-evaluates block, allow, pin and ceiling on the manifest of the bytes that were read;
+  `recheck` (step 18, under the store lock) re-reads the class and the policy from the then-pinned snapshot, without
+  network, and evaluates `grant`.
+- **Run time and the pause:** `orch.addons.runner.call(..., gate=hubpolicy.run_gate(service))` asks before anything is
+  staged or started, on the last pinned snapshot: block and ceiling for every add-on (built-ins too); for a marketplace
+  add-on also that its origin is still listed, `allow`, and (company) that the key its install record holds is still
+  pinned. The refusal is `RunnerError(code, "paused by hub policy")`; the grant is untouched and undoing the policy
+  change un-pauses it. A joined host with no verifiable snapshot (an expired card) pauses **every** add-on, the dashboard
+  included. `market.installed` shows the cause: per add-on `paused: {code, cause: policy | unverified, reconnect}` and
+  `hub: {state: standalone | verified | unverified, reconnect: "orch hub refresh"}`; `hub.refresh` (with a new card) is
+  never gated by this policy.
+- **Every path that runs an add-on asks one helper, `hubpolicy.running(service, name)`** (granted, on, not paused): start-agent and
+  model routing (`agents._addon`), terminals (`terms.addon_granted`) and Publish (`publishing._gate`, via `hubpolicy.allowed`).
+  `runner.call(gate=...)` takes `hubpolicy.run_gate(service)`. A plain `addon.grant` (re-enable of a built-in or of the install
+  record's bytes) runs the same `grant` evaluation in `_recheck`, with the record's origin and key.
+- **Not done / follow-up:** the host wiring that calls `runner.call` with the gate is the add-on runner's (it is not
+  called anywhere in core yet; any new caller MUST pass the gate on a hub-joined host); the dashboard page for
+  `paused` and the `pinned` publisher wording.

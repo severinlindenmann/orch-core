@@ -8,9 +8,9 @@ import pytest
 
 from orch import canon, crypto
 from orch.identity import Refused, pairing
-from orch.relay import wire
+from orch.wsproto import wire
 
-from ..relay import corpus
+from ..wsproto import corpus
 
 S2 = corpus.S2
 

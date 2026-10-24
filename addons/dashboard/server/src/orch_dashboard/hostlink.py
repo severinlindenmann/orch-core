@@ -40,6 +40,9 @@ CAPS = [
     "workdir/1",
     "publish/1",
 ]
+MARKET_READS = ("market.list", "market.installed")
+MARKET_WRITES = ("market.stage", "market.unstage", "market.uninstall", "market.refresh")
+MARKET_OPS = (*MARKET_READS, *MARKET_WRITES)
 OPS = {
     name: 1
     for name in (
@@ -114,6 +117,9 @@ OPS = {
         "hub.handoff",
         "share.rules",
         "share.preview",
+        # V3 A10 (design-g3 4.2): the Add-ons page. Reads: market.list, market.installed. Person writes (owner role, the
+        # host refuses an agent): stage, unstage, uninstall, refresh. Every install is a terminal hand-off.
+        *MARKET_OPS,
     )
 }
 RUN_OPS = {"run.sub", "run.list", "run.stop", "agent.preview", "agent.start", "grant.deposit_status", "grant.forget"}
@@ -403,14 +409,29 @@ class HostLink:
                 raise
 
     def next_event(self, timeout=0.1):
-        """One reader at a time; calls can still consume and queue interleaved events."""
+        """One reader at a time; calls can still consume and queue interleaved events.
+
+        The wait for the next frame happens WITHOUT the link's lock: this link is shared with every REST call of the
+        workspace, and a reader that held the lock for its whole `select` made each call wait for it (about 100 ms,
+        twice per request: `addon.list` and the op itself). Only taking a frame off the socket holds the lock."""
         with self.lock:
             if self.events:
                 return self.events.popleft()
+            if self.sock.fileno() < 0:
+                raise fail("host.unavailable")
+        try:
+            if not select.select([self.sock], [], [], timeout)[0]:
+                return None
+        except (OSError, ValueError):  # closed while waiting
+            raise fail("host.unavailable") from None
+        with self.lock:
             try:
+                if self.events:
+                    return self.events.popleft()
+                # A call may have read the frame while this reader waited: only read what is still there.
                 if self.sock.fileno() < 0:
                     raise fail("host.unavailable")
-                if not select.select([self.sock], [], [], timeout)[0]:
+                if not select.select([self.sock], [], [], 0)[0]:
                     return None
                 frame = receive(self.sock)
                 if frame.get("t") == "fatal":

@@ -13,6 +13,7 @@ from tests.host.dispatch_helpers import UID, err
 from tests.host.live_helpers import SESSION, world
 from tests.host.live_helpers import ok as ok_
 from tests.host.test_dispatch_matrix import as_agent_class, wrong_secret
+from tests.tamper import tamper_text
 
 OK_REMOTE = "https://example.org/team/proj"
 
@@ -78,8 +79,8 @@ def test_the_defaults_are_marked_and_the_four_gates_are_given(w):
         "gates",
         "defaults",
         "sign_methods",
+        "addons",
         "icon",
-        "models",
         "publish",
         "settings_at",
         "policy_at",
@@ -244,7 +245,6 @@ def test_no_person_gets_less_and_only_repos_a_visible_ticket_links(w):
             "defaults",
             "sign_methods",
             "icon",
-            "models",
             "sub_cursor",
         }  # no settings_at, policy_at
         assert got["settings"]["repos"] == {"proj": {"default_branch": "main"}}  # linked by a visible ticket only
@@ -341,7 +341,7 @@ def test_a_page_token_that_is_forged_altered_foreign_or_old_is_page_expired(w):
     assert err(c.req("workspace.settings", {"page": "garbage"})) == "page.expired"
     body, _, mac = token.rpartition(".")
     assert err(c.req("workspace.settings", {"page": body + "." + mac[::-1]})) == "page.expired"
-    assert err(c.req("workspace.settings", {"page": body[:-2] + "AA." + mac})) == "page.expired"
+    assert err(c.req("workspace.settings", {"page": tamper_text(body) + "." + mac})) == "page.expired"
     # another principal (the owner's grant is another principal than the person's connection)
     assert err(c.req("workspace.settings", {"page": token}, grant=w.grant, session=SESSION)) == "page.expired"
     # a token this host issued for another op (ticket.query's), for this very principal
@@ -403,3 +403,11 @@ def test_the_publish_server_is_read_by_a_person_and_not_by_an_agent(w):
     assert ok(c.req("workspace.settings"))["publish"] == value
     as_agent_class(w)
     assert "publish" not in ok(c.req("workspace.settings"))
+
+
+def test_an_agent_with_a_grant_reads_add_on_settings_and_a_no_person_reader_does_not(w):
+    """G6 ruling 5: add-on settings are not secret; an agent with a grant (column G) reads them, column N does not."""
+    c = w.client()
+    assert ok(c.req("workspace.settings", grant=w.grant, session=SESSION))["addons"] == {}
+    as_agent_class(w)
+    assert "addons" not in ok(c.req("workspace.settings", grant=wrong_secret(w.grant)))

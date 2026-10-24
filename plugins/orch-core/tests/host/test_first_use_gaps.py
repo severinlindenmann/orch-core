@@ -19,7 +19,15 @@ import pytest
 from orch.host import cli as host_cli
 from orch.host import enable as svc
 from tests.host.lifecycle_helpers import UID
-from tests.host.test_host_mode_on import cli, fake, host, world  # noqa: F401 - fixtures
+from tests.host.test_host_mode_on import cli, fake, host, init_ws, world  # noqa: F401 - fixtures
+
+
+@pytest.fixture(autouse=True)
+def _no_exposure_mark(monkeypatch):
+    """#1097 E3 needs a registered workspace and a running host (tests: test_key_exposure_custody.py)."""
+    from orch.custody import exposure
+
+    monkeypatch.setattr(exposure, "mark_before_move", lambda *a, **k: None)
 
 
 def _wid(root: Path) -> str:
@@ -34,7 +42,7 @@ def _wid(root: Path) -> str:
 
 def test_the_peer_default_finds_a_passphrase_key(world):  # noqa: F811
     env, root = world["env"], world["root"]
-    assert cli(env, "init", "--prefix", "DEMO", "--name", "Severin")[0] == 0
+    assert init_ws(world)[0] == 0
     assert list(host_cli.default_peers(Path(env["ORCH_STATE_DIR"]), root, env)) == [str(UID)]
 
 
@@ -45,7 +53,7 @@ def test_the_peer_default_finds_a_convenience_key(world, monkeypatch):  # noqa: 
     from orch.ops import human
 
     env, root = world["env"], world["root"]
-    assert cli(env, "init", "--prefix", "DEMO", "--name", "Severin")[0] == 0
+    assert init_ws(world)[0] == 0
     state, wid = Path(env["ORCH_STATE_DIR"]), _wid(root)
     store = FakeStore()
     monkeypatch.setattr(conv, "open_store", lambda s: store)
@@ -58,7 +66,7 @@ def test_the_peer_default_without_any_key_says_so(world):  # noqa: F811
     from orch.ops import human
 
     env, root = world["env"], world["root"]
-    assert cli(env, "init", "--prefix", "DEMO", "--name", "Severin")[0] == 0
+    assert init_ws(world)[0] == 0
     state, wid = Path(env["ORCH_STATE_DIR"]), _wid(root)
     (human.keys_dir(state, wid) / human.KEY_FILE).unlink()  # no passphrase key, no convenience selection
     with pytest.raises(host_cli.HostError) as e:
@@ -71,7 +79,7 @@ def test_the_peer_default_without_any_key_says_so(world):  # noqa: F811
 
 def test_disable_reverses_enable_and_keeps_the_state(world):  # noqa: F811
     env, fk = world["env"], world["fake"]
-    assert cli(env, "init", "--prefix", "DEMO", "--name", "Severin")[0] == 0
+    assert init_ws(world)[0] == 0
     assert host(["enable", "--dev"], env)[0] == 0
     unit = fk.plan
     assert unit is not None and unit.unit_path.exists() and fk.loaded
@@ -95,7 +103,7 @@ def test_disable_reverses_enable_and_keeps_the_state(world):  # noqa: F811
 
 def test_disable_purges_the_read_only_releases_only_inside_the_release_dir(world):  # noqa: F811
     env = world["env"]
-    assert cli(env, "init", "--prefix", "DEMO", "--name", "Severin")[0] == 0
+    assert init_ws(world)[0] == 0
     assert host(["enable", "--dev"], env)[0] == 0
     releases = Path(env["HOME"]) / ".local/share/orch/releases"
     outside = Path(env["HOME"]) / "outside"
@@ -116,7 +124,7 @@ def test_disable_purges_the_read_only_releases_only_inside_the_release_dir(world
 
 def test_disable_refuses_another_setup_unless_forced(world):  # noqa: F811
     env, fk = world["env"], world["fake"]
-    assert cli(env, "init", "--prefix", "DEMO", "--name", "Severin")[0] == 0
+    assert init_ws(world)[0] == 0
     assert host(["enable", "--dev"], env)[0] == 0
     unit = fk.plan
     assert unit is not None
@@ -287,7 +295,7 @@ def test_disable_stops_a_disabled_but_active_systemd_unit(world, monkeypatch):  
     env, fk = world["env"], world["fake"]
     real_plan = svc.plan
     monkeypatch.setattr(svc, "plan", lambda *a, **k: real_plan(*a, **{**k, "platform": "linux"}))
-    assert cli(env, "init", "--prefix", "DEMO", "--name", "Severin")[0] == 0
+    assert init_ws(world)[0] == 0
     assert host(["enable", "--dev"], env)[0] == 0
     fk.enabled, fk.active = False, True  # `systemctl disable` without --now: still running
     fk.ran.clear()
@@ -301,7 +309,7 @@ def test_disable_stops_an_active_unit_whose_file_is_gone(world, monkeypatch):  #
     env, fk = world["env"], world["fake"]
     real_plan = svc.plan
     monkeypatch.setattr(svc, "plan", lambda *a, **k: real_plan(*a, **{**k, "platform": "linux"}))
-    assert cli(env, "init", "--prefix", "DEMO", "--name", "Severin")[0] == 0
+    assert init_ws(world)[0] == 0
     assert host(["enable", "--dev"], env)[0] == 0
     fk.plan.unit_path.unlink()  # the file is gone, the unit still runs and is not enabled
     fk.enabled, fk.active = False, True
@@ -336,7 +344,7 @@ def test_the_peer_default_needs_the_key_itself_not_only_the_selection(world, mon
     from orch.custody.convenience import FakeStore
 
     env, root = world["env"], world["root"]
-    assert cli(env, "init", "--prefix", "DEMO", "--name", "Severin")[0] == 0
+    assert init_ws(world)[0] == 0
     state, wid = Path(env["ORCH_STATE_DIR"]), _wid(root)
     store = FakeStore()
     monkeypatch.setattr(conv, "open_store", lambda s: store)
@@ -442,7 +450,7 @@ def test_purge_releases_is_refused_while_the_runner_service_is_installed(world, 
     from orch.runner import service as runner_service
 
     env, fk = world["env"], world["fake"]
-    assert cli(env, "init", "--prefix", "DEMO", "--name", "Severin")[0] == 0
+    assert init_ws(world)[0] == 0
     assert host(["enable", "--dev"], env)[0] == 0
     releases = Path(env["HOME"]) / ".local/share/orch/releases"
     rplan = runner_service.plan(

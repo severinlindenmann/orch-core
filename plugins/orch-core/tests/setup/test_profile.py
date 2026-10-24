@@ -214,12 +214,6 @@ def test_a_projects_own_dot_orch_is_a_named_collision(tmp):
     assert "already has its own .orch/" in e.message and "never writes into a project's folder" in e.message
 
 
-def test_orch_own_init_lock_refuses_as_orch(tmp):
-    (tmp.work / ".orch-init.lock").mkdir()
-    e = refused(tmp, tmp.work)
-    assert "orch's own .orch-init.lock" in e.message
-
-
 def test_existing_project_dir_is_fine(tmp):
     (tmp.work / "README.md").write_text("x")
     (tmp.work / "src").mkdir()
@@ -230,3 +224,19 @@ def test_registered_dir_is_finish_mode(tmp):
     (tmp.work / "config.json").write_text("{}")
     mode = check_dir(str(tmp.work), home=tmp.home, state_dir=tmp.state, registered=lambda r: object())[1]
     assert mode == "finish"
+
+
+def test_run8_one_click_is_the_suggested_method_where_available_and_the_risk_sentence_is_in_the_state(tmp):
+    from orch.custody.cli import RISK
+
+    f = SetupFlow(make_env(tmp, click=lambda: (True, None)))
+    f.launch(str(tmp.work))
+    out = get(f, "state")[1]
+    assert out["suggested"]["method"] == "click" and out["click_risk"] == RISK and "terminal" in out["methods"]
+
+
+def test_run8_terminal_is_suggested_when_this_machine_cannot_hold_a_click_key(tmp):
+    f = SetupFlow(make_env(tmp, click=lambda: (False, "no_keychain")))
+    f.launch(str(tmp.work))
+    assert get(f, "state")[1]["suggested"]["method"] == "terminal"
+    assert post(f, "profile", {**PROFILE, "method": "terminal"})[1] == {"ok": True}  # Terminal stays selectable

@@ -161,6 +161,8 @@ def policy_obj() -> dict[str, Any]:
 
 
 def hash_vectors() -> dict[str, Any]:
+    from . import oracle_f1_questions as oq
+
     policy_in = {
         "approvers": ["owner", "maintainer", "owner"],
         "count": 1,
@@ -178,7 +180,6 @@ def hash_vectors() -> dict[str, Any]:
     qid = hashlib.sha256(
         LABELS["question_id"].encode() + cj({"workspace_id": W, "ticket": UID, "question": "Q1"})
     ).hexdigest()[:32]
-    opts = [{"key": "csv", "label": "Monthly CSV"}, {"key": "api", "label": "Tariff API", "cost": "+1 day"}]
     return {
         "artifact_digest": [
             {"bytes_hex": "", "hash": digest(b"")},
@@ -192,10 +193,6 @@ def hash_vectors() -> dict[str, Any]:
         ],
         "section_hash_refused": ["cafe\u0301", "a\r\nb", "a\x00", "\u202e", "\nabc", "abc\n", "\n", "a" * 65537],
         "value_hash_refused": ["cafe\u0301", {"k": ["a\r\nb"]}, {"x": "\u202e"}, ["\ud800"]],
-        "question_hash_refused": [
-            {"text": "cafe\u0301", "options": []},
-            {"text": "ok", "options": [{"key": "a", "label": "cafe\u0301"}]},
-        ],
         "value_hash": [
             {"value": None, "hash": h("value", b"null")},
             {"value": ["a", 1, {"b": True}], "hash": h("value", cj(["a", 1, {"b": True}]))},
@@ -235,32 +232,7 @@ def hash_vectors() -> dict[str, Any]:
             {"people": {}, "hash": h("people", b"{}")},
         ],
         "question_id": [{"workspace_id": W, "ticket": UID, "question": "Q1", "qid": qid}],
-        "question_hash": [
-            {
-                "qid": qid,
-                "ticket": UID,
-                "text": "Which tariff export is the source of truth?",
-                "options": opts,
-                "hash": h(
-                    "question",
-                    cj(
-                        {
-                            "question_id": qid,
-                            "ticket": UID,
-                            "text": "Which tariff export is the source of truth?",
-                            "options": opts,
-                        }
-                    ),
-                ),
-            },
-            {
-                "qid": qid,
-                "ticket": UID,
-                "text": "Ok?",
-                "options": [],
-                "hash": h("question", cj({"question_id": qid, "ticket": UID, "text": "Ok?", "options": []})),
-            },
-        ],
+        **oq.hash_vectors(),
         "grant_secret_hash_refused": ["", "00" * 31, "00" * 33],
         "grant_secret_hash": [{"secret_hex": "00" * 32, "hash": h("grant_secret", bytes(32))}],
     }
@@ -614,6 +586,7 @@ def all_vectors() -> dict[str, dict[str, Any]]:
 
 def _vectors() -> dict[str, dict[str, Any]]:
     from . import oracle_f1_flow as fl
+    from . import oracle_f1_questions as oq
     from . import oracle_f1_signed as sg
 
     restore = sg.restore_scenarios()
@@ -643,6 +616,7 @@ def _vectors() -> dict[str, dict[str, Any]]:
         "questions.json": {
             "pins": "question ids and hashes, answers, and a decision for the same qid after a restore",
             "scenarios": fl.question_scenarios(),
+            "forms": oq.forms(),
         },
         "effective_policy.json": {
             "pins": "the 5.7 intersection of workspace and override, a later workspace change, gate.no_eligible",
@@ -697,8 +671,10 @@ INDEX: dict[str, str] = {
     "text.json": "[shared, CHANGED] CRLF/CR -> LF, NFC (Unicode 16.0), refused controls, bidi and unassigned (11.3); "
     "H12e (orch-v2-host 11A.14 14.8) adds LF kept and code points unassigned in 16.0 but assigned in Unicode 17.0 "
     "(a phone with newer tables must refuse them before the sign sheet)",
-    "hashes.json": "[shared, CHANGED] known answers: artifact, section, value, policy, people, question id and hash, "
-    "grant secret; refused non-NFC inputs (5.6); refused non-canonical policies (5.7)",
+    "hashes.json": "[shared, CHANGED] known answers: artifact, section, value, policy, people, question id, grant "
+    "secret; refused non-NFC inputs (5.6); refused non-canonical policies (5.7); #1123: the question hash over the "
+    "whole question (kinds choice and text, spec), refused question shapes, answer rules, the pinned fold and blank "
+    "sets (5.6.1)",
     "chain.json": "[shared, unchanged] three chained events: heads, prev, canonical lines, signing bytes; the sig and "
     "host_sig values in it are PLACEHOLDERS, real signatures are pinned in signatures.json, tamper.json and the "
     "scenarios",
@@ -713,7 +689,8 @@ INDEX: dict[str, str] = {
     "(5.3, 5.11)",
     "tamper.json": "tampered chain lines of the ticket and workspace log, the seq where the chain breaks (5.5)",
     "genesis.json": "the six genesis checks in order (5.11)",
-    "devices.json": "device.added rules: drop: and scope refusals, self-signed, stale roster_v, recovery (5.3, 5.11)",
+    "devices.json": "device.added rules: drop: and scope refusals, self-signed, stale roster_v, recovery; "
+    "device.removed: the last device of an owner stays (5.3, 5.11)",
     "revocation.json": "device.revoked: embedded revocation as authority, reason mismatch, recovery (5.3)",
     "checkpoint.json": "checkpoint objects, signed bytes, refusals, divergence (5.10); receiver checks with valid "
     "signatures: pinned delegation, owner-device policy, signed source, line binding, abandoned, T head, position "
@@ -730,12 +707,13 @@ INDEX: dict[str, str] = {
     "effective_policy.json": "the 5.7 intersection, a later workspace change, gate.no_eligible",
     "approvals.json": "model scenarios: who may approve (5.7), host events (5.2, 5.12), gate.incomplete, "
     "gate.not_applicable, a stale source_sha",
-    "questions.json": "question id and hash, answers, a decision for the same qid after a restore",
+    "questions.json": "question id and hash, answers, a decision for the same qid after a restore; #1123 `forms`: one "
+    "choice and one text question as raw event, read-view item and hub needs, each with its hash (5.6.1)",
     "phone_events.json": "[shared, new] phone person events over relay.submit (orch-v2-host 11A.14, H12e): "
     "question.answered and ticket.created signed by a phone of sev (dk_sevp1, look+decide), secure-enclave-unlocked "
     "and passphrase; per accepted case the submitted form, signing bytes, digest, sig, appended event and head; "
     "refusals (question.stale, members.stale, event.bad_base, sig.invalid, device.scope, event.duplicate_id, "
-    "ticket.exists, an abandoned answer replayed); high-s; a why-only re-ask; A -> B -> A then a delayed A answer",
+    "ticket.exists, an abandoned answer replayed); high-s; a blocking-only re-ask; A -> B -> A then a delayed A answer",
     "index.json": "this list",
 }
 

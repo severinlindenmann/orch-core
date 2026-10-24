@@ -564,7 +564,7 @@ def test_a_client_connects_only_to_the_trusted_control_socket(lab):
 
 
 def test_register_works_in_a_project_that_already_has_files(lab):
-    """Plain `orch init` in an existing project, then `orch host register .`: the project's own files do not matter."""
+    """Plain `orch setup` in an existing project, then `orch host register .`: the project's own files do not matter."""
     (Path(lab.root) / "README.md").write_text("project")
     (Path(lab.root) / "src").mkdir()
     (Path(lab.root) / "src" / "a.py").write_text("x")

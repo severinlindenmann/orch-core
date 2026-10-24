@@ -11,6 +11,7 @@ import copy
 from collections.abc import Callable
 from typing import Any
 
+from orch.addons.settings_value import KEY as ADDONS_KEY
 from orch.canon import HashError, check_repo_identity, event_head, same_repo_identity
 
 from . import addon_rules, authz, generations, hubledger, identity, policies
@@ -168,14 +169,80 @@ def device_added(core: Core, e: dict[str, Any], v: Verifier) -> Refusal | None:
     return None
 
 
+def device_exposed(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
+    """``device.exposed`` (#1097): the device marks itself as having been in convenience custody. Only the device
+    itself, for its own person, can sign one (the hub, a relay and an agent never can: the actor rules). The mark only
+    removes authority (``signer_kind`` then reads ``exposed``), is monotonic, and nothing clears it."""
+    a = e["actor"]
+    dev = ws.devices.get(e["device"])
+    if dev is None:
+        return Refusal(Code.DEVICE_UNKNOWN, e["device"])
+    if e["device"] != a.get("device") or dev.person != a.get("id"):
+        return Refusal(Code.ROLE_DENIED, "a device is marked exposed by that device itself")
+    dev.exposed = True
+    return None
+
+
+def device_rotated(core: Core, e: dict[str, Any], v: Verifier) -> Refusal | None:
+    """``device.rotated`` (#1097): the new device (the actor) replaces ``old``, a device of the same person, in ONE
+    event: the new one is added and the old one removed, so a copy of the old key is dead in every mode. The
+    certificate and the rotation are signed by the person key (``verify_embedded``); the rotation is bound to THIS
+    workspace, the old and the new device and the current ``roster_v``, so it cannot be replayed elsewhere or later."""
+    ws, a, dev = core.ws, e["actor"], e["device"]
+    old = ws.devices.get(e["old"])
+    if old is None or old.person != a["id"] or old.removed or old.revoked:
+        return Refusal(Code.DEVICE_UNKNOWN, f"{e['old']} is not a valid device of {a['id']}")
+    if dev in ws.devices or dev in ws.revocations:
+        return Refusal(Code.DEVICE_EXISTS, dev)
+    if (r := authz.device_valid(None, e["cert"], ts(e["at"]), False)) is not None:
+        return r
+    o = e["rotation"]["o"]
+    if (
+        o["workspace_id"] != ws.workspace_id
+        or o["roster_v"] != ws.roster_v
+        or "p_" + o["person_id"] != a["id"]
+        or "d_" + o["old"] != e["old"]
+        or "d_" + o["new"] != dev
+    ):
+        return Refusal(Code.DEVICE_CERT, "the rotation is not for this workspace, person, devices and roster version")
+    if not v.verify_embedded(e, pk_pub=ws.members[a["id"]].pk_pub):
+        return Refusal(Code.DEVICE_CERT, "the certificate or the rotation is not signed by the person key")
+    ws.devices[dev] = Device(dev, a["id"], copy.deepcopy(e["cert"]))
+    old.removed = True
+    return None
+
+
 def device_removed(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
     dev = ws.devices.get(e["device"])
     if dev is None:
         return Refusal(Code.DEVICE_UNKNOWN, e["device"])
     if e["actor"]["id"] != dev.person and _role(ws, e) != "owner":
         return Refusal(Code.ROLE_DENIED, "a device is removed by its person or an owner")
+    holder = ws.members.get(dev.person)
+    if holder is not None and holder.role == "owner" and device_signs_now(ws, dev, ts(e["at"])):
+        # #1198 C15, under the store lock: removing this device must not leave its owner without one that signs
+        others = [d for d in ws.devices.values() if d is not dev and d.person == dev.person]
+        if not any(device_signs_now(ws, d, ts(e["at"])) for d in others):
+            return Refusal(
+                Code.DEVICE_LOCKOUT,
+                "This is the last working device of an owner. Removing it would lock that owner out for good. Pair or "
+                "add another device first.",
+            )
     dev.removed = True
     return None
+
+
+def device_signs_now(ws: WsCore, dev: Device, at: int) -> bool:
+    """A device that can sign at ``at`` (seconds): not removed or revoked, certificate not expired, with ``decide``, and
+    held by a current member. The one predicate of the lockout guard (the host's op handler uses it too)."""
+    from orch.identity.certs import person_scope_ok
+
+    if dev.removed or dev.revoked or dev.person not in ws.members:
+        return False
+    o = dev.cert["o"]
+    if o["expires_ms"] is not None and o["expires_ms"] <= at * 1000:
+        return False
+    return person_scope_ok({"scopes_max": list(o["scopes_max"])})
 
 
 def device_revoked(core: Core, e: dict[str, Any], v: Verifier) -> Refusal | None:
@@ -267,9 +334,11 @@ def settings_changed(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
         return r
     s = e["set"]
     if "via" in e["actor"] and (bad := sorted(set(s) - CHANNEL_SETTINGS)):
-        # hub protocol 8.8 (V3-D29): sign_methods, repos, publish, models, icon ... stay off the channel, whatever the
+        # hub protocol 8.8 (V3-D29): sign_methods, repos, publish, icon ... stay off the channel, whatever the
         # hub signed; one place for append and replay
         return Refusal(Code.SETTINGS_INVALID, f"a hub may not set {', '.join(bad)}")
+    if ADDONS_KEY in s and len(s) != 1:  # G6: one add-on per event, nothing else beside it (one review, one word)
+        return Refusal(Code.SETTINGS_INVALID, "addons: add-on settings are changed on their own")
     repos = dict(ws.repos)
     for name, v in s.get("repos", {}).items():
         if v is None:
@@ -303,17 +372,21 @@ def settings_changed(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
             if server["server"] == server["share"]:
                 return Refusal(Code.SETTINGS_INVALID, "publish: the share address must differ from the server address")
             ws.settings["publish"] = dict(server)
-    if "models" in s:  # Model routing: harness -> mode -> model; null clears; each value is a name of the closed list
-        table = s["models"]
-        if table is None:
-            ws.settings.pop("models", None)
-        else:
-            from orch.modelchoices import MODEL_CHOICES
+    if ADDONS_KEY in s:  # G6: the settings of one add-on; replay checks the general shape only, the host the schema
+        from orch.addons import settings_value
 
-            for harness, per in table.items():
-                if harness not in MODEL_CHOICES or any(m not in MODEL_CHOICES[harness] for m in per.values()):
-                    return Refusal(Code.SETTINGS_INVALID, "models: a model that orch does not offer for its harness")
-            ws.settings["models"] = {h: dict(sorted(per.items())) for h, per in sorted(table.items()) if per}
+        if (why := settings_value.check_changes(s[ADDONS_KEY])) is not None:
+            return Refusal(Code.SETTINGS_INVALID, f"addons: {why}")
+        ((name, value),) = s[ADDONS_KEY].items()
+        held = dict(ws.settings.get(ADDONS_KEY) or {})
+        if value is None:
+            held.pop(name, None)
+        else:
+            held[name] = copy.deepcopy(value)
+        if held:
+            ws.settings[ADDONS_KEY] = dict(sorted(held.items()))
+        else:
+            ws.settings.pop(ADDONS_KEY, None)
     if (
         "icon" in s
     ):  # the workspace icon: a pair of ids of the closed lists; null clears it (the default comes from the id)
@@ -508,6 +581,7 @@ def addon_event(core: Core, e: dict[str, Any]) -> Refusal | None:
             copy.deepcopy(e["fields"]),
             copy.deepcopy(e["sections"]),
             list(e["artifact_kinds"]),
+            runtime=copy.deepcopy(e.get("runtime")),
         )
         named |= generations.addon_binds_gates(new.binds)
 
@@ -520,6 +594,12 @@ def addon_event(core: Core, e: dict[str, Any]) -> Refusal | None:
                 old.enabled = False
             else:
                 old.purged = True
+                held = dict(ws.settings.get(ADDONS_KEY) or {})  # G6: its signed settings go with it
+                if held.pop(name, None) is not None:
+                    if held:
+                        ws.settings[ADDONS_KEY] = held
+                    else:
+                        ws.settings.pop(ADDONS_KEY, None)
 
     def per_ticket(t: TCore) -> None:
         if typ == "addon.purged":  # §8.1: purge removes the addon's data from the derived state of every ticket
@@ -604,6 +684,36 @@ def restore(core: Core, lc: LogCore, e: dict[str, Any], v: Verifier) -> Refusal 
 HUB_MODES = ("selective", "full")
 
 
+def hub_owner_proof(ws: WsCore, e: dict[str, Any], v: Verifier, *, dev: bool) -> Refusal | None:
+    """#1198 C9 (hub contract 9.6 "Readers"): every ``hub.joined`` and ``hub.left`` carries a valid owner proof,
+    whatever its ``auth``. The deciding inputs are the model's own: the actor's ``PK`` from the roster, the last hub
+    event it holds (``ws.hub``, read BEFORE this event changes it) and the append time of the host-signed chained
+    line (``e["at"]``, never a body field or a deliverer's value). A verifier without the method refuses (fail
+    closed)."""
+    if (r := _owner_only(ws, e)) is not None:
+        return r
+    check = getattr(v, "verify_hub_owner_proof", None)
+    if check is None:
+        return Refusal(Code.HUB_INVALID, "owner_proof: unavailable")
+    actor = e["actor"]["id"]
+    member = ws.members.get(actor)
+    h = ws.hub
+    prior = None
+    if h and h.get("status") in ("joined", "left"):
+        joined = h["status"] == "joined"
+        prior = {
+            "type": "hub.joined" if joined else "hub.left",
+            "hub_id": h["hub_id"],
+            "mode": h["mode"] if joined else None,
+            "binding_seq": h["binding_seq"],
+        }
+    code = check(
+        e, workspace_id=ws.workspace_id, actor_person_id=actor.removeprefix("p_"),
+        pk_pub=None if member is None else member.pk_pub, prior=prior, at_ms=ts(e["at"]) * 1000, dev=dev,
+    )  # fmt: skip
+    return None if code is None else Refusal(Code.HUB_INVALID, f"owner_proof: {code}")
+
+
 def hub_joined(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
     """``hub.joined`` (owner only, owner-signed): a new binding of the one hub. A selective one adds no member (D80);
     a full one makes the hub a member of kind ``hub`` (D74). ``binding_seq`` is strictly higher than any earlier one
@@ -616,15 +726,7 @@ def hub_joined(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
     h = ws.hub
     if e["mode"] not in HUB_MODES:
         return Refusal(Code.HUB_INVALID, "unknown hub mode")
-    if (
-        h and h["status"] == "joined" and h["mode"] == "full" and e["mode"] == "full" and e["hub_id"] == h["hub_id"]
-        and e["hk_root_pub"] == h["hk_root_pub"] and e["binding_seq"] == h["binding_seq"] and e["aliases"] == []
-    ):  # fmt: skip
-        # V3-D29 / C10: the owner signs full mode again, with the words that say the phones' pairing ends. Nothing
-        # about the binding changes; the host reads the mark and starts the cut-over (and refuses it once cut over).
-        ws.hub = {**h, "affirmed_at": e.get("at")}
-        return None
-    if h and h["status"] == "joined":
+    if h and h.get("status") == "joined":
         switch = h["mode"] == "selective" and e["mode"] == "full" and e["hub_id"] == h["hub_id"]
         if not switch or e["hk_root_pub"] != h["hk_root_pub"]:
             return Refusal(Code.HUB_INVALID, "this workspace is already joined to a hub; leave it first")
@@ -669,25 +771,10 @@ def hub_joined(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
         "alias_book": {**book, e["hub_id"]: dict(aliases)},
         "ledger": ledger,
         "user_hub": user_hub,
+        "owner_proof": e.get("owner_proof"),  # #1198 C9: hub.connect sends the proof the signed log holds
         **({"joined_at": e["at"]} if "at" in e else {}),  # C8 P2-b: nothing made before this binding lands under it
         **({"member": {"kind": "hub", "hub_id": e["hub_id"]}} if e["mode"] == "full" else {}),
     }
-    return None
-
-
-def relay_reopened(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
-    """``relay.reopened`` (V3 C10 M4, owner only): the direct relay path opens again. Only after the workspace has
-    LEFT the hub whose full mode closed it: while a hub is joined in full mode it is refused (D68: full mode is
-    hub-only, and a reopened door would let a direct device bypass the hub's role gate). It names the hub that was
-    left. It changes no state of the model; the host acts on it (``cutover.reopen``)."""
-    if (r := _owner_only(ws, e)) is not None:
-        return r
-    h = ws.hub
-    if not h or h.get("status") != "left":
-        return Refusal(Code.HUB_INVALID, "relay.reopened needs a workspace that has left its hub")
-    if e["hub_id"] != h.get("hub_id"):
-        return Refusal(Code.HUB_INVALID, "relay.reopened must name the hub that was left")
-    ws.hub = {**h, "reopened": True}  # the host acts on it (cutover.reopen); a later hub.joined starts a fresh record
     return None
 
 
@@ -702,7 +789,7 @@ def hub_left(ws: WsCore, e: dict[str, Any], core: Core | None = None) -> Refusal
     if (r := _owner_only(ws, e)) is not None:
         return r
     h = ws.hub
-    if not h or h["status"] != "joined":
+    if not h or h.get("status") != "joined":
         return Refusal(Code.HUB_INVALID, "this workspace is not joined to a hub")
     if e["hub_id"] != h["hub_id"] or e["binding_seq"] != h["binding_seq"]:
         return Refusal(Code.HUB_INVALID, "hub.left must name the hub and binding that are joined")
@@ -712,6 +799,8 @@ def hub_left(ws: WsCore, e: dict[str, Any], core: Core | None = None) -> Refusal
         ws.hub = {
             **{k: v for k, v in h.items() if k != "member"},
             "status": "left",
+            "owner_proof": None,
+            "invalid": False,
         }  # the hub member goes with the leave
         for grant in ws.grants.values():
             if grant.hub_id == hub_id:

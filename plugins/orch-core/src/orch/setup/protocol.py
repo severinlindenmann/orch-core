@@ -35,7 +35,7 @@ _PREFIX = re.compile(r"[A-Z][A-Z0-9]{1,7}")
 _ADDON_ID = re.compile(r"[a-z][a-z0-9-]{0,39}")
 _PROFILE_KEYS = frozenset({"name", "prefix", "addons", "method", "agent_hours", "agent_grant", "relay"})
 #: keys a page may leave out (their value then is the default)
-_OPTIONAL_KEYS = frozenset({"git_init"})
+_OPTIONAL_KEYS = frozenset({"git_init", "records"})
 
 
 class SetupError(Exception):
@@ -48,7 +48,7 @@ class SetupError(Exception):
 
 def clean_name(value: Any) -> str:
     """One line of printable text (no control or format characters), NFC, whitespace collapsed; ``invalid.input``
-    otherwise. The same rule as ``orch init``'s owner name."""
+    otherwise. The same rule as ``orch setup``'s owner name."""
     if not isinstance(value, str):
         raise SetupError("invalid.input", "name is text", field="name")
     name = unicodedata.normalize("NFC", " ".join(value.split()))
@@ -101,6 +101,9 @@ def validate_profile(
     git_init = body.get("git_init", False)
     if type(git_init) is not bool:
         raise SetupError("invalid.input", "git_init is true or false", field="git_init")
+    records = body.get("records", False)  # consent to the records repo + local auto-commit; absent means no
+    if type(records) is not bool:
+        raise SetupError("invalid.input", "records is true or false", field="records")
     return {
         "name": name,
         "prefix": prefix,
@@ -110,4 +113,5 @@ def validate_profile(
         "agent_grant": body["agent_grant"],
         "relay": body["relay"],
         "git_init": git_init,
+        "records": records,
     }

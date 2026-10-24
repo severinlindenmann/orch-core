@@ -336,113 +336,6 @@
             }
           ]
         },
-        "models": {
-          "oneOf": [
-            {
-              "type": "object",
-              "description": "Model routing: for each harness and Start agent mode, the model a start uses; a mode that is not named uses the harness default. Names come from a closed list per harness. null clears every choice.",
-              "properties": {
-                "claude-code": {
-                  "type": "object",
-                  "properties": {
-                    "work": {
-                      "enum": [
-                        "fable",
-                        "opus",
-                        "sonnet",
-                        "haiku"
-                      ]
-                    },
-                    "refine": {
-                      "enum": [
-                        "fable",
-                        "opus",
-                        "sonnet",
-                        "haiku"
-                      ]
-                    },
-                    "fix": {
-                      "enum": [
-                        "fable",
-                        "opus",
-                        "sonnet",
-                        "haiku"
-                      ]
-                    },
-                    "continue": {
-                      "enum": [
-                        "fable",
-                        "opus",
-                        "sonnet",
-                        "haiku"
-                      ]
-                    },
-                    "context": {
-                      "enum": [
-                        "fable",
-                        "opus",
-                        "sonnet",
-                        "haiku"
-                      ]
-                    }
-                  },
-                  "additionalProperties": false
-                },
-                "codex": {
-                  "type": "object",
-                  "properties": {
-                    "work": {
-                      "enum": [
-                        "gpt-5.4",
-                        "gpt-5-codex",
-                        "gpt-5",
-                        "o3"
-                      ]
-                    },
-                    "refine": {
-                      "enum": [
-                        "gpt-5.4",
-                        "gpt-5-codex",
-                        "gpt-5",
-                        "o3"
-                      ]
-                    },
-                    "fix": {
-                      "enum": [
-                        "gpt-5.4",
-                        "gpt-5-codex",
-                        "gpt-5",
-                        "o3"
-                      ]
-                    },
-                    "continue": {
-                      "enum": [
-                        "gpt-5.4",
-                        "gpt-5-codex",
-                        "gpt-5",
-                        "o3"
-                      ]
-                    },
-                    "context": {
-                      "enum": [
-                        "gpt-5.4",
-                        "gpt-5-codex",
-                        "gpt-5",
-                        "o3"
-                      ]
-                    }
-                  },
-                  "additionalProperties": false
-                }
-              },
-              "minProperties": 1,
-              "additionalProperties": false
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
         "icon": {
           "oneOf": [
             {
@@ -490,6 +383,25 @@
               "type": "null"
             }
           ]
+        },
+        "addons": {
+          "type": "object",
+          "description": "G6: the settings of ONE installed add-on (its manifest's settings schema is checked by the host, the general bounds by every replay). null removes them.",
+          "minProperties": 1,
+          "maxProperties": 1,
+          "propertyNames": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/addonName"
+          },
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
         }
       },
       "additionalProperties": false

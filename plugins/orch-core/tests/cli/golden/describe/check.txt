@@ -6,5 +6,5 @@ pre: workspace_exists
 args:
   --staged  also check the staged files: hand edits, forged log lines, .state, secrets
 errors:
-  not_found (exit 2): run orch init in a workspace | fix: orch describe init
+  not_found (exit 2): run it in a workspace folder (orch setup makes one) | fix: orch help
 out: ok check {problems} / next: {next}

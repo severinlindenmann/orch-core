@@ -96,8 +96,6 @@ export interface HostSettings {
   claim_ttl_min: number | null
   lease_ttl_min: number | null
   /** Durations no `settings.changed` has set (the F1 defaults). */
-  /** Model routing: the signed table (agent -> mode -> model); null: none set. */
-  models?: import('./modelRouting').ModelTable | null
   defaults: string[] | null
   gates: Record<PolicyGate, HostPolicy> | null
   repos: HostRepo[] | null
@@ -205,6 +203,47 @@ export function policyProblem(gate: PolicyGate, p: HostPolicy): string | null {
   return null
 }
 
+/** The four ways to answer "who has to approve this step?" (1.4). Each maps to a `policy_set` (the host signs its own sentence). */
+export type ApprovalPreset = 'owner' | 'owner_or_maintainer' | 'two' | 'independent'
+export const APPROVAL_PRESETS: readonly ApprovalPreset[] = ['owner', 'owner_or_maintainer', 'two', 'independent']
+export const PRESET_LABEL: Record<ApprovalPreset, string> = {
+  owner: 'An owner',
+  owner_or_maintainer: 'An owner or maintainer',
+  two: 'Two people (owners or maintainers)',
+  independent: 'Someone other than who did the work',
+}
+const PRESET_SHAPE: Record<ApprovalPreset, Pick<HostPolicy, 'approvers' | 'count' | 'not' | 'independent'>> = {
+  owner: { approvers: ['owner'], count: 1, not: [], independent: false },
+  owner_or_maintainer: { approvers: ['maintainer', 'owner'], count: 1, not: [], independent: false },
+  two: { approvers: ['maintainer', 'owner'], count: 2, not: [], independent: false },
+  independent: { approvers: ['maintainer', 'owner'], count: 1, not: ['assignees'], independent: true },
+}
+
+/** The policy a preset stands for. Where it applies (every ticket, some types) is kept as it is. */
+export const presetPolicy = (preset: ApprovalPreset, current: HostPolicy): HostPolicy => canonicalPolicy({ ...PRESET_SHAPE[preset], applies: current.applies })
+
+/** The preset a stored policy is exactly, or null (a custom rule). */
+export const presetOf = (p: HostPolicy): ApprovalPreset | null => {
+  const c = canonicalPolicy(p)
+  return APPROVAL_PRESETS.find((k) => JSON.stringify({ ...canonicalPolicy({ ...PRESET_SHAPE[k], applies: c.applies }) }) === JSON.stringify(c)) ?? null
+}
+
+/** The people who could ever approve under a policy: members of the named roles, or any member for ticket roles, minus the roles it excludes. */
+export function eligibleApprovers(p: HostPolicy, members: readonly { person: string; role: Role }[]): number {
+  const roles: Role[] = ['owner', 'maintainer', 'member']
+  const named = new Set(p.approvers.filter((a): a is Role => roles.includes(a as Role)))
+  const ticketRoles = p.approvers.some((a) => !roles.includes(a as Role))
+  const barred = new Set(p.not.filter((a): a is Role => roles.includes(a as Role)))
+  return members.filter((m) => m.role !== 'viewer' && !barred.has(m.role) && (named.has(m.role) || ticketRoles)).length
+}
+
+/** Why a step could never be approved with the people there are now, or null. */
+export function policyUnmet(p: HostPolicy, members: readonly { person: string; role: Role }[]): { needs: number; has: number } | null {
+  if (p.applies === 'off') return null
+  const has = eligibleApprovers(p, members)
+  return p.count > has ? { needs: p.count, has } : null
+}
+
 /** The base64url alphabet only, 65 bytes: 87 characters, no padding. */
 export const PUBLIC_KEY = /^[A-Za-z0-9_-]{87}$/
 export const MAX_CERT_BYTES = 16384
@@ -232,5 +271,20 @@ export const SCOPE_HELP: Record<string, string> = {
   operate: 'change members, settings and grants',
   type: 'type into terminals',
 }
+/** What a device may do, in the words a person uses (the host's four scopes). */
+export const RIGHTS: Record<string, string> = { look: 'Can read', decide: 'Can approve', operate: 'Can change settings', type: 'Can use terminals' }
+
+/** The union of what a person's valid devices may do, in a fixed order. */
+export const rightsOf = (devices: readonly RosterDevice[]): string[] =>
+  Object.entries(RIGHTS).filter(([scope]) => devices.some((d) => d.valid && d.scopes.includes(scope))).map(([, text]) => text)
+
+/** The one line under a person's name: where they sign from. */
+export const deviceLine = (devices: readonly RosterDevice[], mine: boolean): string =>
+  devices.length === 0 ? 'No device' : mine ? (devices.length === 1 ? 'This computer' : `This computer and ${devices.length - 1} more`) : devices.length === 1 ? '1 device' : `${devices.length} devices`
+
+/** A device below the level the workspace requires cannot read click-signed entries. The signing device is never flagged. */
+export const deviceBelow = (devices: readonly RosterDevice[], required: number | null, signsHere: boolean): boolean =>
+  !signsHere && required !== null && required >= 1 && devices.some((d) => d.valid && (d.reader ?? 0) < required)
+
 /** A person or device id without its tail: `p_` and the first 12 hex digits. The full id stays in a tooltip. */
 export const shortId = (id: string): string => (id.length > 16 ? `${id.slice(0, 14)}…` : id)

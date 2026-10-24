@@ -56,6 +56,7 @@ WORKSPACE_BUILDERS = {
     "policy.set": "policy_set",
     "member.role": "member_role",
     "member.remove": "member_remove",
+    "device.remove": "device_remove",
     "grant.revoke": "grant_revoke",
 }
 

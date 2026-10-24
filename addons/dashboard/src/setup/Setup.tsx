@@ -29,7 +29,7 @@ export function plainReason(code: string): string {
   if (code === 'session.required' || code === 'session.expired') return 'This page no longer has its link to your terminal. This happens after a reload or when the session ran out.'
   if (code === 'setup.ended') return 'This setup was already finished or stopped.'
   if (code === 'setup.token' || code === 'setup.unavailable') return 'The link to your terminal could not be used.'
-  if (code.startsWith('client:') || code.startsWith('http.')) return 'The page could not reach orch on this Mac.'
+  if (code.startsWith('client:') || code.startsWith('http.')) return 'The page could not reach orch on this computer.'
   return 'Setup could not go on.'
 }
 function Reason({ reason }: { reason: string }) {
@@ -76,8 +76,8 @@ export function summarize(review: Review): { lines: string[]; unknown: boolean }
     else if (item.id === 'runner_grant' && item.type === 'grant.issued' && f && typeof f.hours === 'number' && typeof f.scope === 'string' && typeof f.verbs === 'string')
       // the ordinary grant in words (scope and verbs are in the technical details); any other scope or verbs keeps the raw values
       lines.push(f.scope === 'workable' && f.verbs === 'agent'
-        ? `This Mac’s agent runner may work on any ticket you can see, as you, for ${duration(f.hours)}`
-        : `This Mac’s agent runner gets agent access for ${duration(f.hours)} (scope ${f.scope}, verbs ${f.verbs})`)
+        ? `This computer’s agent runner may work on any ticket you can see, as you, for ${duration(f.hours)}`
+        : `This computer’s agent runner gets agent access for ${duration(f.hours)} (scope ${f.scope}, verbs ${f.verbs})`)
     else if (item.type === 'settings.changed' && only('set') && f?.set && typeof f.set === 'object' && !Array.isArray(f.set)) {
       const set = f.set as Record<string, unknown>
       const okHours = !('grant_hours' in set) || typeof set.grant_hours === 'number'
@@ -91,7 +91,7 @@ export function summarize(review: Review): { lines: string[]; unknown: boolean }
     } else odd(item.title)
   }
   for (const flag of review.flags) {
-    if (flag.id === 'custody' || flag.id === 'terminal') lines.push(flag.text)
+    if (flag.id === 'custody' || flag.id === 'terminal' || flag.id === 'records') lines.push(flag.text)
     else if (flag.id !== 'runner' && flag.id !== 'terminals') odd(flag.text) // a flag this page does not know is shown
   }
   if (addons.length) lines.push(`Add-ons: ${addons.join(', ')}`)
@@ -168,9 +168,9 @@ function FinishChoices({
         <dd>{on.map((a) => a.title).join(', ')}</dd>
         <dt>Agents may work for</dt>
         <dd>{hoursText(current.agent_hours)}</dd>
-        <dt>Agent execution on this Mac</dt>
+        <dt>Agent execution on this computer</dt>
         <dd>{yesNo(current.runner.enabled)}</dd>
-        <dt>Agent access for this Mac’s runner</dt>
+        <dt>Agent access for this computer’s runner</dt>
         <dd>{current.runner_grant ? 'Given before' : 'Not given'}</dd>
         <dt>You approve with</dt>
         <dd>{current.method === 'click' ? 'One click on this computer' : 'Terminal'}</dd>
@@ -201,7 +201,7 @@ function FinishChoices({
               <label className="toggle">
                 <span>
                   <strong>{label('runner_grant')}</strong>
-                  <small>The runner is the program on this Mac that starts your agents. Its access key never goes into this page.</small>
+                  <small>The runner is the program on this computer that starts your agents. Its access key never goes into this page.</small>
                 </span>
                 <input
                   type="checkbox"
@@ -307,12 +307,12 @@ export function Setup({ api }: { api: SetupAPI }) {
     agent_hours: 8,
     agent_grant: false,
     relay: false,
+    records: true,
   })
   const [step, setStep] = useState(0)
   const [secrets, setSecrets] = useState<Secrets | null>(null)
   const [words, setWords] = useState<Record<string, string>>({})
   const [review, setReview] = useState<Review>()
-  const [typed, setTyped] = useState('')
   const [run, setRun] = useState<string>()
   const [progress, setProgress] = useState<Progress>()
   const [busy, setBusy] = useState(false)
@@ -327,7 +327,6 @@ export function Setup({ api }: { api: SetupAPI }) {
     setAccess(a)
     setProfile((p) => ({ ...p, agent_hours: a === 'none' ? 8 : a, ...(a === 'none' ? { agent_grant: false } : {}) }))
     setReview(undefined)
-    setTyped('')
   }
   const heading = useRef<HTMLHeadingElement>(null)
   const lock = useRef(false)
@@ -530,14 +529,13 @@ export function Setup({ api }: { api: SetupAPI }) {
   const update = (value: Partial<Profile>) => {
     setProfile((p) => ({ ...p, ...value }))
     setReview(undefined)
-    setTyped('')
   }
   async function getReview() {
     setReview(await api.call<Review>('review', {}))
     setStep(5)
   }
   async function approveProfile() {
-    await api.call('profile', { ...profile, git_init: offersGit && profile.git_init === true })
+    await api.call('profile', { ...profile, git_init: offersGit && profile.git_init === true, records: state?.mode !== 'finish' && profile.records !== false })
     if (state?.mode === 'finish' || confirmed.current) await getReview()
     else {
       const revealed = await api.call<Secrets>('secrets/reveal', {})
@@ -600,15 +598,6 @@ export function Setup({ api }: { api: SetupAPI }) {
     !!review &&
     (((state?.mode === 'finish' || !!review.runner_grant) && !review.tty_confirm) ||
       (review.tty_confirm && review.fingerprint?.length !== 3))
-  // A typed word is expected whenever the review gives machine access or changes how long agents may work. Core
-  // decides; if it ever omits the word where it is due, the page refuses to continue.
-  const needsWord =
-    !!review &&
-    (profile.agent_grant ||
-      !!review.runner_grant ||
-      (state?.mode === 'finish'
-        ? review.items.some((i) => i.id === 'settings' && i.details.some((d) => d.includes('grant_hours')))
-        : profile.agent_hours > 8))
   const summary = review ? summarize(review) : { lines: [], unknown: false }
   const next = (n: number) => (
     <button className="primary" onClick={() => setStep(n)}>
@@ -843,6 +832,11 @@ export function Setup({ api }: { api: SetupAPI }) {
                   </span>
                 </label>
               ))}
+              {profile.method === 'click' && state.click_available && (
+                <p className="notice" data-testid="click-risk">
+                  <Inline>{state.click_risk}</Inline>
+                </p>
+              )}
               <h2>Let agents work for you for:</h2>
               <div className="segments">
                 <button aria-pressed={access === 'none'} onClick={() => chooseAccess('none')}>
@@ -859,9 +853,9 @@ export function Setup({ api }: { api: SetupAPI }) {
               ) : (
                 <label className="toggle">
                   <span>
-                    Let this Mac’s agent runner start agents now
+                    Let this computer’s agent runner start agents now
                     <small>
-                      The runner is the program on this Mac that starts your agents. Its access key stays with it and
+                      The runner is the program on this computer that starts your agents. Its access key stays with it and
                       never goes into this page.
                     </small>
                   </span>
@@ -888,13 +882,23 @@ export function Setup({ api }: { api: SetupAPI }) {
                     />
                   </label>
                   {profile.method === 'click' && (
-                    <p>
-                      Relay is unavailable with One click:{' '}
-                      {state.click_reason ||
-                        'One click and phone approvals cannot be used together yet (click_relay_unsupported).'}
-                    </p>
+                    <p>Phone approvals are not available with One click yet. Choose Terminal to use them.</p>
                   )}
                 </>
+              )}
+              {state.mode !== 'finish' && (
+                <label className="toggle">
+                  <span>
+                    Keep a history of this workspace
+                    <small>Saved on this computer automatically. Nothing is uploaded.</small>
+                  </span>
+                  <input
+                    type="checkbox"
+                    role="switch"
+                    checked={profile.records !== false}
+                    onChange={(e) => update({ records: e.target.checked })}
+                  />
+                </label>
               )}
               <footer>
                 <button onClick={() => setStep(2)}>Back</button>
@@ -1005,8 +1009,8 @@ export function Setup({ api }: { api: SetupAPI }) {
                 <div className="warning">
                   <p>
                     {review.flags.some((f) => f.id === 'custody')
-                      ? 'One-click approval and dashboard agents act as you on this Mac.'
-                      : 'Dashboard agents act as you on this Mac.'}{' '}
+                      ? 'One-click approval and dashboard agents act as you on this computer.'
+                      : 'Dashboard agents act as you on this computer.'}{' '}
                     Only continue on a computer you trust.
                   </p>
                   <details>
@@ -1071,48 +1075,35 @@ export function Setup({ api }: { api: SetupAPI }) {
               </details>
               {review.tty_confirm && (
                 <div className="inset">
-                  <h2>How to finish</h2>
+                  <h2>One more confirmation after you click</h2>
                   <ol>
-                    {review.typed_word && (
-                      <li>
-                        Type <Raw>{review.typed_word}</Raw> below and press {state.mode === 'finish' ? 'Finish setup' : 'Create workspace'}.
-                      </li>
-                    )}
+                    <li>Click {state.mode === 'finish' ? 'Finish setup' : 'Create workspace'} below.</li>
+                    <li>Return to the terminal window where you started orch setup. Leave this page open to compare the three words.</li>
                     <li>
-                      Then look at your terminal: orch asks you to confirm there. It shows three words. If they match <Words words={review.fingerprint} />,
-                      type yes there.
+                      Check that the terminal shows the same words in the same order: <Words words={review.fingerprint} />. If they match, type yes in the terminal
+                      and press Enter.
                     </li>
                   </ol>
+                  <p>If any word is different, do not type yes. Close the terminal window and run orch setup again.</p>
                 </div>
-              )}
-              {review.typed_word && (
-                <label>
-                  Type <Raw>{review.typed_word}</Raw> here to confirm
-                  <input autoComplete="off" value={typed} onChange={(e) => setTyped(e.target.value)} />
-                </label>
-              )}
-              {needsWord && !review.typed_word && (
-                <p role="alert">A typed confirmation is required. Return to your terminal to restart setup.</p>
               )}
               {terminalReviewMissing && (
                 <p role="alert">Terminal confirmation is missing. Return to your terminal to restart setup.</p>
               )}
+              <p>
+                Clicking {state.mode === 'finish' ? 'Finish setup' : 'Create workspace'} approves the choices shown above
+                {review.tty_confirm ? ' and starts the final check.' : ' and starts creating your workspace.'}
+              </p>
               <footer>
                 <button
                   className="primary"
-                  disabled={
-                    terminalReviewMissing ||
-                    (!!review.typed_word && typed !== review.typed_word) ||
-                    (needsWord && !review.typed_word)
-                  }
+                  disabled={terminalReviewMissing}
                   onClick={() =>
                     void act(async () => {
                       const result = await api.call<{ run_id: string }>('create', {
                         review_id: review.review_id,
                         digest: review.digest,
-                        ...(review.typed_word ? { typed_word: typed } : {}),
                       })
-                      setTyped('')
                       setRun(result.run_id)
                     })
                   }

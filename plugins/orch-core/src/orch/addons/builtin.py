@@ -1,5 +1,5 @@
 """Manifests of the addons whose host code ships inside orch-core (start-agent, terminals, worktrees, publish, usage,
-explorer, estimate, model-routing, github, wiki), so they install without a clone:
+explorer, estimate, wiki), so they install without a clone:
 ``orch addon manifest <name> --write .`` puts ``addons/<name>/orch-addon.json`` into a workspace,
 then ``orch addon grant <name>`` (B5b).
 The package copies in ``manifests/`` equal ``addons/<name>/orch-addon.json`` of the repo (a test pins that)."""
@@ -10,10 +10,11 @@ import argparse
 import os
 import secrets
 import stat
+from collections.abc import Mapping
 from contextlib import ExitStack
 from importlib.resources import files
 from pathlib import Path
-from typing import TextIO
+from typing import Any, TextIO
 
 from orch.layout import LayoutError
 
@@ -26,8 +27,6 @@ NAMES = (
     "usage",
     "estimate",
     "explorer",
-    "model-routing",
-    "github",
     "wiki",
 )
 
@@ -36,6 +35,20 @@ def manifest_bytes(name: str) -> bytes:
     if name not in NAMES:
         raise ValueError(f"no built-in manifest {name!r} (have: {', '.join(NAMES)})")
     return files("orch.addons").joinpath("manifests", f"{name}.json").read_bytes()
+
+
+def is_builtin_package(ev: Mapping[str, Any], name: str | None = None) -> bool:
+    """True when the signed event names a built-in add-on (``name``, when given, must be that one) AND
+    carries the digest of exactly that built-in package: never by name alone (a clone with other code is not it)."""
+    from orch.addons.package import MANIFEST_FILE, package_digest
+
+    ev_name = ev.get("name")
+    if not isinstance(ev_name, str) or ev_name not in NAMES or (name is not None and ev_name != name):
+        return False
+    try:
+        return ev.get("package_sha256") == package_digest({MANIFEST_FILE: manifest_bytes(ev_name)})
+    except (ValueError, OSError):
+        return False
 
 
 def write_manifest(workspace: str, name: str, data: bytes, force: bool = False) -> Path:

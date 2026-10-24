@@ -27,7 +27,7 @@ describe('today queue: grouping and order', () => {
   })
 
   it('folds three or more open decisions with the same addon and action into one row, at the first one\'s place', () => {
-    const ds = [dec('a1', 'publish', 'decide', 'Publish report'), dec('q1'), dec('q2'), dec('q3'), dec('m1', 'models', 'escalate', 'Model routing'), dec('m2', 'models', 'escalate', 'Model routing')]
+    const ds = [dec('a1', 'publish', 'decide', 'Publish report'), dec('q1'), dec('q2'), dec('q3'), dec('m1', 'factory', 'escalate', 'Factory run'), dec('m2', 'factory', 'escalate', 'Factory run')]
     const [g] = buildGroups(sortEntries(toEntries([], ds)))
     expect(g.count).toBe(6)
     expect(g.rows.map((r) => (r.kind === 'fold' ? `fold:${r.entries.length}` : r.entry.id))).toEqual(['addon:a1', 'addon:m1', 'addon:m2', 'fold:3'])

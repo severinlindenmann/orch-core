@@ -26,6 +26,24 @@ def no_signer_child(monkeypatch):
         monkeypatch.delenv(name, raising=False)
 
 
+@pytest.fixture(autouse=True)
+def desktop_not_headless(monkeypatch):
+    """No test depends on the machine it runs on being a desktop or a headless server (CI's Linux runner has no
+    display). Every server a test starts takes the random-port path; parallel workers must never meet on the fixed
+    headless port, so binding it is a test failure. A test of the headless path passes its own environ."""
+    monkeypatch.delenv("SSH_CONNECTION", raising=False)
+    monkeypatch.setenv("DISPLAY", ":99")
+    import orch_dashboard.__main__ as launcher
+
+    real = launcher.bind_listener
+
+    def guarded(wanted):
+        assert wanted != launcher.HEADLESS_PORT, "a test must not bind the fixed headless port"
+        return real(wanted)
+
+    monkeypatch.setattr(launcher, "bind_listener", guarded)
+
+
 @pytest.fixture
 def click_start():
     """The signer's start function for the `gateway` fixture; a test that exercises click-to-sign overrides it."""
@@ -185,7 +203,8 @@ def rich(p1, stub):
     options = [{"key": "csv", "label": "Monthly CSV"}, {"key": "api", "label": "Tariff API"}]
     for n, (text, blocking) in enumerate([("Which export is the source?", True), ("Any naming rule?", False)], 1):
         qid = hashing.question_id(WS, first, f"Q{n}")
-        question = {"id": f"Q{n}", "to": "ticket_owner", "text": text, "options": options, "blocking": blocking}
+        question = {"id": f"Q{n}", "to": "ticket_owner", "text": text, "kind": "choice", "options": options,
+                    "blocking": blocking}  # fmt: skip
         env.tick()
         s.append(
             {
@@ -193,7 +212,7 @@ def rich(p1, stub):
                 "actor": env.agent,
                 "question": question,
                 "qid": qid,
-                "hash": hashing.question_hash(qid, first, text, options),
+                "hash": hashing.question_hash(qid, first, question),
             },
             log=first,
         )
@@ -205,7 +224,7 @@ def rich(p1, stub):
                     first,
                     "question.answered",
                     question="Q1",
-                    hash=hashing.question_hash(qid, first, text, options),
+                    hash=hashing.question_hash(qid, first, question),
                     option="csv",
                 ),
                 log=first,

@@ -72,9 +72,27 @@ class Human:
             auth=kw.pop("auth", "passphrase"),
         )
 
-    def sign(self, prepared: dict[str, Any]) -> signer.Signed:
+    def owner_proof(self, prepared: dict[str, Any], **over: Any) -> dict[str, Any]:
+        """#1198 C9: the owner proof the terminal would make with the owner's backup key (here: the test person's
+        ``PK``), over the prepared hub event, bound to this request, at the lab's clock. ``over`` overrides a field."""
+        from orch.host import hubproof
+        from orch.hubclient import wire
+
+        owner = getattr(self.person, "owner", self.person)  # a new device of the owner: the owner's PK signs
+        now = int(self.served.lab.ws.clock[0] * 1000)
+        kw: dict[str, Any] = {
+            "workspace_id": self.served.wid, "pk_pub": owner.pk_pub, "op": prepared["op"],
+            "payload": hubproof.payload_of(prepared["events"][0]), "request_id": prepared["request"]["id"],
+            "issued_ms": now, "expires_ms": now + 600_000, "dev": prepared["owner_proof"]["dev"],
+            "sign": owner.pk_sign,
+        }  # fmt: skip
+        return wire.build_owner_proof(**{**kw, **over})
+
+    def sign(self, prepared: dict[str, Any], *, proof: Any = "auto") -> signer.Signed:
         self.check(prepared)
-        return signer.sign(prepared, backend=self.backend, key_id="dk", workspace_id=self.served.wid)
+        if proof == "auto":
+            proof = self.owner_proof(prepared) if prepared["op"] in ("hub.join", "hub.mode", "hub.leave") else None
+        return signer.sign(prepared, backend=self.backend, key_id="dk", workspace_id=self.served.wid, owner_proof=proof)
 
     def submit_res(self, request_id: str, events: list[dict[str, Any]], idem: str | bool = True) -> dict[str, Any]:
         return self.c.req("human.submit", {"request_id": request_id, "events": events}, idem=idem)
@@ -101,6 +119,25 @@ def unsigned(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [{k: v for k, v in e.items() if k != "sig"} for e in copy.deepcopy(events)]
 
 
+def sync_dev_store(served: Any) -> None:
+    """#1198 C9: one source for the dev state. When ``hubops.workspace_dev`` says the served workspace is a dev
+    workspace (a test patches it), its store replays as dev too (the model compares a hub proof's ``dev`` marker with
+    the store's own ``hub_dev``), and so do the test's own stores (``lab.ws.other()``). Per instance, no class patch."""
+    from orch.host import hubops
+
+    service = served.service
+    if not hubops.workspace_dev(service):
+        return
+
+    def make_dev(store: Any) -> None:
+        store.hub_dev = True
+        store._needs_reload = True  # noqa: SLF001
+        store.refresh()
+
+    served.lab.ws.hub_dev = True
+    service.submit(make_dev, service.store).result()
+
+
 @pytest.fixture
 def lab(tmp_path):
     import errno
@@ -120,6 +157,7 @@ def lab(tmp_path):
 def served(lab):
     s = Served(lab)
     try:
+        sync_dev_store(s)
         yield s
     finally:
         s.close()

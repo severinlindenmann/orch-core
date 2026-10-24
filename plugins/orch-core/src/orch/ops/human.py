@@ -58,7 +58,7 @@ KEY_FILE = KEY_ID + ".key.json"
 
 def keys_dir(state_dir: Path, workspace_id: str) -> Path:
     """Where this person's device key for the workspace lives: next to the workspace key (``keys/wsk``), in a directory
-    of its own. One person per workspace per machine in P1 (the real ``orch init``/``keys`` UX is C8)."""
+    of its own. One person per workspace per machine in P1 (the real ``orch setup``/``keys`` UX is C8)."""
     return state_dir / "hosts" / workspace_id / "person"
 
 
@@ -73,7 +73,7 @@ NO_KEY = "this machine holds no device key of yours for this workspace"
 
 def device_backend(state_dir: Path, workspace_id: str, *, convenience: bool = False) -> Backend:
     """The one lookup of this person's device key for a workspace, for every signing path (the CLI's human ops, the
-    pairing and genesis-pin commands, the hosted ``Human``). The key is where ``orch init`` put it (:func:`keys_dir`,
+    pairing and genesis-pin commands, the hosted ``Human``). The key is where ``orch setup`` put it (:func:`keys_dir`,
     the passphrase backend) unless the person moved it to convenience custody (``custody.select``), in which case the
     passphrase file is gone and the selection names the backend. Only the hosted path (``convenience=True``: the host
     checks the flag at prepare, bind and submit) may use that backend; direct mode and the genesis pin are
@@ -134,6 +134,9 @@ class _AcceptAll:
 
     def genesis_failure(self, event: Any) -> str | None:
         return None
+
+    def verify_hub_owner_proof(self, event: Any, **kw: Any) -> str | None:
+        return None  # #1198 C9: the owner proof is made after the review; the submit and the append check it for real
 
 
 def review_prompt(text: str, expect: str) -> bool:

@@ -50,7 +50,8 @@ def test_the_put_carries_the_roster_version_and_the_question_hash(world, hub):
     roster = world.service.store.state.workspace.roster_v
     q = world.service.store.state.tickets[item["chain"]["log"]].questions[0]
     assert item["f1"] == {"roster_v": roster, "gates": {}, "questions": {"Q1": {"hash": q.hash}}}
-    assert q.hash == canon.question_hash(q.qid, item["chain"]["log"], "which bank?", [])
+    raw = {"id": "Q1", "to": "ticket_owner", "text": "which bank?", "blocking": True, "kind": "text"}
+    assert q.hash == canon.question_hash(q.qid, item["chain"]["log"], raw)
     sharefmt.check_f1(item["f1"], item["chain"])
 
 

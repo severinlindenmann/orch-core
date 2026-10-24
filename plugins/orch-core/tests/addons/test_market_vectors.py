@@ -20,6 +20,8 @@ DOC = Path(__file__).parents[4] / "docs/architecture/orch-v2-marketplace.md"
 
 # codes the doc defines that need a network, git or a running host, so there is no pure vector for them here
 NO_VECTOR = {"market.commit_mismatch", "market.fetch_failed", "market.staged_changed"}
+# the hub-policy codes are covered by the shared vectors_hub_policy.json (`evaluate` cases, D14); see SHARED below
+SHARED = json.loads((Path(__file__).parents[1] / "hub/vectors/vectors_hub_policy.json").read_text())["cases"]
 
 
 def doc_codes() -> set[str]:
@@ -47,6 +49,7 @@ def test_vector_names_are_unique_and_the_set_is_not_one_sided():
 def test_every_code_in_the_doc_has_a_vector_and_every_vector_code_is_in_the_doc():
     codes = doc_codes()
     used = {c["expect"]["refuse"] for c in CASES if "refuse" in c["expect"]}
+    used |= {c["expect"]["error"] for c in SHARED if c["check"] == "evaluate" and "error" in c["expect"]}
     assert used <= codes, f"vector codes missing from the doc: {sorted(used - codes)}"
     assert codes - used <= NO_VECTOR, f"doc codes without a vector: {sorted(codes - used - NO_VECTOR)}"
 
@@ -59,7 +62,6 @@ def test_the_spec_names_the_brief_negatives():
         "index_bad_sha_short",
         "index_missing_pin",
         "install_digest_mismatch_changed_file",
-        "install_capability_outside_ceiling",
         "install_min_orch_too_high",
         "index_duplicate_id",
         "install_publisher_key_changed",

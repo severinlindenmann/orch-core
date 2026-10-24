@@ -26,9 +26,7 @@ def quick(agent=None, checks=None, **over):
         "kind": "quick_task",
         "title": "Fix the typo in the README",
         "description": "The README says teh instead of the.",
-        "checks": checks
-        if checks is not None
-        else [{"text": "The typo is gone", "cmd": 'test -z "$(grep -w teh README.md)"'}],
+        "checks": checks if checks is not None else [{"text": "The typo is gone", "cmd": "grep -c teh README.md"}],
         "agent": agent,
     }
     return {**base, **over}
@@ -43,7 +41,7 @@ def test_the_full_quick_sequence_lands_in_order(human, tmp_path):
     assert got["doc"]["labels"] == ["quick"] and got["doc"]["type"] == "chore"
     assert got["gates"]["requirements"]["state"] == "approved" and got["gates"]["plan"]["state"] == "approved"
     assert [(a["id"], a["text"]) for a in got["doc"]["acceptance"]] == [("AC1", "The typo is gone")]
-    assert got["doc"]["tasks"][0]["verify"]["cmd"].startswith("test -z")
+    assert got["doc"]["tasks"][0]["verify"]["cmd"].startswith("grep -c teh")
     assert got["status"] != "done"  # the task still ends with the person's verdict
     plan = got["sections"]["plan"][-1]["hash"]
     from orch import canon
@@ -64,7 +62,7 @@ def test_the_review_shows_the_task_the_plan_and_what_is_approved(human, tmp_path
     assert content["ticket"]["new"] is True
     assert sorted(s["id"] for s in content["sections"]) == ["plan", "requirements"]
     plan = next(s for s in content["sections"] if s["id"] == "plan")["text"]
-    assert "1. The typo is gone" in plan and "Checked by: test -z" in plan
+    assert "1. The typo is gone" in plan and "Checked by: grep -c teh" in plan
     assert content["acceptance"][0]["text"] == "The typo is gone" and content["tasks"][0]["verify"]
     assert any("approves the requirements" in n.lower() for n in content["notes"])
     assert any("still ends with your own verdict" in n for n in content["notes"])
@@ -184,7 +182,7 @@ def test_the_grant_lands_last_and_the_review_is_honest_about_its_reach(human, tm
         and "GRANT" in note
     )
     assert signer.confirm_word(first) == "GRANT"
-    assert sequence.confirm_kind(rig.intent) == "word"
+    assert sequence.confirm_kind(rig.intent) == "click"  # the terminal still types GRANT
     out = rig.driver().run(first)
     assert out["landed"] == 9
     types = [e["type"] for _, ev, _ in rig.submitted for e in ev]
@@ -219,6 +217,8 @@ def test_a_grant_with_other_hours_or_a_wrong_time_span_is_refused(human, tmp_pat
         {"checks": []},
         {"checks": [{"text": "a\nb", "cmd": None}]},
         {"checks": [{"text": "ok", "cmd": "x\ny"}]},
+        {"checks": [{"text": "ok", "cmd": "test -f a.html && grep -q x a.html"}]},
+        {"checks": [{"text": "ok", "cmd": 'test -z "$(grep teh README.md)"'}]},
         {"title": ""},
         {"description": "\nleading"},
         {"agent": {"hours": 200, "scope": "workable"}},
@@ -408,18 +408,14 @@ def test_the_grant_is_only_ever_the_last_step():
     assert kinds.index("grant") == len(kinds) - 1 and kinds.count("grant") == 1  # the grant is only ever last
 
 
-def test_a_grant_needs_the_typed_word_and_goes_to_the_runner_last(click, served, human):  # noqa: F811
-    from tests.host.test_click import refused
-
+def test_a_grant_is_one_click_and_goes_to_the_runner_last(click, served, human):  # noqa: F811
     click.signer._execution = lambda entry: True
     p = click_prepare(click, quick(agent={"hours": 8, "scope": "workable"}))
     v = click.view(p["request_id"])
-    assert v["view"]["confirm"]["kind"] == "word" and v["view"]["confirm"]["word"].endswith("/GRANT")
+    assert v["view"]["confirm"] == {"kind": "click"}
     assert "Agents may work on any ticket they are allowed to work on" in "\n".join(v["view"]["lines"])
     click.mono.t += 2
-    refused(lambda: click.sign(p["request_id"], v["view_digest"]), "human.click_refused", "word")
-    assert click.signatures == 0
-    out = click.sign(p["request_id"], v["view_digest"], word=v["view"]["confirm"]["word"])
+    out = click.sign(p["request_id"], v["view_digest"])
     assert click.signatures == 9
     assert out["deposit"] in ("confirmed", "rejected", "unknown") and out["grant"].startswith("gr_")
 

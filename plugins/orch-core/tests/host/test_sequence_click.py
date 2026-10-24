@@ -60,7 +60,7 @@ def test_a_click_re_asserts_the_confirmation_kind_of_the_stored_intent(click, se
     _, p = prepare(click)
     v = click.view(p["request_id"])
     click.mono.t += 2
-    monkeypatch.setattr(sequence, "confirm_kind", lambda intent, person=None: "word")
+    monkeypatch.setattr(sequence, "confirm_kind", lambda intent, person=None: "terminal")
     refused(lambda: click.sign(p["request_id"], v["view_digest"]), "human.click_refused", "terminal_only")
     assert click.signatures == 0
 
@@ -144,18 +144,14 @@ def test_the_host_refuses_a_sequence_for_the_phone(human):
     assert err(res) == "invalid.input"
 
 
-def test_a_sequence_with_an_owner_step_is_a_click_and_the_typed_word(click, served, human):
-    """B12D: an owner step decides who may act, so the whole review needs the typed word (a click is not enough)."""
+def test_a_sequence_with_an_owner_step_is_one_click(click, served, human):
+    """#1198 C1: an owner step decides who may act, and it is still one click after the review (no typed word)."""
     me = click.owner.ref  # another member would need his own reader declaration for convenience signing
     _, p = prepare(click, intent_of(acceptance=["It opens"], people={"reviewers": [me], "owner": me}))
     v = click.view(p["request_id"])
-    assert v["view"]["confirm"]["kind"] == "word"
-    word = v["view"]["confirm"]["word"]
-    assert word.startswith("DEMO-")  # the ticket word, not GRANT
+    assert v["view"]["confirm"] == {"kind": "click"}
     click.mono.t += 2
-    refused(lambda: click.sign(p["request_id"], v["view_digest"]), "human.click_refused", "word")
-    assert click.signatures == 0
-    out = click.sign(p["request_id"], v["view_digest"], word=word)
+    out = click.sign(p["request_id"], v["view_digest"])
     assert click.signatures == 4 + 1 + 2  # new, set, two sections, the criterion, the reviewer, the owner
     got = ok(served.client().req("ticket.get", {"ref": out["result"]["key"]}))["data"]["doc"]
     assert [a["text"] for a in got["acceptance"]] == ["It opens"] and got["people"]["reviewers"] == [me]
@@ -208,29 +204,28 @@ def test_1070_a_new_ticket_with_a_reviewer_is_one_click_and_lists_the_person(cli
     assert got["people"]["reviewers"] == [me]
 
 
-def test_1070_naming_another_member_or_a_mix_keeps_the_word_and_a_stranger_aborts(click, served, human):
-    """MED-1/LOW-2: only the signer's own id lowers the confirmation; anyone else (a member, a mix, a non-member id)
-    stays a word, and a non-member id never lands."""
+def test_1070_naming_another_member_or_a_mix_is_a_click_and_the_review_names_the_role(click, served, human):
+    """#1198 C1: naming anyone else is a click too (no typed word); the review says what the role allows."""
     me = click.owner.ref
     other = "p_" + "9" * 32  # not a member
     for people in ({"reviewers": [other]}, {"assignees": [other]}, {"reviewers": sorted([me, other])}):
         _, p = prepare(click, intent_of(people=people))
         v = click.view(p["request_id"])
-        assert v["view"]["confirm"]["kind"] == "word", people
+        assert v["view"]["confirm"] == {"kind": "click"}, people
         notes = str(v["view"]["content"].get("notes"))
         assert ("Reviewers may approve" in notes) or ("Assignees do the work" in notes)
 
 
-def test_1070_sign_time_classes_a_non_self_member_as_word_so_a_click_approval_is_refused(click, served, human):
-    """The class is re-asserted at sign time from the stored intent and the signer's own person: an approval that was
-    (wrongly) recorded as a click for an intent naming another member is refused and nothing is signed."""
+def test_a_sequence_approval_not_classed_as_the_intent_is_refused_at_sign(click, served, human):
+    """The class is re-asserted at sign time from the stored intent: an approval recorded as anything but the
+    intent's class is refused and nothing is signed."""
     other = "p_" + "9" * 32
     _, p = prepare(click, intent_of(people={"reviewers": [other]}))
     v = click.view(p["request_id"])
-    assert v["view"]["confirm"]["kind"] == "word"
+    assert v["view"]["confirm"] == {"kind": "click"}
     approvals = [a for a in click.signer.approvals.values() if a.request_id == p["request_id"]]
     assert len(approvals) == 1
-    approvals[0].kind = "click"  # as if the prepare had classed it a click
+    approvals[0].kind = "terminal"  # as if the prepare had classed it differently
     v = click.view(p["request_id"])  # a view the page could now have been shown
     click.mono.t += 2
     refused(lambda: click.sign(p["request_id"], v["view_digest"]), "human.click_refused", "terminal_only")
@@ -245,6 +240,18 @@ def test_1070_self_as_assignee_and_reviewer_is_a_click_at_prepare_and_at_sign(cl
     v = click.view(p["request_id"])
     assert v["view"]["confirm"] == {"kind": "click"}
     click.mono.t += 2
-    out = click.sign(p["request_id"], v["view_digest"])  # accepted at sign time with no word
+    out = click.sign(p["request_id"], v["view_digest"])  # accepted at sign time
     got = ok(served.client().req("ticket.get", {"ref": out["result"]["key"]}))["data"]["doc"]
     assert got["people"]["assignees"] == [me] and got["people"]["reviewers"] == [me]
+
+
+def test_c21_a_missing_key_refuses_a_sequence_before_any_step_is_claimed(click, served, human):
+    _, p = prepare(click)
+    v = click.view(p["request_id"])
+    click.mono.t += 2
+    gone = click.store.items.pop((served.wid, click.owner.device))
+    refused(lambda: click.sign(p["request_id"], v["view_digest"]), "custody.no_key")
+    assert click.signatures == 0 and (served.wid, p["request_id"]) not in click.signer._attempted
+    click.store.items[(served.wid, click.owner.device)] = gone
+    assert click.sign(p["request_id"], v["view_digest"])["duplicate"] is False
+    assert click.signatures == 4

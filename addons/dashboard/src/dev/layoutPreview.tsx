@@ -12,8 +12,11 @@ import type { QuickRow, RecordsStatus } from '@/api/quickRecords'
 import { ApiError } from '@/api/types'
 import { SettingsFrame } from '@/app/pages/settings'
 import { HostGeneral } from '@/app/pages/settings/host/General'
-import { HostRecords } from '@/app/pages/settings/host/Records'
+import { RecordsBlock } from '@/app/pages/settings/host/Records'
 import { HostAddOns } from '@/app/pages/settings/host/AddOns'
+import { HostGates } from '@/app/pages/settings/host/Gates'
+import { HostGrants } from '@/app/pages/settings/host/Grants'
+import { HostMembers } from '@/app/pages/settings/host/Members'
 import { HostDevices } from '@/app/pages/settings/host/Devices'
 import { createPairFixture, installPairFixture, type PairFixture, type PairFixtureOptions } from './pairFixture'
 import type { MemberDevice, PairMember, PairOfferStatus } from '@/api/pairing'
@@ -34,16 +37,16 @@ import { StartAgentDialog } from '@/app/terminal/real/StartAgentDialog'
 import { AgentAccess } from '@/app/shell/AgentAccess'
 import { ConfirmWords } from '@/setup/Setup'
 import { nowMs } from '@/lib/time'
-import { clickProblem, CLICK_RISK, type ClickCard, type ClickViewAnswer } from '@/api/click'
+import { clickProblem, CLICK_RISK, ROTATE_LINE, type ClickCard, type ClickViewAnswer } from '@/api/click'
 import { pastedIn } from '@/api/pasteImage'
 import { Section } from '@/app/pages/new-ticket/SectionsEditor'
 import { ClickSignPanel } from '@/components/sign/ClickSignPanel'
 import { storyOf } from '@/components/sign/story'
 import { signerProblem } from '@/api/refusals'
-import type { RosterMember } from '@/api/settings'
+import type { HostGrant, HostPolicy, PolicyGate, RosterMember } from '@/api/settings'
 import type { Workspace } from '@/api/types'
 import { ClickProblemBox } from '@/components/sign/RefusalDevices'
-import { readersOf, readersRoster, refusalSamples } from './readersFixture'
+import { ME as READER_ME, MARA, readersOf, readersRoster, refusalSamples } from './readersFixture'
 import { setFeatures } from '@/api/features'
 import { NewTicketPage } from '@/app/pages/new-ticket'
 import { TicketPage } from '@/app/pages/ticket'
@@ -76,11 +79,8 @@ export const LAYOUT_SCENARIOS = [
   'agent-dialog-acked',
   'agent-blocked',
   'agent-grant',
-  'agent-outcomes',
-  // Model routing: the Start agent dialog with a model chosen by the workspace, and Settings > Add-ons with the box.
+  // The Start agent dialog with a model chosen by an add-on.
   'agent-model',
-  'addons-model-routing',
-  'addons-model-routing-open',
   'addons-publish',
   'addons-publish-open',
   'addons-publish-unset',
@@ -104,6 +104,7 @@ export const LAYOUT_SCENARIOS = [
   'signing-on',
   'signing-off',
   'signing-terminal-on',
+  'signing-idle-off', // #1198 C17: One click switched itself off; a plain click turns it on again
   'signing-unsafe',
   'signing-unknown',
   // Core D1 (#582): the dev sandbox host. The DEV SANDBOX badge (normal and with a long workspace name), the alarms list,
@@ -122,6 +123,13 @@ export const LAYOUT_SCENARIOS = [
   'drop-errors',
   'drop-versions',
   'drop-phone',
+  // Run 8 V1: the final Settings pages (General, People, Approvals, Agent access) with fixture answers.
+  'settings-general',
+  'settings-members',
+  'settings-approvals',
+  'settings-approvals-stuck',
+  'settings-access',
+  'settings-access-empty',
   // B11 (finding 9): the New ticket form with a signed hand-off; Create opens ONE review of the ticket and its text.
   'new-sequence',
   // U4: the same form on a host that can start agents: with a usable agent access, and without one.
@@ -143,8 +151,13 @@ const LONG_WORD = 'U'.repeat(90)
 const PLACEHOLDER_DEVICE = 'd_' + '0123456789abcdef'.repeat(2)
 const SIGNING_LONG_NAME = 'The quarterly orchestration workspace of the very long named organisation ' + LONG_WORD
 const SIGNING_LONG_PREFIX = 'LONGPREFIX-' + 'WORKSPACE-'.repeat(5) + 'END' // 64 characters at most: a safe shell word
+let idleResumed = false // the signing-idle-off fixture after its plain click
 const signingCard = (scenario: LayoutScenario): ClickCard =>
-  scenario === 'signing-dev-host'
+  scenario === 'signing-idle-off'
+    ? idleResumed
+      ? { custody: 'convenience', enabled: true, available: true, switchable: true, device: PLACEHOLDER_DEVICE }
+      : { custody: 'convenience', enabled: false, available: false, problem: 'idle', idle_hours: 12, switchable: true, device: PLACEHOLDER_DEVICE }
+    : scenario === 'signing-dev-host'
     ? { custody: 'passphrase', enabled: false, available: false, problem: 'dev_host', switchable: true, device: PLACEHOLDER_DEVICE }
     : scenario === 'signing-on' || scenario === 'signing-unknown'
     ? { custody: 'passphrase', enabled: false, available: false, problem: 'not_convenience', switchable: true, device: PLACEHOLDER_DEVICE }
@@ -213,11 +226,27 @@ const quickRows = (scenario: LayoutScenario): QuickRow[] =>
     ? Array.from({ length: 60 }, (_, i) => quickRow(i, { title: i % 7 === 0 ? `Fix ${LONG_URL}` : `Quick task number ${i} with a title that goes on for a while to see how a row wraps`, labels: i % 3 === 0 ? ['quick', 'docs'] : ['quick'], quick: { commits: i % 5 === 0 ? null : i, files: i % 4 === 0 ? null : i * 2, over: i % 6 === 0 ? true : i % 5 === 0 ? null : false } }))
     : [
         quickRow(1, { title: `Read ${LONG_URL} and fix the link`, labels: ['quick', 'docs', 'a-rather-long-label-name', 'web'], quick: { commits: 4, files: 7, over: true } }),
-        quickRow(2, { title: LONG_WORD, status: 'in-progress' }),
-        quickRow(3, { title: 'No repository is linked yet', status: 'backlog', quick: { commits: null, files: null, over: null } }),
+        quickRow(2, { title: LONG_WORD, status: 'in-progress', claim: { agent: 'claude-code', for: 'p_sev', session: 's1', live: true } }),
+        quickRow(3, { title: 'No repository is linked yet', status: 'backlog', quick: { commits: null, files: null, over: null }, awaiting_gate: 'verify' }),
         quickRow(4, { title: 'Fix the typo in CONTRIBUTING' }),
+        quickRow(5, { title: 'Choose a photo format', open_questions: 1, claim: { agent: 'codex', for: 'p_sev', session: 's2', live: true } }),
       ]
 
+const gatePolicy = (over: Partial<HostPolicy> = {}): HostPolicy => ({ approvers: ['owner'], count: 1, not: [], applies: 'all', independent: false, ...over })
+/** The three questions, one of each kind: a preset, another preset, a custom rule (and, when stuck, a count nobody can meet). */
+const settingsGates = (scenario: LayoutScenario): Record<PolicyGate, HostPolicy> => ({
+  requirements: gatePolicy(),
+  plan: scenario === 'settings-approvals-stuck' ? gatePolicy({ approvers: ['owner', 'maintainer'], count: 9 }) : gatePolicy({ approvers: ['maintainer', 'owner'] }),
+  verify: gatePolicy({ approvers: ['reviewers'], not: ['assignees'] }),
+  code: gatePolicy({ approvers: ['maintainer', 'owner'], not: ['assignees'], applies: 'off', independent: true }),
+})
+const accessGrants = (scenario: LayoutScenario): HostGrant[] =>
+  scenario === 'settings-access-empty'
+    ? []
+    : [
+        { id: 'gr_' + '0'.repeat(25) + 'A', person: READER_ME, scope: 'workable', verbs: 'agent', issued_at: '2026-10-23T08:00:00Z', expires_at: new Date(Date.now() + 3 * 86_400_000).toISOString(), revoked: null, sessions: 2, session_ids: [], sessions_more: null, label: 'runner' },
+        { id: 'gr_' + '0'.repeat(25) + 'B', person: MARA, scope: 'workable', verbs: 'agent', issued_at: '2026-10-20T08:00:00Z', expires_at: new Date(Date.now() - 86_400_000).toISOString(), revoked: { at: '2026-10-21T09:00:00Z', by: READER_ME, seq: 4 }, sessions: 0, session_ids: [], sessions_more: null, label: null },
+      ]
 const records = (scenario: LayoutScenario): RecordsStatus => {
   const base: RecordsStatus = {
     available: true,
@@ -355,7 +384,7 @@ function quickRequest(action: Record<string, unknown>): HandoffRequest {
       notes: [
         'Approves the requirements as written above, and the plan as written above (the signer checks that each approval covers exactly this text).',
         'The task still ends with your own verdict: nothing closes it for you.',
-        ...(agent ? [`Agents may work on all workable tickets, not only this one, until about ${until}. Typed word: GRANT. The grant is signed last; its secret goes to your orch runner or your own terminal, never to the dashboard.`] : []),
+        ...(agent ? [`Agents may work on all workable tickets, not only this one, until about ${until}. The grant is signed last; its secret goes to your orch runner or your own terminal, never to the dashboard.`] : []),
         `One confirmation signs all ${of} steps, in order (${of} signatures). If the ticket changes meanwhile, signing stops and what was already signed stays as it is.`,
       ],
     },
@@ -493,10 +522,6 @@ const ROUTING_CHOICES: RoutingChoices = {
     { id: 'claude-code', label: 'Claude', models: [{ id: 'fable', label: 'Fable' }, { id: 'opus', label: 'Opus' }, { id: 'sonnet', label: 'Sonnet' }, { id: 'haiku', label: 'Haiku' }] },
     { id: 'codex', label: 'Codex', models: [{ id: 'gpt-5.4', label: 'GPT-5.4' }, { id: 'gpt-5-codex', label: 'GPT-5 Codex' }, { id: 'gpt-5', label: 'GPT-5' }, { id: 'o3', label: 'o3' }] },
   ],
-  modes: [
-    { id: 'work', label: 'Do the work' }, { id: 'refine', label: 'Write requirements and plan' }, { id: 'fix', label: 'Fix what was sent back' },
-    { id: 'continue', label: 'Continue' }, { id: 'context', label: 'Read and answer' },
-  ],
 }
 const agentPreview = (scenario: LayoutScenario): AgentPreview => {
   const base: AgentPreview = {
@@ -506,9 +531,9 @@ const agentPreview = (scenario: LayoutScenario): AgentPreview => {
     grant: { id: AGENT_GRANT, until: new Date(nowMs() + 3 * 86_400_000).toISOString(), scope: 'workable' }, blocked: null,
     warnings: ['the program is found and started through your login shell; your shell profile runs first and can change what runs', `ORCH_WORKTREES leaves out ${LONG_URL}: its path contains ':'`],
   }
-  if (scenario === 'agent-model') return { ...base, display: `claude --model sonnet 'Run orch status, then work on ticket DEMO-0043.'`, model: 'sonnet', model_source: 'workspace' }
+  if (scenario === 'agent-model') return { ...base, display: `claude --model sonnet 'Run orch status, then work on ticket DEMO-0043.'`, model: 'sonnet', model_source: 'addon', model_by: 'model-routing' }
   if (scenario === 'agent-blocked') return { ...base, grant: null, blocked: { code: 'runner.disabled', message: `dashboard execution is off for this workspace on this machine ${LONG_WORD}`, detail: { missing: 'machine' } } }
-  if (scenario === 'agent-grant' || scenario === 'agent-outcomes') return { ...base, grant: null, blocked: { code: 'launch.no_grant', message: 'no usable runner grant', detail: { reason: 'expiring' } } }
+  if (scenario === 'agent-grant') return { ...base, grant: null, blocked: { code: 'launch.no_grant', message: 'no usable runner grant', detail: { reason: 'expiring' } } }
   return base
 }
 /** What a shell with colours prints: ls, git status and diff, a failing test, all 16 ANSI colours (layout preview only). */
@@ -587,6 +612,7 @@ const pairOptions = (scenario: LayoutScenario): PairFixtureOptions => {
 /** The roster a scenario reads: the pair fixture's members for `pair-*`, else the readers fixture. */
 function rosterFor(scenario: LayoutScenario): RosterMember[] {
   if (scenario.startsWith('pair-')) return ({ ...pairOptions(scenario), ...pairOverride }.members ?? []) as RosterMember[]
+  if (scenario === 'settings-approvals-stuck') return readersRoster().slice(0, 1)
   return readersRoster()
 }
 const DAY = 86_400_000
@@ -701,6 +727,7 @@ const originals = new Map<string, unknown>()
 
 /** Test cleanup: undo every mock api swap before another test uses the shared client. */
 export function resetLayoutPreview() {
+  idleResumed = false
   const a = api as unknown as Record<string, unknown>
   const r = runsApi as unknown as Record<string, unknown>
   for (const [name, fn] of originals) {
@@ -730,7 +757,7 @@ function install() {
   if (installed) return
   installed = true
   const a = api as unknown as Record<string, (...args: never[]) => unknown>
-  const original = { getIdentity: a.getIdentity, getTicket: a.getTicket, clickStatus: a.clickStatus, switchClick: a.switchClick }
+  const original = { getIdentity: a.getIdentity, getTicket: a.getTicket, clickStatus: a.clickStatus, switchClick: a.switchClick, custodySeal: a.custodySeal }
   const set = (name: string, fn: (...args: never[]) => unknown) => {
     originals.set(name, a[name])
     a[name] = fn
@@ -781,6 +808,9 @@ function install() {
     return { ok: true, commit: 'd'.repeat(40), pushed: push, url: push ? LONG_URL : null }
   })
   set('recordsAutoOff', async () => ({ ok: true }))
+  set('recordsInit', async () => ({ ok: true }))
+  set('recordsMark', async () => ({ ok: true }))
+  set('recordsPushInitial', async (_ws: string, url: string) => ({ ok: true, commit: 'd'.repeat(40), pushed: true, url }))
   set('getIdentity', async (...args: never[]) => ({ ...((await (original.getIdentity as (...a: never[]) => Promise<object>)(...args)) as object), runner: { connected: true, enabled: current === 'runner-on', terminals: true } }))
   // The signing card: the same card on every read; a switch answers with "result unknown" (the card's own reload follows).
   // Only the signing-* scenarios answer from the fixture; every other scenario keeps the api's own method.
@@ -789,8 +819,31 @@ function install() {
     return hostInfoFor(current)
   })
   set('clickStatus', async (...args: never[]) => (current.startsWith('signing-') ? signingCard(current) : original.clickStatus(...args)))
+  // The sealed new passphrase (C12): the fixture's workspace id is not a real one (the seal binds a 32-hex id), so the
+  // preview shows the refusal a remote dashboard gets; the real seal is covered by SigningCard.test.tsx.
+  set('custodySeal', async (...args: never[]) => {
+    if (!current.startsWith('signing-')) return (original.custodySeal as (...a: never[]) => Promise<object>)(...args)
+    throw new ApiError(409, { code: 'human.click_refused', message: 'fixture', retryable: false })
+  })
+  // #1198 C13: Settings → Devices shows "This computer's key"; the review answers from a fixture (the seal itself is
+  // covered by ReplaceKey.test.tsx: the fixture's workspace id is not a real one).
+  set('rotateSeal', async (ws: string) => ({
+    request_id: 'hr_01M5PVRB46WS3X8H5X2RQK04S9',
+    view_digest: `sha256:${'a'.repeat(64)}`,
+    expires_in: 300,
+    view: {
+      op: 'device.rotate', workspace: { id: ws, name: 'billing', prefix: 'DEMO' },
+      old: `d_${'1'.repeat(32)}`, new: `d_${'2'.repeat(32)}`, confirm: { kind: 'click' },
+      lines: ['Replace the signing key of this computer for billing.', 'The old key stops signing everywhere, also while a hub is down. The new key is signed by your recovery code for this workspace only; nothing is re-shared with a hub.', `old device: d_${'1'.repeat(32)}`, `new device: d_${'2'.repeat(32)}`, ROTATE_LINE],
+      rotate_line: ROTATE_LINE, seal: { v: 1, alg: 'P256-HKDF-SHA256-A256GCM', pk: `B${'Q'.repeat(86)}`, purposes: ['device.recovery_code', 'custody.passphrase'] },
+    },
+  }))
   set('switchClick', async (...args: never[]) => {
     if (!current.startsWith('signing-')) return original.switchClick(...args)
+    if (current === 'signing-idle-off') {
+      idleResumed = true
+      return signingCard(current)
+    }
     throw new TypeError('fixture: the connection was lost')
   })
   set('prepareHandoff', async (_ws: string, action: Record<string, unknown>) => {
@@ -802,10 +855,9 @@ function install() {
     available: true,
     add_ons: [
       { id: 'dashboard', title: 'Dashboard', desc: "This workspace's dashboard (locked on).", state: 'on', locked: 'The dashboard is always on: it is what shows this workspace.', blocked: null },
-      { id: 'start-agent', title: 'Start agents', desc: 'Start an agent from the dashboard. It runs on this Mac, as you.', state: 'on', locked: null, blocked: 'Stop first: an agent of yours is running right now.' },
-      { id: 'terminals', title: 'Terminals', desc: 'Open a terminal on this Mac from the dashboard. It runs as you.', state: 'off', locked: null, blocked: 'Needs dashboard execution first. In your terminal run: orch runner enable' },
+      { id: 'start-agent', title: 'Start agents', desc: 'Start an agent from the dashboard. It runs on this computer, as you.', state: 'on', locked: null, blocked: 'Stop first: an agent of yours is running right now.' },
+      { id: 'terminals', title: 'Terminals', desc: 'Open a terminal on this computer from the dashboard. It runs as you.', state: 'off', locked: null, blocked: 'Needs dashboard execution first. In your terminal run: orch runner enable' },
       { id: 'worktrees', title: 'Worktrees', desc: 'Each ticket gets its own copy of your project folder, so agents do not overwrite each other.', state: 'off', locked: null, blocked: null },
-      { id: 'model-routing', title: 'Model routing', desc: 'Choose which AI model each kind of agent work starts on. You still see the model before every start.', state: current.startsWith('addons-model-routing') ? 'on' : 'off', locked: null, blocked: null },
       { id: 'publish', title: 'Publish', desc: 'Share files of a ticket with a link.', state: current.startsWith('addons-publish') ? 'on' : 'off', locked: null, blocked: null },
       { id: 'quick', title: 'Quick tasks', desc: 'Small one-off tasks. Always available; there is nothing to switch on.', state: 'on', locked: 'Always available. There is nothing to switch.', blocked: null },
     ],
@@ -816,16 +868,16 @@ function install() {
     claim_ttl_min: 120,
     lease_ttl_min: 60,
     defaults: ['claim_ttl_min', 'lease_ttl_min'],
-    gates: {},
-    repos: [{ name: 'code', default_branch: 'main', remote: LONG_URL }],
+    gates: current.startsWith('settings-approvals') ? settingsGates(current) : {},
+    repos: current === 'settings-general' ? [] : [{ name: 'code', default_branch: 'main', remote: LONG_URL }],
     repos_more: false,
-    models: current.startsWith('new-sequence-start') ? { 'claude-code': { work: 'opus' } } : current.startsWith('addons-model-routing') ? { 'claude-code': { work: 'sonnet', refine: 'opus', context: 'haiku' }, codex: { fix: 'gpt-5.4' } } : null,
     settings_at: null,
     policy_at: null,
   }))
   // H12d-2: `/members` and `/readers` in the real shape. The pair scenarios read the pair fixture's members.
   set('getRoster', async () => rosterFor(current))
-  set('getReaders', async () => readersOf(rosterFor(current), current === 'readers-devices' ? 1 : 0))
+  set('listHostGrants', async (_ws: string, active: boolean) => accessGrants(current).filter((g) => !active || (!g.revoked && Date.parse(g.expires_at) > Date.now())))
+  set('getReaders', async () => readersOf(rosterFor(current), current === 'readers-devices' || current === 'settings-members' ? 1 : 0))
   set('getHandoff', async (_ws: string, id: string): Promise<HandoffState> => ({ id, state: 'prepared', op: opOf.get(id) ?? 'new', key: null, expires_at: new Date(Date.now() + 600_000).toISOString(), event_ids: [], seq: null }))
   set('cancelHandoff', async (_ws: string, id: string) => ({ id, state: 'cancelled' }))
 }
@@ -868,8 +920,7 @@ export function LayoutPreview({ name }: { name: string }) {
     return <div className="p-4"><AgentAccess ws={workspace.id} previewStopped={scenario === 'agent-pill-stopped'} /></div>
   if (scenario.startsWith('agent-'))
     return (
-      <StartAgentDialog ws={workspace.id} ticket="DEMO-0043" open onClose={() => {}}
-        grantStep={scenario === 'agent-outcomes' ? { kind: 'unknown', grant: AGENT_GRANT } : undefined} />
+      <StartAgentDialog ws={workspace.id} ticket="DEMO-0043" open choose onClose={() => {}} />
     )
   if (scenario.startsWith('drop-'))
     return (
@@ -923,13 +974,17 @@ export function LayoutPreview({ name }: { name: string }) {
     return (
       <SettingsFrame current="addons" addon={undefined} ws={workspace.id} tabs={HOST_TABS}>
         <HostAddOns workspace={workspace} />
-        {scenario.endsWith('-open') && <OpenAddOnPanel customize={scenario === 'addons-model-routing-open'} />}
+        {scenario.endsWith('-open') && <OpenAddOnPanel />}
       </SettingsFrame>
     )
+  if (scenario === 'settings-general') return <SettingsFrame current="general" addon={undefined} ws={workspace.id} tabs={HOST_TABS}><HostGeneral workspace={{ ...workspace, click: signingCard('signing-off'), icon_known: true }} /></SettingsFrame>
+  if (scenario === 'settings-members') return <SettingsFrame current="members" addon={undefined} ws={workspace.id} tabs={HOST_TABS}><HostMembers workspace={workspace} /></SettingsFrame>
+  if (scenario.startsWith('settings-approvals')) return <SettingsFrame current="gates" addon={undefined} ws={workspace.id} tabs={HOST_TABS}><HostGates workspace={workspace} /></SettingsFrame>
+  if (scenario.startsWith('settings-access')) return <SettingsFrame current="grants" addon={undefined} ws={workspace.id} tabs={HOST_TABS}><HostGrants workspace={workspace} /></SettingsFrame>
   if (scenario.startsWith('records-'))
     return (
       <SettingsFrame current="records" addon={undefined} ws={workspace.id} tabs={HOST_TABS}>
-        <HostRecords workspace={workspace} />
+        <RecordsBlock workspace={workspace} />
       </SettingsFrame>
     )
   return (
@@ -1034,27 +1089,24 @@ function SignBPreview({ scenario, ws }: { scenario: string; ws: string }) {
     ? { headline: 'Extend agent access', title: 'Extend agent access', fields_changed: [{ field: 'who', before: null, after: 'Agents working for you (Claude Code)' }, { field: 'owner', before: null, after: SIGN_B_PERSON }, { field: 'computer', before: null, after: 'Sevi’s MacBook' }, { field: 'until', before: 'Thu 22 Oct, 16:34', after: 'Thu 22 Oct, 16:34 (replaced)' }] }
     : { headline: kind === 'new' || kind === 'new-access' ? 'Create ticket' : kind === 'requirements' ? 'Approve requirements' : 'Approve plan', title: kind.startsWith('new') ? 'Create ticket' : kind === 'requirements' ? 'Approve requirements' : 'Approve plan', ticket: { key: 'TESTOR-0007', title: 'Export report as PDF', uid_tail: '9f3c1a', key_note: '', new: kind.startsWith('new') },
       sections: [{ id: 'requirements', title: 'Requirements', text: 'Export button on the report page\nPDF has the company logo\nWorks for reports up to 200 rows' }, ...(kind === 'plan' ? [{ id: 'plan', title: 'Plan you are approving', text: '1. Add an Export button.\n2. Generate a PDF with the logo.\n3. Check a short and a 200-row report.' }] : [])], fields_changed: fields }
-  const word = kind === 'new-access' || kind === 'extend' ? 'GRANT' : null
   const action = (kind === 'new' ? { action: 'new_sequence', title: 'Export report as PDF', type: 'feature', sections: {} }
     : kind === 'new-access' ? { action: 'new_sequence', title: 'Export report as PDF', type: 'feature', sections: {}, agent: { hours: 168 } }
     : kind === 'requirements' ? { action: 'approve', key: 'TESTOR-0007', gate: 'requirements' }
     : kind === 'plan' ? { action: 'approve', key: 'TESTOR-0007', gate: 'plan' }
     : { action: 'runner_grant', hours: 72, scope: 'workable', extend: 'gr_old' }) as import('@/api/click').ClickAction
-  const answer: import('@/api/click').ClickViewAnswer = { view_digest: 'sha256:' + 'a'.repeat(64), view: { risk: CLICK_RISK, op: 'x', workspace: { id: ws, name: 'Sevi’s workspace', prefix: 'TESTOR' }, fingerprint: '7d8b2e954b7d', lines: ['x'], checks: [], confirm: word ? { kind: 'word', word } : { kind: 'click' }, expires_at: new Date(nowMs() + 600_000).toISOString(), auth: 'convenience', device: 'Sevi’s MacBook · local signing key', artifacts: null, content } }
-  return <div className="mx-auto max-w-lg space-y-4 rounded-lg border border-border bg-surface p-4"><h2 className="text-base font-semibold">{content.title}</h2><ClickSignPanel ws={ws} answer={answer} problem={null} signing={false} onSign={() => {}} onCancel={() => {}} story={storyOf(action)} onPhone={kind === 'plan' ? () => {} : undefined} /></div>
+  const answer: import('@/api/click').ClickViewAnswer = { view_digest: 'sha256:' + 'a'.repeat(64), view: { risk: CLICK_RISK, op: 'x', workspace: { id: ws, name: 'Sevi’s workspace', prefix: 'TESTOR' }, fingerprint: '7d8b2e954b7d', lines: ['x'], checks: [], confirm: { kind: 'click' }, expires_at: new Date(nowMs() + 600_000).toISOString(), auth: 'convenience', device: 'Sevi’s MacBook · local signing key', artifacts: null, content } }
+  return <div className="mx-auto max-w-lg space-y-4 rounded-lg border border-border bg-surface p-4"><h2 className="text-base font-semibold">{content.title}</h2><ClickSignPanel ws={ws} answer={answer} problem={null} signing={false} onSign={() => {}} onCancel={() => {}} story={storyOf(action)} /></div>
 }
 
-/** Preview only: opens the one add-on that is On (the person's click on its title, then on Customize models). */
-function OpenAddOnPanel({ customize }: { customize: boolean }) {
+/** Preview only: opens the one add-on that is On (the person's click on its title). */
+function OpenAddOnPanel() {
   useEffect(() => {
     const t = setInterval(() => {
       const expand = document.querySelector<HTMLButtonElement>('[data-testid$="-expand"][aria-expanded="false"]')
       if (expand) return void expand.click()
-      const more = customize ? [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === 'Customize models') : null
-      if (more) more.click()
-      else if (document.querySelector('[data-testid="publish-server"], [data-testid="model-routing"]')) clearInterval(t)
+      if (document.querySelector('[data-testid="publish-server"]')) clearInterval(t)
     }, 100)
     return () => clearInterval(t)
-  }, [customize])
+  }, [])
   return null
 }

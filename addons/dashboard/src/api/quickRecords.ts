@@ -1,5 +1,5 @@
 // Quick tasks and records on a real host (M6, host contract 12.8, 12.9, 12.11): the shapes the dashboard server sends,
-// the constant strings the contract wants verbatim in the bundle, and the one local setting (the quick limits).
+// and the constant strings the contract wants verbatim in the bundle.
 import type { TicketSummary } from './types'
 
 /** Client text, never host text (12.11 "Rules and strings"). Whenever `runner.enabled`, whatever `terminals` says. */
@@ -10,17 +10,13 @@ export const EXPORT_WARNING = { before: 'Push publishes every ticket in this wor
 /** The private-remote line, the same way. */
 export const PRIVATE_REMOTE = { before: 'orch trusts your word that only you read ', after: '.' } as const
 
-/** What the person must type in a terminal: the dashboard has no button for these (12.11, G12). */
+/** What the person must type in a terminal (12.11, G12). #1198 C15: the records steps are buttons now, with a review. */
 export const TERMINAL_COMMANDS = {
   runnerEnable: 'orch runner enable',
-  remotePrivate: 'orch records remote private',
   autoOn: 'orch records auto on',
   autoOnPush: 'orch records auto on --push',
-  pushInitial: 'orch records push --initial',
 } as const
 
-/** Starting a quick task is ONE review and ONE confirmation (B11): said in the UI, in plain words. */
-export const ONE_SIGNATURE = 'One signature starts the task: it creates it, approves its requirements and plan, and only if you tick the box lets agents work. You still give the final verdict.'
 export const QUICK_LABEL = 'quick'
 
 export interface QuickCounts {
@@ -39,8 +35,6 @@ export interface QuickPage {
 }
 export interface QuickParams {
   status?: string[]
-  max_commits?: number
-  max_files?: number
   limit?: number
   page?: string
 }
@@ -68,41 +62,6 @@ export interface RunnerInfo {
   connected: boolean
   enabled: boolean
   terminals: boolean
-}
-
-// ---- the quick limits: a local setting of this browser, per workspace (12.11: "limits are a local setting")
-export interface QuickLimits {
-  max_commits: number | null
-  max_files: number | null
-}
-const KEY = (ws: string) => `orch.quick.limits.${ws}`
-export const LIMIT_RANGE = { max_commits: { min: 1, max: 100 }, max_files: { min: 1, max: 1000 } } as const
-
-const inRange = (v: unknown, r: { min: number; max: number }): v is number => typeof v === 'number' && Number.isInteger(v) && v >= r.min && v <= r.max
-
-/** Unset limits are left to the host's defaults. Storage that is missing or damaged reads as "not set". */
-export function readQuickLimits(ws: string): QuickLimits {
-  try {
-    const v: unknown = JSON.parse(localStorage.getItem(KEY(ws)) ?? 'null')
-    if (v && typeof v === 'object') {
-      const o = v as Record<string, unknown>
-      return { max_commits: inRange(o.max_commits, LIMIT_RANGE.max_commits) ? o.max_commits : null, max_files: inRange(o.max_files, LIMIT_RANGE.max_files) ? o.max_files : null }
-    }
-  } catch {
-    /* storage unavailable or not JSON */
-  }
-  return { max_commits: null, max_files: null }
-}
-
-/** Returns false when the browser would not keep it (the choice then lasts for this page only). */
-export function writeQuickLimits(ws: string, limits: QuickLimits): boolean {
-  try {
-    if (limits.max_commits === null && limits.max_files === null) localStorage.removeItem(KEY(ws))
-    else localStorage.setItem(KEY(ws), JSON.stringify(limits))
-    return true
-  } catch {
-    return false
-  }
 }
 
 /** Status groups of the page. `waiting` is a host status of quick.list. */

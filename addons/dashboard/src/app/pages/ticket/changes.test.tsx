@@ -14,7 +14,7 @@ describe('ticket: the changes the verdict signs', () => {
   it('Testing: the Changes tab draws core\'s diff of the branch, and Acceptance links to it', async () => {
     const { user } = renderApp('/ticket/DEMO-0041')
     await user.click(await screen.findByRole('tab', { name: /Acceptance/ }, T))
-    expect(await screen.findByTestId('evidence-changes', {}, T)).toHaveTextContent(/the verdict signs commit c90e7a1/)
+    expect(await screen.findByTestId('evidence-changes', {}, T)).toHaveTextContent(/the verdict covers commit c90e7a1/)
     await user.click(within(screen.getByTestId('evidence-changes')).getByRole('button', { name: 'Open changes' }))
     const diff = await screen.findByLabelText('Diff', {}, T)
     expect(within(diff).getAllByText(/@@ -\d+/).length).toBeGreaterThan(0)

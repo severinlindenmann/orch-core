@@ -639,3 +639,42 @@ def test_replay_refuses_noncanonical_stored_remote(w):
 def test_repo_metadata_still_requires_the_owner(w):
     entry = {"path": "../repo", "remote": "https://host/a/b", "default_branch": "main"}
     assert refused(w, "workspace", "settings.changed", "mara", set={"repos": {"repo": entry}}) == Code.ROLE_DENIED
+
+
+# ---- #1198 C15: the last working device of an owner stays (judged in the model, under the store lock at append)
+def second_device(w, tag="sev2", expires_in=None):
+    """A second device of the owner; with ``expires_in`` (seconds from now) its certificate expires then."""
+    c = cert(w.people["sev"][2:], hex32(tag))
+    c["o"]["expires_ms"] = None if expires_in is None else int((w.clock.timestamp() + expires_in) * 1000)
+    w.wev("device.added", "sev", device="d_" + hex32(tag), cert=c)
+    return "d_" + hex32(tag)
+
+
+def test_two_removals_that_would_leave_an_owner_without_a_device_are_refused_in_order(w):
+    d2 = second_device(w)
+    d1 = w.dev["sev"]
+    assert refused(w, "workspace", "device.removed", "sev", device=d1) is None
+    w.wev("device.removed", "sev", device=d1)
+    # the second removal was prepared on the same state as the first: judged now, it is the last working device
+    assert refused(
+        w, "workspace", "device.removed", {"kind": "person", "id": w.people["sev"], "device": d2}, device=d2
+    ) == (Code.DEVICE_LOCKOUT)
+
+
+def test_a_device_that_cannot_sign_does_not_count_as_a_working_one(w):
+    second_device(w, expires_in=60)
+    w.tick(600)  # the certificate has expired by the time of the removal
+    assert refused(w, "workspace", "device.removed", "sev", device=w.dev["sev"]) == Code.DEVICE_LOCKOUT
+
+
+def test_an_expired_or_removed_target_may_go_and_a_member_may_lose_their_only_device(w):
+    d2 = second_device(w, expires_in=60)
+    w.tick(600)
+    assert refused(w, "workspace", "device.removed", "sev", device=d2) is None  # nothing that signs is lost
+    assert refused(w, "workspace", "device.removed", "tom", device=w.dev["tom"]) is None
+
+
+def test_only_the_person_or_an_owner_removes_a_device(w):
+    assert refused(w, "workspace", "device.removed", "mara", device=w.dev["sev"]) == Code.ROLE_DENIED
+    assert refused(w, "workspace", "device.removed", "tom", device=w.dev["sev"]) == Code.ROLE_DENIED
+    assert refused(w, "workspace", "device.removed", "sev", device=w.dev["tom"]) is None

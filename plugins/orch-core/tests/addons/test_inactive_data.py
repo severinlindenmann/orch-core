@@ -10,7 +10,7 @@ from orch.addons import install
 from orch.addons.needs import needs_of_ticket
 from orch.addons.registry import view_data
 from orch.store import StoreError
-from tests.addons.helpers import make_package, manifest
+from tests.addons.helpers import installed_package, manifest
 from tests.ops.humans import hws, me  # noqa: F401
 
 POINTS = "ticket.addons.echo.points"
@@ -46,7 +46,7 @@ def refresh(hws):
 
 
 def setup(hws, me, man=None):
-    make_package(hws.store_dir, man=man)
+    installed_package(hws, man=man)
     assert me("addon", "grant", "echo").code == 0
     uid = hws.new_ticket("with an addon field")
     write(hws, uid, 5)

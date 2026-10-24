@@ -12,7 +12,7 @@ from orch.crypto.encoding import unb64u
 from orch.hubclient import HubRefused, HubState, flush_outbox, join_selective, leave, wire
 
 from . import contract as H
-from .fake import FakeHub
+from .fake import FakeHub, host_join_proof
 from .vec import V, private_key, pub
 
 WS = V["ids"]["workspace_a"]
@@ -57,6 +57,10 @@ class Host:
 
     def join(self, **over: Any):
         kw = {**self.kw, **over}
+        kw.setdefault(
+            "owner_proof",
+            host_join_proof(self.state, now_ms=NOW, binding_seq=kw.get("binding_seq"), workspace_id=WS),
+        )  # #1198 C9: the proof the signed log holds
         r = join_selective(
             state=self.state, transport=self.wire, record_joined=lambda p: self.log.append(("hub.joined", p)),
             save=self._save, old_transport=self.tf, **kw,
@@ -88,7 +92,7 @@ def test_join_selective(host: Host, hub: FakeHub) -> None:
     r = host.join()
     assert [t for t, _ in host.log] == ["hub.joined"]
     p = host.log[0][1]
-    assert set(p) == {"hub_id", "hk_root_pub", "mode", "binding_seq", "aliases"}
+    assert set(p) == {"hub_id", "hk_root_pub", "mode", "binding_seq", "aliases", "owner_proof"}
     assert p["mode"] == "selective" and p["binding_seq"] == 1 and p["hub_id"] == hub.hub_id
     assert r.state.status == "bound" and host.state.status == "bound"
     ws = hub.workspaces[WS]
@@ -103,7 +107,7 @@ def test_hub_never_sees_wk_material(host: Host, hub: FakeHub) -> None:
     assert ws.wk_seals == [] and all(op != "wk_seal" for _, op, _ in hub.calls)
     # nothing the hub received is a wrap, a member list or a key: only the join body members
     for m in host.wire.sent:
-        assert m["o"]["op"] == "join" and set(m["o"]["body"]) == {"invite", "card", "pk_pub", "binding"}
+        assert m["o"]["op"] == "join" and set(m["o"]["body"]) == {"invite", "card", "pk_pub", "binding", "owner_proof"}
 
 
 def test_wk_seal_refused_in_selective(host: Host, hub: FakeHub) -> None:
@@ -187,7 +191,7 @@ def test_alias_never_repointed(host: Host) -> None:
 def test_leave(host: Host, hub: FakeHub) -> None:
     host.join()
     r = host.leave()
-    assert r.delivered and r.payload == {"hub_id": hub.hub_id, "binding_seq": 1}
+    assert r.delivered and r.payload == {"hub_id": hub.hub_id, "binding_seq": 1, "owner_proof": None}
     assert [t for t, _ in host.log] == ["hub.joined", "hub.left"]
     assert host.state.status == "unbound" and host.state.outbox == {}
     assert hub.workspaces[WS].binding["status"] == "unbound"
@@ -250,8 +254,9 @@ def test_declined_join_sends_nothing(host: Host) -> None:
 
     with pytest.raises(RuntimeError):
         join_selective(
-            state=None, transport=host.wire, record_joined=boom, save=host._save, old_transport=host.tf, **host.kw
-        )
+            state=None, transport=host.wire, record_joined=boom, save=host._save, old_transport=host.tf,
+            owner_proof=host_join_proof(None, now_ms=NOW, workspace_id=WS), **host.kw,
+        )  # fmt: skip
     assert host.wire.sent == [] and host.state is None
 
 
@@ -267,9 +272,16 @@ def test_payload_vectors() -> None:
     p = wire.joined_payload(
         hk_root_pub=pub("hk_root"), mode="selective", binding_seq=1,
         aliases=[{"person_id": V["ids"]["person_alice"], "user_id": V["ids"]["user_alice"]}],
+        owner_proof=V["hub_joined"]["event"]["owner_proof"],
     )  # fmt: skip
     assert p == {k: V["hub_joined"]["event"][k] for k in p}
-    assert wire.left_payload(hub_id_=V["ids"]["hub"], binding_seq=1) == {"hub_id": V["ids"]["hub"], "binding_seq": 1}
+    assert (
+        wire.joined_payload(hk_root_pub=pub("hk_root"), mode="selective", binding_seq=1, aliases=[])["owner_proof"]
+        is None
+    )
+    left = wire.left_payload(hub_id_=V["ids"]["hub"], binding_seq=1)
+    assert left == {"hub_id": V["ids"]["hub"], "binding_seq": 1, "owner_proof": None}  # #1198 C9: the signer fills it
+    assert wire.without_proof(left) == {"hub_id": V["ids"]["hub"], "binding_seq": 1}
 
 
 def test_built_objects_match_vectors() -> None:
@@ -371,7 +383,7 @@ def card_of_another_hub() -> dict:
     opo = {"v": 2, "suite": 2, "kind": "hub.op_cert", "hv": 0, "hub_id": hid, "cert_id": "11" * 16, "op_seq": 1,
            "hk_op_pub": b64u(op_pub), "issued_ms": NOW - 1000, "expires_ms": NOW + 10**9, "dev": True}  # fmt: skip
     o = {"v": 2, "suite": 2, "kind": "hub.card", "hv": 0, "hub_id": hid, "hk_root_pub": b64u(root_pub),
-         "hxk_pub": b64u(op_pub), "relay_url": None, "tls_spki_sha256": b64u(b"\x02" * 32), "card_seq": 1,
+         "hxk_pub": b64u(op_pub), "relay_url": None, "tls_spki_sha256": b64u(b"\x02" * 32), "card_seq": 1, "reader": 1,
          "issued_ms": NOW - 1000, "dev": True}  # fmt: skip
     return {"o": o, "op_cert": {"o": opo, "sig": b64u(S.sign(root, wire.SIG_OP_CERT + cj(opo)))},
             "sig": b64u(S.sign(op, wire.SIG_CARD + cj(o)))}  # fmt: skip

@@ -77,13 +77,16 @@ class Item:
     retry: bool = False  # M2: a grant issued before whose hand-over was never confirmed
 
 
+#: what the review says about the records step (the consent): plain words, one place
+RECORDS_TEXT = "Keep a history of your tickets on this computer, saved automatically (never uploaded)."
+
+
 @dataclass
 class Plan:
     items: list[Item]
     flags: list[dict[str, str]]
     runner_grant: dict[str, Any] | None
     risk: dict[str, Any] | None
-    typed_word: str | None
     tty_confirm: bool
     canon_profile: dict[str, Any]
     rows: list[dict[str, Any]] = field(default_factory=list)
@@ -103,7 +106,6 @@ class Plan:
             "runner_grant": self.runner_grant,
             "flags": self.flags,
             "risk": self.risk,
-            "typed_word": self.typed_word,
             "tty_confirm": self.tty_confirm,
         }
 
@@ -254,6 +256,8 @@ def plan(
                 "None of your files is committed.",
             }
         )
+    if profile.get("records") and facts is None:  # a new workspace only
+        flags.append({"id": "records", "text": RECORDS_TEXT})
     wants_exec = profile["agent_grant"] or any(
         info[a].needs_runner or info[a].needs_terminals for a in profile["addons"]
     )
@@ -269,20 +273,12 @@ def plan(
         risk = {"text": CONVENIENCE_RISK, "once": True}
     elif profile["method"] == "terminal":
         flags.append({"id": "terminal", "text": "Every approval asks for your passphrase in a terminal."})
-    # R2: a typed word in the browser for more than 8 hours of agent access, or any runner grant
-    typed = None
-    if runner_grant is not None:
-        typed = "GRANT"
-    elif "grant_hours" in sets and wanted(
-        "settings"
-    ):  # the workspace's agent time changes (Finish setup keeps a value that is already set)
-        typed = "AGENTS"
     # R3: a terminal confirmation for Finish setup and for anything that gives a machine-held grant or runs code
     exec_addon = any(
         info[a].needs_runner or info[a].needs_terminals for a in profile["addons"] if info[a].kind == "addon"
     )
     tty = facts is not None or runner_grant is not None or exec_addon
-    p = Plan(items, flags, runner_grant, risk, typed, tty, _canon_profile(profile, directory))
+    p = Plan(items, flags, runner_grant, risk, tty, _canon_profile(profile, directory))
     if facts is None:
         p.workspace = _workspace(profile, directory)
     p.rows = _rows(p, profile)
@@ -313,6 +309,7 @@ def _canon_profile(profile: Mapping[str, Any], directory: str) -> dict[str, Any]
     keys = ("name", "prefix", "addons", "method", "agent_hours", "agent_grant", "relay")
     out = {k: profile[k] for k in keys}
     out["git_init"] = bool(profile.get("git_init"))
+    out["records"] = bool(profile.get("records"))
     out["dir"] = directory
     out["custody_conversion"] = profile["method"] == "click"
     return out
@@ -391,7 +388,6 @@ def _digest(p: Plan) -> str:
         "workspace": p.workspace,
         "flags": p.flags,
         "risk": p.risk,
-        "typed_word": p.typed_word,
         "tty": p.tty_confirm,
     }
     return "sha256:" + hashlib.sha256(canon.dumps(doc)).hexdigest()

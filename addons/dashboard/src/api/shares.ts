@@ -157,8 +157,6 @@ const CODE_TEXT: Record<string, string> = {
   'role.denied': 'Sharing is for the ticket owner, owners and maintainers.',
   'quota.host': 'Too many prepared copies are waiting, or they are too large. Discard some.',
   'outcome.unknown': 'The answer got lost. Reload to see whether it worked before you try again. If you lost the link, revoke the share and share again.',
-  'sign.click_only':
-    'This workspace signs in the dashboard, but sharing files is signed in your terminal only. Run orch publish share with the copy’s id (under Technical details), or turn convenience off.',
   invalid: 'That is not a valid choice.',
   not_found: 'That share or copy is not there any more.',
 }

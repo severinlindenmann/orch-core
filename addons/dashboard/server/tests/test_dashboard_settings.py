@@ -268,7 +268,15 @@ def test_the_session_lists_the_settings_features(worlds, team):
         assert feature in got
     assert {f for f in got if f.startswith("do:")} == {
         f"do:{op}"
-        for op in ("settings.set", "policy.set", "member.add", "member.role", "member.remove", "grant.revoke")
+        for op in (
+            "settings.set",
+            "policy.set",
+            "member.add",
+            "member.role",
+            "member.remove",
+            "device.remove",
+            "grant.revoke",
+        )
     }
 
 
@@ -567,6 +575,40 @@ def test_member_role_remove_and_grant_revoke_prepare_their_events(worlds, team, 
         ("human.prepare", "grant.revoke", {"grant": grants["tom"], "reason": "not needed"}),
     ]
     assert people["vic"].ref in env.store.state.workspace.members
+
+
+def test_device_remove_prepares_one_device_removed_event_and_keeps_an_owners_last_device(worlds, team, host_calls):
+    """#1198 C15: `device_remove` is a typed action; the host names the device event, and an owner's last working device
+    is refused with core's plain reason (the lockout guard)."""
+    env, people, grants = team
+    world = worlds(env.owner.ref)
+    vic = people["vic"]
+    got = handoff(world, {"action": "device_remove", "device": vic.device}).json()
+    assert got["op"] == "device.remove" and [e["type"] for e in got["events"]] == ["device.removed"]
+    assert got["events"][0]["device"] == vic.device
+    prepare = next(c for c in host_calls if c[0] == "human.prepare")
+    assert prepare[1]["op"] == "device.remove" and prepare[1]["args"] == {"device": vic.device}
+    res = handoff(world, {"action": "device_remove", "device": env.owner.device})
+    assert res.status_code == 409 and res.json()["error"]["code"] == "device.lockout"
+    assert "last working device of an owner" in res.json()["error"]["message"]
+    assert vic.device in {d for d, v in env.store.state.workspace.devices.items() if not v.removed}  # nothing written
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"action": "device_remove", "device": "x"},
+        {"action": "device_remove", "device": "d_" + "A" * 32},
+        {"action": "device_remove", "device": "d_" + "a" * 31},
+        {"action": "device_remove", "device": "d_" + "a" * 32, "reason": "x"},
+        {"action": "device_remove"},
+    ],
+)
+def test_device_remove_is_typed(worlds, team, body):
+    world = worlds(team[0].owner.ref)
+    res = handoff(world, body)
+    assert res.status_code == 400 and res.json()["error"]["code"] == "invalid.input"
+    assert world.stub.requests.table == {}
 
 
 @pytest.mark.parametrize(

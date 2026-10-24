@@ -173,21 +173,21 @@ export function NewTicketOverlay({ onClose, opener }: { onClose: () => void; ope
             </Button>
             <SheetDescription className="sr-only">Create a ticket in one line, or fill in the form.</SheetDescription>
           </SheetHeader>
-          <div className="min-h-0 flex-1 overflow-y-auto px-6 pt-4">
+          <div className="flex min-h-0 flex-1 flex-col">
             {!me || !workspace ? (
-              <Skeleton className="h-96" aria-label="Loading" />
+              <Skeleton className="m-6 h-96" aria-label="Loading" />
             ) : (
               <>
                 {/* A quick ticket is created at once; on a real host every ticket is a signed hand-off, so only the form is offered. */}
                 {!handoffMode(workspace.id) && (
-                  <>
+                  <div className="flex-none px-6 pt-4">
                     <QuickTicket workspaceId={workspace.id} canCreate={canCreate} value={quick} onChange={setQuick} onCreated={quickCreated} inputRef={quickRef} />
                     <div className="my-4 flex items-center gap-3 text-[12px] text-text-faint" aria-hidden>
                       <span className="h-px flex-1 bg-border" />
                       or fill in the form
                       <span className="h-px flex-1 bg-border" />
                     </div>
-                  </>
+                  </div>
                 )}
                 <NewTicketForm
                   key={`${workspace.id}:${me.person}`}

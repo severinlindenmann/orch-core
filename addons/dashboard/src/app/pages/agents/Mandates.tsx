@@ -70,7 +70,7 @@ export function MandatesTab({ ws, state, now }: { ws: string; state: MandatesPre
       {!inForce && (
         <Section title="Issue a mandate">
           <p className="text-[13px] text-text-muted">
-            One orchestrator steers the whole workspace in your name: it approves waiting agents and gates, unblocks tickets, enables factories and starts their runs, and issues grants. Settings, addons, members and roles, devices, relay pairing, secrets and connections and protected paths stay yours. You pick the length, up to 30 days, and renew it with one new signature on this Mac with Touch ID.
+            One orchestrator steers the whole workspace in your name: it approves waiting agents and gates, unblocks tickets, enables factories and starts their runs, and issues grants. Settings, addons, members and roles, devices, relay pairing, secrets and connections and protected paths stay yours. You pick the length, up to 30 days, and renew it with one new signature on this computer with Touch ID.
           </p>
           {m && <p className="mt-2 text-[13px] text-text-muted">Mandate {m.id} {m.state === 'revoked' ? 'was revoked' : `was stopped at #${m.stop?.boundary_seq}`}. One mandate at a time in the preview.</p>}
           <div className="mt-3 flex flex-wrap items-center gap-2">

@@ -24,16 +24,14 @@ lab, served, human = human_helpers.lab, human_helpers.served, human_helpers.huma
 pytestmark = pytest.mark.slow  # a host
 
 PUBLISH = {"server": "https://files.example.com", "share": "https://share.example.com"}
-MODELS = {"claude-code": {"work": "sonnet", "refine": "opus"}, "codex": {"fix": "gpt-5.4"}}
-SETTINGS = {"publish": PUBLISH, "model-routing": {"models": MODELS}}
-FLAT = {"publish": {"publish": PUBLISH}, "model-routing": {"models": MODELS}}
+FLAT = {"publish": {"publish": PUBLISH}}
 
 
 def preview(h, name):
     return ok(h.c.req("addon.preview", {"name": name}))["data"]
 
 
-def enable(h, name="model-routing", **over):
+def enable(h, name="publish", **over):
     intent = {
         "v": 1,
         "kind": "addon_enable",
@@ -95,7 +93,7 @@ def test_validate_takes_exactly_the_closed_shape(human):
     base = enable(human)
     assert sequence.validate_intent(base) == base
     assert [s["op"] for s in sequence.steps(base)] == ["settings.set", "addon.grant"]
-    assert sequence.label_of(base) == "turn on model-routing"
+    assert sequence.label_of(base) == "turn on publish"
     bad = [
         {**base, "extra": 1},
         {k: v for k, v in base.items() if k != "grant"},
@@ -103,24 +101,18 @@ def test_validate_takes_exactly_the_closed_shape(human):
         {**base, "name": "usage"},  # an add-on without settings keeps the plain grant
         {**base, "name": "nope"},
         {**base, "settings": {}},
-        {**base, "settings": {"publish": PUBLISH}},  # the key of ANOTHER add-on
-        {**base, "settings": {"models": MODELS, "publish": PUBLISH}},
-        {**base, "settings": {"models": None}},  # clearing is not enabling
-        {**base, "settings": {"models": {}}},
-        {**base, "settings": {"models": {"claude-code": {}}}},  # no model chosen
-        {**base, "settings": {"models": {"claude-code": {"work": "gpt-5"}}}},  # off the closed list
-        {**base, "settings": {"models": {"shell": {"work": "opus"}}}},
-        {**base, "grant": {**base["grant"], "name": "publish"}},
+        {**base, "settings": {"models": {"claude-code": {"work": "opus"}}}},  # a key no add-on needs any more
+        {**base, "settings": {"publish": PUBLISH, "models": None}},
+        {**base, "grant": {**base["grant"], "name": "usage"}},
         {**base, "grant": {**base["grant"], "extra": 1}},
         {**base, "grant": {**base["grant"], "capabilities": ["rm -rf"]}},
         {**base, "grant": {k: v for k, v in base["grant"].items() if k != "version"}},
-        {**base, "grant": "model-routing"},
+        {**base, "grant": "publish"},
     ]
     for intent in bad:
         with pytest.raises(sequence.SequenceInvalid):
             sequence.validate_intent(intent)
-    pub = enable(human, "publish")
-    sequence.validate_intent(pub)
+    pub = base
     for settings in (
         {"publish": None},
         {"publish": {"server": PUBLISH["server"], "share": PUBLISH["server"]}},  # the same address twice
@@ -147,7 +139,7 @@ def test_ae1_both_payloads_are_built_from_the_intent_alone(human):
 # --- AE2 + the whole run --------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("name", ["model-routing", "publish"])
+@pytest.mark.parametrize("name", ["publish"])
 def test_the_whole_sequence_lands_settings_first_then_the_grant(human, tmp_path, name):
     rig = Rig(human, tmp_path, enable(human, name))
     out = rig.driver().run(rig.first())
@@ -156,6 +148,8 @@ def test_the_whole_sequence_lands_settings_first_then_the_grant(human, tmp_path,
     assert types == ["settings.changed", "addon.granted"]
     assert settings_of(human)[needs.NEEDS_SETTINGS[name]] == FLAT[name][needs.NEEDS_SETTINGS[name]]
     assert on(human, name)
+    row = next(r for r in ok(human.c.req("addon.list"))["data"]["addons"] if r["name"] == name)
+    assert row["capabilities"] == sorted(rig.intent["grant"]["capabilities"])  # for a capability gate
     granted = rig.submitted[1][1][0]
     assert {k: v for k, v in granted.items() if k in rig.intent["grant"]} == rig.intent["grant"]
     rec = rig.sessions.get(rig.wid, rig.driver().digest)
@@ -176,10 +170,10 @@ def test_ae2_a_stop_between_the_steps_leaves_the_settings_and_the_add_on_off(hum
     with pytest.raises(Aborted):
         rig.driver().run(first)
     assert [e["type"] for _, ev, _ in rig.submitted for e in ev] == ["settings.changed"]
-    assert settings_of(human)["models"] == MODELS and not on(human, "model-routing")  # "set up, not on"
+    assert settings_of(human)["publish"] == PUBLISH and not on(human, "publish")  # "set up, not on"
     # asking again (a new review) finishes it: the plain grant is allowed now that the settings exist
-    human.run("addon.grant", {"name": "model-routing"})
-    assert on(human, "model-routing")
+    human.run("addon.grant", {"name": "publish"})
+    assert on(human, "publish")
 
 
 def test_ae2_nothing_signed_at_step_zero_changes_nothing(human, tmp_path):
@@ -188,7 +182,7 @@ def test_ae2_nothing_signed_at_step_zero_changes_nothing(human, tmp_path):
     rig.port.sign = lambda p: (_ for _ in ()).throw(RuntimeError("no key"))
     with pytest.raises(Aborted):
         rig.driver().run(first)
-    assert "models" not in settings_of(human) and not on(human, "model-routing")
+    assert "publish" not in settings_of(human) and not on(human, "publish")
 
 
 # --- AE5: the package is bound --------------------------------------------------------------------
@@ -201,7 +195,7 @@ def test_ae5_the_host_refuses_step_zero_when_the_package_is_not_the_reviewed_one
     op, args = sequence.step_args(rig.intent, 0, None)
     res = human.c.req("human.prepare", {"op": op, "args": args, "signer": human.signer, "sequence": rig.meta0()})
     assert err(res) == "human.request_mismatch" and "package changed" in res["error"]["message"]
-    assert "models" not in settings_of(human)
+    assert "publish" not in settings_of(human)
 
 
 def test_ae5_the_signer_refuses_a_grant_that_is_not_the_reviewed_one(human, tmp_path):
@@ -247,7 +241,7 @@ def test_the_signer_compares_each_step_byte_for_byte(human, tmp_path, k):
             sequence.check_step(rig.intent, k, bad, person=rig.person, first=None, prev_head=None)
     if k == 0:
         bad = copy.deepcopy(prepared)
-        bad["events"][0]["set"] = {"models": {"claude-code": {"work": "haiku"}}}
+        bad["events"][0]["set"] = {"publish": {**PUBLISH, "share": "https://other.example.com"}}
         with pytest.raises(Aborted):
             sequence.check_step(rig.intent, 0, bad, person=rig.person, first=None, prev_head=None)
         bad = copy.deepcopy(prepared)
@@ -264,15 +258,19 @@ def test_the_signer_compares_each_step_byte_for_byte(human, tmp_path, k):
 # --- AE3: the strongest step decides the confirmation ---------------------------------------------
 
 
-def test_ae3_publish_is_terminal_only_and_model_routing_is_the_word(human):
+def test_ae3_publish_is_a_click(human):
     pub = sequence.validate_intent(enable(human, "publish"))
-    models = sequence.validate_intent(enable(human, "model-routing"))
-    assert sequence.confirm_kind(pub) == "terminal"
-    assert sequence.confirm_kind(models) == "word"
-    assert not sequence.has_grant(pub) and not sequence.has_grant(models)  # a runner grant only
+    assert sequence.confirm_kind(pub) == "click"  # #1198 C2: Publish is a click like every other add-on
+    assert not sequence.has_grant(pub)  # a runner grant only
     # the early check by args, as the click signer asks it before prepare
-    assert protocol_class("settings.set", {"set": {"publish": PUBLISH}}) == "terminal"
-    assert protocol_class("addon.grant", {"name": "publish"}) == "terminal"  # also alone, not in a sequence
+    assert protocol_class("settings.set", {"set": {"publish": PUBLISH}}) == "click"
+    assert protocol_class("addon.grant", {"name": "publish"}) == "click"  # also alone, not in a sequence
+    from orch.click import protocol
+
+    # #1198 C10: a hub step is a click only together with the sealed backup key (check_prepared refuses it otherwise)
+    assert protocol_class("hub.join", {}) == "click" and "hub.join" in protocol.SEALED_OPS
+    assert protocol_class("device.rotate", {}) == "terminal"  # nothing else became a click
+    assert protocol_class("keys.rotate", {}) == "terminal"
 
 
 def protocol_class(op, args):
@@ -302,7 +300,7 @@ def test_ae8_existing_kinds_keep_their_digests_steps_and_confirmations():
     assert sequence.digest_of(wid, person, new) == PIN_NEW
     assert sequence.digest_of(wid, person, q) == PIN_QUICK
     assert sequence.digest_of(wid, person, edit) == PIN_EDIT
-    assert [sequence.confirm_kind(i) for i in (new, q, edit)] == ["click", "click", "word"]
+    assert [sequence.confirm_kind(i) for i in (new, q, edit)] == ["click", "click", "click"]
     assert [s["kind"] for s in sequence.steps(new)] == ["new", "set", "section", "section"]
     assert all("log" not in s for i in (new, q, edit) for s in sequence.steps(i))  # only the add-on kind names a log
     assert sequence_terminal.labels_for(new) == (canon.LABELS["sig_ticket_event"].encode("ascii"),)
@@ -310,7 +308,8 @@ def test_ae8_existing_kinds_keep_their_digests_steps_and_confirmations():
 
 #: computed on origin/develop 053cec33 (before this feature) and unchanged by it
 PIN_NEW = "sha256:8bbb0b9172fd7b52546e005b49900ce7e3ec4e931a93f91779fafc720f0ee838"
-PIN_QUICK = "sha256:0208dfb798c3c634f29554515242876ba17b894556cf47a37f04734821693a02"
+#: PIN_QUICK recomputed in #1149: the quick() fixture's check command changed (shell syntax is refused now)
+PIN_QUICK = "sha256:3b20a1ceb3beac3bf87ed39259b896c50dd85281bdd5fd021d229f41ef802d61"
 PIN_EDIT = "sha256:b5af6594f9bf685844ce2aa42be98ac4cffbc80896cbad35af629547f81534e4"
 
 
@@ -329,46 +328,44 @@ def click_prepare(click_, intent):
     return click_.prepare(op, args, sequence=meta)
 
 
-def test_ae3_a_click_never_signs_publish_it_is_refused_at_prepare_and_at_sign(click, served, human):
-    intent = enable(human, "publish")
-    refused(lambda: click_prepare(click, intent), "human.click_refused", "terminal_only")
-    assert click.signatures == 0 and not on(human, "publish")
+def test_ae3_publish_is_one_plain_click_and_the_view_shows_both_servers(click, served, human):
+    p = click_prepare(click, enable(human, "publish"))
+    v = click.view(p["request_id"])
+    assert v["view"]["confirm"] == {"kind": "click"}
+    shown = "\n".join(v["view"]["lines"])
+    assert PUBLISH["server"] in shown and PUBLISH["share"] in shown  # what is signed is on screen
+    click.mono.t += 2
+    out = click.sign(p["request_id"], v["view_digest"])
+    assert out["duplicate"] is False and click.signatures == 2
+    assert on(human, "publish")
 
 
 def test_ae3_publish_is_refused_at_sign_when_the_stored_kind_is_forced_down(click, served, human, monkeypatch):
     """The sign step re-asserts the kind of the stored intent: a prepare that slipped through still signs nothing."""
-    intent = enable(human, "model-routing")
-    p = click_prepare(click, intent)  # a word sequence: accepted
+    intent = enable(human, "publish")
+    p = click_prepare(click, intent)  # accepted
     v = click.view(p["request_id"])
     click.mono.t += 2
     monkeypatch.setattr(sequence, "confirm_kind", lambda i, person=None: "terminal")
     refused(
-        lambda: click.sign(p["request_id"], v["view_digest"], word=v["view"]["confirm"]["word"]),
+        lambda: click.sign(p["request_id"], v["view_digest"]),
         "human.click_refused",
         "terminal_only",
     )
-    assert click.signatures == 0 and not on(human, "model-routing")
+    assert click.signatures == 0 and not on(human, "publish")
 
 
-def test_model_routing_is_one_click_plus_the_add_on_word(click, served, human):
-    p = click_prepare(click, enable(human, "model-routing"))
-    v = click.view(p["request_id"])
-    word = v["view"]["confirm"]
-    assert word["kind"] == "word" and word["word"] == f"model-routing~{served.wid[-8:]}"
-    assert v["view"]["headline"] == "Turn on Model routing"
-    click.mono.t += 2
-    refused(lambda: click.sign(p["request_id"], v["view_digest"]), "human.click_refused", "word")
-    refused(
-        lambda: click.sign(p["request_id"], v["view_digest"], word="DEMO~89abcdef/SETTINGS"),
-        "human.click_refused",
-        "word",
-    )
-    assert click.signatures == 0
-    out = click.sign(p["request_id"], v["view_digest"], word=word["word"])
-    assert click.signatures == 2 and out["duplicate"] is False
-    assert on(human, "model-routing") and settings_of(human)["models"] == MODELS
-    again = click.sign(p["request_id"], v["view_digest"], word=word["word"])  # a repeat answers, never signs again
-    assert again["duplicate"] is True and click.signatures == 2
+def test_a_grant_step_with_capabilities_is_a_click_for_every_add_on(human):
+    """V3-D38 + #1198 C2: the grant step of a sequence is classed from the signed event the way ``confirm_kind`` does it
+    (``op_class("addon.grant", events=[grant])``); every add-on grant, Publish included, is one click whatever its
+    capability list (the review lists them)."""
+    from orch.click import protocol
+
+    base = enable(human, "publish")["grant"]
+    market = {**base, "name": "market-addon", "package_sha256": "sha256:" + "0" * 64}
+    for caps in ([], ["network"], ["network", "choose_model"], ["credential", "network"]):
+        assert protocol.op_class("addon.grant", events=[{**market, "capabilities": caps}]) == "click"
+    assert protocol.op_class("addon.grant", events=[{**base, "capabilities": ["network"]}]) == "click"
 
 
 # --- the terminal path: the word, the review, both add-ons ----------------------------------------
@@ -379,7 +376,7 @@ def handoff_first(rig):
     return ok(rig.h.c.req("human.prepare", {"op": op, "args": args, "handoff": True, "sequence": rig.meta0()}))["data"]
 
 
-@pytest.mark.parametrize("name", ["publish", "model-routing"])
+@pytest.mark.parametrize("name", ["publish"])
 def test_the_terminal_signs_both_add_ons_with_the_add_on_word_and_one_review(human, served, tmp_path, name):
     import contextlib
 
@@ -419,7 +416,6 @@ def test_the_terminal_signs_both_add_ons_with_the_add_on_word_and_one_review(hum
 def test_the_review_says_the_settings_and_the_grant_in_words(human, tmp_path):
     for name, expect in (
         ("publish", ["Publish: files are sent to", PUBLISH["server"], "Publish: links open at", PUBLISH["share"]]),
-        ("model-routing", ["Claude: Do the work", "Sonnet", "Claude: Write requirements and plan", "Opus"]),
     ):
         rig = Rig(human, tmp_path / name, enable(human, name))
         first = rig.first()
@@ -446,15 +442,13 @@ def json_text(content):
     return json.dumps(content, sort_keys=True)
 
 
-def test_ae3_the_word_is_the_add_ons_not_the_settings_word(human, tmp_path):
-    from orch.click import view as views
+def test_ae3_the_terminal_word_is_the_add_ons_not_the_settings_word(human, tmp_path):
     from orch.host import signer
 
-    rig = Rig(human, tmp_path, enable(human, "model-routing"))
+    rig = Rig(human, tmp_path, enable(human, "publish"))
     first = rig.first()
-    want = f"model-routing~{human.served.wid[-8:]}"
+    want = f"publish~{human.served.wid[-8:]}"
     assert signer.confirm_word(first) == want
-    assert views.word(first, lambda w: ("Acme", "DEMO")) == want
     plain = human.prepare("settings.set", {"set": {"grant_hours": 9}})
     assert signer.confirm_word(plain, lambda w: ("Acme", "DEMO")).endswith(
         "/SETTINGS"
@@ -465,7 +459,7 @@ def test_ae3_the_word_is_the_add_ons_not_the_settings_word(human, tmp_path):
 
 
 def test_ae4_addon_grant_is_refused_while_the_setting_is_unset_and_allowed_once_it_is_set(human):
-    for name in ("publish", "model-routing"):
+    for name in ("publish",):
         res = human.prepare_res("addon.grant", {"name": name})
         assert err(res) == "invalid.input" and "needs its settings first" in res["error"]["message"]
         assert not installed(human, name)  # refused before anything is installed
@@ -489,16 +483,6 @@ def test_ae4_clearing_the_setting_is_refused_while_the_add_on_is_on(human, tmp_p
     human.run("settings.set", {"set": {"publish": None}})  # off: clearing is allowed
     assert "publish" not in settings_of(human)
     assert err(human.prepare_res("addon.grant", {"name": "publish"})) == "invalid.input"  # and unset again: no grant
-
-
-def test_ae4_models_with_nothing_chosen_count_as_cleared(human, tmp_path):
-    rig = Rig(human, tmp_path, enable(human, "model-routing"))
-    rig.driver().run(rig.first())
-    for models in (None, {"claude-code": {}}, {"claude-code": {}, "codex": {}}):
-        assert err(human.prepare_res("settings.set", {"set": {"models": models}})) == "invalid.input"
-    human.run("settings.set", {"set": {"models": {"codex": {"fix": "o3"}}}})  # another choice: fine
-    assert needs.is_set({"models": {"claude-code": {}}}, "model-routing") is False
-    assert needs.is_set({"models": {"codex": {"fix": "o3"}}}, "model-routing") is True
 
 
 def test_the_setup_never_plans_these_add_ons(human):
@@ -530,7 +514,7 @@ def test_ae7_a_member_is_refused_before_anything_is_signed_and_nothing_is_instal
     from orch.host.errors import HostError
 
     member = lab.add_member()
-    intent = sequence.validate_intent(enable(human, "model-routing"))
+    intent = sequence.validate_intent(enable(human, "publish"))
     store = served.service.store
     store.refresh()
 
@@ -541,7 +525,7 @@ def test_ae7_a_member_is_refused_before_anything_is_signed_and_nothing_is_instal
         seqaddon.host_check_first(store, member.ref, intent, dry_run=False, err=err_of)
     assert info.value.code == "role.denied" and "workspace owners" in info.value.message
     seqaddon.host_check_first(store, human.person.ref, intent, dry_run=False, err=err_of)  # the owner passes
-    assert not installed(human, "model-routing") and "models" not in settings_of(human)
+    assert not installed(human, "publish") and "publish" not in settings_of(human)
 
 
 def test_the_host_refuses_to_turn_on_what_is_on_already(human, tmp_path):
@@ -553,34 +537,25 @@ def test_the_host_refuses_to_turn_on_what_is_on_already(human, tmp_path):
 
 
 def test_a_dry_run_installs_and_signs_nothing(human, tmp_path):
-    rig = Rig(human, tmp_path, enable(human, "model-routing"))
+    rig = Rig(human, tmp_path, enable(human, "publish"))
     res = prepare_first(human, rig, dry_run=True)
-    assert res["ok"] and not installed(human, "model-routing") and "models" not in settings_of(human)
-    assert not on(human, "model-routing")
+    assert res["ok"] and not installed(human, "publish") and "publish" not in settings_of(human)
+    assert not on(human, "publish")
 
 
 def test_install_happens_at_the_grant_step_only_after_the_settings_landed(human, tmp_path):
-    rig = Rig(human, tmp_path, enable(human, "model-routing"))
+    rig = Rig(human, tmp_path, enable(human, "publish"))
     first = rig.first()
-    assert not installed(human, "model-routing")  # step 0 prepared: still nothing on disk
+    assert not installed(human, "publish")  # step 0 prepared: still nothing on disk
     rig.driver().run(first)
-    assert installed(human, "model-routing")
-    assert preview(human, "model-routing")["grant"] == rig.intent["grant"]  # the installed bytes are the reviewed ones
-    assert preview(human, "model-routing")["on"] is True and preview(human, "model-routing")["set_up"] is True
-
-
-def test_routing_off_is_lifted_for_the_sequence_only(human, tmp_path):
-    models = {"models": MODELS}
-    assert err(human.prepare_res("settings.set", {"set": models})) == "invalid.input"  # off: the plain op still refuses
-    rig = Rig(human, tmp_path, enable(human))
-    ok(prepare_first(human, rig))  # the sequence's first step is allowed
-    # a sequence for PUBLISH does not lift it for models, and the plain op stays refused
-    assert err(human.prepare_res("settings.set", {"set": models})) == "invalid.input"
+    assert installed(human, "publish")
+    assert preview(human, "publish")["grant"] == rig.intent["grant"]  # the installed bytes are the reviewed ones
+    assert preview(human, "publish")["on"] is True and preview(human, "publish")["set_up"] is True
 
 
 def test_the_first_step_of_the_sequence_is_the_intents_and_nothing_else(human, tmp_path):
     rig = Rig(human, tmp_path, enable(human))
-    other = {"set": {"models": {"claude-code": {"work": "haiku"}}}}  # not the intent's settings
+    other = {"set": {"publish": {**PUBLISH, "share": "https://other.example.com"}}}  # not the intent's settings
     res = human.c.req(
         "human.prepare", {"op": "settings.set", "args": other, "signer": human.signer, "sequence": rig.meta0()}
     )
@@ -607,7 +582,7 @@ def test_ae6_a_foreign_workspace_event_between_the_steps_is_refused_by_the_host(
     rig.port.prepare = prepare
     with pytest.raises(Aborted):
         rig.driver().run(first)
-    assert seen["op"] == "addon.grant" and not on(human, "model-routing")
+    assert seen["op"] == "addon.grant" and not on(human, "publish")
 
 
 def test_ae6_the_grant_lands_only_on_the_tail_the_signers_settings_left(human, tmp_path):
@@ -617,7 +592,7 @@ def test_ae6_the_grant_lands_only_on_the_tail_the_signers_settings_left(human, t
     rig.hooks[1] = lambda rid, events, idem: human.run("settings.set", {"set": {"grant_hours": 10}})
     with pytest.raises(Aborted):
         rig.driver().run(first)
-    assert not on(human, "model-routing") and settings_of(human)["models"] == MODELS
+    assert not on(human, "publish") and settings_of(human)["publish"] == PUBLISH
 
 
 def test_a_workspace_step_names_the_log_and_is_only_the_grant(human):
@@ -655,12 +630,12 @@ def test_signed_but_not_confirmed_resumes_with_the_same_bytes(human, tmp_path):
     with pytest.raises(Aborted) as info:
         rig.driver().run(first)
     assert info.value.resumable and info.value.landed == 1
-    assert settings_of(human)["models"] == MODELS and not on(human, "model-routing")
+    assert settings_of(human)["publish"] == PUBLISH and not on(human, "publish")
     rig.hooks.clear()
     again = rig.driver()
     assert again.resumable() is not None
     out = again.run(None)  # a resume: only the recorded bytes are resent
-    assert out["landed"] == 2 and on(human, "model-routing")
+    assert out["landed"] == 2 and on(human, "publish")
     types = [e["type"] for _, ev, _ in rig.submitted for e in ev]
     assert (
         types == ["settings.changed", "addon.granted", "addon.granted"] and rig.submitted[1][1] == rig.submitted[2][1]
@@ -678,7 +653,7 @@ def test_a_click_refuses_to_start_what_a_live_session_holds(click, served, human
     v = click.view(p["request_id"])
     click.mono.t += 2
     refused(
-        lambda: click.sign(p["request_id"], v["view_digest"], word=v["view"]["confirm"]["word"]),
+        lambda: click.sign(p["request_id"], v["view_digest"]),
         "human.click_refused",
         "resumable",
     )
@@ -716,12 +691,12 @@ def test_low3_the_add_on_sequence_never_says_ticket(human, tmp_path):
     stale = {"step": 1, "of": 2, "digest": rig.meta0()["digest"], "prev": "0" * 26, "log": "workspace"}
     res = human.c.req(
         "human.prepare",
-        {"op": "addon.grant", "args": {"name": "model-routing"}, "signer": human.signer, "sequence": stale},
+        {"op": "addon.grant", "args": {"name": "publish"}, "signer": human.signer, "sequence": stale},
     )
     assert err(res) == "human.request_mismatch"
     assert "ticket" not in res["error"]["message"] and "workspace changed" in res["error"]["message"]
     bad = copy.deepcopy(first)
-    bad["events"][0]["set"] = {"models": {"claude-code": {"work": "haiku"}}}
+    bad["events"][0]["set"] = {"publish": {**PUBLISH, "share": "https://other.example.com"}}
     with pytest.raises(Aborted) as info:
         sequence.check_step(rig.intent, 0, bad, person=rig.person, first=None, prev_head=None)
     assert "ticket" not in info.value.reason
@@ -738,7 +713,7 @@ def test_low3_the_click_messages_do_not_say_ticket_for_an_add_on(click, served, 
     v = click.view(p["request_id"])
     click.mono.t += 2
     e = refused(
-        lambda: click.sign(p["request_id"], v["view_digest"], word=v["view"]["confirm"]["word"]),
+        lambda: click.sign(p["request_id"], v["view_digest"]),
         "human.click_refused",
         "resumable",
     )
@@ -748,18 +723,21 @@ def test_low3_the_click_messages_do_not_say_ticket_for_an_add_on(click, served, 
 # --- review round 2 --------------------------------------------------------------------------------
 
 
-def test_publish_is_never_turned_on_by_a_click_whatever_the_route(click, served, human):
+def test_publish_is_turned_on_by_a_click_on_every_route_but_a_grant_stays_terminal(click, served, human):
     from orch.click import protocol
 
-    assert protocol.op_class("addon.grant", args={"name": "publish"}) == "terminal"
-    assert protocol.op_class("addon.grant", events=[{"name": "publish"}]) == "terminal"
-    assert protocol.op_class("addon.grant", args={"name": "usage"}) == "word"
-    assert protocol.op_class("addon.grant", events=[{"name": "usage"}]) == "word"
-    # at prepare: the plain grant of Publish is refused before the host is asked
+    assert protocol.op_class("addon.grant", args={"name": "publish"}) == "click"
+    assert protocol.op_class("addon.grant", events=[{"name": "publish"}]) == "click"
+    assert protocol.op_class("addon.grant", args={"name": "usage"}) == "click"
+    assert protocol.op_class("addon.grant", events=[{"name": "usage"}]) == "click"
+    # nothing else became a click: a runner grant and the hub ops are not in this route
+    assert protocol.op_class("grant", args={}) == "click"  # #1198 C7: with the sealed reveal
+    assert protocol.op_class("hub.join", args={}) == "click" and "hub.join" in protocol.SEALED_OPS  # C10: sealed only
+    assert protocol.op_class("device.rotate", args={}) == "terminal"
+    # at prepare: the plain grant of Publish is accepted now, and signs nothing until the person clicks
     human.run("settings.set", {"set": {"publish": PUBLISH}})
-    refused(lambda: click.prepare("addon.grant", {"name": "publish"}), "human.click_refused", "terminal_only")
+    click.prepare("addon.grant", {"name": "publish"})
     assert click.signatures == 0 and not on(human, "publish")
-    # at sign, check_prepared classes the request by its signed events with the same function (asserted above)
 
 
 def test_the_publish_addresses_are_read_by_a_person_not_by_an_agent_with_a_grant(human, served):

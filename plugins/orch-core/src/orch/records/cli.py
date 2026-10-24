@@ -20,8 +20,11 @@ refused (``records.unsupported``).
 (``records.budget``). Every run is logged to ``<state>/person/records.jsonl`` (start, commit, push, refusal codes;
 never contents or credentials).
 
-**Terminal only:** ``auto on`` (asks on ``/dev/tty``), ``push --initial`` and ``remote-private`` (ask on ``/dev/tty``
-unless ``--yes``). The dashboard runs only ``commit [--push]``, ``auto off`` and ``status`` as a fixed-argv child;
+**Terminal only:** ``auto on`` (asks on ``/dev/tty``). ``push --initial`` and ``remote-private`` ask on ``/dev/tty``
+unless ``--yes``; with ``--expect-url URL`` they refuse (``records.remote_invalid``, nothing changed) when the remote's
+push address is not exactly ``URL``. #1198 C15: the dashboard shows that address, and after one click runs them as a
+fixed-argv child with ``--yes --expect-url`` (the person's click replaces the typed answer, and the address clicked on
+is the address used). It also runs ``init``, ``commit [--push]``, ``auto off`` and ``status`` as fixed-argv children;
 ``status`` writes nothing to the records repo and makes no network call (no records lock file, no run log); it may
 record the host's convenience mark, and in direct mode it opens the store (its lock and recovery).
 
@@ -52,7 +55,13 @@ from .host_link import TRUST_PROMPT, resolve
 from .person import RunLog, run_lock
 from .tool import Link, ValidatedTips, commit, init_repo, push, push_url
 
-__all__ = ["CHILD_SCHEMA", "main"]
+__all__ = ["CHILD_SCHEMA", "NOT_SET_UP", "main"]
+
+#: what a person reads when the workspace has no records history yet (``orch records status``, text output)
+NOT_SET_UP = (
+    "The records history is not set up on this computer yet. Run orch records init once to start it "
+    "(orch setup does this for a new workspace); nothing is sent anywhere."
+)
 
 _SHA = {"type": "string", "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"}
 #: the records child's one JSON line (§12.11)
@@ -105,6 +114,10 @@ def _parser() -> argparse.ArgumentParser:
             s.add_argument("--initial", action="store_true", help="create the remote branch (terminal only)")
         if name in ("push", "remote-private"):
             s.add_argument("--yes", action="store_true", help="do not ask (you have read the warning)")
+            s.add_argument(
+                "--expect-url",
+                help="refuse unless the remote's push address is exactly this (the address the person reviewed)",
+            )
         if name == "remote-private":
             s.add_argument("--off", action="store_true", help="remove the mark")
         if name == "auto":
@@ -242,12 +255,23 @@ def _do_push(run: _Run, r: Any) -> dict[str, Any]:
     repo = run.repo(r.record_root, a.remote)
     if a.initial and not a.yes and not run.confirm(f"Create the records branch on the remote {a.remote}?"):
         raise RecordsError("records.unconfirmed", "not confirmed; nothing pushed (push --initial is terminal only)")
-    res = push(repo, r.link, r.workspace_id, r.tips, remote=a.remote, initial=a.initial)
+    res = push(repo, r.link, r.workspace_id, r.tips, remote=a.remote, initial=a.initial, expect_url=a.expect_url)
     if res.get("pushed"):
         failed = _note(r.link, {"commit": res["commit"], "pushed": True, "url": res["url"]})
         if failed:
             res["note"] = failed
     return res
+
+
+def _expect(repo: Any, remote: str, expected: str) -> str:
+    """The remote's one effective push URL, which must be exactly ``expected`` (the address the person reviewed)."""
+    url = push_url(repo, remote)
+    if url != expected:
+        raise RecordsError(
+            "records.remote_invalid",
+            "the remote's address is not the one you reviewed, so nothing was changed. Look at it again.",
+        )
+    return url
 
 
 def _do_status(run: _Run, r: Any) -> dict[str, Any]:
@@ -300,7 +324,7 @@ def _do_remote_private(run: _Run, r: Any) -> dict[str, Any]:
     if a.off:
         return dict(r.link("records.remote_private", {"on": False}))
     repo = run.repo(r.record_root, a.remote)
-    url = push_url(repo, a.remote)
+    url = push_url(repo, a.remote) if a.expect_url is None else _expect(repo, a.remote, a.expect_url)
     if not a.yes and not run.confirm(TRUST_PROMPT.format(url=url)):
         raise RecordsError("records.unconfirmed", "not confirmed; nothing changed")
     return dict(r.link("records.remote_private", {"url": url, "on": True}))
@@ -536,7 +560,11 @@ def _dispatch(run: _Run, r: Any) -> tuple[dict[str, Any], str]:
         return res, (f"pushed {res['commit'][:12]} to {res['url']}" if res["pushed"] else "up to date")
     if a.cmd == "status":
         res = _do_status(run, r)
-        return {"status": res}, json.dumps(res, sort_keys=True)
+        text = json.dumps(res, sort_keys=True)
+        if res.get("configured") is False:
+            # plain words first (run 8): the state is "not set up yet", the way out is one command (the setup does it)
+            text = f"{NOT_SET_UP}\n{text}"
+        return {"status": res}, text
     if a.cmd == "sync-index":
         res = _do_sync_index(run, r)
         return res, f"index synced to {res['commit'][:12]}"

@@ -196,7 +196,7 @@ def test_the_first_view_of_orch_sign_prints_the_fingerprint_the_dashboard_shows(
     shown = Shown()
     sign(served, human, p["request"]["code"], shown=shown)
     first = shown.plain[0].splitlines()
-    at = first.index(f"Verification fingerprint: {p['fingerprint']}")  # headline, "in workspace ...", fingerprint
+    at = first.index(f"Verification code: {p['fingerprint']}")  # headline, "in workspace ...", fingerprint
     assert first[at - 1].startswith("in workspace ") and at < next(i for i, x in enumerate(first) if "the body" in x)
     assert (
         len(p["fingerprint"]) == 12 and f"fingerprint: {p['fingerprint']}" in shown.texts[0]
@@ -531,7 +531,7 @@ def test_one_workspace_failing_does_not_stop_the_search(human, served, monkeypat
     track.failing = {0}  # the first one asked answers workspace.unavailable
     rc, doc, errs = cli(p["request"]["code"])
     assert rc == 0, doc
-    assert "not asked:" in errs and "1 other workspace on this Mac is not reachable" in errs
+    assert "not asked:" in errs and "1 other workspace on this computer is not reachable" in errs
     assert "workspace.unavailable" not in errs and entry["workspace_id"] not in errs  # F2: plain words, no ids
     assert track.all_closed() and len(track.opened) == 2  # the failing connection was closed (33625455)
 
@@ -717,3 +717,27 @@ def test_a_key_in_one_click_custody_with_click_off_is_told_plainly_and_nothing_i
     with pytest.raises(HostError) as other:  # a passphrase key never gets this rewrite
         handoff._sign_code_explained(entry, refuse, backend=Passphrase())
     assert other.value.message.startswith("disabled: convenience signing is off")
+
+
+def test_orch_sign_says_the_key_has_no_passphrase_only_for_a_convenience_key(human, served, monkeypatch):
+    """#1170 A3: with One click on, `orch sign` works and tells the person what kind of key signs."""
+    from orch.host import convenience
+
+    class ConvenienceKey(CliBackend):
+        auth = "convenience"
+
+    _, key = human.ticket()
+    cli = Cli(human, served, monkeypatch, backend=ConvenienceKey(human.person, "convenience"))
+    convenience.set_enabled(served.lab.state, served.wid, True, UID)
+    code = human.prepare("log", {"ref": key, "text": "one click"}, handoff=True)["request"]["code"]
+    rc, doc, errs = cli(code)
+    assert rc == 0, doc
+    assert handoff.NO_PASSPHRASE in errs
+    assert handoff.NO_PASSPHRASE in cli.shown.texts[-1]  # stderr is not the terminal here: the review carries it
+    assert served.lab.ws.events(key)[-1]["auth"] == "convenience"
+    plain = Cli(human, served, monkeypatch)
+    code = human.prepare("log", {"ref": key, "text": "passphrase"}, handoff=True)["request"]["code"]
+    convenience.set_enabled(served.lab.state, served.wid, False, UID)
+    rc, doc, errs = plain(code)
+    assert rc == 0 and handoff.NO_PASSPHRASE not in errs
+    assert handoff.NO_PASSPHRASE not in plain.shown.texts[-1]

@@ -32,6 +32,9 @@ export const policy = (over: Partial<HostSettings['gates'] extends infer G ? (G 
 })
 
 export interface FakeWs {
+  market?: import('@/api/market').MarketList
+  marketInstalled?: import('@/api/market').MarketInstalled
+  marketStage?: import('@/api/market').StageResult
   id: string
   prefix: string
   name: string
@@ -193,12 +196,12 @@ function prepare(body: Record<string, unknown>): HandoffRequest {
       return workspaceRequest('member.remove', { type: 'member.removed', person: body.person })
     case 'icon_set':
       return workspaceRequest('settings.set', { type: 'settings.changed', set: { icon: body.icon } })
-    case 'models_set':
-      return workspaceRequest('settings.set', { type: 'settings.changed', set: { models: Object.keys(body.models as object).length ? body.models : null } })
     case 'publish_setup':
       return workspaceRequest('settings.set', { type: 'settings.changed', set: { publish: { server: body.server, share: body.share } } })
     case 'publish_share':
       return workspaceRequest('publish.share', { type: 'log.added', text: `Publish approval: share files outside this computer\nStaged copy: ${String(body.staged_id)}` })
+    case 'market_grant':
+      return workspaceRequest('addon.grant', { type: 'addon.granted', name: body.name, staged: body.staged })
     case 'addon_grant':
       return workspaceRequest('addon.grant', { type: 'addon.granted', name: body.name })
     case 'addon_disable':
@@ -216,7 +219,7 @@ export class FakeHost {
   requests = new Map<string, HandoffRequest>()
   cancelled: string[] = []
   /** Click-to-sign: what the fake signer was asked, and the Views it shows (by request id). */
-  clickRequests = new Map<string, { op: string; confirm: 'click' | 'word' }>()
+  clickRequests = new Map<string, { op: string; confirm: 'click' }>()
   clickCancelled: string[] = []
   clickSigned: Record<string, unknown>[] = []
   clickCount = 0
@@ -261,6 +264,13 @@ export class FakeHost {
     if (!m || !ws) return missing()
     if (ws.host_state !== 'ok') return json({ ok: false, error: { code: 'host.unavailable', message: 'host.unavailable', retryable: true } }, 503)
     const rest = m[2]
+    if (rest.startsWith('market/') && method !== 'GET' && (ws.role !== 'owner' || !ws.features.includes('actions'))) return json({ ok: false, error: { code: 'permission.denied', message: 'Owner approval is required', retryable: false } }, 403)
+    if (rest === 'market') return json(ws.market ?? { markets: [] })
+    if (rest === 'market/installed') return json(ws.marketInstalled ?? { addons: [] })
+    if (rest === 'market/stage' && method === 'POST') return json(ws.marketStage)
+    if (rest.startsWith('market/stage/') && method === 'DELETE') return json({ removed: true })
+    if (rest === 'market/uninstall') return json({ name: body?.name, removed: true })
+    if (rest === 'market/refresh') return json({ refreshed: true })
     if (rest === 'today') return json(today)
     if (rest === 'board' || rest === 'tickets') return json({ ...board, next_page: null })
     if (rest === 'tickets/DEMO-0001') return json({ ...ticket, title: ws.title })
@@ -268,6 +278,7 @@ export class FakeHost {
     if (rest === 'tickets/DEMO-0001/changes') return json(changes)
     if (rest === 'identity') return json({ uuid: ws.id, prefix: ws.prefix, genesis: 'sha256:' + 'f'.repeat(64), epoch: 3, key_fingerprint: 'AB12 CD34', created_at: null, tier: 'A', me: { person: ws.me, name: 'Sev', role: ws.role, tier: 'A', workspace: ws.id }, ...(ws.runner !== undefined ? { runner: ws.runner } : {}) })
     if (rest === 'quick') return ws.quick === undefined ? missing() : json(typeof ws.quick === 'function' ? ws.quick(new URLSearchParams(query)) : ws.quick)
+    if (rest === 'runner') return json({ runner: ws.runner ? { ...ws.runner, grant: null } : null })
     if (rest === 'records') return ws.records === undefined ? missing() : json(ws.records)
     if (rest === 'settings') return json(ws.settings)
     if (rest === 'members') return json(ws.roster)
@@ -287,7 +298,7 @@ export class FakeHost {
     if (rest === 'click/prepare' && method === 'POST') {
       const request = prepare(body!)
       const id = 'hr_' + String(++this.clickCount).padStart(26, '0')
-      const confirm = request.op === 'policy.set' || request.op.startsWith('member.') ? 'word' : 'click'
+      const confirm = 'click'
       this.clickRequests.set(id, { op: request.op, confirm })
       return json({ request_id: id, expires_at: request.expires_at, op: request.op, confirm })
     }
@@ -303,7 +314,7 @@ export class FakeHost {
           fingerprint: '0123456789ab',
           lines: [`FROM-THE-SIGNER ${got.op}`],
           checks: [],
-          confirm: got.confirm === 'word' ? { kind: 'word', word: `${ws.prefix}~${ws.id.slice(-8)}/POLICY` } : { kind: 'click' },
+          confirm: { kind: 'click' },
           expires_at: new Date(Date.now() + 600_000).toISOString(),
           auth: 'convenience',
           device: 'd_' + '1'.repeat(32),

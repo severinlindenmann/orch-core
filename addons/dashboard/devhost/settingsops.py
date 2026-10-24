@@ -307,6 +307,33 @@ def member_remove(builder, args):
     return events, "workspace", builder.payload_material(None, events, ticket=None)
 
 
+DEVICE = re.compile(r"^d_[0-9a-f]{32}$")
+
+
+def device_remove(builder, args):
+    """The dev host's `device.remove`: the lockout guard of core for what it can see (an owner's last working device).
+    The device that signs is known only to the signer, which refuses it again."""
+    builder.exact(args, {"device"})
+    device = args["device"]
+    if not isinstance(device, str) or not DEVICE.fullmatch(device):
+        raise invalid("device is a device id")
+    ws = builder.store.state.workspace
+    target = ws.devices.get(device)
+    if target is None or target.removed:
+        raise fail("not_found", "that device is not in this workspace (or it was removed already)", exit=2)
+    holder = ws.members.get(target.person)
+    working = [d for d in ws.devices.values() if d.person == target.person and not d.removed and not d.revoked]
+    if holder is not None and holder.role == "owner" and len(working) <= 1:
+        raise fail(
+            "device.lockout",
+            "This is the last working device of an owner. Removing it would lock that owner out for good. Pair or "
+            "add another device first.",
+            exit=3,
+        )
+    events = [builder.envelope({"type": "device.removed", "device": device}, "workspace")]
+    return events, "workspace", builder.payload_material(None, events, ticket=None)
+
+
 def _member(builder, person):
     if not isinstance(person, str) or not PERSON.fullmatch(person):
         raise invalid("person is a person id")

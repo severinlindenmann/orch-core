@@ -13,7 +13,7 @@ programming over its characters:
 * any other character costs ``log2`` of the character pool the whole text draws on (lower case, upper case, digits,
   other), a separator (space, ``-``, ``_``, ``.``, ``,``) 3 bits.
 
-The generated passphrase of ``orch init`` (six distinct BIP-39 words, about 66 bits) is judged by the same rule.
+The generated passphrase of ``orch setup`` (six distinct BIP-39 words, about 66 bits) is judged by the same rule.
 The common-password list is vendored next to this file
 (``common_passwords.txt``, the first 5000 entries of the SecLists 10k list, MIT licence).
 

@@ -30,6 +30,7 @@ import hashlib
 from typing import Any
 
 from orch import repopaths
+from orch.addons.settings_value import KEY as ADDONS_KEY
 from orch.canon import HashError, canonical_policy, check_repo_identity
 from orch.model.types import WORKSPACE
 
@@ -455,9 +456,9 @@ def _snapshot(ctx: ReadCtx, limit: int) -> dict[str, Any]:
         "gates": {g: canonical_policy(thaw(ws.policies[g])) for g in GATES},
         "defaults": [k for k in SETTINGS if k not in named],
         "sign_methods": sign_methods(ctx.service, ws),
-        "models": thaw(ws.settings["models"]) if "models" in ws.settings else None,
         "icon": thaw(ws.settings["icon"]) if "icon" in ws.settings else None,
         "publish": thaw(ws.settings["publish"]) if "publish" in ws.settings else None,
+        ADDONS_KEY: thaw(ws.settings[ADDONS_KEY]) if ADDONS_KEY in ws.settings else {},
         "settings_at": settings_at,
         "policy_at": policy_at,
         "sub_cursor": cursor,
@@ -513,13 +514,13 @@ def workspace_settings(ctx: ReadCtx) -> dict[str, Any]:
         "gates": data["gates"],
         "defaults": data["defaults"],
         "sign_methods": data["sign_methods"],
-        "models": data["models"],
         "icon": data["icon"],  # always present (null: none signed): the key means "this host knows the icon setting"
         "sub_cursor": data["sub_cursor"],
     }
     if viewer.column in ("P", "R"):  # the Publish server addresses: for a person (or their phone), not an agent (G, N)
         out["publish"] = data["publish"]
     if viewer.column != "N":
+        out[ADDONS_KEY] = data[ADDONS_KEY]  # G6 ruling 5: not secret, see the add-on settings review note
         out["settings_at"] = data["settings_at"]
         out["policy_at"] = data["policy_at"]
     return out

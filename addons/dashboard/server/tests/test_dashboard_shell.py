@@ -37,6 +37,7 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/hub",
         "/api/w/{ws}/hub/share",
         "/api/w/{ws}/hub/share/preview",
+        "/api/w/{ws}/hub/connect",
         "/api/w/{ws}/hub/command",
         "/api/w/{ws}/click/prepare",
         "/api/w/{ws}/click/view",
@@ -44,7 +45,10 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/click/sign",
         "/api/w/{ws}/click/cancel",
         "/api/w/{ws}/click/custody",
+        "/api/w/{ws}/click/custody/seal",
         "/api/w/{ws}/click/images",  # R3 part B: pasted-screenshot chunks relayed to the signer (digest-checked)
+        "/api/w/{ws}/click/rotate",
+        "/api/w/{ws}/click/rotate/seal",
         "/api/w/{ws}/settings",
         "/api/w/{ws}/add-ons",
         "/api/w/{ws}/versions",
@@ -85,6 +89,9 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/records",
         "/api/w/{ws}/records/commit",
         "/api/w/{ws}/records/auto-off",
+        "/api/w/{ws}/records/init",
+        "/api/w/{ws}/records/remote",
+        "/api/w/{ws}/records/push-initial",
         "/api/w/{ws}/records/current",
         "/api/w/{ws}/runs",
         "/api/w/{ws}/terminals/preview",
@@ -99,6 +106,12 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/model-routing",
         "/api/w/{ws}/widgets/catalog",  # Widgets add-on (#763): built-in template pins
         "/widget-frame/{rest:path}",  # sandboxed widget frame, own CSP, exact-match only (#763, Opus Tier A+)
+        "/api/w/{ws}/market",  # V3 A10: the Add-ons page
+        "/api/w/{ws}/market/installed",
+        "/api/w/{ws}/market/stage",
+        "/api/w/{ws}/market/stage/{stage_id}",
+        "/api/w/{ws}/market/uninstall",
+        "/api/w/{ws}/market/refresh",
         "/api/w/{ws}/runner",
         "/api/w/{ws}/runner/deposits/{deposit_id}",
         "/api/w/{ws}/runner/forget",
@@ -139,7 +152,15 @@ def test_shell_p1_reads(client, token, stub):
         "read_ext2",
         *(
             f"do:{op}"
-            for op in ("settings.set", "policy.set", "member.add", "member.role", "member.remove", "grant.revoke")
+            for op in (
+                "settings.set",
+                "policy.set",
+                "member.add",
+                "member.role",
+                "member.remove",
+                "device.remove",
+                "grant.revoke",
+            )
         ),
     ]
     assert workspaces[0]["features"] == every
@@ -176,7 +197,6 @@ def test_shell_p1_reads(client, token, stub):
         "/w/DEMO/settings/general",
         "/w/DEMO/settings/grants",
         "/w/DEMO/settings/addons",  # R2-2: the Add-ons tab
-        "/w/DEMO/settings/records",  # M6: a reload or pasted link of the records tab (e2e found a 404)
         "/w/DEMO/quick",
         "/w/DEMO/activity",
         "/w/DEMO/usage",

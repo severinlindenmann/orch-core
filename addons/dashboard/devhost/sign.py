@@ -46,9 +46,12 @@ OP_WORDS = {
     "member.add": "add a member to the workspace",
     "member.role": "change the role of a member",
     "member.remove": "remove a member from the workspace",
+    "device.remove": "remove a device: it can no longer sign for the workspace",
     "grant.revoke": "revoke a grant",
 }
-WORKSPACE_OPS = ("settings.set", "policy.set", "member.add", "member.role", "member.remove", "grant.revoke")
+WORKSPACE_OPS = (
+    "settings.set", "policy.set", "member.add", "member.role", "member.remove", "device.remove", "grant.revoke",
+)  # fmt: skip
 MEMBER_OPS = ("member.add", "member.role", "member.remove")
 WARNING = "only sign a code you created yourself"
 
@@ -109,7 +112,7 @@ def recompute(prepared: dict[str, Any], *, workspace_id: str, person: str, devic
         if e["type"] == "question.answered":
             q = material.get("question") or {}
             qid = canon.question_id(workspace_id, ticket["uid"], q["id"])
-            if e.get("hash") != canon.question_hash(qid, ticket["uid"], q["text"], q.get("options") or []):
+            if e.get("hash") != canon.question_hash(qid, ticket["uid"], q):
                 raise Refused("the question hash is not the hash of the question shown")
         if op in WORKSPACE_OPS:
             if prepared.get("log") != "workspace" or material.get("ticket") is not None:

@@ -19,6 +19,8 @@ export interface ClickCard {
   enabled: boolean
   available: boolean
   problem?: string
+  /** C17: the configured idle limit in hours, on or off (One click switches itself off after this long without use). */
+  idle_hours?: number
   switchable?: boolean
   /** The device key (`d_` + 32 hex) the switch would move into this computer's key store. */
   device?: string
@@ -27,15 +29,27 @@ export interface ClickCard {
 /**
  * The switch: `on` proves the person's CURRENT passphrase (the key must be in passphrase custody now); `off` turns the
  * flag off and, with a NEW passphrase (V3-D31), moves the key back under it in the same step (core accepts it only
- * while signing is on).
+ * while signing is on). The new passphrase is never sent in the clear: it is sealed to the signer's key (C12).
  */
-export type ClickSwitch = { on: true; passphrase: string } | { on: false; passphrase?: string }
+export type ClickSwitch =
+  | { on: true; passphrase: string }
+  | { on: true; resume: true }
+  | { on: false }
+  | { on: false; request_id: string; view_digest: string; sealed: { 'custody.passphrase': import('./sealed').Envelope } }
+
+/** The signer's one-use key for the NEW passphrase of "off" (#1198 C12, sealed purpose custody.passphrase). */
+export interface CustodySealOffer {
+  request_id: string
+  view_digest: string
+  seal: { v: 1; alg: string; pk: string; purposes: string[] }
+  expires_in: number
+}
 
 export interface ClickPrepared {
   request_id: string
   expires_at: string
   op: string
-  confirm: 'click' | 'word'
+  confirm: 'click'
 }
 
 /** The signer's View, as it came (the server adds nothing). `lines` are core's terminal review, already escaped. */
@@ -48,7 +62,7 @@ export interface ClickView {
   fingerprint: string
   lines: string[]
   checks: { repo: string; clean: boolean; attested_by: string; at: string }[]
-  confirm: { kind: 'click' } | { kind: 'word'; word: string }
+  confirm: { kind: 'click' }
   expires_at: string
   auth: string
   device: string
@@ -57,6 +71,10 @@ export interface ClickView {
   deposit?: boolean
   /** Core's constant `DEPOSIT_LINE`, when `deposit` is true. */
   deposit_line?: string
+  /** #1198 C7: a grant whose secret is shown once in this page. `for` names the page key this review was made for. */
+  seal?: { v: number; alg: string; purposes: string[]; for?: string; pk?: string }
+  /** #1198 C10: a hub step (core's constants, when the View asks for the backup key). */
+  backup_key_line?: string
 }
 
 export interface ClickViewAnswer {
@@ -88,6 +106,8 @@ export interface ClickSigned {
   grant?: string | null
   /** H11c-2, only when `deposit` is `rejected`: a closed code, never host text. */
   deposit_reason?: DepositReason
+  /** #1198 C7, agent access only: the secret sealed to this page's key (ciphertext; null if it could not be delivered). */
+  reveal?: { purpose: 'grant.secret'; envelope: import('./sealed').Envelope } | null
 }
 
 export type DepositOutcome = 'confirmed' | 'rejected' | 'unknown'
@@ -96,8 +116,18 @@ export type DepositReason = 'grant.forgotten' | 'grant.not_runner' | 'grant.verb
 /** M7b: the runner grant, a click request, or a terminal hand-off with runner set by this server, never by the browser. The signer sets label and verbs. */
 export type RunnerGrantAction = Extract<HandoffAction, { action: 'runner_grant' }>
 
+/**
+ * #1198 C7: agent access for a tool outside the dashboard. The secret comes back sealed to `reveal_key`, the page's
+ * one-use public key, which is sent at prepare so the review the person approves is of that key.
+ */
+export type AgentAccessAction = { action: 'agent_access'; hours: number; scope: 'workable' | 'all'; label?: string; reveal_key: string }
+
+/** #1198 C10: join a hub (selective only; a full join is the Terminal's) or leave it, with the backup key sealed to the signer. */
+export type HubJoinAction = { action: 'hub_join'; hub_card: string; hub_id: string; mode?: 'selective' }
+export type HubLeaveAction = { action: 'hub_leave' }
+
 /** Every typed action a click request may carry. */
-export type ClickAction = HandoffAction | RunnerGrantAction
+export type ClickAction = HandoffAction | RunnerGrantAction | AgentAccessAction | HubJoinAction | HubLeaveAction
 
 /** Core's constant (orch.click.protocol DEPOSIT_LINE): a deposit View must carry it, or Sign is not offered. */
 export const DEPOSIT_LINE = 'The secret goes to your orch runner on this machine and is never shown'
@@ -105,28 +135,76 @@ export const DEPOSIT_LINE = 'The secret goes to your orch runner on this machine
 export const DEPOSIT_RISK = 'Anything that takes over the dashboard can give agents standing authority to act for you on tickets for as long as the grant lasts (up to 7 days, the length you choose); you can stop it at any time.'
 
 /**
- * A deposit View is shown with a Sign button only when it says so, carries both constants, and is of this workspace
- * with this workspace's word (`<PREFIX>~<ws[-8:]>/GRANT`, review L3). The server checks too.
+ * A deposit View is shown with a Sign button only when it says so, carries both constants, and is of this workspace.
+ * The server checks too.
  */
 export const depositViewOk = (view: ClickView, ws: string): boolean =>
-  view.workspace?.id === ws && view.confirm.kind === 'word' && view.confirm.word.endsWith(`~${ws.slice(-8)}/GRANT`) &&
-  view.deposit === true && view.deposit_line === DEPOSIT_LINE && view.lines.includes(DEPOSIT_LINE) && view.lines.includes(DEPOSIT_RISK) &&
-  view.confirm.kind === 'word' && /^[A-Z][A-Z0-9]{0,15}~[0-9a-f]{8}\/GRANT$/.test(view.confirm.word)
+  view.workspace?.id === ws && view.confirm.kind === 'click' &&
+  view.deposit === true && view.deposit_line === DEPOSIT_LINE && view.lines.includes(DEPOSIT_LINE) && view.lines.includes(DEPOSIT_RISK)
+
+/** Core's constants (orch.click.protocol REVEAL_LINE, REVEAL_RISK): a shown-secret View lacking either is not offered. */
+export const REVEAL_LINE = 'The secret is shown once, on this page, only to you. orch keeps only a fingerprint of it'
+export const REVEAL_RISK = 'The secret will be shown once in this browser. Anyone who controls this dashboard could read it.'
+
+/** The page key as the signer's View names it: the full SHA-256 (64 hex) of its base64url text (golden vectors: plugins/orch-core/tests/click_reveal_fingerprint.json). */
+export async function keyFingerprint(publicKeyB64: string): Promise<string> {
+  const d = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(publicKeyB64)))
+  return Array.from(d, (b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+/** A shown-secret View is offered a Sign button only when it is for THIS page's key, the grant.secret purpose, both constants and this workspace. */
+export const revealViewOk = async (view: ClickView, ws: string, publicKeyB64: string): Promise<boolean> =>
+  view.workspace?.id === ws && view.confirm.kind === 'click' && view.deposit !== true &&
+  view.seal?.purposes?.length === 1 && view.seal.purposes[0] === 'grant.secret' && view.seal.for === (await keyFingerprint(publicKeyB64)) &&
+  view.lines.includes(REVEAL_LINE) && view.lines.includes(REVEAL_RISK)
+
+/** Core's constants (orch.click.protocol BACKUP_KEY_LINE, BACKUP_KEY_RISK): a hub View lacking either is not offered. */
+export const BACKUP_KEY_LINE = 'This step also needs your backup key. You type it once here; orch does not keep it'
+
+/** A hub View gets the backup-key field only when it asks for exactly `hub.backup_key` with the signer's key, carries the backup-key line (`BACKUP_KEY_LINE`, in `lines` and as `backup_key_line`) and is of this workspace. */
+export const backupViewOk = (view: ClickView, ws: string): boolean =>
+  view.workspace?.id === ws && view.confirm.kind === 'click' && view.deposit !== true &&
+  view.seal?.purposes?.length === 1 && view.seal.purposes[0] === 'hub.backup_key' && typeof view.seal.pk === 'string' && view.seal.pk.length === 87 &&
+  view.lines.includes(BACKUP_KEY_LINE) && view.backup_key_line === BACKUP_KEY_LINE
+
+/** #1198 C13: the signer's review of "Replace this device's key" and its one-use key for the two typed secrets. */
+export const ROTATE_LINE =
+  'This step also needs your recovery code and a passphrase for the new key. You type them once here; orch does not keep them'
+export interface RotateOffer {
+  request_id: string
+  view_digest: string
+  expires_in: number
+  view: {
+    op: 'device.rotate'
+    workspace: { id: string; name: string; prefix: string }
+    old: string
+    new: string
+    lines: string[]
+    confirm: { kind: 'click' }
+    rotate_line: string
+    seal: { v: 1; alg: string; pk: string; purposes: string[] }
+  }
+}
+/** The server answers `{ done: true, ...card }` instead when an earlier run had landed the event and only the install was left. */
+export type RotateBegin = RotateOffer | ({ done: true } & ClickCard)
+export const rotateOfferOk = (o: RotateBegin, ws: string): o is RotateOffer =>
+  !('done' in o) && o.view?.op === 'device.rotate' && o.view.workspace?.id === ws && o.view.confirm?.kind === 'click' &&
+  o.view.seal?.pk?.length === 87 && o.view.seal.purposes.length === 2 && o.view.seal.purposes[0] === 'device.recovery_code' &&
+  o.view.seal.purposes[1] === 'custody.passphrase' && o.view.lines.includes(ROTATE_LINE) && o.view.old !== o.view.new
 
 /** The flag of a workspace: the signer says click-to-sign is on and it can sign there now (real host only). */
 export const clickReady = (w: Pick<Workspace, 'click'> | undefined | null): boolean => !!w?.click && w.click.enabled && w.click.available
 
 /**
- * Which typed actions are offered a Sign button: the ones the signer's allowlist serves as click or click + word.
- * `grant` is not an action of the dashboard at all (terminal only); anything not listed here is terminal only.
+ * Which typed actions are offered a Sign button: the ones the signer's allowlist serves as click.
+ * The runner grant and the shown-secret agent access are click requests too; anything not listed here is terminal only.
  */
-const CLICK_ACTIONS: ReadonlySet<string> = new Set<HandoffAction['action']>([
+const CLICK_ACTIONS: ReadonlySet<string> = new Set<ClickAction['action']>([
   'accept_criterion', 'withdraw_acceptance', 'mark_task_done',
   'approve', 'request_changes', 'verdict', 'answer', 'comment', 'label', 'close', 'reopen', 'move', 'new', 'new_sequence', 'edit_sequence', 'quick_start', 'details', 'section',
-  'settings_set', 'policy_set', 'member_add', 'member_role', 'member_remove', 'grant_revoke', 'addon_grant', 'addon_disable', 'addon_enable',
+  'settings_set', 'icon_set', 'repo_set', 'repo_remove', 'policy_set', 'member_add', 'member_role', 'member_remove', 'device_remove', 'grant_revoke', 'runner_grant', 'agent_access', 'hub_join', 'hub_leave', 'addon_grant', 'market_grant', 'addon_disable', 'addon_enable', 'publish_setup', 'publish_share',
 ])
-// Publish decides where files go: terminal only, also when it is turned on together with its address
-export const clickEligible = (a: ClickAction | null): boolean => !!a && CLICK_ACTIONS.has(a.action) && !((a.action === 'addon_enable' || a.action === 'addon_grant') && a.name === 'publish')
+export const clickEligible = (a: ClickAction | null): boolean => !!a && CLICK_ACTIONS.has(a.action)
 
 export type ClickNext =
   /** Sign again (the review is unchanged). */
@@ -172,7 +250,6 @@ const REFUSED: Record<string, ClickProblem> = {
   expired: { title: 'Expired', body: 'The request ran out of time before it was signed. Prepare it again.', next: 'prepare' },
   view_changed: { title: 'The review changed', body: 'What you would sign is no longer what you were shown. Nothing was signed. Read the new review.', next: 'review' },
   too_soon: { title: 'Too soon', body: 'The review was on screen for less than a second. Nothing was signed. Press Sign again.', next: 'retry' },
-  word: { title: 'Not the word shown', body: 'Type the word exactly as the review shows it. Nothing was signed.', next: 'retry' },
   custody_changed: { title: 'The key moved', body: 'The custody of your device key changed since the review. Nothing was signed. Prepare the request again.', next: 'prepare' },
   busy: { title: 'Busy', body: 'Another signature is in progress. Wait a moment, then press Sign again.', next: 'retry' },
   check_failed: { title: 'A check failed', body: 'The signing helper refused what the host sent (it did not match). Nothing was signed.'+OFF, next: 'terminal' },
@@ -212,7 +289,7 @@ export function clickProblem(e: unknown): ClickProblem {
     case 'sign.convenience_unavailable': {
       const r = refusalOf(e)!
       // The switch moved after the page chose its way: nothing is wrong, the next try follows the host's current answer.
-      if (r.reason === 'disabled') return { title: 'Click-to-sign was switched off', body: `${refusalSentence(r)} To sign in the Terminal, the key must first move back to a passphrase: "orch keys custody passphrase --workspace <prefix> --in-place". Try again makes a new request for the Terminal.`, next: 'retry', stale: true, devices: r.devices }
+      if (r.reason === 'disabled') return { title: 'Click-to-sign was switched off', body: `${refusalSentence(r)} To sign in the terminal, the key must first move back to a passphrase: "orch keys custody passphrase --workspace <prefix> --in-place". Try again makes a new request for the terminal.`, next: 'retry', stale: true, devices: r.devices }
       return { title: 'Click-to-sign is not available here', body: r.reason === 'dev_host' ? refusalSentence(r) : `${refusalSentence(r)}${OFF}`, next: 'terminal', devices: r.devices }
     }
     case DEV_REFUSED:
@@ -229,14 +306,10 @@ export function clickProblem(e: unknown): ClickProblem {
       return { title: 'Busy', body: 'The host is busy. Try again shortly.', next: 'retry' }
     case 'intent.expired':
       return { title: 'This attempt is too old; start again', body: e.message, next: 'prepare' }
-    case 'intent.ended':
-      return { title: 'The earlier attempt ended', body: `${e.message} Nothing was signed. Start again to make a new request.`, next: 'prepare' }
     case 'intent.blocked':
       return { title: 'The earlier attempt ended', body: e.message, next: 'prepare' }
     case 'intent.open':
       return { title: 'An attempt for this is already open', body: e.message || 'The host holds an open request for this action. Wait until it ends or expires.', next: 'open' }
-    case 'sign.click_only':
-      return { title: 'This workspace signs in the dashboard', body: e.message, next: 'retry' }
     case 'sign.convenience_readers': {
       const r = refusalOf(e)!
       // A known reason is said in plain words; without one (a host before H12d-2) the host's own message stays.
@@ -247,7 +320,7 @@ export function clickProblem(e: unknown): ClickProblem {
     case 'rate.limited':
       return { title: 'Too many signatures', body: `The signing helper allows only so many signatures per minute and hour. Try again in ${Math.max(1, Math.ceil((e.retry_after_ms ?? 1000) / 1000))} s.`, next: 'retry', waitMs: e.retry_after_ms ?? 1000 }
     case 'custody.no_key':
-      return { title: 'No key on this computer', body: 'There is no device key for this workspace in convenience custody here. '+OFF, next: 'terminal' }
+      return { title: 'No key on this computer', body: 'There is no signing key on this computer. Nothing was signed. Turn One click off and on again, or sign in a terminal.'+OFF, next: 'terminal' }
     case 'custody.unavailable':
       return { title: 'The key store is not available', body: 'The key store is locked or refused access. Unlock it.'+OFF, next: 'terminal' }
     case 'host.version_mismatch':

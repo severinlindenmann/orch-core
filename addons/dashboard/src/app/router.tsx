@@ -10,6 +10,7 @@ import { addonPageData, agentsData, artifactsData, boardData, loadShell, pageLoa
 import { validateAgentsSearch, validateArtifactsSearch, validateBoardSearch, validateTicketSearch } from './search'
 import { workspaceRewrite, type UrlState } from './urls'
 import { hasFeature, isRealHost } from '@/api/features'
+import { queries } from '@/api/queries'
 
 // Every page is its own chunk. The route loaders load it (and warm the page's data) before the router shows the page:
 // the old page stays until then, or until `PENDING_MS`, after which the page's skeleton shows (see routeData.ts).
@@ -28,6 +29,7 @@ const ChecklistPage = lazyPage(() => import('./checklist/ChecklistPage'), 'Check
 // The feedback page: also its own page without the shell (saved in the browser, asks the host for nothing).
 const FeedbackPage = lazyPage(() => import('./feedback/FeedbackPage'), 'FeedbackPage')
 const GuidePage = lazyPage(() => import('./pages/guide'), 'GuidePage')
+const MarketPage = lazyPage(() => import('./pages/market'), 'MarketPage')
 const SharesPage = lazyPage(() => import('./pages/shares'), 'SharesPage')
 const WorktreesPage = lazyPage(() => import('./pages/worktrees'), 'WorktreesPage')
 const ExplorerPage = lazyPage(() => import('./pages/explorer'), 'ExplorerPage')
@@ -43,7 +45,7 @@ const AddonPage = lazyPage(() => import('./pages/AddonPage'), 'AddonPage')
 const addonNodes = () => import('@/addon-ui/preloadNodes').then((m) => m.preloadAddonNodes())
 
 /** Under this a page simply replaces the old one; past it the page's skeleton shows, for at least PENDING_MIN_MS. */
-export const PENDING_MS = 200
+export const PENDING_MS = 120
 export const PENDING_MIN_MS = 300
 
 /** The tester's checklist (not in the nav; opened with `orch dashboard open /checklist`). */
@@ -195,7 +197,19 @@ const explorerRoute = createRoute({
   loader: pageLoader(() => [], [ExplorerPage.preload]),
   component: ExplorerPage,
 })
-/** Shares of a real host (Publish add-on): listed only while the add-on is ON; the mock keeps its own addon page. */
+/** Owner marketplace, served only by a real host advertising market. */
+const marketRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'addons',
+  validateSearch: (s: Record<string, unknown>): { tab: 'browse' | 'installed' | 'marketplaces' } => ({ tab: s.tab === 'installed' || s.tab === 'marketplaces' ? s.tab : 'browse' }),
+  beforeLoad: () => {
+    if (!isRealHost()) throw redirect({ to: '/' })
+    serves('market')()
+  },
+  loader: pageLoader(({ qc, ws }) => hasFeature('market', ws.id) ? [qc.ensureQueryData(queries.marketList(ws.id))] : [], [MarketPage.preload]),
+  component: MarketPage,
+})
+/** Shares of a real host (Publish add-on): listed only while the add-on is ON. */
 const sharesRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'shares',
@@ -308,7 +322,7 @@ const addonRoute = createRoute({
   },
 })
 
-const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, newTicketRoute, ticketRoute, artifactsRoute, agentsRoute, quickRoute, dropRoute, checklistRoute, feedbackRoute, worktreesRoute, terminalsRoute, explorerRoute, sharesRoute, activityRoute, usageRoute, guideRoute, layoutPreviewRoute, settingsRoute, settingsTabRoute, settingsAddonRoute, settingsAddonsAliasRoute, addonRoute])
+const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, newTicketRoute, ticketRoute, artifactsRoute, agentsRoute, quickRoute, dropRoute, checklistRoute, feedbackRoute, worktreesRoute, terminalsRoute, explorerRoute, marketRoute, sharesRoute, activityRoute, usageRoute, guideRoute, layoutPreviewRoute, settingsRoute, settingsTabRoute, settingsAddonRoute, settingsAddonsAliasRoute, addonRoute])
 
 /**
  * The app's router. Without `initialPath` it owns the address bar (browser history); tests pass an in-app or

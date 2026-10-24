@@ -179,7 +179,7 @@ class Importer:
             raise OrchError(
                 "invalid.input",
                 f"the v1 prefix is {v1.prefix[:16]!r}, this workspace's is {prefix!r}",
-                hint="keys are kept, so the prefixes must match: orch init --prefix " + v1.prefix[:16],
+                hint="keys are kept, so the prefixes must match: orch setup with prefix " + v1.prefix[:16],
             )
         for p in v1.problems:
             out.skipped.append((p.where, p.why))
@@ -291,7 +291,7 @@ class Importer:
             wid = self.store.state.workspace.workspace_id
             qid = canon.question_id(wid, uid, q["id"])
             ev["qid"] = qid
-            ev["hash"] = canon.question_hash(qid, uid, q["text"], q.get("options", []))
+            ev["hash"] = canon.question_hash(qid, uid, q)
         return ev
 
     # -- doing

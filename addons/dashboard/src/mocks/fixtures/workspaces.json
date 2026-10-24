@@ -143,25 +143,6 @@
           "network"
         ]
       },
-      "github": {
-        "enabled": true,
-        "status": "active",
-        "installed": true,
-        "granted": {
-          "version": "0.5.2",
-          "capabilities": [
-            "network"
-          ],
-          "package_sha256": "0f33d256eae57ec0f00baba48552b229d04f5fb2bfe277ce02667cf7196f6fa9",
-          "at": "2026-09-02T09:00:00Z",
-          "by": "p_sev"
-        },
-        "version": "0.5.2",
-        "package_sha256": "0f33d256eae57ec0f00baba48552b229d04f5fb2bfe277ce02667cf7196f6fa9",
-        "capabilities": [
-          "network"
-        ]
-      },
       "usage": {
         "enabled": true,
         "status": "active",
@@ -372,25 +353,6 @@
         "version": "0.2.0",
         "package_sha256": "ddf14dd22f808f71dd0499e40807cbcbcdd25c018d6cdda6b2143e691d9a822d",
         "capabilities": []
-      },
-      "github": {
-        "enabled": true,
-        "status": "active",
-        "installed": true,
-        "granted": {
-          "version": "0.5.2",
-          "capabilities": [
-            "network"
-          ],
-          "package_sha256": "0f33d256eae57ec0f00baba48552b229d04f5fb2bfe277ce02667cf7196f6fa9",
-          "at": "2026-09-02T09:00:00Z",
-          "by": "p_sev"
-        },
-        "version": "0.5.2",
-        "package_sha256": "0f33d256eae57ec0f00baba48552b229d04f5fb2bfe277ce02667cf7196f6fa9",
-        "capabilities": [
-          "network"
-        ]
       },
       "wiki": {
         "enabled": true,

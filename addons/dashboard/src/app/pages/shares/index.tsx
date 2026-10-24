@@ -101,7 +101,7 @@ function SharesBody({ onRevoke, onSign }: { onRevoke: (s: Share) => void; onSign
           The publish server is not running or cannot be reached, so views and states are the ones this computer last knew.{' '}
           {isLoopback(data.server) ? (
             <>
-              It runs on this computer: start it in a Terminal with <code className="font-mono">orch-publish dev</code>.
+              It runs on this computer: start it in a terminal with <code className="font-mono">orch-publish dev</code>.
             </>
           ) : (
             <>Check that the server is up and that its address is right in Settings, Add-ons, Publish.</>

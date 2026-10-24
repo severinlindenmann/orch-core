@@ -19,20 +19,29 @@ __all__ = [
     "DEPOSIT_MAX_HOURS",
     "DEPOSIT_RISK",
     "OPS",
+    "REVEAL_LINE",
+    "ROTATE_LINE",
+    "ROTATE_OP",
+    "ROTATE_PURPOSES",
+    "SEALED_OPS",
+    "BACKUP_KEY_LINE",
+    "REVEAL_RISK",
     "REASONS",
     "REFUSALS",
     "CONTRACT",
     "FEATURES",
     "ClickError",
     "RISK",
-    "WORD_OPS",
     "click_detail",
     "op_class",
 ]
 
+#: 3 (#1198 C1, C2): no typed-word class: every op that was a word op is a click, Publish (``settings.set`` publish,
+#: ``addon.grant`` of publish, ``publish.share``) included; ``sign`` reads no ``word`` and the ``word`` refusal is
+#: gone; a client reads ``status.contract`` and sends nothing typed.
 #: 2 (H11c-2): deposit support (``deposit`` on ``prepare``, ``deposit``/``deposit_reason`` on ``sign``); a contract-1
 #: signer answers ``terminal_only`` for every ``grant``, so a client reads ``status.contract`` to tell the two apart
-CONTRACT = 2
+CONTRACT = 3
 #: the closed set of ``sign``'s ``deposit_reason`` (static codes, never host text; anything else is ``other``)
 DEPOSIT_REASONS = frozenset(
     {"grant.forgotten", "grant.not_runner", "grant.verbs", "grant.expiring", "rate.limited", "runner.unavailable",
@@ -46,15 +55,46 @@ DEPOSIT_RISK = (
     "Anything that takes over the dashboard can give agents standing authority to act for you on tickets for as long "
     "as the grant lasts (up to 7 days, the length you choose); you can stop it at any time."
 )
+#: #1198 C7: the View of a grant whose secret is shown once in the page (sealed to the page's key) carries this line
+#: (and in ``lines``) and ``seal.purposes == ["grant.secret"]``
+REVEAL_LINE = "The secret is shown once, on this page, only to you. orch keeps only a fingerprint of it"
+#: the plain risk of a shown secret (#1198 C7): the page's key is chosen by the page, so whoever controls the dashboard
+#: could ask for the secret under its own key; the review says so
+REVEAL_RISK = "The secret will be shown once in this browser. Anyone who controls this dashboard could read it."
+#: #1198 C10: the hub steps are clicks only together with the person's backup key, typed once in the page and sealed to
+#: the signer's per-request key (sealed-field contract, purpose ``hub.backup_key``). op -> purposes its View asks for
+SEALED_OPS: dict[str, tuple[str, ...]] = {
+    "hub.join": ("hub.backup_key",),
+    "hub.mode": ("hub.backup_key",),
+    "hub.leave": ("hub.backup_key",),
+}
+#: #1198 C13: ``device.rotate`` (a new key for this computer) is a click only through the signer's own ``rotate`` op,
+#: never through ``prepare``: the NEW key signs it, so the signer makes that key itself. It takes the recovery code
+#: (to sign the new key's certificate) and the passphrase of the new key file, both typed once in the page and sealed
+#: to the signer's per-offer key. ``device.rotate`` stays terminal-only in :func:`op_class` (and so in ``prepare``).
+ROTATE_OP = "device.rotate"
+ROTATE_PURPOSES: tuple[str, ...] = ("device.recovery_code", "custody.passphrase")
+ROTATE_LINE = (
+    "This step also needs your recovery code and a passphrase for the new key. "
+    "You type them once here; orch does not keep them"
+)
+#: the View of a hub step ends with this line (and carries ``backup_key_line``); the page asks for the key
+BACKUP_KEY_LINE = "This step also needs your backup key. You type it once here; orch does not keep it"
 #: a deposit grant lasts at most this many hours (D-P2-27)
 DEPOSIT_MAX_HOURS = GRANT_MAX_HOURS
-OPS = ("prepare", "view", "sign", "cancel", "status", "custody_on", "custody_off", "stash")
+OPS = ("prepare", "view", "sign", "cancel", "status", "custody_on", "custody_off", "stash", "rotate")
 #: what this signer can do beyond its contract, in ``status.features``: ``custody`` is ``custody_on``/``custody_off``,
 #: the dashboard's click-to-sign switch (§0.8.6 item 3a); ``sequence`` is ``prepare {sequence}``: one review, N
 #: signatures (batch 11); an older signer has no ``features`` and no switch, and ignores ``sequence`` (never asked)
 #: ``images`` is ``stash`` (a pasted screenshot, in chunks, held by the signer) and ``prepare {sequence}`` naming it
-#: (R3 part B)
-FEATURES = ("custody", "sequence", "images")
+#: (R3 part B); ``reveal`` (#1198 C7) is a ``grant`` without ``deposit``: ``sign`` takes ``reveal_key`` and answers
+#: ``reveal`` (the secret sealed to the page's key); a signer without it answers ``terminal_only`` for that grant.
+#: ``backup_key`` (#1198 C10) is the hub steps by click: the View carries ``seal`` and ``sign`` takes ``sealed``
+#: ``sealed_passphrase`` (#1198 C12) is ``custody_off {begin}`` then ``custody_off {request_id, view_digest, sealed}``:
+#: the new passphrase of "One click off" arrives sealed; a clear ``passphrase`` is refused
+#: ``device_rotate`` (#1198 C13) is ``rotate {begin}`` (the review: old and new key, and the signer's key for the two
+#: sealed secrets), then ``rotate {request_id, view_digest, sealed}``: a new device key for this computer
+FEATURES = ("custody", "sequence", "images", "reveal", "backup_key", "sealed_passphrase", "device_rotate")
 #: the host's ``sign.convenience_unavailable`` reasons (orch-v2-host §0.8.6 item 1), from the host's closed schema
 REASONS: tuple[str, ...] = tuple(_HOST_DETAIL["sign.convenience_unavailable"]["reason"])  # type: ignore[arg-type]
 #: ``human.click_refused`` reasons (§0.8.6 item 5)
@@ -64,7 +104,6 @@ REFUSALS = (
     "expired",
     "view_changed",
     "too_soon",
-    "word",
     "custody_changed",
     "busy",
     "check_failed",
@@ -124,58 +163,48 @@ CLICK_OPS = frozenset(
         "artifact.replace",
         "apply",
         "grant.revoke",
+        "grant",  # #1198 C7: with the secret sealed to the page (``reveal_key``), or deposited (``deposit``)
         "addon.disable",
         "settings.set",
-    }
-)
-#: §0.8.6 item 6: ops that change who or what may act: click plus the typed word
-WORD_OPS = frozenset(
-    {
-        "relay.pair_device",
+        "hub.join",  # #1198 C10: only with the backup key sealed to the signer (SEALED_OPS); see view.check_prepared
+        "hub.mode",
+        "hub.leave",
+        "device.remove",  # #1198 C15: refused for the signing device and an owner's last device (device.lockout)
+        "addon.grant",  # every add-on, publish included (#1198 C2); the review lists what is signed
+        "publish.share",  # #1198 C2: the staged copy's own words are the review; the person clicks
+        # #1198 C1: these were the typed-word class; the person reads the review and clicks, nothing is typed
         "member.add",
         "member.role",
         "member.remove",
-        "addon.grant",
         "addon.purge",
         "policy.set",
         "people.set",  # B12D: who owns, works on or reviews a ticket decides who may act on it
     }
 )
-#: ``grant`` and every op in neither set is terminal-only (fail closed for ops added later)
+#: every op not in :data:`CLICK_OPS` is terminal-only (fail closed for ops added later)
 
 
-#: ``settings.set`` keys that need more than a click. ``publish`` decides where shared files go: terminal only (the
-#: dashboard signs it through ``orch sign CODE``). ``repos``, ``sign_methods`` and ``grant_hours`` need the typed word.
-#: ``icon`` (the workspace icon) is deliberately in none of the sets: a closed-list cosmetic choice, signed by a click.
-SETTINGS_TERMINAL_KEYS = frozenset({"publish"})
-SETTINGS_WORD_KEYS = frozenset({"repos", "sign_methods", "grant_hours", "models"})
-_RANK = {"click": 0, "word": 1, "terminal": 2}
+#: ``settings.set`` keys that need more than a click: none (#1198 C2). ``publish`` (where shared files go) is a click
+#: too, because its View lists both servers in words; ``repos``, ``sign_methods`` and ``grant_hours`` lost their typed
+#: word in C1. (``addons``, the values an add-on reads, is a click: owner V3-D38, 24 Oct.) ``icon`` (cosmetic) is a
+#: click as well.
+SETTINGS_TERMINAL_KEYS: frozenset[str] = frozenset()
 
 
 def _settings_class(changes: list[Any]) -> str:
-    out = "click"
     for changed in changes:
         if not isinstance(changed, dict):
-            return "word"  # not a plain settings map: fail closed to the stronger confirmation
-        for k in changed:
-            head = str(k).split(".")[0]
-            kind = "terminal" if head in SETTINGS_TERMINAL_KEYS else "word" if head in SETTINGS_WORD_KEYS else "click"
-            out = max(out, kind, key=_RANK.__getitem__)
-    return out
+            return "terminal"  # not a plain settings map: fail closed
+        if any(str(k).split(".")[0] in SETTINGS_TERMINAL_KEYS for k in changed):
+            return "terminal"
+    return "click"
 
 
 def op_class(op: str, events: list[dict[str, Any]] | None = None, args: dict[str, Any] | None = None) -> str:
-    """``click``, ``word`` or ``terminal``. ``settings.set`` is classed by the keys it changes (see the key sets above),
+    """``click`` or ``terminal``. ``settings.set`` is classed by the keys it changes (see the key sets above),
     from the signed events when there are any (**the class at sign time, which wins**), else from the request's
     ``args["set"]`` (the early check, before prepare); with neither it counts as a click op. A class the early check
     gives can only be raised by the sign-time check, never lowered."""
-    if op == "addon.grant":
-        # Publish decides where files go: turning it on is terminal only, however it is asked (args at prepare, the
-        # signed event at sign time, which wins)
-        names = [ev.get("name") for ev in events] if events is not None else [(args or {}).get("name")]
-        return "terminal" if "publish" in names else "word"
-    if op in WORD_OPS:
-        return "word"
     if op == "settings.set" and (events is not None or args is not None):
         if events is not None:
             return _settings_class([ev.get("set") for ev in events])

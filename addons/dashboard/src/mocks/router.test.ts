@@ -277,7 +277,7 @@ describe('addon action route', () => {
     const transport = createMockTransport(store, { latency: false })
     expect((await transport.request('POST', '/api/addons/estimate/actions/set', { ws: store.workspaces[0].id })).status).toBe(404)
     const ws = store.workspaces[0].id
-    expect((await transport.request('POST', `/api/workspaces/${ws}/addons/github/actions/refresh`, {})).status).toBe(200)
+    expect((await transport.request('POST', `/api/workspaces/${ws}/addons/wiki/actions/search`, { query: 'a' })).status).toBe(200)
   })
   it('refuses a ticket from another workspace with 409 ticket.other_workspace', async () => {
     const { api, store } = setup()
@@ -300,7 +300,7 @@ describe('addon action route', () => {
       const before = store.eventsOf('DEMO-0043').length
       expect(await run(api, demo, 'estimate', 'set', { ticket: 'DEMO-0043', formData: { points: 13 } })).toBe('403 forbidden')
       expect(await run(api, demo, 'publish', 'share', { ticket: 'DEMO-0043' })).toBe('403 forbidden')
-      expect(await run(api, demo, 'github', 'refresh')).toBe('403 forbidden')
+      expect(await run(api, demo, 'wiki', 'create')).toBe('403 forbidden')
       expect(store.ticket('DEMO-0043')!.addons.estimate?.points).not.toBe(13)
       expect(store.eventsOf('DEMO-0043')).toHaveLength(before)
     })

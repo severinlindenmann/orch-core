@@ -3,15 +3,17 @@
 // neutrally (an empty list) where a page needs an answer to draw, and with `op.unsupported` everywhere else. Nothing
 // here imports the mock.
 import { clearSession, getToken } from './bootstrap'
+import { refreshFeatures } from './features'
 import { createFetchTransport } from './fetchTransport'
 import type { MandatesPreviewState } from './mandatesPreview'
 import type { Api, ListTicketsParams } from './apiFactory'
 import type { SignDefault, SignMethod } from './signing'
 import type { HandoffAction, HandoffRequest, HandoffState } from './handoff'
-import type { ClickAction, ClickCard, ClickState, ClickPrepared, ClickSigned, ClickSwitch, ClickViewAnswer } from './click'
+import type { ClickAction, ClickCard, ClickState, ClickPrepared, ClickSigned, ClickSwitch, ClickViewAnswer, CustodySealOffer, RotateBegin } from './click'
 import type { HostGrant, HostReaders, HostSettings, RosterMember } from './settings'
 import type { QuickPage, QuickParams, RecordsRun, RecordsStatus } from './quickRecords'
 import { activityQuery, type ActivityPage, type ActivityParams } from './activity'
+import type { MarketList, MarketInstalled, StageInput, StageResult } from './market'
 import { uploadFor, type ArtifactImage, type PastedRef } from './pasteImage'
 import {
   ApiError,
@@ -156,7 +158,11 @@ function workspace(s: ServerWorkspace): Workspace {
 }
 
 /** Every workspace the server knows, running or not (the switcher shows the others as "host not running"). */
-const listWorkspaces = async () => (await call<ServerWorkspace[]>('/api/workspaces')).map(workspace)
+const listWorkspaces = async () => {
+  const rows = await call<ServerWorkspace[]>('/api/workspaces')
+  refreshFeatures(rows)
+  return rows.map(workspace)
+}
 
 export async function logout() {
   const result = await createFetchTransport('', getToken).request('POST', '/auth/logout')
@@ -170,7 +176,7 @@ export const SESSION_READ_MS = 20_000
 export const session = async (cancel?: AbortSignal) => {
   const stop = cancel ? AbortSignal.any([cancel, AbortSignal.timeout(SESSION_READ_MS)]) : AbortSignal.timeout(SESSION_READ_MS)
   try {
-    return await call<{ features: string[]; workspaces: Record<string, string[]> }>('/api/session', 'GET', undefined, stop)
+    return await call<{ features: string[]; workspaces: Record<string, string[]>; login?: string }>('/api/session', 'GET', undefined, stop)
   } catch (e) {
     if (e instanceof ApiError || cancel?.aborted) throw e
     throw new ApiError(0, { code: 'host.unavailable', message: 'It did not answer in time. Try again.', retryable: true })
@@ -212,16 +218,20 @@ const reads = {
   getAddOns: (ws: string) => call<import('./addOnSwitches').AddOnsData>(`${w(ws)}/add-ons`),
   getReaders: (ws: string) => call<HostReaders>(`${w(ws)}/readers`),
   listHostGrants: (ws: string, active = true) => call<HostGrant[]>(`${w(ws)}/grants?active=${active}`),
-  // Quick tasks and records (M6). The limits are this browser's own setting; the server saves nothing.
+  // Quick tasks and records (M6). The host measures how big a quick task has grown.
   getQuick: (ws: string, p: QuickParams = {}) => {
     const q = new URLSearchParams()
     for (const s of p.status ?? []) q.append('status', s)
-    if (p.max_commits !== undefined) q.set('max_commits', String(p.max_commits))
-    if (p.max_files !== undefined) q.set('max_files', String(p.max_files))
     q.set('limit', String(p.limit ?? 200))
     if (p.page) q.set('page', p.page)
     return call<QuickPage>(`${w(ws)}/quick?${q.toString()}`)
   },
+  marketList: (ws: string) => call<MarketList>(`${w(ws)}/market`),
+  marketInstalled: (ws: string) => call<MarketInstalled>(`${w(ws)}/market/installed`),
+  marketStage: (ws: string, input: StageInput) => call<StageResult>(`${w(ws)}/market/stage`, 'POST', input),
+  marketUnstage: (ws: string, stage: string) => call<{ removed: boolean }>(`${w(ws)}/market/stage/${encodeURIComponent(stage)}`, 'DELETE'),
+  marketUninstall: (ws: string, name: string) => call<{ name: string; removed: boolean }>(`${w(ws)}/market/uninstall`, 'POST', { name }),
+  marketRefresh: (ws: string, input: { url?: string } = {}) => call<unknown>(`${w(ws)}/market/refresh`, 'POST', input),
   getActivity: (ws: string, p: ActivityParams = {}) => call<ActivityPage>(`${w(ws)}/activity?${activityQuery(p)}`),
   getRecordsCurrent: (ws: string) => call<RecordsStatus>(`${w(ws)}/records/current`),
   getRecords: (ws: string) => call<RecordsStatus>(`${w(ws)}/records`),
@@ -234,6 +244,10 @@ const reads = {
 const records = {
   recordsCommit: (ws: string, push: boolean) => call<RecordsRun>(`${w(ws)}/records/commit`, 'POST', { push }),
   recordsAutoOff: (ws: string) => call<RecordsRun>(`${w(ws)}/records/auto-off`, 'POST'),
+  /** #1198 C15: the admin clicks. The address is the one the review showed; the tool refuses if git now resolves to another. */
+  recordsInit: (ws: string) => call<RecordsRun>(`${w(ws)}/records/init`, 'POST', {}),
+  recordsMark: (ws: string, url: string | null) => call<RecordsRun>(`${w(ws)}/records/remote`, 'POST', url === null ? { on: false } : { on: true, url }),
+  recordsPushInitial: (ws: string, url: string) => call<RecordsRun>(`${w(ws)}/records/push-initial`, 'POST', { url }),
 }
 
 /** Reads a page needs an answer to even when the host has nothing to say yet: an empty list, never a made-up one. */
@@ -279,8 +293,8 @@ const click = {
   getArtifactImage: (ws: string, key: string, name: string) =>
     call<{ image: ArtifactImage | null }>(`${w(ws)}/tickets/${encodeURIComponent(key)}/artifacts/${encodeURIComponent(name)}`),
   viewClick: (ws: string, requestId: string) => call<ClickViewAnswer>(`${w(ws)}/click/view`, 'POST', { request_id: requestId }),
-  signClick: (ws: string, requestId: string, viewDigest: string, word?: string) =>
-    call<ClickSigned>(`${w(ws)}/click/sign`, 'POST', { request_id: requestId, view_digest: viewDigest, ...(word === undefined ? {} : { word }) }),
+  signClick: (ws: string, requestId: string, viewDigest: string, revealKey?: string, sealed?: Record<string, import('./sealed').Envelope>) =>
+    call<ClickSigned>(`${w(ws)}/click/sign`, 'POST', { request_id: requestId, view_digest: viewDigest, ...(revealKey ? { reveal_key: revealKey } : {}), ...(sealed ? { sealed } : {}) }),
   stateClick: (ws: string, requestId: string) => call<ClickState>(`${w(ws)}/click/state`, 'POST', { request_id: requestId }),
   /** V3 C11: what the host says to check when the hub's channel signs (a read; nothing is prepared or signed here). */
   hubSign: (ws: string, body: import('./hubsign').HubSignRequest) => call<import('./hubsign').HubSignInfo>(`${w(ws)}/hubsign`, 'POST', body),
@@ -289,6 +303,7 @@ const click = {
   getHubPreview: (ws: string, body: { add?: import('./hub').HubRule; remove?: import('./hub').HubRule }) =>
     call<import('./hub').HubPreview>(`${w(ws)}/hub/share/preview`, 'POST', body),
   getHubCommand: (ws: string, body: import('./hub').HubCommandRequest) => call<import('./hub').HubCommand>(`${w(ws)}/hub/command`, 'POST', body),
+  connectHub: (ws: string, body: import('./hub').HubConnectRequest) => call<import('./hub').HubConnected>(`${w(ws)}/hub/connect`, 'POST', body),
   cancelClick: (ws: string, requestId: string) => call<{ id: string; state: string }>(`${w(ws)}/click/cancel`, 'POST', { request_id: requestId }),
   // How I approve (B6): the person's own default way to sign, and whether a phone is paired. Both were missing here, so
   // every real host looked as if it "does not provide personal approval preferences" (B11 10). An older server answers
@@ -298,6 +313,10 @@ const click = {
   phoneAvailable: (ws: string) => call<{ phones: number }>(`${w(ws)}/phone/available`),
   clickStatus: (ws: string) => call<ClickCard>(`${w(ws)}/click/status`),
   switchClick: (ws: string, body: ClickSwitch) => call<ClickCard>(`${w(ws)}/click/custody`, 'POST', body),
+  custodySeal: (ws: string) => call<CustodySealOffer>(`${w(ws)}/click/custody/seal`, 'POST', {}),
+  rotateSeal: (ws: string) => call<RotateBegin>(`${w(ws)}/click/rotate/seal`, 'POST', {}),
+  rotateKey: (ws: string, body: { request_id: string; view_digest: string; sealed: Record<string, import('./sealed').Envelope> }) =>
+    call<{ done: true } & ClickCard>(`${w(ws)}/click/rotate`, 'POST', body),
 }
 
 const implemented: Record<string, unknown> = { ...reads, ...empty, ...handoff, ...click, ...records }

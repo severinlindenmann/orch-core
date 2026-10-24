@@ -11,14 +11,13 @@ from orch_dashboard.errors import HostError
 from orch_dashboard.handoff import PrepareBody, expected, host_call, host_files, plan
 
 PUBLISH = {"server": "https://files.example.test", "share": "https://links.example.test"}
-MODELS = {"codex": {"work": "gpt-5.4"}}
 
 
 def parse(**fields):
     return TypeAdapter(PrepareBody).validate_python({"action": "addon_enable", **fields})
 
 
-@pytest.mark.parametrize("name,fields", [("publish", {"publish": PUBLISH}), ("model-routing", {"models": MODELS})])
+@pytest.mark.parametrize("name,fields", [("publish", {"publish": PUBLISH})])
 def test_first_step_and_expected(name, fields):
     body = parse(name=name, **fields)
     assert host_call(body) == ("settings.set", {"set": fields})
@@ -33,14 +32,12 @@ def test_first_step_and_expected(name, fields):
     "fields",
     [
         {"name": "publish", "publish": PUBLISH, "grant": {}},
-        {"name": "publish", "models": MODELS},
-        {"name": "model-routing", "publish": PUBLISH},
-        {"name": "publish", "publish": PUBLISH, "models": MODELS},
+        {"name": "publish", "models": {"codex": {"work": "gpt-5.4"}}},
+        {"name": "model-routing", "publish": PUBLISH},  # no longer a built-in add-on
+        {"name": "publish", "publish": PUBLISH, "models": {"codex": {"work": "gpt-5.4"}}},
+        {"name": "publish"},
         {"name": "publish", "publish": {**PUBLISH, "extra": "x"}},
         {"name": "publish", "publish": {"server": PUBLISH["server"], "share": PUBLISH["server"]}},
-        {"name": "model-routing", "models": {"codex": {"work": "invented"}}},
-        {"name": "model-routing", "models": {}},
-        {"name": "model-routing", "models": {"codex": {}}},
     ],
 )
 def test_invalid_input(fields):
@@ -55,34 +52,34 @@ class Link:
 
     def call(self, op, args=None):
         if op == "addon.list":
-            return {"addons": [{"name": "model-routing", "state": self.state}]}
+            return {"addons": [{"name": "publish", "state": self.state}]}
         assert op == "activity.list"
         return {
             "items": []
             if self.head is None
-            else [{"type": "addon.disabled", "id": self.head, "data": {"name": "model-routing"}}]
+            else [{"type": "addon.disabled", "id": self.head, "data": {"name": "publish"}}]
         }
 
 
 def test_plan_uses_preview_and_latest_switch(tmp_path):
     link = Link()
-    grant = preview_grant(tmp_path, "model-routing")
+    grant = preview_grant(tmp_path, "publish")
     reads = []
 
     def call(ws, op, args):
         reads.append((op, args))
-        assert op == "addon.preview" and args == {"name": "model-routing"}
+        assert op == "addon.preview" and args == {"name": "publish"}
         return {"grant": grant}
 
     gateway = SimpleNamespace(link=lambda ws: link, call=call)
-    body = parse(name="model-routing", models=MODELS)
+    body = parse(name="publish", publish=PUBLISH)
     ws = "a" * 32
     first = plan(gateway, ws, body)
     intent = body.intent(grant)
     digest = sequence.digest_of(ws, link.welcome["peer"]["person"], intent)
     assert first.sequence == {"step": 0, "of": 2, "digest": digest, "intent": intent}
     assert intent["grant"] == grant and first.files is None
-    assert first.base == {"sequence": digest, "addon": {"addon": "model-routing", "head": None}}
+    assert first.base == {"sequence": digest, "addon": {"addon": "publish", "head": None}}
     assert plan(gateway, ws, body).idem(ws) == first.idem(ws)
     link.state = "active"
     with pytest.raises(HostError) as err:
@@ -99,9 +96,9 @@ def test_plan_uses_preview_and_latest_switch(tmp_path):
 @pytest.mark.parametrize(
     "settings,want",
     [
-        ({"publish": PUBLISH, "models": MODELS}, (True, True)),
-        ({"publish": None, "models": {"codex": {}}}, (False, False)),
-        (None, (None, None)),
+        ({"publish": PUBLISH}, True),
+        ({"publish": None}, False),
+        (None, None),
     ],
 )
 def test_rows_report_setup(client, token, stub, gateway, monkeypatch, settings, want):
@@ -121,14 +118,14 @@ def test_rows_report_setup(client, token, stub, gateway, monkeypatch, settings, 
 
     monkeypatch.setattr(gateway, "call", call)
     rows = {r["id"]: r for r in _get(client, token, stub, "add-ons").json()["add_ons"]}
-    assert rows["publish"]["needs"] == "publish" and rows["publish"]["set_up"] is want[0]
-    assert rows["model-routing"]["needs"] == "models" and rows["model-routing"]["set_up"] is want[1]
+    assert rows["publish"]["needs"] == "publish" and rows["publish"]["set_up"] is want
+    assert "model-routing" not in rows
     assert rows["quick"]["needs"] is None and rows["quick"]["set_up"] is True
     assert rows["usage"]["needs"] is None and rows["usage"]["set_up"] is True
     assert reads == ["workspace.settings"]
 
 
-@pytest.mark.parametrize("name,fields", [("publish", {"publish": PUBLISH}), ("model-routing", {"models": MODELS})])
+@pytest.mark.parametrize("name,fields", [("publish", {"publish": PUBLISH})])
 def test_plan_reads_the_preview_over_the_real_host_link(gateway, stub, p1, name, fields):
     """e2e run 4: the grant body is read over the real `HostLink` (no stubbed `gateway.call`), answered by core's own
     `addon.preview` handler. `addon.preview` must be a read there: a call it treats as a write needs an idem, and the
@@ -139,3 +136,30 @@ def test_plan_reads_the_preview_over_the_real_host_link(gateway, stub, p1, name,
     assert planned.sequence["intent"] == body.intent(grant)
     assert planned.sequence["intent"]["grant"]["name"] == name
     assert planned.base["addon"] == {"addon": name, "head": None}
+
+
+def test_the_model_choice_is_offered_by_the_choose_model_capability_not_by_the_name(gateway, stub, monkeypatch):
+    class Link:
+        welcome = {"workspace": {"id": "w_cap"}}
+
+        def has(self, cap):
+            return False
+
+        def supports(self, op, cap):
+            return True
+
+        def call(self, op, args=None, **kw):
+            return {"addons": self.rows}
+
+    link = Link()
+    monkeypatch.setattr(gateway, "enabled", lambda ws: link)
+    link.rows = [{"name": "my-picker", "state": "active", "capabilities": ["choose_model"]}]
+    assert "model_routing" in gateway.features(stub.ws)
+    for rows in (
+        [{"name": "model-routing", "state": "active", "capabilities": ["network"]}],  # the name alone decides nothing
+        [{"name": "model-routing", "state": "active"}],
+        [{"name": "my-picker", "state": "disabled", "capabilities": ["choose_model"]}],
+        [],
+    ):
+        link.rows = rows
+        assert "model_routing" not in gateway.features(stub.ws)

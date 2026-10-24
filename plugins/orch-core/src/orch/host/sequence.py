@@ -354,6 +354,10 @@ def _task_verify(value: Any) -> str:
     cmd = _one_line(value, "verify command", 4096)
     if len(cmd.encode("utf-8")) > 4096:  # Call.text's byte limit
         raise SequenceInvalid("verify command is longer than 4096 bytes")
+    from orch.model.tasks import verify_cmd_problem
+
+    if problem := verify_cmd_problem(cmd):
+        raise SequenceInvalid(f"verify command: {problem}")
     return cmd
 
 
@@ -736,36 +740,22 @@ def step_args(intent: Mapping[str, Any], k: int, ref: str | None) -> tuple[str, 
     return step["op"], args
 
 
-def confirm_kind(intent: Mapping[str, Any], person: str | None = None) -> str:
-    """The strongest confirmation any step needs (``click`` < ``word`` < ``terminal``); the sequence's confirmation is
-    that of its strongest step. A grant to the runner is a ``word`` (the GRANT word) in a sequence.
-
-    #1070 relaxes B12D in one case only, in this one place: a NEW ticket whose assignees and reviewers are ALL the
-    signer's own id (``person``; the creator naming themselves) and which has no ``owner`` step is a click. Naming
-    anyone else gives that person approval rights (a reviewer may approve gates and accept checks) or the worker role
-    (not undoable), so it keeps the word, as does any owner step (agent access: the GRANT word) and every people edit
-    of an EXISTING ticket. Without a known signer (``person`` None) people steps are never lowered."""
+def confirm_kind(intent: Mapping[str, Any]) -> str:
+    """The strongest confirmation any step needs (``click`` < ``terminal``); the sequence's confirmation is that of its
+    strongest step. #1198 C1: there is no typed word any more, so every people change and a grant to the runner are a
+    click (the grant also needs dashboard execution on this machine: the click signer checks that on its own). Only a
+    step whose op is terminal-only (``settings.set`` of Publish) makes the whole sequence terminal."""
     from orch.click.protocol import op_class
-
-    rank = {"click": 0, "word": 1, "terminal": 2}
 
     def step_class(s: Mapping[str, Any]) -> str:
         if s["kind"] == "grant":
-            return "word"
-        if (
-            intent["kind"] == KIND
-            and s["kind"] == "people"
-            and s["args"].get("role") in ("assignees", "reviewers")
-            and person is not None
-            and not s["args"].get("remove")
-            and s["args"].get("add")
-            and all(who == person for who in s["args"]["add"])
-        ):
             return "click"
+        if s["op"] == "addon.grant" and intent["kind"] == ADDON:
+            return op_class(s["op"], events=[intent["grant"]])  # the signed capability list decides
         # AE3: the class of a step is that of its op WITH its args (``settings.set`` of Publish is terminal-only)
         return op_class(s["op"], args=s["args"])
 
-    return max((step_class(s) for s in steps(intent)), key=lambda c: rank[c])
+    return "terminal" if any(step_class(s) == "terminal" for s in steps(intent)) else "click"
 
 
 def has_grant(intent: Mapping[str, Any]) -> bool:

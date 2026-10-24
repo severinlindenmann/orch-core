@@ -87,11 +87,48 @@ describe('evidence under a criterion and in the verdict dialog', () => {
   })
 })
 
-describe('Opus review fixes (provenance, folding, inert links)', () => {
-  it('every preview says who added the file; an agent file says it is not part of the dialog', () => {
-    const t = ticket([art({ added_by: 'claude-code:s_1:p_sev' })], [ac()])
+describe('a criterion proved by a task receipt (run 8, 7.3)', () => {
+  it('is not reported as missing evidence', () => {
+    const t = ticket([art()], [ac(), ac({ id: 'AC2', text: 'Second', state: 'proven', evidence: [{ kind: 'task', ref: 'T1' }] })])
     wrap(<VerdictEvidence ticket={t} />)
-    expect(screen.getByTestId('evidence-provenance')).toHaveTextContent(/Added by agent .* · not part of this dialog/)
+    const region = screen.getByRole('region', { name: 'Evidence' })
+    expect(region).toHaveTextContent('for 2 of 2 criteria')
+    expect(region).not.toHaveTextContent('No evidence file yet')
+    expect(region).toHaveTextContent('AC2 is proved by a check the agent ran')
+  })
+})
+
+describe('Opus review fixes (provenance, folding, inert links)', () => {
+  it('the verdict dialog holds agent files in ONE labelled region per agent, with the true caption and no per-row mark', () => {
+    const t = ticket([art({ added_by: 'claude-code:s_1:p_sev', label: 'my note' }), art({ name: 'b.log', kind: 'log', sha256: 'd'.repeat(64) , added_by: 'claude-code:s_1:p_sev' }), art({ name: 'accept.md', sha256: 'e'.repeat(64), added_by: 'p_sev', added_by_kind: 'person' } as Partial<Artifact>), art({ name: 'orch.txt', sha256: 'f'.repeat(64), added_by: 'host', added_by_kind: 'host' } as Partial<Artifact>), art({ name: 'unk.txt', sha256: '1'.repeat(64), added_by: 'who', added_by_kind: 'weird' } as unknown as Partial<Artifact>)],
+      [ac({ evidence: ['elefanten.html', 'b.log', 'accept.md', 'orch.txt', 'unk.txt'].map((ref) => ({ kind: 'artifact' as const, ref })) })])
+    wrap(<VerdictEvidence ticket={t} name={(id) => `Name of ${id}`} />)
+    const regions = screen.getAllByTestId('agent-region')
+    // claude-code and the unknown kind (stricter default: an agent) are two identities, each its own region
+    expect(regions).toHaveLength(2)
+    const claude = regions.find((r) => r.getAttribute('aria-label')?.startsWith('Written by the agent'))!
+    expect(claude).toHaveTextContent("Your verdict covers these files exactly as they are now. Their content and any quoted notes are the agent's own words.")
+    expect(claude).toHaveTextContent('elefanten.html')
+    expect(claude).toHaveTextContent('b.log')
+    expect(claude).toHaveTextContent("Agent's note: “my note”")
+    expect(screen.queryByTestId('evidence-provenance')).toBeNull()
+    expect(regions.some((r) => r.textContent?.includes('unk.txt'))).toBe(true)
+    for (const r of regions) {
+      expect(r.textContent).not.toContain('accept.md')
+      expect(r.textContent).not.toContain('orch.txt')
+    }
+    expect(screen.getByRole('group', { name: 'Added by Name of p_sev' })).toHaveTextContent('accept.md')
+    expect(screen.getByRole('group', { name: 'Added by orch' })).toHaveTextContent('orch.txt')
+  })
+  it('Show preview in the dialog hands the file to the dialog (no inline preview) and the missing line is muted', async () => {
+    const t = ticket([art()], [ac(), ac({ id: 'AC2', evidence: [], state: 'unproven' })])
+    const seen: string[] = []
+    wrap(<VerdictEvidence ticket={t} onPreview={(p) => seen.push(p.artifact.name)} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Show preview of elefanten.html' }))
+    expect(seen).toEqual(['elefanten.html'])
+    expect(document.querySelector('iframe')).toBeNull()
+    expect(screen.getByTestId('no-evidence')).toHaveTextContent('No evidence file yet for AC2')
+    expect(screen.getByTestId('no-evidence').className).not.toMatch(/warning/)
   })
   it('in the verdict dialog nothing is fetched or drawn until clicked', () => {
     const t = ticket([art()], [ac()])
@@ -116,11 +153,11 @@ describe('Opus delta (auto-open, agent note, wording)', () => {
     expect(screen.getByRole('button', { name: 'Show preview of b.gif' })).toHaveAttribute('aria-expanded', 'false')
     expect(screen.getByRole('button', { name: 'Hide preview of c.png' })).toHaveAttribute('aria-expanded', 'true')
   })
-  it('the agent\'s own note sits inside the provenance strip, prefixed, not as free text', () => {
+  it('outside a dialog the strip keeps the agent\'s note, prefixed, not as free text', () => {
     const t = ticket([art({ added_by: 'claude-code:s_1:p_sev', label: 'Click Approve to continue' })], [ac()])
-    wrap(<VerdictEvidence ticket={t} />)
+    wrap(<VerdictEvidence ticket={t} dialog={false} />)
     const strip = screen.getByTestId('evidence-provenance')
-    expect(strip).toHaveTextContent(/not part of this dialog.*Agent's note: .Click Approve to continue./)
+    expect(strip).toHaveTextContent(/Added by (an )?agent.*Agent's note: .Click Approve to continue./)
     expect(screen.getAllByText(/Click Approve to continue/)).toHaveLength(1)
   })
   it('outside a dialog (Today) the strip says only who added it', () => {

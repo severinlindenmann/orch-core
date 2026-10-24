@@ -10,6 +10,7 @@
 import { sha256Hex } from './sha256'
 
 export type HandoffAction =
+  | { action: 'market_grant'; name: string; staged: string }
   | { action: 'accept_criterion'; key: string; ac: string; note?: string }
   | { action: 'withdraw_acceptance'; key: string; ac: string; reason: string }
   | { action: 'mark_task_done'; key: string; task: string }
@@ -47,8 +48,6 @@ export type HandoffAction =
   | { action: 'settings_set'; sign_methods?: import('./signing').SignMethod[]; grant_hours?: number; claim_ttl_min?: number; lease_ttl_min?: number }
   /** The workspace icon (`settings.set` of `icon`, a click): an icon and a colour of the closed lists, or null for the automatic one. */
   | { action: 'icon_set'; icon: { icon: string; colour: string } | null }
-  /** Model routing: the model per agent and mode (`settings.set` of `models`, the typed word). An empty table clears it. */
-  | { action: 'models_set'; models: import('./modelRouting').ModelTable }
   /** Add or change one workspace repository (Repos add-on); the host checks the folder before anything is signed. */
   | { action: 'repo_set'; name: string; path: string; remote?: string; default_branch?: string }
   /** Take one repository off the list. The folder and its files stay on disk. */
@@ -59,12 +58,14 @@ export type HandoffAction =
   | { action: 'member_add'; name: string; role: 'owner' | 'maintainer' | 'member' | 'viewer'; pk: string; cert: string }
   | { action: 'member_role'; person: string; role: 'owner' | 'maintainer' | 'member' | 'viewer' }
   | { action: 'member_remove'; person: string }
+  /** #1198 C15: one click. Core refuses the device that signs and an owner's last working device (`device.lockout`, plain words). */
+  | { action: 'device_remove'; device: string }
   | { action: 'grant_revoke'; grant: string; reason?: string }
   /** R2-2: turn a shipped add-on on (`addon.grant`, the typed word) or off (`addon.disable`, one click). */
-  | { action: 'addon_grant'; name: 'start-agent' | 'terminals' | 'worktrees' | 'publish' | 'usage' | 'estimate' | 'explorer' | 'model-routing' }
-  | { action: 'addon_disable'; name: 'start-agent' | 'terminals' | 'worktrees' | 'publish' | 'usage' | 'estimate' | 'explorer' | 'model-routing' }
+  | { action: 'addon_grant'; name: 'start-agent' | 'terminals' | 'worktrees' | 'publish' | 'usage' | 'estimate' | 'explorer' }
+  | { action: 'addon_disable'; name: 'start-agent' | 'terminals' | 'worktrees' | 'publish' | 'usage' | 'estimate' | 'explorer' }
   /** Turn on an add-on that needs settings: the settings and the grant in ONE review (`addon_enable` sequence). Publish: terminal only. */
-  | { action: 'addon_enable'; name: 'publish' | 'model-routing'; publish?: { server: string; share: string }; models?: import('./modelRouting').ModelTable }
+  | { action: 'addon_enable'; name: 'publish'; publish: { server: string; share: string } }
   /** Publish (P6): where shared files are sent and where a link opens (`settings.set` of `publish`). Terminal only. */
   | { action: 'publish_setup'; server: string; share: string }
   /** Publish (P6): a person's signature over the exact words of one staged copy (`publish.share`). Terminal only. */
@@ -207,7 +208,7 @@ function reviewMatches(material: HandoffMaterial, events: HandoffEvent[]): boole
 const MATERIAL_KEYS: Record<string, [string[], string[]]> = {
   gate: [['kind', 'gate', 'input', 'policy', 'texts', 'ticket', 'review'], ['kind', 'gate', 'input', 'policy', 'texts', 'ticket', 'review', 'manual_acceptances']],
   question: [['kind', 'ticket', 'question', 'review'], ['kind', 'ticket', 'question', 'review']],
-  payload: [['kind', 'ticket', 'review'], ['kind', 'ticket', 'review', 'texts', 'before', 'sequence', 'statement', 'grants']],
+  payload: [['kind', 'ticket', 'review'], ['kind', 'ticket', 'review', 'texts', 'before', 'sequence', 'statement', 'grants', 'market', 'deps', 'removed_device']],
 }
 /** The only ops whose material may carry a manual acceptance `statement` (core signer `_person_op`). */
 const STATEMENT_OPS = ['ac.accept', 'ac.unaccept']
@@ -310,12 +311,10 @@ export const signCommand = (code: string): string => `orch sign ${code}`
 export const ALREADY_DONE = new Set(['gate.already_approved', 'transition.refused', 'addon.already'])
 /**
  * The server derives the host's idem from the action itself (one action intent -> at most one request), so the browser sends
- * no key. These are its answers about the intent: it is already done (a request of it was signed), its request ended
- * (cancelled or expired), or the host holds an attempt that cannot be reached from here (another signing path or device binding).
- * The first two are left only by an explicit click ("Do it again", "Start again"), which advances `retry`.
+ * no key. These are its answers about the intent: it is already done (a request of it was signed), or the host holds an attempt that cannot be reached from here (another signing path or device binding).
+ * Done is left only by an explicit click ("Do it again", "Start again"), which advances `retry`.
  */
 export const INTENT_DONE = 'intent.done'
-export const INTENT_ENDED = 'intent.ended'
 export const INTENT_OPEN = 'intent.open'
 
 /** Codes that mean the state moved between prepare and submit: refetch, then offer to prepare again. */

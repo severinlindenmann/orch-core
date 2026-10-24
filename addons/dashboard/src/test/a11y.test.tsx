@@ -13,7 +13,6 @@ const demo = (s: MockStore) => s.workspaces.find((w) => w.prefix === 'DEMO')!.id
 // so every case names its title and a content marker, and the run waits for the skeletons to go before axe looks.
 const ADDON_PAGES: [string, RegExp, RegExp][] = [
   ['publish/shares', /Apps & shares/, /Live shares/],
-  ['github/reviews', /Code reviews/, /Open PRs/],
   ['usage/overview', /Usage/, /Cost · this month/],
   ['wiki/pages', /Wiki/, /Tariff data conventions/],
   ['terminals/sessions', /Terminals/, /view-only mirrors/],
@@ -83,7 +82,7 @@ describe('accessibility smoke (axe, no serious or critical violations)', () => {
     ['/', /^Today$/, /need you/],
     ['/board', /^Board$/, /Backlog/],
     ['/tickets', /^Tickets$/, /All tickets/],
-    ['/tickets/new', /^New ticket$/, /Out of scope/],
+    ['/tickets/new', /^New ticket$/, /What should be true/],
     ['/agents', /^Agents$/, /Issue grant/],
     ['/settings/general', /^Settings$/, /Key fingerprint/],
     ['/settings/members', /^Settings$/, /Add member/],

@@ -196,6 +196,12 @@ def _register(target: Any, env: Mapping[str, str], out: TextIO) -> int:
             info = _call(target, "publish.list", {}, env)
             out.write("\n".join(_admin_lines(info, None)) + "\n")
             return 3
+        if exc.code == "hub.not_joined":
+            out.write(
+                "Publishing goes through a hub, and this workspace has none connected. "
+                "Join a hub (orch hub join), then run: orch publish register\n"
+            )
+            return 3
         if exc.code == "runner.disabled":
             out.write(
                 "Publish is off in this workspace. Turn it on in Settings, Add-ons (or: orch addon grant publish), "
@@ -375,7 +381,7 @@ def _check_shape(a: argparse.Namespace) -> None:
 
 
 def _check_setup(a: argparse.Namespace) -> None:
-    from orch.relay import wire
+    from orch.wsproto import wire
 
     if not a.server or not a.share_addr:
         raise PubError("invalid.input", _USAGE, 2)

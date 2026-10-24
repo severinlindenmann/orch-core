@@ -43,7 +43,7 @@ from typing import TYPE_CHECKING, Any
 from jsonschema import Draft202012Validator
 
 from .errors import HostError
-from .launch import HARNESSES, LOGIN_NOTICE, check_model, display, launch_argv, routed_model
+from .launch import HARNESSES, LOGIN_NOTICE, check_model, display, launch_argv
 from .visibility import Viewer
 
 if TYPE_CHECKING:
@@ -54,8 +54,6 @@ __all__ = ["AGENT_OPS", "ADDON", "complete", "plan", "serve"]
 
 AGENT_OPS: dict[str, int] = {"agent.preview": 1, "agent.start": 1}
 ADDON = "start-agent"
-#: Model routing: while this add-on is on, the workspace's signed ``settings.models`` picks a start's model
-ROUTING = "model-routing"
 #: §0.11 (v1.6): 8 agent runs per person per workspace, 16 per person, 64 per runner
 AGENTS_PER_WORKSPACE = 8
 AGENTS_PER_PERSON = 16
@@ -92,13 +90,9 @@ def _validate(op: str, args: Any) -> None:
 
 
 def _addon(service: WorkspaceService, name: str) -> bool:
-    from orch.addons.install import as_addons
+    from . import hubpolicy
 
-    try:
-        found = as_addons(service.store.state.workspace.addons).get(name)
-    except (AttributeError, KeyError, TypeError):
-        return False
-    return found is not None and found.enabled and not found.purged
+    return hubpolicy.running(service, name)  # granted, on, and not paused by the hub policy
 
 
 def agent_missing(service: WorkspaceService, hub: RunnerHub) -> str | None:
@@ -278,7 +272,6 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
     from orch.runner.config import ConfigError, RunnerConfig, read_config
     from orch.runner.link import ENV_FROM_RUNNER
 
-    from .runnergrants import MIN_LEFT
     from .terms import missing
 
     service = call.service
@@ -313,14 +306,17 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
     except ConfigError as exc:
         config = RunnerConfig()
         p.block("launch.invalid", str(exc))
-    source = "chosen" if model is not None else "default"
-    if agent and model is None and mode is not None and harness in HARNESSES and _addon(service, ROUTING):
-        # the host chooses, from the owner's signed setting; the person's review binds it (it is in the spec digest)
-        model, problem = routed_model(service.store.state.workspace.settings, harness, mode)
-        if problem is not None:
-            p.block("launch.invalid", problem)
-        elif model is not None:
-            source = "workspace"
+    source, routed_by = ("chosen" if model is not None else "default"), None
+    if agent and model is None and mode is not None and harness in HARNESSES:
+        # an add-on that holds choose_model proposes; core checks the answer against its closed list, and the person's
+        # review binds the result (it is in the spec digest). An explicit model never asks the add-on.
+        from . import routing
+
+        routed = routing.choose(service, harness, mode)
+        if routed.problem is not None:
+            p.block("launch.invalid", routed.problem)
+        elif routed.model is not None:
+            model, source, routed_by = routed.model, "addon", routed.by
     for name, value, of in (("model", model, harness), ("subagent_model", sub, "claude-code")):
         bad = check_model(name, value, of)
         if bad:
@@ -387,10 +383,7 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
         if cur is None:
             p.block("launch.no_grant", "no runner grant for you on this machine: issue one", reason="none")
         else:
-            reason = hub.grants.valid(service, person, cur["grant"], left=MIN_LEFT)  # type: ignore[union-attr]
-            auth = service.auth
-            if reason is None and cur.get("scope") == "all" and auth is not None and auth.roles.get(person) == "member":
-                reason = "scope"
+            reason = hub.grants.launch_reason(service, person, cur)  # type: ignore[union-attr]
             if reason is not None:
                 p.block("launch.no_grant", f"your runner grant cannot start agents now ({reason})", reason=reason)
             else:
@@ -407,7 +400,7 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
     digest = hashlib.sha256(
         json.dumps(
             {"v": 2, "kind": "agent" if agent else "shell", "harness": harness, "mode": mode, "model": model,
-             "model_source": source, "subagent_model": sub, "argv": argv, "login_shell": login,
+             "model_source": source, "routed_by": routed_by, "subagent_model": sub, "argv": argv, "login_shell": login,
              "cwd": where["cwd"], "pin": pin_view, "gen": where.get("gen"), "env_names": env_names,
              "env_fixed": env_fixed,
              "grant": grant["id"] if grant else None, "as_person": not agent},
@@ -418,8 +411,9 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
         {*env_names, *env_fixed, "TERM", "COLORTERM", *(("ORCH_GRANT", "ORCH_SESSION") if agent else ())}
     )
     out: dict[str, Any] = {
-        "spec": digest, "model": model, "model_source": source, "argv": argv, "display": display(argv),
-        "login_shell": login, "program": program, "cwd": where["cwd"], "cwd_path": where["path"],
+        "spec": digest, "model": model, "model_source": source, "model_by": routed_by, "argv": argv,
+        "display": display(argv), "login_shell": login, "program": program, "cwd": where["cwd"],
+        "cwd_path": where["path"],
         "env": shown_env, "blocked": p.blocked, "warnings": p.warnings[:8],
         "_launch": {"argv": argv, "env_names": env_names, "env_fixed": env_fixed, "cwd": where["pin"],
                     "create": where["create"], "mkdir": where["mkdir"], "ticket": key, "login_shell": login,

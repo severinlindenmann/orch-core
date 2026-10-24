@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import os
 import time
 from pathlib import Path
@@ -11,9 +12,14 @@ import pytest
 
 from orch.addons.manifest import declarations, load_package_manifest
 from orch.addons.package import read_package
-from orch.addons.runner import Limits, RunnerError, call, child_env
+from orch.addons.runner import Limits, RunnerError, child_env
+from orch.addons.runner import call as _call
+from orch.addons.runner import propose as _propose
 from orch.model.types import Addon
 from tests.addons.helpers import make_package
+
+call = functools.partial(_call, gate=None)  # standalone: these tests are not about the hub policy
+propose = functools.partial(_propose, gate=None)
 
 
 def ticket(**over):
@@ -52,7 +58,7 @@ def pkg(tmp_path):
 
 def run(pkg, trigger, **limits):
     _, package, granted = pkg
-    return call(
+    return propose(
         package,
         granted,
         trigger=trigger,
@@ -207,7 +213,7 @@ def test_a_changed_package_never_starts(pkg):
     d, package, granted = pkg
     granted.package_sha256 = "sha256:" + "0" * 64
     with pytest.raises(RunnerError) as e:
-        call(package, granted, trigger="ok", ticket=TICKET)
+        propose(package, granted, trigger="ok", ticket=TICKET)
     assert e.value.code == "addon.digest_mismatch"
 
 
@@ -220,7 +226,7 @@ def test_the_command_capabilities_and_identity_come_from_the_granted_package_nev
     _, package, _ = pkg
     for over in ({"capabilities": ["network"]}, {"capabilities": []}, {"version": "9.9.9"}, {"name": "other"}):
         with pytest.raises(RunnerError) as e:
-            call(package, granted_for(package, **over), trigger="ok", ticket=TICKET)
+            propose(package, granted_for(package, **over), trigger="ok", ticket=TICKET)
         assert e.value.code == "addon.digest_mismatch", over
     # a package whose manifest names another command has another digest: it is not the granted one
     evil = make_package(
@@ -232,7 +238,7 @@ def test_the_command_capabilities_and_identity_come_from_the_granted_package_nev
     )
     other = read_package(evil)
     with pytest.raises(RunnerError) as e:
-        call(other, granted_for(package), trigger="ok", ticket=TICKET)
+        propose(other, granted_for(package), trigger="ok", ticket=TICKET)
     assert e.value.code == "addon.digest_mismatch"
 
 
@@ -248,7 +254,7 @@ def test_a_ticket_that_is_not_visible_to_everyone_is_never_run(pkg):
     _, package, granted = pkg
     for vis in ({"restricted": ["p_x"]}, "restricted", None):
         with pytest.raises(RunnerError) as e:
-            call(package, granted, trigger="ok", ticket=ticket(visibility=vis))
+            propose(package, granted, trigger="ok", ticket=ticket(visibility=vis))
         assert e.value.code == "addon.not_visible"
 
 
@@ -256,7 +262,7 @@ def test_a_disabled_or_purged_addon_is_never_run(pkg):
     _, package, _ = pkg
     for over in ({"enabled": False}, {"purged": True}):
         with pytest.raises(RunnerError) as e:
-            call(package, granted_for(package, **over), trigger="ok", ticket=TICKET)
+            propose(package, granted_for(package, **over), trigger="ok", ticket=TICKET)
         assert e.value.code == "addon.inactive"
 
 
@@ -267,7 +273,7 @@ def test_a_missing_command_is_a_start_failure(tmp_path):
     d = make_package(tmp_path, man=m)
     package = read_package(d)
     with pytest.raises(RunnerError) as e:
-        call(package, granted_for(package), trigger="ok", ticket=TICKET)
+        propose(package, granted_for(package), trigger="ok", ticket=TICKET)
     assert e.value.code == "addon.start_failed"
 
 
@@ -276,7 +282,7 @@ def test_a_request_that_is_not_strict_json_or_too_big_is_refused_before_starting
     for own in ({"x": 1.5}, {"x": "y" * (70 << 10)}, {"x": object()}):
         t = ticket(fields={"addons": {"echo": own}})
         with pytest.raises(RunnerError) as e:
-            call(package, granted, trigger="ok", ticket=t)
+            propose(package, granted, trigger="ok", ticket=t)
         assert e.value.code == "addon.bad_request"
 
 
@@ -308,7 +314,7 @@ def test_a_hand_built_package_with_a_path_escape_is_refused_before_anything_is_w
         files = {**real.files, evil: b"x"}
         forged = Package(files, package_digest(files))
         with pytest.raises(RunnerError) as e:
-            call(forged, granted_for(forged), trigger="ok", ticket=TICKET)
+            propose(forged, granted_for(forged), trigger="ok", ticket=TICKET)
         assert e.value.code == "addon.digest_mismatch"
     assert not (tmp_path / "escape.py").exists()
 
@@ -319,7 +325,7 @@ def test_the_digest_field_of_a_package_is_not_trusted(pkg):
     _, package, granted = pkg
     lying = Package({**package.files, "addon.py": b"print('evil')"}, package.digest)  # old digest, new bytes
     with pytest.raises(RunnerError) as e:
-        call(lying, granted, trigger="ok", ticket=TICKET)
+        propose(lying, granted, trigger="ok", ticket=TICKET)
     assert e.value.code == "addon.digest_mismatch"
 
 

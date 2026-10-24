@@ -412,3 +412,59 @@ def test_status_error_catalog():
     with pytest.raises(HostError) as error:
         rc.parse(b'{"ok":false,"code":"records.busy","message":"busy"}', 9, status=True)
     assert error.value.exit == 9 and error.value.error["retryable"]
+
+
+@pytest.mark.parametrize(
+    "action,url,command",
+    [
+        ("init", None, ["init"]),
+        (
+            "mark",
+            "https://git.example.test/r",
+            ["remote-private", "--yes", "--expect-url=https://git.example.test/r"],
+        ),
+        ("unmark", None, ["remote-private", "--off"]),
+        (
+            "push-initial",
+            "https://git.example.test/r",
+            ["push", "--initial", "--yes", "--expect-url=https://git.example.test/r"],
+        ),
+    ],
+)
+def test_c15_admin_actions_are_fixed_argv(spawn, monkeypatch, tmp_path, action, url, command):
+    calls, processes, kills = spawn
+    processes.append(Process(b'{"ok":true}\n'))
+    monkeypatch.setattr(rc.os, "environ", {"HOME": str(tmp_path), "PATH": "/bin"})
+    assert rc.RecordsChild().run(WS, action=action, url=url, state=tmp_path / "s", run_dir=tmp_path / "r") == {
+        "ok": True
+    }
+    assert calls[0][0] == ([sys.executable, "-I", "-m", "orch.records", *command, "--workspace", WS, "--json"],)
+
+
+@pytest.mark.parametrize(
+    "action,url",
+    [
+        ("shell", None),
+        ("init", "https://a.example/r"),  # an action that takes no address is given none
+        ("mark", None),  # an action that needs the reviewed address cannot run without it
+        ("push-initial", None),
+        ("mark", "a b"),
+        ("mark", "a\nb"),
+        ("mark", "x" * 2049),
+        ("mark", "x‮y"),
+    ],
+)
+def test_c15_admin_actions_refuse_anything_else(spawn, action, url):
+    calls, processes, _ = spawn
+    with pytest.raises(HostError) as info:
+        rc.RecordsChild().run(WS, action=action, url=url)
+    assert info.value.error["code"] == "invalid.input" and not calls
+
+
+def test_c15_an_address_that_starts_with_a_dash_is_one_argv_element(spawn, monkeypatch, tmp_path):
+    calls, processes, _ = spawn
+    processes.append(Process(b'{"ok":true}\n'))
+    monkeypatch.setattr(rc.os, "environ", {"HOME": str(tmp_path), "PATH": "/bin"})
+    rc.RecordsChild().run(WS, action="mark", url="-oProxyCommand=x", state=tmp_path / "s", run_dir=tmp_path / "r")
+    argv = calls[0][0][0]
+    assert "--expect-url=-oProxyCommand=x" in argv and "-oProxyCommand=x" not in argv

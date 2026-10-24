@@ -81,6 +81,8 @@ _WORKSPACE_ONLY = frozenset(
         "device.added",
         "device.removed",
         "device.revoked",
+        "device.exposed",
+        "device.rotated",
         "settings.changed",
         "grant.issued",
         "grant.requested",
@@ -92,7 +94,6 @@ _WORKSPACE_ONLY = frozenset(
         "hub.joined",
         "hub.left",
         "hub.pinned",
-        "relay.reopened",
     }
 )
 _BOTH_LOGS = frozenset({"policy.changed", "projection.repaired", "restore", "invalid.acknowledged"})
@@ -579,6 +580,7 @@ def _check_manifest(obj: dict[str, Any]) -> None:
             raise SchemaError("addon-manifest", where, f"heading {h!r} is taken (a core section or another section)")
         seen_headings.add(heading_key(h))
     _check_manifest_needs(obj)
+    _check_manifest_api_1_1(obj)
     line = obj.get("agents_md", "")
     if line and (not _AGENTS_LINE.fullmatch(line) or _AGENTS_BAD & set(line)):
         raise SchemaError(
@@ -586,6 +588,36 @@ def _check_manifest(obj: dict[str, Any]) -> None:
             "/agents_md",
             "printable ASCII, starts with a letter or digit, none of < > [ ] ` * |, no list marker",
         )
+
+
+def _check_manifest_api_1_1(obj: dict[str, Any]) -> None:
+    """addon-api 1.1 (section 8 of ``docs/architecture/addon-api.md``): ``{python}`` is the whole of ``entry.cmd[0]``
+    and nowhere else; ``settings.schema`` is in the closed subset."""
+    from orch.addons.manifest import _api_in_range
+    from orch.addons.settings_schema import SettingsSchemaError, check_settings_schema
+
+    uses = (
+        [c for c in obj.get("capabilities", []) if c in ("choose_model", "credential")]
+        + (["settings"] if "settings" in obj else [])
+        + (["{python}"] if obj["entry"]["cmd"][0] == "{python}" else [])
+    )
+    if uses and _api_in_range((1, 0), obj.get("api", ">=1.0,<2")) is not False:
+        raise SchemaError(
+            "addon-manifest", "/api", f"{uses[0]} needs add-on API 1.1: set api to a range that excludes 1.0"
+        )
+    for i, arg in enumerate(obj["entry"]["cmd"]):
+        if "{python}" in arg and (i != 0 or arg != "{python}"):
+            raise SchemaError(
+                "addon-manifest", _pointer(["entry", "cmd", i]), "{python} is only allowed as the whole of cmd[0]"
+            )
+    if "settings" in obj:
+        flagged = suspicious(obj["settings"]["title"])
+        if flagged:
+            raise SchemaError("addon-manifest", "/settings/title", "invisible character in title")
+        try:
+            check_settings_schema(obj["settings"]["schema"])
+        except SettingsSchemaError as e:
+            raise SchemaError("addon-manifest", _pointer(["settings", "schema", *e.path]), str(e)) from None
 
 
 _AGENTS_LINE = re.compile(r"(?![0-9]+[.)] )[A-Za-z0-9][\x20-\x7e]{0,199}(?![\s\S])")
@@ -809,6 +841,25 @@ def _ev_device_added(obj: dict[str, Any], actor: dict[str, Any]) -> None:
     _check_cert("event", ("cert",), obj["cert"])
 
 
+def _ev_device_exposed(obj: dict[str, Any], actor: dict[str, Any]) -> None:
+    if obj["device"] != actor.get("device"):
+        raise SchemaError("event", "/device", "a device marks itself: device must be the actor's device")
+
+
+def _ev_device_rotated(obj: dict[str, Any], actor: dict[str, Any]) -> None:
+    """#1097: the new device signs its own rotation; every id the three signed parts name is the same one."""
+    o, r = obj["cert"]["o"], obj["rotation"]["o"]
+    if obj["device"] != "d_" + o["device_id"] or obj["device"] != actor.get("device"):
+        raise SchemaError("event", "/device", "device must be the certificate's device and the actor's device")
+    if obj["old"] == obj["device"]:
+        raise SchemaError("event", "/old", "a device cannot replace itself")
+    if "p_" + o["person_id"] != actor.get("id") or r["person_id"] != o["person_id"]:
+        raise SchemaError("event", "/cert/o/person_id", "the rotation is for the actor's person")
+    if r["new"] != o["device_id"] or "d_" + r["old"] != obj["old"]:
+        raise SchemaError("event", "/rotation/o", "rotation must name this old and new device")
+    _check_cert("event", ("cert",), obj["cert"])
+
+
 def _ev_device_revoked(obj: dict[str, Any], actor: dict[str, Any]) -> None:
     o = obj["revocation"]["o"]
     if obj["reason"] != o["reason"]:
@@ -881,6 +932,8 @@ _EVENT_CHECKS = {
     "workspace.created": _ev_workspace_created,
     "member.added": _ev_member_added,
     "device.added": _ev_device_added,
+    "device.exposed": _ev_device_exposed,
+    "device.rotated": _ev_device_rotated,
     "device.revoked": _ev_device_revoked,
     "grant.issued": _ev_grant_issued,
 }

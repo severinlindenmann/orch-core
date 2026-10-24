@@ -2,7 +2,6 @@ import { screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api, mockStore, resetMockStoreForTests } from '@/api/client'
 import { ApiError } from '@/api/types'
-import { installAndGrant } from '@/test/installAddon'
 import { renderApp } from '@/test/renderApp'
 
 afterEach(() => vi.restoreAllMocks())
@@ -92,21 +91,22 @@ describe('Settings', () => {
     expect(panel.closest('tr')?.previousElementSibling).toBe(screen.getByRole('row', { name: /^Estimate \d/ }))
     await user.click(within(panel).getByRole('button', { name: 'Cancel' }))
     await waitFor(() => expect(screen.queryByRole('group', { name: /Estimate settings/ })).toBeNull())
-    expect(screen.getByRole('heading', { name: 'Addons' })).toBeInTheDocument()
-    expect(screen.queryByRole('link', { name: /Back to Addons/ })).toBeNull()
+    // closing the panel and re-drawing the list are separate renders: wait for the list (CI flaked on a sync read)
+    expect(await screen.findByRole('heading', { name: 'Addons' })).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByRole('link', { name: /Back to Addons/ })).toBeNull())
     await waitFor(() => expect(within(screen.getByRole('row', { name: /^Estimate \d/ })).getByRole('button', { name: 'Settings' })).toHaveFocus())
   })
   it('the footer Save is the form submit (form=id), and the form draws no button of its own', async () => {
-    const { user } = renderApp('/settings/addon/models', { setup: (st) => installAndGrant(st, st.workspaces[0].id, 'models') })
-    const field = await screen.findByRole('textbox', { name: 'Standard model' })
+    const { user } = renderApp('/settings/addon/usage')
+    const field = await screen.findByLabelText(/Monthly budget/)
     expect(screen.getAllByRole('button', { name: 'Save' })).toHaveLength(1) // the form draws no button of its own
-    expect(screen.getByRole('button', { name: 'Save' })).toHaveAttribute('form', 'addon-settings-models')
+    expect(screen.getByRole('button', { name: 'Save' })).toHaveAttribute('form', 'addon-settings-usage')
     await user.clear(field)
-    await user.type(field, 'haiku') // Enter in a field is native browser behaviour (jsdom/user-event does not follow `form=`): checked in the browser
+    await user.type(field, '75') // Enter in a field is native browser behaviour (jsdom/user-event does not follow `form=`): checked in the browser
     await user.click(screen.getByRole('button', { name: 'Save' }))
-    await waitFor(async () => expect(((await api.getAddonState(mockStore.workspaces[0].id, 'models')).settings as { standard: string }).standard).toBe('haiku'))
+    await waitFor(async () => expect(((await api.getAddonState(mockStore.workspaces[0].id, 'usage')).settings as { budget_chf: number }).budget_chf).toBe(75))
     // A successful save closes the panel and says so (the toast outlives the route change); no "discard?" question.
-    await waitFor(() => expect(screen.queryByRole('region', { name: /Standard model|models settings/i })).toBeNull())
+    await waitFor(() => expect(screen.queryByRole('region', { name: /Monthly budget|usage settings/i })).toBeNull())
     expect(await screen.findByText(/settings saved$/)).toBeInTheDocument()
     expect(screen.queryByRole('dialog', { name: 'Discard unsaved changes?' })).toBeNull()
     expect(screen.getByRole('heading', { name: 'Addons' })).toBeInTheDocument()
@@ -164,15 +164,6 @@ describe('Settings', () => {
     renderApp('/settings/general')
     expect(await screen.findByText('6f1c0d2e-8b4a-4e1f-9c3d-2a7b5e9f0c11')).toBeInTheDocument()
     expect(await screen.findByText(/epoch 1/i)).toBeInTheDocument() // the identity loads after the workspace id
-  })
-  it('archiving needs the prefix and then the mock refuses', async () => {
-    const { user } = renderApp('/settings/general')
-    await user.click(await screen.findByRole('button', { name: 'Archive workspace' }))
-    const confirm = screen.getByRole('button', { name: 'Archive' })
-    expect(confirm).toBeDisabled()
-    await user.type(screen.getByLabelText(/Type DEMO to confirm/), 'DEMO')
-    await user.click(confirm)
-    expect(await screen.findByText(/Archiving is CLI-only: `orch workspace archive`/)).toBeInTheDocument()
   })
   it('adds a member after signing', async () => {
     const { user } = renderApp('/settings/members')
@@ -274,8 +265,6 @@ describe('Settings', () => {
   it('a maintainer sees why controls are disabled', async () => {
     renderApp('/settings/general', { viewer: 'p_mara' })
     expect((await screen.findAllByText('Only owners can save.')).length).toBe(3) // the name, the icon and the agent grant length
-    expect(screen.getByRole('button', { name: /Export workspace/ })).toBeDisabled()
-    expect(screen.getByText('Only owners can export.')).toBeInTheDocument()
   })
   it('/settings/addons/<name> redirects to the addon settings route', async () => {
     renderApp('/settings/addons/estimate')

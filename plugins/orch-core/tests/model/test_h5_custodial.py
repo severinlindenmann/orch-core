@@ -272,6 +272,12 @@ def test_settings_changed_is_admin_only_and_sets_the_three_keys(w):
     assert (s["grant_hours"], s["claim_ttl_min"]) == (72, 120)
 
 
+def test_a_hub_admin_never_sets_add_on_settings(w):  # G6: the add-on settings key stays off the hub channel
+    r = hub(w, "settings.changed", U1, set={"addons": {"demo": {"mode": "fast"}}})
+    assert r is not None and r.code == Code.SETTINGS_INVALID
+    assert "addons" not in w.state()._core.ws.settings
+
+
 def test_replay_is_the_same_as_the_admission(w):
     req = request(w)
     admit_host(w, host_issue(w, req))
@@ -285,7 +291,7 @@ def test_replay_is_the_same_as_the_admission(w):
     [
         ("sign_methods", ["terminal", "hub"]),
         ("repos", {"x": {"path": "../x"}}),
-        ("models", None),
+        ("addons", {"wiki": None}),
         ("publish", None),
         ("icon", None),
     ],

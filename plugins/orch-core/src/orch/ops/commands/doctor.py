@@ -31,7 +31,7 @@ def _handle(ctx: Context, args: dict[str, Any]) -> Result:
     cfg = ws.config  # as discovery read it; then the root must still be the directory found
     root = ws.verify_root()
     if cfg is None:
-        raise OrchError("not_found", "config.json of the workspace is missing or unreadable", hint="orch init")
+        raise OrchError("not_found", "config.json of the workspace is missing or unreadable", hint="orch setup")
     wid = cfg["workspace"]["id"]
 
     def run() -> list[health.Finding]:
@@ -88,10 +88,10 @@ OP = operation(
     "Verify the logs, signatures, checkpoints, pins and files; reports and changes nothing unless --repair, which "
     "only does the safe repairs through the store.",
     who="read",
-    props={"repair": B("do the safe repairs: answer external edits, rebuild the index, drop dead init keys")},
+    props={"repair": B("do the safe repairs: answer external edits, rebuild the index")},
     pre=("workspace_exists",),
     text="ok doctor {problems}\nnext: {next}",
     data=obj({"problems": INT, "findings": arr(obj({"where": STR, "what": STR, "level": STR}))}),
-    errors=(err("not_found", "run orch init in a workspace", ["orch", "describe", "init"]),),
+    errors=(err("not_found", "run it in a workspace folder (orch setup makes one)", ["orch", "help"]),),
     handler=_handle,
 )

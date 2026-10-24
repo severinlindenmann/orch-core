@@ -1,6 +1,7 @@
 import { activityQuery, type ActivityPage, type ActivityParams } from './activity'
 import { uploadFor, type ArtifactImage, type PastedRef } from './pasteImage'
 import type { Transport } from './transport'
+import type { MarketList, MarketInstalled, StageInput, StageResult } from './market'
 import {
   ApiError,
   type ActionRequest,
@@ -40,7 +41,7 @@ import {
 } from './types'
 import type { MandatesPreviewRequest, MandatesPreviewState } from './mandatesPreview'
 import type { HandoffAction, HandoffRequest, HandoffState } from './handoff'
-import type { ClickAction, ClickCard, ClickState, ClickPrepared, ClickSigned, ClickSwitch, ClickViewAnswer } from './click'
+import type { ClickAction, ClickCard, ClickState, ClickPrepared, ClickSigned, ClickSwitch, ClickViewAnswer, CustodySealOffer, RotateBegin } from './click'
 import type { HostGrant, HostReaders, HostSettings, RosterMember } from './settings'
 import type { QuickPage, QuickParams, RecordsRun, RecordsStatus } from './quickRecords'
 import { connectionInfo, connectionList, doctorReport, secretsFileInfo, skillInfo, skillList, type SkillGrantRequest } from './connections'
@@ -138,19 +139,24 @@ export function createApi(transport: Transport) {
     /** R3 part B: the bytes of a picture file of a ticket (the page hashes them before showing them). */
     getArtifactImage: (ws: string, key: string, name: string) => call<{ image: ArtifactImage | null }>('GET', `/api/w/${ws}/tickets/${key}/artifacts/${encodeURIComponent(name)}`),
     viewClick: (ws: string, requestId: string) => call<ClickViewAnswer>('POST', `/api/w/${ws}/click/view`, { request_id: requestId }),
-    signClick: (ws: string, requestId: string, viewDigest: string, word?: string) =>
-      call<ClickSigned>('POST', `/api/w/${ws}/click/sign`, { request_id: requestId, view_digest: viewDigest, ...(word === undefined ? {} : { word }) }),
+    signClick: (ws: string, requestId: string, viewDigest: string, revealKey?: string, sealed?: Record<string, import('./sealed').Envelope>) =>
+      call<ClickSigned>('POST', `/api/w/${ws}/click/sign`, { request_id: requestId, view_digest: viewDigest, ...(revealKey ? { reveal_key: revealKey } : {}), ...(sealed ? { sealed } : {}) }),
     stateClick: (ws: string, requestId: string) => call<ClickState>('POST', `/api/w/${ws}/click/state`, { request_id: requestId }),
     hubSign: (ws: string, body: import('./hubsign').HubSignRequest) => call<import('./hubsign').HubSignInfo>('POST', `/api/w/${ws}/hubsign`, body),
-    /** V3 A7: the hub pages' reads and the Terminal command of a change (the server signs nothing and sends no hub write). */
+    /** V3 A7: the hub pages' reads and the terminal command of a change (the server signs nothing and sends no hub write). */
     getHubStatus: (ws: string) => call<import('./hub').HubStatus>('GET', `/api/w/${ws}/hub`),
     getHubShare: (ws: string) => call<import('./hub').HubShare>('GET', `/api/w/${ws}/hub/share`),
     getHubPreview: (ws: string, body: { add?: import('./hub').HubRule; remove?: import('./hub').HubRule }) =>
       call<import('./hub').HubPreview>('POST', `/api/w/${ws}/hub/share/preview`, body),
     getHubCommand: (ws: string, body: import('./hub').HubCommandRequest) => call<import('./hub').HubCommand>('POST', `/api/w/${ws}/hub/command`, body),
+    connectHub: (ws: string, body: import('./hub').HubConnectRequest) => call<import('./hub').HubConnected>('POST', `/api/w/${ws}/hub/connect`, body),
     cancelClick: (ws: string, requestId: string) => call<{ id: string; state: string }>('POST', `/api/w/${ws}/click/cancel`, { request_id: requestId }),
     clickStatus: (ws: string) => call<ClickCard>('GET', `/api/w/${ws}/click/status`),
     switchClick: (ws: string, body: ClickSwitch) => call<ClickCard>('POST', `/api/w/${ws}/click/custody`, body),
+    custodySeal: (ws: string) => call<CustodySealOffer>('POST', `/api/w/${ws}/click/custody/seal`, {}),
+    rotateSeal: (ws: string) => call<RotateBegin>('POST', `/api/w/${ws}/click/rotate/seal`, {}),
+    rotateKey: (ws: string, body: { request_id: string; view_digest: string; sealed: Record<string, import('./sealed').Envelope> }) =>
+      call<{ done: true } & ClickCard>('POST', `/api/w/${ws}/click/rotate`, body),
     cancelHandoff: (ws: string, id: string) => call<{ id: string; state: string }>('DELETE', `/api/w/${ws}/handoff/${id}`),
     /** Reduced settings of a real host (M4): what the host says, `available: false` without `settings/1`. */
     phoneAvailable: (ws: string) => call<{ phones: number }>('GET', `/api/w/${ws}/phone/available`),
@@ -166,8 +172,15 @@ export function createApi(transport: Transport) {
     getReaders: (ws: string) => call<HostReaders>('GET', `/api/w/${ws}/readers`),
     /** `active: false` adds the grants that ended. An owner is given every entry, anyone else their own. */
     listHostGrants: (ws: string, active = true) => call<HostGrant[]>('GET', `/api/w/${ws}/grants?active=${active}`),
-    /** Quick tasks of a real host (M6): `available: false` without `quick/1`. The limits are the browser's own setting. */
+    /** Quick tasks of a real host (M6): `available: false` without `quick/1`. */
     getQuick: (ws: string, _p: QuickParams = {}) => call<QuickPage>('GET', `/api/w/${ws}/quick`),
+    /** Marketplace reads and owner-only writes; approval uses the terminal hand-off. */
+    marketList: (ws: string) => call<MarketList>('GET', `/api/w/${ws}/market`),
+    marketInstalled: (ws: string) => call<MarketInstalled>('GET', `/api/w/${ws}/market/installed`),
+    marketStage: (ws: string, input: StageInput) => call<StageResult>('POST', `/api/w/${ws}/market/stage`, input),
+    marketUnstage: (ws: string, stage: string) => call<{ removed: boolean }>('DELETE', `/api/w/${ws}/market/stage/${encodeURIComponent(stage)}`),
+    marketUninstall: (ws: string, name: string) => call<{ name: string; removed: boolean }>('POST', `/api/w/${ws}/market/uninstall`, { name }),
+    marketRefresh: (ws: string, input: { url?: string } = {}) => call<unknown>('POST', `/api/w/${ws}/market/refresh`, input),
     /** The Activity page of a real host: `available: false` without `activity/1`. */
     getActivity: (ws: string, p: ActivityParams = {}) => call<ActivityPage>('GET', `/api/w/${ws}/activity?${activityQuery(p)}`),
     /** Records of a real host (M6): the host's status for owners and maintainers; `available: false` without `records/1`. */
@@ -175,6 +188,10 @@ export function createApi(transport: Transport) {
     getRecords: (ws: string) => call<RecordsStatus>('GET', `/api/w/${ws}/records`),
     recordsCommit: (ws: string, push: boolean) => call<RecordsRun>('POST', `/api/w/${ws}/records/commit`, { push }),
     recordsAutoOff: (ws: string) => call<RecordsRun>('POST', `/api/w/${ws}/records/auto-off`),
+    /** #1198 C15: the admin clicks. The address is the one the review showed; the tool refuses if git now resolves to another. */
+    recordsInit: (ws: string) => call<RecordsRun>('POST', `/api/w/${ws}/records/init`, {}),
+    recordsMark: (ws: string, url: string | null) => call<RecordsRun>('POST', `/api/w/${ws}/records/remote`, url === null ? { on: false } : { on: true, url }),
+    recordsPushInitial: (ws: string, url: string) => call<RecordsRun>('POST', `/api/w/${ws}/records/push-initial`, { url }),
     /** Dry run of a code review policy: the tickets it would move back to testing or to done (owners). */
     previewCodeReview: (ws: string, req: { count: number; applies: CodeReviewApplies }) =>
       call<{ back: { keys: string[]; hidden: number }; done: { keys: string[]; hidden: number } }>('POST', `/api/workspaces/${ws}/code-review-preview`, req),

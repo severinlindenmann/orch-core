@@ -51,7 +51,8 @@ def test_click_and_convenience_never_sign_it():
     from orch.click import protocol
 
     for op in ("hub.join", "hub.mode", "hub.leave"):
-        assert protocol.op_class(op) == "terminal"  # not a click op, not a typed-word op: terminal only
+        # #1198 C10: a click op only together with the sealed backup key (the signer's check_prepared enforces it)
+        assert protocol.op_class(op) == "click" and op in protocol.SEALED_OPS
 
 
 def test_join_selective_signs_hub_joined_and_adds_no_member(human, served):
@@ -237,6 +238,7 @@ JOINED = {
     "mode": "selective",
     "binding_seq": 1,
     "aliases": [],
+    "owner_proof": None,  # #1198 C9: the signer fills it after the review
 }
 
 
@@ -256,8 +258,12 @@ def test_the_signer_refuses_what_hub_join_must_not_sign():
         signer._person_op(_prepared("hub.join", JOINED, log="DEMO-1"))
     with pytest.raises(signer.SignerRefused):  # another op cannot carry the event either
         signer._person_op(_prepared("settings.set", JOINED))
-    left = {"type": "hub.left", "hub_id": HUB_ID, "binding_seq": 1}
+    left = {"type": "hub.left", "hub_id": HUB_ID, "binding_seq": 1, "owner_proof": None}
     signer._person_op(_prepared("hub.leave", left))
+    with pytest.raises(signer.SignerRefused):  # a prepared event never carries a proof: the signer makes it
+        signer._person_op(_prepared("hub.leave", {**left, "owner_proof": {"o": {}, "sig": "x"}}))
+    with pytest.raises(signer.SignerRefused):  # and never lacks the member
+        signer._person_op(_prepared("hub.leave", {k: v for k, v in left.items() if k != "owner_proof"}))
     with pytest.raises(signer.SignerRefused):
         signer._person_op(_prepared("hub.leave", {**left, "extra": 1}))
     with pytest.raises(signer.SignerRefused):
@@ -331,7 +337,8 @@ def test_join_then_connect_sends_the_selective_binding_and_never_a_key(human, se
     assert got["status"] == "bound" and got["binding_seq"] == 1 and got["hub_id"] == HUB_ID
     assert stub.ops() == ["join"]
     body = stub.sent[0]["o"]["body"]
-    assert set(body) == {"invite", "card", "pk_pub", "binding"}
+    assert set(body) == {"invite", "card", "pk_pub", "binding", "owner_proof"}
+    assert body["owner_proof"]["o"]["op"] == "hub.join"  # #1198 C9: the proof the signed log holds goes to the hub
     b = body["binding"]["o"]
     assert (b["mode"], b["binding_seq"], b["dev"], b["hub_id"]) == ("selective", 1, True, HUB_ID)
     keys = set()
@@ -442,20 +449,6 @@ def test_a_leave_before_any_connect_has_nothing_to_tell_the_hub(human, served, s
     assert got["unbound"] is False and stub.sent == []
 
 
-def test_a_convenience_key_never_signs_a_hub_op(human, served):
-    from orch.host import convenience
-
-    for op in ("hub.join", "hub.leave"):
-        with pytest.raises(Exception) as e:
-            convenience.refuse_hub_op(op, "convenience")
-        assert getattr(e.value, "code", "") == "sign.convenience_unavailable"
-        convenience.refuse_hub_op(op, "passphrase")  # the owner's key at the terminal
-    convenience.refuse_hub_op("settings.set", "convenience")  # other ops keep their own rules
-    body = {"op": "hub.join", "args": join_args(), "signer": {**human.signer, "auth": "convenience"}}
-    assert err(human.c.req("human.prepare", body)) == "sign.convenience_unavailable"
-    assert hub_state(served)[0] == {}
-
-
 def test_same_hub_rejoin_delivers_the_owed_unbound_first_then_binds(human, served, stub, monkeypatch):
     from tests.host.dispatch_helpers import ok
 
@@ -506,19 +499,25 @@ def test_a_crash_between_leave_and_unbind_still_lets_the_rejoin_through(human, s
 # --- C2b: the full join through the host ------------------------------------------------------------------------------
 
 
+class _DeferredEpochs(hubops._Epochs):
+    """A rotation is only requested through the gate: it stays owed until the key store makes the epoch."""
+
+    def rotate(self) -> None:
+        self._mk.raise_gate("", "rotate")
+
+
 @pytest.fixture
 def keystore(monkeypatch, served, tmp_path):
     """A membership key store for the served workspace with epoch 1 committed, standing in for the relay's."""
-    from orch.relay.r6.keystore import MembershipKeys, R6Gate
-    from tests.relay import r6kit
+    from orch.identity.epochs import MembershipKeys
+    from tests.wsproto import r6kit
 
     mk = MembershipKeys(tmp_path / "membership", served.wid, now_ms=lambda: 1_790_000_000_000)
-    R6Gate(mk).install(lambda: r6kit.KitStore())
     r6kit.rotate(mk)
     monkeypatch.setattr(
         hubops,
         "epochs_for",
-        lambda service, create=False: hubops._Epochs(mk, None, lambda: hubops._sealed_epoch(service)),
+        lambda service, create=False: _DeferredEpochs(mk, "a" * 32, lambda: hubops._sealed_epoch(service)),
     )
     yield mk
     mk.close()
@@ -593,7 +592,7 @@ def test_a_connect_without_an_invite_never_starts_a_join(human, served, stub, ke
 
 def test_leave_from_full_through_the_host_requests_the_rotation_and_keeps_it_owed(human, served, stub, keystore):
     from tests.host.dispatch_helpers import ok
-    from tests.relay import r6kit
+    from tests.wsproto import r6kit
 
     c = served.client()
     human.run("hub.join", join_args(mode="full"))
@@ -621,7 +620,7 @@ def test_leave_from_full_through_the_host_requests_the_rotation_and_keeps_it_owe
 def test_a_full_rejoin_over_an_unended_binding_still_owes_the_rotation(human, served, stub, keystore):
     """The leave is logged but `hub.unbind` never ran: the next connect must not re-seal the SAME epoch."""
     from tests.host.dispatch_helpers import ok
-    from tests.relay import r6kit
+    from tests.wsproto import r6kit
 
     c = served.client()
     human.run("hub.join", join_args(mode="full"))
@@ -640,7 +639,7 @@ def test_a_full_rejoin_over_an_unended_binding_still_owes_the_rotation(human, se
 
 def test_a_selective_rejoin_over_an_unended_full_binding_owes_the_rotation(human, served, stub, keystore):
     from tests.host.dispatch_helpers import ok
-    from tests.relay import r6kit
+    from tests.wsproto import r6kit
 
     c = served.client()
     human.run("hub.join", join_args(mode="full"))
@@ -657,7 +656,7 @@ def test_a_selective_rejoin_over_an_unended_full_binding_owes_the_rotation(human
 
 def test_status_warns_when_a_routine_rotation_was_not_resealed(human, served, stub, keystore):
     from tests.host.dispatch_helpers import ok
-    from tests.relay import r6kit
+    from tests.wsproto import r6kit
 
     c = served.client()
     human.run("hub.join", join_args(mode="full"))
@@ -670,34 +669,41 @@ def test_status_warns_when_a_routine_rotation_was_not_resealed(human, served, st
     assert _unwrap([m for m in stub.sent if m["o"]["op"] == "wk_seal"][1], served.wid, 2) == keystore.wk(2)
 
 
-def test_epochs_for_sees_a_relay_linked_after_the_first_open(served, tmp_path, monkeypatch):
-    from orch.host import relayr6
-
-    linked = {"v": False}
-    monkeypatch.setattr(relayr6, "_previously_linked", lambda service: linked["v"])
-    monkeypatch.setattr(relayr6, "membership_path", lambda service: tmp_path / "membership")
-    from orch.crypto.encoding import unb64u
-    from orch.host import relayr3
-
-    monkeypatch.setattr(relayr3, "owner_pk_pub", lambda service: unb64u(V["keys"]["pk_alice"]["pub"], 65))
-    svc = served.service
-    first = hubops.epochs_for(svc, create=True)
-    assert first is not None and first._local_owner is not None  # relay-less: local epochs allowed
-    linked["v"] = True
-    second = hubops.epochs_for(svc, create=True)
-    assert second is not None and second._local_owner is None  # now the relay path's; never a local epoch
-    relayr6.close(svc)
+# --- #1198 C9: the proof ran out before the hub took the join -------------------------------------------------------
 
 
-def test_linking_a_relay_is_refused_for_a_workspace_with_local_epochs(served):
-    from orch.host import relaylink
-    from orch.host.errors import HostError
+class ExpiringHub(StubHub):
+    """A hub that refuses the link ``join`` with ``proof_expired`` while ``expired`` is set."""
 
-    svc = served.service
-    mark = relaylink.local_epochs_path(svc.state_dir, svc.workspace_id)
-    mark.parent.mkdir(parents=True, exist_ok=True)
-    mark.write_text("{}")
-    with pytest.raises(HostError) as e:
-        with relaylink.link_reservation(svc):
-            pass
-    assert e.value.code == "relay.local_epochs" and "H5" in str(e.value)
+    expired = True
+
+    def send(self, message):
+        from tests.hub.fake import sign_with
+        from tests.hub.vec import private_key
+
+        reply = super().send(message)
+        m = message["o"]
+        if self.expired and m["op"] == "join":
+            o = {**reply["o"], "body": {"error": "proof_expired"}}
+            return sign_with(private_key("hk_op"), "sig_hub_route", o)
+        return reply
+
+
+def test_an_expired_proof_at_connect_leaves_a_way_out_leave_then_join_again(human, served, monkeypatch, stub):
+    from tests.host.dispatch_helpers import ok
+
+    hub = ExpiringHub()
+    monkeypatch.setattr(hubops, "TRANSPORT", lambda service, hub_id: hub)
+    c = served.client()
+    human.run("hub.join", join_args())
+    res = c.req("hub.connect", connect_args(), idem=True)
+    assert err(res) == "hub.refused"
+    assert "proof_expired" in res["error"]["message"] and "orch hub leave" in res["error"]["hint"]
+    assert hub_state(served)[0]["status"] == "joined"  # the log says joined, the hub never bound
+    assert err(human.prepare_res("hub.join", join_args())) == "hub.already_joined"  # so a second join is refused
+    human.run("hub.leave", {})  # the way out: leave (works with the hub down)
+    assert hub_state(served)[0]["status"] == "left"
+    hub.expired = False
+    human.run("hub.join", join_args())  # a new join: a new proof, binding 2
+    got = ok(c.req("hub.connect", connect_args(), idem=True))["data"]
+    assert got["status"] == "bound" and got["binding_seq"] == 2

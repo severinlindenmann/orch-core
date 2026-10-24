@@ -121,42 +121,12 @@ def _parser() -> argparse.ArgumentParser:
     unreg.add_argument("--state", type=Path)
     unreg.add_argument("--run", type=Path)
     conv = sub.add_parser("convenience", help="click-to-sign per workspace (orch-v2-host §0.8.6); off by default")
-    conv.add_argument("switch", choices=("on", "off", "show"))
+    conv.add_argument("switch", choices=("on", "off", "show", "idle"))
+    conv.add_argument(
+        "--hours", type=int, help="idle: hours without a click signature before One click switches itself off (1-168)"
+    )
     conv.add_argument("--workspace", required=False, help="workspace id or prefix (on/off)")
     conv.add_argument("--state", type=Path)
-    relay = sub.add_parser(
-        "relay", help="the relay worker of a workspace: stop keeps it stopped (also across restarts), start clears that"
-    )
-    relay.add_argument("action", choices=("stop", "start", "unlink", "pair", "primary", "genesis-pin", "link"))
-    relay.add_argument("sub", nargs="?", help="pair: list|cancel|abandon (none: make an offer); primary: set")
-    relay.add_argument("--workspace", required=True, help="workspace id or prefix")
-    relay.add_argument("--state", type=Path)
-    relay.add_argument("--run", type=Path)
-    # R6c-2 (orch-v2-host 11A.15.9): relay pairing, human only
-    relay.add_argument("--scopes", help="pair: the phone's scopes (default look,decide; operate and type refused)")
-    relay.add_argument("--ttl", help="pair: the offer's life, at most 10m")
-    relay.add_argument("--json", action="store_true", help="pair: one JSON object per state change")
-    relay.add_argument("--json-fd", type=int, help="pair --json: write to this descriptor when stdout is no TTY")
-    relay.add_argument("--no-qr", action="store_true")
-    relay.add_argument("--resume", action="store_true", help="pair: attach to --offer (made here or by the dashboard)")
-    relay.add_argument("--offer", help="pair: the offer id")
-    relay.add_argument(
-        "--primary",
-        choices=("inline", "external"),
-        help="pair: who signs the phone's certificate (default inline: this Mac, with your recovery code)",
-    )
-    relay.add_argument(
-        "--relay",
-        help="link: the relay origin, scheme://host[:port], stored verbatim (default: the registered primary's relay)",
-    )
-    relay.add_argument("--max-publication-bytes", type=int, help="link: the checkpoint cap C (1 MiB to 1 GiB)")
-    relay.add_argument("--ca-file", help="link: a PEM file of the relay's CA (a private relay)")
-    relay.add_argument("--proxy", help="link: an http proxy URL")
-    relay.add_argument(
-        "--cert",
-        help="primary set: the primary's certificate file (JSON); default: the one orch keys primary init made",
-    )
-    relay.add_argument("--label", help="primary set: your name for the primary; default: the one chosen at init")
     rdr = sub.add_parser(
         "readers",
         help="reader records of a workspace (orch-v2-host §0.8.6 item 9.10): reset drops them all (fail closed), the "
@@ -279,8 +249,6 @@ def main(argv: list[str], *, env: Mapping[str, str] | None = None, out: TextIO |
             return 0
         if args.cmd == "convenience":
             return _convenience(args, env, out)
-        if args.cmd == "relay":
-            return _relay(args, env, out)
         if args.cmd == "readers":
             return _readers(args, env, out)
         if args.cmd == "enable":
@@ -694,7 +662,7 @@ def ensure_service(state: Path, env: Mapping[str, str], run: Path | None, *, dev
 
 def default_peers(state: Path, root: Path, env: Mapping[str, str]) -> dict[str, dict[str, str]]:
     """``--peer`` left out: this UID as the person whose device key for the workspace is on this machine (the one
-    ``orch init`` made). The host checks the mapping again (a member with a valid ``decide`` device, F8)."""
+    ``orch setup`` made). The host checks the mapping again (a member with a valid ``decide`` device, F8)."""
     from orch.identity import device_ref
     from orch.ops import human
     from orch.ops.caps import Files
@@ -845,6 +813,17 @@ def _convenience(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) 
     if len(match) != 1:
         return write_error(out, False, "not_found", f"no single registered workspace {args.workspace}")
     wid = match[0]["workspace_id"]
+    if args.switch == "idle":  # #1198 C17: the idle limit; takes effect at the next read
+        if args.hours is None:
+            return write_error(out, False, "invalid.input", "--hours is required (1 to 168)")
+        try:
+            convenience.set_idle_hours(state, wid, args.hours, uid)
+        except HostError as exc:
+            return write_error(out, False, exc.code, exc.message, hint=exc.hint)
+        out.write(
+            f"One click switches itself off for {match[0].get('prefix')} ({wid}) after {args.hours} hours without use\n"
+        )
+        return 0
     if here is not None:  # named before acting, so a wrong folder is seen
         out.write(f"this folder belongs to {match[0].get('prefix')} ({wid}): switching click-to-sign off for it\n")
     try:
@@ -876,17 +855,6 @@ def _convenience(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) 
                 )
         with convenience.workspace_lock(state, wid, uid) if args.switch == "on" else contextlib.nullcontext():
             if args.switch == "on":
-                waiting = convenience.pending_handoffs(state, wid, uid, clock=_clock)
-                if waiting:
-                    lines = ", ".join(f"{r['id']} ({r['op']}, code {r['code']})" for r in waiting)
-                    return write_error(
-                        out,
-                        False,
-                        "sign.click_only",
-                        f"{len(waiting)} terminal hand-off request(s) are pending for this workspace: {lines}",
-                        hint="let them expire (10 minutes), then switch convenience on",
-                    )
-            if args.switch == "on":
                 convenience.set_enabled(state, wid, True, uid)
     except HostError as exc:  # lock.busy (a lock is held), custody.unsafe_mode (a lock or flag file is not private)
         return write_error(out, False, exc.code, exc.message, hint=exc.hint)
@@ -901,14 +869,14 @@ def _convenience(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) 
 
         held = select.status(state, wid).get("custody")
         if moved is not None:
-            out.write("The key is back under your passphrase: sign in the Terminal with orch sign <code>\n")
+            out.write("The key is back under your passphrase: sign in the terminal with orch sign <code>\n")
         elif held == "convenience":
             out.write(
-                "The key stays in one-click custody, so it cannot sign in the Terminal yet. To sign with a passphrase: "
+                "The key stays in one-click custody, so it cannot sign in the terminal yet. To sign with a passphrase: "
                 f"orch keys custody passphrase --workspace {match[0].get('prefix') or wid} --in-place\n"
             )
         elif held == "passphrase":
-            out.write("Sign in the Terminal with orch sign <code>\n")
+            out.write("Sign in the terminal with orch sign <code>\n")
     if args.switch == "on":
         out.write(
             "Convenience signing: agents running as you, or anything that takes over this dashboard, could sign.\n"
@@ -951,80 +919,3 @@ def _readers(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> i
     data = {"workspace_id": wid, "dropped": ["d_" + d for d in dropped]}
     out.write(json.dumps({"ok": True, "data": data}, sort_keys=True) + "\n")
     return 0
-
-
-def _relay(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> int:
-    """``orch host relay stop|start --workspace W`` (orch-v2-host §11A.4, H12a). ``stop`` writes the persistent stop
-    marker itself first (it works with the host down: the operator procedure after a state restore is to keep the
-    relay worker stopped until the host clock is past the backup's time + 600 s), then asks a running host to stop
-    the live worker. ``start`` clears it (through the host when it runs); a person's decision, never an agent's."""
-    from orch.custody.cli import write_error
-
-    from . import frames, relaylink
-    from .control_client import ControlClient
-    from .custody import read_json
-    from .registry import registry_path
-
-    state = _state(args.state, env)
-    uid = os.getuid()
-    if args.action in ("pair", "primary", "genesis-pin", "link"):
-        from . import paircli
-
-        return paircli.main(args, env, out, state=state, control=_control_path(args.run, state, env))
-    if args.sub is not None:
-        return write_error(out, False, "invalid.input", f"orch host relay {args.action} takes no {args.sub!r}")
-    if args.action in ("start", "unlink") and env.get("ORCH_GRANT"):
-        return write_error(out, False, "human_only", f"an agent never runs orch host relay {args.action}")
-    try:
-        reg = read_json(registry_path(state), uid) or {"workspaces": []}
-    except HostError as exc:
-        return write_error(out, False, exc.code, exc.message)
-    match = [w for w in reg.get("workspaces") or [] if args.workspace in (w.get("workspace_id"), w.get("prefix"))]
-    if len(match) != 1:
-        return write_error(out, False, "not_found", f"no single registered workspace {args.workspace}")
-    wid = match[0]["workspace_id"]
-    try:
-        if args.action == "stop":
-            relaylink.mark_stopped(state, wid, uid)
-    except HostError as exc:
-        return write_error(out, False, exc.code, exc.message, hint=exc.hint)
-    op = {"stop": "host.relay_stop", "start": "host.relay_start", "unlink": "host.relay_unlink"}[args.action]
-    res: dict[str, Any] | None = None
-    absent = False  # the host is confirmed not running: no socket, or nobody accepts on it
-    try:
-        with ControlClient(_control_path(args.run, state, env)) as client:
-            res = client.call(op, {"workspace_id": wid})
-    except (FileNotFoundError, ConnectionRefusedError):
-        absent = True
-    except (OSError, ConnectionError, ValueError, frames.FrameError, HostError) as exc:  # unknown: a timeout, a
-        # protocol error, an unsafe socket path (ValueError), a host that is not the pinned one
-        why = type(exc).__name__
-        if args.action == "stop":
-            message = (
-                f"host unreachable ({why}): the marker is set, a running worker may continue until the host restarts"
-            )
-        elif args.action == "unlink":
-            message = f"host unreachable ({why}): nothing was unlinked"
-        else:
-            message = f"host unreachable ({why}): the stop was not cleared"
-        error = {"code": "host.unavailable", "message": message, "retryable": True}
-        out.write(json.dumps({"ok": False, "error": error, "exit": 9}, sort_keys=True) + "\n")
-        return 9
-    if absent and args.action == "unlink":  # the rename needs the store lock: only through the host
-        return write_error(out, False, "host.unavailable", "unlink runs through the host: start it first")
-    if absent:  # no host: the marker alone decides
-        try:
-            if args.action == "start":
-                relaylink.clear_stopped(state, wid, uid)
-        except HostError as exc:
-            return write_error(out, False, exc.code, exc.message, hint=exc.hint)
-        data = {"workspace_id": wid, "stopped": args.action == "stop", "host": "not running", "worker": "none"}
-        out.write(json.dumps({"ok": True, "data": data}, sort_keys=True) + "\n")
-        return 0
-    res = res or {}
-    if res.get("ok"):
-        data = {**res["result"]["data"], "host": "running"}
-        out.write(json.dumps({"ok": True, "data": data}, sort_keys=True) + "\n")
-        return 0
-    out.write(json.dumps(res, sort_keys=True) + "\n")
-    return int(res.get("exit", 1))

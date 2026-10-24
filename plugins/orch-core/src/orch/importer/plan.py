@@ -29,6 +29,8 @@ from typing import Any
 
 from orch import canon
 from orch.canon import TextError, clean_line
+from orch.canon import question as canon_q
+from orch.canon.text import MAX_BYTES
 from orch.store.render import refs_of
 
 from .v1 import V1Ticket, V1Workspace, _fence_step, read_artifact
@@ -206,6 +208,11 @@ def clean_text(text: Any, *, one_line: bool = False, warn: Callable[[str], None]
     if bad and warn:
         warn(f"{what or 'text'}: {bad} unusable characters replaced")
     return out
+
+
+def _clip_cp(text: str, limit: int, tail: str = "...") -> str:
+    """``text`` cut to at most ``limit`` code points (the unit of the question limits), ending in ``tail``."""
+    return text if len(text) <= limit else text[: limit - len(tail)].rstrip() + tail
 
 
 def _clip(text: str, limit: int = MAX_STR, tail: str = "...") -> str:
@@ -592,12 +599,23 @@ class TicketPlanner:
             key = str(o.get("key")) if isinstance(o, dict) else ""
             label = clean_text(o.get("label"), one_line=True, warn=warn, what="option") if isinstance(o, dict) else ""
             if re.fullmatch(r"[a-z][a-z0-9_]*", key) and label.strip() and all(x["key"] != key for x in options):
-                options.append({"key": key, "label": _clip(label.strip(), 200)})
+                options.append({"key": key, "label": _clip_cp(label.strip(), canon_q.LIMITS["label"][1])})
         if options and len(options) == len(q.get("options") or []):
+            built["kind"] = "choice"
             built["options"] = options
             rec = q.get("recommended")
             if isinstance(rec, str) and any(x["key"] == rec for x in options):
                 built["recommended"] = rec
+        else:
+            built["kind"] = "text"
+        if len(text) > canon_q.LIMITS["question"][1]:  # the full text moves to details, the question is shortened
+            built["text"] = _clip_cp(text, canon_q.LIMITS["question"][1])
+            built["details"] = _clip_cp(_clip(text, MAX_BYTES), canon_q.LIMITS["details"][1])
+        try:
+            canon_q.validate_question(built)
+        except canon_q.QuestionError as e:
+            warn(f"question {qid} left out: {e}")
+            return None
         qids.add(qid)
         return Step(
             "question",

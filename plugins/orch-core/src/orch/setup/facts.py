@@ -64,7 +64,7 @@ DEFAULT_ON = frozenset({"start-agent", "terminals", "worktrees"})
 DEFAULT_AGENT_HOURS = 72
 #: add-ons that are not an "Agents may" choice: the wizard and Finish setup never list or nag about them; Settings,
 #: Add-ons lists them (``catalog(optional=True)``) so a person can switch them on later
-OPTIONAL = frozenset({"publish", "usage", "estimate", "explorer", "model-routing", "github", "wiki"})
+OPTIONAL = frozenset({"publish", "usage", "estimate", "explorer", "wiki"})
 
 
 def catalog(manifest: Callable[[str], bytes] | None = None, *, optional: bool = False) -> list[AddonInfo]:
@@ -78,8 +78,13 @@ def catalog(manifest: Callable[[str], bytes] | None = None, *, optional: bool = 
 
     read = manifest or builtin.manifest_bytes
     texts = {
-        "start-agent": ("Start agents", "Start an agent from the dashboard. It runs on this Mac, as you.", True, False),
-        "terminals": ("Terminals", "Open a terminal on this Mac from the dashboard. It runs as you.", True, True),
+        "start-agent": (
+            "Start agents",
+            "Start an agent from the dashboard. It runs on this computer, as you.",
+            True,
+            False,
+        ),
+        "terminals": ("Terminals", "Open a terminal on this computer from the dashboard. It runs as you.", True, True),
         "worktrees": (
             "Worktrees",
             "Each ticket gets its own copy of your project folder, so agents do not overwrite each other.",
@@ -88,7 +93,8 @@ def catalog(manifest: Callable[[str], bytes] | None = None, *, optional: bool = 
         ),
         "publish": (
             "Publish",
-            "Share files from a ticket with a link, on a server you choose. Nothing leaves this Mac until you sign.",
+            "Share files from a ticket with a link, on a server you choose. "
+            "Nothing leaves this computer until you sign.",
             False,
             False,
         ),
@@ -107,18 +113,6 @@ def catalog(manifest: Callable[[str], bytes] | None = None, *, optional: bool = 
         "explorer": (
             "File Explorer",
             "Look through this workspace's files and their history in the dashboard. Read only; only owners see it.",
-            False,
-            False,
-        ),
-        "model-routing": (
-            "Model routing",
-            "Choose which AI model each kind of agent work starts on. You still see the model before every start.",
-            False,
-            False,
-        ),
-        "github": (
-            "GitHub",
-            "See pull requests, checks and issues of your repositories. Read only; orch never writes to GitHub.",
             False,
             False,
         ),
@@ -289,11 +283,12 @@ def read_facts(store: Any, person: str, *, runner: dict[str, Any], deposit_confi
 
 #: what a person reads for an item id (B11 finding 6): the ids are the machine's, these are the words
 LABELS = {
-    "runner": "Agent execution on this Mac",
+    "runner": "Agent execution on this computer",
     "settings": "How long agents may work",
-    "runner_grant": "Agent access for this Mac's runner",
-    "runner_grant_retry": "Agent access for this Mac's runner (the earlier hand-over was not confirmed)",
-    "custody": "One-click approval on this Mac",
+    "runner_grant": "Agent access for this computer's runner",
+    "runner_grant_retry": "Agent access for this computer's runner (the earlier hand-over was not confirmed)",
+    "custody": "One-click approval on this computer",
+    "records": "Records history on this computer",
 }
 
 

@@ -18,6 +18,9 @@ import unicodedata
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from orch.canon.question import ANSWER_MAX, QuestionError, validate_question
+from orch.canon.text import TextError, check_plain
+
 from .errors import HubRefused
 
 __all__ = ["UNICODE_VERSION", "check_custodial_payload", "text_ok"]
@@ -130,37 +133,25 @@ def _base_rev(x: Any) -> bool:
     return type(x) is dict and 0 < len(x) <= len(SET_PATHS) and all(k in SET_PATHS and _hash(v) for k, v in x.items())
 
 
-def _option(x: Any) -> bool:
-    return (
-        type(x) is dict
-        and {"key", "label"} <= set(x) <= {"key", "label", "cost"}
-        and _re(_TOKEN)(x["key"])
-        and _text(200)(x["label"])
-        and ("cost" not in x or _text(64)(x["cost"]))
-    )
-
-
 def _question(x: Any) -> bool:
-    """The question a person asks: exactly `{id, to, text, why?, options?, recommended?, blocking}` (the id is the
-    hub's next free `Q<n>`, derived like `qid`); no `sig`."""
-    if type(x) is not dict or not {"id", "to", "text", "blocking"} <= set(x) <= {
-        "id", "to", "text", "why", "options", "recommended", "blocking",
-    }:  # fmt: skip
+    """The question a person asks through the hub: the one question shape (ticket-format §5.6.1), checked by the one
+    validator, plus the routing the hub may set: the id is the hub's next free `Q<n>` (derived like `qid`), `to` a
+    person or a ticket role; no `sig`."""
+    try:
+        validate_question(x)
+    except QuestionError:
         return False
-    opts = x.get("options", [])
-    keys = [o["key"] for o in opts] if type(opts) is list and all(_option(o) for o in opts) else None
-    return (
-        _re(_QID)(x["id"])
-        and (_re(_PERSON)(x["to"]) or x["to"] in TICKET_ROLES)
-        and _text(2000, multiline=True)(x["text"])
-        and ("why" not in x or _text(1000, multiline=True)(x["why"]))
-        and keys is not None
-        and len(opts) <= 8
-        and len(keys) == len(set(keys))
-        and ("options" not in x or len(opts) > 0)
-        and ("recommended" not in x or x["recommended"] in keys)
-        and type(x["blocking"]) is bool
-    )
+    return bool(_re(_PERSON)(x["to"]) or x["to"] in TICKET_ROLES)
+
+
+def _answer_text(x: Any) -> bool:
+    """An answer's text: the answer rule of ticket-format §5.6.1 (1..1000 code points, check_plain, not blank). Which
+    kind takes a text alone is the model's check (it holds the question)."""
+    try:
+        check_plain(x, one_line=False, limit=ANSWER_MAX, what="the answer text")
+    except TextError:
+        return False
+    return True
 
 
 def _visibility(x: Any) -> bool:
@@ -214,8 +205,8 @@ def _gates(x: Any) -> bool:
     return type(x) is dict and len(x) >= 1 and all(g in POLICY_GATES and _gate_policy(g)(v) for g, v in x.items())
 
 
-#: ``settings.changed`` ``set``: only these three keys (``sign_methods``, ``repos``, ``models`` and the rest stay off
-#: the channel, V3-D29)
+#: ``settings.changed`` ``set``: only these three keys (``sign_methods``, ``repos``, an add-on's own settings and the
+#: rest stay off the channel, V3-D29)
 SETTINGS_SET: dict[str, Check] = {
     "grant_hours": _int_in(1, 168),
     "claim_ttl_min": _int_in(15, 1440),
@@ -269,7 +260,7 @@ PAYLOAD: dict[str, tuple[dict[str, Check], dict[str, Check]]] = {
     "question.asked": ({"question": _question, "qid": _re(_HEX32), "hash": _hash}, {}),
     "question.answered": (
         {"question": _re(_QID), "hash": _hash},
-        {"option": _re(_TOKEN), "text": _text(4096, multiline=True)},
+        {"option": _re(_TOKEN), "text": _answer_text},
     ),
     "gate.approved": ({"gate": _enum(*GATES), "hash": _hash, **_DECISION_DERIVED}, {"source_sha": _source_sha}),
     "gate.changes_requested": (

@@ -15,7 +15,7 @@ export function HubChip({ ws }: { ws?: string }) {
     chip.tone === 'amber' ? 'The hub connection needs attention. Open Hub settings for details.' :
     status.data?.mode === 'full' ? 'The hub can read every ticket, file and note. Hub admins act as admins here. Approvals use your phone or passkey.' :
     status.data?.mode === 'selective' ? 'The hub only gets what you pick, plus needs-you notes and questions. You keep signing locally.' :
-    'This workspace works fully on its own: tickets, agents and signing in your Terminal. Connect a hub for your phone, publishing and handoffs.'
+    'This workspace works fully on its own: tickets, agents and signing in your terminal. Connect a hub for your phone, publishing and handoffs.'
   const tone = chip.tone === 'amber' ? 'border-warning/40 bg-warning-soft text-warning' : chip.tone === 'violet-solid' ? 'border-chart-4 bg-chart-4 text-bg' : chip.tone === 'violet' ? 'border-chart-4/40 bg-chart-4/10 text-chart-4' : 'border-border bg-surface-2 text-text-muted'
   return <Tooltip><TooltipTrigger asChild><Link to="/settings/$tab" params={{ tab: 'hub' }} data-testid="hub-chip" aria-label={chip.label}>
     <Badge variant="outline" className={tone}>{Icon && <Icon aria-hidden />}<span className="hub-chip-long">{chip.label}</span><span className="hub-chip-short hidden">{chip.short}</span></Badge>

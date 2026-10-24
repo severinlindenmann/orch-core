@@ -7,8 +7,6 @@ files and the network, with the hub down or hostile.
   epoch: leave first, the leave rotates). A terminal passphrase proof is not built (design-c8 C8-5, amended).
 * :func:`publish_put` tells orch-publish directly (``PUT /v2/hub/bindings/{ws}``, V3-D16: the signed ``hub.unbound`` is
   self-authenticating, so there is no transport signature) with a bounded retry on a lost answer or a 5xx.
-* :func:`cutover_delete` is the seam C10 fills (``DELETE /v2/workspaces/{ws}/cutover`` through the relay allowlist).
-  Until C10 exists a ``closing`` state cannot occur; if it does, the delete is not done and stays owed (fail closed).
 * :func:`history` is the review of M5.
 
 Nothing here imports hub code (D79): the contract is read from its text.
@@ -26,10 +24,8 @@ from .errors import HostError
 if TYPE_CHECKING:
     from .workspace import Call, WorkspaceService
 
-__all__ = ["CUTOVER_DELETE", "TRANSPORT", "history", "publish_put", "rotate", "stuck_gates"]
+__all__ = ["TRANSPORT", "history", "publish_put", "rotate", "stuck_gates"]
 
-#: C10's seam: ``(service) -> bool`` deletes a pending cut-over at the relay (True: gone or never there)
-CUTOVER_DELETE: Callable[[Any], bool] | None = None
 #: tests replace the HTTP transport of the publish PUT; ``None``: ``orch.publishclient.Transport``
 TRANSPORT: Any = None
 _ATTEMPTS = 3
@@ -51,6 +47,10 @@ def rotate(call: Call, epochs: Any) -> dict[str, Any]:
             hint="orch hub leave (it rotates the workspace key), then orch keys rotate if you need another",
             fix=["orch", "hub", "leave"],
         )
+    if hubsign.local_key_exposed(
+        call.service, call.viewer
+    ):  # #1097: signed evidence of convenience custody, even moved back
+        raise hubsign.key_exposed_error()
     if hubsign._click_custody(call.service):  # noqa: SLF001 - custody decides, not a label
         raise HostError(
             "sign.convenience_unavailable",
@@ -72,8 +72,8 @@ def publish_put(service: WorkspaceService) -> Callable[[dict[str, Any]], bool] |
     set up (then it stays owed). True: publish took it (2xx), or holds a newer binding (409 ``stale_binding``)."""
     from orch.canon.jcs import dumps as cj
     from orch.publishclient import Transport
-    from orch.relay import wire
     from orch.store.render import thaw
+    from orch.wsproto import wire
 
     cfg = thaw(service.store.state.workspace.settings.get("publish"))
     if not isinstance(cfg, dict) or not isinstance(cfg.get("server"), str):
@@ -109,24 +109,6 @@ def publish_put(service: WorkspaceService) -> Callable[[dict[str, Any]], bool] |
         return False
 
     return put
-
-
-def cutover_delete(service: WorkspaceService) -> Callable[[], bool] | None:
-    """The delete of a pending cut-over for ``leave`` (L2-C10i-1: wired for real). A test can replace the seam; by
-    default it is :func:`orch.host.cutover.cutover_delete`. Any exception is ``False`` (owed), never a failed unbind."""
-    hook = CUTOVER_DELETE
-    if hook is None:
-        from . import cutover
-
-        hook = cutover.cutover_delete
-
-    def delete() -> bool:
-        try:
-            return bool(hook(service))
-        except Exception:  # noqa: BLE001
-            return False
-
-    return delete
 
 
 def stuck_gates(service: WorkspaceService) -> list[dict[str, Any]]:

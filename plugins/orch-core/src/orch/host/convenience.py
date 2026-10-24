@@ -11,6 +11,18 @@ request.
 * While the flag is on, ops that add a reader are refused at prepare (``sign.convenience_readers``): switch it off
   first.
   With convenience events in the history they are refused in every mode (:mod:`orch.ops.readers`).
+* Idle switch-off (#1198 C17): the flag also goes off by itself after ``idle_hours`` (default 12, 1..168, a host-local
+  setting beside the flag, not a signed workspace setting) without a successful One-click signature. "Off" means
+  exactly what the dashboard's "Turn off" without a passphrase means: the flag no longer counts (``enabled`` is false,
+  ``why`` says ``idle``), the key stays where it is (no key loss, no custody move), and the person turns One click on
+  again to continue. It is computed from the stored ``last_used`` at every read (sign time, status), so there is
+  nothing to run in the background and no write on a read. ``last_used`` is host wall-clock seconds, because the
+  host, the CLI and the signer are separate processes and a monotonic clock does not compare between them; a
+  ``last_used`` more than :data:`SKEW` seconds in the future counts as idle (fails closed).
+  This limits a forgotten session; it is not a boundary against other processes of the same user until agents run
+  as their own user (H1): such a process can edit the file or run ``orch host convenience on``.
+* Turning it on again (the dashboard's plain click, :meth:`orch.click.signer.ClickSigner.custody_on` with ``resume``)
+  goes through :func:`refuse_turn_on` and :func:`set_enabled`, which restarts the idle clock and the risk notice.
 """
 
 from __future__ import annotations
@@ -20,7 +32,7 @@ import fcntl
 import os
 import stat
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -39,13 +51,15 @@ __all__ = [
     "READER_OPS",
     "REASONS",
     "check",
+    "DEFAULT_IDLE_HOURS",
     "enabled",
-    "pair_gate",
     "flag_path",
-    "pending_handoffs",
+    "idle_hours",
+    "idle_off",
+    "set_idle_hours",
+    "touch",
     "read",
     "reason",
-    "refuse_handoff",
     "readers_error",
     "recheck_readers",
     "refuse_reader_op",
@@ -58,11 +72,23 @@ __all__ = [
     "workspace_lock",
 ]
 
-REASONS = ("disabled", "relay_paired", "other_member", "phone_device", "reader_version")
+REASONS = ("idle", "disabled", "relay_paired", "other_member", "phone_device", "reader_version")
 #: §11A.17.2 F3: the click signer on a dev host or against a sandbox's state (not a readers reason: never from why)
 DEV_HOST = "dev_host"
 
 AUTH = "convenience"
+
+#: #1198 C17: hours without a successful One-click signature after which the flag goes off (the design default)
+DEFAULT_IDLE_HOURS = 12
+IDLE_HOURS_RANGE = (1, 168)
+#: a ``last_used`` this far ahead of the clock is not believed (a clock set back, a hand edit): idle
+SKEW = 300
+#: ``touch`` writes at most this often: the smallest idle limit is an hour
+TOUCH_EVERY = 60
+
+
+def _now() -> float:
+    return time.time()
 
 
 def flag_path(state_dir: Path) -> Path:
@@ -83,12 +109,91 @@ def read(state_dir: Path, host_uid: int) -> dict[str, Any]:
     return _doc(state_dir, host_uid)
 
 
-def enabled(state_dir: Path, workspace_id: str, host_uid: int) -> bool:
+def _entry(state_dir: Path, workspace_id: str, host_uid: int) -> dict[str, Any] | None:
+    entry = _doc(state_dir, host_uid)["workspaces"].get(workspace_id)
+    return entry if isinstance(entry, dict) and entry.get("enabled") is True else None
+
+
+def idle_hours(state_dir: Path, workspace_id: str, host_uid: int) -> int:
+    """The idle limit in hours (:data:`DEFAULT_IDLE_HOURS` unless set); an invalid stored value is the default."""
     try:
-        entry = _doc(state_dir, host_uid)["workspaces"].get(workspace_id)
+        value = ((_doc(state_dir, host_uid).get("settings") or {}).get(workspace_id) or {}).get("idle_hours")
+    except (HostError, AttributeError):
+        return DEFAULT_IDLE_HOURS
+    ok = type(value) is int and IDLE_HOURS_RANGE[0] <= value <= IDLE_HOURS_RANGE[1]
+    return value if ok else DEFAULT_IDLE_HOURS
+
+
+def _idle_expired(entry: dict[str, Any], hours: int, now: float) -> bool:
+    last = entry.get("last_used")
+    if type(last) is not int:  # switched on before C17, or hand-edited: counts from nothing, so it is idle
+        return True
+    if last > now + SKEW:
+        return True
+    return now - last > hours * 3600
+
+
+def idle_off(state_dir: Path, workspace_id: str, host_uid: int, *, now: float | None = None) -> int | None:
+    """The hours the flag was idle for when it switched itself off, or ``None``: it is on and in use, or off for
+    another reason. Fails closed to ``None`` only for an unreadable file (``enabled`` is false there anyway)."""
+    try:
+        entry = _entry(state_dir, workspace_id, host_uid)
+    except HostError:
+        return None
+    if entry is None:
+        return None
+    hours = idle_hours(state_dir, workspace_id, host_uid)
+    return hours if _idle_expired(entry, hours, _now() if now is None else now) else None
+
+
+def enabled(state_dir: Path, workspace_id: str, host_uid: int) -> bool:
+    """Is One click on here: the flag is set and it has not gone idle (:func:`idle_off`)."""
+    try:
+        entry = _entry(state_dir, workspace_id, host_uid)
     except HostError:
         return False  # fail closed
-    return isinstance(entry, dict) and entry.get("enabled") is True
+    return entry is not None and not _idle_expired(entry, idle_hours(state_dir, workspace_id, host_uid), _now())
+
+
+def touch(state_dir: Path, workspace_id: str, host_uid: int) -> None:
+    """Record a successful One-click signature now (resets the idle clock). Only while the flag is on and not idle: an
+    expired flag is never revived by activity. Never raises: a failed write only means the flag may go idle sooner."""
+    try:
+        now = int(_now())
+        entry = _entry(state_dir, workspace_id, host_uid)
+        if entry is None or not enabled(state_dir, workspace_id, host_uid):
+            return
+        last = entry.get("last_used")
+        if type(last) is int and 0 <= now - last < TOUCH_EVERY:
+            return
+        with _flock(state_dir, "convenience.lock", host_uid):
+            doc = _doc(state_dir, host_uid)
+            current = doc["workspaces"].get(workspace_id)
+            if (
+                isinstance(current, dict)
+                and current.get("enabled") is True
+                and not _idle_expired(current, idle_hours(state_dir, workspace_id, host_uid), float(now))
+            ):  # again under the lock: right at the limit activity must not revive the flag
+                current["last_used"] = now
+                write_private(flag_path(state_dir), doc)
+    except (HostError, OSError):
+        return
+
+
+def set_idle_hours(state_dir: Path, workspace_id: str, hours: int, host_uid: int) -> dict[str, Any]:
+    """Set the idle limit (``invalid.input`` outside 1..168). It takes effect at the next read, also for a flag that is
+    on now (a longer limit does not revive one that has already gone idle)."""
+    lo, hi = IDLE_HOURS_RANGE
+    if type(hours) is not int or not lo <= hours <= hi:
+        raise HostError("invalid.input", f"idle hours must be a whole number from {lo} to {hi}")
+    with _flock(state_dir, "convenience.lock", host_uid):
+        doc = _doc(state_dir, host_uid)
+        settings = doc.setdefault("settings", {})
+        if not isinstance(settings, dict):
+            raise HostError("internal", "the convenience flag file is corrupt; refusing convenience signing")
+        settings[workspace_id] = {"idle_hours": hours}
+        write_private(flag_path(state_dir), doc)
+        return doc
 
 
 def risk_ack(state_dir: Path, workspace_id: str, host_uid: int) -> str | None:
@@ -272,7 +377,12 @@ def set_enabled(state_dir: Path, workspace_id: str, on: bool, host_uid: int) -> 
             stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
             # B6 (owner decision F): switching it on is where the risk notice is required; every path that gets here
             # shows it (the CLI prints it, the dashboard's switch shows it), and the time is recorded
-            doc["workspaces"][workspace_id] = {"enabled": True, "at": stamp, "risk_ack": stamp}
+            doc["workspaces"][workspace_id] = {
+                "enabled": True,
+                "at": stamp,
+                "risk_ack": stamp,
+                "last_used": int(_now()),  # C17: switching on starts the idle clock
+            }
         else:
             doc["workspaces"].pop(workspace_id, None)
         write_private(flag_path(state_dir), doc)
@@ -300,7 +410,15 @@ def _model_knows() -> bool:
 
 
 def why(
-    store: Any, state_dir: Path, workspace_id: str, host_uid: int, person: str, device: str, *, gated: bool = False
+    store: Any,
+    state_dir: Path,
+    workspace_id: str,
+    host_uid: int,
+    person: str,
+    device: str,
+    *,
+    gated: bool = False,
+    removing: frozenset[str] = frozenset(),
 ) -> tuple[str, list[str]] | None:
     """The first reason convenience signing is not allowed now and the readers below level 1 it names, or None.
     H12d-2 (§0.8.6 item 9.9): ``other_member`` and ``phone_device`` count only readers below level 1 (a current
@@ -309,14 +427,14 @@ def why(
     from orch.ops.readers import below_level, levels
 
     if not gated and not enabled(state_dir, workspace_id, host_uid):  # §11A.17.4: the dev gate stands in
-        return "disabled", []
+        return ("idle", []) if idle_off(state_dir, workspace_id, host_uid) is not None else ("disabled", [])
     methods = store.state.workspace.settings.get("sign_methods")
     if not gated and methods is not None and "click" not in methods:  # B6: the workspace does not allow one click
         return "disabled", []
     if _relay_paired(state_dir, workspace_id):
         return "relay_paired", []
     ws = store.state.workspace
-    found = below_level(ws, levels(state_dir, workspace_id, store.state, host_uid), person, device, None)
+    found = below_level(ws, levels(state_dir, workspace_id, store.state, host_uid), person, device, None, removing)
     if found is not None:
         return found
     if not _model_knows():
@@ -338,15 +456,24 @@ _TEXT = {
     "signatures",
     "phone_device": "another device of yours (a phone or another machine) has not declared that it knows them",
     "reader_version": "this host's model does not accept auth convenience; update orch-core",
+    "idle": "One click switched itself off after {hours} hours without use. Turn it on again to continue",
     "dev_host": "this is a Simulator dev host or a dev-pair sandbox: click-to-sign is off here for good (only "
     "column R's dev gate accepts Simulator answers, orch-v2-host 11A.17)",
 }
 
 
-def unavailable(reason: str, devices: list[str]) -> HostError:
-    """``sign.convenience_unavailable`` for ``reason`` (the message starts with it) and the readers it names."""
+def unavailable(reason: str, devices: list[str], *, hours: int | None = None) -> HostError:
+    """``sign.convenience_unavailable`` for ``reason`` (the message starts with it) and the readers it names. ``idle``
+    names the limit in ``hours`` (C17)."""
     named = f" ({', '.join(devices)})" if devices else ""
     hint = "sign in your terminal with orch sign CODE"
+    if reason == "idle":
+        return HostError(
+            "sign.convenience_unavailable",
+            f"idle: {_TEXT['idle'].format(hours=hours)}.",
+            hint="orch host convenience on --workspace W (or sign in your terminal with orch sign CODE meanwhile)",
+            detail={"reason": "idle", "devices": []},  # the hours are in the message
+        )
     if devices:
         hint = "update those readers and declare them (orch keys reader declare), or remove them; meanwhile " + hint
     return HostError(
@@ -357,7 +484,7 @@ def unavailable(reason: str, devices: list[str]) -> HostError:
     )
 
 
-def check(service: Any, person: str, device: str, *, gate: Any = None) -> None:
+def check(service: Any, person: str, device: str, *, gate: Any = None, removing: frozenset[str] = frozenset()) -> None:
     """Raise ``sign.convenience_unavailable`` (message ``<reason>: …``, detail ``{reason, devices}``) unless the
     condition holds. §11A.17: on a dev host every path but column R's gate is ``dev_host``; for a column-R event
     with a :class:`~orch.host.devmode.DevGate` of this workspace, the gate stands in for the flag (``disabled`` does
@@ -367,23 +494,56 @@ def check(service: Any, person: str, device: str, *, gate: Any = None) -> None:
     gated = isinstance(gate, DevGate) and gate.workspace_id == service.workspace_id
     if getattr(service, "dev", None) is not None and not gated:
         raise unavailable(DEV_HOST, [])
-    found = why(service.store, service.state_dir, service.workspace_id, service.host_uid, person, device, gated=gated)
+    found = why(
+        service.store, service.state_dir, service.workspace_id, service.host_uid, person, device, gated=gated,
+        removing=removing,
+    )  # fmt: skip
     if found is not None:
+        if found[0] == "idle":
+            raise unavailable("idle", [], hours=idle_hours(service.state_dir, service.workspace_id, service.host_uid))
         raise unavailable(*found)
 
 
-#: V3 C2a: the ops that bind the workspace to (or free it from) a hub. The owner's own key at the terminal signs them;
-#: a convenience (click-to-sign) key never does, however the label reads.
-HUB_OPS = frozenset({"hub.join", "hub.mode", "hub.leave", "keys.rotate", "relay.reopen"})  # keys.rotate: C8 break-glass
+#: the break-glass ops the owner's own key signs at the terminal; a convenience (click-to-sign) key never does,
+#: however the label reads. (The hub ops are not here: since #1198 C9 they carry the owner proof, whatever the key.)
+TERMINAL_OPS = frozenset({"keys.rotate", "device.rotate"})  # keys.rotate: C8 break-glass
 
 
-def refuse_hub_op(op: str, auth: str | None) -> None:
-    if op in HUB_OPS and auth == "convenience":
+def refuse_terminal_op(op: str, auth: str | None) -> None:
+    if op in TERMINAL_OPS and auth == "convenience":
         raise HostError(
             "sign.convenience_unavailable",
-            "joining or leaving a hub is signed with your own key at the terminal, never with click-to-sign",
-            hint="sign in your terminal with orch sign CODE (or run orch hub join / mode / leave there)",
+            "this step is signed with your own key at the terminal, never with click-to-sign",
+            hint="first move the key back to a passphrase: orch keys custody passphrase --workspace W --in-place, "
+            "then run the step again",
         )
+
+
+def refuse_hub_reader(service: Any, op: str, card: Any, *, now_ms: int, dev_mode: bool) -> None:
+    """#1198 C9 (hub contract 5 "Reader level"): ``hub.join`` and ``hub.mode`` bind the workspace to a hub whose card
+    declares a ``reader`` level below the workspace's ``required_reader`` (convenience history or the flag on): that
+    hub could not read the log, so it is ``sign.convenience_readers`` reason ``hub_too_old``. A card that does not
+    verify is left to the op's own refusal (``hub.refused``)."""
+    if op not in ("hub.join", "hub.mode"):
+        return
+    from orch.hubclient import wire
+    from orch.hubclient.errors import HubRefused
+
+    try:
+        held = wire.verify_card(card, now_ms=now_ms, dev_mode=dev_mode)
+    except HubRefused:
+        return
+    required = _required(service, history=True)
+    try:
+        wire.check_hub_reader(held, required)
+    except HubRefused:
+        raise HostError(
+            "sign.convenience_readers",
+            f"hub_too_old: this hub declares reader level {held['card']['reader']}, this workspace requires {required}",
+            hint="the hub must be updated to a release that knows convenience signatures (card reader 1), or join "
+            "before this workspace has convenience signatures, with convenience off",
+            detail={"reason": "hub_too_old", "devices": []},
+        ) from None
 
 
 def refuse_reader_op(
@@ -419,7 +579,7 @@ def refuse_reader_op(
     history (``history``) holds a convenience event or the flag is on; the handler's own check follows."""
     if op not in READER_OPS:
         return
-    if op in ("member.add", "relay.pair_device") and events is not None:
+    if op == "member.add" and events is not None:
         _check_new_readers(service, events, readers or [], history=history)
         return
     if op == "relay.pair":
@@ -466,44 +626,6 @@ def _required(service: Any, *, history: bool) -> int:
     if history and seen_or_history(service.store, service.state_dir, service.workspace_id, service.host_uid):
         return 1
     return 0
-
-
-def pair_gate(service: Any, meta: Any, *, offer_id: str, who: dict[str, str]) -> Any:
-    """**The step-4 hook for R6c** (11A.15.6 step 4, H12d-3): call it when the host opens a pair request, after step 3
-    (``check_pair_meta``, the meta signature, ±300 s, a presented cert) and **before** the offer is consumed, the SAS
-    is shown or the primary is asked. ``who`` is ``{"pk_pin": <the link's pk_pin>}`` on path 7b, or ``{"person_id":
-    <the presented cert's person, bare hex>}`` on path 7a. ``required_reader`` is computed here (the flag, the durable
-    mark, the merged history: a rare op), the clock is the host's.
-
-    Returns :class:`orch.identity.pairdevice.PairGate`: R6 stores ``decl`` and ``decl_who`` verbatim with the offer at
-    step 5 (the **first** stored declaration wins on a resend: ECDSA signatures differ per resend, and a resend of a
-    consumed offer never runs this again) and passes them as ``PairDeviceFacts(decl=, decl_who=)`` at step 9, where
-    the authoritative check runs in the allocation's append. Raises :class:`HostError`: ``sign.convenience_readers``
-    (``no_declaration``, ``reader_too_old``; ``detail`` names the device) or ``reader.decl_invalid`` (the reason
-    first in the message). R6 answers either with the short ``rejected``, moves the offer to ``rejected`` and shows the
-    message on the host screen ("This phone's orch app is too old for this workspace ...", §0.8.6 item 9.15 Q4)."""
-    from orch.identity.pairdevice import PairGateRefused
-    from orch.identity.pairdevice import pair_gate as gate
-
-    required = _required(service, history=True)
-    try:
-        return gate(
-            meta,
-            workspace_id=service.workspace_id,
-            offer_id=offer_id,
-            who=who,
-            required=required,
-            now_ms=int(service.clock() * 1000),
-        )
-    except PairGateRefused as exc:
-        if exc.code == "reader.decl_invalid":
-            raise HostError("reader.decl_invalid", exc.detail) from None
-        raise HostError(
-            exc.code,
-            exc.detail,
-            hint="This phone's orch app is too old for this workspace (convenience signing). Update it and scan again.",
-            detail={"reason": exc.reason, "devices": ["d_" + meta.device_id]},
-        ) from None
 
 
 def recheck_readers(service: Any, events: list[dict[str, Any]], readers: list[dict[str, Any]]) -> dict[str, int]:
@@ -608,15 +730,6 @@ READER_UPGRADE = (
 )
 
 
-# -- one signing path per workspace (§0.8.6 item 8, owner decision of 12 Oct 2026)
-
-CLICK_ONLY_TEXT = (
-    "click-to-sign is on for this workspace: use Sign in the dashboard. To sign in the terminal instead, turn "
-    "convenience off with `orch host convenience off --workspace {ws}` and move the key back with "
-    "`orch keys custody passphrase --workspace {ws} --in-place`"
-)
-
-
 LOCK_WAIT = 2.0  # seconds a lock is waited for before ``lock.busy``: a stopped process must not wedge the host
 
 
@@ -650,49 +763,7 @@ def _flock(state_dir: Path, name: str, host_uid: int) -> Iterator[None]:
 
 
 def workspace_lock(state_dir: Path, workspace_id: str, host_uid: int) -> contextlib.AbstractContextManager[None]:
-    """An exclusive ``flock`` on ``<state>/host/convenience-<ws>.lock``: it serializes, across processes (the host and
-    ``orch host convenience on``), a hand-off prepare against switching the flag on, so exactly one wins."""
+    """An exclusive ``flock`` on ``<state>/host/convenience-<ws>.lock``: it serializes, across processes (the host,
+    ``orch host convenience on`` and the click signer's custody switch), changes of the flag and of the custody
+    selection, so exactly one wins."""
     return _flock(state_dir, f"convenience-{workspace_id}.lock", host_uid)
-
-
-def refuse_handoff(service: Any) -> None:
-    """``sign.click_only`` while the flag is on: a hand-off request (one with a code) is not prepared, bound or
-    submitted. Call it under :func:`workspace_lock` at prepare."""
-    if enabled(service.state_dir, service.workspace_id, service.host_uid):
-        raise HostError(
-            "sign.click_only",
-            CLICK_ONLY_TEXT.format(ws=service.workspace_id),
-            hint="sign in the dashboard, or: orch host convenience off --workspace W, then "
-            "orch keys custody passphrase --workspace W --in-place",
-            fix=["orch", "host", "convenience", "off", "--workspace", service.workspace_id],
-        )
-
-
-_SUBMIT_GRACE = 60.0
-
-
-def pending_handoffs(
-    state_dir: Path, workspace_id: str, host_uid: int, *, clock: Callable[[], float] = time.time
-) -> list[dict[str, Any]]:
-    """The workspace's pending (``prepared`` or ``bound``, not expired) hand-off requests, as stored. A bound request
-    counts a minute past its expiry as defence in depth: the host's submit holds the workspace lock from its flag
-    check to its journal write, so ``on`` cannot interleave with it whatever the timing. A request file that cannot be
-    read is ``custody.unsafe_mode`` (switching on must not guess about it)."""
-    from .requests import PENDING, RequestStore
-
-    store = RequestStore(state_dir, workspace_id, host_uid, clock=clock)
-    out = []
-    for rid in store.ids():
-        try:
-            rec = store.read(rid)
-        except HostError as exc:
-            raise unsafe(f"request {rid} cannot be read ({exc.message}); fix or remove it first") from None
-        if rec is None or not rec.get("code") or rec.get("state") not in PENDING:
-            continue
-        try:
-            if store.lapsed(rec, _SUBMIT_GRACE if rec.get("state") == "bound" else 0.0):
-                continue
-        except (KeyError, TypeError, ValueError):  # no usable ``expires``: unreadable, switching on must not guess
-            raise unsafe(f"request {rid} has no valid expiry; fix or remove it first") from None
-        out.append(rec)
-    return out

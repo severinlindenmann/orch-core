@@ -33,7 +33,6 @@ failures never lock out another. ``human.get`` with ``signer`` binds the request
 from __future__ import annotations
 
 import base64
-import contextlib
 import copy
 import logging
 import os
@@ -46,8 +45,9 @@ from typing import TYPE_CHECKING, Any
 from jsonschema import Draft202012Validator
 
 from orch import canon
+from orch.addons.settings_value import KEY as ADDONS_KEY
 
-from . import convenience, hubsign, pairdevice, review
+from . import convenience, hubproof, hubsign, marketinstall, review
 from .errors import HostError
 from .outcomes import Planned, request_idem
 from .requests import (
@@ -108,7 +108,7 @@ _SCHEMAS = {
     },
     "human.get": {
         "type": "object",
-        "properties": {"request_id": _REQ, "signer": _SIGNER},
+        "properties": {"request_id": _REQ, "signer": _SIGNER, "owner_proof": {"type": ["object", "null"]}},
         "required": ["request_id"],
         "additionalProperties": False,
     },
@@ -192,6 +192,8 @@ def _unsigned(event: dict[str, Any], *, grant: bool) -> dict[str, Any]:
     out = {k: v for k, v in event.items() if k != "sig"}
     if grant and out.get("type") == "grant.issued":
         out.pop("secret_hash", None)
+    if grant and out.get("type") in review.OWNER_PROOF_TYPES:
+        out.pop("owner_proof", None)  # the signer fills it after the review; the submit checks it (hubproof)
     return out
 
 
@@ -231,6 +233,16 @@ def probe_device(store: Any, person: str, now: float) -> str:
         if dev.person == person and _device_refusal(dev, now, False) is None:
             return ref
     raise HostError("device.invalid", f"{person} has no valid device")
+
+
+#: #1097: the one op whose signer is a device the roster does not know yet (the NEW device signs its own
+#: ``device.rotated``); the model judges that shape (``breakglass.is_rotation``), not the roster check below.
+ROTATE_OP = "device.rotate"
+
+
+def _removing(op: str, devices: list[Any]) -> frozenset[str]:
+    """#1198 C15: the devices a ``device.remove`` takes away, for the readers condition (judged after the removal)."""
+    return frozenset(d for d in devices if op == "device.remove" and isinstance(d, str))
 
 
 def _operate(types: list[str]) -> bool:
@@ -317,11 +329,6 @@ class HumanOps:
             if same is not None:
                 return same  # the same request, in its current state
         try:
-            if handoff:  # §0.8.6 item 8: the flag check and the request file are one step against `convenience on`
-                svc = call.service
-                with convenience.workspace_lock(svc.state_dir, svc.workspace_id, svc.host_uid):
-                    convenience.refuse_handoff(svc)
-                    return self._prepare(call, args, dry_run, intent)
             return self._prepare(call, args, dry_run, intent)
         except BaseException:
             if intent is not None:
@@ -400,13 +407,16 @@ class HumanOps:
         assert person is not None  # column P only
         now = service.clock()
         store.refresh()
-        if name not in ("member.add", pairdevice.OP):  # after the handler, with the reader's declaration (H12d-2)
+        if name != "member.add":  # after the handler, with the reader's declaration (H12d-2)
             convenience.refuse_reader_op(service, name)  # §0.8.6: no new reader while convenience signing is on
-        if signer is not None:
-            convenience.refuse_hub_op(name, signer["auth"])  # V3 C2a: a hub op is never click-to-sign
+        # #1198 C10: a One-click signer may prepare a hub step: the owner proof comes from the backup key sealed to it.
+        # Nothing is signed or submitted without the proof: ``get`` refuses a convenience bind without one (below), and
+        # the submit and the model check every hub event under the lock (hubproof).
         if signer is not None and signer["auth"] == "convenience":
-            convenience.check(service, person, signer["device"])  # the owner's condition, at prepare
-        if signer is not None:
+            convenience.check(
+                service, person, signer["device"], removing=_removing(name, [args["args"].get("device")])
+            )  # the owner's condition, at prepare
+        if signer is not None and name != ROTATE_OP:
             check_device(store, person, signer["device"], now, operate=_operate(sorted(types)))
         operation = _person_operation(name)
         inner = dict(args["args"])
@@ -427,12 +437,11 @@ class HumanOps:
             dry_run=dry_run,
         )
         capture.dry_run = dry_run
+        capture.market_files = marketinstall.files_of(service)
         if args.get("sequence") is not None and name == "artifact.add":
             self._check_pasted_image(inner, files)
         meta = self._sequence(call, name, inner, args, person, store, dry_run)
         capture.sequence = meta
-        if name == pairdevice.OP:  # H12c-e: R6's verified facts, never the request's (the args name only the offer)
-            capture.pair = pairdevice.facts_for(service, inner)
         if name == "publish.share":  # P5: the staged copy's own words (the args name only the staged id)
             from . import publishing
 
@@ -441,6 +450,9 @@ class HumanOps:
             from . import hubops
 
             capture.hub = hubops.facts_for(service)
+            convenience.refuse_hub_reader(
+                service, name, inner.get("hub_card"), now_ms=capture.hub.now_ms, dev_mode=capture.hub.dev_mode
+            )  # #1198 C9: the hub's card declares a reader level the log's history needs
             if name == "hub.mode" or inner.get("mode") == "full":  # V3 C11: a full join leaves click-to-sign off
                 hubsign.refuse_full_while_click_on(service)
         ctx = self.backend._context(call, None, False, files, prepare=capture)
@@ -461,11 +473,15 @@ class HumanOps:
         if len(logs) != 1:
             raise HostError("internal", f"{name} prepared events for more than one log")
         log = logs.pop()
-        if signer is not None:
+        if signer is not None and name != ROTATE_OP:
             check_device(
                 store, person, signer["device"], now, operate=_operate([c.event["type"] for c in capture.events])
             )
         prepared, extras = self._build(call, name, log, capture, store, now)
+        if name in hubproof.OPS:  # #1198 C9: what the signer needs to make the owner proof (the host's own dev state)
+            from . import hubops
+
+            prepared["owner_proof"] = {"dev": bool(hubops.workspace_dev(service))}
         # H12d-2 (§0.8.6 item 9.4): the new reader's declaration against required_reader, early, with a good message
         built = prepared["events"]
         convenience.refuse_reader_op(service, name, events=built, readers=capture.readers)
@@ -514,6 +530,7 @@ class HumanOps:
             "extras": extras,
             # H12d-2: the readers the request admits, with their verified declarations (not signed, not material)
             "readers": capture.readers,
+            "staged": capture.staged,  # V3 G3: the stage an addon.grant installs from (None: plain grant)
             "sequence": meta,
             "result": template,
             "submit": None,
@@ -562,6 +579,11 @@ class HumanOps:
         elif op == "settings.set":
             if (why := settings_needs.clear_refusal(events[0].get("set") or {}, ws.addons)) is not None:
                 raise HostError("invalid.input", why)
+            if ADDONS_KEY in (events[0].get("set") or {}):  # G6: the granted schema, again on the re-read state
+                from orch.addons import settings_value
+
+                if (why := settings_value.check_granted(store, events[0]["set"][ADDONS_KEY])) is not None:
+                    raise HostError("invalid.input", f"add-on settings: {why}")
 
     @staticmethod
     def _sequence(
@@ -718,10 +740,6 @@ class HumanOps:
     def _material(store: Any, log: str, events: list[dict[str, Any]], capture: Any, extras: list) -> dict[str, Any]:
         from orch.store.render import thaw
 
-        if capture.pair is not None:  # H12c-e: the relay.pair_device kind (orch.identity.pairdevice)
-            from orch.identity.pairdevice import material as pair_material
-
-            return pair_material(capture.pair)
         view = store.ticket(log) if log != "workspace" else None
         ticket = {"key": view.key, "uid": view.uid} if view is not None else None
         if view is None and log != "workspace":  # a person's new: the ticket its ticket.created makes
@@ -779,6 +797,9 @@ class HumanOps:
                 for key, value in (ev.get("set") or {}).items():  # the host's current values, unsigned (§0.8.1)
                     if key == "repos":
                         now = {name: thaw(current.repos.get(name)) for name in value}
+                    elif key == ADDONS_KEY and isinstance(value, dict):  # G6: the host's value of each named add-on
+                        held = current.settings.get(ADDONS_KEY) or {}
+                        now = {name: thaw(held.get(name)) for name in value}
                     else:
                         now = thaw(current.settings.get(key))  # a tuple (sign_methods) is a list on the wire
                     before.setdefault(key, now)
@@ -792,6 +813,12 @@ class HumanOps:
                 for gid in taken
                 if (g := known.get(gid)) is not None and isinstance(g.scope, str) and isinstance(g.expires_at, str)
             }
+        if capture.removed_device is not None and "device.removed" in types:
+            material["removed_device"] = dict(capture.removed_device)  # #1198 C15: whose device, per host, not signed
+        if capture.market is not None and "addon.granted" in types:
+            material["market"] = copy.deepcopy(capture.market)  # V3 G3: the host's word on the source, not signed
+        if capture.deps is not None and "addon.granted" in types:
+            material["deps"] = copy.deepcopy(capture.deps)  # V3 G4: the package list, from the checked lockfile
         seq = getattr(capture, "sequence", None)
         if seq is not None and seq["step"] == 0:  # the whole intent is in the material: bound by review_digest
             material["sequence"] = {"digest": seq["digest"], "of": seq["of"], "intent": copy.deepcopy(seq["intent"])}
@@ -822,8 +849,6 @@ class HumanOps:
         if state in ("submitted", "cancelled"):
             raise HostError("human.request_state", f"the request is {state}")
         call.service.store.refresh()
-        if record["op"] == pairdevice.OP:  # H12c-e: the pair readers are bound to the reviewed offer and attempt
-            pairdevice.check_entries(record["prepared"], record.get("readers") or [])
         convenience.refuse_reader_op(  # §0.8.6: fails early, before binding (H12d-2: the declaration, rechecked)
             call.service,
             record["op"],
@@ -831,13 +856,24 @@ class HumanOps:
             events=record["prepared"]["events"],
             readers=record.get("readers") or [],
         )
-        if record.get("code"):  # §0.8.6 item 8: a hand-off request is dead once click-to-sign is on
-            convenience.refuse_handoff(call.service)
+        if record["op"] in hubproof.OPS:  # #1198 C9: a proof sent with the bind is checked now; One-click needs one
+            sent = args.get("owner_proof")
+            if sent is not None or signer["auth"] == "convenience":
+                hubproof.check(
+                    call.service, person=record["person"], op=record["op"], request_id=record["id"],
+                    event=record["prepared"]["events"][0], proof=sent,
+                )  # fmt: skip
         if record.get("sequence") is not None and signer["auth"] not in ("passphrase", "convenience"):
             # a sequence is bound to the passphrase or one-click custody only, here as at prepare (not the phone)
             raise HostError("invalid.input", "a sequence is signed with the passphrase or one-click custody only")
+        unsigned = record["prepared"]["events"]
         if signer["auth"] == "convenience":  # §0.8.6: before a convenience binding, and on every bound read
-            convenience.check(call.service, record["person"], signer["device"])
+            convenience.check(
+                call.service,
+                record["person"],
+                signer["device"],
+                removing=_removing(record["op"], [e.get("device") for e in unsigned]),
+            )
         if state == "bound":
             if record["signer"] != signer:
                 raise HostError("human.request_state", "the request is bound to another device")
@@ -852,17 +888,18 @@ class HumanOps:
         store = call.service.store
         store.refresh()
         events = record["prepared"]["events"]
-        check_device(
-            store,
-            record["person"],
-            signer["device"],
-            call.service.clock(),
-            operate=_operate([e["type"] for e in events]),
-        )
+        if record["op"] != ROTATE_OP:
+            check_device(
+                store,
+                record["person"],
+                signer["device"],
+                call.service.clock(),
+                operate=_operate([e["type"] for e in events]),
+            )
         if _binds_commits(record["prepared"]):  # N3: a tree dirtied since prepare is refused here, nothing bound
             check_bindings(call, record)
             record = recheck_trees(call, record)
-        for ev in record["prepared"]["events"]:  # the one change binding makes: null -> the signer's device and auth
+        for ev in unsigned:  # the one change binding makes: null -> the signer's device and auth
             ev["actor"]["device"] = signer["device"]
             ev["auth"] = signer["auth"]
         record = {**record, "state": "bound", "signer": signer}
@@ -1046,8 +1083,6 @@ class HumanOps:
             if record["state"] == "expired":
                 raise HostError("human.request_expired", _expired(record, "before it was appended"))
             store.refresh()  # unconditionally: the history and roster checks below read what is on disk now
-            if record["op"] == pairdevice.OP:
-                pairdevice.check_entries(record["prepared"], record.get("readers") or [])
             from . import sequence
 
             meta = record.get("sequence")
@@ -1076,12 +1111,24 @@ class HumanOps:
                 if log not in ("workspace", view.uid) or (log == "workspace" and record["op"] != "grant"):
                     raise HostError("human.request_mismatch", "the ticket changed while signing, review again")
             self._recheck_needs(store, record, events)
+            marketinstall.recheck(
+                service, record, events
+            )  # V3 G3 C2: the install record as it is now, before the journal
             if (refused := hubsign.refusal(service, events, None)) is not None:
                 raise refused  # V3 C11: before the journal write; a join after the prepare lands here
-            for e in events:
-                convenience.refuse_hub_op(record["op"], e.get("auth"))  # V3 C2a, again at submit
+            if record["op"] in hubproof.OPS:  # #1198 C9: every hub event carries a valid proof, checked under the lock
+                for e in events:
+                    hubproof.check(
+                        service, person=record["person"], op=record["op"], request_id=record["id"],
+                        event=e, proof=e.get("owner_proof"),
+                    )  # fmt: skip
             if any(e.get("auth") == "convenience" for e in events):  # §0.8.6: the condition, again at submit
-                convenience.check(service, record["person"], events[0]["actor"]["device"])
+                convenience.check(
+                    service,
+                    record["person"],
+                    events[0]["actor"]["device"],
+                    removing=_removing(record["op"], [e.get("device") for e in events]),
+                )
             # §0.8.6: a reader is never added to a history with convenience signatures, nor while the flag is on,
             # however long ago the request was prepared
             convenience.refuse_reader_op(
@@ -1091,30 +1138,19 @@ class HumanOps:
                 events=record["prepared"]["events"],
                 readers=record.get("readers") or [],
             )
-            with contextlib.ExitStack() as stack:
-                if record.get("code"):  # §0.8.6 item 8: the flag read and the journal write are one step against
-                    # `convenience on`. Lock order: submit takes store -> convenience, while prepare takes
-                    # convenience -> store. Safe: both run on the workspace's single worker thread, and the other
-                    # processes (the CLI, direct mode) take only one of the two; the 2 s wait is the backstop
-                    # (lock.busy, never a deadlock)
-                    stack.enter_context(
-                        convenience.workspace_lock(service.state_dir, service.workspace_id, service.host_uid)
-                    )
-                    convenience.refuse_handoff(service)
-                git = service.caps_for(call.principal).git
-                self._judge(store, record, events, git)
-                log = record["prepared"]["log"]
-                view = store.ticket(log) if log != "workspace" else None
-                key = view.key if view is not None else None
-                outcomes = service.outcomes
-                outcomes.plan(intent, [Planned(log, e["id"], e["type"], e["actor"]) for e in events], key)
-                record = {
-                    **record,
-                    "submit": {"events": events, "outcome_key": intent.key},
-                    "submitted_at": requests.clock(),
-                }
-                requests.write(record)  # fsync before the first append: a crash after it is rolled forward at start
-                stack.close()  # the flag can no longer be read as off by a submit that is already journalled
+            git = service.caps_for(call.principal).git
+            self._judge(store, record, events, git)
+            log = record["prepared"]["log"]
+            view = store.ticket(log) if log != "workspace" else None
+            key = view.key if view is not None else None
+            outcomes = service.outcomes
+            outcomes.plan(intent, [Planned(log, e["id"], e["type"], e["actor"]) for e in events], key)
+            record = {
+                **record,
+                "submit": {"events": events, "outcome_key": intent.key},
+                "submitted_at": requests.clock(),
+            }
+            requests.write(record)  # fsync before the first append: a crash after it is rolled forward at start
             return finish(service, requests, record)
 
     @staticmethod
@@ -1465,7 +1501,6 @@ def append_signed(
     *,
     signed_by: tuple[str, str] | None,
     readers: list[dict[str, Any]] | None = None,
-    hooks: Any = None,
     dev_gate: Any = None,
 ) -> tuple[list[int], HostError | None]:
     """**The single choke point for appending signed person events** (§0.8.1, §11A.4): ``human.finish`` and the relay
@@ -1503,11 +1538,7 @@ def append_signed(
     request's admitted readers) and ``required_reader`` recomputed. Their records are written before the append
     (``custody.unsafe_mode`` if that fails, nothing appended). Whichever of a convenience event and a reader event
     appends first, the other refuses.
-
-    ``hooks`` (H12c-e, only ``relay.pair_device`` through :func:`finish`; :class:`orch.host.pairdevice.Hooks`): R6's
-    step 9 in the same critical section. ``before(new events)`` runs first (the allocation intent; a refusal appends
-    nothing), ``after(seqs)`` once every event is in the log, ``failed(error)`` when nothing landed after ``before``
-    accepted."""
+    """
     from orch.store import StoreError
 
     if signed_by is not None:
@@ -1530,8 +1561,6 @@ def append_signed(
 
         store.append_check = check
         try:
-            if hooks is not None:  # H12c-e: R6's (i) and (ii) first (11A.15.6 step 9), under this lock
-                error = hooks.before([e for e in events if store.logged_event(log, e.get("id")) is None])
             if error is None:  # V3 C11 (D78/D81): full hub mode takes no local signature, whoever the signer is
                 error = hubsign.refusal(service, [e for e in events if store.logged_event(log, e.get("id")) is None],
                                         signed_by)  # fmt: skip
@@ -1560,13 +1589,10 @@ def append_signed(
                     error = _store_error(exc)
                     break
                 landed.append(int(done.event["seq"]))
-            if hooks is not None:
-                if error is None:
-                    hooks.after(landed)
-                elif not landed:
-                    hooks.failed(error)
         finally:
             store.append_check = old_check
+    if landed and signed_by is None and any(e.get("auth") == "convenience" for e in events):
+        convenience.touch(service.state_dir, service.workspace_id, service.host_uid)  # #1198 C17: resets the idle clock
     return landed, error
 
 
@@ -1596,15 +1622,14 @@ def finish(service: WorkspaceService, requests: RequestStore, record: dict[str, 
     ``seq`` s that landed; it is never ``partial``. Returns the result; raises the stored error for a failed one."""
     store = service.store
     log = record["prepared"]["log"]
-    hooks = pairdevice.hooks(service, record) if record["op"] == pairdevice.OP else None  # H12c-e: R6's step 9
+    signed = record["submit"]["events"]
     landed, error = append_signed(
         service,
         log,
-        record["submit"]["events"],
+        signed,
         record["extras"],
         signed_by=None,
         readers=record.get("readers") or [],
-        hooks=hooks,
     )
     now = service.clock()
     if error is not None:
@@ -1614,6 +1639,9 @@ def finish(service: WorkspaceService, requests: RequestStore, record: dict[str, 
         outcome = {"state": "failed", "error": failed.error(), "exit": failed.exit, "seqs": landed}
         requests.write({**record, "state": "submitted", "done_at": now, "outcome": outcome})
         raise _Stored(failed) if landed else failed
+    marketinstall.after_grant(
+        service, record, signed
+    )  # V3 G3 C3: the swap and the records, idempotent, also at roll-forward
     template = record.get("result") or {}
     view = store.ticket(log) if log != "workspace" else None
     result = ok_result(template.get("data") or {}, seq=max(landed))

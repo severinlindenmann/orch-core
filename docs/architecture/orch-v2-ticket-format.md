@@ -247,6 +247,7 @@ Pretty-printed with a fixed key order, so git diffs show one value per line. It 
       "id": "Q1",
       "to": "p_mara",
       "text": "Which tariff export is the source of truth, the monthly CSV or the API?",
+      "kind": "choice",
       "why": "The two differ for 3 of 40 tariffs; the seed must pick one.",
       "options": [{"key": "csv", "label": "Monthly CSV"}, {"key": "api", "label": "Tariff API", "cost": "+1 day"}],
       "recommended": "csv",
@@ -282,7 +283,7 @@ on. Defaults for a new ticket:
 | `links` | object, all four keys present | `{"repos": [], "branches": {}, "prs": [], "external": []}` | `repos`: repo names; `branches`: repo name → branch name; `prs`: `{repo, url}` with an `https://` url; `external`: `https://` urls |
 | `acceptance` | list of `{id, text}` | `[]` | |
 | `tasks` | list of `{id, text, verify, proves, assignee?}` | `[]` | `verify` is `null` or `{"cmd": str}`; `proves` lists AC ids that exist; `assignee` is optional (absent, never `null`) |
-| `questions` | list of `{id, to, text, why?, options?, recommended?, blocking}` | `[]` | `to` is a person id or a ticket role (`ticket_owner`, `assignees`, `reviewers`, `watchers`); `options` items are `{key, label, cost?}`; `recommended` is one of the option keys |
+| `questions` | list of `{id, to, text, kind, why?, details?, options?, recommended?, allow_other?, blocking}` (§5.6.1) | `[]` | `to` is a person id or a ticket role (`ticket_owner`, `assignees`, `reviewers`, `watchers`); `kind` is `choice` (2..6 `options` items `{key, label, text?, facts?, cost?}`, `recommended` one of the option keys) or `text` (an open question, no options) |
 | `addons` | object, `<addon name>` → object | `{}` | validated against the addon's manifest (§8) |
 
 The `spike` type covers the format's "spike / investigation" column; there is no separate `investigation` type.
@@ -498,7 +499,7 @@ agent; **D** an addon; **H** the host only. Types marked D58–D60 are new with 
 | `task.reopened` | A | `task`; `reason?`: str | |
 | `handoff.written` | A | `text`: str, at most 2 048 bytes | Rewrites Current state. `orch handoff` also releases the claim (`claim.released`, `handoff`). |
 | `log.added` | A, U | `text`: str, at most 4 096 bytes | Agent notes and human comments. |
-| `question.asked` | A, U | `question`: the full question object as in `ticket.json` (`id`, `to`, `text`, `why?`, `options?`, `recommended?`, `blocking`); `qid`: 32 hex; `hash`: question hash | The last `question.asked` for an id defines it; `ticket.json` `questions` is its projection. `qid` is derived (§5.6). Re-asking an existing id needs a grant or a person; unattended only creates new ids. |
+| `question.asked` | A, U | `question`: the full question object as in `ticket.json` (§5.6.1); `qid`: 32 hex; `hash`: question hash | The last `question.asked` for an id defines it; `ticket.json` `questions` is its projection. `qid` is derived (§5.6). Re-asking an existing id needs a grant or a person; unattended only creates new ids. |
 | `question.answered` | P | `question`: question id; `hash`; `option?`: option key; `text?`: str | At least one of `option`, `text`. Only the `to` person or a holder of the `to` role, or an owner or maintainer; when `to` resolves to no current member, owners and maintainers. |
 | `gate.approved` | P | `gate`: `requirements`, `plan` or `code`; `gate_gen`: int; `hash`: gate hash; `policy_hash`; `source_sha?`: source list | `source_sha` only and always on `code` (D59). |
 | `gate.changes_requested` | P | `gate`: `requirements`, `plan` or `code`; `gate_gen`; `hash`; `policy_hash`; `text`: str | |
@@ -523,18 +524,19 @@ agent; **D** an addon; **H** the host only. Types marked D58–D60 are new with 
 | `device.added` | P | `device`: device id; `cert`: signed object | Protocol §6.1 certificate, verbatim. Signed by an existing device of the same person, or by the new device when none is left (§5.3). |
 | `device.removed` | P | `device`; `reason?`: str | Removes the device from **this** workspace only (protocol §6.3). By the device's person or an owner. |
 | `device.revoked` | P, H | `device`; `reason`: `compromised`, `lost` or `retired`; `revocation`: signed object | The global revocation (protocol §6.2), signed by the person key, verbatim; its authority (§5.3). `reason` must equal `revocation.o.reason`, otherwise refused. Every workspace refuses the device from then on. For an already revoked device, only lost/retired → compromised is accepted; same or weaker reasons give `device.exists`. `compromised` has the effects in §5.7. H may append a freshly received revocation independently of any restore. |
+| `device.exposed` | P | `device`; `reason`: `convenience` | #1097. Signed by that device itself (a device of the signer's own person; the hub, a relay and an agent never can). The mark that this device key was in convenience custody, so a process of the owner's UID may hold a copy. It only removes authority: from here on `signer_kind` of that device is `exposed` and no break-glass row allows it (`sign.key_exposed`). Monotonic: nothing clears it, only a new key (`device.rotated`). The mark is the only evidence, and is read from the roster before the `auth` label. A key with no mark counts as clean. |
+| `device.rotated` | P | `old`: device id; `device`: device id; `cert`: signed object; `rotation`: signed object | #1097. Signed by the **new** device itself, which the roster does not know yet. `cert` is its certificate (protocol §6.1) signed by the person key, `rotation` is a fresh person-key signature (label `orch/v2/sig/device-rotate\|`) over `{workspace_id, person_id, old, new, roster_v}`, so it cannot be replayed in another workspace or at another roster version. `old` must be a device of the same person; the new device is added and `old` is removed in the same event. A break-glass row (`pk`): it works in full hub mode with the hub down. |
 | `policy.changed` | P | `gates`: {gate: policy} | The workspace defaults. |
 | `settings.changed` | P | `set`: {`grant_hours?`: int 1–24, `claim_ttl_min?`: int 15–1440, `lease_ttl_min?`: int 5–1440, `sign_methods?`: array of `terminal`, `click`, `phone`, `hub` (1–4, unique, contains `terminal`; `touchid` is reserved and refused; `hub` is C3b, §15.4), `models?`: {`claude-code?`/`codex?`: {`work?`/`refine?`/`fix?`/`continue?`/`context?`: a model name of that harness's closed list} or null} (Model routing: the model a Start agent mode uses; unnamed = harness default; `null` clears; typed word, owner only), `repos?`: {repo name: {`path`: str, `remote?`: canonical repo identity, `default_branch?`: branch name} or null}} | **D60** (`grant_hours`). Existing grants keep their end time. `null` removes a repo. Refused when two repos resolve to the same path or declare the same identity (ignoring ASCII case), or a `local:` remote names another repo. **B6** (`sign_methods`, owner decision F of 16 Oct 2026): the ways a signature may be made in this workspace; absent means not set: every way is allowed (the model judges none). The model enforces it for honest `auth` labels only (the label is the signer's own word); custody and host admission are the real control (HOST §0.8.6 B6 item 5). |
 | `grant.issued` | P, H | `grant`: grant id; `scope`: `all` or `workable`; `verbs`: `"agent"` or [operation name]; `issued_at`: timestamp; `hours`: int; `expires_at`: timestamp; `secret_hash`: hash; `label?`: str; `request?`: event id | **D60** terms in §10.1 A3. Always for the signer. Readers check `\|at − issued_at\| ≤ 300 s`, `expires_at == issued_at + 3600·hours` (seconds, no leap seconds) and the role terms at the event's position. **C10 (hub protocol §8.8):** the host (H) also appends it, and only with `request` naming an admitted `grant.requested` of the same terms (`scope`, `verbs`, `hours`, `label`), not answered before, with `0 ≤ at − request.at ≤ 300 s` and `issued_at = min(request.at, at)`. The grant is then for the request's canonical signer, with that signer's role at the request, no device, and `Grant.hub_id` = the request's hub (leaving the hub ends it, C8). A person never writes `request`. |
 | `grant.requested` | P (hub) | `scope`: `all` or `workable`; `verbs`: `"agent"` or [operation name]; `hours`: int 1–168; `label?`: str | C10 (hub protocol §8.8, V3-D29). Hub-signed only (`auth: "hub"`; a device-signed one is refused). A request for an agent grant: it changes no grant by itself; the host answers with a host-actor `grant.issued` naming it. The signer must be a member (an aliased hub user). Terms by the signer's role as `grant.issued` (D60). The event carries no grant id, secret hash or times. |
 | `grant.revoked` | P | `grant`; `reason?`: str | **D60.** Owners revoke any grant; others their own, compared as the signer's **canonical** person (a hub user aliased to the grantee revokes it, C10). |
 | `device.excluded` | P (hub) | `device`; `reason`: `lost`, `retired` or `compromised` | C10 (hub protocol §8.8). Hub-signed only, an `admin` of the hub. Ends the device in **this** workspace as `device.removed` does; `compromised` has the effects of §5.7 and ends the device's grants. Refused (`role.denied`) for a device of a workspace owner: owner devices go only through the person-signed `device.revoked`, so the hub cannot block the owner's break-glass. |
-| `addon.granted` | P | `name`: addon name; `version`: str; `package_sha256`: hash; `capabilities`: [token]; `fields`: {field: {`type`, its limits, `set_by`, `gate`?}}; `sections`: [{`id`, `types`, `gate`?}]; `artifact_kinds`: [kind] | Owner only. Also enables the addon. The host derives `fields`, `sections` and `artifact_kinds` from the package's manifest (§8.1); replay never reads the manifest and checks every later addon write against these three (§8.1). The bindings of §5.7 are the entries that have `gate`. |
+| `addon.granted` | P | `name`: addon name; `version`: str; `package_sha256`: hash; `capabilities`: [token]; `fields`: {field: {`type`, its limits, `set_by`, `gate`?}}; `sections`: [{`id`, `types`, `gate`?}]; `artifact_kinds`: [kind]; `runtime?`: {`kind`, `lock`, `packages`} | Owner only. Also enables the addon. `runtime` (V3 G4, marketplace spec §8.1) is present only when the add-on installs dependencies after the grant: the lockfile kind, its path in the package and the number of locked packages; the host derives it from the manifest's `runtime` and the checked lockfile. The host derives `fields`, `sections` and `artifact_kinds` from the package's manifest (§8.1); replay never reads the manifest and checks every later addon write against these three (§8.1). The bindings of §5.7 are the entries that have `gate`. |
 | `addon.disabled` | P | `name` | Data stays untouched. A new `addon.granted` enables it again. |
 | `addon.purged` | P | `name` | Deletes the addon's data. |
-| `hub.joined` | P | `hub_id`: hex16; `hk_root_pub`: b64u; `mode`: `selective` (`full` is refused until C2b); `binding_seq`: int ≥ 1; `aliases`: [{`person_id`, `user_id`}] sorted by `person_id` | V3 (hub contract H0 §9.1). Owner only, signed by the owner's device key at the host terminal. `hub_id` is the hub id of `hk_root_pub`. Adds no member and seals no key: a selective hub never holds `WK_e` (spec §8a). `binding_seq` is higher than every earlier one; refused while a hub is joined; an alias is never re-pointed. |
-| `hub.left` | P | `hub_id`; `binding_seq` | V3 (hub contract H0 §9.1). Owner only (break-glass): ends the joined binding it names. |
-| `relay.reopened` | P | `hub_id` | V3 C10 (design M4). Owner only, signed at the terminal with the owner's own key. Opens the direct relay path again, which a full-mode join closed (H5) and a leave did not reopen. Refused unless the workspace has left a hub, and it names that hub. Phones must be paired again. |
+| `hub.joined` | P | `hub_id`: hex16; `hk_root_pub`: b64u; `mode`: `selective` (`full` is refused until C2b); `binding_seq`: int ≥ 1; `aliases`: [{`person_id`, `user_id`}] sorted by `person_id`; `owner_proof`: object or null | V3 (hub contract H0 §9.1). Owner only, signed by the owner's device key. #1198 C9: `owner_proof` is the hub contract §9.6 proof signed with the owner's person key `PK` (the backup key); `null` only in a prepared event, never in a recorded one: the model refuses a `hub.joined` / `hub.left` without a valid proof (`hub.invalid`, detail `owner_proof: <code>`), with the roster's `pk_pub`, its own record of the prior hub event and the append time of the host-signed chained line (`at`). A `hub.joined` / `hub.left` of an owner that the model refuses leaves the hub state `unknown` (`ws.hub.invalid`): every reader of the signing mode treats it as full, never as standalone; a later valid `hub.joined` or `hub.left` clears it. Whether a workspace is dev is its signed genesis (`prefix` `SBX`), read the same by every opener. `hub_id` is the hub id of `hk_root_pub`. Adds no member and seals no key: a selective hub never holds `WK_e` (spec §8a). `binding_seq` is higher than every earlier one; refused while a hub is joined; an alias is never re-pointed. |
+| `hub.left` | P | `hub_id`; `binding_seq`; `owner_proof`: object or null | V3 (hub contract H0 §9.1). Owner only (break-glass): ends the joined binding it names. #1198 C9: carries the owner proof like `hub.joined`. |
 | `hub.pinned` | H | `hub_id`; `object`: one signed `hub.card` (with its `op_cert`), `hub.op_revoked` or `hub.snapshot`, verbatim | C3b (§15.2). The hub ledger: workspace log only, appended by the host together with the custodial event that needs it. Its authority is the embedded signatures under the `hk_root_pub` of `hub.joined`. |
 | `hub.pinned` | H | `hub_id`; `object`: a signed `hub.card`, `hub.op_revoked` or `hub.snapshot` | C3b (§15.2): the hub ledger; authority is the embedded signatures under the root pinned by `hub.joined`. |
 
@@ -556,7 +558,8 @@ with an old role.
 | `device.added` | the device's own person, from an existing device, or the new device when none is left |
 | `device.revoked` | any member's device, or the host; the embedded revocation must be signed by the device's person key |
 | `device.removed` | the device's own person; owners for any device |
-| `relay.reopened` | owners, at the terminal (C10) |
+| `device.exposed` | the marked device itself (#1097) |
+| `device.rotated` | the new device, with the person key's certificate and rotation signature (#1097) |
 | `device.excluded` | an `admin` of the hub (mapped to owner), never for an owner's device (C10) |
 | `grant.issued`, `grant.revoked` | §10.1 A3 (D60) |
 | `grant.requested` | any role with a grant (hub `edit` and `admin`), through the hub only (C10) |
@@ -623,7 +626,7 @@ the field it belongs to; no code looks a hash up by value alone.
 | policy hash | `H("orch/v2/policy\|" \|\| cj({"gate": gate, "policy": P}))`, `P` the effective policy in canonical form (§5.7). Undefined for a blocked gate (§5.7): nothing is hashed and no prompt is built | `gate.*`, `verdict.given`, gate hash |
 | people hash | `H("orch/v2/people\|" \|\| cj({role: value}))` over only the ticket roles the gate's effective policy names in `approvers` or `not`, plus `assignees` when `independent` is on; lists sorted, `owner` as `ticket_owner`, a person id or null | gate hash |
 | question id (`qid`) | the first 16 bytes, in 32 hex, of `H("orch/v2/question-id\|" \|\| cj({"workspace_id": W, "ticket": uid, "question": "Q1"}))` | `question.asked`; the protocol §13 `question_id` |
-| question hash | `H("orch/v2/question\|" \|\| cj({"question_id": qid, "ticket": uid, "text", "options"}))` (protocol §13's shape; `options` `[]` when none) | `question.*` |
+| question hash | `H("orch/v2/question\|" \|\| cj({"question_id": qid, "ticket": uid, "text", "options", "spec"}))` over the whole raw question (§5.6.1): `options` `[]` for a kind without options, `spec` every other key but `id`, `to`, `blocking` | `question.*` |
 | event head | `H("orch/v2/event\|" \|\| cj(event))` | `prev`, `based_on`, checkpoints |
 | checkpoint hash (`h_checkpoint`) | `H("orch/v2/checkpoint-hash\|" \|\| cj(C.o))` | restore source |
 | log accumulator (`h_log_acc`) | `acc_0 = 32 zero bytes`; `acc_k = H("orch/v2/log-acc\|" \|\| acc_{k-1} \|\| raw32(head_k))`, both inputs exactly 32 decoded bytes, no seq | checkpoint entries |
@@ -641,6 +644,47 @@ the field it belongs to; no code looks a hash up by value alone.
   signature domain of a reader's declaration, signed only by a device key (`DEVICE_KEY_LABELS`). It is an F1 label
   (`orch.canon.LABELS`, `labels.json`), listed by the relay corpus under the same key, and prefix-free against every
   label of both tables (`tests/crypto/test_reader_decl_label.py`).
+
+### 5.6.1 Questions: one shape, kinds, the question hash (#1123)
+
+Every question has a `kind` from a closed registry (`orch.canon.question.KINDS`). There is no other shape: a
+question without `kind` is refused by the schema, the model and the signer (no legacy branch; a dev ledger with
+older questions does not replay).
+
+| Kind | Own keys | Answer (`question.answered`) |
+|---|---|---|
+| `choice` | `options` (2..6), `recommended?` (an option key), `allow_other?` (`true` or absent) | `option`; `option` + `text` = the choice plus a note that never replaces it; `text` alone = "something else", only with `allow_other` |
+| `text` | none | `text` (an open question); `option` is refused |
+
+Common keys: `id`, `to`, `blocking` (routing), `text` (the question), `kind`, `why?`, `details?`. Option:
+`{key, label, text?, facts?, cost?}`; `label` is the title; `facts` is an array of 1..3 `[label, value]` pairs (the
+only form). **Absent is the only "none"**: `""`, `[]`, `null` and `allow_other: false` are refused, so one rendering
+has one encoding and one hash. An answer has no `value` (#1124 decides typed answers).
+
+**Limits** (code points: Python `len`, JS `Array.from(s).length`, Swift `unicodeScalars.count`; every string is
+also at most 4096 UTF-8 bytes): question text 1..140 (may span lines); options 2..6; key the token pattern, at most
+32, unique; title 1..60; option text 1..200; cost 1..60; facts 1..3, label 1..24, value 1..40; details 1..1500
+(multi-line); why 1..4096; an answer text 1..1000. Titles of one question are distinct after the fold, and fact
+labels of one option are distinct after the fold.
+
+**Text rules** (`orch.canon.text.check_plain`, verify only, never normalise): §11.3, plus no `suspicious()`
+character (zero-width and other Cf, private use, a leading mark, F1's invisible look-alikes), not empty or only
+Unicode `White_Space` (PropList 16.0, NBSP and U+3000 included), and no LF or TAB in one-line fields (title, option
+text, cost, facts). **The fold** is `NFC(full case fold C+F (NFC(s)))` with the bundled Unicode 16.0 CaseFolding
+table (`orch.canon.text.fold`; ß/ẞ, ſ, K Kelvin, ﬁ, ς/Σ and İ have vectors); JS and Swift bundle the same table.
+
+**The question hash** binds everything a person decides on: `text`, `options` (verbatim, in stored order) and
+`spec` = every key but the routing keys `id`, `to`, `blocking` and `text`/`options` (so `kind`, `why`, `details`,
+`recommended`, `allow_other`). A re-ask that changes only routing keeps the answer; any other change voids it. The
+one entry is `canon.question_hash(qid, uid, question)` over the RAW question; it validates the whole question
+first (`validate_question`), so nothing hashes, signs or replays an invalid one. The validator runs on replay too,
+so these limits are frozen for each kind; a later tightening is admit-only.
+
+**Reads carry `spec` verbatim** next to `options`: a reader hashes `{question_id, ticket, text, options, spec}`
+exactly as given and never rebuilds `spec` from view keys. A spec key or kind a client does not render makes the
+question "needs a newer app", never answerable. Fixtures in three forms (raw event, read-view item, hub needs), the
+hash known answers, refused shapes, answer rules, fold and blank sets: `tests/vectors/f1/hashes.json`
+(`question_*`) and `tests/vectors/f1/questions.json` (`forms`), generated by `tests/canon/oracle_f1_questions.py`.
 
 ### 5.7 Gates
 
@@ -682,7 +726,8 @@ their fields and sections join one of these (the `gate` of a field or section in
 | `code` | `ticket.type`, `ticket.size`, `ticket.acceptance`, `ticket.links` |
 
 Not bound by any gate, so never presented as approved: `title`, `priority`, `labels`, `parent`, `blocked_by`, `due`,
-`visibility`, questions (also `why` and `recommended`), Current state, and addon fields without a binding.
+`visibility`, questions (their own question hash binds them to answers, §5.6.1), Current state, and addon fields
+without a binding.
 
 **Generations.** Each gate `g` of a ticket has a generation, starting at 0. The events in this table raise it **in
 every status**. **An event raises a gate by at most 1, however many rows match.** A row raises `g` only if `g` applies to the ticket before or after the event, so an event that turns a gate on or off (a `policy.changed` of `applies`, a change of `ticket.type`) raises it. "Every later gate" uses the same test.
@@ -1484,7 +1529,7 @@ Rules:
 | `fields.<name>` | `type`: `string` (one line, `max_len` ≤ 200), `text` (multi-line, ≤ 4 KB), `integer` (`min`, `max`), `boolean`, `enum` (`values`: [token]), `string_list` (`max_items`), `person` (person id); `set_by`: approver tokens, `agent`, `addon` (a human token means the write is a signed person event); `gate?`: [gate]; `show?`, `filter?`: bool |
 | `sections[]` | `id` (token), `heading` (1–40 chars), `after` (a core section id), `gate?`: [gate], `types`: [ticket type] |
 | `artifact_kinds[]` | `{kind: token, label: str}`; a core kind name is refused |
-| `capabilities` | tokens from a closed list: `serve_http`, `spawn_agent`, `pty`, `network`, `git_push` |
+| `capabilities` | tokens from a closed list: `serve_http`, `spawn_agent`, `pty`, `network`, `git_push`, `choose_model`, `credential` (addon-api 1.1) |
 
 The host derives `addon.granted` (§5.4.2) from the manifest's `fields` (without `show` and `filter`), `sections` and
 `artifact_kinds`; replay uses only that event, never the manifest.
@@ -1851,8 +1896,10 @@ these codes; they are the stable `error.code` strings of §10.4 for these refusa
 | `device.exists` | §5.3 the device id is already registered |
 | `device.invalid` | §5.3 the device was removed, revoked, or its certificate expired |
 | `device.scope` | §5.3 the certificate lacks `decide` (or `operate`), or has a `drop:` scope |
+| `device.lockout` | a `device.removed` of an owner's last device that can sign now (not removed or revoked, certificate not expired at the event's `at`, with `decide`, held by a member) |
 | `sign.method` | B6: the person event's `auth` is a way (`convenience` is `click`, `secure-enclave-unlocked` is `phone`) that the workspace's `settings.sign_methods` leaves out, judged by the state at the event's own position; honest labels only |
 | `sign.hub_only` | C8/C11 (D78, D81): a person event that is not `auth: "hub"` at a position where the workspace is joined to a hub in **full** mode, and whose type is not a break-glass event (`hub.left`, signed by an owner without the click or convenience signer); judged by the state at the event's own position, append and replay alike. The break-glass set is `orch.model.breakglass.BREAK_GLASS` |
+| `sign.key_exposed` | #1097: a device key with a signed `device.exposed` mark signs a full-mode `hub.joined` (also with an `auth: "convenience"` label, marked or not; first join, selective to full, the `hub.mode` re-affirmation) or a break-glass event (`hub.left`); judged by the state before the event, append and replay alike. A key with no such evidence is clean. The way out is `device.rotated` (`orch keys custody passphrase --rotate`) |
 | `device.cert` | §5.3 an embedded certificate or revocation is not signed by the person key, or is for another person |
 | `grant.invalid` | §10.1 the grant is unknown, expired, revoked, ended, another person's, or its person may not run agents |
 | `grant.scope` | §10.1 the grant's scope does not cover the ticket, or the person can't see it |
@@ -1912,10 +1959,10 @@ these codes; they are the stable `error.code` strings of §10.4 for these refusa
 | `question.stale` | §5.4.1 the answer names an older question hash |
 | `question.answered` | §5.4.1 the first valid answer already won |
 | `question.bad_id` | §5.6 `qid` is not derived from the question id |
-| `question.bad_hash` | §5.6 the question hash is wrong |
+| `question.bad_hash` | §5.6 the question hash is wrong, or the question breaks §5.6.1 |
 | `question.reask` | §5.2 an unattended session re-asks an existing id |
 | `answer.not_allowed` | §5.4.1 the signer is not the addressee, an owner or a maintainer |
-| `answer.bad_option` | §5.4.1 neither option nor text, or an option key that doesn't exist |
+| `answer.bad_option` | §5.6.1 the answer is not one the question's kind takes (no option and no text, an option key that doesn't exist, a text without `allow_other`, whitespace-only or too long text) |
 
 Next to these, the key custody has its own refusals (exit 3, not retryable, not model codes): `custody.no_prompt`,
 `custody.no_key` and `custody.wrong_passphrase` (§10.8), and `custody.no_batch`: `orch import v1` signs its reviewed
@@ -2059,26 +2106,24 @@ detected and refused with one message that says to delete it; nothing reads, mov
   key is tolerated on read (any other value is refused) and never written. The host serves and checks
   (`check_workspace_files`: owner, mode 0o022, ACL) the store, and agents, terminals and worktrees keep using the
   project. An entry whose root holds an old-version store is unavailable with the delete message.
-- **`Store.open`** resolves the layout from the project directory fd; `create=True` (only `orch init` and
+- **`Store.open`** resolves the layout from the project directory fd; `create=True` (only `orch setup` and
   `host.bootstrap`) makes `.orch` with `mkdir` (an existing one is refused, never reused) and records the identity of
   what it made, which is all a rollback may remove (by fds, through a tombstone). Every transaction re-checks the
   layout under the guard and the lock, so a stale opener fails closed (in a running host the message says `restart the host: orch host restart`).
 
-**Decisions of C8 (instructions and `orch init` as built).** Where §10.2, the harness doc and the custody doc were silent,
+**Decisions of C8 (instructions and `orch setup` as built).** Where §10.2, the harness doc and the custody doc were silent,
 `orch.instructions` and `orch.ops.workspace_init` do the following. Each is a rule the tests pin (`tests/instructions/`).
 
-- **Where the workspace is.** `orch init --prefix DEMO [--name NAME]` makes the workspace **in the current directory**
+- **Where the workspace is.** `orch setup` makes the workspace **in the current directory**
   (`config.json`, `keys.jsonl`, `events/`, `tickets/`, `.state/` next to your files), not in an `orchestrator/` folder;
   `find_workspace` still accepts both. It is refused as invalid input when a workspace is here or above, or when any of
   those five names exists, and when the state directory lies inside the workspace (the workspace key would be committed).
-  The workspace name in `config.json` is the directory name; the owner's name is `--name`, else `$USER`. A lock directory
-  (`.orch-init.lock`) keeps two inits in one directory apart (`lock.busy`), so one rollback never deletes the other's files.
+  The workspace name in `config.json` is the directory name; the owner's name is `--name`, else `$USER`. (V3-D38: the `.orch-init.lock` directory is gone; the host serialises bootstraps per root.)
 - **Refusals come before any key exists.** A grant (`ORCH_GRANT`) or a missing person's presence is `human_only`; no
   controlling terminal (`/dev/tty`) is `human_only` too; so is an instruction-file path that is or lies below a symbolic
   link. Any failure after a key was made removes the key directory and the workspace files this call made, so a second try
   starts clean. Ctrl-C and SIGHUP (closing the terminal) do the same and print one line (`stop: init cancelled, nothing
-  was created`), no traceback. Key directories of an init that was killed (SIGKILL, power loss) carry an
-  `.init-incomplete` marker with the process id; the next `init` removes those whose process is gone. Every failure after
+  was created`), no traceback. (V3-D38: the marker and its sweep are gone; a hosted setup that dies is cleaned up by the host's bootstrap intent and start-up recovery.) Every failure after
   a passphrase or the code was shown says that what was shown is void.
 - **The passphrase comes first.** `/dev/tty` shows a generated passphrase (six distinct words of the BIP-39 list, about
   66 bits, shown once); the person types it back to confirm, or types one of their own instead (asked twice). Only then
@@ -2160,7 +2205,7 @@ detected and refused with one message that says to delete it; nothing reads, mov
   at most 6 lines and 150 tokens, a skill at most 600 tokens (a token is four characters), all always-loaded text under
   500 tokens (measured on the real texts), and `orch help` within its pinned size.
 - **Follow-ups.** Writing the instruction files with directory file descriptors (`dir_fd`, `O_NOFOLLOW`) to close the lstat-then-act race (a same-user process can still create empty directories outside via a swapped link; no file escapes); refusing hardlinked instruction files.
-- **Locks and signals.** The init lock is an `flock` on `.orch-init.lock` (dropped by the kernel when the process dies; the stale file blocks nothing); SIGTERM and SIGHUP are handled like Ctrl-C. A relative `ORCH_STATE_DIR` is made absolute. Files over 1 MiB are never rewritten (`init` reports it, `sync` refuses). The hook exits 0 even when it prints `DAMAGED`.
+- **Locks and signals.** (V3-D38: the init lock is gone.) SIGTERM and SIGHUP are handled like Ctrl-C. A relative `ORCH_STATE_DIR` is made absolute. Files over 1 MiB are never rewritten (`init` reports it, `sync` refuses). The hook exits 0 even when it prints `DAMAGED`.
 - **Strength check** is applied to the NFKC text without invisible format characters; dictionary words (BIP-39, the common list, a few famous phrases, the user's name and the prefix) are one unit each.
 - **Skill sidecar.** `orch.skill.json` is validated in plain Python (D55): exactly `schema_version` (1), `skill_version`
   (`x.y.z`), `scope` (`builtin`, `workspace` or `org`), `connections` and `env` (lists of names).
@@ -2202,7 +2247,7 @@ operation).
   ever reaches it. Every signature then asks for the passphrase on `/dev/tty` through the passphrase backend (§5.3, D65):
   never stdin, stdout, stderr, an argument or an environment variable, and no option skips or carries it. No controlling
   terminal is custody.no_prompt, a wrong or empty passphrase is custody.wrong_passphrase, a missing key file is
-  custody.no_key (hint: `orch init`, C8); all exit 3, not retryable, declared by every human operation and kept distinct
+  custody.no_key (hint: `orch setup`, C8); all exit 3, not retryable, declared by every human operation and kept distinct
   (D65: agents branch on them). Nothing is written in any case. A harness that shares the person's terminal can still
   trigger the prompt; that limit is D65's. A person's operation is never deduplicated or answered from the session
   records: every call is a fresh signature.
@@ -2210,7 +2255,7 @@ operation).
   role `device`), next to the workspace key. The person and the device are not named by the caller: the device id is
   derived from the key file's public key and looked up in the replayed device roster, which says whose device it is. A key
   the log does not know, a removed or revoked device and a person who is no longer a member sign nothing
-  (role.denied, before any prompt). P1 holds one device key per workspace per machine; creating it is `orch init`/`keys`
+  (role.denied, before any prompt). P1 holds one device key per workspace per machine; creating it is `orch setup`/`keys`
   (C8), not C7.
 - **What is signed comes from the log.** `gate`, `gate_gen`, `hash`, `policy_hash`, `source_sha`, the question `hash`,
   `roster_v` and `based_on` are read from the verified state at the moment of the call; the operations have no option
@@ -2366,7 +2411,7 @@ Every string in `ticket.json`, `body.md` and events:
 | grant verbs | `"agent"` or a list of operation names |
 | core artifact kind | `screenshot`, `log`, `report`, `link`, `dataset`, `build`, `diagram`, `receipt`, `feedback`, `other` |
 | manifest field type | `string`, `text`, `integer`, `boolean`, `enum`, `string_list`, `person` |
-| addon capability | `serve_http`, `spawn_agent`, `pty`, `network`, `git_push` |
+| addon capability | `serve_http`, `spawn_agent`, `pty`, `network`, `git_push`, `choose_model`, `credential` |
 
 ### 11.5 Frozen in P1, and the test vectors
 
@@ -2426,7 +2471,7 @@ owner's confirmation.
 | N10 | The code gate (D59) | `not` always includes `assignees` and `independent` is always `true`, enforced by the host. No `via` field in P1. In P1 turning it on moves no ticket back. In P1 only a person's signature approves it; D62 mandates may sign it from P2 (spec PR #352). | agreed with Codex |
 | N11 | Addon writes | Addons hold no key; the host appends their events. `set_by` is a list of actor alternatives checked per write (`agent`, `addon`, human tokens = a signed person event). Only leaf paths can be set, so replacing `ticket.addons.<addon>` can't bypass `set_by`. Addon events never carry core authority. | agreed with Codex, modified |
 | N12 | Independence of approvers | The policy option `independent`, **off by default** for `requirements`, `plan` and `verify`, so a sole owner can approve their own agents' work; always on for `code` (D59). See O4 for what `not: assignees` covers. | new from the Codex review |
-| N13 | Trust root | The head of `workspace.created` is the genesis, checked in six ordered steps (§5.11); remembered by the host outside the workspace, in every workspace checkpoint, shown at pairing (the person's custody key file records it from P3 pairing on; `orch init` does not, see §10.7). Readers replay authorization, not only signatures. **P1 limit:** see O7. | new from the Codex review; tightened with the Opus reviewer |
+| N13 | Trust root | The head of `workspace.created` is the genesis, checked in six ordered steps (§5.11); remembered by the host outside the workspace, in every workspace checkpoint, shown at pairing (the person's custody key file records it from P3 pairing on; `orch setup` does not, see §10.7). Readers replay authorization, not only signatures. **P1 limit:** see O7. | new from the Codex review; tightened with the Opus reviewer |
 | N14 | Rollback and trust in P1 | Equal-height divergent heads are refused and `restore` is defined, but **P1 can't detect a rollback when both the history and the local checkpoints are replaced**, and the genesis pin lives in files the same OS user owns (O7). The workspace’s `.state/applied` crash marker is unsigned: anyone who can write `.state` can make a rollback look like a repairable crash. Relay checkpoints (P3) and host-held keys (P2) address these limits. | new from the Codex review |
 | O1 | Where the factor is recorded | In the event's `auth` only, not in the device certificate. D64 records custody in event `auth`; WebAuthn is deferred past P2 because it needs a new signature contract. | agreed with Opus reviewer |
 | O2 | Custody of `dk_sig` in P1 | `dk_sig` is held by the backend named in `auth`; in P1 it is passphrase-encrypted like the person key, decrypted for one signature on a TTY, never cached; a key that signs without its factor is `file`-tier and never signs person events (§5.3). | agreed with Opus reviewer |
@@ -3190,10 +3235,5 @@ is not `auth: "hub"` and not a break-glass event by an owner is refused (`sign.h
   `hub.handoff {kind: grant}` of the same person, binding and terms (`host/grantoff.py`); otherwise it is destroyed.
 * A hub-signed `settings.changed` sets only `grant_hours`, `claim_ttl_min`, `lease_ttl_min`; a hub-signed
   `policy.changed` never changes a stored `factor` floor; `device.excluded` is refused for an owner's device.
-* H5: `HubState.direct` (`open` | `closing` | `closed`, `hub.json`) is set by the owner's full-mode join through
-  `hub.connect` (`host/cutover.py`). From `closing` the host starts no relay thread, every `RelayConn` passes the
-  `directpath` gate (cut-over routes and session mechanics only) and direct ops answer `relay.cut_over`. The cut-over
-  rotates to a local epoch with no listed device, seals it to the hub, and for a relay-linked workspace sends
-  `PUT /v2/workspaces/{ws}/cutover {v: 2, hub_id, state: "cut_over"}`. A leave never reopens it; the owner's
-  `relay.reopened` (`orch relay reopen`, after the leave is finished) does. A join made before C10 is cut over
-  automatically only for a dev workspace holding a dev hub card.
+* No direct relay path (V3-D36, D69): a workspace host never starts a relay thread; the former H5 cut-over state is gone. The
+  The relay.reopened event is deleted (legacy removal R4b).

@@ -6,7 +6,6 @@
 // a refusal) is the existing two-step dialog: the button calls `fallback`. Nothing here signs without a shown View.
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { toast } from 'sonner'
 import type { HandoffAction } from '@/api/handoff'
 import { clickReady } from '@/api/click'
 import { handoffMode } from '@/api/features'
@@ -78,7 +77,7 @@ export function AnswerSend({
   const inline = handoffMode(ws) && !methods.loading && !!action && !!option && method === 'click' && !workspaces.isPending
 
   const click = useClickSign(ws, () => {
-    toast.success('Answered')
+    // No toast: the answer is shown where it was given (the card turns into "Answered"), one message only.
     signedNow(qc, ws, ticket, question.id, question.hash)
   })
   const clickRef = useRef(click)
@@ -113,7 +112,7 @@ export function AnswerSend({
         return
       }
       started.current = current
-      void k.start(action, 0, true)
+      void k.start(action)
     }, delay)
     return () => clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -246,11 +245,11 @@ function Presented({ click, showWorkspace }: { click: ReturnType<typeof useClick
     void click.sign()
   }
   return (
-    <section data-testid="answer-strip" aria-label="You are sending" className="space-y-3 rounded-md border border-border bg-bg p-3">
+    <section data-testid="answer-strip" aria-label="You are answering" className="space-y-3 rounded-md border border-border bg-bg p-3">
       <p role="status" className="sr-only" data-testid="strip-live">
         <Said text={liveText(click.phase, armed)} />
       </p>
-      <h3 className="text-[12px] font-medium text-text-muted">You are sending</h3>
+      <h3 className="text-[12px] font-medium text-text-muted">You are answering</h3>
       {showWorkspace && view.workspace?.name && (
         <p data-testid="strip-workspace" className="text-[12px] text-text-muted">
           Workspace <Raw>{view.workspace.name}</Raw>

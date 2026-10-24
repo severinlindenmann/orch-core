@@ -22,7 +22,7 @@ import pytest
 from conftest import ORIGIN, PORT
 from fastapi.testclient import TestClient
 from orch.click.client import ClickClient
-from realhost_kit import Pty, Workspace, confirm_rules, key_of, ready_requirements, short_run_root
+from realhost_kit import Pty, Workspace, key_of, ready_requirements, short_run_root
 
 from orch_dashboard.app import create_app
 from orch_dashboard.auth import Auth
@@ -66,7 +66,7 @@ def world(tmp_path_factory):
             [sys.executable, "-I", CHILD, "cli", "keys", "custody", "convenience", "--workspace", ws.ws_id],
             ws.env(),
             ws.root,
-            confirm_rules(),
+            ws.rules(),
             90,
         ).run()
         assert convert.code == 0, convert.output[-1500:]
@@ -159,7 +159,9 @@ def test_the_workspace_card_and_the_flag(world, click):
     assert "click" in ws["features"], (ws["click"], ws["features"])
     card = dict(ws["click"])
     assert re.fullmatch(r"d_[0-9a-f]{32}", card.pop("device"))  # the validated device key (#578), never a raw value
-    assert card == {"custody": "convenience", "enabled": True, "available": True}
+    # B6 (b238af89): the card says when the One click risk notice was acknowledged; enabling One click records it.
+    assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", card.pop("risk_ack"))
+    assert card == {"custody": "convenience", "enabled": True, "available": True, "idle_hours": 12}
     card = world.client.get(click.url("status"), headers=click.headers(False)).json()
     assert card["custody"] == "convenience"
 
@@ -200,7 +202,7 @@ def test_a_view_that_is_not_the_one_built_is_refused(world, click):
     assert ok.status_code == 200, ok.text
 
 
-def test_a_word_op_needs_the_word_the_view_shows(world, click):
+def test_a_policy_op_signs_on_one_click_and_takes_no_word(world, click):
     policy = {
         "approvers": ["owner"],
         "count": 1,
@@ -210,17 +212,14 @@ def test_a_word_op_needs_the_word_the_view_shows(world, click):
     }
     got = click.prepare({"action": "policy_set", "gate": "requirements", "policy": policy})
     assert got.status_code == 200, got.text
-    assert got.json()["confirm"] == "word"
+    assert got.json()["confirm"] == "click"
     rid = got.json()["request_id"]
     view = click.post("view", {"request_id": rid}).json()
-    word = view["view"]["confirm"]["word"]
-    assert view["view"]["confirm"]["kind"] == "word" and word.endswith("/POLICY") and "~" in word
+    assert view["view"]["confirm"] == {"kind": "click"}
     time.sleep(1.2)
-    for wrong in (None, "policy", word.lower()):
-        body = {"request_id": rid, "view_digest": view["view_digest"], **({"word": wrong} if wrong else {})}
-        res = click.post("sign", body)
-        assert res.status_code == 409 and res.json()["error"]["reason"] == "word", wrong
-    ok = click.post("sign", {"request_id": rid, "view_digest": view["view_digest"], "word": word})
+    typed = click.post("sign", {"request_id": rid, "view_digest": view["view_digest"], "word": "POLICY"})
+    assert typed.status_code == 400 or typed.status_code == 422  # contract 3: there is no word field
+    ok = click.post("sign", {"request_id": rid, "view_digest": view["view_digest"]})
     assert ok.status_code == 200, ok.text
 
 
@@ -231,11 +230,13 @@ def test_cancel_cancels_on_the_host(world, click):
     assert click.post("view", {"request_id": got["request_id"]}).status_code == 404
 
 
-def test_a_click_workspace_prepares_no_terminal_handoff(world, click):
-    """ONE signing path per workspace (owner decision, 12 Oct 2026): with the flag on, /handoff is refused."""
+def test_a_click_workspace_still_prepares_a_terminal_handoff(world, click):
+    """#1170: with the flag on, /handoff works (the code for `orch sign`)."""
     res = world.client.post(f"/api/w/{world.ws.ws_id}/handoff", json=approve(world, "three"), headers=click.headers())
-    assert res.status_code == 409 and res.json()["error"]["code"] == "sign.click_only", res.text
-    assert world.ws.ws_id in res.json()["error"]["message"]
+    assert res.status_code == 200, res.text
+    world.client.delete(
+        f"/api/w/{world.ws.ws_id}/handoff/{res.json()['id']}", headers=click.headers()
+    )  # leave none open
 
 
 def test_with_the_flag_off_the_host_refuses_and_the_card_says_so(world, click):
@@ -341,15 +342,24 @@ def test_signed_once_then_already_done_and_only_an_explicit_click_repeats_it(wor
     click.post("cancel", {"request_id": more.json()["request_id"]})
 
 
-def test_a_cancelled_attempt_is_ended_and_start_again_is_explicit(world, click):
-    body = {"action": "comment", "key": world.keys["three"], "message": f"cancel then start again {time.time()}"}
+def test_a_cancelled_attempt_stays_ended_and_pressing_again_is_a_fresh_request_signed_only_on_purpose(world, click):
+    """#794 (12a19e82, merge train #974): the server steps past an attempt that ended unsigned, so pressing the action
+    again is one fresh request instead of `intent.ended`. The cancelled request is never signed afterwards, and the
+    fresh one adds nothing to the log until the person views and signs it."""
+    body = {"action": "comment", "key": world.keys["three"], "message": f"cancel then press again {time.time()}"}
+    before = _head(click, world)
     made = click.prepare(body, fresh=False).json()
+    view = click.post("view", {"request_id": made["request_id"]}).json()
     assert click.post("cancel", {"request_id": made["request_id"]}).status_code == 200
-    res = click.prepare(body, fresh=False)
-    assert res.status_code == 409 and res.json()["error"]["code"] == "intent.ended", res.text
-    fresh = click.prepare({**body, "retry": 1}, fresh=False)
-    assert fresh.status_code == 200 and fresh.json()["request_id"] != made["request_id"]
-    click.post("cancel", {"request_id": fresh.json()["request_id"]})
+    time.sleep(1.2)
+    late = click.post("sign", {"request_id": made["request_id"], "view_digest": view["view_digest"]})
+    assert late.status_code in (404, 409), late.text  # the cancelled attempt stays cancelled
+    again = click.prepare(body, fresh=False)
+    assert again.status_code == 200 and again.json()["request_id"] != made["request_id"], again.text
+    twin = click.prepare(body, fresh=False)  # a double click or a second tab: the same open request
+    assert twin.status_code == 200 and twin.json()["request_id"] == again.json()["request_id"], twin.text
+    assert _head(click, world) == before  # nothing was signed
+    click.post("cancel", {"request_id": again.json()["request_id"]})
 
 
 # -- host idem and the signer's durable record, together (core #416 idem, #431 record) ---------------------------------

@@ -62,9 +62,10 @@ def status(code: str) -> int:
         "peer.denied",
         "host.required",
         "sign.hub_only",
+        "market.actor_refused",
     } or code.startswith("grant."):
         return 403
-    if code in {"intent.ended", "intent.done", "intent.expired"}:
+    if code in {"intent.done", "intent.expired"}:
         return 409
     if code == "human.request_expired":
         return 410
@@ -104,7 +105,7 @@ def response(code: str, http: int):
     return JSONResponse({"ok": False, "error": {"code": code, "message": code, "retryable": False}}, status_code=http)
 
 
-FIX_COMMAND_CODES = ("sign.convenience_readers", "sign.click_only")
+FIX_COMMAND_CODES = ("sign.convenience_readers",)
 
 
 def plain_argv(fix) -> bool:
@@ -131,6 +132,7 @@ DETAIL_KEYS: dict[str, dict[str, tuple[str, ...] | str]] = {
     "ticket.key_not_next": {"next_key": KEY},
     "sign.convenience_unavailable": {
         "reason": (
+            "idle",
             "disabled",
             "relay_paired",
             "other_member",
@@ -142,10 +144,39 @@ DETAIL_KEYS: dict[str, dict[str, tuple[str, ...] | str]] = {
         "devices": DEVICES,
     },
     "sign.hub_only": {"reason": ("hub",)},  # V3 C11: full hub mode takes no local key
+    # V3 G4: why a dependency environment was refused or no longer verifies (fixed words, as core's table)
+    "market.env_failed": {
+        "reason": (
+            "no_binary",
+            "sdist_only",
+            "download",
+            "hash_mismatch",
+            "auto_run_file",
+            "path_escape",
+            "link",
+            "too_large",
+            "installer",
+            "package",
+            "superseded",
+            "lock",
+            "platform",
+            "network",
+        )  # fmt: skip
+    },
+    "market.env_changed": {"reason": ("missing", "changed", "digest", "abi")},
     "sign.convenience_readers": {
-        "reason": ("no_declaration", "reader_too_old", "declaration_unknown", "relay_too_old", "unknown_readers"),
+        "reason": (
+            "no_declaration",
+            "reader_too_old",
+            "declaration_unknown",
+            "relay_too_old",
+            "hub_too_old",
+            "unknown_readers",
+        ),  # fmt: skip
         "devices": DEVICES,
     },
+    # core C9 (#1198): why the owner proof of a hub step (join, switch to full, leave) was refused
+    "hub.proof_invalid": {"reason": ("proof_invalid", "proof_expired", "proof_missing", "dev_mismatch", "dev_refused")},
     # core P5 (orch-v2-host 12.15): why the publish server said no
     "publish.server_refused": {
         "reason": (
@@ -241,7 +272,6 @@ CLICK_REFUSALS = (
     "expired",
     "view_changed",
     "too_soon",
-    "word",
     "custody_changed",
     "busy",
     "check_failed",
@@ -262,12 +292,9 @@ REASONS: dict[str, tuple[str, ...] | re.Pattern] = {
 }
 #: `state`, closed per code: the human request's terminal state on this server's own `intent.*` answers (N15)
 STATES: dict[str, tuple[str, ...]] = {
-    "intent.ended": ("cancelled", "expired"),
     "intent.done": ("submitted",),
     "intent.failed": ("submitted",),
 }
-#: `why` (only with `human.click_refused`/`terminal_only`): this orch cannot hand a grant to the runner
-WHYS = ("update_orch",)
 
 
 def valid_code(v) -> bool:
@@ -316,7 +343,6 @@ TOP_KEYS = {
     "retryable": lambda v, code: isinstance(v, bool),
     "retry_after_ms": lambda v, code: retry_after(v) is not None,
     "reason": _reason,
-    "why": _on(CLICK_REFUSED, lambda v, code: isinstance(v, str) and v in WHYS),
     "state": lambda v, code: isinstance(v, str) and v in STATES.get(code, ()),
     "request_id": _on(CLICK_REFUSED, _match(REQUEST_ID, 32)),
     "signed_at": _on(

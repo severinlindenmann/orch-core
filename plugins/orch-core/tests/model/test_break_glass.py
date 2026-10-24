@@ -41,22 +41,13 @@ def strict(w: World):
 # --- the table -----------------------------------------------------------------------------------------------------
 
 
-def test_the_set_is_exactly_leave_recover_repin_rotate_and_the_v3_d29_reaffirmation():
-    assert set(breakglass.BREAK_GLASS) == {"hub.leave", "device.recover", "hub.repin", "keys.rotate", "hub.mode"}
-    assert breakglass.event_types() == {"hub.left", "device.added", "hub.repinned", "hub.joined"}
-    assert breakglass.BREAK_GLASS["hub.mode"].shape is breakglass.reaffirms_full  # not any hub.joined
-
-
-def test_only_the_exact_reaffirmation_shape_is_the_hub_joined_a_local_key_may_sign():
-    ws = WsCore(created=True)
-    ws.hub = {"status": "joined", "mode": "full", "hub_id": "h", "hk_root_pub": "r", "binding_seq": 3}
-    ok = {"type": "hub.joined", "mode": "full", "hub_id": "h", "hk_root_pub": "r", "binding_seq": 3, "aliases": []}
-    assert breakglass.reaffirms_full(ws, ok)
-    for over in ({"binding_seq": 4}, {"hub_id": "x"}, {"hk_root_pub": "q"}, {"mode": "selective"},
-                 {"aliases": [{"person_id": "a", "user_id": "b"}]}):  # fmt: skip
-        assert not breakglass.reaffirms_full(ws, {**ok, **over}), over
-    ws.hub["mode"] = "selective"
-    assert not breakglass.reaffirms_full(ws, ok)
+def test_the_set_is_exactly_leave_recover_repin_rotate_and_the_1097_rows():
+    assert set(breakglass.BREAK_GLASS) == {
+        "hub.leave", "device.recover", "hub.repin", "keys.rotate", "device.rotate", "device.mark_exposed",
+    }  # fmt: skip
+    assert breakglass.event_types() == {
+        "hub.left", "device.added", "hub.repinned", "device.rotated", "device.exposed",
+    }  # fmt: skip
 
 
 @pytest.mark.parametrize("signer", breakglass.SIGNER_KINDS)

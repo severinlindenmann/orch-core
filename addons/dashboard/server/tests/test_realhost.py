@@ -1,6 +1,6 @@
 """The dashboard server against a REAL orch host (core H6b and later): `orch host run --foreground` as a subprocess.
 
-A disposable workspace is created with the real `orch init` in a pty, seeded with the real CLI, served by a real host
+A disposable workspace is created with the real `orch setup` (the page played over the setup socket, the terminal in a pty), seeded with the real CLI, served by a real host
 and read through the server's TestClient. Every hand-off is signed with the real `orch sign CODE` in a pty. Nothing
 touches `~/.config/orch`: state, HOME and XDG_CONFIG_HOME are explicit and under a throwaway directory (see
 `realhost_kit`). Skipped when the host cannot start (no pty, no unix sockets, ...). Run: `uv run pytest -m realhost`.
@@ -115,8 +115,10 @@ def test_shell_reads(world, api, token):
     h = {"Authorization": f"Bearer {token}"}
     spaces = world.client.get("/api/workspaces", headers=h).json()
     assert [(w["prefix"], w["host_state"], w["name"]) for w in spaces] == [("DEMO", "ok", "billing")]
-    assert spaces[0]["members"][0]["role"] == "owner" and spaces[0]["needs_you"] == 3
-    # RH-6: the number is what Today counts; the no_eligible and acknowledge notices are listed but not counted
+    assert spaces[0]["members"][0]["role"] == "owner" and spaces[0]["needs_you"] == 5
+    # RH-6: the number is what Today counts (questions and approvals/verdicts; never a no_eligible or acknowledge
+    # notice). B5b (fc7c940d): the one member of a solo workspace may decide every gate, so both testing tickets wait
+    # for the owner's verdict: question + 2 requirements approvals + 2 verdicts.
     me = world.client.get("/api/me", headers=h).json()
     assert me[0]["role"] == "owner" and me[0]["tier"] == "A"
     ident = api.get("/identity").json()
@@ -125,10 +127,11 @@ def test_shell_reads(world, api, token):
     kinds = {(n["ticket"], n["kind"]) for n in today["needs_you"]}
     k = world.keys
     assert (k["question"], "question") in kinds and (k["gate"], "approval") in kinds
-    assert (k["verdict"], "no_eligible") in kinds  # one person: nobody else may decide verify
+    assert (k["verdict"], "verdict") in kinds and (k["testing"], "verdict") in kinds  # B5b: the solo owner decides
+    assert all(kind != "no_eligible" for _, kind in kinds)
     assert [t["key"] for t in today["working"]] == [k["in_progress"]]
     counted = [n for n in today["needs_you"] if n["kind"] in ("question", "approval", "verdict")]
-    assert len(counted) == spaces[0]["needs_you"] < len(today["needs_you"])
+    assert len(counted) == spaces[0]["needs_you"] == len(today["needs_you"])
 
 
 def test_board_and_backlog_paging(world, api):
@@ -452,15 +455,14 @@ def pair(tmp_path_factory):
     root = short_run_root() / uuid.uuid4().hex[:6]
     a, b = Workspace(root / "w", dirname="a"), Workspace(root / "w", dirname="b")
     try:
+        a.make_dirs()
+        a.start_host()
+        b.host = a.host
         for w, title in ((a, "Alpha ticket"), (b, "Beta ticket")):
-            w.init()
+            w.init()  # `orch setup` registers each workspace with the running host
             w.grant()
             w.install_dashboard()
             w.agent("new", title)
-        a.start_host()
-        a.register()
-        b.host = a.host
-        b.register()
     except (RuntimeError, TimeoutError, OSError) as exc:
         a.stop_host()
         shutil.rmtree(root, ignore_errors=True)
@@ -553,7 +555,6 @@ def test_record_real_host_goldens(world):
 @pytest.mark.parametrize(
     "body",
     [
-        {"action": "addon_enable", "name": "model-routing", "models": {"claude-code": {"work": "opus"}}},
         {
             "action": "addon_enable",
             "name": "publish",

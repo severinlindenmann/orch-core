@@ -1,0 +1,1 @@
+err sign.key_exposed this device key was in one-click custody, so it cannot do this: make a new key with your recovery code · retry:false · next: orch keys custody passphrase --rotate --workspace W (needs your recovery code; works while the hub is down) · fix: orch keys custody passphrase --rotate

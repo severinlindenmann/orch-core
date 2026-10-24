@@ -1,19 +1,27 @@
-// Starting a quick task as a person: ONE review and ONE confirmation (B11, order step ii). The signer signs the task
-// (a chore labelled quick), its requirements, one criterion and one task per step, the plan it derives from them, the
-// approval of the requirements and of the plan and, only when the box is ticked, the agent access, last. It goes through
-// the workspace's ONE signing path (HandoffDialog: click where it is on, the terminal where it is off); this file adds no
-// path of its own.
+// Starting a quick task (run 8, V2): one input and one button. "Sign and start task" creates the task, approves its
+// requirements and plan (made from the checks) in ONE signature, and then starts an agent with the defaults. The review
+// opens next to the button (SignPopover); access is a select inside it only when there is none or it is nearly over.
+// "Create without starting" is the same signature without the agent. No size is asked: the host measures it later.
+import { useQueryClient } from '@tanstack/react-query'
+import { ChevronRight } from 'lucide-react'
 import { useRef, useState } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { toast } from 'sonner'
+import { HARNESSES } from '@/api/agents'
 import type { HandoffAction } from '@/api/handoff'
-import { accessLength, GRANT_MAX_HOURS, grantDefaultHours, runnerLengths } from '@/api/grants'
-import { queries } from '@/api/queries'
-import { ONE_SIGNATURE } from '@/api/quickRecords'
+import { runnerLengths } from '@/api/grants'
+import { newIdem } from '@/api/runs'
+import { useMe } from '@/app/useMe'
 import { useWorkspace } from '@/app/workspace'
-import { HandoffDialog } from '@/components/sign/HandoffDialog'
+import { shownModel, type Reviewed } from '@/app/pages/new-ticket/startAfterCreate'
+import { useStartAfterCreate } from '@/app/pages/new-ticket/useStartAfterCreate'
+import { useStartPlan } from '@/app/pages/new-ticket/useStartPlan'
+import { AccessSelect } from '@/components/sign/AccessSelect'
+import { SignButton } from '@/components/sign/SignButton'
+import { SignPopover } from '@/components/sign/SignPopover'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { quickKey } from './status'
 
 /** The most a title may hold: one line (the host's own limit is wider; a quick task is one line). */
 export const MAX_QUICK_TITLE = 120
@@ -47,139 +55,166 @@ export function quickAction(title: string, description: string, steps: Step[], a
   }
 }
 
-export function AddQuick({ ws }: { ws: string }) {
+interface Pending {
+  n: number
+  action: HandoffAction
+  startNow: boolean
+  withAccess: boolean
+  title: string
+  reviewed: Reviewed
+  idem: string
+  priorGrantIds: string[]
+}
+
+export function AddQuick({ ws, onCreated, onStartFailed, onStartDone }: { ws: string; /** A task now exists (and an agent is being started for it). */ onCreated?: (key: string, title: string) => void; onStartFailed?: (key: string) => void; /** The start finished, one way or the other. */ onStartDone?: (key: string) => void }) {
   const qc = useQueryClient()
   const { workspace } = useWorkspace()
-  // The signer's runner grant lasts at most the workspace maximum (Settings), owners included: offer nothing longer.
-  const hostCap = useQuery(queries.hostSettings(ws)).data?.grant_hours
-  const cap = typeof hostCap === 'number' ? Math.min(GRANT_MAX_HOURS, Math.max(1, Math.floor(hostCap))) : grantDefaultHours(workspace)
-  const lengths = runnerLengths(cap)
+  const me = useMe(ws).data
+  const plan = useStartPlan(workspace!, me?.person ?? '')
+  const after = useStartAfterCreate()
   const [text, setText] = useState('')
   const [details, setDetails] = useState('')
   const [steps, setSteps] = useState<Step[]>([{ text: '', cmd: '' }])
-  const [agents, setAgents] = useState(false)
-  const [hours, setHours] = useState<number>(8)
-  const [action, setAction] = useState<HandoffAction | null>(null)
-  const [checking, setChecking] = useState<number[]>([])
-  const [started, setStarted] = useState('')
+  const [more, setMore] = useState(false)
+  const [pending, setPending] = useState<Pending | null>(null)
+  const [signing, setSigning] = useState(false)
+  const [hours, setHours] = useState<number | null>(null)
   const input = useRef<HTMLInputElement>(null)
+  const startBtn = useRef<HTMLButtonElement>(null)
+  const plainBtn = useRef<HTMLButtonElement>(null)
+  const [anchor, setAnchor] = useState<HTMLElement | null>(null)
   const title = oneLine(text)
   const tooLong = [...text.trim()].length > MAX_QUICK_TITLE
-  const chosen = lengths.some(([h]) => h === hours) ? hours : (lengths[0]?.[0] ?? 8)
-  const built = quickAction(text, details, steps, agents ? chosen : null)
-  const done = () => {
-    setStarted(agents ? `An agent starts with access for ${accessLength(chosen)}.` : 'An agent picks it up when one has access.')
-    setChecking([])
-    setAction(null)
+  const canStart = plan.available
+  const hoursNow = hours ?? plan.hours
+  const lengths = runnerLengths(plan.cap)
+
+  const reset = () => {
     setText('')
     setDetails('')
     setSteps([{ text: '', cmd: '' }])
-    setAgents(false)
-    void qc.invalidateQueries({ queryKey: ['quick', ws] })
+    setMore(false)
+    setHours(null)
     input.current?.focus()
   }
+
+  const begin = (start: boolean, el: HTMLElement | null) => {
+    const fresh = plan.grantNow()
+    const startNow = start && canStart
+    const withAccess = startNow && !fresh
+    const action = quickAction(text, details, steps, withAccess ? hoursNow : null)
+    if (!action || !title) return
+    // A quick task is a piece of work: the agent does it (not "write the requirements"), with the defaults of this workspace.
+    const choice = { harness: plan.pref.harness, mode: 'work' as const, model: plan.pref.model }
+    const reviewed: Reviewed = { choice, model: shownModel(choice), grantId: fresh?.id ?? null }
+    setAnchor(el)
+    setPending({ n: (pending?.n ?? 0) + 1, action, startNow, withAccess, title, reviewed, idem: newIdem(), priorGrantIds: plan.priorGrantIds })
+  }
+
+  const settled = async (p: Pending, key: string | null, deposit: string | undefined) => {
+    reset()
+    void qc.invalidateQueries({ queryKey: ['quick', ws] })
+    if (!p.startNow) return toast.success('Task created')
+    if (!key) return toast.warning('Task created. The agent was not started: the host did not say which task it is.')
+    onCreated?.(key, p.title)
+    if (p.withAccess && deposit !== undefined && deposit !== 'confirmed') {
+      onStartFailed?.(key)
+      return toast.warning('Task created. The agent was not started: its access is not confirmed yet.')
+    }
+    const out = await after.run({ ws, key, reviewed: p.reviewed, idem: p.idem, priorGrantIds: p.priorGrantIds })
+    onStartDone?.(key)
+    if (out.kind === 'started') toast.success(`Started “${p.title}” with ${HARNESSES.find((h) => h.id === p.reviewed.choice.harness)?.name ?? 'the agent'}`)
+    else {
+      onStartFailed?.(key)
+      toast.warning(out.reason)
+    }
+  }
+
   const setStep = (i: number, patch: Partial<Step>) => setSteps((all) => all.map((s, n) => (n === i ? { ...s, ...patch } : s)))
-  const filled = steps.filter((s) => s.text.trim())
-  const withCheck = filled.filter((s) => s.cmd.trim()).length
-  const summary = [
-    title ?? 'No title yet',
-    filled.length ? `${filled.length} checklist ${filled.length === 1 ? 'step' : 'steps'}${withCheck ? ` (${withCheck} with a way to check)` : ''}` : 'no checklist steps',
-    agents ? `agent access for ${accessLength(chosen)}` : 'no agent access',
-  ].join(' · ')
+  const starting = after.state.kind === 'running'
   return (
-    <section aria-label="Add a quick task" className="min-w-0 space-y-4 rounded-lg border border-border bg-surface p-4">
-      {started && (
-        <p role="status" data-testid="quick-started" className="rounded-md border border-border bg-bg px-3 py-2 text-[13px] text-text">
-          Task created and signed. {started} It is in the list below.
-        </p>
-      )}
+    <section aria-label="Add a quick task" className="min-w-0 space-y-3 rounded-lg border border-border bg-surface p-4">
       <form
-        className="space-y-4"
+        className="space-y-3"
         onSubmit={(e) => {
           e.preventDefault()
-          if (built) setAction(built)
+          if (title && !pending && !starting) begin(true, startBtn.current)
         }}
       >
         <div className="space-y-1.5">
-          <Label htmlFor="quick-title">Quick task (one line)</Label>
-          <Input id="quick-title" ref={input} value={text} onChange={(e) => setText(e.target.value)} aria-invalid={tooLong ? true : undefined} placeholder="Fix the typo in CONTRIBUTING" autoComplete="off" className="min-h-11" />
+          <Label htmlFor="quick-title">What needs doing?</Label>
+          <Input id="quick-title" ref={input} value={text} onChange={(e) => setText(e.target.value)} aria-invalid={tooLong ? true : undefined} placeholder="Rename the team photo folder" autoComplete="off" className="min-h-11" />
         </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="quick-details">Details (optional)</Label>
-          <textarea id="quick-details" value={details} onChange={(e) => setDetails(e.target.value)} rows={2} className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px]" placeholder="What should be true when it is done?" />
-        </div>
-        <fieldset className="min-w-0 space-y-3">
-          <legend className="text-[13px] font-medium text-text">Steps (optional, up to {MAX_STEPS})</legend>
-          <ol className="space-y-3">
-            {steps.map((s, i) => (
-              <li key={i} className="min-w-0 space-y-2 rounded-lg border border-border bg-bg p-3">
-                <div className="flex items-center gap-2">
-                  <span aria-hidden className="grid size-6 shrink-0 place-items-center rounded-full bg-surface text-[11px] font-medium text-text-muted">{i + 1}</span>
-                  <Input aria-label={`Step ${i + 1}`} value={s.text} onChange={(e) => setStep(i, { text: e.target.value })} placeholder="What to do" autoComplete="off" className="min-h-11 w-auto min-w-0 flex-1" />
-                  <Button type="button" variant="ghost" size="sm" className="min-h-11 min-w-11 shrink-0 px-2 text-xs text-text-muted hover:text-text" aria-label={`Remove step ${i + 1}`} onClick={() => setSteps((all) => (all.length > 1 ? all.filter((_, n) => n !== i) : [{ text: '', cmd: '' }]))}>
-                    Remove
-                  </Button>
-                </div>
-                {checking.includes(i) || s.cmd ? (
-                  <Input aria-label={`Step ${i + 1} check`} value={s.cmd} onChange={(e) => setStep(i, { cmd: e.target.value })} placeholder="Command that checks it" autoComplete="off" className="min-h-11 font-mono" />
-                ) : (
-                  <Button type="button" variant="ghost" size="sm" className="min-h-11 max-w-full whitespace-normal px-0 text-xs text-text-muted underline-offset-4 hover:bg-transparent hover:text-text hover:underline dark:hover:bg-transparent" onClick={() => setChecking((c) => [...c, i])}>
-                    Add a way to check
-                  </Button>
-                )}
-              </li>
-            ))}
-          </ol>
-          {steps.length < MAX_STEPS ? (
-            <Button type="button" variant="outline" className="min-h-11 w-full" onClick={() => setSteps((all) => [...all, { text: '', cmd: '' }])}>
-              Add a step
+        <details open={more} onToggle={(e) => setMore(e.currentTarget.open)} className="group text-[13px]">
+          <summary className="inline-flex cursor-pointer list-none items-center gap-1 text-text-muted hover:text-text [&::-webkit-details-marker]:hidden">
+            <ChevronRight aria-hidden className="size-3.5 transition-transform group-open:rotate-90" /> Add details or checks
+          </summary>
+          <div className="mt-3 space-y-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="quick-details">Details (optional)</Label>
+              <textarea id="quick-details" value={details} onChange={(e) => setDetails(e.target.value)} rows={2} className="w-full rounded-md border border-border bg-bg px-3 py-2 text-[13px]" placeholder="What should be true when it is done?" />
+            </div>
+            <fieldset className="min-w-0 space-y-2">
+              <legend className="text-[13px] font-medium text-text">Checks (optional, up to {MAX_STEPS})</legend>
+              <ol className="space-y-2">
+                {steps.map((s, i) => (
+                  <li key={i} className="min-w-0 space-y-2 rounded-lg border border-border bg-bg p-3">
+                    <div className="flex items-center gap-2">
+                      <span aria-hidden className="grid size-6 shrink-0 place-items-center rounded-full bg-surface text-[11px] font-medium text-text-muted">{i + 1}</span>
+                      <Input aria-label={`Check ${i + 1}`} value={s.text} onChange={(e) => setStep(i, { text: e.target.value })} placeholder="What to check" autoComplete="off" className="min-h-11 w-auto min-w-0 flex-1" />
+                      <Button type="button" variant="ghost" size="sm" className="min-h-11 min-w-11 shrink-0 px-2 text-xs text-text-muted hover:text-text" aria-label={`Remove check ${i + 1}`} onClick={() => setSteps((all) => (all.length > 1 ? all.filter((_, n) => n !== i) : [{ text: '', cmd: '' }]))}>
+                        Remove
+                      </Button>
+                    </div>
+                    {s.cmd || s.text ? <Input aria-label={`Check ${i + 1} command`} value={s.cmd} onChange={(e) => setStep(i, { cmd: e.target.value })} placeholder="Command that checks it (optional)" autoComplete="off" className="min-h-11 font-mono" /> : null}
+                  </li>
+                ))}
+              </ol>
+              {steps.length < MAX_STEPS ? (
+                <Button type="button" variant="outline" className="min-h-11 w-full" onClick={() => setSteps((all) => [...all, { text: '', cmd: '' }])}>Add a check</Button>
+              ) : (
+                <p className="text-[12px] text-text-muted">A quick task has up to {MAX_STEPS} checks. Make a ticket for anything bigger.</p>
+              )}
+            </fieldset>
+          </div>
+        </details>
+        {tooLong && <p role="alert" className="text-[12px] text-danger">A quick task is one line of at most {MAX_QUICK_TITLE} characters.</p>}
+        <div className="flex flex-wrap items-center gap-2">
+          <SignButton
+            ref={startBtn}
+            label={canStart || plan.pending ? 'Sign and start task' : 'Sign and create task'}
+            disabled={!title || !!pending && !signing}
+            signing={signing}
+            after={starting ? 'Starting agent…' : null}
+            slowLabel="Still starting…"
+            className="min-h-11"
+            data-testid="quick-start"
+            onClick={() => begin(true, startBtn.current)}
+          />
+          {(canStart || plan.pending) && (
+            <Button ref={plainBtn} type="button" variant="ghost" className="min-h-11 text-text-muted" disabled={!title || !!pending || starting} onClick={() => begin(false, plainBtn.current)}>
+              Create without starting
             </Button>
-          ) : (
-            <p className="text-[12px] text-text-muted">A quick task has up to {MAX_STEPS} steps. Make a ticket for anything bigger.</p>
           )}
-        </fieldset>
-        <div className="space-y-3 rounded-lg border border-warning/25 bg-warning/5 p-3">
-          <label className="flex items-start gap-2 text-[13px] text-text">
-            <input type="checkbox" className="mt-1 size-4 shrink-0" checked={agents} onChange={(e) => setAgents(e.target.checked)} />
-            <span>Let agents work on any ticket they are allowed to work on, not only this one, for</span>
-          </label>
-          <select aria-label="How long agents may work" value={chosen} disabled={!agents} onChange={(e) => setHours(Number(e.target.value))} className="block min-h-11 w-full min-w-0 rounded-md border border-border bg-bg px-3 text-[13px] text-text disabled:text-text-muted">
-            {lengths.map(([h, label]) => (
-              <option key={h} value={h}>
-                {label}
-              </option>
-            ))}
-          </select>
-          <p className="text-[12px] text-text-muted">
-            {agents ? `This workspace allows agent access of up to ${accessLength(cap)} (Settings).` : 'No agent access is asked for. The task waits until an agent that already has access picks it up.'}
-          </p>
         </div>
-        <Button type="submit" className="min-h-11 w-full" disabled={!title || !built || !!action}>
-          Start task
-        </Button>
-        <p data-testid="quick-what-you-sign" className="break-words border-t border-border pt-3 text-[12px] leading-relaxed text-text-muted">
-          <span className="font-medium">What you sign. </span>
-          {summary}
-        </p>
+        {!canStart && !plan.pending && plan.reason && <p className="text-[12px] text-text-muted" data-testid="quick-no-agent">No agent can start here: {plan.reason}</p>}
       </form>
-      <p data-testid="quick-one-signature" className="text-[12px] text-text-muted">
-        {ONE_SIGNATURE}
-      </p>
-      {tooLong && (
-        <p role="alert" className="text-[12px] text-danger">
-          A quick task is one line of at most {MAX_QUICK_TITLE} characters.
-        </p>
-      )}
-      {action && (
-        <HandoffDialog
-          title="Start task"
+      {pending && (
+        <SignPopover
+          key={`${pending.n}-${pending.withAccess ? hoursNow : 0}`}
+          title={pending.startNow ? 'Start task' : 'Create task'}
           ws={ws}
-          action={action}
+          action={pending.withAccess ? quickAction(text, details, steps, hoursNow) ?? pending.action : pending.action}
           autoStart
-          onClose={() => setAction(null)}
-          onSettled={(phase) => {
-            if (phase === 'done') done()
+          startsAgent={pending.startNow}
+          anchor={anchor}
+          controls={pending.withAccess ? <AccessSelect hours={hoursNow} onHours={setHours} lengths={lengths} agentName={HARNESSES.find((h) => h.id === pending.reviewed.choice.harness)?.name} prefix={workspace?.prefix} /> : undefined}
+          doneToast={pending.startNow ? '' : 'Task created'}
+          onSigning={setSigning}
+          onSettled={(phase, state, request) => {
+            if (phase === 'done') void settled(pending, quickKey(state, request), state?.deposit)
           }}
+          onClose={() => setPending(null)}
         />
       )}
     </section>

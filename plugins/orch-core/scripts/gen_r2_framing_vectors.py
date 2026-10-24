@@ -19,9 +19,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from orch import crypto  # noqa: E402
 from orch.relay import bridge, framing, submit, wire  # noqa: E402
 from tests.relay.bridgekit import T0, World, apply_setup, open_chunk, ulid  # noqa: E402
+
+from orch import crypto  # noqa: E402
 
 OUT = ROOT / "tests" / "relay" / "r2_vectors" / "r2_framing.json"
 SEED = b"r2-framing-vectors-v1"

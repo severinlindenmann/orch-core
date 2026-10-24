@@ -15,7 +15,7 @@ const status = (p: Promise<unknown>) => p.then(() => 200, (e: { status: number }
 
 describe('action minimum roles are declared once, in the package manifest', () => {
   it('every addon declares save_settings as owner-only', () => {
-    for (const name of ['publish', 'github', 'usage', 'terminals', 'wiki', 'estimate']) {
+    for (const name of ['publish', 'usage', 'terminals', 'wiki', 'estimate']) {
       const pkg = addons.find((a) => a.name === name) as unknown as { actions?: Record<string, { minRole: string }> }
       expect(pkg.actions?.save_settings.minRole, `${name}.save_settings`).toBe('owner')
     }
@@ -23,7 +23,7 @@ describe('action minimum roles are declared once, in the package manifest', () =
     expect(publish.actions.decide.minRole).toBe('maintainer')
   })
   it('mock modules carry no role of their own', () => {
-    for (const name of ['publish', 'github', 'usage', 'terminals', 'wiki', 'estimate']) {
+    for (const name of ['publish', 'usage', 'terminals', 'wiki', 'estimate']) {
       for (const [id, a] of Object.entries(getAddon(name)!.actions)) expect(typeof a, `${name}.${id}`).toBe('function')
     }
   })

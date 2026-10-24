@@ -12,7 +12,7 @@ from orch.crypto import suite as S
 from orch.crypto.encoding import b64u, unb64u
 from orch.hubclient import HubLink, HubRefused, Position, derive_view_key, sync_logs
 from orch.hubclient import logsync as LS
-from tests.relay import r6kit
+from tests.wsproto import r6kit
 
 from . import logview
 from .fake import FakeHub
@@ -60,7 +60,7 @@ def test_a_production_page_opens_with_the_vector_key_and_a_fresh_salt_each_time(
 def test_the_key_stores_view_key_is_the_contract_derivation(mk):  # noqa: F811
     for e in (1,):
         assert mk.view_key(e) == derive_view_key(mk.wk(e), WS, e)
-    from orch.relay.r6.keystore import CustodyRefused
+    from orch.identity.epochs import CustodyRefused
 
     with pytest.raises(CustodyRefused):
         mk.view_key(7)  # never held
@@ -725,7 +725,7 @@ def test_l2_c14_2_the_view_key_is_only_for_the_epoch_sealed_to_the_hub():
             return b"k" * 32
 
     st, sealed = Store(), {"v": 1}
-    e = _Epochs(st, None, lambda: sealed["v"])
+    e = _Epochs(st, "a" * 32, lambda: sealed["v"])
     assert e.view_key(1) == b"k" * 32
     with pytest.raises(HubRefused) as x:
         e.view_key(2)  # held, but newer than the epoch sealed to the hub
@@ -734,4 +734,4 @@ def test_l2_c14_2_the_view_key_is_only_for_the_epoch_sealed_to_the_hub():
     with pytest.raises(HubRefused):
         e.view_key(1)
     with pytest.raises(HubRefused):
-        _Epochs(st).view_key(1)  # no provider: fail closed
+        _Epochs(st, "a" * 32).view_key(1)  # no provider: fail closed

@@ -23,10 +23,10 @@ custody.wrong_passphrase 3 retry:false
 sign.convenience_readers 3 retry:false
 sign.convenience_unavailable 3 retry:false
 sign.hub_only 3 retry:false
+sign.key_exposed 3 retry:false
 relay.pair_open 3 retry:false
 relay.no_primary 3 retry:false
 relay.quota 3 retry:false
-relay.pair_closed 3 retry:false
 host.dev_refused 3 retry:false
 reader.decl_invalid 3 retry:false
 custody.no_batch 3 retry:false
@@ -63,8 +63,10 @@ conflict.section 8 retry:true
 conflict.field 8 retry:true
 quick.unlabelled 9 retry:true
 hub.refused 3 retry:false
+hub.proof_invalid 3 retry:false
 hub.already_joined 3 retry:false
 hub.not_joined 3 retry:false
+device.lockout 3 retry:false
 retry.later 9 retry:true
 quota.unattended 9 retry:true
 members.stale 9 retry:true
@@ -78,6 +80,8 @@ market.rollback 3 retry:false
 market.community_unisolated 3 retry:false
 market.blocked 3 retry:false
 market.not_allowed 3 retry:false
+market.addon_not_allowed 3 retry:false
+market.publisher_unpinned 3 retry:false
 market.unknown_addon 3 retry:false
 market.revoked 3 retry:false
 market.host_not_allowed 3 retry:false
@@ -104,3 +108,6 @@ market.actor_refused 3 retry:false
 market.state_invalid 5 retry:false
 market.refresh_running 9 retry:true
 market.already_added 3 retry:false
+market.not_installed 3 retry:false
+market.ambiguous_addon 3 retry:false
+market.still_enabled 3 retry:false

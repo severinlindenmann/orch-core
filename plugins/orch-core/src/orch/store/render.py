@@ -24,6 +24,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from orch import canon
+from orch.addons.settings_value import KEY as ADDONS_KEY
 from orch.schema import SECTIONS_BY_TYPE
 
 __all__ = [
@@ -76,8 +77,8 @@ _ITEM_ORDER = {
     "prs": ("repo", "url"),
     "acceptance": ("id", "text"),
     "tasks": ("id", "text", "verify", "proves", "assignee"),
-    "questions": ("id", "to", "text", "why", "options", "recommended", "blocking"),
-    "options": ("key", "label", "cost"),
+    "questions": ("id", "to", "text", "kind", "why", "details", "options", "recommended", "allow_other", "blocking"),
+    "options": ("key", "label", "text", "facts", "cost"),
     "policy": ("approvers", "count", "not", "applies", "independent"),
 }
 _REFS = re.compile(r"\(artifact:([A-Za-z0-9][A-Za-z0-9._-]{0,127})\)")
@@ -140,8 +141,8 @@ def render_config(view: Any, *, host_id: str, wsk_pub: str, name: str, run_for: 
             "lease_ttl_min": view.settings["lease_ttl_min"],
             **({"sign_methods": list(view.settings["sign_methods"])} if "sign_methods" in view.settings else {}),
             **({"publish": dict(view.settings["publish"])} if "publish" in view.settings else {}),
-            **({"models": thaw(view.settings["models"])} if "models" in view.settings else {}),
             **({"icon": thaw(view.settings["icon"])} if "icon" in view.settings else {}),
+            **({ADDONS_KEY: thaw(view.settings[ADDONS_KEY])} if ADDONS_KEY in view.settings else {}),
             "repos": {r: dict(sorted(p.items())) for r, p in sorted(view.repos.items())},
         },
         "agents": {"run_for": run_for},

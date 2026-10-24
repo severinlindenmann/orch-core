@@ -1,3 +1,4 @@
+import userEvent from '@testing-library/user-event'
 // R3-A1: Settings shows the versions it already knows: core (package + release), the dashboard, and each add-on's manifest version.
 import { screen, within } from '@testing-library/react'
 import { expect, it, vi } from 'vitest'
@@ -24,20 +25,12 @@ const state = useFakeHost(() => [
 
 it('General shows the core version with its release, and the dashboard version', async () => {
   show('/w/DEMO/settings/general')
+  await userEvent.setup().click(await screen.findByText('Advanced'))
   const box = await screen.findByTestId('versions', {}, T)
   expect(within(box).getByText('v2.0.1')).toBeInTheDocument()
   expect(within(box).getByText('release 0123456789ab')).toBeInTheDocument()
   expect(within(box).getByText('v0.1.0')).toBeInTheDocument()
   expect(state.host.posts()).toEqual([]) // nothing is written
-})
-
-it('each add-on row shows a muted version when the host says one, nothing when it does not', async () => {
-  show('/w/DEMO/settings/addons')
-  await screen.findByRole('list', { name: 'Add-ons' }, T)
-  expect(screen.getByTestId('addon-worktrees-version')).toHaveTextContent('v1.2.3')
-  expect(screen.getByTestId('addon-dashboard-version')).toHaveTextContent('v0.1.0')
-  expect(screen.queryByTestId('addon-publish-version')).toBeNull()
-  expect(screen.queryByTestId('addon-usage-version')).toBeNull()
 })
 
 it('the answer is checked: odd values read as not known', () => {

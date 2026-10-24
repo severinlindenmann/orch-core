@@ -30,7 +30,7 @@ def build(prepared, verified=True):
 APPROVE = """\
 Approve the requirements of DEMO-0001 (key per host; signed id …<TAIL>)
 in workspace Acme (DEMO)
-Verification fingerprint: <FP>
+Verification code: <FP>
 
 Context
   | the context
@@ -54,7 +54,7 @@ Empty, not shown: Summary.
 NEW = """\
 Create ticket DEMO-0002 · Elefant Chart (key per host; signed id …<TAIL>)
 in workspace Acme (DEMO)
-Verification fingerprint: <FP>
+Verification code: <FP>
 
 Details
   type: chore
@@ -68,9 +68,9 @@ def test_the_plain_view_of_an_approval_is_headline_and_content_without_hashes(hu
     p = human.prepare("approve", {"ref": key, "gate": "requirements"})
     text = signer.plain(p, WS)
     assert str(text) == APPROVE.replace("<TAIL>", p["log"][-8:]).replace("<FP>", p["fingerprint"])
-    # A-3: the dashboard says "check that this matches the fingerprint in your terminal": the same 12 hex, labelled,
+    # A-3: the dashboard says "check that the verification code matches the one in the terminal": the same 12 hex, labelled,
     # on the third line, before any content (and the full review's own `fingerprint:` line is still in the details)
-    assert text.splitlines()[2] == f"Verification fingerprint: {p['fingerprint']}" and re.fullmatch(
+    assert text.splitlines()[2] == f"Verification code: {p['fingerprint']}" and re.fullmatch(
         r"[0-9a-f]{12}", p["fingerprint"]
     )
     for hidden in ("sha256", "uid ", "pid ", "self-declared", "policy", "gate input"):
@@ -156,9 +156,7 @@ def test_the_view_of_a_click_carries_the_headline_and_the_content_next_to_the_un
 
     _, key = human.ticket("Owner CLI test")
     p = human.prepare("log", {"ref": key, "text": "note"})
-    v = view.build(
-        p, WS, kind="click", device=p["events"][0]["actor"]["device"], expires_at="2026-01-01T00:00:00Z", artifacts=None
-    )
+    v = view.build(p, WS, device=p["events"][0]["actor"]["device"], expires_at="2026-01-01T00:00:00Z", artifacts=None)
     assert v["headline"].startswith("Add a note to DEMO-0001") and v["content"]["sections"][0]["text"] == "note"
     assert v["lines"] == signer.render(p, WS).rstrip("\n").split("\n")  # the full review is still there, line for line
     assert v["risk"]
@@ -295,6 +293,8 @@ VALUES = {
     "duplicate_of": "DEMO-0007", "resolution": "duplicate", "key": "DEMO-0002", "ticket_type": "chore", "title": "Marker Title",
     "owner": "p_" + "4" * 32, "add": ["p_" + "7" * 32], "remove": ["p_" + "8" * 32], "from": "open", "to": "backlog", "gate": "plan",
     "gates": {"plan": POLICY}, "set": {"grant_hours": 5},
+    "runtime": {"kind": "python-requirements", "lock": "marker-lock.txt", "packages": 3},
+    "old": "d_" + "5" * 32, "rotation": {"o": {"kind": "device_rotation", "marker": "rot"}, "sig": "s"},
     "hub_id": "38d8abed52ccfb538da401fd54e64bdc", "hk_root_pub": "marker-hubroot", "mode": "selective", "binding_seq": 3,
     "aliases": [{"person_id": "9" * 32, "user_id": "a" * 32}], "sections": {"summary": {"hash": "sha256:" + "ee" * 32, "refs": ["marker-art"]}},
 }  # fmt: skip
@@ -364,7 +364,7 @@ def test_the_plain_view_shows_every_key_it_claims_to_show(typ):
         needles = []
         if isinstance(value, str) and value.startswith("sha256:"):
             needles.append(value[7:19])  # a digest is shown short
-        elif key in ("pk_pub", "cert", "device_cert", "hk_root_pub"):
+        elif key in ("pk_pub", "cert", "device_cert", "hk_root_pub", "rotation"):
             needles.append(signcontent._fp(value))  # a key or certificate is shown by its fingerprint
         elif key in ("sections", "set", "gates", "source_sha"):
             needles.append(
@@ -823,6 +823,29 @@ def _addon(**change):
     return {"op": "addon.grant", "events": [ev], "material": {"kind": "payload", "ticket": None}}
 
 
+def test_g4_an_addon_grant_with_dependencies_is_never_the_short_view_and_says_what_is_installed():
+    runtime = {"kind": "python-requirements", "lock": "requirements.txt", "packages": 3}
+    c = build(_addon(runtime=runtime))
+    assert c["headline"] == "Grant the add-on terminals"
+    rows = {r["field"]: r["after"] for r in c["fields_changed"]}
+    assert "dependencies" in rows and "requirements.txt" in rows["dependencies"] and "3" in rows["dependencies"]
+    assert any("Also installs 3 Python packages listed in requirements.txt after you sign" in n for n in c["notes"])
+    assert any("no package scripts run" in n for n in c["notes"])
+    one = build(_addon(runtime={**runtime, "kind": "node-package-lock", "lock": "package-lock.json", "packages": 1}))
+    assert any("Also installs 1 Node package listed in package-lock.json" in n for n in one["notes"])
+    for bad in (
+        {**runtime, "kind": "go-mod"},
+        {**runtime, "extra": 1},
+        {"kind": "python-requirements", "lock": "x"},
+        {**runtime, "packages": "3"},
+        {**runtime, "packages": 0},
+        {**runtime, "lock": ["x"]},
+        "pip",
+    ):
+        with pytest.raises(signcontent.PlainUnavailable):
+            build(_addon(runtime=bad))
+
+
 def test_f7_an_addon_grant_says_what_the_addon_may_do_and_keeps_digest_and_raw_fields_out_of_the_main_view():
     c = build(_addon())
     assert c["headline"] == "Turn on Terminals: it says it will open terminals on this computer, as you"
@@ -927,8 +950,8 @@ def test_f7_an_answer_to_a_question_with_why_and_a_recommendation_is_plain():
     rows = {r["field"]: r["after"] for r in c["fields_changed"]}
     assert rows["your choice"] == "Hello (option hello)"
     assert rows["option hello"] == "Hello" and rows["option hi"] == "Hi"
-    assert rows["recommended option (per host)"] == "Hello"
-    assert any(s["title"].endswith("(per host, not signed)") and "before I write" in s["text"] for s in c["sections"])
+    assert rows["recommended option"] == "Hello"  # bound by the question hash since #1123
+    assert any(s["title"] == "Why it was asked" and "before I write" in s["text"] for s in c["sections"])
     assert c["ticket"]["key"] == "RA-0001"
     view = "\n".join(signcontent.text(c, signer._clean))
     assert "{" not in view and "options" not in view.replace("option ", "")
@@ -1053,7 +1076,7 @@ def test_f8_a_stop_says_which_access_in_words_and_keeps_the_id_out_of_them():
     c = build({"op": "grant.revoke", "events": [ev], "material": material_for("grant.revoked", ev)})
     assert c["headline"] == "Take back agent access"  # signed words only
     row = c["fields_changed"][0]
-    assert row["after"].startswith("Agent access for this Mac's runner, until ") and row["after"].endswith(
+    assert row["after"].startswith("Agent access for this computer's runner, until ") and row["after"].endswith(
         "(per host, not signed)"
     )
     shown = "\n".join(signcontent.text(c, signer._clean)) + c["headline"] + repr(c)
@@ -1068,7 +1091,7 @@ def test_f8_an_extend_names_the_replaced_access_by_words_only():
     c = build({"op": "grant", "events": [new, old], "material": m})
     assert "gr_" not in repr(c)  # neither id is in the plain view: both are in the technical details
     line = next(x for x in c["summary"]["lines"] if "Per host, not signed: that is the agent access" in x)
-    assert "for this Mac's runner, until " in line
+    assert "for this computer's runner, until " in line
     same = _stop(new["grant"], "extended")
     with pytest.raises(signcontent.PlainUnavailable):  # the caller then shows the full review
         build({"op": "grant", "events": [new, same], "material": {**m, "grants": {same["grant"]: _info(same)}}})
@@ -1213,7 +1236,7 @@ def test_v4_an_extend_is_titled_and_says_running_agents_stop():
     assert "per host, not signed" in joined and "3 days" in joined and "ends " in joined
     everything = repr(c) + "\n".join(signcontent.text(c, signer._clean))
     assert "gr_" not in everything  # ids are in the technical details only (issue 788)
-    assert c["headline"].startswith("Extend agent access for this Mac's runner, for 3 days")
+    assert c["headline"].startswith("Extend agent access for this computer's runner, for 3 days")
     # the warning is said once, in the notes (the terminal prints no summary lines; the dashboard shows both)
     assert repr(c).count("Running agents will stop.") == 1
     assert "\n".join(signcontent.text(c, signer._clean)).count("Running agents will stop.") == 1
@@ -1439,5 +1462,7 @@ def test_788_the_hosts_word_never_reaches_a_headline_or_summary_as_if_it_were_si
     old = _stop("gr_0OLDBBBBBBBBBBBBBBBBBBBBB", "extended")
     m = {**material_for("grant.issued", new), "grants": {old["grant"]: _info(old)}}
     ext = build({"op": "grant", "events": [new, old], "material": m})
-    assert "Mac's runner, until" not in ext["headline"]  # the signed label of the NEW access may name the runner
-    assert all("per host, not signed" in x.lower() for x in ext["summary"]["lines"] if "this Mac's runner, until" in x)
+    assert "computer's runner, until" not in ext["headline"]  # the signed label of the NEW access may name the runner
+    assert all(
+        "per host, not signed" in x.lower() for x in ext["summary"]["lines"] if "this computer's runner, until" in x
+    )

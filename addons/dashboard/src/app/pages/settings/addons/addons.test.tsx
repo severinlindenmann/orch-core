@@ -1,5 +1,6 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
+import { offerUpdate } from '@/test/offerUpdate'
 import { renderApp } from '@/test/renderApp'
 
 describe('Addon manager', () => {
@@ -24,16 +25,16 @@ describe('Addon manager', () => {
     await waitFor(() => expect(screen.getAllByRole('link', { name: /Quick tasks/ }).some((l) => l.getAttribute('href') === '/w/DEMO/addon/quick/quick')).toBe(true)) // sidebar nav appeared
   })
   it('an update with a new capability shows the diff and is one signature (it stays on)', async () => {
-    const { user } = renderApp('/settings/addons')
-    const row = await screen.findByRole('row', { name: /GitHub/ })
+    const { user } = renderApp('/settings/addons', { setup: (s) => void offerUpdate(s) })
+    const row = await screen.findByRole('row', { name: /Estimate/ })
     await user.click(within(row).getByRole('button', { name: /Update to 0\.6\.0/ }))
     expect(await screen.findByText('+ spawn_agent')).toBeInTheDocument()
-    expect(screen.getByRole('dialog')).toHaveTextContent('The new capabilities take effect now and GitHub (github) stays on')
+    expect(screen.getByRole('dialog')).toHaveTextContent('The new capabilities take effect now and Estimate (estimate) stays on')
     // The changelog is the addon's text: shown apart, labelled as the addon's.
     expect(within(screen.getByRole('dialog')).getByRole('region', { name: 'From the addon: changelog' })).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Update' }))
-    await waitFor(() => expect(within(screen.getByRole('row', { name: /GitHub/ })).getByText('Active')).toBeInTheDocument())
-    expect(within(screen.getByRole('row', { name: /GitHub/ })).getByText('0.6.0')).toBeInTheDocument()
+    await waitFor(() => expect(within(screen.getByRole('row', { name: /Estimate/ })).getByText('Active')).toBeInTheDocument())
+    expect(within(screen.getByRole('row', { name: /Estimate/ })).getByText('0.6.0')).toBeInTheDocument()
     expect(screen.queryByText(/grant again/)).toBeNull()
   })
   it('a catalog package whose title core cannot say plainly cannot be signed (alert, Sign off)', async () => {
@@ -45,16 +46,16 @@ describe('Addon manager', () => {
     expect(within(dialog).getByRole('button', { name: 'Grant and turn on' })).toBeDisabled()
   })
   it('updating a disabled addon says it stays off (the host keeps on/off)', async () => {
-    const { user } = renderApp('/settings/addons')
-    await user.click(within(await screen.findByRole('row', { name: /GitHub/ })).getByRole('switch', { name: 'GitHub enabled' }))
-    await within(screen.getByRole('row', { name: /GitHub/ })).findByRole('switch', { name: 'GitHub disabled' })
-    await user.click(within(screen.getByRole('row', { name: /GitHub/ })).getByRole('button', { name: /Update to 0\.6\.0/ }))
-    const dialog = await screen.findByRole('dialog', { name: /Update GitHub \(github\) to 0\.6\.0/ })
-    expect(dialog).toHaveTextContent('GitHub (github) stays off')
+    const { user } = renderApp('/settings/addons', { setup: (s) => void offerUpdate(s) })
+    await user.click(within(await screen.findByRole('row', { name: /Estimate/ })).getByRole('switch', { name: 'Estimate enabled' }))
+    await within(screen.getByRole('row', { name: /Estimate/ })).findByRole('switch', { name: 'Estimate disabled' })
+    await user.click(within(screen.getByRole('row', { name: /Estimate/ })).getByRole('button', { name: /Update to 0\.6\.0/ }))
+    const dialog = await screen.findByRole('dialog', { name: /Update Estimate \(estimate\) to 0\.6\.0/ })
+    expect(dialog).toHaveTextContent('Estimate (estimate) stays off')
     expect(dialog).not.toHaveTextContent('stays on')
     await user.click(within(dialog).getByRole('button', { name: 'Update' }))
-    await waitFor(() => expect(within(screen.getByRole('row', { name: /GitHub/ })).getByText('0.6.0')).toBeInTheDocument())
-    expect(within(screen.getByRole('row', { name: /GitHub/ })).getByRole('switch', { name: 'GitHub disabled' })).toBeInTheDocument()
+    await waitFor(() => expect(within(screen.getByRole('row', { name: /Estimate/ })).getByText('0.6.0')).toBeInTheDocument())
+    expect(within(screen.getByRole('row', { name: /Estimate/ })).getByRole('switch', { name: 'Estimate disabled' })).toBeInTheDocument()
   })
   it('disabling an addon removes its nav, palette commands and Today card', async () => {
     const { user } = renderApp('/settings/addons')
@@ -118,14 +119,14 @@ describe('Grant and update dialogs list what viewers can run', () => {
   it('an update that adds a viewer action shows it in the diff and the grant still signs', async () => {
     const { user } = renderApp('/settings/addons', {
       setup: (s) => {
-        const gh = s.addons.find((a) => a.name === 'github')!
-        gh.update!.actions = { ...gh.actions, refresh: { minRole: 'viewer', label: 'Refresh pull requests' } }
+        const est = offerUpdate(s)
+        est.update!.actions = { ...est.actions, peek: { minRole: 'viewer', label: 'Peek' } }
       },
     })
-    await user.click(within(await screen.findByRole('row', { name: /GitHub/ })).getByRole('button', { name: /Update to 0\.6\.0/ }))
-    expect(await screen.findByText('+ Viewers can: Refresh (refresh)')).toBeInTheDocument()
+    await user.click(within(await screen.findByRole('row', { name: /Estimate/ })).getByRole('button', { name: /Update to 0\.6\.0/ }))
+    expect(await screen.findByText('+ Viewers can: Peek (peek)')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Update' }))
-    await waitFor(() => expect(within(screen.getByRole('row', { name: /GitHub/ })).getByText('0.6.0')).toBeInTheDocument())
+    await waitFor(() => expect(within(screen.getByRole('row', { name: /Estimate/ })).getByText('0.6.0')).toBeInTheDocument())
     expect(screen.queryByText(/grant again/)).toBeNull()
   })
 })

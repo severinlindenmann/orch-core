@@ -47,7 +47,7 @@ export interface RunnerInfo {
   enabled: boolean
   terminals: boolean
   /** M7b: the caller's runner grant (never its secret). */
-  grant?: { id: string; until: string; scope: 'all' | 'workable' } | null
+  grant?: { id: string; until: string; scope: 'all' | 'workable'; startable?: boolean; startable_until?: string | null } | null
 }
 
 export interface RunList {
@@ -177,14 +177,14 @@ export function exitText(run: Pick<Run, 'state' | 'exit' | 'kind'>): string | nu
   const e = run.exit
   if (!e) return run.state === 'lost' ? `${what} was lost: the runner no longer knows it.` : null
   switch (e.reason) {
-    case 'spawn_failed': return `${what} could not be started. Is its program installed on this Mac?`
+    case 'spawn_failed': return `${what} could not be started. Is its program installed on this computer?`
     case 'stopped': return `${what} was stopped.`
     case 'runner_restarted': return `${what} ended because the agent runner restarted.`
     case 'lost': return `${what} was lost: the runner no longer knows it.`
     default:
       if (e.signal) return `${what} ended (${e.signal}).`
       if (e.code === 0) return `${what} finished.`
-      if (e.code === 127) return `${what} ended at once: its program was not found on this Mac (code 127).`
+      if (e.code === 127) return `${what} ended at once: its program was not found on this computer (code 127).`
       if (e.code != null) return `${what} ended with an error (code ${e.code}).`
       return `${what} ended.`
   }

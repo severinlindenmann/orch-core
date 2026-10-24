@@ -11,7 +11,7 @@ import { installAndGrant } from '@/test/installAddon'
 import { refused } from '@/test/refused'
 
 // One decision rule, in core, for every addon that asks a human (manifest `actions[id].decision: true`).
-const DECIDING = ['publish', 'quick', 'models', 'factory', 'schedules', 'repos'] as const
+const DECIDING = ['publish', 'quick', 'factory', 'schedules', 'repos'] as const
 
 const setup = (viewer = 'p_sev') => {
   const store = createMockStore({ persist: false })

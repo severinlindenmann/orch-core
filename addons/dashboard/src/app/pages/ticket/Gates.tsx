@@ -53,7 +53,7 @@ function Approvals({ gate, viewer }: { gate: GateStatus; viewer: Viewer }) {
           {a.via === 'factory_charter' ? ' · auto-approved under the factory charter' : ''}
           {a.source_sha ? ` · commit ${a.source_sha}` : ''}
           {' · '}
-          {phoneDecision(a) ? <span className="text-text-muted">as reported by your Mac</span> : a.sig_ok === undefined ? (
+          {phoneDecision(a) ? <span className="text-text-muted">as reported by your computer</span> : a.sig_ok === undefined ? (
             <span className="text-text-muted">signature not checked</span>
           ) : (
             <span className={a.sig_ok ? 'text-success' : 'text-danger'}>{a.sig_ok ? 'verified signature' : 'signature failed'}</span>
@@ -105,7 +105,7 @@ function Step({ name, ticket, viewer, mine }: { name: GateName; ticket: TicketDo
                   <dt className="inline text-text-faint">{viewer.name(a.by)} </dt>
                   <dd className="inline">
                     {fmtExact(a.at)}
-                    {phoneDecision(a) ? ' · as reported by your Mac' : <> · via {a.via ? VIA[a.via] ?? a.via : 'unknown'}
+                    {phoneDecision(a) ? ' · as reported by your computer' : <> · via {a.via ? VIA[a.via] ?? a.via : 'unknown'}
                       {a.via === 'factory_charter' ? '' : ` · presence ${a.presence ? presenceLabel(a.presence) : 'unknown'}`}
                     </>}
                   </dd>

@@ -25,7 +25,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from orch import canon
-from orch.identity import pairdevice
+from orch.addons.settings_value import KEY as ADDONS_KEY
 
 from . import review, signcontent
 
@@ -242,7 +242,16 @@ _MOVE_TO = frozenset({"backlog", "open"})
 _GATES = frozenset({"requirements", "plan", "verify", "code"})
 _PEOPLE_ROLES = ("owner", "assignees", "reviewers")  # watchers: not offered by the dashboard yet
 _SETTINGS_KEYS = frozenset(
-    {"grant_hours", "claim_ttl_min", "lease_ttl_min", "sign_methods", "repos", "publish", "models", "icon"}
+    {
+        "grant_hours",
+        "claim_ttl_min",
+        "lease_ttl_min",
+        "sign_methods",
+        "repos",
+        "publish",
+        "icon",
+        ADDONS_KEY,
+    }  # fmt: skip
 )
 
 
@@ -323,26 +332,54 @@ def _person_op(prepared: Mapping[str, Any]) -> None:
                 and e["type"] == "hub.joined"
                 and e.get("mode") in (("full",) if op == "hub.mode" else ("selective", "full"))
                 and (op == "hub.join" or e.get("aliases") == [])
-                and set(e) - review.ENVELOPE == {"hub_id", "hk_root_pub", "mode", "binding_seq", "aliases"}
+                and set(e) - review.ENVELOPE
+                == {"hub_id", "hk_root_pub", "mode", "binding_seq", "aliases", "owner_proof"}
+                and e["owner_proof"] is None  # #1198 C9: the signer fills it after the review
             )
         elif op == "hub.leave":  # V3 C2a: one hub.left on the workspace log, naming the hub and the binding it ends
             ok = (
                 len(events) == 1
                 and log == "workspace"
                 and e["type"] == "hub.left"
-                and set(e) - review.ENVELOPE == {"hub_id", "binding_seq"}
+                and set(e) - review.ENVELOPE == {"hub_id", "binding_seq", "owner_proof"}
+                and e["owner_proof"] is None  # #1198 C9: the signer fills it after the review
             )
-        elif op == "relay.reopen":  # V3 C10 M4: one relay.reopened on the workspace log, naming the hub that was left
+        elif op == "device.mark_exposed":  # #1097: one device.exposed, the signer's own device, nothing else
             ok = (
                 len(events) == 1
                 and log == "workspace"
-                and e["type"] == "relay.reopened"
-                and set(e) - review.ENVELOPE == {"hub_id"}
+                and e["type"] == "device.exposed"
+                and set(e) - review.ENVELOPE == {"device", "reason"}
+                and e.get("reason") == "convenience"
+                and e.get("device") == e["actor"].get("device")
+            )
+        elif op == "device.rotate":  # #1097: one device.rotated, signed by the NEW device (the actor), replacing `old`
+            ok = (
+                len(events) == 1
+                and log == "workspace"
+                and e["type"] == "device.rotated"
+                and set(e) - review.ENVELOPE == {"old", "device", "cert", "rotation"}
+                and e.get("device") == e["actor"].get("device")
+                and e.get("old") != e.get("device")
+            )
+        elif op == "device.remove":  # #1198 C15: one device.removed, never the signer's own device (lockout guard)
+            ok = (
+                len(events) == 1
+                and log == "workspace"
+                and e["type"] == "device.removed"
+                and set(e) - review.ENVELOPE == {"device"}
+                and isinstance(e.get("device"), str)
+                and _DEVICE.fullmatch(e["device"]) is not None
+                and e.get("device") != e["actor"].get("device")
             )
         elif op == "settings.set":
             sets = e.get("set")
             ok = e["type"] == "settings.changed" and log == "workspace" and isinstance(sets, dict) and bool(sets)
             ok = ok and set(sets) <= _SETTINGS_KEYS
+            if ok and ADDONS_KEY in sets:  # G6: one add-on, alone, within the general bounds (rendered from the event)
+                from orch.addons import settings_value
+
+                ok = len(sets) == 1 and settings_value.check_changes(sets[ADDONS_KEY]) is None
         else:
             return
         if not ok:
@@ -457,10 +494,20 @@ _MATERIAL_KEYS = {
     "question": ({"kind", "ticket", "question", "review"}, {"kind", "ticket", "question", "review"}),
     "payload": (
         {"kind", "ticket", "review"},
-        {"kind", "ticket", "review", "texts", "before", "sequence", "statement", "grants"},
+        {
+            "kind",
+            "ticket",
+            "review",
+            "texts",
+            "before",
+            "sequence",
+            "statement",
+            "grants",
+            "market",
+            "deps",
+            "removed_device",
+        },
     ),
-    # H12c-e (11A.15.10 item 12): exactly the bound fields and the review, nothing else
-    pairdevice.MATERIAL_KIND: (pairdevice.MATERIAL_FIELDS | {"review"}, pairdevice.MATERIAL_FIELDS | {"review"}),
 }
 
 
@@ -491,8 +538,6 @@ def _hashes(prepared: Mapping[str, Any], workspace_id: str) -> None:
     gate_event = len(events) == 1 and events[0]["type"] in _GATE_TYPES
     question_event = len(events) == 1 and events[0]["type"] == "question.answered"
     want = "gate" if gate_event else ("question" if question_event else "payload")
-    if op == pairdevice.OP:  # H12c-e: the op and its kind belong together, both ways (no cross-kind substitution)
-        want = pairdevice.MATERIAL_KIND
     if kind != want:
         _refuse(f"material of kind {kind!r} for {op}")
     if log == "workspace":
@@ -504,22 +549,11 @@ def _hashes(prepared: Mapping[str, Any], workspace_id: str) -> None:
         _gate(material, events[0], workspace_id, log)
     elif kind == "question":
         _question(material, events[0], workspace_id, log)
-    elif kind == pairdevice.MATERIAL_KIND:
-        _pair_device(material, events, workspace_id, log)
     _before(material, events)
     _grants(material, events)
-
-
-def _pair_device(material: Mapping[str, Any], events: list[Mapping[str, Any]], workspace_id: str, log: str) -> None:
-    """H12c-e: the binding of the ``relay.pair_device`` material (:func:`orch.identity.pairdevice.check_material`):
-    the workspace, the device id, the cleaned label, the scopes, the certificate digest and the SAS or ``cert_code``,
-    against the one ``device.added`` on the workspace log; any extra field is refused."""
-    if log != "workspace" or len(events) != 1:
-        _refuse("relay.pair_device signs one device.added on the workspace log")
-    try:
-        pairdevice.check_material(material, events[0], workspace_id=workspace_id, person=events[0]["actor"]["id"])
-    except pairdevice.PairDeviceInvalid as exc:
-        _refuse(f"relay.pair_device: {exc}")
+    _market(material, events)
+    _removed_device(material, events)
+    _deps(material, events)
 
 
 def _gate(material: Mapping[str, Any], ev: Mapping[str, Any], workspace_id: str, log: str) -> None:
@@ -561,7 +595,7 @@ def _question(material: Mapping[str, Any], ev: Mapping[str, Any], workspace_id: 
         _refuse("the material shows another question")
     try:
         qid = canon.question_id(workspace_id, log, q["id"])
-        bound = canon.question_hash(qid, log, q["text"], q.get("options") or [])
+        bound = canon.question_hash(qid, log, q)  # the whole raw question: kind, details, why, facts are bound
     except Exception as exc:  # noqa: BLE001
         _refuse(f"the question cannot be hashed: {exc}")
     if ev.get("hash") != bound:
@@ -585,6 +619,129 @@ def _grants(material: Mapping[str, Any], events: list[Mapping[str, Any]]) -> Non
             or not all(isinstance(v, str) and len(v) <= 200 for v in info.values())
         ):
             _refuse("material.grants is malformed")
+
+
+_MARKET_KEYS = {"url", "class", "commit", "source_note", "publisher", "index_version", "stale", "summary", "replaces"}
+_TOFU = ("unsigned", "new", "known", "pinned")
+
+
+def _market(material: Mapping[str, Any], events: list[Mapping[str, Any]]) -> None:
+    """``material["market"]`` (V3 G3, C4) is the host's word about where an add-on came from: the marketplace, its
+    class, the commit, the publisher key's fingerprint and first-use status, the index version and a display summary.
+    It is NOT signed and the review says so. Exactly these keys and these shapes, only on a request that signs one
+    ``addon.granted``; anything else (an unknown key, a number where a string belongs, a long text) is refused. No
+    capability, field or section travels here: those come from the signed event."""
+    block = material.get("market")
+    if block is None:
+        return
+    pub = block.get("publisher") if isinstance(block, dict) else None
+    if (
+        not isinstance(block, dict)
+        or set(block) != _MARKET_KEYS
+        or [e.get("type") for e in events] != ["addon.granted"]
+        or not isinstance(pub, dict)
+        or set(pub) != {"fingerprint", "tofu"}
+    ):
+        _refuse("material.market is malformed")
+    short = lambda v, n: isinstance(v, str) and len(v) <= n  # noqa: E731
+    ok = (
+        short(block["url"], 200)
+        and block["class"] in ("official", "dev", "company", "dev-folder")
+        and isinstance(block["commit"], str)
+        and re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", block["commit"]) is not None
+        and block["source_note"]
+        == (
+            "a local folder at this commit (orch addon dev), not a marketplace"
+            if block["class"] == "dev-folder"
+            else "source as claimed by the marketplace"
+        )
+        and (pub["fingerprint"] is None or short(pub["fingerprint"], 60))
+        and pub["tofu"] in _TOFU
+        and type(block["index_version"]) is int
+        and type(block["stale"]) is bool
+        and (block["summary"] is None or short(block["summary"], 300))
+        and (block["replaces"] is None or re.fullmatch(r"sha256:[0-9a-f]{64}", str(block["replaces"])) is not None)
+    )
+    if not ok:
+        _refuse("material.market is malformed")
+
+
+def _removed_device(material: Mapping[str, Any], events: list[Mapping[str, Any]]) -> None:
+    """``material["removed_device"]`` (#1198 C15) names the holder of the device a ``device.removed`` removes, from the
+    host's roster: exactly ``{device, holder}``, the device being the event's own, only on that one event."""
+    block = material.get("removed_device")
+    if block is None:
+        return
+    if (
+        not isinstance(block, dict)
+        or set(block) != {"device", "holder"}
+        or [e.get("type") for e in events] != ["device.removed"]
+        or block["device"] != events[0].get("device")
+        or not isinstance(block["holder"], str)
+        or not 1 <= len(block["holder"]) <= 100
+    ):
+        _refuse("material.removed_device is malformed")
+
+
+_DEP_KINDS = ("python-requirements", "node-package-lock")
+_DEP_NOTES = (None, "compiled", "other_platform", "dev")
+_DEP_NAME = re.compile(r"[A-Za-z0-9@._~/ >+-]{1,200}")
+_DEP_VERSION = re.compile(r"[0-9A-Za-z.+!_-]{1,60}")
+
+
+from orch.market.deps import DIFF_LINE as deps_diff_line  # noqa: E402
+
+
+def _deps(material: Mapping[str, Any], events: list[Mapping[str, Any]]) -> None:
+    """``material["deps"]`` (V3 G4, C5): the packages an ``addon.granted`` with ``runtime`` installs, as this computer
+    listed them from the lockfile (covered by the package digest, but not itself signed: the review labels it so).
+    Required on a request that signs an ``addon.granted`` with ``runtime``, forbidden anywhere else, and exactly these
+    keys and shapes; ``kind``, ``lock`` and the package count must equal the SIGNED ``runtime``. Every name and version
+    is a short plain token: nothing here can carry a line break or a command."""
+    block = material.get("deps")
+    with_runtime = [e for e in events if e.get("type") == "addon.granted" and e.get("runtime") is not None]
+    if with_runtime and len(events) != 1:
+        _refuse("an add-on that installs dependencies is signed alone, not in a batch")
+    signed = with_runtime[0]["runtime"] if with_runtime else None
+    if block is None:
+        if signed is not None:
+            _refuse("material.deps is missing for an add-on that installs dependencies")
+        return
+    rows = block.get("rows") if isinstance(block, dict) else None
+    if (
+        signed is None
+        or not isinstance(block, dict)
+        or set(block) - {"diff"} != {"kind", "lock", "count", "bytes", "rows"}
+        or not isinstance(rows, list)
+        or (block["kind"], block["lock"], block["count"]) != (signed["kind"], signed["lock"], signed["packages"])
+        or block["kind"] not in _DEP_KINDS
+        or type(block["count"]) is not int
+        or len(rows) != block["count"]
+        or type(block["bytes"]) is not int
+        or not 0 <= block["bytes"] <= 1 << 30
+    ):
+        _refuse("material.deps is malformed")
+    d = block.get("diff")
+    if d is not None and not (
+        isinstance(d, dict)
+        and set(d) == {"lines", "widened"}
+        and type(d["widened"]) is bool
+        and isinstance(d["lines"], list)
+        and len(d["lines"]) <= 2 * 1000 + 1
+        and all(isinstance(x, str) and 0 < len(x) <= 300 and deps_diff_line.fullmatch(x) for x in d["lines"])
+    ):
+        _refuse("material.deps has a malformed diff")
+    for r in rows:
+        if (
+            not isinstance(r, dict)
+            or set(r) != {"name", "version", "installs", "note"}
+            or not (isinstance(r["name"], str) and _DEP_NAME.fullmatch(r["name"]))
+            or not (isinstance(r["version"], str) and _DEP_VERSION.fullmatch(r["version"]))
+            or type(r["installs"]) is not bool
+            or r["note"] not in _DEP_NOTES
+            or (r["note"] in ("other_platform", "dev")) == r["installs"]
+        ):
+            _refuse("material.deps has a malformed row")
 
 
 def _before(material: Mapping[str, Any], events: list[Mapping[str, Any]]) -> None:
@@ -637,13 +794,14 @@ _PLAIN = {
     "policy.set": "set the gate policies {gates} of {ticket}",
     "settings.set": "change the workspace settings {set}",
     "people.set": "change the {role} of {ticket}",
-    "relay.pair_device": "add the paired device {device} to your devices",
     "publish.share": "let the staged copy of files of {ticket} be shared outside this computer",
     "hub.join": "join hub {hub_id} in {mode} mode: the hub sees only what you share and never gets the workspace key",
     "hub.join.full": "join hub {hub_id} in full mode: the hub will be able to read everything in this workspace",
     "hub.mode": "switch hub {hub_id} to {mode} mode: the hub will be able to read everything in this workspace",
     "hub.leave": "leave hub {hub_id} (binding {binding_seq}) and tell it that this workspace is no longer bound",
-    "relay.reopen": "open the direct relay path of this workspace again (phones must be paired again)",
+    "device.mark_exposed": "record that your device key {device} was in one-click custody (it only loses authority)",
+    "device.remove": "remove the device {device}; it can no longer sign for this workspace",
+    "device.rotate": "replace your device key {old} with the new key {device}; the old key stops signing everywhere",
 }
 
 
@@ -680,8 +838,6 @@ def confirm_word(prepared: Mapping[str, Any], workspace: Callable[[str], tuple[s
         return f"{_clean(ev.get('name'))}~{_clean(prepared['workspace_id'])[-8:]}"
     if op in _ADDON_OPS:
         return _clean(ev.get("name"))
-    if op == pairdevice.OP:  # H12c-e: the last eight hex of the device id being added (shown in the review)
-        return _clean(ev.get("device"))[-8:]
     if ticket is not None:
         return ticket_word(prepared)
     return op.upper()
@@ -757,6 +913,50 @@ UNSEEN = "signed commitment: orch sign has not seen these bytes; compare with th
 SEEN = "checked against your local file"
 
 
+_QUESTION_KEYS = frozenset({"id", "to", "text", "kind", "why", "details", "options", "recommended", "allow_other",
+                            "blocking"})  # fmt: skip
+_OPTION_KEYS = frozenset({"key", "label", "text", "facts", "cost"})
+
+
+def _lines(label: str, text: Any) -> list[str]:
+    return [f"{label}:", *("| " + _clean(line) for line in str(text).split("\n"))]
+
+
+def _question_content(q: Any) -> list[str]:
+    """The full review of a question (#1123): EVERY key of the shown question, so the fallback view (when the plain
+    view is unavailable) still shows each hash-bound byte. A key outside the one question shape is refused, never
+    skipped: an unknown key could be bound and unseen."""
+    if not isinstance(q, dict) or set(q) - _QUESTION_KEYS:
+        _refuse("the question carries a key the review does not show")
+    opts = q.get("options", [])
+    if not isinstance(opts, list) or not all(isinstance(o, dict) and not set(o) - _OPTION_KEYS for o in opts):
+        _refuse("an option carries a key the review does not show")
+    out = [f"question {_clean(q.get('id'))} (kind {_clean(q.get('kind'))}):"]
+    out += ["| " + _clean(line) for line in str(q.get("text", "")).split("\n")]
+    if "why" in q:
+        out += _lines("why it was asked (signed)", q["why"])
+    if "details" in q:
+        out += _lines("details (signed)", q["details"])
+    for o in opts:
+        out.append(f"option {_clean(o.get('key'))}: {_clean(o.get('label'))}")
+        if "text" in o:
+            out.append(f"  text: {_clean(o['text'])}")
+        if "cost" in o:
+            out.append(f"  cost: {_clean(o['cost'])}")
+        facts = o.get("facts", [])
+        if not isinstance(facts, list) or not all(isinstance(f, list) and len(f) == 2 for f in facts):
+            _refuse("an option's facts are not [label, value] pairs")
+        out += [f"  {_clean(f[0])}: {_clean(f[1])}" for f in facts]
+    if "recommended" in q:
+        out.append(f"recommended option (signed): {_clean(q['recommended'])}")
+    if "allow_other" in q:
+        out.append(f"an answer in your own words is allowed (signed): {_clean(q['allow_other'])}")
+    for k, label in (("to", "addressed to"), ("blocking", "blocks the ticket")):
+        if k in q:
+            out.append(f"{label} (routing, not signed): {_clean(q[k])}")
+    return out
+
+
 def render(
     prepared: Mapping[str, Any],
     workspace: Callable[[str], tuple[str, str] | None],
@@ -807,6 +1007,8 @@ def render(
                 out.append(f"ticket_key: {_clean(value)} (ticket key per host)")
             elif key == "reader":
                 out.append(review.reader_line(int(value)))
+            elif key == "owner_proof":
+                out.append(f"owner proof: {_clean(value)}")
             elif key == "statement":
                 out.append("statement:")
                 out += ["| " + _clean(line) for line in value.split("\n")]
@@ -816,18 +1018,58 @@ def render(
                 out.append(f"{_clean(key)}: {_clean(value)}")
     if material.get("kind") == "gate":
         out += _gate_content(material)
-    if material.get("kind") == pairdevice.MATERIAL_KIND:
-        out += _pair_content(material)
     if material.get("kind") == "question":
-        q = material["question"]
-        out.append(f"question {_clean(q['id'])}:")
-        out += ["| " + _clean(line) for line in str(q.get("text", "")).split("\n")]
-        out += [f"option {_clean(o.get('key'))}: {_clean(o.get('label'))}" for o in q.get("options") or []]
+        out += _question_content(material["question"])
     for gid, info in sorted((material.get("grants") or {}).items()):  # the host's word on each access taken back
         out.append(
             f"access {_clean(gid)} taken back (per host, not signed): label {_clean(info['label']) or '(none)'}, "
             f"tickets {_clean(info['scope'])}, ends {_clean(info['expires_at'])}, person {_clean(info['person'])}"
         )
+    market = material.get("market")
+    if market is not None:  # the host's word, labelled; nothing here is signed (C4)
+        pub = market["publisher"]
+        who = {"unsigned": "unsigned (no publisher key)", "new": "first use: remembered when you sign",
+               "known": "same publisher as before", "pinned": "key pinned by your hub"}[pub["tofu"]]  # fmt: skip
+        if market["class"] == "dev-folder":
+            commit = _clean(market["commit"])
+            out.append(
+                f"DEV add-on from a local folder, not from a marketplace (per host, not signed): commit {commit}"
+            )
+            out.append(f"source (per host, not signed): {_clean(market['source_note'])}")
+            market = None
+    if market is not None:
+        out.append(f"marketplace (per host, not signed): {_clean(market['url'])} ({_clean(market['class'])})")
+        out.append(f"marketplace commit (per host, not signed): {_clean(market['commit'])}")
+        out.append(f"source (per host, not signed): {_clean(market['source_note'])}")
+        out.append(
+            f"publisher (per host, not signed): {_clean(pub['fingerprint']) if pub['fingerprint'] else 'none'}, {who}; "
+            "a key proves it is the same publisher as last time, not who they are"
+        )
+        out.append(
+            f"index version (per host, not signed): {int(market['index_version'])}"
+            + (" (STALE: past its expiry)" if market["stale"] else "")
+        )
+        if market["replaces"]:
+            out.append(f"replaces package (per host, not signed): {_clean(market['replaces'])}")
+        if market["summary"]:
+            out.append(f"summary from the marketplace (per host, not signed): {_clean(market['summary'])}")
+    deps = material.get("deps")
+    if deps is not None:  # the host's list of what gets installed, from the lockfile (covered by the digest)
+        out.append(
+            f"dependencies (listed by this computer from the lockfile, covered by the digest, not signed itself): "
+            f"{int(deps['count'])} packages, {_clean(deps['kind'])}, {_clean(deps['lock'])}"
+        )
+        for r in deps["rows"]:
+            note = {None: "", "compiled": " (compiled code)", "other_platform": " (not on this computer)",
+                    "dev": " (development, not installed)"}[r["note"]]  # fmt: skip
+            out.append(f"dep {_clean(r['name'])} {_clean(r['version'])}{note}")
+    if deps is not None and deps.get("diff") is not None:
+        d = deps["diff"]
+        out.append(
+            "update of the dependencies (host-derived, not signed): "
+            + ("WIDENED, read all of it" if d["widened"] else "not widened")
+        )
+        out += [f"dep change {_clean(x)}" for x in d["lines"]]
     for path, value in sorted((material.get("before") or {}).items()):
         label = "current value according to the host, not signed" if not path.startswith(("ticket.", "body.")) else ""
         out.append(f"before {_clean(path)}{' (' + label + ')' if label else ''}:")
@@ -878,13 +1120,8 @@ def plain(
 ) -> Review:
     """B6 (owner decision E): the review in three layers. The plain view is :func:`signcontent.text` of the request's
     own events and material (so it is exactly what is signed); the details are today's full :func:`render`, which
-    also runs here, so every refusal of the full review still comes before any prompt. A relay pairing keeps the full
-    review as its only view (the code the person compared is part of what it binds)."""
+    also runs here, so every refusal of the full review still comes before any prompt."""
     full = render(prepared, workspace, artifacts=artifacts)
-    if prepared["material"].get("kind") == pairdevice.MATERIAL_KIND:
-        out = Review(prefix + full)
-        out.details = ""
-        return out
     known = workspace(prepared["workspace_id"])
     try:
         lines = signcontent.text(
@@ -897,7 +1134,7 @@ def plain(
         return Review(prefix + full)
     # The dashboard says "check that this matches the fingerprint in your terminal": the same 12 hex it shows, on a
     # labelled line under the headline (before the first blank line). The full review's `fingerprint:` line stays too.
-    fp = f"Verification fingerprint: {_clean(prepared['fingerprint'])}"
+    fp = f"Verification code: {_clean(prepared['fingerprint'])}"
     lines.insert(lines.index("") if "" in lines else len(lines), fp)
     if artifacts in ("unseen", "checked") and any(e["type"] in ARTIFACT_TYPES for e in prepared["events"]):
         lines += [_clean(UNSEEN if artifacts == "unseen" else SEEN), ""]
@@ -910,24 +1147,6 @@ def plain(
     out.details = prefix + full
     out.details_first = os.environ.get("ORCH_SIGN_DETAILS") == "1"  # `orch sign --details` sets it
     return out
-
-
-def _pair_content(material: Mapping[str, Any]) -> list[str]:
-    """H12c-e (11A.15.6 step 9): what the ``relay.pair_device`` review binds, every field on its own line. The label
-    is the cleaned label exactly as recorded, shown "named by the device": it is not signed (``device.added`` carries
-    none) and not authenticated."""
-    comparison = material["comparison"]
-    what = "the SAS you compared (path 7a)" if comparison["kind"] == "sas" else "cert_code you compared (path 7b)"
-    return [
-        "=== relay pairing: this signature adds a phone as your device ===",
-        f"workspace: {_clean(material['workspace_id'])} (bound)",
-        f"offer: {_clean(material['offer_id'])} attempt {_clean(material['attempt'])} (host attestation)",
-        f"device: {_clean(material['device'])} (you type its last eight: {_clean(material['device'])[-8:]})",
-        f"label: {_clean(material['label']) or '(none)'} (named by the device; not signed, not authenticated)",
-        f"scopes: {', '.join(_clean(s) for s in material['scopes'])} (the relay list scopes of this offer)",
-        f"certificate: {_clean(material['cert_digest'])} (the digest of the certificate this event embeds)",
-        f"{_clean(comparison['kind'])}: {_clean(comparison['code'])} ({what})",
-    ]
 
 
 def _gate_content(material: Mapping[str, Any]) -> list[str]:
@@ -975,9 +1194,18 @@ class Signed:
         return f"Signed({len(self.events)} events, secret={'<redacted>' if self._secret else None})"
 
 
-def sign(prepared: Mapping[str, Any], *, backend: Any, key_id: str, workspace_id: str) -> Signed:
+def sign(
+    prepared: Mapping[str, Any],
+    *,
+    backend: Any,
+    key_id: str,
+    workspace_id: str,
+    owner_proof: Mapping[str, Any] | None = None,
+) -> Signed:
     """Sign every event (after :func:`check` and the person's confirmation). A ``grant.issued`` gets its secret here:
-    32 random bytes, hashed into the event before the signing bytes are built. Nothing else changes in an event."""
+    32 random bytes, hashed into the event before the signing bytes are built. A ``hub.joined`` / ``hub.left`` gets
+    its ``owner_proof`` (#1198 C9: made by the owner's person key, see :func:`terminal_owner_proof`) here, before the
+    signing bytes are built, and is refused without one. Nothing else changes in an event."""
     from orch.identity import GrantToken, format_grant, sign_person_event
 
     log = prepared["log"]
@@ -1000,9 +1228,60 @@ def sign(prepared: Mapping[str, Any], *, backend: Any, key_id: str, workspace_id
                 token = GrantToken(ev["grant"], _secrets.token_bytes(32))
                 ev["secret_hash"] = canon.grant_secret_hash(token.secret)
                 secret = format_grant(token)
+            if ev["type"] in review.OWNER_PROOF_TYPES:
+                if owner_proof is None or ev.get("owner_proof") is not None:
+                    raise SignerRefused("refusing to sign: a hub step needs the owner proof of your backup key")
+                ev["owner_proof"] = copy.deepcopy(dict(owner_proof))
             ev["sig"] = sign_person_event(be, key_id, workspace_id, log, ev, action=f"{prepared['op']} ({ev['type']})")
             out.append(ev)
     return Signed(out, secret)
+
+
+#: how long a terminal-made owner proof lives: the contract's maximum (hub contract 9.6; a host request lives as long)
+OWNER_PROOF_LIFE_MS = 600_000
+
+
+def terminal_owner_proof(
+    prepared: Mapping[str, Any],
+    request_id: str,
+    *,
+    workspace_id: str,
+    person: str,
+    now_ms: Callable[[], int] | None = None,
+    pk_factory: Callable[..., Any] | None = None,
+) -> dict[str, Any]:
+    """#1198 C9, the Terminal (backup) path of a hub step: ask for the backup key (the recovery code, typed on
+    ``/dev/tty``, never stored), derive the person key ``PK``, check that it is ``person``'s (before anything is
+    signed), make the owner proof over the event payload the person just reviewed, and let the key go again.
+    ``pk_factory`` is :class:`~orch.custody.personkey.RecoveryCodeSource` (a seam for tests); it signs only
+    ``sig_hub_owner_proof`` here."""
+    import time
+
+    from orch.hubclient import wire
+    from orch.hubclient.errors import HubRefused
+
+    from . import hubproof
+
+    events, facts = prepared["events"], prepared.get("owner_proof")
+    if len(events) != 1 or not isinstance(facts, dict) or type(facts.get("dev")) is not bool:
+        _refuse("the hub step carries no dev marker for its owner proof")
+    if pk_factory is None:
+        from orch.custody.personkey import RecoveryCodeSource as pk_factory  # noqa: N813
+    clock = now_ms or (lambda: int(time.time() * 1000))
+    issued = clock()
+    with pk_factory(
+        labels=("sig_hub_owner_proof",),
+        person_id=bytes.fromhex(person.removeprefix("p_")),
+        action="sign the hub step with your backup key",
+    ) as pk:
+        try:
+            return wire.build_owner_proof(
+                workspace_id=workspace_id, pk_pub=pk.pk_pub, op=prepared["op"],
+                payload=hubproof.payload_of(events[0]), request_id=request_id, issued_ms=issued,
+                expires_ms=issued + OWNER_PROOF_LIFE_MS, dev=facts["dev"], sign=pk.signer("sig_hub_owner_proof"),
+            )  # fmt: skip
+        except HubRefused as exc:
+            raise SignerRefused(f"refusing to sign: the owner proof is not well formed ({exc.code})") from None
 
 
 def check_uploads(prepared: Mapping[str, Any], files: Mapping[str, Any] | None) -> None:
@@ -1042,6 +1321,7 @@ def run(
     idem: str,
     files: dict[str, Any] | None = None,
     on_secret: Callable[[str], list[str]] | None = None,
+    owner_proof: Callable[[Mapping[str, Any], str], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """The CLI composite of a person op in host mode. ``call(op, args, **opts)`` sends one request on the pinned
     workspace connection and returns its ``result`` (raising the host's error); ``confirm(text, word)`` shows the
@@ -1065,6 +1345,7 @@ def run(
         idem=idem,
         files=files or {},  # every artifact event must name bytes this client uploaded: none uploaded, none passes
         on_secret=on_secret,
+        owner_proof=owner_proof,
     )
 
 
@@ -1131,6 +1412,7 @@ def finish(
     before: Callable[[], None] | None = None,
     prefix: str = "",
     on_secret: Callable[[str], list[str]] | None = None,
+    owner_proof: Callable[[Mapping[str, Any], str], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """The tail every signing client shares (the composite and ``orch sign``): ``before`` (a client's own extra
     checks), :func:`check`, :func:`check_uploads` (when ``files`` is given), the review (``prefix``, then
@@ -1146,7 +1428,13 @@ def finish(
         text = plain(prepared, workspace, artifacts=artifacts, prefix=prefix, members=members_of(call))
         if not confirm(text, confirm_word(prepared, workspace)):
             _refuse("not confirmed")
-        signed = sign(prepared, backend=backend, key_id=key_id, workspace_id=workspace_id)
+        proof = None
+        if any(e.get("type") in review.OWNER_PROOF_TYPES for e in prepared["events"]):  # #1198 C9: the backup key
+            make = owner_proof or (
+                lambda p, rid: terminal_owner_proof(p, rid, workspace_id=workspace_id, person=person)
+            )
+            proof = make(prepared, request_id)
+        signed = sign(prepared, backend=backend, key_id=key_id, workspace_id=workspace_id, owner_proof=proof)
     except BaseException as exc:
         cancel_request(call, request_id, exc)
         raise

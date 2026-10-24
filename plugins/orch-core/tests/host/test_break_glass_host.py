@@ -1,4 +1,4 @@
-"""V3 C8 on the host: the leave with the hub dead or hostile (publish told directly, the pending cut-over cancelled, the
+"""V3 C8 on the host: the leave with the hub dead or hostile (publish told directly, the
 new epoch local), ``keys.rotate`` and the review. The model rules are in tests/model/test_break_glass.py."""
 
 # ruff: noqa: F811  (fixtures imported from test_hub_ops are redefined as arguments)
@@ -106,45 +106,7 @@ def test_publish_stays_owed_until_it_takes_it(human, served, stub, keystore, mon
     assert got["publish_told"] is True and hubops._load_state(served.service).publish_owed == {}
 
 
-# --- a pending cut-over is cancelled, a closed one stays closed ----------------------------------------------------
-
-
-def _set_direct(served, value):
-    st = hubops._load_state(served.service)
-    st.direct = value
-    hubops._save_state(served.service, st)
-
-
-def test_a_pending_cutover_is_deleted_at_the_leave(human, served, stub, keystore, monkeypatch):
-    calls = []
-    monkeypatch.setattr(breakglass, "CUTOVER_DELETE", lambda service: calls.append(1) or True)
-    _leave_full(human, served, stub, keystore)
-    _set_direct(served, "closing")
-    got = ok(served.client().req("hub.unbind", {}, idem=True))["data"]
-    assert calls == [1] and got["cutover"] == "none"
-    assert hubops._load_state(served.service).direct == "closed"  # never reopened: it behaved as closed all along
-
-
-def test_a_cutover_delete_that_fails_stays_owed_and_is_tried_again(human, served, stub, keystore, monkeypatch):
-    answers = iter([False, True])
-    monkeypatch.setattr(breakglass, "CUTOVER_DELETE", lambda service: next(answers))
-    _leave_full(human, served, stub, keystore)
-    _set_direct(served, "closing")
-    got = ok(served.client().req("hub.unbind", {}, idem=True))["data"]
-    assert got["cutover"] == "owed" and hubops._load_state(served.service).direct == "closing"
-    got = ok(served.client().req("hub.unbind", {}, idem=True))["data"]
-    assert got["cutover"] == "none" and hubops._load_state(served.service).direct == "closed"
-
-
-def test_a_closed_cutover_is_left_alone_and_never_reopened(human, served, stub, keystore, monkeypatch):
-    monkeypatch.setattr(breakglass, "CUTOVER_DELETE", lambda service: pytest.fail("nothing to delete"))
-    _leave_full(human, served, stub, keystore)
-    _set_direct(served, "closed")
-    ok(served.client().req("hub.unbind", {}, idem=True))
-    assert hubops._load_state(served.service).direct == "closed"
-
-
-# --- the new epoch is local once the relay is cut over -------------------------------------------------------------
+# --- the new epoch is local -------------------------------------------------------------
 
 
 class FakeMk:
@@ -156,21 +118,18 @@ class FakeMk:
     def current_epoch(self):
         return self.epoch
 
-    def advance_local(self, owner, *, cut_over=False):
-        self.calls.append(("local", owner, cut_over))
+    def advance_local(self, owner):
+        self.calls.append(("local", owner))
         self.epoch += 1
 
     def raise_gate(self, *a):
         self.calls.append(("gate",))
 
 
-def test_a_cut_over_workspace_makes_its_epoch_locally_and_a_relay_linked_one_asks_the_relay_path():
+def test_rotate_makes_the_epoch_locally():
     local = FakeMk()
-    hubops._Epochs(local, "owner", cut_over=True).rotate()
-    assert local.calls == [("local", "owner", True)] and local.epoch == 2
-    linked = FakeMk()
-    hubops._Epochs(linked, None).rotate()
-    assert linked.calls == [("gate",)]
+    hubops._Epochs(local, "owner").rotate()
+    assert local.calls == [("local", "owner")] and local.epoch == 2
 
 
 # --- keys.rotate ---------------------------------------------------------------------------------------------------
@@ -183,7 +142,7 @@ def test_keys_rotate_is_refused_to_agents_and_to_the_click_signer(served):
         "human_only",
     )
     with pytest.raises(Exception, match="terminal"):
-        convenience.refuse_hub_op("keys.rotate", "convenience")
+        convenience.refuse_terminal_op("keys.rotate", "convenience")
 
 
 def test_keys_rotate_makes_the_owner_a_new_epoch(served, monkeypatch):

@@ -11,7 +11,7 @@ export function StopSharing({ ws, ticket, onClose }: { ws: string; ticket: strin
   return <Flow title="Stop sharing this ticket" onClose={onClose}>
     {terminal ? <TerminalStep ws={ws} request={{ kind: 'share_revoke', ref: ticket }}>{review}</TerminalStep> : <>{review}
       <details><summary data-testid="hub-revoke-details">Technical details</summary><Raw>{ticket}</Raw></details>
-      <Action id="hub-revoke-continue" onClick={() => setTerminal(true)}>Continue to Terminal</Action>
+      <Action id="hub-revoke-continue" onClick={() => setTerminal(true)}>Continue to the terminal</Action>
     </>}
   </Flow>
 }

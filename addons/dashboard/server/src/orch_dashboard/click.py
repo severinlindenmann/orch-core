@@ -2,7 +2,7 @@
 
 A closed set of typed routes, like the hand-off. The browser names a typed action (the same bodies as the hand-off);
 the op and its arguments are chosen here, in `host_call`, never by the browser. The View comes from the signer and is
-passed on unchanged: **this server never builds a preview for a click request, never logs a View, a word or a
+passed on unchanged: **this server never builds a preview for a click request, never logs a View or a
 credential, and never signs.** It also never calls the signer from an addon route: only these four handlers do.
 
 **One action intent -> at most one request -> at most one signature.** The idem handed to the signer's `prepare` is
@@ -15,6 +15,7 @@ A request obtained through an intent belongs to the PERSON in that workspace: an
 poll and cancel it (the signer separately refuses anything it did not prepare itself, and signs a request once).
 """
 
+import hashlib
 import re
 import threading
 from collections import OrderedDict
@@ -29,12 +30,12 @@ from .errors import HostError, fail
 from .gateway import Gateway
 from .handoff import (
     AddonEnable,
-    AddonGrant,
+    AgentAccess,
     EditTicket,
+    HubJoin,
+    HubLeave,
     NewTicketSequence,
     PrepareBody,
-    PublishSetup,
-    PublishShare,
     QuickStart,
     RequestId,
     RunnerGrant,
@@ -52,13 +53,12 @@ from .reads import workspace
 # The card text, verbatim (owner decision, 12 Oct 2026). A View that carries anything else is not shown.
 RISK = "Convenience signing: agents running as you, or anything that takes over this dashboard, could sign."
 ViewDigest = Annotated[str, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
-Word = Annotated[str, StringConstraints(min_length=1, max_length=128)]
 TTL = 660  # a request lives 10 minutes at most (the signer caps it); the session forgets it a minute later
 REMEMBERED = 256
 #: refusals after which a request can no longer be signed: its slot is free again
 ENDED = {"expired", "not_prepared_here", "custody_changed", "human.request_expired", "human.request_state"}
 #: the signer says `the request is <state>` when an intent's idem returns a request that already ended
-TERMINAL = re.compile(r"^the request is (submitted|cancelled|expired)$")
+SUBMITTED = "the request is submitted"  # cancelled/expired never get here: send_prepare steps past them (#794)
 
 # M7b, the runner grant (D-P2-27, section 0.8.6 item 6): a click request of its own action. The texts are core's
 # constants (orch.click.protocol); a View of a deposit grant that lacks either is not shown.
@@ -67,7 +67,9 @@ DEPOSIT_RISK = (
     "Anything that takes over the dashboard can give agents standing authority to act for you on tickets for as long "
     "as the grant lasts (up to 7 days, the length you choose); you can stop it at any time."
 )
-GRANT_WORD = re.compile(r"^[A-Z][A-Z0-9]{0,15}~[0-9a-f]{8}/GRANT$")
+#: core's constants (orch.click.protocol REVEAL_LINE, REVEAL_RISK): a shown-secret View that lacks either is not shown
+REVEAL_LINE = "The secret is shown once, on this page, only to you. orch keeps only a fingerprint of it"
+REVEAL_RISK = "The secret will be shown once in this browser. Anyone who controls this dashboard could read it."
 DEPOSITS = ("confirmed", "rejected", "unknown")
 #: H11c-2's closed set of `deposit_reason` codes (static codes, never host text); anything else reads `other`
 DEPOSIT_REASONS = (
@@ -81,7 +83,6 @@ DEPOSIT_REASONS = (
 )
 ULID = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 GRANT_ID = re.compile(r"^gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")
-UPDATE_ORCH = "This orch version can't hand a grant to the runner; update orch."
 
 Passphrase = Annotated[str, StringConstraints(min_length=1, max_length=1024)]
 
@@ -89,22 +90,42 @@ Passphrase = Annotated[str, StringConstraints(min_length=1, max_length=1024)]
 class CustodyBody(BaseModel):
     """The click-to-sign switch (section 0.8.6 item 3a). `on` needs the person's CURRENT passphrase: the proof the key
     is theirs, checked by the signer against the key in passphrase custody (Opus H1 on #539). `off` may carry the NEW
-    passphrase the key moves back under (V3-D31, narrowing Opus H2): the signer takes it only while the switch is on
-    and trades that authority for it in one locked step, else it refuses (`custody.terminal_needed`). Without one it
-    only turns the flag off. This server is a relay: the text is never logged or echoed (the validation handler
-    answers a bare `invalid.input`), and an explicit `null` is invalid."""
+    passphrase the key moves back under (V3-D31, narrowing Opus H2), but only SEALED to the signer's one-use key
+    (#1198 C12, purpose `custody.passphrase`): `request_id`, `view_digest` and `sealed` come from `click/custody/seal`.
+    The signer takes it only while the switch is on and trades that authority for it in one locked step, else it
+    refuses (`custody.terminal_needed`). Without them it only turns the flag off. This server is a relay: it never
+    sees a new passphrase, and nothing here is logged or echoed (the validation handler answers a bare
+    `invalid.input`)."""
 
     model_config = ConfigDict(extra="forbid", strict=True)
     on: bool
     passphrase: Passphrase | None = None
+    #: #1198 C17: `on` without a passphrase, for a key already in this computer's key store (idle switch-off): a plain
+    #: click after the review; only from a dashboard opened on this computer (the route checks)
+    resume: bool = False
+    request_id: Annotated[str, StringConstraints(pattern=r"^hr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")] | None = None
+    view_digest: ViewDigest | None = None
+    sealed: "PassphraseSealed | None" = None
 
     @model_validator(mode="after")
-    def _proof_only_to_switch_on(self):
-        if self.on and self.passphrase is None:
+    def _shape(self):
+        if self.resume and (not self.on or self.passphrase is not None):
+            raise ValueError("resume is on without a passphrase")
+        if self.on and self.passphrase is None and not self.resume:
             raise ValueError("on needs the passphrase")
-        if not self.on and "passphrase" in self.model_fields_set and self.passphrase is None:
-            raise ValueError("off takes a passphrase or none")
+        if self.on and (self.request_id or self.view_digest or self.sealed):
+            raise ValueError("on takes the current passphrase only")
+        if not self.on and self.passphrase is not None:
+            raise ValueError("a new passphrase is sent sealed")
+        if not self.on and "passphrase" in self.model_fields_set:
+            raise ValueError("off takes no passphrase field")
+        if not self.on and len({self.request_id is None, self.view_digest is None, self.sealed is None}) != 1:
+            raise ValueError("a sealed passphrase comes with its request id and review digest")
         return self
+
+
+class SealBegin(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
 
 
 #: Every typed action a click request may carry: the hand-off's, plus the runner grant (click only, never a hand-off).
@@ -114,8 +135,8 @@ ClickBody = PrepareBody
 
 def deposit_view_ok(view: dict, ws: str) -> bool:
     """A deposit grant's View (section 0.8.6 item 6): `deposit:true`, core's deposit line in `deposit_line` and in
-    `lines`, the owner's risk sentence in `lines`, this workspace, and the typed word `<PREFIX>~<WS8>/GRANT` of THIS
-    workspace (review L3: bound to `ws`, not any workspace's word)."""
+    `lines`, the owner's risk sentence in `lines`, this workspace and a plain click
+    confirmation (no typed word)."""
     confirm = view.get("confirm")
     lines = view.get("lines")
     workspace = view.get("workspace")
@@ -123,18 +144,101 @@ def deposit_view_ok(view: dict, ws: str) -> bool:
         isinstance(workspace, dict)
         and workspace.get("id") == ws
         and isinstance(confirm, dict)
-        and isinstance(confirm.get("word"), str)
-        and confirm["word"].endswith(f"~{ws[-8:]}/GRANT")
         and view.get("deposit") is True
         and view.get("deposit_line") == DEPOSIT_LINE
         and isinstance(lines, list)
         and DEPOSIT_LINE in lines
         and DEPOSIT_RISK in lines
-        and isinstance(confirm, dict)
-        and confirm.get("kind") == "word"
-        and isinstance(confirm.get("word"), str)
-        and GRANT_WORD.fullmatch(confirm["word"]) is not None
+        and confirm == {"kind": "click"}
     )
+
+
+def key_fingerprint(key: str) -> str:
+    """Core's `view.key_fingerprint`: the full SHA-256 (64 hex) of the key's base64url text (golden vectors shared
+    with core and the page: `plugins/orch-core/tests/click_reveal_fingerprint.json`)."""
+    return hashlib.sha256(key.encode()).hexdigest()
+
+
+#: How a session was opened (`Auth.login_kind`) for which `agent_access` may be prepared. Until the passkey step-up for
+#: a grant secret exists (R1-6), only a session opened by `orch dashboard` on this computer may; an unknown kind and
+#: any remote or hub kind are refused (fail closed), so the remote dashboard cannot ship the reveal unprotected.
+REVEAL_SESSION_KINDS = frozenset({"local"})
+
+
+def reveal_view_ok(view: dict, ws: str, reveal_key: str) -> bool:
+    """A shown-secret grant's View: no deposit, the sealed field's `grant.secret` purpose bound to the page's own key
+    (its fingerprint), core's risk and reveal lines, this workspace and a plain click."""
+    seal = view.get("seal")
+    lines = view.get("lines")
+    workspace = view.get("workspace")
+    return (
+        isinstance(workspace, dict)
+        and workspace.get("id") == ws
+        and view.get("deposit") is None
+        and isinstance(seal, dict)
+        and seal.get("purposes") == ["grant.secret"]
+        and seal.get("for") == key_fingerprint(reveal_key)
+        and isinstance(lines, list)
+        and REVEAL_LINE in lines
+        and REVEAL_RISK in lines
+        and view.get("confirm") == {"kind": "click"}
+    )
+
+
+SEALED_LOCAL_ONLY = "A new passphrase for your key needs a dashboard opened on this computer."
+ROTATE_LOCAL_ONLY = "Replacing this computer's key needs a dashboard opened on this computer."
+#: core's constant (orch.click.protocol BACKUP_KEY_LINE): a hub step's View that lacks it is not shown
+BACKUP_KEY_LINE = "This step also needs your backup key. You type it once here; orch does not keep it"
+HUB_STEPS = (HubJoin, HubLeave)
+B64URL = r"[A-Za-z0-9_-]"
+
+
+def backup_view_ok(view: dict, ws: str) -> bool:
+    """A hub step's View (#1198 C10): the sealed field's `hub.backup_key` purpose with the signer's own per-request key
+    (a P-256 point, 87 base64url characters), core's backup-key line, this workspace and a plain click."""
+    seal = view.get("seal")
+    lines = view.get("lines")
+    workspace = view.get("workspace")
+    return (
+        isinstance(workspace, dict)
+        and workspace.get("id") == ws
+        and view.get("deposit") is None
+        and isinstance(seal, dict)
+        and set(seal) == {"v", "alg", "pk", "purposes"}
+        and seal["v"] == 1
+        and type(seal["v"]) is int
+        and seal["alg"] == "P256-HKDF-SHA256-A256GCM"
+        and seal["purposes"] == ["hub.backup_key"]
+        and isinstance(seal["pk"], str)
+        and re.fullmatch(rf"{B64URL}{{87}}", seal["pk"]) is not None
+        and isinstance(lines, list)
+        and BACKUP_KEY_LINE in lines
+        and view.get("backup_key_line") == BACKUP_KEY_LINE
+        and view.get("confirm") == {"kind": "click"}
+    )
+
+
+def reveal_answer(got: dict) -> dict:
+    """Of a shown-secret grant's `sign` answer, only the grant id and the sealed envelope, checked for shape and size:
+    exactly `v`, `alg`, `epk`, `ct` with the sealed field's values. Never `result`. The envelope is ciphertext for the
+    page's key; it is relayed and never logged. A malformed one is dropped (`reveal: null`), never repaired."""
+    grant = (got.get("result") or {}).get("data", {}).get("grant") if isinstance(got.get("result"), dict) else None
+    out: dict = {"grant": grant if isinstance(grant, str) and GRANT_ID.fullmatch(grant) else None, "reveal": None}
+    rev = got.get("reveal")
+    env = rev.get("envelope") if isinstance(rev, dict) and rev.get("purpose") == "grant.secret" else None
+    if (
+        isinstance(env, dict)
+        and set(env) == {"v", "alg", "epk", "ct"}
+        and env["v"] == 1
+        and type(env["v"]) is int
+        and env["alg"] == "P256-HKDF-SHA256-A256GCM"
+        and isinstance(env["epk"], str)
+        and re.fullmatch(r"[A-Za-z0-9_-]{87}", env["epk"])
+        and isinstance(env["ct"], str)
+        and re.fullmatch(r"[A-Za-z0-9_-]{1,6000}", env["ct"])
+    ):
+        out["reveal"] = {"purpose": "grant.secret", "envelope": dict(env)}
+    return out
 
 
 def deposit_answer(got: dict, request_id: str) -> dict:
@@ -169,9 +273,58 @@ class Step(BaseModel):
     request_id: RequestId
 
 
+class Envelope(BaseModel):
+    """A sealed value as the page made it (sealed-field contract section 4): ciphertext for the signer's key. This
+    server relays it and never opens, keeps or logs it; the signer checks everything else."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    v: Annotated[int, Field(ge=1, le=1)]
+    alg: Annotated[str, StringConstraints(pattern=r"^P256-HKDF-SHA256-A256GCM$")]
+    epk: Annotated[str, StringConstraints(pattern=rf"^{B64URL}{{87}}$")]
+    ct: Annotated[str, StringConstraints(pattern=rf"^{B64URL}{{363,5483}}$")]
+
+
+class Sealed(BaseModel):
+    """The typed secrets of a sign call, by purpose (sealed-field contract section 7). Only the hub backup key today."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    hub_backup_key: Envelope = Field(alias="hub.backup_key")
+
+
+class PassphraseSealed(BaseModel):
+    """The new passphrase of "One click off", sealed (purpose `custody.passphrase`): relayed as ciphertext."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, populate_by_name=False)
+    custody_passphrase: Envelope = Field(alias="custody.passphrase")
+
+
+CustodyBody.model_rebuild()
+
+
+class RotateSealed(BaseModel):
+    """The two typed secrets of "Replace this device's key", sealed (purposes `device.recovery_code` and
+    `custody.passphrase`): relayed as ciphertext."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, populate_by_name=False)
+    device_recovery_code: Envelope = Field(alias="device.recovery_code")
+    custody_passphrase: Envelope = Field(alias="custody.passphrase")
+
+
+class RotateBody(BaseModel):
+    """#1198 C13: `request_id`, `view_digest` and `sealed` come from `click/rotate/seal`; the signer does the rest."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    request_id: Annotated[str, StringConstraints(pattern=r"^hr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")]
+    view_digest: ViewDigest
+    sealed: RotateSealed
+
+
 class Sign(Step):
     view_digest: ViewDigest
-    word: Word | None = None
+    #: a shown-secret grant only: the key the review was made for (the signer refuses any other)
+    reveal_key: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{87}$")] | None = None
+    #: a hub step only (#1198 C10): the backup key sealed to the signer's key, by purpose
+    sealed: Sealed | None = None
 
 
 class Clicks:
@@ -257,12 +410,133 @@ def register(app: FastAPI, gateway: Gateway):
         mode = mode_of(gateway, ws)  # V3 C11: advisory, so the page shows the hub panel; the host decides
         return {**card, "switchable": signer.switchable(), **({"mode": mode} if mode else {})}
 
+    def seal_view_ok(got: object) -> bool:
+        """The signer offer for a sealed new passphrase: a request id, a review digest and exactly the one purpose with
+        the signer's own key (a P-256 point, 87 base64url characters)."""
+        if not isinstance(got, dict) or set(got) != {"request_id", "view_digest", "seal", "expires_in"}:
+            return False
+        seal = got["seal"]
+        return (
+            isinstance(got["request_id"], str)
+            and re.fullmatch(r"hr_[0-7][0-9A-HJKMNP-TV-Z]{25}", got["request_id"]) is not None
+            and isinstance(got["view_digest"], str)
+            and re.fullmatch(r"sha256:[0-9a-f]{64}", got["view_digest"]) is not None
+            and type(got["expires_in"]) is int
+            and isinstance(seal, dict)
+            and set(seal) == {"v", "alg", "pk", "purposes"}
+            and seal["v"] == 1
+            and type(seal["v"]) is int
+            and seal["alg"] == "P256-HKDF-SHA256-A256GCM"
+            and seal["purposes"] == ["custody.passphrase"]
+            and isinstance(seal["pk"], str)
+            and re.fullmatch(rf"{B64URL}{{87}}", seal["pk"]) is not None
+        )
+
     def owner(ws: str) -> bool:
         me = app.state.person_of(ws)
         return any(m.person == me and m.role == "owner" for m in adapters.members(gateway.call(ws, "member.list")))
 
+    @app.post("/api/w/{ws}/click/custody/seal")
+    def custody_seal(_: SealBegin, request: Request, ws: str = Depends(workspace)):
+        """The signer's one-use key for the NEW passphrase of "One click off" (#1198 C12): request id, review digest
+        and the public key. Owners, on a dashboard opened on this computer only. Nothing secret passes here."""
+        gateway.enabled(ws)
+        if app.state.auth.login_kind(request.state.token) not in REVEAL_SESSION_KINDS:
+            raise refusal_check(SEALED_LOCAL_ONLY)
+        if not owner(ws):
+            raise fail("role.denied", "Only an owner switches signing in the dashboard.", exit=3)
+        if not signer.passphrase_seals():
+            raise fail(
+                "click.contract", "Update orch-core: its signing helper cannot take a sealed passphrase yet.", exit=9
+            )
+        got = signer.call("custody_off", {"workspace_id": ws, "begin": True})
+        if not seal_view_ok(got):
+            raise refusal_check(
+                "The signing helper's offer for your passphrase is not what it should be. Nothing changed."
+            )
+        return got
+
+    def rotate_offer_ok(got: object, ws: str) -> bool:
+        """The signer's review of a key replacement: this workspace, the old and new device ids, a plain click, and
+        exactly the two purposes with the signer's own key (a P-256 point, 87 base64url characters)."""
+        if not isinstance(got, dict) or set(got) != {"request_id", "view_digest", "view", "expires_in"}:
+            return False
+        view = got["view"]
+        if not isinstance(view, dict) or type(got["expires_in"]) is not int:
+            return False
+        seal, workspace = view.get("seal"), view.get("workspace")
+        lines = view.get("lines")
+        device = re.compile(r"^d_[0-9a-f]{32}$")
+        return (
+            isinstance(got["request_id"], str)
+            and re.fullmatch(r"hr_[0-7][0-9A-HJKMNP-TV-Z]{25}", got["request_id"]) is not None
+            and isinstance(got["view_digest"], str)
+            and re.fullmatch(r"sha256:[0-9a-f]{64}", got["view_digest"]) is not None
+            and view.get("op") == "device.rotate"
+            and isinstance(workspace, dict)
+            and workspace.get("id") == ws
+            and isinstance(view.get("old"), str)
+            and device.fullmatch(view["old"]) is not None
+            and isinstance(view.get("new"), str)
+            and device.fullmatch(view["new"]) is not None
+            and view["old"] != view["new"]
+            and view.get("confirm") == {"kind": "click"}
+            and isinstance(lines, list)
+            and all(isinstance(x, str) for x in lines)
+            and isinstance(seal, dict)
+            and set(seal) == {"v", "alg", "pk", "purposes"}
+            and seal["v"] == 1
+            and type(seal["v"]) is int
+            and seal["alg"] == "P256-HKDF-SHA256-A256GCM"
+            and seal["purposes"] == ["device.recovery_code", "custody.passphrase"]
+            and isinstance(seal["pk"], str)
+            and re.fullmatch(rf"{B64URL}{{87}}", seal["pk"]) is not None
+        )
+
+    def rotate_gate(request: Request, ws: str) -> None:
+        """Local sessions only (until the passkey step-up), an owner, a signer that can (begin and sign alike)."""
+        gateway.enabled(ws)
+        if app.state.auth.login_kind(request.state.token) not in REVEAL_SESSION_KINDS:
+            raise refusal_check(ROTATE_LOCAL_ONLY)
+        if not owner(ws):
+            raise fail("role.denied", "Only an owner replaces a device key in the dashboard.", exit=3)
+        if not signer.rotations():
+            raise fail("click.contract", "Update orch-core: its signing helper cannot replace a key yet.", exit=9)
+
+    @app.post("/api/w/{ws}/click/rotate/seal")
+    def rotate_seal(_: SealBegin, request: Request, ws: str = Depends(workspace)):
+        """The review of "Replace this device's key" with the signer's one-use key for the recovery code and the new
+        passphrase (#1198 C13). Nothing secret passes here; the signer refuses while One click is on."""
+        rotate_gate(request, ws)
+        got = signer.call("rotate", {"workspace_id": ws, "begin": True})
+        if got.get("done") is True:  # an earlier run had landed the event and only the install was left
+            return {"done": True, **(adapters.click_card(got) or {})}
+        if not rotate_offer_ok(got, ws):
+            raise refusal_check(
+                "The signing helper's review of the key replacement is not what it should be. Nothing changed."
+            )
+        return got
+
+    @app.post("/api/w/{ws}/click/rotate")
+    def rotate(body: RotateBody, request: Request, ws: str = Depends(workspace)):
+        """Replace this computer's device key: ciphertext only, relayed and never opened here (#1198 C13)."""
+        rotate_gate(request, ws)
+        row = signer.call(
+            "rotate",
+            {
+                "workspace_id": ws,
+                "request_id": body.request_id,
+                "view_digest": body.view_digest,
+                "sealed": {
+                    "device.recovery_code": body.sealed.device_recovery_code.model_dump(),
+                    "custody.passphrase": body.sealed.custody_passphrase.model_dump(),
+                },
+            },
+        )
+        return {"done": True, **(adapters.click_card(row) or {}), "switchable": True}
+
     @app.post("/api/w/{ws}/click/custody")
-    def custody(body: CustodyBody, ws: str = Depends(workspace)):
+    def custody(body: CustodyBody, request: Request, ws: str = Depends(workspace)):
         """Switch signing in the dashboard on or off (section 0.8.6 item 3a): owners only; the signer does the work
         (this process never opens a key) and answers the workspace's card. No route here changes a credential."""
         gateway.enabled(ws)
@@ -270,13 +544,39 @@ def register(app: FastAPI, gateway: Gateway):
             raise fail("role.denied", "Only an owner switches signing in the dashboard.", exit=3)
         if not signer.switchable():
             raise fail("click.contract", "Update orch-core: its signing helper cannot switch signing yet.", exit=9)
-        if body.on:  # the proof goes to the signer only; nothing here reads, keeps or logs it
+        if body.resume:
+            # no passphrase to prove: only a dashboard opened on this computer (the same gate as a shown secret), until
+            # the passkey step-up exists; anything else keeps the terminal command on the card
+            if app.state.auth.login_kind(request.state.token) not in REVEAL_SESSION_KINDS:
+                raise fail(
+                    "custody.terminal_needed",
+                    "Turning One click on again needs a dashboard opened on this computer. Use the terminal: "
+                    "orch host convenience on --workspace " + ws,
+                    exit=3,
+                )
+            row = signer.call("custody_on", {"workspace_id": ws, "resume": True})
+        elif body.on:  # the proof goes to the signer only; nothing here reads, keeps or logs it
             row = signer.call("custody_on", {"workspace_id": ws, "passphrase": body.passphrase})
-        else:  # off: the flag; with a NEW passphrase the signer also moves the key back (V3-D31), only while on
+        elif body.sealed is not None:  # off with a NEW passphrase (V3-D31): ciphertext only, relayed and never opened
+            if app.state.auth.login_kind(request.state.token) not in REVEAL_SESSION_KINDS:
+                raise refusal_check(SEALED_LOCAL_ONLY)
+            if not signer.passphrase_seals():
+                raise fail(
+                    "click.contract",
+                    "Update orch-core: its signing helper cannot take a sealed passphrase yet.",
+                    exit=9,
+                )
             row = signer.call(
                 "custody_off",
-                {"workspace_id": ws, **({"passphrase": body.passphrase} if body.passphrase is not None else {})},
+                {
+                    "workspace_id": ws,
+                    "request_id": body.request_id,
+                    "view_digest": body.view_digest,
+                    "sealed": {"custody.passphrase": body.sealed.custody_passphrase.model_dump()},
+                },
             )
+        else:  # off: the flag only
+            row = signer.call("custody_off", {"workspace_id": ws})
         return {**(adapters.click_card(row) or {}), "switchable": True}
 
     @app.post("/api/w/{ws}/click/images")
@@ -291,22 +591,12 @@ def register(app: FastAPI, gateway: Gateway):
     @app.post("/api/w/{ws}/click/prepare")
     def prepare(body: ClickBody, request: Request, ws: str = Depends(workspace)):
         token = request.state.token
+        if isinstance(body, AgentAccess) and app.state.auth.login_kind(token) not in REVEAL_SESSION_KINDS:
+            raise refusal_check("Agent access with a shown secret needs a dashboard opened on this computer.")
+        if isinstance(body, HUB_STEPS) and app.state.auth.login_kind(token) not in REVEAL_SESSION_KINDS:
+            raise refusal_check("A hub step with your backup key needs a dashboard opened on this computer.")
         gateway.enabled(ws)  # pinned workspace, dashboard addon enabled in it (the hand-off's `human()` does this)
         refuse_if_hub_only(gateway, ws)  # V3 C11: full hub mode takes no click signature (the host refuses it too)
-        if isinstance(body, PublishSetup | PublishShare) or (
-            isinstance(body, AddonEnable | AddonGrant) and body.name == "publish"
-        ):
-            # Where files go, and the signature that lets them leave: terminal only, never one click. Refused here,
-            # before a slot is taken or the signer is asked (core's op_class also reads `publish.share` as terminal).
-            raise HostError(
-                {
-                    "code": "human.click_refused",
-                    "message": "Sharing files and choosing where they go are signed in your terminal, not by click.",
-                    "retryable": False,
-                    "reason": "terminal_only",
-                },
-                3,
-            )
         with handoffs.lock:
             handoffs.reserve(token)  # check and take a slot in one step (shared with the hand-off)
         try:
@@ -317,23 +607,15 @@ def register(app: FastAPI, gateway: Gateway):
 
     def _prepare(body, token, ws):
         grant = isinstance(body, RunnerGrant)
-        if grant and not signer.deposits():
-            # A contract-1 signer reads every grant as terminal only: say so before anything is prepared (H11c-2).
-            raise HostError(
-                {
-                    "code": "human.click_refused",
-                    "message": UPDATE_ORCH,
-                    "retryable": False,
-                    "reason": "terminal_only",
-                    "why": "update_orch",
-                },
-                3,
-            )
+        if isinstance(body, AgentAccess) and not signer.reveals():
+            raise fail("click.contract", "Update orch-core: its signing helper cannot show a grant secret yet.", exit=9)
         if isinstance(body, NewTicketSequence | EditTicket | QuickStart | AddonEnable) and not signer.sequences():
             # an older signer would ignore `sequence` and sign the first step only
             raise fail(
                 "click.contract", "Update orch-core: its signing helper can't sign a ticket and its text yet.", exit=9
             )
+        if isinstance(body, HUB_STEPS) and not signer.backup_keys():
+            raise fail("click.contract", "Update orch-core: its signing helper cannot take a backup key yet.", exit=9)
         planned = plan(gateway, ws, body)  # the only place an op name is chosen
         if planned.sequence and planned.sequence["intent"].get("images") and not signer.images():
             raise fail("click.contract", "Update orch-core: its signing helper cannot sign pictures yet.", exit=9)
@@ -365,6 +647,8 @@ def register(app: FastAPI, gateway: Gateway):
                 sent["files"] = files
             if planned.sequence:
                 sent["sequence"] = planned.sequence
+            if isinstance(body, AgentAccess):
+                sent["reveal_key"] = body.reveal_key  # public; bound into the review the signer builds
             if grant:
                 sent["deposit"] = True  # the deposit-only grant mode: the secret goes to the runner, never here
             return signer.call("prepare", sent)
@@ -374,57 +658,44 @@ def register(app: FastAPI, gateway: Gateway):
         except HostError as exc:
             sweep()
             said = str(exc.error.get("message", "")) if exc.error["code"] == "human.request_state" else ""
-            ended_as = TERMINAL.fullmatch(said)
-            if ended_as is None:
+            if said != SUBMITTED:
                 raise
-            # The host returned this intent's request, and it has ended: say how, and offer an explicit new attempt.
-            state = ended_as.group(1)
-            if state == "submitted":
-                # The signer drops the terminal request id. Replay the exact binding through our link to obtain
-                # the host record; opts.idem guarantees this cannot create another request.
-                signed_retry = getattr(exc, "retry_used", body.retry)  # the retry whose attempt was signed
-                device = signer.status().get(ws, {}).get("device")
-                if not device:
-                    raise fail("host.unavailable", "Cannot read the earlier signing record.") from None
-                try:
-                    prepared = app.state.human(
-                        ws,
-                        "human.prepare",
-                        {"op": planned.op, "args": planned.args, "signer": {"device": device, "auth": "convenience"}},
-                        idem=planned.idem(ws, signed_retry),
-                        files=files,
-                    )
-                except HostError as exc:
-                    # The same mapping as send_prepare: never a raw idem code to the browser (Opus re-check N3).
-                    code = exc.error.get("code")
-                    if code == "idem.expired":
-                        raise fail(
-                            "intent.expired",
-                            "This attempt is older than the host keeps records (24 h). Start again only if you intend "
-                            "another attempt; an earlier one may have been signed.",
-                            exit=5,
-                        ) from None
-                    if code == "idem.conflict":
-                        raise fail(
-                            "intent.blocked",
-                            "The earlier attempt was signed, but its record can't be read here. Start again only if "
-                            "you intend another attempt; an earlier one may have been signed.",
-                            exit=5,
-                        ) from None
-                    raise
-                if prepared.get("request", {}).get("state") != "submitted":
-                    raise fail("internal", "The host did not return the submitted intent.")
-                raise read_done(human, ws, prepared["request"]["id"]) from None
-
-            raise HostError(
-                {
-                    "code": "intent.ended",
-                    "message": f"The earlier attempt is {state}.",
-                    "retryable": False,
-                    "state": state,
-                },
-                exit=5,
-            ) from None
+            # This intent's attempt was signed: answer "Already done" from the host's record.
+            # The signer drops the terminal request id. Replay the exact binding through our link to obtain
+            # the host record; opts.idem guarantees this cannot create another request.
+            signed_retry = getattr(exc, "retry_used", body.retry)  # the retry whose attempt was signed
+            device = signer.status().get(ws, {}).get("device")
+            if not device:
+                raise fail("host.unavailable", "Cannot read the earlier signing record.") from None
+            try:
+                prepared = app.state.human(
+                    ws,
+                    "human.prepare",
+                    {"op": planned.op, "args": planned.args, "signer": {"device": device, "auth": "convenience"}},
+                    idem=planned.idem(ws, signed_retry),
+                    files=files,
+                )
+            except HostError as exc:
+                # The same mapping as send_prepare: never a raw idem code to the browser (Opus re-check N3).
+                code = exc.error.get("code")
+                if code == "idem.expired":
+                    raise fail(
+                        "intent.expired",
+                        "This attempt is older than the host keeps records (24 h). Start again only if you intend "
+                        "another attempt; an earlier one may have been signed.",
+                        exit=5,
+                    ) from None
+                if code == "idem.conflict":
+                    raise fail(
+                        "intent.blocked",
+                        "The earlier attempt was signed, but its record can't be read here. Start again only if "
+                        "you intend another attempt; an earlier one may have been signed.",
+                        exit=5,
+                    ) from None
+                raise
+            if prepared.get("request", {}).get("state") != "submitted":
+                raise fail("internal", "The host did not return the submitted intent.")
+            raise read_done(human, ws, prepared["request"]["id"]) from None
         rid = got["request_id"]
         clicks.forget(rid)  # adopted by the new signer; it is no longer an orphan
         sweep()
@@ -472,7 +743,19 @@ def register(app: FastAPI, gateway: Gateway):
             raise refusal_check("The review does not say where the grant goes. Nothing was shown. Cancel it.")
         # Review I1: the grant's View must be of the very record `expected()` checked (the host's fingerprint), so the
         # hours and scope signed are the ones verified.
-        if isinstance(wanted, RunnerGrant) and (
+        # A shown-secret grant: the View must carry the sealed purpose for THIS page's key, and no other View may.
+        if isinstance(
+            wanted, HUB_STEPS
+        ):  # a hub step: the signer's own key for the backup key, and nothing else sealed
+            if not backup_view_ok(shown, ws):
+                raise refusal_check("The review does not ask for your backup key. Nothing was shown. Cancel it.")
+        elif isinstance(wanted, AgentAccess) != (shown.get("seal") is not None) or (
+            isinstance(wanted, AgentAccess) and not reveal_view_ok(shown, ws, wanted.reveal_key)
+        ):
+            raise refusal_check(
+                "The review does not say that the secret is shown here once. Nothing was shown. Cancel it."
+            )
+        if isinstance(wanted, RunnerGrant | AgentAccess) and (
             not isinstance(verified, dict)
             or not verified.get("fingerprint")
             or shown.get("fingerprint") != verified["fingerprint"]
@@ -544,7 +827,10 @@ def register(app: FastAPI, gateway: Gateway):
         return out
 
     @app.post("/api/w/{ws}/click/sign")
-    def sign(body: Sign, ws: str = Depends(workspace)):
+    def sign(body: Sign, request: Request, ws: str = Depends(workspace)):
+        if body.sealed is not None and app.state.auth.login_kind(request.state.token) not in REVEAL_SESSION_KINDS:
+            # where the typed key arrives: the local-only gate of prepare, repeated (fail closed on any other kind)
+            raise refusal_check("A hub step with your backup key needs a dashboard opened on this computer.")
         mine(ws, body.request_id)
         rid = body.request_id
         wanted = clicks.get(rid)[2]
@@ -552,11 +838,21 @@ def register(app: FastAPI, gateway: Gateway):
         # replaces the signer under it, and the mark is already there if the answer is lost. (A second signature of
         # the request is refused by the signer and the host, which are the ones that know.)
         handoffs.begin_sign(ws, rid, handoffs.clock() + TTL + 60)
-        args = {"view_digest": body.view_digest}
-        if body.word is not None:
-            args["word"] = body.word  # exactly as typed
         try:
-            got = signer.call("sign", {"workspace_id": ws, "request_id": rid, **args}, lost=lost_sign())
+            sent = {"workspace_id": ws, "request_id": rid, "view_digest": body.view_digest}
+            if isinstance(wanted, AgentAccess):
+                if body.reveal_key != wanted.reveal_key:  # the key of the review, nothing else (the signer checks too)
+                    raise fail("invalid.input", "reveal_key is not the key this review was made for", exit=1)
+                sent["reveal_key"] = body.reveal_key
+            elif body.reveal_key is not None:
+                raise fail("invalid.input", "only a grant shown in the page takes reveal_key", exit=1)
+            if isinstance(wanted, HUB_STEPS):  # the backup key, sealed: relayed as ciphertext, never read or logged
+                if body.sealed is None:
+                    raise fail("invalid.input", "A hub step needs your backup key.", exit=1)
+                sent["sealed"] = {"hub.backup_key": body.sealed.hub_backup_key.model_dump()}
+            elif body.sealed is not None:
+                raise fail("invalid.input", "only a hub step takes a sealed value", exit=1)
+            got = signer.call("sign", sent, lost=lost_sign())
         except HostError as exc:
             # Before follow-up host reads, which may themselves fail. A definite failure never clears an earlier or a
             # concurrent unknown outcome; the rule lives in Handoffs.end_sign.
@@ -588,13 +884,27 @@ def register(app: FastAPI, gateway: Gateway):
         handoffs.settled(rid)
         result = got.get("result") if isinstance(got.get("result"), dict) else {}
         out = {"state": "submitted", "duplicate": bool(got.get("duplicate"))}
+        if isinstance(wanted, AgentAccess):
+            return out | reveal_answer(got)  # the grant id and the sealed envelope; never `result`
+        if not isinstance(wanted, RunnerGrant):
+            # A ticket or quick task whose sequence ends in the agent access: the page needs the ticket's key to start
+            # the agent for exactly that ticket, so the key and the seq are answered in this case too.
+            if isinstance(result.get("key"), str) and adapters.runs.KEY.fullmatch(result["key"]):
+                out["key"] = result["key"]
+            if type(result.get("seq")) is int:
+                out["seq"] = result["seq"]
+            if "key" not in out and "deposit" in got:
+                # The result is the last step's (the grant): the ticket's key is on the host's own row of this request.
+                try:
+                    rows = human(ws, "human.pending", {"request_id": rid}).get("requests", [])
+                    row = rows[0] if len(rows) == 1 and isinstance(rows[0], dict) and rows[0].get("id") == rid else {}
+                except HostError:
+                    row = {}
+                if isinstance(row.get("key"), str) and adapters.runs.KEY.fullmatch(row["key"]):
+                    out["key"] = row["key"]
         if isinstance(wanted, RunnerGrant) or "deposit" in got:
-            # Only the deposit's enum, its id and the grant id; never `result` (section 0.8.6 item 6).
+            # Of the deposit only its enum, its id and the grant id; never `result` (section 0.8.6 item 6).
             return out | deposit_answer(got, rid)
-        if isinstance(result.get("key"), str):
-            out["key"] = result["key"]
-        if isinstance(result.get("seq"), int):
-            out["seq"] = result["seq"]
         return out
 
     @app.post("/api/w/{ws}/click/cancel")

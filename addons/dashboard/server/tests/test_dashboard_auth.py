@@ -328,7 +328,7 @@ def test_print_url_terminal_only(tmp_path, monkeypatch, capsys):
         "control",
         lambda _p, c, *_: {"release": launcher.code_digest()}
         if c == "hello"
-        else {"port": PORT, "code": "demo-not-a-real-code"},
+        else {"port": PORT, "code": "demo-not-a-real-code", "expires_at": int(time.time()) + 30},
     )
     monkeypatch.setattr(launcher.webbrowser, "open", lambda _: pytest.fail("must print only"))
     launcher.open_dashboard(print_url=True)
@@ -530,3 +530,13 @@ def test_an_older_server_without_expires_at_keeps_the_30s_bound(tmp_path, monkey
     t0 = time.time()
     reply = launcher.control(tmp_path / "ctl.sock", "launch", "setup")
     assert t0 + CODE_TTL <= reply["expires_at"] <= time.time() + CODE_TTL
+
+
+def test_session_reports_how_it_was_opened(client, auth):
+    code = auth.launch(PORT)["code"]
+    token = client.post("/auth/session", json={"code": code}, headers={"Origin": ORIGIN}).json()["token"]
+    head = {"Authorization": f"Bearer {token}"}
+    assert client.get("/api/session", headers=head).json()["login"] == "local"
+    assert auth.login_kind(token) == "local"
+    client.post("/auth/logout", headers={**head, "Origin": ORIGIN})
+    assert auth.login_kind(token) is None

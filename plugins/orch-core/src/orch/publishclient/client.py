@@ -27,9 +27,9 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from orch.relay import wire
-from orch.relay.pubsign import PublishSigner, SignedPublish
-from orch.relay.sign import SignerRefused
+from orch.wsproto import wire
+from orch.wsproto.pubsign import PublishSigner, SignedPublish
+from orch.wsproto.sign import SignerRefused
 
 __all__ = ["MAX_ATTEMPTS", "PublishClient", "PublishError", "PublishResponse", "Transport", "share_target"]
 
@@ -65,7 +65,9 @@ class PublishResponse:
 
 class Transport:
     """What the client needs from a network: one call, status and body back. Raises ``OSError`` (incl. timeouts) or
-    ``http.client.HTTPException`` if the answer did not arrive. The default sends over ``http.client``."""
+    ``http.client.HTTPException`` if the answer did not arrive. A plain ``http.client`` call: ``PublishClient`` is never
+    given it (V3-D36: every publish request goes over the hub link); its only user is the break-glass
+    ``PUT hub.unbound`` to orch-publish."""
 
     def __call__(
         self,
@@ -137,12 +139,12 @@ class PublishClient:
         self,
         signer: PublishSigner,
         *,
-        transport: Callable[..., tuple[int, bytes]] | None = None,
+        transport: Callable[..., tuple[int, bytes]],
         sleep: Callable[[float], None] = time.sleep,
         timeout: float = _TIMEOUT_S,
     ) -> None:
         self._signer = signer
-        self._transport = transport or Transport()
+        self._transport = transport
         self._sleep = sleep
         self._timeout = timeout
 

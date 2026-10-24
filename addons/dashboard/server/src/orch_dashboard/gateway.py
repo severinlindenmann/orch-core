@@ -74,12 +74,22 @@ WRITE_OPS = (
     "member.add",
     "member.role",
     "member.remove",
+    "device.remove",
     "grant.revoke",
     "addon.grant",
     "addon.disable",
 )
 
 
+#: what the Add-ons page calls (all of it)
+MARKET_PAGE_OPS = (
+    "market.list",
+    "market.installed",
+    "market.stage",
+    "market.unstage",
+    "market.uninstall",
+    "market.refresh",
+)
 #: the host ops the Publish page and box need (shares.py); all under cap `publish/1`
 PUBLISH_FEATURE_OPS = (
     "publish.list",
@@ -243,6 +253,24 @@ class Gateway:
         cls._addon_seen[key] = on
         return on
 
+    @classmethod
+    def capability_on(cls, link, capability) -> bool:
+        """Does an add-on that is granted, enabled and holds `capability` exist here? The decision is by the active
+        grant's capability, never by the add-on's name. Unreadable: the last known answer, else off."""
+        welcome = getattr(link, "welcome", None)
+        ws = (welcome.get("workspace") or {}).get("id") if isinstance(welcome, dict) else None
+        key = (ws or id(link), "capability:" + capability)
+        try:
+            rows = link.call("addon.list")["addons"]
+        except (HostError, KeyError, TypeError):
+            return cls._addon_seen.get(key, False)
+        on = any(
+            isinstance(a, dict) and a.get("state") == "active" and capability in (a.get("capabilities") or ())
+            for a in rows
+        )
+        cls._addon_seen[key] = on
+        return on
+
     def features(self, ws):
         link = self.enabled(ws)
         features = []
@@ -309,7 +337,9 @@ class Gateway:
                 ("grant.forget", "run/1"),
                 ("whoami", "ops/1"),
             ],
-            # V3 A7: the Hub tab, the top-bar chip and the Tickets column (reads; every change is a Terminal command).
+            # V3 A10: the Add-ons page (Browse, Installed, Marketplaces); every install is a terminal hand-off
+            "market": [(op, "ops/1") for op in MARKET_PAGE_OPS],
+            # V3 A7: the Hub tab, the top-bar chip and the Tickets column (reads; every change is a terminal command).
             "hub": [
                 ("hub.status", "hub/1")
             ],  # share.* is checked by its own routes: an older host degrades in the page
@@ -323,8 +353,8 @@ class Gateway:
         if "terminals" in features and self.addon_on(link, "terminals"):
             # The Terminals page (menu entry and route) exists only while the add-on is ON; the dock keeps its own gate.
             features.append("terminals_page")
-        if "agent_start" in features and self.addon_on(link, "model-routing"):
-            features.append("model_routing")  # Model routing (add-on on): the Settings section and the model choice
+        if "agent_start" in features and self.capability_on(link, "choose_model"):
+            features.append("model_routing")  # an active add-on holds choose_model: the model choice is offered
         if link.supports("run.list", "run/1") and self.addon_on(link, "usage"):
             # Usage: the page and the ticket box exist only while the add-on is ON for this workspace.
             features.append("usage")
@@ -347,9 +377,9 @@ class Gateway:
                 features.append("move")  # the board's move action (H6b): backlog <-> open through a hand-off
         return features
 
-    def one_path_is_click(self, ws) -> bool:
-        """Is click-to-sign switched ON for this workspace (the signer's flag)? Then it is the ONE signing path: the
-        dashboard prepares no terminal hand-off there (owner decision, 12 Oct 2026)."""
+    def one_click_on(self, ws) -> bool:
+        """Is click-to-sign switched ON for this workspace (the signer's flag)? Only the default sign method follows
+        it: the terminal hand-off stays available either way (#1170)."""
         card = self.click.status().get(ws)
         return isinstance(card, dict) and card.get("enabled") is True
 

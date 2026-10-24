@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
 import { api } from '@/api/client'
 import { ApiError } from '@/api/types'
-import { DASHBOARD_EXECUTION_LINE, readQuickLimits, writeQuickLimits } from '@/api/quickRecords'
+import { DASHBOARD_EXECUTION_LINE } from '@/api/quickRecords'
 import ticket from '@/test/fixtures/server-m2/ticket.json'
 import { queryClient } from '@/production/Shell'
 import { DO, MARA, OWNER, READS, TOM, roster, settingsOf, show, useFakeHost, workspace } from '@/test/hostHarness'
@@ -50,66 +50,37 @@ const other = (...c: string[]) => state.host.calls.filter((x) => c.some((p) => x
 
 // ---------------------------------------------------------------- quick tasks
 
-it('lists the quick tasks with counts, marks the outgrown one first and keeps unknown counts unknown', async () => {
+it('lists the quick tasks in plain status words, with a chip only for the one the host measured as too big', async () => {
   show('/w/DEMO/quick')
   const list = await screen.findByRole('list', { name: 'Active quick tasks' }, T)
   const items = within(list).getAllByRole('listitem')
-  expect(items[0]).toHaveTextContent('DEMO-0011')
-  expect(items[0]).toHaveTextContent('too big')
-  expect(items[0]).toHaveTextContent('4 commits, 7 files')
-  expect(items[1]).toHaveTextContent('1 commit, 1 file')
-  expect(items[3]).toHaveTextContent('size not measured yet')
-  expect(items[3]).not.toHaveTextContent(/0 commits|too big/)
-  expect(await screen.findByRole('tab', { name: /^Completed\s*1/ }, T)).toBeInTheDocument()
-  const asked = other('/quick')[0]
-  expect(asked.path).toContain('status=backlog')
-  expect(asked.path).not.toContain('max_commits') // no limit set: the host's defaults
+  expect(items).toHaveLength(4)
+  const big = items.find((i) => i.textContent?.includes('DEMO-0011'))!
+  expect(within(big).getByTestId('quick-over')).toHaveTextContent('Bigger than a quick task')
+  for (const i of items) expect(within(i).getByTestId('quick-status')).toHaveTextContent('Not started')
+  expect(list).not.toHaveTextContent(/commits|size not measured|too big/) // no size is asked or shown
+  expect(items.filter((i) => within(i).queryByTestId('quick-over'))).toHaveLength(1)
+  expect(await screen.findByRole('tab', { name: /^Finished\s*1/ }, T)).toBeInTheDocument()
+  expect(other('/quick')[0].path).not.toContain('max_commits') // the host measures: nothing is sent
 })
 
-it('the limits are a local setting: saved per workspace in this browser and sent as flat max_commits / max_files', async () => {
-  const user = userEvent.setup()
+it('there is no limits box: the quick limits and their browser storage are gone', async () => {
   show('/w/DEMO/quick')
   await screen.findByRole('list', { name: 'Active quick tasks' }, T)
-  await user.click(screen.getByText(/^When is a quick task too big/))
-  await user.type(screen.getByLabelText(/^Commits/), '2')
-  await user.type(screen.getByLabelText(/^Files/), '5')
-  await user.click(screen.getByRole('button', { name: 'Save limits' }))
-  await waitFor(() => expect(other('/quick').some((c) => c.path.includes('max_commits=2') && c.path.includes('max_files=5'))).toBe(true))
-  expect(readQuickLimits(A)).toEqual({ max_commits: 2, max_files: 5 })
-  expect(other('/quick').every((c) => !c.path.includes('limits'))).toBe(true) // never a nested limits object
-  expect(state.host.calls.filter((c) => c.method === 'POST')).toEqual([]) // the server saves nothing
+  expect(screen.queryByTestId('quick-limits')).toBeNull()
+  expect(screen.queryByText(/When is a quick task too big/)).toBeNull()
+  expect(screen.queryByTestId('quick-one-signature')).toBeNull()
+  expect(screen.queryByTestId('quick-what-you-sign')).toBeNull()
 })
 
-it('a limit out of range is refused in the page and never sent', async () => {
+it('the Finished tab asks for the finished statuses', async () => {
   const user = userEvent.setup()
   show('/w/DEMO/quick')
-  await screen.findByRole('list', { name: 'Active quick tasks' }, T)
-  await user.click(screen.getByText(/^When is a quick task too big/))
-  await user.type(screen.getByLabelText(/^Commits/), '101')
-  expect(screen.getByRole('button', { name: 'Save limits' })).toBeDisabled()
-  expect(screen.getByRole('alert')).toHaveTextContent('1 to 100')
-  expect(readQuickLimits(A)).toEqual({ max_commits: null, max_files: null })
-})
-
-it('damaged or unavailable storage reads as "not set" and writing says so', () => {
-  localStorage.setItem(`orch.quick.limits.${A}`, '{not json')
-  expect(readQuickLimits(A)).toEqual({ max_commits: null, max_files: null })
-  localStorage.setItem(`orch.quick.limits.${A}`, JSON.stringify({ max_commits: 0, max_files: 'x' }))
-  expect(readQuickLimits(A)).toEqual({ max_commits: null, max_files: null })
-  const set = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
-    throw new Error('blocked')
-  })
-  expect(writeQuickLimits(A, { max_commits: 3, max_files: null })).toBe(false)
-  set.mockRestore()
-})
-
-it('the Completed tab asks for the finished statuses', async () => {
-  const user = userEvent.setup()
-  show('/w/DEMO/quick')
-  await user.click(await screen.findByRole('tab', { name: /^Completed/ }, T))
-  const list = await screen.findByRole('list', { name: 'Completed quick tasks' }, T)
+  await user.click(await screen.findByRole('tab', { name: /^Finished/ }, T))
+  const list = await screen.findByRole('list', { name: 'Finished quick tasks' }, T)
   expect(list).toHaveTextContent('Drop the old logo')
-  expect(within(list).queryByRole('button', { name: /^Close/ })).toBeNull() // nothing to close
+  expect(within(list).getByTestId('quick-status')).toHaveTextContent('Finished')
+  expect(within(list).queryByRole('button', { name: /^More for/ })).toBeNull() // nothing to close
 })
 
 it('an absent cap or op is an honest "not served", and without the feature the page is not reached', async () => {
@@ -126,33 +97,33 @@ it('no quick feature: the route goes to the board and the sidebar has no entry',
   expect(other('/quick')).toEqual([])
 })
 
-it('a viewer sees the list but no add form and no Close', async () => {
+it('a viewer sees the list but no add form and no menu', async () => {
   state.host.workspaces[0].role = 'viewer'
   state.host.workspaces[0].roster = roster().map((m) => (m.person === OWNER ? { ...m, role: 'viewer' as const } : m))
   show('/w/DEMO/quick')
   await screen.findByRole('list', { name: 'Active quick tasks' }, T)
-  expect(screen.queryByLabelText(/^Quick task \(one line\)/)).toBeNull()
-  expect(screen.queryByRole('button', { name: /^Close/ })).toBeNull()
+  expect(screen.queryByLabelText('What needs doing?')).toBeNull()
+  expect(screen.queryByRole('button', { name: /^More for/ })).toBeNull()
 })
 
-it('says "one signature" in the add form, in plain words', async () => {
+it('the form is one input and one button; details and checks are folded', async () => {
   show('/w/DEMO/quick')
-  const note = await screen.findByTestId('quick-one-signature', {}, T)
-  expect(note).toHaveTextContent('One signature starts the task')
-  expect(note).toHaveTextContent('final verdict')
-  expect(screen.queryByTestId('quick-two-signatures')).toBeNull()
+  const field = await screen.findByLabelText('What needs doing?', {}, T)
+  expect(field).toBeInTheDocument()
+  expect(screen.getByText('Add details or checks').closest('details')).not.toHaveAttribute('open')
+  expect(screen.getByRole('button', { name: 'Sign and create task' })).toBeDisabled() // no agent can start on this fake host
+  expect(screen.queryByRole('button', { name: 'Create without starting' })).toBeNull()
 })
 
-it('starting on a terminal workspace is ONE hand-off with the whole task: title, details, steps, no agent access unless ticked', async () => {
+it('creating on a terminal workspace is ONE hand-off with the whole task: title, details, checks', async () => {
   const user = userEvent.setup()
   show('/w/DEMO/quick')
-  await user.type(await screen.findByLabelText(/^Quick task \(one line\)/, {}, T), 'Fix the typo in CONTRIBUTING')
+  await user.type(await screen.findByLabelText('What needs doing?', {}, T), 'Fix the typo in CONTRIBUTING')
+  await user.click(screen.getByText('Add details or checks'))
   await user.type(screen.getByLabelText('Details (optional)'), 'It says teh.')
-  await user.type(screen.getByLabelText('Step 1'), 'The typo is gone')
-  expect(screen.queryByLabelText('Step 1 check')).toBeNull() // the command field is folded behind the button
-  await user.click(screen.getByRole('button', { name: 'Add a way to check' }))
-  await user.type(screen.getByLabelText('Step 1 check'), 'test -z "$(grep -w teh CONTRIBUTING.md)"')
-  await user.click(screen.getByRole('button', { name: 'Start task' }))
+  await user.type(screen.getByLabelText('Check 1'), 'The typo is gone')
+  await user.type(screen.getByLabelText('Check 1 command'), 'test -z "$(grep -w teh CONTRIBUTING.md)"')
+  await user.click(screen.getByRole('button', { name: 'Sign and create task' }))
   const first = await screen.findByRole('dialog', {}, T)
   await within(first).findByTestId('handoff-command', {}, T)
   expect(state.host.posts()).toHaveLength(1)
@@ -165,95 +136,96 @@ it('starting on a terminal workspace is ONE hand-off with the whole task: title,
   expect(other('/click/')).toEqual([]) // the terminal path only: no click route on a workspace where it is off
 }, 30000)
 
-it('ticking the box adds the agent access (workable tickets only) to the same request, never on its own', async () => {
+it('with an agent runner and no access: "Sign and start task" signs the access in the same request; "Create without starting" never does', async () => {
+  state.host.workspaces[0].features = [...FEATURES, 'agent_start']
   state.host.workspaces[0].settings = settingsOf({ grant_hours: 72 })
   const user = userEvent.setup()
   show('/w/DEMO/quick')
-  await user.type(await screen.findByLabelText(/^Quick task \(one line\)/, {}, T), 'Water the plants')
-  expect(screen.getByLabelText('How long agents may work')).toBeDisabled()
-  await user.click(screen.getByRole('checkbox', { name: /Let agents work on any ticket/ }))
-  // the workspace maximum caps the lengths (the host refuses a longer runner grant): 3 days here, so no 7 days
-  expect(within(screen.getByLabelText('How long agents may work')).getAllByRole('option').map((o) => o.textContent)).toEqual(['8 hours', '1 day', '3 days'])
-  await user.selectOptions(screen.getByLabelText('How long agents may work'), '24')
-  await user.click(screen.getByRole('button', { name: 'Start task' }))
+  await user.type(await screen.findByLabelText('What needs doing?', {}, T), 'Water the plants')
+  await user.click(await screen.findByRole('button', { name: 'Create without starting' }, T))
   await screen.findByRole('dialog', {}, T)
   await waitFor(() => expect(state.host.posts()).toHaveLength(1), T)
+  expect(state.host.posts()[0].body).toEqual({ action: 'quick_start', title: 'Water the plants' })
+}, 30000)
+
+it('with an agent runner and no access the review carries the access length as a select (capped by the workspace)', async () => {
+  state.host.workspaces[0].features = [...FEATURES, 'agent_start']
+  state.host.workspaces[0].settings = settingsOf({ grant_hours: 72 })
+  const user = userEvent.setup()
+  show('/w/DEMO/quick')
+  await user.type(await screen.findByLabelText('What needs doing?', {}, T), 'Water the plants')
+  await user.click(await screen.findByRole('button', { name: 'Sign and start task' }, T))
+  const dialog = await screen.findByRole('dialog', {}, T)
+  const select = await within(dialog).findByLabelText('Give agents access for', {}, T)
+  expect(within(select).getAllByRole('option').map((o) => o.textContent)).toEqual(['8 hours', '1 day', '3 days'])
+  expect(state.host.posts()).toEqual([]) // on the terminal path nothing is prepared until the choice is made
+  await user.selectOptions(select, '24')
+  await user.click(within(dialog).getByRole('button', { name: /Sign in a terminal|Start task|Sign and start/ }))
+  await waitFor(() => expect(state.host.posts().length).toBeGreaterThan(0), T)
   expect(state.host.posts()[0].body).toEqual({ action: 'quick_start', title: 'Water the plants', agent: { hours: 24 } })
 }, 30000)
 
-it('adding where click-to-sign is on goes through the click routes, not a hand-off', async () => {
+it('adding where click-to-sign is on goes through the click routes, not a hand-off, with no terminal choice', async () => {
   state.host.workspaces[0].features = [...FEATURES, 'click']
   state.host.workspaces[0].click = { custody: 'convenience', enabled: true, available: true }
   const user = userEvent.setup()
   show('/w/DEMO/quick')
-  await user.type(await screen.findByLabelText(/^Quick task \(one line\)/, {}, T), 'Remove the dead import')
-  await user.click(screen.getByRole('button', { name: 'Start task' }))
+  await user.type(await screen.findByLabelText('What needs doing?', {}, T), 'Remove the dead import')
+  await user.click(screen.getByRole('button', { name: 'Sign and create task' }))
   const first = await screen.findByRole('dialog', {}, T)
   await within(first).findByRole('button', { name: /^Sign( |$)/ }, T)
   expect(state.host.posts()).toEqual([]) // no terminal hand-off was prepared
-  expect(within(first).queryByRole('button', { name: 'Sign in the terminal instead' })).toBeNull()
+  expect(within(first).queryByRole('button', { name: /terminal/i })).toBeNull()
+  expect(within(first).queryByRole('button', { name: /phone/i })).toBeNull()
 })
 
-it('the checklist is editable: steps can be added and removed, up to four, and the limit is explained', async () => {
+it('the checks are editable: up to four, and the limit is explained', async () => {
   const user = userEvent.setup()
   show('/w/DEMO/quick')
-  await user.type(await screen.findByLabelText(/^Quick task \(one line\)/, {}, T), 'Make a giraffe chart')
-  await user.type(screen.getByLabelText('Step 1'), 'Read the data')
-  for (let i = 0; i < 3; i++) await user.click(screen.getByRole('button', { name: 'Add a step' }))
-  expect(screen.getByLabelText('Step 4')).toBeInTheDocument()
-  expect(screen.queryByRole('button', { name: 'Add a step' })).toBeNull()
-  expect(screen.getByText(/up to 4 steps/)).toBeInTheDocument()
-  await user.type(screen.getByLabelText('Step 2'), 'Draw the chart')
-  await user.click(screen.getByRole('button', { name: 'Remove step 1' }))
-  expect(screen.queryByLabelText('Step 4')).toBeNull()
-  expect(screen.getByLabelText('Step 1')).toHaveValue('Draw the chart')
-  expect(screen.getByRole('button', { name: 'Add a step' })).toBeInTheDocument()
-  // what is signed is said in plain words below the button
-  expect(screen.getByTestId('quick-what-you-sign')).toHaveTextContent('Make a giraffe chart · 1 checklist step · no agent access')
-})
-
-it('what you sign names the agent access and the note shows the workspace maximum, not a fixed 7 days', async () => {
-  state.host.workspaces[0].settings = settingsOf({ grant_hours: 72 })
-  const user = userEvent.setup()
-  show('/w/DEMO/quick')
-  await user.type(await screen.findByLabelText(/^Quick task \(one line\)/, {}, T), 'Water the plants')
-  expect(screen.getByText(/No agent access is asked for/)).toBeInTheDocument()
-  await user.click(screen.getByRole('checkbox', { name: /Let agents work on any ticket/ }))
-  expect(await screen.findByText(/allows agent access of up to 3 days/, {}, T)).toBeInTheDocument()
-  expect(screen.queryByText(/7 days/)).toBeNull()
-  expect(screen.getByTestId('quick-what-you-sign')).toHaveTextContent('agent access for 8 h')
+  await user.type(await screen.findByLabelText('What needs doing?', {}, T), 'Make a giraffe chart')
+  await user.click(screen.getByText('Add details or checks'))
+  await user.type(screen.getByLabelText('Check 1'), 'Read the data')
+  for (let i = 0; i < 3; i++) await user.click(screen.getByRole('button', { name: 'Add a check' }))
+  expect(screen.getByLabelText('Check 4')).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Add a check' })).toBeNull()
+  expect(screen.getByText(/up to 4 checks/)).toBeInTheDocument()
+  await user.type(screen.getByLabelText('Check 2'), 'Draw the chart')
+  await user.click(screen.getByRole('button', { name: 'Remove check 1' }))
+  expect(screen.queryByLabelText('Check 4')).toBeNull()
+  expect(screen.getByLabelText('Check 1')).toHaveValue('Draw the chart')
 })
 
 it('a title that is empty or has a line break is never submitted', async () => {
   const user = userEvent.setup()
   show('/w/DEMO/quick')
-  const field = await screen.findByLabelText(/^Quick task \(one line\)/, {}, T)
-  expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled()
+  const field = await screen.findByLabelText('What needs doing?', {}, T)
+  const go = () => screen.getByRole('button', { name: 'Sign and create task' })
+  expect(go()).toBeDisabled()
   await user.type(field, '   ')
-  expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled()
+  expect(go()).toBeDisabled()
   await user.clear(field)
   await user.type(field, 'x'.repeat(121))
-  expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled()
+  expect(go()).toBeDisabled()
   expect(screen.getByRole('alert')).toHaveTextContent('at most 120')
 })
 
-it('Close prepares the existing close hand-off for that key', async () => {
+it('Close (in the row menu) prepares the existing close hand-off for that key', async () => {
   const user = userEvent.setup()
   show('/w/DEMO/quick')
-  await user.click(await screen.findByRole('button', { name: 'Close DEMO-0010' }, T))
+  await user.click(await screen.findByRole('button', { name: 'More for DEMO-0010' }, T))
+  await user.click(await screen.findByRole('menuitem', { name: 'Close' }, T))
   const dialog = await screen.findByRole('dialog', {}, T)
   await within(dialog).findByTestId('handoff-command', {}, T)
   expect(state.host.posts()[0].body).toMatchObject({ action: 'close', key: 'DEMO-0010' })
 })
 
-it('Make a normal ticket reads fresh labels and sets exactly the remaining labels', async () => {
+it('Make a normal ticket (in the row menu) reads fresh labels and sets exactly the remaining labels', async () => {
   const user = userEvent.setup()
   show('/w/DEMO/quick')
-  const list = await screen.findByRole('list', { name: 'Active quick tasks' }, T)
+  await screen.findByRole('list', { name: 'Active quick tasks' }, T)
   state.host.override = (path, method) => path.endsWith('/tickets/DEMO-0014') && method === 'GET' ? Response.json({ ...ticket, key: 'DEMO-0014', labels: ['quick', 'docs', 'web', 'new-label'] }) : undefined
-  expect(within(list).getByRole('button', { name: 'Make DEMO-0010 a normal ticket' })).toBeInTheDocument()
-  expect(within(list).getAllByRole('button', { name: /a normal ticket$/ })).toHaveLength(4)
-  await user.click(within(list).getByRole('button', { name: 'Make DEMO-0014 a normal ticket' }))
+  await user.click(await screen.findByRole('button', { name: 'More for DEMO-0014' }, T))
+  await user.click(await screen.findByRole('menuitem', { name: 'Make a normal ticket' }, T))
   const dialog = await screen.findByRole('dialog', {}, T)
   await within(dialog).findByTestId('handoff-command', {}, T)
   expect(state.host.posts()[0].body).toMatchObject({ action: 'details', key: 'DEMO-0014', labels: ['docs', 'web', 'new-label'] })
@@ -261,46 +233,51 @@ it('Make a normal ticket reads fresh labels and sets exactly the remaining label
   expect(dialog).toHaveTextContent('Labels kept: docswebnew-label')
 })
 
-it('a viewer gets no Make a normal ticket button', async () => {
-  state.host.workspaces[0].role = 'viewer'
-  state.host.workspaces[0].roster = roster().map((m) => (m.person === OWNER ? { ...m, role: 'viewer' as const } : m))
-  show('/w/DEMO/quick')
-  await screen.findByRole('list', { name: 'Active quick tasks' }, T)
-  expect(screen.queryByRole('button', { name: /a normal ticket$/ })).toBeNull()
-})
-
 // ---------------------------------------------------------------- records
 
-it('records: status, the export warning and the commands for the terminal-only actions, verbatim', async () => {
-  show('/w/DEMO/settings/records')
+it('records: status, the export warning and the commands for what only a terminal does, verbatim', async () => {
+  show('/w/DEMO/settings/general')
+  await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
+  const advancedRecords = screen.queryByText('For advanced users')
+  if (advancedRecords) await userEvent.setup().click(advancedRecords)
   const warning = await screen.findByTestId('records-export-warning', {}, T)
   expect(warning.textContent).toBe(`Push publishes every ticket in this workspace to the remote configured in the records repository (last known: ${URL_PUSH}), restricted ones included.`)
   expect(screen.queryByTestId('records-private-line')).toBeNull() // not marked private
   expect(screen.getByText('12 events in 1 ticket, plus 5 workspace events')).toBeInTheDocument()
   expect(screen.getByText('on, every 15 minutes, without push')).toBeInTheDocument()
-  for (const c of ['orch records remote private', 'orch records auto on', 'orch records auto on --push', 'orch records push --initial']) expect(screen.getByText(c)).toBeInTheDocument()
-  // Terminal-only means no button.
-  expect(screen.queryByRole('button', { name: /remote private|auto on|initial|runner enable/i })).toBeNull()
+  for (const c of ['orch records auto on', 'orch records auto on --push']) expect(screen.getByText(c)).toBeInTheDocument()
+  // #1198 C15: the remote steps are buttons with a review, not commands.
+  for (const c of ['orch records remote private', 'orch records push --initial']) expect(screen.queryByText(c)).toBeNull()
+  expect(screen.queryByRole('button', { name: /auto on|runner enable/i })).toBeNull()
 })
 
 it('records: a private remote is labelled as a historical note', async () => {
   state.host.workspaces[0].records = status({ remote: { url: URL_PUSH, url_hidden: false, private: true, export: 'ok' } })
-  show('/w/DEMO/settings/records')
+  show('/w/DEMO/settings/general')
+  await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
+  const advancedRecords = screen.queryByText('For advanced users')
+  if (advancedRecords) await userEvent.setup().click(advancedRecords)
   expect((await screen.findByTestId('records-private-line', {}, T)).textContent).toBe(`Last noted as private: ${URL_PUSH}.`)
 })
 
 it('records: a push blocked for convenience readers is said, and Commit and push is not offered', async () => {
   state.host.workspaces[0].records = status({ remote: { url: URL_PUSH, url_hidden: false, private: false, export: 'blocked_convenience' } })
-  show('/w/DEMO/settings/records')
+  show('/w/DEMO/settings/general')
+  await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
+  const advancedRecords = screen.queryByText('For advanced users')
+  if (advancedRecords) await userEvent.setup().click(advancedRecords)
   expect(await screen.findByTestId('records-export-blocked', {}, T)).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'Commit now' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Save now' })).toBeInTheDocument()
   expect(screen.queryByRole('button', { name: 'Commit and push' })).toBeNull()
 })
 
 it('records: hidden characters in the URL are escaped by visible.tsx, never repaired', async () => {
   const bad = 'https://git.example.test/a‮b.git'
   state.host.workspaces[0].records = status({ remote: { url: bad, url_hidden: false, private: false, export: 'ok' } })
-  show('/w/DEMO/settings/records')
+  show('/w/DEMO/settings/general')
+  await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
+  const advancedRecords = screen.queryByText('For advanced users')
+  if (advancedRecords) await userEvent.setup().click(advancedRecords)
   const warning = await screen.findByTestId('records-export-warning', {}, T)
   expect(warning.textContent).toContain('a\\u{202e}b.git')
   expect(warning.textContent).not.toContain('‮')
@@ -308,7 +285,10 @@ it('records: hidden characters in the URL are escaped by visible.tsx, never repa
 
 it('records: a URL the server withheld says so and never invents one', async () => {
   state.host.workspaces[0].records = status({ remote: { url: null, url_hidden: true, private: null, export: null }, auto: { on: false, every_min: 15, push: true } })
-  show('/w/DEMO/settings/records')
+  show('/w/DEMO/settings/general')
+  await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
+  const advancedRecords = screen.queryByText('For advanced users')
+  if (advancedRecords) await userEvent.setup().click(advancedRecords)
   const warning = await screen.findByTestId('records-export-warning', {}, T)
   expect(warning).toHaveTextContent('cannot be shown here')
   expect(screen.queryByRole('button', { name: 'Commit and push' })).toBeNull()
@@ -317,8 +297,11 @@ it('records: a URL the server withheld says so and never invents one', async () 
 it('records: commit now posts exactly {push:false} and shows the result', async () => {
   const user = userEvent.setup()
   state.host.override = (path, method) => (path.endsWith('/records/commit') && method === 'POST' ? Response.json({ ok: true, commit: 'd'.repeat(40), pushed: false }) : undefined)
-  show('/w/DEMO/settings/records')
-  await user.click(await screen.findByRole('button', { name: 'Commit now' }, T))
+  show('/w/DEMO/settings/general')
+  await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
+  const advancedRecords = screen.queryByText('For advanced users')
+  if (advancedRecords) await userEvent.setup().click(advancedRecords)
+  await user.click(await screen.findByRole('button', { name: 'Save now' }, T))
   expect(await screen.findByTestId('records-result', {}, T)).toHaveTextContent(`Committed ${'d'.repeat(40)}, not pushed`)
   expect(state.host.calls.find((c) => c.path.endsWith('/records/commit'))?.body).toEqual({ push: false })
 })
@@ -327,7 +310,10 @@ it('records: commit and push shows the export warning first and posts {push:true
   state.host.workspaces[0].records = status({ remote: { url: URL_PUSH, url_hidden: false, private: true, export: 'ok' } })
   const user = userEvent.setup()
   state.host.override = (path, method) => path.endsWith('/records/current') ? Response.json(status({ remote: { url: URL_PUSH, current_url: URL_PUSH, current_private: true, matches_last: true } })) : (path.endsWith('/records/commit') && method === 'POST' ? Response.json({ ok: true, commit: 'd'.repeat(40), pushed: true, url: URL_PUSH }) : undefined)
-  show('/w/DEMO/settings/records')
+  show('/w/DEMO/settings/general')
+  await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
+  const advancedRecords = screen.queryByText('For advanced users')
+  if (advancedRecords) await userEvent.setup().click(advancedRecords)
   await user.click(await screen.findByRole('button', { name: 'Commit and push' }, T))
   const dialog = await screen.findByRole('dialog', {}, T)
   expect((await within(dialog).findByTestId('records-export-warning')).textContent).toBe(`Push publishes every ticket in this workspace to ${URL_PUSH}, restricted ones included.`)
@@ -345,8 +331,11 @@ it('records: a failed push shows the stable code and the commit that did land; a
     path.endsWith('/records/commit') && method === 'POST'
       ? Response.json({ ok: false, exit: 3, error: { code: 'records.push_rejected', message: null, message_hidden: true, retryable: false, commit: 'e'.repeat(40) } }, { status: 409 })
       : undefined
-  show('/w/DEMO/settings/records')
-  await user.click(await screen.findByRole('button', { name: 'Commit now' }, T))
+  show('/w/DEMO/settings/general')
+  await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
+  const advancedRecords = screen.queryByText('For advanced users')
+  if (advancedRecords) await userEvent.setup().click(advancedRecords)
+  await user.click(await screen.findByRole('button', { name: 'Save now' }, T))
   const failure = await screen.findByTestId('records-failure', {}, T)
   expect(failure).toHaveTextContent('records.push_rejected')
   expect(failure).toHaveTextContent(`A local commit already landed: ${'e'.repeat(40)}`)
@@ -356,7 +345,10 @@ it('records: a failed push shows the stable code and the commit that did land; a
 it('records: turning automatic commits off posts nothing at all (no body)', async () => {
   const user = userEvent.setup()
   state.host.override = (path, method) => (path.endsWith('/records/auto-off') && method === 'POST' ? Response.json({ ok: true }) : undefined)
-  show('/w/DEMO/settings/records')
+  show('/w/DEMO/settings/general')
+  await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
+  const advancedRecords = screen.queryByText('For advanced users')
+  if (advancedRecords) await userEvent.setup().click(advancedRecords)
   await user.click(await screen.findByRole('button', { name: 'Turn automatic commits off' }, T))
   await screen.findByTestId('records-result', {}, T)
   const call = state.host.calls.find((c) => c.path.endsWith('/records/auto-off'))
@@ -366,40 +358,55 @@ it('records: turning automatic commits off posts nothing at all (no body)', asyn
 
 it('records: no "off" button when automatic commits are not on', async () => {
   state.host.workspaces[0].records = status({ auto: { on: false, every_min: 15, push: false } })
-  show('/w/DEMO/settings/records')
-  await screen.findByRole('button', { name: 'Commit now' }, T)
+  show('/w/DEMO/settings/general')
+  await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
+  const advancedRecords = screen.queryByText('For advanced users')
+  if (advancedRecords) await userEvent.setup().click(advancedRecords)
+  await screen.findByRole('button', { name: 'Save now' }, T)
   expect(screen.queryByRole('button', { name: 'Turn automatic commits off' })).toBeNull()
 })
 
-it('records: configured false says there is no repository yet, offers Commit now and still shows what is pending', async () => {
+it('records: configured false says there is no repository yet, offers Save now and still shows what is pending', async () => {
   state.host.workspaces[0].records = status({ configured: false, repo: null, last: null, auto: null, remote: null })
-  show('/w/DEMO/settings/records')
+  show('/w/DEMO/settings/general')
+  await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
+  const advancedRecords = screen.queryByText('For advanced users')
+  if (advancedRecords) await userEvent.setup().click(advancedRecords)
   expect(await screen.findByTestId('records-not-configured', {}, T)).toHaveTextContent('No records repository yet; the first commit creates it.')
   expect(screen.getByTestId('records-not-configured')).not.toHaveTextContent('orch records init')
   expect(screen.getByText('12 events in 1 ticket, plus 5 workspace events')).toBeInTheDocument()
   expect(screen.getByText('nothing noted yet')).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'Commit now' })).toBeEnabled()
+  expect(screen.getByRole('button', { name: 'Save now' })).toBeEnabled()
   expect(screen.queryByRole('button', { name: 'Commit and push' })).toBeNull() // no remote to push to
 })
 
 it('records: configured true with last null keeps "nothing noted yet" and no not-configured line', async () => {
   state.host.workspaces[0].records = status({ configured: true, last: null })
-  show('/w/DEMO/settings/records')
+  show('/w/DEMO/settings/general')
+  await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
+  const advancedRecords = screen.queryByText('For advanced users')
+  if (advancedRecords) await userEvent.setup().click(advancedRecords)
   expect(await screen.findByText('nothing noted yet', {}, T)).toBeInTheDocument()
   expect(screen.queryByTestId('records-not-configured')).toBeNull()
 })
 
 it('records: an absent cap or op is an honest "not served"', async () => {
   state.host.workspaces[0].records = { available: false }
-  show('/w/DEMO/settings/records')
+  show('/w/DEMO/settings/general')
+  await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
+  const advancedRecords = screen.queryByText('For advanced users')
+  if (advancedRecords) await userEvent.setup().click(advancedRecords)
   expect(await screen.findByTestId('records-unavailable', {}, T)).toHaveTextContent('does not serve records')
-  expect(screen.queryByRole('button', { name: 'Commit now' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Save now' })).toBeNull()
 })
 
 it('records: members get no status request and no buttons (owners and maintainers only)', async () => {
   state.host.workspaces[0].me = TOM
   state.host.workspaces[0].role = 'member'
-  show('/w/DEMO/settings/records')
+  show('/w/DEMO/settings/general')
+  await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
+  const advancedRecords = screen.queryByText('For advanced users')
+  if (advancedRecords) await userEvent.setup().click(advancedRecords)
   expect(await screen.findByTestId('records-role', {}, T)).toHaveTextContent('owners and maintainers')
   expect(other('/records')).toEqual([])
 })
@@ -409,15 +416,18 @@ it('records: a maintainer may run it; a host refusal stays a refusal', async () 
   state.host.workspaces[0].role = 'maintainer'
   state.host.workspaces[0].records = undefined
   state.host.override = (path) => (path.endsWith('/records') ? Response.json({ ok: false, exit: 4, error: { code: 'role.denied', message: 'role.denied', retryable: false } }, { status: 403 }) : undefined)
-  show('/w/DEMO/settings/records')
+  show('/w/DEMO/settings/general')
+  await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
+  const advancedRecords = screen.queryByText('For advanced users')
+  if (advancedRecords) await userEvent.setup().click(advancedRecords)
   expect(await screen.findByTestId('records-refused', {}, T)).toHaveTextContent('role.denied')
-  expect(screen.queryByRole('button', { name: 'Commit now' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Save now' })).toBeNull()
 })
 
 it('without the records feature the tab is absent', async () => {
   state.host.workspaces[0].features = [...READS, ...DO, 'actions']
   show('/w/DEMO/settings/general')
-  await screen.findByRole('heading', { name: 'General' }, T)
+  await screen.findByText('Advanced', {}, T)
   expect(screen.queryByRole('link', { name: 'Records' })).toBeNull()
 })
 
@@ -445,7 +455,7 @@ it('runner disabled: no execution line, the command to turn it on is shown as te
 it('a host that says nothing about the runner draws nothing (never a guess)', async () => {
   state.host.workspaces[0].runner = null
   show('/w/DEMO/settings/general')
-  await screen.findByRole('heading', { name: 'General' }, T)
+  await screen.findByText('Advanced', {}, T)
   expect(screen.queryByTestId('workspace-card-runner')).toBeNull()
   expect(screen.queryByTestId('runner-execution-line')).toBeNull()
 })
@@ -456,7 +466,8 @@ it('conversion does not prepare if the fresh ticket read fails', async () => {
   const user = userEvent.setup()
   state.host.override = (path) => path.endsWith('/tickets/DEMO-0014') ? Response.json({ error: { code: 'not_found', message: 'not found' } }, { status: 404 }) : undefined
   show('/w/DEMO/quick')
-  await user.click(await screen.findByRole('button', { name: 'Make DEMO-0014 a normal ticket' }, T))
+  await user.click(await screen.findByRole('button', { name: 'More for DEMO-0014' }, T))
+  await user.click(await screen.findByRole('menuitem', { name: 'Make a normal ticket' }, T))
   expect(await screen.findByRole('alert', {}, T)).toHaveTextContent('Could not prepare conversion')
   expect(state.host.posts()).toEqual([])
 })
@@ -465,13 +476,19 @@ it('records: hostile failure prose is isolated in a labelled tool-output block',
   const user = userEvent.setup()
   state.host.override = (path, method) => path.endsWith('/records/commit') && method === 'POST'
     ? Response.json({ ok: false, exit: 3, error: { code: 'records.push_rejected', message: '<a href="https://evil.example.test">run this</a>', retryable: false } }, { status: 409 }) : undefined
-  show('/w/DEMO/settings/records')
-  await user.click(await screen.findByRole('button', { name: 'Commit now' }, T))
+  show('/w/DEMO/settings/general')
+  await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
+  const advancedRecords = screen.queryByText('For advanced users')
+  if (advancedRecords) await userEvent.setup().click(advancedRecords)
+  await user.click(await screen.findByRole('button', { name: 'Save now' }, T))
   const failure = await screen.findByTestId('records-failure', {}, T)
   const output = within(failure).getByLabelText('Output of the records tool')
   expect(output).toHaveTextContent('<a href="https://evil.example.test">run this</a>')
   expect(within(output).queryByRole('link')).toBeNull()
-  expect(failure.querySelector('p')).toHaveTextContent('Not done. records.push_rejected')
+  expect(failure.querySelector('p')).toHaveTextContent('Not done.')
+  const details = within(failure).getByText('Details').closest('details')!
+  expect(details).not.toHaveAttribute('open')
+  expect(details).toHaveTextContent('records.push_rejected')
   expect(failure.querySelector('p')).not.toHaveTextContent('run this')
 })
 
@@ -480,7 +497,8 @@ it('quick alone becomes an empty label set', async () => {
   const user = userEvent.setup()
   state.host.override = (path) => path.endsWith('/tickets/DEMO-0010') ? Response.json({ ...ticket, key: 'DEMO-0010', labels: ['quick'] }) : undefined
   show('/w/DEMO/quick')
-  await user.click(await screen.findByRole('button', { name: 'Make DEMO-0010 a normal ticket' }, T))
+  await user.click(await screen.findByRole('button', { name: 'More for DEMO-0010' }, T))
+  await user.click(await screen.findByRole('menuitem', { name: 'Make a normal ticket' }, T))
   const dialog = await screen.findByRole('dialog', {}, T)
   await within(dialog).findByTestId('handoff-command', {}, T)
   expect(dialog).toHaveTextContent('Labels kept: none')
@@ -496,7 +514,10 @@ it.each(['not-private', 'mismatch', 'failure', 'null', 'hidden'])('records curre
     if (kind === 'failure') throw new ApiError(409, { code: 'records.busy', message: 'busy', retryable: true })
     return { available: true, remote: { url: URL_PUSH, url_hidden: false, private: false, export: 'ok', current_url: kind === 'null' || kind === 'hidden' ? null : currentURL, current_url_hidden: kind === 'hidden', current_private: false, matches_last: kind !== 'mismatch' } }
   })
-  show('/w/DEMO/settings/records')
+  show('/w/DEMO/settings/general')
+  await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
+  const advancedRecords = screen.queryByText('For advanced users')
+  if (advancedRecords) await userEvent.setup().click(advancedRecords)
   await user.click(await screen.findByRole('button', { name: 'Commit and push' }, T))
   const dialog = await screen.findByRole('dialog', {}, T)
   expect(dialog).toHaveTextContent('Checking where push goes…')
@@ -521,7 +542,10 @@ it('records current check as a maintainer: host only, no private line (L2)', asy
   state.host.workspaces[0].role = 'maintainer'
   state.host.workspaces[0].roster = roster().map((m) => (m.person === OWNER ? { ...m, role: 'maintainer' as const } : m))
   vi.spyOn(api, 'getRecordsCurrent').mockResolvedValueOnce({ available: true, remote: { url: 'git.example.test', url_hidden: false, private: true, export: 'ok', current_url: 'git.example.test', current_url_hidden: false, current_private: true, matches_last: true } } as never)
-  show('/w/DEMO/settings/records')
+  show('/w/DEMO/settings/general')
+  await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
+  const advancedRecords = screen.queryByText('For advanced users')
+  if (advancedRecords) await userEvent.setup().click(advancedRecords)
   await user.click(await screen.findByRole('button', { name: 'Commit and push' }, T))
   const dialog = await screen.findByRole('dialog', {}, T)
   const warning = await within(dialog).findByTestId('records-export-warning')
@@ -531,7 +555,10 @@ it('records current check as a maintainer: host only, no private line (L2)', asy
 
 it.each(['ok', 'index_differs', 'unsafe'])('configured %s before the first commit has a repository', async (repoState) => {
   state.host.workspaces[0].records = status({ configured: true, last: null, repo: { state: repoState } })
-  show('/w/DEMO/settings/records')
+  show('/w/DEMO/settings/general')
+  await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
+  const advancedRecords = screen.queryByText('For advanced users')
+  if (advancedRecords) await userEvent.setup().click(advancedRecords)
   await screen.findByText('nothing noted yet', {}, T)
   expect(screen.queryByTestId('records-not-configured')).toBeNull()
 })
@@ -540,7 +567,71 @@ it.each([{ status: 'done', labels: ['quick'] }, { status: 'closed', labels: ['qu
   const user = userEvent.setup()
   state.host.override = (path) => path.endsWith('/tickets/DEMO-0010') ? Response.json({ ...ticket, key: 'DEMO-0010', ...fresh }) : undefined
   show('/w/DEMO/quick')
-  await user.click(await screen.findByRole('button', { name: 'Make DEMO-0010 a normal ticket' }, T))
+  await user.click(await screen.findByRole('button', { name: 'More for DEMO-0010' }, T))
+  await user.click(await screen.findByRole('menuitem', { name: 'Make a normal ticket' }, T))
   await screen.findByRole('alert', {}, T)
   expect(state.host.posts()).toEqual([])
+})
+
+
+const openRecords = async () => {
+  show('/w/DEMO/settings/general')
+  await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
+  const advancedRecords = screen.queryByText('For advanced users')
+  if (advancedRecords) await userEvent.setup().click(advancedRecords)
+}
+const CURRENT = { available: true, remote: { url: URL_PUSH, url_hidden: false, private: false, export: 'ok', current_url: URL_PUSH, current_url_hidden: false, current_private: false, matches_last: true } }
+
+it('records C15: marking the remote private shows the exact address and one click sends exactly that address', async () => {
+  const user = userEvent.setup()
+  vi.spyOn(api, 'getRecordsCurrent').mockResolvedValue(CURRENT as never)
+  const mark = vi.spyOn(api, 'recordsMark').mockResolvedValue({ ok: true } as never)
+  await openRecords()
+  await user.click(await screen.findByRole('button', { name: 'Mark the remote as private' }, T))
+  const dialog = await screen.findByTestId('records-admin-dialog', {}, T)
+  await within(dialog).findByText(URL_PUSH, {}, T)
+  expect(dialog).toHaveTextContent('only you can read')
+  expect(within(dialog).queryByRole('textbox')).toBeNull() // nothing is typed
+  await user.click(within(dialog).getByRole('button', { name: 'Mark as private' }))
+  await waitFor(() => expect(mark).toHaveBeenCalledWith(A, URL_PUSH))
+})
+
+it('records C15: an address that cannot be shown cannot be clicked through', async () => {
+  const user = userEvent.setup()
+  vi.spyOn(api, 'getRecordsCurrent').mockResolvedValue({ available: true, remote: { ...CURRENT.remote, current_url: null, current_url_hidden: true } } as never)
+  const first = vi.spyOn(api, 'recordsPushInitial').mockResolvedValue({ ok: true } as never)
+  await openRecords()
+  await user.click(await screen.findByRole('button', { name: 'Create the remote branch' }, T))
+  const dialog = await screen.findByTestId('records-admin-dialog', {}, T)
+  await within(dialog).findByRole('alert', {}, T)
+  expect(within(dialog).getByRole('button', { name: 'Create branch and upload tickets' })).toBeDisabled()
+  expect(first).not.toHaveBeenCalled()
+})
+
+it('records C15: the first push says it uploads restricted tickets and sends the shown address', async () => {
+  const user = userEvent.setup()
+  vi.spyOn(api, 'getRecordsCurrent').mockResolvedValue(CURRENT as never)
+  const first = vi.spyOn(api, 'recordsPushInitial').mockResolvedValue({ ok: true, commit: 'd'.repeat(40), pushed: true, url: URL_PUSH } as never)
+  await openRecords()
+  await user.click(await screen.findByRole('button', { name: 'Create the remote branch' }, T))
+  const dialog = await screen.findByTestId('records-admin-dialog', {}, T)
+  await within(dialog).findByText(URL_PUSH, {}, T)
+  expect(dialog).toHaveTextContent('Restricted tickets are included')
+  await user.click(within(dialog).getByRole('button', { name: 'Create branch and upload tickets' }))
+  await waitFor(() => expect(first).toHaveBeenCalledWith(A, URL_PUSH))
+  expect(await screen.findByTestId('records-result', {}, T)).toHaveTextContent('pushed')
+})
+
+it('records C15: Set up runs init, and a private remote offers Remove the private mark', async () => {
+  const user = userEvent.setup()
+  state.host.workspaces[0].records = status({ configured: false, repo: null, remote: { url: URL_PUSH, url_hidden: false, private: true, export: 'ok' } })
+  const init = vi.spyOn(api, 'recordsInit').mockResolvedValue({ ok: true } as never)
+  const mark = vi.spyOn(api, 'recordsMark').mockResolvedValue({ ok: true } as never)
+  await openRecords()
+  await user.click(await screen.findByRole('button', { name: 'Set up' }, T))
+  await waitFor(() => expect(init).toHaveBeenCalledWith(A))
+  await user.click(await screen.findByRole('button', { name: 'Remove the private mark' }, T))
+  const dialog = await screen.findByTestId('records-admin-dialog', {}, T)
+  await user.click(within(dialog).getByRole('button', { name: 'Remove private label' }))
+  await waitFor(() => expect(mark).toHaveBeenCalledWith(A, null))
 })

@@ -66,8 +66,21 @@ class Capture:
     #: V3 C2a: ``hub.join``'s facts from the host (:class:`orch.host.hubops.HubFacts`: the host's own clock and whether
     #: this workspace is a dev workspace), never from the request: the hub card is checked against them
     hub: Any = None
+    #: #1198 C15: ``device.remove``'s display facts from the host's roster (``{device, holder}``: the member's name),
+    #: shown in the review as "per host, not signed"; ``material["removed_device"]``
+    removed_device: dict[str, str] | None = None
     #: batch 11 (finding 9): the checked ``sequence`` meta of ``human.prepare`` (one step of a signer's sequence)
     sequence: dict[str, Any] | None = None
+    #: V3 G3: ``addon.grant {staged}``: the stage the grant is for, ``{stage, name}`` (kept on the request record, not
+    #: signed), and the marketplace block of the review (``material["market"]``: per host, not signed)
+    staged: dict[str, Any] | None = None
+    market: dict[str, Any] | None = None
+    #: V3 G4: the dependency block of an ``addon.granted`` with ``runtime`` (``material["deps"]``: listed by this
+    #: computer from the lockfile, covered by the digest, not itself signed)
+    deps: dict[str, Any] | None = None
+    #: V3 G3: the host's marketplace records of this workspace (``orch.host.marketstate.MarketFiles``), set by the host
+    #: before the handler runs: a handler has no state directory of its own under the host
+    market_files: Any = None
 
     statement: str | None = None
 

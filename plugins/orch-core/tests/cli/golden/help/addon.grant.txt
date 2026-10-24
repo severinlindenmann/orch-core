@@ -1,5 +1,6 @@
 Grant an addon its capabilities (owner only); also enables it.
-usage: orch addon grant NAME [--dry-run]
+usage: orch addon grant NAME [--staged STAGE] [--dry-run]
   NAME  addon name
+  --staged STAGE  the stage id that `orch addon install` or `update` made (the package comes from it, not from addons/)
   --dry-run  say what would happen, append nothing
 more: orch describe addon.grant

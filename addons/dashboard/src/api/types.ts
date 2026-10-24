@@ -570,7 +570,7 @@ export type LaunchWhere = 'terminals' | 'background'
 
 /**
  * What core will start for one ticket, as the start-agent addon's state carries it (`previews[ticket]`): the labels
- * of the person's choice, the exact command and, when model routing is on, its one-line model summary. Core's
+ * of the person's choice, the exact command and, when a model add-on picks it, its one-line model summary. Core's
  * start dialog shows this; the start itself resolves it again with the same resolver.
  */
 export interface LaunchPreview {
@@ -580,7 +580,7 @@ export interface LaunchPreview {
   harness: string
   where: string
   command: string
-  /** "Model · work runs on standard: Standard (sonnet); subagents on haiku" (model routing on). */
+  /** "Model · work runs on standard: Standard (sonnet); subagents on haiku" (a model add-on picks it). */
   model?: string
   /** Why Start is blocked (a setting that is not a model name), as one sentence. */
   blocked?: string
@@ -766,7 +766,6 @@ export type SettingsRequest =
   | { op: 'icon'; icon: { icon: string; colour: string } | null }
   /** Format §5.4.2 `settings.changed` `set.repos`: repo name → entry, or null to remove it (signed in the UI). */
   | { op: 'repos'; set: Record<string, WorkspaceRepo | null> }
-  | { op: 'archive'; prefix: string }
 
 /** POST /api/workspaces/:ws/addons/:name. Owner only; grant and update are signed in the UI. */
 export type AddonOpRequest =
@@ -981,7 +980,7 @@ export interface ActionResult {
 export interface ApiErrorBody {
   ok: false
   exit?: number
-  error: { code: string; message: string; hint?: string; fix?: string | { argv: string[] }; retryable: boolean; retry_after_ms?: number; reason?: string; request_id?: string; signed_at?: string | null; op?: string; summary?: string; commit?: string; message_hidden?: boolean; why?: string; detail?: ErrorDetail }
+  error: { code: string; message: string; hint?: string; fix?: string | { argv: string[] }; retryable: boolean; retry_after_ms?: number; reason?: string; request_id?: string; signed_at?: string | null; op?: string; summary?: string; commit?: string; message_hidden?: boolean; detail?: ErrorDetail }
 }
 
 /** `Error.detail` (host contract v1.9): the server forwards it only for the click-to-sign refusal codes (H12d-2). */
@@ -1009,8 +1008,6 @@ export class ApiError extends Error {
   /** The records child's message had characters that are hidden: it is withheld (null) and the code stands. */
   readonly message_hidden?: boolean
   readonly exit?: number
-  /** M7b: why a runner grant is terminal only (`update_orch`: the signer is too old to hand it to the runner). */
-  readonly why?: string
   /** H12d-2: `reason` and `devices` of `sign.convenience_unavailable` / `sign.convenience_readers` (read through `refusalOf`). */
   readonly detail?: ErrorDetail
   constructor(status: number, body: ApiErrorBody['error'], exit?: number) {
@@ -1030,7 +1027,6 @@ export class ApiError extends Error {
     this.commit = body.commit
     this.message_hidden = body.message_hidden
     this.exit = exit
-    this.why = body.why
     this.detail = body.detail
     if (signingMethodStale(this)) notifySigningMethodStale()
   }
@@ -1040,7 +1036,6 @@ export class ApiError extends Error {
 export const SIGNING_METHOD_STALE = 'orch:signing-method-stale'
 /** A refusal that means the page chose the wrong way to sign because the switch moved (the host decides, never the page). */
 export const signingMethodStale = (e: { code: string; reason?: string; detail?: { reason?: string } }): boolean =>
-  e.code === 'sign.click_only' ||
   ((e.code === 'human.click_refused' || e.code === 'sign.convenience_unavailable') && (e.reason ?? e.detail?.reason) === 'disabled')
 function notifySigningMethodStale() {
   try { if (typeof window !== 'undefined') window.dispatchEvent(new Event(SIGNING_METHOD_STALE)) } catch { /* no window: nothing to refresh */ }

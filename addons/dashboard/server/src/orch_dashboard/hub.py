@@ -1,10 +1,11 @@
 """The hub pages of Mission Control (V3 A7, orch-core #859; mockups v3-a5-mode and v3-a3-flows).
 
-Mission Control explains and shows exactly what will change; **the owner signs in the Terminal**. So this module has
-read routes that relay the host's own reads through a closed shape, and one route that builds the Terminal command for
-a change. It signs nothing, holds no hub credential, opens no connection to a hub and sends no hub write to the host
-(`hub.join`, `hub.mode`, `hub.leave`, `hub.connect`, `hub.unbind` and the `share.*` writes are run by `orch hub ...`
-in the owner's Terminal, which refuses agents). It imports no hub code (D79).
+Mission Control explains and shows exactly what will change; **the owner signs in the terminal**. So this module has
+read routes that relay the host's own reads through a closed shape, and one route that builds the terminal command for
+a change. It signs nothing, holds no hub credential and opens no connection to a hub. The one hub write it sends the
+host is `hub.connect` after a join by click (see below); `hub.join`, `hub.mode`, `hub.leave`, `hub.unbind` and the
+`share.*` writes are signed by click or run by `orch hub ...` in the owner's Terminal, which refuses agents. It
+imports no hub code (D79).
 
 * `GET  /hub`                `hub.status`: the host's view of the hub. Everything in it comes from the host's replayed
                              log and `hub.json`; the group counts come from the pinned snapshot and are "from the hub,
@@ -12,8 +13,12 @@ in the owner's Terminal, which refuses agents). It imports no hub code (D79).
 * `GET  /hub/share`          `share.rules` + `share.preview {}`: the rules, what each matches now, the tickets the hub
                              has (by key, for the Tickets column).
 * `POST /hub/share/preview`  `share.preview {add | remove}`: what the hub would see after ONE rule change.
-* `POST /hub/command`        the exact command to run in the Terminal for one change. Closed bodies, every value
+* `POST /hub/command`        the exact command to run in the terminal for one change. Closed bodies, every value
                              checked and shell-quoted; a value with a hidden character is refused, never repaired.
+* `POST /hub/connect`        #1198 C11: the second half of a join by click. After the signed `hub.join` is on the log,
+                             the host's `hub.connect {invite, hub_card}` tells the hub (the hub checks the invite).
+                             The host does the work and the checks; this route only relays, for a dashboard opened on
+                             this computer, and never logs or keeps the invite.
 
 Host text is display-only: hidden characters are withheld, never repaired.
 """
@@ -24,13 +29,14 @@ import re
 import shlex
 from typing import Annotated, Literal
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from pydantic import BaseModel, ConfigDict, StringConstraints, model_validator
 
 from . import reads
 from .adapters.addons import display
 from .errors import HostError, fail
 from .gateway import Gateway
+from .terminals import Idem
 from .text import hidden
 
 MODES = ("standalone", "selective", "full", "unknown")
@@ -44,6 +50,27 @@ MAX_TICKETS = 100  # share.preview lists at most 100 rows; more means the list i
 Invite = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{3,255}$")]
 CardPath = Annotated[str, StringConstraints(min_length=1, max_length=1024)]
 RuleValue = Annotated[str, StringConstraints(min_length=1, max_length=100)]
+
+
+#: the hub id a join invite may start with (`<hub id>:<code>`): the hub only ever sees the code
+INVITE_PREFIX = re.compile(r"([0-9a-f]{32}):(.+)", re.DOTALL)
+MAX_CARD_BYTES = 16 * 1024
+
+
+class ConnectBody(BaseModel):
+    """The invite and the hub card of a join the person just signed with one click. The card is the hub's own file as
+    text (strict JSON); the host verifies it against the hub it pinned at the join."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    idem: Idem
+    invite: Annotated[str, StringConstraints(min_length=4, max_length=512)]
+    hub_card: Annotated[str, StringConstraints(min_length=2, max_length=MAX_CARD_BYTES)]
+
+    @model_validator(mode="after")
+    def shape(self):
+        if hidden(self.invite) or self.invite != self.invite.strip():
+            raise ValueError("the invite is plain text")
+        return self
 
 
 class Rule(BaseModel):
@@ -118,7 +145,7 @@ class CommandBody(BaseModel):
 
 
 def command_of(body: CommandBody) -> str:
-    """The one line to run in the Terminal. Every value is closed above and quoted here."""
+    """The one line to run in the terminal. Every value is closed above and quoted here."""
     k = body.kind
     if k == "join":
         return (
@@ -272,6 +299,29 @@ def register(app: FastAPI, gateway: Gateway):
         if not link.supports("share.preview", "hub/1"):
             raise fail("op.unsupported", "This host cannot preview sharing yet.", exit=1)
         return preview_view(link.call("share.preview", args))
+
+    @app.post("/api/w/{ws}/hub/connect")
+    def hub_connect(body: ConnectBody, request: Request, ws: str = Depends(reads.workspace)):
+        """Tell the hub about a join the person just signed (#1198 C11). Local sessions only, like the signing it
+        follows. The invite goes to the host and nowhere else; nothing here logs it."""
+        from .click import REVEAL_SESSION_KINDS, refusal_check
+        from .handoff import _strict_json_object
+
+        if app.state.auth.login_kind(request.state.token) not in REVEAL_SESSION_KINDS:
+            raise refusal_check("Connecting a hub needs a dashboard opened on this computer.")
+        try:
+            card = _strict_json_object(body.hub_card)
+        except ValueError:
+            raise fail("invalid.input", "That is not a hub card.", exit=1) from None
+        invite = body.invite
+        if m := INVITE_PREFIX.fullmatch(invite):  # the hub id in an invite must be the card's own, or nothing is sent
+            if m.group(1) != (card.get("o") or {}).get("hub_id"):
+                raise fail("invalid.input", "The invite is for another hub than this card.", exit=1)
+            invite = m.group(2)
+        link = link_for(ws, "hub.connect")
+        got = link.call("hub.connect", {"hub_card": card, "invite": invite}, write=True, idem=body.idem)
+        mode = got.get("mode") if isinstance(got, dict) else None
+        return {"connected": True, "mode": mode if mode in MODES else None}
 
     @app.post("/api/w/{ws}/hub/command")
     def hub_command(body: CommandBody, ws: str = Depends(reads.workspace)):

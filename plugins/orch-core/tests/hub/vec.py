@@ -45,6 +45,12 @@ RUN_CHECKS = frozenset(
         "share_revoke",
         "log_sync",  # V3 C14: the vector pages applied by the test-side hub port (tests/hub/logview.py); D15b: `proj`
         "roster_v",  # D15b-1: core's own roster_v count (tests/hub/test_roster_v_vectors.py replays real events)
+        "left_payload",  # #1198 C8: hub.left with its owner_proof member (test-side port)
+        "card_reader",  # #1198 C8: the card's signed reader level, through the PRODUCTION orch.hubclient.wire
+        "hub_reader",
+        "owner_proof",  # #1198 C8 (protocol 9.6): the host's check, PRODUCTION wire.check_owner_proof
+        "owner_proof_recorded",  # readers of hub.joined / hub.left, PRODUCTION wire.check_recorded_owner_proof
+        "owner_proof_join",  # #1198 C9: the hub's check at link join / binding_put (test-side port, contract.py)
     }
 )
 SKIPPED_CHECKS = {
@@ -67,6 +73,7 @@ SKIPPED_CHECKS = {
     "pair_link": "phone pairing link (orch-mobile and hub): not a host check",
     "audit": "hub audit chain (D4): hub side",
     "audit_ack": "hub audit chain (D4): hub side",
+    "ws_card_admission": "hub side (workspace card admission at card_put, protocol 9.5): the hub checks the card",
     "admin_read": "hub admin reads (D3/D4): hub side",
     "admin_read_row": "hub admin reads (D3/D4): hub side",
     "admin_read_rows": "hub admin reads (D3/D4): hub side",
@@ -81,7 +88,9 @@ SKIPPED_CHECKS = {
 #: cases of a check core runs whose rules core has not implemented yet (orch-core#1036): non-strict xfail, so CI shows
 #: them and a fix turns them into XPASS
 #: phase 5 (hub protocol 8.8, owner V3-D29): the five new custodial types; core C10 (#878) admits them
-PENDING_VECTORS: frozenset[str] = frozenset()  # phase 5 is admitted since C10 (#878)
+#: #1123 A: the one question shape (`kind`, ticket-format 5.6.1) is a breaking change; the vendored hub vectors still
+#: carry kind-less custodial questions until D-hub regenerates them (orch-hub vectorgen), then this set is empty again
+PENDING_VECTORS: frozenset[str] = frozenset({"action_question_asked_by_edit", "custodial_event_question_asked"})
 
 
 def private_key(name: str):
@@ -210,6 +219,10 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
         return _run_share(check, a)
     if check == "log_sync":
         return _run_log_sync(a)
+    if check == "left_payload":
+        return H.check_left_payload(a["payload"])
+    if check in ("card_reader", "hub_reader", "owner_proof", "owner_proof_recorded", "owner_proof_join"):
+        return _run_owner_proof(check, a)
     if check == "roster_v":
         from .roster_replay import replay_roster_v
 
@@ -322,3 +335,32 @@ def _run_log_sync(a: dict[str, Any]) -> dict[str, Any]:
             continue
         logview.apply_page(view, page, workspace_id=a["workspace_id"], wsk_pub=unb64u(a["wsk_pub"], 65), wk=wk)
     return view.summary()
+
+
+def _run_owner_proof(check: str, a: dict[str, Any]) -> dict[str, Any]:
+    """#1198 C8 (protocol 5, 9.6) through the PRODUCTION module ``orch.hubclient.wire``."""
+    from orch.hubclient import wire
+
+    dev, now = a.get("dev_mode", True), a.get("now_ms", 0)
+    if check == "card_reader":
+        return {"reader": _held_prod(a)["card"]["reader"]}
+    if check == "hub_reader":
+        return {"reader": wire.check_hub_reader(_held_prod(a), a["required_reader"])}
+    if check == "owner_proof":
+        o = wire.check_owner_proof(
+            a["signed"], pk_pub=unb64u(a["pk_pub"], 65), workspace_id=a["workspace_id"], op=a["op"],
+            payload=a["payload"], request_id=a["request_id"], now_ms=now, dev_mode=dev,
+        )  # fmt: skip
+        return {"op": o["op"], "person_id": o["person_id"]}
+    if check == "owner_proof_join":
+        o = H.check_join_proof(
+            a["signed"], pk_pub=unb64u(a["pk_pub"], 65), workspace_id=a["workspace_id"], hub_id_=a["hub_id"],
+            binding=a["binding"], op=a["op"], now_ms=now, dev_mode=dev,
+        )  # fmt: skip
+        return {"op": o["op"]}
+    pk = None if a["pk_pub"] is None else unb64u(a["pk_pub"], 65)
+    o = wire.check_recorded_owner_proof(
+        a["event_type"], a["payload"], at_ms=a["at_ms"], prior=a["prior"], workspace_id=a["workspace_id"],
+        actor_person_id=a["actor_person_id"], pk_pub=pk, dev_mode=dev,
+    )  # fmt: skip
+    return {"proof": o["op"]}

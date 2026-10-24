@@ -175,11 +175,12 @@ def _claim_ok(call: Call, view: Any) -> bool:
 
 def _gate(call: Call) -> None:
     service = call.service
-    addon = service.store.state.workspace.addons.get(ADDON)
-    if addon is None or not addon["enabled"] or addon["purged"]:
+    from . import hubpolicy
+
+    if not hubpolicy.running(service, ADDON):  # granted, on, and not paused by the hub policy
         raise HostError(
             "runner.disabled",
-            "dashboard execution: the worktrees addon is not granted (missing: addon)",
+            f"dashboard execution: the worktrees addon is not granted (missing: addon){hubpolicy.why(service, ADDON)}",
             detail={"missing": "addon"},
         )
     hub = getattr(service, "runners", None)

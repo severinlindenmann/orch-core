@@ -131,7 +131,7 @@ _SPECS = [
         3,
         False,
         "no device key of yours here",
-        "orch init sets up your device key",
+        "orch setup sets up your device key",
         ["orch", "help"],
         "The key file of the person's device is missing; a human signature needs it (D65).",
     ),
@@ -178,6 +178,17 @@ _SPECS = [
         "build yet are not signable here either.",
     ),
     _e(
+        "sign.key_exposed",
+        3,
+        False,
+        "this device key was in one-click custody, so it cannot do this: make a new key with your recovery code",
+        "orch keys custody passphrase --rotate --workspace W (needs your recovery code; works while the hub is down)",
+        ["orch", "keys", "custody", "passphrase", "--rotate"],
+        "#1097: a device key with a signed device.exposed mark (written before it entered convenience custody)"
+        " cannot enter full hub mode, leave a hub on its own, or rotate "
+        "the workspace key, because a process of yours may hold a copy. Only a new key (device.rotated) clears it.",
+    ),
+    _e(
         "relay.pair_open",
         3,
         False,
@@ -208,17 +219,6 @@ _SPECS = [
         "(orch-v2-host 11A.15.6 step 1).",
     ),
     _e(
-        "relay.pair_closed",
-        3,
-        False,
-        "the pairing does not allow this step now",
-        "look at the offer's state; start a new pairing if it ended",
-        ["orch", "host", "relay", "pair", "list"],
-        "A pairing step its offer's state does not allow: cancel of an allocated offer, an answer or certificate "
-        "for an offer not waiting for it, relay.pair_device outside step 9 or near the phone's deadline, or "
-        "without a membership publisher (orch-v2-host 11A.15.6, 11A.15.9A).",
-    ),
-    _e(
         "host.dev_refused",
         3,
         False,
@@ -244,7 +244,7 @@ _SPECS = [
         3,
         False,
         "this key backend cannot sign a reviewed batch",
-        "use a passphrase device key (orch init sets one up)",
+        "use a passphrase device key (orch setup sets one up)",
         ["orch", "help"],
         "orch import v1 signs a reviewed batch under one unlock; a key backend that asks per signature cannot, so "
         "nothing is signed (F1 10.4a, 14.2).",
@@ -393,7 +393,7 @@ _SPECS = [
         "the host is already creating or serving this workspace",
         "orch host list",
         ["orch", "host", "list"],
-        "init --host: the root or the workspace id is already registered, has a genesis or is being bootstrapped (N5).",
+        "orch setup: the root or the workspace id is already registered, has a genesis or is being bootstrapped (N5).",
     ),
     _e(
         "custody.unsafe_mode",
@@ -402,7 +402,7 @@ _SPECS = [
         "the directory or one of its parents is not safe for the host",
         "use a directory owned by you whose parents only you or root can change",
         ["orch", "describe", "{cmd}"],
-        "init --host: the root or an ancestor fails the host's ownership and mode checks (D-P2-17).",
+        "orch setup: the root or an ancestor fails the host's ownership and mode checks (D-P2-17).",
     ),
     _e(
         "host.unavailable",
@@ -411,7 +411,7 @@ _SPECS = [
         "the orch host cannot be reached",
         "start the host service, then retry",
         ["orch", "host", "list"],
-        "init --host: no host answers on the control socket, or the connection dropped (§0.6, raised by the client).",
+        "orch setup: no host answers on the control socket, or the connection dropped (§0.6, raised by the client).",
     ),
     # 5 validation
     _e(
@@ -556,6 +556,17 @@ _SPECS = [
         "The hub card or the join did not verify (hub contract section 14: bad signature, other hub, dev mismatch).",
     ),
     _e(
+        "hub.proof_invalid",
+        3,
+        False,
+        "the hub step is not backed by your backup key",
+        "sign it again with your backup key at the terminal: orch sign",
+        ["orch", "sign"],
+        "A hub step (join, switch to full, leave) needs the owner proof, signed with the person key derived from the "
+        "backup key (hub contract 9.6). Detail reason: proof_invalid, proof_expired, proof_missing, dev_mismatch or "
+        "dev_refused.",
+    ),
+    _e(
         "hub.already_joined",
         3,
         False,
@@ -572,6 +583,16 @@ _SPECS = [
         "nothing to leave",
         ["orch", "status"],
         "There is no joined hub on the workspace log.",
+    ),
+    _e(
+        "device.lockout",
+        3,
+        False,
+        "removing this device would lock someone out",
+        "remove it from another device, or add another device first",
+        ["orch", "status"],
+        "A device is not removed when it signs the removal itself, or when it is the last working device of an owner "
+        "(#1198 C15).",
     ),
     _e(
         "retry.later",
@@ -626,8 +647,22 @@ _MARKET = (
         "only the official marketplace can be added for now",
         "other marketplaces need per-add-on user isolation",
     ),
-    ("market.blocked", 3, False, "the hub blocks this marketplace", "ask the hub admin"),
-    ("market.not_allowed", 3, False, "the hub does not allow this marketplace", "ask the hub admin"),
+    ("market.blocked", 3, False, "the hub blocks this add-on", "ask the hub admin"),
+    (
+        "market.not_allowed",
+        3,
+        False,
+        "the hub does not allow this marketplace, or its policy cannot be verified",
+        "ask the hub admin, or reconnect: orch hub status --refresh",
+    ),
+    ("market.addon_not_allowed", 3, False, "the hub does not allow this add-on", "ask the hub admin"),
+    (
+        "market.publisher_unpinned",
+        3,
+        False,
+        "the publisher key is not one the hub pins for this marketplace",
+        "ask the hub admin",
+    ),
     ("market.unknown_addon", 3, False, "the marketplace has no add-on with this id", "orch market list --entries"),
     ("market.revoked", 3, False, "this add-on version is revoked by the marketplace", "pick another version"),
     ("market.host_not_allowed", 3, False, "the add-on repository host is not allowed", "orch market list"),
@@ -673,6 +708,10 @@ _MARKET = (
     ),
     ("market.refresh_running", 9, True, "a refresh of this marketplace is already running", "try again in a moment"),
     ("market.already_added", 3, False, "this marketplace is already added", "orch market refresh"),
+    # V3 G3: install, update, remove
+    ("market.not_installed", 3, False, "this add-on was not installed from a marketplace", "orch addon install ID"),
+    ("market.ambiguous_addon", 3, False, "more than one added marketplace lists this id", "name one with --from URL"),
+    ("market.still_enabled", 3, False, "the add-on is still turned on", "orch addon disable NAME, then remove it"),
 )
 _SPECS += [
     _e(code, exit_, retry, msg, hint, ["orch", "market", "list"], "Marketplace refusal (spec section 13): " + msg + ".")
@@ -700,6 +739,8 @@ GLOBAL_ERRORS = (
     "sign.convenience_unavailable",
     # V3 C11 (D78/D81): any person op signed locally is refused while the workspace is in full hub mode
     "sign.hub_only",
+    # #1097: a gated act signed by a device key that was in convenience custody (hub join/leave/mode, keys.rotate)
+    "sign.key_exposed",
 )
 
 

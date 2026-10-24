@@ -60,6 +60,6 @@ describe('what is an unknown outcome', () => {
     expect(unknownOutcome(new TypeError('Failed to fetch'))).toBe(true)
     expect(unknownOutcome(new ApiError(502, { code: 'host.unavailable', message: 'x', retryable: true }))).toBe(true)
     expect(unknownOutcome(new ApiError(503, { code: 'host.unavailable', message: 'x', retryable: true }, 9))).toBe(false)
-    expect(unknownOutcome(new ApiError(409, { code: 'human.click_refused', message: 'x', retryable: false, reason: 'word' }, 3))).toBe(false)
+    expect(unknownOutcome(new ApiError(409, { code: 'human.click_refused', message: 'x', retryable: false, reason: 'view_changed' }, 3))).toBe(false)
   })
 })

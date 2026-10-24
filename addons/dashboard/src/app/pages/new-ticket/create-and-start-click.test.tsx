@@ -1,4 +1,4 @@
-// "Create and start agent" on the REAL one-click path (HandoffDialog and useClickSign are not mocked): a click sequence
+// "Create and start agent" on the REAL one-click path (SignPopover and useClickSign are not mocked): a click sequence
 // that stops at the agent access, and one whose runner hand-over is not confirmed, never start an agent and never leave
 // a second ticket to be created from the same typed text.
 import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react'
@@ -19,7 +19,7 @@ const view = (): ClickViewAnswer => ({
   view_digest: DIGEST,
   view: {
     risk: CLICK_RISK, op: 'new', workspace: { id: 'x'.repeat(32), name: 'billing', prefix: 'DEMO' }, fingerprint: '0123456789ab',
-    lines: ['Create DEMO-0044: Export CSV'], checks: [], confirm: { kind: 'word', word: 'GRANT' },
+    lines: ['Create DEMO-0044: Export CSV'], checks: [], confirm: { kind: 'click' },
     expires_at: new Date(Date.now() + 600_000).toISOString(), auth: 'convenience', device: 'd_x', artifacts: null,
   },
 })
@@ -28,11 +28,11 @@ let s: { preview: ReturnType<typeof vi.spyOn>; start: ReturnType<typeof vi.spyOn
 beforeEach(() => {
   const real = api.getWorkspaces.bind(api)
   vi.spyOn(api, 'getWorkspaces').mockImplementation(async () => (await real()).map((w) => ({ ...w, click: { custody: 'convenience' as const, enabled: true, available: true } })))
-  vi.spyOn(api, 'getHostSettings').mockResolvedValue({ available: true, grant_hours: 168, models: null } as Awaited<ReturnType<typeof api.getHostSettings>>)
-  vi.spyOn(routingApi, 'choices').mockResolvedValue({ harnesses: [{ id: 'claude-code', label: 'Claude', models: [] }, { id: 'codex', label: 'Codex', models: [] }], modes: [] })
+  vi.spyOn(api, 'getHostSettings').mockResolvedValue({ available: true, grant_hours: 168 } as Awaited<ReturnType<typeof api.getHostSettings>>)
+  vi.spyOn(routingApi, 'choices').mockResolvedValue({ harnesses: [{ id: 'claude-code', label: 'Claude', models: [] }, { id: 'codex', label: 'Codex', models: [] }] })
   vi.spyOn(agentsApi, 'runner').mockResolvedValue({ runner: { connected: true, enabled: true, terminals: false, grant: null } })
   vi.spyOn(agentsApi, 'riskNotices').mockResolvedValue({ acknowledged: { start_agent: true } })
-  vi.spyOn(api, 'prepareClick').mockResolvedValue({ request_id: REQ, expires_at: new Date(Date.now() + 600_000).toISOString(), op: 'new', confirm: 'word' })
+  vi.spyOn(api, 'prepareClick').mockResolvedValue({ request_id: REQ, expires_at: new Date(Date.now() + 600_000).toISOString(), op: 'new', confirm: 'click' })
   vi.spyOn(api, 'viewClick').mockResolvedValue(view())
   vi.spyOn(api, 'cancelClick').mockResolvedValue({ id: REQ, state: 'cancelled' })
   s = {
@@ -54,12 +54,11 @@ async function signed() {
   await r.user.click(await screen.findByRole('button', { name: /New ticket/ }, T))
   const sheet = await screen.findByRole('dialog', { name: 'New ticket' }, T)
   await r.user.type(await within(sheet).findByLabelText('Title', {}, T), 'Export CSV')
-  await r.user.type(within(sheet).getByLabelText(/^Requirements/), 'Empty months export a header row')
-  await r.user.click(await within(sheet).findByRole('button', { name: 'Create and start agent' }, T))
+  await r.user.type(within(sheet).getByLabelText(/^What should be true/), 'Empty months export a header row')
+  await r.user.click(await within(sheet).findByRole('button', { name: 'Review and start agent' }, T))
   const dialog = (await screen.findAllByRole('dialog', {}, T)).find((d) => d.hasAttribute('data-handoff-dialog'))!
   expect(await within(dialog).findByTestId('not-signed-start')).toBeInTheDocument() // the real dialog carries the unsigned block
   await within(dialog).findByTestId('click-panel', {}, T)
-  fireEvent.change(within(dialog).getByLabelText(/Type GRANT to confirm/), { target: { value: 'GRANT' } })
   const go = within(dialog).getByRole('button', { name: 'Sign and start agent' })
   await waitFor(() => expect(go).toBeEnabled(), { timeout: ARM_MS + 3000 })
   fireEvent.pointerDown(go)
@@ -72,8 +71,10 @@ describe('the real click path', () => {
   it('stopped at the agent access: the ticket exists, no second ticket can be made, nothing starts, Start agent is offered', async () => {
     s.sign.mockRejectedValue(new ApiError(409, { code: 'human.click_refused', message: 'the host refused the grant. 4 of 5 signatures landed; the ticket DEMO-0044 stays a draft.', retryable: false, reason: 'stopped' }))
     s.state.mockResolvedValue({ id: REQ, state: 'bound', key: 'DEMO-0044', progress: { done: 4, of: 5, last: 'grant' } })
-    const { r, dialog } = await signed()
-    await within(dialog).findByTestId('click-problem', {}, T)
+    const { r } = await signed()
+    // the review folded into the button while signing and opens again with the error inside: look it up afresh
+    await screen.findByTestId('click-problem', {}, T)
+    const dialog = (await screen.findAllByRole('dialog', {}, T)).find((d) => d.hasAttribute('data-handoff-dialog'))!
     await waitFor(() => expect(s.state).toHaveBeenCalledWith(expect.any(String), REQ), T)
     await r.user.click(within(dialog).getAllByRole('button', { name: /^(Close|Cancel)$/ }).at(-1)!)
     const info = await screen.findByTestId('agent-no-access', {}, T)

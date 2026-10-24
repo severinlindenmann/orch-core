@@ -26,6 +26,7 @@ from typing import Any
 
 from orch import canon
 
+from . import sealed
 from . import view as views
 from .protocol import (
     CONTRACT,
@@ -37,6 +38,9 @@ from .protocol import (
     OP_NAME,
     REASONS,
     REQ,
+    ROTATE_OP,
+    ROTATE_PURPOSES,
+    SEALED_OPS,
     WS_ID,
     ClickError,
     op_class,
@@ -57,6 +61,8 @@ CUSTODY_WINDOW = 900.0
 #: the wrong-passphrase record of the switch, in the person's custody root (it survives a signer restart: Opus M1)
 CUSTODY_MISSES = "click-custody.json"
 PASSPHRASE_MAX = 1024
+#: #1198 C12: the signer's offer of a key for the NEW passphrase of "One click off" lives this long, one use
+PASSPHRASE_OFFER_LIFETIME = 300.0
 REQUEST_LIFETIME = 600.0  # §0.8.1: a request lives 10 minutes
 HUMAN_OPS_V1 = ("human.prepare", "human.get", "human.submit", "human.pending", "human.cancel")
 
@@ -95,6 +101,25 @@ class Budget:
 
 
 @dataclass
+class Rotation:
+    """#1198 C13: one offer of ``rotate {begin}``: the signer's key for the two sealed secrets, the digest of the review
+    it was made for, the NEW device key (generated in memory, its scalar wiped when the offer ends) and the old device.
+    One use."""
+
+    recipient: sealed.Recipient
+    digest: str
+    deadline: float
+    scalar: bytearray
+    old: str
+    new: str
+
+    def close(self) -> None:
+        self.recipient.close()
+        for i in range(len(self.scalar)):
+            self.scalar[i] = 0
+
+
+@dataclass
 class Approval:
     workspace_id: str
     request_id: str
@@ -114,6 +139,16 @@ class Approval:
     log: list[str] = field(default_factory=list)
     #: v1.6: prepared in deposit-only grant mode (D-P2-27); the hand-over's settled outcome once known
     deposit: bool = False
+    #: #1198 C7: prepared to show the grant secret once in the page, sealed to the page's key (``reveal_key`` at sign)
+    reveal: bool = False
+    #: the sealed envelope of this approval's secret and the page key it is sealed to: held (ciphertext only, useless
+    #: without the page's private key) so a lost answer or a retried submit delivers the same envelope, never a second
+    #: sealing; the secret itself is never kept
+    reveal_pk: str | None = None
+    reveal_env: dict[str, Any] | None = None
+    #: #1198 C10: the signer's per-request key that opens the typed secret of an op in ``SEALED_OPS`` (the hub backup
+    #: key); its public half is in the View. Closed (private key dropped) when the approval ends. Never logged
+    seal: sealed.Recipient | None = None
     deposit_result: dict[str, Any] | None = None
     #: R3 part B: the bytes of the pasted screenshots of a sequence by name, held HERE (verified against the intent)
     images: dict[str, bytes] | None = None
@@ -163,7 +198,15 @@ class ClickSigner:
         #: R3 part B: pasted screenshots uploaded by ``stash`` (workspace, digest) -> {buf, size, done, at}
         self.stash_: dict[tuple[str, str], dict[str, Any]] = {}
         self.conns: dict[str, Any] = {}
+        #: #1198 C12: (workspace, request id) -> (recipient, view digest, deadline): the key that opens the sealed new
+        #: passphrase of ``custody_off``; one per workspace, one use, in memory only
+        self._offers: dict[tuple[str, str], tuple[sealed.Recipient, str, float]] = {}
+        #: #1198 C13: (workspace, request id) -> the offer of a new device key; one per workspace, one use, memory only
+        self._rotations: dict[tuple[str, str], Rotation] = {}
         self.busy = False
+        #: page keys reserved at prepare, each for one approval (workspace, request): one key, one request, one seal
+        #: (sealed-field contract §3)
+        self._reveal_keys: dict[str, tuple[str, str]] = {}
         #: ``(workspace_id, request_id)`` whose signing started in this process: defence in depth against a claim
         #: record deleted from outside after a failed or interrupted signature (the claim file alone is not trusted)
         #: Kept for the whole signer process lifetime, never pruned: memory is bounded by the sign budget (30/min,
@@ -210,6 +253,26 @@ class ClickSigner:
 
         try:
             return risk_ack(self.state, entry["workspace_id"], int(entry["host_uid"]))
+        except (OSError, ValueError):
+            return None
+
+    def _idle_hours(self, entry: dict[str, Any]) -> int:
+        """#1198 C17: the configured idle limit in hours (the default when none is set)."""
+        from orch.host.convenience import idle_hours
+
+        try:
+            return idle_hours(self.state, entry["workspace_id"], int(entry["host_uid"]))
+        except (OSError, ValueError):
+            from orch.host.convenience import DEFAULT_IDLE_HOURS
+
+            return DEFAULT_IDLE_HOURS
+
+    def _idle_off(self, entry: dict[str, Any]) -> int | None:
+        """#1198 C17: the hours the flag was idle for when it switched itself off, else ``None``."""
+        from orch.host.convenience import idle_off
+
+        try:
+            return idle_off(self.state, entry["workspace_id"], int(entry["host_uid"]))
         except (OSError, ValueError):
             return None
 
@@ -323,6 +386,31 @@ class ClickSigner:
             )
         return backend, sel
 
+    def _key_ready(self, entry: dict[str, Any], backend: Any) -> None:
+        """The key can be read and signs for the selected device: the same load that signing does. Run BEFORE any claim,
+        so a missing or unreadable key is a definite refusal (provably nothing signed, the request stays signable once
+        the key is back) and never an ``uncertain`` request that stays ``bound`` for good."""
+        from orch.custody.base import CustodyError, KeyNotFound
+
+        wid = entry["workspace_id"]
+        try:
+            backend.verify_capability()
+        except KeyNotFound:
+            self._note("refused", workspace=wid, code="custody.no_key")
+            raise ClickError(
+                "custody.no_key",
+                "There is no signing key on this computer. Turn One click off and on again, or sign in a terminal.",
+            ) from None
+        except CustodyError:  # includes BackendUnavailable
+            self.problems[wid] = "custody_unavailable"
+            self._note("refused", workspace=wid, code="custody.unavailable")
+            raise ClickError(
+                "custody.unavailable",
+                "The signing key cannot be read on this computer. Unlock the key store, or sign in a terminal.",
+            ) from None
+        if self.problems.get(wid) == "custody_unavailable":  # the store works again: only this problem kind clears
+            self.problems.pop(wid, None)
+
     def _approval(self, args: Mapping[str, Any]) -> tuple[dict[str, Any], Approval]:
         entry = self._entry(args.get("workspace_id"))
         rid = args.get("request_id")
@@ -336,11 +424,18 @@ class ClickSigner:
     def _expired(self, approval: Approval) -> bool:
         return self.mono() >= approval.deadline
 
-    def _fetch(self, entry: dict[str, Any], approval: Approval, device: str) -> dict[str, Any]:
-        """``human.get`` with this signer (already bound at prepare) and the byte-for-byte binding check."""
-        prepared = self._call(
-            entry, "human.get", {"request_id": approval.request_id, "signer": {"device": device, "auth": "convenience"}}
-        )["data"]
+    def _fetch(
+        self, entry: dict[str, Any], approval: Approval, device: str, proof: Mapping[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """``human.get`` with this signer (already bound at prepare) and the byte-for-byte binding check. A hub step
+        (#1198 C10) is read without the signer until the owner proof exists (``proof``): then ``human.get`` checks the
+        proof at the bind, and a One-click signer without one is refused there (``hub.proof_invalid``)."""
+        body: dict[str, Any] = {"request_id": approval.request_id}
+        if approval.seal is None or proof is not None:
+            body["signer"] = {"device": device, "auth": "convenience"}
+        if proof is not None:
+            body["owner_proof"] = dict(proof)
+        prepared = self._call(entry, "human.get", body)["data"]
         if views.invariant(prepared) != approval.binding:
             raise refused("view_changed", "the host's answer differs from the request this signer prepared")
         views.check_prepared(
@@ -350,6 +445,8 @@ class ClickSigner:
             device=device,
             files=approval.files,
             deposit=approval.deposit,
+            reveal=approval.reveal,
+            sealed_op=approval.seal is not None,
         )
         return prepared
 
@@ -380,10 +477,24 @@ class ClickSigner:
                     raise ClickError("invalid.input", "the first step names a screenshot the review does not carry")
                 files = {"path": {"b64": base64.b64encode(first).decode()}}
                 send_files = self._host_files(entry, first)
+        reveal = op == "grant" and not deposit
+        reveal_key: str | None = None
+        if args.get("reveal_key") is not None and not reveal:
+            raise ClickError("invalid.input", "only a grant shown in the page takes reveal_key")
         if deposit:  # v1.6 (D-P2-27): the one click grant, handed straight to the runner, never shown
             if op != "grant":
                 raise ClickError("invalid.input", "deposit is for grant only")
             inner = self._deposit_args(entry, inner)
+        elif reveal:  # #1198 C7: the secret is shown once in the page, sealed to a key it sends at sign
+            if seq is not None or files:
+                raise ClickError("invalid.input", "a grant takes no sequence and no files")
+            inner = self._reveal_args(inner)
+            reveal_key = self._reveal_key_arg(args)  # bound into the review: the page sends it at prepare
+            if reveal_key is None:
+                raise ClickError("invalid.input", "a shown grant takes a reveal_key at prepare")
+        elif op in SEALED_OPS:  # #1198 C10: a hub step by click, with the backup key sealed to this signer
+            if seq is not None or files or deposit:
+                raise ClickError("invalid.input", "a hub step takes no sequence, files or deposit")
         elif op_class(op, args=inner) == "terminal":
             raise refused("terminal_only", f"{op} is signed in the terminal (orch sign CODE)")
         if len(self.approvals) >= MAX_APPROVALS:
@@ -413,8 +524,16 @@ class ClickSigner:
             device=device,
             files=files,
             deposit=deposit,
+            reveal=reveal,
+            sealed_op=op in SEALED_OPS,
         )
         key = (entry["workspace_id"], rid)
+        if reveal_key is not None and self._reveal_keys.setdefault(reveal_key, key) != key:
+            try:  # the key belongs to another request: this one is cancelled, nothing was signed
+                self._call(entry, "human.cancel", {"request_id": rid})
+            except ClickError:
+                pass
+            raise ClickError("invalid.input", "this reveal_key is already used for another request; make a new key")
         if key not in self.approvals:  # an idem retry returns the same request: keep its record
             expires_at = str(request.get("expires_at"))
             left = min(max(0.0, _epoch(expires_at) - self.wall()), REQUEST_LIFETIME)  # never longer than §0.8.1's
@@ -430,11 +549,16 @@ class ClickSigner:
                 expires_at=expires_at,
                 files=files or None,
                 deposit=deposit,
+                reveal=reveal,
+                reveal_pk=reveal_key,
+                seal=sealed.Recipient("in", workspace_id=entry["workspace_id"], request_id=rid)
+                if op in SEALED_OPS
+                else None,
                 images=images or None,
                 image_digests=tuple(sorted({canon.artifact_digest(b) for b in images.values()})) if images else (),
             )
         approval = self.approvals[key]
-        if approval.deposit != deposit:
+        if approval.deposit != deposit or approval.reveal != reveal or approval.reveal_pk != reveal_key:
             raise ClickError("idem.conflict", "this idem named a request prepared in another mode")
         self._note("prepared", workspace=entry["workspace_id"], request=rid, op=op)
         return {"request_id": rid, "expires_at": approval.expires_at, "op": op, "confirm": approval.kind}
@@ -558,12 +682,23 @@ class ClickSigner:
 
         return {"path": {"blob": upload(_Conn(), data, None)}}
 
+    def _sequence_kind(self, entry: dict[str, Any], intent: Mapping[str, Any]) -> str:
+        """The confirmation of a sequence (always ``click``, else ``terminal_only``). Its own rule, not part of any
+        confirmation class: a sequence that ends in a grant to the runner needs dashboard execution on this machine."""
+        from orch.host import sequence
+
+        if sequence.confirm_kind(intent) == "terminal":
+            raise refused("terminal_only", "this sequence needs more than a click; use the terminal (orch sign CODE)")
+        if sequence.has_grant(intent) and not self._execution(entry):
+            raise refused("terminal_only", "dashboard execution is off for this workspace on this machine")
+        return "click"
+
     def _sequence_ok(
         self, entry: dict[str, Any], op: str, inner: dict[str, Any], seq: Any, deposit: bool, files: Any
     ) -> None:
         """A sequence (one review, N signatures, batch 11) starts with ``new`` and nothing else; the confirmation of
-        the whole is that of its strongest step: a click, or (with a grant to the runner last) the GRANT word, which
-        needs dashboard execution on this machine. A terminal step means the terminal."""
+        the whole is a click (a grant to the runner last also needs dashboard execution on this machine).
+        A terminal step means the terminal."""
         from orch.host import sequence
 
         if deposit or files or not isinstance(seq, dict) or seq.get("step") != 0:
@@ -574,15 +709,12 @@ class ClickSigner:
             raise ClickError("invalid.input", f"sequence: {exc}") from None
         if op != sequence.steps(intent)[0]["op"]:  # a new ticket starts with new, an edit with its first change
             raise ClickError("invalid.input", "a sequence starts with the first op of its intent")
-        kind = sequence.confirm_kind(intent, self._person(entry))
-        # a grant to the runner needs dashboard execution on this machine; a people change: click plus the typed word
-        if kind == "terminal" or (kind == "word" and sequence.has_grant(intent) and not self._execution(entry)):
-            raise refused("terminal_only", "this sequence needs more than a click; use the terminal (orch sign CODE)")
+        self._sequence_kind(entry, intent)
 
     def view(self, args: Mapping[str, Any]) -> dict[str, Any]:
         entry, approval = self._approval(args)
         if self._expired(approval):
-            self.approvals.pop((approval.workspace_id, approval.request_id), None)
+            self._drop(approval)
             raise refused("expired", "the request expired; prepare it again")
         _, sel = self._convenience(entry)
         if sel.gen != approval.gen:
@@ -605,11 +737,12 @@ class ClickSigner:
         return views.build(
             prepared,
             self._names(entry),
-            kind=approval.kind,
             device=device,
             expires_at=approval.expires_at,
             artifacts=artifacts,
             deposit=approval.deposit,
+            reveal=approval.reveal_pk,
+            seal_in=None if approval.seal is None else (approval.seal.public, SEALED_OPS[approval.op]),
         )
 
     def sign(self, args: Mapping[str, Any]) -> dict[str, Any]:
@@ -635,18 +768,23 @@ class ClickSigner:
         vd = args.get("view_digest")
         if type(vd) is not str or not HASH.fullmatch(vd):
             raise ClickError("invalid.input", "view_digest is a sha256 hash")
+        reveal_key = self._reveal_key_arg(args)  # syntax only, before anything else; whether one is needed: below
         rec = self._record(entry["workspace_id"], rid)  # first, before the registry: it survives a restart
         if rec is not None:
-            return self._deposited(entry, rec["op"], rid, self._replay(entry, rec, vd))
+            res = self._deposited(entry, rec["op"], rid, self._replay(entry, rec, vd))
+            held = self.approvals.get((entry["workspace_id"], rid))
+            return res if held is None else self._revealed(held, reveal_key, res)
         entry, approval = self._approval(args)
         if approval.signed is not None:  # the in-memory guard stays, also when the record was lost
             if vd != approval.view_digest:
                 raise refused("already_signed", "this request was already signed for another review")
             if approval.result is not None:
-                return self._deposited(entry, approval.op, rid, {"result": approval.result, "duplicate": True})
-            self._rerecord(approval)
-            # the identical events and idem, never a new signature
-            return self._deposited(entry, approval.op, rid, self._submit(entry, approval, None))
+                res = self._deposited(entry, approval.op, rid, {"result": approval.result, "duplicate": True})
+            else:
+                self._rerecord(approval)
+                # the identical events and idem, never a new signature
+                res = self._deposited(entry, approval.op, rid, self._submit(entry, approval, None))
+            return self._revealed(approval, reveal_key, res)
         if (approval.workspace_id, approval.request_id) in self._attempted:
             # signing started here, and neither a record nor cached events exist: the claim was removed from outside
             raise refused(
@@ -654,8 +792,13 @@ class ClickSigner:
                 "signing this request was attempted but no record of it exists; this signer does not sign it again",
             )
         if self._expired(approval):
-            self.approvals.pop((approval.workspace_id, approval.request_id), None)
+            self._drop(approval)
             raise refused("expired", "the request expired; prepare it again")
+        if approval.reveal and reveal_key != approval.reveal_pk:  # the key approved in the review, nothing else
+            raise ClickError("invalid.input", "reveal_key is not the key this review was made for")
+        if not approval.reveal and reveal_key is not None:
+            raise ClickError("invalid.input", "only a grant shown in the page takes reveal_key")
+        envelopes = self._sealed_arg(approval, args)  # exactly the View's purposes (sealed-field contract section 7)
         if approval.view_digest is None or vd != approval.view_digest:
             raise refused("view_changed", "that is not the review this signer built for the request")
         if approval.built_at is None or self.mono() - approval.built_at < DWELL_SECONDS:
@@ -667,11 +810,14 @@ class ClickSigner:
         prepared = self._fetch(entry, approval, sel["device"])
         if views.digest(self._build(entry, approval, prepared, sel["device"])) != approval.view_digest:
             raise refused("view_changed", "the review changed since it was shown (a check or the registry); view again")
-        if approval.kind == "word":
-            expected = views.word(prepared, self._names(entry))
-            if args.get("word") != expected:
-                raise refused("word", "type the word the review shows")
+        if approval.deposit and not self._execution(entry):  # switched off since prepare: nothing is claimed or signed
+            raise refused("terminal_only", "dashboard execution is off for this workspace on this machine")
+        self._key_ready(entry, backend)  # before every claim, on every sign path (single, sequence, deposit, reveal)
         stored = approval.prepared  # the immutable inputs validated at prepare (== prepared, checked above)
+        proof = None
+        if envelopes is not None:  # #1198 C10: the owner proof, before any claim: a wrong key signs nothing
+            proof = self._owner_proof(entry, approval, prepared, envelopes["hub.backup_key"])
+            self._fetch(entry, approval, sel["device"], proof)  # human.get checks the proof at the bind
         if (stored.get("material") or {}).get("sequence") is not None:
             return self._sign_sequence(entry, approval, backend, sel, stored)
         self.budget.reserve(len(stored["events"]))
@@ -696,11 +842,18 @@ class ClickSigner:
         # signs event by event), so any failure leaves the claim and that request fails closed.
         # before any signature can exist
         self._attempted.add((approval.workspace_id, approval.request_id))
-        signed = host_signer.sign(stored, backend=backend, key_id=KEY_ID, workspace_id=approval.workspace_id)
+        signed = host_signer.sign(
+            stored, backend=backend, key_id=KEY_ID, workspace_id=approval.workspace_id, owner_proof=proof
+        )
+        proof = None
+        if approval.seal is not None:  # signed: the signer's key for the typed secret is dropped with its use
+            approval.seal.close()
         # the secret (a deposit grant only) stays in this frame: never in the approval, a record, a log or a result
         secret = signed.secret
-        if secret is not None and not approval.deposit:  # a grant is refused earlier; never near the channel
+        if secret is not None and not (approval.deposit or approval.reveal):  # refused earlier; never near the channel
             raise refused("terminal_only", "a request that draws a secret is signed in the terminal")
+        if approval.reveal:  # sealed to the page's key before anything else happens: no clear copy leaves this frame
+            self._seal(approval, reveal_key, secret)
         approval.signed, approval.idem = signed.events, idem  # in memory at once: a retry resends, never re-signs
         try:
             try:  # durable before the signature leaves: a crash after this resends these events, never signs again
@@ -709,7 +862,7 @@ class ClickSigner:
                 raise refused("record_unavailable", f"{exc}; nothing was submitted") from None
             self._note("signed", workspace=approval.workspace_id, request=approval.request_id)
             res = self._replay(entry, rec, approval.view_digest)  # the commit first, then the hand-over
-            return self._deposited(entry, approval.op, rid, res, secret)
+            return self._revealed(approval, reveal_key, self._deposited(entry, approval.op, rid, res, secret))
         finally:
             del secret, signed  # best effort: Python cannot wipe a str; nothing keeps a reference to it
 
@@ -780,12 +933,8 @@ class ClickSigner:
             cancel=cancel,
             budget=self.budget.reserve,
         )
-        kind = sequence.confirm_kind(intent, person)  # re-asserted here: what is signed is what this click may sign
-        if (
-            kind == "terminal"
-            or (kind == "word" and sequence.has_grant(intent) and not self._execution(entry))
-            or approval.kind != kind
-        ):
+        kind = self._sequence_kind(entry, intent)  # re-asserted here: what is signed is what this click may sign
+        if approval.kind != kind:  # the approval recorded at prepare must be the class the host-side intent has now
             raise refused("terminal_only", "this sequence needs more than a click; use the terminal (orch sign CODE)")
         driver = sequence.Driver(
             port,
@@ -892,10 +1041,10 @@ class ClickSigner:
         """A deposit grant's answer gains ``deposit``, ``deposit_id`` (the request's ULID) and ``grant``. With the
         secret (this very signature): ``grant.deposit`` on the signer's own connection, after the commit. Without
         it (a repeated ``sign``, a restart): the settled outcome, else ``grant.deposit_status`` once."""
-        if op != "grant":
-            return res
         wid = entry["workspace_id"]
         approval = self.approvals.get((wid, rid))
+        if op != "grant" or (approval is not None and approval.reveal):  # a reveal grant has no runner hand-over
+            return res
         if approval is not None and approval.deposit_result is not None:
             return {**res, **approval.deposit_result}
         did = rid[3:]
@@ -914,6 +1063,119 @@ class ClickSigner:
         if approval is not None and outcome in ("confirmed", "rejected"):
             approval.deposit_result = out
         return {**res, **out}
+
+    # -- the hub backup key by click (#1198 C10, sealed-field purpose hub.backup_key) ---------------------------------
+    @staticmethod
+    def _sealed_arg(approval: Approval, args: Mapping[str, Any]) -> dict[str, Any] | None:
+        """``sealed`` of a sign call: absent for a review that asks for none; for one that does, an object whose keys
+        are exactly the View's purposes, each an object (the envelope; opened later, by the recipient only).
+        Anything else is refused before anything is opened."""
+        want = () if approval.seal is None else SEALED_OPS[approval.op]
+        have = args.get("sealed")
+        if not want:
+            if "sealed" in args:
+                raise ClickError("invalid.input", "this review asks for no sealed value")
+            return None
+        if type(have) is not dict or set(have) != set(want) or any(type(v) is not dict for v in have.values()):
+            raise ClickError("invalid.input", "this review needs the backup key sealed for this request")
+        return have
+
+    def _owner_proof(
+        self, entry: dict[str, Any], approval: Approval, prepared: Mapping[str, Any], envelope: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Open the sealed backup key (recipient bound to this workspace, request and review), derive the person key
+        ``PK``, check it is this person's, sign the owner proof over the reviewed payload and nothing else, then wipe
+        the code and ``PK``. A refusal is static (never the key or crypto detail) and leaves the request signable."""
+        from orch.custody.base import CustodyError
+        from orch.custody.personkey import PersonMismatch, TypedCodeSource
+        from orch.host import signer as host_signer
+
+        assert approval.seal is not None and approval.view_digest is not None
+        ctx = sealed.Context("hub.backup_key", approval.workspace_id, approval.request_id, approval.view_digest)
+        try:
+            code = approval.seal.open(envelope, ctx)
+        except sealed.SealedError as exc:
+            self._note(
+                "refused", workspace=approval.workspace_id, request=approval.request_id, code=f"sealed.{exc.reason}"
+            )
+            raise refused("check_failed", "the backup key could not be read; type it again") from None
+        person = self._person(entry)
+        try:
+            return host_signer.terminal_owner_proof(
+                prepared,
+                approval.request_id,
+                workspace_id=approval.workspace_id,
+                person=person,
+                now_ms=lambda: int(self.wall() * 1000),
+                pk_factory=lambda **kw: TypedCodeSource(code, **kw),
+            )
+        except CustodyError as exc:  # a wrong or mistyped key (PersonMismatch, BadRecoveryCode): static texts only
+            reason = "that backup key is not yours" if isinstance(exc, PersonMismatch) else "that is not a backup key"
+            self._note("refused", workspace=approval.workspace_id, request=approval.request_id, code="backup_key")
+            raise refused("check_failed", f"{reason}; nothing was signed") from None
+        except host_signer.SignerRefused as exc:
+            raise refused("check_failed", str(exc)) from None
+        finally:
+            for i in range(len(code)):  # best effort: the source wipes it as it enters; this covers an early failure
+                code[i] = 0
+
+    # -- the grant secret shown once in the page (#1198 C7, sealed-field contract section 3) -------------------------
+    @staticmethod
+    def _reveal_key_arg(args: Mapping[str, Any]) -> str | None:
+        """``reveal_key``: the page's P-256 public key (65-byte point, base64url), or absent. Syntax only."""
+        key = args.get("reveal_key")
+        if key is None:
+            return None
+        try:
+            sealed.decode_public(key, "reveal_key")
+        except sealed.SealedError:
+            raise ClickError("invalid.input", "reveal_key is a P-256 public key (base64url)") from None
+        return key
+
+    def _seal(self, approval: Approval, reveal_key: str | None, secret: str | None) -> None:
+        """Seal the secret to the page's key, bound to this workspace, request and review. At most once per approval.
+        Only the ciphertext is kept; the secret never leaves this frame. A failure here leaves the claim: the request
+        fails closed, nothing was submitted."""
+        mine = (approval.workspace_id, approval.request_id)
+        if (
+            reveal_key is None
+            or secret is None
+            or approval.view_digest is None
+            or approval.reveal_env is not None
+            or self._reveal_keys.get(reveal_key) != mine  # the key is reserved for this very request, and no other
+        ):
+            raise refused("check_failed", "the secret cannot be sealed for this request")
+        ctx = sealed.Context("grant.secret", approval.workspace_id, approval.request_id, approval.view_digest)
+        try:
+            env = sealed.seal(reveal_key, secret, ctx)
+        except sealed.SealedError as exc:
+            raise refused("check_failed", f"the secret cannot be sealed ({exc.reason})") from None
+        approval.reveal_env = env
+
+    def _revealed(self, approval: Approval, reveal_key: str | None, res: dict[str, Any]) -> dict[str, Any]:
+        """A reveal grant's answer gains ``reveal`` {purpose, envelope}: the envelope sealed at the signature, to the
+        same key (a retry with another key, or a signer that restarted, has none: the secret is not kept anywhere)."""
+        if not approval.reveal or approval.reveal_env is None:
+            return res
+        if reveal_key != approval.reveal_pk:
+            raise ClickError("invalid.input", "reveal_key is not the key this request was sealed to")
+        return {**res, "reveal": {"purpose": "grant.secret", "envelope": approval.reveal_env}}
+
+    def _reveal_args(self, inner: dict[str, Any]) -> dict[str, Any]:
+        """A shown grant's arguments: ``hours`` 1..168 (default 8), ``scope`` and an optional short ``label``; verbs are
+        ``agent``. Not a runner grant (that one is the deposit mode)."""
+        unknown = set(inner) - {"hours", "scope", "label"}
+        hours, scope, label = inner.get("hours", 8), inner.get("scope", "workable"), inner.get("label")
+        if unknown or type(hours) is not int or scope not in ("all", "workable"):
+            raise ClickError("invalid.input", "a shown grant takes hours (a whole number), scope and a label")
+        if not 1 <= hours <= DEPOSIT_MAX_HOURS:
+            raise refused("terminal_only", f"a click grant lasts at most {DEPOSIT_MAX_HOURS} hours; use the terminal")
+        out: dict[str, Any] = {"hours": hours, "scope": scope, "verbs": "agent"}
+        if label is not None:
+            if type(label) is not str or not 1 <= len(label) <= 40 or label.strip().lower() == "runner":
+                raise ClickError("invalid.input", "label is 1 to 40 characters and is not runner")
+            out["label"] = label
+        return out
 
     def _hand_over(self, entry: dict[str, Any], deposit_id: str, secret: str) -> tuple[str, str | None]:
         """``(outcome, reason)``: ``reason`` is the host's refusal code (mapped to the closed set by the caller)."""
@@ -1081,6 +1343,9 @@ class ClickSigner:
             problem = "not_convenience"
         if problem is None and not row["enabled"]:
             problem = "disabled"
+        row["idle_hours"] = self._idle_hours(e)  # #1198 C17: the configured limit, on or off
+        if self._idle_off(e) is not None and problem == "disabled":
+            problem = "idle"  # it switched itself off
         row["available"] = problem is None
         if problem is not None:
             row["problem"] = str(problem)[:200]
@@ -1188,16 +1453,6 @@ class ClickSigner:
             raise ClickError("invalid.input", "passphrase is text")
         return pw
 
-    @staticmethod
-    def _refuse_pending(convenience: Any, state: Path, wid: str, uid: int, clock: Callable[[], float]) -> None:
-        waiting = convenience.pending_handoffs(state, wid, uid, clock=clock)
-        if waiting:
-            raise ClickError(
-                "sign.click_only",
-                f"{len(waiting)} terminal hand-off request(s) are pending for this workspace: let them expire "
-                "(10 minutes), then switch click-to-sign on",
-            )
-
     def _tier_a(self, entry: dict[str, Any]) -> tuple[str, int]:
         """The switch is tier A only (§0.8.6 item 3a): in tier B the host's flag file belongs to another UID."""
         wid, uid = entry["workspace_id"], int(entry["host_uid"])
@@ -1221,6 +1476,10 @@ class ClickSigner:
         from orch.host.errors import HostError
 
         entry = self._entry(args.get("workspace_id"))
+        if args.get("resume") is not None:
+            if args["resume"] is not True or "passphrase" in args:
+                raise ClickError("invalid.input", "resume is true and takes no passphrase")
+            return self._resume(entry)
         pw = self._passphrase(args)
         wid, uid = self._tier_a(entry)
         st = select.status(self.state, wid)
@@ -1245,7 +1504,6 @@ class ClickSigner:
             ) from None
         try:
             before = select.read_selection(self.state, wid)
-            self._refuse_pending(convenience, self.state, wid, uid, self.wall)  # early; checked again under the lock
             try:
                 staged = select.stage_convenience(self.state, wid, prefix=str(entry.get("prefix") or ""), passphrase=pw)
             except WrongPassphrase:
@@ -1254,11 +1512,6 @@ class ClickSigner:
             finished = False
             try:
                 with convenience.workspace_lock(self.state, wid, uid):
-                    try:
-                        self._refuse_pending(convenience, self.state, wid, uid, self.wall)
-                    except ClickError:
-                        select.undo_staged(self.state, wid, staged, before)
-                        raise
                     select.finish_convenience(self.state, wid, staged)
                     finished = True
                     convenience.set_enabled(self.state, wid, True, uid)  # last: no error after the flag changed
@@ -1281,20 +1534,60 @@ class ClickSigner:
         self._note("custody_on", workspace=wid)
         return self._row(entry)
 
+    def _resume(self, entry: dict[str, Any]) -> dict[str, Any]:
+        """#1198 C17: turn click-to-sign back on with a plain click, only when the key is already in convenience custody
+        (idle switch-off, or "Turn off" without a passphrase). There is no passphrase to check: a click proves what
+        ``orch host convenience on`` proves. The dashboard server decides who may ask (a dashboard opened on this
+        computer, an owner, after the review and the risk notice); here: the readers rule (:func:`refuse_turn_on`),
+        the dev-host fence and a quiet custody, then the flag under the lock (``set_enabled`` restarts the idle clock
+        and records the risk notice)."""
+        from orch.custody import select
+        from orch.host import convenience
+        from orch.host.errors import HostError
+
+        wid, uid = self._tier_a(entry)
+        st = select.status(self.state, wid)
+        if st.get("problem") is not None:
+            raise ClickError("custody.unavailable", f"{st['problem']}; see the terminal: orch keys custody status")
+        if st["custody"] != "convenience":
+            raise ClickError("invalid.input", "the key is not in one-click custody: switch it on with the passphrase")
+        if self._enabled(entry):
+            return self._row(entry)
+        try:
+            convenience.refuse_turn_on(self.state, entry, uid)
+            with convenience.workspace_lock(self.state, wid, uid):
+                convenience.set_enabled(self.state, wid, True, uid)  # refuses a dev host
+        except HostError as exc:
+            head = exc.message.split(":", 1)[0]
+            raise ClickError(
+                exc.code,
+                exc.message,
+                reason=head if head in REASONS else None,
+                detail=exc.detail,
+                retryable=exc.code == "lock.busy",
+            ) from None
+        self.problems.pop(wid, None)
+        self._note("custody_on", workspace=wid)
+        return self._row(entry)
+
     def custody_off(self, args: Mapping[str, Any]) -> dict[str, Any]:
-        """Click-to-sign off, from the dashboard. Without a ``passphrase``: the flag goes off and nothing else. With one
-        (V3-D31, narrowing Opus H2 on #539): the flag goes off and the key moves back under that new passphrase, in one
-        locked step, and only while the flag is on at that moment (see the comment block above). The text is never
-        logged or echoed."""
+        """Click-to-sign off, from the dashboard. Without a passphrase: the flag goes off and nothing else. With one
+        (V3-D31, narrowing Opus H2): the flag goes off and the key moves back under that new passphrase, in one
+        locked step, and only while the flag is on at that moment (see the comment block above). The passphrase
+        arrives sealed (#1198 C12, sealed-field purpose ``custody.passphrase``): ``{begin: true}`` returns a one-use
+        offer (request id, review digest, the signer's public key), then ``{request_id, view_digest, sealed}`` opens it.
+        A clear ``passphrase`` is refused. The text is never logged or echoed."""
         from orch.custody import select
         from orch.custody.base import BackendUnavailable, CustodyError, KeyNotFound
         from orch.host.errors import HostError
 
         entry = self._entry(args.get("workspace_id"))
         wid, uid = self._tier_a(entry)
-        pw = args.get("passphrase")
-        if "passphrase" in args and (type(pw) is not str or not pw):
-            raise ClickError("invalid.input", "passphrase is a non-empty string")
+        if "passphrase" in args:
+            raise ClickError("invalid.input", "the passphrase is sent sealed (begin, then sealed)")
+        if "begin" in args:
+            return self._passphrase_offer(wid, args)
+        pw = self._open_passphrase(wid, args) if "sealed" in args else None
         try:
             select.turn_off_convenience(self.state, wid, uid, move_key=pw is not None, passphrase=pw)
         except HostError as exc:
@@ -1308,20 +1601,267 @@ class ClickSigner:
         except (BackendUnavailable, CustodyError) as exc:
             raise ClickError("custody.unavailable", str(exc)) from None
         self.problems.pop(wid, None)
-        self._note("custody_off", workspace=wid)
+        self._note("custody_off", workspace=wid, **({"moved": "true"} if pw is not None else {}))
         return self._row(entry)
+
+    def _passphrase_offer(self, wid: str, args: Mapping[str, Any]) -> dict[str, Any]:
+        """``custody_off {begin: true}``: a fresh key for one sealed passphrase, bound to a new request id and to the
+        digest of this small review (which carries the public key). A newer offer for the workspace drops the older."""
+        from orch.host.requests import new_request_id
+
+        if set(args) != {"workspace_id", "begin"} or args["begin"] is not True:
+            raise ClickError("invalid.input", "begin takes the workspace and true")
+        for key in [k for k, (r, _, _) in self._offers.items() if k[0] == wid or r.closed]:
+            self._offers.pop(key)[0].close()
+        rid = new_request_id()
+        rec = sealed.Recipient("in", workspace_id=wid, request_id=rid)
+        field = {"v": sealed.VERSION, "alg": sealed.ALG, "pk": rec.public, "purposes": ["custody.passphrase"]}
+        digest = views.digest({"op": "custody.off", "workspace_id": wid, "request_id": rid, "seal": field})
+        self._offers[(wid, rid)] = (rec, digest, self.mono() + PASSPHRASE_OFFER_LIFETIME)
+        return {"request_id": rid, "view_digest": digest, "seal": field, "expires_in": int(PASSPHRASE_OFFER_LIFETIME)}
+
+    def _open_passphrase(self, wid: str, args: Mapping[str, Any]) -> str:
+        """Open the sealed new passphrase with the offer's key. The offer is used up by the first open that succeeds
+        (a refusal before that, e.g. a corrupted envelope, leaves it: a relay cannot burn it). Static refusals only."""
+        rid, digest, env = args.get("request_id"), args.get("view_digest"), args.get("sealed")
+        if set(args) != {"workspace_id", "request_id", "view_digest", "sealed"}:
+            raise ClickError("invalid.input", "a sealed passphrase takes request_id, view_digest and sealed")
+        if type(rid) is not str or not REQ.fullmatch(rid) or type(digest) is not str or not HASH.fullmatch(digest):
+            raise ClickError("invalid.input", "request_id and view_digest are ids")
+        if type(env) is not dict or set(env) != {"custody.passphrase"} or type(env["custody.passphrase"]) is not dict:
+            raise ClickError("invalid.input", "sealed is the custody.passphrase envelope")
+        got = self._offers.get((wid, rid))
+        if got is None or self.mono() >= got[2] or got[0].closed:
+            if got is not None:
+                self._offers.pop((wid, rid))[0].close()
+            raise ClickError("invalid.input", "the passphrase window closed; start again")
+        rec, offered, _ = got
+        if digest != offered:
+            raise ClickError("invalid.input", "the passphrase was sealed for another review")
+        try:
+            raw = rec.open(env["custody.passphrase"], sealed.Context("custody.passphrase", wid, rid, offered))
+        except sealed.SealedError:
+            raise ClickError("invalid.input", "the passphrase could not be read; type it again") from None
+        self._offers.pop((wid, rid))[0].close()  # used up: whatever happens next, a new offer is needed
+        try:
+            if len(raw) > PASSPHRASE_MAX:
+                raise ClickError("invalid.input", "passphrase is text")
+            return bytes(raw).decode("utf-8")
+        except UnicodeDecodeError:
+            raise ClickError("invalid.input", "passphrase is text") from None
+        finally:
+            for i in range(len(raw)):
+                raw[i] = 0
+
+    # -- a new device key from the dashboard (#1198 C13, sealed purposes device.recovery_code + custody.passphrase) ---
+    def rotate(self, args: Mapping[str, Any]) -> dict[str, Any]:
+        """``device.rotate`` by click. ``{begin: true}``: the review (this computer's old key and the new key the signer
+        just made in memory) and a one-use key for the two secrets; ``{request_id, view_digest, sealed}``: the recovery
+        code and the passphrase of the new key, opened with that key and bound to this workspace, request and review.
+        The preconditions, the certificate, the host's prepare / check / submit and the install of the new key are
+        :func:`orch.custody.rotate.rotate` (the terminal's own path); the person's click is the confirmation. The
+        recovery code and the scalar of the person key are wiped when the certificate is made; nothing secret is
+        logged, returned or kept. A refusal is static."""
+        entry = self._entry(args.get("workspace_id"))
+        self._tier_a(entry)
+        if "begin" in args:
+            return self._rotate_offer(entry, args)
+        if self.busy:
+            raise refused("busy", "another signature is in progress")
+        self.busy = True
+        try:
+            return self._rotate_sign(entry, args)
+        finally:
+            self.busy = False
+
+    def _convenience_on(self, entry: dict[str, Any]) -> bool:
+        from orch.custody import select
+
+        sel = select.read_selection(self.state, entry["workspace_id"])
+        return bool(self._enabled(entry)) or (
+            sel is not None and (sel["custody"] == "convenience" or sel["transition"] is not None)
+        )
+
+    def _rotate_offer(self, entry: dict[str, Any], args: Mapping[str, Any]) -> dict[str, Any]:
+        from orch import crypto
+        from orch.custody import rotate as rotation
+        from orch.custody.base import CustodyError, KeyNotFound
+
+        wid = entry["workspace_id"]
+        if set(args) != {"workspace_id", "begin"} or args["begin"] is not True:
+            raise ClickError("invalid.input", "begin takes the workspace and true")
+        if self._convenience_on(entry):
+            raise ClickError("invalid.input", "Turn One click off first; then replace the key of this computer.")
+        try:
+            found = rotation.plan(self.state, entry)
+        except KeyNotFound as exc:
+            raise ClickError("custody.no_key", str(exc)) from None
+        except CustodyError as exc:
+            raise ClickError("custody.unavailable", str(exc)[:300]) from None
+        for key in [k for k, r in self._rotations.items() if k[0] == wid or r.recipient.closed]:
+            self._rotations.pop(key).close()
+        if found.finish is not None:  # an earlier run landed the event and stopped before the install: finish it
+            try:
+                with rotation.locked(self.state, entry):  # (the plan above is advisory: look again under the lock)
+                    again = rotation.plan(self.state, entry)
+                    if again.finish is not None:
+                        rotation._install(  # noqa: SLF001
+                            self.state, wid, again.keys, again.stage, again.sel, again.old, again.finish
+                        )
+            except KeyNotFound as exc:
+                raise ClickError("custody.no_key", str(exc)) from None
+            except CustodyError as exc:
+                raise ClickError("custody.unavailable", str(exc)[:300]) from None
+            self.problems.pop(wid, None)
+            self._note("rotated", workspace=wid)
+            return {"done": True, "old": found.old, "new": found.finish, **self._row(entry)}
+        from orch.host.requests import new_request_id
+
+        rid = new_request_id()
+        scalar = bytearray(crypto.private_scalar(crypto.generate_private_key()))
+        new = rotation.Fresh(scalar, "").device
+        recipient = sealed.Recipient("in", workspace_id=wid, request_id=rid)
+        known = self._names(entry)(wid)
+        if known is None:
+            recipient.close()
+            raise ClickError("custody.unavailable", "this workspace is not in your own registry")
+        v = views.rotation(
+            workspace={"id": wid, "name": known[0], "prefix": known[1]}, old=found.old, new=new, pk=recipient.public
+        )
+        digest = views.digest(v)
+        self._rotations[(wid, rid)] = Rotation(
+            recipient, digest, self.mono() + PASSPHRASE_OFFER_LIFETIME, scalar, found.old, new
+        )
+        self._note("review", workspace=wid, request=rid, op=ROTATE_OP)
+        return {"request_id": rid, "view_digest": digest, "view": v, "expires_in": int(PASSPHRASE_OFFER_LIFETIME)}
+
+    def _rotate_sign(self, entry: dict[str, Any], args: Mapping[str, Any]) -> dict[str, Any]:
+        from orch.custody import rotate as rotation
+        from orch.custody.base import CustodyError, KeyNotFound
+        from orch.custody.personkey import BadRecoveryCode, PersonMismatch, TypedCodeSource
+        from orch.custody.strength import check_strength
+
+        wid = entry["workspace_id"]
+        rid, digest, env = args.get("request_id"), args.get("view_digest"), args.get("sealed")
+        if set(args) != {"workspace_id", "request_id", "view_digest", "sealed"}:
+            raise ClickError("invalid.input", "a new device key takes request_id, view_digest and sealed")
+        if type(rid) is not str or not REQ.fullmatch(rid) or type(digest) is not str or not HASH.fullmatch(digest):
+            raise ClickError("invalid.input", "request_id and view_digest are ids")
+        if type(env) is not dict or set(env) != set(ROTATE_PURPOSES) or any(type(v) is not dict for v in env.values()):
+            raise ClickError("invalid.input", "this review needs the recovery code and the passphrase sealed for it")
+        got = self._rotations.get((wid, rid))
+        if got is None or self.mono() >= got.deadline or got.recipient.closed:
+            if got is not None:
+                self._rotations.pop((wid, rid)).close()
+            raise ClickError("invalid.input", "the review closed; start again")
+        if digest != got.digest:
+            raise ClickError("invalid.input", "the secrets were sealed for another review")
+        self._custody_budget()  # wrong recovery codes: at most CUSTODY_TRIES per window, also across a restart
+        opened: dict[str, bytearray] = {}
+        used = False
+        try:
+            for purpose in ROTATE_PURPOSES:
+                try:
+                    opened[purpose] = got.recipient.open(env[purpose], sealed.Context(purpose, wid, rid, got.digest))
+                except sealed.SealedError:
+                    self._note("refused", workspace=wid, request=rid, code="sealed.rotate")
+                    raise ClickError(
+                        "invalid.input", "the recovery code or passphrase could not be read; type both again"
+                    ) from None
+            # both envelopes opened: the offer is used up, whatever happens next (a new offer is needed)
+            self._rotations.pop((wid, rid))
+            used = True
+            # both secrets stay in ``opened`` until the outer ``finally`` zeroises them, whatever refuses first (the
+            # passphrase checks run before the recovery code is handed to the person-key source)
+            code = opened["device.recovery_code"]
+            try:
+                passphrase = bytes(opened["custody.passphrase"]).decode("utf-8")
+            except UnicodeDecodeError:
+                raise ClickError("invalid.input", "passphrase is text") from None
+            if not 0 < len(passphrase) <= PASSPHRASE_MAX:
+                raise ClickError("invalid.input", "passphrase is text")
+            try:
+                check_strength(passphrase)
+            except CustodyError as exc:
+                raise ClickError("invalid.input", str(exc)[:300]) from None
+            fresh = rotation.Fresh(got.scalar, passphrase)
+            if fresh.device != got.new:  # (cannot differ: the review named this very key)
+                raise refused("check_failed", "the new key is not the one in the review")
+
+            def same(prepared: Mapping[str, Any]) -> None:
+                ev = views.single_event(prepared)
+                ok = (
+                    ev is not None
+                    and prepared.get("op") == ROTATE_OP
+                    and ev.get("old") == got.old
+                    and ev.get("device") == got.new
+                )
+                if not ok:  # the host built another rotation than the one the person clicked
+                    from orch.host.signer import SignerRefused
+
+                    raise SignerRefused("the host's request is not the key replacement you reviewed")
+
+            try:
+                out = rotation.rotate(
+                    self.state,
+                    entry,
+                    {},
+                    say=lambda _t: None,
+                    pk_factory=lambda **kw: TypedCodeSource(code, **kw),
+                    confirm=lambda _text, _word: True,  # the click on the review above
+                    now_ms=lambda: int(self.wall() * 1000),
+                    call=lambda op, a, **kw: self._call(entry, op, a, **kw),
+                    fresh=fresh,
+                    before=same,
+                )
+            except (PersonMismatch, BadRecoveryCode) as exc:
+                self._miss()
+                self._note("refused", workspace=wid, request=rid, code="recovery_code")
+                reason = (
+                    "that recovery code is not yours"
+                    if isinstance(exc, PersonMismatch)
+                    else "that is not a recovery code"
+                )
+                raise refused("check_failed", f"{reason}; nothing was signed and your old key is unchanged") from None
+            except KeyNotFound as exc:
+                raise ClickError("custody.no_key", str(exc)) from None
+            except CustodyError as exc:  # SignerRefused is already one (rotate wraps it): static texts of our own
+                self._note("refused", workspace=wid, request=rid, code="custody.rotate")
+                raise ClickError("custody.unavailable", str(exc)[:300]) from None
+        finally:
+            for b in opened.values():
+                for i in range(len(b)):
+                    b[i] = 0
+            if used:  # an offer whose envelopes did not open stays (a relay cannot burn it)
+                got.close()  # the signer's key and the new scalar are dropped with the offer, whatever happened
+        self.problems.pop(wid, None)
+        self._note("rotated", workspace=wid)
+        return {"done": True, "old": out["old"], "new": out["device"], **self._row(entry)}
 
     # -- bookkeeping ---------------------------------------------------------------------------------------------------
     def _drop(self, approval: Approval) -> None:
         self.approvals.pop((approval.workspace_id, approval.request_id), None)
+        if approval.seal is not None:
+            approval.seal.close()
 
     def _sweep(self) -> None:
         for key, a in list(self.approvals.items()):
             if self._expired(a) or a.result is not None:
                 self.approvals.pop(key, None)
+                if a.seal is not None:
+                    a.seal.close()
         # ``_attempted`` is deliberately not swept: it lives as long as the process (see its definition).
 
     def close(self) -> None:
+        for rec, _, _ in self._offers.values():
+            rec.close()
+        self._offers.clear()
+        for rot in self._rotations.values():
+            rot.close()
+        self._rotations.clear()
+        for a in self.approvals.values():
+            if a.seal is not None:
+                a.seal.close()
         for c in self.conns.values():
             try:
                 c.close()
@@ -1339,6 +1879,7 @@ class ClickSigner:
             "cancel": self.cancel,
             "custody_on": self.custody_on,
             "custody_off": self.custody_off,
+            "rotate": self.rotate,
             "stash": self.stash,
         }.get(op)
         if op == "status":

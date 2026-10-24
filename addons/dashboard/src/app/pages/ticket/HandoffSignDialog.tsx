@@ -1,4 +1,4 @@
-import { VerdictEvidence } from './EvidenceView'
+import { VerdictEvidence, VerdictPreview } from './EvidenceView'
 import { ManualAcceptanceReview } from './ManualAcceptance'
 // A ticket's human action in hand-off mode (real host): approve, request changes, verdict, answer. The form holds only
 // what the person types or picks; once they press the verb, the host prepares the request and the dialog shows the
@@ -8,8 +8,8 @@ import { useNavigate } from '@tanstack/react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { signedNow } from '@/api/signedDrop'
 import type { HandoffAction, HandoffRequest } from '@/api/handoff'
-import type { GateName, TicketDocument } from '@/api/types'
-import { HandoffDialog } from '@/components/sign/HandoffDialog'
+import type { Artifact, GateName, TicketDocument } from '@/api/types'
+import { SignPopover } from '@/components/sign/SignPopover'
 import { Prose, Raw } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
@@ -27,6 +27,20 @@ function titleOf(a: HumanAction): string {
       return 'Give verdict (Verify)'
     case 'request_changes':
       return `Request changes on ${gateActionName(a.gate)}`
+  }
+}
+
+/** The ONE toast after the signature says the outcome, not the mechanism. */
+function doneToastOf(a: HumanAction): string {
+  switch (a.kind) {
+    case 'answer':
+      return 'Answer sent'
+    case 'approve':
+      return `${gateActionName(a.gate)} approved`
+    case 'verdict':
+      return 'Verdict recorded'
+    case 'request_changes':
+      return 'Changes requested'
   }
 }
 
@@ -60,6 +74,8 @@ export function HandoffSignDialog({
   const [text, setText] = useState('')
   const [outcome, setOutcome] = useState<'pass' | 'fail' | null>(null)
   const radio = useRef<HTMLInputElement>(null)
+  // A preview replaces the verdict form in the dialog body; the choice and note stay in this component's state.
+  const [preview, setPreview] = useState<{ artifact: Artifact; acId: string } | null>(null)
   if (!action) return null
 
   const title = titleOf(action)
@@ -110,17 +126,14 @@ export function HandoffSignDialog({
   }
 
   return (
-    <HandoffDialog
-      phoneRequest={(action.kind === 'approve' || action.kind === 'request_changes') && (action.gate === 'requirements' || action.gate === 'plan') && typeof ticket.gates[action.gate].gen === 'number'
-        ? { ref: ticket.key, gate: action.gate, gate_gen: ticket.gates[action.gate].gen! } : undefined}
+    <SignPopover
       title={title}
       ws={ws}
       action={request}
       autoStart={action.kind === 'approve' || action.kind === 'answer'}
-      closeWhenDone={action.kind === 'answer'}
-      doneToast={action.kind === 'answer' ? 'Answered' : undefined}
+      doneToast={doneToastOf(action)}
       confirmLabel={confirmLabel}
-      hint={hint}
+      hint={preview ? 'Go back to the verdict to sign' : hint}
       warning={warning}
       onPending={onPending}
       onSettled={(phase) => {
@@ -131,7 +144,8 @@ export function HandoffSignDialog({
       initialFocus={() => (action.kind === 'verdict' ? radio.current : null)}
       key={`${action.kind}-${action.kind === 'answer' ? action.question : 'gate' in action ? action.gate : ''}`}
     >
-      {action.kind === 'verdict' && (
+      {action.kind === 'verdict' && preview && <VerdictPreview ticket={ticket} artifact={preview.artifact} onBack={() => setPreview(null)} />}
+      {action.kind === 'verdict' && !preview && (
         <>
           <p className="flex flex-wrap items-center gap-x-3 text-[13px] text-text-muted">
             <Button type="button" variant="link" size="sm" className="h-auto p-0 text-[13px]" onClick={leaveTo(onOpenEvidence)}>
@@ -141,7 +155,7 @@ export function HandoffSignDialog({
               Open changes
             </Button>
           </p>
-          <VerdictEvidence ticket={ticket} />
+          <VerdictEvidence ticket={ticket} onPreview={setPreview} name={viewer.name} />
           <ManualAcceptanceReview ticket={ticket} name={viewer.name} />
           <fieldset className="grid gap-2">
             <legend className="sr-only">Verdict</legend>
@@ -157,9 +171,10 @@ export function HandoffSignDialog({
               </label>
             ))}
           </fieldset>
+          <p className="text-[12px] text-text-muted">Pass accepts all {ticket.acceptance_state.length} criteria with the files and code shown.</p>
         </>
       )}
-      {(action.kind === 'request_changes' || action.kind === 'verdict') && (
+      {(action.kind === 'request_changes' || (action.kind === 'verdict' && !preview)) && (
         <div className="space-y-1.5">
           <Label htmlFor="sign-text">{action.kind === 'request_changes' || outcome === 'fail' ? 'What should change? (required)' : 'Note (optional)'}</Label>
           <Textarea id="sign-text" value={text} onChange={(e) => setText(e.target.value)} rows={3} />
@@ -178,6 +193,6 @@ export function HandoffSignDialog({
           {action.text?.trim() && <Prose className="text-text">{action.text.trim()}</Prose>}
         </section>
       )}
-    </HandoffDialog>
+    </SignPopover>
   )
 }

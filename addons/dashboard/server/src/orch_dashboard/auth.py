@@ -15,6 +15,9 @@ CODE_TTL = 30
 # The one-time nonce of `orch setup` lives 5 min: the person may copy the printed link into another terminal or
 # browser. Still single use, and the claim still binds the first browser; only the window to present it is longer.
 SETUP_CODE_TTL = 300
+# The code `--print-url` prints on a headless machine (#1198 R1-1) lives 5 min too: the person has to open an
+# `ssh -L` tunnel on their own computer before they can use it. Still single use; desktops keep CODE_TTL.
+TUNNEL_CODE_TTL = 300
 
 
 class Auth:
@@ -28,6 +31,10 @@ class Auth:
         # The exact file handed out per code, so later directory resolution can never change what is deleted.
         self.files: dict[str, Path] = {}
         self.sessions: dict[str, tuple[float, float]] = {}
+        # How each session was opened. Every launch code is made by `orch dashboard` on this computer, so a session is
+        # "local"; a hub or remote sign-in would pass its own kind to `exchange` (the page shows "Log out" only for
+        # those).
+        self.kinds: dict[str, str] = {}
         self.setup_sessions: dict[str, str] = {}
         self.attempts = deque()
         self.lock = threading.Lock()
@@ -35,13 +42,13 @@ class Auth:
     def probe(self, nonce):
         return hmac.new(bytes.fromhex(self.probe_key), (nonce + self.instance).encode(), hashlib.sha256).hexdigest()
 
-    def launch(self, port, setup=False):
+    def launch(self, port, setup=False, tunnel=False):
         with self.lock:
             now = self.clock()
             for stale in [c for c, until in self.codes.items() if until <= now]:
                 self._forget(stale)
             code = secrets.token_urlsafe(32)
-            ttl = SETUP_CODE_TTL if setup else CODE_TTL
+            ttl = SETUP_CODE_TTL if setup else TUNNEL_CODE_TTL if tunnel else CODE_TTL
             self.codes[code] = now + ttl
             if setup:
                 self.setup_codes.add(code)
@@ -102,7 +109,7 @@ class Auth:
             self._forget(found)  # single use, whether or not it is still alive
             return now < until
 
-    def exchange(self, code):
+    def exchange(self, code, kind="local"):
         with self.lock:
             now = self.clock()
             if code in self.setup_codes:
@@ -115,6 +122,7 @@ class Auth:
             self._forget(code)
             token = secrets.token_urlsafe(32)
             self.sessions[token] = now, now
+            self.kinds[token] = kind
             return {"token": token, "expires_at": datetime.fromtimestamp(now + 86400, UTC).isoformat()}, 200
 
     def valid(self, token, touch=True):
@@ -126,6 +134,7 @@ class Auth:
                 for t, (born, last) in self.sessions.items()
                 if now - born < 86400 and now - last < 43200
             }
+            self.kinds = {t: k for t, k in self.kinds.items() if t in self.sessions}
             if token not in self.sessions:
                 return False
             born, _ = self.sessions[token]
@@ -133,9 +142,15 @@ class Auth:
                 self.sessions[token] = born, now
             return True
 
+    def login_kind(self, token):
+        """How this session was opened (``"local"``), or None for a session this server does not know."""
+        with self.lock:
+            return self.kinds.get(token) if token in self.sessions else None
+
     def logout(self, token):
         with self.lock:
             self.sessions.pop(token, None)
+            self.kinds.pop(token, None)
 
     def bind_setup(self, token, setup_id):
         """Setup scope only. Core owns the 30 s single-use claim and 10 min idle/run-aware lifetime.

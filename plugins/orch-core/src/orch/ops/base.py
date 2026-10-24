@@ -60,7 +60,7 @@ class Context:
     plan: Callable[[list[tuple[str, str, str, dict[str, Any]]], str | None], None] | None = field(
         default=None, repr=False
     )
-    #: Host mode: registry ops the host does not serve (``init``, ``import.v1``). No other op may reach them, so
+    #: Host mode: registry ops the host does not serve (``import.v1``). No other op may reach them, so
     #: ``apply`` refuses a batch item naming one.
     unserved: frozenset[str] = field(default=frozenset(), repr=False)
     #: Host mode (H6a): ``wait`` looks once per call and raises ``Parked`` instead of sleeping on the worker thread
@@ -70,6 +70,10 @@ class Context:
     #: and **appends nothing**: each event it would sign or append is judged and recorded there instead, for the
     #: signing client to sign and ``human.submit`` to append. ``None`` everywhere else.
     prepare: Any = field(default=None, repr=False)
+    #: Host mode (V3 G7): ``granted -> None | {code, cause, reconnect}``, the hub policy's word on one grant ("paused
+    #: by hub policy"). ``addon.list`` shows a paused add-on as not active, which is what the dashboard reads.
+    #: ``None``: no host.
+    addon_pause: Any = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if self.caps is None:

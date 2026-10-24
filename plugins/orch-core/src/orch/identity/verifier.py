@@ -45,12 +45,12 @@ from typing import Any
 from orch import canon, crypto
 
 from . import members
-from .certs import check_cert, verify_revocation
+from .certs import check_cert, check_rotation, verify_revocation
 from .errors import Refused
 
 __all__ = ["CryptoVerifier"]
 
-_KNOWN = ("workspace.created", "member.added", "device.added", "device.revoked", "restore.revocation")
+_KNOWN = ("workspace.created", "member.added", "device.added", "device.rotated", "device.revoked", "restore.revocation")
 
 
 def _cert_o(cert: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -120,6 +120,14 @@ class CryptoVerifier:
         except TypeError:
             return "unavailable"
 
+    def verify_hub_owner_proof(self, event: Mapping[str, Any], **kw: Any) -> str | None:
+        from orch.hubclient.modelverify import HubModelChecks
+
+        try:
+            return HubModelChecks().verify_hub_owner_proof(event, **kw)
+        except TypeError:
+            return "unavailable"
+
     def genesis_failure(self, event: Mapping[str, Any]) -> str | None:
         """The code of the first failing check of §5.11 for a ``workspace.created`` (``genesis.owner_mismatch``, ...,
         ``genesis.bad_sig``), or ``None`` when all hold. Lets the model give check 6 its own refusal code."""
@@ -158,6 +166,9 @@ class CryptoVerifier:
                 return True
             if etype == "device.added":
                 members.check_device_added(event, given)
+            elif etype == "device.rotated":  # #1097: the new device's certificate and the fresh rotation, both by PK
+                members.check_device_added(event, given)
+                check_rotation(event.get("rotation"), given)
             else:
                 if device_cert is None:
                     return False

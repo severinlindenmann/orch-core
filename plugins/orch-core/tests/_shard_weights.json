@@ -49,7 +49,7 @@
 "tests/host/test_click_cli.py": 1.3,
 "tests/host/test_click_deposit.py": 20.0,
 "tests/host/test_click_log.py": 0.3,
-"tests/host/test_click_only.py": 24.6,
+"tests/host/test_handoff_one_click.py": 6.0,
 "tests/host/test_click_records.py": 26.7,
 "tests/host/test_column_r.py": 2.1,
 "tests/host/test_column_r_sites.py": 0.4,

@@ -142,7 +142,12 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     receipt, receipt_log = _client_receipt(c, ctx, view, tid, task, args)
     if args.get("run"):
         if task["verify"] is None:
-            raise OrchError("invalid.input", f"{tid} has no verify command; add one with task add --verify")
+            raise OrchError(
+                "invalid.input",
+                f"{tid} has no verify command, so --run has nothing to run; close it without --run",
+                hint=f"orch task done {tid}",
+                retryable=True,
+            )
         # F1 "Receipts": never run a command no person approved in the plan and the caller's person did not write
         verify_trust.require(view, tid, verify_trust.caller_person(c), verify_trust.grants(c))
         if ctx.dry_run:

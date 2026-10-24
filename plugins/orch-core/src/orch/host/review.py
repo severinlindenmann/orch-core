@@ -27,6 +27,8 @@ __all__ = [
     "ENVELOPE",
     "GATE_TYPES",
     "LEVEL_MAX",
+    "OWNER_PROOF_LINE",
+    "OWNER_PROOF_TYPES",
     "READER_TYPES",
     "PERSON_AGENT_OPS",
     "events_fit",
@@ -44,11 +46,17 @@ __all__ = [
 
 #: the envelope keys a review payload leaves out (§0.8.1)
 ENVELOPE = frozenset({"v", "id", "type", "actor", "auth", "hash_v", "roster_v", "based_on", "sig"})
+#: #1198 C9: the hub events whose ``owner_proof`` the signer fills after the review (like a grant's ``secret_hash``).
+#: It is not in the review payload or the fingerprint; the review shows a derived line instead.
+OWNER_PROOF_TYPES = frozenset({"hub.joined", "hub.left"})
+OWNER_PROOF_LINE = "signed with your backup key"
 #: the decision types whose ``gate_gen`` is an envelope key of the review: shown on its own line, labelled a host
 #: attestation (v1.5 "Bound hashes"); on any other type an unexpected ``gate_gen`` stays in the payload, so it is shown
 GATE_TYPES = frozenset({"gate.approved", "gate.changes_requested", "verdict.given"})
 _DECISIONS = frozenset({"gate.approved", "gate.changes_requested", "verdict.given", "question.answered"})
-_CERTS = {"member.added": "device_cert", "workspace.created": "device_cert", "device.added": "cert"}
+_CERTS = {
+    "member.added": "device_cert", "workspace.created": "device_cert", "device.added": "cert", "device.rotated": "cert",
+}  # fmt: skip
 _SECTIONS = frozenset({"ticket.updated", "ticket.created", "question.asked"})
 
 
@@ -82,16 +90,17 @@ HOST_PERSON_OPS: dict[str, frozenset[str]] = {
     # B12D: one role's people of a ticket (the sequence engine's last steps; also a plain person op)
     "people.set": frozenset({"people.changed"}),
     # H12c-e (11A.15.10 item 12): the paired phone's device.added, with its own material kind
-    "relay.pair_device": frozenset({"device.added"}),
     # P5: a person's signature over the exact words of one staged share (a log.added note on its ticket)
     "publish.share": frozenset({"log.added"}),
     # V3 C2a (hub contract 9.1): the owner's record that the workspace joined a hub selectively, or left it
     "hub.join": frozenset({"hub.joined"}),
     "hub.mode": frozenset({"hub.joined"}),  # V3 C2b: selective to full, the owner's own signature
     "hub.leave": frozenset({"hub.left"}),
-    "relay.reopen": frozenset({"relay.reopened"}),  # V3 C10 M4
+    "device.mark_exposed": frozenset({"device.exposed"}),  # #1097: written before a key enters convenience custody
+    "device.rotate": frozenset({"device.rotated"}),  # #1097: the new device replaces the old (recovery code)
+    "device.remove": frozenset({"device.removed"}),  # #1198 C15: one click, with lockout guards
 }
-_NOT_PERSON = frozenset({"init", "import.v1"})  # init is host.wsk_create + host.bootstrap; import v1 is direct mode
+_NOT_PERSON = frozenset({"import.v1"})  # import v1 is direct mode
 
 
 def person_op_types(op: str) -> frozenset[str] | None:
@@ -155,7 +164,12 @@ def sha256_cj(value: Any) -> str:
 def payload(event: Mapping[str, Any]) -> dict[str, Any]:
     """The event without the envelope keys: every other key, verbatim."""
     gate = event.get("type") in GATE_TYPES
-    return {k: copy.deepcopy(v) for k, v in event.items() if k not in ENVELOPE and not (gate and k == "gate_gen")}
+    proof = event.get("type") in OWNER_PROOF_TYPES
+    return {
+        k: copy.deepcopy(v)
+        for k, v in event.items()
+        if k not in ENVELOPE and not (gate and k == "gate_gen") and not (proof and k == "owner_proof")
+    }
 
 
 def _cert(event: Mapping[str, Any], field: str) -> dict[str, Any]:
@@ -201,6 +215,8 @@ def derived(event: Mapping[str, Any], material: Mapping[str, Any]) -> dict[str, 
         if not isinstance(statement, str) or not acceptance.matches(dict(event), statement):
             raise ReviewError("the statement is not the one this event signs")
         return {"statement": statement}
+    if typ in OWNER_PROOF_TYPES:
+        return {"owner_proof": OWNER_PROOF_LINE}
     if typ in _CERTS:
         return _cert(event, _CERTS[typ])
     if typ in _DECISIONS:
@@ -229,12 +245,14 @@ def review_digest(material: Mapping[str, Any]) -> str:
 
 def fingerprint_view(event: Mapping[str, Any]) -> dict[str, Any]:
     """The event as the fingerprint covers it: without ``sig``, ``actor.device``, ``auth`` and, for ``grant.issued``,
-    ``secret_hash`` (the fields a signer fills in)."""
+    ``secret_hash`` and, for ``hub.joined`` / ``hub.left``, ``owner_proof`` (the fields a signer fills in)."""
     out = {k: copy.deepcopy(v) for k, v in event.items() if k not in ("sig", "auth")}
     if isinstance(out.get("actor"), dict):
         out["actor"] = {k: v for k, v in out["actor"].items() if k != "device"}
     if out.get("type") == "grant.issued":
         out.pop("secret_hash", None)
+    if out.get("type") in OWNER_PROOF_TYPES:
+        out.pop("owner_proof", None)
     return out
 
 

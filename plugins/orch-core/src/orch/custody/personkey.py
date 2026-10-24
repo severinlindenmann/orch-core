@@ -1,7 +1,7 @@
 """The person key ``PK`` as a pluggable source (orch-v2-host 11A.15.10 item 10; owner decision Q1 = B, 11A.15.16).
 
 ``PK`` is the person's **permanent** identity key: ``person_id = id(PK)``, there is no rotation, and a stolen copy
-stays valid. ``orch init`` derives it from the 24-word recovery code and drops it (core rule C8). Adding a device
+stays valid. ``orch setup`` derives it from the 24-word recovery code and drops it (core rule C8). Adding a device
 (the certificate, the cert challenge or the rejection of §8.4) and revoking one need it again. A
 :class:`PersonKeySource` is what those commands get instead of a key:
 
@@ -15,14 +15,14 @@ stays valid. ``orch init`` derives it from the 24-word recovery code and drops i
   ends, however it ends; ``sign`` after the block is :class:`PersonKeyClosed`.
 
 **``sig_ws_delegation`` is not signed here (JUDGEMENT CALL, H12c-d).** The delegation of a workspace key is signed
-once, by ``orch init``, from the code it has just shown. Adding and revoking devices (R6, revocation) never need it,
+once, by ``orch setup``, from the code it has just shown. Adding and revoking devices (R6, revocation) never need it,
 and a source that cannot sign one cannot be talked into delegating a workspace to an attacker's ``WSK``. This is the
 same set 11A.15.16 fixes for the A' option. A future caller that needs it adds it with its own review.
 
 :class:`RecoveryCodeSource` is the production source under Q1 = B: the code is typed on ``/dev/tty`` (never stdin;
 refused without a terminal, :class:`~orch.custody.base.NoPrompt`, and under ``ORCH_GRANT``, :class:`HumanOnly`)
 **once** for the command, checked by the existing parser (:func:`orch.identity.recovery.check_recovery_code`, the
-BIP-39 checksum), derived exactly as ``orch init`` derives it (:func:`orch.identity.recovery.derive_person_scalar`),
+BIP-39 checksum), derived exactly as ``orch setup`` derives it (:func:`orch.identity.recovery.derive_person_scalar`),
 and matched against the expected person (the workspace owner's pinned ``pk_pub`` or ``person_id``) **before** any
 signature (:class:`PersonMismatch`). Nothing is written to disk; the code and the key are never logged, never in an
 exception text, an exception chain or its frames, or a ``repr``. The terminal is opened first; from then, before the
@@ -73,13 +73,17 @@ __all__ = [
     "PersonMismatch",
     "PublicKeyUnknown",
     "RecoveryCodeSource",
+    "TypedCodeSource",
     "check_granted",
     "check_labels",
     "check_payload",
     "printable_action",
 ]
 
-SIGN_LABELS: tuple[str, ...] = ("sig_device_cert", "sig_cert_challenge", "sig_cert_rejection", "sig_revocation")
+SIGN_LABELS: tuple[str, ...] = (
+    "sig_device_cert", "sig_cert_challenge", "sig_cert_rejection", "sig_revocation", "sig_device_rotate",
+    "sig_hub_owner_proof",
+)  # fmt: skip
 """What a person-key source signs: certificates, cert challenges and rejections (R6) and revocations. Never
 ``sig_ws_delegation`` (see the module docstring)."""
 assert all(L[n] in PERSON_KEY_LABELS for n in SIGN_LABELS)
@@ -229,7 +233,7 @@ def _expected(person_id: object, pk_pub: object) -> tuple[bytes, bytes | None]:
 
 
 def _derive_scalar(text: str) -> int:
-    """The person scalar of a checked code: ``orch init``'s derivation (production scrypt parameters). Tests replace
+    """The person scalar of a checked code: ``orch setup``'s derivation (production scrypt parameters). Tests replace
     it with the low-N seam; nothing in production does."""
     return recovery.derive_person_scalar(text)
 
@@ -298,7 +302,7 @@ def _read_code(r: int, w: int, prompt: str, buf: bytearray) -> bool:
 
 
 def _unlock(typed: bytearray, scalar: bytearray, derive: Callable[[str], int] | None = None) -> Any:
-    """Check ``typed`` with the existing parser, derive the person key as ``orch init`` does, write its 32-byte scalar
+    """Check ``typed`` with the existing parser, derive the person key as ``orch setup`` does, write its 32-byte scalar
     into the caller's ``scalar`` and return the key object. Shared by every source that starts from a code.
 
     **No typed text survives in an exception (Opus F1).** A parser refusal records only its reason inside the
@@ -519,3 +523,67 @@ class RecoveryCodeSource:
     def derive_label_key(self) -> bytes:
         self._key()
         return crypto.hkdf(bytes(self._live[1]), b"", LABEL_KEY_INFO)
+
+
+class TypedCodeSource(RecoveryCodeSource):
+    """The person key from a recovery code the click signer opened from the sealed field (#1198 C10, purpose
+    ``hub.backup_key``), for one proof. The same lifecycle and checks as :class:`RecoveryCodeSource` (the code is
+    parsed and the key derived by the one existing path; the derived person must be ``person_id``/``pk_pub`` before
+    anything is signed; only the granted labels sign; no raw-sign call; one use), but the code arrives as bytes, not as
+    a prompt on ``/dev/tty``. **It takes ownership of ``code`` (a ``bytearray``) and wipes it on entering**, whatever
+    happens; the scalar is wiped on exit. Under ``ORCH_GRANT`` it refuses, like its sibling: an agent never holds PK."""
+
+    __slots__ = ("_code",)
+
+    def __init__(
+        self,
+        code: bytearray,
+        *,
+        labels: Iterable[str],
+        person_id: bytes | None = None,
+        pk_pub: bytes | None = None,
+        action: str = "",
+    ) -> None:
+        try:
+            super().__init__(labels=labels, person_id=person_id, pk_pub=pk_pub, action=action)
+        except BaseException:
+            _zeroise(code)
+            raise
+        self._code: bytearray | None = code
+
+    def __enter__(self) -> TypedCodeSource:
+        typed, self._code = self._code, None
+        scalar = bytearray()
+        opened = False
+        try:
+            if self._state != "new" or typed is None:
+                raise PersonKeyClosed("a recovery code source serves one command; make a new one")
+            self._state = "closed"
+            if os.environ.get("ORCH_GRANT") is not None:
+                raise HumanOnly("the recovery code is never used under ORCH_GRANT: an agent never holds PK")
+            key = _unlock(typed, scalar)
+            pub = crypto.public_bytes(key)
+            if not hmac.compare_digest(crypto.person_id(pub), self._person_id) or (
+                self._pk_pub is not None and not hmac.compare_digest(pub, self._pk_pub)
+            ):
+                key = None
+                raise PersonMismatch(
+                    f"that recovery code is not the one of p_{self._person_id.hex()}; nothing was signed"
+                )
+            self._pk_pub = pub
+            self._live[:] = [key, scalar]
+            self._state = "open"
+            opened = True
+            return self
+        finally:
+            if typed is not None:
+                _zeroise(typed)
+            if not opened:
+                self._live.clear()
+                _zeroise(scalar)
+
+    def __del__(self) -> None:
+        code, self._code = getattr(self, "_code", None), None
+        if code is not None:
+            _zeroise(code)
+        super().__del__()

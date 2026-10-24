@@ -1,1 +1,0 @@
-err relay.pair_closed the pairing does not allow this step now · retry:false · next: look at the offer's state; start a new pairing if it ended · fix: orch host relay pair list

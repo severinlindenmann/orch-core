@@ -4,7 +4,7 @@ usage: orch doctor [--repair]
 who: read · emits: -
 pre: workspace_exists
 args:
-  --repair  do the safe repairs: answer external edits, rebuild the index, drop dead init keys
+  --repair  do the safe repairs: answer external edits, rebuild the index
 errors:
-  not_found (exit 2): run orch init in a workspace | fix: orch describe init
+  not_found (exit 2): run it in a workspace folder (orch setup makes one) | fix: orch help
 out: ok doctor {problems} / next: {next}

@@ -110,8 +110,8 @@ it('speaks the four click routes with POST bodies and keeps reason and wait on a
     [`/api/w/${ws}/click/view`, 'POST', { request_id: 'hr_1' }],
     [`/api/w/${ws}/click/cancel`, 'POST', { request_id: 'hr_1' }],
   ])
-  await expect(api.signClick(ws, 'hr_1', 'sha256:' + 'a'.repeat(64), '  word ')).rejects.toMatchObject({ code: 'rate.limited', retry_after_ms: 4200, reason: 'x' })
-  expect(JSON.parse(String((answers.mock.calls[4][1] as RequestInit).body))).toEqual({ request_id: 'hr_1', view_digest: 'sha256:' + 'a'.repeat(64), word: '  word ' })
+  await expect(api.signClick(ws, 'hr_1', 'sha256:' + 'a'.repeat(64))).rejects.toMatchObject({ code: 'rate.limited', retry_after_ms: 4200, reason: 'x' })
+  expect(JSON.parse(String((answers.mock.calls[4][1] as RequestInit).body))).toEqual({ request_id: 'hr_1', view_digest: 'sha256:' + 'a'.repeat(64) })
 })
 
 it('offers a workspace the click card only when the server lists the click feature', async () => {
@@ -122,9 +122,32 @@ it('offers a workspace the click card only when the server lists the click featu
   expect((await api.getWorkspaces())[0].click).toEqual({ custody: 'convenience', enabled: true, available: false })
 })
 
+it('a workspace list read refreshes the features: a newly enabled add-on shows in the menu without a reload (run 8, 1.7)', async () => {
+  const { setFeatures, hasFeature } = await import('./features')
+  const row = (features: string[]) => ({ id: ws, prefix: 'DEMO', name: 'b', members: [], needs_you: 0, host_state: 'ok', features })
+  setFeatures({ features: ['actions'], workspaces: { [ws]: ['actions'] } })
+  expect(hasFeature('usage', ws)).toBe(false)
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json([row(['actions', 'usage'])])))
+  await api.getWorkspaces()
+  expect(hasFeature('usage', ws)).toBe(true)
+  expect(hasFeature('usage')).toBe(true)
+  setFeatures(null)
+})
+
 it('asks the server where a click request stands (the answer to an unknown outcome)', async () => {
   const answers = vi.fn(async (_url: string) => Response.json({ id: 'hr_1', state: 'bound' }))
   vi.stubGlobal('fetch', answers)
   expect(await api.stateClick(ws, 'hr_1')).toEqual({ id: 'hr_1', state: 'bound' })
   expect(String(answers.mock.calls[0][0])).toBe(`/api/w/${ws}/click/state`)
+})
+
+it('sends a sealed hub backup key with the sign call, and nothing sealed otherwise (#1198 C10)', async () => {
+  const answers = vi.fn(async () => Response.json({ state: 'submitted', duplicate: false }))
+  vi.stubGlobal('fetch', answers)
+  const env = { v: 1 as const, alg: 'P256-HKDF-SHA256-A256GCM' as const, epk: 'A'.repeat(87), ct: 'B'.repeat(363) }
+  const d = 'sha256:' + 'a'.repeat(64)
+  await api.signClick(ws, 'hr_1', d, undefined, { 'hub.backup_key': env })
+  await api.signClick(ws, 'hr_1', d)
+  const bodies = (answers.mock.calls as unknown as [string, RequestInit][]).map((c) => JSON.parse(String(c[1].body)))
+  expect(bodies).toEqual([{ request_id: 'hr_1', view_digest: d, sealed: { 'hub.backup_key': env } }, { request_id: 'hr_1', view_digest: d }])
 })

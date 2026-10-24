@@ -29,7 +29,7 @@ def test_the_closed_lists_are_the_same_in_every_schema():
 def test_a_plain_click_signs_it_and_the_class_is_click():
     assert op_class("settings.set", args={"set": {"icon": PAIR}}) == "click"
     assert op_class("settings.set", args={"set": {"icon": None}}) == "click"
-    assert op_class("settings.set", args={"set": {"icon": PAIR, "models": None}}) == "word"  # the stronger key wins
+    assert op_class("settings.set", args={"set": {"icon": PAIR, "repos": None}}) == "click"  # repos lost its word
 
 
 def test_set_read_and_clear_through_the_host(human, served):

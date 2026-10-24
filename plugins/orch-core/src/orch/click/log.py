@@ -34,6 +34,7 @@ WHAT = frozenset(
         "deposit",  # v1.6: a deposit grant's hand-over to the runner (the outcome code only, never a secret)
         "custody_on",  # §0.8.6 item 3a: the dashboard switched click-to-sign on (the workspace id, never a passphrase)
         "custody_off",  # and off
+        "rotated",  # #1198 C13: this computer got a new device key (the workspace id, never a code or passphrase)
     }
 )
 _SAFE = {
@@ -41,6 +42,7 @@ _SAFE = {
     "request": re.compile(r"hr_[0-7][0-9A-HJKMNP-TV-Z]{25}"),
     "op": re.compile(r"[a-z][a-z_]*(\.[a-z_]+)*"),
     "code": re.compile(r"[a-z][a-z0-9_.]{0,79}"),
+    "moved": re.compile(r"true"),  # #1198 C12: custody_off moved the key under a new passphrase (never the passphrase)
 }
 
 

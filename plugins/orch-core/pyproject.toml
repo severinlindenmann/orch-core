@@ -9,6 +9,8 @@ license-files = ["LICENSE"]
 dependencies = [
     "cryptography>=43",
     "jsonschema>=4.26.0",
+    "packaging>=24",  # lockfile and marker parsing (marketplace spec 15.2-11)
+    "pip>=24",  # installs add-on wheels offline into their own environment (spec 8.2, design G4)
     "pyopenssl>=25",
     "segno>=1.6.6",
 ]
@@ -35,7 +37,6 @@ markers = [
     "needs_os_users: requires root and ORCH_TEST_OS_USERS=1 to exercise a second real OS user",
     "slow: takes more than ~2 s (builds wheels, property sweeps); a quick loop skips it with -m 'not slow'",
     "t2_long: a T2 test with its own longer real-time budget, t2_long(seconds); runs once, on the default cap",
-    "relay_t2: the T2 real-relay tests (11A.10): need ORCH_RELAY_DIR (the pinned orch-relay checkout); run by the relay-t2 CI job only",
 ]
 
 [tool.ruff]

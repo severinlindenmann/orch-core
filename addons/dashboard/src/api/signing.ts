@@ -20,4 +20,4 @@ export interface SignContent {
   cancels?: { gate: string; people: string[]; complete: boolean }[]
   notes?: string[]
 }
-export const methodLabel: Record<SignMethod, string> = { terminal: 'Sign in Terminal', click: 'One click', phone: 'Approve on your phone' }
+export const methodLabel: Record<SignMethod, string> = { terminal: 'Sign in a terminal', click: 'One click', phone: 'Approve on your phone' }

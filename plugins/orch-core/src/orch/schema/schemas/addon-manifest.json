@@ -486,6 +486,26 @@
       },
       "uniqueItems": true
     },
+    "settings": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "schema": {
+          "type": "object",
+          "description": "a closed JSON-Schema subset, checked further in validate() (addon-api.md section 8)"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "title",
+        "schema"
+      ],
+      "description": "addon-api 1.1: the schema of this add-on's settings value"
+    },
     "needs": {
       "type": "array",
       "maxItems": 16,
@@ -538,6 +558,28 @@
       "type": "string",
       "maxLength": 200,
       "description": "empty, or one line (8.1); the first-character rule is checked by validate()"
+    },
+    "runtime": {
+      "type": "object",
+      "description": "orch.addon/3 only (spec 8.1): the one lockfile of the add-on's dependencies. kind picks the rules, lock is a path inside the package (checked in load_manifest). Installed by orch after the owner signs; no package script ever runs.",
+      "properties": {
+        "kind": {
+          "enum": [
+            "python-requirements",
+            "node-package-lock"
+          ]
+        },
+        "lock": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      },
+      "required": [
+        "kind",
+        "lock"
+      ],
+      "additionalProperties": false
     }
   },
   "additionalProperties": false,
@@ -549,6 +591,29 @@
     "entry"
   ],
   "allOf": [
+    {
+      "if": {
+        "properties": {
+          "capabilities": {
+            "contains": {
+              "const": "credential"
+            }
+          }
+        },
+        "required": [
+          "capabilities"
+        ]
+      },
+      "then": {
+        "properties": {
+          "capabilities": {
+            "contains": {
+              "const": "network"
+            }
+          }
+        }
+      }
+    },
     {
       "if": {
         "properties": {
@@ -576,6 +641,11 @@
             {
               "required": [
                 "min_core"
+              ]
+            },
+            {
+              "required": [
+                "runtime"
               ]
             }
           ]

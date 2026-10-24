@@ -37,6 +37,9 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from orch import canon
+from orch.addons.settings_value import KEY as ADDONS_KEY
+
+from .review import OWNER_PROOF_LINE
 
 __all__ = ["DETAILS_ONLY", "SHOWN", "TECHNICAL_KEYS", "PlainUnavailable", "build", "clean_tree", "headline", "text"]
 
@@ -52,7 +55,7 @@ TECHNICAL_KEYS = frozenset(
         "v", "id", "type", "actor", "auth", "hash_v", "roster_v", "based_on", "sig", "seq", "at", "prev", "ws_seq",
         "host_sig",
         # hashes and attestations the details carry
-        "gate_gen", "hash", "policy_hash", "base_rev", "secret_hash",
+        "gate_gen", "hash", "policy_hash", "base_rev", "secret_hash", "owner_proof",
         # C10: the id of the grant.requested a host-actor grant.issued answers; a person never signs it
         "request",
     }
@@ -63,17 +66,19 @@ SHOWN: dict[str, frozenset[str]] = {
     "addon.disabled": frozenset({"name"}),
     "addon.purged": frozenset({"name"}),
     "addon.granted": frozenset(
-        {"name", "version", "package_sha256", "capabilities", "artifact_kinds", "fields", "sections"}
+        {"name", "version", "package_sha256", "capabilities", "artifact_kinds", "fields", "sections", "runtime"}
     ),
     "artifact.added": frozenset({"name", "kind", "label", "ac", "task", "ref", "addon", "bytes", "sha256"}),
     "artifact.replaced": frozenset({"name", "kind", "label", "ac", "task", "replaces", "bytes", "sha256"}),
     "device.added": frozenset({"device", "cert"}),
+    "device.exposed": frozenset({"device", "reason"}),
+    "device.removed": frozenset({"device", "reason"}),
+    "device.rotated": frozenset({"old", "device", "cert", "rotation"}),
     "gate.approved": frozenset({"gate", "source_sha"}),
     "gate.changes_requested": frozenset({"gate", "text"}),
     "verdict.given": frozenset({"outcome", "text", "source_sha"}),
     "hub.joined": frozenset({"hub_id", "hk_root_pub", "mode", "binding_seq", "aliases"}),
     "hub.left": frozenset({"hub_id", "binding_seq"}),
-    "relay.reopened": frozenset({"hub_id"}),
     "grant.issued": frozenset({"grant", "scope", "verbs", "label", "hours", "issued_at", "expires_at"}),
     "grant.revoked": frozenset({"grant", "reason"}),
     "log.added": frozenset({"text"}),
@@ -273,7 +278,7 @@ _GRANT_INFO = frozenset({"label", "scope", "expires_at", "person"})
 def _grant_words(ev: Mapping[str, Any], ctx: _Ctx) -> tuple[str, bool]:
     """Which access an event takes back, in words and by the host's word (``material["grants"]``, labelled "per host,
     not signed" where it is shown):
-    ``("agent access for this Mac's runner, until Sun 00:37", True)`` for the person's own
+    ``("agent access for this computer's runner, until Sun 00:37", True)`` for the person's own
     runner access, ``(.., False)`` for any other own access. The id is never in the words (it is in the technical
     details). Anything that cannot be said distinctly (no host word, a malformed one, an access of another person, no
     end time) raises :class:`PlainUnavailable`: the caller then shows the full review, with the ids."""
@@ -287,7 +292,7 @@ def _grant_words(ev: Mapping[str, Any], ctx: _Ctx) -> tuple[str, bool]:
     if info["person"] != (ev.get("actor") or {}).get("id"):
         raise PlainUnavailable("the access to be taken back is not the signer's own")
     if info["label"] == "runner" and info["scope"] == "workable":
-        return f"agent access for this Mac's runner, until {until}", True
+        return f"agent access for this computer's runner, until {until}", True
     label = f' "{one(info["label"])}"' if info["label"] else ""
     return f"agent access{label} (tickets: {one(info['scope'])}), until {until}", False
 
@@ -324,7 +329,7 @@ def _extend_summary(events: list[Mapping[str, Any]], ctx: _Ctx) -> dict[str, Any
     ]
     # the headline is all the terminal's plain view prints first: it keeps the length and the end; the ids of the new
     # and the replaced access are in the technical details (the full review), never in the plain words
-    head = f"Extend agent access for this Mac's runner, for {span(hours)}" + (
+    head = f"Extend agent access for this computer's runner, for {span(hours)}" + (
         f" (until {until}, your time)" if until else ""
     )
     return {"title": "Extend agent access", "lines": lines, "headline": head}
@@ -468,48 +473,51 @@ def _publish_rows(out: dict[str, Any], value: Any, before: Any, ctx: Any) -> boo
     return True
 
 
-_MODE_WORDS = {
-    "work": "Do the work", "refine": "Write requirements and plan", "fix": "Fix what was sent back",
-    "continue": "Continue", "context": "Read and answer",
-}  # fmt: skip
-_HARNESS_WORDS = {"claude-code": "Claude", "codex": "Codex"}
+def _leaf_word(v: Any) -> str:
+    """A leaf as canonical JSON on one line: strings quoted, ``true``/``false``/``null`` bare, ``{}`` and ``[]``
+    literal, so ``true`` and ``"true"``, ``5`` and ``"5"`` differ and no text can pass for the ``(removed)`` marker."""
+    return one(canon.dumps(v).decode("utf-8"))
 
 
-def _model_word(name: str | None) -> str:
-    from orch.modelchoices import MODEL_LABELS
+def _addons_rows(out: dict[str, Any], value: Any, before: Any, ctx: Any) -> str | None:
+    """``settings.changed`` ``set.addons`` (G6): ONE add-on's settings, one row per leaf (``path = value``), nothing
+    folded, a leaf that goes away shown as removed. The name is the signed one; the host's current values are labelled
+    ``per host, not signed``. The headline when it is plain, else ``None`` (the caller raises: no plain view)."""
+    from orch.addons import settings_value as sv
 
-    return "Harness default" if name is None else MODEL_LABELS[name]
-
-
-def _models_rows(out: dict[str, Any], value: Any, before: Any, ctx: Any) -> bool:
-    """``settings.changed`` ``set.models`` (Model routing): one row per harness and mode, the model in words, ``Harness
-    default`` where none is set. The new value replaces the whole table, so every mode of every harness is listed.
-    ``False`` (the generic row, every byte) when the value is not a plain table of the closed lists."""
-    from orch.modelchoices import MODEL_CHOICES
-
-    def plain(v: Any) -> bool:
-        return isinstance(v, Mapping) and all(
-            h in MODEL_CHOICES
-            and isinstance(per, Mapping)
-            and all(m in _MODE_WORDS and per[m] in MODEL_CHOICES[h] for m in per)
-            for h, per in v.items()
+    if sv.check_changes(value) is not None:
+        return None
+    ((name, new),) = value.items()
+    old = before.get(name) if isinstance(before, Mapping) else None
+    if sv.check_shape(old) is not None:
+        old = None  # not plain data: show nothing of it rather than guess
+    new_leaves = sv.leaves(new) if new is not None else []
+    old_leaves = sv.leaves(old) if old is not None else []
+    now, was = dict(new_leaves), dict(old_leaves)
+    if len(now) != len(new_leaves) or len(was) != len(old_leaves):
+        return None  # two leaves on one path would show one row: no plain view at all
+    if new is None:
+        _row(
+            out,
+            one(name),
+            "(removed: the add-on uses its defaults)",
+            "(set)" if old is not None else None,
+            ctx.note(False),
         )
-
-    if value is not None and not plain(value):
-        return False
-    if before is not None and not plain(before):
-        return False  # the host's current value is not a plain table: the generic row shows every byte
-    new = value or {}
-    old = before if plain(before) else {}
-    for harness, hword in _HARNESS_WORDS.items():
-        for mode, mword in _MODE_WORDS.items():
-            after = new.get(harness, {}).get(mode)
-            was = old.get(harness, {}).get(mode)
-            _row(out, f"{hword}: {mword}", _model_word(after), _model_word(was), ctx.note(False))
+    for path in sorted(set(now) | set(was)):
+        label = f"{name}: {path}" if path else name
+        _row(
+            out,
+            label,
+            _leaf_word(now[path]) if path in now else "(removed)",
+            _leaf_word(was[path]) if path in was else None,
+            ctx.note(False),
+        )
     out.setdefault("notes", []).append(
-        "Start agent uses these models for new agents. You still see the model before each start."
+        "Stored in the workspace as plain text: people and agents who can read the workspace can see them. "
+        f"{one(name)} gets exactly these values when orch runs it; keys go through 'orch addon login', not here."
     )
-    return True
+    return f"Settings of {one(name)} (add-on)"
 
 
 def _icon_word(v: Any) -> str | None:
@@ -923,6 +931,7 @@ class _Ctx:
 
     def __init__(self, verified: bool) -> None:
         self.verified = verified
+        self.removed_device: Any = None  # material["removed_device"] (#1198 C15): whose device, per host, not signed
         self.grants: Any = None  # material["grants"]: the host's word about each access taken back (not signed)
         self.taken = 0  # how many accesses the request takes back, and how many rows were made so far
         self.rows = 0
@@ -1025,7 +1034,11 @@ def _question(material: Mapping[str, Any], events: list[Mapping[str, Any]], tick
     ev = events[0]
     _check_keys("question.answered", ev, SHOWN["question.answered"], TECHNICAL_KEYS)
     q = material.get("question") or {}
-    _check_keys("question keys", q, frozenset({"id", "text", "why", "options", "recommended", "to", "blocking"}))
+    # #1123 A: `kind` is the one new key rendered here (choice/text read as before); details, allow_other and the new
+    # option keys stay unknown, so they fall back to the full review until B2 renders them.
+    _check_keys(
+        "question keys", q, frozenset({"id", "text", "kind", "why", "options", "recommended", "to", "blocking"})
+    )
     for o in q.get("options") or []:
         _check_keys("question option keys", o, frozenset({"key", "label", "cost"}))
     keys = [_s(o.get("key")) for o in q.get("options") or []]
@@ -1036,8 +1049,8 @@ def _question(material: Mapping[str, Any], events: list[Mapping[str, Any]], tick
     answer = opts.get(_s(picked), _s(picked)) if picked else "your own words"
     out["headline"] = f"Answer “{_line1(q.get('text'), 60)}” on {_ref(ticket)} with {answer}"
     out["sections"] = [{"id": "question", "title": "Question", "text": _s(q.get("text", ""))}]
-    if q.get("why"):  # the question hash binds the text and the options, not this: the host's word
-        out["sections"].append({"id": "why", "title": "Why it was asked (per host, not signed)", "text": _s(q["why"])})
+    if q.get("why"):  # bound by the question hash (#1123, spec)
+        out["sections"].append({"id": "why", "title": "Why it was asked", "text": _s(q["why"])})
     if ev.get("text"):
         out["sections"].append(
             {"id": "answer", "title": "Your note" if picked else "Your answer", "text": _s(ev["text"])}
@@ -1065,8 +1078,8 @@ def _question(material: Mapping[str, Any], events: list[Mapping[str, Any]], tick
             f"option {_s(o.get('key'))}",
             _s(o.get("label")) + (f" (cost {_s(o['cost'])})" if o.get("cost") else ""),
         )
-    # who it is addressed to, whether it blocks and which option is recommended are the host's word: the question hash
-    # binds none of them. Said in plain words, each row labelled "(per host)" and listed after the signed rows.
+    # who it is addressed to and whether it blocks are routing, the host's word: the question hash does not bind them
+    # (labelled "(per host)"). The recommended option IS bound (#1123, spec), so its row has no such label.
     out["fields_title"] = "About this question"  # facts of the question, not changes: no "- ->" before values
     for k, label in (("to", "addressed to"), ("blocking", "blocks the ticket"), ("recommended", "recommended option")):
         if k in q:
@@ -1079,7 +1092,7 @@ def _question(material: Mapping[str, Any], events: list[Mapping[str, Any]], tick
                 words = opts.get(_s(value), _s(value))
             else:
                 words = _s(value)
-            _row(out, f"{label} (per host)", words)  # the host's word: the question hash binds none of these
+            _row(out, label if k == "recommended" else f"{label} (per host)", words)
 
 
 # --- everything else ------------------------------------------------------------------------------------------------
@@ -1098,6 +1111,7 @@ def _payload(
     ref = _ref(ticket)
     heads: list[str] = []
     ctx.grants = material.get("grants")
+    ctx.removed_device = material.get("removed_device")
     taken = [_grant_words(ev, ctx)[0] for ev in events if ev.get("type") == "grant.revoked"]
     ctx.taken = len(taken)
     if len(set(taken)) != len(taken):  # two accesses that read alike are never shown as one
@@ -1108,6 +1122,35 @@ def _payload(
             raise PlainUnavailable(f"the plain view does not know the event type {typ}")
         _check_keys(typ, ev, SHOWN[typ], TECHNICAL_KEYS)
         heads.append(_event(typ, ev, ref, out, before, texts, ctx))
+    market = material.get("market")
+    if isinstance(market, Mapping) and isinstance(market.get("publisher"), Mapping):  # V3 G3: the host's word, labelled
+        tofu = {
+            "new": "first use of this publisher key",
+            "known": "same publisher as before",
+            "pinned": "publisher key pinned by your hub",
+        }.get(_s(market["publisher"].get("tofu")), "unsigned")
+        warn = ""  # one click has no typed word: what the person must not miss sits in the plain note itself
+        if market.get("stale") is True:
+            warn += " STALE: the marketplace index is past its expiry (per host, not signed)."
+        if market.get("class") == "dev-folder":
+            warn += " DEV: a local folder, not a marketplace package (per host, not signed)."
+        out.setdefault("notes", []).append(
+            f"Where it comes from (per host, not signed): {_s(market.get('url'))}, {tofu}. "
+            "A key shows the same publisher as last time, not who they are." + warn
+        )
+    deps = material.get("deps")
+    if deps is not None:
+        _row(out, "packages (listed by this computer from the lockfile; covered by the digest)", _deps_words(deps))
+        diff = deps.get("diff") if isinstance(deps, Mapping) else None
+        if isinstance(diff, Mapping) and isinstance(diff.get("lines"), list):
+            if len(diff["lines"]) > 1000:  # too long for the short view: the full review shows every line
+                raise PlainUnavailable("the plain view does not show this many dependency changes")
+            _row(
+                out,
+                "dependency changes (host-derived, not signed)",
+                ("WIDENED: " if diff.get("widened") is True else "not widened: ")
+                + "; ".join(one(x) for x in diff["lines"]),
+            )
     issued = [ev.get("grant") for ev in events if ev.get("type") == "grant.issued"]
     revoked = [ev.get("grant") for ev in events if ev.get("type") == "grant.revoked"]
     if issued and revoked:  # an Extend: the access it replaces must be another one than the new access
@@ -1205,12 +1248,17 @@ def _event(
             _row(out, "reason", ev["reason"])
         return "Take back agent access"  # signed words only: which access is in the labelled row (the host's word)
     if typ == "settings.changed":
+        if ADDONS_KEY in (ev.get("set") or {}):
+            if len(ev["set"]) != 1:
+                raise PlainUnavailable("add-on settings are signed on their own")
+            head = _addons_rows(out, ev["set"][ADDONS_KEY], before.get(ADDONS_KEY), ctx)
+            if head is None:
+                raise PlainUnavailable("the add-on settings are not plain data")
+            return head
         for key, value in sorted((ev.get("set") or {}).items()):
             if key == "repos" and _repo_rows(out, value, before.get(key), ctx):
                 continue
             if key == "publish" and _publish_rows(out, value, before.get(key), ctx):
-                continue
-            if key == "models" and _models_rows(out, value, before.get(key), ctx):
                 continue
             if key == "icon" and _icon_rows(out, value, before.get(key), ctx):
                 continue
@@ -1229,6 +1277,7 @@ def _event(
         _row(out, "hub key fingerprint", _fp(ev.get("hk_root_pub")))
         _row(out, "mode", mode)
         _row(out, "binding", ev.get("binding_seq"))
+        _row(out, "owner proof", OWNER_PROOF_LINE)
         aliases = ev.get("aliases") if isinstance(ev.get("aliases"), list) else []
         for a in aliases:
             if not isinstance(a, dict) or set(a) != {"person_id", "user_id"}:
@@ -1239,9 +1288,8 @@ def _event(
                 "Full: the hub will be able to read everything in this workspace, restricted tickets too. It becomes "
                 "a member of the workspace and gets the workspace key (sealed to the hub's own key). Leaving later "
                 "starts a new key the hub never gets, but it cannot take back what the hub already read. Only you can"
-                " sign this, with your own key at this terminal. Your phones' direct pairing ends: from then on the hub"
-                " is the only path to this workspace, and no direct connection is accepted. Leaving the hub does not"
-                " bring the direct path back; only orch relay reopen does, and phones must be paired again."
+                " sign this, with your own key at this terminal."
+                " The hub is the only path to this workspace for phones and publishing."
             )
             return f"Join hub {hub} in full mode: the hub will be able to read everything in this workspace"
         out.setdefault("notes", []).append(
@@ -1252,20 +1300,13 @@ def _event(
     if typ == "hub.left":
         _row(out, "hub", ev.get("hub_id"))
         _row(out, "binding", ev.get("binding_seq"))
+        _row(out, "owner proof", OWNER_PROOF_LINE)
         out.setdefault("notes", []).append(
             "The workspace tells the hub and publish that it is no longer bound. This does not take back what the "
             "hub already read. If the hub was in full mode, the workspace key is replaced by a new one that the hub "
             "never gets."
         )
         return f"Leave hub {_short(ev.get('hub_id'))}"
-    if typ == "relay.reopened":  # V3 C10 M4
-        _row(out, "hub that was left", ev.get("hub_id"))
-        out.setdefault("notes", []).append(
-            "The direct relay path of this workspace opens again. Phones that were paired before are not members any "
-            "more: they must be paired again. Anyone who pairs through the relay again can reach this workspace "
-            "without the hub."
-        )
-        return "Open the direct relay path of this workspace again"
     if typ == "people.changed":
         role = _s(ev.get("role"))
         add, remove = ev.get("add") or [], ev.get("remove") or []
@@ -1318,6 +1359,37 @@ def _event(
         _row(out, "device", ev.get("device"))
         _cert_rows(out, "certificate", ev.get("cert"))
         return "Add a paired device to your devices"
+    if typ == "device.removed":  # #1198 C15: one click; the lockout guards are the host's and the signer's
+        _row(out, "device", ev.get("device"))
+        held = ctx.removed_device
+        if isinstance(held, Mapping) and held.get("device") == ev.get("device"):
+            _row(out, "belongs to (per host, not signed)", _s(held.get("holder")))
+        if ev.get("reason") is not None:
+            _row(out, "reason", ev.get("reason"))
+        out.setdefault("notes", []).append(
+            "This device can no longer sign for this workspace, and the change stays in its log. To use that phone or "
+            "computer again, pair it again as a new device."
+        )
+        return "Remove a device from this workspace"
+    if typ == "device.exposed":  # #1097: the mark written before a key enters one-click custody
+        _row(out, "device", ev.get("device"))
+        _row(out, "reason", ev.get("reason"))
+        out.setdefault("notes", []).append(
+            "This is recorded in the workspace log for good: a program running as you may keep a copy of this key. "
+            "From now on it cannot start full hub mode or leave a hub on its own; a new key (your recovery code) "
+            "clears that. This only takes authority away from the key."
+        )
+        return "Record that your device key was in one-click custody"
+    if typ == "device.rotated":  # #1097: the guided rotation, signed by the new key
+        _row(out, "old device", ev.get("old"))
+        _row(out, "new device", ev.get("device"))
+        _cert_rows(out, "certificate", ev.get("cert"))
+        _row(out, "recovery key statement", _fp(ev.get("rotation")))
+        out.setdefault("notes", []).append(
+            "The old key stops signing in every mode, also while a hub is down. The new key is signed by your "
+            "recovery key for this workspace only. Nothing is re-shared with a hub."
+        )
+        return "Replace your device key with a new one"
     if typ == "question.asked":
         out.setdefault("sections", []).append({"id": "question", "title": "Question", "text": _s(ev.get("question"))})
         _row(out, "question id", ev.get("qid"))
@@ -1332,6 +1404,8 @@ _CAPABILITY_WORDS = {
     "pty": "open terminals on this computer, as you",
     "network": "use the internet",
     "git_push": "push your code to remote repositories",
+    "choose_model": "choose the model for agent starts (you still see it before each start)",
+    "credential": "get the key you store for this add-on with 'orch addon login' and send it over the internet",
 }
 _ADDON_NAME = re.compile(r"[a-z][a-z0-9_-]{0,63}")
 _VERSION = re.compile(r"[0-9][0-9A-Za-z.+-]{0,31}")
@@ -1362,14 +1436,8 @@ EXPLORER_ROW = (
 
 def _is_builtin_explorer(ev: Mapping[str, Any]) -> bool:
     from orch.addons import builtin
-    from orch.addons.package import MANIFEST_FILE, package_digest
 
-    try:
-        return ev.get("name") == "explorer" and ev.get("package_sha256") == package_digest(
-            {MANIFEST_FILE: builtin.manifest_bytes("explorer")}
-        )
-    except (ValueError, OSError):
-        return False
+    return builtin.is_builtin_package(ev, "explorer")
 
 
 def _addon(typ: str, ev: Mapping[str, Any], out: dict[str, Any]) -> str:
@@ -1386,7 +1454,7 @@ def _addon(typ: str, ev: Mapping[str, Any], out: dict[str, Any]) -> str:
         return f"Purge the add-on {name}"
     version = ev.get("version")
     words = _capability_words(ev.get("capabilities"))
-    declares = any(ev.get(k) not in (None, [], {}) for k in ("fields", "sections", "artifact_kinds"))
+    declares = any(ev.get(k) not in (None, [], {}) for k in ("fields", "sections", "artifact_kinds", "runtime"))
     if named and words is not None and not declares and isinstance(version, str) and _VERSION.fullmatch(version):
         _row(out, "add-on", name)
         _row(out, "version", version)
@@ -1406,7 +1474,53 @@ def _addon(typ: str, ev: Mapping[str, Any], out: dict[str, Any]) -> str:
     for k in ("capabilities", "artifact_kinds", "fields", "sections"):
         if ev.get(k) is not None:
             _row(out, k.replace("_", " "), ev[k])
+    if ev.get("runtime") is not None:
+        runtime = ev["runtime"]
+        _row(out, "dependencies", runtime)
+        out.setdefault("notes", []).append(_runtime_words(runtime))
     return f"Grant the add-on {name}"
+
+
+_DEP_NOTES = {
+    None: "", "compiled": " (compiled code)", "other_platform": " (not on this computer)",
+    "dev": " (development, not installed)",
+}  # fmt: skip
+
+
+def _deps_words(deps: Any) -> str:
+    """``material["deps"]`` (the host's list of the packages an add-on installs, checked by the signer) as one row:
+    every package, in lockfile order. A shape this view does not know is the full review."""
+    rows = deps.get("rows") if isinstance(deps, Mapping) else None
+    if (
+        not isinstance(rows, list)
+        or len(rows) > 1000
+        or not all(
+            isinstance(r, Mapping) and r.get("note") in _DEP_NOTES and isinstance(r.get("name"), str) for r in rows
+        )
+    ):
+        raise PlainUnavailable("the plain view does not know these packages")
+    return "; ".join(f"{one(r['name'])} {one(r.get('version'))}{_DEP_NOTES[r['note']]}" for r in rows)
+
+
+_RUNTIME_KINDS = {"python-requirements": "Python", "node-package-lock": "Node"}
+
+
+def _runtime_words(runtime: Any) -> str:
+    """V3 G4 (D6): the signed ``runtime`` of an ``addon.granted`` in words; any other shape is the full review."""
+    if (
+        not isinstance(runtime, Mapping)
+        or set(runtime) != {"kind", "lock", "packages"}
+        or runtime["kind"] not in _RUNTIME_KINDS
+        or not isinstance(runtime["lock"], str)
+        or type(runtime["packages"]) is not int
+        or runtime["packages"] < 1
+    ):
+        raise PlainUnavailable("the plain view does not know this runtime")
+    n = runtime["packages"]
+    return (
+        f"Also installs {n} {_RUNTIME_KINDS[runtime['kind']]} package{'' if n == 1 else 's'} listed in "
+        f"{one(runtime['lock'])} after you sign; no package scripts run."
+    )
 
 
 def _cert_rows(out: dict[str, Any], label: str, cert: Any) -> None:

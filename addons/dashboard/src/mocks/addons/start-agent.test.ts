@@ -261,14 +261,12 @@ describe('core computes what starts (the addon cannot spoof it)', () => {
 })
 
 describe('the launch is structured and checked by core', () => {
-  it('launchSpec refuses a ticket key, place or model outside the allowed forms; the prompt is one argv element', async () => {
+  it('launchSpec refuses a ticket key or place outside the allowed forms; the prompt is one argv element', async () => {
     const { launchSpec } = await import('@/mocks/sessions')
     const ok = { ticket: 'DEMO-0044', mode: 'work', harness: 'claude-code', where: 'background' } as const
-    expect(launchSpec(ok, {}).argv.at(-1)).toBe('/orch:work DEMO-0044')
-    expect(() => launchSpec({ ...ok, ticket: 'DEMO-0044; id' }, {})).toThrow()
-    expect(() => launchSpec({ ...ok, where: 'x$(id)' as never }, {})).toThrow()
-    expect(() => launchSpec(ok, { model: '-x' })).toThrow()
-    expect(() => launchSpec(ok, { subagentModel: 'a b' })).toThrow()
+    expect(launchSpec(ok).argv.at(-1)).toBe('/orch:work DEMO-0044')
+    expect(() => launchSpec({ ...ok, ticket: 'DEMO-0044; id' })).toThrow()
+    expect(() => launchSpec({ ...ok, where: 'x$(id)' as never })).toThrow()
   })
 })
 

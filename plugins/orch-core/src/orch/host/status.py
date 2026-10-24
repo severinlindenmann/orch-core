@@ -95,29 +95,6 @@ def _here(env: Mapping[str, str], state: Path) -> dict[str, Any] | None:
     return {"root": str(root), "mode": "host", "workspace_id": target.workspace_id, "socket": str(target.socket)}
 
 
-def _relay(state: Path, wid: str, host_uid: int) -> dict[str, Any] | None:
-    """The relay part of a row (R5): ``None`` for a workspace without a relay directory."""
-    from . import relaylink
-
-    if not os.path.lexists(relaylink.relay_dir(state, wid)):
-        return None
-    try:
-        linked = os.path.lexists(relaylink.link_path(state, wid))
-        blocker = relaylink.start_blocker(state, wid, host_uid)
-    except Exception as exc:  # noqa: BLE001 - reported, never the reason the status fails
-        return {"error": type(exc).__name__}
-    try:
-        outbox = sum(1 for n in os.listdir(state / "hosts" / wid / "outbox") if len(n) == 25 and n.endswith(".json"))
-    except FileNotFoundError:
-        outbox = 0
-    except OSError:
-        outbox = None
-    from .relayr4 import ledger_at
-
-    ledger = ledger_at(state, wid, host_uid)
-    return {"linked": linked, "blocker": blocker, "outbox_pending": outbox, "held": ledger["held"], "ledger": ledger}
-
-
 def report(state: Path, env: Mapping[str, str], control: Path) -> dict[str, Any]:
     from orch import hostclient
 
@@ -139,9 +116,8 @@ def report(state: Path, env: Mapping[str, str], control: Path) -> dict[str, Any]
             {"what": f"the registry is unreadable: {exc.message}", "fix": f"look at {registry_path(state)}"}
         )
     try:
-        flags = convenience.read(state, uid).get("workspaces") or {}
+        convenience.read(state, uid)  # only to report an unreadable flag file
     except HostError as exc:
-        flags = {}
         problems.append(
             {"what": f"the click-to-sign flags are unreadable: {exc.message}", "fix": "orch host convenience show"}
         )
@@ -152,7 +128,6 @@ def report(state: Path, env: Mapping[str, str], control: Path) -> dict[str, Any]
         host_uid = entry.get("host_uid") if type(entry.get("host_uid")) is int else uid
         sock = hostclient.workspace_socket(env, state, host_uid, wid)
         live = served.get(wid)
-        flag = flags.get(wid)
         row = {
             "workspace_id": wid,
             "prefix": entry.get("prefix"),
@@ -161,28 +136,13 @@ def report(state: Path, env: Mapping[str, str], control: Path) -> dict[str, Any]
             "socket": str(sock),
             "socket_answers": _socket_answers(sock, host_uid, wid) if host["answers"] else False,
             "person": ((entry.get("peers") or {}).get(str(uid)) or {}).get("person"),
-            "click_to_sign": bool(isinstance(flag, dict) and flag.get("enabled") is True),
+            "click_to_sign": convenience.enabled(state, wid, host_uid),
         }
+        idle = convenience.idle_off(state, wid, host_uid)  # #1198 C17: it switched itself off after this many hours
+        if idle is not None:
+            row["click_idle_off_hours"] = idle
         if live and isinstance(live.get("sandbox"), bool):  # §11A.17.2: only from a dev host
             row["sandbox"] = live["sandbox"]
-        relay = _relay(state, wid, host_uid)
-        if relay is not None:
-            row["relay"] = relay
-            from .relayr4 import held_attention
-
-            note = held_attention(str(entry.get("prefix")), relay.get("held") or [], relay.get("ledger"))
-            if note is not None:  # R4 (11A.9): held evidence the owner must publish (interim for #572)
-                problems.append(note)
-            why = relay.get("blocker") or relay.get("error")
-            if relay.get("linked") and why and why != "stopped":
-                problems.append(
-                    {
-                        "what": f"{entry.get('prefix')}: relay-linked, but its relay worker cannot start: {why}",
-                        "fix": "nothing to do until R6 lands (orch-v2-host §11A.1)"
-                        if str(why).startswith("r6_not_ready")
-                        else "orch host relay start --workspace " + wid,
-                    }
-                )
         rows.append(row)
         if len(str(sock).encode()) > SOCKET_PATH_MAX:
             problems.append(
@@ -277,12 +237,6 @@ def render(rep: Mapping[str, Any]) -> str:
             + ({True: " sandbox", False: " not sandbox"}[w["sandbox"]] if "sandbox" in w else "")
         )
         lines.append(f"  root {w['root']}")
-        if "relay" in w:
-            r = w["relay"]
-            lines.append(
-                f"  relay linked={_yes(r.get('linked'))} worker={'may start' if not r.get('blocker') else r['blocker']}"
-                f" outbox={r.get('outbox_pending')}" + (f" held_evidence={len(r['held'])}" if r.get("held") else "")
-            )
     here = rep["here"]
     if here is None:
         lines.append("here: not in a workspace")

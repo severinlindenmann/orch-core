@@ -31,7 +31,6 @@ def base(code="human.click_refused", **extra):
         ("host.restarting", "retryable", True),
         ("rate.limited", "retry_after_ms", 0),
         ("rate.limited", "retry_after_ms", 3_600_000),
-        ("human.click_refused", "why", "update_orch"),
         ("human.click_refused", "request_id", RID),
         ("human.click_refused", "request_id", RID[3:]),
         ("intent.done", "signed_at", "2026-10-15T12:00:00Z"),
@@ -44,8 +43,6 @@ def base(code="human.click_refused", **extra):
         ("records.push_failed", "commit", SHA256),
         ("records.push_failed", "message_hidden", True),
         ("intent.failed", "reason", "human.request_state"),
-        ("intent.ended", "state", "cancelled"),
-        ("intent.ended", "state", "expired"),
         ("intent.done", "state", "submitted"),
         ("intent.failed", "state", "submitted"),
     ]
@@ -109,7 +106,8 @@ def test_the_whole_allowed_shape_passes_unchanged():
         ("host.unavailable", "reason", "terminal_only"),  # a code without a reason set
         ("intent.failed", "reason", "Not A Code"),
         ("intent.failed", "reason", ["x"]),
-        ("intent.ended", "state", "submitted"),  # state: only the closed set of its code
+        ("intent.done", "state", "cancelled"),  # state: only the closed set of its code
+        ("intent.ended", "state", "cancelled"),  # no longer a code of this server (#794): no state
         ("intent.done", "state", "/tmp/x"),
         ("host.unavailable", "state", "submitted"),
     ],
@@ -170,16 +168,13 @@ def test_a_non_dict_host_error_answers_internal():
 
 # ---- the server's own errors keep what the page reads ---------------------------------------------------------------
 def test_the_servers_own_errors_pass_whole():
-    from orch_dashboard.click import UPDATE_ORCH, refusal_check
+    from orch_dashboard.click import refusal_check
     from orch_dashboard.click_signer import lost_sign
     from orch_dashboard.errors import fail
     from orch_dashboard.handoff import done_error
 
     assert body(refusal_check("x").error)[1]["error"]["reason"] == "check_failed"
     assert body(lost_sign().error)[1]["error"]["reason"] == "uncertain"
-    grant = {"code": "human.click_refused", "message": UPDATE_ORCH, "retryable": False}
-    got = body({**grant, "reason": "terminal_only", "why": "update_orch"})[1]["error"]
-    assert (got["reason"], got["why"], got["message"]) == ("terminal_only", "update_orch", UPDATE_ORCH)
     done = done_error(
         {"request": {"submitted_at": "2026-10-15T12:00:00Z"}, "op": "answer", "material": {"review": ["a"]}},
         {"seq": 3},
@@ -291,7 +286,7 @@ def test_l2_the_terminal_end_frame_checks_code_and_retry_after():
     "code,key,value",
     [
         ("host.busy", "summary", "A similar thing was signed"),
-        ("intent.ended", "summary", "[]"),
+        ("intent.failed", "summary", "[]"),
         ("host.busy", "signed_at", "2026-10-15T12:00:00Z"),
         ("host.busy", "op", "answer"),
         ("host.busy", "request_id", RID),

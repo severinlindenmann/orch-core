@@ -36,9 +36,9 @@ export function TerminalStep({ ws, request, children, onStatus }: { ws: string; 
   }
   return <div className="space-y-4">
     {children}
-    <p>The Terminal shows what you are signing; check it matches this screen.</p>
-    <p className="text-text-muted">Finish on your computer: open Terminal on the machine that runs this workspace. This dashboard is not where you sign: it never sees your passphrase or your key.</p>
-    <h3 className="font-semibold">Copy this command into Terminal</h3>
+    <p>The terminal shows what you are signing; check it matches this screen.</p>
+    <p className="text-text-muted">Finish on your computer: open a terminal on the computer that runs this workspace. This dashboard is not where you sign: it never sees your passphrase or your key.</p>
+    <h3 className="font-semibold">Copy this command into the terminal</h3>
     {command ? <ExactCommandLine command={command} testId="hub-command" /> : error ? <div role="alert"><p className="text-danger">{error}</p><Action id="hub-command-retry" onClick={() => setRetry(n => n + 1)}>Try again</Action></div> : <p role="status">Preparing command…</p>}
     <details><summary data-testid="hub-technical-details" className="cursor-pointer text-text-muted">Technical details</summary><div className="mt-2 space-y-2 break-all"><p>Workspace: <Raw>{ws}</Raw></p><Raw>{JSON.stringify(request, null, 2)}</Raw></div></details>
     {command && <Action id="hub-ran-it" disabled={checking} onClick={() => void check()}>{checking ? 'Checking…' : 'I ran it'}</Action>}

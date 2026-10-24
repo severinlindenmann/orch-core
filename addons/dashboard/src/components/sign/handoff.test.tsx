@@ -32,8 +32,8 @@ describe('the hand-off dialog (real host)', () => {
     expect(within(dialog).getByTestId('handoff-command')).toHaveTextContent(`orch sign ${CODE}`)
     expect(within(dialog).getByTestId('handoff-fingerprint')).toHaveTextContent(request.fingerprint)
     expect(within(dialog).getByTestId('handoff-fingerprint')).toBeVisible()
-    expect(dialog).toHaveTextContent('Check that this matches the fingerprint in your terminal')
-    expect(dialog).toHaveTextContent(/This dashboard is not where you sign/)
+    expect(dialog).toHaveTextContent('matches the one in the terminal')
+    expect(dialog).toHaveTextContent(/This page never sees your passphrase or your key/)
     expect(dialog).toHaveTextContent('Preview. Your terminal shows what you sign.')
     expect(dialog).toHaveTextContent('Content hash')
     // Nothing in this dialog signs: no passphrase field, no Touch ID wording, no signing call.
@@ -120,10 +120,8 @@ describe('the hand-off dialog (real host)', () => {
     const request = fakeRequest({ id: 'hr_' + '0'.repeat(25) + '9' })
     s.prepare.mockResolvedValue(request)
     s.get.mockResolvedValueOnce(state(request)).mockResolvedValue(state(request, { state: 'submitted', event_ids: [request.events[0].id as string], seq: 9 }))
-    await mount(PLAN)
-    const done = await screen.findByText(/is in the ticket's log/, {}, { timeout: 9000 })
-    expect(done).toBeInTheDocument()
-    expect(screen.getByText('Signed')).toBeInTheDocument()
+    const { onClose } = await mount(PLAN)
+    await waitFor(() => expect(onClose).toHaveBeenCalled(), { timeout: 9000 }) // the one toast says it; the review closes
     expect(s.get).toHaveBeenCalledWith(expect.any(String), request.id)
     expect(s.prepare).toHaveBeenCalledTimes(1) // never prepares again on its own
     expect(s.cancel).not.toHaveBeenCalledWith(expect.any(String), request.id) // a signed request is never cancelled
@@ -155,10 +153,10 @@ describe('the hand-off dialog (real host)', () => {
 
   it('a retry that finds the request already signed ends in Signed, with no second prepare', async () => {
     s.prepare.mockRejectedValueOnce(refusal('outcome.unknown', 503)).mockResolvedValue({ ...fakeRequest(), state: 'submitted' })
-    const { user } = await mount(PLAN)
+    const { user, onClose } = await mount(PLAN)
     const dialog = await screen.findByRole('dialog', {}, T)
     await user.click(await within(dialog).findByRole('button', { name: 'Try again' }, T))
-    expect(await within(dialog).findByText('Signed', {}, T)).toBeInTheDocument()
+    await waitFor(() => expect(onClose).toHaveBeenCalled(), T)
     expect(s.prepare).toHaveBeenCalledTimes(2)
   })
 
@@ -220,8 +218,8 @@ describe('the hand-off dialog (real host)', () => {
     s.prepare.mockResolvedValue(request)
     for (let i = 0; i < 5; i++) s.get.mockRejectedValueOnce(new ApiError(503, { code: 'lock.busy', message: 'busy', retryable: true }, 9))
     s.get.mockResolvedValue(state(request, { state: 'submitted', seq: 8 }))
-    await mount(PLAN)
-    expect(await screen.findByText('Signed', {}, { timeout: 18000 })).toBeInTheDocument()
+    const { onClose } = await mount(PLAN)
+    await waitFor(() => expect(onClose).toHaveBeenCalled(), { timeout: 18000 })
     expect(s.prepare).toHaveBeenCalledTimes(1)
     expect(s.get.mock.calls.length).toBeGreaterThanOrEqual(6)
   }, 22000)

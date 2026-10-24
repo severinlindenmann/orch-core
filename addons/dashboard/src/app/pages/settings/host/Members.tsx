@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
-import { HelpCircle, Trash2, UserPlus } from 'lucide-react'
+import { UserPlus } from 'lucide-react'
 import { useRef, useState } from 'react'
-import { MAX_CERT_BYTES, MAX_KEY_FILE_BYTES, PUBLIC_KEY, canAddRole, canChangeRoles, canRemoveMember, certProblem, SCOPE_HELP, keyText, type RosterMember } from '@/api/settings'
+import { MAX_CERT_BYTES, MAX_KEY_FILE_BYTES, PUBLIC_KEY, canAddRole, canChangeRoles, canRemoveMember, certProblem, deviceBelow, deviceLine, keyText, rightsOf, type RosterMember } from '@/api/settings'
 import { hasFeature } from '@/api/features'
 import type { Role, Workspace } from '@/api/types'
 import { LoadFailed } from '@/components/LoadFailed'
@@ -10,8 +10,6 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
 import { queries } from '@/api/queries'
 import { PersonAvatar } from '../../ticket/shared'
@@ -20,33 +18,38 @@ import { useViewerPerson, useViewerRole } from './useViewerRole'
 import { useSettingsHandoff } from './useSettingsHandoff'
 
 const ROLES: Role[] = ['owner', 'maintainer', 'member', 'viewer']
+const ROLE_LABEL: Record<Role, string> = { owner: 'Owner', maintainer: 'Maintainer', member: 'Member', viewer: 'Viewer' }
 const ROLE_HELP: Record<Role, string> = {
-  owner: 'Everything: settings, roles, gate policies, grants, approvals the policy allows.',
-  maintainer: 'Creates and moves tickets, issues grants, adds and removes members and viewers, approves gates when the policy allows.',
-  member: 'Creates tickets, comments, answers questions addressed to them, grants their own agents the tickets they may work on.',
-  viewer: 'Reads everything they can see. Changes nothing.',
+  owner: 'Everything, including settings and people',
+  maintainer: 'Manages tickets, agent access and members',
+  member: 'Creates tickets and gives their own agents access',
+  viewer: 'Can read, cannot change',
 }
 
-function RoleHelp() {
+/** The four roles in plain words: a strip on a wide page, one fold on a narrow one. */
+function RoleStrip() {
   return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <Button variant="ghost" size="sm" aria-label="What can each role do?">
-          <HelpCircle />
-          Roles
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent align="end" className="w-80 text-[13px]">
-        <dl className="space-y-2">
+    <>
+      <dl data-testid="role-strip" className="hidden grid-cols-4 gap-2 @[34rem]/page:grid">
+        {ROLES.map((r) => (
+          <div key={r} className="rounded-lg border border-border bg-surface p-3 text-[12px]">
+            <dt className="mb-1 text-[13px] font-medium text-text">{ROLE_LABEL[r]}</dt>
+            <dd className="text-text-muted">{ROLE_HELP[r]}</dd>
+          </div>
+        ))}
+      </dl>
+      <details className="rounded-lg border border-border bg-surface px-3 py-2 text-[13px] @[34rem]/page:hidden">
+        <summary className="cursor-pointer">What each role can do</summary>
+        <dl className="mt-2 space-y-2">
           {ROLES.map((r) => (
             <div key={r}>
-              <dt className="font-medium">{r}</dt>
+              <dt className="font-medium">{ROLE_LABEL[r]}</dt>
               <dd className="text-text-muted">{ROLE_HELP[r]}</dd>
             </div>
           ))}
         </dl>
-      </PopoverContent>
-    </Popover>
+      </details>
+    </>
   )
 }
 
@@ -117,7 +120,7 @@ function AddMember({ me, onSubmit, onClose }: { me: Role | undefined; onSubmit: 
           }}
         >
           <DialogHeader>
-            <DialogTitle>Add member</DialogTitle>
+            <DialogTitle>Add person</DialogTitle>
             <DialogDescription>
               The person makes their own key and first device; you sign only that they join. Ask them for their public key and device certificate files. Owners are made by promoting a member afterwards.
             </DialogDescription>
@@ -157,6 +160,7 @@ function AddMember({ me, onSubmit, onClose }: { me: Role | undefined; onSubmit: 
 /** Members and roles from the host's roster. Role changes, additions and removals are hand-offs; the host decides who may sign. */
 export function HostMembers({ workspace }: { workspace: Workspace }) {
   const roster = useQuery(queries.roster(workspace.id))
+  const readers = useQuery({ ...queries.readers(workspace.id), enabled: hasFeature('readers', workspace.id) })
   const role = useViewerRole(workspace)
   const viewer = useViewerPerson()
   const { ask, dialog } = useSettingsHandoff(workspace.id)
@@ -168,117 +172,94 @@ export function HostMembers({ workspace }: { workspace: Workspace }) {
   const mayRole = canChangeRoles(role) && hasFeature('do:member.role', workspace.id)
   const mayAdd = (['maintainer', 'member', 'viewer'] as const).some((r) => canAddRole(role, r)) && hasFeature('do:member.add', workspace.id)
   const mayRemove = (target: Role) => canRemoveMember(role, target) && hasFeature('do:member.remove', workspace.id)
+  // The signing device is never flagged: when one click is on and works, this computer signs now.
+  const signsHere = !!workspace.click?.enabled && !!workspace.click.available
+  const required = readers.data?.available === false ? null : (readers.data?.required_reader ?? null)
 
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
-        <h2 className="flex-1 text-base font-semibold">Members &amp; roles</h2>
-        <RoleHelp />
+        <h2 className="flex-1 text-base font-semibold">People</h2>
         {mayAdd && (
-          <Button size="sm" onClick={() => setAdding(true)}>
+          <Button size="sm" variant="outline" onClick={() => setAdding(true)}>
             <UserPlus />
-            Add member
+            Add person
           </Button>
         )}
       </div>
+      <RoleStrip />
       {!mayRole && (
         <p>
           <OwnerNote>{canChangeRoles(role) ? 'This host cannot change roles yet.' : 'Only owners can change roles. Owners add and remove anyone; maintainers add and remove members and viewers.'}</OwnerNote>
         </p>
       )}
-      <div className="rounded-lg border border-border bg-surface">
-        <Table className="min-w-[30rem]">
-          <TableHeader>
-            <TableRow>
-              <TableHead>Person</TableHead>
-              <TableHead className="w-44">Role</TableHead>
-              <TableHead>Devices</TableHead>
-              <TableHead className="w-24" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {members.map((m) => {
-              const lastOwner = m.role === 'owner' && owners === 1
-              const select = (
+      <ul aria-label="People" className="space-y-2">
+        {members.map((m, idx) => {
+          const lastOwner = m.role === 'owner' && owners === 1
+          const mine = m.person === viewer
+          const below = deviceBelow(m.devices, required, mine && signsHere)
+          const rights = rightsOf(m.devices)
+          const name = visible(m.name)
+          return (
+            <li key={m.person} data-testid="person-card" className="rounded-lg border border-border bg-surface p-3">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                <PersonAvatar id={m.person} name={m.name} size="default" />
+                <div className="min-w-0 flex-1 basis-40">
+                  <div className="truncate text-[14px] font-medium">
+                    {m.name_hidden ? <span className="text-warning">Name not shown: it has invisible characters</span> : <bdi>{name}</bdi>}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-text-muted">
+                    <span>{deviceLine(m.devices, mine)}</span>
+                    {below && <button type="button" data-testid="device-needs-update" onClick={() => { const d = document.getElementById(`person-details-${idx}`) as HTMLDetailsElement | null; if (d) { d.open = true; d.scrollIntoView({ block: 'nearest' }) } }} className="rounded-full border border-warning/50 px-2 py-px text-[11px] text-warning hover:bg-warning/10">Device update needed</button>}
+                  </div>
+                </div>
                 <select
-                  aria-label={`Role of ${visible(m.name)}`}
+                  aria-label={`Role of ${name}`}
                   value={m.role}
                   disabled={!mayRole || lastOwner}
                   title={lastOwner ? 'You cannot demote the last owner. Make someone else an owner first.' : undefined}
                   onChange={(e) => {
                     const next = e.target.value as Role
-                    ask({ title: `Make ${visible(m.name)} ${next === 'owner' ? 'an owner' : `a ${next}`}`, action: { action: 'member_role', person: m.person, role: next }, autoStart: true })
+                    ask({ title: `Make ${name} ${next === 'owner' ? 'an owner' : `a ${next}`}`, action: { action: 'member_role', person: m.person, role: next }, autoStart: true })
                   }}
-                  className="h-8 w-full rounded-md border border-border bg-bg px-2 text-[13px] disabled:cursor-not-allowed disabled:opacity-60"
+                  className="h-8 rounded-full border border-border bg-bg px-3 text-[13px] disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {ROLES.map((r) => (
-                    <option key={r}>{r}</option>
+                    <option key={r} value={r}>{ROLE_LABEL[r]}</option>
                   ))}
                 </select>
-              )
-              return (
-                <TableRow key={m.person}>
-                  <TableCell>
-                    <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                      <PersonAvatar id={m.person} name={m.name} />
-                      {m.name_hidden ? (
-                        <span className="text-warning">Name not shown: it has invisible characters</span>
-                      ) : (
-                        <Raw>{m.name}</Raw>
-                      )}
-                      <details className="basis-full pl-8 text-[11px] text-text-faint @[40rem]/page:basis-auto @[40rem]/page:pl-0">
-                        <summary className="cursor-pointer">Technical details</summary>
-                        <span className="break-all font-mono">Person id <Raw>{m.person}</Raw></span>
-                      </details>
-                    </span>
-                  </TableCell>
-                  <TableCell>{select}</TableCell>
-                  <TableCell>
-                    {m.devices.length === 0 ? (
-                      <span className="text-text-faint">none</span>
-                    ) : (
-                      <ul aria-label={`Devices of ${visible(m.name)}`} className="space-y-0.5 text-[12px]">
-                        {m.devices.map((d, i) => (
-                          <li key={d.id} className="flex flex-wrap gap-x-2">
-                            <span className="text-text-muted">Device {i + 1}</span>
-                            <span className={d.valid ? 'text-text-faint' : 'text-warning'}>{d.valid ? <Raw>{d.scopes.join(', ')}</Raw> : 'not valid'}</span>
-                            {d.auth && <span className="text-text-faint"><Raw>{d.auth}</Raw></span>}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                    {m.devices.length > 0 && (
-                      <details className="mt-1 text-[11px] text-text-faint">
-                        <summary className="cursor-pointer">Technical details</summary>
-                        {m.devices.map((d, i) => (
-                          <span key={d.id} className="block break-all font-mono">Device {i + 1} <Raw>{d.id}</Raw></span>
-                        ))}
-                      </details>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    {mayRemove(m.role) && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        aria-label={`Remove ${visible(m.name)}`}
-                        disabled={m.person === viewer || lastOwner}
-                        title={m.person === viewer ? 'You cannot remove yourself.' : lastOwner ? 'The last owner cannot be removed.' : undefined}
-                        onClick={() => ask({ title: `Remove ${visible(m.name)}`, action: { action: 'member_remove', person: m.person }, autoStart: true })}
-                      >
-                        <Trash2 />
-                      </Button>
-                    )}
-                  </TableCell>
-                </TableRow>
-              )
-            })}
-          </TableBody>
-        </Table>
-      </div>
-      <p className="text-[12px] text-text-muted" data-testid="scope-legend">
-        A device can: {Object.entries(SCOPE_HELP).map(([k, v], i) => <span key={k}>{i > 0 && '; '}<b className="font-medium text-text">{k}</b> = {v}</span>)}.
-      </p>
+                {mayRemove(m.role) && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    aria-label={`Remove ${name}`}
+                    disabled={mine || lastOwner}
+                    title={mine ? 'You cannot remove yourself.' : lastOwner ? 'The last owner cannot be removed.' : undefined}
+                    onClick={() => ask({ title: `Remove ${name}`, action: { action: 'member_remove', person: m.person }, autoStart: true })}
+                  >
+                    Remove
+                  </Button>
+                )}
+              </div>
+              <details id={`person-details-${idx}`} className="mt-2 text-[12px] text-text-muted">
+                <summary className="cursor-pointer">Details</summary>
+                <div className="mt-2 space-y-2">
+                  <ul aria-label={`What ${name} can do`} className="flex flex-wrap gap-1.5">
+                    {rights.length === 0 ? <li>No device, so nothing yet.</li> : rights.map((r) => <li key={r} className="rounded-full border border-border px-2 py-px text-[11px] text-text">{r}</li>)}
+                  </ul>
+                  {below && <p>Update the orch app on {mine ? 'this computer' : 'that device'} before it can approve with One click.</p>}
+                  <p className="break-all font-mono text-[11px] text-text-faint">Person id <Raw>{m.person}</Raw></p>
+                  {m.devices.map((d, i) => (
+                    <p key={d.id} className="break-all font-mono text-[11px] text-text-faint">
+                      Device {i + 1} <Raw>{d.id}</Raw>{d.valid ? '' : ' · not valid'}{d.auth ? <> · <Raw>{d.auth}</Raw></> : null}
+                    </p>
+                  ))}
+                </div>
+              </details>
+            </li>
+          )
+        })}
+      </ul>
       {adding && (
         <AddMember
           me={role}

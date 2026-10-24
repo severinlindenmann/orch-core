@@ -1,11 +1,9 @@
-"""#1070: the confirmation of a New ticket sequence, op x people role x agent access (pure, no host).
+"""The confirmation of a sequence, op x people role x agent access (pure, no host).
 
-Rules: a plain new ticket and a new ticket with assignees and/or reviewers are a click; an owner step, agent access
-and every people edit of an EXISTING ticket keep the typed word (B12D); an unknown kind or op fails closed."""
+#1198 C1: there is no typed word. Every sequence (people, owner step, agent access, edit of an existing ticket) is a
+click; only a terminal-only step (Publish) makes it terminal."""
 
 from __future__ import annotations
-
-import itertools
 
 import pytest
 
@@ -16,13 +14,13 @@ P1, P2 = "p_" + "1" * 32, "p_" + "2" * 32
 AGENT = {"hours": 8, "scope": "workable"}
 
 
-def new_kind(people=None, agent=None, person=P1, **over):
+def new_kind(people=None, agent=None, **over):
     extra = {}
     if people:
         extra["people"] = people
     if agent:
         extra["agent"] = agent
-    return sequence.confirm_kind(sequence.validate_intent(intent_of(**extra, **over)), person)
+    return sequence.confirm_kind(sequence.validate_intent(intent_of(**extra, **over)))
 
 
 def edit_intent(**over):
@@ -44,62 +42,35 @@ def test_a_plain_new_ticket_is_a_click():
 
 @pytest.mark.parametrize(
     "people",
-    [{"assignees": [P1]}, {"reviewers": [P1]}, {"assignees": [P1], "reviewers": [P1]}],
-)
-def test_a_new_ticket_naming_only_the_signer_is_a_click(people):
-    assert new_kind(people=people) == "click"
-    assert new_kind(people=people, person=None) == "word"  # no known signer: never lowered
-
-
-@pytest.mark.parametrize(
-    "people",
     [
+        {"assignees": [P1]},
         {"reviewers": [P2]},
-        {"assignees": [P2]},
         {"reviewers": [P1, P2]},
         {"assignees": [P1], "reviewers": [P2]},
-        {"assignees": [P2], "reviewers": [P1]},
+        {"owner": P1},
+        {"owner": P2, "assignees": [P1], "reviewers": [P1]},
     ],
 )
-def test_a_new_ticket_naming_another_member_or_a_mix_keeps_the_word(people):
-    assert new_kind(people=people) == "word"
+def test_every_people_change_of_a_new_ticket_is_a_click(people):
+    assert new_kind(people=people) == "click"
 
 
-@pytest.mark.parametrize(
-    "people",
-    [{"owner": P1}, {"owner": P1, "assignees": [P2]}, {"owner": P2, "assignees": [P1], "reviewers": [P1]}],
-)
-def test_a_new_ticket_with_an_owner_step_keeps_the_word(people):
-    assert new_kind(people=people) == "word"
-
-
-@pytest.mark.parametrize("people", [None, {"assignees": [P1]}, {"reviewers": [P1]}, {"owner": P1}])
-def test_agent_access_keeps_the_word_whatever_the_people(people):
-    assert new_kind(people=people, agent=AGENT) == "word"
+@pytest.mark.parametrize("people", [None, {"assignees": [P1]}, {"reviewers": [P1]}, {"owner": P1}, {"reviewers": [P2]}])
+def test_agent_access_is_a_click_whatever_the_people(people):
+    assert new_kind(people=people, agent=AGENT) == "click"
 
 
 @pytest.mark.parametrize("role", ["assignees", "reviewers", "owner"])
-def test_a_people_edit_of_an_existing_ticket_keeps_the_word(role):
+def test_a_people_edit_of_an_existing_ticket_is_a_click(role):
     intent = sequence.validate_intent(edit_intent(people={role: {"add": [P1], "remove": []}}))
-    assert sequence.confirm_kind(intent, P1) == "word"  # even naming the signer: an edit of an existing ticket
+    assert sequence.confirm_kind(intent) == "click"
 
 
-def test_the_matrix_op_x_people_role_x_who_x_agent():
-    who = {"self": [P1], "other": [P2], "mix": [P1, P2]}
-    click = set()
-    for role, w, agent in itertools.product(("assignees", "reviewers"), who, (False, True)):
-        if new_kind(people={role: who[w]}, agent=AGENT if agent else None) == "click":
-            click.add((role, w, agent))
-    assert click == {("assignees", "self", False), ("reviewers", "self", False)}
+def test_a_terminal_only_step_makes_the_sequence_terminal():
+    """The class of a step is that of its op with its args; Publish's settings are a click since #1198 C2."""
+    intent = sequence.validate_intent(intent_of())
+    assert sequence.confirm_kind(intent) == "click"
+    from orch.click.protocol import op_class
 
-
-def test_the_owners_draft_creator_as_assignee_and_reviewer_no_owner_step_is_a_click():
-    """#1070 exact case: the dashboard drops the owner step when the owner is the creator (`sequencePeople`), so the
-    host sees the creator as assignee and reviewer only, plus an estimate and requirements text."""
-    me = "p_" + "1" * 32
-    kind = new_kind(
-        people={"assignees": [me], "reviewers": [me]},
-        set={"size": "xs"},
-        sections={"requirements": "It works."},
-    )
-    assert kind == "click"
+    assert op_class("settings.set", args={"set": {"publish": None}}) == "click"
+    assert op_class("unknown.op") == "terminal"  # an unknown op fails closed

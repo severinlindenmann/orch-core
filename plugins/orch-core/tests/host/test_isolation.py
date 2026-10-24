@@ -19,6 +19,7 @@ def _good() -> FakeOsFacts:
     f.add_path("/run/orch/1000/host.sock", uid=UID, gid=AGID, mode=0o660, kind="sock")
     f.add_path(KEY, uid=UID, gid=UID, mode=0o600)
     f.readable[(AUID, KEY)] = False
+    f.units["orch-runner@orch-agent-sev.service"] = AUID
     return f
 
 
@@ -28,18 +29,25 @@ def _codes(f: FakeOsFacts, paths=(KEY,)) -> set[str]:
 
 def test_tier_b_when_everything_checks_out() -> None:
     r = detect(_good(), "sev", UID, [KEY])
-    assert r.isolated and r.tier == "B" and r.reasons == () and "own user" in r.summary
+    assert (
+        r.isolated
+        and r.status == "isolated"
+        and r.tier == "B"
+        and r.reasons == ()
+        and not r.pause_click_signing
+        and "own user" in r.summary
+    )
 
 
 def test_no_agent_user_is_tier_a() -> None:
     r = detect(FakeOsFacts(), "sev", UID, [KEY])
-    assert not r.isolated and r.tier == "A" and [x.code for x in r.reasons] == ["no_agent_user"]
+    assert r.status == "same_user" and r.tier == "A" and [x.code for x in r.reasons] == ["no_agent_user"]
 
 
 @pytest.mark.parametrize("platform", ["darwin", "windows"])
 def test_other_platforms_not_isolated_with_reason(platform: str) -> None:
     r = detect(FakeOsFacts(platform), "sev", UID, [KEY])
-    assert not r.isolated and r.reasons[0].code == "unsupported_platform" and "run as you" in r.summary
+    assert r.status == "same_user" and r.reasons[0].code == "unsupported_platform" and "run as you" in r.summary
 
 
 def test_key_readable_by_agent_fails() -> None:
@@ -114,3 +122,55 @@ def test_wrong_home_or_shell() -> None:
     f = _good()
     f.add_user("orch-agent-sev", AUID, home="/home/x")
     assert _codes(f) == {"agent_properties"}
+
+
+def test_runner_down_is_availability_and_does_not_pause_signing() -> None:
+    f = _good()
+    del f.units["orch-runner@orch-agent-sev.service"]
+    r = detect(f, "sev", UID, [KEY])
+    assert r.status == "broken" and [x.code for x in r.availability] == ["runner_down"]
+    assert not r.exposure and not r.pause_click_signing
+
+
+def test_runner_peer_uid_is_person_pauses_signing() -> None:
+    f = _good()
+    f.units["orch-runner@orch-agent-sev.service"] = UID
+    r = detect(f, "sev", UID, [KEY])
+    assert _codes(f) == {"runner_is_person"} and r.pause_click_signing
+
+
+def test_runner_as_wrong_user_is_exposure() -> None:
+    f = _good()
+    f.units["orch-runner@orch-agent-sev.service"] = 4321
+    assert _codes(f) == {"runner_wrong_user"}
+
+
+@pytest.mark.parametrize(
+    "mutate,code",
+    [
+        (lambda f: f.readable.__setitem__((AUID, KEY), True), "readable_by_agent"),
+        (lambda f: f.pins.pop(AUID), "no_pin"),
+        (lambda f: f.add_path("/run/orch/1000", uid=UID, gid=AGID, mode=0o2770, kind="dir"), "run_dir_wrong"),
+    ],
+)
+def test_exposure_facts_pause_click_signing(mutate, code) -> None:
+    f = _good()
+    mutate(f)
+    r = detect(f, "sev", UID, [KEY])
+    assert r.status == "broken" and r.pause_click_signing and code in {x.code for x in r.exposure}
+
+
+def test_control_dir_must_be_0700_person() -> None:
+    f = _good()
+    f.add_path("/run/orch/1000/control", uid=UID, gid=AGID, mode=0o750, kind="dir")
+    assert _codes(f) == {"control_dir_wrong"}
+    f.add_path("/run/orch/1000/control", uid=UID, gid=UID, mode=0o700, kind="dir")
+    assert detect(f, "sev", UID, [KEY]).isolated
+
+
+def test_uid_to_name_must_agree_with_name_to_uid() -> None:
+    f = _good()
+    agent = f.users["orch-agent-sev"]
+    other = agent.__class__("other", AUID, AGID, "/", "/bin/sh", frozenset({"other"}))
+    f.users = {"other": other, "orch-agent-sev": agent}  # getpwuid(AUID) now answers "other"
+    assert "name_uid_mismatch" in _codes(f)

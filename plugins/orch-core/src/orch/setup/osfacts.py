@@ -57,6 +57,7 @@ class OsFacts(Protocol):
     def stat(self, path: str) -> PathInfo | None: ...
     def listdir(self, path: str) -> list[str]: ...
     def can_read(self, uid: int, path: str) -> bool: ...
+    def unit_uid(self, unit: str) -> int | None: ...  # UID of the active unit's MainPID; None = not active/unknown
     def pin(self, uid: int) -> dict | None: ...  # root-owned pin for a UID; None = no pin; broken = a "*" agent pin
 
 
@@ -156,3 +157,23 @@ class RealOsFacts:
         from ..host.pins import AgentPins
 
         return AgentPins(self._pin_dir).get(uid)
+
+    def unit_uid(self, unit: str) -> int | None:
+        """The UID the unit's main process really runs as (from /proc), or None if it is not active."""
+        import subprocess
+
+        try:
+            out = subprocess.run(  # fixed absolute binary, no shell, fixed arguments
+                ["/usr/bin/systemctl", "show", "-p", "ActiveState", "-p", "MainPID", "--", unit],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+                env={},
+            ).stdout
+            vals = dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
+            if vals.get("ActiveState") != "active" or int(vals.get("MainPID", "0")) <= 0:
+                return None
+            return os.stat(f"/proc/{int(vals['MainPID'])}").st_uid
+        except (OSError, ValueError, subprocess.SubprocessError):
+            return None

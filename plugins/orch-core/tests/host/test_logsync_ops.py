@@ -308,18 +308,28 @@ def test_core_1034_a_retryable_failure_does_not_end_the_sender(monkeypatch, huma
     assert until(lambda: loghub.logs() == local_summary(served))
     real = logsyncops._pass  # noqa: SLF001
     codes = iter(["epoch_changed", "live_check_failed"])
+    recovered = threading.Event()  # set once the hub holds the new log, i.e. the first successful pass has sent it
+    release = threading.Event()  # holds that pass open, so the window between "sent" and "error cleared" is observable
 
     def flaky(service, rt):
         code = next(codes, None)
         if code is not None:
             raise HubRefused(code)
-        return real(service, rt)
+        real(service, rt)
+        if recovered.is_set() or loghub.logs() == local_summary(served):
+            recovered.set()
+            assert release.wait(10)
 
     monkeypatch.setattr(logsyncops, "_pass", flaky)
     human.ticket("during the re-seal")
-    assert until(lambda: loghub.logs() == local_summary(served) and len(loghub.logs()) >= 2, 12)
+    assert recovered.wait(12) and len(loghub.logs()) >= 2
+    # The hub has everything but the loop clears ``last_error`` only after the pass returns: this used to be a race
+    # (the test asserted None here). Now the window is held open, asserted, and then closed on purpose.
     status = logsyncops.status(served.service)
-    assert status is not None and status["running"] and status["last_error"] is None
+    assert status is not None and status["running"] and status["last_error"] == "live_check_failed"
+    release.set()
+    assert until(lambda: (logsyncops.status(served.service) or {}).get("last_error") is None, 12)
+    assert logsyncops.status(served.service)["running"]
 
 
 def test_core_1034_the_live_check_tells_a_moved_epoch_from_a_definite_no(monkeypatch, human, served, stub, loghub):  # noqa: F811

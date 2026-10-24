@@ -235,8 +235,6 @@ export function clickProblem(e: unknown): ClickProblem {
       return { title: 'The earlier attempt ended', body: e.message, next: 'prepare' }
     case 'intent.open':
       return { title: 'An attempt for this is already open', body: e.message || 'The host holds an open request for this action. Wait until it ends or expires.', next: 'open' }
-    case 'sign.click_only':
-      return { title: 'This workspace signs in the dashboard', body: e.message, next: 'retry' }
     case 'sign.convenience_readers': {
       const r = refusalOf(e)!
       // A known reason is said in plain words; without one (a host before H12d-2) the host's own message stays.

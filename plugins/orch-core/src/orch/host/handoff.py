@@ -118,6 +118,7 @@ def sign_code(
     sessions: Any = None,
     now: Callable[[], float] | None = None,
     notice: bool = True,
+    no_passphrase: bool = False,
 ) -> dict[str, Any]:
     """Resolve ``code``, bind, check, review, confirm, sign and submit (see the module doc). ``call(op, args,
     idem=None)`` sends one request on the pinned workspace connection and returns its ``result``. ``resolved`` is the
@@ -160,7 +161,7 @@ def sign_code(
             confirm=confirm,
             sessions=sessions,
             new_idem=new_idem,
-            prefix=f"{NOTICE}\n\n" if notice else "",
+            prefix=_prefix(notice, no_passphrase),
             deliver=lambda secret, rid: _deliver(call, secret, rid, choose, show_secret),
             **({} if now is None else {"now": now}),
         )
@@ -202,7 +203,7 @@ def sign_code(
         files={n: {"b64": base64.b64encode(b).decode()} for n, b in files.items()} if files else None,
         artifacts="checked" if files else "unseen",
         before=before,
-        prefix=f"{NOTICE}\n\n" if notice else "",
+        prefix=_prefix(notice, no_passphrase),
         on_secret=on_secret,
     )
 
@@ -343,6 +344,15 @@ def _own_workspaces(state: Path, uid: int, pick: str | None) -> list[dict[str, A
     return out
 
 
+NO_PASSPHRASE = "This key has no passphrase (One click is on): anything running as you could sign with it."
+
+
+def _prefix(notice: bool, no_passphrase: bool) -> str:
+    """The warnings the review carries when stderr is not the terminal (N13): the notice, and the key's custody."""
+    lines = ([NOTICE] if notice else []) + ([NO_PASSPHRASE] if no_passphrase else [])
+    return "".join(f"{line}\n\n" for line in lines)
+
+
 def _sign_code_explained(entry: dict[str, Any], run: Callable[..., Any], *a: Any, backend: Any, **kw: Any) -> Any:
     """:func:`sign_code`, with the one refusal the person cannot act on made plain: a key in one-click custody binds
     ``auth: convenience`` (the key has no passphrase), and while click-to-sign is off the host refuses that binding
@@ -419,6 +429,9 @@ def main(
         wid = entry["workspace_id"]
         person = entry["peers"][str(uid)]["person"]
         backend = _backend(state, wid)
+        one_click = getattr(backend, "auth", None) == "convenience"
+        if one_click:  # #1170: the person reads what kind of key signs (in the review too when stderr is elsewhere)
+            err.write(NO_PASSPHRASE + "\n")
         device = device_ref(backend.public_key(human.KEY_ID))
         name = Path(str(entry.get("root") or wid)).name
 
@@ -444,6 +457,7 @@ def main(
             choose=human.secret_destination,
             sessions=Sessions(state),
             notice=not on_tty,
+            no_passphrase=one_click and not on_tty,
         )
     except sequence.Aborted as exc:
         text = f"stopped after {exc.landed} of {exc.total} signatures: {exc.reason}"

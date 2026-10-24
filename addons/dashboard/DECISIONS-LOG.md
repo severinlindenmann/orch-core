@@ -2044,3 +2044,14 @@ Revert: remove Wiki route registration and feature advertisement; repository pag
 - **Why:** Owner decision V3-D38 (24 Oct): one click in the browser, always. The click view still shows every line of the signed event and the marketplace block labelled "per host, not signed".
 - **Not done here:** the dashboard has no add-on settings form yet (G6 B1 is core only); when it lands its action only needs to be listed in `CLICK_ACTIONS`.
 - **Revert:** restore the word class in `orch.click.protocol`, the refusal in `click.prepare`, and the Terminal wording.
+
+### 2026-10-23 — General settings and records (run-8 1.2 / 1.8)
+
+- **Decision:** Put workspace identity, approving, agent access and repositories on General; keep technical information, reservation times and Records in a closed Advanced fold. Records uses host status for its summary and preserves push confirmation and terminal-only operations in For advanced users.
+- **Why:** Keep everyday settings compact while retaining the existing signing and records operations. Save agent access independently from reservation times.
+- **Revert:** Restore the previous General layout and Records page, along with the navigation and interaction tests.
+
+### 2026-10-23 — Run-8 V1: People, Approvals, Agent access, badge, Log out, transitions
+
+- **Decision:** Tabs are General, Members, Approvals, Agent access, Add-ons, Hub (Records is in General > Advanced; Devices is no tab, `/settings/devices` is still served for the phone pairing until the Phone add-on row takes it). Approvals are four presets mapped to `policy_set` (the host signs its own sentence), a "can never be met" block, a code-review switch; the old matrix is under Custom rules. `/api/session` reports `login` ("local" for every launch-code session); Log out shows only for a known hub/remote session. Page change: 120 ms pending delay, a 2 px indeterminate bar, 180 ms fade with a 6 px rise and staggered first rows.
+- **Why:** run-8 owner items 1.2-1.5, 1.8, 1.9, 2, 3, 10 (FINAL draft). **Revert:** restore the previous host pages, tabs and the sidebar button.

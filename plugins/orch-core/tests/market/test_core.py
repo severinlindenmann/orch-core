@@ -15,6 +15,7 @@ from orch.addons.package import package_digest
 from orch.market import MarketError, address, constants, fetch, index, policy
 from orch.market.url import canonical_market_url
 from tests.market import helpers as H
+from tests.tamper import tamper_b64u
 
 VECTORS = json.loads((Path(__file__).parents[1] / "addons/vectors_market.json").read_text())["cases"]
 
@@ -166,7 +167,7 @@ def test_a_present_signature_on_another_index_must_verify():
     other = "https://git.example.org/acme/market"
     doc = H.index(1, url=other)
     assert index.verify(doc, other, official=False) is True
-    doc["signature"]["sig"] = doc["signature"]["sig"][:-2] + "AA"
+    doc["signature"]["sig"] = tamper_b64u(doc["signature"]["sig"])
     assert code_of(index.verify, doc, other, official=False) == "market.index_unsigned"
     unsigned = H.index(1, url=other, signed=False)
     assert index.verify(unsigned, other, official=False) is False

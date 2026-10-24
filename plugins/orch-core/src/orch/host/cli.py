@@ -841,17 +841,6 @@ def _convenience(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) 
                 )
         with convenience.workspace_lock(state, wid, uid) if args.switch == "on" else contextlib.nullcontext():
             if args.switch == "on":
-                waiting = convenience.pending_handoffs(state, wid, uid, clock=_clock)
-                if waiting:
-                    lines = ", ".join(f"{r['id']} ({r['op']}, code {r['code']})" for r in waiting)
-                    return write_error(
-                        out,
-                        False,
-                        "sign.click_only",
-                        f"{len(waiting)} terminal hand-off request(s) are pending for this workspace: {lines}",
-                        hint="let them expire (10 minutes), then switch convenience on",
-                    )
-            if args.switch == "on":
                 convenience.set_enabled(state, wid, True, uid)
     except HostError as exc:  # lock.busy (a lock is held), custody.unsafe_mode (a lock or flag file is not private)
         return write_error(out, False, exc.code, exc.message, hint=exc.hint)

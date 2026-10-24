@@ -250,12 +250,6 @@ export function SignPopover(p: SignPopoverProps) {
   }
   const again = () => {
     if (!p.action) return
-    if (method === 'click' && phase === 'error' && run.error?.code === 'sign.click_only') {
-      // The switch moved after the page chose the terminal: a NEW request, the way the host answers now.
-      run.reset()
-      startMethod(Math.max(run.retry, click.retry) + 1)
-      return
-    }
     run.reset(phase === 'unknown' || phase === 'error') // the same key where the host may already have the request
     void run.prepare(p.action)
   }
@@ -428,7 +422,7 @@ export function SignPopover(p: SignPopoverProps) {
       {footerShown && <div className={`${STICKY_FOOTER} flex flex-wrap items-center gap-2 sm:justify-between`} data-testid="sign-footer-row">
         <span aria-live="polite" className="text-[12px] text-text-muted">
           {phase === 'idle' && p.hint}
-          {phase === 'waiting' && 'Waiting for your signature'}
+          {phase === 'waiting' && 'Waiting for approval in Terminal…'}
         </span>
         <div className="flex flex-wrap gap-2">
           {phase === 'idle' && !clickOpen && !(autoNow && p.action) && (

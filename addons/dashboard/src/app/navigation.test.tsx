@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/api/client'
 import { renderApp } from '@/test/renderApp'
 import { PENDING_MS } from './router'
-import { FADE_MS } from './shell/pageMotion'
+import { FADE_MS, pageNameOf } from './shell/pageMotion'
 
 const T = { timeout: 8000 }
 const sleep = (ms: number) => act(() => new Promise<void>((r) => setTimeout(r, ms)))
@@ -148,6 +148,32 @@ describe('scroll while the next page is pending (G4 review I1)', () => {
   })
 })
 
+describe('the loading bar', () => {
+  it('names pages for screen readers', () => {
+    expect([pageNameOf('/'), pageNameOf('/board'), pageNameOf('/ticket/DEMO-0043'), pageNameOf('/settings/members')]).toEqual(['Today', 'Board', 'ticket DEMO-0043', 'Settings'])
+  })
+
+  it('shows an indeterminate bar while a page loads and removes it when the page is in', async () => {
+    await import('./pages/agents')
+    const { router } = renderApp('/board')
+    await screen.findByTestId('card-DEMO-0043', {}, T)
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
+    let release!: () => void
+    const gate = new Promise<void>((r) => (release = r))
+    const real = api.getAgentActivity.bind(api)
+    vi.spyOn(api, 'getAgentActivity').mockImplementation(async (ws) => {
+      await gate
+      return real(ws)
+    })
+    act(() => void router.navigate({ to: '/agents' }))
+    const bar = await screen.findByRole('progressbar', { name: 'Loading Agents' }, T)
+    // Indeterminate: it never says how far along it is.
+    expect(bar).not.toHaveAttribute('aria-valuenow')
+    release()
+    await waitFor(() => expect(screen.queryByRole('progressbar')).not.toBeInTheDocument(), T)
+  })
+})
+
 describe('the page fade', () => {
   const realMatchMedia = window.matchMedia
   const motion = (reduce: boolean) => {
@@ -159,9 +185,10 @@ describe('the page fade', () => {
     animate.mockClear()
     delete (HTMLElement.prototype as Partial<HTMLElement>).animate
   })
-  const fades = () => animate.mock.calls.filter(([frames]) => JSON.stringify(frames) === JSON.stringify([{ opacity: 0 }, { opacity: 1 }]))
+  // The page's own fade (the rows that follow it carry a delay).
+  const fades = () => animate.mock.calls.filter(([frames, opts]) => JSON.stringify(frames) === JSON.stringify([{ opacity: 0, transform: 'translateY(6px)' }, { opacity: 1, transform: 'none' }]) && !(opts as { delay?: number }).delay)
 
-  it('fades a new page in once, opacity only, in FADE_MS; not on a filter or a settings section change', async () => {
+  it('fades a new page in once (opacity and a 6 px rise), in FADE_MS; not on a filter or a settings section change', async () => {
     motion(false)
     HTMLElement.prototype.animate = animate as unknown as HTMLElement['animate']
     const { router } = renderApp('/board')
@@ -170,8 +197,8 @@ describe('the page fade', () => {
     await act(() => router.navigate({ to: '/tickets' }))
     await screen.findByText('DEMO-0043', {}, T)
     expect(fades()).toHaveLength(1)
-    expect(fades()[0]).toEqual([[{ opacity: 0 }, { opacity: 1 }], expect.objectContaining({ duration: FADE_MS })])
-    expect(FADE_MS).toBeLessThanOrEqual(160)
+    expect(fades()[0]).toEqual([[{ opacity: 0, transform: 'translateY(6px)' }, { opacity: 1, transform: 'none' }], expect.objectContaining({ duration: FADE_MS })])
+    expect(FADE_MS).toBeLessThanOrEqual(200)
     await act(() => router.navigate({ to: '/tickets', search: { q: 'dbt' } }))
     await sleep(50)
     expect(fades()).toHaveLength(1)

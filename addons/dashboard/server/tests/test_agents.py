@@ -133,8 +133,14 @@ def test_preview_passes_the_work_folder_state_and_never_invents_it():
     """The page starts a NEW ticket's agent unattended only in a new or empty work folder: the state reaches it, and a
     host that said nothing stays unknown (no `workdir` key), never "empty"."""
     base = {"cwd": {"kind": "workdir", "ticket": "DEMO-1"}, "cwd_path": "/w/.orch-work/DEMO-1", "ticket": "DEMO-1"}
-    assert project.agent_preview({**base, "workdir": {"exists": False, "empty": True}})["workdir"] == {"exists": False, "empty": True}
-    assert project.agent_preview({**base, "workdir": {"exists": True, "empty": False}})["workdir"] == {"exists": True, "empty": False}
+    assert project.agent_preview({**base, "workdir": {"exists": False, "empty": True}})["workdir"] == {
+        "exists": False,
+        "empty": True,
+    }
+    assert project.agent_preview({**base, "workdir": {"exists": True, "empty": False}})["workdir"] == {
+        "exists": True,
+        "empty": False,
+    }
     assert project.agent_preview({**base, "workdir": {"exists": True}})["workdir"] == {"exists": True, "empty": False}
     assert "workdir" not in project.agent_preview(base)
     assert "workdir" not in project.agent_preview({**base, "workdir": "empty"})

@@ -133,9 +133,13 @@ def agent_preview(data):
     ticket, spec = data.get("ticket"), data.get("spec")
     model, source = data.get("model"), data.get("model_source")
     # A ticket without a codebase runs in its work folder: whether it exists and is empty (the page starts a NEW ticket's
-    # agent unattended only in a new or empty folder, so a missing answer must read as "not known", never as empty).
+    # agent unattended only in a new or empty folder, so a missing answer must read as "not known", never empty).
     folder = data.get("workdir")
-    workdir = {"exists": folder.get("exists") is True, "empty": folder.get("empty") is True} if isinstance(folder, dict) else None
+    workdir = (
+        {"exists": folder.get("exists") is True, "empty": folder.get("empty") is True}
+        if isinstance(folder, dict)
+        else None
+    )
     return {
         "spec": spec if isinstance(spec, str) and re.fullmatch(r"[0-9a-f]{64}", spec) else None,
         "ticket": ticket if isinstance(ticket, str) and KEY.fullmatch(ticket) else None,

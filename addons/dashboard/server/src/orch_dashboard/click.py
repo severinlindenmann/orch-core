@@ -589,8 +589,8 @@ def register(app: FastAPI, gateway: Gateway):
         result = got.get("result") if isinstance(got.get("result"), dict) else {}
         out = {"state": "submitted", "duplicate": bool(got.get("duplicate"))}
         if not isinstance(wanted, RunnerGrant):
-            # A ticket or quick task whose sequence ends in the agent access: the page needs the ticket's key to start the
-            # agent for exactly that ticket, so the key and the seq are answered in this case too.
+            # A ticket or quick task whose sequence ends in the agent access: the page needs the ticket's key to start
+            # the agent for exactly that ticket, so the key and the seq are answered in this case too.
             if isinstance(result.get("key"), str):
                 out["key"] = result["key"]
             if isinstance(result.get("seq"), int):

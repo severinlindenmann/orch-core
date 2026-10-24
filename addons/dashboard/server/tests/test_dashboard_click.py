@@ -1977,7 +1977,13 @@ def test_a_sequence_that_ends_in_the_agent_access_still_answers_its_ticket_key(c
     def handler(op, args):
         if op == "sign":
             script.states[args["request_id"]] = "submitted"
-            return {"result": {"key": "DEMO-0044", "seq": 7, "secret": SECRET}, "duplicate": False, "deposit": "confirmed", "deposit_id": rid[3:], "grant": GRANT}
+            return {
+                "result": {"key": "DEMO-0044", "seq": 7, "secret": SECRET},
+                "duplicate": False,
+                "deposit": "confirmed",
+                "deposit_id": rid[3:],
+                "grant": GRANT,
+            }
         return base(op, args)
 
     script.clients[0].handler = handler
@@ -1997,7 +2003,13 @@ def test_the_key_comes_from_the_hosts_row_when_the_last_steps_result_has_none(cl
     def handler(op, args):
         if op == "sign":
             script.states[args["request_id"]] = "submitted"
-            return {"result": {"data": {"grant": GRANT}}, "duplicate": False, "deposit": "confirmed", "deposit_id": rid[3:], "grant": GRANT}
+            return {
+                "result": {"data": {"grant": GRANT}},
+                "duplicate": False,
+                "deposit": "confirmed",
+                "deposit_id": rid[3:],
+                "grant": GRANT,
+            }
         return base(op, args)
 
     script.clients[0].handler = handler

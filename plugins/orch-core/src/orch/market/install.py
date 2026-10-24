@@ -110,7 +110,7 @@ def check_entry(ctx: Ctx, doc: Mapping[str, Any], addon_id: str) -> Facts:
         if known is not None and (pub is None or pub["key"] != known):
             raise MarketError("market.publisher_key_changed")
         tofu = "unsigned" if pub is None else ("known" if known is not None else "new")
-    policy.evaluate("manifest", ctx.hub, {"url": ctx.url, "capabilities": entry["capabilities"]})  # step 8
+    policy.evaluate("manifest", ctx.hub, {"url": ctx.url, "capabilities": entry.get("capabilities", [])})  # step 8
     need, have = _core_key(entry["min_orch"]), _core_key(ctx.core_version)
     if need is None or have is None or have < need:
         raise MarketError("market.min_orch")

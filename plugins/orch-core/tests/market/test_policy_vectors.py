@@ -22,11 +22,10 @@ def product(args: dict) -> dict:
     r = args["req"]
     try:
         pol = policy.from_raw(args["policy"])
-        if r["stage"] == "run":  # a marketplace add-on's install record holds the key it was installed under
-            e = pol.market(r["market_url"])
+        if r["stage"] == "run":
             policy.check_run(
                 pol, name=r["id"], version=r["version"], capabilities=r["capabilities"],
-                origin=r["market_url"] or None, key=e.keys[0] if e is not None and e.keys else None,
+                origin=r["market_url"] or None, key=r["publisher_key"],
             )  # fmt: skip
         else:
             policy.evaluate(r["stage"], pol, {**r, "url": r["market_url"]})
@@ -48,7 +47,7 @@ def test_the_reference_gives_the_shared_answer(case):
 
 
 def test_the_vectors_are_the_ones_the_hub_shipped():
-    assert len(CASES) == 35 and OFFICIAL == "https://github.com/severinlindenmann/orch-marketplace"
+    assert len(CASES) == 40 and OFFICIAL == "https://github.com/severinlindenmann/orch-marketplace"
 
 
 # ------------------------------------------------------------------------------------------------ core-only rows

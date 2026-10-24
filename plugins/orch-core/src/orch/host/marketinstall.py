@@ -32,6 +32,7 @@ import shutil
 import stat
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 from orch import __version__ as CORE_VERSION
@@ -582,11 +583,12 @@ def _recheck(service: WorkspaceService, record: dict[str, Any], ev: dict[str, An
         pol = hubpolicy.stored(
             service
         )  # the same grant-stage evaluation as a staged grant, on the then-pinned snapshot
-        rec = files.installs()[ADDONS].get(ev.get("name"))  # none for a built-in: block and ceiling only
-        policy.check_run(
-            pol, name=ev.get("name"), version=ev.get("version"), capabilities=ev.get("capabilities") or [],
-            origin=None if rec is None else rec["origin"], key=None if rec is None else rec["publisher_key"],
-        )  # fmt: skip
+        if pol is not None:  # no record is a real built-in only (hubpolicy.check): a deleted record is not a built-in
+            grant = SimpleNamespace(
+                name=ev.get("name"), version=ev.get("version"), package_sha256=ev.get("package_sha256"),
+                capabilities=ev.get("capabilities") or [],
+            )  # fmt: skip
+            hubpolicy.check(service, pol, grant, files.installs()[ADDONS].get(ev.get("name")))
         return
     doc, pkg, _ = staged_package(files, ev["name"], staged["stage"], service.clock())
     if pkg.digest != ev["package_sha256"] or doc["version"] != ev["version"]:
@@ -642,6 +644,11 @@ def _recheck_dev(service: WorkspaceService, files: MarketFiles, ev: dict[str, An
         raise MarketError("market.reserved_id")
     if name in files.installs()[ADDONS]:
         raise MarketError("market.origin_changed")
+    pol = hubpolicy.stored(service)  # a dev folder has no origin: block and ceiling still apply under a hub policy
+    if pol is not None:
+        policy.check_run(
+            pol, name=name, version=ev.get("version"), capabilities=ev.get("capabilities") or [], origin=None, key=None
+        )
 
 
 def gate_plain(files: MarketFiles, ev: dict[str, Any]) -> None:

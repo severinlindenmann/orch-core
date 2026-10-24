@@ -632,7 +632,7 @@ _MARKET = (
         3,
         False,
         "the hub does not allow this marketplace, or its policy cannot be verified",
-        "ask the hub admin, or reconnect to the hub: orch hub refresh",
+        "ask the hub admin, or reconnect: orch hub status --refresh",
     ),
     ("market.addon_not_allowed", 3, False, "the hub does not allow this add-on", "ask the hub admin"),
     (

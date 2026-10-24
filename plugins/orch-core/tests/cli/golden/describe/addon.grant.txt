@@ -15,7 +15,7 @@ errors:
   human_only (exit 3): orch ask or orch wait | fix: orch describe ask
   market.community_unisolated (exit 3): other marketplaces need per-add-on user isolation | fix: orch market list
   market.manifest_mismatch (exit 3): the entry is refused | fix: orch market list
-  market.not_allowed (exit 3): ask the hub admin, or reconnect to the hub: orch hub refresh | fix: orch market list
+  market.not_allowed (exit 3): ask the hub admin, or reconnect: orch hub status --refresh | fix: orch market list
   market.not_installed (exit 3): orch addon install ID | fix: orch market list
   market.origin_changed (exit 3): orch addon list | fix: orch market list
   market.publisher_key_changed (exit 3): orch market trust --replace | fix: orch market list

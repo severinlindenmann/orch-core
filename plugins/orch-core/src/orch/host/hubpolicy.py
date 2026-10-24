@@ -28,7 +28,22 @@ if TYPE_CHECKING:
 
     from .workspace import Call, WorkspaceService
 
-__all__ = ["UNREADABLE", "facts", "paused", "allowed", "refresh_now", "run_gate", "running", "stored", "view"]
+__all__ = [
+    "why",
+    "RECONNECT",
+    "UNREADABLE",
+    "UNVERIFIED",
+    "check",
+    "pause_of",
+    "facts",
+    "paused",
+    "allowed",
+    "refresh_now",
+    "run_gate",
+    "running",
+    "stored",
+    "view",
+]
 
 
 class _Unreadable:
@@ -97,6 +112,12 @@ def refresh_now(call: Call, dev: bool) -> str | None:
     return None
 
 
+#: the way back from an unverifiable hub (an expired hub card, a hub that never answered): ask the hub for a fresh
+#: snapshot, with the new card when the old one expired (``orch hub status --refresh [--hub-card FILE]``, never gated)
+RECONNECT = "orch hub status --refresh --hub-card FILE"
+UNVERIFIED = {"code": "market.not_allowed", "cause": "unverified", "reconnect": RECONNECT}
+
+
 def view(pol: MarketPolicy | None | _Unreadable) -> dict[str, Any]:
     """The hub half of ``market.installed`` (what the person sees when add-ons are paused): ``standalone`` (no hub),
     ``verified`` (the pinned snapshot verifies; a policy may still pause single add-ons) or ``unverified`` (a joined
@@ -105,8 +126,29 @@ def view(pol: MarketPolicy | None | _Unreadable) -> dict[str, Any]:
     if pol is None:
         return {"state": "standalone", "code": None, "reconnect": None}
     if isinstance(pol, _Unreadable):
-        return {"state": "unverified", "code": "market.not_allowed", "reconnect": "orch hub refresh"}
+        return {"state": "unverified", "code": "market.not_allowed", "reconnect": RECONNECT}
     return {"state": "verified", "code": None, "reconnect": None}
+
+
+def check(service: WorkspaceService, pol: MarketPolicy, granted: Any, rec: dict[str, Any] | None = None) -> None:
+    """The run-time check of one grant under a policy (``MarketError``). ``rec`` is its install record (pass the one
+    just read, or leave ``None`` to read it now). No record is for a real built-in package only; any other grant without
+    one (a deleted record, a folder that was never installed) must not read as a built-in: ``market.not_allowed``."""
+    from orch.addons import builtin  # noqa: PLC0415
+    from orch.market import ADDONS  # noqa: PLC0415
+
+    from .marketinstall import _files  # noqa: PLC0415
+
+    if rec is None:
+        rec = _files(service).installs()[ADDONS].get(granted.name)
+    if rec is None and not builtin.is_builtin_package(
+        {"name": granted.name, "package_sha256": getattr(granted, "package_sha256", None)}, granted.name
+    ):
+        raise MarketError("market.not_allowed")
+    policy.check_run(
+        pol, name=granted.name, version=granted.version, capabilities=sorted(granted.capabilities),
+        origin=None if rec is None else rec["origin"], key=None if rec is None else rec["publisher_key"],
+    )  # fmt: skip
 
 
 def run_gate(service: WorkspaceService) -> Callable[[Any], None]:
@@ -115,18 +157,9 @@ def run_gate(service: WorkspaceService) -> Callable[[Any], None]:
     hub policy"; undoing the policy change (or reconnecting) un-pauses it, the grant is untouched."""
 
     def gate(granted: Any) -> None:
-        from .marketinstall import _files  # noqa: PLC0415
-
         pol = stored(service)  # a joined host that cannot verify raises market.not_allowed
-        if pol is None:
-            return
-        from orch.market import ADDONS  # noqa: PLC0415
-
-        rec = _files(service).installs()[ADDONS].get(granted.name)
-        policy.check_run(
-            pol, name=granted.name, version=granted.version, capabilities=sorted(granted.capabilities),
-            origin=None if rec is None else rec["origin"], key=None if rec is None else rec["publisher_key"],
-        )  # fmt: skip
+        if pol is not None:
+            check(service, pol, granted)
 
     return gate
 
@@ -155,21 +188,53 @@ def allowed(service: WorkspaceService, granted: Any) -> bool:
     return True
 
 
-def paused(service: WorkspaceService, pol: MarketPolicy | None | _Unreadable, rec: dict[str, Any] | None, model: Any,
-           name: str) -> dict[str, Any] | None:  # fmt: skip
-    """Is this add-on paused by the hub policy now (the run-time check on the pinned snapshot, no network)? ``None``
-    when it runs, else ``{code, cause, reconnect}``: ``code`` is the refusal, ``cause`` is ``policy`` (the hub's
-    policy says no) or ``unverified`` (no verified snapshot: an expired card, a hub that never answered, a reset
-    record), ``reconnect`` is the command that repairs an unverified one. Built-ins have no record."""
+def pause_of(service: WorkspaceService, granted: Any) -> dict[str, Any] | None:
+    """Is this grant paused by the hub policy now (no network)? ``None`` when it runs, else
+    ``{code, cause, reconnect}``: ``cause`` is ``policy`` (the hub's policy says no) or ``unverified`` (no
+    verified snapshot: ``reconnect`` is the way back). What ``addon.list`` (and so the dashboard) and
+    ``market.installed`` show."""
+    try:
+        pol = stored(service)
+    except MarketError:
+        return dict(UNVERIFIED)
+    if pol is None:
+        return None
+    try:
+        check(service, pol, granted)
+    except MarketError as exc:
+        return {"code": exc.code, "cause": "policy", "reconnect": None}
+    return None
+
+
+def why(service: WorkspaceService, name: str) -> str:
+    """Words for a refusal of a feature whose add-on is off: ``" - paused by hub policy (CODE)"`` (with the way back
+    for an unverifiable hub), or ``""`` when the hub policy is not the reason (not granted, disabled)."""
+    from orch.addons.install import as_addons
+
+    try:
+        found = as_addons(service.store.state.workspace.addons).get(name)
+    except (AttributeError, KeyError, TypeError):
+        return ""
+    if found is None or not found.enabled or found.purged:
+        return ""
+    p = pause_of(service, found)
+    if p is None:
+        return ""
+    return f" - paused by hub policy ({p['code']})" + (f"; reconnect: {p['reconnect']}" if p["reconnect"] else "")
+
+
+def paused(
+    service: WorkspaceService, pol: MarketPolicy | None | _Unreadable, rec: dict[str, Any] | None, model: Any, name: str
+) -> dict[str, Any] | None:
+    """:func:`pause_of` for ``market.installed``, from the policy and the record it has already read."""
     if model is None or model.purged:
         return None
     if isinstance(pol, _Unreadable):
-        return {"code": "market.not_allowed", "cause": "unverified", "reconnect": "orch hub refresh"}
+        return dict(UNVERIFIED)
+    if pol is None:
+        return None
     try:
-        policy.check_run(
-            pol, name=name, version=model.version, capabilities=sorted(model.capabilities),
-            origin=None if rec is None else rec["origin"], key=None if rec is None else rec["publisher_key"],
-        )  # fmt: skip
+        check(service, pol, model, rec)
     except MarketError as exc:
         return {"code": exc.code, "cause": "policy", "reconnect": None}
     return None

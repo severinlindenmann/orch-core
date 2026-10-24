@@ -39,7 +39,7 @@ def test_a_gate_that_allows_runs_as_before_and_no_gate_is_a_host_without_a_hub(p
     package, granted = pkg
     calls = []
     propose(package, granted, trigger="manual", ticket=TICKET, gate=lambda g: calls.append(g.name))
-    propose(package, granted, trigger="manual", ticket=TICKET)
+    propose(package, granted, trigger="manual", ticket=TICKET, gate=None)
     assert calls == ["echo"]
 
 
@@ -56,3 +56,12 @@ def test_the_gate_is_asked_on_every_run_not_once(pkg):
     assert e.value.code == "market.capability_ceiling"
     state["blocked"] = False  # the policy change is undone: the same grant runs again
     propose(package, granted, trigger="manual", ticket=TICKET, gate=gate)
+
+
+def test_a_caller_cannot_forget_the_gate():
+    """``gate`` has no default: the first caller that forgets it fails at once, not open on a joined host."""
+    import inspect
+
+    for fn in (runner.call, runner.propose):
+        p = inspect.signature(fn).parameters["gate"]
+        assert p.default is inspect.Parameter.empty and p.kind is inspect.Parameter.KEYWORD_ONLY

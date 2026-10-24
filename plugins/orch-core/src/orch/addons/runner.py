@@ -213,7 +213,7 @@ def propose(
     ticket: Any,
     limits: Limits | None = None,
     env: envtree.EnvLocation | None = None,
-    gate: Callable[[Addon], None] | None = None,
+    gate: Callable[[Addon], None] | None,
 ) -> Any:
     """:func:`call` with method ``propose``: ``ticket`` is a ``TicketView``, of which only the key, type, status and
     this addon's own fields are sent, and only for a ticket whose visibility is ``workspace``.
@@ -319,7 +319,7 @@ def call(
     *,
     credential: Callable[[str], str | None] | None = None,
     env: envtree.EnvLocation | None = None,
-    gate: Callable[[Addon], None] | None = None,
+    gate: Callable[[Addon], None] | None,
 ) -> Any:
     """Run the addon once with ``method`` and ``params`` (built by core) and return the ``result`` of its response; the
     caller checks it per method. ``granted`` is the replayed grant (the ACTIVE one: disabled or purged is refused) and

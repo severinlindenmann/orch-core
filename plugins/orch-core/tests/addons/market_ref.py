@@ -232,7 +232,7 @@ def evaluate(a: dict[str, Any]) -> None:
     if allow is not None and r["id"] not in allow and url != "":
         raise Refuse("market.addon_not_allowed")
     key = r["publisher_key"]
-    if company and key not in entry["keys"] and (stage != "run" or key is not None):
+    if company and key not in entry["keys"]:
         raise Refuse("market.publisher_unpinned")
     if pol["ceiling"] is not None and not set(r["capabilities"]) <= set(pol["ceiling"]):
         raise Refuse("market.capability_ceiling")

@@ -237,6 +237,13 @@ def test_the_hub_removing_a_company_marketplace_makes_stage_and_add_not_allowed(
 
 
 # ------------------------------------------------------------------------------------------------ pause (run time)
+def _builtin_digest(name):
+    from orch.addons.builtin import manifest_bytes
+    from orch.addons.package import MANIFEST_FILE, package_digest
+
+    return package_digest({MANIFEST_FILE: manifest_bytes(name)})
+
+
 def installed(served):
     return ok(person(served, "market.installed"))["data"]
 
@@ -262,9 +269,9 @@ def test_an_unverifiable_hub_pauses_every_addon_and_names_the_way_back(served, h
     install(served, human)
     hub.pol = None  # the card expired, or the hub record is gone: no verifiable snapshot
     data = installed(served)
-    assert data["hub"] == {"state": "unverified", "code": "market.not_allowed", "reconnect": "orch hub refresh"}
+    assert data["hub"] == {"state": "unverified", "code": "market.not_allowed", "reconnect": hubpolicy.RECONNECT}
     assert data["addons"][0]["paused"] == {
-        "code": "market.not_allowed", "cause": "unverified", "reconnect": "orch hub refresh",
+        "code": "market.not_allowed", "cause": "unverified", "reconnect": hubpolicy.RECONNECT,
     }  # fmt: skip
 
 
@@ -272,8 +279,10 @@ def test_the_run_gate_applies_block_allow_ceiling_and_the_pin_to_every_addon(ser
     install(served, human)
     service = served.service
     gate = hubpolicy.run_gate(service)
-    mine = SimpleNamespace(name="standup", version="1.0.0", capabilities=("network",))
-    builtin = SimpleNamespace(name="dashboard", version="1.0.0", capabilities=("serve_http",))
+    mine = SimpleNamespace(name="standup", version="1.0.0", capabilities=("network",), package_sha256="sha256:x")
+    builtin = SimpleNamespace(
+        name="dashboard", version="1.0.0", capabilities=("serve_http",), package_sha256=_builtin_digest("dashboard")
+    )
     gate(mine)
     gate(builtin)
     hub.set(allow=["other"])
@@ -336,7 +345,7 @@ def test_the_view_says_standalone_verified_or_unverified():
     assert hubpolicy.view(None)["state"] == "standalone"
     assert hubpolicy.view(pol)["state"] == "verified"
     assert hubpolicy.view(hubpolicy.UNREADABLE) == {
-        "state": "unverified", "code": "market.not_allowed", "reconnect": "orch hub refresh",
+        "state": "unverified", "code": "market.not_allowed", "reconnect": hubpolicy.RECONNECT,
     }  # fmt: skip
 
 
@@ -364,14 +373,31 @@ def test_host_features_see_a_paused_addon_as_off(served, human, hub, ready, monk
     from orch.addons import install as addon_install
     from orch.model.types import Addon
 
-    builtins = {n: Addon(n, "0.1.0", "sha256:" + "0" * 64, (), {}, [], []) for n in (terms.ADDON, agents.ROUTING)}
+    builtins = {n: Addon(n, "0.1.0", _builtin_digest(n), [], {}, [], []) for n in (terms.ADDON, "start-agent")}
     monkeypatch.setattr(addon_install, "as_addons", lambda view: builtins)
     assert M.on_worker(served, lambda: terms.addon_granted(service)) is True
-    assert M.on_worker(served, lambda: agents._addon(service, agents.ROUTING)) is True  # noqa: SLF001
-    hub.set(block=[terms.ADDON, agents.ROUTING])  # a blocked built-in is off for the host features that use it
+    assert M.on_worker(served, lambda: agents._addon(service, "start-agent")) is True  # noqa: SLF001
+    hub.set(block=[terms.ADDON, "start-agent"])  # a blocked built-in is off for the host features that use it
     assert M.on_worker(served, lambda: terms.addon_granted(service)) is False
-    assert M.on_worker(served, lambda: agents._addon(service, agents.ROUTING)) is False  # noqa: SLF001
+    assert M.on_worker(served, lambda: agents._addon(service, "start-agent")) is False  # noqa: SLF001
     hub.pol = None  # an unverifiable hub pauses them all
     assert M.on_worker(served, lambda: terms.addon_granted(service)) is False
     hub.set()  # undone: on again
     assert M.on_worker(served, lambda: terms.addon_granted(service)) is True
+
+
+def test_routing_refuses_a_blocked_choose_model_addon_and_never_asks_it(served, monkeypatch):
+    """The only host caller of ``runner.call``: a paused choose_model add-on is not run and not remembered."""
+    from orch.addons import install as addon_install
+    from orch.addons import runner
+    from orch.host import routing
+    from orch.model.types import Addon
+
+    g = Addon("model-routing", "1.0.0", "sha256:" + "0" * 64, ["choose_model"], {}, [], [])
+    monkeypatch.setattr(addon_install, "as_addons", lambda view: {"model-routing": g})
+    asked = []
+    monkeypatch.setattr(runner, "call", lambda *a, **k: asked.append(k) or {"model": None})
+    pol = policy.from_raw(raw_policy(block=["model-routing"]))
+    monkeypatch.setattr(hubpolicy, "stored", lambda service: pol)
+    got = M.on_worker(served, lambda: routing._choose(served.service, "claude-code", "plan"))  # noqa: SLF001
+    assert got.problem == routing.PAUSED and asked == []

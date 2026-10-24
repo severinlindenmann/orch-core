@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import os
 import time
 from pathlib import Path
@@ -11,9 +12,14 @@ import pytest
 
 from orch.addons.manifest import declarations, load_package_manifest
 from orch.addons.package import read_package
-from orch.addons.runner import Limits, RunnerError, call, child_env, propose
+from orch.addons.runner import Limits, RunnerError, child_env
+from orch.addons.runner import call as _call
+from orch.addons.runner import propose as _propose
 from orch.model.types import Addon
 from tests.addons.helpers import make_package
+
+call = functools.partial(_call, gate=None)  # standalone: these tests are not about the hub policy
+propose = functools.partial(_propose, gate=None)
 
 
 def ticket(**over):

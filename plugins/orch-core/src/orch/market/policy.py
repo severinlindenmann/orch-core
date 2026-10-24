@@ -93,8 +93,7 @@ def _run(policy: MarketPolicy, req: dict[str, Any]) -> None:
     if url:  # an add-on from a marketplace; a built-in has no origin
         entry = _listed(policy, url)
         _allowed(policy, req)
-        if req.get("publisher_key") is not None:
-            _pinned(entry, req["publisher_key"])
+        _pinned(entry, req.get("publisher_key"))  # the key the install record holds; none = unpinned for a company
     elif req.get("id") in policy.block or f"{req.get('id')}@{req.get('version')}" in policy.block:
         raise MarketError("market.blocked")
     _within(policy, req)
@@ -104,12 +103,7 @@ def check_run(
     policy: MarketPolicy | None, *, name: str, version: str, capabilities: Any, origin: str | None, key: str | None
 ) -> None:
     """The run-time check of one add-on (``origin`` and ``key`` are what its install record holds, ``None`` for a
-    built-in). A ``company`` origin whose record holds no pinned key is refused: it cannot have been installed under a
-    pin, so the pin cannot hold now."""
-    if policy is not None and origin:
-        entry = policy.market(origin)
-        if entry is not None and entry.cls == "company" and key is None:
-            raise MarketError("market.publisher_unpinned")
+    built-in): :func:`evaluate` at stage ``run``; a ``company`` origin whose record holds no pinned key is refused."""
     evaluate("run", policy, {"url": origin or "", "id": name, "version": version, "capabilities": capabilities,
                              "publisher_key": key})  # fmt: skip
 

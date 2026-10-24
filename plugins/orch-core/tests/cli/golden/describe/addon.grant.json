@@ -134,7 +134,7 @@
         "code": "market.not_allowed",
         "exit": 3,
         "retryable": false,
-        "hint": "ask the hub admin, or reconnect to the hub: orch hub refresh",
+        "hint": "ask the hub admin, or reconnect: orch hub status --refresh",
         "fix": [
           "orch",
           "market",

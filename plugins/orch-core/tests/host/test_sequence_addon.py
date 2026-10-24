@@ -326,6 +326,19 @@ def test_ae3_a_click_never_signs_publish_it_is_refused_at_prepare_and_at_sign(cl
     assert click.signatures == 0 and not on(human, "publish")
 
 
+def test_a_grant_step_with_capabilities_is_a_click_for_a_non_built_in_add_on(human):
+    """V3-D38 (ported from the model-routing test): the grant step of a sequence is classed from the signed event the
+    way ``confirm_kind`` does it (``op_class("addon.grant", events=[grant])``); a market add-on that is not built in is
+    one click whatever its capability list, while Publish stays terminal-only."""
+    from orch.click import protocol
+
+    base = enable(human, "publish")["grant"]
+    market = {**base, "name": "market-addon", "package_sha256": "sha256:" + "0" * 64}
+    for caps in ([], ["network"], ["network", "choose_model"], ["credential", "network"]):
+        assert protocol.op_class("addon.grant", events=[{**market, "capabilities": caps}]) == "click"
+    assert protocol.op_class("addon.grant", events=[{**base, "capabilities": ["network"]}]) == "terminal"
+
+
 # --- the terminal path: the word, the review, both add-ons ----------------------------------------
 
 

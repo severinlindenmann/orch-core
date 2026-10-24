@@ -646,5 +646,49 @@ def test_assess_policy_unknown_answers_are_recorded_as_unknown() -> None:
 def test_assess_policy_requires_every_ssh_context_to_deny() -> None:
     f = _good()
     seen = []
-    f.sshd_denies = lambda user, host, addr: (seen.append((host, addr)), len(seen) != 2)[1]
+    f.sshd_denies = lambda user, host, addr, laddr, lport: (seen.append((host, addr)), len(seen) != 2)[1]
     assert assess_policy(f, "orch-agent-sev").ssh == "allowed" and len(seen) >= 2
+
+
+def test_unreadable_policy_entry_reads_as_changed_and_detect_never_raises() -> None:
+    from orch.setup.osfacts import UNREADABLE
+
+    f = _good()
+    f.sigs["/etc/sudoers"] = UNREADABLE  # PermissionError inside a 0750 directory
+    assert _policy_codes(f) == {"policy_changed_since_setup"}
+
+    class Boom(FakeOsFacts):
+        def stat(self, path):
+            raise PermissionError(path)
+
+    b = Boom()
+    b.__dict__.update({k: v for k, v in f.__dict__.items()})
+    r = detect(b, "sev", UID, STATE, [KEY])
+    assert r.status == "broken" and r.pause_click_signing and [x.code for x in r.reasons] == ["facts_unreadable"]
+
+
+def test_doas_conf_is_watched_and_absent_is_recorded() -> None:
+    f = _good()
+    assert f.pins[AUID]["policy"]["files"]["/etc/doas.conf"] is None
+    f.sigs["/etc/doas.conf"] = (10, 1, 1, 9)  # appeared after setup
+    assert _policy_codes(f) == {"policy_changed_since_setup"}
+
+
+def test_no_sshd_installed_needs_no_dropin() -> None:
+    f = _good()
+    f.sshd_present = False
+    f.sigs.pop(SSHD_DROPIN)
+    f.paths.pop(SSHD_DROPIN)
+    v = assess_policy(f, "orch-agent-sev")
+    assert v.ssh_dropin is True and v.ok
+
+
+def test_ssh_contexts_vary_local_address_and_try_every_configured_port() -> None:
+    f = _good()
+    f.ports = [22, 2222]
+    seen = []
+    f.sshd_denies = lambda user, host, addr, laddr, lport: (seen.append((host, addr, laddr, lport)), True)[1]
+    assert assess_policy(f, "orch-agent-sev").ssh == "denied"
+    assert {p for *_x, p in seen} == {22, 2222} and len({t[2] for t in seen}) >= 2 and len(seen) == 6
+    f.ports = None  # sshd would not tell its ports
+    assert assess_policy(f, "orch-agent-sev").ssh == "unknown"

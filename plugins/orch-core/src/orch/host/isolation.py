@@ -102,7 +102,7 @@ def _same_user(platform: str, reason: Reason) -> IsolationResult:
     return IsolationResult("same_user", platform, (reason,))
 
 
-def detect(
+def _detect(
     facts: OsFacts,
     person: str,
     person_uid: int,
@@ -192,8 +192,10 @@ def _policy(facts: OsFacts, name: str, pin: dict) -> list[Reason]:
     """Root-written policy (sudoers, sshd) is never judged by parsing it here. The root-owned pin records the verdict of
     sudo and sshd themselves, taken by the setup step, plus the stat signature of each policy file. Here we only check
     that the verdict is good and that nothing changed since (size, mtime, inode, and the set of files in the drop-in
-    directories). Anything else, including a missing field, asks for the admin step again. Limit: a file that sudo or
-    sshd include from outside these paths is not watched."""
+    directories). Anything else, including a missing field, asks for the admin step again. Limits: a file that sudo or
+    sshd include from outside these paths is not watched; sudo rules from LDAP or sssd are not seen; where a policy
+    directory is unreadable to this process (RHEL: 0750/0700) a new file inside is caught through the directory's own
+    signature, and an unstat-able entry reads as changed."""
     bad = Reason(
         "policy_changed_since_setup",
         f"The sudo or SSH rules may have changed since setup for '{name}'. Run the admin step again.",
@@ -282,3 +284,29 @@ def _run_tree(facts: OsFacts, root: str, person_uid: int, agent_gid: int) -> lis
 
     walk(root, 0, False)
     return out
+
+
+def detect(
+    facts: OsFacts,
+    person: str,
+    person_uid: int,
+    state_dir: str,
+    key_paths: list[str] | tuple[str, ...] = (),
+    *,
+    run_root: str = RUN_ROOT,
+) -> IsolationResult:
+    """``state_dir``: the person's state directory (always checked, and it must exist); ``key_paths``: key files
+    that the agent must not read either (absent ones are skipped, e.g. a key not created yet). Never raises for an
+    operating-system reason: a fact that cannot be read is an exposure fact."""
+    try:
+        return _detect(facts, person, person_uid, state_dir, key_paths, run_root=run_root)
+    except OSError as exc:
+        return IsolationResult(
+            "broken",
+            getattr(facts, "platform", "linux"),
+            (
+                Reason(
+                    "facts_unreadable", f"A system fact could not be read ({type(exc).__name__}), so it is not trusted."
+                ),
+            ),
+        )

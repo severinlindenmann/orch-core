@@ -86,8 +86,11 @@ class OsFacts(Protocol):
     # Root-written policy is never parsed here. A root process asks the authoritative tools (setup, L2); the host only
     # compares stat signatures with what the root-owned pin recorded.
     def sudo_allows(self, user: str) -> bool | None: ...  # ``sudo -l -U``: True = a rule, False = none
-    def sshd_denies(self, user: str, host: str, addr: str) -> bool | None: ...  # ``sshd -T -C ...``; None = unknown
-    def file_sig(self, path: str) -> tuple[int, int, int] | None: ...  # (size, mtime_ns, inode); None = absent
+    def sshd_installed(self) -> bool: ...
+    def sshd_ports(self) -> list[int] | None: ...  # the ports sshd itself reports; None = unknown
+    def sshd_denies(self, user: str, host: str, addr: str, laddr: str, lport: int) -> bool | None: ...
+    # file_sig: (size, mtime_ns, ctime_ns, inode); None = absent; UNREADABLE (never equals a record) = stat failed
+    def file_sig(self, path: str) -> tuple[int, int, int, int] | None: ...
     def unit_state(self, unit: str) -> UnitState: ...
     def pin(self, uid: int) -> dict | None: ...  # root-owned pin for a UID; None = no pin; broken = a "*" agent pin
 
@@ -96,6 +99,8 @@ def _platform() -> str:
     return {"linux": "linux", "darwin": "darwin", "win32": "windows"}.get(sys.platform, sys.platform)
 
 
+UNREADABLE = (-1, -1, -1, -1)  # a signature that can never match a recorded one
+_SSHD = ("/usr/sbin/sshd", "/sbin/sshd")
 _ACL_ACCESS = "system.posix_acl_access"
 _ACL_NAMES = (_ACL_ACCESS, "system.posix_acl_default")
 
@@ -252,12 +257,14 @@ class RealOsFacts:
     def can_connect(self, uid: int, path: str) -> bool:
         return uid == 0 or self._reach(uid, path, 0o1, 0o2, 0o2)
 
-    def file_sig(self, path: str) -> tuple[int, int, int] | None:
+    def file_sig(self, path: str) -> tuple[int, int, int, int] | None:
         try:
             st = os.stat(path)
         except FileNotFoundError:
             return None
-        return (st.st_size, st.st_mtime_ns, st.st_ino)
+        except OSError:  # e.g. PermissionError inside a 0750/0700 directory on RHEL: never matches a record
+            return UNREADABLE
+        return (st.st_size, st.st_mtime_ns, st.st_ctime_ns, st.st_ino)
 
     @staticmethod
     def _run(argv: list[str]) -> tuple[int, str] | None:
@@ -283,12 +290,27 @@ class RealOsFacts:
             return True
         return None
 
-    def sshd_denies(self, user: str, host: str, addr: str) -> bool | None:
-        """sshd's own effective ``denyusers`` for a connection context (``sshd -T -C``; needs root)."""
-        sshd = next((b for b in ("/usr/sbin/sshd", "/sbin/sshd") if os.path.exists(b)), None)
+    def sshd_installed(self) -> bool:
+        return any(os.path.exists(b) for b in _SSHD)
+
+    def sshd_ports(self) -> list[int] | None:
+        sshd = next((b for b in _SSHD if os.path.exists(b)), None)
         if sshd is None:
+            return []
+        res = self._run([sshd, "-T"])
+        if res is None or res[0] != 0:
             return None
-        res = self._run([sshd, "-T", "-C", f"user={user},host={host},addr={addr}"])
+        ports = sorted({int(ln.split()[1]) for ln in res[1].splitlines() if ln.lower().startswith("port ")})
+        return ports or None
+
+    def sshd_denies(self, user: str, host: str, addr: str, laddr: str, lport: int) -> bool | None:
+        """sshd's own effective ``denyusers`` for a connection context (``sshd -T -C``; needs root). No sshd installed:
+        nobody can log in over SSH, so denied."""
+        sshd = next((b for b in _SSHD if os.path.exists(b)), None)
+        if sshd is None:
+            return True
+        ctx = f"user={user},host={host},addr={addr},laddr={laddr},lport={lport}"
+        res = self._run([sshd, "-T", "-C", ctx])
         if res is None or res[0] != 0:
             return None
         pats = [p for ln in res[1].splitlines() if ln.lower().startswith("denyusers ") for p in ln.split()[1:]]

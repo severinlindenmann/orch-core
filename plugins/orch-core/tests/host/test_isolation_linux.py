@@ -87,3 +87,23 @@ def test_user_gids_come_from_getgrouplist_and_cover_the_process_groups() -> None
     assert (
         set(os.getgroups()) <= info.gids or os.getuid() == 0
     )  # login groups at start; getgrouplist reads the database
+
+
+def test_file_sig_has_ctime_and_unreadable_never_matches(monkeypatch, tmp_path) -> None:
+    from orch.setup.osfacts import UNREADABLE
+
+    real = RealOsFacts()
+    f = tmp_path / "f"
+    f.write_text("x")
+    st = f.stat()
+    assert real.file_sig(str(f)) == (st.st_size, st.st_mtime_ns, st.st_ctime_ns, st.st_ino)
+    assert real.file_sig(str(tmp_path / "absent")) is None
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    (locked / "x").write_text("x")
+    locked.chmod(0o000)
+    try:
+        if os.getuid() != 0:
+            assert real.file_sig(str(locked / "x")) == UNREADABLE  # PermissionError inside an unsearchable directory
+    finally:
+        locked.chmod(0o700)

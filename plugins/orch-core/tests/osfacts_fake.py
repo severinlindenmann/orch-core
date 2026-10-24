@@ -20,6 +20,8 @@ class FakeOsFacts:
         self.sigs: dict[str, tuple[int, int, int]] = {}
         self.sudo_answer: bool | None = False  # sudo -l -U: no rule
         self.sshd_answer: bool | None = True  # sshd -T -C: denied
+        self.sshd_present = True
+        self.ports: list[int] | None = [22]
 
     def add_user(self, name, uid, *, gid=None, home="/home/x", shell="/bin/bash", groups=(), extra_gids=()) -> None:
         gid = uid if gid is None else gid
@@ -66,8 +68,14 @@ class FakeOsFacts:
     def sudo_allows(self, user):
         return self.sudo_answer
 
-    def sshd_denies(self, user, host, addr):
+    def sshd_denies(self, user, host, addr, laddr, lport):
         return self.sshd_answer
+
+    def sshd_installed(self):
+        return self.sshd_present
+
+    def sshd_ports(self):
+        return self.ports
 
     def file_sig(self, path):
         return self.sigs.get(path)

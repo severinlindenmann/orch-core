@@ -273,10 +273,15 @@ def _check_existing(facts: OsFacts, want: UserPlan, person_uid: int | None, refu
 
 
 # Root-written policy files whose stat signature the pin records (no content is ever parsed by the unprivileged host):
-POLICY_FILES = ("/etc/sudoers", "/etc/sudoers.d", "/etc/ssh/sshd_config", "/etc/ssh/sshd_config.d")
+POLICY_FILES = ("/etc/sudoers", "/etc/sudoers.d", "/etc/doas.conf", "/etc/ssh/sshd_config", "/etc/ssh/sshd_config.d")
 _POLICY_DIRS = ("/etc/sudoers.d", "/etc/ssh/sshd_config.d")
 # Representative sshd connection contexts for ``sshd -T -C``; the user must be denied in every one.
-SSH_CONTEXTS = (("localhost", "127.0.0.1"), ("example.com", "203.0.113.9"), ("host.internal", "10.0.0.5"))
+# (host, addr, laddr); each is tried on every port sshd reports.
+SSH_CONTEXTS = (
+    ("localhost", "127.0.0.1", "127.0.0.1"),
+    ("example.com", "203.0.113.9", "10.0.0.5"),
+    ("host.internal", "10.0.0.5", "192.0.2.1"),
+)
 
 
 @dataclass(frozen=True)
@@ -285,8 +290,8 @@ class PolicyVerdict:
 
     sudo: str  # "none" | "allowed" | "unknown"
     ssh: str  # "denied" | "allowed" | "unknown"
-    ssh_dropin: bool  # orch's own drop-in is present with the expected content (the plain file check)
-    files: dict[str, list[int] | None]  # path -> [size, mtime_ns, inode], or None while absent
+    ssh_dropin: bool  # sshd is not installed, or orch's own drop-in is present with the expected content
+    files: dict[str, list[int] | None]  # path -> [size, mtime_ns, ctime_ns, inode], or None while absent
 
     @property
     def ok(self) -> bool:
@@ -300,7 +305,12 @@ def assess_policy(facts: OsFacts, user: str, *, dropin_text: str | None = None) 
     """Run as root (the setup apply step, after the user and the sshd drop-in exist): ask sudo and sshd themselves for
     ``user`` and take the stat signatures of the policy files. Never parses policy text."""
     sudo = facts.sudo_allows(user)
-    answers = [facts.sshd_denies(user, host, addr) for host, addr in SSH_CONTEXTS]
+    ports = facts.sshd_ports()
+    answers = (
+        [None]
+        if ports is None
+        else [facts.sshd_denies(user, h, a, la, port) for h, a, la in SSH_CONTEXTS for port in (ports or [22])]
+    )
     ssh = "unknown" if any(a is None for a in answers) else "denied" if all(answers) else "allowed"
     files: dict[str, list[int] | None] = {}
     for path in POLICY_FILES:
@@ -313,7 +323,8 @@ def assess_policy(facts: OsFacts, user: str, *, dropin_text: str | None = None) 
     return PolicyVerdict(
         "unknown" if sudo is None else "allowed" if sudo else "none",
         ssh,
-        facts.file_sig(SSHD_DROPIN) is not None and (dropin_text is None or dropin_text == SSHD_DROPIN_TEXT),
+        not facts.sshd_installed()
+        or (facts.file_sig(SSHD_DROPIN) is not None and (dropin_text is None or dropin_text == SSHD_DROPIN_TEXT)),
         files,
     )
 

@@ -337,7 +337,7 @@ export function SignPopover(p: SignPopoverProps) {
           answer={click.view}
           problem={click.problem}
           signing={click.phase === 'signing'}
-          onSign={(word) => void click.sign(word)}
+          onSign={() => void click.sign()}
           onCancel={() => void close()}
           waitUntil={waitUntil}
           story={story}

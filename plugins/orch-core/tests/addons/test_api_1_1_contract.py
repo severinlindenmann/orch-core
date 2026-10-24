@@ -166,6 +166,75 @@ def test_depth_is_at_most_4():
     bad(settings={"title": "T", "schema": nest(4)})
 
 
+def test_f2_every_string_and_integer_is_bounded():
+    for node in (
+        {"type": "string"},
+        {"type": "integer"},
+        {"type": "integer", "minimum": 1},
+        {"type": "integer", "maximum": 1},
+    ):
+        bad(settings=mutate(lambda s, n=node: s["properties"].update(x=n)))
+    ok = {"type": "integer", "minimum": -(2**53 - 1), "maximum": 2**53 - 1}
+    assert load(
+        settings=mutate(
+            lambda s: s["properties"].update(x=ok),
+        )
+    )
+    bad(settings=mutate(lambda s: s["properties"].update(x={"type": "integer", "minimum": 0, "maximum": 2**53})))
+    assert load(settings=mutate(lambda s: s["properties"].update(x={"type": "string", "maxLength": 5})))
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "\ud800x",
+        "",
+        " ",
+        "\u00a0",
+        "a\u00a0b",
+        "a\u2003b",
+        "e\u0301x"[1:],
+        "\u200bx",
+        "x\u202ey",
+        "\ue000",
+        "\u0378",
+        "a\tb",
+    ],
+)
+def test_f3_titles_and_enum_values_are_clean_text(text):
+    bad(settings=mutate(lambda s: s["properties"]["claude"]["properties"]["work"].update(enum=[text])))
+    bad(settings=mutate(lambda s: s["properties"]["claude"].update(title=text)))
+
+
+def test_f3_whitespace_only_enum_values_are_refused_but_spaces_inside_are_fine():
+    bad(settings=mutate(lambda s: s["properties"]["claude"]["properties"]["work"].update(enum=[" ", "  "])))
+    assert load(settings=mutate(lambda s: s["properties"]["claude"]["properties"]["work"].update(enum=["a b"])))
+
+
+def test_f4_the_credential_word_names_the_add_on_and_the_internet():
+    w = signcontent._CAPABILITY_WORDS["credential"]  # noqa: SLF001
+    assert "for this add-on" in w and "over the internet" in w and "never" not in w
+
+
+FEATURES = [
+    {"capabilities": ["choose_model"]},
+    {"capabilities": ["credential", "network"]},
+    {"settings": SETTINGS},
+    {"entry": {"cmd": ["{python}", "{pkg}/main.py"]}},
+]
+
+
+@pytest.mark.parametrize("extra", FEATURES)
+def test_f6_1_1_features_need_an_api_range_that_excludes_1_0(extra):
+    for api in (">=1.0,<2", ">=1", "<2", ">=1.0"):
+        with pytest.raises(ManifestError):
+            load_manifest(json.dumps(manifest(schema="orch.addon/3", api=api, **extra)).encode())
+    with pytest.raises(ManifestError):  # a /2 manifest has no api: read as >=1.0,<2
+        load_manifest(json.dumps(manifest(**extra)).encode())
+    for api in (">=1.1,<2", ">1.0", ">=1.1"):
+        load_manifest(json.dumps(manifest(schema="orch.addon/3", api=api, **extra)).encode())
+
+
 def test_the_official_ids_are_reserved_for_the_official_marketplace():
     assert constants.OFFICIAL_IDS == ("github", "landing", "model-routing")
     assert constants.MOVED_IDS == ()

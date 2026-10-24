@@ -69,7 +69,7 @@ The closed list: `serve_http`, `spawn_agent`, `pty`, `network`, `git_push`, and 
 | Capability | Review line ("can ...") | Rule |
 |---|---|---|
 | `choose_model` | choose the model for agent starts (you still see it before each start) | core calls the add-on only for an agent start with no explicit model (section 8.3) |
-| `credential` | get the key you store with 'orch addon login' (orch never gives it to agents) | requires `network` (the manifest is refused without it); section 8.4 |
+| `credential` | get the key you store for this add-on with 'orch addon login' and send it over the internet | requires `network` (the manifest is refused without it); section 8.4 |
 
 ## 6. Runner environment, events and ops (as of API 1.0)
 
@@ -88,7 +88,8 @@ is never part of what a person signs.
 
 ## 8. API 1.1 (additions only)
 
-An add-on that uses any of this declares `api: ">=1.1,<2"`. This section is the contract; the runner, credential store,
+An add-on that uses any of this (`choose_model`, `credential`, `settings`, `{python}`) must declare an `api` range that
+excludes 1.0 (for example `>=1.1,<2`); the manifest is refused otherwise. This section is the contract; the runner, credential store,
 settings op and launch hook that implement it are separate tasks (design G6, #924).
 
 **8.1 The `{python}` entry placeholder.** `entry.cmd[0]` may be exactly `{python}` (it is refused anywhere else, and as

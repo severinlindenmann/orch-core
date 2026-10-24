@@ -593,8 +593,18 @@ def _check_manifest(obj: dict[str, Any]) -> None:
 def _check_manifest_api_1_1(obj: dict[str, Any]) -> None:
     """addon-api 1.1 (section 8 of ``docs/architecture/addon-api.md``): ``{python}`` is the whole of ``entry.cmd[0]``
     and nowhere else; ``settings.schema`` is in the closed subset."""
+    from orch.addons.manifest import _api_in_range
     from orch.addons.settings_schema import SettingsSchemaError, check_settings_schema
 
+    uses = (
+        [c for c in obj.get("capabilities", []) if c in ("choose_model", "credential")]
+        + (["settings"] if "settings" in obj else [])
+        + (["{python}"] if obj["entry"]["cmd"][0] == "{python}" else [])
+    )
+    if uses and _api_in_range((1, 0), obj.get("api", ">=1.0,<2")) is not False:
+        raise SchemaError(
+            "addon-manifest", "/api", f"{uses[0]} needs add-on API 1.1: set api to a range that excludes 1.0"
+        )
     for i, arg in enumerate(obj["entry"]["cmd"]):
         if "{python}" in arg and (i != 0 or arg != "{python}"):
             raise SchemaError(

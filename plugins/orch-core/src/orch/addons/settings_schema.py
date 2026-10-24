@@ -11,6 +11,8 @@ import re
 import unicodedata
 from typing import Any
 
+from orch.canon import suspicious
+
 __all__ = ["MAX_DEPTH", "SettingsSchemaError", "check_settings_schema"]
 
 MAX_DEPTH = 4  # nesting of schema nodes, the root is depth 1
@@ -45,7 +47,14 @@ def _bounded(v: Any, lo: int, hi: int) -> bool:
 
 
 def _text_ok(s: str) -> bool:
-    return all(c >= " " and unicodedata.category(c) not in ("Cc", "Cf", "Zl", "Zp") for c in s)
+    """Printable, not only blank, no control/surrogate/private/unassigned character, no space but U+0020, nothing
+    ``suspicious()`` flags (invisible, bidi, look-alikes, a leading mark)."""
+    if not s.strip() or suspicious(s):
+        return False
+    return all(
+        unicodedata.category(c) not in ("Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp") and (c == " " or not c.isspace())
+        for c in s
+    )
 
 
 def check_settings_schema(node: Any) -> None:
@@ -96,6 +105,8 @@ def _object(node: dict[str, Any], path: list[str | int], depth: int) -> None:
 
 
 def _string(node: dict[str, Any], path: list[str | int], depth: int) -> None:
+    if "enum" not in node and "maxLength" not in node:
+        raise SettingsSchemaError(path, "a string sets enum or maxLength")
     if "maxLength" in node and not _bounded(node["maxLength"], 1, 200):
         raise SettingsSchemaError([*path, "maxLength"], "maxLength is 1 to 200")
     if "enum" in node:
@@ -112,6 +123,8 @@ def _string(node: dict[str, Any], path: list[str | int], depth: int) -> None:
 
 
 def _integer(node: dict[str, Any], path: list[str | int], depth: int) -> None:
+    if "minimum" not in node or "maximum" not in node:
+        raise SettingsSchemaError(path, "an integer sets minimum and maximum")
     for k in ("minimum", "maximum"):
         if k in node and not _bounded(node[k], -_SAFE_INT, _SAFE_INT):
             raise SettingsSchemaError([*path, k], f"{k} is a whole number")

@@ -32,12 +32,12 @@ export function adminView(d) {
   const panels = h("div", {}, p("Loading admin data…"));
   const tabs = h("div", { class: "section-tabs", role: "tablist", "aria-label": "Admin sections" });
   let data, selected = 0, generation = 0;
-  const names = ["People & groups", "Access", "Workspaces", "Audit"];
+  const names = ["People & groups", "Access", "Workspaces", "Marketplaces", "Audit"];
   const buttons = names.map((name, i) => h("button", {
     id: "admin-tab-" + i, role: "tab", text: name, "aria-controls": "admin-panel-" + i,
     "aria-selected": String(i === selected), tabindex: i === selected ? "0" : "-1",
     onclick: () => choose(i), onkeydown: (ev) => {
-      const next = ev.key === "ArrowRight" ? (i + 1) % 4 : ev.key === "ArrowLeft" ? (i + 3) % 4 : ev.key === "Home" ? 0 : ev.key === "End" ? 3 : null;
+      const next = ev.key === "ArrowRight" ? (i + 1) % names.length : ev.key === "ArrowLeft" ? (i + names.length - 1) % names.length : ev.key === "Home" ? 0 : ev.key === "End" ? names.length - 1 : null;
       if (next !== null) { ev.preventDefault(); choose(next); buttons[next].focus(); }
     },
   }));
@@ -53,12 +53,13 @@ export function adminView(d) {
   async function load() {
     const current = ++generation;
     try {
-      const keys = ["users", "groups", "grants", "workspaces", "channels", "audit"];
+      const keys = ["users", "groups", "grants", "workspaces", "channels", "market-policy", "audit"];
       const responses = await Promise.all(keys.map((key) => d.api("GET", "/admin/" + key)));
       if (current !== generation) return;
       const failed = responses.find((r) => r.status !== 200);
       if (failed) { error(failed.body?.error ?? "unavailable"); panels.replaceChildren(h("button", { text: "Try again", onclick: load })); return; }
-      data = Object.fromEntries(keys.map((key, i) => [key, key === "audit" ? responses[i].body : responses[i].body[key]]));
+      data = Object.fromEntries(keys.map((key, i) => [key, key === "audit" || key === "market-policy" ? responses[i].body : responses[i].body[key]]));
+      data.policy = data["market-policy"];
       if (data.audit.head?.seq > Math.max(0, ...(data.audit.records ?? []).map((r) => r.seq))) {
         const recent = await d.api("GET", "/admin/audit?since=" + Math.max(0, data.audit.head.seq - 100));
         if (current !== generation) return;
@@ -155,6 +156,58 @@ export function adminView(d) {
       p("Binding: " + txt(w.status ?? "unknown")), w.mode === "selective" ? p("Personal · owner only · " + personName(w.owner_alias)) : null)),
       !data.workspaces.length ? p("No workspaces yet.") : null];
   }
+  const CAPS = [["git_push", "Push code to git"], ["network", "Use the network"], ["pty", "Run terminal sessions"], ["serve_http", "Serve web pages"], ["spawn_agent", "Start other agents"]];
+  const official = () => data.policy.official_url;
+  const ids = (text) => [...new Set(text.split(/[\s,]+/).filter(Boolean))].sort();
+  function marketplaces() {
+    const cur = data.policy.policy;
+    const url = h("input", { required: true, maxlength: 300, autocomplete: "off", placeholder: "Address of the marketplace repository" });
+    const key1 = h("input", { required: true, maxlength: 100, autocomplete: "off", "aria-label": "Current public key" });
+    const key2 = h("input", { maxlength: 100, autocomplete: "off", "aria-label": "Next public key (optional)" });
+    const anyAddon = h("input", { type: "radio", name: "allow", checked: cur.addons.allow === null });
+    const onlyAddon = h("input", { type: "radio", name: "allow", checked: cur.addons.allow !== null });
+    const allow = h("textarea", { rows: 2, maxlength: 4000, "aria-label": "Allowed add-ons" }); allow.value = (cur.addons.allow ?? []).join(" ");
+    const block = h("textarea", { rows: 2, maxlength: 4000 }); block.value = cur.addons.block.join(" ");
+    const limit = h("input", { type: "checkbox", checked: cur.ceiling !== null });
+    const caps = CAPS.map(([id, name]) => [id, h("input", { type: "checkbox", checked: (cur.ceiling ?? CAPS.map((c) => c[0])).includes(id) }), name]);
+    const write = (policy, button) => change(button, "PUT", "/admin/market-policy", { base_version: data.policy.version, policy });
+    const edit = (button, fn) => { const next = JSON.parse(JSON.stringify(cur)); fn(next); return write(next, button); };
+    const rows = cur.markets.map((m) => h("article", { class: "list-row row" },
+      h("div", { class: "grow" }, h("b", { text: txt(m.url) }),
+        h("div", { class: "row" }, chip(m.class === "official" ? "Official" : "Company", m.class === "official" ? "ok" : ""),
+          m.class === "company" ? chip(m.keys.length + (m.keys.length === 1 ? " key pinned" : " keys pinned")) : null)),
+      remove("Remove", "PUT", "/admin/market-policy", { base_version: data.policy.version, policy: { ...cur, markets: cur.markets.filter((x) => x.url !== m.url) } })));
+    const hasOfficial = cur.markets.some((m) => m.url === official());
+    return [h("h2", { text: "Marketplaces" }),
+      p("What the people in your workspaces may install. Changes reach every connected workspace within moments; installing still needs a person's review. Version " + data.policy.version + "."),
+      h("section", { class: "card" }, h("h3", { text: "Allowed marketplaces" }), rows.length ? rows : p("None: nothing can be installed from a marketplace."),
+        !hasOfficial ? h("button", { type: "button", text: "Allow the official marketplace", onclick: (ev) => edit(ev.currentTarget, (n) => { n.markets.push({ url: official(), class: "official", keys: [] }); n.markets.sort((a, b) => (a.url < b.url ? -1 : 1)); }) }) : null),
+      h("section", { class: "card" }, h("h3", { text: "Add your company marketplace" }),
+        p("Paste the address and the public key your marketplace signs with. Only add-ons signed with that key are accepted."),
+        form("Add marketplace", [field("Address", url), field("Public key", key1), field("Next public key (optional)", key2)], "PUT", "/admin/market-policy", () => {
+          const next = JSON.parse(JSON.stringify(cur));
+          next.markets = next.markets.filter((x) => x.url !== url.value.trim());
+          next.markets.push({ url: url.value.trim(), class: url.value.trim() === official() ? "official" : "company", keys: url.value.trim() === official() ? [] : [...new Set([key1.value.trim(), key2.value.trim()].filter(Boolean))].sort() });
+          next.markets.sort((a, b) => (a.url < b.url ? -1 : 1));
+          return { base_version: data.policy.version, policy: next };
+        })),
+      h("section", { class: "card" }, h("h3", { text: "Add-ons and permissions" }),
+        h("form", { onsubmit: (ev) => { ev.preventDefault(); const button = ev.currentTarget.querySelector("button[type=submit]");
+          void edit(button, (n) => {
+            n.addons.allow = onlyAddon.checked ? ids(allow.value) : null;
+            n.addons.block = ids(block.value);
+            n.ceiling = limit.checked ? caps.filter(([, box]) => box.checked).map(([id]) => id).sort() : null;
+          }); } },
+          h("fieldset", {}, h("legend", { text: "Which add-ons may be installed" }),
+            h("label", { class: "check" }, anyAddon, " Any add-on from an allowed marketplace"),
+            h("label", { class: "check" }, onlyAddon, " Only these add-ons (names, separated by spaces)"), allow),
+          h("label", {}, "Never allow these add-ons (a name, or name@1.2.3 for one version)", block),
+          h("fieldset", {}, h("legend", { text: "Permissions an add-on may ask for" }),
+            h("label", { class: "check" }, limit, " Limit the permissions to the ticked ones"),
+            caps.map(([, box, name]) => h("label", { class: "check" }, box, " " + name))),
+          h("button", { class: "pri", type: "submit", text: "Save add-on rules" })),
+        p("Blocking a built-in add-on such as the dashboard pauses it in every workspace until the rule is removed."))];
+  }
   function audit() {
     const records = [...(data.audit.records ?? [])].sort((a, b) => b.seq - a.seq);
     return [h("h2", { text: "Audit" }), p("The API returns up to 100 records per page. Outcomes are shown only when recorded."),
@@ -162,14 +215,15 @@ export function adminView(d) {
         const o = record?.o ?? {};
         const time = new Date(o.ts_ms);
         let what = o.type === "grant" ? txt(e.group) + " on " + workspaceName(e.workspace_id) + ": " + (e.role ? roleName(e.role) : "Revoked")
-          : o.type === "membership" ? personName(e.user_id) + (e.added ? " added to " : " removed from ") + txt(e.group) : txt(e.verb ?? e.change ?? o.type);
+          : o.type === "membership" ? personName(e.user_id) + (e.added ? " added to " : " removed from ") + txt(e.group)
+          : o.type === "market_policy" ? "Marketplace rules changed (version " + txt(e.version) + ")" : txt(e.verb ?? e.change ?? o.type);
         if ("before" in e || "after" in e) what += ": " + txt(e.before) + " → " + txt(e.after);
         const actor = o.type === "custodial" ? "Hub on behalf of " + personName(e.user_id) : personName(e.actor_user_id ?? "Hub operator");
         return [Number.isNaN(time.getTime()) ? "Not recorded" : time.toLocaleString(), actor, what, txt(e.outcome ?? "Not recorded")];
       }), "Recent access changes"), !records.length ? p("No access changes recorded.") : null];
   }
   function draw() {
-    panels.replaceChildren(...[people, access, workspaces, audit].map((view, i) => h("section", {
+    panels.replaceChildren(...[people, access, workspaces, marketplaces, audit].map((view, i) => h("section", {
       id: "admin-panel-" + i, role: "tabpanel", "aria-labelledby": "admin-tab-" + i, hidden: i !== selected,
     }, view())));
   }

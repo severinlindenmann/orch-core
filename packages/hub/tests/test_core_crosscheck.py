@@ -155,3 +155,19 @@ def test_question_hash_and_refusals_agree_with_live_core():
     for v in f["question_hash_refused"]:
         with pytest.raises(core_hash.HashError):
             core_hash.question_hash("a" * 32, "T", v["question"])
+
+
+def test_market_policy_constants_match_core():
+    """D14: the official marketplace URL and the capability list the policy validator mirrors."""
+    import re
+
+    from orch_hub.contract import market_policy as MP
+
+    # read as text: importing orch.market / orch.addons would pull in core's whole dependency set
+    consts = (SRC / "orch" / "market" / "constants.py").read_text()
+    manifest = (SRC / "orch" / "addons" / "manifest.py").read_text()
+    official = re.search(r'^OFFICIAL_URL = "([^"]+)"', consts, re.MULTILINE)
+    caps = re.search(r"^CAPABILITIES = \(([^)]*)\)", manifest, re.MULTILINE)
+    assert official and caps
+    assert MP.OFFICIAL_URL == official.group(1)
+    assert sorted(re.findall(r'"([a-z_]+)"', caps.group(1))) == list(MP.CAPABILITIES)

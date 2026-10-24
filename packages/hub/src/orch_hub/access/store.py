@@ -23,6 +23,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from ..contract import market_policy as MP
+from ..contract.canon import cj, loads_strict
 from ..contract.hub import ROLES
 from ..fsutil import PrivateFileError, open_private_db
 
@@ -47,6 +49,10 @@ CREATE TABLE IF NOT EXISTS grants (
 CREATE TABLE IF NOT EXISTS revoked_channels (channel_id TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS snapshots (
   workspace_id TEXT PRIMARY KEY, version INTEGER NOT NULL, fingerprint TEXT NOT NULL, signed TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS market_policy (
+  id INTEGER PRIMARY KEY CHECK (id = 1), version INTEGER NOT NULL CHECK (version >= 1),
+  policy TEXT NOT NULL, hash TEXT NOT NULL
 );
 """
 
@@ -106,6 +112,10 @@ class Access:
             self._db = open_private_db(path, check_same_thread=False, isolation_level=None)
             self._db.executescript(_SCHEMA)
             self._db.execute("INSERT OR IGNORE INTO groups(name, created_ms) VALUES (?,?)", (ADMIN_GROUP, self._now()))
+            d = MP.default_policy()  # a new hub trusts the official marketplace only (D14)
+            self._db.execute(
+                "INSERT OR IGNORE INTO market_policy VALUES (1, 1, ?, ?)", (cj(d).decode(), MP.policy_hash(d))
+            )
         except PrivateFileError as e:
             raise AccessError("bad_private_file", str(e)) from None
         except (sqlite3.Error, OSError) as e:
@@ -364,6 +374,61 @@ class Access:
 
     def revoked_channels(self) -> list[str]:
         return [c for (c,) in self._q("SELECT channel_id FROM revoked_channels ORDER BY channel_id")]
+
+    # --- the hub marketplace policy (D14) ------------------------------------------------------------------------
+
+    def market_policy(self) -> dict[str, Any]:
+        """``{version, policy, hash}``. The stored row is re-validated on every read (fail closed: a damaged row is a
+        store error, never a guessed policy)."""
+        rows = self._q("SELECT version, policy, hash FROM market_policy WHERE id=1")
+        if not rows:
+            raise AccessError("store_error", "market_policy")
+        version, text, h = rows[0]
+        try:
+            policy = MP.check_policy(loads_strict(text))
+        except MP.PolicyMalformed, ValueError:
+            raise AccessError("store_error", "market_policy") from None
+        if h != MP.policy_hash(policy):
+            raise AccessError("store_error", "market_policy")
+        return {"version": version, "policy": policy, "hash": h}
+
+    def set_market_policy(self, base_version: object, policy: object, *, actor: str) -> dict[str, Any]:
+        """Replace the whole policy. ``base_version`` must be the stored version (``conflict`` otherwise: no lost
+        update). The audit record is appended inside the transaction; if that fails the change is refused."""
+        if type(base_version) is not int or base_version < 1:
+            raise AccessError("malformed", "base_version")
+        _hex(actor, "actor")
+        try:
+            new = MP.check_policy(policy)
+        except MP.PolicyMalformed:
+            raise AccessError("malformed", "policy") from None
+        h = MP.policy_hash(new)
+        try:
+            with self.tx() as db:
+                if not self.is_hub_admin(actor):
+                    raise AccessError("forbidden_role", "only a hub-admin sets the marketplace policy")
+                row = db.execute("SELECT version FROM market_policy WHERE id=1").fetchone()
+                if row is None:
+                    raise AccessError("store_error", "market_policy")
+                if row[0] != base_version:
+                    raise AccessError("conflict", "market_policy")
+                version = row[0] + 1
+                db.execute(
+                    "UPDATE market_policy SET version=?, policy=?, hash=? WHERE id=1", (version, cj(new).decode(), h)
+                )
+                if self.observer is None:  # never change the policy without the audit chain behind it
+                    raise AccessError("store_error", "no audit")
+                self.observer(
+                    {
+                        "kind": "market_policy",
+                        "version": version,
+                        "policy_hash": h,
+                        "actor_user_id": actor,
+                    }
+                )
+        except sqlite3.Error as e:
+            raise AccessError("store_error", type(e).__name__) from None
+        return {"version": version, "policy": new, "hash": h}
 
     # --- snapshot persistence (used by AccessSnapshots) -----------------------------------------------------------
 

@@ -48,11 +48,19 @@ try {
   await page.getByRole("heading", { name: "People & groups" }).waitFor();
   await page.getByText(/^Adding .* to .* gives /).first().waitFor();
   await shot("admin-people");
-  for (const [tab, heading] of [["Access", "Access"], ["Workspaces", "Workspaces"], ["Audit", "Audit"]]) {
+  for (const [tab, heading] of [["Access", "Access"], ["Workspaces", "Workspaces"], ["Marketplaces", "Marketplaces"], ["Audit", "Audit"]]) {
     await page.getByRole("tab", { name: tab }).click();
     await page.getByRole("heading", { name: heading, exact: true }).waitFor();
     await shot("admin-" + tab.toLowerCase());
   }
+  // D14: the hub marketplace policy: block one add-on, the version rises
+  await page.getByRole("tab", { name: "Marketplaces" }).click();
+  await page.getByText("Official", { exact: true }).first().waitFor();
+  await page.getByLabel("Never allow these add-ons").fill("wiki@1.0.0");
+  await page.getByRole("button", { name: "Save add-on rules" }).click();
+  await page.getByText("Saved").waitFor();
+  await page.getByText(/Version 2\./).waitFor();
+  await shot("admin-marketplaces-saved");
   // add a person, then remove them with the two-step button
   await page.getByRole("tab", { name: "People & groups" }).click();
   await page.getByLabel("Name", { exact: true }).fill("Jonas");

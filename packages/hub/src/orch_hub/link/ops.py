@@ -18,6 +18,7 @@ from ..contract import hub as H
 from ..contract.canon import unb64u
 from ..contract.hub import Refused
 from ..contract.keystore import OpSigner
+from ..contract.market_policy import default_policy
 from .registry import Registry
 
 if TYPE_CHECKING:
@@ -72,7 +73,7 @@ class NoPublish:
 
 
 class StubSnapshots:
-    """Phase-2 stub: version 1, no roles, no revoked channels, signed by HK_op under the current op cert."""
+    """Phase-2 stub: version 1, no roles, no revoked channels, the default marketplace policy, signed by HK_op under the current op cert."""
 
     def __init__(self, op_signer: OpSigner, hub_id: str, op_cert_id: str, now_ms: Callable[[], int]) -> None:
         self._s, self._hub, self._cert, self._now = op_signer, hub_id, op_cert_id, now_ms
@@ -91,6 +92,7 @@ class StubSnapshots:
             "issued_ms": self._now(),
             "roles": {},
             "revoked_channels": [],
+            "market_policy": default_policy(),
             "dev": True,
         }
         return self._s.sign_object(o)

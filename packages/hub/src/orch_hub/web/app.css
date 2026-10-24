@@ -124,3 +124,5 @@ h1, h2, h3, p, b, span, td, th, dd, button, summary { overflow-wrap:anywhere; }
 .navtabs a.nav.on { background:var(--card); border-color:var(--line); color:var(--pri); font-weight:600; }
 .navtabs a.nav:hover { background:var(--card); }
 @media (max-width: 520px) { button, select, input { min-height:44px; } }
+label.check { display:flex; align-items:center; gap:10px; font-size:14px; font-weight:450; color:inherit; margin:8px 0; }
+label.check input { display:inline-block; width:18px; height:18px; margin:0; flex:none; }

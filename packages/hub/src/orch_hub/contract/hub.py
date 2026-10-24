@@ -17,6 +17,7 @@ from typing import Any
 from . import suite as S
 from .canon import CanonError, b64u, cj, loads_strict, unb64u, unhex
 from .labels import EVENT_TYPE, L, custodial_label
+from .market_policy import valid_policy
 
 HV = 0  # hub contract version (H0)
 CONTRACT_NAME = "orch.hub/0"
@@ -175,6 +176,7 @@ FIELDS: dict[str, dict[str, Check]] = {
         "issued_ms": _int_min(0),
         "roles": lambda x: type(x) is dict,
         "revoked_channels": lambda x: type(x) is list,
+        "market_policy": valid_policy,  # D14: required, never null (protocol.md §7.1)
         "dev": _bool,
     },
     "hub.binding": {
@@ -220,7 +222,7 @@ FIELDS: dict[str, dict[str, Check]] = {
         "seq": _int_min(1),
         "prev": _b64u_n(32),
         "ts_ms": _int_min(0),
-        "type": _enum("custodial", "grant", "membership", "space", "channel", "share"),
+        "type": _enum("custodial", "grant", "membership", "space", "channel", "share", "market_policy"),
         "scope_tag": lambda x: x is None or _b64u_n(32)(x),
         "event_hash": _b64u_n(32),
         "dev": _bool,

@@ -1,17 +1,19 @@
 """The one key an add-on may hold (V3 G6, design-g6 section 5): the ONLY reader and writer of
 ``<state>/hosts/<ws>/addons/<name>/credential``.
 
-* The person stores it with ``orch addon login <name>`` (tty only, see ``orch.cli.addon_credential``); no host op, no
-  dashboard form and no hub path writes it, so an agent cannot plant one.
-* The file is ``0600`` in a ``0700`` directory of the host UID, written tmp + fsync + rename through directory fds
-  (``O_NOFOLLOW``, ``O_EXCL``); a loose mode, a link, a second hard link or another owner is refused, never repaired.
+* The person stores it with ``orch addon login <name>`` (tty only, see ``orch.cli.addon_credential``); no host op,
+  no dashboard form and no hub path writes it, and orch does not hand it to agents.
+* The file is ``0600`` in a ``0700`` directory of the host UID. ``addons/`` is opened once (``O_NOFOLLOW``) and every
+  operation is relative to that fd (tmp + fsync + rename, ``O_EXCL``);
+  a loose mode, a link, a second hard link or another owner is refused, never repaired.
 * :func:`provider` hands the runner a callable that yields the value only while the ACTIVE grant holds both
   ``credential`` and ``network`` (C2) and the file belongs to that add-on; otherwise ``None`` (the add-on is called
   without a key).
 * :func:`remove` and :func:`sweep` delete it (purge, uninstall, a grant that dropped the capability, host start; C4):
   idempotent.
 
-Tier A limit (spec 15.1): a same-UID agent can read the file; a per-add-on UID (#287) closes that."""
+Tier A limit (spec 15.1): an agent running as the same UID can read or write the file directly (and a terminal is no
+barrier to a determined one) until the per-add-on UID (#287)."""
 
 from __future__ import annotations
 
@@ -26,6 +28,7 @@ from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 
 from orch.host import custody
+from orch.host.errors import HostError
 from orch.market import ADDONS  # the store-layout lint matches the bare word
 
 FILE = "credential"
@@ -91,36 +94,76 @@ def addon_dir(state_dir, workspace_id: str, name: str) -> Path:
     return root_dir(state_dir, workspace_id) / _name(name)
 
 
-@contextlib.contextmanager
-def _open_dir(directory: Path, host_uid: int, *, create: bool = False) -> Iterator[int | None]:
-    """``directory`` as an fd checked on the fd itself (a private directory of the host UID), or ``None`` if absent.
-    With ``create`` the missing directory (and its ``addons`` parent) is made ``0700``."""
+def _check_fd(fd: int, host_uid: int, what: str) -> None:
+    info = os.fstat(fd)
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != host_uid or stat.S_IMODE(info.st_mode) != 0o700:
+        raise custody.unsafe(f"credential custody requires a private {what}")
+
+
+def _open_at(dir_fd: int, name: str, host_uid: int, what: str, *, create: bool = False) -> int | None:
+    """``name`` below ``dir_fd`` as a checked directory fd (``O_NOFOLLOW | O_DIRECTORY``, 0700, the host UID), or
+    ``None`` if absent. Never follows a link, never reaches a path: the only way the module opens a directory."""
     if create:
-        for d in (directory.parent, directory):
-            try:
-                os.mkdir(d, 0o700)
-            except FileExistsError:
-                pass
+        try:
+            os.mkdir(name, 0o700, dir_fd=dir_fd)
+        except FileExistsError:
+            pass
     try:
-        fd = os.open(directory, _DIR_FLAGS)
+        fd = os.open(name, _DIR_FLAGS, dir_fd=dir_fd)
     except FileNotFoundError:
+        return None
+    except OSError:
+        raise custody.unsafe(f"credential custody requires a private {what}") from None
+    try:
+        _check_fd(fd, host_uid, what)
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+@contextlib.contextmanager
+def _root(state_dir, workspace_id: str, host_uid: int, *, create: bool = False) -> Iterator[int | None]:
+    """The ``addons`` directory of the workspace as a checked fd, opened ONCE (``O_NOFOLLOW``) below ``hosts/<ws>``
+    (itself opened ``O_NOFOLLOW``, and with ``create`` first walked by ``check_tree``); ``None`` if absent. Every
+    operation of this module is relative to it, so a link planted at ``addons`` or below it is refused, and nothing
+    outside the directory that was checked is ever read, written or deleted."""
+    hosts = Path(state_dir) / "hosts" / workspace_id
+    if create:
+        custody.check_tree(hosts, host_uid)
+    try:
+        hfd = os.open(hosts, _DIR_FLAGS)
+    except FileNotFoundError:
+        if create:
+            raise custody.unsafe("credential custody requires the workspace directory") from None
         yield None
         return
     except OSError:
-        raise custody.unsafe("credential custody requires a private directory") from None
+        raise custody.unsafe("credential custody requires the workspace directory") from None
+    rfd = None
     try:
-        info = os.fstat(fd)
-        if not stat.S_ISDIR(info.st_mode) or info.st_uid != host_uid or stat.S_IMODE(info.st_mode) != 0o700:
-            raise custody.unsafe("credential custody requires a private directory")
-        try:
-            now = os.lstat(directory)
-        except OSError:
-            raise custody.unsafe("credential custody directory changed") from None
-        if (now.st_dev, now.st_ino) != (info.st_dev, info.st_ino):
-            raise custody.unsafe("credential custody directory changed")
-        yield fd
+        rfd = _open_at(hfd, ADDONS, host_uid, "directory", create=create)
+        yield rfd
     finally:
-        os.close(fd)
+        if rfd is not None:
+            os.close(rfd)
+        os.close(hfd)
+
+
+@contextlib.contextmanager
+def _addon(state_dir, workspace_id: str, host_uid: int, name: str, *, create: bool = False) -> Iterator[int | None]:
+    """The directory of add-on ``name`` as a checked fd, or ``None`` if absent."""
+    _name(name)
+    with _root(state_dir, workspace_id, host_uid, create=create) as rfd:
+        if rfd is None:
+            yield None
+            return
+        dfd = _open_at(rfd, name, host_uid, "directory", create=create)
+        try:
+            yield dfd
+        finally:
+            if dfd is not None:
+                os.close(dfd)
 
 
 def _unlink(dfd: int, name: str) -> bool:
@@ -170,7 +213,7 @@ def load(state_dir, workspace_id: str, host_uid: int, name: str) -> Secret | Non
     """The stored credential of add-on ``name``, ``None`` when absent or stored for another name. A compromised file is
     refused (``custody.unsafe_mode``), never repaired."""
     try:
-        with _open_dir(addon_dir(state_dir, workspace_id, name), host_uid) as dfd:
+        with _addon(state_dir, workspace_id, host_uid, name) as dfd:
             if dfd is None:
                 return None
             raw = _read(dfd, host_uid)
@@ -186,12 +229,10 @@ def status(state_dir, workspace_id: str, host_uid: int, name: str) -> str:
 
 def store(state_dir, workspace_id: str, host_uid: int, name: str, secret: Secret, now: float) -> None:
     """Write (or replace) the credential of ``name``: tmp + fsync + rename inside the checked directory."""
-    directory = addon_dir(state_dir, workspace_id, name)
-    custody.check_tree(directory.parent.parent, host_uid)
     data = json.dumps(
         {"v": 1, "addon": name, "value": secret.reveal(), "stored_at": int(now)}, sort_keys=True, separators=(",", ":")
     ).encode()
-    with _open_dir(directory, host_uid, create=True) as dfd:
+    with _addon(state_dir, workspace_id, host_uid, name, create=True) as dfd:
         if dfd is None:
             raise custody.unsafe("credential custody requires a private directory")
         tmp = f".{FILE}.{os.getpid()}.{secrets.token_hex(4)}.tmp"
@@ -210,59 +251,65 @@ def store(state_dir, workspace_id: str, host_uid: int, name: str, secret: Secret
 
 
 def remove(state_dir, workspace_id: str, name: str) -> bool:
-    """Delete the credential directory of ``name``; ``False`` when there was none. Idempotent. Only the credential file
-    and leftover temp files are unlinked (a planted foreign entry keeps the directory and is a custody finding)."""
-    directory = addon_dir(state_dir, workspace_id, name)
-    try:
-        with _open_dir(directory, os.getuid()) as dfd:
-            if dfd is None:
-                return False
-            existed = False
-            for entry in os.listdir(dfd):
-                if entry == FILE or (entry.startswith(f".{FILE}.") and entry.endswith(".tmp")):
-                    existed |= _unlink(dfd, entry) and entry == FILE
-        with contextlib.suppress(OSError):  # not empty (foreign entry): left for the custody check to report
-            os.rmdir(directory)
-    except custody.HostError:
-        # a directory that is not ours or not private cannot be trusted to unlink inside; remove the link/dir itself
-        _force(directory)
-        return True
-    return existed
+    """Delete the credential directory of ``name``; ``False`` when there was none. Idempotent. Relative to the checked
+    ``addons`` fd: an entry that is a link or a regular file is unlinked; a directory is entered only if it is private
+    and the host's (only the credential file and our own temp leftovers are unlinked in it); any other directory is left
+    alone and refused (``custody.unsafe_mode``), never emptied."""
+    _name(name)
+    uid = os.getuid()
+    with _root(state_dir, workspace_id, uid) as rfd:
+        return False if rfd is None else _remove_at(rfd, name, uid)
 
 
-def _force(directory: Path) -> None:
-    """Remove a compromised credential directory entry without following links."""
+def _remove_at(rfd: int, name: str, uid: int) -> bool:
     try:
-        info = os.lstat(directory)
+        info = os.stat(name, dir_fd=rfd, follow_symlinks=False)
     except FileNotFoundError:
-        return
-    if stat.S_ISDIR(info.st_mode):
-        for entry in os.listdir(directory):
-            with contextlib.suppress(OSError):
-                os.unlink(directory / entry)
-        with contextlib.suppress(OSError):
-            os.rmdir(directory)
-    else:
-        with contextlib.suppress(OSError):
-            os.unlink(directory)
+        return False
+    if not stat.S_ISDIR(info.st_mode):  # a link or a file planted where the directory belongs: not followed
+        _unlink(rfd, name)
+        return True
+    dfd = _open_at(rfd, name, uid, "directory")  # refuses a loose or foreign directory: left as it is
+    if dfd is None:
+        return False
+    try:
+        existed = False
+        for entry in os.listdir(dfd):
+            if entry == FILE or (entry.startswith(f".{FILE}.") and entry.endswith(".tmp")):
+                try:
+                    existed |= _unlink(dfd, entry) and entry == FILE
+                except OSError:  # a directory of that name: not ours to empty, rmdir below fails and custody reports
+                    pass
+    finally:
+        os.close(dfd)
+    with contextlib.suppress(OSError):  # not empty (a foreign entry): left for the custody check to report
+        os.rmdir(name, dir_fd=rfd)
+    return existed
 
 
 def sweep(state_dir, workspace_id: str, keep: Iterable[str]) -> list[str]:
     """Delete the credential directory of every add-on NOT in ``keep`` (``keep``: names that are granted, not purged and
     hold ``credential`` in their grant). Called after a purge, an uninstall or a grant that dropped the capability, and
-    at host start (C4). Returns the names removed."""
+    at host start (C4). Returns the names removed. A compromised entry is skipped and refused after the rest was
+    swept (the first ``custody.unsafe_mode`` is raised at the end)."""
     wanted = set(keep)
-    base = root_dir(state_dir, workspace_id)
-    try:
-        entries = sorted(os.listdir(base))
-    except (FileNotFoundError, NotADirectoryError):
-        return []
-    gone = []
-    for entry in entries:
-        if entry in wanted or NAME.fullmatch(entry) is None:
-            continue
-        remove(state_dir, workspace_id, entry)
-        gone.append(entry)
+    uid = os.getuid()
+    gone: list[str] = []
+    first: HostError | None = None
+    with _root(state_dir, workspace_id, uid) as rfd:
+        if rfd is None:
+            return gone
+        for entry in sorted(os.listdir(rfd)):
+            if entry in wanted or NAME.fullmatch(entry) is None:
+                continue
+            try:
+                _remove_at(rfd, entry, uid)
+            except HostError as exc:
+                first = first or exc
+                continue
+            gone.append(entry)
+    if first is not None:
+        raise first
     return gone
 
 

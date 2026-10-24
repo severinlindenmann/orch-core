@@ -4,8 +4,10 @@
     orch addon logout NAME [--workspace W] [--state DIR]   delete it
 
 A person's command, on the person's own terminal. There is no host op, no dashboard form and no hub path that writes
-the key, so an agent cannot plant one. With ``ORCH_GRANT`` or ``ORCH_SESSION`` set the command is refused FIRST (before
-the host or a terminal is touched). The value is read from ``/dev/tty`` with echo off: never from stdin, an argument or
+the key. This stops accidents and keeps orch from handing the key to agents; it is not a sandbox (Tier A, spec 15.1: a
+same-UID agent can still read or write the file until #287). With ``ORCH_GRANT`` or ``ORCH_SESSION`` set the command
+is refused FIRST (before the host or a terminal is touched). The value is read from ``/dev/tty`` with echo off: never
+from stdin, an argument or
 the environment. ``login`` needs the add-on granted, enabled and holding the ``credential`` capability (asked of the
 host as ``addon.list``, which only reads the signed log); only the shape of the value is checked. Everything is written
 through :mod:`orch.addons.credential`; the audit line carries the name and the time, never the value."""

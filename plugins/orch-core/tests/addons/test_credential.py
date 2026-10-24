@@ -186,3 +186,68 @@ def test_c4_purge_uninstall_capability_drop_delete_the_key(state, monkeypatch):
     }
     marketinstall.sweep_credentials(svc)  # idempotent at start
     assert cr.status(state, "ws", UID, "live") == "stored"
+
+
+# --- A2-1: the module never leaves the checked ``addons`` fd ------------------------------------------------------
+
+
+def _linked_addons(state, tmp_path):
+    victim = tmp_path / "victim"
+    (victim / "projects").mkdir(parents=True)
+    os.chmod(victim, 0o700)
+    os.chmod(victim / "projects", 0o755)
+    (victim / "projects" / "notes.txt").write_text("precious")
+    os.symlink(victim, state / "hosts" / "ws" / "addons")
+    return victim
+
+
+def test_store_through_a_symlinked_addons_dir_is_refused_and_writes_nothing(state, tmp_path):
+    victim = _linked_addons(state, tmp_path)
+    with pytest.raises(HostError) as caught:
+        put(state, "probe")
+    assert caught.value.code == "custody.unsafe_mode"
+    assert not (victim / "probe").exists()
+
+
+def test_load_through_a_symlinked_addons_dir_is_refused(state, tmp_path):
+    victim = _linked_addons(state, tmp_path)
+    (victim / "probe").mkdir(mode=0o700)
+    (victim / "probe" / "credential").write_text(json.dumps({"v": 1, "addon": "probe", "value": VALUE, "stored_at": 1}))
+    (victim / "probe" / "credential").chmod(0o600)
+    with pytest.raises(HostError):
+        cr.load(state, "ws", UID, "probe")
+
+
+def test_sweep_and_remove_through_a_symlinked_addons_dir_delete_nothing_elsewhere(state, tmp_path):
+    victim = _linked_addons(state, tmp_path)
+    with pytest.raises(HostError):
+        cr.sweep(state, "ws", keep=[])
+    with pytest.raises(HostError):
+        cr.remove(state, "ws", "projects")
+    assert (victim / "projects" / "notes.txt").read_text() == "precious"
+
+
+def test_a_loose_entry_is_left_alone_and_refused_never_emptied(state):
+    put(state, "good")
+    put(state, "stray")
+    base = state / "hosts" / "ws" / "addons"
+    os.chmod(base / "stray", 0o755)
+    (base / "stray" / "keepme").write_text("x")
+    with pytest.raises(HostError) as caught:
+        cr.sweep(state, "ws", keep=[])
+    assert caught.value.code == "custody.unsafe_mode"
+    assert (base / "stray" / "keepme").read_text() == "x" and (base / "stray" / "credential").exists()
+    assert not (base / "good").exists()  # the rest was still swept
+    with pytest.raises(HostError):
+        cr.remove(state, "ws", "stray")
+
+
+def test_a_link_or_file_planted_as_the_entry_is_unlinked_not_followed(state, tmp_path):
+    put(state, "keep")
+    base = state / "hosts" / "ws" / "addons"
+    outside = tmp_path / "outside.txt"
+    outside.write_text("precious")
+    (base / "viafile").write_text("junk")
+    (base / "vialink").symlink_to(outside)
+    assert cr.sweep(state, "ws", keep=["keep"]) == ["viafile", "vialink"]
+    assert outside.read_text() == "precious" and sorted(p.name for p in base.iterdir()) == ["keep"]

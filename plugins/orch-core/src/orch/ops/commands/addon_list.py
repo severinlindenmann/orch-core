@@ -13,8 +13,10 @@ from orch.ops.runtime import Call
 
 
 def _credential(c: Call, name: str, state: str, capabilities: Any) -> str | None:
-    """``"stored"`` or ``"missing"`` for an active add-on whose grant holds ``credential``: existence only, the value is
-    never read into the answer. Absent for every other add-on (and for a store without a host state directory)."""
+    """``"stored"``, ``"missing"`` or ``"unsafe"`` (the stored file or its directories fail the custody check) for an
+    active add-on whose grant holds ``credential``: existence only, the value is never read into the answer.
+    Absent for every other add-on (and for a store without a host state
+    directory)."""
     state_dir = getattr(c.store, "host_state_dir", None)
     if state_dir is None or state != "active" or "credential" not in capabilities:
         return None
@@ -26,8 +28,10 @@ def _credential(c: Call, name: str, state: str, capabilities: Any) -> str | None
 
 def handle(ctx: Context, args: dict[str, Any]) -> Result:
     """Granted addons (with their state: active, disabled, purged, changed since the grant, missing) and packages that
-    are installed but not granted (``not_granted``). ``enabled`` is true only for an active addon. P1: this is the one
-    place that loads the registry; P2 loads it for every call that runs or writes an addon."""
+    are installed but not granted (``not_granted``). ``enabled`` is true only for an active addon. A row of an
+    active addon that holds ``credential``
+    also has ``credential``: ``stored``, ``missing`` or ``unsafe``. P1: this is the one place that loads the
+    registry; P2 loads it for every call that runs or writes an addon."""
     c = Call.of(ctx, "addon.list")
     c.ws.require_root()
     root = c.store.layout.store  # addons/ lives in the store

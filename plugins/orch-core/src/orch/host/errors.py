@@ -185,6 +185,7 @@ DETAIL_KEYS: dict[str, dict[str, tuple[str, ...] | str | None]] = {
     # H12d-2 (§0.8.6 item 9.9, 9.11): the closed reason and the readers below the level (``devices``: device ids)
     "sign.convenience_unavailable": {  # H12c-e; pair_device is no longer emitted (B10)
         "reason": (
+            "idle",
             "disabled",
             "relay_paired",
             "other_member",

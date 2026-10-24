@@ -116,9 +116,8 @@ def report(state: Path, env: Mapping[str, str], control: Path) -> dict[str, Any]
             {"what": f"the registry is unreadable: {exc.message}", "fix": f"look at {registry_path(state)}"}
         )
     try:
-        flags = convenience.read(state, uid).get("workspaces") or {}
+        convenience.read(state, uid)  # only to report an unreadable flag file
     except HostError as exc:
-        flags = {}
         problems.append(
             {"what": f"the click-to-sign flags are unreadable: {exc.message}", "fix": "orch host convenience show"}
         )
@@ -129,7 +128,6 @@ def report(state: Path, env: Mapping[str, str], control: Path) -> dict[str, Any]
         host_uid = entry.get("host_uid") if type(entry.get("host_uid")) is int else uid
         sock = hostclient.workspace_socket(env, state, host_uid, wid)
         live = served.get(wid)
-        flag = flags.get(wid)
         row = {
             "workspace_id": wid,
             "prefix": entry.get("prefix"),
@@ -138,8 +136,11 @@ def report(state: Path, env: Mapping[str, str], control: Path) -> dict[str, Any]
             "socket": str(sock),
             "socket_answers": _socket_answers(sock, host_uid, wid) if host["answers"] else False,
             "person": ((entry.get("peers") or {}).get(str(uid)) or {}).get("person"),
-            "click_to_sign": bool(isinstance(flag, dict) and flag.get("enabled") is True),
+            "click_to_sign": convenience.enabled(state, wid, host_uid),
         }
+        idle = convenience.idle_off(state, wid, host_uid)  # #1198 C17: it switched itself off after this many hours
+        if idle is not None:
+            row["click_idle_off_hours"] = idle
         if live and isinstance(live.get("sandbox"), bool):  # §11A.17.2: only from a dev host
             row["sandbox"] = live["sandbox"]
         rows.append(row)

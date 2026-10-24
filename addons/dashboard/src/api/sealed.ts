@@ -54,10 +54,13 @@ function b64urlDecodeStrict(text: unknown): Uint8Array | null {
   return b64urlEncode(out) === text ? out : null
 }
 
+/** INTERNAL, for sealed.testing.ts only. */
+export const b64urlDecodeStrictForTests = b64urlDecodeStrict
+
 // ---- context ----
 
 const WORKSPACE_RE = /^[0-9a-f]{32}$/
-const REQUEST_RE = /^hr_[0-9A-HJKMNP-TV-Z]{26}$/
+const REQUEST_RE = /^hr_[0-7][0-9A-HJKMNP-TV-Z]{25}$/ // as the signer's: a 128-bit ULID, so the first character is 0-7
 const DIGEST_RE = /^sha256:[0-9a-f]{64}$/
 
 function directionOf(purpose: unknown): 'in' | 'out' | null {
@@ -96,8 +99,16 @@ function buildAad(dir: 'in' | 'out', ctx: SealedContext, epk: Uint8Array, rpk: U
   return lengthPrefixed([LABEL, enc.encode(dir), enc.encode(ctx.purpose), enc.encode(ctx.workspace_id), enc.encode(ctx.request_id), enc.encode(ctx.view_digest), epk, rpk])
 }
 
-async function deriveKeyNonce(priv: CryptoKey, peerRaw: Uint8Array, aad: Uint8Array): Promise<{ key: CryptoKey; nonce: Uint8Array }> {
-  const peer = await subtle().importKey('raw', peerRaw as BufferSource, CURVE, false, [])
+/** Import a peer public point; WebCrypto refuses a point that is not on the curve. */
+async function importPeer(raw: Uint8Array): Promise<CryptoKey> {
+  try {
+    return await subtle().importKey('raw', raw as BufferSource, CURVE, false, [])
+  } catch {
+    throw new SealedError('malformed')
+  }
+}
+
+async function deriveKeyNonce(priv: CryptoKey, peer: CryptoKey, aad: Uint8Array): Promise<{ key: CryptoKey; nonce: Uint8Array }> {
   const z = new Uint8Array(await subtle().deriveBits({ name: 'ECDH', public: peer }, priv, 256))
   const ikm = await subtle().importKey('raw', z, 'HKDF', false, ['deriveBits'])
   z.fill(0)
@@ -108,29 +119,14 @@ async function deriveKeyNonce(priv: CryptoKey, peerRaw: Uint8Array, aad: Uint8Ar
   return { key, nonce }
 }
 
-/** An ephemeral or long-lived P-256 key: a non-extractable private key and its 65-byte public point. */
+/** A P-256 key: a non-extractable private key and its 65-byte public point. */
 export type KeyPair = { privateKey: CryptoKey; publicKey: Uint8Array }
 
 async function newKeyPair(): Promise<KeyPair> {
-  const pair = await subtle().generateKey(CURVE, true, ['deriveBits'])
+  // The private key is never extractable: it is born that way, nothing ever holds its scalar. A public key always exports.
+  const pair = await subtle().generateKey(CURVE, false, ['deriveBits'])
   const publicKey = new Uint8Array(await subtle().exportKey('raw', pair.publicKey))
-  // Re-import the private half as non-extractable, so nothing can read it back out of the page.
-  const jwk = await subtle().exportKey('jwk', pair.privateKey)
-  const privateKey = await subtle().importKey('jwk', jwk, CURVE, false, ['deriveBits'])
-  return { privateKey, publicKey }
-}
-
-/** Import a P-256 private JWK (tests and vectors) as a non-extractable key with its public point. */
-export async function importKeyPair(jwk: { x: string; y: string; d: string }): Promise<KeyPair> {
-  const privateKey = await subtle().importKey('jwk', { kty: 'EC', crv: 'P-256', x: jwk.x, y: jwk.y, d: jwk.d, ext: false }, CURVE, false, ['deriveBits'])
-  const x = b64urlDecodeStrict(jwk.x)
-  const y = b64urlDecodeStrict(jwk.y)
-  if (!x || !y || x.length !== 32 || y.length !== 32) throw new SealedError('malformed')
-  const publicKey = new Uint8Array(65)
-  publicKey[0] = 4
-  publicKey.set(x, 1)
-  publicKey.set(y, 33)
-  return { privateKey, publicKey }
+  return { privateKey: pair.privateKey, publicKey }
 }
 
 function padSecret(secret: Uint8Array): Uint8Array {
@@ -149,15 +145,11 @@ function padSecret(secret: Uint8Array): Uint8Array {
  * The ephemeral key is always fresh: the nonce is derived from the key agreement, so a reused key would reuse a nonce.
  */
 export function seal(signerPk: Uint8Array | string, secret: string, ctx: SealedContext): Promise<Envelope> {
-  return sealWith(signerPk, secret, ctx, undefined)
+  return sealInternal(signerPk, secret, ctx, undefined)
 }
 
-/** TEST ONLY (the vectors fix the ephemeral key). Never call from page code. */
-export function __sealWithEphemeralForTests(signerPk: Uint8Array | string, secret: string, ctx: SealedContext, ephemeral: KeyPair): Promise<Envelope> {
-  return sealWith(signerPk, secret, ctx, ephemeral)
-}
-
-async function sealWith(signerPk: Uint8Array | string, secret: string, ctx: SealedContext, ephemeral: KeyPair | undefined): Promise<Envelope> {
+/** INTERNAL, for sealed.testing.ts only (the vectors fix the ephemeral key). Page code calls seal(). */
+export async function sealInternal(signerPk: Uint8Array | string, secret: string, ctx: SealedContext, ephemeral: KeyPair | undefined): Promise<Envelope> {
   const dir = validContext(ctx)
   if (dir !== 'in') throw new SealedError('context')
   const rpk = typeof signerPk === 'string' ? b64urlDecodeStrict(signerPk) : signerPk
@@ -168,12 +160,7 @@ async function sealWith(signerPk: Uint8Array | string, secret: string, ctx: Seal
     padded = padSecret(bytes)
     const eph = ephemeral ?? (await newKeyPair())
     const aad = buildAad('in', ctx, eph.publicKey, rpk)
-    let derived: { key: CryptoKey; nonce: Uint8Array }
-    try {
-      derived = await deriveKeyNonce(eph.privateKey, rpk, aad)
-    } catch {
-      throw new SealedError('malformed') // a recipient key that is not on the curve
-    }
+    const derived = await deriveKeyNonce(eph.privateKey, await importPeer(rpk), aad) // a recipient key off the curve: malformed
     const ct = new Uint8Array(await subtle().encrypt({ name: 'AES-GCM', iv: derived.nonce as BufferSource, additionalData: aad as BufferSource }, derived.key, padded as BufferSource))
     return { v: 1, alg: ALG, epk: b64urlEncode(eph.publicKey), ct: b64urlEncode(ct) }
   } finally {
@@ -182,9 +169,20 @@ async function sealWith(signerPk: Uint8Array | string, secret: string, ctx: Seal
   }
 }
 
+/** What a reveal key is made for: the approval's workspace and request. open() refuses any other context. */
+export type Bound = { workspace_id: string; request_id: string }
+
+function equalBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false
+  let d = 0
+  for (let i = 0; i < a.length; i++) d |= a[i] ^ b[i]
+  return d === 0
+}
+
 /**
- * The browser's key for one sign call that expects a grant-secret reveal. Create it with `newRevealKey()`, send
- * `publicKey` (base64url) as `reveal_key`, open the reveal once, then `close()` it.
+ * The browser's key for one sign call that expects a grant-secret reveal. Create it with `newRevealKey(bound)`, send
+ * `publicKeyB64` as `reveal_key`, call `open()` once on the reveal, then `close()` it.
+ * The context of every open is built from the caller's own state (the approval it holds), never from the envelope or the server.
  */
 export class RevealKey {
   readonly publicKey: Uint8Array
@@ -192,18 +190,13 @@ export class RevealKey {
   readonly #seen = new Set<string>()
   readonly #bound: Bound
   #pinnedDigest: string | null = null
+
+  /** Use newRevealKey(). Taking a ready key pair is for sealed.testing.ts (fixed vector keys). */
   constructor(pair: KeyPair, bound: Bound) {
     if (!bound || !WORKSPACE_RE.test(bound.workspace_id) || !REQUEST_RE.test(bound.request_id)) throw new SealedError('context')
     this.publicKey = pair.publicKey
     this.#priv = pair.privateKey
     this.#bound = { workspace_id: bound.workspace_id, request_id: bound.request_id }
-  }
-  /** Internal to open(): is this context the one the key was made for (and the pinned View, once there is one)? */
-  _contextMatches(ctx: SealedContext): boolean {
-    return ctx.workspace_id === this.#bound.workspace_id && ctx.request_id === this.#bound.request_id && (this.#pinnedDigest === null || ctx.view_digest === this.#pinnedDigest)
-  }
-  _pinDigest(digest: string): void {
-    this.#pinnedDigest ??= digest
   }
   get publicKeyB64(): string {
     return b64urlEncode(this.publicKey)
@@ -215,90 +208,62 @@ export class RevealKey {
     this.#priv = null
     this.#seen.clear()
   }
-  /** Internal to open(): the private key handle (null once closed). */
-  _priv(): CryptoKey | null {
-    return this.#priv
-  }
-  _wasSeen(epk: string): boolean {
-    return this.#seen.has(epk)
-  }
-  _markSeen(epk: string): void {
-    this.#seen.add(epk)
+
+  /**
+   * Open the `reveal.envelope` of a sign result. Returns the secret bytes: the caller shows them, then overwrites them
+   * (`fill(0)`). Checks run in the order of contract section 5, all before any decryption.
+   */
+  async open(envelope: unknown, ctx: SealedContext): Promise<Uint8Array> {
+    // closed
+    const priv = this.#priv
+    if (!priv) throw new SealedError('closed')
+    // context (and the direction: the browser opens "out" values only), then this key's own approval and pinned View
+    if (validContext(ctx) !== 'out') throw new SealedError('context')
+    if (ctx.workspace_id !== this.#bound.workspace_id || ctx.request_id !== this.#bound.request_id) throw new SealedError('context')
+    if (this.#pinnedDigest !== null && ctx.view_digest !== this.#pinnedDigest) throw new SealedError('context')
+    // exactly v, alg, epk, ct; v the integer 1; the one algorithm
+    if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)) throw new SealedError('malformed')
+    const env = envelope as Record<string, unknown>
+    if (Object.keys(env).sort().join(',') !== 'alg,ct,epk,v') throw new SealedError('malformed')
+    if (typeof env.v !== 'number' || !Number.isInteger(env.v) || env.v !== 1) throw new SealedError('malformed')
+    if (env.alg !== ALG) throw new SealedError('malformed')
+    // canonical base64url
+    const epk = b64urlDecodeStrict(env.epk)
+    const ct = b64urlDecodeStrict(env.ct)
+    if (!epk || !ct) throw new SealedError('malformed')
+    // epk: 65 bytes, 0x04, on the curve (the import checks), not our own key
+    if (epk.length !== 65 || epk[0] !== 4) throw new SealedError('malformed')
+    const peer = await importPeer(epk)
+    if (equalBytes(epk, this.publicKey)) throw new SealedError('malformed')
+    // ct length
+    const body = ct.length - TAG
+    if (body < BLOCK || body > 4096 || body % BLOCK !== 0) throw new SealedError('malformed')
+    // replay (a failed open below does not burn the epk)
+    const epkText = env.epk as string
+    if (this.#seen.has(epkText)) throw new SealedError('replay')
+    // authenticate + decrypt
+    const aad = buildAad('out', ctx, epk, this.publicKey)
+    const derived = await deriveKeyNonce(priv, peer, aad)
+    let padded: Uint8Array
+    try {
+      padded = new Uint8Array(await subtle().decrypt({ name: 'AES-GCM', iv: derived.nonce as BufferSource, additionalData: aad as BufferSource }, derived.key, ct as BufferSource))
+    } catch {
+      throw new SealedError('open_failed')
+    }
+    // padding
+    try {
+      const n = (padded[0] << 8) | padded[1]
+      if (n < 1 || n > padded.length - 2 || Math.ceil((n + 2) / BLOCK) * BLOCK !== padded.length) throw new SealedError('malformed')
+      for (let i = 2 + n; i < padded.length; i++) if (padded[i] !== 0) throw new SealedError('malformed')
+      this.#seen.add(epkText)
+      this.#pinnedDigest ??= ctx.view_digest
+      return padded.slice(2, 2 + n)
+    } finally {
+      padded.fill(0)
+    }
   }
 }
-
-/** What a reveal key is made for: the approval's workspace and request. open() refuses any other context. */
-export type Bound = { workspace_id: string; request_id: string }
 
 export async function newRevealKey(bound: Bound): Promise<RevealKey> {
   return new RevealKey(await newKeyPair(), bound)
-}
-
-export function revealKeyFromPair(pair: KeyPair, bound: Bound): RevealKey {
-  return new RevealKey(pair, bound)
-}
-
-function equalBytes(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.length !== b.length) return false
-  let d = 0
-  for (let i = 0; i < a.length; i++) d |= a[i] ^ b[i]
-  return d === 0
-}
-
-/**
- * Open the `reveal.envelope` of a sign result. The context is built from the caller's own state (the approval it holds),
- * never from the envelope or the server. Returns the secret bytes: the caller shows them, then overwrites them (`fill(0)`).
- */
-export async function open(recipient: RevealKey, envelope: unknown, ctx: SealedContext): Promise<Uint8Array> {
-  // 1. closed
-  const priv = recipient._priv()
-  if (!priv) throw new SealedError('closed')
-  // 2. context (and the direction: the browser opens "out" values only)
-  if (validContext(ctx) !== 'out') throw new SealedError('context')
-  // 2b. the key's own approval, and the View pinned by the first successful open
-  if (!recipient._contextMatches(ctx)) throw new SealedError('context')
-  // 3. exactly v, alg, epk, ct; v the integer 1; the one algorithm
-  if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)) throw new SealedError('malformed')
-  const env = envelope as Record<string, unknown>
-  const keys = Object.keys(env).sort()
-  if (keys.length !== 4 || keys.join(',') !== 'alg,ct,epk,v') throw new SealedError('malformed')
-  if (typeof env.v !== 'number' || !Number.isInteger(env.v) || env.v !== 1) throw new SealedError('malformed')
-  if (env.alg !== ALG) throw new SealedError('malformed')
-  // 4. canonical base64url
-  const epk = b64urlDecodeStrict(env.epk)
-  const ct = b64urlDecodeStrict(env.ct)
-  if (!epk || !ct) throw new SealedError('malformed')
-  // 5. epk: 65 bytes, 0x04, not our own key (on-curve is checked when it is imported below)
-  if (epk.length !== 65 || epk[0] !== 4 || equalBytes(epk, recipient.publicKey)) throw new SealedError('malformed')
-  // 6. ct length
-  const body = ct.length - TAG
-  if (body < BLOCK || body > 4096 || body % BLOCK !== 0) throw new SealedError('malformed')
-  const aad = buildAad('out', ctx, epk, recipient.publicKey)
-  let derived: { key: CryptoKey; nonce: Uint8Array }
-  try {
-    derived = await deriveKeyNonce(priv, epk, aad)
-  } catch {
-    throw new SealedError('malformed') // off the curve
-  }
-  // 7. replay (a failed open below does not burn the epk)
-  const epkText = env.epk as string
-  if (recipient._wasSeen(epkText)) throw new SealedError('replay')
-  // 8. authenticate + decrypt
-  let padded: Uint8Array
-  try {
-    padded = new Uint8Array(await subtle().decrypt({ name: 'AES-GCM', iv: derived.nonce as BufferSource, additionalData: aad as BufferSource }, derived.key, ct as BufferSource))
-  } catch {
-    throw new SealedError('open_failed')
-  }
-  // 9. padding
-  try {
-    const n = (padded[0] << 8) | padded[1]
-    if (n < 1 || n > padded.length - 2 || Math.ceil((n + 2) / BLOCK) * BLOCK !== padded.length) throw new SealedError('malformed')
-    for (let i = 2 + n; i < padded.length; i++) if (padded[i] !== 0) throw new SealedError('malformed')
-    recipient._markSeen(epkText)
-    recipient._pinDigest(ctx.view_digest)
-    return padded.slice(2, 2 + n)
-  } finally {
-    padded.fill(0)
-  }
 }

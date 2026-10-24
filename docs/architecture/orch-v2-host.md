@@ -11462,13 +11462,13 @@ checked at registration, at host start, and again by `dev_gate` inside the colum
   `id` and `root` only (no `person_id`, no `workspaces`) and `dev.json`, and start a **pending dev host**; (2) run
   `orch setup --prefix SBX` (owner name `orch dev sandbox <id8>`, passphrase custody) in `<root>/ws`, which bootstraps and
   registers the workspace on that host; (3) stop the host by its own PID and write the manifest's `person_id` and
-  `workspaces` entry (`id`, `st_dev`, `st_ino`), the workspace marker and `dev.json`; (4) start the full dev host, which
+  `workspaces` entry (`id`, `st_dev`, `st_ino`) and the workspace marker (`dev.json` was written once, in step 1, and stays); (4) start the full dev host, which
   proves S1 to S5 as before. Production code never writes a sandbox file.
 - **The pending dev host (V3-D38).** A manifest with neither `person_id` nor `workspaces` gives a pending dev host
   (start-up proof checks 1 to 3 and 5 unchanged; a manifest that lists workspaces but no person is still refused,
   `no_person`). It has **no dev powers**: `sandbox_reason` fails first with `S0` for every workspace, so `dev_gate`,
   the test marketplace and the lock-free `gated` are all off, and a records push is refused as on every dev host. It
-  starts only with an empty registry (`not_sandbox` otherwise) and admits exactly one fresh `SBX` genesis per process,
+  starts only with an empty registry (`not_sandbox` otherwise) and admits exactly one fresh `SBX` genesis per process (the claim records the workspace id and is checked again before every admission, start-up recovery and same-key retries included),
   only through `host.bootstrap`: the genesis prefix is `SBX`, the owner name the sandbox's, the owner a fresh person, the
   root `<root>/ws` or `<root>/ws-<n>` directly below the pinned root. `host.register` and every further bootstrap on a
   pending host are `not_sandbox`. Its status line reads `DEV HOST (pending genesis, no dev powers)`. Dev powers exist

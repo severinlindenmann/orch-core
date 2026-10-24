@@ -43,7 +43,11 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     if text is not None:
         event["text"] = text
     doc = next((x for x in view.fields["questions"] if x["id"] == qid), None)
-    done = h.run(event, view.uid, f"answer {qid} of {view.key}", review=_review(h, view, doc, event))
+    review = None
+    if not (ctx.dry_run or ctx.prepare is not None):  # those never show a review (h.run returns before it)
+        h.precheck(event, view.uid)  # the model's refusal (e.g. not an option) comes first, as without a review
+        review = _review(h, view, doc, event)
+    done = h.run(event, view.uid, f"answer {qid} of {view.key}", review=review)
     return h.ticket_result(view, done, {"question": qid}, f"orch show {view.key}")
 
 

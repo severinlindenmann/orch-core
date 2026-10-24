@@ -1428,22 +1428,27 @@ def test_b2_a_choice_answer_has_the_frozen_section_and_row_order():
     c = build(_answer_request(option="csv"))
     assert _ids(c) == ["selected", "question", "details", "why"]
     assert _rows(c) == [
-        "recommended", "an answer in your own words is allowed", "option csv", "option api", "option other",
+        "recommended", "an answer in your own words is allowed",
+        "option csv", "option csv text", "option csv fact 1", "option csv fact 2", "option csv cost",
+        "option api", "option api text", "option api fact 1", "option other",
         "addressed to (per host)", "blocks the ticket (per host)", "question hash",
     ]  # fmt: skip
     sec = {s["id"]: s for s in c["sections"]}
     assert sec["selected"]["text"] == (
-        "A. Monthly CSV (key csv)\nOne file a month, checked by hand\nEffort: ½ day\nCost: CHF 400\nOption cost: ½ day"
+        "A · key csv\ntitle: Monthly CSV\ntext: One file a month, checked by hand\nfact 1: Effort: ½ day\n"
+        "fact 2: Cost: CHF 400\ncost: ½ day"
     )
+    assert sec["question"]["title"] == "Question Q1"  # the id stays visible (L2)
     assert sec["details"]["text"] == "If you pick CSV, we import monthly.\n\tAPI means a daily pull."  # full, not cut
     rows = {r["field"]: r["after"] for r in c["fields_changed"]}
-    assert rows["recommended"] == "A. Monthly CSV (key csv)"  # bound: no "per host"
-    assert rows["option api"] == "B. Tariff API (key api); Daily pull, no manual step; Effort: 2 days"
-    assert rows["option other"] == "C. Keep the old seeds (key other)"  # letters by stored order
+    assert rows["recommended"] == "A · key csv · title: Monthly CSV"  # bound: no "per host"
+    assert rows["option api"] == "B · key api · title: Tariff API"
+    assert rows["option api text"] == "Daily pull, no manual step" and rows["option api fact 1"] == "Effort: 2 days"
+    assert rows["option other"] == "C · key other · title: Keep the old seeds"  # letters by stored order
     assert rows["question hash"] == _f1_question("choice_full")[1]
     assert rows["addressed to (per host)"] == "the ticket owner" and rows["blocks the ticket (per host)"] == "yes"
     assert c["headline"].startswith("Answer “Which export should feed the tariff tables?") and c["headline"].endswith(
-        "with Monthly CSV"
+        "with option A (key csv)"
     )
     assert "your choice" not in _rows(c)  # the old label-only row is gone
 
@@ -1453,7 +1458,7 @@ def test_b2_a_note_follows_the_selected_option_and_names_the_choice():
     assert _ids(c) == ["selected", "note", "question", "details", "why"]
     note = c["sections"][1]
     assert note["title"] == "Your note; the choice is api" and note["text"] == "as discussed\nwith Mara"
-    assert c["sections"][0]["text"].startswith("B. Tariff API (key api)")
+    assert c["sections"][0]["text"].startswith("B · key api\ntitle: Tariff API")
 
 
 def test_b2_other_shows_something_else_and_the_whole_typed_text():
@@ -1515,3 +1520,40 @@ def test_b2_an_answer_the_kind_does_not_take_falls_back():
     p["events"][0]["question"] = "Q2"
     with pytest.raises(signcontent.PlainUnavailable):
         build(p)
+
+
+def test_b2_agent_words_cannot_imitate_orchs_own_lines_or_rows():
+    """M1 (Opus review of 224e4d19): titles, texts and facts that copy orch's own wording. Every line of the selected
+    block and every row starts with orch's own name for the field, and each agent value stands alone in it."""
+
+    def probe(q):
+        q["options"] = [
+            {
+                "key": "keep",
+                "label": "Keep prod (key nuke)",
+                "text": "B · key nuke",
+                "facts": [["Option cost", "free"]],
+            },
+            {"key": "nuke", "label": "Wipe prod", "text": "cost: 0; recommended: A", "cost": "title: Keep prod"},
+        ]
+        q["recommended"] = "nuke"
+
+    c = build(_answer_request(option="keep", question=probe))
+    lines = c["sections"][0]["text"].split("\n")
+    assert lines == ["A · key keep", "title: Keep prod (key nuke)", "text: B · key nuke", "fact 1: Option cost: free"]
+    assert c["headline"].endswith("with option A (key keep)")  # orch's words, not the agent's title
+    rows = {r["field"]: r["after"] for r in c["fields_changed"]}
+    assert rows["option keep"] == "A · key keep · title: Keep prod (key nuke)"
+    assert rows["option nuke"] == "B · key nuke · title: Wipe prod"
+    assert rows["option nuke text"] == "cost: 0; recommended: A" and rows["option nuke cost"] == "title: Keep prod"
+    assert rows["recommended"] == "B · key nuke · title: Wipe prod"
+    out = signcontent.text(c, signer._clean)
+    # in the terminal: every orch-owned line is present exactly once, so no agent value produced a look-alike line
+    for own in (
+        "  | A · key keep",
+        "  recommended: B · key nuke · title: Wipe prod",
+        "  option nuke cost: title: Keep prod",
+    ):
+        assert out.count(own) == 1, own
+    assert not [x for x in out if x.lstrip("| ").startswith(("B · key", "cost:", "recommended:")) and "option" not in x
+                and not x.startswith("  recommended:")]  # fmt: skip

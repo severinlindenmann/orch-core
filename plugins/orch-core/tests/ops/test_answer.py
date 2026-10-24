@@ -99,9 +99,10 @@ def test_the_terminal_review_is_the_signer_view_and_shows_every_bound_field(hws,
     review = hws.reviews[-1]
     q = hws.view("1").questions[0]
     for needle in (
-        "Your choice", "B. api (key api)", "Your note; the choice is api", "| as discussed", "Question",
-        "| Which export?", "| Pick one.", "Why it was asked", "| The seeds are stale.", "recommended: A. csv (key csv)",
-        "option csv: A. csv (key csv)", "option api: B. api (key api)", f"question hash: {q.hash}",
+        "Your choice", "| B · key api", "| title: api", "Your note; the choice is api", "| as discussed",
+        "Question Q1", "| Which export?", "| Pick one.", "Why it was asked", "| The seeds are stale.",
+        "recommended: A · key csv · title: csv", "option csv: A · key csv · title: csv",
+        "option api: B · key api · title: api", f"question hash: {q.hash}",
     ):  # fmt: skip
         assert needle in review, f"{needle!r} not in the review:\n{review}"
     assert review.index("Your choice") < review.index("Your note") < review.index("Question")
@@ -149,3 +150,16 @@ def test_wait_labels_a_note_with_the_choice(hws, agent, me):
     assert me("answer", "Q1", "--option", "csv", "-m", "as discussed", "--ref", key).code == 0
     r = agent("wait", "--ref", key, "--timeout", "1")
     assert r.code == 0 and "--- your note; the choice is csv [" in r.out and "as discussed" in r.out
+
+
+def test_a_bad_option_gets_the_models_refusal_before_any_review(hws, agent, me):
+    """L1 (Opus review of 224e4d19): the review is built only after the model's precheck, so a key that is not an
+    option is refused as the model refuses it, and nothing is shown or signed."""
+    key = make_ticket(agent)
+    ask(agent)
+    hws.reviews.clear()
+    r = me("answer", "Q1", "--option", "zzz", "--ref", key, "--json")
+    assert r.err_code == "invalid.input" and r.doc["error"]["message"].startswith("answer.bad_option:"), r.out
+    assert hws.reviews == [] and answered(hws) == []
+    d = me("answer", "Q1", "--option", "csv", "--ref", key, "--dry-run")  # a dry run shows no review either
+    assert d.code == 0 and hws.reviews == [] and answered(hws) == []

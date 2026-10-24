@@ -1041,15 +1041,22 @@ def _letter(i: int) -> str:
     return chr(ord("A") + i)  # by STORED order (2..6 options), never by submission or recommendation
 
 
-def _option_lines(i: int, o: Mapping[str, Any]) -> list[str]:
-    """One option as the signed view states it: letter, title and key, then its text, facts and cost."""
-    lines = [f"{_letter(i)}. {_s(o['label'])} (key {_s(o['key'])})"]
+def _option_head(i: int, o: Mapping[str, Any]) -> str:
+    """The orch-owned part of an option: its letter and key (a key is ``[a-z][a-z0-9_]*``, never free text)."""
+    return f"{_letter(i)} · key {_s(o['key'])}"
+
+
+def _option_parts(o: Mapping[str, Any]) -> list[tuple[str, str]]:
+    """The agent's words of an option, each under an orch-owned name (``title``, ``text``, ``fact N``, ``cost``). Every
+    one of them is a one-line field (``validate_question``), so a line or row that starts with one of these names is
+    orch's own: agent text can never begin a line, and each value stands alone (M1, Opus review of 224e4d19)."""
+    parts = [("title", _s(o["label"]))]
     if "text" in o:
-        lines.append(_s(o["text"]))
-    lines += [f"{_s(label)}: {_s(value)}" for label, value in o.get("facts", [])]
+        parts.append(("text", _s(o["text"])))
+    parts += [(f"fact {n}", f"{_s(label)}: {_s(value)}") for n, (label, value) in enumerate(o.get("facts", []), 1)]
     if "cost" in o:
-        lines.append(f"Option cost: {_s(o['cost'])}")
-    return lines
+        parts.append(("cost", _s(o["cost"])))
+    return parts
 
 
 def _question(material: Mapping[str, Any], events: list[Mapping[str, Any]], ticket: Any, out: dict[str, Any]) -> None:
@@ -1086,10 +1093,11 @@ def _question(material: Mapping[str, Any], events: list[Mapping[str, Any]], tick
     sections: list[dict[str, str]] = []
     if picked is not None:
         i = index[picked]
-        sections.append({"id": "selected", "title": "Your choice", "text": "\n".join(_option_lines(i, options[i]))})
+        lines = [_option_head(i, options[i]), *(f"{name}: {value}" for name, value in _option_parts(options[i]))]
+        sections.append({"id": "selected", "title": "Your choice", "text": "\n".join(lines)})
         if typed is not None:
             sections.append({"id": "note", "title": f"Your note; the choice is {picked}", "text": typed})
-        answer = _s(options[i]["label"])
+        answer = f"option {_letter(i)} (key {_s(picked)})"  # orch's words: the agent's title is in `selected`
     elif q["kind"] == "choice":  # Other: allowed by `allow_other` (validate_answer checked it)
         sections.append({"id": "selected", "title": "Your choice", "text": "Something else"})
         sections.append({"id": "answer", "title": "Your answer", "text": typed})
@@ -1097,7 +1105,7 @@ def _question(material: Mapping[str, Any], events: list[Mapping[str, Any]], tick
     else:  # a text question: "Your answer" is the selection, no `selected`
         sections.append({"id": "answer", "title": "Your answer", "text": typed})
         answer = "your answer"
-    sections.append({"id": "question", "title": "Question", "text": q["text"]})
+    sections.append({"id": "question", "title": f"Question {q['id']}", "text": q["text"]})
     if "details" in q:
         sections.append({"id": "details", "title": "Details from the agent", "text": q["details"]})
     if "why" in q:
@@ -1108,11 +1116,16 @@ def _question(material: Mapping[str, Any], events: list[Mapping[str, Any]], tick
     out["fields_title"] = "About this question"  # facts of the question, not changes: no "- ->" before values
     if "recommended" in q:  # bound by the question hash: an ordinary row, never "per host"
         r = q["recommended"]
-        _row(out, "recommended", f"{_letter(index[r])}. {_s(options[index[r]]['label'])} (key {_s(r)})")
+        _row(
+            out, "recommended", f"{_option_head(index[r], options[index[r]])} · title: {_s(options[index[r]]['label'])}"
+        )
     if "allow_other" in q:
         _row(out, "an answer in your own words is allowed", "yes")
-    for i, o in enumerate(options):
-        _row(out, f"option {_s(o['key'])}", "; ".join(_option_lines(i, o)))
+    for i, o in enumerate(options):  # one row per option (letter, key, title), then one sub-row per other agent field
+        parts = _option_parts(o)
+        _row(out, f"option {_s(o['key'])}", f"{_option_head(i, o)} · title: {parts[0][1]}")
+        for name, value in parts[1:]:
+            _row(out, f"option {_s(o['key'])} {name}", value)
     # who it is addressed to and whether it blocks are routing, the host's word: the question hash does not bind them
     _row(out, "addressed to (per host)", "the ticket owner" if q["to"] == "ticket_owner" else _s(q["to"]))
     _row(out, "blocks the ticket (per host)", "yes" if q["blocking"] else "no")

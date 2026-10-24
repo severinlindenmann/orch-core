@@ -38,6 +38,9 @@ CUSTODY_FEATURE = "custody"
 IMAGES_FEATURE = "images"  # `stash` and `prepare {sequence}` naming pasted screenshots (core R3 part B)
 REVEAL_FEATURE = "reveal"  # `prepare {reveal_key}` and `sign`'s sealed `reveal` of a grant secret (core C7)
 BACKUP_KEY_FEATURE = "backup_key"  # `sign {sealed}`: the hub steps by click with the sealed backup key (core C10)
+SEALED_PASSPHRASE_FEATURE = (
+    "sealed_passphrase"  # `custody_off {begin}`, then `{sealed}`: the new passphrase sealed (core C12)
+)
 SEQUENCE_FEATURE = "sequence"  # `prepare {sequence}`: one review, N signatures (core batch 11)
 
 
@@ -184,6 +187,16 @@ class Signer:
             except HostError:
                 return False
             return BACKUP_KEY_FEATURE in self.features
+
+    def passphrase_seals(self) -> bool:
+        """Can the running signer take the new passphrase of "One click off" sealed (`custody_off {begin}`)? An older
+        one would take it in the clear, so it is never asked. Never raises."""
+        with self.lock:
+            try:
+                self._ensure()
+            except HostError:
+                return False
+            return SEALED_PASSPHRASE_FEATURE in self.features
 
     def images(self) -> bool:
         """Can the running signer hold a pasted screenshot (`stash`)? An older one would ignore `images` of the intent

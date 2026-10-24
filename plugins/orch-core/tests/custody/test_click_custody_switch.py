@@ -7,6 +7,7 @@ import os
 
 import pytest
 
+from orch.click import sealed
 from orch.click.log import ClickLog
 from orch.click.protocol import FEATURES, OPS, ClickError
 from orch.click.signer import CUSTODY_TRIES, CUSTODY_WINDOW, ClickSigner
@@ -98,7 +99,7 @@ def test_the_signer_advertises_the_switch():
 def test_status_lists_the_feature(switch):
     signer, *_ = switch
     out = signer.status({})
-    assert out["features"] == ["custody", "sequence", "images", "reveal", "backup_key"]
+    assert out["features"] == ["custody", "sequence", "images", "reveal", "backup_key", "sealed_passphrase"]
     (row,) = out["workspaces"]
     assert row["custody"] == "passphrase" and row["enabled"] is False and row["problem"] == "not_convenience"
 
@@ -163,7 +164,7 @@ def test_the_passphrase_never_reaches_the_log_or_an_answer(switch):
     signer, _, provider, _, _, log = switch
     refused(lambda: on(signer, "wrong secret words"), "custody.wrong_passphrase")
     row = on(signer, provider.passphrase)
-    refused(lambda: signer.handle("custody_off", {"workspace_id": WS, "passphrase": "x"}), "custody.unavailable")
+    refused(lambda: off(signer, passphrase="x"), "custody.unavailable")
     text = repr(log.lines) + repr(row)
     for secret in ("wrong secret words", provider.passphrase):
         assert secret not in text
@@ -182,7 +183,23 @@ def test_the_written_log_has_the_switch_and_no_passphrase(switch):
 # -- fix-forward of the Opus review of #539 (H1, H2, M1, M2, L1-L3) ------------------------------------------------
 
 
+def offer(signer):
+    return signer.handle("custody_off", {"workspace_id": WS, "begin": True})
+
+
+def sealed_for(got, secret, *, purpose="custody.passphrase", workspace=WS):
+    ctx = sealed.Context(purpose, workspace, got["request_id"], got["view_digest"])
+    return {
+        "request_id": got["request_id"],
+        "view_digest": got["view_digest"],
+        "sealed": {"custody.passphrase": sealed.seal(got["seal"]["pk"], secret, ctx)},
+    }
+
+
 def off(signer, **extra):
+    """Off as the dashboard does it: a passphrase goes through begin, then sealed to the offered key (#1198 C12)."""
+    if "passphrase" in extra:
+        extra = {**sealed_for(offer(signer), extra.pop("passphrase")), **extra}
     return signer.handle("custody_off", {"workspace_id": WS, **extra})
 
 
@@ -273,11 +290,12 @@ def test_off_with_a_weak_passphrase_changes_nothing_and_the_flag_stays_on(switch
     assert off(signer, passphrase=STRONG)["custody"] == "passphrase"  # the retry works
 
 
-@pytest.mark.parametrize("pw", ["", 7, None])
-def test_off_with_an_odd_passphrase_is_invalid_input(switch, pw):
+@pytest.mark.parametrize("pw", ["", 7, None, STRONG])
+def test_off_with_a_clear_passphrase_is_invalid_input(switch, pw):
+    """#1198 C12: the passphrase is never accepted in the clear, whatever it is."""
     signer, state, provider, *_ = switch
     on(signer, provider.passphrase)
-    refused(lambda: off(signer, passphrase=pw), "invalid.input")
+    refused(lambda: signer.handle("custody_off", {"workspace_id": WS, "passphrase": pw}), "invalid.input")
     assert flag(state)
 
 
@@ -703,3 +721,134 @@ def test_the_leftover_sweep_runs_for_a_dashboard_off_without_a_passphrase(switch
     store.put(WS, device, b"\x01" * 32)  # what a crashed move left behind
     off(signer)
     assert not store.exists(WS, device)
+
+
+# -- #1198 C12: the new passphrase of "One click off" arrives sealed -------------------------------------------
+
+
+def test_c12_the_offer_carries_a_key_a_digest_and_nothing_secret(switch):
+    signer, *_ = switch
+    got = offer(signer)
+    assert set(got) == {"request_id", "view_digest", "seal", "expires_in"}
+    assert got["seal"]["purposes"] == ["custody.passphrase"] and got["seal"]["alg"] == sealed.ALG
+    assert "sealed_passphrase" in FEATURES
+
+
+def test_c12_a_sealed_passphrase_moves_the_key_and_leaves_no_trace(switch):
+    signer, state, provider, store, _, log = switch
+    on(signer, provider.passphrase)
+    got = offer(signer)
+    args = sealed_for(got, STRONG)
+    row = signer.handle("custody_off", {"workspace_id": WS, **args})
+    assert row["custody"] == "passphrase" and row["enabled"] is False
+    spilled = repr(log.lines) + repr(row) + repr(signer.__dict__.get("problems"))
+    assert STRONG not in spilled
+    for f in (state / "click").rglob("*") if (state / "click").exists() else []:
+        if f.is_file():
+            assert STRONG.encode() not in f.read_bytes()
+    assert not signer._offers  # the key was dropped with its use
+
+
+def test_c12_an_offer_is_used_once_a_replay_is_refused(switch):
+    signer, state, provider, *_ = switch
+    on(signer, provider.passphrase)
+    args = sealed_for(offer(signer), STRONG)
+    signer.handle("custody_off", {"workspace_id": WS, **args})
+    refused(lambda: signer.handle("custody_off", {"workspace_id": WS, **args}), "invalid.input")
+
+
+def test_c12_a_weak_passphrase_uses_up_the_offer_and_a_new_one_works(switch):
+    signer, state, provider, *_ = switch
+    on(signer, provider.passphrase)
+    args = sealed_for(offer(signer), "password1")
+    refused(lambda: signer.handle("custody_off", {"workspace_id": WS, **args}), "custody.unavailable")
+    assert flag(state)
+    refused(lambda: signer.handle("custody_off", {"workspace_id": WS, **args}), "invalid.input")
+    assert off(signer, passphrase=STRONG)["custody"] == "passphrase"
+
+
+def test_c12_wrong_binding_is_refused_and_does_not_burn_the_offer(switch):
+    signer, state, provider, *_ = switch
+    on(signer, provider.passphrase)
+    got = offer(signer)
+    # another request's context (the digest of a different offer), another purpose, a flipped bit: all refused
+    wrong_purpose = sealed_for(got, STRONG)
+    ctx = sealed.Context("hub.backup_key", WS, got["request_id"], got["view_digest"])
+    wrong_purpose["sealed"]["custody.passphrase"] = sealed.seal(got["seal"]["pk"], STRONG, ctx)
+    refused(lambda: signer.handle("custody_off", {"workspace_id": WS, **wrong_purpose}), "invalid.input")
+    good = sealed_for(got, STRONG)
+    flipped = {
+        **good,
+        "sealed": {
+            "custody.passphrase": {
+                **good["sealed"]["custody.passphrase"],
+                "ct": "A" + good["sealed"]["custody.passphrase"]["ct"][1:],
+            }
+        },
+    }
+    refused(lambda: signer.handle("custody_off", {"workspace_id": WS, **flipped}), "invalid.input")
+    assert flag(state)
+    assert signer.handle("custody_off", {"workspace_id": WS, **good})["custody"] == "passphrase"  # still opens
+
+
+def test_c12_another_digest_or_request_or_workspace_is_refused(switch):
+    signer, state, provider, *_ = switch
+    on(signer, provider.passphrase)
+    got = offer(signer)
+    args = sealed_for(got, STRONG)
+    refused(
+        lambda: signer.handle("custody_off", {"workspace_id": WS, **args, "view_digest": "sha256:" + "0" * 64}),
+        "invalid.input",
+    )
+    refused(
+        lambda: signer.handle("custody_off", {"workspace_id": WS, **args, "request_id": "hr_" + "0" * 26}),
+        "invalid.input",
+    )
+    refused(lambda: signer.handle("custody_off", {"workspace_id": "f" * 32, **args}), "not_found")
+    assert flag(state)
+
+
+def test_c12_a_newer_offer_drops_the_older_and_an_expired_one_is_refused(switch):
+    signer, state, provider, _, mono, _ = switch
+    on(signer, provider.passphrase)
+    first = sealed_for(offer(signer), STRONG)
+    second = offer(signer)
+    refused(lambda: signer.handle("custody_off", {"workspace_id": WS, **first}), "invalid.input")
+    late = sealed_for(second, STRONG)
+    mono.t += 400  # mono is the wall seam of this fixture; the offer's clock is the signer's mono
+    signer.mono = lambda: mono.t + 10_000
+    refused(lambda: signer.handle("custody_off", {"workspace_id": WS, **late}), "invalid.input")
+    assert flag(state)
+
+
+def test_c12_odd_sealed_shapes_and_begin_extras_are_invalid(switch):
+    signer, *_ = switch
+    got = offer(signer)
+    good = sealed_for(got, STRONG)
+    for bad in (
+        {**good, "sealed": {}},
+        {**good, "sealed": {"hub.backup_key": good["sealed"]["custody.passphrase"]}},
+        {**good, "extra": 1},
+        {"request_id": got["request_id"], "sealed": good["sealed"]},
+    ):
+        refused(lambda bad=bad: signer.handle("custody_off", {"workspace_id": WS, **bad}), "invalid.input")
+    refused(lambda: signer.handle("custody_off", {"workspace_id": WS, "begin": True, "x": 1}), "invalid.input")
+    refused(lambda: signer.handle("custody_off", {"workspace_id": WS, "begin": False}), "invalid.input")
+
+
+def test_c12_nothing_secret_in_the_written_log(switch):
+    signer, state, provider, _, _, log = switch
+    on(signer, provider.passphrase)
+    off(signer, passphrase=STRONG)
+    assert STRONG not in (log.root / "click.jsonl").read_text()
+
+
+def test_c12_the_log_says_the_key_moved_only_when_it_did(switch):
+    signer, state, provider, _, _, log = switch
+    on(signer, provider.passphrase)
+    off(signer, passphrase=STRONG)
+    assert ("custody_off", {"workspace": WS, "moved": "true"}) in log.lines
+    text = (log.root / "click.jsonl").read_text()
+    assert '"moved": "true"' in text and STRONG not in text
+    on2 = signer.handle("custody_off", {"workspace_id": WS})  # flag only, key already under a passphrase
+    assert on2 and log.lines[-1] == ("custody_off", {"workspace": WS})

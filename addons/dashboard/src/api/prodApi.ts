@@ -9,7 +9,7 @@ import type { MandatesPreviewState } from './mandatesPreview'
 import type { Api, ListTicketsParams } from './apiFactory'
 import type { SignDefault, SignMethod } from './signing'
 import type { HandoffAction, HandoffRequest, HandoffState } from './handoff'
-import type { ClickAction, ClickCard, ClickState, ClickPrepared, ClickSigned, ClickSwitch, ClickViewAnswer } from './click'
+import type { ClickAction, ClickCard, ClickState, ClickPrepared, ClickSigned, ClickSwitch, ClickViewAnswer, CustodySealOffer } from './click'
 import type { HostGrant, HostReaders, HostSettings, RosterMember } from './settings'
 import type { QuickPage, QuickParams, RecordsRun, RecordsStatus } from './quickRecords'
 import { activityQuery, type ActivityPage, type ActivityParams } from './activity'
@@ -308,6 +308,7 @@ const click = {
   phoneAvailable: (ws: string) => call<{ phones: number }>(`${w(ws)}/phone/available`),
   clickStatus: (ws: string) => call<ClickCard>(`${w(ws)}/click/status`),
   switchClick: (ws: string, body: ClickSwitch) => call<ClickCard>(`${w(ws)}/click/custody`, 'POST', body),
+  custodySeal: (ws: string) => call<CustodySealOffer>(`${w(ws)}/click/custody/seal`, 'POST', {}),
 }
 
 const implemented: Record<string, unknown> = { ...reads, ...empty, ...handoff, ...click, ...records }

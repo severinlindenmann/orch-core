@@ -59,6 +59,8 @@ CUSTODY_WINDOW = 900.0
 #: the wrong-passphrase record of the switch, in the person's custody root (it survives a signer restart: Opus M1)
 CUSTODY_MISSES = "click-custody.json"
 PASSPHRASE_MAX = 1024
+#: #1198 C12: the signer's offer of a key for the NEW passphrase of "One click off" lives this long, one use
+PASSPHRASE_OFFER_LIFETIME = 300.0
 REQUEST_LIFETIME = 600.0  # §0.8.1: a request lives 10 minutes
 HUMAN_OPS_V1 = ("human.prepare", "human.get", "human.submit", "human.pending", "human.cancel")
 
@@ -175,6 +177,9 @@ class ClickSigner:
         #: R3 part B: pasted screenshots uploaded by ``stash`` (workspace, digest) -> {buf, size, done, at}
         self.stash_: dict[tuple[str, str], dict[str, Any]] = {}
         self.conns: dict[str, Any] = {}
+        #: #1198 C12: (workspace, request id) -> (recipient, view digest, deadline): the key that opens the sealed new
+        #: passphrase of ``custody_off``; one per workspace, one use, in memory only
+        self._offers: dict[tuple[str, str], tuple[sealed.Recipient, str, float]] = {}
         self.busy = False
         #: page keys reserved at prepare, each for one approval (workspace, request): one key, one request, one seal
         #: (sealed-field contract §3)
@@ -1480,19 +1485,23 @@ class ClickSigner:
         return self._row(entry)
 
     def custody_off(self, args: Mapping[str, Any]) -> dict[str, Any]:
-        """Click-to-sign off, from the dashboard. Without a ``passphrase``: the flag goes off and nothing else. With one
-        (V3-D31, narrowing Opus H2 on #539): the flag goes off and the key moves back under that new passphrase, in one
-        locked step, and only while the flag is on at that moment (see the comment block above). The text is never
-        logged or echoed."""
+        """Click-to-sign off, from the dashboard. Without a passphrase: the flag goes off and nothing else. With one
+        (V3-D31, narrowing Opus H2): the flag goes off and the key moves back under that new passphrase, in one
+        locked step, and only while the flag is on at that moment (see the comment block above). The passphrase
+        arrives sealed (#1198 C12, sealed-field purpose ``custody.passphrase``): ``{begin: true}`` returns a one-use
+        offer (request id, review digest, the signer's public key), then ``{request_id, view_digest, sealed}`` opens it.
+        A clear ``passphrase`` is refused. The text is never logged or echoed."""
         from orch.custody import select
         from orch.custody.base import BackendUnavailable, CustodyError, KeyNotFound
         from orch.host.errors import HostError
 
         entry = self._entry(args.get("workspace_id"))
         wid, uid = self._tier_a(entry)
-        pw = args.get("passphrase")
-        if "passphrase" in args and (type(pw) is not str or not pw):
-            raise ClickError("invalid.input", "passphrase is a non-empty string")
+        if "passphrase" in args:
+            raise ClickError("invalid.input", "the passphrase is sent sealed (begin, then sealed)")
+        if "begin" in args:
+            return self._passphrase_offer(wid, args)
+        pw = self._open_passphrase(wid, args) if "sealed" in args else None
         try:
             select.turn_off_convenience(self.state, wid, uid, move_key=pw is not None, passphrase=pw)
         except HostError as exc:
@@ -1506,8 +1515,57 @@ class ClickSigner:
         except (BackendUnavailable, CustodyError) as exc:
             raise ClickError("custody.unavailable", str(exc)) from None
         self.problems.pop(wid, None)
-        self._note("custody_off", workspace=wid)
+        self._note("custody_off", workspace=wid, **({"moved": "true"} if pw is not None else {}))
         return self._row(entry)
+
+    def _passphrase_offer(self, wid: str, args: Mapping[str, Any]) -> dict[str, Any]:
+        """``custody_off {begin: true}``: a fresh key for one sealed passphrase, bound to a new request id and to the
+        digest of this small review (which carries the public key). A newer offer for the workspace drops the older."""
+        from orch.host.requests import new_request_id
+
+        if set(args) != {"workspace_id", "begin"} or args["begin"] is not True:
+            raise ClickError("invalid.input", "begin takes the workspace and true")
+        for key in [k for k, (r, _, _) in self._offers.items() if k[0] == wid or r.closed]:
+            self._offers.pop(key)[0].close()
+        rid = new_request_id()
+        rec = sealed.Recipient("in", workspace_id=wid, request_id=rid)
+        field = {"v": sealed.VERSION, "alg": sealed.ALG, "pk": rec.public, "purposes": ["custody.passphrase"]}
+        digest = views.digest({"op": "custody.off", "workspace_id": wid, "request_id": rid, "seal": field})
+        self._offers[(wid, rid)] = (rec, digest, self.mono() + PASSPHRASE_OFFER_LIFETIME)
+        return {"request_id": rid, "view_digest": digest, "seal": field, "expires_in": int(PASSPHRASE_OFFER_LIFETIME)}
+
+    def _open_passphrase(self, wid: str, args: Mapping[str, Any]) -> str:
+        """Open the sealed new passphrase with the offer's key. The offer is used up by the first open that succeeds
+        (a refusal before that, e.g. a corrupted envelope, leaves it: a relay cannot burn it). Static refusals only."""
+        rid, digest, env = args.get("request_id"), args.get("view_digest"), args.get("sealed")
+        if set(args) != {"workspace_id", "request_id", "view_digest", "sealed"}:
+            raise ClickError("invalid.input", "a sealed passphrase takes request_id, view_digest and sealed")
+        if type(rid) is not str or not REQ.fullmatch(rid) or type(digest) is not str or not HASH.fullmatch(digest):
+            raise ClickError("invalid.input", "request_id and view_digest are ids")
+        if type(env) is not dict or set(env) != {"custody.passphrase"} or type(env["custody.passphrase"]) is not dict:
+            raise ClickError("invalid.input", "sealed is the custody.passphrase envelope")
+        got = self._offers.get((wid, rid))
+        if got is None or self.mono() >= got[2] or got[0].closed:
+            if got is not None:
+                self._offers.pop((wid, rid))[0].close()
+            raise ClickError("invalid.input", "the passphrase window closed; start again")
+        rec, offered, _ = got
+        if digest != offered:
+            raise ClickError("invalid.input", "the passphrase was sealed for another review")
+        try:
+            raw = rec.open(env["custody.passphrase"], sealed.Context("custody.passphrase", wid, rid, offered))
+        except sealed.SealedError:
+            raise ClickError("invalid.input", "the passphrase could not be read; type it again") from None
+        self._offers.pop((wid, rid))[0].close()  # used up: whatever happens next, a new offer is needed
+        try:
+            if len(raw) > PASSPHRASE_MAX:
+                raise ClickError("invalid.input", "passphrase is text")
+            return bytes(raw).decode("utf-8")
+        except UnicodeDecodeError:
+            raise ClickError("invalid.input", "passphrase is text") from None
+        finally:
+            for i in range(len(raw)):
+                raw[i] = 0
 
     # -- bookkeeping ---------------------------------------------------------------------------------------------------
     def _drop(self, approval: Approval) -> None:
@@ -1524,6 +1582,9 @@ class ClickSigner:
         # ``_attempted`` is deliberately not swept: it lives as long as the process (see its definition).
 
     def close(self) -> None:
+        for rec, _, _ in self._offers.values():
+            rec.close()
+        self._offers.clear()
         for a in self.approvals.values():
             if a.seal is not None:
                 a.seal.close()

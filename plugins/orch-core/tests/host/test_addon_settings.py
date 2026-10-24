@@ -141,11 +141,11 @@ def test_only_an_owner_sets_add_on_settings(w):
 
 
 # ------------------------------------------------------------------------------- the word, the signer, the hub
-def test_the_class_is_the_typed_word():
+def test_the_class_is_one_click():
     cls = protocol.op_class
-    assert cls("settings.set", args={"set": {"addons": {"demo": {"mode": "fast"}}}}) == "word"
-    assert cls("settings.set", args={"set": {"addons": {"demo": None}}}) == "word"
-    assert cls("settings.set", events=[{"type": "settings.changed", "set": {"addons": {"demo": {}}}}]) == "word"
+    assert cls("settings.set", args={"set": {"addons": {"demo": {"mode": "fast"}}}}) == "click"
+    assert cls("settings.set", args={"set": {"addons": {"demo": None}}}) == "click"
+    assert cls("settings.set", events=[{"type": "settings.changed", "set": {"addons": {"demo": {}}}}]) == "click"
 
 
 # ------------------------------------------------------------------------------------------- host: the schema

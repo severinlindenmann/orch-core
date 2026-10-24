@@ -32,7 +32,7 @@ it('shows a source on every card, states and a permanent nav link', async () => 
   }
   show('/w/DEMO/addons')
   await screen.findByText('Available', {}, T)
-  for (const text of ['Off', 'On', 'Awaiting Terminal approval', 'Withdrawn by its publisher']) expect(screen.getByText(text)).toBeInTheDocument()
+  for (const text of ['Off', 'On', 'Waiting for installation approval', 'Withdrawn by its publisher']) expect(screen.getByText(text)).toBeInTheDocument()
   for (const card of screen.getAllByRole('article')) expect(within(card).getByText('official - demo-example/market - 1.2.0')).toBeInTheDocument()
   expect(screen.getByRole('link', { name: 'Add-ons' })).toHaveAttribute('href', '/w/DEMO/addons')
 })
@@ -57,11 +57,11 @@ it('update diff values from the package sit inside the AddonFrame', async () => 
 it('stages the exact source, hands off in Terminal and refreshes after submission', async () => {
   const d = await openReview()
   expect(state.host.calls.find((c) => c.path.endsWith('/market/stage'))?.body).toEqual({ id: 'calendar', url: market().url })
-  expect(within(d).getByText('You will approve this exact version and these permissions in the Terminal. Nothing is enabled until you sign.')).toBeInTheDocument()
-  await userEvent.click(within(d).getByRole('button', { name: 'Continue in Terminal' }))
+  expect(within(d).getByText('Next, review and approve the installation with one click. The add-on will be installed turned off.')).toBeInTheDocument()
+  await userEvent.click(within(d).getByRole('button', { name: 'Review installation' }))
   await waitFor(() => expect(state.host.posts()).toHaveLength(1), T)
   expect(state.host.posts()[0].body).toEqual({ action: 'market_grant', name: 'calendar', staged: 'demo-stage' })
-  expect(screen.getByText('Awaiting Terminal approval')).toBeInTheDocument()
+  expect(screen.getByText('Waiting for installation approval')).toBeInTheDocument()
   ws().market!.markets[0].addons[0].installed = { version: '1.2.0', state: 'disabled' }
   act(() => {
     state.host.submitted.set([...state.host.requests.keys()][0], 'DEMO-0001')
@@ -136,13 +136,28 @@ it('requires turning an active add-on off before Remove', async () => {
   expect(await screen.findByRole('button', { name: 'Remove' }, T)).toBeDisabled()
   expect(screen.getByText('Turn it off in Settings > Add-ons first')).toBeInTheDocument()
 })
+it('with One click on, install is the signer review and one Sign press: no Terminal, no typed word (V3-D38)', async () => {
+  ws().click = { custody: 'convenience', enabled: true, available: true }
+  ws().features = [...ws().features, 'click']
+  const d = await openReview()
+  expect(within(d).queryByText(/Terminal/)).toBeNull()
+  await userEvent.click(within(d).getByRole('button', { name: 'Review installation' }))
+  expect(await screen.findByTestId('click-panel', {}, T)).toHaveTextContent('FROM-THE-SIGNER addon.grant') // the signer's own review, not the page's
+  expect(state.host.posts().filter((c) => c.path.endsWith('/handoff'))).toHaveLength(0)
+  expect(state.host.calls.find((c) => c.path.endsWith('/click/prepare'))?.body).toEqual({ action: 'market_grant', name: 'calendar', staged: 'demo-stage' })
+  expect(screen.queryByRole('textbox')).toBeNull() // no word to type
+  const sign = await screen.findByRole('button', { name: 'Approve and install' }, T)
+  await waitFor(() => expect(sign).toBeEnabled(), { timeout: 5000 })
+  await userEvent.click(sign)
+  await waitFor(() => expect(state.host.clickSigned).toHaveLength(1), T)
+})
 it('expired stages must be reviewed again and cannot continue', async () => {
   ws().marketStage = stage({ expires_at: '2000-01-01T00:00:00Z' })
   const d = await openReview()
-  expect(within(d).queryByRole('button', { name: 'Continue in Terminal' })).toBeNull()
+  expect(within(d).queryByRole('button', { name: 'Review installation' })).toBeNull()
   ws().marketStage = stage({ stage: 'demo-stage-new' })
   await userEvent.click(within(d).getByRole('button', { name: 'Review again' }))
-  await screen.findByRole('button', { name: 'Continue in Terminal' })
+  await screen.findByRole('button', { name: 'Review installation' })
   expect(state.host.calls.filter((c) => c.path.endsWith('/market/stage') && c.method === 'POST')).toHaveLength(2)
 })
 it('removes a disabled package only after confirmation', async () => {

@@ -76,7 +76,7 @@ export type MarketInstalled = { addons: InstalledAddon[] }
 export const EXTERNAL_HELP = "External marketplaces aren't available in this workspace yet"
 export function stateLabel(state?: string, pending = false): string {
   return pending || state === 'pending'
-    ? 'Awaiting Terminal approval'
+    ? 'Waiting for installation approval'
     : !state
       ? 'Available'
       : state === 'disabled'

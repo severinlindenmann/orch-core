@@ -27,7 +27,7 @@ import { usePageHeader } from '@/app/shell/ShellUi'
 import { useWorkspace } from '@/app/workspace'
 import { useRole } from '@/app/useRole'
 
-const HELP = 'You will approve this exact version and these permissions in the Terminal. Nothing is enabled until you sign.'
+const HELP = 'Next, review and approve the installation with one click. The add-on will be installed turned off.'
 const cell = 'p-2 align-top break-words @max-[800px]:block @max-[800px]:before:block @max-[800px]:before:text-text-faint @max-[800px]:before:content-[attr(data-label)]'
 function Table({ columns, children }: { columns: string[]; children: ReactNode }) {
   return (
@@ -171,7 +171,7 @@ function Review({
             </Button>
           ) : (
             <Button disabled={busy} onClick={proceed}>
-              Continue in Terminal
+              Review installation
             </Button>
           )}
         </DialogFooter>
@@ -458,7 +458,7 @@ function MarketWorkspace() {
           )}
         </>
       )}
-      {mayWrite && stage && (
+      {mayWrite && stage && !handoff && (
         <Review
           stage={stage}
           busy={busy}
@@ -483,6 +483,7 @@ function MarketWorkspace() {
         <SignPopover
           title="Approve add-on package"
           ws={ws}
+          anchor={null} // the review dialog is folded away while this one is open (Cancel here brings it back)
           action={{ action: 'market_grant', name: handoff.name, staged: handoff.stage }}
           autoStart
           onClose={() => {

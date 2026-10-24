@@ -1940,6 +1940,38 @@ def test_publish_setup_and_share_are_never_one_click(client, token, stub, script
     assert client.app.state.handoffs.active == {}
 
 
+MARKET = {"action": "market_grant", "name": "echo", "staged": "st_" + "0" * 32}
+
+
+@pytest.fixture
+def host_serves_grant(monkeypatch):
+    """The test host's welcome does not list addon.grant (a real one does); the column check is not what is tested."""
+    from orch_dashboard import handoff
+
+    monkeypatch.setattr(handoff, "WORKSPACE_OPS", tuple(o for o in handoff.WORKSPACE_OPS if o != "addon.grant"))
+
+
+def test_a_market_install_is_one_click_and_the_signer_gets_the_host_review_material_only(
+    client, token, stub, script, rich, host_serves_grant
+):
+    """V3-D38: the grant of a staged marketplace package goes to the signer like any other action. The server names
+    the op and its two arguments; the review (capabilities, marketplace block) is the host's and the signer's."""
+    res = prepare(client, token, stub, MARKET)
+    assert res.status_code == 200, res.text
+    (op, args) = [c for c in script.clients[0].calls if c[0] == "prepare"][0]
+    assert args["op"] == "addon.grant" and args["args"] == {"name": "echo", "staged": MARKET["staged"]}
+    assert "sequence" not in args and "files" not in args
+    again = prepare(client, token, stub, MARKET)  # the same stage is the same request
+    assert again.json()["request_id"] == res.json()["request_id"] and script.prepared == 1
+    other = prepare(client, token, stub, {**MARKET, "staged": "st_" + "1" * 32})  # a new review is a new request
+    assert other.status_code == 200 and script.prepared == 2
+
+
+def test_a_market_install_for_publish_is_still_not_a_thing(client, token, stub, script, rich, host_serves_grant):
+    res = prepare(client, token, stub, {**MARKET, "name": "publish"})
+    assert res.status_code == 409 and res.json()["error"]["reason"] == "terminal_only" and script.prepared == 0
+
+
 def test_a_stopped_sequence_says_which_ticket_exists_and_that_the_agent_access_is_last(
     client, token, stub, script, host_check, rich, monkeypatch
 ):

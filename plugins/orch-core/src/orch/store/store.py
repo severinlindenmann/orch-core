@@ -377,6 +377,7 @@ class Store:
         #: finish): the host's cheap foreign-append signal (F11)
         self.outside_changes = 0
         self.workspace_id = workspace_id
+        self.host_state_dir = host_state_dir  # None for a store that is not served by a host
         self._expected_genesis = expected_genesis
         self._host = host
         self._verifier = verifier

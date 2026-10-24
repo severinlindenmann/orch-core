@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from orch import __version__ as CORE_VERSION
-from orch.addons import builtin, install
+from orch.addons import builtin, credential, install
 from orch.addons.manifest import ManifestError
 from orch.addons.package import PackageError, from_files, read_package
 from orch.market import ADDONS, MarketError, constants, fetch, index, policy
@@ -450,6 +450,7 @@ def after_grant(service: WorkspaceService, record: dict[str, Any], signed: list[
     forward): put the granted bytes in place and write the records. Idempotent: it decides by digests, never by names,
     and a second run finds nothing to do. Failures are logged, never raised: the registry already fails closed on a
     directory whose digest is not the grant's, and :func:`recover` finishes it at the next start."""
+    sweep_credentials(service)  # V3 G6 C4: a purge or a grant that dropped the capability deletes the key
     staged = record.get("staged")
     if record.get("op") != "addon.grant" or staged is None or not signed:
         return
@@ -457,6 +458,21 @@ def after_grant(service: WorkspaceService, record: dict[str, Any], signed: list[
         _converge(service, staged["stage"], signed[0])
     except Exception:  # noqa: BLE001 - fail closed: the digest check of the registry holds the add-on back
         LOG.exception("market install: finishing the swap of %s failed", staged.get("stage"))
+
+
+def sweep_credentials(service: WorkspaceService) -> None:
+    """Delete the stored key (:mod:`orch.addons.credential`) of every add-on that is not granted, is purged, or whose
+    ACTIVE grant no longer holds ``credential`` (V3 G6 C4). Idempotent; failures are logged, never raised: a key that
+    stays is only read while the grant qualifies (C2)."""
+    try:
+        keep = [
+            n
+            for n, g in install.as_addons(service.store.state.workspace.addons).items()
+            if not g.purged and "credential" in g.capabilities
+        ]
+        credential.sweep(service.state_dir, service.workspace_id, keep)
+    except Exception:  # noqa: BLE001
+        LOG.exception("add-on credential sweep failed")
 
 
 def _converge(service: WorkspaceService, stage: str, ev: dict[str, Any]) -> None:
@@ -622,6 +638,7 @@ def recover(service: WorkspaceService) -> None:
                 LOG.exception("market install: recovery of %s failed", doc["name"])
         elif now > doc.get("expires_at", 0):
             files.drop_stage(doc["stage"])
+    sweep_credentials(service)  # V3 G6 C4: idempotent at start
     root = _store_root(service)
     if (root / install.ADDONS_DIR).is_dir():
         with _addons_dir(root / install.ADDONS_DIR) as d:
@@ -697,4 +714,5 @@ def _uninstall(service: WorkspaceService, name: str) -> dict[str, Any]:
                     _sweep(d, name)
             del cur[ADDONS][name]  # the rollback floor ("seen") and the publisher key stay
             write(cur)
+    credential.remove(service.state_dir, service.workspace_id, name)  # V3 G6 C4: the key goes with the package
     return {"name": name, "removed": True}

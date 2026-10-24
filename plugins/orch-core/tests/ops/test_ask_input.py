@@ -258,3 +258,68 @@ def test_unattended_ask_takes_options_too(ws, anon):
     Cli(ws)("new", "A ticket")
     r = anon.j("ask", "can I?", "--ref", "1", *A)
     assert r.code == 0, r.out
+
+
+def test_pipes_split_on_the_first_two_only(ws, cli):
+    claimed(cli)
+    r = cli("ask", "Which?", "--option", "a | Fast | x | y", "--option", "b | B")
+    assert r.code == 0, r.out + r.err
+    assert stored(ws)["options"][0] == {"key": "a", "label": "Fast", "text": "x | y"}
+
+
+def test_fact_may_come_before_its_option_on_the_command_line(ws, cli):
+    claimed(cli)
+    r = cli("ask", "Which?", "--fact", "a | Size | S", "--option", "a | A", "--option", "b | B")
+    assert r.code == 0, r.out + r.err
+    assert stored(ws)["options"][0]["facts"] == [["Size", "S"]]
+
+
+def test_trailing_marker_warns(ws, cli):
+    claimed(cli)
+    r = cli("ask", "Which? a) csv b)", *A)
+    assert r.code == 0 and "warning:" in r.out
+
+
+def test_question_file_with_details_file_is_refused_not_double_read(ws, cli):
+    claimed(cli)
+    r = cli.j("ask", "--question-file", "-", "--details-file", "-", stdin=json.dumps({"text": "Name?"}))
+    assert (r.code, r.err_code) == (5, "invalid.input") and "--details-file" in r.doc["error"]["message"]
+
+
+def test_question_file_takes_the_ref_flag(ws, cli):
+    cli("new", "A ticket")
+    r = cli("ask", "--question-file", "-", "--ref", "1", stdin=json.dumps({"text": "Name?"}))
+    assert r.code == 0, r.out + r.err
+    assert stored(ws)["text"] == "Name?"
+
+
+def test_empty_rec_with_a_text_question_is_refused(ws, cli):
+    claimed(cli)
+    r = cli.j("ask", "q?", "--text-question", "--rec", "")
+    assert (r.code, r.err_code) == (5, "invalid.input") and "takes no options" in r.doc["error"]["message"]
+
+
+def test_flag_and_file_name_a_bad_option_the_same_way(ws, cli):
+    claimed(cli)
+    bad = "x" * 61
+    r1 = cli.j("ask", "q?", "--option", f"a | {bad}", "--option", "b | B")
+    doc = {"text": "q?", "options": [{"key": "a", "title": bad}, {"key": "b", "title": "B"}]}
+    r2 = cli.j("ask", "--question-file", "-", stdin=json.dumps(doc))
+    assert r1.doc["error"]["message"] == r2.doc["error"]["message"] and "option a title" in r1.doc["error"]["message"]
+
+
+@pytest.mark.parametrize(
+    "item",
+    [
+        {"op": "ask", "text": "Which?", "option": ["a | A", "b | B"], "details_file": "x"},
+        {"op": "ask", "text": "Which?", "option": ["a | A", "b | B"], "ref": "1"},
+        {"op": "ask", "text": "Which?", "option": ["a | A", "b | B"], "file": "x"},
+        {"op": "ask", "text": "Which?", "option": ["a | A", "b | B"], "colour": "red"},
+        {"op": "ask", "option": ["a | A", "b | B"]},
+    ],
+)
+def test_batch_ask_item_keys(ws, cli, item):
+    claimed(cli)
+    r = cli.j("apply", "--file", "-", stdin=json.dumps({"ref": "1", "ops": [item]}))
+    assert (r.code, r.err_code) == (5, "invalid.input")
+    assert ws.ticket_json("1")["questions"] == []

@@ -38,7 +38,7 @@
           "items": {
             "type": "string"
           },
-          "description": "an answer: 'key | title | text' (2 to 6, text is optional)",
+          "description": "an answer: 'key | title | text' (2 to 6; split on the first two |)",
           "x-metavar": "'KEY | TITLE | TEXT'"
         },
         "fact": {

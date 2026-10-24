@@ -28,7 +28,7 @@ _FLAG = {
     "allow_other": "--allow-other",
     "non_blocking": "--non-blocking",
 }
-_MARKER = re.compile(r"(?:^|\s)\(?([A-Da-d])\)\s")
+_MARKER = re.compile(r"(?:^|\s)\(?([A-Da-d])\)(?=\s|$)")
 
 
 def _flag(name: str) -> str:
@@ -50,7 +50,9 @@ def _line(c: Call, value: Any, what: str) -> Any:
 def _from_flags(c: Call, args: Mapping[str, Any]) -> dict[str, Any]:
     q: dict[str, Any] = {"text": c.text(args["text"], what="question")}
     if args.get("text_question"):
-        clash = [n for n in ("option", "fact", "rec", "allow_other") if args.get(n)]
+        clash = [n for n in ("option", "fact", "rec") if args.get(n) is not None] + (
+            ["allow_other"] if args.get("allow_other") else []
+        )
         if clash:
             raise OrchError("invalid.input", f"--text-question takes no options: remove {_flag(clash[0])}")
         q["kind"] = "text"
@@ -90,14 +92,13 @@ def _from_flags(c: Call, args: Mapping[str, Any]) -> dict[str, Any]:
     if args.get("details_file") is not None:
         q["details"] = c.text(c.read_file_text(args["details_file"]), what="details")
     elif args.get("details") is not None:
-        c.check_secret(args["details"])
         q["details"] = c.text(args["details"], what="details")
     return q
 
 
 def _from_doc(c: Call, args: Mapping[str, Any]) -> dict[str, Any]:
     for n in _SHAPING:
-        if args.get(n):
+        if args.get(n) not in (None, False):
             raise OrchError("invalid.input", f"--question-file holds the whole question: remove {_flag(n)}")
     if args.get("non_blocking"):
         raise OrchError("invalid.input", '--question-file holds the whole question: put "blocking": false in it')
@@ -140,15 +141,23 @@ def _doc_options(c: Call, v: Any) -> Any:
         if extra:
             raise OrchError("invalid.input", f"option {i} has keys that orch does not know: {', '.join(extra)}")
         built: dict[str, Any] = {}
+        name = o["key"] if type(o.get("key")) is str else str(i)
         for k, x in o.items():
             if k == "title":
-                built["label"] = _line(c, x, f"option {i} title")
+                built["label"] = _line(c, x, f"option {name} title")
             elif k == "facts":
                 built["facts"] = (
-                    [[_line(c, y, "fact") for y in f] if type(f) is list else f for f in x] if type(x) is list else x
+                    [
+                        [_line(c, f[0], f"option {name} fact label"), _line(c, f[1], f"option {name} fact value")]
+                        if type(f) is list and len(f) == 2
+                        else f
+                        for f in x
+                    ]
+                    if type(x) is list
+                    else x
                 )
             else:
-                built[k] = _line(c, x, f"option {i} {k}")
+                built[k] = _line(c, x, f"option {name} {k}")
         out.append(built)
     return out
 

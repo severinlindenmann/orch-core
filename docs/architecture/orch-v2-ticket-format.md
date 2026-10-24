@@ -1791,7 +1791,7 @@ claim"**, if the session holds exactly one; otherwise `ambiguous_ref` comes back
 |---|---|
 | Context | `status` (also shows who the agent is, its grant and its cursor), `describe [cmd]`, `help <workflow>` |
 | Read | `show [REF] [--section A,B \| --full \| --log --since N \| --diff --since N]`, `list`, `search`, `next`, `inbox`, `quick list` (H11f) |
-| Lifecycle | `new`, `quick add "TITLE"` (H11f: `new --type chore`, then `set labels=quick`), `claim [REF \| --next \| --takeover --reason]`, `release`, `handoff -m`, `submit`, `ask "…" --options a,b --rec a [--to p]`, `wait` |
+| Lifecycle | `new`, `quick add "TITLE"` (H11f: `new --type chore`, then `set labels=quick`), `claim [REF \| --next \| --takeover --reason]`, `release`, `handoff -m`, `submit`, `ask "…" --option 'key | title | text' … [--fact] [--rec KEY] [--allow-other] [--details] [--to p]`, `wait` |
 | Edit | `set REF key=value` (keys: title, priority, size, labels, due, links, parent, blocked_by; person-only fields have their own operations), `section set`, `ac add\|edit`, `task list\|next\|add\|start\|done\|skip\|block\|reopen`, `artifact add\|replace\|list`, `log`, `apply --file -` (an atomic batch) |
 | Human only | `approve [REF] GATE`, `request-changes [REF] GATE`, `verdict [REF] pass\|fail` (the `REF` comes first, `--ref` still works), `answer`, `close`, `reopen`, `grant`, `member`. Agents get `human_only`, `retry:false`. |
 | Admin | `init`, `doctor`, `check`, `instructions sync`, `instructions hook`, `import v1`, `addon …` |
@@ -1863,8 +1863,8 @@ Combined calls for the common loops:
     it. Any argument shaped like a grant secret is refused before parsing with grant.secret_in_args (exit 2).
     Secrets are redacted before any truncation, everywhere. Handlers run with an environment without `ORCH_GRANT`.
 13. **Arguments.** `--json`, `--help` and `-h` are recognised only before `--` and never as an option value. A scalar
-    flag given twice is a usage error. `ask --options` splits on commas, and each option must match the token pattern
-    (no whitespace inside a token).
+    flag given twice is a usage error. `ask --option 'key | title | text'` is repeatable and splits on the first two `|` only (title and text may
+    hold `|`); the key must match the token pattern, and the validator (§5.6.1) judges every other limit.
 
 ### 10.4a Refusal codes of the model
 
@@ -2622,7 +2622,7 @@ A1–A20 (PR body), HO (dashboard handover, input only), D58–D60, the adversar
 | 130 | Stop rule details (#346) | Advisory; same refusal three times in 15 min returns `stop`; `human_only` ignores args; only a successful non-dry-run write resets; usage, retryable and internal errors (incl. `not_implemented`, exit 1) don't count; no session means no stop rule and no dedup; malformed `ORCH_SESSION` is invalid.input (§10.4 items 5, 6). | "Three in a row" needed a definition of same, window and reset. |
 | 131 | Grant secrets in arguments and environment (#346) | grant.secret_in_args (exit 2) before parsing; redaction before truncation everywhere; handlers get no `ORCH_GRANT`; a malformed `ORCH_GRANT` is refused for every write, reads ignore it (§10.4 item 12). | N4: a secret must not reach logs, output or child processes. |
 | 132 | Echoed text and `fix.argv` (#346) | Echoed agent text escaped (`⟨U+…⟩`, C0/C1/ESC); JSON escapes C1, bidi and line separators; `fix.argv` starts with `orch` with clean elements, else `internal` (§10.4 item 11). | Terminal escape and bidi tricks in error output. |
-| 133 | Argument parsing rules (#346) | `--json`, `--help`, `-h` only before `--` and never as an option value; a scalar flag twice is a usage error; `ask --options` splits on commas with token-pattern options; `set` keys are title, priority, size, labels, due, links, parent, blocked_by (§10.3, §10.4 item 13). | Free text with commas or flag-like values must not change the command. |
+| 133 | Argument parsing rules (#346) | `--json`, `--help`, `-h` only before `--` and never as an option value; a scalar flag twice is a usage error; `ask --option 'key | title | text'` splits on the first two `|` and the validator judges the limits; `set` keys are title, priority, size, labels, due, links, parent, blocked_by (§10.3, §10.4 item 13). | Free text with commas or flag-like values must not change the command. |
 | 134 | Last owner, viewers, duplicate approvals (#347) | The last owner can't be removed or demoted (`members.last_owner`); a viewer writes only answers addressed to them and device events; a duplicate approval by one person counts once (§5.9, §5.11). | A workspace keeps an owner; counts are by person. |
 | 135 | Addon grant contents and repo links (#347) | the grant's field, section and kind names belong to the addon in the same event; `links.repos` must be in `settings.repos`, and a stale repo blocks only edits touching links (§5.11). | One addon can't bind another's fields; an old repo doesn't freeze unrelated edits. |
 | 136 | Initial policies and merged order (#347) | Initial workspace policies are the §2 config defaults; merged order `(ws_seq, at, uid, seq)`; an append sorting before the last is refused (`chain.bad_ws_seq`) (§5.11). | A total order every reader computes the same way. |

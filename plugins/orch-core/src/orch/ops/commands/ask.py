@@ -20,7 +20,8 @@ OP = operation(
         "text": S("the question (up to 140 characters)", **{"x-metavar": "TEXT"}),
         "ref": S("ticket REF (flag); default: your claim", pattern=REF_PATTERN, **{"x-metavar": "REF"}),
         "option": L(
-            "an answer: 'key | title | text' (2 to 6, text is optional)", **{"x-metavar": "'KEY | TITLE | TEXT'"}
+            "an answer: 'key | title | text' (2 to 6; split on the first two |)",
+            **{"x-metavar": "'KEY | TITLE | TEXT'"},
         ),
         "fact": L(
             "a fact of an option: 'key | Label | value' (1 to 3 per option)", **{"x-metavar": "'KEY | LABEL | VALUE'"}

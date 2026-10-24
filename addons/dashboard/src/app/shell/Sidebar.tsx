@@ -25,6 +25,7 @@ import {
   FolderGit2,
   FolderTree,
   Gauge,
+  Puzzle,
   Share2,
   SquareTerminal,
 } from 'lucide-react'
@@ -457,6 +458,8 @@ const CORE_NAV = [
   { to: '/terminals', label: 'Terminals', icon: SquareTerminal, feature: 'terminals_page', real: true },
   /** Files (File Explorer add-on): owners only, listed only while the add-on is ON (the server adds `explorer` then). */
   { to: '/explorer', label: 'Files', icon: FolderTree, feature: 'explorer', real: true },
+  /** Add-ons (marketplace): listed only when the host serves the market ops (the server adds `market`). */
+  { to: '/addons', label: 'Add-ons', icon: Puzzle, feature: 'market', real: true },
   /** Shares (Publish add-on): listed only while the add-on is ON for this workspace (the server adds `publish` then). */
   { to: '/shares', label: 'Shares', icon: Share2, feature: 'publish', real: true },
   /** Usage (add-on): agent time per ticket; listed only while the add-on is ON (the server adds `usage` then). */

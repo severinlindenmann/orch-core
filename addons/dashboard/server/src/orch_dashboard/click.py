@@ -15,6 +15,7 @@ A request obtained through an intent belongs to the PERSON in that workspace: an
 poll and cancel it (the signer separately refuses anything it did not prepare itself, and signs a request once).
 """
 
+import hashlib
 import re
 import threading
 from collections import OrderedDict
@@ -130,11 +131,21 @@ def deposit_view_ok(view: dict, ws: str) -> bool:
     )
 
 
+def key_fingerprint(key: str) -> str:
+    """Core's `view.key_fingerprint`: the full SHA-256 (64 hex) of the key's base64url text (golden vectors shared
+    with core and the page: `plugins/orch-core/tests/click_reveal_fingerprint.json`)."""
+    return hashlib.sha256(key.encode()).hexdigest()
+
+
+#: How a session was opened (`Auth.login_kind`) for which `agent_access` may be prepared. Until the passkey step-up for
+#: a grant secret exists (R1-6), only a session opened by `orch dashboard` on this computer may; an unknown kind and
+#: any remote or hub kind are refused (fail closed), so the remote dashboard cannot ship the reveal unprotected.
+REVEAL_SESSION_KINDS = frozenset({"local"})
+
+
 def reveal_view_ok(view: dict, ws: str, reveal_key: str) -> bool:
     """A shown-secret grant's View: no deposit, the sealed field's `grant.secret` purpose bound to the page's own key
     (its fingerprint), core's risk and reveal lines, this workspace and a plain click."""
-    import hashlib
-
     seal = view.get("seal")
     lines = view.get("lines")
     workspace = view.get("workspace")
@@ -144,7 +155,7 @@ def reveal_view_ok(view: dict, ws: str, reveal_key: str) -> bool:
         and view.get("deposit") is None
         and isinstance(seal, dict)
         and seal.get("purposes") == ["grant.secret"]
-        and seal.get("for") == hashlib.sha256(reveal_key.encode()).hexdigest()[:16]
+        and seal.get("for") == key_fingerprint(reveal_key)
         and isinstance(lines, list)
         and REVEAL_LINE in lines
         and REVEAL_RISK in lines
@@ -330,6 +341,8 @@ def register(app: FastAPI, gateway: Gateway):
     @app.post("/api/w/{ws}/click/prepare")
     def prepare(body: ClickBody, request: Request, ws: str = Depends(workspace)):
         token = request.state.token
+        if isinstance(body, AgentAccess) and app.state.auth.login_kind(token) not in REVEAL_SESSION_KINDS:
+            raise refusal_check("Agent access with a shown secret needs a dashboard opened on this computer.")
         gateway.enabled(ws)  # pinned workspace, dashboard addon enabled in it (the hand-off's `human()` does this)
         refuse_if_hub_only(gateway, ws)  # V3 C11: full hub mode takes no click signature (the host refuses it too)
         with handoffs.lock:

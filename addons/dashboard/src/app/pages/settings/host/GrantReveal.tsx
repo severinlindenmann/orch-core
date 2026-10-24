@@ -23,15 +23,26 @@ export interface GrantRevealProps {
   onClose: () => void
   /** The grant list changed (a grant was made). */
   onChanged?: () => void
+  /** True from the click on: the dialog must not be closed (the secret would be lost); false again after Done. */
+  onBusy?: (busy: boolean) => void
+}
+
+/** Why a sealed secret could not be opened here, in plain words (never the code). The access exists either way. */
+const REVEAL_FAILED: Record<string, string> = {
+  replay: 'The access was created, but its secret was already opened once and cannot be shown again. Stop this access in the list and make a new one.',
+  closed: 'The access was created, but this window closed its secret before it could be shown. Stop this access in the list and make a new one.',
+  unknown: 'The access was created, but its secret could not be opened in this window. Stop this access in the list and make a new one.',
 }
 
 type Shown = { kind: 'secret'; value: string } | { kind: 'lost' } | { kind: 'wiped' } | { kind: 'failed'; reason: string }
 
-export function GrantReveal({ ws, hours, scope, label, onClose, onChanged }: GrantRevealProps) {
+export function GrantReveal({ ws, hours, scope, label, onClose, onChanged, onBusy }: GrantRevealProps) {
   const click = useClickSign(ws)
   const key = useRef<RevealKey | null>(null)
   const publicKey = useRef<string>('')
   const started = useRef(false)
+  const gone = useRef(false)
+  const live = useRef({ phase: 'idle' as string, rid: undefined as string | undefined })
   const [checked, setChecked] = useState<{ digest: string; ok: boolean } | null>(null)
   const [shown, setShown] = useState<Shown | null>(null)
   const [copied, setCopied] = useState(false)
@@ -43,19 +54,24 @@ export function GrantReveal({ ws, hours, scope, label, onClose, onChanged }: Gra
     started.current = true
     void (async () => {
       const k = await newRevealKey()
+      if (gone.current) { k.close(); return } // unmounted while the key was being made: no request for a gone page
       key.current = k
       publicKey.current = k.publicKeyB64
       await click.start(action(k.publicKeyB64))
     })()
     return () => {
+      gone.current = true
       key.current?.close()
       key.current = null
+      // A request that was prepared but not signed is cancelled here (a signed one is the host's; its secret is gone with the page).
+      if (live.current.rid && ['ready', 'viewing', 'preparing'].includes(live.current.phase)) void click.cancel()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // The request id exists: bind the key to this workspace and request (open() builds its context from these, never from the answer).
   const rid = click.prepared?.request_id
+  live.current = { phase: click.phase, rid }
   useEffect(() => {
     if (!rid || !key.current) return
     try { key.current.bind({ workspace_id: ws, request_id: rid }) } catch { /* bound already (a re-render) */ }
@@ -92,6 +108,10 @@ export function GrantReveal({ ws, hours, scope, label, onClose, onChanged }: Gra
     })()
   }, [click.phase, click.signed, click.view, rid, ws, shown, onChanged])
 
+  // From the click on, the dialog stays open until the person is done: the secret exists only on this screen.
+  const busy = ['signing', 'settling', 'done'].includes(click.phase) && !(shown && shown.kind !== 'secret')
+  useEffect(() => { onBusy?.(busy) }, [busy, onBusy])
+
   // Wipe on a timer; the unmount drops everything with the component state.
   useEffect(() => {
     if (shown?.kind !== 'secret') return
@@ -114,7 +134,7 @@ export function GrantReveal({ ws, hours, scope, label, onClose, onChanged }: Gra
           This secret is shown only once. Copy it now; orch cannot show it again. It hides itself after 5 minutes. If you lose it, stop this access and make a new one.
         </p>
         <code data-testid="grant-secret" className="block max-h-40 overflow-auto break-all rounded-md border border-border bg-bg p-3 font-mono text-[12px] select-all">{shown.value}</code>
-        <p className="text-[12px] text-text-muted">Paste it into the tool's settings as its access secret (the variable <code>ORCH_GRANT</code>).</p>
+        <p className="text-[12px] text-text-muted">Paste it into the tool's settings where it asks for the orch access key.</p>
         <div className="flex flex-wrap justify-end gap-2">
           <Button className="min-h-11" onClick={() => void copy()}>{copied ? <><Check className="size-4" aria-hidden />Copied</> : <><Copy className="size-4" aria-hidden />Copy</>}</Button>
           <Button variant="outline" className="min-h-11" onClick={finish}>Done, hide it</Button>
@@ -125,7 +145,7 @@ export function GrantReveal({ ws, hours, scope, label, onClose, onChanged }: Gra
   if (shown) {
     const text = shown.kind === 'wiped' ? 'The secret was hidden. It cannot be shown again: stop this access in the list and make a new one if you did not copy it.'
       : shown.kind === 'lost' ? 'The access was created, but its secret did not arrive. It cannot be shown again: stop this access in the list and make a new one.'
-        : `The access was created, but its secret could not be opened here (${shown.reason}). Stop this access in the list and make a new one.`
+        : REVEAL_FAILED[shown.reason] ?? REVEAL_FAILED.unknown
     return (
       <section data-testid="grant-reveal-lost" className="space-y-3">
         <p role="alert" className="text-[13px] text-danger">{text}</p>

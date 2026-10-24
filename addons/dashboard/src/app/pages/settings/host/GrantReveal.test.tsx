@@ -56,9 +56,9 @@ afterEach(async () => {
   vi.restoreAllMocks()
 })
 
-function mount(onClose = vi.fn()) {
-  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><TooltipProvider><GrantReveal ws={WS} hours={48} scope="workable" label="my tool" onClose={onClose} /></TooltipProvider></QueryClientProvider>)
-  return { onClose }
+function mount(onClose = vi.fn(), onBusy = vi.fn()) {
+  const r = render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><TooltipProvider><GrantReveal ws={WS} hours={48} scope="workable" label="my tool" onClose={onClose} onBusy={onBusy} /></TooltipProvider></QueryClientProvider>)
+  return { onClose, onBusy, unmount: r.unmount }
 }
 const signButton = async () => screen.findByRole('button', { name: 'Sign and show the secret' }, T)
 async function signAndWait() {
@@ -130,7 +130,35 @@ describe('the grant reveal', () => {
     s.view.mockResolvedValue(await view())
     mount()
     await signAndWait()
-    expect(await screen.findByTestId('grant-reveal-lost', {}, T)).toHaveTextContent('could not be opened')
+    expect(await screen.findByTestId('grant-reveal-lost', {}, T)).toHaveTextContent('could not be opened in this window')
     expect(document.body.textContent).not.toContain(SECRET)
+  })
+
+  it('cancels a prepared, unsigned request when it goes away, and never signs', async () => {
+    const { unmount } = mount()
+    await signButton()
+    unmount()
+    await waitFor(() => expect(s.cancel).toHaveBeenCalledWith(WS, REQ), T)
+    expect(s.sign).not.toHaveBeenCalled()
+    expect(key.closed).toBe(true)
+  })
+
+  it('prepares nothing for a page that went away while its key was being made', async () => {
+    let release: (k: RevealKey) => void = () => {}
+    vi.mocked(sealed.newRevealKey).mockReturnValue(new Promise<RevealKey>((r) => { release = r }))
+    const { unmount } = mount()
+    unmount()
+    release(key)
+    await new Promise((r) => setTimeout(r, 50))
+    expect(s.prepare).not.toHaveBeenCalled()
+    expect(key.closed).toBe(true)
+  })
+
+  it('tells its dialog to stay open from the click on until the person is done', async () => {
+    const { onBusy } = mount()
+    await signAndWait()
+    await screen.findByTestId('grant-secret', {}, T)
+    expect(onBusy).toHaveBeenLastCalledWith(true)
+    fireEvent.click(screen.getByRole('button', { name: 'Done, hide it' }))
   })
 })

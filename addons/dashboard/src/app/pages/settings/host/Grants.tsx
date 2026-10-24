@@ -81,12 +81,13 @@ function GiveToolAccess({ workspace, onChanged }: { workspace: Workspace; onChan
   const [hours, setHours] = useState(24)
   const [label, setLabel] = useState('')
   const name = label.trim()
+  const [busy, setBusy] = useState(false)
   if (!clickReady(workspace)) return null
   return (
     <>
       <Button variant="outline" data-testid="give-tool-access" onClick={() => setStep('form')}>Give a tool access</Button>
       {step !== 'closed' && (
-        <Dialog open onOpenChange={(o) => !o && setStep('closed')}>
+        <Dialog open onOpenChange={(o) => !o && !busy && setStep('closed')}>
           <DialogContent className="max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Give a tool access</DialogTitle>
@@ -107,7 +108,7 @@ function GiveToolAccess({ workspace, onChanged }: { workspace: Workspace; onChan
                 <Button className="w-full" onClick={() => setStep('run')}>Continue to the review</Button>
               </div>
             ) : (
-              <GrantReveal ws={workspace.id} hours={hours} scope="workable" label={name || undefined} onChanged={onChanged} onClose={() => setStep('closed')} />
+              <GrantReveal ws={workspace.id} hours={hours} scope="workable" label={name || undefined} onChanged={onChanged} onBusy={setBusy} onClose={() => { setBusy(false); setStep('closed') }} />
             )}
           </DialogContent>
         </Dialog>

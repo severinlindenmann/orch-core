@@ -474,3 +474,37 @@ def test_reveal_hours_and_scope_are_the_reviewed_ones(world):
         "view_changed",
     )
     assert click.signatures == 0
+
+
+def test_reveal_fingerprint_is_the_full_sha256_and_matches_the_shared_golden_vectors():
+    import json
+
+    from orch.click import view as cview
+
+    vectors = json.loads((Path(__file__).parents[1] / "click_reveal_fingerprint.json").read_text())
+    assert vectors["cases"]
+    for case in vectors["cases"]:
+        assert len(case["fingerprint"]) == 64 and cview.key_fingerprint(case["key"]) == case["fingerprint"]
+
+
+def test_reveal_one_key_reserves_one_request_at_prepare(world):
+    served, click, _, _ = world
+    page = Page()
+    p, v, page = reveal_flow(click, served, page=page)
+    # a second request prepared with the same key is refused at prepare (and cancelled at the host): never two seals
+    refused(lambda: click.prepare("grant", {"hours": 3, "scope": "workable"}, reveal_key=page.public), "invalid.input")
+    res = click.sign(p["request_id"], v["view_digest"], reveal_key=page.public)
+    assert page.open(res, v["view_digest"]) and click.signatures == 1
+    refused(lambda: click.prepare("grant", {"hours": 4, "scope": "workable"}, reveal_key=page.public), "invalid.input")
+
+
+def test_reveal_seal_refuses_a_key_reserved_for_another_request(world):
+    from orch.click.protocol import ClickError
+
+    served, click, _, _ = world
+    p, v, page = reveal_flow(click, served)
+    approval = click.signer.approvals[(served.wid, p["request_id"])]
+    click.signer._reveal_keys[page.public] = (served.wid, "hr_" + "0" * 25 + "1")  # as if another request held it
+    with pytest.raises(ClickError):
+        click.signer._seal(approval, page.public, "gr_x.y")
+    assert approval.reveal_env is None

@@ -180,7 +180,7 @@ function equalBytes(a: Uint8Array, b: Uint8Array): boolean {
 }
 
 /**
- * The browser's key for one sign call that expects a grant-secret reveal. Create it with `newRevealKey(bound)`, send
+ * The browser's key for one sign call that expects a grant-secret reveal. Create it with `newRevealKey()`, send the public key at prepare, `bind()` it when the request id is known, send
  * `publicKeyB64` as `reveal_key`, call `open()` once on the reveal, then `close()` it.
  * The context of every open is built from the caller's own state (the approval it holds), never from the envelope or the server.
  */
@@ -191,12 +191,11 @@ export class RevealKey {
   #bound: Bound | null
   #pinnedDigest: string | null = null
 
-  /** Use newRevealKey(). Taking a ready key pair is for sealed.testing.ts (fixed vector keys). */
-  constructor(pair: KeyPair, bound?: Bound) {
+  /** Use newRevealKey(). Taking a ready key pair is for sealed.testing.ts (fixed vector keys). Unbound until bind(). */
+  constructor(pair: KeyPair) {
     this.publicKey = pair.publicKey
     this.#priv = pair.privateKey
     this.#bound = null
-    if (bound) this.bind(bound)
   }
   /**
    * Bind the key to its approval once. The grant reveal sends the public key when it PREPARES the request (the key is
@@ -273,6 +272,6 @@ export class RevealKey {
   }
 }
 
-export async function newRevealKey(bound?: Bound): Promise<RevealKey> {
-  return new RevealKey(await newKeyPair(), bound)
+export async function newRevealKey(): Promise<RevealKey> {
+  return new RevealKey(await newKeyPair())
 }

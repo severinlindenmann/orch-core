@@ -2145,7 +2145,7 @@ def reveal_view(**over):
         "v": 1,
         "alg": "P256-HKDF-SHA256-A256GCM",
         "purposes": ["grant.secret"],
-        "for": hashlib.sha256(PAGE_KEY.encode()).hexdigest()[:16],
+        "for": hashlib.sha256(PAGE_KEY.encode()).hexdigest(),
     }
     view = {
         "risk": RISK,
@@ -2228,7 +2228,8 @@ def test_agent_access_is_not_a_terminal_hand_off(client, token, stub, reveals):
     "over",
     [
         {"seal": None},
-        {"seal": {"v": 1, "alg": "x", "purposes": ["grant.secret"], "for": "0" * 16}},  # another key
+        {"seal": {"v": 1, "alg": "x", "purposes": ["grant.secret"], "for": "0" * 64}},  # another key
+        {"seal": {"v": 1, "alg": "x", "purposes": ["grant.secret"], "for": "0" * 16}},  # a truncated fingerprint
         {"seal": {"v": 1, "alg": "x", "purposes": ["hub.backup_key"], "for": "x"}},
         {"lines": ["grant", REVEAL_LINE]},  # no risk line
         {"lines": ["grant", REVEAL_RISK]},
@@ -2367,3 +2368,30 @@ def test_a_new_page_key_is_a_new_request_and_the_same_key_the_same_one():
         )
 
     assert idem(a) == idem(a) and idem(a) != idem(b)
+
+
+def test_the_page_key_fingerprint_matches_the_golden_vectors_shared_with_core_and_the_page():
+    import json
+    from pathlib import Path
+
+    from orch_dashboard.click import key_fingerprint
+
+    path = Path(__file__).resolve().parents[4] / "plugins/orch-core/tests/click_reveal_fingerprint.json"
+    cases = json.loads(path.read_text())["cases"]
+    assert cases
+    for case in cases:
+        assert len(case["fingerprint"]) == 64 and key_fingerprint(case["key"]) == case["fingerprint"]
+
+
+def test_agent_access_is_refused_on_any_session_that_is_not_a_local_one(client, token, stub, reveals, auth):
+    """Until the passkey step-up (R1-6) exists, a remote or unknown session kind never prepares agent_access."""
+    from orch_dashboard.click import REVEAL_SESSION_KINDS
+
+    assert REVEAL_SESSION_KINDS == {"local"}
+    for kind in ("remote", "hub", "passkey", None):
+        auth.kinds[token] = kind
+        res = prepare(client, token, stub, agent_access())
+        assert res.status_code == 409, (kind, res.text)
+    assert sent_of(reveals, "prepare") == []
+    auth.kinds[token] = "local"
+    assert prepare(client, token, stub, agent_access()).status_code == 200

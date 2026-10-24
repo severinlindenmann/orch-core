@@ -172,8 +172,9 @@ class ClickSigner:
         self.stash_: dict[tuple[str, str], dict[str, Any]] = {}
         self.conns: dict[str, Any] = {}
         self.busy = False
-        #: page keys a grant secret was sealed to in this process: one key, one sign call (sealed-field contract §3)
-        self._reveal_keys: set[str] = set()
+        #: page keys reserved at prepare, each for one approval (workspace, request): one key, one request, one seal
+        #: (sealed-field contract §3)
+        self._reveal_keys: dict[str, tuple[str, str]] = {}
         #: ``(workspace_id, request_id)`` whose signing started in this process: defence in depth against a claim
         #: record deleted from outside after a failed or interrupted signature (the claim file alone is not trusted)
         #: Kept for the whole signer process lifetime, never pruned: memory is bounded by the sign budget (30/min,
@@ -404,8 +405,8 @@ class ClickSigner:
                 raise ClickError("invalid.input", "a grant takes no sequence and no files")
             inner = self._reveal_args(inner)
             reveal_key = self._reveal_key_arg(args)  # bound into the review: the page sends it at prepare
-            if reveal_key is None or reveal_key in self._reveal_keys:
-                raise ClickError("invalid.input", "a shown grant takes a new reveal_key at prepare")
+            if reveal_key is None:
+                raise ClickError("invalid.input", "a shown grant takes a reveal_key at prepare")
         elif op_class(op, args=inner) == "terminal":
             raise refused("terminal_only", f"{op} is signed in the terminal (orch sign CODE)")
         if len(self.approvals) >= MAX_APPROVALS:
@@ -438,6 +439,12 @@ class ClickSigner:
             reveal=reveal,
         )
         key = (entry["workspace_id"], rid)
+        if reveal_key is not None and self._reveal_keys.setdefault(reveal_key, key) != key:
+            try:  # the key belongs to another request: this one is cancelled, nothing was signed
+                self._call(entry, "human.cancel", {"request_id": rid})
+            except ClickError:
+                pass
+            raise ClickError("invalid.input", "this reveal_key is already used for another request; make a new key")
         if key not in self.approvals:  # an idem retry returns the same request: keep its record
             expires_at = str(request.get("expires_at"))
             left = min(max(0.0, _epoch(expires_at) - self.wall()), REQUEST_LIFETIME)  # never longer than §0.8.1's
@@ -972,14 +979,20 @@ class ClickSigner:
         """Seal the secret to the page's key, bound to this workspace, request and review. At most once per approval.
         Only the ciphertext is kept; the secret never leaves this frame. A failure here leaves the claim: the request
         fails closed, nothing was submitted."""
-        if reveal_key is None or secret is None or approval.view_digest is None or approval.reveal_env is not None:
+        mine = (approval.workspace_id, approval.request_id)
+        if (
+            reveal_key is None
+            or secret is None
+            or approval.view_digest is None
+            or approval.reveal_env is not None
+            or self._reveal_keys.get(reveal_key) != mine  # the key is reserved for this very request, and no other
+        ):
             raise refused("check_failed", "the secret cannot be sealed for this request")
         ctx = sealed.Context("grant.secret", approval.workspace_id, approval.request_id, approval.view_digest)
         try:
             env = sealed.seal(reveal_key, secret, ctx)
         except sealed.SealedError as exc:
             raise refused("check_failed", f"the secret cannot be sealed ({exc.reason})") from None
-        self._reveal_keys.add(reveal_key)
         approval.reveal_env = env
 
     def _revealed(self, approval: Approval, reveal_key: str | None, res: dict[str, Any]) -> dict[str, Any]:

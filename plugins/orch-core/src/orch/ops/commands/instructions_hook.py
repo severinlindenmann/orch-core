@@ -48,7 +48,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     if ws.root is None:  # a plugin hook runs in every project: outside a workspace it says nothing
         return _silent(event)
     # A hook never pins a genesis (no trust on first use from a hook that runs in every cloned repository): it reads
-    # only a workspace this machine has pinned, on purpose, by `orch status` or `orch init`.
+    # only a workspace this machine has pinned, on purpose, by `orch status` or `orch setup`.
     # Host mode: the host serves only a workspace whose genesis it pinned at registration, and gives the handler no
     # state directory and no config.json read.
     pinned = ctx.hosted or _pinned(ws, ctx)

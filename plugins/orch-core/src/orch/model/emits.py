@@ -59,7 +59,6 @@ EMITS_V1: dict[str, frozenset[str]] = {
             "ticket.updated",
         }
     ),
-    "init": frozenset({"workspace.created"}),
     "log": frozenset({"log.added"}),
     "member.add": frozenset({"member.added"}),
     "member.remove": frozenset({"member.removed"}),
@@ -91,7 +90,6 @@ HUMAN_ONLY: frozenset[str] = frozenset(
         "grant",
         "grant.revoke",
         "import.v1",
-        "init",
         "member.add",
         "member.remove",
         "member.role",

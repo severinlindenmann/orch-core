@@ -176,28 +176,6 @@ def test_a_stale_index_is_rebuilt_by_repair_only(two):
     assert "index.stale" not in codes(r)
 
 
-def test_keys_of_a_dead_init_are_reported_and_swept_by_repair(two):
-    ws = two
-    d = ws.host_state / "hosts" / ("a" * 32)
-    (d / "keys").mkdir(parents=True)
-    (d / "keys" / "wsk.key").write_text("x")
-    import subprocess
-    import sys
-
-    dead = subprocess.Popen([sys.executable, "-c", "pass"])
-    dead.wait()
-    (d / ".init-incomplete").write_text(f"{dead.pid}\n")
-    r = doctor(ws)
-    assert "keys.orphan" in codes(r) and d.exists()
-    r = doctor(ws, "--repair")
-    assert "keys.orphan" not in codes(r) and not d.exists()
-    other = (
-        ws.host_state / "hosts" / ("b" * 32)
-    )  # keys with no marker are not an init of ours: left alone, not reported
-    (other / "keys").mkdir(parents=True)
-    assert "keys.orphan" not in codes(doctor(ws))
-
-
 def test_an_unobservable_repository_is_a_warning(two):
     ws = two
     ws.store = ws.other()  # one that knows the tickets the CLI made

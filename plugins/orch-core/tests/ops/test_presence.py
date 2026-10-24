@@ -161,7 +161,7 @@ def test_no_key_on_this_machine(hws, agent, me):
     (hws.person_dir / "dk.key.json").unlink()
     r = me("approve", "requirements", "--ref", key, "--json")
     assert r.code == 3 and r.err_code == "custody.no_key" and hws.provider.requests == []
-    assert "orch init" in r.doc["error"]["hint"]
+    assert "orch setup" in r.doc["error"]["hint"]
 
 
 def test_a_key_file_others_can_read_is_not_used(hws, agent, me):

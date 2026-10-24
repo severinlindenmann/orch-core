@@ -139,7 +139,7 @@ suite and the same vectors. A single suite is used across all components, never 
 - AES-256-GCM, with AAD binding the object id, epoch and purpose.
 
 > **P1 deviation (C8, pending the owner's confirmation).** The `passphrase` backend of P1 has no hardware wrapping, so
-> `orch init` does **not** store the person key: it is derived from the recovery code, signs the first device certificate
+> `orch setup` does **not** store the person key: it is derived from the recovery code, signs the first device certificate
 > and the workspace delegation, and is dropped. The code is the only way back to `PK`; adding or revoking a device needs
 > it, typed on the terminal. Wrapping `PK` on the primary device comes with the Secure Enclave / TPM backend, when this
 > is revisited.

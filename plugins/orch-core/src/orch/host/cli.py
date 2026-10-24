@@ -659,7 +659,7 @@ def ensure_service(state: Path, env: Mapping[str, str], run: Path | None, *, dev
 
 def default_peers(state: Path, root: Path, env: Mapping[str, str]) -> dict[str, dict[str, str]]:
     """``--peer`` left out: this UID as the person whose device key for the workspace is on this machine (the one
-    ``orch init`` made). The host checks the mapping again (a member with a valid ``decide`` device, F8)."""
+    ``orch setup`` made). The host checks the mapping again (a member with a valid ``decide`` device, F8)."""
     from orch.identity import device_ref
     from orch.ops import human
     from orch.ops.caps import Files

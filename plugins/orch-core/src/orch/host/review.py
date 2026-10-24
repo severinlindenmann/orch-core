@@ -93,7 +93,7 @@ HOST_PERSON_OPS: dict[str, frozenset[str]] = {
     "device.mark_exposed": frozenset({"device.exposed"}),  # #1097: written before a key enters convenience custody
     "device.rotate": frozenset({"device.rotated"}),  # #1097: the new device replaces the old (recovery code)
 }
-_NOT_PERSON = frozenset({"init", "import.v1"})  # init is host.wsk_create + host.bootstrap; import v1 is direct mode
+_NOT_PERSON = frozenset({"import.v1"})  # import v1 is direct mode
 
 
 def person_op_types(op: str) -> frozenset[str] | None:

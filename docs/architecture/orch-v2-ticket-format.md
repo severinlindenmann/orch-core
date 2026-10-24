@@ -2105,26 +2105,24 @@ detected and refused with one message that says to delete it; nothing reads, mov
   key is tolerated on read (any other value is refused) and never written. The host serves and checks
   (`check_workspace_files`: owner, mode 0o022, ACL) the store, and agents, terminals and worktrees keep using the
   project. An entry whose root holds an old-version store is unavailable with the delete message.
-- **`Store.open`** resolves the layout from the project directory fd; `create=True` (only `orch init` and
+- **`Store.open`** resolves the layout from the project directory fd; `create=True` (only `orch setup` and
   `host.bootstrap`) makes `.orch` with `mkdir` (an existing one is refused, never reused) and records the identity of
   what it made, which is all a rollback may remove (by fds, through a tombstone). Every transaction re-checks the
   layout under the guard and the lock, so a stale opener fails closed (in a running host the message says `restart the host: orch host restart`).
 
-**Decisions of C8 (instructions and `orch init` as built).** Where §10.2, the harness doc and the custody doc were silent,
+**Decisions of C8 (instructions and `orch setup` as built).** Where §10.2, the harness doc and the custody doc were silent,
 `orch.instructions` and `orch.ops.workspace_init` do the following. Each is a rule the tests pin (`tests/instructions/`).
 
-- **Where the workspace is.** `orch init --prefix DEMO [--name NAME]` makes the workspace **in the current directory**
+- **Where the workspace is.** `orch setup` makes the workspace **in the current directory**
   (`config.json`, `keys.jsonl`, `events/`, `tickets/`, `.state/` next to your files), not in an `orchestrator/` folder;
   `find_workspace` still accepts both. It is refused as invalid input when a workspace is here or above, or when any of
   those five names exists, and when the state directory lies inside the workspace (the workspace key would be committed).
-  The workspace name in `config.json` is the directory name; the owner's name is `--name`, else `$USER`. A lock directory
-  (`.orch-init.lock`) keeps two inits in one directory apart (`lock.busy`), so one rollback never deletes the other's files.
+  The workspace name in `config.json` is the directory name; the owner's name is `--name`, else `$USER`. (V3-D38: the `.orch-init.lock` directory is gone; the host serialises bootstraps per root.)
 - **Refusals come before any key exists.** A grant (`ORCH_GRANT`) or a missing person's presence is `human_only`; no
   controlling terminal (`/dev/tty`) is `human_only` too; so is an instruction-file path that is or lies below a symbolic
   link. Any failure after a key was made removes the key directory and the workspace files this call made, so a second try
   starts clean. Ctrl-C and SIGHUP (closing the terminal) do the same and print one line (`stop: init cancelled, nothing
-  was created`), no traceback. Key directories of an init that was killed (SIGKILL, power loss) carry an
-  `.init-incomplete` marker with the process id; the next `init` removes those whose process is gone. Every failure after
+  was created`), no traceback. (V3-D38: the marker and its sweep are gone; a hosted setup that dies is cleaned up by the host's bootstrap intent and start-up recovery.) Every failure after
   a passphrase or the code was shown says that what was shown is void.
 - **The passphrase comes first.** `/dev/tty` shows a generated passphrase (six distinct words of the BIP-39 list, about
   66 bits, shown once); the person types it back to confirm, or types one of their own instead (asked twice). Only then
@@ -2206,7 +2204,7 @@ detected and refused with one message that says to delete it; nothing reads, mov
   at most 6 lines and 150 tokens, a skill at most 600 tokens (a token is four characters), all always-loaded text under
   500 tokens (measured on the real texts), and `orch help` within its pinned size.
 - **Follow-ups.** Writing the instruction files with directory file descriptors (`dir_fd`, `O_NOFOLLOW`) to close the lstat-then-act race (a same-user process can still create empty directories outside via a swapped link; no file escapes); refusing hardlinked instruction files.
-- **Locks and signals.** The init lock is an `flock` on `.orch-init.lock` (dropped by the kernel when the process dies; the stale file blocks nothing); SIGTERM and SIGHUP are handled like Ctrl-C. A relative `ORCH_STATE_DIR` is made absolute. Files over 1 MiB are never rewritten (`init` reports it, `sync` refuses). The hook exits 0 even when it prints `DAMAGED`.
+- **Locks and signals.** (V3-D38: the init lock is gone.) SIGTERM and SIGHUP are handled like Ctrl-C. A relative `ORCH_STATE_DIR` is made absolute. Files over 1 MiB are never rewritten (`init` reports it, `sync` refuses). The hook exits 0 even when it prints `DAMAGED`.
 - **Strength check** is applied to the NFKC text without invisible format characters; dictionary words (BIP-39, the common list, a few famous phrases, the user's name and the prefix) are one unit each.
 - **Skill sidecar.** `orch.skill.json` is validated in plain Python (D55): exactly `schema_version` (1), `skill_version`
   (`x.y.z`), `scope` (`builtin`, `workspace` or `org`), `connections` and `env` (lists of names).
@@ -2248,7 +2246,7 @@ operation).
   ever reaches it. Every signature then asks for the passphrase on `/dev/tty` through the passphrase backend (§5.3, D65):
   never stdin, stdout, stderr, an argument or an environment variable, and no option skips or carries it. No controlling
   terminal is custody.no_prompt, a wrong or empty passphrase is custody.wrong_passphrase, a missing key file is
-  custody.no_key (hint: `orch init`, C8); all exit 3, not retryable, declared by every human operation and kept distinct
+  custody.no_key (hint: `orch setup`, C8); all exit 3, not retryable, declared by every human operation and kept distinct
   (D65: agents branch on them). Nothing is written in any case. A harness that shares the person's terminal can still
   trigger the prompt; that limit is D65's. A person's operation is never deduplicated or answered from the session
   records: every call is a fresh signature.
@@ -2256,7 +2254,7 @@ operation).
   role `device`), next to the workspace key. The person and the device are not named by the caller: the device id is
   derived from the key file's public key and looked up in the replayed device roster, which says whose device it is. A key
   the log does not know, a removed or revoked device and a person who is no longer a member sign nothing
-  (role.denied, before any prompt). P1 holds one device key per workspace per machine; creating it is `orch init`/`keys`
+  (role.denied, before any prompt). P1 holds one device key per workspace per machine; creating it is `orch setup`/`keys`
   (C8), not C7.
 - **What is signed comes from the log.** `gate`, `gate_gen`, `hash`, `policy_hash`, `source_sha`, the question `hash`,
   `roster_v` and `based_on` are read from the verified state at the moment of the call; the operations have no option
@@ -2472,7 +2470,7 @@ owner's confirmation.
 | N10 | The code gate (D59) | `not` always includes `assignees` and `independent` is always `true`, enforced by the host. No `via` field in P1. In P1 turning it on moves no ticket back. In P1 only a person's signature approves it; D62 mandates may sign it from P2 (spec PR #352). | agreed with Codex |
 | N11 | Addon writes | Addons hold no key; the host appends their events. `set_by` is a list of actor alternatives checked per write (`agent`, `addon`, human tokens = a signed person event). Only leaf paths can be set, so replacing `ticket.addons.<addon>` can't bypass `set_by`. Addon events never carry core authority. | agreed with Codex, modified |
 | N12 | Independence of approvers | The policy option `independent`, **off by default** for `requirements`, `plan` and `verify`, so a sole owner can approve their own agents' work; always on for `code` (D59). See O4 for what `not: assignees` covers. | new from the Codex review |
-| N13 | Trust root | The head of `workspace.created` is the genesis, checked in six ordered steps (§5.11); remembered by the host outside the workspace, in every workspace checkpoint, shown at pairing (the person's custody key file records it from P3 pairing on; `orch init` does not, see §10.7). Readers replay authorization, not only signatures. **P1 limit:** see O7. | new from the Codex review; tightened with the Opus reviewer |
+| N13 | Trust root | The head of `workspace.created` is the genesis, checked in six ordered steps (§5.11); remembered by the host outside the workspace, in every workspace checkpoint, shown at pairing (the person's custody key file records it from P3 pairing on; `orch setup` does not, see §10.7). Readers replay authorization, not only signatures. **P1 limit:** see O7. | new from the Codex review; tightened with the Opus reviewer |
 | N14 | Rollback and trust in P1 | Equal-height divergent heads are refused and `restore` is defined, but **P1 can't detect a rollback when both the history and the local checkpoints are replaced**, and the genesis pin lives in files the same OS user owns (O7). The workspace’s `.state/applied` crash marker is unsigned: anyone who can write `.state` can make a rollback look like a repairable crash. Relay checkpoints (P3) and host-held keys (P2) address these limits. | new from the Codex review |
 | O1 | Where the factor is recorded | In the event's `auth` only, not in the device certificate. D64 records custody in event `auth`; WebAuthn is deferred past P2 because it needs a new signature contract. | agreed with Opus reviewer |
 | O2 | Custody of `dk_sig` in P1 | `dk_sig` is held by the backend named in `auth`; in P1 it is passphrase-encrypted like the person key, decrypted for one signature on a TTY, never cached; a key that signs without its factor is `file`-tier and never signs person events (§5.3). | agreed with Opus reviewer |

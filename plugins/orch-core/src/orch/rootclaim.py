@@ -1,11 +1,11 @@
 """What a project folder already holds under the names orch's store takes there (finding B11-2).
 
 A folder is an **orch workspace** only by orch's own marker: a ``config.json`` that is orch's (``"schema":
-"orch.workspace/2"`` with a ``workspace`` id, or the v1 layout the importer knows), or orch's own ``.orch-init.lock`` /
-``.orch``. Generic names alone (``config.json``, ``events/``, ``tickets/``, ...) never make a folder "orch": many
+"orch.workspace/2"`` with a ``workspace`` id, or the v1 layout the importer knows), or orch's own
+``.orch`` store. Generic names alone (``config.json``, ``events/``, ``tickets/``, ...) never make a folder "orch": many
 projects have them. They are a **collision** instead: orch's store would write under the same name in the project
 folder, and orch never writes over (or into) a project's own file. The one place that names what orch writes into the
-root; ``orch setup``, ``orch init`` and ``host.bootstrap`` all refuse through :func:`refusal`.
+root; ``orch setup`` and ``host.bootstrap`` both refuse through :func:`refusal`.
 
 Read-only, ``O_NOFOLLOW`` below a directory fd (:mod:`orch.discovery`'s reader). Fail closed: a ``config.json`` that
 cannot be read is not orch's, so it is a collision, never a pass.
@@ -19,22 +19,17 @@ from dataclasses import dataclass
 from orch import discovery
 from orch import layout as layout_mod
 
-__all__ = ["MARKERS", "WRITES", "RootView", "inspect", "refusal"]
+__all__ = ["WRITES", "RootView", "inspect", "refusal"]
 
 #: the one name the store takes in the project root: ``.orch/`` (the project's own ``config.json``, ``events/``,
 #: ``tickets/`` ... are no collision)
 WRITES = (layout_mod.STORE_DIR,)
-#: names only orch makes: an init in progress (or a crashed one). ``.orch`` itself is either orch's store, which makes
-#: the folder a workspace, or the project's own, which is a collision.
-MARKERS = (".orch-init.lock",)
 
 
 @dataclass(frozen=True)
 class RootView:
     #: the folder holds an orch store (by orch's own marker)
     orch: bool
-    #: orch's own marker names present (``.orch-init.lock``, ``.orch``) without an orch config
-    markers: tuple[str, ...]
     #: project files/folders under a name orch's store would write
     collisions: tuple[str, ...]
     #: the folder holds an orch store from before the ``.orch/`` move (an orch config in the root): the plain message
@@ -61,25 +56,17 @@ def inspect(root: str | os.PathLike[str]) -> RootView:
         os.close(fd)
     return RootView(
         orch=orch,
-        markers=tuple(n for n in MARKERS if n in names),
         collisions=tuple(sorted(n for n in WRITES if n in names)),
         legacy=legacy,
     )
 
 
-def refusal(view: RootView, *, init_lock_ok: bool = False) -> str | None:
-    """The plain refusal for a **new** workspace in this folder, or ``None`` when it is free. ``init_lock_ok``: the
-    caller is ``orch init`` itself (its ``flock`` on ``.orch-init.lock`` decides; a crashed init's lock is reused)."""
+def refusal(view: RootView) -> str | None:
+    """The plain refusal for a **new** workspace in this folder, or ``None`` when it is free."""
     if view.legacy is not None:
         return view.legacy
     if view.orch:
         return "this folder is already an orch workspace (its config.json is orch's)"
-    held = [m for m in view.markers if not (init_lock_ok and m == ".orch-init.lock")]
-    if held:
-        return (
-            f"this folder holds orch's own {', '.join(held)} from an earlier or running orch init; "
-            "remove it if no init is running, then retry"
-        )
     if layout_mod.STORE_DIR in view.collisions:
         return (
             "this project already has its own .orch/ (it is not an orch store); orch keeps its workspace in .orch/ "

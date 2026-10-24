@@ -480,7 +480,7 @@ class Store:
         ``validation.path``, and a directory with no store yet gets :func:`orch.layout.fresh`. ``store_pin``: what
         discovery saw of the store (:class:`~orch.layout.StorePin`): the opened ``.orch`` must be that directory (an
         inode swapped in between is ``validation.path``), and after an implicit walk it must still be the current
-        user's and not group/other-writable. ``create`` (default ``False``; only ``orch init`` and ``host.bootstrap``
+        user's and not group/other-writable. ``create`` (default ``False``; only ``orch setup`` and ``host.bootstrap``
         set it): a new workspace may be made: in the new layout its ``.orch`` (which
         must not exist: ``Store.created_store`` is its identity). Without it no ``.orch`` is ever made.
         """

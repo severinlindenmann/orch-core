@@ -1,6 +1,6 @@
 """H12c-d (orch-v2-host 11A.15.10 item 10, 11A.15.16 Q1 = B): the pluggable ``PersonKeySource`` and the production
 ``RecoveryCodeSource``. The recovery code is typed on ``/dev/tty`` only, once per command, checked with the existing
-parser, derived exactly as ``orch init`` does, matched against the expected person before any signature, held for the
+parser, derived exactly as ``orch setup`` does, matched against the expected person before any signature, held for the
 ``with`` block and zeroised (best effort) on every exit path. Generated codes only; the terminal is a real pty."""
 
 from __future__ import annotations
@@ -776,7 +776,7 @@ def test_a_source_cannot_be_copied_or_pickled(fast, no_grant, tty):
 
 
 def test_derive_label_key_and_the_key_equal_init_for_the_same_code(no_grant, tty):
-    """Production scrypt parameters: the same person key and label key as ``orch init``'s derivation."""
+    """Production scrypt parameters: the same person key and label key as ``orch setup``'s derivation."""
     code = rec.generate_recovery_code()
     pk = rec.derive_person_key(code)
     want_pub = crypto.public_bytes(pk)
@@ -832,7 +832,7 @@ SOURCE_CALLERS = {"custody/personkey.py", "custody/cli.py"}  # B1b: orch keys pr
 SCALAR_CALLERS = {
     "identity/recovery.py",  # the derivation itself
     "identity/__init__.py",  # the re-export
-    "ops/workspace_init.py",  # orch init: the genesis certificate and delegation, then dropped
+    "ops/workspace_init.py",  # orch setup: the genesis certificate and delegation, then dropped
     "custody/personkey.py",  # the RecoveryCodeSource (Q1 = B)
 }
 

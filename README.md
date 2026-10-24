@@ -119,7 +119,7 @@ orch doesn't depend on one harness. Every command is defined once, and gates and
 
 | | Claude Code | Codex CLI and others |
 |---|---|---|
-| Install | plugin marketplace | `uv tool install`, then `orch init` writes `AGENTS.orch.md` |
+| Install | plugin marketplace | `uv tool install`, then `orch setup` writes `AGENTS.orch.md` |
 | Instructions | `AGENTS.orch.md` and skills | `AGENTS.orch.md`, plus skills where the harness supports `SKILL.md` |
 | Gates and signatures | enforced by orch | enforced by orch |
 | Hand edits to ticket files | refused early by a guard hook | detected by `orch check` and `orch doctor`, or prevented by running agents under their own OS user |
@@ -139,8 +139,7 @@ claude plugin install orch-core@orch-core
 uv tool install "git+https://github.com/severinlindenmann/orch-core#subdirectory=plugins/orch-core"
 
 # then, in your project
-orch init           # creates the workspace and writes AGENTS.orch.md
-orch host enable    # starts the host that holds the keys
+orch setup          # starts the host that holds the keys, creates the workspace and writes AGENTS.orch.md
 orch help work      # what an agent reads first
 ```
 

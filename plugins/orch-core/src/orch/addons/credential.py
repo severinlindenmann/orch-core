@@ -316,7 +316,7 @@ def sweep(state_dir, workspace_id: str, keep: Iterable[str]) -> list[str]:
 def provider(
     state_dir, workspace_id: str, host_uid: int, name: str, capabilities: Iterable[str], *, active: bool = True
 ) -> Callable[[str], str | None]:
-    """The callable the runner calls, as ``read(granted.name)``, just before one call of add-on ``name`` (C2); it is bound
+    """The callable the runner calls, as ``read(granted.name)``, just before a call of ``name`` (C2); it is bound
     to ``name`` and refuses a call for any other add-on. It yields the value only when the
     ACTIVE grant (``active``, ``capabilities``) holds both ``credential`` and ``network`` and the stored file is this
     add-on's; in every other case ``None``, without reading the file at all when the grant does not qualify."""

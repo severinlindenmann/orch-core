@@ -1,3 +1,4 @@
+import userEvent from '@testing-library/user-event'
 // R3-A1: Settings shows the versions it already knows: core (package + release), the dashboard, and each add-on's manifest version.
 import { screen, within } from '@testing-library/react'
 import { expect, it, vi } from 'vitest'
@@ -24,6 +25,7 @@ const state = useFakeHost(() => [
 
 it('General shows the core version with its release, and the dashboard version', async () => {
   show('/w/DEMO/settings/general')
+  await userEvent.setup().click(await screen.findByText('Advanced'))
   const box = await screen.findByTestId('versions', {}, T)
   expect(within(box).getByText('v2.0.1')).toBeInTheDocument()
   expect(within(box).getByText('release 0123456789ab')).toBeInTheDocument()

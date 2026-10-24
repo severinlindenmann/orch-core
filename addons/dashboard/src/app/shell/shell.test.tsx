@@ -15,7 +15,7 @@ describe('app shell', () => {
     // The sidebar entry (Today's Glance also has "Open Apps & shares").
     expect(await screen.findByRole('link', { name: /^Apps & shares/ })).toBeInTheDocument()
     expect((await screen.findAllByRole('img', { name: /From addon:/ })).length).toBeGreaterThanOrEqual(5)
-    expect(await screen.findByText('agents granted until 18:00')).toBeInTheDocument()
+    expect(await screen.findByText('Agents can work until 18:00')).toBeInTheDocument()
   })
 
   it('links to the feedback page with a full page load, like the checklist', async () => {

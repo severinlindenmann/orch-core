@@ -44,6 +44,9 @@
                 },
                 "state": {
                   "type": "string"
+                },
+                "credential": {
+                  "type": "string"
                 }
               },
               "required": [

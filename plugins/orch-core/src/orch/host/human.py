@@ -45,6 +45,7 @@ from typing import TYPE_CHECKING, Any
 from jsonschema import Draft202012Validator
 
 from orch import canon
+from orch.addons.settings_value import KEY as ADDONS_KEY
 
 from . import convenience, hubsign, marketinstall, review
 from .errors import HostError
@@ -561,6 +562,11 @@ class HumanOps:
         elif op == "settings.set":
             if (why := settings_needs.clear_refusal(events[0].get("set") or {}, ws.addons)) is not None:
                 raise HostError("invalid.input", why)
+            if ADDONS_KEY in (events[0].get("set") or {}):  # G6: the granted schema, again on the re-read state
+                from orch.addons import settings_value
+
+                if (why := settings_value.check_granted(store, events[0]["set"][ADDONS_KEY])) is not None:
+                    raise HostError("invalid.input", f"add-on settings: {why}")
 
     @staticmethod
     def _sequence(
@@ -774,6 +780,9 @@ class HumanOps:
                 for key, value in (ev.get("set") or {}).items():  # the host's current values, unsigned (§0.8.1)
                     if key == "repos":
                         now = {name: thaw(current.repos.get(name)) for name in value}
+                    elif key == ADDONS_KEY and isinstance(value, dict):  # G6: the host's value of each named add-on
+                        held = current.settings.get(ADDONS_KEY) or {}
+                        now = {name: thaw(held.get(name)) for name in value}
                     else:
                         now = thaw(current.settings.get(key))  # a tuple (sign_methods) is a list on the wire
                     before.setdefault(key, now)

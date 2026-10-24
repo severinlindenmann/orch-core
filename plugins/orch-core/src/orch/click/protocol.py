@@ -30,7 +30,8 @@ __all__ = [
 ]
 
 #: 3 (#1198 C1, C2): no typed-word class: every op that was a word op is a click, Publish (``settings.set`` publish,
-#: ``addon.grant`` of publish, ``publish.share``) included; ``sign`` reads no ``word`` and the ``word`` refusal is gone; a client reads ``status.contract`` and sends nothing typed.
+#: ``addon.grant`` of publish, ``publish.share``) included; ``sign`` reads no ``word`` and the ``word`` refusal is
+#: gone; a client reads ``status.contract`` and sends nothing typed.
 #: 2 (H11c-2): deposit support (``deposit`` on ``prepare``, ``deposit``/``deposit_reason`` on ``sign``); a contract-1
 #: signer answers ``terminal_only`` for every ``grant``, so a client reads ``status.contract`` to tell the two apart
 CONTRACT = 3

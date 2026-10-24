@@ -44,8 +44,16 @@ def test_x_only_directory_with_a_world_readable_key_is_readable(monkeypatch, tmp
     assert real.can_read(NOBODY, str(key)) is False
 
 
-@pytest.mark.skipif(shutil.which("setfacl") is None, reason="setfacl missing")
+def _unmet(reason: str) -> None:
+    """A missing prerequisite skips on a developer machine but FAILS in CI: these tests must really run there."""
+    if os.environ.get("CI"):
+        pytest.fail(f"CI must run this test, but: {reason}")
+    pytest.skip(reason)
+
+
 def test_acl_entry_grants_and_removal_revokes(monkeypatch, tmp_path) -> None:
+    if shutil.which("setfacl") is None:
+        _unmet("setfacl is not installed (apt-get install acl)")
     real = _real(monkeypatch, tmp_path)
     key = tmp_path / "k"
     key.write_text("secret")
@@ -53,7 +61,7 @@ def test_acl_entry_grants_and_removal_revokes(monkeypatch, tmp_path) -> None:
     assert real.can_read(NOBODY, str(key)) is False
     done = subprocess.run(["setfacl", "-m", f"u:{NOBODY}:r", str(key)], capture_output=True)
     if done.returncode != 0:
-        pytest.skip("filesystem without ACL support")
+        _unmet("filesystem without ACL support")
     assert real.stat(str(key)).has_acl is True
     assert real.can_read(NOBODY, str(key)) is True
     subprocess.run(["setfacl", "-b", str(key)], check=True)

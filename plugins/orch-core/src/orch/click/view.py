@@ -12,7 +12,18 @@ from orch import canon
 from orch.host import signcontent, signer
 
 from . import sealed
-from .protocol import DEPOSIT_LINE, DEPOSIT_MAX_HOURS, DEPOSIT_RISK, REVEAL_LINE, REVEAL_RISK, RISK, op_class, refused
+from .protocol import (
+    BACKUP_KEY_LINE,
+    DEPOSIT_LINE,
+    DEPOSIT_MAX_HOURS,
+    DEPOSIT_RISK,
+    REVEAL_LINE,
+    REVEAL_RISK,
+    RISK,
+    SEALED_OPS,
+    op_class,
+    refused,
+)
 
 __all__ = [
     "MAX_EVENTS",
@@ -108,12 +119,14 @@ def check_prepared(
     files: Mapping[str, Any] | None,
     deposit: bool = False,
     reveal: bool = False,
+    sealed_op: bool = False,
 ) -> str:
     """Every §0.8.1 signer check, then the click rules; returns the op class (``click``). Raises
     ``human.click_refused`` (``check_failed`` or ``terminal_only``). ``deposit``: the request was prepared in
     deposit-only grant mode; only :func:`deposit_checks`' grant passes then. ``reveal``: prepared to show the secret
     once in the page; only :func:`reveal_checks`' grant passes then. Any other request with a ``grant.issued`` is
-    terminal-only."""
+    terminal-only. ``sealed_op`` (#1198 C10): prepared with the sealed backup key; a hub step (``SEALED_OPS``) passes
+    only then, and nothing else does."""
     if not isinstance(prepared, Mapping) or prepared.get("workspace_id") != workspace_id:
         raise refused("check_failed", "the host answered for another workspace")
     events = prepared.get("events")
@@ -125,6 +138,8 @@ def check_prepared(
             signer.check_uploads(prepared, files)
     except signer.SignerRefused as exc:
         raise refused("check_failed", str(exc)) from None
+    if (prepared.get("op") in SEALED_OPS) != sealed_op:  # a hub step is a click only together with its sealed key
+        raise refused("terminal_only", f"{prepared.get('op')} is signed in the terminal (orch sign CODE)")
     if deposit:
         deposit_checks(prepared)
         kind = "click"
@@ -150,12 +165,15 @@ def build(
     artifacts: str | None,
     deposit: bool = False,
     reveal: str | None = None,
+    seal_in: tuple[str, tuple[str, ...]] | None = None,
 ) -> dict[str, Any]:
     """The View (after :func:`check_prepared`). ``checks`` are listed apart from ``lines`` so their time can change
     without changing :func:`digest`. A deposit grant (and only one) gets ``deposit: true`` and ``deposit_line``, and
     its ``lines`` end with the tier-A sentence and that line. A reveal grant (and only one) gets ``seal`` (the sealed
     field's ``grant.secret`` purpose, no key: the page brings its own, sealed-field contract section 7) and
-    ``reveal_line``, which its ``lines`` end with; ``view_digest`` covers both."""
+    ``reveal_line``, which its ``lines`` end with; ``view_digest`` covers both. ``seal_in`` ``(pk, purposes)`` (#1198 C10):
+    an op that asks for a typed secret (the hub backup key) carries ``seal`` with the signer's per-request public key
+    and exactly those purposes (sealed-field contract section 7), and ``backup_key_line`` in ``lines``."""
     known = workspace(prepared["workspace_id"])
     if known is None:
         raise refused("check_failed", "this workspace is not in your own registry")
@@ -207,6 +225,11 @@ def build(
         }
         view["reveal_risk"] = REVEAL_RISK
         view["reveal_line"] = REVEAL_LINE
+    if seal_in is not None:
+        pk, purposes = seal_in
+        view["lines"] = [*view["lines"], "", BACKUP_KEY_LINE]
+        view["seal"] = {"v": sealed.VERSION, "alg": sealed.ALG, "pk": pk, "purposes": list(purposes)}
+        view["backup_key_line"] = BACKUP_KEY_LINE
     if content is not None:
         view["headline"], view["content"] = content["headline"], content
     if len(canon.dumps(view)) > MAX_VIEW_BYTES:

@@ -404,8 +404,9 @@ class HumanOps:
         store.refresh()
         if name != "member.add":  # after the handler, with the reader's declaration (H12d-2)
             convenience.refuse_reader_op(service, name)  # §0.8.6: no new reader while convenience signing is on
-        if signer is not None and name in hubproof.OPS and signer["auth"] == "convenience":
-            raise hubproof.refusal("proof_missing")  # #1198 C9: a One-click key cannot make the proof; none, no bind
+        # #1198 C10: a One-click signer may prepare a hub step: it gets the owner proof from the backup key sealed to it.
+        # Nothing is signed or submitted without the proof: ``get`` refuses a convenience bind without one (below), and
+        # the submit and the model check every hub event under the lock (hubproof).
         if signer is not None and signer["auth"] == "convenience":
             convenience.check(service, person, signer["device"])  # the owner's condition, at prepare
         if signer is not None and name != ROTATE_OP:

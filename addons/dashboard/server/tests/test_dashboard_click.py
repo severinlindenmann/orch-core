@@ -491,9 +491,7 @@ def test_views_words_and_credentials_are_never_logged(client, token, stub, scrip
     caplog.set_level(logging.DEBUG)
     prepare(client, token, stub)
     client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token))
-    client.post(
-        url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH}, headers=hdr(token)
-    )
+    client.post(url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH}, headers=hdr(token))
     out = capfd.readouterr()
     for text in (caplog.text, out.out, out.err):
         assert CANARY not in text and "TYPED-WORD" not in text and token not in text
@@ -2126,3 +2124,224 @@ def test_pictures_need_a_signer_that_holds_them(client, token, stub, script):
     body = {"sha256": f"sha256:{DIGEST}", "size": 3, "offset": 0, "b64": "AAEC", "last": True}
     res = client.post(url(stub, "images"), json=body, headers=hdr(token))
     assert res.status_code >= 400 and "orch-core" in res.text
+
+
+# -- #1198 C7: agent access whose secret is shown once in the page, sealed to its own key -------------
+
+PAGE_KEY = "B" + "A" * 86  # 87 base64url characters: the shape of a P-256 point; the server never decodes it
+REVEAL_LINE = "The secret is shown once, on this page, only to you. orch keeps only a fingerprint of it"
+REVEAL_RISK = "The secret will be shown once in this browser. Anyone who controls this dashboard could read it."
+ENVELOPE = {"v": 1, "alg": "P256-HKDF-SHA256-A256GCM", "epk": "C" + "A" * 86, "ct": "D" * 342}
+
+
+def agent_access(**kw):
+    return {"action": "agent_access", "reveal_key": PAGE_KEY, **kw}
+
+
+def reveal_view(**over):
+    import hashlib
+
+    seal = {
+        "v": 1,
+        "alg": "P256-HKDF-SHA256-A256GCM",
+        "purposes": ["grant.secret"],
+        "for": hashlib.sha256(PAGE_KEY.encode()).hexdigest()[:16],
+    }
+    view = {
+        "risk": RISK,
+        "op": "grant",
+        "workspace": {"id": GRANT_WS, "name": "billing", "prefix": "DEMO"},
+        "fingerprint": "0123456789ab",
+        "lines": ["grant for Demo Owner", "", REVEAL_RISK, REVEAL_LINE],
+        "seal": seal,
+        "confirm": {"kind": "click"},
+    }
+    return {"view": {**view, **over}, "view_digest": HASH}
+
+
+@pytest.fixture
+def reveals(script, monkeypatch, host_check):
+    global GRANT_WS
+    GRANT_WS = script.ws
+    script.features = ["custody", "reveal"]
+    host_check.verified = {"fingerprint": "0123456789ab"}
+    script.sign_answer = {
+        "result": {"data": {"grant": GRANT, "secret": f"{GRANT}.{SECRET}"}, "seq": 9},
+        "duplicate": False,
+        "reveal": {"purpose": "grant.secret", "envelope": dict(ENVELOPE)},
+        "auth": {"grant": f"{GRANT}.{SECRET}"},
+    }
+    base = script.handler
+
+    def handler(op, args):
+        if op == "sign" and script.view["view"].get("op") == "grant":
+            script.states[args["request_id"]] = "submitted"
+            return dict(script.sign_answer)
+        return base(op, args)
+
+    script.handler = handler
+    script.view = reveal_view()
+    return script
+
+
+def sent_of(script, op):
+    return [c for cl in script.clients for c in cl.calls if c[0] == op]
+
+
+def test_agent_access_sends_the_page_key_at_prepare_and_the_grant_args_only(client, token, stub, reveals):
+    res = prepare(client, token, stub, agent_access(hours=24, scope="all", label="my tool"))
+    assert res.status_code == 200, res.text
+    sent = sent_of(reveals, "prepare")[0][1]
+    assert sent["op"] == "grant" and sent["args"] == {"hours": 24, "scope": "all", "label": "my tool"}
+    assert sent["reveal_key"] == PAGE_KEY and "deposit" not in sent
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        agent_access(hours=169),
+        agent_access(label="runner"),
+        agent_access(label="x" * 41),
+        agent_access(verbs="log"),
+        agent_access(runner=True),
+        agent_access(reveal_key="short"),
+        {"action": "agent_access"},  # no key
+    ],
+)
+def test_agent_access_bodies_are_closed(client, token, stub, reveals, body):
+    assert prepare(client, token, stub, body).status_code == 400
+    assert sent_of(reveals, "prepare") == []
+
+
+def test_agent_access_needs_a_signer_that_can_seal(client, token, stub, reveals):
+    reveals.features = ["custody"]
+    res = prepare(client, token, stub, agent_access())
+    assert res.status_code != 200 and sent_of(reveals, "prepare") == []
+
+
+def test_agent_access_is_not_a_terminal_hand_off(client, token, stub, reveals):
+    res = client.post(f"/api/w/{stub.ws}/handoff", json=agent_access(), headers=hdr(token))
+    assert res.status_code == 400
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"seal": None},
+        {"seal": {"v": 1, "alg": "x", "purposes": ["grant.secret"], "for": "0" * 16}},  # another key
+        {"seal": {"v": 1, "alg": "x", "purposes": ["hub.backup_key"], "for": "x"}},
+        {"lines": ["grant", REVEAL_LINE]},  # no risk line
+        {"lines": ["grant", REVEAL_RISK]},
+        {"deposit": True},
+        {"confirm": {}},
+        {"workspace": {"id": "f" * 32, "name": "other", "prefix": "DEMO"}},
+        {"fingerprint": "ffffffffffff"},
+    ],
+)
+def test_an_agent_access_view_without_the_reveal_parts_is_not_shown(client, token, stub, reveals, over):
+    reveals.view = reveal_view(**over)
+    prepare(client, token, stub, agent_access())
+    res = client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token))
+    assert res.status_code == 409 and res.json()["error"]["reason"] == "check_failed"
+
+
+def test_a_view_of_another_action_that_claims_a_seal_is_not_shown(client, token, stub, script):
+    script.view = {"view": {**script.view["view"], "seal": reveal_view()["view"]["seal"]}, "view_digest": HASH}
+    prepare(client, token, stub)
+    res = client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token))
+    assert res.status_code == 409 and res.json()["error"]["reason"] == "check_failed"
+
+
+def test_the_agent_access_view_is_shown_as_the_signer_made_it(client, token, stub, reveals):
+    prepare(client, token, stub, agent_access())
+    res = client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token))
+    assert res.status_code == 200, res.text
+    assert res.json() == reveals.view
+
+
+def test_the_agent_access_sign_answer_is_the_grant_id_and_the_sealed_envelope_only(client, token, stub, reveals):
+    prepare(client, token, stub, agent_access())
+    res = client.post(
+        url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH, "reveal_key": PAGE_KEY}, headers=hdr(token)
+    )
+    assert res.status_code == 200, res.text
+    assert res.json() == {
+        "state": "submitted",
+        "duplicate": False,
+        "grant": GRANT,
+        "reveal": {"purpose": "grant.secret", "envelope": ENVELOPE},
+    }
+    assert SECRET not in res.text and "auth" not in res.text and "result" not in res.json()
+    assert sent_of(reveals, "sign")[0][1]["reveal_key"] == PAGE_KEY
+
+
+def test_a_swapped_reveal_key_never_reaches_the_signer(client, token, stub, reveals):
+    prepare(client, token, stub, agent_access())
+    other = "E" + "A" * 86
+    for key in (other, None):
+        body = {"request_id": REQ, "view_digest": HASH} | ({"reveal_key": key} if key else {})
+        res = client.post(url(stub, "sign"), json=body, headers=hdr(token))
+        assert res.status_code in (400, 409), res.text
+    assert sent_of(reveals, "sign") == []
+
+
+def test_reveal_key_is_refused_on_any_other_sign(client, token, stub, script):
+    prepare(client, token, stub)
+    res = client.post(
+        url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH, "reveal_key": PAGE_KEY}, headers=hdr(token)
+    )
+    assert res.status_code in (400, 409) and sent_of(script, "sign") == []
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"v": 2},
+        {"alg": "x"},
+        {"epk": "short"},
+        {"ct": ""},
+        {"extra": 1},
+    ],
+)
+def test_a_malformed_envelope_is_dropped_not_repaired_and_the_secret_is_never_passed(client, token, stub, reveals, bad):
+    reveals.sign_answer = {
+        **reveals.sign_answer,
+        "reveal": {"purpose": "grant.secret", "envelope": {**ENVELOPE, **bad}},
+    }
+    prepare(client, token, stub, agent_access())
+    res = client.post(
+        url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH, "reveal_key": PAGE_KEY}, headers=hdr(token)
+    )
+    assert res.json()["reveal"] is None and res.json()["grant"] == GRANT
+    assert SECRET not in res.text
+
+
+def test_the_server_logs_never_hold_the_envelope_or_the_secret(client, token, stub, reveals, caplog):
+    import logging
+
+    caplog.set_level(logging.DEBUG)
+    prepare(client, token, stub, agent_access())
+    client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token))
+    client.post(
+        url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH, "reveal_key": PAGE_KEY}, headers=hdr(token)
+    )
+    assert SECRET not in caplog.text and ENVELOPE["ct"] not in caplog.text
+
+
+def test_expected_admits_only_the_callers_agent_access():
+    from orch_dashboard.handoff import AgentAccess, expected
+
+    me = "p_" + "1" * 32
+    good = {
+        "type": "grant.issued",
+        "verbs": "agent",
+        "hours": 8,
+        "scope": "workable",
+        "label": "tool",
+        "actor": {"kind": "person", "id": me, "device": None},
+    }
+    check = expected(AgentAccess(action="agent_access", reveal_key=PAGE_KEY, label="tool"), me)
+    assert check([good])
+    for bad in ({"label": "runner"}, {"label": None}, {"verbs": ["log"]}, {"hours": 9}, {"scope": "all"}, {"extra": 1}):
+        assert not check([{**good, **bad}]), bad
+    assert not check([good, good])

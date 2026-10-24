@@ -896,6 +896,9 @@ class AgentAccess(Action):
     hours: Annotated[int, Field(ge=1, le=168)] = 8  # core GRANT_MAX_HOURS
     scope: Literal["all", "workable"] = "workable"
     label: Annotated[str, StringConstraints(min_length=1, max_length=40, strip_whitespace=True)] | None = None
+    #: the page's one-use P-256 public key (65-byte point, base64url): sent to the signer at prepare, so the review the
+    #: person approves is of this key; the dashboard server only relays it (it is public) and never holds a private key
+    reveal_key: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{87}$")]
 
     @field_validator("label")
     @classmethod
@@ -1749,8 +1752,14 @@ def register(app: FastAPI, gateway: Gateway):
                 body, RepoSet
             ):  # the host's path check, before any request exists (plain refusal in the dialog)
                 gateway.check_repo_path(ws, body.path)
-            if isinstance(body, AgentAccess):  # the secret is shown only in the page, sealed: a click request, never here
-                raise fail("invalid.input", "Agent access with a shown secret is signed with one click in the dashboard.", exit=1)
+            if isinstance(
+                body, AgentAccess
+            ):  # the secret is shown only in the page, sealed: a click request, never here
+                raise fail(
+                    "invalid.input",
+                    "Agent access with a shown secret is signed with one click in the dashboard.",
+                    exit=1,
+                )
             planned = plan(gateway, ws, body)
             if planned.sequence and planned.sequence["intent"].get("images"):
                 raise fail(

@@ -8,6 +8,8 @@ from collections import deque
 from datetime import UTC, datetime
 from pathlib import Path
 
+from .policy import LOOPBACK, REMOTE
+
 # A launch code lives 30 s; its redirect file lives exactly as long (#542 item 3). Redemption and the expiry timer
 # both go through `_forget` under the lock: the code is invalidated and the file unlinked exactly once, by whichever
 # comes first. A file a paused launcher writes after that holds a dead code (and the launcher refuses to write or keep
@@ -25,7 +27,7 @@ TUNNEL_CODE_TTL = 300
 LIFETIMES = {"local": (86400, 43200), "remote": (43200, 7200)}  # remote: 12 h absolute, 2 h idle (host spec 0.8.6 10.3)
 #: The listener a kind of session belongs to. A session works only on the listener that opened it (#1198 R1-4): a
 #: remote bearer presented on loopback (or a local one on the front) is as unknown as a made-up token.
-KIND_LISTENER = {"local": "loopback", "remote": "remote"}
+KIND_LISTENER = {"local": LOOPBACK, "remote": REMOTE}
 #: Kinds a launch code can open: a launch code is made on this computer and is a loopback credential.
 LAUNCH_KINDS = frozenset({"local"})
 
@@ -220,7 +222,7 @@ class Auth:
             if key not in self.remote_sources and len(self.remote_sources) >= REMOTE_MAX_SOURCES:
                 key = _OVERFLOW
             bucket = self.remote_sources.setdefault(key, deque())
-            if len(bucket) >= REMOTE_PER_SOURCE or len(self.remote_all) >= REMOTE_GLOBAL:
+            if len(bucket) >= REMOTE_PER_SOURCE:
                 if not bucket:
                     del self.remote_sources[key]
                 return False
@@ -260,7 +262,7 @@ class Auth:
         """The listener this session was opened on (``"loopback"`` or ``"remote"``), or None when unknown. A session
         without a recorded listener (a test that wrote ``kinds`` by hand) belongs to loopback."""
         with self.lock:
-            return self.listeners.get(token, "loopback") if token in self.sessions else None
+            return self.listeners.get(token, LOOPBACK) if token in self.sessions else None
 
     def logout(self, token):
         with self.lock:

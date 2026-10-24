@@ -14,9 +14,9 @@ import socket
 from .auth import client_address
 from .errors import response
 from .hostlink import peer_uid
+from .policy import REMOTE
 
 CLIENT_HEADER = b"x-orch-client"
-LISTENER = "remote"
 
 
 class PeerChecked(socket.socket):
@@ -76,7 +76,7 @@ class Front:
         scope = {
             **scope,
             "headers": [(k, v) for k, v in scope["headers"] if k.lower() != CLIENT_HEADER],
-            "orch_listener": LISTENER,
+            "orch_listener": REMOTE,
             "state": {**scope.get("state", {}), "client": client},
         }
         await self.app(scope, receive, send)

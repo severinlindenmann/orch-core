@@ -9,6 +9,10 @@ to a listener."""
 import re
 from dataclasses import dataclass
 
+#: The two listeners, by name: a session, a terminal ticket and a request's `scope["orch_listener"]` all use these.
+LOOPBACK = "loopback"
+REMOTE = "remote"
+
 # §0.8.6 item 7: the required directives (default-src, script-src, object-src, base-uri, frame-ancestors, form-action)
 # plus the narrow extras this app needs (its own styles, connections and inline-free images).
 # `connect-src` adds the terminal WebSocket on this server's own origin only (section 12.6.6: no `ws:` wildcard, no
@@ -121,7 +125,7 @@ class ListenerPolicy:
 def loopback_policy(port: int) -> ListenerPolicy:
     """The 127.0.0.1 listener, exactly as it behaved before the policy object."""
     return ListenerPolicy(
-        name="loopback",
+        name=LOOPBACK,
         scheme="http",
         host=f"127.0.0.1:{port}",
         csp_template=_CSP_LOOPBACK,
@@ -143,7 +147,7 @@ def remote_policy(name: str) -> ListenerPolicy:
     if name.split(".")[-1].isdigit() or name.endswith(".localhost") or name.endswith(".local"):
         raise ValueError("remote name must be a public DNS name")
     return ListenerPolicy(
-        name="remote",
+        name=REMOTE,
         scheme="https",
         host=name,
         csp_template=_CSP_REMOTE,
@@ -152,6 +156,6 @@ def remote_policy(name: str) -> ListenerPolicy:
         widget_frames=False,
         pre_login_only=True,
         launch_codes=False,
-        session_kinds=frozenset({"remote"}),
+        session_kinds=frozenset({"remote"}),  # the session kind, not the listener
         extra_headers=(HSTS,),
     )

@@ -41,6 +41,7 @@ from .adapters import runs as project
 from .errors import HostError, fail, retry_after, valid_code
 from .gateway import Gateway
 from .hostlink import HostLink
+from .policy import LOOPBACK
 
 RunId = Annotated[str, StringConstraints(pattern=r"^r_[0-7][0-9A-HJKMNP-TV-Z]{25}$")]
 Idem = Annotated[str, StringConstraints(pattern=r"^a_[0-7][0-9A-HJKMNP-TV-Z]{25}$")]
@@ -116,7 +117,7 @@ class Intent:
     generation: str
     expires: float
     #: the listener the session (and so the ticket) belongs to; a ticket works on that listener's socket only
-    listener: str = "loopback"
+    listener: str = LOOPBACK
 
 
 @dataclass
@@ -130,7 +131,7 @@ class Tickets:
     lock: threading.Lock = field(default_factory=threading.Lock)
 
     def mint(
-        self, token: str, ws: str, run: str, mode: str, take: bool, from_: int | None, listener: str = "loopback"
+        self, token: str, ws: str, run: str, mode: str, take: bool, from_: int | None, listener: str = LOOPBACK
     ) -> tuple[str, float] | None:
         """A new ticket and its lifetime in seconds, or None when this session asked for 10 in the last minute."""
         with self.lock:
@@ -233,7 +234,7 @@ def register(app: FastAPI, gateway: Gateway, tickets: Tickets) -> None:
     def terminals_listener(request: Request) -> str:
         """The listener of this request, if terminals are on there and the session belongs to it. A shell on the server
         is off on the front unless switched on (host spec 10.3): nothing is opened or minted otherwise."""
-        listener = request.scope.get("orch_listener", "loopback")
+        listener = request.scope.get("orch_listener", LOOPBACK)
         policy = app.state.policies.get(listener)
         if policy is None or not policy.terminals:
             raise fail("not_found", "Terminals are not available on this connection.", exit=3)
@@ -521,7 +522,7 @@ class TermSocket:
         try:
             raw = await self.first_ticket()
             intent = self.tickets.redeem(raw)
-            listener = ws.scope.get("orch_listener", "loopback")
+            listener = ws.scope.get("orch_listener", LOOPBACK)
             if (
                 intent is None
                 or not self.auth.valid(intent.token, touch=False)

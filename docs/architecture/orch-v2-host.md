@@ -3710,7 +3710,16 @@ login.
   `login_kind` themselves too, so a remote session that somehow reached one is refused (fail closed) until the
   step-up (10.5) exists. The front's `remote.json` (`{"name", "front_uid"}` in the dashboard state directory, mode
   not writable by others, `front_uid` neither the person nor root) turns the front socket on; a file that is there
-  but wrong refuses the start (`remote.not_configured`).
+  but wrong switches remote access off and shows `remote.not_configured` in `/api/session` (`remote_problem`); the
+  loopback dashboard keeps serving.
+- **The front socket (R1-4).** `<run>/dashboard/front.sock` is mode 0666 in a 0711 directory owned by the person:
+  file permissions let the front's user connect, and the server's peer-UID check on every accepted connection (closed
+  before a byte is read unless the peer is `front_uid`) is the authority. Both servers run on asyncio's selector loop
+  (the check lives in `accept`; the front refuses to start on any other loop). The front server adds
+  `limit_concurrency` 64, keep-alive 5 s and a 16 KiB incomplete-event limit behind Caddy's own 32-connection limit.
+- **Terminal tickets belong to a listener.** A ticket records the listener it was minted on and redeems only on that
+  listener's socket, for a session of that listener; `attach` and `terminals/open` mint or open nothing where the
+  listener's policy has terminals off (the front's default).
 - **Rate limits** for passkey login, in buckets of their own: 20 per minute per source, the source being the client's
   IPv4 address (/32) or its IPv6 /64 prefix. A global cap of 600 per minute only guards the CPU, far above any single
   source; when a distributed flood reaches it, remote login waits and the SSH tunnel is the fallback. The loopback

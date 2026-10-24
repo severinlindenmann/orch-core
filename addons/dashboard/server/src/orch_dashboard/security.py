@@ -24,12 +24,13 @@ CLICK_STEP = ("/view", "/sign", "/cancel", "/state", "/custody")
 class Security:
     """ASGI checks before routing, including duplicate headers and streamed body limits."""
 
-    def __init__(self, app, auth, policy: ListenerPolicy, others=()):
+    def __init__(self, app, auth, policy: ListenerPolicy, others=(), registry=None):
         """``policy`` is the default listener (loopback). ``others`` are further listeners' policies; a request is
         handled by the one named in ``scope["orch_listener"]``, which only the server that accepted the connection
         sets (front.Front), never a header. A name that is not configured is refused (fail closed)."""
         self.app, self.auth, self.policy = app, auth, policy
-        self.policies = {p.name: p for p in (policy, *others)}
+        # `registry` (create_app's `app.state.policies`) is shared: taking a policy out of it turns that listener off
+        self.policies = registry if registry is not None else {p.name: p for p in (policy, *others)}
 
     def policy_of(self, scope):
         return self.policies.get(scope.get("orch_listener", self.policy.name))

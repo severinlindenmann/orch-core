@@ -32,7 +32,7 @@ from .auth import CODE_TTL, SETUP_CODE_TTL, Auth
 from .front import Front, PeerChecked
 from .gateway import Gateway, RunDirectoryError, run_dir, state_dir
 from .hostlink import check_uid, encode, receive
-from .policy import remote_policy
+from .policy import REMOTE, remote_policy
 
 #: seconds a stopping server waits for open connections (a tab's live stream) before it cuts them
 GRACE = 3
@@ -218,7 +218,7 @@ def listen_port(directory, headless=None, port=None):
 
 
 def remote_config(directory):
-    """``(name, front_uid)`` from ``<dashboard>/remote.json``, or None when the file is absent (remote access off).
+    """``(policy, front_uid)`` from ``<dashboard>/remote.json``, or None when the file is absent (remote access off).
     Anything wrong with a file that is there refuses the start (host spec 10.2: missing any of it keeps remote mode
     off, and the server says which), never a silent fall back to loopback only: the administrator asked for remote
     access and must see that it is not on. The file is read with the checks of the port file: a plain file of ours that
@@ -240,7 +240,7 @@ def remote_config(directory):
         name, uid = data["name"], data["front_uid"]
         if set(data) != {"name", "front_uid"} or type(uid) is not int:
             raise ValueError
-        remote_policy(name)  # the name must be a public DNS name
+        policy = remote_policy(name)  # the name must be a public DNS name
     except (ValueError, KeyError, TypeError):
         raise RuntimeError(
             f"remote.not_configured: {path} must hold exactly a public DNS name and the front's user id"
@@ -248,7 +248,7 @@ def remote_config(directory):
     if uid <= 0 or uid == os.getuid():
         # the front is its own system user: a front that shares our UID is no boundary (any process of ours passes)
         raise RuntimeError("remote.not_configured: front_uid must be a user other than the person's and not root")
-    return name, uid
+    return policy, uid
 
 
 def front_socket_path(run):
@@ -279,6 +279,16 @@ def bind_front(path, front_uid):
     sock.listen(128)
     sock.setblocking(False)
     return sock
+
+
+def close_front(front, path):
+    """Close the front socket and remove its file (only a socket of ours), once."""
+    if front is not None:
+        front.close()
+        if path is not None:
+            with suppress(OSError):
+                if stat.S_ISSOCK(path.lstat().st_mode):
+                    path.unlink()
 
 
 def server_config(app, front=False):
@@ -401,6 +411,7 @@ def _serve(directory, lock_fd=None, port=None):
     listener.listen(128)
     port = listener.getsockname()[1]
     front = None
+    front_path = None
     try:
         if remote:
             try:
@@ -414,14 +425,11 @@ def _serve(directory, lock_fd=None, port=None):
                     else (f"remote.not_configured: the front socket could not be opened ({exc.__class__.__name__})"),
                 )
         app = create_app(
-            port,
-            gateway=gateway,
-            auth=auth,
-            remote=remote_policy(remote[0]) if remote else None,
-            remote_problem=remote_problem,
+            port, gateway=gateway, auth=auth, remote=remote[0] if remote else None, remote_problem=remote_problem
         )
     except BaseException:
         listener.close()
+        close_front(front, front_path)
         raise
     server = uvicorn.Server(server_config(app))
     front_server = front_thread = None
@@ -431,6 +439,11 @@ def _serve(directory, lock_fd=None, port=None):
     old = os.umask(0o177)
     try:
         ctl.bind(str(ctl_path))
+    except BaseException:
+        ctl.close()
+        listener.close()
+        close_front(front, front_path)
+        raise
     finally:
         os.umask(old)
     os.chmod(ctl_path, 0o600)
@@ -497,9 +510,15 @@ def _serve(directory, lock_fd=None, port=None):
                 if front_server.started or not front_thread.is_alive():
                     break
                 time.sleep(0.05)
-            if not front_server.started:  # loopback keeps serving; remote access is off and says why
+            if not front_server.started:
+                # loopback keeps serving; remote access is off and says why. "Off" means off before loopback serves:
+                # the front thread is joined and the remote policy leaves the listener registry (fail closed).
                 front_server.should_exit = True
+                front_thread.join(timeout=GRACE + 2)
+                app.state.policies.pop(REMOTE, None)
                 app.state.remote_problem = "remote.not_configured: the front socket did not start"
+                close_front(front, front_path)
+                front = front_server = front_thread = None
         server.run(sockets=[listener])
     finally:
         server.should_exit = True
@@ -509,9 +528,7 @@ def _serve(directory, lock_fd=None, port=None):
         thread.join(timeout=3)
         if front_thread is not None:
             front_thread.join(timeout=GRACE + 2)
-        if front is not None:
-            front.close()
-            front_path.unlink(missing_ok=True)
+        close_front(front, front_path)
         listener.close()
 
 

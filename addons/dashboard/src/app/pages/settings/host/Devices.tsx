@@ -644,7 +644,14 @@ function DeviceList({ workspace, devices, failed }: { workspace: Workspace; devi
                             action: { action: 'device_remove', device: String(d.id) },
                             autoStart: true,
                             confirmLabel: 'Remove device',
-                            summary: <p data-testid="device-remove-summary">This device will no longer be able to approve changes for this workspace. Pair it again to restore that.</p>,
+                            summary: (
+                              <div data-testid="device-remove-summary" className="space-y-1">
+                                <p>
+                                  <DeviceLabel label={d.label} named={false} /> of <Inline>{d.name}</Inline>
+                                </p>
+                                <p>This device will no longer be able to approve changes for this workspace. Pair it again to restore that.</p>
+                              </div>
+                            ),
                           })
                         }
                       >

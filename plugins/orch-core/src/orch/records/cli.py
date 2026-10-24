@@ -255,9 +255,7 @@ def _do_push(run: _Run, r: Any) -> dict[str, Any]:
     repo = run.repo(r.record_root, a.remote)
     if a.initial and not a.yes and not run.confirm(f"Create the records branch on the remote {a.remote}?"):
         raise RecordsError("records.unconfirmed", "not confirmed; nothing pushed (push --initial is terminal only)")
-    if a.expect_url is not None:
-        _expect(repo, a.remote, a.expect_url)
-    res = push(repo, r.link, r.workspace_id, r.tips, remote=a.remote, initial=a.initial)
+    res = push(repo, r.link, r.workspace_id, r.tips, remote=a.remote, initial=a.initial, expect_url=a.expect_url)
     if res.get("pushed"):
         failed = _note(r.link, {"commit": res["commit"], "pushed": True, "url": res["url"]})
         if failed:

@@ -494,7 +494,19 @@ _MATERIAL_KEYS = {
     "question": ({"kind", "ticket", "question", "review"}, {"kind", "ticket", "question", "review"}),
     "payload": (
         {"kind", "ticket", "review"},
-        {"kind", "ticket", "review", "texts", "before", "sequence", "statement", "grants", "market", "deps"},
+        {
+            "kind",
+            "ticket",
+            "review",
+            "texts",
+            "before",
+            "sequence",
+            "statement",
+            "grants",
+            "market",
+            "deps",
+            "removed_device",
+        },
     ),
 }
 
@@ -540,6 +552,7 @@ def _hashes(prepared: Mapping[str, Any], workspace_id: str) -> None:
     _before(material, events)
     _grants(material, events)
     _market(material, events)
+    _removed_device(material, events)
     _deps(material, events)
 
 
@@ -651,6 +664,23 @@ def _market(material: Mapping[str, Any], events: list[Mapping[str, Any]]) -> Non
     )
     if not ok:
         _refuse("material.market is malformed")
+
+
+def _removed_device(material: Mapping[str, Any], events: list[Mapping[str, Any]]) -> None:
+    """``material["removed_device"]`` (#1198 C15) names the holder of the device a ``device.removed`` removes, from the
+    host's roster: exactly ``{device, holder}``, the device being the event's own, only on that one event."""
+    block = material.get("removed_device")
+    if block is None:
+        return
+    if (
+        not isinstance(block, dict)
+        or set(block) != {"device", "holder"}
+        or [e.get("type") for e in events] != ["device.removed"]
+        or block["device"] != events[0].get("device")
+        or not isinstance(block["holder"], str)
+        or not 1 <= len(block["holder"]) <= 100
+    ):
+        _refuse("material.removed_device is malformed")
 
 
 _DEP_KINDS = ("python-requirements", "node-package-lock")

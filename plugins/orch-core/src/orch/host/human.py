@@ -240,6 +240,11 @@ def probe_device(store: Any, person: str, now: float) -> str:
 ROTATE_OP = "device.rotate"
 
 
+def _removing(op: str, devices: list[Any]) -> frozenset[str]:
+    """#1198 C15: the devices a ``device.remove`` takes away, for the readers condition (judged after the removal)."""
+    return frozenset(d for d in devices if op == "device.remove" and isinstance(d, str))
+
+
 def _operate(types: list[str]) -> bool:
     from orch.model.authz import OPERATE
 
@@ -408,7 +413,9 @@ class HumanOps:
         # Nothing is signed or submitted without the proof: ``get`` refuses a convenience bind without one (below), and
         # the submit and the model check every hub event under the lock (hubproof).
         if signer is not None and signer["auth"] == "convenience":
-            convenience.check(service, person, signer["device"])  # the owner's condition, at prepare
+            convenience.check(
+                service, person, signer["device"], removing=_removing(name, [args["args"].get("device")])
+            )  # the owner's condition, at prepare
         if signer is not None and name != ROTATE_OP:
             check_device(store, person, signer["device"], now, operate=_operate(sorted(types)))
         operation = _person_operation(name)
@@ -806,6 +813,8 @@ class HumanOps:
                 for gid in taken
                 if (g := known.get(gid)) is not None and isinstance(g.scope, str) and isinstance(g.expires_at, str)
             }
+        if capture.removed_device is not None and "device.removed" in types:
+            material["removed_device"] = dict(capture.removed_device)  # #1198 C15: whose device, per host, not signed
         if capture.market is not None and "addon.granted" in types:
             material["market"] = copy.deepcopy(capture.market)  # V3 G3: the host's word on the source, not signed
         if capture.deps is not None and "addon.granted" in types:
@@ -858,7 +867,12 @@ class HumanOps:
             # a sequence is bound to the passphrase or one-click custody only, here as at prepare (not the phone)
             raise HostError("invalid.input", "a sequence is signed with the passphrase or one-click custody only")
         if signer["auth"] == "convenience":  # §0.8.6: before a convenience binding, and on every bound read
-            convenience.check(call.service, record["person"], signer["device"])
+            convenience.check(
+                call.service,
+                record["person"],
+                signer["device"],
+                removing=_removing(record["op"], [e.get("device") for e in record["prepared"]["events"]]),
+            )
         if state == "bound":
             if record["signer"] != signer:
                 raise HostError("human.request_state", "the request is bound to another device")
@@ -1108,7 +1122,12 @@ class HumanOps:
                         event=e, proof=e.get("owner_proof"),
                     )  # fmt: skip
             if any(e.get("auth") == "convenience" for e in events):  # §0.8.6: the condition, again at submit
-                convenience.check(service, record["person"], events[0]["actor"]["device"])
+                convenience.check(
+                    service,
+                    record["person"],
+                    events[0]["actor"]["device"],
+                    removing=_removing(record["op"], [e.get("device") for e in events]),
+                )
             # §0.8.6: a reader is never added to a history with convenience signatures, nor while the flag is on,
             # however long ago the request was prepared
             convenience.refuse_reader_op(

@@ -362,6 +362,7 @@ describe('paired devices', () => {
     await user.click(within(rows[1]).getByRole('button', { name: 'Remove' }))
     await screen.findByRole('dialog', {}, T)
     expect(spy.mock.calls[0][1]).toEqual({ action: 'device_remove', device: 'd_' + '2'.repeat(32) })
+    expect(await screen.findByTestId('device-remove-summary', {}, T)).toHaveTextContent('Severin') // whose device it is
     spy.mockRestore()
   })
 

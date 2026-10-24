@@ -699,22 +699,30 @@ def push(
     *,
     remote: str = "origin",
     initial: bool = False,
+    expect_url: str | None = None,
 ) -> dict[str, Any]:
-    """Push exactly the branch's current commit, fast-forward only, after the history and the export check."""
+    """Push exactly the branch's current commit, fast-forward only, after the history and the export check.
+    ``expect_url`` (#1198 C15): the address the person reviewed; the push URL this run resolves and uses must be exactly
+    that, or nothing is sent (``records.remote_invalid``). One resolution: the one the push goes to."""
     branch = repo.branch()
     ref = f"refs/heads/{branch}"
     source = repo.resolve(ref)  # S, resolved once
     if source is None:
         raise RecordsError("records.git_state", f"{branch} has no commit yet: orch records commit first")
     with repo.transport() as net:
-        return _push(repo, net, link, workspace_id, tips, remote, initial, branch, ref, source)
+        return _push(repo, net, link, workspace_id, tips, remote, initial, branch, ref, source, expect_url)
 
 
 def _push(
     repo: Git, net: Git, link: Link, workspace_id: str, tips: ValidatedTips, remote: str, initial: bool,
-    branch: str, ref: str, source: str,
+    branch: str, ref: str, source: str, expect_url: str | None = None,
 ) -> dict[str, Any]:  # fmt: skip
     url = push_url(repo, remote, net)
+    if expect_url is not None and url != expect_url:
+        raise RecordsError(
+            "records.remote_invalid",
+            "the remote's address is not the one you reviewed, so nothing was changed. Look at it again.",
+        )
     repo.no_grafts()
     # before any network call: the history, then the export check with the scan of what the push exports (#441)
     checked = validate_history(repo, workspace_id, source, tips.get(workspace_id, branch))

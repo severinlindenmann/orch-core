@@ -29,6 +29,7 @@ from orch.addons.settings_value import KEY as ADDONS_KEY
 from orch.canon import HashError, canonical_policy
 from orch.model import claims
 from orch.model.types import GRANT_MAX_HOURS
+from orch.model.workspace import device_signs_now
 from orch.ops._dsl import REF, STR, E, S, err, obj, operation
 from orch.ops.base import Context, Operation, Result
 from orch.ops.errors import GLOBAL_ERRORS, OrchError
@@ -480,14 +481,23 @@ def handle_device_remove(ctx: Context, args: dict[str, Any]) -> Result:
             "device of yours.",
         )
     holder = ws.members.get(target.person)
-    if holder is not None and holder.role == "owner":
-        working = [d for d in ws.devices.values() if d.person == target.person and not d.removed and not d.revoked]
-        if len(working) <= 1:
+    core = h.store.state._core.ws
+    at = int(ctx.now())
+    if holder is not None and holder.role == "owner" and device_signs_now(core, core.devices[device], at):
+        # early and plain; the model enforces the same under the store lock at append (workspace.device_removed)
+        if not any(
+            device_signs_now(core, d, at) for d in core.devices.values() if d.person == target.person and d.id != device
+        ):
             raise OrchError(
                 "device.lockout",
                 "This is the last working device of an owner. Removing it would lock that owner out for good. Pair "
                 "or add another device first.",
             )
+    if ctx.prepare is not None:
+        ctx.prepare.removed_device = {
+            "device": device,
+            "holder": holder.name if holder is not None else "a former member",
+        }
     done = h.run({"type": "device.removed", "device": device}, "workspace", f"remove the device {device}", review=[])
     return h.workspace_result(done, {"device": device}, "the device can no longer sign for this workspace")
 

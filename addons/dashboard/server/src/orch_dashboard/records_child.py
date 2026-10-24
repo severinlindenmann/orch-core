@@ -237,7 +237,9 @@ class RecordsChild:
             argv = [sys.executable, "-I", "-m", "orch.records"]
             if action is not None:
                 argv += ACTIONS[action]
-                argv += ["--expect-url", url] if url is not None else []
+                argv += (
+                    [f"--expect-url={url}"] if url is not None else []
+                )  # one element: a leading "-" is never an option
             else:
                 argv += (
                     ["status"] if status else ["auto", "off"] if auto_off else ["commit", *(["--push"] if push else [])]

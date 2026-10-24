@@ -461,7 +461,7 @@ def test_c15_the_dashboards_click_binds_the_address_it_showed(r):
     assert code == 3 and out["code"] == "records.remote_invalid"
     assert url_a not in json.dumps(out) and url_b not in json.dumps(out)
     assert not [a for op, a in r.calls if op == "records.remote_private"]  # the host was never asked
-    code, out = r.cli("push", "--initial", "--yes", "--expect-url", url_b)
+    code, out = r.cli("push", "--initial", "--yes", f"--expect-url={url_b}")
     assert code == 3 and out["code"] == "records.remote_invalid"
     assert git(r.tmp, "--git-dir", url_a[len("file://") :], "for-each-ref") == ""  # nothing was pushed
     code, out = r.cli("remote-private", "--yes", "--expect-url", url_a)

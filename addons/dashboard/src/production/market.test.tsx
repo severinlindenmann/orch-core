@@ -151,6 +151,25 @@ it('with One click on, install is the signer review and one Sign press: no Termi
   await userEvent.click(sign)
   await waitFor(() => expect(state.host.clickSigned).toHaveLength(1), T)
 })
+it('with One click on, stale, dev and widened warnings stay visible above the signer review (V3-D38 L2)', async () => {
+  ws().click = { custody: 'convenience', enabled: true, available: true }
+  ws().features = [...ws().features, 'click']
+  const base = updateStage(true)
+  ws().marketStage = { ...base, market: { ...base.market, stale: true, class: 'dev' }, update: { ...base.update!, widened: true } }
+  const d = await openReview('installed')
+  await userEvent.click(within(d).getByRole('button', { name: 'Review installation' }))
+  const lead = await screen.findByTestId('sign-lead', {}, T)
+  expect(within(lead).getByRole('alert')).toHaveTextContent('This update asks for more than before.')
+  expect(lead).toHaveTextContent('out of date')
+  expect(lead).toHaveTextContent('local development folder')
+  expect(lead).toHaveTextContent('not signed')
+  expect(lead).toHaveTextContent('not verified')
+})
+it('the review frames say the text is unverified, never that the publisher wrote it', async () => {
+  const d = await openReview()
+  expect(within(d).getByText('From the add-on package (not verified)')).toBeInTheDocument()
+  expect(within(d).queryByText(/provided by the add-on publisher/i)).toBeNull()
+})
 it('expired stages must be reviewed again and cannot continue', async () => {
   ws().marketStage = stage({ expires_at: '2000-01-01T00:00:00Z' })
   const d = await openReview()

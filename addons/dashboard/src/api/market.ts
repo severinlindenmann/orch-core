@@ -51,7 +51,7 @@ export interface MarketStage {
   review: string[]
   market: {
     url: string
-    class: 'official' | 'community'
+    class: 'official' | 'community' | 'dev'
     commit: string
     source_note: string
     publisher: { fingerprint: string | null; tofu: 'unsigned' | 'new' | 'known' }

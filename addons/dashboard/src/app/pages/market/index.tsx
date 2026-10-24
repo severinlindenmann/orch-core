@@ -69,7 +69,7 @@ function Review({
   // The host's review lines wrap manifest text (title, command, agents text, needs text): all of it is the add-on's, so
   // the whole list sits in one frame (the provenance rule is about where the bytes come from, not who composed the line).
   const full = (
-    <AddonFrame addon={s.name} title="Package review, provided by the add-on publisher">
+    <AddonFrame addon={s.name} title="From the add-on package (not verified)">
       <ul aria-label="Full review" className="space-y-2">
         {reviewLines(s).map((line, i) => (
           <li key={i} className={line.added ? 'border-l-2 border-success pl-3 text-success' : ''}>
@@ -126,7 +126,7 @@ function Review({
         {s.market.stale && <p className="text-warning">Out of date - refresh</p>}
         {s.market.summary && (
           <AddonFrame addon={s.name} title="From the addon">
-            <p className="text-xs text-text-muted">Provided by the add-on publisher</p>
+            <p className="text-xs text-text-muted">Marketplace details (shown by this computer, not signed)</p>
             <Inline>{s.market.summary}</Inline>
           </AddonFrame>
         )}
@@ -310,7 +310,7 @@ function MarketWorkspace() {
                       <AddonFrame addon={a.id} title="From the addon" compact className="flex-1 items-start text-sm">
                         <Inline>{a.from_marketplace.summary}</Inline>
                       </AddonFrame>
-                      <p className="text-[11px] text-text-faint">The text above was provided by the add-on publisher.</p>
+                      <p className="text-[11px] text-text-faint">The text above comes from the add-on package: not verified.</p>
                       <div className="flex flex-wrap gap-1">
                         {a.capabilities.map((p) => (
                           <span className="rounded-full border border-border px-2 text-xs" key={p}>
@@ -492,7 +492,10 @@ function MarketWorkspace() {
                 <Inline>{handoff.name}</Inline> · Version <Inline>{handoff.version}</Inline>
               </p>
               <p>After installation: turned off. You turn it on later in Settings.</p>
-              <p className="text-text-muted">The marketplace lines below are shown by this computer and are not covered by your approval.</p>
+              <p className="text-text-muted">The marketplace lines below are shown by this computer, are not signed and are not verified. Your approval does not cover them.</p>
+              {widened(handoff) && <p role="alert" className="font-medium text-warning">This update asks for more than before.</p>}
+              {handoff.market.stale && <p className="text-warning">This review is out of date: the marketplace may have changed. Cancel and review again.</p>}
+              {handoff.market.class === 'dev' && <p className="text-warning">This is a local development folder, not a marketplace package.</p>}
             </div>
           }
           onClose={() => {

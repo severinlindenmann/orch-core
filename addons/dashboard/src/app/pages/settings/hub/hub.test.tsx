@@ -1,15 +1,24 @@
 // V3 A7: the hub pages. Mission Control explains and builds the terminal command; it never signs or changes the hub.
-import { cleanup, screen, waitFor, within } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { setHubScenario, type HubScenario } from '@/mocks/hub'
+import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import * as sealed from '@/api/sealed'
+import { setHubScenario, setMockOneClick, type HubScenario } from '@/mocks/hub'
 import { renderApp } from '@/test/renderApp'
 
 const T = { timeout: 4000 }
-beforeEach(() => setHubScenario('standalone'))
+beforeEach(() => {
+  setHubScenario('standalone')
+  setMockOneClick(true)
+})
 afterEach(() => {
   cleanup()
   setHubScenario(null)
 })
+const WORDS = 'orchid anchor ribbon velvet quarter timber lantern cobalt meadow harbor window thunder'
+const HUB = '9f3c1ab277de40c8aa11bb22cc33dd44'
+const CARD = JSON.stringify({ o: { hub_id: HUB }, sig: 'x' })
+// Typing a long JSON string key by key is slow; a paste is one change.
+const paste = async (id: string, text: string) => fireEvent.change(await screen.findByTestId(id, {}, T), { target: { value: text } })
 
 const hubPage = (scenario: HubScenario, path = '/w/DEMO/settings/hub') => {
   setHubScenario(scenario)
@@ -37,7 +46,8 @@ describe('the Hub tab has a different page for each mode', () => {
     expect(screen.queryAllByRole('switch')).toHaveLength(0)
     expect(screen.queryAllByRole('checkbox')).toHaveLength(0)
     expect(screen.getByTestId('hub-choose-share')).toBeTruthy()
-    expect(screen.getByTestId('hub-full-switch')).toBeTruthy()
+    expect(screen.getByTestId('hub-full-blocked')).toBeTruthy() // One click is on: the plain sentence, not a dead button
+    expect(screen.queryByTestId('hub-full-switch')).toBeNull()
   })
 
   it('full: says the hub reads everything and labels the hub numbers "from the hub, not signed"', async () => {
@@ -75,6 +85,7 @@ describe('joining (A3.1): the person decides, the terminal signs', () => {
   it('pre-selects nothing, then hands over the exact command', async () => {
     const view = hubPage('standalone')
     await view.user.click(await screen.findByTestId('hub-connect', {}, T))
+    await view.user.click(await screen.findByTestId('hub-join-terminal', {}, T))
     expect((screen.getByTestId('hub-join-continue') as HTMLButtonElement).disabled).toBe(true)
     await type(view, 'hub-invite', 'INV-7QK2-M9XD')
     await type(view, 'hub-card', '/Users/me/acme card.json')
@@ -96,17 +107,25 @@ describe('joining (A3.1): the person decides, the terminal signs', () => {
   })
 })
 
-describe('switching to full access (A3.2): one way, typed, then the terminal', () => {
-  it('stays disabled until the exact words are typed', async () => {
+describe('switching to full access (A3.2): one way, only while One click is off, then the terminal', () => {
+  it('says plainly why not while One click is on, and offers the honest ways', async () => {
+    const view = hubPage('selective')
+    expect(await screen.findByTestId('hub-full-blocked', {}, T)).toHaveTextContent(/Turn One click off/)
+    expect(screen.queryByTestId('hub-full-switch')).toBeNull() // no dead button
+    expect(screen.getByTestId('hub-settings-link')).toBeTruthy()
+    await view.user.click(screen.getByTestId('hub-full-terminal-link'))
+    expect(await screen.findByTestId('hub-full-card', {}, T)).toBeTruthy()
+  })
+
+  it('with One click off: a card path, then the terminal (no typed words)', async () => {
+    setMockOneClick(false)
     const view = hubPage('selective')
     await view.user.click(await screen.findByTestId('hub-full-switch', {}, T))
     expect(screen.getByText(/One way/)).toBeTruthy()
-    await type(view, 'hub-full-card', 'card.json')
     const go = screen.getByTestId('hub-full-continue') as HTMLButtonElement
     expect(go.disabled).toBe(true)
-    await type(view, 'hub-full-words', 'full acces')
-    expect(go.disabled).toBe(true)
-    await type(view, 'hub-full-words', 'Full Access')
+    expect(screen.queryByTestId('hub-full-words')).toBeNull()
+    await type(view, 'hub-full-card', 'card.json')
     expect(go.disabled).toBe(false)
     await view.user.click(go)
     expect((await screen.findByTestId('hub-command', {}, T)).textContent).toBe('orch hub mode full --hub-card card.json')
@@ -114,11 +133,11 @@ describe('switching to full access (A3.2): one way, typed, then the terminal', (
 })
 
 describe('leaving (A3.5 / A3.6)', () => {
-  it('normal leave lists the consequences before the command', async () => {
+  it('normal leave lists the consequences before the command, in a terminal if you ask for it', async () => {
     const view = hubPage('selective')
     await view.user.click(await screen.findByTestId('hub-leave', {}, T))
     expect(screen.getByText(/cannot be taken back/)).toBeTruthy()
-    await view.user.click(screen.getByTestId('hub-leave-continue'))
+    await view.user.click(await screen.findByTestId('hub-leave-terminal', {}, T))
     expect((await screen.findByTestId('hub-command', {}, T)).textContent).toBe('orch hub leave')
   })
 
@@ -128,7 +147,8 @@ describe('leaving (A3.5 / A3.6)', () => {
     expect(within(banner).getByText('Hub offline, working locally')).toBeTruthy()
     await view.user.click(within(banner).getByTestId('hub-leave-down'))
     expect(await screen.findByText('Leave without the hub', {}, T)).toBeTruthy()
-    expect((await screen.findByTestId('hub-command', {}, T).catch(() => null)) ?? true).toBeTruthy()
+    expect((await screen.findByTestId('hub-command', {}, T)).textContent).toBe('orch hub leave')
+    expect(screen.queryByTestId('hub-backup-input')).toBeNull() // the hub cannot be reached: a terminal only
     cleanup()
     hubPage('selective', '/w/DEMO')
     await screen.findByTestId('hub-chip', {}, T)
@@ -192,6 +212,7 @@ describe('the hub id of an invite (core#1110)', () => {
   it('shows it in the review and hands the invite to the terminal unchanged', async () => {
     const view = hubPage('standalone')
     await view.user.click(await screen.findByTestId('hub-connect', {}, T))
+    await view.user.click(await screen.findByTestId('hub-join-terminal', {}, T))
     await type(view, 'hub-invite', '9f3c1ab277de40c8aa11bb22cc33dd44:7QK2M9XD')
     await type(view, 'hub-card', 'card.json')
     await view.user.click(screen.getByTestId('hub-join-continue'))
@@ -199,5 +220,92 @@ describe('the hub id of an invite (core#1110)', () => {
     await view.user.click(screen.getByTestId('hub-join-review'))
     expect((await screen.findByTestId('hub-command', {}, T)).textContent).toBe('orch hub join 9f3c1ab277de40c8aa11bb22cc33dd44:7QK2M9XD --hub-card card.json --mode selective')
     expect(screen.getByTestId('hub-invite-id').textContent).toContain('9f3c 1ab2 77de 40c8')
+  })
+})
+
+describe('by click (#1198 C11)', () => {
+  // The mock workspace id is not a 32-hex id, which the real seal requires; HubStep.test.tsx covers the real seal.
+  let seal: ReturnType<typeof vi.spyOn>
+  beforeEach(() => { seal = vi.spyOn(sealed, 'seal').mockResolvedValue({ v: 1, alg: 'P256-HKDF-SHA256-A256GCM', epk: 'e', ct: 'c' } as sealed.Envelope) })
+  afterEach(() => vi.restoreAllMocks())
+  const sign = async (view: ReturnType<typeof renderApp>, label: string) => {
+    fireEvent.change(await screen.findByTestId('hub-backup-input', {}, T), { target: { value: WORDS } })
+    const btn = await screen.findByRole('button', { name: label }, T)
+    await waitFor(() => expect(btn).toBeEnabled(), { timeout: 5000 })
+    fireEvent.pointerDown(btn)
+    fireEvent.click(btn)
+  }
+
+  it('connects: the card is read, the hub shown, the backup key typed once, and the page then says connected', async () => {
+    const view = hubPage('standalone')
+    await view.user.click(await screen.findByTestId('hub-connect', {}, T))
+    expect(screen.getByText(/hub card file from a hub admin/)).toBeTruthy()
+    expect((screen.getByTestId('hub-join-continue') as HTMLButtonElement).disabled).toBe(true)
+    await paste('hub-card-text', 'not a card')
+    expect(screen.getByTestId('hub-card-bad')).toBeTruthy()
+    expect((screen.getByTestId('hub-join-continue') as HTMLButtonElement).disabled).toBe(true)
+    await paste('hub-card-text', CARD)
+    expect(screen.getByTestId('hub-card-id').textContent).toContain('9f3c 1ab2 77de 40c8')
+    await view.user.click(screen.getByTestId('hub-join-continue'))
+    expect((screen.getByTestId('hub-join-review') as HTMLButtonElement).disabled).toBe(true) // pre-selects nothing
+    await view.user.click(screen.getByTestId('hub-mode-selective'))
+    await view.user.click(screen.getByTestId('hub-join-review'))
+    expect(screen.getByTestId('hub-sign-for').textContent).toContain('9f3c 1ab2 77de 40c8')
+    await sign(view, 'Sign and join the hub')
+    expect(await screen.findByTestId('hub-step-done', {}, T)).toHaveTextContent(/Connected/)
+    expect(seal).toHaveBeenCalledTimes(1)
+    expect(seal.mock.calls[0][1]).toBe(WORDS)
+    expect(document.body.textContent).not.toContain('orchid')
+    expect(screen.queryByTestId('hub-command')).toBeNull() // no terminal command anywhere in this path
+    await view.user.click(within(screen.getByTestId('hub-step')).getByRole('button', { name: 'Close' }))
+    expect(await screen.findByText('Connected · Hub sees only what you share', {}, T)).toBeTruthy()
+  })
+
+  it('everything is not a click: it says so and goes to the terminal', async () => {
+    const view = hubPage('standalone')
+    await view.user.click(await screen.findByTestId('hub-connect', {}, T))
+    await paste('hub-card-text', CARD)
+    await view.user.click(screen.getByTestId('hub-join-continue'))
+    await view.user.click(screen.getByTestId('hub-mode-full'))
+    expect(screen.getByTestId('hub-full-terminal').textContent).toMatch(/needs your key in a terminal/)
+    expect((screen.getByTestId('hub-join-review') as HTMLButtonElement).disabled).toBe(true)
+    await view.user.click(screen.getByTestId('hub-full-to-terminal'))
+    expect(await screen.findByTestId('hub-invite', {}, T)).toBeTruthy()
+    await view.user.click(screen.getByTestId('hub-join-back-click'))
+    expect(await screen.findByTestId('hub-mode-full', {}, T)).toBeTruthy()
+  })
+
+  it('with One click off, connecting says why and offers the terminal, not a dead button', async () => {
+    setMockOneClick(false)
+    const view = hubPage('standalone')
+    await view.user.click(await screen.findByTestId('hub-connect', {}, T))
+    await paste('hub-card-text', CARD)
+    await view.user.click(screen.getByTestId('hub-join-continue'))
+    await view.user.click(screen.getByTestId('hub-mode-selective'))
+    await view.user.click(screen.getByTestId('hub-join-review'))
+    expect(await screen.findByTestId('hub-no-one-click', {}, T)).toHaveTextContent(/One click is off/)
+    expect(screen.queryByTestId('hub-backup-input')).toBeNull()
+    await view.user.click(screen.getByTestId('hub-join-terminal-instead'))
+    expect(await screen.findByTestId('hub-invite', {}, T)).toBeTruthy()
+  })
+
+  it('leaves: the consequences, then one click with the backup key', async () => {
+    const view = hubPage('selective')
+    await view.user.click(await screen.findByTestId('hub-leave', {}, T))
+    expect(screen.getByText(/cannot be taken back/)).toBeTruthy()
+    expect(screen.queryByTestId('hub-command')).toBeNull()
+    await sign(view, 'Sign and leave the hub')
+    expect(await screen.findByTestId('hub-step-done', {}, T)).toHaveTextContent(/You left the hub/)
+    await view.user.click(within(screen.getByTestId('hub-step')).getByRole('button', { name: 'Close' }))
+    expect(await screen.findByText(/Not connected\./, {}, T)).toBeTruthy()
+  })
+
+  it('with One click off, leaving says why and offers the terminal', async () => {
+    setMockOneClick(false)
+    const view = hubPage('selective')
+    await view.user.click(await screen.findByTestId('hub-leave', {}, T))
+    expect(await screen.findByTestId('hub-no-one-click', {}, T)).toHaveTextContent(/One click is off/)
+    await view.user.click(screen.getByTestId('hub-leave-terminal'))
+    expect((await screen.findByTestId('hub-command', {}, T)).textContent).toBe('orch hub leave')
   })
 })

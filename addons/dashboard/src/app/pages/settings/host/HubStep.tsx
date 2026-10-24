@@ -18,9 +18,11 @@ export interface HubStepProps {
   onClose: () => void
   /** The hub state changed (the step was signed). */
   onChanged?: () => void
+  /** What "done" says (default: Signed.). */
+  doneText?: string
 }
 
-export function HubStep({ ws, action, onClose, onChanged }: HubStepProps) {
+export function HubStep({ ws, action, onClose, onChanged, doneText }: HubStepProps) {
   const click = useClickSign(ws)
   const field = useRef<HTMLInputElement>(null)
   const started = useRef(false)
@@ -112,7 +114,7 @@ export function HubStep({ ws, action, onClose, onChanged }: HubStepProps) {
       ))}
       {click.phase === 'settling' && <p role="status" className="text-[13px] text-text-muted">{click.settleNote ?? 'The signature is settling…'}</p>}
       {click.phase === 'done' && (
-        <div className="space-y-2"><p role="status" data-testid="hub-step-done" className="text-[13px] text-text">Signed.</p><div className="flex justify-end"><Button onClick={onClose}>Close</Button></div></div>
+        <div className="space-y-2"><p role="status" data-testid="hub-step-done" className="text-[13px] text-text">{doneText ?? 'Signed.'}</p><div className="flex justify-end"><Button onClick={onClose}>Close</Button></div></div>
       )}
       {(click.phase === 'failed' || click.phase === 'cancelled') && click.problem && (
         <div className="space-y-2">

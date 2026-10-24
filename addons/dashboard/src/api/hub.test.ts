@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { api } from '@/api/client'
-import { FULL_ACCESS_WORDS, hubChip, type HubStatus } from './hub'
+import { hubCardId, hubChip, type HubStatus } from './hub'
 import { mockHubStatus, setHubScenario } from '@/mocks/hub'
 
 const base = mockHubStatus('standalone')
@@ -71,8 +71,10 @@ describe('the mock hub (what the pages are built against)', () => {
     expect((await api.getHubCommand('ws', { kind: 'share_remove', rule: { kind: 'ticket', value: 'DEMO-0045' } })).command).toBe('orch hub share rule remove --ticket DEMO-0045')
   })
 
-  it('types the words for the one-way switch exactly', () => {
-    expect(FULL_ACCESS_WORDS).toBe('full access')
+  it('reads the hub id of a pasted hub card, and nothing else', () => {
+    const id = '9f3c1ab277de40c8aa11bb22cc33dd44'
+    expect(hubCardId(JSON.stringify({ o: { hub_id: id }, sig: 'x' }))).toEqual({ id, short: '9f3c 1ab2 77de 40c8' })
+    for (const bad of ['', 'not json', '[]', '{}', '{"o":{}}', '{"o":{"hub_id":"XYZ"}}', '{"hub_id":"' + id + '"}']) expect(hubCardId(bad)).toBeNull()
   })
 
   it('the hub mock is reached only from the mock router and tests, never from pages (so it is absent from the production bundle)', async () => {

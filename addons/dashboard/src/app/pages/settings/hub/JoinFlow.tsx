@@ -49,24 +49,24 @@ export function JoinFlow({ ws, onClose }: { ws: string; onClose: () => void }) {
         ? <p data-testid="hub-card-id">This card is for the hub <Raw>{hub.short}</Raw>. Ask your hub admin to read you this number; if it differs, stop.</p>
         : <p role="alert" data-testid="hub-card-bad" className="text-danger">This does not look like a hub card. Paste everything from the file, from the first brace to the last.</p>)}
       <Action id="hub-join-continue" disabled={!hub || tooBig} onClick={() => setStep('mode')}>Continue</Action>
-      <p className="text-xs text-text-muted">No card yet, or you prefer a terminal? <button type="button" data-testid="hub-join-terminal" className="underline" onClick={() => terminal(null)}>Do it in a terminal</button></p>
+      <p className="text-xs text-text-muted">Prefer a terminal? <button type="button" data-testid="hub-join-terminal" className="underline" onClick={() => terminal(null)}>Do it in a terminal</button></p>
     </>}
     {step === 'mode' && <>
       <h3 className="font-semibold">What should the hub be able to see?</h3>
       <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,220px),1fr))] gap-3" role="group" aria-label="What the hub can see">
         {(['selective', 'full'] as const).map(value => <button key={value} data-testid={'hub-mode-' + value} aria-pressed={mode === value} className={'space-y-3 rounded-lg border p-4 text-left focus-visible:ring-2 focus-visible:ring-chart-4 ' + (mode === value ? violet : 'border-border')} onClick={() => setMode(value)}>
           <strong>{value === 'selective' ? 'Only what I choose' : 'Everything'}</strong>
-          <p>{value === 'selective' ? 'The hub sees needs-you notes, questions and tickets you pick. You keep signing locally. Everything else stays on this computer.' : 'The hub can read every ticket, file and note, now and later. Hub admins act as admins here. Approvals use your phone or passkey.'}</p>
+          <p>{value === 'selective' ? 'The hub sees the tickets you pick. Always shared: notes that need your attention, and full questions. You keep signing locally. Everything else stays on this computer.' : 'The hub can read every ticket, file and note, now and later. Hub admins act as admins here. Approvals use your phone or passkey.'}</p>
         </button>)}
       </div>
-      <p>Needs-you notes and questions are always shared. You can allow everything later. Going back requires leaving and rejoining.</p>
-      {mode === 'full' && <p data-testid="hub-full-terminal" className="rounded border border-border p-3">Letting the hub read everything cannot be done here: it needs your key in a terminal, and it is refused while One click is on. <button type="button" className="underline" data-testid="hub-full-to-terminal" onClick={() => terminal('full')}>Do it in a terminal</button>, or choose “Only what I choose”.</p>}
+      <p>Notes that need your attention and full questions are always shared. You can allow everything later. Going back requires leaving and rejoining.</p>
+      {mode === 'full' && <p data-testid="hub-full-terminal" className="rounded border border-border p-3">Letting the hub read everything cannot be done here: it is refused while One click is on, and otherwise needs your key in a terminal. <button type="button" className="underline" data-testid="hub-full-to-terminal" onClick={() => terminal('full')}>Do it in a terminal</button>, or choose “Only what I choose”.</p>}
       <div className="flex flex-wrap gap-2"><Action id="hub-join-back" onClick={() => setStep('card')}>Back</Action><Action id="hub-join-review" disabled={mode !== 'selective'} onClick={() => setStep('sign')}>Continue</Action></div>
     </>}
     {step === 'sign' && hub && <>
-      <p data-testid="hub-sign-for">You are connecting this workspace to the hub <Raw>{hub.short}</Raw>. The hub will see only what you share, plus needs-you notes and questions. {caveat}</p>
+      <p data-testid="hub-sign-for">You are connecting this workspace to the hub <Raw>{hub.short}</Raw>. The hub will see only what you share, plus notes that need your attention and full questions. {caveat}</p>
       {oneClick === 'on'
-        ? <HubStep ws={ws} action={{ action: 'hub_join', hub_card: card, hub_id: hub.id }} onClose={onClose} onChanged={refresh} doneText="Connected. The hub sees only what you choose to share." />
+        ? <HubStep ws={ws} action={{ action: 'hub_join', hub_card: card, hub_id: hub.id }} onClose={onClose} onChanged={refresh} doneText="Connected. The hub sees only what you choose to share, plus notes that need your attention and full questions." />
         : <NoOneClick state={oneClick} what="Connecting"><Action id="hub-join-terminal-instead" onClick={() => terminal('selective')}>Do it in a terminal</Action></NoOneClick>}
       <Action id="hub-join-edit" onClick={() => setStep('card')}>Back to the hub card</Action>
     </>}

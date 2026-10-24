@@ -12,8 +12,8 @@ export function LeaveFlow({ ws, hubDown = false, onClose }: { ws: string; hubDow
   const [done, setDone] = useState<string>()
   const consequences = <div className="space-y-2">
     <p>Your tickets, agents and keys stay on this computer. You can keep working locally.</p>
-    <p>Your phone, publishing and handoffs through this hub stop working. Hub members lose access through the hub.</p>
-    <p className="text-danger">{caveat} The hub is asked to delete its copies.</p>
+    <p>Your phone, publishing and handoffs through this hub stop working, and hub members lose access to this workspace through the hub.</p>
+    <p className="text-warning">{caveat} The hub is asked to delete its copies, but cannot prove that it did.</p>
     {hubDown && <p className="text-warning">Your terminal asks you to sign and may ask you to unlock your key. The hub will not be told until it is reachable. It may still list this workspace and keep copies of what it read.</p>}
   </div>
   const here = !terminal && oneClick === 'on'

@@ -130,7 +130,15 @@ def test_hub_joined_bytes():
     msg = b"orch/v2/sig/ws-event|" + cj(H.signed_context(V["ids"]["workspace_a"], "workspace", e))
     assert msg.hex() == j["signed_hex"]
     assert S.verify(pub(j["signer"]), unb64u(j["event"]["sig"], 64), msg)
-    H.check_joined_payload({k: e[k] for k in ("hub_id", "hk_root_pub", "mode", "binding_seq", "aliases")})
+    payload = {k: e[k] for k in ("hub_id", "hk_root_pub", "mode", "binding_seq", "aliases", "owner_proof")}
+    H.check_joined_payload(payload)
+    # #1198 C8: a One-click (convenience) hub.joined carries the owner's PK proof, and readers accept it
+    assert e["auth"] == "convenience"
+    o = H.check_recorded_owner_proof(
+        "hub.joined", payload, at_ms=V["now_ms"], prior=None, workspace_id=V["ids"]["workspace_a"],
+        actor_person_id=V["ids"]["person_alice"], pk_pub=pub("pk_alice"), dev_mode=True,
+    )  # fmt: skip
+    assert o["op"] == "hub.join"
 
 
 def test_publish_bytes():

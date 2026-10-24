@@ -235,4 +235,12 @@ class OwnerDeviceSigner(_Signer):
         return {"o": a["o"], "sig": a["sig"], "device_cert": dict(device_cert), "pk_pub": b64u(pk_pub)}
 
 
-SIGNERS = (RootSigner, OpSigner, UkSigner, ChannelSigner, WskSigner, OwnerDeviceSigner)
+class PersonSigner(_Signer):
+    """The person key ``PK`` (derived from the recovery code) on the hub contract: the owner proof of a hub op only
+    (§9.6). Its other objects (device certs, the workspace delegation) are core's. orch-core's signer holds ``PK``
+    only for the moment of one proof and wipes it; this class exists for the reference and the tests."""
+
+    KINDS = MappingProxyType({"hub.owner_proof": "sig_hub_owner_proof"})
+
+
+SIGNERS = (RootSigner, OpSigner, UkSigner, ChannelSigner, WskSigner, OwnerDeviceSigner, PersonSigner)

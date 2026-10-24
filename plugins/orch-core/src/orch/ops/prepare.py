@@ -72,6 +72,9 @@ class Capture:
     #: signed), and the marketplace block of the review (``material["market"]``: per host, not signed)
     staged: dict[str, Any] | None = None
     market: dict[str, Any] | None = None
+    #: V3 G4: the dependency block of an ``addon.granted`` with ``runtime`` (``material["deps"]``: listed by this
+    #: computer from the lockfile, covered by the digest, not itself signed)
+    deps: dict[str, Any] | None = None
     #: V3 G3: the host's marketplace records of this workspace (``orch.host.marketstate.MarketFiles``), set by the host
     #: before the handler runs: a handler has no state directory of its own under the host
     market_files: Any = None

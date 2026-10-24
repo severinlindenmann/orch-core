@@ -239,7 +239,7 @@ network and write nothing; the first network access is step 11.
 | 16 | Compatibility with this core (`incompatibility()` of addon-api §3) | existing `addon.incompatible` |
 | 17 | **Review**, then the human signs `addon.granted` for exactly `grant_event(manifest, package)` of the staged bytes | the owner declines |
 | 18 | Under the store lock, the host re-reads the staged package, checks its digest equals the digest in the signed grant, appends `addon.granted`, swaps the directory by rename, records origin and (now) the TOFU key | `market.staged_changed` |
-| 19 | If the granted manifest declares `runtime`: build the dependency environment (§8.2) from the lockfile bytes of the granted package. The add-on stays unavailable until this has succeeded; from then on the environment is re-verified before every run | `market.env_failed`, `market.env_changed` |
+| 19 | If the granted manifest declares `runtime`: build the dependency environment (§8.2) from the lockfile bytes of the granted package, by the human-only op `market.env_build {name}` (`orch addon install`, `update` and `setup` call it right after the signature). The add-on stays unavailable ("needs setup") until this has succeeded; from then on the environment is re-verified before every run | `market.env_failed`, `market.env_changed` |
 
 Steps 12 to 15 are repeated by the host at step 18 on the staged bytes; the checks of 13 and 18 are the safety, the
 others are early, readable errors.
@@ -356,7 +356,12 @@ Updates are never automatic. `orch market refresh` (read-only, allowed to agents
 
 5. A new grant is **always** needed: the digest changed, so the old grant no longer covers the bytes. There is no
    "update that keeps the grant".
-6. Steps 17 to 19 of §5. On failure at any step the old version stays installed and active.
+6. Steps 17 to 19 of §5. On failure at any step up to and including step 18 the old version stays installed and active.
+   **Step 19 is after the swap (G4, D5):** the signed grant and the new package are in place when the environment is
+   built, so a failure at step 19 (a dependency that was fine at stage time and is not now) leaves the new version
+   signed but "needs setup", not running; the old version does not come back by itself. Staging downloads and verifies
+   every artifact first (§8.2, D3), so this is rare: a missing or wrong dependency refuses the stage while the old
+   version still runs. The person retries with `orch addon setup NAME` or removes the add-on.
 
 **Several workspaces:** one grant per workspace, each its own review, as in addon-platform §4.
 
@@ -391,6 +396,15 @@ review line "installs these packages" is derived from the granted manifest and l
 | `python-requirements` | pip `requirements.txt` in hash mode (`uv export --format requirements-txt` produces it) | every logical line is a requirement followed by one or more `--hash=sha256:<64 hex>` and nothing else. The requirement part MUST parse as a real PEP 508 requirement (not a regular expression over text, so an option cannot hide in the marker): one name, exactly one specifier `==` with a full version (no `*`), an optional marker, no URL. Option lines (`--index-url`, `--extra-index-url`, `--find-links`, `-e`, `-r`) and VCS or URL requirements are therefore refused |
 | `node-package-lock` | `package-lock.json`, `lockfileVersion` the integer 3 (not `3.0`) | strict parse. Every package key is `node_modules/<name>` repeated for nesting (names by the npm grammar, so no `..`, no empty or dot segment, nothing outside `node_modules/`), has a `version`, is not a `link`, and its `resolved` is **exactly** `https://registry.npmjs.org/<name>/-/<basename>-<version>.tgz` for the key's name and the entry's version (registry host pinned in core per ecosystem). `integrity` is exactly one `sha512-` plus the base64 of a 64-byte digest, nothing more. The root entry (`""`, the add-on itself) MUST NOT name a `resolved`, `integrity`, `link` or `inBundle`, and every dependency it declares MUST be a locked entry. The names and versions the review shows are derived from these checked keys only |
 
+**One parser.** `orch.addons.lockfile.check` is the only code that reads a lockfile; it gives the verdict of the
+reference checker on every `lock` vector, and its rows (name, version, hashes, markers, flags) are the only source of
+what the review shows, what an update diff compares, what is downloaded and what is installed. Lock text never reaches
+an installer. Limits: the file at most 1 MiB of UTF-8 without control characters, at most 1000 rows. A `python-requirements`
+manifest's `entry.cmd[0]` is `{python}` (never a python found on PATH, for any add-on; needs add-on API 1.1) and a `node-package-lock` manifest's is `node` (the command the owner reads is the
+interpreter the dependencies were chosen for). The signed `addon.granted` carries `runtime {kind, lock, packages}`
+(D6: more code arrives after the signature, so the signature names it); the review lists every locked package, and
+whether it is compiled, not on this computer, or development only.
+
 **Scripts are not judged by the lockfile.** Flags such as `hasInstallScript` are the publisher's claim, so a lock is neither accepted nor refused for them. The rule is that no dependency script ever runs (§8.2).
 
 More kinds (other runtimes) are an additive change to the schema's enum with their own rules and vectors.
@@ -401,44 +415,72 @@ The package is verified on every run (the runner copies in-memory bytes into a f
 dependency environment is persistent code too, so it gets the same guarantee: **an environment runs only if it is
 exactly the tree the host built from the granted lockfile**, checked before every run.
 
-**Building** (step 19, after the signed grant, by the host and never by the add-on):
+**Staging (D3).** At `market.stage`, after step 16, the host plans the lock for this computer (Python markers for the
+interpreter that runs add-ons; Node `dev`, `optional`, `os` and `cpu`), then **downloads and verifies every artifact**
+(§5.1: one fetcher, `orch.market.download`) into a private cache. A package this computer cannot install, a
+source-only dependency, a hash the server does not deliver, a wheel that would put an auto-running file in the
+environment, a tarball with links or bundled code: each refuses the stage before the person signs, while the old
+version still runs. Nothing is unpacked yet.
 
-1. *Fresh and ours.* Create the environment in a new `mkdtemp` directory under `<state>/addon-env/` (host-user private,
-   outside workspace and package), install into it, then `rename` it to
-   `<state>/addon-env/<workspace id>/<name>/<package digest hex prefix>/`. If the target already exists it is refused
-   (`market.env_failed`) unless the host created it and its record says so: a directory an agent created beforehand at
-   the predictable path is never adopted. Not shared between add-ons, workspaces or versions.
-2. *Lock bytes from memory.* The lockfile fed to the installer is written from the verified in-memory `Package` that was
-   granted, never re-read from staging or from the installed package directory. Which file is the lockfile comes
-   from the granted manifest's `runtime` (§8.1).
-3. *Nothing resolves, nothing from a dependency runs.* Python: `pip install --isolated --require-hashes --no-deps
-   --only-binary=:all: --target <env>`, the index fixed by the installer (`https://pypi.org/simple`, files from
-   `files.pythonhosted.org`), never by the lockfile. Node: `npm ci --ignore-scripts --userconfig=/dev/null
-   --globalconfig=/dev/null`, the registry fixed by the installer. The installer's environment is scrubbed (no
-   `PIP_*`, `NPM_*`, `NODE_OPTIONS`, `PYTHON*`, proxy variables, no `HOME` config: a per-user `pip.conf` or `.npmrc` is
-   not read). Another package manager MUST use its equivalents: exact versions from the lock, hash verification, no
-   source builds, no lifecycle or install scripts, no resolution. Every artifact is hashed and compared with the
-   lockfile before it is unpacked, and every connection obeys §5.1. A dependency whose only form is a source
-   distribution is refused (`market.env_failed`), not built.
+**The fetcher.** Only `https` on port 443, the host compared whole against the list for the lock kind (Python:
+`pypi.org`, `files.pythonhosted.org`; Node: `registry.npmjs.org`). Every address a name resolves to is judged; the
+connection goes to the first checked address with the name as TLS server name and `Host`, with no second lookup; a
+redirect is `market.address_refused`. Each artifact streams to a fresh `O_EXCL` file, is hashed while it streams
+and is compared with the lock BEFORE it gets its name; a cache hit is hashed again on every use. Caps: 64 MiB per
+artifact, 256 MiB per add-on, 8 MiB for a Python project index, a deadline for the whole stage or build. For Python
+only a wheel of exactly the locked name and version, whose sha256 the lock lists and whose tags this interpreter
+supports, is chosen (none: `no_binary`; only source distributions: `sdist_only`).
+
+**Building** (step 19, after the signed grant, by the host and never by the add-on; `market.env_build`, human-only):
+
+1. *The grant and its bytes.* Under the store lock the latest grant (on, with `runtime`) is read, then the lock is
+   released. The package is read into memory from `addons/<name>` and its digest must equal the grant's: that
+   in-memory package is the only source of lock bytes, and no installer ever gets a path into the package or into
+   staging. One flock per workspace and add-on.
+2. *Fresh and ours.* The environment is built in a new `mkdtemp` directory under `<state>/addon-env/` (host-user
+   private, same file system) and `rename`d to `<state>/addon-env/<workspace id>/<name>/<package digest hex[:16]>/`
+   under the store lock and the flock, after the grant is read again: a changed grant discards the build
+   (`superseded`). **A target that already exists is removed, never adopted** (D4: refusing it would let anyone who can
+   create the directory block an add-on for ever): it is deleted through a directory descriptor and replaced. Not
+   shared between add-ons, workspaces or versions.
+3. *Nothing resolves, nothing from a dependency runs, nothing connects.* Python (D1): orch writes `req.txt` from the
+   checked rows (`name==version --hash=sha256:<chosen>`, no author text), copies the verified wheels into the build
+   directory and runs `pip install --isolated --no-index --find-links <wheels> --require-hashes --no-deps
+   --only-binary=:all: --no-compile --no-cache-dir --no-input --target <env>` with the host's own interpreter and an
+   environment made from nothing (fixed `PATH`, empty `HOME` and `TMPDIR`, no `PIP_*`, no proxy, no `PYTHON*`), a
+   time and output limit. Node (D2): orch unpacks each verified tarball itself (`orch.market.untar`): regular files and
+   directories only, the first path component dropped, no link of any kind, no `node_modules` segment inside a
+   tarball (bundled code is not in the lock), no case twins, limits on entries, file size, decompressed bytes and
+   header size, modes normalized; no npm, no `.bin` links, no script. A dependency whose only form is a source
+   distribution is refused, not built (`sdist_only`).
 4. *No interpreter ever starts inside the environment.* The host does not run `<env>/bin/python` or any tool from
-   the environment to build, check or stamp it. At run time, Python dependencies are put on the path with `PYTHONPATH`
-   pointing at the `--target` directory from the host's own interpreter, so no `site` directory is registered and no
-   `.pth` file is processed.
-5. *Auto-running files are refused.* After installing, the file list is checked: a path that leaves the environment
-   (absolute, `..`, empty or `.` segment, backslash), and, at the environment root, any `*.pth`, `sitecustomize` or
-   `usercustomize` (file or package, any case) fails the build (`market.env_failed`; vectors `env_paths_*`).
-6. *Stamp.* The host writes a stamp outside the environment: `{digest: <package digest>, tree: <tree hash>}`, where the
-   tree hash is `sha256:` over `<sha256>  <mode>  <path>` lines of every file in byte order of the path (the
-   same shape as the §8.1 package digest, plus the mode).
+   the environment to build, check or stamp it. At run time Python dependencies are put on the path with `PYTHONPATH`
+   and the interpreter runs with `-S` (no `site`, no `.pth`); Node finds them through a `node_modules` link made by
+   orch inside the runner's private copy of the package.
+5. *Auto-running files and escapes are refused.* After installing, the whole tree is walked without following a link:
+   regular files and directories only, one link each, no path that leaves the environment (absolute, `..`, empty or `.`
+   segment, backslash, control character), at the environment root no `*.pth`, `sitecustomize*` or `usercustomize*`
+   (any case), at most 20 000 entries, 256 MiB, 64 levels (`env_paths` vectors).
+6. *Stamp.* The host writes `<digest dir>.stamp.json` next to the environment (0600, atomic): `{v, ws, name,
+   digest, kind, tree, dirs, files, bytes, abi, built_at}`. `tree` is `sha256:` over `<sha256>  <mode>  <path>` lines
+   of every file in byte order of the path (the shape of the §8.1 package digest, plus the mode, the `env_stamp`
+   vectors), `dirs` the same over the directories (an added empty directory shows), `abi` the interpreter's cache tag and
+   best wheel tag, or the Node platform and architecture.
+7. *Tidy.* The name's other digest directories and the cache files this build used are removed. At start the host
+   removes every `.build-*`, an unstamped target, environments of uninstalled names and of old digests, and cache
+   files older than a day (`addonenv.recover`).
 
-**Checking** (before every start, in the runner, like the package): the stamp's `digest` is the package digest being
-run, and the tree on disk hashes to the stamp's `tree`; otherwise the add-on does not start (`market.env_changed`,
-shown as "environment changed" and offered a rebuild, which is the install again). Equivalent and allowed: copy the
+**Checking** (before every start, **inside `runner.call`**, like the package, C1): every component is opened without
+following a link, the stamp is the one for this workspace, add-on, package digest and kind, its `abi` is this
+computer's, and the walk of the tree hashes to the stamp's `tree`, `dirs`, file count and size; otherwise the add-on does
+not start (`market.env_changed`, reason `missing`, `changed`, `digest` or `abi`, shown as "needs setup" or
+"environment changed" and offered `orch addon setup`). Nothing is rebuilt and nothing connects at run time; Tier A
+(§15.1): a same-user process that forges both the tree and the stamp is the stated limit. Equivalent and allowed: copy the
 environment into the same fresh read-only directory as the package and hash the copy. A file planted before the build
 (refused by step 1), added, changed, removed or re-moded afterwards is caught here.
 
-A failure at any step leaves no environment and no running add-on; the grant stays signed, and the owner can retry or
-remove. Having dependencies does not change the add-on's capabilities: `network` stays a capability, and installing
+A failure at any step leaves no environment and no running add-on; the grant stays signed, and the owner can retry
+(`orch addon setup NAME`) or remove (which deletes the environment, §7). Having dependencies does not change the add-on's capabilities: `network` stays a capability, and installing
 dependencies is the host's act, not available to the add-on.
 
 ## 9. Hub policy hook (interface only)
@@ -575,8 +617,8 @@ are new in the v1 catalog; G2/G3 declare them per op and regenerate the CLI gold
 | `market.lock_missing` | `runtime.lock` is not in the package | 15 |
 | `market.lock_invalid` | the lockfile breaks a rule of §8.1 | 15 |
 | `market.staged_changed` | the staged package no longer has the signed digest at grant time | 18 |
-| `market.env_failed` | the dependency environment could not be built: install failure, a source-only dependency, a path leaving the environment, an auto-running file (`.pth`, `sitecustomize`, `usercustomize`), or an existing target not created by the host | 19 |
-| `market.env_changed` | at run time, the environment no longer matches its stamp or the stamp is for another package digest | run |
+| `market.env_failed` | the dependency environment could not be built, or a dependency cannot be had (stage time and step 19). Fixed reason words: `no_binary`, `sdist_only`, `download`, `hash_mismatch`, `auto_run_file`, `path_escape`, `link`, `too_large`, `installer`, `package`, `superseded`, `lock` (two applicable lines of one name), `platform` (a required package that does not run here) | 16, 19 |
+| `market.env_changed` | at run time, the environment no longer matches its stamp or the stamp is for another package digest. Reasons: `missing`, `changed`, `digest`, `abi` | run |
 | `market.actor_refused` | an agent or mandate asked for a human-only action | 0 |
 
 Rows without a vector in `vectors_market.json` (`fetch_failed`, `commit_mismatch`, `staged_changed`, `env_failed`) need
@@ -688,3 +730,45 @@ Design note `state/design-g3.md`; conditions C1 to C6. What the code does, where
 - **Host-derived preview:** the update diff and `widened` come from the host (the staged bytes against the signed grant; when the
   installed folder is not the granted bytes everything counts as widened). They are for previews only: no client may shorten the
   signed view because of them, and the signer always renders every signed capability, field, section and artifact kind.
+
+## 17. Dependencies as built (V3 G4, #922)
+
+Design note `state/design-g4.md`; conditions C1 to C7. Deviations from the first text of §6 and §8 are in the text
+above: D1 (orch downloads, installers run offline), D2 (no `npm ci`: orch unpacks), D3 (download and verify at stage),
+D4 (an existing target is removed, never adopted), D5 (§6 item 6), D6 (`runtime` in the signed grant), D7 (Python
+add-ons run with the host interpreter and `-S`), D8 (`python-requirements` is `uv export --format requirements-txt
+--no-dev` output).
+
+- **Code:** `orch/addons/lockfile.py` (the one parser and the plan), `orch/addons/envtree.py` (tree rules, walk, stamp,
+  `verify`), `orch/market/download.py` and `untar.py` (the fetcher and the unpacker), `orch/market/deps.py` (review block
+  and update diff), `orch/host/addonenv.py` (stage fetch, `market.env_build`, remove, recovery), `orch/addons/runner.py`
+  (the check inside every call; Python `-S -B`, Node from fixed system directories).
+- **Review and diff:** the review lists every package (compiled, not on this computer, development only) and the
+  download size; `material["deps"]` carries it, checked by the signer against the SIGNED `runtime` and labelled "listed
+  by this computer from the lockfile, covered by the digest". An update diff compares what this computer INSTALLS: a
+  package that keeps its version and hash but starts to be installed here is changed; `widened` is set by runtime added
+  or changed, and by any package added or changed (removals do not widen).
+- **One mechanism for every cap:** `envtree.Budget` (bytes and entries) is the only way a parser consumes input. One
+  budget is shared by everything one operation reads (every wheel and tarball of one environment build or stage, every
+  file of one walk, every download of one build or stage: a new budget per operation), so N archives cannot add up to N times what one may use; a parser takes the
+  budget as a parameter, so a new one cannot forget it.
+- **The invariant (stated once, in `envtree.Budget`):** what orch judged is exactly what gets written, and every written
+  byte comes out of a Budget. Where orch and the consumer both parse a format they must agree: a wheel is listed by orch's
+  own walk of its central directory (the directory must end exactly at the end record, no zip64 record or locator) and
+  then by `zipfile`, which is what pip uses, and the two lists must be identical; a tarball with any sparse member
+  (old GNU type or PAX `GNU.sparse.*`) is refused, so no hole is ever expanded into bytes nobody counted. pip runs with a
+  file size limit, `PIP_CONFIG_FILE=/dev/null` (no global or site config either) and a size watch on the environment it
+  writes; the tree walk after it is the last gate. Directory walks and unpacking hold only the chain of parent
+  descriptors, never one per directory, so a package with hundreds of sibling directories works under a 256-descriptor
+  limit. A wheel is only taken from `files.pythonhosted.org`.
+- **Caps, every one checked before the allocation it guards:** lockfile 1 MiB and 1000 rows (counted before rows are
+  parsed); download 64 MiB per artifact (the `Content-Length` before the body, the count per chunk), 256 MiB per
+  add-on, 8 MiB index; wheel central directory walked by orch entry by entry (20 000 entries and 256 MiB declared in all, drawn before each
+  entry is kept; an end record that lies about its count is refused at the first surplus entry); tarball 20 000 members counted as they stream, 64 MiB per file, decompressed bytes counted by
+  a reading wrapper (`MAX_BYTES` plus a small allowance per member), PAX and long-name headers 8 KiB, no sparse member;
+  environment tree 20 000 entries, 64 levels, 256 MiB, 240 characters per path; pip 300 s and 8 MiB of log; stamp 4 KiB.
+- **Run time:** Python is G6's interpreter line without `-E` (`-B -s -S`; `-E` would ignore the `PYTHONPATH=<package>:<environment>` that carries the dependencies, and the environment is built from nothing anyway); Node `node_modules` link to the environment,
+  `node` looked up in `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`.
+- **Not done / residual:** native builds are refused (O7); an add-on without `network` can still connect until #287
+  (O5); Node resolves packages above the run root only in Tier A terms (O4); the full tree hash per run costs about half
+  a second at the cap (O2).

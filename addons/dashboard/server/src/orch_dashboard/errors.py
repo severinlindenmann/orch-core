@@ -143,6 +143,26 @@ DETAIL_KEYS: dict[str, dict[str, tuple[str, ...] | str]] = {
         "devices": DEVICES,
     },
     "sign.hub_only": {"reason": ("hub",)},  # V3 C11: full hub mode takes no local key
+    # V3 G4: why a dependency environment was refused or no longer verifies (fixed words, as core's table)
+    "market.env_failed": {
+        "reason": (
+            "no_binary",
+            "sdist_only",
+            "download",
+            "hash_mismatch",
+            "auto_run_file",
+            "path_escape",
+            "link",
+            "too_large",
+            "installer",
+            "package",
+            "superseded",
+            "lock",
+            "platform",
+            "network",
+        )  # fmt: skip
+    },
+    "market.env_changed": {"reason": ("missing", "changed", "digest", "abi")},
     "sign.convenience_readers": {
         "reason": ("no_declaration", "reader_too_old", "declaration_unknown", "relay_too_old", "unknown_readers"),
         "devices": DEVICES,

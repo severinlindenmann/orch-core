@@ -1,5 +1,6 @@
 """V3 A10: the Add-ons page's server half. Each route is a thin proxy to one marketplace host op with closed arguments;
-the install hand-off `market_grant` is `addon.grant {name, staged}`: terminal only, never click-eligible."""
+the install hand-off `market_grant` is `addon.grant {name, staged}`: one click like any other signed action (V3-D38;
+the click tests are in test_dashboard_click.py), the Terminal when click-to-sign is off."""
 
 from types import SimpleNamespace
 
@@ -198,23 +199,6 @@ def test_plan_is_one_intent_per_stage_and_skips_the_switch_state_check():
     other = plan(gateway, ws, parse({"action": "market_grant", "name": "echo", "staged": "st_" + "1" * 32}))
     assert (one.op, one.args) == ("addon.grant", {"name": "echo", "staged": STAGE})
     assert one.idem(ws) == again.idem(ws) != other.idem(ws)
-
-
-def test_a_click_attempt_for_market_grant_is_refused_before_anything_is_asked(client, token, stub):
-    res = client.post(
-        f"/api/w/{stub.ws}/click/prepare",
-        json={"action": "market_grant", "name": "echo", "staged": STAGE},
-        headers=hdr(token),
-    )
-    err = res.json()["error"]
-    assert res.status_code == 409 and err["code"] == "human.click_refused" and err["reason"] == "terminal_only"
-    assert client.app.state.handoffs.active == {}
-
-
-def test_the_click_route_names_no_other_market_path():
-    from orch_dashboard import click
-
-    assert click.MarketGrant is MarketGrant
 
 
 def client_has_no_add_route():

@@ -41,7 +41,7 @@ def test_scaffold_passes_the_validator_and_names_the_add_on():
     pkg, manifest = author.check_files(files)
     assert manifest.name == NAME and manifest.version == "0.1.0" and manifest.capabilities == []
     assert pkg.digest == package.package_digest(files)
-    assert json.loads(files["orch-addon.json"])["entry"]["cmd"] == ["python3", "{pkg}/main.py"]
+    assert json.loads(files["orch-addon.json"])["entry"]["cmd"] == ["{python}", "{pkg}/main.py"]
 
 
 @pytest.mark.parametrize("bad", ["", "Changelog", "1abc", "a_b", "a" * 41, "../x", "a b"])

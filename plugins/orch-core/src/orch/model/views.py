@@ -371,6 +371,7 @@ def workspace_view(core: Core, now: int) -> WorkspaceView:
                         "package_sha256": a.package_sha256,
                         "capabilities": a.capabilities,
                         "purged": a.purged,
+                        "runtime": a.runtime,
                     }
                 )
                 for n, a in ws.addons.items()

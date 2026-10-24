@@ -1,4 +1,4 @@
-// A10: browse -> review -> Continue in Terminal (hand-off prepared with the staged id) -> installed, plus update with diff and widened.
+// A10: browse -> review -> Review installation (hand-off prepared with the staged id) -> installed, plus update with diff and widened.
 import path from 'node:path'
 import { expect, test } from '@playwright/test'
 import { FakeServer, STAGE, STAGE_UPDATE, STAGE_WIDE } from './fakeHost'
@@ -20,7 +20,7 @@ const open = async (page: import('@playwright/test').Page, tab: string) => {
   await expect(page.getByRole('heading', { name: 'Add-ons', level: 1 })).toBeVisible()
 }
 
-test('browse -> review -> Continue in Terminal -> installed', async ({ page }) => {
+test('browse -> review -> Review installation -> installed', async ({ page }) => {
   await open(page, 'browse')
   const jira = page.getByRole('article', { name: 'jira' })
   await expect(jira).toContainText('official - severinlindenmann/orch-marketplace - 1.2.0')
@@ -28,11 +28,11 @@ test('browse -> review -> Continue in Terminal -> installed', async ({ page }) =
   await page.screenshot({ path: path.join(SHOTS, 'a10-browse.png') })
   await jira.getByRole('button', { name: /Install/ }).click()
   const dialog = page.getByRole('dialog')
-  await expect(dialog).toContainText('Nothing is enabled until you sign.')
-  await expect(dialog).toContainText('Also installs: 3')
+  await expect(dialog).toContainText('The add-on will be installed turned off.')
+  await expect(dialog).toContainText('Also installs 3 required software components')
   await page.screenshot({ path: path.join(SHOTS, 'a10-review.png') })
   expect(fake.posts('/market/stage')[0].body).toMatchObject({ id: 'jira' })
-  await dialog.getByRole('button', { name: 'Continue in Terminal' }).click()
+  await dialog.getByRole('button', { name: 'Review installation' }).click()
   await expect(page.getByText('7F3K-Q2MA')).toBeVisible()
   expect(fake.posts('/handoff')[0].body).toMatchObject({ action: 'market_grant', name: 'jira', staged: STAGE })
   await page.screenshot({ path: path.join(SHOTS, 'a10-terminal.png') })
@@ -52,7 +52,7 @@ test('update with a diff', async ({ page }) => {
   await expect(dialog).not.toContainText('asks for more than before')
   expect(fake.posts('/market/stage').pop()!.body).toMatchObject({ id: 'github', update: true })
   await page.screenshot({ path: path.join(SHOTS, 'a10-update-diff.png') })
-  await dialog.getByRole('button', { name: 'Continue in Terminal' }).click()
+  await dialog.getByRole('button', { name: 'Review installation' }).click()
   await expect.poll(() => fake.posts('/handoff').pop()?.body).toMatchObject({ action: 'market_grant', name: 'github', staged: STAGE_UPDATE })
 })
 
@@ -64,7 +64,7 @@ test('widened update shows the full review', async ({ page }) => {
   await expect(dialog.getByRole('list', { name: 'Full review' })).toBeVisible()
   await expect(dialog).toContainText('Starts agents on a timetable')
   await page.screenshot({ path: path.join(SHOTS, 'a10-update-widened.png') })
-  await dialog.getByRole('button', { name: 'Continue in Terminal' }).click()
+  await dialog.getByRole('button', { name: 'Review installation' }).click()
   await expect.poll(() => fake.posts('/handoff').pop()?.body).toMatchObject({ staged: STAGE_WIDE })
 })
 

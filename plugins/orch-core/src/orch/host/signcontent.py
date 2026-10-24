@@ -72,7 +72,7 @@ SHOWN: dict[str, frozenset[str]] = {
     "artifact.replaced": frozenset({"name", "kind", "label", "ac", "task", "replaces", "bytes", "sha256"}),
     "device.added": frozenset({"device", "cert"}),
     "device.exposed": frozenset({"device", "reason"}),
-    "device.removed": frozenset({"device"}),
+    "device.removed": frozenset({"device", "reason"}),
     "device.rotated": frozenset({"old", "device", "cert", "rotation"}),
     "gate.approved": frozenset({"gate", "source_sha"}),
     "gate.changes_requested": frozenset({"gate", "text"}),
@@ -1359,6 +1359,8 @@ def _event(
         return "Add a paired device to your devices"
     if typ == "device.removed":  # #1198 C15: one click; the guards (not your own device, not an owner's last) are the host's
         _row(out, "device", ev.get("device"))
+        if ev.get("reason") is not None:
+            _row(out, "reason", ev.get("reason"))
         out.setdefault("notes", []).append(
             "This device can no longer sign for this workspace, and the change stays in its log. To use that phone or "
             "computer again, pair it again as a new device."

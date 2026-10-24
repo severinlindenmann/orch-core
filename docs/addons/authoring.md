@@ -118,7 +118,7 @@ next step. To stop, `orch addon disable changelog`, then `orch addon purge chang
 ## 4. Check it: `orch addon pack`
 
 ```sh
-orch addon pack --git https://github.com/acme/orch-addon-changelog
+orch addon pack ./changelog --git https://github.com/acme/orch-addon-changelog
 ```
 
 validates the package at `HEAD` with the checks an install runs on the bytes (package rules, `orch.addon/3`, a manifest
@@ -178,8 +178,12 @@ an allowed host, and the add-on's source may live in the same repo (`source.subd
 1. **Commit and pack** the add-on (steps 3 and 4 above), with `--git` set to the test marketplace's URL if the add-on
    lives in that repo, and `--subdir` for its folder.
 2. **Make the test marketplace**: a repo with `marketplace.json` listing the entry, signed with a throw-away ECDSA P-256
-   key (the index, and each entry's `publisher`). The orch-dev kit's `e2e/lib/s13_fixture.py` builds one and keeps the
-   private key outside the repo; copy its way of signing, never commit a private key.
+   key (the index, and each entry's `publisher`). The way to do it, in words: generate an ECDSA P-256 key pair and
+   keep the private key outside every repository; write `marketplace.json` with `format`, `name`, `version`, `source`,
+   `expires_at` and the entries; sign each entry with the key (the signature is bound to this marketplace's URL), then
+   sign the index as a whole; commit and push. The orch-dev kit's generator
+   [`e2e/lib/s13_fixture.py`](https://github.com/severinlindenmann/orch-dev-kit/blob/develop/e2e/lib/s13_fixture.py)
+   does exactly this with orch's own signing code and is the worked example. Never commit a private key.
 3. **Tell the dev host**: in the sandbox, `<root>/state/host/dev.json` gets `"market": {"url": "<repo URL>", "keys":
    ["<public key>"]}` (the dev kit writes it with `orch.devsandbox.write_dev_json`). A host without this entry, and
    every real workspace, answer `market.community_unisolated`.

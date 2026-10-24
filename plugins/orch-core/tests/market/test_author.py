@@ -209,3 +209,20 @@ def test_pack_refuses_a_partial_clone(repo, key, value):
     with pytest.raises(author.AuthorError) as e:
         author.pack(str(repo))
     assert e.value.code == "invalid.input" and "partial clone" in e.value.message
+
+
+def test_the_scaffolded_main_file_answers_a_propose_request():
+    import sys
+
+    files = author.scaffold(NAME)
+    request = {
+        "jsonrpc": "2.0", "id": 7, "method": "propose",
+        "params": {"ticket": {"key": "WEB-1", "type": "task", "status": "done", "fields": {}}},
+    }  # fmt: skip
+    run = subprocess.run([sys.executable, "-c", files["main.py"].decode()], input=json.dumps(request) + "\n",
+                         capture_output=True, text=True, check=True)  # fmt: skip
+    assert json.loads(run.stdout) == {"jsonrpc": "2.0", "id": 7, "result": {"set": {"note": "Done: WEB-1"}}}
+    other = dict(request, id=8, method="nope")
+    run = subprocess.run([sys.executable, "-c", files["main.py"].decode()], input=json.dumps(other) + "\n",
+                         capture_output=True, text=True, check=True)  # fmt: skip
+    assert json.loads(run.stdout)["error"]["code"] == -32601

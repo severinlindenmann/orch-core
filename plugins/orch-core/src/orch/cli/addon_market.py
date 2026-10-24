@@ -344,7 +344,7 @@ def _signed(a: argparse.Namespace, env: Mapping[str, str], out: TextIO, as_json:
                 _sign(conn, backend, device, wid, person, label, "addon.disable", {"name": name})
             return conn.call("market.uninstall", {"name": name})["data"]
         if a.cmd == "dev":
-            dev: dict[str, Any] = {"path": _repo_root(a.rest[0])}
+            dev: dict[str, Any] = {"path": a.rest[0]}  # resolved once, in main()
             if a.commit:
                 dev["rev"] = a.commit
             if a.subdir:

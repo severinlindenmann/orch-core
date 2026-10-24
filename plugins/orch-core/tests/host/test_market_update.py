@@ -166,7 +166,7 @@ def test_submit_rechecks_the_rotation_against_the_keys_pinned_now(served, human,
     prepared = human.prepare("addon.grant", {"name": "standup", "staged": st["stage"]})
     signed = human.sign(prepared)
     monkeypatch.setattr(constants, "OFFICIAL_KEYS", (H.KEY_B64,))  # the next key is no longer pinned
-    assert err(human.submit_res(prepared["request"]["id"], signed.events)) == "market.publisher_key_changed"
+    assert err(human.submit_res(prepared["request"]["id"], signed.events)) == "market.official_unsigned"  # C1
     assert mfiles(served).installs()["keys"] == {f"{H.OFFICIAL}|standup": H.KEY_B64}
 
 

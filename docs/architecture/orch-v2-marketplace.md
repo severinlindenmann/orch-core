@@ -214,6 +214,10 @@ The store maps `(marketplace URL, add-on id)` to a publisher key.
 
 A key proves continuity ("the same publisher as last time"), not identity. The review says so in those words.
 
+For the official marketplace the stored key restricts nothing (#1191): any key this release pins passes, so the record
+is information for the review, never a control. The control is the pin list in core (`OFFICIAL_KEYS`), checked at stage
+and again at submit (the staged key must be pinned now, and the current index must still name it as the publisher).
+
 ## 5. Install flow
 
 Human-only (§11). The order below is the order of refusal: the first failing check is the answer. Steps 1 to 10 touch no

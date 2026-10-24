@@ -612,6 +612,11 @@ def _recheck(service: WorkspaceService, record: dict[str, Any], ev: dict[str, An
     listed = next((e for e in now_doc[ADDONS] if e["id"] == ev["name"]), None)
     if listed is None or listed["package_sha256"] != pkg.digest or now_doc["version"] < doc["index_version"]:
         raise MarketError("market.staged_changed")  # D1: the index still lists these bytes, and is not older
+    staged_key = doc["publisher_key"]
+    if cls in ("official", "dev") and staged_key not in keys:  # the pins of THIS release, read now (#1191 C1)
+        raise MarketError("market.official_unsigned")
+    if cls != "company" and (listed.get("publisher") or {}).get("key") != staged_key:
+        raise MarketError("market.staged_changed")  # the index now names another publisher for these bytes
     installs = files.installs()
     prior = installs[ADDONS].get(ev["name"])
     if prior is not None:
@@ -729,6 +734,7 @@ def _converge(service: WorkspaceService, stage: str, ev: dict[str, Any]) -> None
         if old is None or mi.semver(doc["version"]) > mi.semver(old):
             cur["seen"][key] = doc["version"]
         pk = doc["publisher_key"]
+        # the submit recheck refused a staged key that is not pinned (C1); a converge after a crash may run later
         if pk is not None and doc.get("class") == "official" and pk in index.official_keys():
             cur["keys"][key] = pk  # an official key rotation moves the record (#1191); only to a key this release pins
         elif pk is not None and doc.get("tofu") != "pinned":  # the hub's pin replaces TOFU: none stored

@@ -434,6 +434,9 @@ class RunnerHub:
         #: the runner grants (H11c): one per (workspace, person), the deposits and the forgotten ids
         self.grants = RunnerGrants(self)
         self._reported_grants: list[dict[str, Any]] = []
+        #: the stale release a ``runner.restart`` was already asked for: once per release, so a runner that comes back
+        #: on a release the host still calls stale is never restarted in a loop
+        self._restart_asked: str | None = None
 
     # -- state
     @property
@@ -595,6 +598,34 @@ class RunnerHub:
         allows is dropped at the runner, and the runner's word settles ``current`` and pending deposits."""
         reported, self._reported_grants = self._reported_grants, []
         asyncio.get_running_loop().create_task(self._reconcile_grants(reported))
+        self._restart_if_stale()
+
+    def _restart_if_stale(self) -> None:
+        """Tier B (the runner's UID is not the host's): the person cannot restart the runner's system unit, so a runner
+        that loaded another release than this host is asked to restart when idle (``runner.restart``, spec 13.2 item 7);
+        ``Restart=always`` brings it back on ``<release>/current``. Tier A restarts through the person's service
+        manager (:func:`orch.runner.service.restart_if_stale`), never here."""
+        from .service import _release_id
+
+        mine = _release_id()
+        if self.uid is None or self.uid == self.host.host_uid or self.release == mine:
+            return
+        if self._restart_asked == mine:
+            LOG.warning("the runner still runs another release after a restart; not asking again")
+            return
+        self._restart_asked = mine
+        asyncio.get_running_loop().create_task(self._ask_restart(False))
+
+    async def _ask_restart(self, force: bool) -> None:
+        try:
+            await self.restart_runner(force=force)
+        except HostError as exc:
+            LOG.warning("runner.restart was not accepted: %s", exc.code)
+
+    async def restart_runner(self, *, force: bool = False) -> dict[str, Any]:
+        """Ask the connected runner to end when it has no live runs (or at once with ``force``) and come back through
+        its service manager on the current release. ``{"restarting": True, "live": n, "force": bool}``."""
+        return await self.command("restart", {"force": bool(force)}, timeout=10)
 
     async def _reconcile_grants(self, reported: list[dict[str, Any]]) -> None:
         try:

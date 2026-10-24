@@ -10,6 +10,10 @@ itself: it only asks the service manager to.
   ``start``). The user manager searches its own config path, which is ``~/.config`` unless the manager itself was
   started with another ``XDG_CONFIG_HOME``; the CLI's ``XDG_CONFIG_HOME`` is not used for the unit (a dev kit that sets
   one would otherwise write the unit where ``systemctl --user`` never looks).
+* **Linux tier B (agents run as their own OS user, spec 13):** the runner is a SYSTEM unit root installed once
+  (``orch-os-setup``). A :class:`Plan` of kind ``systemd-system`` lets the person's CLI read it (``is-active``,
+  ``show``, status, the comparison with the expected text) and nothing else: install, start, stop and restart need
+  root and raise :class:`SystemUnit`; a release update reaches the runner through the host's ``runner.restart``.
 * **Windows and anything else:** no service; the workspace stays in direct mode (owner re-plan, 12 Oct 2026).
 
 The unit runs ``<release>/current/bin/orch-host run --state <state> --run <run>`` with ``python -I``. In tier A the run
@@ -44,6 +48,7 @@ from . import units
 __all__ = [
     "Manager",
     "Plan",
+    "SystemUnit",
     "Unsupported",
     "dev_source",
     "differences",
@@ -60,6 +65,10 @@ START_WAIT = 20.0
 
 class Unsupported(Exception):
     """No per-user service manager on this platform: direct mode."""
+
+
+class SystemUnit(OSError):
+    """A change to a system unit was asked of the person's CLI: only root (``orch-os-setup``) may make it."""
 
 
 @dataclass(frozen=True)
@@ -184,13 +193,16 @@ def unit_fields(kind: str, content: bytes, release: Path | None = None) -> dict[
 
 def differences(unit: Plan) -> list[str] | None:
     """Which of ``python``, ``state``, ``run`` the installed unit has otherwise than ``unit`` would (``[]``: the same;
-    ``None``: no unit installed). A unit that cannot be read counts as different in every field."""
+    ``None``: no unit installed). A unit that cannot be read counts as different in every field. A system unit (tier
+    B) is root's template, compared as a whole: ``["unit"]`` when its text is not the expected one."""
     try:
         have = unit.unit_path.read_bytes()
     except FileNotFoundError:
         return None
     except OSError:
-        return ["python", "state", "run"]
+        return ["unit"] if unit.kind == "systemd-system" else ["python", "state", "run"]
+    if unit.kind == "systemd-system":
+        return [] if have == unit.content else ["unit"]
     old, new = unit_fields(unit.kind, have, unit.release), unit_fields(unit.kind, unit.content, unit.release)
     if old is None or new is None:
         return ["python", "state", "run"]
@@ -303,6 +315,20 @@ class Manager:
             self._sleep(self.UNLOAD_POLL)
 
     # -- commands
+    @property
+    def _system(self) -> bool:
+        return self.plan.kind == "systemd-system"
+
+    def _ctl(self) -> list[str]:
+        """``systemctl`` for the person's own manager, or the system manager (tier B: read-only here)."""
+        return ["systemctl"] if self._system else ["systemctl", "--user"]
+
+    def _root_only(self, what: str) -> SystemUnit:
+        return SystemUnit(
+            f"{what} the agent runner service needs the administrator (it is a system service); "
+            "run orch-os-setup again, or ask the administrator"
+        )
+
     def _domain(self) -> str:
         return f"gui/{self.plan.uid}"
 
@@ -314,7 +340,7 @@ class Manager:
             return self.run(["launchctl", "print", self._target()]).returncode == 0
         # systemd: enabled and running are independent (a disabled unit can be active, a unit file can be gone while
         # the unit still runs), so either one counts as "there is a service here"
-        if self.run(["systemctl", "--user", "is-enabled", self.plan.systemd_name]).returncode == 0:
+        if self.run([*self._ctl(), "is-enabled", self.plan.systemd_name]).returncode == 0:
             return True
         return self.active() is True
 
@@ -339,7 +365,7 @@ class Manager:
             if res.returncode != 0:
                 return False
             return "state = running" in (res.stdout or "")
-        res = self.run(["systemctl", "--user", "is-active", self.plan.systemd_name])
+        res = self.run([*self._ctl(), "is-active", self.plan.systemd_name])
         out = (res.stdout or "").strip()
         if out in ("active", "activating", "reloading", "refreshing", "deactivating"):
             return True
@@ -353,7 +379,7 @@ class Manager:
                 re.search(r"^(?:\t| {4})pid = ([0-9]+)\s*$", res.stdout or "", re.M) if res.returncode == 0 else None
             )
         else:
-            res = self.run(["systemctl", "--user", "show", "-p", "MainPID", "--value", self.plan.systemd_name])
+            res = self.run([*self._ctl(), "show", "-p", "MainPID", "--value", self.plan.systemd_name])
             found = re.fullmatch(r"\s*([1-9]\d*)\s*", res.stdout or "")
         return int(found.group(1)) if found else None
 
@@ -365,6 +391,8 @@ class Manager:
 
     def install(self) -> bool:
         """Write the unit (0644, atomically) when it differs; returns whether it changed."""
+        if self._system:
+            raise self._root_only("installing")
         if self.installed():
             return False
         path = self.plan.unit_path
@@ -411,6 +439,8 @@ class Manager:
 
     def start(self, *, changed: bool) -> list[list[str]]:
         """Load and start the unit (a changed unit is reloaded); returns the commands that ran."""
+        if self._system:
+            raise self._root_only("starting")
         ran: list[list[str]] = []
 
         def do(argv: list[str], *, check: bool = True) -> None:
@@ -441,12 +471,16 @@ class Manager:
         """The command that restarts the loaded service at once, for this platform only."""
         if self.plan.kind == "launchd":
             return ["launchctl", "kickstart", "-k", self._target()]
+        if self._system:
+            return ["sudo", "systemctl", "restart", self.plan.systemd_name]
         return ["systemctl", "--user", "restart", self.plan.systemd_name]
 
     def restart_now(self) -> list[list[str]]:
         """Restart the loaded service without waiting for the host (``launchctl kickstart -k``, ``systemctl --user
         restart``): the fallback when a graceful drain never finished. The host's state is crash-safe (the service
         manager restarts a crashed host the same way); the caller says so to the person."""
+        if self._system:
+            raise self._root_only("restarting")
         argv = self.restart_command()
         res = self.run(argv)
         if res.returncode != 0:
@@ -457,6 +491,8 @@ class Manager:
         """Stop and unload the service, then remove the unit file (``orch host disable``). A loaded service that
         will not stop leaves the unit in place and raises. Returns the commands that ran. Never touches the state dir
         or the releases."""
+        if self._system:
+            raise self._root_only("stopping")
         ran: list[list[str]] = []
         was_loaded = self.loaded()
         if self.plan.kind == "launchd":

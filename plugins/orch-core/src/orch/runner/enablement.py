@@ -25,6 +25,7 @@ from orch.host.registry import host_dir
 
 __all__ = [
     "CARD_TEXT",
+    "card_text",
     "NO_TERMINALS_TEXT",
     "TERMINALS_ON_TEXT",
     "flag_path",
@@ -44,7 +45,30 @@ CARD_TEXT = (
 NO_TERMINALS_TEXT = "--no-terminals only hides terminals in the dashboard; it does not make agent execution safe."
 
 
-def risk_text(prefix: str, workspace_id: str, terminals: bool) -> str:
+def card_text(agent_user: str | None = None) -> str:
+    """The card line: D-P2-31's where agents run as the person; tier B's (spec 13.5) when they run as ``agent_user``."""
+    if agent_user is None:
+        return CARD_TEXT
+    return f"Dashboard execution: agents and terminals started here run as {agent_user}. It cannot read your keys."
+
+
+def risk_text(prefix: str, workspace_id: str, terminals: bool, agent_user: str | None = None) -> str:
+    """The text the person is shown (and the record keeps). With ``agent_user`` (tier B) the words say the agents run as
+    that user; without it the text is exactly D-P2-31's, which the signing review also uses."""
+    if agent_user is not None:
+        lines = [
+            f"Turn on dashboard execution for {prefix} ({workspace_id}) on this account.",
+            "",
+            card_text(agent_user),
+            "",
+            "The dashboard can then start agents, create worktrees" + (" and open terminals" if terminals else "")
+            + " for this workspace, as that user. It has no access to your SSH keys or your orch keys.",
+            "Anything that takes over this dashboard can still start agents and give them work to do; it is not kept "
+            "out by this switch.",
+        ]  # fmt: skip
+        if not terminals:
+            lines += ["", NO_TERMINALS_TEXT]
+        return "\n".join(lines) + "\n"
     lines = [
         f"Turn on dashboard execution for {prefix} ({workspace_id}) on this account.",
         "",

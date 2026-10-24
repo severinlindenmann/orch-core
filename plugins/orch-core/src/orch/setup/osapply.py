@@ -22,7 +22,6 @@ import errno
 import json
 import os
 import pwd
-import re
 import secrets
 import stat
 import struct
@@ -38,7 +37,6 @@ from .osusers import (
     AGENT_PREFIX,
     NORMAL_PERSON,
     SLOT_HOME_ROOT,
-    SLOT_PREFIX,
     SSHD_DROPIN,
     PinEntry,
     Plan,
@@ -46,6 +44,7 @@ from .osusers import (
     UserPlan,
     assess_policy,
     plan,
+    valid_person,
 )
 
 __all__ = [
@@ -73,7 +72,6 @@ _ALLOWED = frozenset(BIN.values())
 TMPFILES_CONF = "/etc/tmpfiles.d/orch.conf"
 PIN_DIR = "/etc/orch/pins"
 _ROOT = "root"
-_SAFE_NAME = re.compile(r"^[a-z_][a-z0-9_-]*$")
 _SSH_SERVICES = ("ssh.service", "sshd.service")
 
 
@@ -578,11 +576,7 @@ def recheck(facts: OsFacts, ex: Executor, person: str, *, is_root: bool) -> Appl
     res = ApplyResult()
     if not is_root:
         return res.fail("orch-os-setup --recheck must run as root. The runner will not start.")
-    if (
-        not _SAFE_NAME.match(person)
-        or person.startswith((AGENT_PREFIX, SLOT_PREFIX))
-        or len(AGENT_PREFIX + person) > 32
-    ):
+    if not valid_person(person):
         return res.fail(f"'{person}' is not a person orch set up agents for. The runner will not start.")
     if facts.platform != "linux":
         return res.fail("Agents run as their own user only on Linux. The runner will not start.")

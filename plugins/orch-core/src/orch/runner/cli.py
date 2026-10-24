@@ -168,8 +168,19 @@ def enable(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, *, con
     state = _state(args.state, env)
     wid, prefix = _workspace(state, uid, args.workspace, env)
     run_dir = svc.run_dir_for(state, args.run, env)
+    tier = service.agent_tier(state, uid)
+    if tier.kind == "broken":
+        return _fail(
+            "runner.unavailable",
+            f"agents are set up to run as their own user ({tier.agent_user}), but that is not safe right now: "
+            f"{tier.why} Dashboard execution stays off.",
+            9,
+        )
     try:
-        unit = service.plan(env, state, run_dir, releases_dir(dict(env)) / "current")
+        if tier.kind == "B":  # the system unit root installed: read-only here, never written by the person's CLI
+            unit = service.plan_tier_b(str(tier.person), releases_dir(dict(env)), uid=uid)
+        else:
+            unit = service.plan(env, state, run_dir, releases_dir(dict(env)) / "current")
     except svc.Unsupported as exc:
         return _fail("unsupported.platform", str(exc), 3)
     except ValueError as exc:
@@ -191,8 +202,23 @@ def enable(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, *, con
                 5,
             )
     manager = host_cli.SERVICE_MANAGER(unit)
-    differs = svc.differences(unit)
-    if not args.replace and (differs or (differs is None and host_cli._loaded(manager))):
+    agent_user = tier.agent_user if tier.kind == "B" else None
+    if agent_user is not None:
+        if svc.differences(unit) is None:
+            return _fail(
+                "runner.unavailable",
+                f"the agent runner service ({unit.label}) is not installed: run orch-os-setup again",
+                9,
+            )
+        if manager.active() is not True:
+            return _fail(
+                "runner.unavailable",
+                f"the agent runner service ({unit.label}) is not running. It checks the sudo and SSH rules at every "
+                "start and refuses while they are not safe: run orch-os-setup again to see why",
+                9,
+            )
+    differs = None if agent_user is not None else svc.differences(unit)
+    if agent_user is None and not args.replace and (differs or (differs is None and host_cli._loaded(manager))):
         named = differs or ["unit"]  # no unit file here, but the label is loaded: from a unit file elsewhere
         what = ", ".join(named) + " differ" if differs else "unit differs: the label is loaded from another file"
         return _fail(
@@ -203,7 +229,7 @@ def enable(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, *, con
             differs=named,
         )
     terminals = not args.no_terminals
-    text = enablement.risk_text(prefix or wid[:8], wid, terminals)
+    text = enablement.risk_text(prefix or wid[:8], wid, terminals, agent_user)
     if not confirmed:
         try:
             TERMINAL.show(text)
@@ -224,8 +250,10 @@ def enable(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, *, con
         from orch.host.custody import write_private
 
         write_private(Path(state) / "runner" / "settings.json", {"v": 1, "umask": mask})  # runs start with it
-        changed = manager.install()
-        ran = manager.start(changed=changed)
+        changed, ran = False, []  # tier B: the service is root's, already running; nothing to install or start
+        if agent_user is None:
+            changed = manager.install()
+            ran = manager.start(changed=changed)
     except (OSError, HostError) as exc:
         return _fail("runner.unavailable", f"the {unit.kind} runner service did not start: {exc}", 9)
     enablement.set_enabled(state, wid, True, uid, terminals=terminals, text=text)
@@ -236,7 +264,10 @@ def enable(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, *, con
     except OSError:
         stale = None
     data = {"workspace_id": wid, "enabled": True, "terminals": terminals, "service": unit.kind,
-            "unit": str(unit.unit_path), "changed": changed, "ran": ran, "card": enablement.CARD_TEXT}  # fmt: skip
+            "unit": str(unit.unit_path), "changed": changed, "ran": ran,
+            "card": enablement.card_text(agent_user)}  # fmt: skip
+    if agent_user is not None:
+        data["agent_user"] = agent_user
     if stale is not None:
         data["runner_message"] = stale["message"]
         data["runner_restarted"] = stale["restarted"]
@@ -313,10 +344,14 @@ def _run(args: argparse.Namespace, env: Mapping[str, str]) -> int:
 
     release = current_release()  # eager: the release this runner loaded, for the host's hello and for enable
     write_loaded_release(state, release)
-    link = HostLink(sup, Path(run_dir) / "runner" / "host.sock", host_uid=uid, gen=gen, term=term,
-                    config=lambda: read_config(state, uid), grants=grants, release=release)  # fmt: skip
-    link.start()
     stop = threading.Event()
+    from .restart import RestartGate
+
+    gate = RestartGate(lambda: len(sup.table.live()), stop)
+    link = HostLink(sup, Path(run_dir) / "runner" / "host.sock", host_uid=uid, gen=gen, term=term,
+                    config=lambda: read_config(state, uid), grants=grants, release=release,
+                    restart=gate.request)  # fmt: skip
+    link.start()
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(sig, lambda *_: stop.set())
     try:
@@ -410,7 +445,15 @@ def _status(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> in
         "card": enablement.CARD_TEXT,
     }
     try:
-        unit = service.plan(env, state, svc.run_dir_for(state, args.run, env), releases_dir(dict(env)) / "current")
+        tier = service.agent_tier(state, uid)
+        if tier.kind == "B":
+            unit = service.plan_tier_b(str(tier.person), releases_dir(dict(env)), uid=uid)
+            doc["card"] = enablement.card_text(tier.agent_user)
+            doc["agent_user"] = tier.agent_user
+        else:
+            unit = service.plan(env, state, svc.run_dir_for(state, args.run, env), releases_dir(dict(env)) / "current")
+            if tier.kind == "broken":
+                doc["problem"] = problem or tier.why
         try:
             doc["service"] = host_cli.SERVICE_MANAGER(unit).status()
         except OSError as exc:

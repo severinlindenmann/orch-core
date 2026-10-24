@@ -227,8 +227,11 @@ class HostLink:
         config: RunnerConfig | Callable[[], RunnerConfig] | None = None,
         grants: GrantStore | None = None,
         release: str | None = None,
+        restart: Callable[[bool], dict[str, Any]] | None = None,
     ) -> None:
         self.sup = sup
+        #: ``runner.restart`` (tier B, spec 13.2 item 7): arms the runner's own restart (:mod:`orch.runner.restart`)
+        self._restart = restart
         #: the release this process LOADED, taken now (never on the first hello): the host refuses spawns from a
         #: runner of another release than its own (``runner.stale``)
         self.release = release if release is not None else _loaded_release()
@@ -519,6 +522,10 @@ class HostLink:
                 raise SpawnError(exc.code, exc.message) from None
         if cmd == "grant.drop":
             return {"dropped": self.grants.drop(args.get("grant"))}
+        if cmd == "restart":
+            if self._restart is None:
+                raise SpawnError("runner.unavailable", "this runner cannot restart itself")
+            return self._restart(args.get("force") is True)
         if cmd == "attach.end":
             if self.term is not None:
                 self.term.end(str(args.get("att")), str(args.get("reason") or "detached"))

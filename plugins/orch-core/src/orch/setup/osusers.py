@@ -46,6 +46,7 @@ __all__ = [
     "UnitFile",
     "UserPlan",
     "plan",
+    "valid_person",
 ]
 
 AGENT_PREFIX = "orch-agent-"
@@ -69,6 +70,16 @@ _NAME = re.compile(r"^[a-z_][a-z0-9_-]*$")
 _MAX_NAME = 32
 _RELEASE = re.compile(r"^/[A-Za-z0-9_.+/-]*$")  # no whitespace, control characters, '%' or '$': it goes into unit text
 _SYSTEM_UID_MAX = 999  # useradd --system; a login-range UID is a person, never ours
+
+
+def valid_person(person: str) -> bool:
+    """Whether ``person`` can be the instance of ``orch-runner@<person>``: the shape ``plan`` accepts (it is also the
+    check ``--recheck`` makes on the instance systemd passes)."""
+    return bool(
+        _NAME.match(person)
+        and len(AGENT_PREFIX + person) <= _MAX_NAME
+        and not person.startswith((AGENT_PREFIX, SLOT_PREFIX))
+    )
 
 
 def _good_release(release: str) -> bool:

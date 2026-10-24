@@ -3,6 +3,11 @@
 * macOS: LaunchAgent ``io.orch.runner`` (``~/Library/LaunchAgents/io.orch.runner.plist``) in the person's GUI domain.
 * Linux: systemd user unit ``orch-runner.service`` with ``Delegate=yes``, so the runner may create one child cgroup
   per run under its own (D-P2-29, :mod:`orch.runner.cgroup`).
+* Linux tier B (agents run as their own OS user, spec 13): the SYSTEM unit template ``orch-runner@.service`` that root
+  installed (``orch-os-setup``, :func:`orch.setup.osusers.unit_runner`), instance = the person. The person's CLI never
+  writes, starts or stops it (no root): :func:`plan_tier_b` describes it for status and for the checks that compare it,
+  and the :class:`orch.host.enable.Manager` of kind ``systemd-system`` only reads it. A new release reaches the runner
+  through the host's ``runner.restart`` command, never through ``systemctl`` (:func:`restart_if_stale`).
 * Anything else (Windows): no runner, no terminals, no start-agent (D-P2-38).
 
 The unit runs ``<release>/current/bin/orch-runner run --state <state> --run <run>`` with ``python -I``. The units set
@@ -19,6 +24,7 @@ import os
 import plistlib
 import sys
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -28,9 +34,11 @@ from orch.host.units import launcher_arguments, systemd_quote
 __all__ = [
     "LAUNCHD_LABEL",
     "SYSTEMD_NAME",
+    "agent_tier",
     "launchd_plist",
     "loaded_release",
     "plan",
+    "plan_tier_b",
     "program_arguments",
     "restart_if_stale",
     "systemd_unit",
@@ -123,6 +131,70 @@ def plan(
     raise host_enable.Unsupported(f"no runner on {platform}: no terminals and no start-agent here (D-P2-38)")
 
 
+@dataclass(frozen=True)
+class Tier:
+    """Where agents run: ``"A"`` (as the person), ``"B"`` (as ``agent_user``, an OS user of their own) or ``"broken"``
+    (the agent user exists but a fact failed; ``why`` is the first plain reason, and nothing may fall back to A)."""
+
+    kind: str
+    agent_user: str | None = None
+    person: str | None = None
+    why: str = ""
+
+
+def agent_tier(state: Path, uid: int | None = None, *, facts: Any = None) -> Tier:
+    """Read the answer from the system, never from a flag (:func:`orch.host.isolation.detect`). A platform without the
+    separation, or no agent user, is tier A. ``broken`` must stop the caller: silently starting a per-user runner while
+    an agent user exists would run agents as the person behind the person's back."""
+    from orch.host import isolation
+    from orch.setup.osfacts import RealOsFacts
+    from orch.setup.osusers import AGENT_PREFIX
+
+    uid = os.getuid() if uid is None else uid
+    facts = facts if facts is not None else RealOsFacts()
+    if facts.platform != "linux":
+        return Tier("A")
+    user = facts.user_by_uid(uid)
+    if user is None:
+        return Tier("A")
+    found = isolation.detect(facts, user.name, uid, str(state))
+    if found.status == "same_user":
+        return Tier("A")
+    if found.isolated:
+        return Tier("B", AGENT_PREFIX + user.name, user.name)
+    return Tier("broken", AGENT_PREFIX + user.name, user.name, found.summary)
+
+
+def plan_tier_b(
+    person: str, releases: Path, *, uid: int | None = None, platform: str | None = None
+) -> host_enable.Plan:
+    """The runner's system unit for ``person`` (tier B; nothing is written, nothing here can write it). ``releases``
+    is the directory that holds ``current`` (the unit runs ``<releases>/current/bin/orch-runner``). The plan's state
+    and run directories are the AGENT's own (``/var/lib/orch/agents/orch-agent-<person>/state``, ``/run/orch/agents/
+    orch-agent-<person>``), never the person's. Raises :class:`orch.host.enable.Unsupported` off Linux or for a name
+    that cannot be an instance (the unit template puts the prefix in front, so no instance can name root)."""
+    from orch.setup import osusers
+
+    platform = platform or sys.platform
+    if not platform.startswith("linux"):
+        raise host_enable.Unsupported(f"agents run as their own user only on Linux, not on {platform}")
+    if not osusers.valid_person(person):
+        raise host_enable.Unsupported(f"'{person}' cannot name an agent user")
+    user = osusers.AGENT_PREFIX + person
+    unit = osusers.unit_runner(str(releases))
+    return host_enable.Plan(
+        "systemd-system",
+        Path(unit.path),
+        unit.content.encode(),
+        Path(osusers.AGENT_HOME_ROOT) / user / "state",
+        Path(osusers.AGENT_RUN_ROOT) / user,
+        Path(releases) / "current",
+        os.getuid() if uid is None else uid,
+        launchd_label=LAUNCHD_LABEL,
+        systemd_name=f"orch-runner@{person}.service",
+    )
+
+
 def loaded_release_path(state: Path) -> Path:
     return Path(state) / "runner" / "release.json"
 
@@ -192,10 +264,16 @@ def restart_if_stale(
     restarted by the same rule as the host (:func:`orch.host.enable.restart_to_release`), but only when it has no live
     runs (agents, terminals): a restart stops them all, so with live runs the person is told and chooses (``force``
     restarts anyway). A new start from a stale runner is refused by the host (``runner.stale``) meanwhile.
-    ``None``: no runner runs here, or it is current (or cannot be told yet)."""
+    ``None``: no runner runs here, or it is current (or cannot be told yet).
+
+    Tier B (a system unit, ``unit.kind == "systemd-system"``): ``None`` always. The loaded-release file is in the
+    agent's private state directory, which the person cannot read, and the person cannot restart a system unit. The
+    host learns the runner's release from its ``runner.hello`` and asks it to restart when idle (``runner.restart``)."""
     import shlex
     import time
 
+    if unit.kind == "systemd-system":
+        return None
     if manager.active() is not True:
         return None
     pid = manager.main_pid()

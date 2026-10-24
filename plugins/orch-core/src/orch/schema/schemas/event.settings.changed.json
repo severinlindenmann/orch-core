@@ -490,6 +490,25 @@
               "type": "null"
             }
           ]
+        },
+        "addons": {
+          "type": "object",
+          "description": "G6: the settings of ONE installed add-on (its manifest's settings schema is checked by the host, the general bounds by every replay). null removes them.",
+          "minProperties": 1,
+          "maxProperties": 1,
+          "propertyNames": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/addonName"
+          },
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
         }
       },
       "additionalProperties": false

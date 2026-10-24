@@ -88,6 +88,11 @@ class Manifest:
         return self.doc.get("min_core")
 
     @property
+    def settings(self) -> dict[str, Any] | None:
+        """``{title, schema}`` of the settings the person can configure (addon-api 1.1), or ``None``."""
+        return self.doc.get("settings")
+
+    @property
     def agents_md(self) -> str:
         return self.doc.get("agents_md", "")
 

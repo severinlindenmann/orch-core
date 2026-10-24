@@ -4,17 +4,27 @@
 
 let enabled: ReadonlySet<string> | null = null
 let perWorkspace: Readonly<Record<string, readonly string[]>> = {}
+let login: string | null = null
 
 export interface SessionFeatures {
   features: readonly string[]
   workspaces?: Readonly<Record<string, readonly string[]>>
+  /** How this browser session was opened ("local": a launch code from this computer). Absent or unknown: not known. */
+  login?: string
 }
 
 /** Production start-up (and tests): the features the server lists. `null` lists everything. */
 export function setFeatures(session: SessionFeatures | null) {
   enabled = session ? new Set(session.features) : null
   perWorkspace = session?.workspaces ?? {}
+  login = session?.login ?? null
 }
+
+/**
+ * Show "Log out" only for a session that is known to come from a hub or a remote sign-in. A local session (the launch
+ * link from this computer) has nothing to sign out of; when the server does not say, it is hidden too.
+ */
+export const showsLogout = (): boolean => enabled !== null && login !== null && login !== 'local' && login !== 'unknown'
 
 /**
  * The features follow the workspace list: a host serves some of them only while an add-on is ON (Usage, Terminals,

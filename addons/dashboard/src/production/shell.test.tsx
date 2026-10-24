@@ -1,6 +1,7 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import { QueryClientProvider } from '@tanstack/react-query'
 import userEvent from '@testing-library/user-event'
+import { toast } from 'sonner'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { setFeatures } from '@/api/features'
 import { invalidateLive, useLiveUpdates } from '@/api/useLiveUpdates'
@@ -23,10 +24,11 @@ const workspaces = [{ id: ws, prefix: 'DEMO', name: 'Dev workspace', members: [{
 const me = [{ person, name: 'Severin', role: 'owner', tier: 'A', workspace: ws }]
 const empty = { rows: [], next_page: null, total: 0, sub_cursor: 'c', as_of: '2026-10-11T09:00:00Z' }
 let ticketDoc: unknown
+let login: string | undefined = 'local'
 
 function route(url: string): unknown {
   const [path] = url.split('?')
-  if (path === '/api/session') return { features: FEATURES, workspaces: { [ws]: FEATURES } }
+  if (path === '/api/session') return { features: FEATURES, workspaces: { [ws]: FEATURES }, ...(login ? { login } : {}) }
   if (path === '/api/workspaces') return workspaces
   if (path === '/api/me') return me
   if (path === `/api/w/${ws}/today`) return today
@@ -39,6 +41,7 @@ function route(url: string): unknown {
 
 beforeEach(() => {
   ticketDoc = ticket
+  login = 'local'
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
     const body = route(url)
     return body === undefined ? Response.json({ ok: false, error: { code: 'not_found', message: 'No such route in the test', retryable: false } }, { status: 404 }) : Response.json(body)
@@ -46,6 +49,8 @@ beforeEach(() => {
   localStorage.clear()
 })
 afterEach(() => {
+  // A toast lives in sonner's module state, not in the rendered tree: without this it shows in the next test's page.
+  toast.dismiss()
   setFeatures(null)
   queryClient.clear()
   vi.unstubAllGlobals()
@@ -67,8 +72,17 @@ it('Today lists what needs the viewer from the host, without any button that sig
   // The mockup's own demo and viewer controls do not exist in production.
   expect(screen.queryByTestId('demo-mode')).not.toBeInTheDocument()
   expect(screen.queryByText(/viewing as/i)).not.toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'Log out' })).toBeInTheDocument()
+  // A session opened from this computer has nothing to log out of.
+  expect(screen.queryByRole('button', { name: 'Log out' })).not.toBeInTheDocument()
   expect(new Set(methods())).toEqual(new Set(['GET']))
+})
+
+it.each([['hub', true], ['unknown', false], [undefined, false]])('Log out for a %s session: shown %s', async (kind, shown) => {
+  login = kind
+  show('/w/DEMO')
+  expect(await screen.findByText('Approve the requirements')).toBeInTheDocument()
+  if (shown) expect(screen.getByRole('button', { name: 'Log out' })).toBeInTheDocument()
+  else expect(screen.queryByRole('button', { name: 'Log out' })).not.toBeInTheDocument()
 })
 
 it('only the advertised pages are in the navigation', async () => {
@@ -161,6 +175,8 @@ it('a gone for another ticket leaves the open ticket page in place', async () =>
   expect(await screen.findByText('Real P1 ticket')).toBeInTheDocument()
   await waitFor(() => expect(vi.mocked(useLiveUpdates).mock.calls.at(-1)?.[0]).toBe(ws))
   const close = vi.mocked(useLiveUpdates).mock.calls.at(-1)![1]!
+  // The test before closes this same ticket with a toast; a dismissed toast takes a moment to leave the page.
+  await waitFor(() => expect(screen.queryByText(/no longer visible to you/)).not.toBeInTheDocument())
   act(() => invalidateLive(queryClient, ws, 'items', [{ id: '9.g', uid: 'ULID-OTHER', gone: true }], close))
   await new Promise((r) => setTimeout(r, 50))
   expect(location.pathname).toBe('/w/DEMO/ticket/DEMO-0001')

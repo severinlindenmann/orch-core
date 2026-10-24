@@ -103,7 +103,7 @@ person can configure. `schema` is a closed JSON-Schema subset, checked when the 
 (`orch.addons.settings_schema`); anything else is refused:
 
 - the root is `type: "object"`; `type` is one of `object`, `string`, `integer`, `boolean`, `array`;
-- object: `properties` (at most 64, names `[a-z0-9][a-z0-9._-]{0,63}`), `additionalProperties: false` (required),
+- object: `properties` (at most 64, names `[a-z0-9][a-z0-9_-]{0,63}`, no dot), `additionalProperties: false` (required),
   `required` (names of properties), `maxProperties` (0 to 64);
 - string: `enum` (1 to 64 distinct printable strings of at most 64 characters), `maxLength` (1 to 200);
 - integer: `minimum`, `maximum` (whole numbers, `minimum <= maximum`); no floats anywhere;
@@ -118,8 +118,9 @@ exactly `{harness, mode, settings}`; the answer is exactly `{"model": <string or
 already allows for that harness. Anything else blocks the start.
 
 **8.4 `credential`.** An add-on with `credential` (and therefore `network`) receives the one key the person stored for it
-with `orch addon login <name>` in the call's `params.credential`, only while that capability is granted. Agents never
-receive it, and it never appears in a signed text, a log or an add-on answer.
+with `orch addon login <name>` in the call's `params.credential`, only while that capability is granted. orch does not
+hand it to agents, and it never appears in a signed text, a log or an add-on answer. Tier A limit (spec 15.1): an agent
+running as the same UID can read or write the stored file directly until the per-add-on UID (#287).
 
 **8.5 Reserved ids.** `github`, `landing` and `model-routing` are reserved for the official marketplace
 (`orch.market.constants.OFFICIAL_IDS`); another marketplace that lists one is refused with `market.reserved_id`.

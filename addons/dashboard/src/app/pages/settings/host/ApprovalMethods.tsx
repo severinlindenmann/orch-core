@@ -46,19 +46,19 @@ export function ApprovalMethods({ ws, owner }: { ws: string; owner: boolean }) {
   const personal = (allowed ?? ['terminal']).filter(m => m !== 'phone' && setUp(m))
   const readOnly = loading ? 'Reading approval settings…' : !allowed ? 'This host does not report its approval settings, so they cannot be changed here.' : null
   return <>
-    <Section title="Allowed ways to approve">
+    <Section title="Allowed ways to approve in this workspace">
       <div className="space-y-3 text-[13px]">
         {unrestricted && <p>No limit is set: every way below that is set up can be used.</p>}
         <p className="text-text-muted">Choose which methods people can use in this workspace.</p>
-        {(['terminal', 'click', 'phone'] as const).map(m => <div key={m} className="flex flex-wrap items-center gap-x-2"><label className="flex items-center gap-2"><input type="checkbox" checked={selected.includes(m)} disabled={!owner || !allowed || m === 'terminal' || (!setUp(m) && !selected.includes(m))} onChange={e => setDraft(e.target.checked ? [...selected, m] : selected.filter(x => x !== m))} />{m === 'terminal' ? 'Terminal (always)' : m === 'click' ? 'One click on this computer' : 'Phone (Face ID)'}</label>{m === 'phone' && !phonePaired && <span className="text-text-muted">{pairServed(ws) ? 'no phone paired yet' : 'Phone needs the relay add-on (coming later)'}</span>}{m === 'click' && !clickSetUp && <span className="text-text-muted" data-testid="click-next-step">Not set up. Set up one-click: run <code>orch setup</code> in this folder and choose One click.</span>}</div>)}
-        <label className="flex items-center gap-2 text-text-muted"><input type="checkbox" disabled />Touch ID on this Mac · coming</label>
-        <label className="flex items-center gap-2 text-text-muted"><input type="checkbox" disabled />Security key · later</label>
+        {(['terminal', 'click', 'phone'] as const).filter(m => setUp(m) || selected.includes(m)).map(m => <div key={m} className="flex flex-wrap items-center gap-x-2"><label className="flex items-center gap-2"><input type="checkbox" checked={selected.includes(m)} disabled={!owner || !allowed || m === 'terminal'} onChange={e => setDraft(e.target.checked ? [...selected, m] : selected.filter(x => x !== m))} />{m === 'terminal' ? 'Terminal (always)' : m === 'click' ? 'One click on this computer' : 'Phone (Face ID)'}</label></div>)}
+        {!clickSetUp && <p className="text-text-muted" data-testid="click-next-step">One click is not set up on this computer. Turn it on with the switch under Approving above, or run <code>orch setup</code> in this folder.</p>}
+        {!phonePaired && <p className="text-text-muted">{pairServed(ws) ? 'Phone: no phone is paired yet.' : 'Phone: add the Phone add-on first.'}</p>}
         {readOnly && <p className="text-text-muted">{readOnly}</p>}
         {!owner && <p className="text-text-muted">Only an owner changes allowed methods.</p>}
         <Button disabled={!owner || !allowed || !draft} onClick={() => ask({ title: 'Change allowed ways to approve', action: { action: 'settings_set', sign_methods: selected }, autoStart: true })}>Save allowed methods</Button>
       </div>
     </Section>
-    <Section title="My settings → How I approve">
+    <Section title="How I approve">
       {loading ? (
         <p className="text-[13px] text-text-muted">Reading your approval settings…</p>
       ) : !allowed || !preference ? (

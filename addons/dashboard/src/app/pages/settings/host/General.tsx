@@ -10,11 +10,9 @@ import { LoadFailed } from '@/components/LoadFailed'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { fmtDateTime } from '@/lib/time'
-import { accessLength } from '@/api/grants'
 import { queries } from '@/api/queries'
 import { CopyButton } from '../General'
-import { Raw } from '@/components/sign/visible'
+import { visible } from '@/components/sign/visible'
 import { DASHBOARD_EXECUTION_LINE, TERMINAL_COMMANDS } from '@/api/quickRecords'
 import { SigningCard } from './SigningCard'
 import { HostAlarms } from '@/components/dev/DevHost'
@@ -23,18 +21,21 @@ import { OwnerNote } from '../OwnerNote'
 import { useViewerRole } from './useViewerRole'
 import { useSettingsHandoff } from './useSettingsHandoff'
 import { ReposSection } from './Repos'
+import { RecordsBlock } from './Records'
+import { WorkspaceIconFor } from '@/app/workspaceIcon'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { WorkspaceIconPicker } from '../WorkspaceIconPicker'
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="grid grid-cols-[140px_1fr] items-center gap-3 py-1.5 text-[13px]">
+    <div className="grid grid-cols-[minmax(0,120px)_minmax(0,1fr)] items-center gap-3 py-1.5 text-[13px]">
       <dt className="text-text-muted">{label}</dt>
-      <dd className="flex items-center gap-1">{children}</dd>
+      <dd className="flex min-w-0 flex-wrap items-center gap-1 break-all">{children}</dd>
     </div>
   )
 }
 
-/** Workspace identity, the three durations (changed by a hand-off) and (in Repos.tsx) the repositories. */
+/** Everyday workspace settings, with technical settings and records in Advanced. */
 export function HostGeneral({ workspace }: { workspace: Workspace }) {
   const settings = useQuery(queries.hostSettings(workspace.id))
   const identity = useQuery(queries.identity(workspace.id))
@@ -42,6 +43,7 @@ export function HostGeneral({ workspace }: { workspace: Workspace }) {
   const hostInfo = useQuery(queries.hostInfo())
   const versions = useQuery(versionQueries.get(workspace.id))
   const { ask, dialog } = useSettingsHandoff(workspace.id)
+  const [iconOpen, setIconOpen] = useState(false)
   const [draft, setDraft] = useState<Partial<Record<DurationKey, string>>>({})
   if (settings.isError) return <LoadFailed what="settings" onRetry={() => void settings.refetch()} />
   const id = identity.data
@@ -53,9 +55,11 @@ export function HostGeneral({ workspace }: { workspace: Workspace }) {
 
   const value = (k: DurationKey) => draft[k] ?? String(data?.[k] ?? '')
   const changed = DURATIONS.filter((d) => draft[d.key] !== undefined && draft[d.key] !== String(data?.[d.key]))
-  const invalid = changed.find((d) => !inRange(Number(draft[d.key]), d.min, d.max))
-  const save = () => {
-    const set = Object.fromEntries(changed.map((d) => [d.key, Number(draft[d.key])]))
+  const timingChanged = changed.filter(d => d.key !== 'grant_hours')
+  const grantChanged = changed.some(d => d.key === 'grant_hours')
+  const invalid = timingChanged.find((d) => !inRange(Number(draft[d.key]), d.min, d.max))
+  const save = (keys: DurationKey[]) => {
+    const set = Object.fromEntries(changed.filter(d => keys.includes(d.key)).map((d) => [d.key, Number(draft[d.key])]))
     ask({
       title: 'Change the workspace settings',
       action: { action: 'settings_set', ...set },
@@ -65,30 +69,37 @@ export function HostGeneral({ workspace }: { workspace: Workspace }) {
 
   return (
     <div className="space-y-4">
-      <h2 className="text-base font-semibold">General</h2>
-      <HostAlarms alarms={hostInfo.data?.alarms ?? []} />
-      {workspace.icon_known && (
-        <Section title="Icon">
-          <WorkspaceIconPicker
-            workspace={workspace}
-            canEdit={canChangeSettings(role) && served}
-            onSave={(choice) => ask({ title: 'Change the workspace icon', action: { action: 'icon_set', icon: choice }, autoStart: true })}
-          />
-        </Section>
-      )}
-      <Section title="Workspace">
-        <dl className="divide-y divide-border">
-          <Row label="Name">
-            <Raw>{workspace.name}</Raw>
-          </Row>
-          <Row label="Prefix">
-            <Mono>{workspace.prefix}</Mono>
-            <CopyButton value={workspace.prefix} label="prefix" />
-          </Row>
-        </dl>
-        <details className="mt-1 border-t border-border pt-2 text-[13px]">
-          <summary className="cursor-pointer text-text-muted">Technical details</summary>
-          <dl className="divide-y divide-border">
+      <header className="flex min-w-0 items-start gap-3">
+        <div className="flex shrink-0 flex-col items-center gap-1">
+          <WorkspaceIconFor workspace={workspace} className="size-11 bg-brand-soft" />
+          {workspace.icon_known && <Popover open={iconOpen} onOpenChange={setIconOpen}>
+            <PopoverTrigger asChild><button type="button" className="rounded px-1 text-[12px] text-text-muted underline-offset-2 hover:text-text hover:underline">Change</button></PopoverTrigger>
+            <PopoverContent align="start" className="w-80 max-w-[calc(100vw-2rem)]">
+              <WorkspaceIconPicker workspace={workspace} canEdit={canChangeSettings(role) && served}
+                onSave={(choice) => { setIconOpen(false); ask({ title: 'Change the workspace icon', action: { action: 'icon_set', icon: choice }, autoStart: true }) }} />
+            </PopoverContent>
+          </Popover>}
+        </div>
+        <div className="min-w-0 space-y-1 break-words">
+          <h2 className="text-[22px] font-semibold leading-tight"><bdi>{visible(workspace.name)}</bdi></h2>
+          <p className="text-[13px] text-text-muted">Tickets are numbered {workspace.prefix}-0001, {workspace.prefix}-0002 ...</p>
+        </div>
+      </header>
+      {workspace.click !== undefined && <SigningCard workspace={workspace} owner={role === 'owner'} />}
+      <Section title="Agents">
+        {!data ? <p className="text-[13px] text-text-muted">Reading the settings…</p> : !data.available ?
+          <p data-testid="settings-unavailable" className="text-[13px] text-text-muted">This host does not say what the settings are, so none is shown.</p> : <>
+          <AccessLength variant="select" value={Number(value('grant_hours'))} disabled={!!why} onChange={(hours) => setDraft({ ...draft, grant_hours: String(hours) })} />
+          {grantChanged && <Button className="mt-3" disabled={!!why} onClick={() => save(['grant_hours'])}>Save</Button>}
+          {why && <OwnerNote id="agents-why">{why}</OwnerNote>}
+        </>}
+      </Section>
+      <ReposSection workspace={workspace} data={data} onSettled={() => void settings.refetch()} />
+      <details className="rounded-lg border border-border bg-surface text-[13px]">
+        <summary className="cursor-pointer px-4 py-3 font-medium">Advanced</summary>
+        <div className="space-y-5 p-4 pt-0">
+          <div><h4 className="mb-2 font-semibold">Technical details</h4><dl className="divide-y divide-border">
+          <Row label="Prefix"><Mono>{workspace.prefix}</Mono><CopyButton value={workspace.prefix} label="prefix" /></Row>
           <Row label="UUID">
             <Mono>{id?.uuid ?? workspace.id}</Mono>
             <CopyButton value={id?.uuid ?? workspace.id} label="UUID" />
@@ -104,106 +115,99 @@ export function HostGeneral({ workspace }: { workspace: Workspace }) {
               <span>epoch {id.epoch}</span>
             </Row>
           )}
-          </dl>
-        </details>
-      </Section>
+          </dl></div>
+          {versions.data && (versions.data.core.version || versions.data.core.release || versions.data.dashboard.version) && (
+            <div><h4 className="mb-2 font-semibold">Versions</h4>
+              <dl data-testid="versions" className="divide-y divide-border">
+                <Row label="orch core">
+                  <span>{versions.data.core.version ? vLabel(versions.data.core.version) : 'version not known'}</span>
+                  {versions.data.core.release && <Mono>release {versions.data.core.release}</Mono>}
+                </Row>
+                <Row label="Dashboard">
+                  <span>{versions.data.dashboard.version ? vLabel(versions.data.dashboard.version) : 'version not known'}</span>
+                </Row>
+              </dl>
+              <p className="mt-1 text-[12px] text-text-muted">Each add-on's version is in the Add-ons list. The release is the running host's build; if it differs from your terminal's, restart the host.</p>
+            </div>
+          )}
 
-      {versions.data && (versions.data.core.version || versions.data.core.release || versions.data.dashboard.version) && (
-        <Section title="Versions">
-          <dl data-testid="versions" className="divide-y divide-border">
-            <Row label="orch core">
-              <span>{versions.data.core.version ? vLabel(versions.data.core.version) : 'version not known'}</span>
-              {versions.data.core.release && <Mono>release {versions.data.core.release}</Mono>}
-            </Row>
-            <Row label="Dashboard">
-              <span>{versions.data.dashboard.version ? vLabel(versions.data.dashboard.version) : 'version not known'}</span>
-            </Row>
-          </dl>
-          <p className="mt-1 text-[12px] text-text-muted">Each add-on's version is in the Add-ons list. The release is the running host's build; if it differs from your terminal's, restart the host.</p>
-        </Section>
-      )}
+          <div><h4 className="mb-2 font-semibold">Signing methods</h4>
+            <ApprovalMethods key={workspace.id} ws={workspace.id} owner={role === 'owner'} />
+          </div>
 
-      <ApprovalMethods key={workspace.id} ws={workspace.id} owner={role === 'owner'} />
-
-      {/* A real host only (the mock never offers click-to-sign): the switch, with the risk line first. */}
-      {workspace.click !== undefined && <SigningCard workspace={workspace} owner={role === 'owner'} />}
-
-      {runner && (
-        <Section title="Dashboard execution">
-          <div data-testid="workspace-card-runner" className="space-y-2 text-[13px]">
-            {runner.enabled ? (
-              <p data-testid="runner-execution-line" className="text-warning">
-                {DASHBOARD_EXECUTION_LINE}
+          <div><h4 className="mb-2 font-semibold">How long things are held</h4>
+            {!data ? (
+              <p className="text-[13px] text-text-muted">Reading the settings…</p>
+            ) : !data.available ? (
+              <p className="text-[13px] text-text-muted">
+                This host does not say what the settings are, so none is shown.
               </p>
             ) : (
-              <p className="text-text-muted">
-                Dashboard execution is off for this workspace: no agent or terminal can be started from here. Turn it on in your terminal with <code className="font-mono text-text">{TERMINAL_COMMANDS.runnerEnable}</code>.
-              </p>
-            )}
-            <p className="text-text-muted">
-              {runner.connected ? 'The runner on this machine is connected' : 'The runner on this machine is not connected'}
-              {runner.enabled ? `; terminals are ${runner.terminals ? 'available' : 'not available'}.` : '.'}
-            </p>
-          </div>
-        </Section>
-      )}
-
-      <Section title="Timing">
-        {!data ? (
-          <p className="text-[13px] text-text-muted">Reading the settings…</p>
-        ) : !data.available ? (
-          <p data-testid="settings-unavailable" className="text-[13px] text-text-muted">
-            This host does not say what the settings are, so none is shown.
-          </p>
-        ) : (
-          <>
-            <div className="grid gap-4 @[40rem]/page:grid-cols-3">
-              {DURATIONS.map((d) => d.key === 'grant_hours' ? (
-                <AccessLength key={d.key} value={Number(value(d.key))} disabled={!!why} onChange={(hours) => setDraft({ ...draft, grant_hours: String(hours) })} />
-              ) : (
-                <div key={d.key} className="space-y-1.5">
-                  <Label htmlFor={`set-${d.key}`}>
-                    {d.label} ({d.unit})
-                  </Label>
-                  <p className="text-[12px] text-text-muted">{d.hint}</p>
-                  <Input
-                    id={`set-${d.key}`}
-                    type="number"
-                    min={d.min}
-                    max={d.max}
-                    step={1}
-                    value={value(d.key)}
-                    disabled={!!why}
-                    aria-invalid={draft[d.key] !== undefined && !inRange(Number(draft[d.key]), d.min, d.max) ? true : undefined}
-                    onChange={(e) => setDraft({ ...draft, [d.key]: e.target.value })}
-                  />
-                  <p className="text-[12px] text-text-faint">
-                    {data.defaults?.includes(d.key) ? 'The default. ' : ''}
-                    {d.min} to {d.max} {d.unit}
-                  </p>
+              <>
+                <div className="grid gap-4 @[40rem]/page:grid-cols-2">
+                  {DURATIONS.filter(d => d.key !== 'grant_hours').map((d) => (
+                    <div key={d.key} className="space-y-1.5">
+                      <Label htmlFor={`set-${d.key}`}>
+                        {d.key === 'claim_ttl_min' ? 'Ticket reserved for (minutes)' : 'Task held for (minutes)'}
+                      </Label>
+                      <p className="text-[12px] text-text-muted">{d.hint}</p>
+                      <Input
+                        id={`set-${d.key}`}
+                        type="number"
+                        min={d.min}
+                        max={d.max}
+                        step={1}
+                        value={value(d.key)}
+                        disabled={!!why}
+                        aria-invalid={draft[d.key] !== undefined && !inRange(Number(draft[d.key]), d.min, d.max) ? true : undefined}
+                        onChange={(e) => setDraft({ ...draft, [d.key]: e.target.value })}
+                      />
+                      <p className="text-[12px] text-text-faint">
+                        {data.defaults?.includes(d.key) ? 'The default. ' : ''}
+                        {d.min} to {d.max} {d.unit}
+                      </p>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-            {invalid && (
-              <p role="alert" className="mt-2 text-[13px] text-danger">
-                {invalid.label}: use a whole number from {invalid.min} to {invalid.max} {invalid.unit}.
-              </p>
-            )}
-            <div className="mt-3 flex flex-wrap items-center gap-3">
-              <Button disabled={!!why || changed.length === 0 || !!invalid} onClick={save} aria-describedby={why ? 'settings-why' : undefined}>
-                Save settings
-              </Button>
-              {why && <OwnerNote id="settings-why">{why}</OwnerNote>}
-            </div>
-            <p className="mt-2 text-[12px] text-text-muted">
-              A new agent access lasts {data.grant_hours === null ? '' : accessLength(data.grant_hours ?? 0)} unless its signer picks another length (a member's grant is never longer than this); grants already signed keep their end time.
-              {data.settings_at && ` Last changed ${fmtDateTime(data.settings_at.at)}.`}
-            </p>
-          </>
-        )}
-      </Section>
+                {invalid && (
+                  <p role="alert" className="mt-2 text-[13px] text-danger">
+                    {invalid.label}: use a whole number from {invalid.min} to {invalid.max} {invalid.unit}.
+                  </p>
+                )}
+                <div className="mt-3 flex flex-wrap items-center gap-3">
+                  <Button disabled={!!why || timingChanged.length === 0 || !!invalid} onClick={() => save(['claim_ttl_min', 'lease_ttl_min'])} aria-describedby={why ? 'settings-why' : undefined}>
+                    Save settings
+                  </Button>
+                  {why && <OwnerNote id="settings-why">{why}</OwnerNote>}
+                </div>
 
-      <ReposSection workspace={workspace} data={data} onSettled={() => void settings.refetch()} />
+              </>
+            )}
+          </div>
+          {runner && (
+            <div><h4 className="mb-2 font-semibold">Dashboard execution</h4>
+              <div data-testid="workspace-card-runner" className="space-y-2 text-[13px]">
+                {runner.enabled ? (
+                  <p data-testid="runner-execution-line" className="text-warning">
+                    {DASHBOARD_EXECUTION_LINE}
+                  </p>
+                ) : (
+                  <p className="text-text-muted">
+                    Dashboard execution is off for this workspace: no agent or terminal can be started from here. Turn it on in your terminal with <code className="font-mono text-text">{TERMINAL_COMMANDS.runnerEnable}</code>.
+                  </p>
+                )}
+                <p className="text-text-muted">
+                  {runner.connected ? 'The runner on this machine is connected' : 'The runner on this machine is not connected'}
+                  {runner.enabled ? `; terminals are ${runner.terminals ? 'available' : 'not available'}.` : '.'}
+                </p>
+              </div>
+            </div>
+          )}
+
+          <HostAlarms alarms={hostInfo.data?.alarms ?? []} />
+          <RecordsBlock workspace={workspace} />
+        </div>
+      </details>
       {dialog}
     </div>
   )

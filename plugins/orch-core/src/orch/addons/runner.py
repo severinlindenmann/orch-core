@@ -247,6 +247,10 @@ def _cover(raw: bytes, forms: Sequence[bytes]) -> bytes:
         while i != -1:
             hit[i : i + len(f)] = b"\x01" * len(f)
             i = raw.find(f, i + 1)
+        for k in range(len(f) - 1, 0, -1):  # the trailing partial copy is covered too, before the runs collapse
+            if raw.endswith(f[:k]):
+                hit[len(raw) - k :] = b"\x01" * k
+                break
     out, i = bytearray(), 0
     while i < len(raw):
         if hit[i]:

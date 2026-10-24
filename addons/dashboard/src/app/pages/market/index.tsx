@@ -69,7 +69,7 @@ function Review({
   // The host's review lines wrap manifest text (title, command, agents text, needs text): all of it is the add-on's, so
   // the whole list sits in one frame (the provenance rule is about where the bytes come from, not who composed the line).
   const full = (
-    <AddonFrame addon={s.name} title="Package review (from the add-on, per host, not signed)">
+    <AddonFrame addon={s.name} title="Package review, provided by the add-on publisher">
       <ul aria-label="Full review" className="space-y-2">
         {reviewLines(s).map((line, i) => (
           <li key={i} className={line.added ? 'border-l-2 border-success pl-3 text-success' : ''}>
@@ -111,7 +111,7 @@ function Review({
                 ),
               )}
             </AddonFrame>
-            <p>Publisher: {s.update.publisher === 'same' ? 'Matches remembered key' : s.update.publisher === 'first_use' ? publisherWording('new') : 'Unsigned'}</p>
+            <p>Publisher: {s.update.publisher === 'same' ? publisherWording('known') : s.update.publisher === 'first_use' ? publisherWording('new') : 'Unsigned'}</p>
           </section>
         )}
         {s.update && !widened(s) && (
@@ -126,13 +126,13 @@ function Review({
         {s.market.stale && <p className="text-warning">Out of date - refresh</p>}
         {s.market.summary && (
           <AddonFrame addon={s.name} title="From the addon">
-            <p className="text-xs text-text-muted">Per host, not signed</p>
+            <p className="text-xs text-text-muted">Provided by the add-on publisher</p>
             <Inline>{s.market.summary}</Inline>
           </AddonFrame>
         )}
         {s.deps && (
           <p>
-            Also installs: {s.deps.count} software dependencies. {s.deps.verified ? 'Lock and hashes verified' : 'Lock and hashes not verified'}
+            Also installs {s.deps.count} required software {s.deps.count === 1 ? 'component' : 'components'}. {s.deps.verified ? 'Checked against the add-on\u2019s lock file.' : 'Not checked against a lock file.'}
           </p>
         )}
         <p>
@@ -310,7 +310,7 @@ function MarketWorkspace() {
                       <AddonFrame addon={a.id} title="From the addon" compact className="flex-1 items-start text-sm">
                         <Inline>{a.from_marketplace.summary}</Inline>
                       </AddonFrame>
-                      <p className="text-[11px] text-text-faint">The text above is from the add-on's package, per host, not signed.</p>
+                      <p className="text-[11px] text-text-faint">The text above was provided by the add-on publisher.</p>
                       <div className="flex flex-wrap gap-1">
                         {a.capabilities.map((p) => (
                           <span className="rounded-full border border-border px-2 text-xs" key={p}>
@@ -442,7 +442,7 @@ function MarketWorkspace() {
                   ))}
                 </Table>
               )}
-              <p className="text-xs text-text-muted">Allowed by, added by and publisher signature: per host, not signed.</p>
+              <p className="text-xs text-text-muted">Allowed by, added by and publisher signature: shown by this computer, not covered by your approval.</p>
               <p>{EXTERNAL_HELP}</p>
               {mayWrite && (
                 <div className="space-y-1">
@@ -486,6 +486,15 @@ function MarketWorkspace() {
           anchor={null} // the review dialog is folded away while this one is open (Cancel here brings it back)
           action={{ action: 'market_grant', name: handoff.name, staged: handoff.stage }}
           autoStart
+          lead={
+            <div data-testid="install-summary" className="rounded border border-border p-3 text-sm">
+              <p className="font-medium">
+                <Inline>{handoff.name}</Inline> · Version <Inline>{handoff.version}</Inline>
+              </p>
+              <p>After installation: turned off. You turn it on later in Settings.</p>
+              <p className="text-text-muted">The marketplace lines below are shown by this computer and are not covered by your approval.</p>
+            </div>
+          }
           onClose={() => {
             setPending((p) => p.filter((n) => n !== handoff.name))
             setHandoff(null)

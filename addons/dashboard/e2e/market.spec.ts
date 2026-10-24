@@ -29,7 +29,7 @@ test('browse -> review -> Review installation -> installed', async ({ page }) =>
   await jira.getByRole('button', { name: /Install/ }).click()
   const dialog = page.getByRole('dialog')
   await expect(dialog).toContainText('The add-on will be installed turned off.')
-  await expect(dialog).toContainText('Also installs: 3')
+  await expect(dialog).toContainText('Also installs 3 required software components')
   await page.screenshot({ path: path.join(SHOTS, 'a10-review.png') })
   expect(fake.posts('/market/stage')[0].body).toMatchObject({ id: 'jira' })
   await dialog.getByRole('button', { name: 'Review installation' }).click()

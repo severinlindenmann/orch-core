@@ -90,6 +90,8 @@ export interface SignPopoverProps {
   children?: ReactNode
   /** Choices that are part of what is signed (agent access length): shown above the review in every state but signing. A change of `action` needs a new key on this component, which prepares again. */
   controls?: ReactNode
+  /** A plain-words summary above the review, in every state but signing. Unlike `controls` it never holds back the preparation. */
+  lead?: ReactNode
   /** Exact action summary, kept visible while preparing and reviewing. */
   summary?: ReactNode
   /** Said above the panel while it is open: a warning that the page changed under it. */
@@ -324,6 +326,7 @@ export function SignPopover(p: SignPopoverProps) {
       }}
     >
       {p.controls && !signing && phase !== 'waiting' && <div data-testid="sign-controls">{p.controls}</div>}
+      {p.lead && !signing && <div data-testid="sign-lead">{p.lead}</div>}
       {(!(click.view?.view.content || run.request?.content) || isBareContent(click.view?.view.content ?? run.request?.content)) && p.summary}
       {phase === 'idle' && !clickOpen && p.children}
 

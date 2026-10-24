@@ -99,7 +99,7 @@ export function permissionEffect(value: string): string {
   return effects[value] ?? `Requests permission: ${value}`
 }
 export function publisherWording(key: PublisherKey): string {
-  return { unsigned: 'Unsigned', new: 'First use - key will be remembered', known: 'Matches remembered key', changed: 'Key changed - review required' }[key]
+  return { unsigned: 'Unsigned', new: 'First use - key will be remembered', known: 'Publisher key matches the one previously saved on this computer', changed: 'Key changed - review required' }[key]
 }
 export function widened(stage: MarketStage): boolean {
   return !!stage.update && (stage.update.widened || stage.update.publisher === 'first_use' || Object.values(stage.update.added).some((a) => a.length > 0))

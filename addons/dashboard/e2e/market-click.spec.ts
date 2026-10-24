@@ -29,7 +29,8 @@ test('browse -> review -> Review installation -> one Sign press -> installed', a
   // the signer's whole review, the marketplace block labelled, and exactly one way to sign
   const sign = page.getByRole('dialog').getByRole('button', { name: 'Approve and install' })
   await expect(page.getByRole('dialog')).toContainText('package_sha256')
-  await expect(page.getByRole('dialog')).toContainText('(per host, not signed)')
+  await expect(page.getByRole('dialog')).toContainText('(per host, not signed)') // core's label, exact
+  await expect(page.getByTestId('install-summary')).toContainText('After installation: turned off')
   await expect(page.getByRole('dialog')).not.toContainText('7F3K-Q2MA')
   expect(fake.posts('/handoff')).toHaveLength(0) // no Terminal hand-off
   expect(fake.posts('/click/prepare')[0].body).toMatchObject({ action: 'market_grant', name: 'jira', staged: STAGE })

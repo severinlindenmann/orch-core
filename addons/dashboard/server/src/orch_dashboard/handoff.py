@@ -585,28 +585,6 @@ class SettingsSet(Action):
         return self
 
 
-class ModelsSet(Action):
-    """`settings.set {set:{models}}` (Model routing): for each harness and Start agent mode, the model a start uses; a
-    mode that is not named uses the harness default; an empty table clears every choice (sent as `null`). Every name is
-    checked against core's closed per-harness list here, and again by the host. Signed with the typed word."""
-
-    action: Literal["models_set"]
-    models: dict[str, dict[str, str]] = Field(default_factory=dict, max_length=2)
-
-    @model_validator(mode="after")
-    def closed(self):
-        from orch.modelchoices import MODEL_CHOICES, ROUTE_MODES
-
-        for harness, per in self.models.items():
-            if harness not in MODEL_CHOICES:
-                raise ValueError("models: an unknown agent")
-            for mode, name in per.items():
-                if mode not in ROUTE_MODES or name not in MODEL_CHOICES[harness]:
-                    raise ValueError("models: a mode or model that orch does not offer")
-        self.models = {h: dict(sorted(per.items())) for h, per in sorted(self.models.items()) if per}
-        return self
-
-
 class WorkspaceIcon(BaseModel):
     """An icon and a colour of core's closed lists (`orch.wsicons`); nothing else is accepted."""
 
@@ -754,9 +732,7 @@ class MemberRemove(Action):
 
 
 # the dashboard add-on is always on; no other package is offered here
-AddonName = Literal[
-    "start-agent", "terminals", "worktrees", "publish", "usage", "estimate", "explorer", "model-routing", "wiki"
-]
+AddonName = Literal["start-agent", "terminals", "worktrees", "publish", "usage", "estimate", "explorer", "wiki"]
 
 
 class AddonGrant(Action):
@@ -774,9 +750,10 @@ StageId = Annotated[str, StringConstraints(pattern=r"^st_[0-9a-f]{32}$")]
 
 class MarketGrant(Action):
     """`addon.grant {name, staged}`: install or update the package the host staged and the person reviewed (A10).
-    Exactly these two keys (`extra="forbid"`). **Terminal only, never one click**: the click route refuses it
-    (`click.prepare`), and it has no agent route (the dashboard session is the person's). The host re-reads the stage
-    and judges it again when the signed request is submitted."""
+    Exactly these two keys (`extra="forbid"`). **One click** where click-to-sign is on (V3-D38, owner 24 Oct: the
+    signer shows the whole review, the marketplace lines "per host, not signed" included), the terminal hand-off where
+    it is off. `publish` is terminal only (`click.prepare` refuses it). It has no agent route (the dashboard session
+    is the person's). The host re-reads the stage and judges it again when the signed request is submitted."""
 
     action: Literal["market_grant"]
     name: MarketName
@@ -830,25 +807,11 @@ class PublishAddresses(BaseModel):
 
 class AddonEnable(Action):
     action: Literal["addon_enable"]
-    name: Literal["publish", "model-routing"]
-    publish: PublishAddresses | None = None
-    models: dict[str, dict[str, str]] | None = None
-
-    @model_validator(mode="after")
-    def settings_match(self):
-        if self.name == "publish":
-            if self.publish is None or self.models is not None:
-                raise ValueError("Publish needs exactly publish settings")
-        else:
-            if self.models is None or self.publish is not None:
-                raise ValueError("Model routing needs exactly models settings")
-            self.models = ModelsSet(action="models_set", models=self.models).models
-            if not self.models:
-                raise ValueError("choose at least one model")
-        return self
+    name: Literal["publish"]
+    publish: PublishAddresses
 
     def settings(self) -> dict:
-        return {"publish": self.publish.model_dump()} if self.publish is not None else {"models": self.models}
+        return {"publish": self.publish.model_dump()}
 
     def intent(self, grant: dict) -> dict:
         from orch.host import sequence
@@ -944,7 +907,6 @@ PrepareBody = Annotated[
     | Details
     | WriteSection
     | SettingsSet
-    | ModelsSet
     | IconSet
     | RepoSet
     | RepoRemove
@@ -1099,8 +1061,6 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
             return "section.set", {"ref": action.key, "section": action.section, "message": action.text}
         case SettingsSet():
             return "settings.set", {"set": action.model_dump(include={*DURATIONS, "sign_methods"}, exclude_none=True)}
-        case ModelsSet():
-            return "settings.set", {"set": {"models": action.models or None}}
         case IconSet():
             return "settings.set", {"set": {"icon": action.icon.model_dump() if action.icon else None}}
         case AddonEnable():
@@ -1208,7 +1168,7 @@ def expected(action: Action, person: str | None = None):
         return all(adapters.handoff.cj(events[0].get(k)) == adapters.handoff.cj(v) for k, v in fields.items())
 
     match action:
-        case SettingsSet() | ModelsSet() | IconSet() | RepoSet() | RepoRemove() | PublishSetup() | AddonEnable():
+        case SettingsSet() | IconSet() | RepoSet() | RepoRemove() | PublishSetup() | AddonEnable():
             _, args = host_call(action)
             return lambda ev: one(ev, "settings.changed", set=args["set"])
         case PublishShare():

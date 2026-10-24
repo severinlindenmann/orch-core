@@ -1,6 +1,6 @@
 """The dashboard server against a REAL orch host (core H6b and later): `orch host run --foreground` as a subprocess.
 
-A disposable workspace is created with the real `orch init` in a pty, seeded with the real CLI, served by a real host
+A disposable workspace is created with the real `orch setup` (the page played over the setup socket, the terminal in a pty), seeded with the real CLI, served by a real host
 and read through the server's TestClient. Every hand-off is signed with the real `orch sign CODE` in a pty. Nothing
 touches `~/.config/orch`: state, HOME and XDG_CONFIG_HOME are explicit and under a throwaway directory (see
 `realhost_kit`). Skipped when the host cannot start (no pty, no unix sockets, ...). Run: `uv run pytest -m realhost`.
@@ -452,15 +452,14 @@ def pair(tmp_path_factory):
     root = short_run_root() / uuid.uuid4().hex[:6]
     a, b = Workspace(root / "w", dirname="a"), Workspace(root / "w", dirname="b")
     try:
+        a.make_dirs()
+        a.start_host()
+        b.host = a.host
         for w, title in ((a, "Alpha ticket"), (b, "Beta ticket")):
-            w.init()
+            w.init()  # `orch setup` registers each workspace with the running host
             w.grant()
             w.install_dashboard()
             w.agent("new", title)
-        a.start_host()
-        a.register()
-        b.host = a.host
-        b.register()
     except (RuntimeError, TimeoutError, OSError) as exc:
         a.stop_host()
         shutil.rmtree(root, ignore_errors=True)

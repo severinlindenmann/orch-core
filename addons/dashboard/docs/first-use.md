@@ -88,21 +88,20 @@ never completed).
 
 ## 2. Identity and first run
 
-**Status: verified** (`orch init`, in a pty).
+**Status: verified** (`orch setup`; the page was played over the setup socket and the terminal in a pty).
 
-There is no separate "create identity" command: `orch init` creates your person key, your device key and the workspace in
-one go (step 4). You will be asked, in this order:
+There is no separate "create identity" command: `orch setup` (V3-D38; `orch init` is gone) creates your person key, your
+device key and the workspace in one go (step 4), through a setup page in your browser and your Terminal. You will be shown
+and asked, in this order:
 
-1. **Passphrase for this device.** orch prints a generated passphrase of six words. Either type it again to confirm
-   (`Passphrase:`, `Repeat your passphrase:`), or type a passphrase of your own instead. It unlocks the device key; every
-   terminal signature (`orch approve`, `orch grant`, `orch sign`, `orch addon grant`) asks for it. **Keep it** in your
-   password manager.
+1. **Passphrase for this device.** The page shows a generated passphrase of six words, once. It unlocks the device key;
+   every terminal signature (`orch approve`, `orch grant`, `orch sign`, `orch addon grant`) asks for it. **Keep it** in
+   your password manager.
 2. **The 24-word recovery code**, shown once. It is the only way back to your *person* key if you lose this Mac or the
    passphrase; orch does not store it ("nowhere else"). Write it down and keep it somewhere safe and offline.
-   `Press Enter when you have written the code down:`, then it asks **three of the words** by position
-   (`Word 2:`, `Word 11:`, `Word 21:`) to check you wrote it down.
-3. The screen clears and a review of the signed "workspace.created" event is printed; you are asked for the passphrase a
-   last time (`Passphrase:`), then `ok init TEST seq=1`.
+   The page then asks **three of the words** by position to check you wrote it down.
+3. A review of what is created is shown; press Create, compare the three words your Terminal shows with the page's and type
+   `yes`. The page lists the steps as done and the Terminal prints `workspace TEST set up in <dir>`.
 
 What to keep: **passphrase**, **recovery code**. State lives in `~/.config/orch/` (device key under
 `hosts/<workspace-id>/person/`; the host's workspace key under `hosts/<workspace-id>/keys/`).
@@ -133,9 +132,9 @@ orch host status                           # in another tab
 #   service: launchd ... installed=no ...  /  host: answers on .../run/control/host.sock  /  ok
 ```
 
-Use the foreground host for the very first try. `orch host register` and `orch init --host` start the service for you if no
-host answers (`ensure_service`), so if you want no service at all, start the foreground host first and pass `--no-service`
-to `register`.
+Use the foreground host for the very first try. `orch host register` and `orch setup` start the service for you if no
+host answers (`ensure_service`), so if you want no service at all, start the foreground host first (setup uses a host
+that already answers) and pass `--no-service` to `register`.
 
 ## 4. First workspace
 
@@ -143,15 +142,14 @@ to `register`.
 
 ```sh
 mkdir -p ~/orch/test && cd ~/orch/test      # an EMPTY folder
-orch init --prefix TEST --name "Your Name" --host
+orch setup
 ```
 
-`--host` creates the workspace through the running host: the host keeps the workspace key and serves the workspace at once
-(registration included). Prompts: step 2. Output ends with `workspace TEST in <dir>`, `the workspace key stays with the orch
-host`, and `next: orch grant ...`. Check: `orch host list` shows `TEST ... state ok`, `orch status` prints `ok status
+`orch setup` creates the workspace through the running host: the host keeps the workspace key and serves the workspace at
+once (registration included). Prompts: step 2 (name `Your Name`, prefix `TEST` on the page). Check: `orch host list` shows `TEST ... state ok`, `orch status` prints `ok status
 person=Your Name`.
 
-Alternative, a workspace that already exists (made with plain `orch init`, no `--host`): `orch host register <dir>`.
+Alternative, a workspace that already exists (restored on this Mac): `orch host register <dir>`.
 Verified: it answers `{"ok": true, ... "workspace_id": ...}` and `orch status` then says `host mode`. Without `--peer`, `register` maps your UID to the person whose device key for the workspace is on this Mac, in either
 custody (verified in passphrase custody; verified with the test custody seam after the key moved to convenience, same
 command). `--peer 501=person:p_...` is still required when core finds no usable key of yours: the key was removed,
@@ -294,7 +292,7 @@ and releases alone; the removal itself is read from the code (`host/cli.py` `dis
 Where state lives: `~/.config/orch/` (or `$ORCH_STATE_DIR`): `hosts/<ws>/` (signed log, workspace key, your device key under
 `person/`), `host/` (registry `workspaces.json`, `convenience.json` flag, `host.log`), `run/` (sockets), `dashboard/` (ctl
 socket, lock, short-lived launch files), `person/` (convenience custody; macOS keeps the key in the keychain instead). The
-workspace itself (tickets, config) is the folder you ran `orch init` in.
+workspace itself (tickets, config) is the folder you ran `orch setup` in.
 
 ## How this was checked
 
@@ -302,7 +300,7 @@ Re-checked 14 Oct 2026 against `develop` 0d84f707. A throwaway venv, `HOME`, `XD
 short disposable folder with a `.orch-dev` marker (deleted afterwards); Python 3.11 and Node 24.21 on `PATH` for the
 install; non-editable installs of `plugins/orch-core` and `addons/dashboard/server` from the same checkout (the wheel
 holds `orch_dashboard/static/index.html` and `orch_dashboard/orch-addon.json`); one foreground host and one dashboard
-server on 127.0.0.1; no browser, no launchd, no keychain. Prompts were answered through a pty. `orch init`, `orch host
+server on 127.0.0.1; no browser, no launchd, no keychain. Prompts were answered through a pty. `orch setup`, `orch host
 register` without `--peer` (passphrase custody, then again after `keys custody convenience` through the
 `click_child.py` file-custody seam), `orch-dashboard addon-manifest --write`, `orch addon grant`, `orch dashboard
 open --print-url`, `GET /` and the code exchange all ran. Steps 6 and 7 were not repeated (unchanged apart from the

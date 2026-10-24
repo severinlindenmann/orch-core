@@ -48,7 +48,7 @@ class SetupError(Exception):
 
 def clean_name(value: Any) -> str:
     """One line of printable text (no control or format characters), NFC, whitespace collapsed; ``invalid.input``
-    otherwise. The same rule as ``orch init``'s owner name."""
+    otherwise. The same rule as ``orch setup``'s owner name."""
     if not isinstance(value, str):
         raise SetupError("invalid.input", "name is text", field="name")
     name = unicodedata.normalize("NFC", " ".join(value.split()))

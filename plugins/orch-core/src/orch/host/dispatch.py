@@ -5,8 +5,7 @@ version 1, plus ``whoami``, ``host.status``, ``outcome.get``, ``sub.open``, ``su
 (``blob.put``, ``blob.drop``, ``artifact.get``: H4a2, :mod:`orch.host.blobs`, :mod:`orch.host.artifacts`), ``diff``
 (the H3b1 follow-up, :mod:`orch.host.diff`), and nothing else (``unknown_command``). Left out:
 
-* ``init`` and ``import.v1`` (D-P2-9: ``init`` is ``host.wsk_create`` + ``host.bootstrap``; ``import v1`` runs in
-  direct mode before registration).
+* ``import.v1`` (D-P2-9: ``import v1`` runs in direct mode before registration).
 
 ``task.done`` is served at contract 2 (H3b2): ``run`` is refused (``op.not_allowed``, the host never executes
 ``verify.cmd``), a client receipt comes in ``receipt`` and ``receipt_output`` (``files``) and is stored labelled
@@ -142,7 +141,6 @@ Phase = Literal["read", "write", "wait"]
 
 #: registry ops the host does not serve, and why
 NOT_SERVED: dict[str, str] = {
-    "init": "init is host.wsk_create and host.bootstrap (D-P2-9)",
     "import.v1": "import v1 runs in direct mode before registration (D-P2-9)",
 }
 PERSON_READS = frozenset({"doctor", "instructions.sync"})
@@ -859,6 +857,8 @@ class RegistryBackend:
             dev = getattr(call.service, "dev", None)
             if dev is not None:  # §11A.17.2: only on a dev host (absent, not false, elsewhere)
                 data["dev"] = {"sim_convenience": True, "sandbox": dev.id8}
+                if dev.pending:
+                    data["dev"]["pending"] = True
         return data
 
     # -- registry ops

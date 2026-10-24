@@ -564,8 +564,9 @@ def test_init_refuses_sbx_with_other_owner_name(sbx, tmp_path):
 
 
 def test_init_refuses_sbx_with_entered_recovery_code(tmp_path, monkeypatch):
-    """Only a recovery code this init run generated (``_dialogue``, ``generated=True``) may sign an SBX genesis; a
-    typed, restored or imported code is refused before any key is made. Both init paths pass the generated code."""
+    """Only a recovery code this setup run generated (``generated=True``) may sign an SBX genesis; a typed, restored or
+    imported code is refused before any key is made. The one genesis path (the hosted bootstrap) passes
+    ``generated=True`` and the library itself generates no code (``orch setup``'s secrets do)."""
     import inspect
 
     from orch.identity import generate_recovery_code
@@ -587,7 +588,7 @@ def test_init_refuses_sbx_with_entered_recovery_code(tmp_path, monkeypatch):
         workspace_init._signed_genesis(None, tmp_path, "a" * 32, b"", "SBX", "n", "pw", code, generated=True)
     assert len(made) == 1
     source = inspect.getsource(workspace_init)
-    assert source.count("generated=True") == 2 and source.count("code = generate_recovery_code()") == 1
+    assert source.count("generated=True") == 1 and "generate_recovery_code(" not in source
 
 
 def test_host_bootstrap_reserved_prefix_on_a_dev_host(sbx):
@@ -756,3 +757,242 @@ def test_cli_marks_the_dev_process_after_the_proof(sbx, monkeypatch):
     argv = ["run", "--foreground", "--dev-sim-convenience", "--state", str(sbx.state), "--run", str(sbx.run)]
     assert cli.main(argv, env=sbx.env(), out=io.StringIO()) == 0
     assert devsandbox.click_refusal(sbx.tmp / "anywhere", {}) == "dev_host"
+
+
+# --- the pending dev host (V3-D38): one fresh SBX bootstrap, no dev powers, then bind and restart -------------------
+
+
+@pytest.fixture
+def pending(tmp_path):
+    from tests.host.devgate_helpers import PendingSbx
+
+    lab = PendingSbx(tmp_path)
+    try:
+        yield lab
+    finally:
+        lab.close()
+
+
+def _sbx_args(created: dict[str, Any], root: Path, owner: Any, name: str, prefix: str = "SBX") -> dict[str, Any]:
+    """A signed ``workspace.created`` for what ``host.wsk_create`` returned, with ``prefix`` and the owner ``name``."""
+    from orch import canon, crypto
+    from tests.host.lifecycle_helpers import genesis_for
+
+    wid = created["workspace_id"]
+    e = genesis_for(owner, wid, created["wsk_pub"], prefix=prefix)
+    e.pop("sig")
+    e["owner"] = {**e["owner"], "name": name}
+    e["sig"] = crypto.b64u(owner.dk_sign(canon.person_signing_bytes(wid, "workspace", e)))
+    return {
+        "workspace_id": wid,
+        "root": str(root),
+        "events": [e],
+        "peers": {str(UID): {"class": "person", "person": owner.ref}},
+    }
+
+
+def test_a_manifest_without_person_and_workspaces_starts_a_pending_dev_host(pending):
+    dev = pending.dev()
+    assert dev.pending is True and dev.person_id is None and dev.sandbox_id == pending.sandbox_id
+    assert "pending genesis, no dev powers" in devmode.status_line(dev)
+    assert devmode.status_line(dev) != devmode.status_line(
+        devmode.DevHost(dev.root, dev.root_id, dev.sandbox_id, "p_" + "0" * 32, dev.relay_origin)
+    )
+    # a manifest that lists a workspace but names no person is still the forged shape: refused, as before
+    devsandbox.write_manifest(pending.sroot, pending.sandbox_id, workspaces=[(WS, pending.new_root())])
+    assert _refused(pending.dev) == "no_person"
+
+
+def test_a_pending_host_has_no_dev_powers_for_any_workspace(pending):
+    from tests.identity.helpers import Person
+
+    owner, root = Person(), pending.new_root()
+    with pending.host(dev=pending.dev()) as h, h.client() as c:
+        listed = ok(c.call("host.list"))["data"]
+        assert listed["dev"] == {"sim_convenience": True, "sandbox": pending.sandbox_id[:8], "pending": True}
+        created = ok(c.call("host.wsk_create"))["data"]
+        ok(c.call("host.bootstrap", _sbx_args(created, root, owner, pending.owner_name()), idem=new_idem()))
+        service = h.host.services[created["workspace_id"]]
+        assert service.dev_ok is False and devmode.gated(service) is False
+        assert devmode.dev_gate(service) is None and devmode.test_market(service) is None
+        view = devmode.service_view(service)
+        assert devmode.sandbox_reason(h.host.dev, created["workspace_id"], root, view).startswith("S0:")
+        assert [r["sandbox"] for r in ok(c.call("host.list"))["data"]["workspaces"]] == [False]
+
+
+def test_a_pending_host_admits_exactly_one_fresh_sbx_bootstrap(pending):
+    from tests.identity.helpers import Person
+
+    first, second = Person(), Person()
+    with pending.host(dev=pending.dev()) as h, h.client() as c:
+        created = ok(c.call("host.wsk_create"))["data"]
+        ok(
+            c.call(
+                "host.bootstrap", _sbx_args(created, pending.new_root(), first, pending.owner_name()), idem=new_idem()
+            )
+        )
+        again = ok(c.call("host.wsk_create"))["data"]
+        res = c.call(
+            "host.bootstrap",
+            _sbx_args(again, pending.new_root("ws-2"), second, pending.owner_name()),
+            idem=new_idem(),
+        )
+        assert not res["ok"] and res["error"]["detail"]["reason"] == "not_sandbox"
+        assert len(h.host.registry.entries()) == 1
+
+
+@pytest.mark.parametrize("what", ["prefix", "owner_name", "root_outside", "root_not_ws"])
+def test_a_pending_host_refuses_any_other_genesis_and_changes_nothing(pending, what):
+    from tests.identity.helpers import Person
+
+    owner = Person()
+    prefix = "DEMO" if what == "prefix" else "SBX"
+    name = "Somebody" if what == "owner_name" else pending.owner_name()
+    if what == "root_outside":
+        root = pending.tmp / "elsewhere"
+        os.mkdir(root, 0o700)
+        root = Path(os.path.realpath(root))
+    else:
+        root = pending.new_root("other" if what == "root_not_ws" else "ws")
+    with pending.host(dev=pending.dev()) as h, h.client() as c:
+        created = ok(c.call("host.wsk_create"))["data"]
+        res = c.call("host.bootstrap", _sbx_args(created, root, owner, name, prefix), idem=new_idem())
+        assert not res["ok"]
+        assert res["error"]["detail"]["reason"] == "not_sandbox"
+        assert h.host.registry.entries() == [] and h.host.pending_claim is None  # a refusal does not use the claim
+        assert os.listdir(root) == []
+
+
+def test_a_pending_host_refuses_host_register_of_any_workspace(pending, tmp_path):
+    real = Lab(tmp_path / "real")
+    try:
+        with pending.host(dev=pending.dev()) as h, h.client() as c:
+            res = c.call("host.register", {"root": real.root, "peers": real.peers()}, idem=new_idem())
+            assert not res["ok"] and h.host.registry.entries() == []
+            view = devmode.View(
+                {"prefix": "SBX", "owner": {"person": real.owner, "name": pending.owner_name()}}, frozenset()
+            )
+            assert _refused(lambda: devmode.check_admit(h.host.dev, WS, pending.new_root(), view)) == "not_sandbox"
+    finally:
+        real.close()
+
+
+def test_a_pending_host_refuses_to_start_with_a_registered_workspace(pending, tmp_path):
+    from orch.host.registry import Entry, group_name
+
+    real = Lab(tmp_path / "real")
+    try:
+        _write_registry(pending.state, Entry("b" * 32, "DEMO", real.root, UID, group_name("b" * 32), real.peers()))
+        h = pending.host(dev=pending.dev())
+        with pytest.raises(HostError) as e:
+            h.__enter__()
+        h.stop()
+        assert _reason(e) == "not_sandbox"
+    finally:
+        real.close()
+
+
+def test_bind_and_restart_gives_the_full_dev_host_and_only_then_dev_powers(pending):
+    from tests.identity.helpers import Person
+
+    owner, root = Person(), pending.new_root()
+    with pending.host(dev=pending.dev()) as h, h.client() as c:
+        created = ok(c.call("host.wsk_create"))["data"]
+        ok(c.call("host.bootstrap", _sbx_args(created, root, owner, pending.owner_name()), idem=new_idem()))
+        wid = created["workspace_id"]
+    # restarting WITHOUT binding: still a pending manifest, now with a registered workspace: refused
+    again = pending.host(dev=pending.dev())
+    with pytest.raises(HostError) as e:
+        again.__enter__()
+    again.stop()
+    assert _reason(e) == "not_sandbox"
+    # the kit binds the person, the workspace row and the marker, then starts the full dev host
+    pending.bind(owner.ref, wid, root)
+    dev = pending.dev()
+    assert dev.pending is False and dev.person_id == owner.ref
+    with pending.host(dev=dev) as h:
+        service = h.host.services[wid]
+        assert service.dev_ok is True and devmode.dev_gate(service) == devmode.DevGate(pending.sandbox_id, wid)
+        assert h.host.pending_claim is None
+        res = h.client().call(
+            "host.bootstrap",
+            _sbx_args(
+                ok(h.client().call("host.wsk_create"))["data"], pending.new_root("ws-2"), Person(), pending.owner_name()
+            ),
+            idem=new_idem(),
+        )
+        assert (
+            not res["ok"] and res["error"]["detail"]["reason"] == "not_sandbox"
+        )  # the full host admits no new genesis
+
+
+def test_a_normal_host_still_refuses_an_sbx_bootstrap(pending):
+    from tests.identity.helpers import Person
+
+    with pending.host() as h, h.client() as c:  # no dev proof: a normal host
+        created = ok(c.call("host.wsk_create"))["data"]
+        res = c.call(
+            "host.bootstrap", _sbx_args(created, pending.new_root(), Person(), pending.owner_name()), idem=new_idem()
+        )
+        assert not res["ok"] and h.host.registry.entries() == []
+
+
+def test_start_up_recovery_on_a_pending_host_admits_at_most_one_genesis(pending, monkeypatch):  # noqa: F811
+    """One admission per process (design point 3): start-up recovery finishes a landed bootstrap through
+    ``_finish_bootstrap`` -> ``admit(fresh=True)`` without the pending claim or the empty-registry check, so two
+    bootstraps left ``started`` by earlier pending processes are both admitted in one pending process."""
+    from orch.host.control import ControlOps
+    from tests.identity.helpers import Person
+
+    real_finish = ControlOps._finish_bootstrap
+    real_landed = ControlOps._genesis_landed
+    roots = [pending.new_root("ws"), pending.new_root("ws-2")]
+
+    def boom(self, *a, **k):
+        raise RuntimeError("crash after the append")
+
+    # process 1: A's genesis lands, finishing it fails (the intent stays started)
+    monkeypatch.setattr(ControlOps, "_finish_bootstrap", boom)
+    with pending.host(dev=pending.dev()) as h, h.client() as c:
+        a = ok(c.call("host.wsk_create"))["data"]
+        assert not c.call("host.bootstrap", _sbx_args(a, roots[0], Person(), pending.owner_name()), idem=new_idem())[
+            "ok"
+        ]
+    # process 2: A's log cannot be read at recovery (stays started); B lands, finishing it fails too
+    monkeypatch.setattr(
+        ControlOps,
+        "_genesis_landed",
+        staticmethod(lambda r, i: None if r == str(roots[0]) else real_landed(r, i)),
+    )
+    with pending.host(dev=pending.dev()) as h, h.client() as c:
+        assert h.host.registry.entries() == []
+        b = ok(c.call("host.wsk_create"))["data"]
+        assert not c.call("host.bootstrap", _sbx_args(b, roots[1], Person(), pending.owner_name()), idem=new_idem())[
+            "ok"
+        ]
+    monkeypatch.setattr(ControlOps, "_finish_bootstrap", real_finish)
+    monkeypatch.setattr(ControlOps, "_genesis_landed", staticmethod(real_landed))
+    # process 3: one pending process; recovery finishes both
+    h = pending.host(dev=pending.dev())
+    admitted = None
+    try:
+        h.__enter__()
+        admitted = len(h.host.registry.entries())
+    except HostError:
+        admitted = 0  # refusing the start would also be fail closed
+    finally:
+        h.stop()
+    assert admitted <= 1, f"a pending host process admitted {admitted} genesis events"
+
+
+def test_a_pending_host_has_no_hub_dev_material_in_its_replay(pending):
+    """F2: ``hub_dev`` (dev hub material accepted in the replay) is for a full dev host only."""
+    from tests.identity.helpers import Person
+
+    with pending.host(dev=pending.dev()) as h, h.client() as c:
+        created = ok(c.call("host.wsk_create"))["data"]
+        root = pending.new_root()
+        ok(c.call("host.bootstrap", _sbx_args(created, root, Person(), pending.owner_name()), idem=new_idem()))
+        service = h.host.services[created["workspace_id"]]
+        assert service.dev is not None and service.dev.pending is True
+        assert service.store is not None and service.store.hub_dev is False

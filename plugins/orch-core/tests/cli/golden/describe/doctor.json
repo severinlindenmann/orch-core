@@ -18,7 +18,7 @@
       "properties": {
         "repair": {
           "type": "boolean",
-          "description": "do the safe repairs: answer external edits, rebuild the index, drop dead init keys"
+          "description": "do the safe repairs: answer external edits, rebuild the index"
         }
       },
       "required": [],
@@ -69,11 +69,10 @@
         "code": "not_found",
         "exit": 2,
         "retryable": false,
-        "hint": "run orch init in a workspace",
+        "hint": "run it in a workspace folder (orch setup makes one)",
         "fix": [
           "orch",
-          "describe",
-          "init"
+          "help"
         ]
       }
     ]

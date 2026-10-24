@@ -249,7 +249,6 @@ _SETTINGS_KEYS = frozenset(
         "sign_methods",
         "repos",
         "publish",
-        "models",
         "icon",
         ADDONS_KEY,
     }  # fmt: skip

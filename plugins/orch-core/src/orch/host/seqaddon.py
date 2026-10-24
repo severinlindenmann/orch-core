@@ -2,7 +2,7 @@
 
 ONE review and ONE confirmation sign, in this order, on the WORKSPACE log:
 
-0. ``settings.set {<setting>: value}`` -> ``settings.changed`` (the address of Publish, the table of Model routing);
+0. ``settings.set {<setting>: value}`` -> ``settings.changed`` (the address of Publish);
 1. ``addon.grant {name}`` -> ``addon.granted`` (the add-on is on) -- always LAST.
 
 Every prefix is safe: after step 0 the add-on is "set up, not on". Both payloads are built from the intent alone
@@ -66,10 +66,6 @@ def _setting(name: str, key: str, value: Any, bad: type[Exception]) -> Any:
         raise bad(f"the {key} setting is not valid")
     if key == "publish" and value["server"] == value["share"]:
         raise bad("publish: the share address must differ from the server address")
-    if key == "models":
-        if any(not per for per in value.values()):
-            raise bad("models: a harness with no model chosen is left out")
-        return {h: dict(sorted(per.items())) for h, per in sorted(value.items())}
     return copy.deepcopy(value)
 
 

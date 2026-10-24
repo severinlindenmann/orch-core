@@ -52,7 +52,6 @@ MODULES = (
     "member_add",
     "member_remove",
     "member_role",
-    "init",
     "doctor",
     "check",
     "instructions_sync",

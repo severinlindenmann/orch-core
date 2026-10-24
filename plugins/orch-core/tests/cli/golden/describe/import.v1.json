@@ -92,7 +92,7 @@
         "code": "custody.no_batch",
         "exit": 3,
         "retryable": false,
-        "hint": "use a passphrase device key (orch init sets one up)",
+        "hint": "use a passphrase device key (orch setup sets one up)",
         "fix": [
           "orch",
           "help"
@@ -102,7 +102,7 @@
         "code": "custody.no_key",
         "exit": 3,
         "retryable": false,
-        "hint": "orch init sets up your device key",
+        "hint": "orch setup sets up your device key",
         "fix": [
           "orch",
           "help"

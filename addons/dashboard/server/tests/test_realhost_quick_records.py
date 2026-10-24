@@ -155,8 +155,11 @@ def test_records_status_before_any_commit(api):
     body = api.get("/records").json()
     assert body["available"] is True
     # `configured` (core #454) means the workspace's records repository exists, as a tool last reported it: the
-    # fixture's `orch records init` did. Nothing is committed or noted for the caller yet.
-    assert body["configured"] is True and body["repo"] is None and body["last"] is None
+    # fixture's `orch records init` did. Nothing is committed or noted for the caller yet. The fixture's workspace is
+    # registered with the running host (orch setup, V3-D38), so `records init` is served by the host and its repository
+    # already reports a healthy state (before, a direct-mode init left `repo` None until the first commit).
+    assert body["configured"] is True and body["last"] is None
+    assert body["repo"] == {"state": "ok", "problem": None, "problem_hidden": False}
     assert body["pending"]["events"] > 0 and body["pending"]["more"] is False
     assert {t["key"] for t in body["pending"]["tickets"]} >= {"DEMO-0001", "DEMO-0002"}
     assert body["remote"] is None and body["auto"] is None

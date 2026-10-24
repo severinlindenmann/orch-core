@@ -1,4 +1,4 @@
-"""H3b3: ``host.bootstrap`` and the ``init`` composite (``orch init --host``).
+"""H3b3: ``host.bootstrap`` and the hosted create (``orch setup``).
 
 Acceptance (orch-v2-host §8, H3b3):
 
@@ -22,26 +22,20 @@ import sys
 import threading
 import time
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import ec
-from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 
 from orch import crypto
-from orch.crypto import suite
 from orch.host.control_client import ControlClient, new_idem
-from orch.host.service import Host
 from orch.identity import derive_person_key
 from orch.identity.recovery import code_from_entropy
 from orch.ops import workspace_init as wi
 from orch.ops.base import Context
 from orch.ops.caps import Files
-from orch.ops.commands.init import OP
 from orch.ops.errors import OrchError
 from orch.ops.runtime import Workspace
+from tests.host.hosted_create import create_hosted
 from tests.host.lifecycle_helpers import UID, Lab, genesis_for, host_process, wait_for_socket
 from tests.identity.helpers import Person
 from tests.instructions.conftest import FakeTerminal, Passphrases
@@ -139,82 +133,6 @@ def fresh_root(tmp_path: Path, name: str = "fresh") -> Path:
     return root
 
 
-# --- 1. the same genesis bytes in both modes -------------------------------------------------------------------
-
-
-def _deterministic(monkeypatch) -> dict[str, Any]:
-    """Every random draw of an init made repeatable: keys (in draw order), ULIDs, the label salt, ECDSA nonces
-    (RFC 6979), the recovery code and the workspace id. ``reset()`` starts the sequences again."""
-    state = {"keys": 0, "ulids": 0}
-    scalars = [int.from_bytes(hashlib.sha256(f"key {i}".encode()).digest(), "big") % (2**255) for i in range(8)]
-
-    def generate_private_key():
-        state["keys"] += 1
-        return crypto.private_key_from_scalar(scalars[state["keys"] - 1])
-
-    def new_ulid(*_a, **_k):
-        state["ulids"] += 1
-        return f"01J9ZP00000000000000000{state['ulids']:03d}"
-
-    def sign(key, msg):
-        r, s = decode_dss_signature(key.sign(msg, ec.ECDSA(hashes.SHA256(), deterministic_signing=True)))
-        return r.to_bytes(32, "big") + s.to_bytes(32, "big")
-
-    monkeypatch.setattr(crypto, "generate_private_key", generate_private_key)
-    monkeypatch.setattr(crypto, "sign", sign)
-    monkeypatch.setattr(crypto, "salted_seal", lambda k, m, a, p: suite._salted_seal(k, m, a, p, b"\0" * 16))
-    monkeypatch.setattr(wi, "new_ulid", new_ulid)
-    monkeypatch.setattr(wi, "generate_recovery_code", lambda: CODE)
-    monkeypatch.setattr(wi, "secrets", SimpleNamespace(token_hex=lambda n: WID, SystemRandom=wi.secrets.SystemRandom))
-    monkeypatch.setattr(Host, "new_workspace_id", lambda self: WID)
-
-    def reset():
-        state["keys"] = state["ulids"] = 0
-
-    return {"reset": reset}
-
-
-def _files(root: Path, state: Path) -> dict[str, bytes]:
-    return {
-        "genesis line": (root / ".orch" / "events" / "workspace.jsonl").read_bytes(),
-        "config.json": (root / ".orch" / "config.json").read_bytes(),
-        "keys.jsonl": (root / ".orch" / "keys.jsonl").read_bytes(),
-        "pin": (state / "hosts" / WID / "genesis").read_bytes(),
-    }
-
-
-def test_init_through_the_host_yields_the_same_genesis_bytes_as_direct_mode(
-    lab, tmp_path, monkeypatch, term, passphrases, recording
-):
-    other = Lab(tmp_path / "second")  # a second, independent host state, made before the seams pin the randomness
-    try:
-        seams = _deterministic(monkeypatch)
-        roots = {name: tmp_path / name / "work" for name in ("h1", "h2", "d")}
-        for root in roots.values():
-            root.mkdir(parents=True)
-        direct_state = tmp_path / "dstate"
-        args = {"prefix": "DEMO", "name": "Severin"}
-        hosted = []
-        for each, root in ((lab, roots["h1"]), (other, roots["h2"])):
-            monkeypatch.setattr(wi, "connect_host", lambda sd, each=each: Recording(each.run / "control" / "host.sock"))
-            with each.host(clock=lambda: T):
-                seams["reset"]()
-                hosted.append(wi.create_workspace_hosted(ctx_for(root, each.state, lambda: T), dict(args, host=True)))
-        seams["reset"]()
-        direct = wi.create_workspace(ctx_for(roots["d"], direct_state, lambda: T), dict(args))
-        for res in (*hosted, direct):
-            assert res.data == {"prefix": "DEMO", "workspace_id": WID} and res.seq == 1
-        assert [f["op"] for f in recording.sent] == ["host.wsk_create", "host.bootstrap"] * 2
-        first, second = _files(roots["h1"], lab.state), _files(roots["h2"], other.state)
-        assert first == second  # two hosted runs: every random draw is pinned, so a byte comparison means something
-        assert first == _files(roots["d"], direct_state)  # and direct mode writes the same bytes
-        line = json.loads(first["genesis line"])
-        assert line["type"] == "workspace.created" and line["seq"] == 1 and line["host_sig"]
-        assert crypto.b64u(crypto.public_bytes(derive_person_key(CODE))) == line["owner"]["pk_pub"]
-    finally:
-        other.close()
-
-
 # --- 2. the CLI composite: the client signs, the host never sees the person key --------------------------------
 
 
@@ -227,7 +145,7 @@ def _scan(base: Path, needles: dict[str, bytes], skip: tuple[Path, ...] = ()) ->
     return found
 
 
-def test_cli_init_host_runs_the_composite_and_the_host_never_sees_the_person_key(
+def test_hosted_create_runs_the_composite_and_the_host_never_sees_the_person_key(
     lab, tmp_path, monkeypatch, term, passphrases, recording
 ):
     from orch.cli.main import main
@@ -235,17 +153,9 @@ def test_cli_init_host_runs_the_composite_and_the_host_never_sees_the_person_key
     root = fresh_root(tmp_path, "work")
     monkeypatch.chdir(root)
     env = {"ORCH_STATE_DIR": str(lab.state), "HOME": str(tmp_path / "home"), "USER": "severin"}
-    out = io.StringIO()
     with lab.host() as h:
-        code = main(
-            ["init", "--prefix", "DEMO", "--name", "Severin", "--host", "--json"],
-            env=env,
-            stdout=out,
-            stderr=io.StringIO(),
-        )
-        doc = json.loads(out.getvalue())
-        assert code == 0 and doc["ok"] is True, doc
-        wid = doc["data"]["workspace_id"]
+        res = create_hosted(ctx_for(root, lab.state), {"prefix": "DEMO", "name": "Severin", "host": True})
+        wid = res.data["workspace_id"]
         # exactly the composite, and the host drew the id
         assert [f["op"] for f in recording.sent] == ["host.wsk_create", "host.bootstrap"]
         bootstrap = recording.sent[1]["args"]
@@ -294,7 +204,7 @@ def test_cli_init_host_refuses_a_non_empty_directory_before_calling_the_host(
     root = fresh_root(tmp_path, "work")
     (root / ".orch").mkdir()
     with pytest.raises(OrchError) as e:
-        wi.create_workspace_hosted(ctx_for(root, lab.state), {"prefix": "DEMO", "host": True})
+        create_hosted(ctx_for(root, lab.state), {"prefix": "DEMO", "host": True})
     assert e.value.code == "invalid.input" and "own .orch/" in e.value.message
     assert recording.sent == [] and term.shown == []  # no host call, no secret shown
 
@@ -305,10 +215,9 @@ def test_cli_init_host_without_a_host_is_host_unavailable_and_leaves_nothing(
     root = fresh_root(tmp_path, "work")
     before = sorted(os.listdir(lab.state / "hosts"))
     with pytest.raises(OrchError) as e:
-        wi.create_workspace_hosted(ctx_for(root, lab.state), {"prefix": "DEMO", "host": True})
+        create_hosted(ctx_for(root, lab.state), {"prefix": "DEMO", "host": True})
     assert e.value.code == "host.unavailable" and "nothing was created" in e.value.message
     assert os.listdir(root) == [] and sorted(os.listdir(lab.state / "hosts")) == before
-    assert "host.unavailable" in {x["code"] for x in OP.errors}
 
 
 def test_cli_init_host_passes_a_host_refusal_on_and_drops_its_device_key(
@@ -318,7 +227,7 @@ def test_cli_init_host_passes_a_host_refusal_on_and_drops_its_device_key(
     root.chmod(0o777)  # writable by others: the host refuses it (D-P2-17)
     try:
         with lab.host(), pytest.raises(OrchError) as e:
-            wi.create_workspace_hosted(ctx_for(root, lab.state), {"prefix": "DEMO", "host": True})
+            create_hosted(ctx_for(root, lab.state), {"prefix": "DEMO", "host": True})
     finally:
         root.chmod(0o700)
     assert e.value.code == "custody.unsafe_mode"
@@ -528,7 +437,7 @@ def test_the_composite_starts_again_from_wsk_create_after_a_rolled_back_bootstra
     try:
         wait_for_socket(path, proc)
         helper.start()
-        res = wi.create_workspace_hosted(ctx_for(root, lab.state), {"prefix": "DEMO", "host": True})
+        res = create_hosted(ctx_for(root, lab.state), {"prefix": "DEMO", "host": True})
         helper.join(30)
         if "error" in second:
             raise second["error"]
@@ -611,7 +520,7 @@ def test_a_failure_after_the_append_is_retried_with_the_same_idem_and_the_device
         monkeypatch.setattr(registry.Registry, "_add", _once(registry.Registry._add, RuntimeError("disk full")))
     root = fresh_root(tmp_path, "work")
     with lab.host() as h:
-        res = wi.create_workspace_hosted(ctx_for(root, lab.state), {"prefix": "DEMO", "host": True})
+        res = create_hosted(ctx_for(root, lab.state), {"prefix": "DEMO", "host": True})
         wid = res.data["workspace_id"]
         bootstraps = [f for f in recording.sent if f["op"] == "host.bootstrap"]
         assert len({f["idem"] for f in bootstraps}) == 1 and len(bootstraps) >= 2  # the same idem, asked again
@@ -638,7 +547,7 @@ def test_an_outcome_that_stays_unknown_is_host_unavailable_naming_the_idem(
     root = fresh_root(tmp_path, "work")
     with lab.host() as h:
         with pytest.raises(OrchError) as e:
-            wi.create_workspace_hosted(ctx_for(root, lab.state), {"prefix": "DEMO", "host": True})
+            create_hosted(ctx_for(root, lab.state), {"prefix": "DEMO", "host": True})
         assert now[0] >= 1.0  # it waited out the (fake) deadline
         idem = next(f["idem"] for f in recording.sent if f["op"] == "host.bootstrap")
         wid = next(f["args"]["workspace_id"] for f in recording.sent if f["op"] == "host.bootstrap")
@@ -666,7 +575,7 @@ def test_ctrl_c_during_bootstrap_keeps_the_device_key_and_names_the_idem(lab, tm
     monkeypatch.setattr(wi, "connect_host", lambda sd: Interrupted(lab.run / "control" / "host.sock"))
     root = fresh_root(tmp_path, "work")
     with lab.host(), pytest.raises(OrchError) as e:
-        wi.create_workspace_hosted(ctx_for(root, lab.state), {"prefix": "DEMO", "host": True})
+        create_hosted(ctx_for(root, lab.state), {"prefix": "DEMO", "host": True})
     idem = Recording.sent[-1]["idem"]
     wid = Recording.sent[-1]["args"]["workspace_id"]
     assert e.value.code == "host.unavailable" and idem in e.value.hint
@@ -696,7 +605,7 @@ def test_a_connection_that_never_comes_back_ends_after_the_reconnect_deadline(
     now = _fake_clock(monkeypatch, 30.0)
     root = fresh_root(tmp_path, "work")
     with lab.host(), pytest.raises(OrchError) as e:
-        wi.create_workspace_hosted(ctx_for(root, lab.state), {"prefix": "DEMO", "host": True})
+        create_hosted(ctx_for(root, lab.state), {"prefix": "DEMO", "host": True})
     assert 30.0 <= now[0] < 31.0 and len(connects) > 100  # retried every 0.25 s until the 30 s deadline
     idem = next(f["idem"] for f in Recording.sent if f["op"] == "host.bootstrap")
     wid = next(f["args"]["workspace_id"] for f in Recording.sent if f["op"] == "host.bootstrap")
@@ -842,3 +751,24 @@ def test_clean_root_removes_only_recorded_entries(tmp_path):
     recorded = {"events": [os.lstat(root / "events").st_dev, os.lstat(root / "events").st_ino]}
     Control._clean_root(str(root), recorded, None)
     assert not (root / "events").exists() and (root / "tickets" / "mine").exists()
+
+
+def test_connect_host_honours_the_run_directory_of_the_environment(tmp_path, monkeypatch):
+    """#1193: setup and the hosted create find the host where every other host command does."""
+    seen = []
+
+    class Recorder:
+        def __init__(self, path, timeout=None):
+            seen.append(Path(path))
+
+    monkeypatch.setattr("orch.host.control_client.ControlClient", Recorder)
+    state, run = tmp_path / "state", tmp_path / "elsewhere"
+    wi.connect_host(state, {"ORCH_HOST_RUN_DIR": str(run)})
+    wi.connect_host(state, {})
+    monkeypatch.setenv("ORCH_HOST_RUN_DIR", str(run))
+    wi.connect_host(state)
+    assert seen == [
+        run / "control" / "host.sock",
+        state / "run" / "control" / "host.sock",
+        run / "control" / "host.sock",
+    ]

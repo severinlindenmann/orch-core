@@ -162,6 +162,9 @@ OP = operation(
         err("market.publisher_key_changed"),
         err("market.revoked"),
         err("market.not_allowed"),
+        err("market.manifest_mismatch"),
+        err("market.community_unisolated"),
+        err("market.state_invalid"),
     ),
     handler=handle,
 )

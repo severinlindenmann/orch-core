@@ -402,8 +402,12 @@ def _recheck(service: WorkspaceService, record: dict[str, Any], ev: dict[str, An
     cls, keys = market_class(service, url)
     if cls != doc.get("class"):
         raise MarketError("market.staged_changed")
-    if f"{ev['name']}@{version}" in verdict(raw, url, cls, keys, service.clock()).doc.get("revoked", []):
+    now_doc = verdict(raw, url, cls, keys, service.clock()).doc
+    if f"{ev['name']}@{version}" in now_doc.get("revoked", []):
         raise MarketError("market.revoked")
+    listed = next((e for e in now_doc[ADDONS] if e["id"] == ev["name"]), None)
+    if listed is None or listed["package_sha256"] != pkg.digest or now_doc["version"] < doc["index_version"]:
+        raise MarketError("market.staged_changed")  # D1: the index still lists these bytes, and is not older
     installs = files.installs()
     prior = installs[ADDONS].get(ev["name"])
     if prior is not None:

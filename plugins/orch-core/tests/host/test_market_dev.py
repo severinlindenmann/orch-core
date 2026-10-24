@@ -16,7 +16,7 @@ from orch.market import address, constants, fetch
 from tests.host.devgate_helpers import SbxLab
 from tests.host.dispatch_helpers import Served
 from tests.host.lifecycle_helpers import Lab
-from tests.host.market_helpers import Net, err, ok, person, stage
+from tests.host.market_helpers import Net, addon_dir, err, ok, person, stage
 from tests.market import helpers as H
 
 URL = "https://github.com/acme/orch-marketplace-test"
@@ -161,5 +161,34 @@ def test_dev_json_market_is_strict(tmp_path, market):
             devsandbox.parse_dev_json(json.dumps(doc).encode())
         with pytest.raises(devsandbox.SandboxRefused):
             devsandbox.write_dev_json(lab.sroot, lab.sandbox_id, "https://r.example", market)
+    finally:
+        lab.close()
+
+
+# Delta: a dev-class stage whose class vanishes before submit (a normal host reads the same state) is refused.
+def test_a_dev_stage_cannot_be_granted_once_the_dev_class_is_gone(tmp_path, monkeypatch):
+    from tests.host.dispatch_helpers import Served
+    from tests.host.human_helpers import Human
+
+    n = Net()
+    n.url = URL
+    monkeypatch.setattr(fetch, "fetch_index", n.fetch_index)
+    monkeypatch.setattr(fetch, "fetch_package", n.fetch_package)
+    monkeypatch.setattr(address, "resolve", n.resolve)
+    lab = sandbox(tmp_path)
+    try:
+        served = Served(lab, dev=lab.dev())
+        try:
+            n.add("hello", "1.0.0")
+            ok(person(served, "market.add", {"url": URL}))
+            st = ok(stage(served, "hello"))["data"]
+            h = Human(served)
+            prepared = h.prepare("addon.grant", {"name": "hello", "staged": st["stage"]})
+            served.service.dev = None  # the class is gone between stage and submit
+            res = h.submit_res(prepared["request"]["id"], h.sign(prepared).events)
+            assert err(res) == "market.community_unisolated", res
+            assert not (addon_dir(served, "hello")).exists()
+        finally:
+            served.close()
     finally:
         lab.close()

@@ -7,8 +7,8 @@ from orch import schema
 from orch.cli.meta import overview
 from orch.ops.workflows import WORKFLOWS
 
-MAX_DESCRIBE_LINES = 29
-MAX_DESCRIBE_BYTES = 1700
+MAX_DESCRIBE_LINES = 34
+MAX_DESCRIBE_BYTES = 2100
 MAX_HELP_LINES = 10
 MAX_HELP_BYTES = 800
 MAX_OVERVIEW_LINES = 8

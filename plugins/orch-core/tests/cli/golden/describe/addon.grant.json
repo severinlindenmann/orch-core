@@ -109,6 +109,28 @@
         ]
       },
       {
+        "code": "market.community_unisolated",
+        "exit": 3,
+        "retryable": false,
+        "hint": "other marketplaces need per-add-on user isolation",
+        "fix": [
+          "orch",
+          "market",
+          "list"
+        ]
+      },
+      {
+        "code": "market.manifest_mismatch",
+        "exit": 3,
+        "retryable": false,
+        "hint": "the entry is refused",
+        "fix": [
+          "orch",
+          "market",
+          "list"
+        ]
+      },
+      {
         "code": "market.not_allowed",
         "exit": 3,
         "retryable": false,
@@ -214,6 +236,17 @@
         "fix": [
           "orch",
           "status"
+        ]
+      },
+      {
+        "code": "market.state_invalid",
+        "exit": 5,
+        "retryable": false,
+        "hint": "the host does not guess: repair or remove the market directory",
+        "fix": [
+          "orch",
+          "market",
+          "list"
         ]
       },
       {

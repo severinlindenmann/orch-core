@@ -13,6 +13,8 @@ errors:
   custody.no_prompt (exit 3): run this command yourself, in your own terminal | fix: orch help
   custody.wrong_passphrase (exit 3): run the command again and type your passphrase | fix: orch help
   human_only (exit 3): orch ask or orch wait | fix: orch describe ask
+  market.community_unisolated (exit 3): other marketplaces need per-add-on user isolation | fix: orch market list
+  market.manifest_mismatch (exit 3): the entry is refused | fix: orch market list
   market.not_allowed (exit 3): ask the hub admin | fix: orch market list
   market.not_installed (exit 3): orch addon install ID | fix: orch market list
   market.origin_changed (exit 3): orch addon list | fix: orch market list
@@ -23,5 +25,6 @@ errors:
   market.version_reused (exit 3): raise the version | fix: orch market list
   role.denied (exit 3): ask an owner or maintainer | fix: orch status
   lock.busy (exit 4 retry): retry in a moment | fix: orch status
+  market.state_invalid (exit 5): the host does not guess: repair or remove the market directory | fix: orch market list
   members.stale (exit 9 retry): retry; the person re-signs | fix: orch status
 out: ok addon.granted {name} seq={seq} / next: {next}

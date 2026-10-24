@@ -328,7 +328,7 @@ def test_print_url_terminal_only(tmp_path, monkeypatch, capsys):
         "control",
         lambda _p, c, *_: {"release": launcher.code_digest()}
         if c == "hello"
-        else {"port": PORT, "code": "demo-not-a-real-code"},
+        else {"port": PORT, "code": "demo-not-a-real-code", "expires_at": int(time.time()) + 30},
     )
     monkeypatch.setattr(launcher.webbrowser, "open", lambda _: pytest.fail("must print only"))
     launcher.open_dashboard(print_url=True)

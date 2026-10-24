@@ -611,8 +611,8 @@ _SPECS = [
         "the passkey was not accepted",
         "try again, or use the SSH tunnel",
         ["orch", "status"],
-        "A passkey login or registration failed verification (#1198 R1-5). The reason is logged on the server and never "
-        "sent to the browser.",
+        "A passkey login or registration failed verification (#1198 R1-5). The reason is logged on the server and "
+        "never sent to the browser.",
     ),
     _e(
         "enroll.expired",

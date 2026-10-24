@@ -145,7 +145,8 @@ def agent_preview(data):
         "ticket": ticket if isinstance(ticket, str) and KEY.fullmatch(ticket) else None,
         "display": text(data.get("display")),
         "model": model if isinstance(model, str) and MODEL_NAME.fullmatch(model) else None,
-        "model_source": source if source in ("chosen", "workspace", "default") else None,
+        "model_source": source if source in ("chosen", "addon", "default") else None,
+        "model_by": text(data.get("model_by"), 60) if source == "addon" else None,  # the package's own title: data
         "display_hidden": isinstance(data.get("display"), str) and text(data.get("display")) is None,
         "cwd": shown,
         "cwd_path": text(data.get("cwd_path")),

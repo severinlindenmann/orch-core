@@ -41,13 +41,6 @@ DEPOSIT_REASONS = (
 
 
 HARNESS_WORDS = {"claude-code": "Claude", "codex": "Codex"}
-MODE_WORDS = {
-    "work": "Do the work",
-    "refine": "Write requirements and plan",
-    "fix": "Fix what was sent back",
-    "continue": "Continue",
-    "context": "Read and answer",
-}
 
 
 class AgentPreviewBody(BaseModel):
@@ -89,9 +82,9 @@ def register(app: FastAPI, gateway: Gateway) -> None:
 
     @app.get("/api/w/{ws}/model-routing")
     def model_routing(ws: str = Depends(reads.workspace)):
-        """The closed lists Model routing offers (core's `orch.modelchoices`, nothing from the host): the agents, their
-        models and the Start agent modes, in the words the page shows. The signed table itself is in the settings."""
-        from orch.modelchoices import MODEL_CHOICES, MODEL_LABELS, ROUTE_MODES
+        """The closed lists of models a start can name (core's `orch.modelchoices`, nothing from the host): the agents
+        and their models, in the words the page shows."""
+        from orch.modelchoices import MODEL_CHOICES, MODEL_LABELS
 
         gateway.enabled(ws)
         return {
@@ -99,7 +92,6 @@ def register(app: FastAPI, gateway: Gateway) -> None:
                 {"id": h, "label": HARNESS_WORDS[h], "models": [{"id": m, "label": MODEL_LABELS[m]} for m in names]}
                 for h, names in MODEL_CHOICES.items()
             ],
-            "modes": [{"id": m, "label": MODE_WORDS[m]} for m in ROUTE_MODES],
         }
 
     @app.post("/api/w/{ws}/agents/start")

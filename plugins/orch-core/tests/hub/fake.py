@@ -35,6 +35,12 @@ Json = dict[str, Any]
 Responder = Callable[["Forwarded"], Json]
 
 ZERO_WS = "0" * 32
+#: the hub policy of a new hub (orch-hub D14): the official marketplace only
+DEFAULT_POLICY: Json = {
+    "markets": [{"url": "https://github.com/severinlindenmann/orch-marketplace", "class": "official", "keys": []}],
+    "addons": {"allow": None, "block": []},
+    "ceiling": None,
+}
 
 
 class HubError(Exception):
@@ -121,10 +127,18 @@ class FakeHub:
 
     # --- test controls --------------------------------------------------------------------------------------------
 
-    def set_snapshot(self, workspace_id: str, roles: dict[str, str], revoked_channels: list[str] | None = None) -> Json:
+    def set_snapshot(
+        self,
+        workspace_id: str,
+        roles: dict[str, str],
+        revoked_channels: list[str] | None = None,
+        market_policy: Json | None = None,
+    ) -> Json:
         """Sign the next snapshot version of a joined workspace (``roles``: user_id hex -> read | edit | admin)."""
         ws = self.workspaces[workspace_id]
-        ws.snapshot = self._snapshot(workspace_id, ws.snapshot["o"]["version"] + 1, roles, revoked_channels or [])
+        ws.snapshot = self._snapshot(
+            workspace_id, ws.snapshot["o"]["version"] + 1, roles, revoked_channels or [], market_policy
+        )
         return ws.snapshot
 
     def push(self, workspace_id: str, op: str, body: Json) -> Json:
@@ -195,7 +209,9 @@ class FakeHub:
         }
         return sign_with(self._hk_op, "sig_hub_route", o)
 
-    def _snapshot(self, ws_id: str, version: int, roles: dict[str, str], revoked: list[str]) -> Json:
+    def _snapshot(
+        self, ws_id: str, version: int, roles: dict[str, str], revoked: list[str], market_policy: Json | None = None
+    ) -> Json:
         o = {
             "v": 2,
             "suite": 2,
@@ -209,6 +225,7 @@ class FakeHub:
             "issued_ms": self.now_ms,
             "roles": dict(roles),
             "revoked_channels": sorted(set(revoked)),
+            "market_policy": DEFAULT_POLICY if market_policy is None else market_policy,
             "dev": self.dev_mode,
         }
         return sign_with(self._hk_op, "sig_hub_snapshot", o)

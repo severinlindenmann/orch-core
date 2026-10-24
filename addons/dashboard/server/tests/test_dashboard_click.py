@@ -1926,6 +1926,38 @@ def test_publish_setup_and_share_are_never_one_click(client, token, stub, script
     assert client.app.state.handoffs.active == {}
 
 
+MARKET = {"action": "market_grant", "name": "echo", "staged": "st_" + "0" * 32}
+
+
+@pytest.fixture
+def host_serves_grant(monkeypatch):
+    """The test host's welcome does not list addon.grant (a real one does); the column check is not what is tested."""
+    from orch_dashboard import handoff
+
+    monkeypatch.setattr(handoff, "WORKSPACE_OPS", tuple(o for o in handoff.WORKSPACE_OPS if o != "addon.grant"))
+
+
+def test_a_market_install_is_one_click_and_the_signer_gets_the_host_review_material_only(
+    client, token, stub, script, rich, host_serves_grant
+):
+    """V3-D38: the grant of a staged marketplace package goes to the signer like any other action. The server names
+    the op and its two arguments; the review (capabilities, marketplace block) is the host's and the signer's."""
+    res = prepare(client, token, stub, MARKET)
+    assert res.status_code == 200, res.text
+    (op, args) = [c for c in script.clients[0].calls if c[0] == "prepare"][0]
+    assert args["op"] == "addon.grant" and args["args"] == {"name": "echo", "staged": MARKET["staged"]}
+    assert "sequence" not in args and "files" not in args
+    again = prepare(client, token, stub, MARKET)  # the same stage is the same request
+    assert again.json()["request_id"] == res.json()["request_id"] and script.prepared == 1
+    other = prepare(client, token, stub, {**MARKET, "staged": "st_" + "1" * 32})  # a new review is a new request
+    assert other.status_code == 200 and script.prepared == 2
+
+
+def test_a_market_install_for_publish_is_still_not_a_thing(client, token, stub, script, rich, host_serves_grant):
+    res = prepare(client, token, stub, {**MARKET, "name": "publish"})
+    assert res.status_code == 409 and res.json()["error"]["reason"] == "terminal_only" and script.prepared == 0
+
+
 def test_a_stopped_sequence_says_which_ticket_exists_and_that_the_agent_access_is_last(
     client, token, stub, script, host_check, rich, monkeypatch
 ):
@@ -2112,28 +2144,3 @@ def test_pictures_need_a_signer_that_holds_them(client, token, stub, script):
     body = {"sha256": f"sha256:{DIGEST}", "size": 3, "offset": 0, "b64": "AAEC", "last": True}
     res = client.post(url(stub, "images"), json=body, headers=hdr(token))
     assert res.status_code >= 400 and "orch-core" in res.text
-
-
-@pytest.mark.parametrize("supports_sequence", [False, True])
-def test_model_routing_enable_is_a_click_sequence(
-    client, token, stub, script, gateway, monkeypatch, tmp_path, supports_sequence
-):
-    from orch.addons.settings_needs import preview_grant
-    from test_addon_enable import MODELS, Link
-
-    link = Link()
-    monkeypatch.setattr(gateway, "link", lambda ws: link)
-    monkeypatch.setattr(gateway, "enabled", lambda ws: link)
-    monkeypatch.setattr(gateway, "call", lambda ws, op, args: {"grant": preview_grant(tmp_path, "model-routing")})
-    body = {"action": "addon_enable", "name": "model-routing", "models": MODELS}
-    script.features = ["custody", "sequence"] if supports_sequence else ["custody"]
-    res = prepare(client, token, stub, body)
-    if not supports_sequence:
-        assert res.json()["error"]["code"] == "click.contract"
-        assert script.prepared == 0
-        return
-    assert res.status_code == 200, res.text
-    sent = [args for cl in script.clients for op, args in cl.calls if op == "prepare"][-1]
-    assert sent["op"] == "settings.set" and sent["args"] == {"set": {"models": MODELS}}
-    assert sent["sequence"]["of"] == 2
-    assert sent["sequence"]["intent"]["kind"] == "addon_enable"

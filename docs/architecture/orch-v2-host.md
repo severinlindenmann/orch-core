@@ -2794,13 +2794,13 @@ to your orch runner on this machine and is never shown") only then, with the per
 
 | Class | Ops |
 |---|---|
-| **Click** | `approve`, `request_changes`, `verdict`, `answer`, `close`, `reopen`, `new`, `set`, `section.set`, `ac.add`, `ac.edit`, `task.add`, `task.edit`, `task.block`, `task.done`, `task.reopen`, `task.skip`, `task.start`, `ac.accept`, `ac.unaccept`, `task.mark_done`, `log`, `ask`, `claim`, `release`, `handoff`, `submit`, `move`, `artifact.add`, `artifact.replace`, `apply`, `grant.revoke`, `addon.disable`, `settings.set` without `repos` |
-| **Click + typed word** | `relay.pair_device` (the last eight hex of the device id; B10), `member.add`, `member.role`, `member.remove` (word: the person id, unique already), `addon.grant`, `addon.purge` (`<name>~<WS8>`: addon names repeat across workspaces), workspace `policy.set` (`<PREFIX>~<WS8>/POLICY`), `settings.set` with `repos` (`<PREFIX>~<WS8>/SETTINGS`: it changes the repo path and remote that D58's source checks read); a ticket-scope op keeps `KEY/FRAG`. `WS8` is the last 8 characters of the workspace id and `PREFIX` the prefix, both from the signer's own registry (orch-52 decision, 12 Oct 2026, shared with #404's terminal signer) |
+| **Click** | `approve`, `request_changes`, `verdict`, `answer`, `close`, `reopen`, `new`, `set`, `section.set`, `ac.add`, `ac.edit`, `task.add`, `task.edit`, `task.block`, `task.done`, `task.reopen`, `task.skip`, `task.start`, `ac.accept`, `ac.unaccept`, `task.mark_done`, `log`, `ask`, `claim`, `release`, `handoff`, `submit`, `move`, `artifact.add`, `artifact.replace`, `apply`, `grant.revoke`, `addon.disable`, `addon.grant` (any add-on except `publish`, which is terminal only; V3-D38: one click, the review shows the capabilities and the marketplace block), `settings.set` without `repos`, `sign_methods`, `grant_hours` and `publish` (so `addons` is a click, V3-D38) |
+| **Click + typed word** | `relay.pair_device` (the last eight hex of the device id; B10), `member.add`, `member.role`, `member.remove` (word: the person id, unique already), `addon.purge` (`<name>~<WS8>`: addon names repeat across workspaces), workspace `policy.set` (`<PREFIX>~<WS8>/POLICY`), `settings.set` with `repos` (`<PREFIX>~<WS8>/SETTINGS`: it changes the repo path and remote that D58's source checks read); a ticket-scope op keeps `KEY/FRAG`. `WS8` is the last 8 characters of the workspace id and `PREFIX` the prefix, both from the signer's own registry (orch-52 decision, 12 Oct 2026, shared with #404's terminal signer) |
 | **Click + word, deposit only** (v1.6) | `grant` with `deposit:true` and `label:"runner"`, at most 168 h and the workspace `grant_hours` (word `<PREFIX>~<WS8>/GRANT`; the secret goes only to the runner; owner decision of 12 Oct 2026, §12.4.2) |
 | **Terminal only** | `grant` without `deposit:true`, and every op not listed above |
 
 Daily operations use click confirmation as a phase-1 usability decision. A later event may supersede their recorded
-state but may not reverse external effects. Typed words on member, addon-grant/purge, policy and repo-settings
+state but may not reverse external effects. Typed words on member, addon-purge, policy and repo-settings
 operations reduce accidental confirmation; they are neither authentication factors nor protection against
 script-driven signing (the word is in the View). Framing defences address clickjacking separately. The grant secret
 stays off the HTTP path (F1, D-P2-16): a terminal `grant` shows it only on the terminal, and a click deposit grant
@@ -5021,7 +5021,7 @@ it can see (D65's stated limit); presence returns with H9 and tier B in phase 3.
 |---|---|---|---|
 | CLI (`orch approve`) | `human.prepare` with `signer` | `/dev/tty`: header, then review from `material`, confirmation word, `tcflush` (C7) | passphrase, fields from the signing bytes |
 | CLI (`orch sign CODE`) | `human.pending` + `human.get` (binds the device) | the same | the same |
-| H5c click signer (`python -I -m orch.click`, beside the dashboard, auth `convenience`, phase 1) | its own `human.prepare` with `signer` (bound at prepare), then `human.get` | the dashboard's sign panel shows the signer's View (the terminal review line for line, the risk line), §0.8.6 | a click; a typed word for member, addon-grant/purge, policy and repo-settings ops; none on the key |
+| H5c click signer (`python -I -m orch.click`, beside the dashboard, auth `convenience`, phase 1) | its own `human.prepare` with `signer` (bound at prepare), then `human.get` | the dashboard's sign panel shows the signer's View (the terminal review line for line, the risk line), §0.8.6 | a click; a typed word for member, addon-purge, policy and repo-settings ops (V3-D38: `addon.grant`, except `publish`, and `settings.set` with `addons` are one click; the click review lists every line and the marketplace block "per host, not signed"); none on the key |
 | H9 `orch-signer` (macOS, Swift, Secure Enclave P-256, auth `secure-enclave`) | `human.get` (binds the device) | its own native window: header, then review from `material` after recomputing the hashes | Touch ID; the LocalAuthentication reason is built from the signing bytes; non-person labels refused |
 
 WebAuthn (D64) needs a new signature contract and is deferred past P2 (H0 records this).
@@ -5543,7 +5543,7 @@ alternative:
   guarantees; `file` collides with the file tier), or reusing `passphrase` (would hide the missing factor).
 - **Same device on conversion; downgrade in place only with `--in-place`** (Codex 4, Opus R10). *Alternative:* a new
   device for every custody change. That is `--rotate`, designed for when device ops exist.
-- **Click for daily ops; a typed word for member, addon-grant/purge, policy and repo-settings ops; `grant` and unknown
+- **Click for daily ops; a typed word for member, addon-purge, policy and repo-settings ops; `grant` and unknown
   ops terminal-only** (Codex 10, Opus R8; v1.6 adds the deposit-only runner grant, click + word, §10 entry 8 and
   D-P2-27). *Alternatives:* click for everything (the grant secret would cross the HTTP
   process); a word for every op (the owner wants it easy).
@@ -11538,7 +11538,7 @@ variables of check 1 only narrow.
      `tests/relay/personkey_sandbox.py` into `orch.devsandbox` so that production code and `dev-pair` share one
      check; orch-29's open point in 11A.15.10);
   3. `dev.json` exists, is valid, and its `sandbox_id` and `root` equal the manifest's;
-  4. the manifest names the sandbox person (`person_id`, written by `dev-pair` after `orch init`) and the state
+  4. the manifest names the sandbox person (`person_id`, written by `dev-pair` after `orch setup`; a manifest without `person_id` and without `workspaces` starts a pending dev host, 17.3 "Creation") and the state
      directory holds no registered workspace that fails 17.3 (a dev host serves sandbox workspaces only, 17.3 rule
      R5);
   5. the passphrase is the only person custody in the sandbox's `HOME` (no keychain selection, no `custody.json`
@@ -11577,14 +11577,14 @@ checked at registration, at host start, and again by `dev_gate` inside the colum
 | # | Check | Why |
 |---|---|---|
 | S1 | the workspace root is `<root>/ws` (or `<root>/ws-<n>`), reached from the pinned root descriptor without following a link, and its `st_dev`/`st_ino` equal the pair the manifest recorded for this workspace id | a copy or a move breaks it (17.3 "Copies") |
-| S2 | the manifest lists this workspace id under `workspaces`, written by `dev-pair` right after `orch init` in that root | the sandbox owns the workspace, not the other way round |
+| S2 | the manifest lists this workspace id under `workspaces`, written by `dev-pair` right after `orch setup` in that root | the sandbox owns the workspace, not the other way round |
 | S3 | the signed genesis `workspace.created` has `prefix` = `SBX`, `owner.name` = exactly `orch dev sandbox <id8>`, with `id8` = the first 8 characters of the manifest id (the manifest id is 8 or more lowercase hex characters, `^[0-9a-f]{8,}$`; DECIDED (orch-07), D4), and `owner.person` = the manifest's sandbox person (DECIDED (orch-52), O5; strengthened by DECIDED (orch-07), F1: `SBX` is a **reserved** prefix, see "Creation") | an immutable, signed, creation-time marker without an F1 change. Because production `orch init` gives `SBX` only to a fresh throwaway person, no real workspace has an `SBX` genesis, and a forged manifest cannot change a signed genesis |
 | S4 | the member list holds exactly one person, the sandbox person; no `member.added` in the merged history | a sandbox workspace has no other reader whose history we would poison |
 | S5 | the workspace-local marker `<ws>/.state/dev-sandbox.json` (0600) exists and names the same `sandbox_id` and workspace id | an extra check (DECIDED (orch-07), F2). It travels with a file copy, but not through a records repo or a relay restore (`.state/` is rebuilt), so the primary marker on normal hosts is the `SBX` genesis |
 | S6 | the workspace's `link.json` origin equals `dev.json`'s `relay_origin` byte for byte, or there is no link (DECIDED (orch-52), O2: no hard-coded allow-list in production code; `dev.json` is read only under the flag and a matching manifest, so a stray file cannot widen anything) | a sandbox talks only to the relay `dev-pair` chose |
 
 - **R5: a dev host serves sandbox workspaces only, through one registration choke point (DECIDED (orch-07), F5).**
-  Every path that adds a workspace to a host's registry (`orch host register`, `host.bootstrap` (`orch init` against a
+  Every path that adds a workspace to a host's registry (`orch host register`, `host.bootstrap` (`orch setup` against a
   running host), any restore, and a relay-based adopt or recovery) goes through one function,
   `orch.host.registry.admit(service, ws)`. On a dev host it refuses a workspace that fails any of S1 to S5
   (`host.dev_refused`, reason `not_sandbox`); on a normal host it refuses an `SBX` genesis (below). The start-up proof
@@ -11610,9 +11610,22 @@ checked at registration, at host start, and again by `dev_gate` inside the colum
   is neither registered nor served. On a normal host its `SBX` genesis makes `admit` refuse it, whether it arrives as a
   file copy, a records-repo checkout or a relay restore, with or without the marker. Test
   `sbx_genesis_without_marker_refused_on_normal_host` (records rebuild, `.state/` removed, relay restore).
-- **Creation.** `dev-pair up --sim-convenience` runs `orch init --prefix SBX` (owner name `orch dev sandbox <id8>`) in
-  `<root>/ws`, then writes the workspace marker and the manifest's `workspaces` entry (`id`, `st_dev`, `st_ino`) and
-  `person_id`, then `dev.json`, then starts the host.
+- **Creation (V3-D38, amended).** `orch init` is gone; `orch setup` (hosted: `host.wsk_create` + `host.bootstrap`) is the
+  only genesis. `dev-pair up --sim-convenience` and the kit therefore work in four phases: (1) write the manifest with
+  `id` and `root` only (no `person_id`, no `workspaces`) and `dev.json`, and start a **pending dev host**; (2) run
+  `orch setup --prefix SBX` (owner name `orch dev sandbox <id8>`, passphrase custody) in `<root>/ws`, which bootstraps and
+  registers the workspace on that host; (3) stop the host by its own PID and write the manifest's `person_id` and
+  `workspaces` entry (`id`, `st_dev`, `st_ino`) and the workspace marker (`dev.json` was written once, in step 1, and stays); (4) start the full dev host, which
+  proves S1 to S5 as before. Production code never writes a sandbox file.
+- **The pending dev host (V3-D38).** A manifest with neither `person_id` nor `workspaces` gives a pending dev host
+  (start-up proof checks 1 to 3 and 5 unchanged; a manifest that lists workspaces but no person is still refused,
+  `no_person`). It has **no dev powers**: `sandbox_reason` fails first with `S0` for every workspace, so `dev_gate`,
+  the test marketplace and the lock-free `gated` are all off, and a records push is refused as on every dev host. It
+  starts only with an empty registry (`not_sandbox` otherwise) and admits exactly one fresh `SBX` genesis per process (the claim records the workspace id and is checked again before every admission, start-up recovery and same-key retries included),
+  only through `host.bootstrap`: the genesis prefix is `SBX`, the owner name the sandbox's, the owner a fresh person, the
+  root `<root>/ws` or `<root>/ws-<n>` directly below the pinned root. `host.register` and every further bootstrap on a
+  pending host are `not_sandbox`. Its status line reads `DEV HOST (pending genesis, no dev powers)`. Dev powers exist
+  only on a host that has proven the bound person, workspace row and marker at its own start.
 - **`SBX` is a reserved prefix (DECIDED (orch-07), F1).** Production `orch init` and `host.bootstrap` accept
   `--prefix SBX` only when the init **creates a fresh person** (no person identity in `HOME` yet, so the person owns
   nothing else), **this `orch init` run generates the recovery code itself** (never a typed, restored or imported

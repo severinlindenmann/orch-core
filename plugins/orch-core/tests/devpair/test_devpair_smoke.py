@@ -1,6 +1,6 @@
-"""dev-pair's real-orch steps against a real sandbox host (no relay): ``orch init`` through the pseudo-terminal
-(generated passphrase, recovery code confirmed), the D2 sandbox files, ``orch host run --foreground
---dev-sim-convenience``, ``orch host register`` and ``orch keys reader declare``; then ``down``. The relay steps
+"""dev-pair's real-orch steps against a real sandbox host (no relay): ``orch setup`` through the setup socket and the
+pseudo-terminal (generated passphrase, recovery code confirmed), the D2 sandbox files, ``orch host run --foreground
+--dev-sim-convenience``, and ``orch keys reader declare``; then ``down``. The relay steps
 (account, link, pair) are the lead's end-to-end run after the pairing branch merges."""
 
 from __future__ import annotations
@@ -46,19 +46,31 @@ def make_ctx(dp, base, *, sim):
 
 
 @pytest.mark.parametrize("sim", [True, False], ids=["sim-convenience", "plain"])
-def test_init_host_register_and_down(dp, base, sim, capsys):
+def test_setup_host_and_down(dp, base, sim, capsys):
+    """V3-D38: the host first (a PENDING dev host under ``--sim-convenience``), ``orch setup`` through the setup
+    socket and the pseudo-terminal, then for a sandbox: stop, bind person, workspace row and marker, start the full
+    dev host."""
+    dash = Path(__file__).resolve().parents[4] / "addons" / "dashboard" / "server" / ".venv" / "bin" / "orch-dashboard"
+    if not dash.is_file():
+        pytest.skip("orch setup needs the dashboard add-on (uv sync --locked in addons/dashboard/server)")
     ctx = make_ctx(dp, base, sim=sim)
     root = ctx.root
     try:
         prefix, name = ("SBX", devsandbox.owner_name(ctx.sb.sid)) if sim else ("DVP", f"dev-pair {ctx.sb.sid[:8]}")
-        dp.step_init(ctx, prefix, name)
+        if sim:
+            dp.step_sim_pre(ctx, ctx.sb.sid)
+            dp.step_host(ctx, role="host-pending")
+            assert "pending genesis, no dev powers" in (root / "logs" / "host-pending.log").read_text()
+        else:
+            dp.step_host(ctx)
+        dp.step_setup(ctx, prefix, name)
         dp.identity_from_disk(ctx)
-        dp.manifest_update(root, person_id=ctx.person_id)
         # the secrets: 0600, the recovery code is the one the genesis owner is derived from
         for f in ("passphrase", "recovery-code"):
             assert (os.stat(root / "secrets" / f).st_mode & 0o777) == 0o600
         assert len(ctx.sb.read("secrets/recovery-code").decode().split()) == 24
         if sim:
+            dp.stop_host(ctx, "host-pending")
             dp.step_sim(ctx, ctx.sb.sid)
             m = devsandbox.check_manifest(root)
             assert m["person_id"] == ctx.person_id and m["workspaces"][0]["id"] == ctx.workspace_id
@@ -67,11 +79,14 @@ def test_init_host_register_and_down(dp, base, sim, capsys):
                 dev["sim_convenience"] is True and dev["relay_origin"] == ctx.origin and dev["sandbox_id"] == ctx.sb.sid
             )
             assert devsandbox.read_marker(root / "ws")["workspace_id"] == ctx.workspace_id
+            dp.step_host(ctx)
+            host_log = (root / "logs" / "host.log").read_text()
+            assert "DEV HOST: Simulator convenience answers ON" in host_log
         else:
+            dp.manifest_update(root, person_id=ctx.person_id)
             assert not (root / "state" / "host" / "dev.json").exists()
-        dp.step_host(ctx)
-        host_log = (root / "logs" / "host.log").read_text()
-        assert ("DEV HOST: Simulator convenience answers ON" in host_log) is sim
+            host_log = (root / "logs" / "host.log").read_text()
+            assert "DEV HOST" not in host_log
         procs = devsandbox.check_manifest(root)["processes"]
         assert [p["role"] for p in procs] == ["host"] and dp.validate_record(procs[0], os.path.realpath(root))
         assert dp.host_listening(root)

@@ -57,3 +57,5 @@ setup/protocol.py 6
 setup/review.py 6
 setup/steps.py 2
 market/__init__.py 1
+# the hub policy's JSON key "addons" (not a store path)
+hubclient/marketpolicy.py 2

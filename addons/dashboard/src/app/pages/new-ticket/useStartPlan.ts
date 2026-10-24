@@ -89,7 +89,7 @@ export function useStartPlan(workspace: Workspace, person: string) {
 
   const choice: AgentChoiceValue = { harness: pref.harness, mode: pref.mode, model: pref.model }
   const models = choices.data?.harnesses.find((h) => h.id === pref.harness)?.models ?? []
-  const shown = shownModel(choice, settings.data?.models, routing)
+  const shown = shownModel(choice)
   const reviewed: Reviewed = { choice, model: shown, grantId: grant?.id ?? null }
   return { feature, available, reason: reason === 'checking' ? null : reason, pending: feature && runner.isPending, grant, grantNow, needsGrant, lengths, hours, setHours, cap, pref, setPref, choice, models, routing, choices: choices.data, shown, reviewed, priorGrantIds: info?.grant ? [info.grant.id] : [] }
 }

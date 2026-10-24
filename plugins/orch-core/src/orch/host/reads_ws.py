@@ -521,8 +521,8 @@ def workspace_settings(ctx: ReadCtx) -> dict[str, Any]:
     }
     if viewer.column in ("P", "R"):  # the Publish server addresses: for a person (or their phone), not an agent (G, N)
         out["publish"] = data["publish"]
-        out[ADDONS_KEY] = data[ADDONS_KEY]  # G6: what each add-on was told (signed per add-on), never to an agent
     if viewer.column != "N":
+        out[ADDONS_KEY] = data[ADDONS_KEY]  # G6 ruling 5: not secret, see the add-on settings review note
         out["settings_at"] = data["settings_at"]
         out["policy_at"] = data["policy_at"]
     return out

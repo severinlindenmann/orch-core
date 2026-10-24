@@ -26,7 +26,7 @@ MAX_BYTES = 8 * 1024
 MAX_DEPTH = 4  # nesting of containers, the value itself is depth 1
 MAX_STRING = 200
 MAX_ITEMS = 64
-_KEY = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}(?![\s\S])")
+_KEY = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}(?![\s\S])")
 _NAME = re.compile(r"[a-z][a-z0-9-]{0,39}(?![\s\S])")
 _SAFE_INT = 2**53 - 1
 
@@ -51,7 +51,7 @@ def _walk(v: Any, depth: int) -> str | None:
             return f"more than {MAX_ITEMS} entries"
         for k, sub in v.items():
             if not isinstance(k, str) or not _KEY.fullmatch(k):
-                return "a key is lower-case letters, digits . _ -"
+                return "a key is lower-case letters, digits _ -"
             if (why := _walk(sub, depth + 1)) is not None:
                 return why
         return None
@@ -80,6 +80,9 @@ def check_shape(value: Any) -> str | None:
             return f"more than {MAX_BYTES // 1024} KiB"
     except Exception:  # noqa: BLE001 - anything canon refuses (a float, a lone surrogate) is a refusal
         return "not plain data"
+    found = leaves(value)
+    if len(found) != len({path for path, _ in found}):
+        return "two values on one path"
     return None
 
 

@@ -48,6 +48,7 @@ GOOD = {"mode": "fast", "limit": 5, "on": True, "nested": {"tag": "a"}}
         {"note": "a\x00b"},
         {"note": "a‮b"},
         {"Bad": 1},
+        {"a.b": 1},  # B1-1: a dot in a key would let two leaves share one path
         {"a b": 1},
         {"a": {"b": {"c": {"d": {"e": 1}}}}},  # depth 5
         {"note": "x" * 100, "more": ["y" * 190] * 50},  # over 8 KiB
@@ -192,9 +193,11 @@ def test_the_review_shows_every_leaf_on_its_own_line(installed, human):
     assert content["headline"] == "Settings of cfgdemo (add-on)"
     rows = {r["field"]: r for r in content["fields_changed"]}
     assert set(rows) == {"cfgdemo: limit", "cfgdemo: mode", "cfgdemo: nested.tag", "cfgdemo: on"}
-    assert rows["cfgdemo: mode"]["after"] == "fast" and rows["cfgdemo: on"]["after"] == "true"
-    assert rows["cfgdemo: limit"]["after"] == "5" and rows["cfgdemo: nested.tag"]["after"] == "a"
-    assert rows["cfgdemo: mode"]["before"] == "slow" and rows["cfgdemo: mode"]["before_note"] == "per host, not signed"
+    assert rows["cfgdemo: mode"]["after"] == '"fast"' and rows["cfgdemo: on"]["after"] == "true"
+    assert rows["cfgdemo: limit"]["after"] == "5" and rows["cfgdemo: nested.tag"]["after"] == '"a"'
+    assert (
+        rows["cfgdemo: mode"]["before"] == '"slow"' and rows["cfgdemo: mode"]["before_note"] == "per host, not signed"
+    )
     assert rows["cfgdemo: nested.tag"]["before"] is None  # nothing folded: a new leaf has no before
 
 

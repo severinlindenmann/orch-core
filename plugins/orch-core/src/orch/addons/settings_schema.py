@@ -17,7 +17,7 @@ __all__ = ["MAX_DEPTH", "SettingsSchemaError", "check_settings_schema"]
 
 MAX_DEPTH = 4  # nesting of schema nodes, the root is depth 1
 _MAX_ENTRIES = 64  # properties, enum values, maxItems, maxProperties
-_KEY = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}(?![\s\S])")
+_KEY = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}(?![\s\S])")
 _TYPES = ("object", "string", "integer", "boolean", "array")
 _COMMON = {"type", "title"}
 _KEYS = {
@@ -91,7 +91,7 @@ def _object(node: dict[str, Any], path: list[str | int], depth: int) -> None:
         raise SettingsSchemaError([*path, "properties"], f"properties is an object of at most {_MAX_ENTRIES}")
     for k, sub in props.items():
         if not _KEY.fullmatch(k):
-            raise SettingsSchemaError([*path, "properties", k], "a property name is lower-case letters, digits . _ -")
+            raise SettingsSchemaError([*path, "properties", k], "a property name is lower-case letters, digits _ -")
         _node(sub, [*path, "properties", k], depth + 1)
     req = node.get("required", [])
     if (

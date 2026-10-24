@@ -515,7 +515,9 @@ def _models_rows(out: dict[str, Any], value: Any, before: Any, ctx: Any) -> bool
 
 
 def _leaf_word(v: Any) -> str:
-    return "true" if v is True else "false" if v is False else "(nothing)" if v in ({}, []) else _show(v) or "null"
+    """A leaf as canonical JSON on one line: strings quoted, ``true``/``false``/``null`` bare, ``{}`` and ``[]``
+    literal, so ``true`` and ``"true"``, ``5`` and ``"5"`` differ and no text can pass for the ``(removed)`` marker."""
+    return one(canon.dumps(v).decode("utf-8"))
 
 
 def _addons_rows(out: dict[str, Any], value: Any, before: Any, ctx: Any) -> str | None:
@@ -530,8 +532,11 @@ def _addons_rows(out: dict[str, Any], value: Any, before: Any, ctx: Any) -> str 
     old = before.get(name) if isinstance(before, Mapping) else None
     if sv.check_shape(old) is not None:
         old = None  # not plain data: show nothing of it rather than guess
-    now = dict(sv.leaves(new)) if new is not None else {}
-    was = dict(sv.leaves(old)) if old is not None else {}
+    new_leaves = sv.leaves(new) if new is not None else []
+    old_leaves = sv.leaves(old) if old is not None else []
+    now, was = dict(new_leaves), dict(old_leaves)
+    if len(now) != len(new_leaves) or len(was) != len(old_leaves):
+        return None  # two leaves on one path would show one row: no plain view at all
     if new is None:
         _row(
             out,
@@ -550,8 +555,8 @@ def _addons_rows(out: dict[str, Any], value: Any, before: Any, ctx: Any) -> str 
             ctx.note(False),
         )
     out.setdefault("notes", []).append(
-        f"Only {one(name)} reads these settings. It gets exactly these values when orch runs it; "
-        "orch checks them against what it declared."
+        "Stored in the workspace as plain text: people and agents who can read the workspace can see them. "
+        f"{one(name)} gets exactly these values when orch runs it; keys go through 'orch addon login', not here."
     )
     return f"Settings of {one(name)} (add-on)"
 

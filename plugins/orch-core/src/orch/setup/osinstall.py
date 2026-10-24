@@ -5,7 +5,7 @@ is a root-owned 0700 directory that holds the verified release's ``orch/`` tree.
 never as ``-m orch...``: that would import the code from whatever site-packages the release has, which the person can
 change.
 
-TODO(installer): the signed-manifest part belongs to the installer task (the ``curl | sh`` installer and
+TODO(#1198, installer): the signed-manifest part belongs to the installer task (the ``curl | sh`` installer and
 ``orch update``): it must create the staging directory (root, 0700, under a root-only parent), download the release
 archive and its signed manifest INTO it, verify the signature and every file's sha256 against the bytes in the staging
 directory, and only then run this script from there. This file does not fetch or verify signatures; it refuses a

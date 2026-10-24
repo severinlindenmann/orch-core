@@ -710,3 +710,12 @@ def test_doas_conf_present_at_setup_makes_the_verdict_unknown() -> None:
     f.sigs["/etc/doas.conf"] = (10, 1, 1, 9)
     v = assess_policy(f, "orch-agent-sev")
     assert v.sudo == "unknown" and not v.ok
+
+
+def test_the_runner_unit_asked_for_is_the_bare_person_instance() -> None:
+    asked: list[str] = []
+    f = _good()
+    real = f.unit_state
+    f.unit_state = lambda unit: (asked.append(unit), real(unit))[1]
+    detect(f, "sev", UID, STATE, [KEY])
+    assert asked == ["orch-runner@sev.service"]  # not orch-runner@orch-agent-sev.service

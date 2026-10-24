@@ -515,3 +515,13 @@ def test_quarantine_always_stops_and_rewrites_even_when_queries_and_reads_fail()
     assert [BIN["systemctl"], "disable", "--now", "orch-runner@sev.service"] in ex2.commands
     uid = facts.users["orch-agent-sev"].uid
     assert "policy" not in json.loads(ex2.files[f"/etc/orch/pins/{uid}.json"])
+
+
+def test_admin_command_quotes_what_needs_quoting() -> None:
+    import dataclasses
+
+    from orch.setup.osusers import plan
+
+    p = dataclasses.replace(plan(FakeOsFacts(), PERSON, UID), release="/opt/a b;x", person="s ev")
+    cmd = p.admin_command()
+    assert "--release '/opt/a b;x'" in cmd and "--person 's ev'" in cmd

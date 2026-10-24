@@ -162,7 +162,6 @@ class DryRunExecutor(RealExecutor):
 
 
 USER_OBJ, USER, GROUP_OBJ, MASK, OTHER = 0x01, 0x02, 0x04, 0x10, 0x20
-_GROUP_TAG = 0x08
 _UNDEF = 0xFFFFFFFF
 _ACL_NAMES = {"access": "system.posix_acl_access", "default": "system.posix_acl_default"}
 
@@ -506,7 +505,7 @@ class _Apply:
                     # always, whatever the queries would say; "not loaded" is fine, so the result is not a failure
                     self.res.actions.append(" ".join(argv))
                     self.ex.run(argv)
-                    self.res.notes.append(f"the runner of '{agent.name}' was stopped until the check passes again")
+        self.res.notes.append(f"the runner of '{agent.name}' was stopped until the check passes again")
 
     def policy_pin(self, p: Plan) -> None:
         agent = p.agent

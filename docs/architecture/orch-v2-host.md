@@ -13434,7 +13434,7 @@ Root is needed once, at install, never at run time: no setuid binary, no capabil
 the person's home, so it is not what root executes. The installer, as root, downloads the signed release into a root-owned
 0700 staging directory, verifies the signed manifest against the bytes there, and runs
 `/usr/bin/python3 -I -S <staging>/orch/setup/osinstall.py` (system interpreter, never the release venv, never `-m orch...`).
-That step re-checks the staging tree, copies the five stdlib-only setup modules and a launcher to the root-owned
+That step re-checks the staging tree, copies the four stdlib-only setup modules (with the package `__init__` files) and a launcher to the root-owned
 `/usr/lib/orch/os-setup/` (`/usr/lib`, not `/usr/local`: Debian's `/usr/local` can be group-writable), and re-hashes the copy
 against the source. The launcher `/usr/lib/orch/os-setup/orch-os-setup` has the shebang `#!/usr/bin/python3 -I -S`; before it
 imports anything of orch it checks that the interpreter, the standard library and the whole copy (and every directory above
@@ -13668,7 +13668,7 @@ part; H3c's per-workspace groups and worker daemon stay later options.
 
 ### 13.12 Build tasks
 
-L1 setup plan (pure) → L2 apply and `bin/orch-os-setup`; L3 runner as system unit; L4 run directory and sockets; L5
+L1 setup plan (pure) → L2 apply and the root-owned launcher `/usr/lib/orch/os-setup/orch-os-setup`; L3 runner as system unit; L4 run directory and sockets; L5
 person-side ACLs; L6 agent clone and worktrees; L7 agent CLI (served mode only, `instructions.hook`, environment); L8
 dashboard peer-UID check; L9 terminals as the agent; L10 agent sign-in; L11 `isolation.detect()`; L12 the setup step;
 L13 doctor; A1–A4 slots, ACLs, credentials per call, #929; E1 e2e `vps-agent-uid` on the dev VPS; M1–M3 macOS. Real

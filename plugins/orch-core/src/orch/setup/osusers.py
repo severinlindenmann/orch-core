@@ -14,6 +14,7 @@ Rules the plan enforces (design-h1-agent-user §1.1, §7):
 
 from __future__ import annotations
 
+import os
 import re
 import shlex
 from dataclasses import dataclass, field
@@ -66,6 +67,10 @@ _NAME = re.compile(r"^[a-z_][a-z0-9_-]*$")
 _MAX_NAME = 32
 _RELEASE = re.compile(r"^/[A-Za-z0-9_.+/-]*$")  # no whitespace, control characters, '%' or '$': it goes into unit text
 _SYSTEM_UID_MAX = 999  # useradd --system; a login-range UID is a person, never ours
+
+
+def _good_release(release: str) -> bool:
+    return bool(_RELEASE.match(release)) and os.path.normpath(release) == release and release != "/"
 
 
 class OsPlanRefusal(Exception):
@@ -392,6 +397,8 @@ WantedBy=multi-user.target
 
 
 def unit_addon(release: str) -> UnitFile:
+    # TODO(L3): the slot runner launcher (orch-addon-slot) does not exist yet; setup writes this template but does not
+    # enable it. L3 builds the launcher and enables the instances the plan already lists.
     content = f"""[Unit]
 Description=orch add-on slot %i
 After=network.target
@@ -409,7 +416,6 @@ ReadWritePaths={SLOT_HOME_ROOT}/orch-addon-%i
 RestrictSUIDSGID=yes
 MemoryMax=2G
 TasksMax=512
-# TODO(L3): the slot runner launcher does not exist yet; setup writes this template but does not enable it.
 ExecStart={release}/current/bin/orch-addon-slot
 Restart=always
 
@@ -417,12 +423,6 @@ Restart=always
 WantedBy=multi-user.target
 """
     return UnitFile("orch-addon@.service", "/etc/systemd/system/orch-addon@.service", content, ())
-
-
-def _good_release(release: str) -> bool:
-    import posixpath
-
-    return bool(_RELEASE.match(release)) and posixpath.normpath(release) == release and release != "/"
 
 
 def plan(facts: OsFacts, person: str, person_uid: int, *, release: str = "/opt/orch/release") -> Plan:

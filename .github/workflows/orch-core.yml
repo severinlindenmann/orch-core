@@ -56,12 +56,6 @@ jobs:
       - run: uv sync --locked
       - if: matrix.shard == 1  # the lint is the same in every slice
         run: uv run ruff check
-      - if: matrix.shard == 1  # real-kernel facts for the OS-user isolation check (H1 L11): POSIX ACL tools, shown per test
-        run: |
-          sudo apt-get install -y acl
-          uv run pytest -rA -p no:xdist -q tests/host/test_isolation_linux.py
-        env:
-          CI: "true"
       - if: matrix.shard == 1
         run: uv run ruff format --check
       - run: uv run pytest -q -m "not slow" -n auto

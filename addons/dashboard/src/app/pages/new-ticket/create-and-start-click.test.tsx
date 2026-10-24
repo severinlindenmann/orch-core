@@ -59,7 +59,6 @@ async function signed() {
   const dialog = (await screen.findAllByRole('dialog', {}, T)).find((d) => d.hasAttribute('data-handoff-dialog'))!
   expect(await within(dialog).findByTestId('not-signed-start')).toBeInTheDocument() // the real dialog carries the unsigned block
   await within(dialog).findByTestId('click-panel', {}, T)
-  fireEvent.change(within(dialog).getByLabelText(/Type GRANT to confirm/), { target: { value: 'GRANT' } })
   const go = within(dialog).getByRole('button', { name: 'Sign and start agent' })
   await waitFor(() => expect(go).toBeEnabled(), { timeout: ARM_MS + 3000 })
   fireEvent.pointerDown(go)

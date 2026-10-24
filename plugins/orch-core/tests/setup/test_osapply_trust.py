@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
 import stat
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -16,6 +18,34 @@ from orch.setup.osapply import DirSpec, secure_dir
 from orch.setup.osinstall import INSTALLER_FILE, InstallRefused, check_source, install
 
 ME = os.getuid()
+
+
+@pytest.fixture
+def tmp_path():
+    """A private base whose whole ancestor chain the product check accepts (root's or ours, no group/other write).
+
+    pytest's own tmp_path sits under /tmp on Linux (1777), which the trust check rightly refuses, so the tests build
+    their trees under a 0700 directory in HOME, or in the checkout, whichever has an acceptable chain."""
+    candidates = [Path.home(), Path(__file__).resolve().parents[2]]
+    for parent in candidates:
+        try:
+            oslauncher.check_chain(str(parent), (0, ME))
+        except (oslauncher.Untrusted, OSError):
+            continue
+        base = Path(tempfile.mkdtemp(prefix=".orch-l2-test-", dir=parent))
+        break
+    else:
+        msg = "no directory with an acceptable ancestor chain for the trust tests"
+        if os.environ.get("CI"):
+            pytest.fail(msg)
+        pytest.skip(msg)
+    try:
+        yield base
+    finally:
+        for p in [base, *base.rglob("*")]:
+            with contextlib.suppress(OSError):
+                p.chmod(0o700 if p.is_dir() and not p.is_symlink() else 0o600)
+        shutil.rmtree(base, ignore_errors=True)
 
 
 def _staging(tmp_path: Path) -> Path:

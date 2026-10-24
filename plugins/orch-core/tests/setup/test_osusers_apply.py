@@ -525,3 +525,14 @@ def test_admin_command_quotes_what_needs_quoting() -> None:
     p = dataclasses.replace(plan(FakeOsFacts(), PERSON, UID), release="/opt/a b;x", person="s ev")
     cmd = p.admin_command()
     assert "--release '/opt/a b;x'" in cmd and "--person 's ev'" in cmd
+
+
+def test_a_refused_run_does_not_say_nothing_to_change() -> None:
+    res, _, _ = _go(is_root=False)
+    assert "Nothing to change" not in res.report() and res.report().startswith("PROBLEM:")
+    done, ex, facts = _go()
+    assert done.ok and "Nothing to change" not in done.report()  # it did things
+    ex2 = FakeExec(facts)
+    ex2.files, ex2.active, ex2.enabled = dict(ex.files), set(ex.active), set(ex.enabled)
+    again = apply(facts, ex2, PERSON, UID, is_root=True)
+    assert again.ok and again.report() == "Nothing to change."

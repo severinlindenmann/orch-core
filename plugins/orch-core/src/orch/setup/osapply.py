@@ -283,7 +283,10 @@ class ApplyResult:
 
     def report(self) -> str:
         head = "Would do:" if self.dry_run else "Done:"
-        lines = [head, *[f"  {a}" for a in self.actions]] if self.actions else ["Nothing to change."]
+        if self.actions:
+            lines = [head, *[f"  {a}" for a in self.actions]]
+        else:
+            lines = [] if self.problems else ["Nothing to change."]  # a refused run changed nothing, but is not a no-op
         lines += [f"  note: {n}" for n in self.notes]
         lines += [f"PROBLEM: {p}" for p in self.problems]
         return "\n".join(lines)
@@ -357,8 +360,9 @@ class _Apply:
         """Directories below an agent- or slot-owned one are never touched by path: ``ex.secure_dir`` opens them
         file-descriptor-relative from the root-owned ``base`` with O_NOFOLLOW, so a symlink planted by the agent is
         refused instead of followed."""
-        self.res.actions.append(what)
         changed, problem = self.ex.secure_dir(base, spec)
+        if changed or self.dry:  # an unchanged directory is not an action (a second run must report nothing)
+            self.res.actions.append(what)
         if problem:
             self.res.fail(problem)
         return changed

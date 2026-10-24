@@ -41,9 +41,13 @@ def root_machine():
     person = pwd.getpwuid(os.getuid()).pw_name
     release = f"/opt/orch-ci-release-{os.getpid()}"
     # outside /tmp: the units use PrivateTmp. A stand-in program that just stays up.
-    _sudo("install", "-d", "-m", "0755", f"{release}/current/bin")
+    # every directory on its own, explicitly root-owned 0755 (install -d gives parents the umask's mode)
+    for sub in ("", "/current", "/current/bin"):
+        _sudo("install", "-d", "-o", "root", "-g", "root", "-m", "0755", f"{release}{sub}")
     stub = tmp_stub()
-    _sudo("install", "-m", "0755", stub, f"{release}/current/bin/orch-runner")
+    _sudo("install", "-o", "root", "-g", "root", "-m", "0755", stub, f"{release}/current/bin/orch-runner")
+    shown = _sudo("stat", "-c", "%U:%G %a %n", release, f"{release}/current", f"{release}/current/bin").stdout
+    assert shown.count("root:root 755") == 3, shown
     # the installer's step: a sealed root staging directory (under root-only parents), then the documented command
     staging = f"/var/lib/orch-ci-staging-{os.getpid()}"
     _sudo("install", "-d", "-m", "0700", "-o", "root", staging)

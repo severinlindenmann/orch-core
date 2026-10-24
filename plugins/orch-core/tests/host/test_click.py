@@ -283,11 +283,11 @@ def test_sign_refusals_sign_nothing_and_do_not_cancel(click, served, human):
 
 def test_view_and_sign_refuse_a_request_the_signer_did_not_prepare(click, served, human):
     _, key = human.ticket()
-    h = human.prepare("log", {"ref": key, "text": "x"})  # a terminal request (hand-off is refused with the flag on)
+    h = human.prepare("log", {"ref": key, "text": "x"}, handoff=True)  # a terminal request: it has a code (#1170)
     rid = h["request"]["id"]
     refused(lambda: click.view(rid), "human.click_refused", "not_prepared_here")
     refused(lambda: click.sign(rid, "sha256:" + "0" * 64), "human.click_refused", "not_prepared_here")
-    assert pending(served, rid)["state"] == "bound"  # untouched: still the terminal's
+    assert pending(served, rid)["state"] == "prepared"  # untouched: still the terminal's
 
 
 def test_terminal_only_ops_are_refused_before_the_host_is_asked(click, served, human):
@@ -812,7 +812,7 @@ def test_the_forwarded_detail_follows_the_hosts_closed_schema():
 def test_any_other_code_drops_its_detail(click, served, human):
     e = _detail_from(click, human, "launch.no_grant", {"reason": "none"})
     assert e.detail is None and "detail" not in e.error()
-    e = _detail_from(click, human, "sign.click_only", {"reason": "disabled", "devices": [DEV]})
+    e = _detail_from(click, human, "lock.busy", {"reason": "disabled", "devices": [DEV]})
     assert e.detail is None and "detail" not in e.error()
     assert (
         ClickError("human.click_refused", "x", reason="busy", detail={"reason": "disabled"}).error().get("detail")

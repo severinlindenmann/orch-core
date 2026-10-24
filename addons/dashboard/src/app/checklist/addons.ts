@@ -612,9 +612,9 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
       },
       {
         id: 'W6',
-        title: 'The verification fingerprint',
-        text: 'Start any signature from the dashboard (for example Approve requirements) and run the `orch sign ...` command. Compare the fingerprint line in the Terminal with the one in the dashboard dialog. Press d in the Terminal.',
-        see: 'Under the headline a line "Verification fingerprint: " with 12 characters, the same 12 in the dashboard and in the Terminal (the details show "fingerprint:"). It is clear that the command and the fingerprint are two different things.',
+        title: 'The verification code',
+        text: 'Start any signature from the dashboard (for example Approve requirements) and run the `orch sign ...` command. Compare the verification code line in the Terminal with the one in the dashboard dialog. Press d in the Terminal.',
+        see: 'Under the headline a line "Verification code: " with 12 characters, the same 12 in the dashboard (step 3: "Check that the verification code ... matches the one in Terminal, read what Terminal shows (that is what you approve), then type ...") and in the Terminal (the details still show "fingerprint:"). It is clear that the command and the code are two different things.',
       },
       {
         id: 'W7',
@@ -632,7 +632,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'W9',
         title: 'Only create (simpler dialog)',
         text: 'New ticket, "Only create": open the review.',
-        see: 'With one-click signing the button says "Create ticket"; with Terminal signing (the default) there is no such button, the review shows "Sign in Terminal on this computer" and then "Waiting for your signature". What happens next ends with "Nothing starts yet". No orange line, no "Other ways".',
+        see: 'With one-click signing the button says "Create ticket"; with Terminal signing (the default) there is no such button, the review shows "Sign in Terminal on this computer" and then "Waiting for approval in Terminal…". What happens next ends with "Nothing starts yet". No orange line, no "Other ways".',
       },
       {
         id: 'W10',
@@ -669,7 +669,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'W15',
         title: 'Share approval review',
         text: 'Share a ticket\'s files (Shares page, or Share files on a ticket) and continue to approval.',
-        see: 'The review starts with "Share these files": the files, who can open them, how long the link works and where the files go. Below, "Exact signed details" shows the full signed text, and nothing in the summary disagrees with it. A line "Copy this command into Terminal" with the fingerprint under it.',
+        see: 'The review starts with "Share these files": the files, who can open them, how long the link works and where the files go. Below, "Exact signed details" shows the full signed text, and nothing in the summary disagrees with it. Numbered steps: "1. Copy this command." with the command, "2. Paste it into Terminal and press Return.", then "3. Check that the verification code ... matches the one in Terminal ... then type ...".',
       },
       {
         id: 'W16',

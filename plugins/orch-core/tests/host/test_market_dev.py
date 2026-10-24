@@ -29,7 +29,7 @@ def fakes(monkeypatch):
     monkeypatch.setattr(fetch, "fetch_index", n.fetch_index)
     monkeypatch.setattr(fetch, "fetch_package", n.fetch_package)
     monkeypatch.setattr(address, "resolve", n.resolve)
-    assert constants.OFFICIAL_KEYS == ()  # the dev class does not borrow the official key
+    monkeypatch.setattr(constants, "OFFICIAL_KEYS", ())  # the dev class uses its own keys, never the official ones
     return n
 
 

@@ -90,3 +90,29 @@ def test_an_unknown_or_removed_device_is_not_found(human, served, lab):
     member = lab.add_member()
     human.run("device.remove", {"device": member.device})
     assert err(human.prepare_res("device.remove", {"device": member.device})) == "not_found"
+
+
+def test_a_very_long_holder_name_is_cut_in_the_view_and_the_click_stays_signable(human, served, lab):
+    from orch.crypto import b64u
+    from tests.host.lifecycle_helpers import Person
+
+    p = Person()
+    ws = lab.ws
+    ws.tick()
+    store = ws.other()
+    ws.store = store
+    try:
+        store.append(
+            ws.person_event(
+                ws.owner, "workspace", "member.added", person=p.ref, name="N" * 150, role="member",
+                pk_pub=b64u(p.pk_pub), device_cert=p.cert(created=ws.clock[0] * 1000),
+            ),
+            log="workspace",
+        )  # fmt: skip
+    finally:
+        store.close()
+        ws.store = None
+    prepared, done, signed = human.run("device.remove", {"device": p.device})
+    holder = prepared["material"]["removed_device"]["holder"]
+    assert len(holder) == 100 and holder.endswith("…") and holder.startswith("N" * 99)
+    assert removed(served, p.device)

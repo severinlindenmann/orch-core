@@ -494,10 +494,9 @@ def handle_device_remove(ctx: Context, args: dict[str, Any]) -> Result:
                 "or add another device first.",
             )
     if ctx.prepare is not None:
-        ctx.prepare.removed_device = {
-            "device": device,
-            "holder": holder.name if holder is not None else "a former member",
-        }
+        name = holder.name if holder is not None else "a former member"
+        # shown, not signed: a long name is cut (never makes the click unsignable; the signer allows 100 characters)
+        ctx.prepare.removed_device = {"device": device, "holder": name if len(name) <= 100 else name[:99] + "\u2026"}
     done = h.run({"type": "device.removed", "device": device}, "workspace", f"remove the device {device}", review=[])
     return h.workspace_result(done, {"device": device}, "the device can no longer sign for this workspace")
 

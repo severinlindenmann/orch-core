@@ -689,7 +689,8 @@ INDEX: dict[str, str] = {
     "(5.3, 5.11)",
     "tamper.json": "tampered chain lines of the ticket and workspace log, the seq where the chain breaks (5.5)",
     "genesis.json": "the six genesis checks in order (5.11)",
-    "devices.json": "device.added rules: drop: and scope refusals, self-signed, stale roster_v, recovery (5.3, 5.11)",
+    "devices.json": "device.added rules: drop: and scope refusals, self-signed, stale roster_v, recovery; "
+    "device.removed: the last device of an owner stays (5.3, 5.11)",
     "revocation.json": "device.revoked: embedded revocation as authority, reason mismatch, recovery (5.3)",
     "checkpoint.json": "checkpoint objects, signed bytes, refusals, divergence (5.10); receiver checks with valid "
     "signatures: pinned delegation, owner-device policy, signed source, line binding, abandoned, T head, position "

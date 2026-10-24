@@ -186,6 +186,9 @@ def reveal_view_ok(view: dict, ws: str, reveal_key: str) -> bool:
 
 
 SEALED_LOCAL_ONLY = "A new passphrase for your key needs a dashboard opened on this computer."
+RUNNER_LOCAL_ONLY = "Turning on dashboard execution needs a dashboard opened on this computer."
+#: core's constant (orch.click.protocol RUNNER_LINE): the review of turning it on must carry it
+RUNNER_LINE = "Agents may run commands on this computer as you when you start them."
 ROTATE_LOCAL_ONLY = "Replacing this computer's key needs a dashboard opened on this computer."
 #: core's constant (orch.click.protocol BACKUP_KEY_LINE): a hub step's View that lacks it is not shown
 BACKUP_KEY_LINE = "This step also needs your backup key. You type it once here; orch does not keep it"
@@ -317,6 +320,16 @@ class RotateBody(BaseModel):
     request_id: Annotated[str, StringConstraints(pattern=r"^hr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")]
     view_digest: ViewDigest
     sealed: RotateSealed
+
+
+class RunnerBody(BaseModel):
+    """#1198 C14: dashboard execution on or off. `view_digest` is that of the review `click/runner/review` returned for
+    the same `on` and `terminals`; the signer acts only on that."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    on: bool
+    terminals: bool = False  # an extra the person asks for; never on by default
+    view_digest: ViewDigest | None = None
 
 
 class Sign(Step):
@@ -578,6 +591,65 @@ def register(app: FastAPI, gateway: Gateway):
         else:  # off: the flag only
             row = signer.call("custody_off", {"workspace_id": ws})
         return {**(adapters.click_card(row) or {}), "switchable": True}
+
+    def runner_gate(request: Request, ws: str, body: RunnerBody) -> None:
+        """An owner, a signer that can. ON: a dashboard opened on this computer only (until the passkey
+        step-up); OFF only takes authority away and is a plain click everywhere."""
+        gateway.enabled(ws)
+        if not owner(ws):
+            raise fail("role.denied", "Only an owner switches dashboard execution.", exit=3)
+        if body.on and app.state.auth.login_kind(request.state.token) not in REVEAL_SESSION_KINDS:
+            raise refusal_check(RUNNER_LOCAL_ONLY)
+        if not signer.runner_switches():
+            raise fail(
+                "click.contract", "Update orch-core: its signing helper cannot switch dashboard execution yet.", exit=9
+            )
+
+    def runner_view_ok(got: object, ws: str, body: RunnerBody) -> bool:
+        if not isinstance(got, dict) or set(got) != {"view", "view_digest"}:
+            return False
+        view = got["view"]
+        if not isinstance(view, dict) or re.fullmatch(r"sha256:[0-9a-f]{64}", str(got["view_digest"])) is None:
+            return False
+        workspace, lines = view.get("workspace"), view.get("lines")
+        return (
+            view.get("op") == ("runner.on" if body.on else "runner.off")
+            and view.get("on") is body.on
+            and isinstance(workspace, dict)
+            and workspace.get("id") == ws
+            and view.get("confirm") == {"kind": "click"}
+            and isinstance(lines, list)
+            and all(isinstance(x, str) for x in lines)
+            and (RUNNER_LINE in lines) is body.on
+            and (view.get("terminals") is body.terminals if body.on else True)
+        )
+
+    @app.post("/api/w/{ws}/click/runner/review")
+    def runner_review(body: RunnerBody, request: Request, ws: str = Depends(workspace)):
+        """The review of turning dashboard execution on or off: core's own words, relayed after a check."""
+        runner_gate(request, ws, body)
+        got = signer.call("runner", {"workspace_id": ws, "review": True, "on": body.on, "terminals": body.terminals})
+        if not runner_view_ok(got, ws, body):
+            raise refusal_check(
+                "The signing helper's review of dashboard execution is not what it should be. Nothing changed."
+            )
+        return got
+
+    @app.post("/api/w/{ws}/click/runner")
+    def runner_switch(body: RunnerBody, request: Request, ws: str = Depends(workspace)):
+        """Turn dashboard execution on or off after the review (#1198 C14): the signer does what `orch runner enable` or
+        `disable` does. This process starts no service and writes no switch."""
+        runner_gate(request, ws, body)
+        if body.view_digest is None:
+            raise fail("invalid.input", "Read the review first.", exit=5)
+        got = signer.call(
+            "runner",
+            {"workspace_id": ws, "on": body.on, "terminals": body.terminals, "view_digest": body.view_digest},
+        )
+        enabled, terminals = got.get("enabled"), got.get("terminals")
+        if type(enabled) is not bool or type(terminals) is not bool:
+            raise fail("internal", "The signing helper answered something unexpected.", exit=9)
+        return {"enabled": enabled, "terminals": terminals}
 
     @app.post("/api/w/{ws}/click/images")
     def images(body: ImageChunk, ws: str = Depends(workspace)):

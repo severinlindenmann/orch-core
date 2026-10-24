@@ -12,7 +12,6 @@ export const PRIVATE_REMOTE = { before: 'orch trusts your word that only you rea
 
 /** What the person must type in a terminal (12.11, G12). #1198 C15: the records steps are buttons now, with a review. */
 export const TERMINAL_COMMANDS = {
-  runnerEnable: 'orch runner enable',
   autoOn: 'orch records auto on',
   autoOnPush: 'orch records auto on --push',
 } as const

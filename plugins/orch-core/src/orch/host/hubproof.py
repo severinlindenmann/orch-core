@@ -6,6 +6,9 @@ exact payload the owner reviewed, bound to this workspace, this op and this requ
 A device key, even the owner's own, cannot make one, so a stolen One-click key or a taken-over dashboard cannot bind
 the workspace to a hub. This is the ONE place the host checks it; there is no path that skips it:
 
+* A click prepare binds the hub request BEFORE any proof exists (#1198 C10: the proof comes from the backup key typed
+  later). So nothing may assume a bound hub request was proof-checked: every later ``human.get`` from a One-click
+  signer requires the proof, and submit and the model check it again.
 * ``human.get`` with a signer (binding): a proof sent with the bind is checked; a One-click (``convenience``) signer
   that sends none is refused (``proof_missing``), because it could never produce one later.
 * ``human.submit`` (under the store lock, with the roster as it is now): every hub event must carry a valid proof.

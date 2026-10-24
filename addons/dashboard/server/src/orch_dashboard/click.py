@@ -630,7 +630,10 @@ def register(app: FastAPI, gateway: Gateway):
         return out
 
     @app.post("/api/w/{ws}/click/sign")
-    def sign(body: Sign, ws: str = Depends(workspace)):
+    def sign(body: Sign, request: Request, ws: str = Depends(workspace)):
+        if body.sealed is not None and app.state.auth.login_kind(request.state.token) not in REVEAL_SESSION_KINDS:
+            # where the typed key arrives: the local-only gate of prepare, repeated (fail closed on any other kind)
+            raise refusal_check("A hub step with your backup key needs a dashboard opened on this computer.")
         mine(ws, body.request_id)
         rid = body.request_id
         wanted = clicks.get(rid)[2]

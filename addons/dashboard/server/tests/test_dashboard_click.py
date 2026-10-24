@@ -2609,3 +2609,11 @@ def test_a_sealed_value_on_any_other_action_is_refused(client, token, stub, scri
     res = sign_hub(client, token, stub, sealed={"hub.backup_key": BACKUP_ENV})
     assert res.status_code == 400
     assert sent_of(script, "sign") == []
+
+
+def test_a_sealed_sign_on_a_non_local_session_never_reaches_the_signer(client, token, stub, backup, monkeypatch):
+    prepare(client, token, stub, hub_join())
+    monkeypatch.setattr(client_login_kind(), "login_kind", lambda self, token: "remote", raising=False)
+    res = sign_hub(client, token, stub, sealed={"hub.backup_key": BACKUP_ENV})
+    assert res.status_code == 409 and res.json()["error"]["reason"] == "check_failed"
+    assert sent_of(backup, "sign") == []

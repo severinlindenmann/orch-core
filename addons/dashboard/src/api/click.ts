@@ -147,7 +147,7 @@ export const revealViewOk = async (view: ClickView, ws: string, publicKeyB64: st
 /** Core's constants (orch.click.protocol BACKUP_KEY_LINE, BACKUP_KEY_RISK): a hub View lacking either is not offered. */
 export const BACKUP_KEY_LINE = 'This step also needs your backup key. You type it once here; orch does not keep it'
 
-/** A hub View gets the backup-key field only when it asks for exactly `hub.backup_key` with the signer's key, carries both constants and is of this workspace. */
+/** A hub View gets the backup-key field only when it asks for exactly `hub.backup_key` with the signer's key, carries the backup-key line (`BACKUP_KEY_LINE`, in `lines` and as `backup_key_line`) and is of this workspace. */
 export const backupViewOk = (view: ClickView, ws: string): boolean =>
   view.workspace?.id === ws && view.confirm.kind === 'click' && view.deposit !== true &&
   view.seal?.purposes?.length === 1 && view.seal.purposes[0] === 'hub.backup_key' && typeof view.seal.pk === 'string' && view.seal.pk.length === 87 &&

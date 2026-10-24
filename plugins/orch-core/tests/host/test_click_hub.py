@@ -303,3 +303,14 @@ def test_the_typed_code_source_wipes_the_code_refuses_other_labels_and_agents(mo
     with pytest.raises(personkey.HumanOnly):
         personkey.TypedCodeSource(agent, labels=("sig_hub_owner_proof",), person_id=person).__enter__()
     assert set(agent) == {0}
+
+
+def test_a_click_hub_mode_and_a_click_full_join_are_refused_at_prepare_while_one_click_is_on(click, served):
+    """D78/D81: full hub mode needs the key in passphrase custody. `hub.mode` stays a sealed op in core on purpose
+    (the C11 mode UI), but with One click on it never gets past prepare."""
+    e = refused(lambda: click.prepare("hub.join", join_args(mode="full")), "sign.hub_only")
+    assert "passphrase custody" in e.message
+    p, v = flow(click)
+    click.sign(p["request_id"], v["view_digest"], sealed=seal_for(v, served, p["request_id"]))
+    refused(lambda: click.prepare("hub.mode", {"hub_card": copy.deepcopy(CARD), "mode": "full"}), "sign.hub_only")
+    assert click.signatures == 1

@@ -127,7 +127,7 @@ export function ReposSection({ workspace, data, onSettled }: { workspace: Worksp
       ) : (
         <>
           {repos.length === 0 ? (
-            <p className="text-[13px] text-text-muted">No repositories are declared yet.{mayEdit ? ' Add the folder of each repository your tickets work in.' : ''}</p>
+            <p className="text-[13px] text-text-muted">No project folders yet. Agents may only change folders you add here.</p>
           ) : (
             <ul aria-label="Repositories" className="divide-y divide-border text-[13px]">
               {repos.map((r) => (
@@ -164,16 +164,17 @@ export function ReposSection({ workspace, data, onSettled }: { workspace: Worksp
           {data.repos_more && <p className="mt-2 text-[12px] text-text-muted">More repositories exist than are listed here.</p>}
           <div className="mt-3 flex flex-wrap items-center gap-3">
             {mayEdit && (
-              <Button size="sm" onClick={() => open()}>
+              <Button size="sm" variant="outline" onClick={() => open()}>
                 <Plus />
-                Add repository
+                Add folder
               </Button>
             )}
             {why && <OwnerNote id="repos-why">{why}</OwnerNote>}
           </div>
-          <p className="mt-2 text-[12px] text-text-muted">
-            A change to this list is signed like any other setting. Removing a repository only takes it off the list: its folder and files stay on disk. orch does not download (clone) repositories yet: add the folder after cloning it yourself.
-          </p>
+          <details className="mt-2 text-[12px] text-text-muted">
+            <summary className="cursor-pointer">Details</summary>
+            <p className="mt-1">Changes to this list are signed like any other setting. Removing a folder only takes it off the list; the folder and its files stay on disk. orch does not download (clone) repositories yet: add the folder after cloning it yourself.</p>
+          </details>
         </>
       )}
       {form && <RepoForm ws={workspace.id} initial={form.draft} editing={form.editing} taken={repos.map((r) => r.name)} onSubmit={submit} onClose={() => setForm(null)} />}

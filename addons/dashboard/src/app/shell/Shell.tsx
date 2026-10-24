@@ -4,7 +4,7 @@ import { ErrorBoundary, PageProblem } from '@/components/ErrorBoundary'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { retryFailedPageLoads } from '../pages/lazyPage'
 import { GenericSkeleton } from '../pages/skeletons'
-import { PageFade, usePageScroll } from './pageMotion'
+import { NavProgress, PageFade, usePageScroll } from './pageMotion'
 import { DockArea } from '../terminal/dock/DockArea'
 import { useLiveUpdates } from '../live'
 import { useWorkspace, WorkspaceProvider } from '../workspace'
@@ -83,7 +83,8 @@ export function Shell() {
           </a>
           <div className="flex h-full min-w-0">
             <Sidebar />
-            <div className="flex min-w-0 flex-1 flex-col">
+            <div className="relative flex min-w-0 flex-1 flex-col">
+              <NavProgress />
               <Topbar />
               {/* Mandates, PREVIEW ONLY: nothing renders unless the preview is on with a mandate in force. */}
               <MandateBanner />

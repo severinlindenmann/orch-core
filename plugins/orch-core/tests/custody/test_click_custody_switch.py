@@ -703,9 +703,9 @@ def test_the_leftover_sweep_runs_for_a_dashboard_off_without_a_passphrase(switch
     store.put(WS, device, b"\x01" * 32)  # what a crashed move left behind
     off(signer)
     assert not store.exists(WS, device)
-# --- #1198 C17: turning One click back on with a plain click, key already in convenience custody ---------------------
 
-# --- #1198 C17: turning One click back on with a plain click, the key already in convenience custody -------------------
+
+# --- #1198 C17: turning One click back on with a plain click, key already in convenience custody ---------------------
 
 
 def resume(signer, **extra):

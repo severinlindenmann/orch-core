@@ -1462,7 +1462,7 @@ def test_788_the_hosts_word_never_reaches_a_headline_or_summary_as_if_it_were_si
     old = _stop("gr_0OLDBBBBBBBBBBBBBBBBBBBBB", "extended")
     m = {**material_for("grant.issued", new), "grants": {old["grant"]: _info(old)}}
     ext = build({"op": "grant", "events": [new, old], "material": m})
-    assert "Mac's runner, until" not in ext["headline"]  # the signed label of the NEW access may name the runner
+    assert "computer's runner, until" not in ext["headline"]  # the signed label of the NEW access may name the runner
     assert all(
         "per host, not signed" in x.lower() for x in ext["summary"]["lines"] if "this computer's runner, until" in x
     )

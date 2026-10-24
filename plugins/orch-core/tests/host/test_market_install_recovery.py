@@ -52,7 +52,7 @@ def converged(served, st):
 
 def test_crash_after_the_append_before_the_swap(served, human, ready, monkeypatch):
     st, prepared, signed = sign_and_submit(served, human)
-    monkeypatch.setattr(marketinstall, "after_grant", lambda service, record: None)  # the host dies right here
+    monkeypatch.setattr(marketinstall, "after_grant", lambda service, record, signed: None)  # the host dies right here
     ok(human.submit_res(prepared["request"]["id"], signed.events))
     assert not addon_dir(served).exists() and mfiles(served).installs()["addons"] == {}
     assert registry_state(served) != "active"  # granted, but nothing granted runs

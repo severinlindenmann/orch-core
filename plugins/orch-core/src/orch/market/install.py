@@ -19,7 +19,7 @@ from orch.addons import builtin
 from orch.addons.manifest import Manifest, ManifestError, _core_key, declarations, incompatibility, load_manifest
 from orch.addons.package import MANIFEST_FILE, Package
 
-from . import MarketError, index
+from . import ADDONS, MarketError, index
 from .url import host_of
 
 __all__ = ["Ctx", "Facts", "check_entry", "check_package", "diff", "semver"]
@@ -59,7 +59,7 @@ class Facts:
 
 def check_entry(ctx: Ctx, doc: Mapping[str, Any], addon_id: str) -> Facts:
     """Steps 6 to 9 of spec 5 in the order of the reference. The first failing check is the answer."""
-    entry = next((e for e in doc["addons"] if e["id"] == addon_id), None)
+    entry = next((e for e in doc[ADDONS] if e["id"] == addon_id), None)
     if entry is None:
         raise MarketError("market.unknown_addon")
     if f"{entry['id']}@{entry['version']}" in doc.get("revoked", []):

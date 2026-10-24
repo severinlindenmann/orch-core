@@ -1587,10 +1587,11 @@ def finish(service: WorkspaceService, requests: RequestStore, record: dict[str, 
     ``seq`` s that landed; it is never ``partial``. Returns the result; raises the stored error for a failed one."""
     store = service.store
     log = record["prepared"]["log"]
+    signed = record["submit"]["events"]
     landed, error = append_signed(
         service,
         log,
-        record["submit"]["events"],
+        signed,
         record["extras"],
         signed_by=None,
         readers=record.get("readers") or [],
@@ -1603,7 +1604,9 @@ def finish(service: WorkspaceService, requests: RequestStore, record: dict[str, 
         outcome = {"state": "failed", "error": failed.error(), "exit": failed.exit, "seqs": landed}
         requests.write({**record, "state": "submitted", "done_at": now, "outcome": outcome})
         raise _Stored(failed) if landed else failed
-    marketinstall.after_grant(service, record)  # V3 G3 C3: the swap and the records, idempotent, also at roll-forward
+    marketinstall.after_grant(
+        service, record, signed
+    )  # V3 G3 C3: the swap and the records, idempotent, also at roll-forward
     template = record.get("result") or {}
     view = store.ticket(log) if log != "workspace" else None
     result = ok_result(template.get("data") or {}, seq=max(landed))

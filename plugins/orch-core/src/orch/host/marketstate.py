@@ -34,7 +34,7 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
-from orch.market import MarketError
+from orch.market import ADDONS, MarketError
 from orch.store.fsio import write_atomic
 
 from .custody import ensure_private_dir, read_json
@@ -166,10 +166,10 @@ class MarketFiles:
         except Exception:  # noqa: BLE001 - refuse, never reset
             raise MarketError("market.state_invalid") from None
         if doc is None:
-            return {"addons": {}, "seen": {}, "keys": {}}
-        if not isinstance(doc, dict) or set(doc) != {"v", "addons", "seen", "keys"} or doc["v"] != 1:
+            return {ADDONS: {}, "seen": {}, "keys": {}}
+        if not isinstance(doc, dict) or set(doc) != {"v", ADDONS, "seen", "keys"} or doc["v"] != 1:
             raise MarketError("market.state_invalid")
-        addons, seen, keys = doc["addons"], doc["seen"], doc["keys"]
+        addons, seen, keys = doc[ADDONS], doc["seen"], doc["keys"]
         if (
             not isinstance(addons, dict)
             or not all(_valid_install(n, r) for n, r in addons.items())
@@ -179,7 +179,7 @@ class MarketFiles:
             or not all(isinstance(k, str) and isinstance(v, str) for k, v in keys.items())
         ):
             raise MarketError("market.state_invalid")
-        return {"addons": addons, "seen": seen, "keys": keys}
+        return {ADDONS: addons, "seen": seen, "keys": keys}
 
     @contextlib.contextmanager
     def commit_installs(self) -> Iterator[Callable[[dict[str, Any]], None]]:

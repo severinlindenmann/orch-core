@@ -21,7 +21,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, TextIO
 
-from orch.market import ADDONS  # noqa: F401  (the store-layout lint matches the bare word)
+from orch.market import ADDONS  # the store-layout lint matches the bare word
 
 __all__ = ["main"]
 
@@ -120,7 +120,7 @@ def main(
             out.write(
                 json.dumps({"ok": True, "data": data}) + "\n"
                 if as_json
-                else "ok addon update --check\n" + _installed_text(data["addons"]) + "\n"
+                else "ok addon update --check\n" + _installed_text(data[ADDONS]) + "\n"
             )
             return 0
         result = _signed(a, env, out, as_json)
@@ -150,12 +150,12 @@ def _check(a: argparse.Namespace, env: Mapping[str, str]) -> dict[str, Any]:
         data = _call(_target(env), "market.installed", {}, env)
     except PubError as exc:
         raise _Fail(exc.code, exc.message, exc.exit) from None
-    rows = data.get("addons", [])
+    rows = data.get(ADDONS, [])
     if a.rest:
         rows = [r for r in rows if r["name"] == a.rest[0]]
         if not rows:
             raise _Fail("market.not_installed", "this add-on was not installed from a marketplace")
-    return {"addons": rows}
+    return {ADDONS: rows}
 
 
 def _connect(a: argparse.Namespace, env: Mapping[str, str]) -> Any:
@@ -204,7 +204,7 @@ def _signed(a: argparse.Namespace, env: Mapping[str, str], out: TextIO, as_json:
         conn, backend, device, wid, person, label = _connect(a, env)
         if a.cmd == "remove":
             name = a.rest[0]
-            rows = conn.call("market.installed", {})["data"]["addons"]
+            rows = conn.call("market.installed", {})["data"][ADDONS]
             row = next((r for r in rows if r["name"] == name), None)
             if row is None:
                 raise _Fail("market.not_installed", "this add-on was not installed from a marketplace")

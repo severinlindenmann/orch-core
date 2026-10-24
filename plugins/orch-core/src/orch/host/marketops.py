@@ -379,7 +379,7 @@ def _list(service: WorkspaceService, entries: bool, now: float) -> dict[str, Any
             "from_marketplace": {"name": doc["name"], "title": doc.get("title")},
         }  # fmt: skip
         if entries:
-            have = files.installs()["addons"]
+            have = files.installs()[ADDONS]
             row[ADDONS] = [
                 {
                     "id": e["id"],

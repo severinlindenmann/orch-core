@@ -33,7 +33,7 @@ from orch import __version__ as CORE_VERSION
 from orch.addons import builtin, install
 from orch.addons.manifest import ManifestError
 from orch.addons.package import PackageError, from_files, read_package
-from orch.market import MarketError, constants, fetch, index, policy
+from orch.market import ADDONS, MarketError, constants, fetch, index, policy
 from orch.market import install as mi
 from orch.market.url import canonical_market_url
 from orch.ops.errors import ERRORS
@@ -179,7 +179,7 @@ def _plan_stage(call: Call, args: dict[str, Any]) -> dict[str, Any]:
     records = files.load()
     installs = files.installs()
     name = args["id"]
-    prior = installs["addons"].get(name)
+    prior = installs[ADDONS].get(name)
     update = bool(args.get("update"))
     if update and prior is None:
         raise MarketError("market.not_installed")
@@ -217,7 +217,7 @@ def _find_market(files: MarketFiles, records: dict, service: WorkspaceService, n
             v = verdict(raw, url, cls, keys, service.clock())
         except MarketError:
             continue
-        if any(e["id"] == name for e in v.doc["addons"]):
+        if any(e["id"] == name for e in v.doc[ADDONS]):
             found.append(url)
     if not found:
         raise MarketError("market.unknown_addon")
@@ -259,7 +259,7 @@ def _stage(service: WorkspaceService, plan: dict[str, Any], call: Call | None = 
 
     files = _files(service)
     url, name, cls, keys, now = plan["url"], plan["id"], plan["cls"], tuple(plan["keys"]), plan["now"]
-    prior_installed = files.installs()["addons"].get(name)
+    prior_installed = files.installs()[ADDONS].get(name)
     if plan["update"] and prior_installed is not None:
         rec = files.load().get(url)
         if rec is None:
@@ -278,7 +278,7 @@ def _stage(service: WorkspaceService, plan: dict[str, Any], call: Call | None = 
     installs = files.installs()
     ctx = mi.Ctx(
         url=url, cls=cls, keys=keys, core_version=CORE_VERSION, git_hosts=frozenset(constants.DEFAULT_GIT_HOSTS),
-        installed=installs["addons"], known_keys=installs["keys"], seen=installs["seen"],
+        installed=installs[ADDONS], known_keys=installs["keys"], seen=installs["seen"],
         official_ids=frozenset(constants.OFFICIAL_IDS), moved=frozenset(constants.MOVED_IDS),
     )  # fmt: skip
     facts = mi.check_entry(ctx, v.doc, name)
@@ -378,7 +378,7 @@ def _recheck(service: WorkspaceService, record: dict[str, Any], ev: dict[str, An
     if pkg.digest != ev["package_sha256"] or doc["version"] != ev["version"]:
         raise MarketError("market.staged_changed")
     installs = files.installs()
-    prior = installs["addons"].get(ev["name"])
+    prior = installs[ADDONS].get(ev["name"])
     url, version = doc["origin"], ev["version"]
     if prior is not None:
         if prior["origin"] != url:
@@ -409,22 +409,22 @@ def gate_plain(files: MarketFiles, ev: dict[str, Any]) -> None:
     ``market.not_installed``."""
     if builtin.is_builtin_package(ev, ev.get("name")):
         return
-    rec = files.installs()["addons"].get(ev.get("name"))
+    rec = files.installs()[ADDONS].get(ev.get("name"))
     if rec is None or rec["package_sha256"] != ev.get("package_sha256") or rec["version"] != ev.get("version"):
         raise MarketError("market.not_installed")
 
 
 # ------------------------------------------------------------------------------------------------ C3: after the append
-def after_grant(service: WorkspaceService, record: dict[str, Any]) -> None:
+def after_grant(service: WorkspaceService, record: dict[str, Any], signed: list[dict[str, Any]]) -> None:
     """From ``human.finish``, after the signed ``addon.granted`` is in the log (also when start-up rolls a submission
     forward): put the granted bytes in place and write the records. Idempotent: it decides by digests, never by names,
     and a second run finds nothing to do. Failures are logged, never raised: the registry already fails closed on a
     directory whose digest is not the grant's, and :func:`recover` finishes it at the next start."""
     staged = record.get("staged")
-    if record.get("op") != "addon.grant" or staged is None or not record.get("submit"):
+    if record.get("op") != "addon.grant" or staged is None or not signed:
         return
     try:
-        _converge(service, staged["stage"], record["submit"]["events"][0])
+        _converge(service, staged["stage"], signed[0])
     except Exception:  # noqa: BLE001 - fail closed: the digest check of the registry holds the add-on back
         LOG.exception("market install: finishing the swap of %s failed", staged.get("stage"))
 
@@ -451,7 +451,7 @@ def _converge(service: WorkspaceService, stage: str, ev: dict[str, Any]) -> None
         return
     with files.commit_installs() as write:
         cur = files.installs()
-        cur["addons"][name] = {
+        cur[ADDONS][name] = {
             "origin": doc["origin"], "version": doc["version"], "package_sha256": digest, "commit": doc["commit"],
             "installed_at": int(doc["created_at"]), "publisher_key": doc["publisher_key"],
         }  # fmt: skip
@@ -610,8 +610,8 @@ def _installed(service: WorkspaceService) -> dict[str, Any]:
     files = _files(service)
     installs = files.installs()
     rows = []
-    for name in sorted(installs["addons"]):
-        rec = installs["addons"][name]
+    for name in sorted(installs[ADDONS]):
+        rec = installs[ADDONS][name]
         model = _model_addon(service, name)
         state = state_of(service, name)
         avail = None
@@ -622,7 +622,7 @@ def _installed(service: WorkspaceService) -> dict[str, Any]:
         except MarketError:
             v = None
         if v is not None:
-            e = next((x for x in v.doc["addons"] if x["id"] == name), None)
+            e = next((x for x in v.doc[ADDONS] if x["id"] == name), None)
             revoked = f"{name}@{rec['version']}" in v.doc.get("revoked", [])
             if e is not None and (mi.semver(e["version"]) > mi.semver(rec["version"]) or revoked):
                 model_caps = set(model.capabilities) if model is not None else set()
@@ -645,7 +645,7 @@ def _installed(service: WorkspaceService) -> dict[str, Any]:
                 "available": avail,
             }  # fmt: skip
         )
-    return {"addons": rows}
+    return {ADDONS: rows}
 
 
 def _uninstall(service: WorkspaceService, name: str) -> dict[str, Any]:
@@ -655,7 +655,7 @@ def _uninstall(service: WorkspaceService, name: str) -> dict[str, Any]:
         store.refresh()
         with files.commit_installs() as write:
             cur = files.installs()
-            if name not in cur["addons"]:
+            if name not in cur[ADDONS]:
                 raise MarketError("market.not_installed")
             model = _model_addon(service, name)
             if model is not None and model.enabled and not model.purged:
@@ -665,6 +665,6 @@ def _uninstall(service: WorkspaceService, name: str) -> dict[str, Any]:
                 with _addons_dir(root / install.ADDONS_DIR) as d:
                     _rmtree(d, name)
                     _sweep(d, name)
-            del cur["addons"][name]  # the rollback floor ("seen") and the publisher key stay
+            del cur[ADDONS][name]  # the rollback floor ("seen") and the publisher key stay
             write(cur)
     return {"name": name, "removed": True}

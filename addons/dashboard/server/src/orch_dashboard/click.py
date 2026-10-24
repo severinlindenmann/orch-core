@@ -90,22 +90,37 @@ Passphrase = Annotated[str, StringConstraints(min_length=1, max_length=1024)]
 class CustodyBody(BaseModel):
     """The click-to-sign switch (section 0.8.6 item 3a). `on` needs the person's CURRENT passphrase: the proof the key
     is theirs, checked by the signer against the key in passphrase custody (Opus H1 on #539). `off` may carry the NEW
-    passphrase the key moves back under (V3-D31, narrowing Opus H2): the signer takes it only while the switch is on
-    and trades that authority for it in one locked step, else it refuses (`custody.terminal_needed`). Without one it
-    only turns the flag off. This server is a relay: the text is never logged or echoed (the validation handler
-    answers a bare `invalid.input`), and an explicit `null` is invalid."""
+    passphrase the key moves back under (V3-D31, narrowing Opus H2), but only SEALED to the signer's one-use key
+    (#1198 C12, purpose `custody.passphrase`): `request_id`, `view_digest` and `sealed` come from `click/custody/seal`.
+    The signer takes it only while the switch is on and trades that authority for it in one locked step, else it
+    refuses (`custody.terminal_needed`). Without them it only turns the flag off. This server is a relay: it never
+    sees a new passphrase, and nothing here is logged or echoed (the validation handler answers a bare
+    `invalid.input`)."""
 
     model_config = ConfigDict(extra="forbid", strict=True)
     on: bool
     passphrase: Passphrase | None = None
+    request_id: Annotated[str, StringConstraints(pattern=r"^hr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")] | None = None
+    view_digest: ViewDigest | None = None
+    sealed: "PassphraseSealed | None" = None
 
     @model_validator(mode="after")
-    def _proof_only_to_switch_on(self):
+    def _shape(self):
         if self.on and self.passphrase is None:
             raise ValueError("on needs the passphrase")
-        if not self.on and "passphrase" in self.model_fields_set and self.passphrase is None:
-            raise ValueError("off takes a passphrase or none")
+        if self.on and (self.request_id or self.view_digest or self.sealed):
+            raise ValueError("on takes the current passphrase only")
+        if not self.on and self.passphrase is not None:
+            raise ValueError("a new passphrase is sent sealed")
+        if not self.on and "passphrase" in self.model_fields_set:
+            raise ValueError("off takes no passphrase field")
+        if not self.on and len({self.request_id is None, self.view_digest is None, self.sealed is None}) != 1:
+            raise ValueError("a sealed passphrase comes with its request id and review digest")
         return self
+
+
+class SealBegin(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
 
 
 #: Every typed action a click request may carry: the hand-off's, plus the runner grant (click only, never a hand-off).
@@ -165,6 +180,7 @@ def reveal_view_ok(view: dict, ws: str, reveal_key: str) -> bool:
     )
 
 
+SEALED_LOCAL_ONLY = "A new passphrase for your key needs a dashboard opened on this computer."
 #: core's constant (orch.click.protocol BACKUP_KEY_LINE): a hub step's View that lacks it is not shown
 BACKUP_KEY_LINE = "This step also needs your backup key. You type it once here; orch does not keep it"
 HUB_STEPS = (HubJoin, HubLeave)
@@ -269,6 +285,16 @@ class Sealed(BaseModel):
     hub_backup_key: Envelope = Field(alias="hub.backup_key")
 
 
+class PassphraseSealed(BaseModel):
+    """The new passphrase of "One click off", sealed (purpose `custody.passphrase`): relayed as ciphertext."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, populate_by_name=False)
+    custody_passphrase: Envelope = Field(alias="custody.passphrase")
+
+
+CustodyBody.model_rebuild()
+
+
 class Sign(Step):
     view_digest: ViewDigest
     #: a shown-secret grant only: the key the review was made for (the signer refuses any other)
@@ -360,12 +386,50 @@ def register(app: FastAPI, gateway: Gateway):
         mode = mode_of(gateway, ws)  # V3 C11: advisory, so the page shows the hub panel; the host decides
         return {**card, "switchable": signer.switchable(), **({"mode": mode} if mode else {})}
 
+    def seal_view_ok(got: object) -> bool:
+        """The signer's offer for a sealed new passphrase: a request id, a review digest and exactly the one purpose with
+        the signer's own key (a P-256 point, 87 base64url characters)."""
+        if not isinstance(got, dict) or set(got) != {"request_id", "view_digest", "seal", "expires_in"}:
+            return False
+        seal = got["seal"]
+        return (
+            isinstance(got["request_id"], str)
+            and re.fullmatch(r"hr_[0-7][0-9A-HJKMNP-TV-Z]{25}", got["request_id"]) is not None
+            and isinstance(got["view_digest"], str)
+            and re.fullmatch(r"sha256:[0-9a-f]{64}", got["view_digest"]) is not None
+            and type(got["expires_in"]) is int
+            and isinstance(seal, dict)
+            and set(seal) == {"v", "alg", "pk", "purposes"}
+            and seal["v"] == 1
+            and type(seal["v"]) is int
+            and seal["alg"] == "P256-HKDF-SHA256-A256GCM"
+            and seal["purposes"] == ["custody.passphrase"]
+            and isinstance(seal["pk"], str)
+            and re.fullmatch(rf"{B64URL}{{87}}", seal["pk"]) is not None
+        )
+
     def owner(ws: str) -> bool:
         me = app.state.person_of(ws)
         return any(m.person == me and m.role == "owner" for m in adapters.members(gateway.call(ws, "member.list")))
 
+    @app.post("/api/w/{ws}/click/custody/seal")
+    def custody_seal(_: SealBegin, request: Request, ws: str = Depends(workspace)):
+        """The signer's one-use key for the NEW passphrase of "One click off" (#1198 C12): request id, review digest
+        and the public key. Owners, on a dashboard opened on this computer only. Nothing secret passes here."""
+        gateway.enabled(ws)
+        if app.state.auth.login_kind(request.state.token) not in REVEAL_SESSION_KINDS:
+            raise refusal_check(SEALED_LOCAL_ONLY)
+        if not owner(ws):
+            raise fail("role.denied", "Only an owner switches signing in the dashboard.", exit=3)
+        if not signer.passphrase_seals():
+            raise fail("click.contract", "Update orch-core: its signing helper cannot take a sealed passphrase yet.", exit=9)
+        got = signer.call("custody_off", {"workspace_id": ws, "begin": True})
+        if not seal_view_ok(got):
+            raise refusal_check("The signing helper's offer for your passphrase is not what it should be. Nothing changed.")
+        return got
+
     @app.post("/api/w/{ws}/click/custody")
-    def custody(body: CustodyBody, ws: str = Depends(workspace)):
+    def custody(body: CustodyBody, request: Request, ws: str = Depends(workspace)):
         """Switch signing in the dashboard on or off (section 0.8.6 item 3a): owners only; the signer does the work
         (this process never opens a key) and answers the workspace's card. No route here changes a credential."""
         gateway.enabled(ws)
@@ -375,11 +439,22 @@ def register(app: FastAPI, gateway: Gateway):
             raise fail("click.contract", "Update orch-core: its signing helper cannot switch signing yet.", exit=9)
         if body.on:  # the proof goes to the signer only; nothing here reads, keeps or logs it
             row = signer.call("custody_on", {"workspace_id": ws, "passphrase": body.passphrase})
-        else:  # off: the flag; with a NEW passphrase the signer also moves the key back (V3-D31), only while on
+        elif body.sealed is not None:  # off with a NEW passphrase (V3-D31): ciphertext only, relayed and never opened
+            if app.state.auth.login_kind(request.state.token) not in REVEAL_SESSION_KINDS:
+                raise refusal_check(SEALED_LOCAL_ONLY)
+            if not signer.passphrase_seals():
+                raise fail("click.contract", "Update orch-core: its signing helper cannot take a sealed passphrase yet.", exit=9)
             row = signer.call(
                 "custody_off",
-                {"workspace_id": ws, **({"passphrase": body.passphrase} if body.passphrase is not None else {})},
+                {
+                    "workspace_id": ws,
+                    "request_id": body.request_id,
+                    "view_digest": body.view_digest,
+                    "sealed": {"custody.passphrase": body.sealed.custody_passphrase.model_dump()},
+                },
             )
+        else:  # off: the flag only
+            row = signer.call("custody_off", {"workspace_id": ws})
         return {**(adapters.click_card(row) or {}), "switchable": True}
 
     @app.post("/api/w/{ws}/click/images")

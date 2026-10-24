@@ -37,7 +37,7 @@ log = logging.getLogger("orch_dashboard.passkey")
 CHALLENGE_TTL = 120  # seconds (host spec 10.3)
 CEREMONY_CAP = 2048  # outstanding challenges; the oldest is dropped first
 ENROLL_TTL = 900  # 15 min
-ENROLL_TRIES = 5  # wrong codes in total, then every open link is dead
+ENROLL_TRIES = 5  # wrong secrets for one code, then that code is dead
 ENROLL_CODE_BYTES = 24  # 192 bits (the spec asks for at least 128)
 TIMEOUT_MS = 120_000
 BODY_LIMIT = 16_384  # security.py bounds these pre-login bodies
@@ -89,49 +89,50 @@ class RegisterBody(Strict):
     response: RegisterResponse
 
 
-def _digest(code: str) -> bytes:
-    return hashlib.sha256(b"orch/v2/dash-enroll|" + code.encode()).digest()
+def _digest(secret: str) -> bytes:
+    return hashlib.sha256(b"orch/v2/dash-enroll|" + secret.encode()).digest()
 
 
 class EnrollCodes:
-    """Enrollment codes kept as digests, never as text: single use, 15 min, and ``ENROLL_TRIES`` wrong codes in total
-    kill every open one. ``mint`` is what `orch remote enable` and "Add a device" (R1-7, R1-6) call."""
+    """Enrollment codes ``<id>-<secret>``: the id is public (it names the code), the secret has 128 bits and is kept
+    only as a digest. Single use, 15 min. A wrong secret for a known id counts against THAT code only and burns it at
+    ``ENROLL_TRIES``; an unknown id or a malformed code touches no code at all (the route charges the source's bucket
+    instead). So nobody on the front can wipe the owner's open links by guessing. ``mint`` is what `orch remote enable`
+    and "Add a device" (R1-7, R1-6) call."""
 
     def __init__(self, clock):
         self.clock, self.lock = clock, threading.Lock()
-        self.open: dict[bytes, float] = {}
-        self.wrong = 0
+        self.open: dict[str, list] = {}  # id -> [secret digest, expires, wrong tries]
 
     def mint(self) -> str:
-        code = secrets.token_urlsafe(ENROLL_CODE_BYTES)
+        ident, secret = secrets.token_hex(6), secrets.token_urlsafe(ENROLL_CODE_BYTES)
         with self.lock:
             now = self.clock()
-            self.open = {d: until for d, until in self.open.items() if until > now}
-            self.open[_digest(code)] = now + ENROLL_TTL
-            self.wrong = 0  # a fresh link starts a fresh count
-        return code
+            self.open = {i: v for i, v in self.open.items() if v[1] > now}
+            self.open[ident] = [_digest(secret), now + ENROLL_TTL, 0]
+        return f"{ident}-{secret}"
 
-    def check(self, code: str) -> bytes | None:
-        """The code's digest when it is open and alive, else None (a wrong code is counted; the fifth kills all).
-        Compares against every open digest: no early exit on a match."""
-        digest = _digest(code)
+    def check(self, code: str) -> str | None:
+        """The code's id when it is open, alive and the secret matches, else None."""
+        ident, _, secret = code.partition("-")
+        digest = _digest(secret)
         with self.lock:
-            now = self.clock()
-            found = None
-            for known, until in self.open.items():
-                if hmac.compare_digest(known, digest) and until > now:
-                    found = known
-            if found is None:
-                self.wrong += 1
-                if self.wrong >= ENROLL_TRIES:
-                    self.open.clear()
-                return None
-            return found
+            entry = self.open.get(ident)
+            if entry is not None and entry[1] <= self.clock():
+                del self.open[ident]
+                entry = None
+            known = entry[0] if entry is not None else bytes(32)  # same work for an unknown id
+            match = hmac.compare_digest(known, digest) and entry is not None
+            if entry is not None and not match:
+                entry[2] += 1
+                if entry[2] >= ENROLL_TRIES:
+                    del self.open[ident]  # this code only
+            return ident if match else None
 
-    def spend(self, digest: bytes) -> bool:
+    def spend(self, ident: str) -> bool:
         """Single use: True for exactly the first caller."""
         with self.lock:
-            return self.open.pop(digest, None) is not None
+            return self.open.pop(ident, None) is not None
 
 
 class Ceremonies:
@@ -249,7 +250,7 @@ def register(app: FastAPI, auth: Auth, service: Passkeys | None) -> None:
             service.store.touch(credential_id, when=service.now(), sign_count=result.sign_count)
         except (StoreError, OSError) as exc:
             log.error("passkey store not updated: %s", exc)  # the login itself was verified; last-used is display only
-        return auth.open_remote()
+        return auth.open_remote(request.state.client)
 
     @app.post("/auth/enroll/options")
     def enroll_options(body: EnrollOptionsBody, request: Request):
@@ -258,6 +259,7 @@ def register(app: FastAPI, auth: Auth, service: Passkeys | None) -> None:
             return refused
         digest = service.codes.check(body.code)
         if digest is None:
+            auth.remote_attempt(request.state.client)  # a wrong guess costs its source a second charge
             return expired("code")
         try:
             existing = service.store.read()
@@ -294,12 +296,13 @@ def register(app: FastAPI, auth: Auth, service: Passkeys | None) -> None:
             return refused
         digest = service.codes.check(body.code)
         if digest is None:
+            auth.remote_attempt(request.state.client)  # a wrong guess costs its source a second charge
             return expired("code")
         taken = service.ceremonies.take(body.challenge_id, "enroll")
         if taken is None:
             return expired("challenge")
         challenge, (bound, handle) = taken
-        if not hmac.compare_digest(bound, digest):
+        if not bound == digest:
             return expired("challenge bound to another code")
         name = body.name.strip()
         if not name or hidden(name) or not name.isprintable():
@@ -336,4 +339,4 @@ def register(app: FastAPI, auth: Auth, service: Passkeys | None) -> None:
             log.error("passkey not stored: %s", exc)
             return expired("store")  # the code is spent: IT makes a new link
         log.warning("A passkey was added: %s, %s", name, when)  # the terminal and the log show it (host spec 10.1)
-        return auth.open_remote()
+        return auth.open_remote(request.state.client)

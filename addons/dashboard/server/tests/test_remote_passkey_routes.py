@@ -144,15 +144,41 @@ def test_an_enrollment_code_lives_fifteen_minutes(front, app, clock):
     assert res.status_code == 401 and code_of(res) == "enroll.expired"
 
 
-def test_five_wrong_codes_kill_every_open_link(front, app):
-    code = app.state.enroll.mint()
+def test_five_wrong_secrets_burn_only_that_code(front, app):
+    mine, other = app.state.enroll.mint(), app.state.enroll.mint()
+    ident = mine.partition("-")[0]
     for i in range(ENROLL_TRIES):
-        res = front.post("/auth/enroll/options", json={"code": f"wrong-code-{i:02d}-xxxxxxxx"}, headers=JSON)
+        res = front.post(
+            "/auth/enroll/options",
+            json={"code": f"{ident}-wrong{i:02d}xxxxxxxxxxxx"},
+            headers={**JSON, "X-Orch-Client": f"198.51.100.{i + 1}"},
+        )
         assert res.status_code == 401 and code_of(res) == "enroll.expired"
-    dead = front.post("/auth/enroll/options", json={"code": code}, headers=JSON)
-    assert dead.status_code == 401 and code_of(dead) == "enroll.expired"
-    fresh = app.state.enroll.mint()  # IT makes a new link; the count starts again
-    assert front.post("/auth/enroll/options", json={"code": fresh}, headers=JSON).status_code == 200
+    assert front.post("/auth/enroll/options", json={"code": mine}, headers=JSON).status_code == 401  # burned
+    assert front.post("/auth/enroll/options", json={"code": other}, headers=JSON).status_code == 200
+
+
+def test_a_flood_of_wrong_codes_from_one_source_leaves_another_code_usable(front, app):
+    code = app.state.enroll.mint()
+    statuses = [
+        front.post(
+            "/auth/enroll/options", json={"code": f"{i:012x}-guess{i:05d}xxxxxxxxxxxx"}, headers=JSON
+        ).status_code
+        for i in range(30)
+    ]
+    assert statuses[0] == 401 and 429 in statuses  # the source runs out of budget, not the owner's code
+    other = front.post("/auth/enroll/options", json={"code": code}, headers={**JSON, "X-Orch-Client": "198.51.100.77"})
+    assert other.status_code == 200
+    assert len(app.state.enroll.open) == 1
+
+
+def test_a_malformed_or_unknown_id_touches_no_code(front, app):
+    code = app.state.enroll.mint()
+    for bad in ("nodash" * 4, "-" + "x" * 20, "zzzzzzzzzzzz-" + "y" * 22):
+        assert front.post("/auth/enroll/options", json={"code": bad}, headers=JSON).status_code == 401
+    entry = next(iter(app.state.enroll.open.values()))
+    assert entry[2] == 0
+    assert front.post("/auth/enroll/options", json={"code": code}, headers=JSON).status_code == 200
 
 
 def test_a_wrong_and_an_unknown_and_a_dead_code_answer_the_same(front, app, clock):
@@ -404,3 +430,57 @@ def test_remote_access_off_means_no_passkey_routes(gateway, auth, tmp_path):
     static.mkdir()
     off = TestClient(create_app(PORT, gateway, auth, static), base_url=ORIGIN)
     assert off.post("/auth/passkey/options", json={}, headers={"Origin": ORIGIN}).status_code == 404
+
+
+# --- session caps ---------------------------------------------------------------------------------------------------
+def test_at_most_twenty_remote_sessions_live_and_the_oldest_goes_first(auth, clock):
+    tokens = []
+    for i in range(25):
+        clock.now += 1
+        tokens.append(auth.open_remote(f"203.0.113.{i + 1}")["token"])
+    alive = [t for t in tokens if auth.valid(t, touch=False)]
+    assert alive == tokens[-20:]
+    assert len(auth.sessions) == len(auth.kinds) == len(auth.listeners) == len(auth.session_sources) == 20
+
+
+def test_one_source_holds_at_most_five_sessions_and_cannot_push_out_another(auth, clock):
+    other = auth.open_remote("198.51.100.1")["token"]
+    mine = []
+    for _ in range(8):
+        clock.now += 1
+        mine.append(auth.open_remote("203.0.113.7")["token"])
+    assert [t for t in mine if auth.valid(t, touch=False)] == mine[-5:]
+    assert auth.valid(other, touch=False)
+
+
+def test_an_ipv6_source_is_its_slash_64(auth, clock):
+    tokens = []
+    for i in range(7):
+        clock.now += 1
+        tokens.append(auth.open_remote(f"2001:db8:0:1::{i + 1}")["token"])
+    assert len([t for t in tokens if auth.valid(t, touch=False)]) == 5
+
+
+def test_local_sessions_are_not_counted_or_evicted_by_remote_ones(auth, clock):
+    local = auth.exchange(auth.launch(43210)["code"], "local")[0]["token"]
+    for i in range(30):
+        clock.now += 1
+        auth.open_remote(f"203.0.113.{i + 1}")
+    assert auth.valid(local, touch=False)
+
+
+def test_login_records_the_source_of_the_session(front, app, auth):
+    authn, res = enroll(front, app)
+    token = res.json()["token"]
+    assert auth.session_sources[token] == SOURCE
+    assert login(front, authn, source="198.51.100.4").status_code == 200
+
+
+def test_expired_and_logged_out_sessions_leave_no_state(auth, clock):
+    token = auth.open_remote("203.0.113.9")["token"]
+    auth.logout(token)
+    assert auth.session_sources == {} and auth.sessions == {}
+    token = auth.open_remote("203.0.113.9")["token"]
+    clock.now += 43201
+    assert not auth.valid(token)
+    assert auth.session_sources == {}

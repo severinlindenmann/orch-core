@@ -214,8 +214,13 @@ def create_app(
             "login": auth.login_kind(request.state.token) or "unknown",
             "features": sorted({f for ws in workspaces for f in ws.features}),
             "workspaces": {ws.id: ws.features for ws in workspaces},
-            # a wrong remote.json or an unopenable front socket: remote access is off and this says why
-            **({"remote_problem": app.state.remote_problem} if app.state.remote_problem else {}),
+            # a wrong remote.json or an unopenable front socket: remote access is off and this says why. Loopback only:
+            # the front's callers (the internet, once logged in) learn nothing about the server's configuration.
+            **(
+                {"remote_problem": app.state.remote_problem}
+                if app.state.remote_problem and request.scope.get("orch_listener", LOOPBACK) == LOOPBACK
+                else {}
+            ),
         }
 
     @app.get("/api/workspaces")

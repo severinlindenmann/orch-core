@@ -349,3 +349,43 @@ def test_close_front_removes_the_socket_file_and_a_listener_taken_out_of_the_reg
     assert front.get("/").status_code == 200
     app.state.policies.pop(REMOTE)
     assert front.get("/").status_code == 404
+
+
+def test_close_front_removes_only_the_socket_it_bound(socket_dir):
+    """#1198 R1-5: a file or another process's socket that took the name since is left alone (ctl.sock's rule)."""
+    import socket as pysocket
+
+    import orch_dashboard.__main__ as cli
+
+    path = socket_dir / "f.sock"
+    sock = cli.bind_front(path, os.getuid())
+    path.unlink()  # someone replaced it with a socket of their own
+    other = pysocket.socket(pysocket.AF_UNIX)
+    other.bind(str(path))
+    cli.close_front(sock, path)
+    assert path.exists()
+    other.close()
+    path.unlink()
+    path.write_text("a plain file")
+    sock2 = cli.bind_front(socket_dir / "g.sock", os.getuid())
+    cli.close_front(sock2, path)  # not ours, not a socket
+    assert path.read_text() == "a plain file"
+
+
+def test_the_remote_problem_is_not_shown_to_the_front(gateway, auth, tmp_path, remote, passkey_store):
+    static = tmp_path / "static"
+    static.mkdir()
+    (static / "index.html").write_text("<html></html>")
+    from orch_dashboard.policy import remote_policy
+
+    app = create_app(
+        PORT,
+        gateway,
+        auth,
+        static,
+        remote=remote_policy(NAME),
+        remote_problem="remote.not_configured: x",
+        passkeys=passkey_store,
+    )
+    front = TestClient(Front(app), base_url=HTTPS, headers={"X-Orch-Client": SOURCE})
+    assert "remote_problem" not in front.get("/api/session", headers=bearer(remote)).json()

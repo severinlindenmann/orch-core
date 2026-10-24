@@ -83,7 +83,6 @@ export interface Review {
   runner_grant: { hours: number; scope: string; holder: string } | null
   flags: { id: string; text: string }[]
   risk: { text: string; once: boolean } | null
-  typed_word: string | null
   tty_confirm: boolean
 }
 export interface Progress {

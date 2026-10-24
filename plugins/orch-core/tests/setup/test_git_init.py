@@ -63,7 +63,7 @@ def test_the_review_names_git_init_and_the_repo_it_declares(tmp):
 
 
 def test_the_run_makes_the_repository_before_it_prepares_the_settings(tmp):
-    f, ports, p, _ = run_ok(tmp, WITH_GIT, typed="GRANT")
+    f, ports, p, _ = run_ok(tmp, WITH_GIT)
     assert p["error"] is None and p["done"] is True
     n = names(ports)
     assert n.index("git_init") < n.index("human.prepare")
@@ -72,7 +72,7 @@ def test_the_run_makes_the_repository_before_it_prepares_the_settings(tmp):
 
 
 def test_without_the_choice_nothing_is_initialised(tmp):
-    f, ports, p, rv = run_ok(tmp, AGENT, typed="GRANT")
+    f, ports, p, rv = run_ok(tmp, AGENT)
     assert "git_init" not in names(ports) and all(x["id"] != "git" for x in rv["flags"])
 
 

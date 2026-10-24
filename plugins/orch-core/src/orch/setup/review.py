@@ -87,7 +87,6 @@ class Plan:
     flags: list[dict[str, str]]
     runner_grant: dict[str, Any] | None
     risk: dict[str, Any] | None
-    typed_word: str | None
     tty_confirm: bool
     canon_profile: dict[str, Any]
     rows: list[dict[str, Any]] = field(default_factory=list)
@@ -107,7 +106,6 @@ class Plan:
             "runner_grant": self.runner_grant,
             "flags": self.flags,
             "risk": self.risk,
-            "typed_word": self.typed_word,
             "tty_confirm": self.tty_confirm,
         }
 
@@ -275,20 +273,12 @@ def plan(
         risk = {"text": CONVENIENCE_RISK, "once": True}
     elif profile["method"] == "terminal":
         flags.append({"id": "terminal", "text": "Every approval asks for your passphrase in a terminal."})
-    # R2: a typed word in the browser for more than 8 hours of agent access, or any runner grant
-    typed = None
-    if runner_grant is not None:
-        typed = "GRANT"
-    elif "grant_hours" in sets and wanted(
-        "settings"
-    ):  # the workspace's agent time changes (Finish setup keeps a value that is already set)
-        typed = "AGENTS"
     # R3: a terminal confirmation for Finish setup and for anything that gives a machine-held grant or runs code
     exec_addon = any(
         info[a].needs_runner or info[a].needs_terminals for a in profile["addons"] if info[a].kind == "addon"
     )
     tty = facts is not None or runner_grant is not None or exec_addon
-    p = Plan(items, flags, runner_grant, risk, typed, tty, _canon_profile(profile, directory))
+    p = Plan(items, flags, runner_grant, risk, tty, _canon_profile(profile, directory))
     if facts is None:
         p.workspace = _workspace(profile, directory)
     p.rows = _rows(p, profile)
@@ -398,7 +388,6 @@ def _digest(p: Plan) -> str:
         "workspace": p.workspace,
         "flags": p.flags,
         "risk": p.risk,
-        "typed_word": p.typed_word,
         "tty": p.tty_confirm,
     }
     return "sha256:" + hashlib.sha256(canon.dumps(doc)).hexdigest()

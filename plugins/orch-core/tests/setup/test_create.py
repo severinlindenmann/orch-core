@@ -56,7 +56,7 @@ AGENT = {
 }
 
 
-def run_ok(tmp, profile, ports=None, typed=None, **envkw):
+def run_ok(tmp, profile, ports=None, **envkw):
     ports = ports or FakePorts()
     f = setup_flow(tmp, ports, **envkw)
     # first pass only to learn the fingerprint
@@ -67,14 +67,14 @@ def run_ok(tmp, profile, ports=None, typed=None, **envkw):
     if rv["fingerprint"]:
         ports.terminal.answers[:] = ["yes"]
     ports.expect(f.review.plan)
-    body = {"review_id": rv["review_id"], "digest": rv["digest"], **({"typed_word": typed} if typed else {})}
+    body = {"review_id": rv["review_id"], "digest": rv["digest"]}
     out = f.dispatch("POST", "create", {}, body)[1]
     f.thread.join(10)
     return f, ports, progress(f, out["run_id"]), rv
 
 
 def test_terminal_path_signs_in_order_with_one_unlock_and_the_grant_last(tmp):
-    f, ports, p, rv = run_ok(tmp, AGENT, typed="GRANT")
+    f, ports, p, rv = run_ok(tmp, AGENT)
     assert p["error"] is None and p["done"] is True and f.phase == "done"
     assert ports.unlocks == 1
     assert ports.submits == ["addon.granted"] * 4 + ["grant.issued"]  # dashboard, start-agent, terminals, worktrees
@@ -89,7 +89,7 @@ def test_terminal_path_signs_in_order_with_one_unlock_and_the_grant_last(tmp):
 
 
 def test_all_requests_are_prepared_and_checked_before_the_unlock(tmp):
-    f, ports, p, _ = run_ok(tmp, AGENT, typed="GRANT")
+    f, ports, p, _ = run_ok(tmp, AGENT)
     n = names(ports)
     assert n.count("human.prepare") == 5
     assert max(i for i, x in enumerate(n) if x == "human.prepare") < n.index("unlock")
@@ -98,7 +98,7 @@ def test_all_requests_are_prepared_and_checked_before_the_unlock(tmp):
 def test_r1_a_tampered_prepare_aborts_before_the_first_signature(tmp):
     ports = FakePorts()
     ports.tamper = lambda ev: ev.update(capabilities=["pty", "spawn_agent"]) if ev["type"] == "addon.granted" else None
-    f, ports, p, _ = run_ok(tmp, AGENT, ports=ports, typed="GRANT")
+    f, ports, p, _ = run_ok(tmp, AGENT, ports=ports)
     assert p["error"]["code"] == "review.mismatch" and p["error"]["finishable"] is True
     assert ports.unlocks == 0 and ports.submits == []  # nothing was signed or submitted
     assert ports.cancelled  # the prepared requests were cancelled
@@ -123,7 +123,7 @@ def test_r1_an_extra_event_in_a_prepared_request_aborts(tmp):
         return link
 
     ports.workspace = evil
-    f, ports, p, _ = run_ok(tmp, AGENT, ports=ports, typed="GRANT")
+    f, ports, p, _ = run_ok(tmp, AGENT, ports=ports)
     assert p["error"]["code"] == "review.mismatch" and ports.unlocks == 0
 
 
@@ -135,9 +135,7 @@ def test_r3_the_tty_fingerprint_must_match(tmp):
     f.dispatch("POST", "secrets/confirm", {}, {"words": words_for(r)})
     _, rv = f.dispatch("POST", "review", {}, {})
     ports.expect(f.review.plan)
-    out = f.dispatch(
-        "POST", "create", {}, {"review_id": rv["review_id"], "digest": rv["digest"], "typed_word": "GRANT"}
-    )[1]
+    out = f.dispatch("POST", "create", {}, {"review_id": rv["review_id"], "digest": rv["digest"]})[1]
     f.thread.join(10)
     p = progress(f, out["run_id"])
     assert p["error"]["code"] == "tty.declined" and p["error"]["finishable"] is False
@@ -145,7 +143,7 @@ def test_r3_the_tty_fingerprint_must_match(tmp):
     assert " ".join(rv["fingerprint"]) in ports.terminal.shown[0]
 
 
-def test_r2_create_needs_the_typed_word_and_the_bound_digest(tmp):
+def test_r2_create_needs_the_bound_digest_and_no_typed_word(tmp):
     ports = FakePorts()
     f = setup_flow(tmp, ports)
     f.dispatch("POST", "profile", {}, AGENT)
@@ -154,16 +152,10 @@ def test_r2_create_needs_the_typed_word_and_the_bound_digest(tmp):
     _, rv = f.dispatch("POST", "review", {}, {})
     base = {"review_id": rv["review_id"], "digest": rv["digest"]}
     with pytest.raises(SetupError) as e:
-        f.dispatch("POST", "create", {}, base)
-    assert e.value.code == "typed_word.required" and e.value.status == 403
-    with pytest.raises(SetupError) as e:
-        f.dispatch("POST", "create", {}, {**base, "typed_word": "grant"})
-    assert e.value.code == "typed_word.required"
-    with pytest.raises(SetupError) as e:
-        f.dispatch("POST", "create", {}, {**base, "digest": "sha256:" + "0" * 64, "typed_word": "GRANT"})
+        f.dispatch("POST", "create", {}, {**base, "digest": "sha256:" + "0" * 64})
     assert e.value.code == "review.changed" and e.value.status == 409
     with pytest.raises(SetupError) as e:
-        f.dispatch("POST", "create", {}, {**base, "review_id": "rv_other", "typed_word": "GRANT"})
+        f.dispatch("POST", "create", {}, {**base, "review_id": "rv_other"})
     assert e.value.code == "review.changed"
     assert names(ports) == []
 
@@ -184,7 +176,7 @@ def test_create_after_a_profile_change_needs_a_new_review(tmp):
 def test_r4_no_hello_means_no_grant_is_signed(tmp):
     ports = FakePorts()
     ports.hello = False
-    f, ports, p, _ = run_ok(tmp, AGENT, ports=ports, typed="GRANT")
+    f, ports, p, _ = run_ok(tmp, AGENT, ports=ports)
     assert p["error"] is None and p["done"] is True  # finishable, not failed
     assert "grant.issued" not in ports.submits and ports.submits.count("addon.granted") == 4
     st = {s["id"]: s["status"] for s in p["steps"]}
@@ -195,7 +187,7 @@ def test_r4_no_hello_means_no_grant_is_signed(tmp):
 def test_r4_runner_enable_failure_skips_the_grant_and_offers_a_retry(tmp):
     ports = FakePorts()
     ports.fail_runner = True
-    f, ports, p, _ = run_ok(tmp, AGENT, ports=ports, typed="GRANT")
+    f, ports, p, _ = run_ok(tmp, AGENT, ports=ports)
     assert {s["id"]: s["status"] for s in p["steps"]}["runner"] == "failed"
     assert "runner" in p["retry"] and "runner_grant" in p["retry"] and "grant.issued" not in ports.submits
     assert "runner_hello" not in names(ports)
@@ -204,7 +196,7 @@ def test_r4_runner_enable_failure_skips_the_grant_and_offers_a_retry(tmp):
 def test_the_grant_is_done_only_on_a_confirmed_deposit(tmp):
     ports = FakePorts()
     ports.deposit = "rejected"
-    f, ports, p, _ = run_ok(tmp, AGENT, ports=ports, typed="GRANT")
+    f, ports, p, _ = run_ok(tmp, AGENT, ports=ports)
     st = {s["id"]: s["status"] for s in p["steps"]}
     assert st["runner_grant"] == "failed" and "runner_grant_retry" in p["retry"]
 
@@ -212,7 +204,7 @@ def test_the_grant_is_done_only_on_a_confirmed_deposit(tmp):
 def test_a_failed_submit_stops_the_chain_and_marks_the_rest_skipped(tmp):
     ports = FakePorts()
     ports.fail_submit = 2  # the third request (dashboard and start-agent went through)
-    f, ports, p, _ = run_ok(tmp, AGENT, ports=ports, typed="GRANT")
+    f, ports, p, _ = run_ok(tmp, AGENT, ports=ports)
     st = {s["id"]: s["status"] for s in p["steps"]}
     assert st["addon:dashboard"] == "done" and st["addon:start-agent"] == "done" and st["addon:terminals"] == "failed"
     assert st["addon:worktrees"] == "skipped" and st["runner_grant"] == "skipped"
@@ -337,7 +329,7 @@ def test_r9_a_genesis_failure_leaves_nothing_and_a_second_setup_starts_clean(tmp
 
 
 def test_no_secret_in_progress_state_errors_or_review(tmp):
-    f, ports, p, rv = run_ok(tmp, AGENT, typed="GRANT")
+    f, ports, p, rv = run_ok(tmp, AGENT)
     blob = json.dumps([p, rv, f.dispatch("GET", "state", {}, None)[1]])
     for secret in (ports.passphrase_seen, ports.code_seen, GRANT_SECRET, GRANT_SECRET.split(".")[1]):
         assert secret not in blob
@@ -345,7 +337,7 @@ def test_no_secret_in_progress_state_errors_or_review(tmp):
 
 
 def test_the_grant_secret_is_deposited_and_never_stored_by_the_flow(tmp):
-    f, ports, p, _ = run_ok(tmp, AGENT, typed="GRANT")
+    f, ports, p, _ = run_ok(tmp, AGENT)
     deposits = [e for e in ports.log if e[0] == "call" and e[1] == "grant.deposit"]
     assert len(deposits) == 1
     assert GRANT_SECRET not in repr(vars(f)) and GRANT_SECRET not in repr(vars(f.run))
@@ -353,7 +345,7 @@ def test_the_grant_secret_is_deposited_and_never_stored_by_the_flow(tmp):
 
 def test_b8_a_longer_runner_grant_is_prepared_only_after_the_settings_landed(tmp):
     prof = {**AGENT, "agent_hours": 72}
-    f, ports, p, rv = run_ok(tmp, prof, typed="GRANT")
+    f, ports, p, rv = run_ok(tmp, prof)
     assert p["done"] is True and ports.submits[0] == "settings.changed" and ports.submits[-1] == "grant.issued"
     calls = [e for e in ports.log if e[0] == "call"]
     kinds = [(c[1], i) for i, c in enumerate(calls)]
@@ -367,7 +359,7 @@ def test_b8_a_longer_runner_grant_is_prepared_only_after_the_settings_landed(tmp
 def test_b8_the_deferred_grant_is_still_checked_against_the_review(tmp):
     ports = FakePorts()
     ports.tamper = lambda ev: ev.update(hours=ev["hours"] + 1) if ev["type"] == "grant.issued" else None
-    f, ports, p, _ = run_ok(tmp, {**AGENT, "agent_hours": 72}, ports=ports, typed="GRANT")
+    f, ports, p, _ = run_ok(tmp, {**AGENT, "agent_hours": 72}, ports=ports)
     assert p["error"]["code"] == "review.mismatch" and "grant.issued" not in ports.submits
     assert ports.submits[0] == "settings.changed"  # the earlier, already checked requests landed; finishable
     assert p["error"]["finishable"] is True

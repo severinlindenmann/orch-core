@@ -41,19 +41,19 @@ def test_the_review_names_the_records_consent_and_binds_it_to_the_digest(tmp):
 
 
 def test_the_run_sets_up_records_last_and_only_when_consented(tmp):
-    f, ports, p, rv = run_ok(tmp, WITH_RECORDS, typed="GRANT")
+    f, ports, p, rv = run_ok(tmp, WITH_RECORDS)
     assert p["error"] is None and p["done"] is True
     assert [x for x in ports.log if x[0] == "records_setup"] == [("records_setup", ports.log[-1][1], str(tmp.work))]
     assert [s["id"] for s in p["steps"]][-1] == "records"
     assert next(s for s in p["steps"] if s["id"] == "records")["status"] == "done"
-    f, ports, p, rv = run_ok(tmp, AGENT, typed="GRANT")
+    f, ports, p, rv = run_ok(tmp, AGENT)
     assert "records_setup" not in names(ports) and all(x["id"] != "records" for x in rv["flags"])
 
 
 def test_a_records_failure_is_a_retry_item_with_the_command_and_setup_still_finishes(tmp):
     ports = FakePorts()
     ports.fail_records = True
-    f, ports, p, _ = run_ok(tmp, WITH_RECORDS, typed="GRANT", ports=ports)
+    f, ports, p, _ = run_ok(tmp, WITH_RECORDS, ports=ports)
     assert p["done"] is True and p["error"] is None
     assert "records" in p["retry"] and "orch records init" in p["reasons"]["records"]
     assert next(s for s in p["steps"] if s["id"] == "records")["status"] == "failed"

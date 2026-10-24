@@ -313,7 +313,6 @@ export function Setup({ api }: { api: SetupAPI }) {
   const [secrets, setSecrets] = useState<Secrets | null>(null)
   const [words, setWords] = useState<Record<string, string>>({})
   const [review, setReview] = useState<Review>()
-  const [typed, setTyped] = useState('')
   const [run, setRun] = useState<string>()
   const [progress, setProgress] = useState<Progress>()
   const [busy, setBusy] = useState(false)
@@ -328,7 +327,6 @@ export function Setup({ api }: { api: SetupAPI }) {
     setAccess(a)
     setProfile((p) => ({ ...p, agent_hours: a === 'none' ? 8 : a, ...(a === 'none' ? { agent_grant: false } : {}) }))
     setReview(undefined)
-    setTyped('')
   }
   const heading = useRef<HTMLHeadingElement>(null)
   const lock = useRef(false)
@@ -531,7 +529,6 @@ export function Setup({ api }: { api: SetupAPI }) {
   const update = (value: Partial<Profile>) => {
     setProfile((p) => ({ ...p, ...value }))
     setReview(undefined)
-    setTyped('')
   }
   async function getReview() {
     setReview(await api.call<Review>('review', {}))
@@ -601,15 +598,6 @@ export function Setup({ api }: { api: SetupAPI }) {
     !!review &&
     (((state?.mode === 'finish' || !!review.runner_grant) && !review.tty_confirm) ||
       (review.tty_confirm && review.fingerprint?.length !== 3))
-  // A typed word is expected whenever the review gives machine access or changes how long agents may work. Core
-  // decides; if it ever omits the word where it is due, the page refuses to continue.
-  const needsWord =
-    !!review &&
-    (profile.agent_grant ||
-      !!review.runner_grant ||
-      (state?.mode === 'finish'
-        ? review.items.some((i) => i.id === 'settings' && i.details.some((d) => d.includes('grant_hours')))
-        : profile.agent_hours > 8))
   const summary = review ? summarize(review) : { lines: [], unknown: false }
   const next = (n: number) => (
     <button className="primary" onClick={() => setStep(n)}>
@@ -1087,48 +1075,35 @@ export function Setup({ api }: { api: SetupAPI }) {
               </details>
               {review.tty_confirm && (
                 <div className="inset">
-                  <h2>How to finish</h2>
+                  <h2>One more confirmation after you click</h2>
                   <ol>
-                    {review.typed_word && (
-                      <li>
-                        Type <Raw>{review.typed_word}</Raw> below and press {state.mode === 'finish' ? 'Finish setup' : 'Create workspace'}.
-                      </li>
-                    )}
+                    <li>Click {state.mode === 'finish' ? 'Finish setup' : 'Create workspace'} below.</li>
+                    <li>Return to the terminal window where you started orch setup. Leave this page open to compare the three words.</li>
                     <li>
-                      Then look at your terminal: orch asks you to confirm there. It shows three words. If they match <Words words={review.fingerprint} />,
-                      type yes there.
+                      Check that the terminal shows the same words in the same order: <Words words={review.fingerprint} />. If they match, type yes in the terminal
+                      and press Enter.
                     </li>
                   </ol>
+                  <p>If any word is different, do not type yes. Close the terminal window and run orch setup again.</p>
                 </div>
-              )}
-              {review.typed_word && (
-                <label>
-                  Type <Raw>{review.typed_word}</Raw> here to confirm
-                  <input autoComplete="off" value={typed} onChange={(e) => setTyped(e.target.value)} />
-                </label>
-              )}
-              {needsWord && !review.typed_word && (
-                <p role="alert">A typed confirmation is required. Return to your terminal to restart setup.</p>
               )}
               {terminalReviewMissing && (
                 <p role="alert">Terminal confirmation is missing. Return to your terminal to restart setup.</p>
               )}
+              <p>
+                Clicking {state.mode === 'finish' ? 'Finish setup' : 'Create workspace'} approves the choices shown above
+                {review.tty_confirm ? ' and starts the final check.' : ' and starts creating your workspace.'}
+              </p>
               <footer>
                 <button
                   className="primary"
-                  disabled={
-                    terminalReviewMissing ||
-                    (!!review.typed_word && typed !== review.typed_word) ||
-                    (needsWord && !review.typed_word)
-                  }
+                  disabled={terminalReviewMissing}
                   onClick={() =>
                     void act(async () => {
                       const result = await api.call<{ run_id: string }>('create', {
                         review_id: review.review_id,
                         digest: review.digest,
-                        ...(review.typed_word ? { typed_word: typed } : {}),
                       })
-                      setTyped('')
                       setRun(result.run_id)
                     })
                   }

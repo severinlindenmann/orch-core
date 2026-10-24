@@ -470,50 +470,6 @@ def _publish_rows(out: dict[str, Any], value: Any, before: Any, ctx: Any) -> boo
     return True
 
 
-_MODE_WORDS = {
-    "work": "Do the work", "refine": "Write requirements and plan", "fix": "Fix what was sent back",
-    "continue": "Continue", "context": "Read and answer",
-}  # fmt: skip
-_HARNESS_WORDS = {"claude-code": "Claude", "codex": "Codex"}
-
-
-def _model_word(name: str | None) -> str:
-    from orch.modelchoices import MODEL_LABELS
-
-    return "Harness default" if name is None else MODEL_LABELS[name]
-
-
-def _models_rows(out: dict[str, Any], value: Any, before: Any, ctx: Any) -> bool:
-    """``settings.changed`` ``set.models`` (Model routing): one row per harness and mode, the model in words, ``Harness
-    default`` where none is set. The new value replaces the whole table, so every mode of every harness is listed.
-    ``False`` (the generic row, every byte) when the value is not a plain table of the closed lists."""
-    from orch.modelchoices import MODEL_CHOICES
-
-    def plain(v: Any) -> bool:
-        return isinstance(v, Mapping) and all(
-            h in MODEL_CHOICES
-            and isinstance(per, Mapping)
-            and all(m in _MODE_WORDS and per[m] in MODEL_CHOICES[h] for m in per)
-            for h, per in v.items()
-        )
-
-    if value is not None and not plain(value):
-        return False
-    if before is not None and not plain(before):
-        return False  # the host's current value is not a plain table: the generic row shows every byte
-    new = value or {}
-    old = before if plain(before) else {}
-    for harness, hword in _HARNESS_WORDS.items():
-        for mode, mword in _MODE_WORDS.items():
-            after = new.get(harness, {}).get(mode)
-            was = old.get(harness, {}).get(mode)
-            _row(out, f"{hword}: {mword}", _model_word(after), _model_word(was), ctx.note(False))
-    out.setdefault("notes", []).append(
-        "Start agent uses these models for new agents. You still see the model before each start."
-    )
-    return True
-
-
 def _leaf_word(v: Any) -> str:
     """A leaf as canonical JSON on one line: strings quoted, ``true``/``false``/``null`` bare, ``{}`` and ``[]``
     literal, so ``true`` and ``"true"``, ``5`` and ``"5"`` differ and no text can pass for the ``(removed)`` marker."""
@@ -1166,9 +1122,14 @@ def _payload(
         tofu = {"new": "first use of this publisher key", "known": "same publisher as before"}.get(
             _s(market["publisher"].get("tofu")), "unsigned"
         )
+        warn = ""  # one click has no typed word: what the person must not miss sits in the plain note itself
+        if market.get("stale") is True:
+            warn += " STALE: the marketplace index is past its expiry (per host, not signed)."
+        if market.get("class") == "dev-folder":
+            warn += " DEV: a local folder, not a marketplace package (per host, not signed)."
         out.setdefault("notes", []).append(
             f"Where it comes from (per host, not signed): {_s(market.get('url'))}, {tofu}. "
-            "A key shows the same publisher as last time, not who they are."
+            "A key shows the same publisher as last time, not who they are." + warn
         )
     deps = material.get("deps")
     if deps is not None:
@@ -1291,8 +1252,6 @@ def _event(
             if key == "repos" and _repo_rows(out, value, before.get(key), ctx):
                 continue
             if key == "publish" and _publish_rows(out, value, before.get(key), ctx):
-                continue
-            if key == "models" and _models_rows(out, value, before.get(key), ctx):
                 continue
             if key == "icon" and _icon_rows(out, value, before.get(key), ctx):
                 continue

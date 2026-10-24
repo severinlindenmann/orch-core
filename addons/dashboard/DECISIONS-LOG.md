@@ -2037,6 +2037,14 @@ Revert: remove Wiki route registration and feature advertisement; repository pag
 - **Revert:** Remove the Hub UI integrations and exact-command entry point; retain the supplied hub API and mocks.
 - **Validation:** TypeScript only for this task. No servers or test runners started. No browser layout verification performed.
 
+## 2026-10-24 Add-on install is one click (V3-D38)
+
+- **Decision:** Installing or updating a marketplace add-on (`market_grant`, core `addon.grant {name, staged}`) and `settings.set {addons}` are one click, like any other signed action. Core's `op_class` gives every `addon.grant` except `publish` the class `click` (no typed word, whatever the capabilities) and `addons` is no longer a word key. `click.prepare` accepts `market_grant` (the terminal-only refusal and its message are gone; `publish` stays terminal only). The page keeps `SignPopover`: One click where the workspace has it, the Terminal hand-off where it is off (the normal fallback, not a special path).
+- **Words (Codex visual challenge, state/codex/oneclick-0745.md):** review button "Review installation" with "Next, review and approve the installation with one click. The add-on will be installed turned off."; the signer's one button "Approve and install"; card state "Waiting for installation approval". The review dialog folds away while the signer's review is open; Cancel brings it back.
+- **Why:** Owner decision V3-D38 (24 Oct): one click in the browser, always. The click view still shows every line of the signed event and the marketplace block labelled "per host, not signed".
+- **Not done here:** the dashboard has no add-on settings form yet (G6 B1 is core only); when it lands its action only needs to be listed in `CLICK_ACTIONS`.
+- **Revert:** restore the word class in `orch.click.protocol`, the refusal in `click.prepare`, and the Terminal wording.
+
 ### 2026-10-23 — General settings and records (run-8 1.2 / 1.8)
 
 - **Decision:** Put workspace identity, approving, agent access and repositories on General; keep technical information, reservation times and Records in a closed Advanced fold. Records uses host status for its summary and preserves push confirmation and terminal-only operations in For advanced users.

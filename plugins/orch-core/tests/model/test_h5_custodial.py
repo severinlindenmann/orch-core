@@ -291,7 +291,7 @@ def test_replay_is_the_same_as_the_admission(w):
     [
         ("sign_methods", ["terminal", "hub"]),
         ("repos", {"x": {"path": "../x"}}),
-        ("models", None),
+        ("addons", {"wiki": None}),
         ("publish", None),
         ("icon", None),
     ],

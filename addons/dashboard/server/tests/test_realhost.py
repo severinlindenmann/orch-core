@@ -452,15 +452,14 @@ def pair(tmp_path_factory):
     root = short_run_root() / uuid.uuid4().hex[:6]
     a, b = Workspace(root / "w", dirname="a"), Workspace(root / "w", dirname="b")
     try:
+        a.make_dirs()
+        a.start_host()
+        b.host = a.host
         for w, title in ((a, "Alpha ticket"), (b, "Beta ticket")):
-            w.init()
+            w.init()  # `orch setup` registers each workspace with the running host
             w.grant()
             w.install_dashboard()
             w.agent("new", title)
-        a.start_host()
-        a.register()
-        b.host = a.host
-        b.register()
     except (RuntimeError, TimeoutError, OSError) as exc:
         a.stop_host()
         shutil.rmtree(root, ignore_errors=True)

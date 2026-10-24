@@ -225,6 +225,8 @@ class ControlOps:
         data: dict[str, Any] = {"workspaces": rows}
         if self.host.dev is not None:  # absent, not false, on a normal host (goldens unchanged)
             data["dev"] = {"sim_convenience": True, "sandbox": self.host.dev.id8}
+            if self.host.dev.pending:
+                data["dev"]["pending"] = True
         if self.host.dev_alarms:  # §11A.17.3 D3: absent while there is none
             data["alarms"] = [dict(a) for a in self.host.dev_alarms]
         return ok_result(data)
@@ -456,6 +458,11 @@ class ControlOps:
                 self.intents.abandon(intent)  # nothing was created: the same key may run again
                 raise
             # Only now may recovery undo anything, and only what this bootstrap creates from here on.
+            try:
+                self._claim_pending_genesis(workspace_id)
+            except BaseException:
+                self.intents.abandon(intent)
+                raise
             self.intents.update(intent, validated=True, validated_at=int(time.time()))
             return self._run_bootstrap(intent, root, peers, backend)
 
@@ -515,9 +522,35 @@ class ControlOps:
             pins=self.host.pins,
             person_valid=lambda person: person == owner and person_scope_ok(cert.get("o") or {}),
         )
-        devmode.check_admit(self.host.dev, workspace_id, root, _genesis_view(event))  # §11A.17: nothing appended
+        devmode.check_admit(self.host.dev, workspace_id, root, _genesis_view(event), fresh=True)  # nothing appended
         self._check_reserved_prefix(event)
+        self._check_pending_free(workspace_id)
         return peers, backend
+
+    def _pending_free(self, workspace_id: str) -> bool:
+        """The pending rule (V3-D38): a pending dev host admits ONE genesis per process, only into an empty
+        registry. Free when the claim is unclaimed or held by this very workspace id (a retry or the recovery of the
+        same bootstrap)."""
+        held = self.host.pending_claim
+        return not self.host.registry.entries() and held in (None, workspace_id)
+
+    def _check_pending_free(self, workspace_id: str) -> None:
+        """Read-only half (the validation runs twice per bootstrap)."""
+        dev = self.host.dev
+        if dev is not None and dev.pending and not self._pending_free(workspace_id):
+            raise devmode.refused("not_sandbox", "a pending dev host admits one fresh SBX genesis per process")
+
+    def _claim_pending_genesis(self, workspace_id: str) -> None:
+        """The claim, taken under a lock atomically with the check, before anything is appended and again before
+        every admission (``_finish_bootstrap``: live, same-key resume and start-up recovery), so no path admits a
+        second genesis. It records the workspace id, so finishing the claimed bootstrap again is allowed. A bootstrap
+        that fails after this leaves the claim taken; restart the host to try again."""
+        dev = self.host.dev
+        if dev is None or not dev.pending:
+            return
+        with self.host.pending_lock:
+            self._check_pending_free(workspace_id)
+            self.host.pending_claim = workspace_id
 
     def _check_reserved_prefix(self, event: dict[str, Any]) -> None:
         """``SBX`` is reserved for dev-pair sandboxes (§11A.17.3 F1): ``host.bootstrap`` accepts it only for a fresh
@@ -604,7 +637,8 @@ class ControlOps:
                 peers,
             )
             with OwnershipLock(self.state_dir, workspace_id).exclusive(self.host.lock_wait):
-                admit(self.host, entry, _genesis_view(event))  # the one choke point (§11A.17.3 R5)
+                self._claim_pending_genesis(workspace_id)  # also on resume and start-up recovery (one per process)
+                admit(self.host, entry, _genesis_view(event), fresh=True)  # the one choke point (§11A.17.3 R5)
                 self.host.serve_from_thread(entry)
         result = ok_result({"workspace_id": workspace_id, "seq": 1}, seq=1)
         return self.intents.complete(intent, result)["result"]

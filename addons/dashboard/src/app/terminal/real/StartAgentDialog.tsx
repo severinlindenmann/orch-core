@@ -463,7 +463,7 @@ function PreviewLines({ ws, data, ticket, harness }: { ws: string; data: AgentPr
     <div className="space-y-2" data-testid="agent-preview">
       <dl className="grid grid-cols-1 gap-x-3 gap-y-0.5 sm:grid-cols-[110px_minmax(0,1fr)] sm:gap-y-1.5">
         <dt className="text-text-muted">Will use</dt>
-        <dd data-testid="agent-model-line">{data.model ? modelLabel(choices.data, harness, data.model) : 'Chosen by the agent app'}{data.model_source === 'workspace' ? ' (set for this kind of work in Settings)' : data.model_source === 'chosen' ? ' (your choice)' : ''}</dd>
+        <dd data-testid="agent-model-line">{data.model ? modelLabel(choices.data, harness, data.model) : 'Chosen by the agent app'}{data.model_source === 'addon' ? ` (chosen by ${data.model_by ?? 'an add-on'})` : data.model_source === 'chosen' ? ' (your choice)' : ''}</dd>
         {data.grant && (<>
           <dt className="text-text-muted">Agent access</dt><dd data-testid="agent-grant">{data.grant.scope === 'all' ? 'All tickets' : 'Tickets you may work on'}, until {clock(data.grant.until)}. <details className="inline"><summary className="inline cursor-pointer text-text-muted">Technical details</summary> <Raw>{data.grant.id}</Raw></details></dd>
         </>)}

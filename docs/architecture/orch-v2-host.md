@@ -11383,7 +11383,7 @@ variables of check 1 only narrow.
      `tests/relay/personkey_sandbox.py` into `orch.devsandbox` so that production code and `dev-pair` share one
      check; orch-29's open point in 11A.15.10);
   3. `dev.json` exists, is valid, and its `sandbox_id` and `root` equal the manifest's;
-  4. the manifest names the sandbox person (`person_id`, written by `dev-pair` after `orch init`) and the state
+  4. the manifest names the sandbox person (`person_id`, written by `dev-pair` after `orch setup`; a manifest without `person_id` and without `workspaces` starts a pending dev host, 17.3 "Creation") and the state
      directory holds no registered workspace that fails 17.3 (a dev host serves sandbox workspaces only, 17.3 rule
      R5);
   5. the passphrase is the only person custody in the sandbox's `HOME` (no keychain selection, no `custody.json`
@@ -11422,14 +11422,14 @@ checked at registration, at host start, and again by `dev_gate` inside the colum
 | # | Check | Why |
 |---|---|---|
 | S1 | the workspace root is `<root>/ws` (or `<root>/ws-<n>`), reached from the pinned root descriptor without following a link, and its `st_dev`/`st_ino` equal the pair the manifest recorded for this workspace id | a copy or a move breaks it (17.3 "Copies") |
-| S2 | the manifest lists this workspace id under `workspaces`, written by `dev-pair` right after `orch init` in that root | the sandbox owns the workspace, not the other way round |
+| S2 | the manifest lists this workspace id under `workspaces`, written by `dev-pair` right after `orch setup` in that root | the sandbox owns the workspace, not the other way round |
 | S3 | the signed genesis `workspace.created` has `prefix` = `SBX`, `owner.name` = exactly `orch dev sandbox <id8>`, with `id8` = the first 8 characters of the manifest id (the manifest id is 8 or more lowercase hex characters, `^[0-9a-f]{8,}$`; DECIDED (orch-07), D4), and `owner.person` = the manifest's sandbox person (DECIDED (orch-52), O5; strengthened by DECIDED (orch-07), F1: `SBX` is a **reserved** prefix, see "Creation") | an immutable, signed, creation-time marker without an F1 change. Because production `orch init` gives `SBX` only to a fresh throwaway person, no real workspace has an `SBX` genesis, and a forged manifest cannot change a signed genesis |
 | S4 | the member list holds exactly one person, the sandbox person; no `member.added` in the merged history | a sandbox workspace has no other reader whose history we would poison |
 | S5 | the workspace-local marker `<ws>/.state/dev-sandbox.json` (0600) exists and names the same `sandbox_id` and workspace id | an extra check (DECIDED (orch-07), F2). It travels with a file copy, but not through a records repo or a relay restore (`.state/` is rebuilt), so the primary marker on normal hosts is the `SBX` genesis |
 | S6 | the workspace's `link.json` origin equals `dev.json`'s `relay_origin` byte for byte, or there is no link (DECIDED (orch-52), O2: no hard-coded allow-list in production code; `dev.json` is read only under the flag and a matching manifest, so a stray file cannot widen anything) | a sandbox talks only to the relay `dev-pair` chose |
 
 - **R5: a dev host serves sandbox workspaces only, through one registration choke point (DECIDED (orch-07), F5).**
-  Every path that adds a workspace to a host's registry (`orch host register`, `host.bootstrap` (`orch init` against a
+  Every path that adds a workspace to a host's registry (`orch host register`, `host.bootstrap` (`orch setup` against a
   running host), any restore, and a relay-based adopt or recovery) goes through one function,
   `orch.host.registry.admit(service, ws)`. On a dev host it refuses a workspace that fails any of S1 to S5
   (`host.dev_refused`, reason `not_sandbox`); on a normal host it refuses an `SBX` genesis (below). The start-up proof
@@ -11455,9 +11455,22 @@ checked at registration, at host start, and again by `dev_gate` inside the colum
   is neither registered nor served. On a normal host its `SBX` genesis makes `admit` refuse it, whether it arrives as a
   file copy, a records-repo checkout or a relay restore, with or without the marker. Test
   `sbx_genesis_without_marker_refused_on_normal_host` (records rebuild, `.state/` removed, relay restore).
-- **Creation.** `dev-pair up --sim-convenience` runs `orch init --prefix SBX` (owner name `orch dev sandbox <id8>`) in
-  `<root>/ws`, then writes the workspace marker and the manifest's `workspaces` entry (`id`, `st_dev`, `st_ino`) and
-  `person_id`, then `dev.json`, then starts the host.
+- **Creation (V3-D38, amended).** `orch init` is gone; `orch setup` (hosted: `host.wsk_create` + `host.bootstrap`) is the
+  only genesis. `dev-pair up --sim-convenience` and the kit therefore work in four phases: (1) write the manifest with
+  `id` and `root` only (no `person_id`, no `workspaces`) and `dev.json`, and start a **pending dev host**; (2) run
+  `orch setup --prefix SBX` (owner name `orch dev sandbox <id8>`, passphrase custody) in `<root>/ws`, which bootstraps and
+  registers the workspace on that host; (3) stop the host by its own PID and write the manifest's `person_id` and
+  `workspaces` entry (`id`, `st_dev`, `st_ino`) and the workspace marker (`dev.json` was written once, in step 1, and stays); (4) start the full dev host, which
+  proves S1 to S5 as before. Production code never writes a sandbox file.
+- **The pending dev host (V3-D38).** A manifest with neither `person_id` nor `workspaces` gives a pending dev host
+  (start-up proof checks 1 to 3 and 5 unchanged; a manifest that lists workspaces but no person is still refused,
+  `no_person`). It has **no dev powers**: `sandbox_reason` fails first with `S0` for every workspace, so `dev_gate`,
+  the test marketplace and the lock-free `gated` are all off, and a records push is refused as on every dev host. It
+  starts only with an empty registry (`not_sandbox` otherwise) and admits exactly one fresh `SBX` genesis per process (the claim records the workspace id and is checked again before every admission, start-up recovery and same-key retries included),
+  only through `host.bootstrap`: the genesis prefix is `SBX`, the owner name the sandbox's, the owner a fresh person, the
+  root `<root>/ws` or `<root>/ws-<n>` directly below the pinned root. `host.register` and every further bootstrap on a
+  pending host are `not_sandbox`. Its status line reads `DEV HOST (pending genesis, no dev powers)`. Dev powers exist
+  only on a host that has proven the bound person, workspace row and marker at its own start.
 - **`SBX` is a reserved prefix (DECIDED (orch-07), F1).** Production `orch init` and `host.bootstrap` accept
   `--prefix SBX` only when the init **creates a fresh person** (no person identity in `HOME` yet, so the person owns
   nothing else), **this `orch init` run generates the recovery code itself** (never a typed, restored or imported

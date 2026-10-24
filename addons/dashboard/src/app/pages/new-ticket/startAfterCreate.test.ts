@@ -8,9 +8,9 @@ import { startAfterCreate } from './useStartAfterCreate'
 const NOW = Date.parse('2026-10-19T10:00:00Z')
 const GRANT = { id: 'gr_A', until: '2026-10-21T10:00:00Z', scope: 'workable' as const }
 const args: AgentArgs = { ticket: 'DEMO-1', harness: 'claude-code', mode: 'work', worktree: true }
-const reviewed = (over: Partial<Reviewed> = {}): Reviewed => ({ choice: { harness: 'claude-code', mode: 'work', model: '' }, model: { model: 'opus', source: 'workspace' }, grantId: 'gr_A', ...over })
+const reviewed = (over: Partial<Reviewed> = {}): Reviewed => ({ choice: { harness: 'claude-code', mode: 'work', model: '' }, model: { model: 'opus', source: 'chosen' }, grantId: 'gr_A', ...over })
 const preview = (over: Partial<AgentPreview> = {}): AgentPreview => ({
-  spec: 's'.repeat(8), ticket: 'DEMO-1', display: 'claude x', display_hidden: false, model: 'opus', model_source: 'workspace',
+  spec: 's'.repeat(8), ticket: 'DEMO-1', display: 'claude x', display_hidden: false, model: 'opus', model_source: 'chosen',
   cwd: { kind: 'workspace' }, cwd_path: '/w', cwd_path_hidden: false, will_create_worktree: false, login_shell: false, env: [], grant: GRANT, blocked: null, warnings: [], ...over,
 })
 const ACK = { start_agent: true, login_shell: true }
@@ -28,11 +28,15 @@ describe('usableGrant', () => {
 })
 
 describe('shownModel', () => {
-  it('chosen > signed table (routing on) > the agent default', () => {
-    expect(shownModel({ harness: 'codex', mode: 'work', model: 'o3' }, { codex: { work: 'x' } }, true)).toEqual({ model: 'o3', source: 'chosen' })
-    expect(shownModel({ harness: 'claude-code', mode: 'work', model: '' }, { 'claude-code': { work: 'opus' } }, true)).toEqual({ model: 'opus', source: 'workspace' })
-    expect(shownModel({ harness: 'claude-code', mode: 'work', model: '' }, { 'claude-code': { work: 'opus' } }, false)).toEqual({ model: null, source: 'default' })
-    expect(shownModel({ harness: 'claude-code', mode: 'fix', model: '' }, { 'claude-code': { work: 'opus' } }, true)).toEqual({ model: null, source: 'default' })
+  it('chosen > the agent default (an add-on that chooses answers in the preview only)', () => {
+    expect(shownModel({ harness: 'codex', mode: 'work', model: 'o3' })).toEqual({ model: 'o3', source: 'chosen' })
+    expect(shownModel({ harness: 'claude-code', mode: 'work', model: '' })).toEqual({ model: null, source: 'default' })
+  })
+  it('a preview whose model an add-on chose differs from what the page showed', () => {
+    const shown = shownModel({ harness: 'claude-code', mode: 'work', model: '' })
+    const seen = reviewed({ choice: { harness: 'claude-code', mode: 'work', model: '' }, model: shown })
+    expect(compareStart(preview({ model: null, model_source: 'default' }), seen, args, ACK).ok).toBe(true)
+    expect(compareStart(preview({ model: 'opus', model_source: 'addon', model_by: 'model-routing' }), seen, args, ACK).ok).toBe(false)
   })
 })
 
@@ -42,7 +46,7 @@ describe('compareStart (fail closed)', () => {
     ['blocked', preview({ blocked: { code: 'x', message: 'nope', detail: {} } })],
     ['no spec', preview({ spec: null })],
     ['model', preview({ model: 'sonnet' })],
-    ['model source', preview({ model_source: 'chosen' })],
+    ['model source', preview({ model_source: 'addon' })],
     ['worktree', preview({ will_create_worktree: true })],
     ['a repository\'s shared copy', preview({ cwd: { kind: 'repo' } })],
     ['a worktree folder', preview({ cwd: { kind: 'worktree' } })],

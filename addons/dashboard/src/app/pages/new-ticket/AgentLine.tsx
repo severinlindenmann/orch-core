@@ -8,11 +8,11 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import type { StartPlan } from './useStartPlan'
 
-/** "Opus (set in Settings)", "Opus", or "chosen by the agent app". */
+/** "Opus" or "chosen by the agent app". */
 export function modelText(plan: Pick<StartPlan, 'shown' | 'choices' | 'choice'>): string {
-  const { model, source } = plan.shown
+  const { model } = plan.shown
   if (!model) return 'chosen by the agent app'
-  return `${modelLabel(plan.choices, plan.choice.harness, model)}${source === 'workspace' ? ' (set in Settings)' : ''}`
+  return modelLabel(plan.choices, plan.choice.harness, model)
 }
 
 export function AgentLine({ plan, tooMany }: { plan: StartPlan; tooMany: boolean }) {

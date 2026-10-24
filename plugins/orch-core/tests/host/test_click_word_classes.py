@@ -51,7 +51,6 @@ def test_the_early_check_by_args_alone_is_a_click_except_publish():
 
 def test_settings_classes():
     sets = lambda **kw: op_class("settings.set", args={"set": kw})  # noqa: E731
-    assert sets(models={"codex": {"work": "x"}}) == "click"
     assert sets(addons={"demo": {"mode": "fast"}}) == "click"  # V3-D38
     for key in ("repos", "grant_hours", "sign_methods"):
         assert sets(**{key: None}) == "word"

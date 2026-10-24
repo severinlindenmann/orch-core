@@ -24,6 +24,8 @@ def test_source_file_matches_the_vendored_vectors():
     src = dict(line.split(": ", 1) for line in (VECTORS_DIR / "SOURCE").read_text().splitlines())
     assert src["hub_repo"] == "orch-hub" and len(src["hub_commit"]) == 40
     assert src["vectors_hub_sha256"] == hashlib.sha256((VECTORS_DIR / "vectors_hub.json").read_bytes()).hexdigest()
+    pol = hashlib.sha256((VECTORS_DIR / "vectors_hub_policy.json").read_bytes()).hexdigest()
+    assert src["vectors_hub_policy_sha256"] == pol
     assert V["contract"] == "orch.hub/0" and V["hv"] == 0 and V["suite"] == 2
 
 

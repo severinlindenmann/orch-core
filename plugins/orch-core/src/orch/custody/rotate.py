@@ -17,8 +17,9 @@ No re-seal to the hub and no new workspace-key epoch: the hub's membership does 
 
 from __future__ import annotations
 
+import contextlib
 import os
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +27,7 @@ from orch import crypto
 
 from .base import CustodyError, KeyNotFound
 
-__all__ = ["Fresh", "Plan", "plan", "rotate"]
+__all__ = ["Fresh", "Plan", "locked", "plan", "rotate"]
 
 KEY_ID = "dk"
 STAGE = "person-rotate"
@@ -156,6 +157,28 @@ def plan(
     return Plan(person, host_uid, keys, old, stage, sel)
 
 
+@contextlib.contextmanager
+def locked(state_dir: Path, entry: Mapping[str, Any]) -> Iterator[None]:
+    """The workspace lock (the one the custody switch takes) from :func:`plan` through :func:`_install`: two rotations
+    of one workspace never run together, so one cannot delete or replace the staged key of the other. Another one in
+    flight is a plain refusal (nothing was changed)."""
+    from orch.host import convenience as host_convenience
+    from orch.host.errors import HostError
+
+    host_uid = entry.get("host_uid")
+    if type(host_uid) is not int:
+        raise CustodyError("this UID is not mapped to a person of the workspace")
+    try:
+        with host_convenience.workspace_lock(Path(state_dir), entry["workspace_id"], host_uid):
+            yield
+    except HostError as exc:
+        if exc.code != "lock.busy":
+            raise
+        raise CustodyError(
+            "another key replacement or key change of this workspace is running; wait for it, then try again"
+        ) from None
+
+
 def rotate(
     state_dir: Path,
     entry: Mapping[str, Any],
@@ -175,7 +198,29 @@ def rotate(
 
     ``fresh`` (#1198 C13, the click signer): the new key is the caller's (generated in memory, passphrase given), so
     nothing is asked on a terminal and the key signs from memory; ``before`` sees the host's prepared request before
-    anything is signed (the dashboard compares it with the review the person clicked)."""
+    anything is signed (the dashboard compares it with the review the person clicked). The whole run, from the plan
+    to the install, holds :func:`locked`."""
+    with locked(state_dir, entry):
+        return _rotate(
+            state_dir, entry, env, say=say, pk_factory=pk_factory, open_backend=open_backend, confirm=confirm,
+            now_ms=now_ms, call=call, fresh=fresh, before=before,
+        )  # fmt: skip
+
+
+def _rotate(
+    state_dir: Path,
+    entry: Mapping[str, Any],
+    env: Mapping[str, str],
+    *,
+    say: Callable[[str], None],
+    pk_factory: Callable[..., Any],
+    open_backend: Callable[[Path], Any] | None,
+    confirm: Callable[[str, str], bool] | None,
+    now_ms: Callable[[], int] | None,
+    call: Callable[..., Any] | None,
+    fresh: Fresh | None,
+    before: Callable[[Mapping[str, Any]], None] | None,
+) -> dict[str, Any]:
     import time
 
     from orch import hostclient

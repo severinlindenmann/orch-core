@@ -1701,7 +1701,17 @@ class ClickSigner:
         for key in [k for k, r in self._rotations.items() if k[0] == wid or r.recipient.closed]:
             self._rotations.pop(key).close()
         if found.finish is not None:  # an earlier run landed the event and stopped before the install: finish it
-            rotation._install(self.state, wid, found.keys, found.stage, found.sel, found.old, found.finish)  # noqa: SLF001
+            try:
+                with rotation.locked(self.state, entry):  # (the plan above is advisory: look again under the lock)
+                    again = rotation.plan(self.state, entry)
+                    if again.finish is not None:
+                        rotation._install(  # noqa: SLF001
+                            self.state, wid, again.keys, again.stage, again.sel, again.old, again.finish
+                        )
+            except KeyNotFound as exc:
+                raise ClickError("custody.no_key", str(exc)) from None
+            except CustodyError as exc:
+                raise ClickError("custody.unavailable", str(exc)[:300]) from None
             self.problems.pop(wid, None)
             self._note("rotated", workspace=wid)
             return {"done": True, "old": found.old, "new": found.finish, **self._row(entry)}
@@ -1779,9 +1789,13 @@ class ClickSigner:
                 raise refused("check_failed", "the new key is not the one in the review")
 
             def same(prepared: Mapping[str, Any]) -> None:
-                # the bound fields in their fixed order (op, workspace_id, log, events, ...): one event, checked before
-                _, _, _, (ev,), *_ = (prepared.get(k) for k in views.INVARIANT)
-                ok = prepared.get("op") == ROTATE_OP and ev.get("old") == got.old and ev.get("device") == got.new
+                ev = views.single_event(prepared)
+                ok = (
+                    ev is not None
+                    and prepared.get("op") == ROTATE_OP
+                    and ev.get("old") == got.old
+                    and ev.get("device") == got.new
+                )
                 if not ok:  # the host built another rotation than the one the person clicked
                     from orch.host.signer import SignerRefused
 

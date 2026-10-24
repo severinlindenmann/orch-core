@@ -375,3 +375,61 @@ def test_every_refusal_zeroises_both_opened_secrets(click, served, monkeypatch, 
     with pytest.raises(Exception):  # noqa: B017 - which static refusal is not the point here
         go(click, served, offer, seal(offer, served, **kw))
     assert len(seen) == 2 and all(len(b) > 0 and not any(b) for b in seen)
+
+
+def test_a_rotation_in_flight_blocks_a_second_one_and_deletes_nothing(click, served, monkeypatch):
+    """The workspace lock is held from the plan to the install: with a staged key and another rotation running (here:
+    its lock held), a fresh rotation refuses in plain words and leaves the staged key alone."""
+    from orch.host import convenience as host_convenience
+
+    owner = served.lab.ws.owner
+    stage = click.keys.parent / rotate.STAGE
+    backend_over(stage).create("dk", role="device", passphrase=OLD_PW)  # a staged key of the run in flight
+    staged = stage / human.KEY_FILE
+    before = staged.read_bytes()
+    monkeypatch.setattr(host_convenience, "LOCK_WAIT", 0.1)
+    offer = begin(click, served)
+    with host_convenience.workspace_lock(served.lab.state, served.wid, os.getuid()):
+        err = refused(lambda: go(click, served, offer, seal(offer, served)), "custody.unavailable")
+        assert "wait for it" in err.message and CODE not in str(err)
+    assert staged.read_bytes() == before and not roster(served)[owner.device].removed
+
+
+def test_the_terminal_path_takes_the_same_lock(served, click, monkeypatch):
+    from orch.custody.base import CustodyError
+    from orch.host import convenience as host_convenience
+
+    monkeypatch.setattr(host_convenience, "LOCK_WAIT", 0.1)
+    with host_convenience.workspace_lock(served.lab.state, served.wid, os.getuid()):
+        with pytest.raises(CustodyError, match="wait for it"):
+            rotate.rotate(
+                served.lab.state, click.entry, {}, say=lambda t: None, pk_factory=None, open_backend=backend_over
+            )
+
+
+@pytest.mark.parametrize("events", [[], [{"type": "a"}, {"type": "b"}], ["not an object"], None, "x"])
+def test_single_event_is_one_object_or_none(events):
+    from orch.click import view as views
+
+    assert views.single_event({"events": events}) is None
+    assert views.single_event("not a mapping") is None  # type: ignore[arg-type]
+    assert views.single_event({"events": [{"type": "a"}]}) == {"type": "a"}
+
+
+@pytest.mark.parametrize("events", [[], 2, "x"])
+def test_a_host_answer_with_no_single_event_is_refused_plainly(click, served, events):
+    owner = served.lab.ws.owner
+
+    def tamper(op, args, result):
+        if op == "human.prepare":
+            result["data"]["events"] = (
+                result["data"]["events"] * (0 if events == [] else 2) if isinstance(events, list) else events
+            )
+        return result
+
+    click.tamper = tamper
+    offer = begin(click, served)
+    with pytest.raises(Exception) as info:  # noqa: B017 - whichever static check refuses first
+        go(click, served, offer, seal(offer, served))
+    assert not isinstance(info.value, (ValueError, AttributeError, TypeError))
+    assert not roster(served)[owner.device].removed

@@ -33,12 +33,12 @@ const calls = (p: string) => state.host.calls.filter((c) => c.path.includes(p))
 const posted = () => calls('/handoff').filter((c) => c.method === 'POST')
 
 
-const setup = (name: 'publish' | 'model-routing', on = false, setUp: boolean | null = false) => {
+const setup = (name: 'publish', on = false, setUp: boolean | null = false) => {
   route(null, on)
   state.host.workspaces[0].addOns = { available: true, add_ons: [{ id: name, title: name === 'publish' ? 'Publish' : 'Model routing', desc: 'Settings for this workspace.', state: on ? 'on' : 'off', locked: null, blocked: null, needs: name === 'publish' ? 'publish' : 'models', set_up: setUp }] } as never
 }
 
-it.each(['model-routing', 'publish'] as const)('off %s opens settings and sends one enable action', async (name) => {
+it.each(['publish'] as const)('off %s opens settings and sends one enable action', async (name) => {
   setup(name)
   const user = userEvent.setup()
   show('/w/DEMO/settings/addons')
@@ -46,29 +46,17 @@ it.each(['model-routing', 'publish'] as const)('off %s opens settings and sends 
   await user.click(await screen.findByRole('switch', { name: title }, T))
   const form = within(await screen.findByRole('dialog', { name: `Turn on ${title}` }, T))
   expect(form.getByRole('button', { name: 'Turn on' })).toBeDisabled()
-  if (name === 'publish') {
+  {
     expect(form.getByText('Publish is signed in your terminal.')).toBeInTheDocument()
     await user.type(form.getByLabelText('Files are sent to'), 'https://files.example.test')
     await user.type(form.getByLabelText('Links open at'), 'https://links.example.test')
-  } else {
-    await user.selectOptions(await form.findByLabelText('Do the work', { selector: '#route-codex-work' }), 'gpt-5.4')
   }
   await user.click(form.getByRole('button', { name: 'Turn on' }))
   await waitFor(() => expect(posted()).toHaveLength(1), T)
   expect(posted()[0].body).toEqual({ action: 'addon_enable', name, ...(name === 'publish' ? { publish: { server: 'https://files.example.test', share: 'https://links.example.test' } } : { models: { codex: { work: 'gpt-5.4' } } }) })
 })
 
-it('set up but off uses the plain grant', async () => {
-  setup('model-routing', false, true)
-  const user = userEvent.setup()
-  show('/w/DEMO/settings/addons')
-  await user.click(await screen.findByRole('switch', { name: 'Model routing' }, T))
-  expect(screen.queryByTestId('addon-model-routing-state')).toBeNull() // no state chip: the switch says it
-  await waitFor(() => expect(posted()).toHaveLength(1), T)
-  expect(posted()[0].body).toEqual({ action: 'addon_grant', name: 'model-routing' })
-})
-
-it.each(['model-routing', 'publish'] as const)('on %s without settings signs settings only', async (name) => {
+it.each(['publish'] as const)('on %s without settings signs settings only', async (name) => {
   setup(name, true, false)
   const user = userEvent.setup()
   show('/w/DEMO/settings/addons')
@@ -78,23 +66,10 @@ it.each(['model-routing', 'publish'] as const)('on %s without settings signs set
   if (name === 'publish') {
     await user.type(form.getByLabelText('Files are sent to'), 'https://files.example.test')
     await user.type(form.getByLabelText('Links open at'), 'https://links.example.test')
-  } else {
-    await user.selectOptions(await form.findByLabelText('Do the work', { selector: '#route-codex-work' }), 'gpt-5.4')
   }
   await user.click(form.getByRole('button', { name: 'Review and sign' }))
   await waitFor(() => expect(posted()).toHaveLength(1), T)
   expect(posted()[0].body).toEqual(name === 'publish' ? { action: 'publish_setup', server: 'https://files.example.test', share: 'https://links.example.test' } : { action: 'models_set', models: { codex: { work: 'gpt-5.4' } } })
-})
-
-it('on and set up keeps the section and turns off with the switch', async () => {
-  setup('model-routing', true, true)
-  const user = userEvent.setup()
-  show('/w/DEMO/settings/addons')
-  await user.click(await screen.findByTestId('addon-model-routing-expand', {}, T))
-  expect(await screen.findByTestId('model-routing', {}, T)).toBeInTheDocument()
-  await user.click(screen.getByRole('switch', { name: 'Model routing' }))
-  await waitFor(() => expect(posted()).toHaveLength(1), T)
-  expect(posted()[0].body).toEqual({ action: 'addon_disable', name: 'model-routing' })
 })
 
 it('a non-owner cannot open setup', async () => {

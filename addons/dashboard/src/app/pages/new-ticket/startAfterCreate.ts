@@ -5,7 +5,6 @@
 // difference, or anything that needs the person to read it first, leaves the decision to them in the Start agent dialog.
 import { LOGIN_NOTICE, type AgentArgs, type AgentMode, type AgentPreview, type Harness } from '@/api/agents'
 import { MAX_SEQUENCE_STEPS } from '@/api/handoff'
-import type { ModelTable } from '@/api/modelRouting'
 import type { RunnerInfo } from '@/api/runs'
 
 /** The choice behind "Agent: Claude Code · Do the work · Opus". `model` is empty when the host picks it from Settings. */
@@ -35,16 +34,15 @@ export function usableGrant(runner: Pick<RunnerInfo, 'grant'> | null | undefined
   return Number.isFinite(end) && end - now >= MIN_GRANT_MS ? { id: g.id, until: g.until } : null
 }
 
-/** What the host will use for the model: the person's choice, else the signed routing table, else the agent's own default. */
+/** What the page shows for the model: the person's choice, else the agent's own default. An add-on that chooses the model answers in the
+ *  start preview only, so a start whose preview names such a model differs from what was shown and is refused until the person has seen it. */
 export interface ShownModel {
   model: string | null
-  source: 'chosen' | 'workspace' | 'default'
+  source: 'chosen' | 'default'
 }
 
-export function shownModel(choice: AgentChoiceValue, table: ModelTable | null | undefined, routing: boolean): ShownModel {
-  if (choice.model) return { model: choice.model, source: 'chosen' }
-  const routed = routing ? table?.[choice.harness]?.[choice.mode] : undefined
-  return routed ? { model: routed, source: 'workspace' } : { model: null, source: 'default' }
+export function shownModel(choice: AgentChoiceValue): ShownModel {
+  return choice.model ? { model: choice.model, source: 'chosen' } : { model: null, source: 'default' }
 }
 
 /** What the page showed before the signing: it is what the preview must equal. `grantId` is null while the grant is yet to be signed. */

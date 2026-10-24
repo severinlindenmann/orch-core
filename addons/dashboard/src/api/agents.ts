@@ -45,9 +45,10 @@ export interface AgentPreview {
   spec: string | null
   ticket: string | null
   display: string | null
-  /** Model routing: the model this start would use (null: the agent's own default) and who chose it. */
+  /** The model this start would use (null: the agent's own default) and who chose it (`addon`: an add-on that holds choose_model, named by `model_by`). */
   model?: string | null
-  model_source?: 'chosen' | 'workspace' | 'default' | null
+  model_source?: 'chosen' | 'addon' | 'default' | null
+  model_by?: string | null
   display_hidden: boolean
   cwd: { kind: 'workspace' | 'repo' | 'worktree' | 'workdir' | null; repo?: string; ticket?: string }
   cwd_path: string | null

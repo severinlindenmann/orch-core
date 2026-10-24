@@ -4,7 +4,7 @@ export const REAL_HOST_PAGES = [
   'real-host-quick', 'real-host-quick-many', 'real-host-quick-normal-ticket', 'real-host-quick-add',
   'real-host-records', 'real-host-records-hidden-url', 'real-host-records-first-commit', 'real-host-records-push-failed',
   'real-host-records-push-mismatch', 'real-host-records-push', 'real-host-records-push-confirm',
-  'real-host-runner-on', 'real-host-runner-off', 'real-host-addons', 'real-host-agent-model', 'real-host-addons-model-routing', 'real-host-addons-model-routing-open', 'real-host-addons-publish', 'real-host-addons-publish-open', 'real-host-addons-publish-unset',
+  'real-host-runner-on', 'real-host-runner-off', 'real-host-addons', 'real-host-agent-model', 'real-host-addons-publish', 'real-host-addons-publish-open', 'real-host-addons-publish-unset',
   'real-host-terminal-dock', 'real-host-terminal-preview', 'real-host-terminal-readonly', 'real-host-terminal-take',
   'real-host-terminal-exited', 'real-host-terminal-stop',
   'real-host-pair-unavailable', 'real-host-pair-blocked-convenience', 'real-host-pair-offer', 'real-host-pair-pending',

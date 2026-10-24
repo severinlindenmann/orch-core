@@ -79,10 +79,8 @@ export const LAYOUT_SCENARIOS = [
   'agent-dialog-acked',
   'agent-blocked',
   'agent-grant',
-  // Model routing: the Start agent dialog with a model chosen by the workspace, and Settings > Add-ons with the box.
+  // The Start agent dialog with a model chosen by an add-on.
   'agent-model',
-  'addons-model-routing',
-  'addons-model-routing-open',
   'addons-publish',
   'addons-publish-open',
   'addons-publish-unset',
@@ -518,10 +516,6 @@ const ROUTING_CHOICES: RoutingChoices = {
     { id: 'claude-code', label: 'Claude', models: [{ id: 'fable', label: 'Fable' }, { id: 'opus', label: 'Opus' }, { id: 'sonnet', label: 'Sonnet' }, { id: 'haiku', label: 'Haiku' }] },
     { id: 'codex', label: 'Codex', models: [{ id: 'gpt-5.4', label: 'GPT-5.4' }, { id: 'gpt-5-codex', label: 'GPT-5 Codex' }, { id: 'gpt-5', label: 'GPT-5' }, { id: 'o3', label: 'o3' }] },
   ],
-  modes: [
-    { id: 'work', label: 'Do the work' }, { id: 'refine', label: 'Write requirements and plan' }, { id: 'fix', label: 'Fix what was sent back' },
-    { id: 'continue', label: 'Continue' }, { id: 'context', label: 'Read and answer' },
-  ],
 }
 const agentPreview = (scenario: LayoutScenario): AgentPreview => {
   const base: AgentPreview = {
@@ -531,7 +525,7 @@ const agentPreview = (scenario: LayoutScenario): AgentPreview => {
     grant: { id: AGENT_GRANT, until: new Date(nowMs() + 3 * 86_400_000).toISOString(), scope: 'workable' }, blocked: null,
     warnings: ['the program is found and started through your login shell; your shell profile runs first and can change what runs', `ORCH_WORKTREES leaves out ${LONG_URL}: its path contains ':'`],
   }
-  if (scenario === 'agent-model') return { ...base, display: `claude --model sonnet 'Run orch status, then work on ticket DEMO-0043.'`, model: 'sonnet', model_source: 'workspace' }
+  if (scenario === 'agent-model') return { ...base, display: `claude --model sonnet 'Run orch status, then work on ticket DEMO-0043.'`, model: 'sonnet', model_source: 'addon', model_by: 'Model routing' }
   if (scenario === 'agent-blocked') return { ...base, grant: null, blocked: { code: 'runner.disabled', message: `dashboard execution is off for this workspace on this machine ${LONG_WORD}`, detail: { missing: 'machine' } } }
   if (scenario === 'agent-grant') return { ...base, grant: null, blocked: { code: 'launch.no_grant', message: 'no usable runner grant', detail: { reason: 'expiring' } } }
   return base
@@ -831,7 +825,6 @@ function install() {
       { id: 'start-agent', title: 'Start agents', desc: 'Start an agent from the dashboard. It runs on this Mac, as you.', state: 'on', locked: null, blocked: 'Stop first: an agent of yours is running right now.' },
       { id: 'terminals', title: 'Terminals', desc: 'Open a terminal on this Mac from the dashboard. It runs as you.', state: 'off', locked: null, blocked: 'Needs dashboard execution first. In your terminal run: orch runner enable' },
       { id: 'worktrees', title: 'Worktrees', desc: 'Each ticket gets its own copy of your project folder, so agents do not overwrite each other.', state: 'off', locked: null, blocked: null },
-      { id: 'model-routing', title: 'Model routing', desc: 'Choose which AI model each kind of agent work starts on. You still see the model before every start.', state: current.startsWith('addons-model-routing') ? 'on' : 'off', locked: null, blocked: null },
       { id: 'publish', title: 'Publish', desc: 'Share files of a ticket with a link.', state: current.startsWith('addons-publish') ? 'on' : 'off', locked: null, blocked: null },
       { id: 'quick', title: 'Quick tasks', desc: 'Small one-off tasks. Always available; there is nothing to switch on.', state: 'on', locked: 'Always available. There is nothing to switch.', blocked: null },
     ],
@@ -845,7 +838,6 @@ function install() {
     gates: current.startsWith('settings-approvals') ? settingsGates(current) : {},
     repos: current === 'settings-general' ? [] : [{ name: 'code', default_branch: 'main', remote: LONG_URL }],
     repos_more: false,
-    models: current.startsWith('new-sequence-start') ? { 'claude-code': { work: 'opus' } } : current.startsWith('addons-model-routing') ? { 'claude-code': { work: 'sonnet', refine: 'opus', context: 'haiku' }, codex: { fix: 'gpt-5.4' } } : null,
     settings_at: null,
     policy_at: null,
   }))
@@ -949,7 +941,7 @@ export function LayoutPreview({ name }: { name: string }) {
     return (
       <SettingsFrame current="addons" addon={undefined} ws={workspace.id} tabs={HOST_TABS}>
         <HostAddOns workspace={workspace} />
-        {scenario.endsWith('-open') && <OpenAddOnPanel customize={scenario === 'addons-model-routing-open'} />}
+        {scenario.endsWith('-open') && <OpenAddOnPanel />}
       </SettingsFrame>
     )
   if (scenario === 'settings-general') return <SettingsFrame current="general" addon={undefined} ws={workspace.id} tabs={HOST_TABS}><HostGeneral workspace={{ ...workspace, click: signingCard('signing-off'), icon_known: true }} /></SettingsFrame>
@@ -1074,17 +1066,15 @@ function SignBPreview({ scenario, ws }: { scenario: string; ws: string }) {
   return <div className="mx-auto max-w-lg space-y-4 rounded-lg border border-border bg-surface p-4"><h2 className="text-base font-semibold">{content.title}</h2><ClickSignPanel ws={ws} answer={answer} problem={null} signing={false} onSign={() => {}} onCancel={() => {}} story={storyOf(action)} /></div>
 }
 
-/** Preview only: opens the one add-on that is On (the person's click on its title, then on Customize models). */
-function OpenAddOnPanel({ customize }: { customize: boolean }) {
+/** Preview only: opens the one add-on that is On (the person's click on its title). */
+function OpenAddOnPanel() {
   useEffect(() => {
     const t = setInterval(() => {
       const expand = document.querySelector<HTMLButtonElement>('[data-testid$="-expand"][aria-expanded="false"]')
       if (expand) return void expand.click()
-      const more = customize ? [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === 'Customize models') : null
-      if (more) more.click()
-      else if (document.querySelector('[data-testid="publish-server"], [data-testid="model-routing"]')) clearInterval(t)
+      if (document.querySelector('[data-testid="publish-server"]')) clearInterval(t)
     }, 100)
     return () => clearInterval(t)
-  }, [customize])
+  }, [])
   return null
 }

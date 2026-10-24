@@ -12541,7 +12541,7 @@ Where the code differs from or adds to §12.3, §12.4 and §0.8.6 item 6, the co
 - **Location.** The runner listens on `<run>/term/<runner uid>/term.sock`. `<run>` is the same run directory the host
   and its clients use (`--run`, else `ORCH_HOST_RUN_DIR`, else `<state>/run`: `orch.host.enable.run_dir_for`). The
   directory `<run>/term/<uid>/` is created by the runner, owned by the runner UID, mode 0700 in tier A (tier B: §13.3,
-  `/run/orch/agents/<agent uid>/` with an ACL for the person); the socket is 0600 (tier B 0660). The same ancestor rules as D-P2-6
+  `/run/orch/agents/orch-agent-<user>/` with an ACL for the person); the socket is 0600 (tier B 0660). The same ancestor rules as D-P2-6
   apply; the path stays under 100 bytes.
 - **Discovery.** The runner reports `term_socket` in `runner.hello`; the host accepts it only if it equals
   `<run>/term/<runner uid>/term.sock` and returns it in every `term.attach` answer as `socket`, with
@@ -13417,6 +13417,12 @@ the host; a separate host UID stays possible later and nothing here blocks it.
 
 One agent user per person (not per workspace): a person's agents can read every repository that person shares with
 them. Per-workspace agent users are a later option the layout allows. The worker role (H10) is unchanged by this step.
+**One naming key.** Every unit instance, writable path and directory of an agent or slot user is keyed by its user
+name (`orch-agent-<user>`, `orch-addon-<n>`), never by the person's name or a numeric UID, so the units' `%i`, their
+`ReadWritePaths` and the directories always agree. Two things keep the UID: the person's run directory `/run/orch/<person uid>`
+(D-P2-2) and the root-owned pins `/etc/orch/pins/<uid>.json` (the `orch.host.pins` format). Where a check starts from a UID (§12.6.1's expected terminal path from `runner.uid`), it maps the UID to
+the name with `getpwuid` and requires the root-owned pin of that UID to agree.
+
 Classes are §0.5's: an agent-user connection is class `agent` (column N, or G with a verified grant), never P or C,
 so `human.*`, `term.*`, `agent.start`, `grant.deposit` and the control ops are refused by the kernel UID, not by an
 environment variable.
@@ -13429,9 +13435,9 @@ setup shows one line to copy, `sudo <release>/bin/orch-os-setup --person <user>`
 computes a plan from OS facts, prints it, applies it, and may run again: it repairs, it never widens. It uses fixed
 absolute binaries.
 
-1. **Users.** `useradd --system --user-group --home-dir /var/lib/orch/agents/<user>/home --create-home --shell
+1. **Users.** `useradd --system --user-group --home-dir /var/lib/orch/agents/orch-agent-<user>/home --create-home --shell
    /bin/bash orch-agent-<user>`, password locked; `orch-addon-1..8` with `/usr/sbin/nologin` and home
-   `/var/lib/orch/addons/<n>`. A pre-existing user of one of these names without orch's pin is refused, never adopted.
+   `/var/lib/orch/addons/orch-addon-<n>`. A pre-existing user of one of these names without orch's pin is refused, never adopted.
 2. **Privileged groups refused.** If an agent or slot user is in `sudo`, `wheel`, `admin`, `adm`, `docker`, `lxd`,
    `libvirt`, `disk` or `shadow` (each is root or close to it), the helper refuses. The host checks again at every
    start (13.6).
@@ -13442,17 +13448,17 @@ absolute binaries.
    - `d /run/orch/<person uid> 2750 <person> orch-agent-<user>`: setgid, so every socket the host creates inside
      carries the agent's group without the person joining it; the host `chmod`s each socket it shares to 0660. The
      control directory inside stays 0700;
-   - `d /run/orch/agents/<agent uid> 0750 orch-agent-<user> orch-agent-<user>` plus the ACL `u:<person>:rwx`,
+   - `d /run/orch/agents/orch-agent-<user> 0750 orch-agent-<user> orch-agent-<user>` plus the ACL `u:<person>:rwx`,
      default `u:<person>:rw`, so the dashboard (the person) can reach the runner's terminal socket without joining any
      group (a group change needs a re-login of the person's systemd user manager).
-5. **Agent tree.** `/var/lib/orch/agents/<user>/{home,state,repos}`, owned by the agent, 0700, except `repos` 0750
+5. **Agent tree.** `/var/lib/orch/agents/orch-agent-<user>/{home,state,repos}`, owned by the agent, 0700, except `repos` 0750
    with the default ACL `d:u:<person>:rX` (the host reads clones through `orch.gitread`).
 6. **Person-side sharing**, set **as the person** by the CLI right after (no root needed for one's own files):
    `u:<agent>:x` on each ancestor of the release, the interpreter and each workspace repository inside the person's
    home; `u:<agent>:rX` plus a default ACL on the release tree and on `<repo>/.git` only. Each ACL is read back and
    verified.
 7. **Units.** `orch-runner@.service` (instance = the agent user) and `orch-addon@.service` (instance = the slot),
-   enabled and started: `User=%i`, `Delegate=yes` (per-run cgroups, D-P2-29), `NoNewPrivileges=yes`, `PrivateTmp=yes`,
+   enabled and started: `User=%i` (the instance is the user name, e.g. `orch-runner@orch-agent-sev`), `Delegate=yes` (per-run cgroups, D-P2-29), `NoNewPrivileges=yes`, `PrivateTmp=yes`,
    `ProtectSystem=strict`, `ProtectHome=read-only`, `ReadWritePaths=/var/lib/orch/agents/%i /run/orch/agents/%i`,
    `RestrictSUIDSGID=yes`, `TasksMax=`, `MemoryMax=` (agent: 80 % of RAM by default; D-P2-29's "no limits in phase 2"
    was a tier-A limit). `ExecStart` is the person's `<release>/current`. On a new release the host sends
@@ -13465,12 +13471,15 @@ absolute binaries.
 
 - `<run>` = `/run/orch/<person uid>`, mode 2750, owner the person, group `orch-agent-<user>` (setgid). This replaces,
   for Linux tier B, D-P2-6's mode 0711 and per-workspace `orch-<ws>` groups (they stay the later per-workspace option).
-  The ancestor rules of D-P2-6 apply; a root-owned `/run/orch` 0755 is the helper-made parent.
+  The ancestor rules of D-P2-6 apply; a root-owned `/run/orch` 0755 is the helper-made parent. **Invariant:** inside
+  `<run>` only the shared sockets (and the directories leading to them) are group-accessible; every other file (pid
+  files, launch codes, state) is 0600 and every other directory 0700. L4 teaches the transport's ancestor and ACL
+  checks to accept the setgid bit and group `r-x` on `<run>` and nothing wider.
 - Workspace sockets `<run>/<ws>/host.sock` and the runner socket `<run>/runner/host.sock`: owner the person, group the
   agent's (inherited), socket 0660. The control socket directory stays 0700: `host.*` stay person-only.
 - The runner connects as before (D-P2-24): peer UID = the registered runner UID, bound to the unit's `MainPID` read over
   systemd's D-Bus (readable by any user); the runner checks that its peer is the host UID.
-- The terminal socket moves to `/run/orch/agents/<agent uid>/term.sock` (agent-owned directory with the person's ACL,
+- The terminal socket moves to `/run/orch/agents/orch-agent-<user>/term.sock` (agent-owned directory with the person's ACL,
   socket 0660). §12.6.1's checks apply with that path: the directory owned by the runner UID, no write for others
   except the person's ACL entry, peer UID and PID equal the runner's.
 - The agent's `orch` CLI finds the host by `ORCH_HOST_RUN_DIR=/run/orch/<person uid>` from the runner's environment.
@@ -13486,7 +13495,7 @@ absolute binaries.
 | person's working tree (incl. untracked `.env`) | person | nothing |
 | person's `<repo>/.git` | person + ACL `u:agent:rX` | read (fetch) |
 | workspace store `<root>/.orch/` | person | nothing directly; only through the host socket |
-| agent clone `/var/lib/orch/agents/<u>/repos/<ws8>/<name>/` and its worktrees | agent + default ACL `u:person:rX` | everything |
+| agent clone `/var/lib/orch/agents/orch-agent-<user>/repos/<ws8>/<name>/` and its worktrees | agent + default ACL `u:person:rX` | everything |
 | release and interpreter | person + ACL `u:agent:rX` | read, execute |
 
 **Worktrees are worktrees of a clone the agent owns** (amends §12.7). A `git worktree add` into the person's
@@ -13497,10 +13506,14 @@ person, a full escape. So there is one clone per (agent user, repository), fetch
 (`-c safe.directory=<exact path>`), never written to a file and never `*`. The gitsafe owner rule becomes "owned by the
 pinned person UID" for the fetch source and "owned by me" for the clone. The way back is unchanged in kind: `diff`,
 `tree.check` and landing read the agent's clone through `orch.gitread` as the host (the host runs `tree.check` itself,
-as in tier A; the worker split of H10 is not required for tier B), landing imports objects into the host's bare
+as in tier A; the worker split of H10 is not required for tier B). **Condition:** the host reads an agent-owned tree
+only through the `orch.gitread` child with its limits, opened from the pinned directory with `O_NOFOLLOW`, objects by
+id; no git process ever runs there (#565), landing imports objects into the host's bare
 repository (`land/git.py`). The person's own `git` refuses the agent's clone (dubious ownership); the doctor warns on
 `safe.directory=*`. A ticket without a codebase works in a work folder inside the agent's tree (L6 fixes the path),
-not in the person's project root (§12.4.4), which the agent cannot write.
+not in the person's project root (§12.4.4), which the agent cannot write. The runner creates and writes it; the host
+only reads it (`orch.gitread`, or fd-relative `O_NOFOLLOW` reads) and **never writes or deletes anything inside an
+agent-owned tree** (symlink races).
 
 **The store and the guard.** The agent reaches `.orch/` only through the host socket. Direct mode (D-P2-18) under an
 agent UID refuses with a plain message ("this workspace is served by its host"), not with `EACCES` (L7). The plugin's
@@ -13540,8 +13553,14 @@ first failed fact named.
   and ≠ any agent UID; not in a privileged group; `orch-addon@<n>` active with that `User=`; the add-on's package and
   environment readable by that slot and **not readable by any other slot** (ACL read back), and not writable by the slot
   (R-M2).
-- **`same_user`**: no agent or slot users (tier A). **`broken`**: users exist but a fact fails; it is treated as
-  `same_user` everywhere and the doctor names the fact.
+- **`same_user`**: no agent or slot users (tier A). **`broken`**: users exist but a fact fails; the doctor names it.
+  The failed facts split by cause:
+  - **exposure facts** (an agent could reach the key or act as the person): the agent or slot user in a privileged
+    group; an ACL entry for it on `<state>` or a key file; a missing or foreign pin; the runner's peer UID is the
+    person's; `<run>` or the control directory wider than 13.3. These **pause click signing** (13.7) and keep the
+    marketplace gate closed;
+  - **availability facts** (nothing is exposed, something is down): the runner or slot unit not active. One click
+    stays on, with the red line and the doctor; the marketplace gate stays closed for an inactive slot.
 - Used by: the One-click default (13.7), the dashboard's status line ("Agents run as their own user" or the red line),
   the marketplace gate (13.8, #929) and setup's "Check again".
 
@@ -13553,8 +13572,11 @@ first failed fact named.
 - **Default.** On by default where `isolation.detect()` says agents are `isolated`. Off by default elsewhere (no admin
   step, Windows, macOS before M1, `broken`): turning it on is one click after the red line **"Agents run as you.
   Anything an agent runs can sign with One click and read your files."** (plus the step-up of §0.8.6 10.5 on a remote session).
-  If isolation later turns `broken` while One click is on, One click stays as the person set it; the status line turns
-  red and names the fact, and the doctor reports it.
+  If isolation later turns `broken` while One click is on: an **exposure fact** (13.6) **pauses click signing**. The
+  signer refuses each sign with the failed fact named; custody, the key and the person's setting do not change, and
+  signing resumes by itself once the check passes again. An **availability fact** leaves One click on, with the red line
+  and the doctor. Pausing rather than switching off means an agent that breaks something (for example kills its own
+  runner) gains no lever over the person's custody; `orch sign CODE` in the terminal keeps working throughout.
 - **§0.8.6 item 3a works in tier B.** The host-state flag file is the person's (host = person), so the dashboard's custody
   switch is offered in both tiers.
 - **The dashboard port (L8, Linux).** The dashboard server drops loopback TCP connections whose socket owner UID

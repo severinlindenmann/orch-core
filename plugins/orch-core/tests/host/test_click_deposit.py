@@ -100,6 +100,19 @@ def test_a_click_grant_goes_to_the_runner_and_never_to_the_dashboard(world):
     assert me["grant"]["id"] == gid
 
 
+def test_a_deposit_grant_is_refused_at_sign_when_execution_is_switched_off_after_the_review(world):
+    served, click, runner, _ = world
+    execution(served)
+    p, v = flow(click, served)
+    click.mono.t += 2
+    execution(served, False)
+    refused(lambda: click.sign(p["request_id"], v["view_digest"]), "human.click_refused", "terminal_only")
+    assert click.signatures == 0 and runner.grants.report() == []
+    execution(served)
+    res = click.sign(p["request_id"], v["view_digest"])  # nothing was claimed: the same request still signs
+    assert res["deposit"] == "confirmed" and click.signatures == 1
+
+
 def test_extend_is_one_signature_new_grant_and_revoke_old_then_the_deposit(world):
     """B8: Extend = issue + revoke in ONE prepared request, one click, the runner swaps after the commit."""
     served, click, runner, _ = world

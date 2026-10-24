@@ -153,6 +153,7 @@ literal `orch/v2/hub-…|` names.
 | `h_hub_audit_chain` | `orch/v2/hub-audit-chain\|` | hash | one signed audit record (the chain link) | 10.5 |
 | `h_hub_audit_scope` | `orch/v2/hub-audit-scope\|` | hash | the blinded workspace tag of an audit record | 10.5 |
 | `h_hub_audit_event` | `orch/v2/hub-audit-event\|` | hash | an audit event, signed into its record | 10.5 |
+| `h_hub_market_policy` | `orch/v2/hub-market-policy\|` | hash | the hub marketplace policy (`policy_hash`, the `market_policy` audit event) | 7.1 |
 | custodial family | `orch/v2/hub-custodial\|<type>\|` | `UK` | a custodial event (`type` is the event type) | 8 |
 | `sig_hub_channel_proof` | `orch/v2/hub-channel-proof\|` | channel key | the event digest | 8 |
 | `sig_hub_channel_register` | `orch/v2/hub-channel-reg\|` | the new channel key | `cj(o)` of `hub.channel_register` (proof of possession) | 6.3 |
@@ -497,6 +498,7 @@ Signed by `HK_op` under `orch/v2/hub-snapshot|`.
 | `issued_ms` | integer |
 | `roles` | object `{user_id hex: "read" \| "edit" \| "admin"}`; a user without a role is absent |
 | `revoked_channels` | sorted list of unique `channel_id` hex |
+| `market_policy` | the hub marketplace policy of §7.1; **required, never `null`** |
 | `dev` | boolean |
 
 **SHORTCUT** `Snapshots by version only (no generations)` (#910): `generation` is present and MUST be `0`; any other
@@ -505,11 +507,52 @@ value is `malformed`. Hardening (#910) defines `HK_root`-signed generations (spe
 **Verification by the host** (the newest snapshot it holds is `pinned`):
 
 1. §2.2 steps 1–3 under the card's `HK_op`; `hub_id` → `other_hub`; `op_cert_id` → `stale_op_cert`; dev marker;
-2. `roles` keys and values, `revoked_channels` sorted and unique → `malformed`;
+2. `roles` keys and values, `revoked_channels` sorted and unique, `market_policy` valid (§7.1) → `malformed`;
 3. `workspace_id` is this workspace → `other_workspace`;
 4. `version < pinned.version` → `stale_snapshot` (a replayed snapshot cannot bring back a removed user);
 5. `version == pinned.version`: identical `cj(o)` is a no-op; anything else → `snapshot_conflict`;
 6. hold it as the new pin, and store it in the workspace ledger (spec §6) so readers can verify old events.
+
+### 7.1 The hub marketplace policy `orch.hub-policy/1` (D14, orch-core#927)
+
+**Purpose.** What the company allows its workspaces to install and run: which marketplaces, which add-ons, how much
+capability. The hub admin sets it; `HK_op` signs it inside every snapshot; orch-core reads it only from a verified
+snapshot and can only **refuse** by it (a human grant is still needed; core runs standalone without a hub, D79).
+Enforcement is core's (orch-core#928); this section is the shared contract. Vectors: `vectors/vectors_hub_policy.json`
+(`check: "policy"` and `"evaluate"`) and the snapshot and audit cases of `vectors_hub.json`.
+
+```
+market_policy = { "markets": [ {"url": <canonical URL>, "class": "official" | "company", "keys": [<b64u P-256 point>, …]}, … ],
+                  "addons":  {"allow": [<id>, …] | null, "block": [<id> | <id>@<semver>, …]},
+                  "ceiling": [<capability>, …] | null }
+```
+
+- Exact key sets at every level; an unknown or missing key or a wrong type is `malformed`. **Malformed anywhere is the
+  whole policy malformed** (a verifier never reads part of it).
+- `markets`: 0 to 16 entries, sorted by `url`, unique. `url` is a canonical marketplace git URL (`https`, no `.git`, no
+  port, no query; lower-case on case-insensitive hosts such as `github.com`), never repaired. `class` is cross-checked,
+  never trusted: `official` exactly when `url` is the official marketplace (`https://github.com/severinlindenmann/orch-marketplace`)
+  and then `keys` is `[]` (core pins the official key; a hub can neither add nor replace it); `company` for any other
+  URL, with 1 or 2 sorted unique valid P-256 points (the current and the next key).
+- `addons.allow`: `null` = any id from an allowed marketplace, else 0 to 256 sorted unique ids (`[a-z][a-z0-9-]{0,39}`).
+  `addons.block`: 0 to 256 sorted unique items, each an `id` (every version) or `id@x.y.z`. Ids are global across
+  marketplaces.
+- `ceiling`: `null` = none, else a sorted unique subset of core's capabilities (`git_push`, `network`, `pty`,
+  `serve_http`, `spawn_agent`); `[]` = capability-free add-ons only.
+- Lists must already be sorted (one form, one hash). `policy_hash = b64u(H("orch/v2/hub-market-policy|" || cj(policy)))`.
+- **A new hub** starts at policy version 1: the official marketplace only, `allow: null`, `block: []`, `ceiling: null`.
+- **Versioning.** A change of the policy changes every workspace's snapshot content, so every workspace's snapshot
+  `version` rises; `hv` stays `0` (nothing ships an older shape, V3-D36). Selective workspaces (D80) receive the policy
+  too: it only restricts.
+- **Who changes it.** Only a hub-admin, in the admin console: `GET /api/v1/admin/market-policy` returns
+  `{version, policy, hash, official_url}` (the last is display data for the console); `PUT /api/v1/admin/market-policy {base_version, policy}` replaces the whole object, answering
+  `malformed` (400) for an invalid policy, `conflict` (409) when `base_version` is not the stored version (no lost update),
+  `forbidden_role` (403) for anyone else. There is no partial edit. Each change appends one audit record of type
+  `market_policy` (§10.5) **before the change commits**; if the chain cannot be written the change is refused. The audit chain and the policy row live in two databases and cannot share one commit, so the order is fail-safe: if the commit fails after the record was written, the chain holds a record for a change that did not happen (an extra record is possible, a missing one never).
+- **Evaluation** (core, orch-core#928) is specified by the `evaluate` vector cases: unlisted market `market.not_allowed`,
+  company index without a pinned signature `market.index_unsigned`, `id` or `id@version` blocked `market.blocked`,
+  `allow` set and id not in it `market.addon_not_allowed`, publisher key not pinned `market.publisher_unpinned`,
+  capabilities beyond `ceiling` `market.capability_ceiling`; an unreadable or malformed policy is `market.not_allowed`.
 
 **Selective mode (D80).** The host verifies and stores snapshots, but hub roles grant nothing in a selective
 workspace: it accepts `UK` signatures only from users the owner grants explicitly at the host terminal (by default only
@@ -1375,7 +1418,7 @@ workspaces verify and acknowledge it (`audit_ack`), admins read it in full.
 
 ```
 hub.audit {v, suite, kind: "hub.audit", hv, hub_id, op_cert_id, seq ≥ 1, prev: b64u(32), ts_ms,
-           type: "custodial" | "grant" | "membership" | "space" | "channel" | "share", scope_tag: b64u(32) | null,
+           type: "custodial" | "grant" | "membership" | "space" | "channel" | "share" | "market_policy", scope_tag: b64u(32) | null,
            event_hash: b64u(32), dev}                       signed by HK_op, label sig_hub_audit
 ```
 
@@ -1401,7 +1444,7 @@ hub.audit {v, suite, kind: "hub.audit", hv, hub_id, op_cert_id, seq ≥ 1, prev:
   otherwise (vectors `audit_share_*`); `channel` (p4) `{channel_id, user_id, change: register | revoke | renew, factor,
   actor_user_id | null, nonce}`, hub-wide (`scope_tag` null; `actor_user_id` null = the operator at the hub terminal,
   there is no `unrevoke`, §6.2; `renew` = a new certificate for the same channel key, the factor unchanged, recorded BEFORE it is issued and refusing the renewal when the chain cannot be written. **Contract text only in V3: no hub renews**, the certificate lasts 31 days and then the phone pairs again); `grant` `{group, workspace_id, role | null, actor_user_id, nonce}`; `membership`
-  `{group, user_id, added, actor_user_id, nonce}`; `space` `{space_id, epoch, change: create | add | remove | unbind | delete,
+  `{group, user_id, added, actor_user_id, nonce}`; `market_policy` (D14, §7.1) `{version ≥ 1, policy_hash: b64u(32), actor_user_id, nonce}`, hub-wide (`scope_tag` null; the version the change produced and the hash of the new policy, the actor is always a hub-admin); `space` `{space_id, epoch, change: create | add | remove | unbind | delete,
   workspace_id | null, actor_user_id | null, nonce}`. The acting admin's `UK` signature on a grant or membership change is
   the custodial event it came from (spec §10); the audit record points at it, it does not replace it. **Every event of every type carries `nonce`, 32 random bytes
   inside the event; no type is exempt.** Records carry the event's hash to every tenant, so an event without a nonce
@@ -2077,6 +2120,7 @@ v2 codes keep their meaning (v2 §14). New in H0:
 | `dev_mismatch` | everywhere | `dev: false` at a dev verifier |
 | `stale_snapshot`, `snapshot_conflict`, `unknown_snapshot` | snapshot, custodial | §7, §8.3 |
 | `forbidden_role`, `not_granted`, `channel_revoked` | custodial | §8.3 step 7 |
+| `conflict` | admin console (`PUT /admin/market-policy`) | `base_version` is not the stored version (409) |
 | `bad_channel_proof`, `factor_mismatch`, `factor_too_weak` | custodial | §8.3 |
 | `wsk_mismatch`, `not_yet_valid`, `binding_conflict`, `stale_binding`, `unbound` | binding store | §9 |
 | `alias_repointed` | `hub.joined` | §9.1 |

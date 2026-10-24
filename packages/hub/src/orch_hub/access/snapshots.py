@@ -2,7 +2,7 @@
 contract §7, signed only by the typed ``HK_op`` signer.
 
 Versioning. The newest issued snapshot of each workspace is persisted with a fingerprint of what it says (roles,
-revoked channels, op cert). A request recomputes the content; unchanged content returns the stored signed snapshot
+revoked channels, op cert, marketplace policy hash). A request recomputes the content; unchanged content returns the stored signed snapshot
 byte for byte (hosts treat the same ``version`` with different bytes as ``snapshot_conflict``), changed content gets
 ``version + 1``, a fresh ``issued_ms`` and a new signature, stored in the same transaction. Versions therefore only go
 up and survive restarts. Any failure (store, keys, revoked op cert) refuses with ``unavailable``.
@@ -41,7 +41,10 @@ class AccessSnapshots:
         with a.tx() as db:  # roles, channels, the stored row and the new row are one consistent step
             roles = a.roles(workspace_id)
             revoked = a.revoked_channels()
-            fp = hashlib.sha256(cj({"roles": roles, "revoked": revoked, "op": op_cert_id})).hexdigest()
+            mp = a.market_policy()
+            fp = hashlib.sha256(
+                cj({"roles": roles, "revoked": revoked, "op": op_cert_id, "policy": mp["hash"]})
+            ).hexdigest()
             row = a.snapshot_row(workspace_id)
             if row is not None and row[1] == fp:
                 return H.parse(row[2].encode())
@@ -58,6 +61,7 @@ class AccessSnapshots:
                 "issued_ms": self._now(),
                 "roles": roles,
                 "revoked_channels": revoked,
+                "market_policy": mp["policy"],
                 "dev": True,
             }
             signed = signer.sign_object(o)

@@ -10,6 +10,11 @@ agent or a mandate before anything is read or fetched):
   (``<state>/hosts/<ws>/market/staged/<stage>.json``) holding the package that was read once, its digest and the
   facts of the review. A reviewed stage is signed through the existing ``addon.grant {name, staged}``.
 * ``market.unstage {stage}``, ``market.installed {}``, ``market.uninstall {name}``.
+* ``market.dev_stage {path, rev?, subdir?}`` (V3 G5, ``orch addon dev``): the same stage for a commit of a LOCAL
+  repository, only in a dev workspace on a dev host (:func:`orch.host.devmode.dev_gate`, asked on the worker and again
+  at submit). It is not a marketplace source: no index, no class, no origin, no publisher key; the signed grant is the
+  same ``addon.grant {staged}`` and installs the same bytes the same way, but :func:`_converge` writes NO install
+  record, rollback floor or key, so nothing is ever "installed from" the folder and a plain re-grant of it is refused.
 
 The signed grant is the only thing that installs: :func:`recheck` runs under the store lock before the journal write
 (C2), :func:`after_grant` runs from ``human.finish`` after the append (so start-up roll-forward runs it too, idempotent,
@@ -51,6 +56,7 @@ __all__ = [
     "OP_CODES",
     "READS",
     "SCHEMAS",
+    "DEV_NOTE",
     "SOURCE_NOTE",
     "after_grant",
     "files_of",
@@ -66,11 +72,14 @@ __all__ = [
 ]
 
 LOG = logging.getLogger("orch.host.marketinstall")
-MARKET_OPS: dict[str, int] = {"market.stage": 1, "market.unstage": 1, "market.installed": 1, "market.uninstall": 1}
+MARKET_OPS: dict[str, int] = {
+    "market.stage": 1, "market.unstage": 1, "market.installed": 1, "market.uninstall": 1, "market.dev_stage": 1,
+}  # fmt: skip
 READS = frozenset({"market.installed"})
-NETWORK_OPS = frozenset({"market.stage"})  # the fetch: off the workspace worker, no lock held
-HUMAN_ONLY = frozenset({"market.stage", "market.unstage", "market.uninstall"})
+NETWORK_OPS = frozenset({"market.stage", "market.dev_stage"})  # the fetch / the git read: off the worker, no lock held
+HUMAN_ONLY = frozenset({"market.stage", "market.unstage", "market.uninstall", "market.dev_stage"})
 SOURCE_NOTE = "source as claimed by the marketplace"
+DEV_NOTE = "a local folder at this commit (orch addon dev), not a marketplace"
 _STAGE_CODES = (
     "market.actor_refused", "market.state_invalid", "market.malformed", "market.community_unisolated",
     "market.not_allowed", "market.unknown_addon", "market.ambiguous_addon", "market.not_installed", "market.revoked",
@@ -86,6 +95,16 @@ OP_CODES: dict[str, tuple[str, ...]] = {
     "market.stage": _STAGE_CODES,
     "market.unstage": ("market.actor_refused", "market.state_invalid", "market.malformed"),
     "market.installed": ("market.state_invalid", "market.malformed"),
+    "market.dev_stage": (
+        "market.actor_refused",
+        "market.state_invalid",
+        "market.reserved_id",
+        "market.origin_changed",
+        "market.fetch_failed",
+        "market.package_invalid",
+        "market.manifest_mismatch",
+        "host.dev_refused",
+    ),
     "market.uninstall": (
         "market.actor_refused",
         "market.state_invalid",
@@ -112,6 +131,16 @@ SCHEMAS: dict[str, dict[str, Any]] = {
         "additionalProperties": False,
     },
     "market.installed": {"type": "object", "additionalProperties": False},
+    "market.dev_stage": {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string", "minLength": 1, "maxLength": 1024, "pattern": "^/"},
+            "rev": {"type": "string", "minLength": 1, "maxLength": 100},
+            "subdir": {"type": "string", "minLength": 1, "maxLength": 200},
+        },
+        "required": ["path"],
+        "additionalProperties": False,
+    },
     "market.uninstall": {
         "type": "object", "properties": {"name": _NAME}, "required": ["name"], "additionalProperties": False
     },
@@ -177,9 +206,30 @@ def serve(call: Call, op: str, args: dict[str, Any]) -> dict[str, Any]:
             return ok_result({"removed": _files(service).drop_stage(args["stage"])})
         if op == "market.uninstall":
             return ok_result(_uninstall(service, args["name"]))
+        if op == "market.dev_stage":
+            return {"plan": _plan_dev(call, args)}
         return {"plan": _plan_stage(call, args)}
     except MarketError as exc:
         raise _refuse(op, exc.code) from None
+
+
+def _plan_dev(call: Call, args: dict[str, Any]) -> dict[str, Any]:
+    """``market.dev_stage`` on the worker: the dev gate first (a dev host AND a workspace that passes S1 to S6 now),
+    before any path is looked at. Everything else happens in :func:`run`, off the worker."""
+    from . import devmode
+
+    if devmode.dev_gate(call.service) is None:
+        raise devmode.refused(
+            "not_sandbox",
+            "orch addon dev works only in a dev sandbox workspace on a dev host",
+            hint="a real workspace installs add-ons from a marketplace: orch addon install",
+        )
+    service = call.service
+    return {
+        "op": "market.dev_stage", "id": None, "path": args["path"], "rev": args.get("rev"),
+        "subdir": args.get("subdir"), "root": str(_store_root(service)), "now": service.clock(),
+        "granted": dict(install.as_addons(service.store.state.workspace.addons)), "person": call.viewer,
+    }  # fmt: skip
 
 
 def _plan_stage(call: Call, args: dict[str, Any]) -> dict[str, Any]:
@@ -252,12 +302,16 @@ def run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
     from .workspace import ok_result
 
     service = call.service
+    op = plan["op"]
     try:
-        out = _stage(service, plan, call)
+        out = _dev_stage(service, plan) if op == "market.dev_stage" else _stage(service, plan, call)
     except MarketError as exc:
-        _audit(call, "market.stage.refused", id=plan["id"], code=exc.code)
-        raise _refuse("market.stage", exc.code) from None
-    _audit(call, "market.stage", id=plan["id"], stage=out.get("stage"), up_to_date=out.get("up_to_date", False))
+        _audit(call, f"{op}.refused", id=plan["id"], code=exc.code)
+        raise _refuse(op, exc.code) from None
+    if op == "market.dev_stage":
+        _audit(call, op, id=out["name"], stage=out["stage"])
+    else:
+        _audit(call, op, id=plan["id"], stage=out.get("stage"), up_to_date=out.get("up_to_date", False))
     return ok_result(out)
 
 
@@ -348,6 +402,53 @@ def _stage(service: WorkspaceService, plan: dict[str, Any], call: Call | None = 
     }  # fmt: skip
 
 
+def _dev_stage(service: WorkspaceService, plan: dict[str, Any]) -> dict[str, Any]:
+    """``orch addon dev``: a commit of a local repository, read with the closed local export (the same bytes
+    ``orch addon pack`` hashes), judged by the checks an install runs on the package, then ONE stage file marked
+    ``dev``. No index, no marketplace, no key: the stage names no origin and the grant records no install."""
+    from orch import gitsafe
+    from orch.market import author
+
+    try:
+        commit, files = gitsafe.market_local_export(plan["path"], plan["rev"], plan["subdir"])
+        pkg, manifest = author.check_files(files)
+    except gitsafe.MarketGitError as exc:
+        raise MarketError("market.package_invalid" if exc.kind == "package" else "market.fetch_failed") from None
+    except gitsafe.Unsafe as exc:
+        raise HostError("invalid.input", f"cannot read that repository: {str(exc)[:200]}") from None
+    except author.AuthorError as exc:
+        raise MarketError(exc.code if exc.code.startswith("market.") else "market.package_invalid") from None
+    name = manifest.name
+    if name in builtin.NAMES or name in constants.OFFICIAL_IDS or name in constants.MOVED_IDS:
+        raise MarketError("market.reserved_id")  # a dev folder never takes the name of a built-in or official add-on
+    files_ = _files(service)
+    if name in files_.installs()[ADDONS]:
+        raise MarketError("market.origin_changed")  # installed from a marketplace: dev never replaces it
+    event = install.grant_event(manifest, pkg)
+    review = install.review_lines(manifest, pkg, event, plan["granted"].get(name))
+    now = plan["now"]
+    stage = "st_" + secrets.token_hex(16)
+    expires = now + constants.STAGE_TTL
+    files_.write_stage(
+        {
+            "v": 1, "stage": stage, "dev": True, "name": name, "version": manifest.version, "digest": pkg.digest,
+            "origin": None, "commit": commit, "publisher_key": None, "tofu": "unsigned", "index_version": 0,
+            "prev_digest": None, "created_at": now, "expires_at": expires, "class": "dev-folder", "summary": None,
+            "stale": False,
+            "entry": {
+                "id": name, "version": manifest.version, "capabilities": manifest.capabilities,
+                "min_orch": manifest.min_core,
+            },
+            "files": {p: base64.b64encode(b).decode("ascii") for p, b in pkg.files.items()},
+        }
+    )  # fmt: skip
+    body = {k: val for k, val in event.items() if k != "type"}
+    return {
+        "stage": stage, "expires_at": int(expires), "name": name, "version": manifest.version, "commit": commit,
+        "package_sha256": pkg.digest, "grant": body, "review": review, "dev": True,
+    }  # fmt: skip
+
+
 # ------------------------------------------------------------------------------------------------ read the stage
 def staged_package(files: MarketFiles, name: str, stage: str, now: float) -> Any:
     """For ``addon.grant {staged}``: ``(stage doc, Package, Manifest)`` re-read from the stage file once, or
@@ -393,6 +494,9 @@ def _recheck(service: WorkspaceService, record: dict[str, Any], ev: dict[str, An
     doc, pkg, _ = staged_package(files, ev["name"], staged["stage"], service.clock())
     if pkg.digest != ev["package_sha256"] or doc["version"] != ev["version"]:
         raise MarketError("market.staged_changed")
+    if doc.get("dev") is True:  # a dev folder: no index to re-read; the dev gate and the name, as they are now
+        _recheck_dev(service, files, ev)
+        return
     url, version = doc["origin"], ev["version"]
     from . import marketops  # the index and the class as they are now (review F2)
 
@@ -425,6 +529,20 @@ def _recheck(service: WorkspaceService, record: dict[str, Any], ev: dict[str, An
         "grant", policy.current(hub_joined=_joined(service)),
         {"url": url, "id": ev["name"], "version": version, "capabilities": ev["capabilities"]},
     )  # fmt: skip
+
+
+def _recheck_dev(service: WorkspaceService, files: MarketFiles, ev: dict[str, Any]) -> None:
+    """Step 18 for a dev stage (inside ``store.locked()``): the workspace must still pass the dev gate and the
+    name must still be free of a marketplace install and of a reserved name."""
+    from . import devmode
+
+    if devmode.dev_gate(service) is None:
+        raise devmode.refused("not_sandbox", "orch addon dev works only in a dev sandbox workspace on a dev host")
+    name = ev["name"]
+    if name in builtin.NAMES or name in constants.OFFICIAL_IDS or name in constants.MOVED_IDS:
+        raise MarketError("market.reserved_id")
+    if name in files.installs()[ADDONS]:
+        raise MarketError("market.origin_changed")
 
 
 def _joined(service: WorkspaceService) -> bool:
@@ -478,6 +596,11 @@ def _converge(service: WorkspaceService, stage: str, ev: dict[str, Any]) -> None
             return
         _sweep(d, name)
     if doc is None or pkg is None:
+        return
+    if (
+        doc.get("dev") is True
+    ):  # never recorded as an install: no origin, floor or key (the dev stage is the only trace)
+        files.drop_stage(stage)
         return
     with files.commit_installs() as write:
         cur = files.installs()

@@ -228,7 +228,7 @@ describe('by click (#1198 C11)', () => {
   let seal: ReturnType<typeof vi.spyOn>
   beforeEach(() => { seal = vi.spyOn(sealed, 'seal').mockResolvedValue({ v: 1, alg: 'P256-HKDF-SHA256-A256GCM', epk: 'e', ct: 'c' } as sealed.Envelope) })
   afterEach(() => vi.restoreAllMocks())
-  const sign = async (view: ReturnType<typeof renderApp>, label: string) => {
+  const sign = async (label: string) => {
     fireEvent.change(await screen.findByTestId('hub-backup-input', {}, T), { target: { value: WORDS } })
     const btn = await screen.findByRole('button', { name: label }, T)
     await waitFor(() => expect(btn).toBeEnabled(), { timeout: 5000 })
@@ -251,7 +251,7 @@ describe('by click (#1198 C11)', () => {
     await view.user.click(screen.getByTestId('hub-mode-selective'))
     await view.user.click(screen.getByTestId('hub-join-review'))
     expect(screen.getByTestId('hub-sign-for').textContent).toContain('9f3c 1ab2 77de 40c8')
-    await sign(view, 'Sign and join the hub')
+    await sign('Sign and join the hub')
     expect(await screen.findByTestId('hub-step-done', {}, T)).toHaveTextContent(/Connected/)
     expect(seal).toHaveBeenCalledTimes(1)
     expect(seal.mock.calls[0][1]).toBe(WORDS)
@@ -294,7 +294,7 @@ describe('by click (#1198 C11)', () => {
     await view.user.click(await screen.findByTestId('hub-leave', {}, T))
     expect(screen.getByText(/cannot be taken back/)).toBeTruthy()
     expect(screen.queryByTestId('hub-command')).toBeNull()
-    await sign(view, 'Sign and leave the hub')
+    await sign('Sign and leave the hub')
     expect(await screen.findByTestId('hub-step-done', {}, T)).toHaveTextContent(/You left the hub/)
     await view.user.click(within(screen.getByTestId('hub-step')).getByRole('button', { name: 'Close' }))
     expect(await screen.findByText(/Not connected\./, {}, T)).toBeTruthy()

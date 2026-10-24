@@ -347,14 +347,14 @@ class ClickSigner:
             self._note("refused", workspace=wid, code="custody.no_key")
             raise ClickError(
                 "custody.no_key",
-                "There is no signing key on this computer. Turn One click off and on again, or sign in Terminal.",
+                "There is no signing key on this computer. Turn One click off and on again, or sign in a terminal.",
             ) from None
         except CustodyError:  # includes BackendUnavailable
             self.problems[wid] = "custody_unavailable"
             self._note("refused", workspace=wid, code="custody.unavailable")
             raise ClickError(
                 "custody.unavailable",
-                "The signing key cannot be read on this computer. Unlock the key store, or sign in Terminal.",
+                "The signing key cannot be read on this computer. Unlock the key store, or sign in a terminal.",
             ) from None
         if self.problems.get(wid) == "custody_unavailable":  # the store works again: only this problem kind clears
             self.problems.pop(wid, None)

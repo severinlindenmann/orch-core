@@ -32,7 +32,7 @@ NEEDS_URL = frozenset({"mark", "push-initial"})
 
 
 def valid_url(url):
-    """The address as shown in the review: printable, no spaces, within the core bound. The core tool checks the rest."""
+    """The address as shown in the review: printable, no spaces, within the core bound; core checks the rest."""
     return isinstance(url, str) and 0 < len(url) <= 2048 and url.isprintable() and not any(c.isspace() for c in url)
 
 

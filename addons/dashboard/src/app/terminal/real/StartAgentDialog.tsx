@@ -227,7 +227,11 @@ function StartAgent({ ws, ticket, onClose, onStarted, initial, choose }: { ws: s
   // Instant: valid access and nothing to read means no dialog at all. Anything else falls through to the form.
   const instantAllowed = !choose && !initial && (runner.isPending || !!startable)
   const [fellThrough, setFellThrough] = useState(false)
-  const quiet = instantAllowed && !fellThrough
+  // Only a dialog that has not left the form: once the access is being signed, the grant that lands (and makes the access
+  // valid) must not turn the dialog silent and remount the review under the person's hands.
+  const leftForm = useRef(false)
+  if (step !== 'form') leftForm.current = true
+  const quiet = instantAllowed && !fellThrough && !leftForm.current
   const tried = useRef(false)
   const settled = !runner.isPending && !ack.isPending && !!data && !stale && !loading
   useEffect(() => {

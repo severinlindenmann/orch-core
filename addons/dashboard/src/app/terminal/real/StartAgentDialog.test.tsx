@@ -509,6 +509,9 @@ describe('a short, calm dialog (U6)', () => {
     fireEvent.click(sign)
     await waitFor(() => expect(onStarted).toHaveBeenCalledWith(run), { timeout: 8000 })
     expect(s.start).toHaveBeenCalledTimes(1)
+    // The grant that landed made the access valid while the review was still open: the dialog did not turn silent and
+    // prepare the same access a second time (the host answers that with "the earlier attempt ended").
+    expect(s.prepare).toHaveBeenCalledTimes(1)
   }, 15000)
 
   it('valid access and nothing to read: no dialog at all, the agent just starts', async () => {

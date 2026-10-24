@@ -369,21 +369,46 @@ def check(service: Any, person: str, device: str, *, gate: Any = None) -> None:
         raise unavailable(*found)
 
 
-#: V3 C2a: the ops that bind the workspace to (or free it from) a hub. The owner's own key at the terminal signs them;
-#: a convenience (click-to-sign) key never does, however the label reads.
-HUB_OPS = frozenset(
-    {"hub.join", "hub.mode", "hub.leave", "keys.rotate", "device.rotate"}
-)  # keys.rotate: C8 break-glass
+#: the break-glass ops the owner's own key signs at the terminal; a convenience (click-to-sign) key never does,
+#: however the label reads. (The hub ops are not here: since #1198 C9 they carry the owner proof, whatever the key.)
+TERMINAL_OPS = frozenset({"keys.rotate", "device.rotate"})  # keys.rotate: C8 break-glass
 
 
-def refuse_hub_op(op: str, auth: str | None) -> None:
-    if op in HUB_OPS and auth == "convenience":
+def refuse_terminal_op(op: str, auth: str | None) -> None:
+    if op in TERMINAL_OPS and auth == "convenience":
         raise HostError(
             "sign.convenience_unavailable",
-            "joining or leaving a hub is signed with your own key at the terminal, never with click-to-sign",
+            "this step is signed with your own key at the terminal, never with click-to-sign",
             hint="first move the key back to a passphrase: orch keys custody passphrase --workspace W --in-place, "
-            "then run the hub step again",
+            "then run the step again",
         )
+
+
+def refuse_hub_reader(service: Any, op: str, card: Any, *, now_ms: int, dev_mode: bool) -> None:
+    """#1198 C9 (hub contract 5 "Reader level"): ``hub.join`` and ``hub.mode`` bind the workspace to a hub whose card
+    declares a ``reader`` level below the workspace's ``required_reader`` (convenience history or the flag on): that
+    hub could not read the log, so it is ``sign.convenience_readers`` reason ``hub_too_old``. A card that does not
+    verify is left to the op's own refusal (``hub.refused``)."""
+    if op not in ("hub.join", "hub.mode"):
+        return
+    from orch.hubclient import wire
+    from orch.hubclient.errors import HubRefused
+
+    try:
+        held = wire.verify_card(card, now_ms=now_ms, dev_mode=dev_mode)
+    except HubRefused:
+        return
+    required = _required(service, history=True)
+    try:
+        wire.check_hub_reader(held, required)
+    except HubRefused:
+        raise HostError(
+            "sign.convenience_readers",
+            f"hub_too_old: this hub declares reader level {held['card']['reader']}, this workspace requires {required}",
+            hint="the hub must be updated to a release that knows convenience signatures (card reader 1), or join "
+            "before this workspace has convenience signatures, with convenience off",
+            detail={"reason": "hub_too_old", "devices": []},
+        ) from None
 
 
 def refuse_reader_op(

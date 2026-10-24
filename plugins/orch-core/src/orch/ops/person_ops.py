@@ -422,7 +422,10 @@ def handle_hub_leave(ctx: Context, args: dict[str, Any]) -> Result:
     current = h.store.state.workspace.hub
     if not current or current.get("status") != "joined":
         raise OrchError("hub.not_joined", "this workspace is not joined to a hub")
-    event = {"type": "hub.left", "hub_id": current["hub_id"], "binding_seq": current["binding_seq"]}
+    from orch.hubclient import wire
+
+    # owner_proof None: the signer fills it after the review (#1198 C9); the host refuses an event without it
+    event = {"type": "hub.left", **wire.left_payload(hub_id_=current["hub_id"], binding_seq=current["binding_seq"])}
     done = h.run(event, "workspace", f"leave hub {current['hub_id']}", review=[])
     data = {"hub_id": current["hub_id"], "binding_seq": current["binding_seq"]}
     return h.workspace_result(done, data, "the host now tells the hub that this workspace is unbound")
@@ -517,7 +520,7 @@ HUB_JOIN = operation(
     emits=("hub.joined",),
     text="ok hub.joined {hub_id} seq={seq}\nnext: {next}",
     data=obj({"hub_id": STR, "mode": STR, "binding_seq": {"type": "integer"}}),
-    errors=(err("role.denied"), err("hub.refused"), err("hub.already_joined")),
+    errors=(err("role.denied"), err("hub.refused"), err("hub.already_joined"), err("hub.proof_invalid")),
     handler=handle_hub_join,
 )
 HUB_MODE = operation(
@@ -534,7 +537,13 @@ HUB_MODE = operation(
     emits=("hub.joined",),
     text="ok hub.joined {hub_id} seq={seq}\nnext: {next}",
     data=obj({"hub_id": STR, "mode": STR, "binding_seq": {"type": "integer"}}),
-    errors=(err("role.denied"), err("hub.refused"), err("hub.not_joined"), err("hub.already_joined")),
+    errors=(
+        err("role.denied"),
+        err("hub.refused"),
+        err("hub.not_joined"),
+        err("hub.already_joined"),
+        err("hub.proof_invalid"),
+    ),  # fmt: skip
     handler=handle_hub_mode,
 )
 HUB_LEAVE = operation(
@@ -547,7 +556,7 @@ HUB_LEAVE = operation(
     emits=("hub.left",),
     text="ok hub.left {hub_id} seq={seq}\nnext: {next}",
     data=obj({"hub_id": STR, "binding_seq": {"type": "integer"}}),
-    errors=(err("role.denied"), err("hub.not_joined")),
+    errors=(err("role.denied"), err("hub.not_joined"), err("hub.proof_invalid")),
     handler=handle_hub_leave,
 )
 

@@ -180,6 +180,8 @@ DETAIL_KEYS: dict[str, dict[str, tuple[str, ...] | str | None]] = {
         )  # fmt: skip
     },
     "ticket.key_not_next": {"next_key": None},
+    # #1198 C9: why the owner proof of a hub step was refused (hub contract 9.6, section 14)
+    "hub.proof_invalid": {"reason": ("proof_invalid", "proof_expired", "proof_missing", "dev_mismatch", "dev_refused")},
     # H12d-2 (§0.8.6 item 9.9, 9.11): the closed reason and the readers below the level (``devices``: device ids)
     "sign.convenience_unavailable": {  # H12c-e; pair_device is no longer emitted (B10)
         "reason": (
@@ -234,7 +236,14 @@ DETAIL_KEYS: dict[str, dict[str, tuple[str, ...] | str | None]] = {
     },
     "market.env_changed": {"reason": ("missing", "changed", "digest", "abi")},
     "sign.convenience_readers": {
-        "reason": ("no_declaration", "reader_too_old", "declaration_unknown", "relay_too_old", "unknown_readers"),
+        "reason": (
+            "no_declaration",
+            "reader_too_old",
+            "declaration_unknown",
+            "relay_too_old",
+            "hub_too_old",
+            "unknown_readers",
+        ),
         "devices": DEVICES,
     },
 }

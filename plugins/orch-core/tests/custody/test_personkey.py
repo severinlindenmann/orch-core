@@ -196,6 +196,7 @@ def test_sign_labels_are_the_r6_revocation_and_rotation_labels_never_the_delegat
     names = personkey.SIGN_LABELS
     assert set(names) == {
         "sig_device_cert", "sig_cert_challenge", "sig_cert_rejection", "sig_revocation", "sig_device_rotate",
+        "sig_hub_owner_proof",
     }  # fmt: skip
     assert all(L[n] in PERSON_KEY_LABELS for n in names)
     assert "sig_ws_delegation" not in names
@@ -828,7 +829,11 @@ def _refs(names: set[str]) -> dict[str, set[str]]:
 
 
 # Each entry is a reviewed caller. R6 (orch-29) adds its add-device and revoke call sites here, with the review.
-SOURCE_CALLERS = {"custody/personkey.py", "custody/cli.py"}  # B1b: orch keys primary init (account creation)
+SOURCE_CALLERS = {
+    "custody/personkey.py",
+    "custody/cli.py",
+    "host/signer.py",
+}  # B1b: orch keys primary init (account creation)
 SCALAR_CALLERS = {
     "identity/recovery.py",  # the derivation itself
     "identity/__init__.py",  # the re-export

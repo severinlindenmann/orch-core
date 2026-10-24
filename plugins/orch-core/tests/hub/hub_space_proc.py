@@ -23,6 +23,16 @@ from orch_hub.spaces.service import SpaceError  # noqa: E402
 
 from conftest import Invites  # noqa: E402
 
+
+def proof(o: dict, ws: str, pk: str = "pk_alice") -> dict:
+    """#1198 C9: the owner proof (protocol 9.6) the real hub wants with a join, made now (its clock is real)."""
+    import time
+
+    now = int(time.time() * 1000)
+    payload = {k: o[k] for k in ("hub_id", "hk_root_pub", "mode", "binding_seq")} | {"aliases": []}
+    return G.owner_proof("hub.join", payload, pk=pk, workspace_id=ws, issued_ms=now - 1_000, expires_ms=now + 300_000)
+
+
 ADMIN = G.fake16("hub_admin_user")
 
 with tempfile.TemporaryDirectory() as d:
@@ -36,7 +46,7 @@ with tempfile.TemporaryDirectory() as d:
     router = Router(reg, queue, None, keys._now)
     spaces = SpaceService(
         SpaceStore(str(Path(d) / "spaces.db")), reg, access, keys.op_signer, keys.hub_id,
-        lambda: keys.op_cert()["o"]["cert_id"], now_ms=keys._now,
+        lambda: keys.op_cert()["o"]["cert_id"], now_ms=keys._now, dev_mode=True,
     )  # fmt: skip
     srv = LinkServer.from_keys(
         keys,
@@ -46,6 +56,7 @@ with tempfile.TemporaryDirectory() as d:
         router=router,
         access=access,
         spaces=spaces,
+        dev_mode=True,
     ).start()
     card = keys.card()
 
@@ -64,6 +75,7 @@ with tempfile.TemporaryDirectory() as d:
                 "card": G.v2_card(ws=w, wsk=wsk, wxk_pub=G.K.b(wxk)),
                 "pk_pub": b64u(G.K.pub["pk_alice"]),
                 "binding": G.signed(wsk, "sig_hub_binding", o),
+                "owner_proof": proof(o, w),
             },
         }
 

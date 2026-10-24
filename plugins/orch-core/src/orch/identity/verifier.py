@@ -120,6 +120,14 @@ class CryptoVerifier:
         except TypeError:
             return "unavailable"
 
+    def verify_hub_owner_proof(self, event: Mapping[str, Any], **kw: Any) -> str | None:
+        from orch.hubclient.modelverify import HubModelChecks
+
+        try:
+            return HubModelChecks().verify_hub_owner_proof(event, **kw)
+        except TypeError:
+            return "unavailable"
+
     def genesis_failure(self, event: Mapping[str, Any]) -> str | None:
         """The code of the first failing check of §5.11 for a ``workspace.created`` (``genesis.owner_mismatch``, ...,
         ``genesis.bad_sig``), or ``None`` when all hold. Lets the model give check 6 its own refusal code."""

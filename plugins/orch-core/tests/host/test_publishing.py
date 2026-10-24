@@ -170,6 +170,12 @@ class PublishHub:
         return {"status": status, "body_hex": data.hex()}
 
 
+@pytest.fixture(autouse=True)
+def dev_hub(monkeypatch):
+    """#1198 C9: before ``served`` opens its store (the model checks a hub proof's dev marker against the store's)."""
+    human_helpers.dev_hub_stores(monkeypatch)
+
+
 class World:
     """A served workspace that has joined a hub (``join=False``: a workspace alone). ``server`` is orch-publish behind
     the hub; ``hub`` is the link to it. The module seams are set through ``monkeypatch``, so they are back whenever

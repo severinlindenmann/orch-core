@@ -13,7 +13,7 @@ committed) and never resurrects (a later binding needs a higher ``binding_seq``)
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -255,9 +255,12 @@ def _join(
     binding_seq: int | None = None,
     addr: str | None = None,
     old_transport: Callable[[str, dict[str, Any]], HubTransport],
+    owner_proof: Mapping[str, Any] | None = None,
 ) -> JoinResult:
     if type(invite) is not str or not invite or len(invite) > 512:
         raise HubRefused("malformed")
+    if owner_proof is None:
+        raise HubRefused("proof_missing")  # #1198 C9: the join carries the owner proof from the signed log, never none
     if state is not None and state.status == "bound":
         if binding_seq is None or binding_seq <= state.binding_seq:
             raise HubRefused("already_joined")
@@ -311,8 +314,9 @@ def _join(
             sign=sign_wsk,
         )
         payload = wire.joined_payload(
-            hk_root_pub=root, mode=mode, binding_seq=seq, aliases=list(aliases or []), prior_aliases=prior
-        )
+            hk_root_pub=root, mode=mode, binding_seq=seq, aliases=list(aliases or []), prior_aliases=prior,
+            owner_proof=owner_proof,
+        )  # fmt: skip
         merged = dict(prior)
         merged.update({a["person_id"]: a["user_id"] for a in payload["aliases"]})
         new = HubState(
@@ -338,7 +342,16 @@ def _join(
         transport, hub_id=new.hub_id, workspace_id=workspace_id, hk_op_pub=hk_op, sign=sign_wsk,
         mode=mode, now_ms=now_ms,
     )  # fmt: skip
-    link.call("join", {"invite": invite, "card": v2_card, "pk_pub": b64u(pk_pub), "binding": binding})
+    link.call(
+        "join",
+        {
+            "invite": invite,
+            "card": v2_card,
+            "pk_pub": b64u(pk_pub),
+            "binding": binding,
+            "owner_proof": dict(owner_proof),
+        },
+    )
     new.status = "bound"
     save(new)
     if mode == "full":
@@ -442,12 +455,15 @@ def switch_full(
     save: Callable[[HubState], None],
     binding_seq: int,
     epochs: EpochKeys,
+    owner_proof: Mapping[str, Any] | None = None,
 ) -> HubState:
     """Selective to full for the hub already bound (9.4 "a mode switch"): sign the full binding, put it (no new
     invite), then seal. The owner's ``hub.joined`` (full) is already on the log. A crash or a down hub leaves
     ``switching``; the same call again resumes with the same signed binding."""
     if state is None or state.status not in ("bound", "switching"):
         raise HubRefused("not_joined")
+    if owner_proof is None:
+        raise HubRefused("proof_missing")  # #1198 C9: the mode switch carries the owner proof from the signed log
     if state.status == "bound" and state.mode != "selective":
         raise HubRefused("already_joined")
     _epoch_ready(state, epochs)
@@ -471,7 +487,7 @@ def switch_full(
         transport, hub_id=state.hub_id, workspace_id=workspace_id, hk_op_pub=hk_op, sign=sign_wsk, mode="selective",
         now_ms=now_ms,
     )  # fmt: skip
-    link.call("binding_put", {"object": state.binding})  # the hub switches its mode with the binding
+    link.call("binding_put", {"object": state.binding, "owner_proof": dict(owner_proof)})  # the hub switches its mode
     state.status = "bound"
     save(state)
     _seal(state, HubLink(transport, hub_id=state.hub_id, workspace_id=workspace_id, hk_op_pub=hk_op, sign=sign_wsk,
@@ -515,7 +531,7 @@ def flush_outbox(
             HubLink(
                 t, hub_id=hub_id, workspace_id=workspace_id, hk_op_pub=unb64u(entry["hk_op_pub"], 65),
                 sign=sign_wsk, mode=entry["mode"], now_ms=now_ms,
-            ).call("binding_put", {"object": entry["unbound"]})  # fmt: skip
+            ).call("binding_put", {"object": entry["unbound"], "owner_proof": None})  # fmt: skip
         except HubRefused as exc:
             if exc.code != "stale_binding":  # the hub holds a newer binding: there is nothing left to unbind
                 continue

@@ -20,6 +20,11 @@ from tests.host.test_publishing import ADDON, REPORT, SERVER, SHARE, World
 lab, served, human_fx = human_helpers.lab, human_helpers.served, human_helpers.human
 
 
+@pytest.fixture(autouse=True)
+def dev_hub(monkeypatch):
+    human_helpers.dev_hub_stores(monkeypatch)  # #1198 C9: before ``served`` opens its store
+
+
 def run(argv, env, *, as_json=False):
     out, err = io.StringIO(), io.StringIO()
     code = publish.main([*argv, *(["--json"] if as_json else [])], env=env, out=out, err=err)

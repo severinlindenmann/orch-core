@@ -25,6 +25,7 @@ ROOT = V["keys"]["hk_root"]["pub"]
 def dev_workspace(monkeypatch):
     """The lab is not a proven sandbox: tests that need a dev workspace say so here (the real proof is devmode's)."""
     monkeypatch.setattr(hubops, "workspace_dev", lambda service: True)
+    human_helpers.dev_hub_stores(monkeypatch)
 
 
 def join_args(**over):
@@ -237,6 +238,7 @@ JOINED = {
     "mode": "selective",
     "binding_seq": 1,
     "aliases": [],
+    "owner_proof": None,  # #1198 C9: the signer fills it after the review
 }
 
 
@@ -256,8 +258,12 @@ def test_the_signer_refuses_what_hub_join_must_not_sign():
         signer._person_op(_prepared("hub.join", JOINED, log="DEMO-1"))
     with pytest.raises(signer.SignerRefused):  # another op cannot carry the event either
         signer._person_op(_prepared("settings.set", JOINED))
-    left = {"type": "hub.left", "hub_id": HUB_ID, "binding_seq": 1}
+    left = {"type": "hub.left", "hub_id": HUB_ID, "binding_seq": 1, "owner_proof": None}
     signer._person_op(_prepared("hub.leave", left))
+    with pytest.raises(signer.SignerRefused):  # a prepared event never carries a proof: the signer makes it
+        signer._person_op(_prepared("hub.leave", {**left, "owner_proof": {"o": {}, "sig": "x"}}))
+    with pytest.raises(signer.SignerRefused):  # and never lacks the member
+        signer._person_op(_prepared("hub.leave", {k: v for k, v in left.items() if k != "owner_proof"}))
     with pytest.raises(signer.SignerRefused):
         signer._person_op(_prepared("hub.leave", {**left, "extra": 1}))
     with pytest.raises(signer.SignerRefused):
@@ -331,7 +337,8 @@ def test_join_then_connect_sends_the_selective_binding_and_never_a_key(human, se
     assert got["status"] == "bound" and got["binding_seq"] == 1 and got["hub_id"] == HUB_ID
     assert stub.ops() == ["join"]
     body = stub.sent[0]["o"]["body"]
-    assert set(body) == {"invite", "card", "pk_pub", "binding"}
+    assert set(body) == {"invite", "card", "pk_pub", "binding", "owner_proof"}
+    assert body["owner_proof"]["o"]["op"] == "hub.join"  # #1198 C9: the proof the signed log holds goes to the hub
     b = body["binding"]["o"]
     assert (b["mode"], b["binding_seq"], b["dev"], b["hub_id"]) == ("selective", 1, True, HUB_ID)
     keys = set()
@@ -442,17 +449,16 @@ def test_a_leave_before_any_connect_has_nothing_to_tell_the_hub(human, served, s
     assert got["unbound"] is False and stub.sent == []
 
 
-def test_a_convenience_key_never_signs_a_hub_op(human, served):
-    from orch.host import convenience
-
+def test_a_convenience_key_cannot_prepare_a_hub_op_without_the_proof(human, served):
     for op in ("hub.join", "hub.leave"):
-        with pytest.raises(Exception) as e:
-            convenience.refuse_hub_op(op, "convenience")
-        assert getattr(e.value, "code", "") == "sign.convenience_unavailable"
-        convenience.refuse_hub_op(op, "passphrase")  # the owner's key at the terminal
-    convenience.refuse_hub_op("settings.set", "convenience")  # other ops keep their own rules
-    body = {"op": "hub.join", "args": join_args(), "signer": {**human.signer, "auth": "convenience"}}
-    assert err(human.c.req("human.prepare", body)) == "sign.convenience_unavailable"
+        body = {
+            "op": op,
+            "args": join_args() if op == "hub.join" else {},
+            "signer": {**human.signer, "auth": "convenience"},
+        }
+        res = human.c.req("human.prepare", body)
+        assert err(res) == "hub.proof_invalid"
+        assert res["error"]["detail"] == {"reason": "proof_missing"}
     assert hub_state(served)[0] == {}
 
 

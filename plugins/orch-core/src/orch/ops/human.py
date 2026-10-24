@@ -135,6 +135,9 @@ class _AcceptAll:
     def genesis_failure(self, event: Any) -> str | None:
         return None
 
+    def verify_hub_owner_proof(self, event: Any, **kw: Any) -> str | None:
+        return None  # #1198 C9: the owner proof is made after the review; the submit and the append check it for real
+
 
 def review_prompt(text: str, expect: str) -> bool:
     """Show ``text`` on the person's own terminal and go on only if the person types ``expect`` (the ticket key) and

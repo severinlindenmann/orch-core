@@ -495,10 +495,11 @@ _SPEC = {
             "aliases": [
                 {"person_id": "4cfef66f1dc7bee794e9d949f2a216c3", "user_id": "a368bd380588e5dabee62a516031e21f"}
             ],
+            "owner_proof": None,
         },
         5,
     ),
-    "hub.left": (PERSON, {"hub_id": "38d8abed52ccfb538da401fd54e64bdc", "binding_seq": 1}, 5),
+    "hub.left": (PERSON, {"hub_id": "38d8abed52ccfb538da401fd54e64bdc", "binding_seq": 1, "owner_proof": None}, 5),
     "device.exposed": (PERSON, {"device": "d_" + DID, "reason": "convenience"}, 5),
     "device.rotated": (
         PERSON,

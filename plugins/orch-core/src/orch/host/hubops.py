@@ -936,7 +936,7 @@ def _connect(
         return switch_full(
             state=state, hub_card=plan["card"], workspace_id=service.workspace_id, wsk_pub=wsk_pub, sign_wsk=sign,
             dev_mode=plan["dev"], now_ms=now, transport=transport, save=save, binding_seq=model["binding_seq"],
-            epochs=epochs,
+            epochs=epochs, owner_proof=model.get("owner_proof"),
         )  # fmt: skip
     from orch.crypto.encoding import unb64u
 
@@ -945,7 +945,7 @@ def _connect(
         pk_pub=unb64u(plan["pk_pub"], 65), workspace_id=service.workspace_id, wsk_pub=wsk_pub, sign_wsk=sign,
         dev_mode=plan["dev"], now_ms=now, transport=transport, addr=plan["addr"],
         record_joined=lambda _payload: None, save=save, aliases=aliases, binding_seq=model["binding_seq"],
-        old_transport=_transport_for(service, wsk_pub, sign), epochs=epochs,
+        old_transport=_transport_for(service, wsk_pub, sign), epochs=epochs, owner_proof=model.get("owner_proof"),
     ).state  # fmt: skip
 
 
@@ -971,7 +971,7 @@ def _join(
         dev_mode=plan["dev"], now_ms=now, transport=transport, addr=plan["addr"],
         record_joined=lambda _payload: None,  # hub.joined is already on the log (checked in serve)
         save=save, aliases=aliases, mode=model["mode"], binding_seq=model["binding_seq"],
-        old_transport=_transport_for(service, wsk_pub, sign), epochs=epochs,
+        old_transport=_transport_for(service, wsk_pub, sign), epochs=epochs, owner_proof=model.get("owner_proof"),
     )  # fmt: skip
 
 

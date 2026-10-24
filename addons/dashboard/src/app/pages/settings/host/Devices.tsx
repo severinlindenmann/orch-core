@@ -249,7 +249,7 @@ function BeforeOffer({ workspace, preview, creating, onCreate }: { workspace: Wo
   return (
     <div className={box} data-testid="pair-before">
       <p>
-        Pairing makes a one-time link for the orch app on your phone. You compare a code on both screens, confirm on your Mac&apos;s primary, and sign
+        Pairing makes a one-time link for the orch app on your phone. You compare a code on both screens, confirm on your computer&apos;s primary, and sign
         the new device in a terminal.
       </p>
       <p className="text-text-muted">
@@ -501,7 +501,7 @@ function OfferView(p: {
   if (state === 'confirmed')
     return (
       <div className={box} data-testid="pair-confirmed">
-        <p className="font-medium">Codes matched. The host is asking your Mac&apos;s primary for a certificate.</p>
+        <p className="font-medium">Codes matched. The host is asking your computer&apos;s primary for a certificate.</p>
         <Button size="sm" variant="ghost" onClick={p.onCancel}>
           Cancel pairing
         </Button>
@@ -510,13 +510,13 @@ function OfferView(p: {
   if (state === 'cert_pending')
     return (
       <div className={box} data-testid="pair-cert">
-        <p className="font-medium">Two steps in a terminal on this Mac finish the pairing.</p>
+        <p className="font-medium">Two steps in a terminal on this computer finish the pairing.</p>
         <p className="text-text-muted">
           They can&apos;t be done in the browser: a workspace with a paired phone refuses click-to-sign.
         </p>
         <ol className="list-decimal space-y-3 pl-5">
           <li className="space-y-1" data-testid="pair-step-primary">
-            <p>Confirm on your Mac&apos;s primary. Run:</p>
+            <p>Confirm on your computer&apos;s primary. Run:</p>
             {primaryCommand(status?.offer_id) !== null ? (
               <CopyText label="Command for the primary" testId="pair-primary-command">
                 {primaryCommand(status?.offer_id)!}
@@ -632,7 +632,7 @@ function DeviceList({ workspace, devices, failed }: { workspace: Workspace; devi
                     <details data-testid="device-remove" className="mt-1 text-[12px]">
                       <summary className="cursor-pointer text-text-muted">Remove this device</summary>
                       <div className="mt-1 space-y-1">
-                        <p className="text-text-muted">Removing needs your person key, so it is done in a terminal on this Mac (you type your recovery code). It also rotates the relay keys.</p>
+                        <p className="text-text-muted">Removing needs your person key, so it is done in a terminal on this computer (you type your recovery code). It also rotates the relay keys.</p>
                         {deviceRemoveCommand(String(d.id), workspace.prefix) !== null ? (
                           <CopyText label="Command to remove this device" testId="device-remove-command">
                             {deviceRemoveCommand(String(d.id), workspace.prefix)!}

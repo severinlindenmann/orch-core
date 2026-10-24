@@ -78,8 +78,8 @@ def catalog(manifest: Callable[[str], bytes] | None = None, *, optional: bool = 
 
     read = manifest or builtin.manifest_bytes
     texts = {
-        "start-agent": ("Start agents", "Start an agent from the dashboard. It runs on this Mac, as you.", True, False),
-        "terminals": ("Terminals", "Open a terminal on this Mac from the dashboard. It runs as you.", True, True),
+        "start-agent": ("Start agents", "Start an agent from the dashboard. It runs on this computer, as you.", True, False),
+        "terminals": ("Terminals", "Open a terminal on this computer from the dashboard. It runs as you.", True, True),
         "worktrees": (
             "Worktrees",
             "Each ticket gets its own copy of your project folder, so agents do not overwrite each other.",
@@ -88,7 +88,7 @@ def catalog(manifest: Callable[[str], bytes] | None = None, *, optional: bool = 
         ),
         "publish": (
             "Publish",
-            "Share files from a ticket with a link, on a server you choose. Nothing leaves this Mac until you sign.",
+            "Share files from a ticket with a link, on a server you choose. Nothing leaves this computer until you sign.",
             False,
             False,
         ),
@@ -277,11 +277,11 @@ def read_facts(store: Any, person: str, *, runner: dict[str, Any], deposit_confi
 
 #: what a person reads for an item id (B11 finding 6): the ids are the machine's, these are the words
 LABELS = {
-    "runner": "Agent execution on this Mac",
+    "runner": "Agent execution on this computer",
     "settings": "How long agents may work",
-    "runner_grant": "Agent access for this Mac's runner",
-    "runner_grant_retry": "Agent access for this Mac's runner (the earlier hand-over was not confirmed)",
-    "custody": "One-click approval on this Mac",
+    "runner_grant": "Agent access for this computer's runner",
+    "runner_grant_retry": "Agent access for this computer's runner (the earlier hand-over was not confirmed)",
+    "custody": "One-click approval on this computer",
     "records": "Records history on this computer",
 }
 

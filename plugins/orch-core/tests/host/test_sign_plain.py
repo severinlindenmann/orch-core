@@ -68,7 +68,7 @@ def test_the_plain_view_of_an_approval_is_headline_and_content_without_hashes(hu
     p = human.prepare("approve", {"ref": key, "gate": "requirements"})
     text = signer.plain(p, WS)
     assert str(text) == APPROVE.replace("<TAIL>", p["log"][-8:]).replace("<FP>", p["fingerprint"])
-    # A-3: the dashboard says "check that the verification code matches the one in Terminal": the same 12 hex, labelled,
+    # A-3: the dashboard says "check that the verification code matches the one in the terminal": the same 12 hex, labelled,
     # on the third line, before any content (and the full review's own `fingerprint:` line is still in the details)
     assert text.splitlines()[2] == f"Verification code: {p['fingerprint']}" and re.fullmatch(
         r"[0-9a-f]{12}", p["fingerprint"]
@@ -1076,7 +1076,7 @@ def test_f8_a_stop_says_which_access_in_words_and_keeps_the_id_out_of_them():
     c = build({"op": "grant.revoke", "events": [ev], "material": material_for("grant.revoked", ev)})
     assert c["headline"] == "Take back agent access"  # signed words only
     row = c["fields_changed"][0]
-    assert row["after"].startswith("Agent access for this Mac's runner, until ") and row["after"].endswith(
+    assert row["after"].startswith("Agent access for this computer's runner, until ") and row["after"].endswith(
         "(per host, not signed)"
     )
     shown = "\n".join(signcontent.text(c, signer._clean)) + c["headline"] + repr(c)
@@ -1091,7 +1091,7 @@ def test_f8_an_extend_names_the_replaced_access_by_words_only():
     c = build({"op": "grant", "events": [new, old], "material": m})
     assert "gr_" not in repr(c)  # neither id is in the plain view: both are in the technical details
     line = next(x for x in c["summary"]["lines"] if "Per host, not signed: that is the agent access" in x)
-    assert "for this Mac's runner, until " in line
+    assert "for this computer's runner, until " in line
     same = _stop(new["grant"], "extended")
     with pytest.raises(signcontent.PlainUnavailable):  # the caller then shows the full review
         build({"op": "grant", "events": [new, same], "material": {**m, "grants": {same["grant"]: _info(same)}}})
@@ -1236,7 +1236,7 @@ def test_v4_an_extend_is_titled_and_says_running_agents_stop():
     assert "per host, not signed" in joined and "3 days" in joined and "ends " in joined
     everything = repr(c) + "\n".join(signcontent.text(c, signer._clean))
     assert "gr_" not in everything  # ids are in the technical details only (issue 788)
-    assert c["headline"].startswith("Extend agent access for this Mac's runner, for 3 days")
+    assert c["headline"].startswith("Extend agent access for this computer's runner, for 3 days")
     # the warning is said once, in the notes (the terminal prints no summary lines; the dashboard shows both)
     assert repr(c).count("Running agents will stop.") == 1
     assert "\n".join(signcontent.text(c, signer._clean)).count("Running agents will stop.") == 1
@@ -1463,4 +1463,4 @@ def test_788_the_hosts_word_never_reaches_a_headline_or_summary_as_if_it_were_si
     m = {**material_for("grant.issued", new), "grants": {old["grant"]: _info(old)}}
     ext = build({"op": "grant", "events": [new, old], "material": m})
     assert "Mac's runner, until" not in ext["headline"]  # the signed label of the NEW access may name the runner
-    assert all("per host, not signed" in x.lower() for x in ext["summary"]["lines"] if "this Mac's runner, until" in x)
+    assert all("per host, not signed" in x.lower() for x in ext["summary"]["lines"] if "this computer's runner, until" in x)

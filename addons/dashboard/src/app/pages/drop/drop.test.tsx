@@ -562,13 +562,13 @@ describe('Drop A2: shared from your phone', () => {
     const text = async (n: string) => within(await rowOf(n)).getByTestId('drop-download-reason').textContent
     expect(await text('awaiting.jpg')).toMatch(/until this workspace’s host claims it/)
     expect(await text('revoked-phone.jpg')).toMatch(/phone was removed before this was claimed, so the file can’t be claimed/)
-    expect(await text('needs-terminal.jpg')).toMatch(/Mac’s terminal/)
+    expect(await text('needs-terminal.jpg')).toMatch(/computer’s terminal/)
     expect(await text('from-the-future.jpg')).toMatch(/Not claimed yet/)
   })
 
   it('pending_others: a count line when N > 0, nothing when 0 or absent; rows are never filtered client-side', async () => {
     open('drop-phone')
-    expect(await screen.findByTestId('drop-pending-others')).toHaveTextContent('3 items from others await review at the Mac\'s terminal.')
+    expect(await screen.findByTestId('drop-pending-others')).toHaveTextContent('3 items from others await review at this computer\'s terminal.')
     cleanup()
     open('drop-phone', { pendingOthers: 0 })
     await rowOf('plain-file.pdf')
@@ -584,7 +584,7 @@ describe('Drop A2: shared from your phone', () => {
     expect(within(await rowOf('boarding-pass.pdf')).getByTestId('drop-delete')).toBeInTheDocument()
     const hand = await rowOf('needs-terminal.jpg')
     expect(within(hand).queryByTestId('drop-delete')).toBeNull()
-    expect(within(hand).getByTestId('drop-handoff')).toHaveTextContent("Confirm at the Mac's terminal")
+    expect(within(hand).getByTestId('drop-handoff')).toHaveTextContent("Confirm at this computer's terminal")
     const none = await rowOf('awaiting.jpg')
     expect(within(none).queryByTestId('drop-delete')).toBeNull()
     expect(within(none).queryByTestId('drop-handoff')).toBeNull()
@@ -597,7 +597,7 @@ describe('Drop A2: shared from your phone', () => {
     })
     await view.user.click(within(await rowOf('own.pdf')).getByTestId('drop-delete'))
     await view.user.click(await screen.findByTestId('drop-confirm-delete', {}, T))
-    expect(await within(screen.getByTestId('drop-confirm')).findByTestId('drop-handoff', {}, T)).toHaveTextContent("Confirm at the Mac's terminal")
+    expect(await within(screen.getByTestId('drop-confirm')).findByTestId('drop-handoff', {}, T)).toHaveTextContent("Confirm at this computer's terminal")
     expect(screen.queryByTestId('drop-confirm-delete')).toBeNull()
     const denied = dropError(new DropError(403, { code: 'role.denied', message: 'role.denied', retryable: false }))
     expect(denied.text).toBe(dropError(new DropError(403, { code: 'drop.not_eligible', message: 'x', retryable: false })).text)

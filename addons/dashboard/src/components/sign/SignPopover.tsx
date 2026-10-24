@@ -176,7 +176,7 @@ export function SignPopover(p: SignPopoverProps) {
     if (!viaHub && autoNow && p.action && !started.current && p.ws && !known.isPending && !methods.loading) {
       started.current = true
       // A click request that ended earlier (cancelled, expired) must not block a fresh open: this open is a new intent.
-      if (method === 'click') void click.start(p.action, 0, true)
+      if (method === 'click') void click.start(p.action)
       else void run.prepare(p.action)
     }
     // Once per opening: a changed action object is not a new press.
@@ -422,7 +422,7 @@ export function SignPopover(p: SignPopoverProps) {
       {footerShown && <div className={`${STICKY_FOOTER} flex flex-wrap items-center gap-2 sm:justify-between`} data-testid="sign-footer-row">
         <span aria-live="polite" className="text-[12px] text-text-muted">
           {phase === 'idle' && p.hint}
-          {phase === 'waiting' && 'Waiting for approval in Terminal…'}
+          {phase === 'waiting' && 'Waiting for approval in a terminal…'}
         </span>
         <div className="flex flex-wrap gap-2">
           {phase === 'idle' && !clickOpen && !(autoNow && p.action) && (

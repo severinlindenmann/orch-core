@@ -49,7 +49,7 @@ describe('mandates preview endpoint (mock)', () => {
     const renewed = n.ok ? n.state.mandate! : null
     expect(renewed).toMatchObject({ revision: 2, days: 14 })
     expect(Date.parse(renewed!.expires) - Date.parse(s.now())).toBe(14 * 86_400_000)
-    expect(renewed!.revisions.at(-1)!.what).toMatch(/^Renewed on this Mac/)
+    expect(renewed!.revisions.at(-1)!.what).toMatch(/^Renewed on this computer/)
     s.mandatesPreview.request(ws, { op: 'stop', stop_agents: false })
     expect(s.mandatesPreview.request(ws, { op: 'renew', days: 7 })).toMatchObject({ ok: false, status: 409 })
   })

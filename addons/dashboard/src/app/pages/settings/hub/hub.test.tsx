@@ -1,4 +1,4 @@
-// V3 A7: the hub pages. Mission Control explains and builds the Terminal command; it never signs or changes the hub.
+// V3 A7: the hub pages. Mission Control explains and builds the terminal command; it never signs or changes the hub.
 import { cleanup, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { setHubScenario, type HubScenario } from '@/mocks/hub'
@@ -71,7 +71,7 @@ describe('the top-bar chip', () => {
   })
 })
 
-describe('joining (A3.1): the person decides, the Terminal signs', () => {
+describe('joining (A3.1): the person decides, the terminal signs', () => {
   it('pre-selects nothing, then hands over the exact command', async () => {
     const view = hubPage('standalone')
     await view.user.click(await screen.findByTestId('hub-connect', {}, T))
@@ -96,7 +96,7 @@ describe('joining (A3.1): the person decides, the Terminal signs', () => {
   })
 })
 
-describe('switching to full access (A3.2): one way, typed, then the Terminal', () => {
+describe('switching to full access (A3.2): one way, typed, then the terminal', () => {
   it('stays disabled until the exact words are typed', async () => {
     const view = hubPage('selective')
     await view.user.click(await screen.findByTestId('hub-full-switch', {}, T))
@@ -189,7 +189,7 @@ describe('the hub id of an invite (core#1110)', () => {
     expect(inviteHubId('9f3c:abc')).toBeNull()
   })
 
-  it('shows it in the review and hands the invite to the Terminal unchanged', async () => {
+  it('shows it in the review and hands the invite to the terminal unchanged', async () => {
     const view = hubPage('standalone')
     await view.user.click(await screen.findByTestId('hub-connect', {}, T))
     await type(view, 'hub-invite', '9f3c1ab277de40c8aa11bb22cc33dd44:7QK2M9XD')

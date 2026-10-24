@@ -1,6 +1,6 @@
 """V3 A10: the Add-ons page's server half. Each route is a thin proxy to one marketplace host op with closed arguments;
 the install hand-off `market_grant` is `addon.grant {name, staged}`: one click like any other signed action (V3-D38;
-the click tests are in test_dashboard_click.py), the Terminal when click-to-sign is off."""
+the click tests are in test_dashboard_click.py), the terminal when click-to-sign is off."""
 
 from types import SimpleNamespace
 

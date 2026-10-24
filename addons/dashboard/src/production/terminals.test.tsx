@@ -53,7 +53,7 @@ it('lists terminals and agents with their state and who controls them, and the m
   expect(within(rows[2]).queryByRole('button', { name: /^Stop/ })).toBeNull()
   // M-5: an ended row says why it ended (an agent whose program is missing is not a silent "Ended").
   expect(rows[3]).toHaveTextContent('Ended')
-  expect(within(rows[3]).getByTestId('run-exit')).toHaveTextContent('its program was not found on this Mac (code 127)')
+  expect(within(rows[3]).getByTestId('run-exit')).toHaveTextContent('its program was not found on this computer (code 127)')
   expect(screen.getAllByRole('link', { name: 'Terminals' }).length).toBeGreaterThan(0)
 })
 

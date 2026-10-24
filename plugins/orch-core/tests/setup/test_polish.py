@@ -46,8 +46,8 @@ def test_finish_state_has_current_values_and_words_and_never_custody(tmp):
     assert st["current"]["runner"] == {"enabled": True, "terminals": False} and st["current"]["method"] == "terminal"
     assert "custody" not in st["missing"] and "settings" not in st["missing"] and "runner" not in st["missing"]
     assert st["missing"] == ["addon:terminals", "addon:worktrees", "runner_grant"]
-    assert st["missing_words"] == ["Terminals add-on", "Worktrees add-on", "Agent access for this Mac's runner"]
-    assert st["labels"]["runner_grant"] == "Agent access for this Mac's runner"
+    assert st["missing_words"] == ["Terminals add-on", "Worktrees add-on", "Agent access for this computer's runner"]
+    assert st["labels"]["runner_grant"] == "Agent access for this computer's runner"
     assert not any(w.startswith(("addon:", "runner_")) for w in st["missing_words"])
 
 
@@ -63,7 +63,7 @@ def test_finish_with_a_set_agent_time_has_no_typed_word(tmp):
 
 def test_labels_read_in_words():
     assert fx.label("addon:dashboard", INFO) == "Dashboard add-on"
-    assert fx.label("runner_grant", INFO) == "Agent access for this Mac's runner"
+    assert fx.label("runner_grant", INFO) == "Agent access for this computer's runner"
     assert fx.label("nonsense", INFO) == "A setup step"
 
 

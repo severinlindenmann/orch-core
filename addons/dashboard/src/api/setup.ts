@@ -39,7 +39,7 @@ export interface SetupState {
   } | null
   /** Finish setup on a workspace that lacks nothing: the page offers only "Open dashboard" */
   complete?: boolean
-  /** step/item id -> words (`runner_grant`: "Agent access for this Mac's runner") */
+  /** step/item id -> words (`runner_grant`: "Agent access for this computer's runner") */
   labels?: Record<string, string>
 }
 export interface Profile {

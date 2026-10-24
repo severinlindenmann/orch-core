@@ -202,7 +202,7 @@ it('share files end to end: pick, prepare, read every file with its size, sign, 
   await waitFor(() => expect(calls('/handoff').filter((c) => c.method === 'POST')).toHaveLength(1), T)
   expect(calls('/handoff')[0].body).toMatchObject({ action: 'publish_share', key: 'DEMO-0001', staged_id: STAGED })
   expect(calls('/shares/send')).toEqual([])
-  await screen.findByText('Waiting for approval in Terminal…', {}, T)
+  await screen.findByText('Waiting for approval in a terminal…', {}, T)
   const rid = [...state.host.requests.keys()][0]
   act(() => void state.host.submitted.set(rid, 'DEMO-0001')) // the person signed in the terminal
   const dialog = await screen.findByRole('dialog', { name: 'Your link' }, { timeout: 9000 })
@@ -268,7 +268,7 @@ it('a server that does not know the workspace is said in words, with the admin s
   await user.click(within(box).getByRole('button', { name: 'Review and sign' }))
   await user.click(await screen.findByRole('button', { name: 'Continue to approval' }, T))
   await waitFor(() => expect(calls('/handoff').filter((c) => c.method === 'POST')).toHaveLength(1), T)
-  await screen.findByText('Waiting for approval in Terminal…', {}, T)
+  await screen.findByText('Waiting for approval in a terminal…', {}, T)
   act(() => void state.host.submitted.set([...state.host.requests.keys()][0], 'DEMO-0001'))
   const alert = await screen.findByRole('alert', {}, { timeout: 9000 })
   expect(alert).toHaveTextContent('has not allowed this workspace yet')
@@ -349,7 +349,7 @@ async function signedShare(user: ReturnType<typeof userEvent.setup>) {
   await user.click(within(form).getByRole('button', { name: 'Review selected files' }))
   await user.click(within(await screen.findByRole('dialog', { name: 'Review your share' }, T)).getByRole('button', { name: 'Continue to approval' }))
   await waitFor(() => expect(calls('/handoff').filter((c) => c.method === 'POST')).toHaveLength(1), T)
-  await screen.findByText('Waiting for approval in Terminal…', {}, T)
+  await screen.findByText('Waiting for approval in a terminal…', {}, T)
 }
 
 it('the link stays on screen until Done when the list cannot be read after the send', async () => {
@@ -405,7 +405,7 @@ it('on the Shares page the link also stays until Done when the list then fails t
   await user.click(await screen.findByRole('button', { name: 'Review and sign' }, T))
   await user.click(await screen.findByRole('button', { name: 'Continue to approval' }, T)) // the dialog's own
   await waitFor(() => expect(calls('/handoff').filter((c) => c.method === 'POST')).toHaveLength(1), T)
-  await within(await screen.findByRole('dialog', {}, T)).findByText('Waiting for approval in Terminal…', {}, T)
+  await within(await screen.findByRole('dialog', {}, T)).findByText('Waiting for approval in a terminal…', {}, T)
   const inner = state.host.override!
   state.host.override = (p, m, b) => {
     const res = inner(p, m, b)

@@ -944,7 +944,7 @@ it('market approval is Terminal only and displays the exact package name and sta
   vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'terminal', is_default: true, allowed: ['terminal'] })
   const prepare = vi.spyOn(api, 'prepareHandoff').mockResolvedValue(request)
   vi.spyOn(api, 'getHandoff').mockResolvedValue(state(request))
-  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><HandoffDialog ws={'a'.repeat(32)} title="Approve add-on package" action={action} autoStart onClose={() => {}} /></QueryClientProvider>)
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SignPopover ws={"a".repeat(32)} title="Approve add-on package" action={action} autoStart onClose={() => {}} /></QueryClientProvider>)
   await waitFor(() => expect(prepare).toHaveBeenCalledWith('a'.repeat(32), action, 0))
   expect(await screen.findByText(visible(action.staged), { exact: false })).toBeVisible()
   expect(screen.getAllByText(action.name, { exact: false }).length).toBeGreaterThan(0)

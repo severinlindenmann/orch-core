@@ -19,7 +19,7 @@ import {
 } from '@/api/market'
 import { AddonFrame } from '@/addon-ui/AddonFrame'
 import { Inline, Raw, visible } from '@/components/sign/visible'
-import { HandoffDialog } from '@/components/sign/HandoffDialog'
+import { SignPopover } from '@/components/sign/SignPopover'
 import { LoadFailed } from '@/components/LoadFailed'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -464,20 +464,26 @@ function MarketWorkspace() {
           proceed={() => {
             setPending((p) => [...p, stage.name])
             setHandoff(stage)
-            setStage(null)
           }}
         />
       )}
       {mayWrite && handoff && (
-        <HandoffDialog
+        <SignPopover
           title="Approve add-on package"
           ws={ws}
           action={{ action: 'market_grant', name: handoff.name, staged: handoff.stage }}
           autoStart
-          onClose={() => setHandoff(null)}
+          onClose={() => {
+            setPending((p) => p.filter((n) => n !== handoff.name))
+            setHandoff(null)
+          }}
           onSettled={(phase) => {
             if (['done', 'expired', 'cancelled', 'failed'].includes(phase)) {
               setPending((p) => p.filter((n) => n !== handoff.name))
+              if (phase === 'done') {
+                setStage(null)
+                setHandoff(null)
+              }
               void refresh()
             }
           }}

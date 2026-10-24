@@ -90,6 +90,9 @@ dashboard dev host ``devhost/reads.diff``
 (``orch market``: the index of a marketplace)           (:func:`_market_env`, not :func:`_net_env`), closed ``-c``
                                                         settings, a checked address pinned with ``curloptResolve``,
                                                         no checkout (plumbing reads one blob into memory)
+``gitsafe.market_export_package`` (V3 G3, ``orch      the same environment and settings: ``ls-tree -r -z -l`` judged
+addon install``: an add-on's files at a commit)         whole, then ONE ``cat-file --batch`` with listed sizes; no
+                                                        checkout, the package exists only in memory
 ``gitread/*`` (host mode)                               no git process (a pure-Python reader in a sandbox child)
 ======================================================  ===========================================================
 
@@ -127,8 +130,8 @@ __all__ = [
     "ALLOWED", "ALLOWED_SUB", "HARDEN", "INVARIANT", "ISOLATION", "KNOWN_EXEC", "LAND_OPS", "NEUTRAL", "OPS", "PINNED",
     "NetSpec", "Op", "Unsafe", "command", "pinned", "config_env", "config_files", "exec_risk", "gate", "isolated_env",
     "land_check", "land_init", "local_config", "target_tracking_ref",
-    "MARKET_FETCH_SECONDS", "MARKET_MAX_PACK", "MarketGitError", "market_fetch", "market_fetch_argv",
-    "market_read_blob",
+    "MARKET_FETCH_SECONDS", "MARKET_MAX_PACK", "MARKET_PACKAGE_PACK", "MarketGitError", "market_export_package",
+    "market_fetch", "market_fetch_argv", "market_read_blob",
 ]  # fmt: skip
 
 INVARIANT = (
@@ -1054,7 +1057,10 @@ def gate(repo: str, own: Mapping[str, str], *, timeout: float = GATE_SECONDS) ->
 # ------------------------------------------------------------------------------------------------ marketplace (G2)
 #: wall-clock limit of one marketplace fetch, and the byte cap of everything it may write into the staging directory
 MARKET_FETCH_SECONDS = 60.0
-MARKET_MAX_PACK = 4 << 20
+MARKET_MAX_PACK = 4 << 20  # the index (spec 5.1.1: its own cap)
+#: an add-on's whole commit tree must fit (no partial clone, design G3 open point c): the package total of 8.1 plus a
+#: margin for the tree objects and the pack overhead. A cap of its own, never the index's.
+MARKET_PACKAGE_PACK = (16 << 20) + (8 << 20)
 MARKET_MIN_GIT = (2, 37)  # http.curloptResolve (the address that passed the checks is the address git connects to)
 _OBJECT_ID = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})(?![\s\S])")
 _MARKET_URL = re.compile(r"https://[a-z0-9.-]{1,253}(?:/[A-Za-z0-9][A-Za-z0-9._~-]{0,99}){1,6}(?![\s\S])")
@@ -1063,7 +1069,8 @@ _IPV6 = re.compile(r"[0-9a-f:]{2,39}(?![\s\S])")
 
 
 class MarketGitError(Exception):
-    """A marketplace git operation failed; ``kind`` is ``redirect``, ``failed`` or ``too_big``."""
+    """A marketplace git operation failed; ``kind`` is ``redirect``, ``failed``, ``too_big``, ``mismatch`` (the fetched
+    object id is not the pinned one) or ``package`` (the tree breaks a rule of 8.1)."""
 
     def __init__(self, kind: str) -> None:
         super().__init__(kind)
@@ -1117,8 +1124,9 @@ _TRAMPOLINE = (
 
 
 def _market_run(
-    argv: list[str], home: str, staging: str, *, timeout: float, cap: int, stdout_cap: int = 1 << 20
-) -> bytes:
+    argv: list[str], home: str, staging: str, *, timeout: float, cap: int, stdout_cap: int = 1 << 20,
+    stdin: bytes | None = None,
+) -> bytes:  # fmt: skip
     """Run one marketplace git command in its own process group with a wall-clock limit, ``RLIMIT_FSIZE`` set by the
     trampoline, a watchdog on the staging directory's size and bounded reading of its output (the caps are
     mechanisms, not hopes)."""
@@ -1128,7 +1136,8 @@ def _market_run(
 
     try:
         proc = subprocess.Popen(  # noqa: S603 - fixed argv built above
-            [sys.executable, "-I", "-c", _TRAMPOLINE, str(cap), *argv], stdin=subprocess.DEVNULL,
+            [sys.executable, "-I", "-c", _TRAMPOLINE, str(cap), *argv],
+            stdin=subprocess.DEVNULL if stdin is None else subprocess.PIPE,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=_market_env(home), cwd="/", start_new_session=True,
         )  # fmt: skip
     except OSError:
@@ -1164,7 +1173,17 @@ def _market_run(
             if total > cap:
                 return kill("too_big")
 
+    def feed() -> None:
+        try:
+            proc.stdin.write(stdin)  # type: ignore[union-attr]
+        except OSError:
+            pass  # the process ended or was killed: its exit status says so
+        finally:
+            with contextlib.suppress(OSError):
+                proc.stdin.close()  # type: ignore[union-attr]
+
     readers = [
+        *([threading.Thread(target=feed, daemon=True)] if stdin is not None else []),
         threading.Thread(target=drain, args=(proc.stdout, "out", stdout_cap), daemon=True),
         threading.Thread(target=drain, args=(proc.stderr, "err", 64 << 10), daemon=True),
         threading.Thread(target=watch, daemon=True),
@@ -1189,19 +1208,21 @@ def _market_run(
     return bytes(bufs["out"])
 
 
-def market_fetch(url: str, commit: str | None, host: str, address: str, staging: str) -> str:
+def market_fetch(url: str, commit: str | None, host: str, address: str, staging: str, *, cap: int | None = None) -> str:
     """Fetch ``commit`` (or the remote ``HEAD``) of a marketplace into the empty private directory ``staging`` (a
     fresh ``git init --template=``, object format by the length of ``commit``; sha1 for ``HEAD``). Returns the full
-    object id fetched, which equals ``commit`` when one was given. A git older than 2.37 is refused."""
+    object id fetched, which equals ``commit`` when one was given. ``cap`` is the byte limit of the pack (the index's
+    by default; a package fetch passes :data:`MARKET_PACKAGE_PACK`). A git older than 2.37 is refused."""
     if not staging.startswith("/") or "\0" in staging:
         raise Unsafe("invalid staging directory")
     if git_version({"PATH": _market_env(staging)["PATH"]}) < MARKET_MIN_GIT:
         raise MarketGitError("failed")
     fmt = "sha256" if commit is not None and len(commit) == 64 else "sha1"
     argv = market_fetch_argv(url, commit, host, address, staging)  # validates every operand before anything runs
+    cap = MARKET_MAX_PACK if cap is None else cap
     _market_run([_git_exe(), "init", "--quiet", "--template=", f"--object-format={fmt}", staging], staging, staging,
                 timeout=10, cap=MARKET_MAX_PACK)  # fmt: skip
-    _market_run(argv, staging, staging, timeout=MARKET_FETCH_SECONDS, cap=MARKET_MAX_PACK)
+    _market_run(argv, staging, staging, timeout=MARKET_FETCH_SECONDS, cap=cap)
     got = _market_run([_git_exe(), "-C", staging, "rev-parse", "--verify", "FETCH_HEAD^{commit}"], staging, staging,
                       timeout=10, cap=MARKET_MAX_PACK).decode("ascii", "replace").strip()  # fmt: skip
     if _OBJECT_ID.fullmatch(got) is None or (commit is not None and got != commit):
@@ -1233,3 +1254,76 @@ def market_read_blob(staging: str, commit: str, path: str, limit: int) -> bytes:
     if len(data) != int(m.group(3)):
         raise MarketGitError("failed")
     return data
+
+
+_LS_ROW = re.compile(rb"(\d{6}) (blob|commit|tree) ([0-9a-f]{40}|[0-9a-f]{64}) +(\d+)\t([^\0]+)", re.S)
+_SUBDIR_SEGMENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+
+
+def market_export_package(staging: str, commit: str, subdir: str | None) -> dict[str, bytes]:
+    """The package at ``commit`` (below ``subdir`` when given) as an in-memory ``{path: bytes}`` map, read through
+    plumbing only (spec 5.1.1 ``export_package``): no checkout, so no ``.gitattributes`` filter, ``export-subst``,
+    ``export-ignore``, end-of-line conversion, LFS smudge or hook can touch a byte, and nothing is written anywhere.
+
+    1. ``ls-tree -r -z -l`` of the tree, judged WHOLE before any blob is read (``MarketGitError('package')``): every
+       mode ``100644``/``100755`` (no link ``120000``, no submodule ``160000``), every path valid under 8.1 (no ``..``,
+       no ``.git``, no leading dot, no non-ASCII), no case twins, no name that is both file and directory, the number
+       of entries, every size and the total within the 8.1 caps (the sizes are the listing's), the manifest on top.
+    2. ONE ``cat-file --batch`` for all the listed blobs; its output is capped at the listed total plus the batch
+       headers, and each blob's reported type and size must equal the listing. A blob is never written to a path
+       from the tree."""
+    from orch.addons import package
+
+    if not staging.startswith("/") or "\0" in staging or _OBJECT_ID.fullmatch(commit) is None:
+        raise Unsafe("invalid operand")
+    parts = [] if subdir is None else subdir.split("/")
+    if len(parts) > package.MAX_DEPTH - 1 or not all(
+        _SUBDIR_SEGMENT.fullmatch(p) and p != "__pycache__" for p in parts
+    ):
+        raise Unsafe("invalid subdirectory")
+    treeish = f"{commit}:{subdir}" if subdir else f"{commit}^{{tree}}"
+    # a listing is bounded by the entry cap: no tree that big is listed (a longer output kills the command)
+    row_cap = (package.MAX_FILES + 1) * (package.MAX_DEPTH * 66 + 160)
+    try:
+        listing = _market_run([_git_exe(), "-C", staging, *_MARKET_C, "ls-tree", "-r", "-z", "-l", treeish], staging,
+                              staging, timeout=10, cap=MARKET_MAX_PACK, stdout_cap=row_cap)  # fmt: skip
+    except MarketGitError as exc:
+        raise MarketGitError("package" if exc.kind == "too_big" else exc.kind) from None
+    rows = [r for r in listing.split(b"\0") if r]
+    sizes: dict[str, int] = {}
+    oids: list[tuple[str, int]] = []
+    for row in rows:
+        m = _LS_ROW.fullmatch(row)
+        if m is None or m.group(1) not in (b"100644", b"100755") or m.group(2) != b"blob":
+            raise MarketGitError("package")  # a link, a submodule, anything that is not a regular file
+        try:
+            path = m.group(5).decode("utf-8")
+        except UnicodeDecodeError:
+            raise MarketGitError("package") from None
+        if path in sizes:
+            raise MarketGitError("package")
+        sizes[path] = int(m.group(4))
+        oids.append((m.group(3).decode("ascii"), sizes[path]))
+    try:
+        package.check_listing(sizes)
+    except package.PackageError:
+        raise MarketGitError("package") from None
+    wanted = b"".join(oid.encode("ascii") + b"\n" for oid, _ in oids)
+    total = sum(size for _, size in oids)
+    blobs = _market_run([_git_exe(), "-C", staging, *_MARKET_C, "cat-file", "--batch"], staging, staging,
+                        timeout=30, cap=MARKET_MAX_PACK, stdout_cap=total + len(oids) * 160, stdin=wanted)  # fmt: skip
+    out: dict[str, bytes] = {}
+    pos = 0
+    for (oid, size), path in zip(oids, sizes, strict=True):
+        eol = blobs.find(b"\n", pos)
+        if eol < 0 or blobs[pos:eol] != f"{oid} blob {size}".encode("ascii"):
+            raise MarketGitError("failed")
+        start = eol + 1
+        data = blobs[start : start + size]
+        if len(data) != size or blobs[start + size : start + size + 1] != b"\n":
+            raise MarketGitError("failed")
+        out[path] = data
+        pos = start + size + 1
+    if pos != len(blobs):
+        raise MarketGitError("failed")
+    return out

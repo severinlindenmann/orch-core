@@ -22,6 +22,7 @@ from . import ADDONS, MarketError, constants
 from .url import canonical_market_url, schema
 
 INDEX_LABEL = b"orch/market/1/index|"
+ENTRY_LABEL = b"orch/market/1/entry|"
 _ORDER_N = 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551
 _COMMIT = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})(?![\s\S])")
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}(?![\s\S])")
@@ -89,17 +90,29 @@ def _verify(key_b64: str, sig_b64: str, message: bytes) -> bool:
         return False
 
 
+def entry_message(entry: dict[str, Any], market: str) -> bytes:
+    """What a publisher signs (4.3): the label, the entry with ``publisher`` reduced to its key, and the URL of the
+    marketplace it is published in (so a signed entry copied into another marketplace does not verify there)."""
+    reduced = {**entry, "publisher": {"key": entry["publisher"]["key"]}}
+    return ENTRY_LABEL + dumps({"entry": reduced, "market": market})
+
+
+def verify_entry(entry: dict[str, Any], market: str) -> bool:
+    return _verify(entry["publisher"]["key"], entry["publisher"]["sig"], entry_message(entry, market))
+
+
 def official_keys() -> tuple[str, ...]:
     """The only verifier input for the official index: the constant of this release, looked up here at call time (so
     a test can replace the constant; nothing else, no environment, file or flag, can)."""
     return constants.OFFICIAL_KEYS
 
 
-def verify(doc: dict[str, Any], url: str, *, official: bool) -> bool:
+def verify(doc: dict[str, Any], url: str, *, official: bool, keys: tuple[str, ...] | None = None) -> bool:
     """Step 2 of spec 5, before anything is taken from the index. Returns whether a signature was present and
     verified. ``market.source_mismatch`` if the index is not the one added from ``url``. Official: ``expires_at`` and a
     signature by a key of :func:`official_keys` are required (``market.index_unsigned``). Other: a present signature
-    must verify against its own key (an unreachable path before #287; kept minimal)."""
+    must verify against its own key (an unreachable path before #287; kept minimal). ``keys`` replaces the official key
+    list for the sandbox's test marketplace (class ``dev``, V3 G3 C5): the same rules, other keys."""
     if doc["source"]["git"] != url:
         raise MarketError("market.source_mismatch")
     sig = doc.get("signature")
@@ -107,7 +120,7 @@ def verify(doc: dict[str, Any], url: str, *, official: bool) -> bool:
         if (
             sig is None
             or "expires_at" not in doc
-            or sig["key"] not in official_keys()
+            or sig["key"] not in (official_keys() if keys is None else keys)
             or not _verify(sig["key"], sig["sig"], signed_message(doc))
         ):
             raise MarketError("market.index_unsigned")
@@ -131,10 +144,10 @@ class Verdict:
     payload_sha256: str  # sha256 of the signed message: what "the same index version" means
 
 
-def evaluate(raw: bytes, url: str, *, official: bool, now: float) -> Verdict:
+def evaluate(raw: bytes, url: str, *, official: bool, now: float, keys: tuple[str, ...] | None = None) -> Verdict:
     """Steps 1 and 2 of spec 5 on the exact bytes, in order: parse, pins and schema, URL, signature."""
     doc = check(parse(raw))
-    verified = verify(doc, url, official=official)
+    verified = verify(doc, url, official=official, keys=keys)
     return Verdict(doc, verified, is_stale(doc, now), hashlib.sha256(signed_message(doc)).hexdigest())
 
 

@@ -1113,6 +1113,15 @@ def _payload(
             raise PlainUnavailable(f"the plain view does not know the event type {typ}")
         _check_keys(typ, ev, SHOWN[typ], TECHNICAL_KEYS)
         heads.append(_event(typ, ev, ref, out, before, texts, ctx))
+    market = material.get("market")
+    if isinstance(market, Mapping) and isinstance(market.get("publisher"), Mapping):  # V3 G3: the host's word, labelled
+        tofu = {"new": "first use of this publisher key", "known": "same publisher as before"}.get(
+            _s(market["publisher"].get("tofu")), "unsigned"
+        )
+        out.setdefault("notes", []).append(
+            f"Where it comes from (per host, not signed): {_s(market.get('url'))}, {tofu}. "
+            "A key shows the same publisher as last time, not who they are."
+        )
     issued = [ev.get("grant") for ev in events if ev.get("type") == "grant.issued"]
     revoked = [ev.get("grant") for ev in events if ev.get("type") == "grant.revoked"]
     if issued and revoked:  # an Extend: the access it replaces must be another one than the new access

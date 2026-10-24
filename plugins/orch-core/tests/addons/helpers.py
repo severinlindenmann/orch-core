@@ -70,3 +70,33 @@ def make_package(
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_bytes(data)
     return d
+
+
+def record_install(hws: Any, name: str = "echo") -> str:
+    """The install record a marketplace install leaves (V3 G3): the digest of the package now in ``addons/<name>``. A
+    plain ``addon.grant`` signs only built-in bytes or the bytes of this record (C1), so a test that grants a fixture
+    folder installs it first, as an install would. Returns the digest."""
+    import os
+
+    from orch.addons.package import read_package
+    from orch.host.marketstate import MarketFiles
+    from tests.store.helpers import WS
+
+    pkg = read_package(hws.store_dir / "addons" / name)
+    digest, version = pkg.digest, json.loads(pkg.files["orch-addon.json"])["version"]
+    files = MarketFiles(hws.host_state, WS, os.getuid())
+    with files.commit_installs() as write:
+        cur = files.installs()
+        cur["addons"][name] = {
+            "origin": "https://github.com/acme/orch-market", "version": version, "package_sha256": digest,
+            "commit": "a" * 40, "installed_at": 1_790_000_000, "publisher_key": None,
+        }  # fmt: skip
+        write(cur)
+    return digest
+
+
+def installed_package(hws: Any, name: str = "echo", **kw: Any) -> Path:
+    """:func:`make_package` in the workspace's store, then its install record (what an install leaves)."""
+    d = make_package(hws.store_dir, name, **kw)
+    record_install(hws, name)
+    return d

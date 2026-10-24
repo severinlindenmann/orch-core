@@ -1,10 +1,10 @@
 // Settings > Add-ons (R2-2): what `GET /api/w/:ws/add-ons` answers. Words come from the server (the setup wizard's catalog).
 
 export interface AddOnRow {
-  /** The add-on's name: `start-agent`, `terminals`, `worktrees`, `publish`, `usage`, `model-routing`, or one that is always on (`dashboard`, `quick`). */
+  /** The add-on's name: `start-agent`, `terminals`, `worktrees`, `publish`, `usage`, or one that is always on (`dashboard`, `quick`). */
   id: string
-  /** The setting this add-on needs before it can be on (`publish`, `models`), or null. */
-  needs?: 'publish' | 'models' | null
+  /** The setting this add-on needs before it can be on (`publish`), or null. */
+  needs?: 'publish' | null
   /** Whether that setting is set; null when the host could not say (then nothing is claimed). */
   set_up?: boolean | null
   title: string

@@ -41,7 +41,7 @@ def product(a: dict, monkeypatch) -> dict:
         if not official and not ctx["isolation"]:
             raise MarketError("market.community_unisolated")
         mctx = mi.Ctx(
-            url=url, cls="official" if official else "dev", keys=(ctx["official"]["key"],) if official else (),
+            url=url, cls="official" if official else "community", keys=(ctx["official"]["key"],) if official else (),
             core_version=ctx["core_version"], git_hosts=frozenset(ctx["git_hosts"]), installed=ctx["installed"],
             known_keys=ctx["known_keys"], seen=ctx["seen"], builtin=frozenset(ctx["builtin"]),
             official_ids=frozenset(ctx["official_ids"]), moved=frozenset(ctx["moved"]),

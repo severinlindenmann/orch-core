@@ -69,7 +69,6 @@ def test_the_early_check_by_args_alone_is_the_word_ceiling():
 
 def test_settings_classes():
     sets = lambda **kw: op_class("settings.set", args={"set": kw})  # noqa: E731
-    assert sets(models={"codex": {"work": "x"}}) == "click"
     for key in ("repos", "grant_hours", "sign_methods"):
         assert sets(**{key: None}) == "word"
     assert sets(publish=None) == "terminal"

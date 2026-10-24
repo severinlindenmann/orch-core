@@ -147,7 +147,6 @@ WORD_OPS = frozenset(
 #: ``settings.set`` keys that need more than a click. ``publish`` decides where shared files go: terminal only (the
 #: dashboard signs it through ``orch sign CODE``). ``repos``, ``sign_methods`` and ``grant_hours`` need the typed word,
 #: and so does ``addons`` (free-form values an add-on reads; owner choice, G6).
-#: ``models`` (a pick from a closed list, no authority change) is a click (run 8, owner item 1.6).
 #: ``icon`` (the workspace icon) is deliberately in none of the sets: a closed-list cosmetic choice, signed by a click.
 SETTINGS_TERMINAL_KEYS = frozenset({"publish"})
 SETTINGS_WORD_KEYS = frozenset({"repos", "sign_methods", "grant_hours", ADDONS_KEY})

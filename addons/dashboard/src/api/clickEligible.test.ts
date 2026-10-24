@@ -6,7 +6,6 @@ import { clickEligible } from '@/api/click'
 it('settings actions the signer serves by click are click-eligible', () => {
   expect(clickEligible({ action: 'icon_set', icon: { icon: 'cloud', colour: 'teal' } })).toBe(true)
   expect(clickEligible({ action: 'icon_set', icon: null })).toBe(true)
-  expect(clickEligible({ action: 'models_set', models: {} })).toBe(true)
   expect(clickEligible({ action: 'repo_set', name: 'a', path: '/x' })).toBe(true)
   expect(clickEligible({ action: 'settings_set', sign_methods: ['terminal', 'click'] })).toBe(true) // #1161: core classes it click + word
   expect(clickEligible({ action: 'repo_remove', name: 'a' })).toBe(true)

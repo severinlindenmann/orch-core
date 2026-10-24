@@ -531,8 +531,6 @@ async function run(send, close) {
               ['real-host-agent-dialog', 'agent-dialog', [['the dialog', '[data-start-agent]'], ['the first-time notice', '[data-testid="agent-risk-full"]']]],
               ['real-host-agent-dialog-acked', 'agent-dialog-acked', [['the dialog', '[data-start-agent]'], ['the details line', '[data-testid="agent-details"] summary']]],
               ['real-host-agent-model', 'agent-model', [['the dialog', '[data-start-agent]'], ['the model line', '[data-testid="agent-model-line"]']]],
-              ['real-host-addons-model-routing', 'addons-model-routing', [['the settings chevron', '[data-testid="addon-model-routing-expand"]']]],
-              ['real-host-addons-model-routing-open', 'addons-model-routing-open', [['the routing box', '[data-testid="model-routing"]'], ['the choices', '[data-testid="routing-claude-code"]']]],
               ['real-host-addons-publish', 'addons-publish', [['the settings chevron', '[data-testid="addon-publish-expand"]']]],
               ['real-host-addons-publish-open', 'addons-publish-open', [['the publish box', '[data-testid="publish-server"]'], ['the connection check', '[data-testid="publish-connection"]']]],
               ['real-host-addons-publish-unset', 'addons-publish-unset', [['the publish row', '[data-testid="addon-publish"]']]],

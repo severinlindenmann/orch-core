@@ -96,8 +96,6 @@ export interface HostSettings {
   claim_ttl_min: number | null
   lease_ttl_min: number | null
   /** Durations no `settings.changed` has set (the F1 defaults). */
-  /** Model routing: the signed table (agent -> mode -> model); null: none set. */
-  models?: import('./modelRouting').ModelTable | null
   defaults: string[] | null
   gates: Record<PolicyGate, HostPolicy> | null
   repos: HostRepo[] | null

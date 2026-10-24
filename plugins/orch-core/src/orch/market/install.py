@@ -34,7 +34,7 @@ def semver(v: str) -> tuple[int, int, int]:
 class Ctx:
     """Everything step 6 to 9 read besides the index. ``cls`` is ``official`` or ``dev`` (the sandbox's test
     marketplace, C5): both need every entry to carry a publisher whose key is in ``keys``; ``dev`` has the reserved-id
-    rule of a non-official market."""
+    rule of a non-official market, except that it may list the official ids."""
 
     url: str
     cls: str
@@ -69,7 +69,10 @@ def check_entry(ctx: Ctx, doc: Mapping[str, Any], addon_id: str) -> Facts:
         raise MarketError("market.host_not_allowed")
     official = ctx.cls == "official"
     taken = official and entry["id"] in ctx.builtin and entry["id"] not in ctx.moved
-    claimed = not official and (entry["id"] in ctx.builtin or entry["id"] in ctx.official_ids)
+    # the sandbox's test marketplace (dev) may carry the official ids to prove the real packages before the official
+    # index is signed (G6, deviation from G3 C5); built-in ids stay refused, and a non-dev workspace never has the class
+    ids = ctx.builtin if ctx.cls == "dev" else ctx.builtin | ctx.official_ids
+    claimed = not official and entry["id"] in ids
     if taken or claimed:
         raise MarketError("market.reserved_id")
     prior = ctx.installed.get(entry["id"])

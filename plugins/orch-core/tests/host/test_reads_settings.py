@@ -80,7 +80,6 @@ def test_the_defaults_are_marked_and_the_four_gates_are_given(w):
         "sign_methods",
         "addons",
         "icon",
-        "models",
         "publish",
         "settings_at",
         "policy_at",
@@ -245,7 +244,6 @@ def test_no_person_gets_less_and_only_repos_a_visible_ticket_links(w):
             "defaults",
             "sign_methods",
             "icon",
-            "models",
             "sub_cursor",
         }  # no settings_at, policy_at
         assert got["settings"]["repos"] == {"proj": {"default_branch": "main"}}  # linked by a visible ticket only

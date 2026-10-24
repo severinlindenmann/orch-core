@@ -4,12 +4,16 @@
  "notes": [
   "Keys are JWK (P-256); public keys and envelope fields are base64url without padding.",
   "seal: with ephemeral_jwk fixed, sealing plaintext to recipient_public for context gives exactly envelope; every intermediate (shared_secret, aad, key, nonce, padded) is given.",
-  "open: the recipient (direction in = the signer, out = the browser) opens envelope for context; expect is 'ok' (the plaintext of the base seal vector) or a refusal reason.",
-  "replay is stateful (a second open of the same epk is 'replay') and is not a vector."
+  "open: the recipient (direction in = the signer, out = the browser), bound to bound.workspace_id and bound.request_id when it was made, opens envelope for context; expect is 'ok' (the plaintext of the base seal vector) or a refusal reason.",
+  "replay and the view_digest pin are stateful (a second open of the same epk is 'replay'; after a first open, another view_digest is 'context') and are not vectors."
  ],
  "open": [
   {
    "base": "in_github_token",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "github.token",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -35,6 +39,10 @@
   },
   {
    "base": "in_github_token",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQS",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "github.token",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQS",
@@ -60,6 +68,10 @@
   },
   {
    "base": "in_github_token",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "github.token",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -85,6 +97,10 @@
   },
   {
    "base": "in_github_token",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "fedcba9876543210fedcba9876543210"
+   },
    "context": {
     "purpose": "github.token",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -110,6 +126,68 @@
   },
   {
    "base": "in_github_token",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQS",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
+   "context": {
+    "purpose": "github.token",
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "view_digest": "sha256:abababababababababababababababababababababababababababababababab",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
+   "direction": "in",
+   "envelope": {
+    "alg": "P256-HKDF-SHA256-A256GCM",
+    "ct": "FhiZ3xpILOBHrUKbAR1T8T0lcj3g8g3wXcJyGXkADwOKeUDfanbD_5nv-CJ1NF9kECkHK-09l6qGeax-BvqG_LVknrhWi-xRAUWZEZD5Q4Rd59ypwEMLo6QitiYh65sQmDc6Pfbbx2EVZ3vWh1lDgmIdYchjclnUGgdKWx1F8kBx7nw_RpoRdmev1rATYdgM7Z2BiKbgbvcuckw_GorH0CWs8uul7r-41M-4bMHZ5vatYlmepzlNxP8l5JYaVAvRO-5NeI2xrJnOoywgXaXq7AZEIshlco7TJVUmjScgqcGe1Eva5b2-l_xrINsQiJCpCJK81dlyLsHrCzxjaJJeC38Zer_RHmaKTCPJihBryCs",
+    "epk": "BHzqKtWf_p29Bu83ajaE5uH5fmbJPDbkMjKeoz-v4aFczV-RPRdBeBLwaV63QCAvb7dJXBjXcvNYYPRAGlGUDUc",
+    "v": 1
+   },
+   "expect": "context",
+   "name": "in_github_token/bound_to_other_request",
+   "recipient_jwk": {
+    "crv": "P-256",
+    "d": "Pec1Lm4afb1O428Jnmj94z3AfMxbF7SRSwiQlBMpdc0",
+    "kty": "EC",
+    "x": "aes6rN-hLCeH2sH30od1s8OdRF3UfjdSS_zWc7EqUow",
+    "y": "HdewCsaTBetETZravUO5J7lnsV5qzeT96FvK547RO0w"
+   }
+  },
+  {
+   "base": "in_github_token",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "fedcba9876543210fedcba9876543210"
+   },
+   "context": {
+    "purpose": "github.token",
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "view_digest": "sha256:abababababababababababababababababababababababababababababababab",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
+   "direction": "in",
+   "envelope": {
+    "alg": "P256-HKDF-SHA256-A256GCM",
+    "ct": "FhiZ3xpILOBHrUKbAR1T8T0lcj3g8g3wXcJyGXkADwOKeUDfanbD_5nv-CJ1NF9kECkHK-09l6qGeax-BvqG_LVknrhWi-xRAUWZEZD5Q4Rd59ypwEMLo6QitiYh65sQmDc6Pfbbx2EVZ3vWh1lDgmIdYchjclnUGgdKWx1F8kBx7nw_RpoRdmev1rATYdgM7Z2BiKbgbvcuckw_GorH0CWs8uul7r-41M-4bMHZ5vatYlmepzlNxP8l5JYaVAvRO-5NeI2xrJnOoywgXaXq7AZEIshlco7TJVUmjScgqcGe1Eva5b2-l_xrINsQiJCpCJK81dlyLsHrCzxjaJJeC38Zer_RHmaKTCPJihBryCs",
+    "epk": "BHzqKtWf_p29Bu83ajaE5uH5fmbJPDbkMjKeoz-v4aFczV-RPRdBeBLwaV63QCAvb7dJXBjXcvNYYPRAGlGUDUc",
+    "v": 1
+   },
+   "expect": "context",
+   "name": "in_github_token/bound_to_other_workspace",
+   "recipient_jwk": {
+    "crv": "P-256",
+    "d": "Pec1Lm4afb1O428Jnmj94z3AfMxbF7SRSwiQlBMpdc0",
+    "kty": "EC",
+    "x": "aes6rN-hLCeH2sH30od1s8OdRF3UfjdSS_zWc7EqUow",
+    "y": "HdewCsaTBetETZravUO5J7lnsV5qzeT96FvK547RO0w"
+   }
+  },
+  {
+   "base": "in_github_token",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "github.token",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -135,6 +213,10 @@
   },
   {
    "base": "in_github_token",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "github.token",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -160,6 +242,10 @@
   },
   {
    "base": "in_github_token",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "github.token",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -185,6 +271,10 @@
   },
   {
    "base": "in_github_token",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "github.token",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -210,6 +300,10 @@
   },
   {
    "base": "in_github_token",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "github.token",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -235,6 +329,10 @@
   },
   {
    "base": "in_github_token",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "github.token",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -260,6 +358,10 @@
   },
   {
    "base": "in_github_token",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "github.token",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -285,6 +387,10 @@
   },
   {
    "base": "in_github_token",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "github.token",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -310,6 +416,10 @@
   },
   {
    "base": "in_github_token",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "github.token",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -335,6 +445,97 @@
   },
   {
    "base": "in_github_token",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
+   "context": {
+    "purpose": "github.token",
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "view_digest": "sha256:abababababababababababababababababababababababababababababababab",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
+   "direction": "in",
+   "envelope": {
+    "alg": "P256-HKDF-SHA256-A256GCM",
+    "ct": "FhiZ3xpILOBHrUKbAR1T8T0lcj3g8g3wXcJyGXkADwOKeUDfanbD_5nv-CJ1NF9kECkHK-09l6qGeax-BvqG_LVknrhWi-xRAUWZEZD5Q4Rd59ypwEMLo6QitiYh65sQmDc6Pfbbx2EVZ3vWh1lDgmIdYchjclnUGgdKWx1F8kBx7nw_RpoRdmev1rATYdgM7Z2BiKbgbvcuckw_GorH0CWs8uul7r-41M-4bMHZ5vatYlmepzlNxP8l5JYaVAvRO-5NeI2xrJnOoywgXaXq7AZEIshlco7TJVUmjScgqcGe1Eva5b2-l_xrINsQiJCpCJK81dlyLsHrCzxjaJJeC38Zer_RHmaKTCPJihBryCs",
+    "epk": "BHzqKtWf_p29Bu83ajaE5uH5fmbJPDbkMjKeoz-v4aFcMqBuwei-h-4PlqFIv9_QkEi2o-gojQynnwu_5a5r8rg",
+    "v": 1
+   },
+   "expect": "open_failed",
+   "name": "in_github_token/epk_negated",
+   "recipient_jwk": {
+    "crv": "P-256",
+    "d": "Pec1Lm4afb1O428Jnmj94z3AfMxbF7SRSwiQlBMpdc0",
+    "kty": "EC",
+    "x": "aes6rN-hLCeH2sH30od1s8OdRF3UfjdSS_zWc7EqUow",
+    "y": "HdewCsaTBetETZravUO5J7lnsV5qzeT96FvK547RO0w"
+   }
+  },
+  {
+   "base": "in_github_token",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
+   "context": {
+    "purpose": "github.token",
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "view_digest": "sha256:abababababababababababababababababababababababababababababababab",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
+   "direction": "in",
+   "envelope": {
+    "alg": "P256-HKDF-SHA256-A256GCM",
+    "ct": "FhiZ3xpILOBHrUKbAR1T8T0lcj3g8g3wXcJyGXkADwOKeUDfanbD_5nv-CJ1NF9kECkHK-09l6qGeax-BvqG_LVknrhWi-xRAUWZEZD5Q4Rd59ypwEMLo6QitiYh65sQmDc6Pfbbx2EVZ3vWh1lDgmIdYchjclnUGgdKWx1F8kBx7nw_RpoRdmev1rATYdgM7Z2BiKbgbvcuckw_GorH0CWs8uul7r-41M-4bMHZ5vatYlmepzlNxP8l5JYaVAvRO-5NeI2xrJnOoywgXaXq7AZEIshlco7TJVUmjScgqcGe1Eva5b2-l_xrINsQiJCpCJK81dlyLsHrCzxjaJJeC38Zer_RHmaKTCPJihBryCs",
+    "epk": "BHzqKtWf_p29Bu83ajaE5uH5fmbJPDbkMjKeoz-v4aFczV-RPRdBeBLwaV63QCAvb7dJXBjXcvNYYPRAGlGUDUd",
+    "v": 1
+   },
+   "expect": "malformed",
+   "name": "in_github_token/epk_noncanonical_last_char",
+   "recipient_jwk": {
+    "crv": "P-256",
+    "d": "Pec1Lm4afb1O428Jnmj94z3AfMxbF7SRSwiQlBMpdc0",
+    "kty": "EC",
+    "x": "aes6rN-hLCeH2sH30od1s8OdRF3UfjdSS_zWc7EqUow",
+    "y": "HdewCsaTBetETZravUO5J7lnsV5qzeT96FvK547RO0w"
+   }
+  },
+  {
+   "base": "in_github_token",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
+   "context": {
+    "purpose": "github.token",
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "view_digest": "sha256:abababababababababababababababababababababababababababababababab",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
+   "direction": "in",
+   "envelope": {
+    "alg": "P256-HKDF-SHA256-A256GCM",
+    "ct": "FhiZ3xpILOBHrUKbAR1T8T0lcj3g8g3wXcJyGXkADwOKeUDfanbD_5nv-CJ1NF9kECkHK-09l6qGeax-BvqG_LVknrhWi-xRAUWZEZD5Q4Rd59ypwEMLo6QitiYh65sQmDc6Pfbbx2EVZ3vWh1lDgmIdYchjclnUGgdKWx1F8kBx7nw_RpoRdmev1rATYdgM7Z2BiKbgbvcuckw_GorH0CWs8uul7r-41M-4bMHZ5vatYlmepzlNxP8l5JYaVAvRO-5NeI2xrJnOoywgXaXq7AZEIshlco7TJVUmjScgqcGe1Eva5b2-l_xrINsQiJCpCJK81dlyLsHrCzxjaJJeC38Zer_RHmaKTCPJihBryCt",
+    "epk": "BHzqKtWf_p29Bu83ajaE5uH5fmbJPDbkMjKeoz-v4aFczV-RPRdBeBLwaV63QCAvb7dJXBjXcvNYYPRAGlGUDUc",
+    "v": 1
+   },
+   "expect": "malformed",
+   "name": "in_github_token/ct_noncanonical_last_char",
+   "recipient_jwk": {
+    "crv": "P-256",
+    "d": "Pec1Lm4afb1O428Jnmj94z3AfMxbF7SRSwiQlBMpdc0",
+    "kty": "EC",
+    "x": "aes6rN-hLCeH2sH30od1s8OdRF3UfjdSS_zWc7EqUow",
+    "y": "HdewCsaTBetETZravUO5J7lnsV5qzeT96FvK547RO0w"
+   }
+  },
+  {
+   "base": "in_github_token",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "github.token",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -360,6 +561,10 @@
   },
   {
    "base": "in_github_token",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "github.token",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -386,6 +591,10 @@
   },
   {
    "base": "in_github_token",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "github.token",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -410,6 +619,10 @@
   },
   {
    "base": "in_github_token",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "github.token",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -435,6 +648,10 @@
   },
   {
    "base": "in_github_token",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "github.token",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -460,6 +677,10 @@
   },
   {
    "base": "in_github_token",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "github.token",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -485,6 +706,10 @@
   },
   {
    "base": "in_github_token",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "github.token",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -510,6 +735,10 @@
   },
   {
    "base": "in_github_token",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "github.token",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -535,6 +764,10 @@
   },
   {
    "base": "in_github_token",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "github.token",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -558,6 +791,10 @@
   },
   {
    "base": "out_grant_secret",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "grant.secret",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -583,6 +820,10 @@
   },
   {
    "base": "out_grant_secret",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQS",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "grant.secret",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQS",
@@ -608,6 +849,10 @@
   },
   {
    "base": "out_grant_secret",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "grant.secret",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -633,6 +878,10 @@
   },
   {
    "base": "out_grant_secret",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "fedcba9876543210fedcba9876543210"
+   },
    "context": {
     "purpose": "grant.secret",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -658,6 +907,68 @@
   },
   {
    "base": "out_grant_secret",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQS",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
+   "context": {
+    "purpose": "grant.secret",
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "view_digest": "sha256:abababababababababababababababababababababababababababababababab",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
+   "direction": "out",
+   "envelope": {
+    "alg": "P256-HKDF-SHA256-A256GCM",
+    "ct": "-1eq1kXz2Wpctm8VNfzceBR7GOinpYNVmys9TxroiMSDwGOAZ3SHJx4LEsXQMWXPyNfdxBlbT0vsrbN4VOLQrYEPWCzdU5kKtE6T6BxONs_7emiAXILAHHYY9wpQZ3bjZMWIidABaXeunFzC8bVmP8m8kt9xV-W2XQXDTYZoSTEFnnAguC7Lk14Welufswb1NB2gaWoI-6A_mWIPjh2lth-s2vKd-pphInoc1p-z4B1ErD2OhHfZCPKOcZAMSk_65RexIEm7VnSF33LSxcOfwbIV4iG_qBoixCK3ZTXKMyh6c9SMjNNzXu737r72Hj5vceqQSEIIQbhtJYglLAWlYzdIajluDBHWBJLRL1DMTGY",
+    "epk": "BB_jH-WgRIdeB7CNmDvyasN1KVMvYlDZn-fUwNIPWkTsxyuJgGcMRwGKSpIbhazGQob3Bno-5YbiXpQCwwWl3hI",
+    "v": 1
+   },
+   "expect": "context",
+   "name": "out_grant_secret/bound_to_other_request",
+   "recipient_jwk": {
+    "crv": "P-256",
+    "d": "wCGsbuxzwe4y3B4yefLBko24fHxn_QBZSUSTBIqVgXs",
+    "kty": "EC",
+    "x": "L4LCnaHml4AL1ONyzXIrWD0m3OulDlHANII2h6Za-ds",
+    "y": "c9U_fkC3z0sjAQnR_3Y-JnHVRLNDnmd7vjXxLlZb0BM"
+   }
+  },
+  {
+   "base": "out_grant_secret",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "fedcba9876543210fedcba9876543210"
+   },
+   "context": {
+    "purpose": "grant.secret",
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "view_digest": "sha256:abababababababababababababababababababababababababababababababab",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
+   "direction": "out",
+   "envelope": {
+    "alg": "P256-HKDF-SHA256-A256GCM",
+    "ct": "-1eq1kXz2Wpctm8VNfzceBR7GOinpYNVmys9TxroiMSDwGOAZ3SHJx4LEsXQMWXPyNfdxBlbT0vsrbN4VOLQrYEPWCzdU5kKtE6T6BxONs_7emiAXILAHHYY9wpQZ3bjZMWIidABaXeunFzC8bVmP8m8kt9xV-W2XQXDTYZoSTEFnnAguC7Lk14Welufswb1NB2gaWoI-6A_mWIPjh2lth-s2vKd-pphInoc1p-z4B1ErD2OhHfZCPKOcZAMSk_65RexIEm7VnSF33LSxcOfwbIV4iG_qBoixCK3ZTXKMyh6c9SMjNNzXu737r72Hj5vceqQSEIIQbhtJYglLAWlYzdIajluDBHWBJLRL1DMTGY",
+    "epk": "BB_jH-WgRIdeB7CNmDvyasN1KVMvYlDZn-fUwNIPWkTsxyuJgGcMRwGKSpIbhazGQob3Bno-5YbiXpQCwwWl3hI",
+    "v": 1
+   },
+   "expect": "context",
+   "name": "out_grant_secret/bound_to_other_workspace",
+   "recipient_jwk": {
+    "crv": "P-256",
+    "d": "wCGsbuxzwe4y3B4yefLBko24fHxn_QBZSUSTBIqVgXs",
+    "kty": "EC",
+    "x": "L4LCnaHml4AL1ONyzXIrWD0m3OulDlHANII2h6Za-ds",
+    "y": "c9U_fkC3z0sjAQnR_3Y-JnHVRLNDnmd7vjXxLlZb0BM"
+   }
+  },
+  {
+   "base": "out_grant_secret",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "grant.secret",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -683,6 +994,10 @@
   },
   {
    "base": "out_grant_secret",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "grant.secret",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -708,6 +1023,10 @@
   },
   {
    "base": "out_grant_secret",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "grant.secret",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -733,6 +1052,10 @@
   },
   {
    "base": "out_grant_secret",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "grant.secret",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -758,6 +1081,10 @@
   },
   {
    "base": "out_grant_secret",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "grant.secret",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -783,6 +1110,10 @@
   },
   {
    "base": "out_grant_secret",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "grant.secret",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -808,6 +1139,10 @@
   },
   {
    "base": "out_grant_secret",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "grant.secret",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -833,6 +1168,10 @@
   },
   {
    "base": "out_grant_secret",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "grant.secret",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -858,6 +1197,10 @@
   },
   {
    "base": "out_grant_secret",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "grant.secret",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -883,6 +1226,97 @@
   },
   {
    "base": "out_grant_secret",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
+   "context": {
+    "purpose": "grant.secret",
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "view_digest": "sha256:abababababababababababababababababababababababababababababababab",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
+   "direction": "out",
+   "envelope": {
+    "alg": "P256-HKDF-SHA256-A256GCM",
+    "ct": "-1eq1kXz2Wpctm8VNfzceBR7GOinpYNVmys9TxroiMSDwGOAZ3SHJx4LEsXQMWXPyNfdxBlbT0vsrbN4VOLQrYEPWCzdU5kKtE6T6BxONs_7emiAXILAHHYY9wpQZ3bjZMWIidABaXeunFzC8bVmP8m8kt9xV-W2XQXDTYZoSTEFnnAguC7Lk14Welufswb1NB2gaWoI-6A_mWIPjh2lth-s2vKd-pphInoc1p-z4B1ErD2OhHfZCPKOcZAMSk_65RexIEm7VnSF33LSxcOfwbIV4iG_qBoixCK3ZTXKMyh6c9SMjNNzXu737r72Hj5vceqQSEIIQbhtJYglLAWlYzdIajluDBHWBJLRL1DMTGY",
+    "epk": "BB_jH-WgRIdeB7CNmDvyasN1KVMvYlDZn-fUwNIPWkTsONR2fpjzuP91tW3kelM5vXkI-YbBGnkdoWv9PPpaIe0",
+    "v": 1
+   },
+   "expect": "open_failed",
+   "name": "out_grant_secret/epk_negated",
+   "recipient_jwk": {
+    "crv": "P-256",
+    "d": "wCGsbuxzwe4y3B4yefLBko24fHxn_QBZSUSTBIqVgXs",
+    "kty": "EC",
+    "x": "L4LCnaHml4AL1ONyzXIrWD0m3OulDlHANII2h6Za-ds",
+    "y": "c9U_fkC3z0sjAQnR_3Y-JnHVRLNDnmd7vjXxLlZb0BM"
+   }
+  },
+  {
+   "base": "out_grant_secret",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
+   "context": {
+    "purpose": "grant.secret",
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "view_digest": "sha256:abababababababababababababababababababababababababababababababab",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
+   "direction": "out",
+   "envelope": {
+    "alg": "P256-HKDF-SHA256-A256GCM",
+    "ct": "-1eq1kXz2Wpctm8VNfzceBR7GOinpYNVmys9TxroiMSDwGOAZ3SHJx4LEsXQMWXPyNfdxBlbT0vsrbN4VOLQrYEPWCzdU5kKtE6T6BxONs_7emiAXILAHHYY9wpQZ3bjZMWIidABaXeunFzC8bVmP8m8kt9xV-W2XQXDTYZoSTEFnnAguC7Lk14Welufswb1NB2gaWoI-6A_mWIPjh2lth-s2vKd-pphInoc1p-z4B1ErD2OhHfZCPKOcZAMSk_65RexIEm7VnSF33LSxcOfwbIV4iG_qBoixCK3ZTXKMyh6c9SMjNNzXu737r72Hj5vceqQSEIIQbhtJYglLAWlYzdIajluDBHWBJLRL1DMTGY",
+    "epk": "BB_jH-WgRIdeB7CNmDvyasN1KVMvYlDZn-fUwNIPWkTsxyuJgGcMRwGKSpIbhazGQob3Bno-5YbiXpQCwwWl3hJ",
+    "v": 1
+   },
+   "expect": "malformed",
+   "name": "out_grant_secret/epk_noncanonical_last_char",
+   "recipient_jwk": {
+    "crv": "P-256",
+    "d": "wCGsbuxzwe4y3B4yefLBko24fHxn_QBZSUSTBIqVgXs",
+    "kty": "EC",
+    "x": "L4LCnaHml4AL1ONyzXIrWD0m3OulDlHANII2h6Za-ds",
+    "y": "c9U_fkC3z0sjAQnR_3Y-JnHVRLNDnmd7vjXxLlZb0BM"
+   }
+  },
+  {
+   "base": "out_grant_secret",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
+   "context": {
+    "purpose": "grant.secret",
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "view_digest": "sha256:abababababababababababababababababababababababababababababababab",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
+   "direction": "out",
+   "envelope": {
+    "alg": "P256-HKDF-SHA256-A256GCM",
+    "ct": "-1eq1kXz2Wpctm8VNfzceBR7GOinpYNVmys9TxroiMSDwGOAZ3SHJx4LEsXQMWXPyNfdxBlbT0vsrbN4VOLQrYEPWCzdU5kKtE6T6BxONs_7emiAXILAHHYY9wpQZ3bjZMWIidABaXeunFzC8bVmP8m8kt9xV-W2XQXDTYZoSTEFnnAguC7Lk14Welufswb1NB2gaWoI-6A_mWIPjh2lth-s2vKd-pphInoc1p-z4B1ErD2OhHfZCPKOcZAMSk_65RexIEm7VnSF33LSxcOfwbIV4iG_qBoixCK3ZTXKMyh6c9SMjNNzXu737r72Hj5vceqQSEIIQbhtJYglLAWlYzdIajluDBHWBJLRL1DMTGZ",
+    "epk": "BB_jH-WgRIdeB7CNmDvyasN1KVMvYlDZn-fUwNIPWkTsxyuJgGcMRwGKSpIbhazGQob3Bno-5YbiXpQCwwWl3hI",
+    "v": 1
+   },
+   "expect": "malformed",
+   "name": "out_grant_secret/ct_noncanonical_last_char",
+   "recipient_jwk": {
+    "crv": "P-256",
+    "d": "wCGsbuxzwe4y3B4yefLBko24fHxn_QBZSUSTBIqVgXs",
+    "kty": "EC",
+    "x": "L4LCnaHml4AL1ONyzXIrWD0m3OulDlHANII2h6Za-ds",
+    "y": "c9U_fkC3z0sjAQnR_3Y-JnHVRLNDnmd7vjXxLlZb0BM"
+   }
+  },
+  {
+   "base": "out_grant_secret",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "grant.secret",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -908,6 +1342,10 @@
   },
   {
    "base": "out_grant_secret",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "grant.secret",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -934,6 +1372,10 @@
   },
   {
    "base": "out_grant_secret",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "grant.secret",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -958,6 +1400,10 @@
   },
   {
    "base": "out_grant_secret",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "grant.secret",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -983,6 +1429,10 @@
   },
   {
    "base": "out_grant_secret",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "grant.secret",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -1008,6 +1458,10 @@
   },
   {
    "base": "out_grant_secret",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "grant.secret",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -1033,6 +1487,10 @@
   },
   {
    "base": "out_grant_secret",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "grant.secret",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -1058,6 +1516,10 @@
   },
   {
    "base": "out_grant_secret",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "grant.secret",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -1083,6 +1545,10 @@
   },
   {
    "base": "out_grant_secret",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "grant.secret",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -1106,6 +1572,10 @@
   },
   {
    "base": "in_github_token",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "custody.passphrase",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -1131,6 +1601,10 @@
   },
   {
    "base": "in_recovery_code",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "hub.backup_key",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -1156,6 +1630,10 @@
   },
   {
    "base": "out_grant_secret",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "github.token",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -1181,6 +1659,10 @@
   },
   {
    "base": "in_github_token",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "grant.secret",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -1206,6 +1688,10 @@
   },
   {
    "base": "in_github_token",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "github.token",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -1231,6 +1717,10 @@
   },
   {
    "base": "out_grant_secret",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "grant.secret",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -1256,6 +1746,10 @@
   },
   {
    "base": "in_github_token",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "github.token",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -1281,6 +1775,10 @@
   },
   {
    "base": "out_grant_secret",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "grant.secret",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -1306,6 +1804,10 @@
   },
   {
    "base": "in_github_token",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "github.token",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -1331,6 +1833,10 @@
   },
   {
    "base": "out_grant_secret",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "grant.secret",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -1356,6 +1862,10 @@
   },
   {
    "base": "in_github_token",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "github.token",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
@@ -1381,6 +1891,10 @@
   },
   {
    "base": "out_grant_secret",
+   "bound": {
+    "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",
+    "workspace_id": "0123456789abcdef0123456789abcdef"
+   },
    "context": {
     "purpose": "grant.secret",
     "request_id": "hr_01JB2C3D4E5F6G7H8J9K0MNPQR",

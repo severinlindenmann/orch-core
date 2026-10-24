@@ -166,13 +166,15 @@ def pad(secret: bytes) -> bytes:
     return body + b"\x00" * (-len(body) % BLOCK)
 
 
-def unpad(padded: bytes) -> bytes:
-    if not padded or len(padded) % BLOCK or len(padded) > MAX_PADDED:
+def unpad(padded: bytes | bytearray) -> bytearray:
+    """The secret of an opened value, sliced through a memoryview (no extra immutable copy of the secret)."""
+    view = memoryview(padded)
+    if not len(view) or len(view) % BLOCK or len(view) > MAX_PADDED:
         raise SealedError("malformed", "the sealed value has a wrong size")
-    n = int.from_bytes(padded[:2], "big")
-    if not 1 <= n <= len(padded) - 2 or len(padded) != len(pad(b"\x01" * n)) or any(padded[2 + n :]):
+    n = int.from_bytes(view[:2], "big")
+    if not 1 <= n <= len(view) - 2 or len(view) != -(-(n + 2) // BLOCK) * BLOCK or any(view[2 + n :]):
         raise SealedError("malformed", "the sealed value has a wrong padding")
-    return padded[2 : 2 + n]
+    return bytearray(view[2 : 2 + n])
 
 
 def _parse(envelope: Any) -> tuple[ec.EllipticCurvePublicKey, bytes, bytes]:
@@ -188,19 +190,19 @@ def _parse(envelope: Any) -> tuple[ec.EllipticCurvePublicKey, bytes, bytes]:
     return epk, epk_raw, ct
 
 
-def seal(
-    recipient_public: str,
-    secret: bytes | bytearray | str,
-    ctx: Context,
-    *,
-    ephemeral: ec.EllipticCurvePrivateKey | None = None,
+def seal(recipient_public: str, secret: bytes | bytearray | str, ctx: Context) -> dict[str, Any]:
+    """Seal ``secret`` to ``recipient_public`` for ``ctx``, with a fresh ephemeral key that is used once and dropped
+    (the nonce is derived, so a reused ephemeral key would reuse key and nonce: there is no way to pass one in)."""
+    return _seal_with(ec.generate_private_key(ec.SECP256R1()), recipient_public, secret, ctx)
+
+
+def _seal_with(
+    eph: ec.EllipticCurvePrivateKey, recipient_public: str, secret: bytes | bytearray | str, ctx: Context
 ) -> dict[str, Any]:
-    """Seal ``secret`` to ``recipient_public`` for ``ctx``. ``ephemeral`` is for test vectors only: in use every
-    seal makes a fresh key, uses it once and drops it (the nonce is derived, so a reused key would reuse it)."""
+    """The construction with a given ephemeral key: for the deterministic test vectors only, never in use."""
     rpk, rpk_raw = decode_public(recipient_public, "recipient key")
     data = secret.encode("utf-8") if isinstance(secret, str) else bytes(secret)
     padded = pad(data)
-    eph = ephemeral if ephemeral is not None else ec.generate_private_key(ec.SECP256R1())
     epk = encode_public(eph.public_key())
     epk_raw = _unb64url(epk, "epk")
     if epk_raw == rpk_raw:
@@ -211,20 +213,39 @@ def seal(
 
 
 class Recipient:
-    """An ephemeral P-256 key that opens sealed values of one direction.
+    """An ephemeral P-256 key that opens sealed values of one direction, bound to one request.
 
     ``in``: the signer makes one per approval when it builds a View that asks for a secret; the View carries
     :attr:`public` (so ``view_digest`` covers it), the private key stays in the signer process (never written, never
     sent) and is dropped with :meth:`close` when the approval ends. ``out``: the browser's side (here for tests and
-    the vectors). Every ``epk`` opens once (``replay`` after that).
+    the vectors). The recipient is bound to ``workspace_id`` and ``request_id`` when it is made, and to the
+    ``view_digest`` of its first successful open: an open with another context is ``context``, whatever the caller
+    passes. Every ``epk`` opens once (``replay`` after that).
     """
 
-    def __init__(self, direction: str, *, private_key: ec.EllipticCurvePrivateKey | None = None) -> None:
+    def __init__(self, direction: str, *, workspace_id: str, request_id: str) -> None:
+        self._init(direction, workspace_id, request_id, ec.generate_private_key(ec.SECP256R1()))
+
+    @classmethod
+    def _for_vectors(
+        cls, direction: str, workspace_id: str, request_id: str, key: ec.EllipticCurvePrivateKey
+    ) -> Recipient:
+        """A recipient with a given key: for the deterministic test vectors only, never in use."""
+        self = cls.__new__(cls)
+        self._init(direction, workspace_id, request_id, key)
+        return self
+
+    def _init(self, direction: str, workspace_id: str, request_id: str, key: ec.EllipticCurvePrivateKey) -> None:
         if direction not in ("in", "out"):
             raise ValueError("direction is in or out")
-        self.direction = direction
-        self._key: ec.EllipticCurvePrivateKey | None = private_key or ec.generate_private_key(ec.SECP256R1())
-        self.public = encode_public(self._key.public_key())
+        if type(workspace_id) is not str or not WS_ID.fullmatch(workspace_id):
+            raise SealedError("context", "workspace_id is a workspace id")
+        if type(request_id) is not str or not REQ.fullmatch(request_id):
+            raise SealedError("context", "request_id is a request id")
+        self.direction, self.workspace_id, self.request_id = direction, workspace_id, request_id
+        self.view_digest: str | None = None
+        self._key: ec.EllipticCurvePrivateKey | None = key
+        self.public = encode_public(key.public_key())
         self._raw = _unb64url(self.public, "public key")
         self._seen: set[bytes] = set()
 
@@ -233,11 +254,16 @@ class Recipient:
         return self._key is None
 
     def open(self, envelope: Any, ctx: Context) -> bytearray:
-        """The secret, as a ``bytearray`` the caller wipes after use. Refuses with :class:`SealedError`."""
+        """The secret, as a ``bytearray`` the caller wipes after use (best effort: the AEAD's own output is an
+        immutable ``bytes`` that only the garbage collector releases). Refuses with :class:`SealedError`."""
         if self._key is None:
             raise SealedError("closed", "this sealed field is closed")
         if ctx.direction != self.direction:
             raise SealedError("context", "this purpose is not opened here")
+        if (ctx.workspace_id, ctx.request_id) != (self.workspace_id, self.request_id):
+            raise SealedError("context", "this sealed field belongs to another request")
+        if self.view_digest is not None and ctx.view_digest != self.view_digest:
+            raise SealedError("context", "this sealed field belongs to another review")
         epk, epk_raw, ct = _parse(envelope)
         if epk_raw == self._raw:
             raise SealedError("malformed", "the ephemeral key is the recipient key")
@@ -246,14 +272,13 @@ class Recipient:
         ad = aad(ctx, epk_raw, self._raw)
         key, nonce = derive(self._key.exchange(ec.ECDH(), epk), ad)
         try:
-            padded = bytearray(AESGCM(key).decrypt(nonce, ct, ad))
+            padded = AESGCM(key).decrypt(nonce, ct, ad)
         except InvalidTag:
             raise SealedError("open_failed", "the sealed value does not open for this request") from None
-        try:
-            out = bytearray(unpad(bytes(padded)))
-        finally:
-            padded[:] = b"\x00" * len(padded)
+        out = unpad(padded)
+        del padded
         self._seen.add(epk_raw)
+        self.view_digest = ctx.view_digest
         return out
 
     def close(self) -> None:

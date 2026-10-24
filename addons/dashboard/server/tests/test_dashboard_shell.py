@@ -37,6 +37,7 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/hub",
         "/api/w/{ws}/hub/share",
         "/api/w/{ws}/hub/share/preview",
+        "/api/w/{ws}/hub/connect",
         "/api/w/{ws}/hub/command",
         "/api/w/{ws}/click/prepare",
         "/api/w/{ws}/click/view",

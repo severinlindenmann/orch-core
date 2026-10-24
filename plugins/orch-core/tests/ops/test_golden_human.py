@@ -57,7 +57,19 @@ def build(tmp: Path, mp: pytest.MonkeyPatch, mode: Any = None) -> HumanWs:
     with (mode or _direct)(ws) as extra:
         agent, me = Cli(ws, **extra), Cli(ws, grant=False, session=None, **extra)
         first = make_ticket(agent, "Needs approval")  # DEMO-0001: filled, nothing approved yet
-        assert agent("ask", "Which export is the source of truth?", "--options", "csv,api", "--rec", "csv").code == 0
+        assert (
+            agent(
+                "ask",
+                "Which export is the source of truth?",
+                "--option",
+                "csv | csv",
+                "--option",
+                "api | api",
+                "--rec",
+                "csv",
+            ).code
+            == 0
+        )
         assert agent("release").code == 0
         second = make_ticket(agent, "Ready for the verdict")  # DEMO-0002
         to_testing(agent, me, ws.tmp, second)

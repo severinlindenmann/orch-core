@@ -73,7 +73,7 @@ def world(ws, cli, tmp_path):
         "--proves",
         "AC1",
     )
-    cli("ask", ACCEPTED, "--options", "a,b", "--why", ACCEPTED)
+    cli("ask", ACCEPTED, "--option", "a | a", "--option", "b | b", "--why", ACCEPTED)
     f = tmp_path / "evidence.log"
     f.write_text(ACCEPTED)
     cli("artifact", "add", str(f), "--label", "x​y ⟨ z", "--ac", "AC1")

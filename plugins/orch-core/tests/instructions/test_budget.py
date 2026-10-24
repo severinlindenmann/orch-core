@@ -69,7 +69,7 @@ def test_the_real_session_start_output_in_a_busy_workspace_stays_within_six_line
         cli("new", "A ticket")
         cli("claim", "1")
         for i in range(4):
-            cli("ask", f"Question number {i}?", "--options", "a,b", "--non-blocking")
+            cli("ask", f"Question number {i}?", "--option", "a | a", "--option", "b | b", "--non-blocking")
         out = io.StringIO()
         code = main(
             ["instructions", "hook", "session-start"],

@@ -188,7 +188,7 @@ def test_apply_runs_a_batch_in_order_on_the_state_the_earlier_items_made(ws, cli
         {"op": "task.start", "task": "T1"},
         {"op": "section.set", "section": "plan", "message": "build, then test"},
         {"op": "log", "text": "batch applied"},
-        {"op": "ask", "text": "ok?", "options": ["yes", "no"]},
+        {"op": "ask", "text": "ok?", "option": ["yes | yes", "no | no"]},
     )
     r = cli("apply", "--file", "-", stdin=doc)
     assert r.code == 0 and r.first == "ok DEMO-0001 apply 6 seq=8", r.err

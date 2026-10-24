@@ -12,7 +12,7 @@ MAX_DESCRIBE_BYTES = 2500
 MAX_HELP_LINES = 10
 MAX_HELP_BYTES = 800
 MAX_OVERVIEW_LINES = 8
-MAX_OP_HELP_LINES = 14
+MAX_OP_HELP_LINES = 18  # ask has the most flags: option, fact, details, text-question, question-file (#1123)
 
 
 def test_describe_one_command_in_every_spelling(cli):

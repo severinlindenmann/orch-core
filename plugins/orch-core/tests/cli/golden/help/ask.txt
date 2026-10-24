@@ -1,9 +1,15 @@
 Ask a person; works without a grant (unattended). Then orch wait.
-usage: orch ask TEXT [--ref REF] [--options A,B] [--rec KEY] [--to WHO] [--why TEXT] [--non-blocking] [--dry-run]
-  TEXT  the question
+usage: orch ask [TEXT] [--ref REF] [--option 'KEY | TITLE | TEXT'] [--fact 'KEY | LABEL | VALUE'] [--rec KEY] [--allow-other] [--details TEXT] [--details-file PATH] [--text-question] [--question-file PATH] [--to WHO] [--why TEXT] [--non-blocking] [--dry-run]
+  TEXT  the question (up to 140 characters)
   --ref REF  ticket REF (flag); default: your claim
-  --options A,B  answer option keys, comma separated
+  --option 'KEY | TITLE | TEXT'  an answer: 'key | title | text' (2 to 6, text is optional)
+  --fact 'KEY | LABEL | VALUE'  a fact of an option: 'key | Label | value' (1 to 3 per option)
   --rec KEY  the recommended option key
+  --allow-other  the person may also type an answer of their own
+  --details TEXT  more detail for the person (up to 1500 characters)
+  --details-file PATH  read the details from PATH, or - for stdin
+  --text-question  an open question: the person types the answer, no options
+  --question-file PATH  the whole question as JSON, from PATH or - for stdin (not with TEXT or the flags above)
   --to WHO  person id or role to ask
   --why TEXT  why it matters
   --non-blocking  work can go on while it is open

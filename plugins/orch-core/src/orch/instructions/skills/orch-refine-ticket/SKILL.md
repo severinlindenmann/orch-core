@@ -16,3 +16,4 @@ Judgment rules. The steps are in `orch help refine`.
 - A verify is one command run without a shell: no &&, ||, |, ;, > or $( ). Wrap a script as sh -c '...'. Adding a task refuses a bare operator.
 - Fill every section and criterion the gate needs, then stop and `orch wait`: the person approves or requests changes on the gate in Approvals. Never ask a question ("please review", "approve?") for that, it only duplicates the real approval. An incomplete gate cannot be approved.
 - Once approved, do not reword the approved sections quietly: a change voids the approval and sends the ticket back. Say why you change it.
+- A question to the person is a real choice: 2 to 6 titled answers they can click, never an a) b) list in the text.

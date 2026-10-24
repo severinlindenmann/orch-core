@@ -21,7 +21,20 @@ def claimed(cli):
 
 def test_ask_writes_a_blocking_question_with_options(ws, cli):
     claimed(cli)
-    r = cli("ask", "Which source?", "--options", "csv,api", "--rec", "csv", "--why", "they differ", "--to", "assignees")
+    r = cli(
+        "ask",
+        "Which source?",
+        "--option",
+        "csv | CSV",
+        "--option",
+        "api | API",
+        "--rec",
+        "csv",
+        "--why",
+        "they differ",
+        "--to",
+        "assignees",
+    )
     assert r.first == "ok DEMO-0001 question.asked Q1 seq=3" and r.out.splitlines()[-1] == "next: orch wait"
     q = ws.ticket_json("1")["questions"][0]
     assert q == {
@@ -30,37 +43,32 @@ def test_ask_writes_a_blocking_question_with_options(ws, cli):
         "text": "Which source?",
         "kind": "choice",
         "why": "they differ",
-        "options": [{"key": "csv", "label": "csv"}, {"key": "api", "label": "api"}],
+        "options": [{"key": "csv", "label": "CSV"}, {"key": "api", "label": "API"}],
         "recommended": "csv",
         "blocking": True,
     }
-    r = cli.j("ask", "Later?", "--non-blocking")
+    r = cli.j("ask", "Later?", "--non-blocking", "--text-question")
     assert r.data == {"question": "Q2", "blocking": False} and r.doc["hints"] == ["orch task next"]
     assert ws.ticket_json("1")["questions"][1]["to"] == "ticket_owner"
 
 
-def test_ask_validates_its_options(ws, cli):
+def test_ask_validates_its_to(ws, cli):
     claimed(cli)
-    for argv in (
-        ["--rec", "a"],  # a recommendation needs options
-        ["--options", "a,b", "--rec", "c"],
-        ["--options", "a,a"],
-        ["--options", "a b"],
-        ["--to", "someone"],
-    ):
-        r = cli.j("ask", "q?", *argv)
-        assert (r.code, r.err_code) == (5, "invalid.input"), argv
+    r = cli.j("ask", "q?", "--option", "a | A", "--option", "b | B", "--to", "someone")
+    assert (r.code, r.err_code) == (5, "invalid.input")
 
 
 def test_ask_without_a_grant_is_an_unattended_event(ws, anon):
     Cli(ws)("new", "A ticket")
-    r = anon.j("ask", "can I?", "--ref", "1")
+    r = anon.j("ask", "can I?", "--ref", "1", "--text-question")
     assert r.code == 0, r.out
     e = ws.events("1")[-1]
     assert e["type"] == "question.asked" and e["actor"]["unattended"] is True and "grant" not in e["actor"]
     r = anon.j("ask", "which one?")  # nobody claims anything without a grant: name the ticket
     assert (r.code, r.err_code) == (2, "ambiguous_ref")
-    assert anon.j("ask", "again", "--ref", "1").data["question"] == "Q2"  # new ids only: a question is never re-asked
+    assert (
+        anon.j("ask", "again", "--ref", "1", "--text-question").data["question"] == "Q2"
+    )  # new ids only: a question is never re-asked
 
 
 def test_unattended_writes_stay_off_restricted_tickets(ws, cli, anon):
@@ -99,7 +107,7 @@ def test_an_agent_event_needs_a_session(ws, cli):
 
 def asked(ws, cli, *argv):
     claimed(cli)
-    assert cli("ask", "Which?", "--options", "a,b", *argv).code == 0
+    assert cli("ask", "Which?", "--option", "a | a", "--option", "b | b", *argv).code == 0
     return ws.view("1").questions[0]
 
 

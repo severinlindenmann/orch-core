@@ -548,7 +548,7 @@ market_policy = { "markets": [ {"url": <canonical URL>, "class": "official" | "c
   `{version, policy, hash, official_url}` (the last is display data for the console); `PUT /api/v1/admin/market-policy {base_version, policy}` replaces the whole object, answering
   `malformed` (400) for an invalid policy, `conflict` (409) when `base_version` is not the stored version (no lost update),
   `forbidden_role` (403) for anyone else. There is no partial edit. Each change appends one audit record of type
-  `market_policy` (§10.5) **in the same transaction**; if the chain cannot be written the change is refused.
+  `market_policy` (§10.5) **before the change commits**; if the chain cannot be written the change is refused. The audit chain and the policy row live in two databases and cannot share one commit, so the order is fail-safe: if the commit fails after the record was written, the chain holds a record for a change that did not happen (an extra record is possible, a missing one never).
 - **Evaluation** (core, orch-core#928) is specified by the `evaluate` vector cases: unlisted market `market.not_allowed`,
   company index without a pinned signature `market.index_unsigned`, `id` or `id@version` blocked `market.blocked`,
   `allow` set and id not in it `market.addon_not_allowed`, publisher key not pinned `market.publisher_unpinned`,

@@ -171,3 +171,25 @@ def test_market_policy_constants_match_core():
     assert official and caps
     assert MP.OFFICIAL_URL == official.group(1)
     assert sorted(re.findall(r'"([a-z_]+)"', caps.group(1))) == list(MP.CAPABILITIES)
+
+
+def _norm(pattern: str) -> str:
+    """core's JSON-schema spelling (``^…(?![\\s\\S])``) to the hub's Python spelling (``…\\Z``)."""
+    return pattern.removeprefix("^").replace(r"(?![\s\S])", r"\Z")
+
+
+def test_market_policy_patterns_match_core_schema():
+    """D14 L1: the hand-copied URL, semver, key and id patterns and the case-insensitive hosts equal core's own, so a
+    core-side change cannot make hub and core call each other's policies malformed."""
+    import re
+
+    from orch_hub.contract import market_policy as MP
+
+    defs = json.loads((SRC / "orch" / "addons" / "schemas" / "market.v1.json").read_text())["$defs"]
+    assert MP._GIT_URL.pattern == _norm(defs["gitUrl"]["pattern"])
+    assert MP._SEMVER + r"\Z" == _norm(defs["semver"]["pattern"])
+    assert MP._B64U_KEY.pattern == _norm(defs["b64uKey"]["pattern"])
+    assert MP._ID.pattern == _norm(defs["name"]["pattern"])
+    consts = (SRC / "orch" / "market" / "constants.py").read_text()
+    hosts = re.search(r"^CASE_INSENSITIVE_HOSTS = \(([^)]*)\)", consts, re.MULTILINE)
+    assert hosts and tuple(re.findall(r'"([^"]+)"', hosts.group(1))) == MP.CASE_INSENSITIVE_HOSTS

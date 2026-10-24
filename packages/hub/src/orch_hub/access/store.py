@@ -416,6 +416,10 @@ class Access:
                 db.execute(
                     "UPDATE market_policy SET version=?, policy=?, hash=? WHERE id=1", (version, cj(new).decode(), h)
                 )
+                # ORDER (fail-safe, D14): the audit record goes to audit.db, the row to access.db, so the two cannot share one
+                # commit. The record is appended BEFORE this transaction commits: if the append fails the row rolls back
+                # (refused); if the COMMIT then fails, an audit record exists for a change that did not happen. That is
+                # the safe direction (an extra record is possible, a missing one never): the chain over-reports.
                 if self.observer is None:  # never change the policy without the audit chain behind it
                     raise AccessError("store_error", "no audit")
                 self.observer(

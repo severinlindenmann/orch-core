@@ -129,17 +129,25 @@ class Refuse(Exception):
 
 def evaluate(policy: Any, req: dict) -> None:
     """design-d14 §4, the hub-policy parts only, in order. ``policy`` None = unreadable (link down, no snapshot).
-    ``req.stage``: install (P0, steps 2, 4, 6, 7, 8), grant (6, 8 on the grant event), run (block + ceiling)."""
+    ``req.stage``: install (P0, steps 2, 4, 6, 7, 8), grant (6, 8 on the grant event), run (block + ceiling; for a marketplace add-on also origin, allow and the company key)."""
     stage = req["stage"]
     if stage == "run":
         try:
             p = check_policy(policy)
         except Malformed:
             raise Refuse("market.not_allowed") from None
-        # market_url "" = a built-in (no origin); a marketplace add-on's origin must still be listed
-        if req["market_url"] and all(m["url"] != req["market_url"] for m in p["markets"]):
+        # market_url "" = a built-in (no origin): block and ceiling only. A marketplace add-on's origin must still be listed,
+        # its id must pass ``allow``, and a company origin needs the pinned key its install record holds (no key = unpinned)
+        m = next((m for m in p["markets"] if m["url"] == req["market_url"]), None)
+        if req["market_url"] and m is None:
             raise Refuse("market.not_allowed")
         _block(p, req)
+        if req["market_url"]:
+            allow = p["addons"]["allow"]
+            if allow is not None and req["id"] not in allow:
+                raise Refuse("market.addon_not_allowed")
+            if m["class"] == "company" and req["publisher_key"] not in m["keys"]:
+                raise Refuse("market.publisher_unpinned")
         _ceiling(p, req)
         return
     try:
@@ -351,7 +359,12 @@ def eval_cases() -> list[tuple[str, Any, dict]]:
         ("eval_run_unblocked_ok", DEFAULT, r(stage="run", url="", id="terminals", caps=["pty"])),
         ("eval_run_policy_unreadable", None, r(stage="run", url="", id="terminals")),
         ("eval_run_company_market_removed", DEFAULT, r(stage="run", url=COMPANY, id="acme-tool")),
-        ("eval_run_company_market_listed_ok", cpol, r(stage="run", url=COMPANY, id="acme-tool")),
+        ("eval_run_company_market_listed_ok", cpol, r(stage="run", url=COMPANY, id="acme-tool", publisher_key=K1)),
+        ("eval_run_allow_not_listed", pol(allow=["landing"]), r(stage="run", id="github")),
+        ("eval_run_allow_listed_ok", pol(allow=["github"]), r(stage="run", id="github")),
+        ("eval_run_allow_does_not_apply_to_a_builtin", pol(allow=["landing"]), r(stage="run", url="", id="terminals")),
+        ("eval_run_company_key_no_longer_pinned", cpol, r(stage="run", url=COMPANY, id="acme-tool", publisher_key=KX)),
+        ("eval_run_company_without_a_recorded_key", cpol, r(stage="run", url=COMPANY, id="acme-tool")),
         ("eval_run_official_market_removed", pol(markets=[]), r(stage="run", id="github")),
     ]
 

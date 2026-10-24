@@ -387,7 +387,7 @@ def register(app: FastAPI, gateway: Gateway):
         return {**card, "switchable": signer.switchable(), **({"mode": mode} if mode else {})}
 
     def seal_view_ok(got: object) -> bool:
-        """The signer's offer for a sealed new passphrase: a request id, a review digest and exactly the one purpose with
+        """The signer offer for a sealed new passphrase: a request id, a review digest and exactly the one purpose with
         the signer's own key (a P-256 point, 87 base64url characters)."""
         if not isinstance(got, dict) or set(got) != {"request_id", "view_digest", "seal", "expires_in"}:
             return False
@@ -422,10 +422,14 @@ def register(app: FastAPI, gateway: Gateway):
         if not owner(ws):
             raise fail("role.denied", "Only an owner switches signing in the dashboard.", exit=3)
         if not signer.passphrase_seals():
-            raise fail("click.contract", "Update orch-core: its signing helper cannot take a sealed passphrase yet.", exit=9)
+            raise fail(
+                "click.contract", "Update orch-core: its signing helper cannot take a sealed passphrase yet.", exit=9
+            )
         got = signer.call("custody_off", {"workspace_id": ws, "begin": True})
         if not seal_view_ok(got):
-            raise refusal_check("The signing helper's offer for your passphrase is not what it should be. Nothing changed.")
+            raise refusal_check(
+                "The signing helper's offer for your passphrase is not what it should be. Nothing changed."
+            )
         return got
 
     @app.post("/api/w/{ws}/click/custody")
@@ -443,7 +447,11 @@ def register(app: FastAPI, gateway: Gateway):
             if app.state.auth.login_kind(request.state.token) not in REVEAL_SESSION_KINDS:
                 raise refusal_check(SEALED_LOCAL_ONLY)
             if not signer.passphrase_seals():
-                raise fail("click.contract", "Update orch-core: its signing helper cannot take a sealed passphrase yet.", exit=9)
+                raise fail(
+                    "click.contract",
+                    "Update orch-core: its signing helper cannot take a sealed passphrase yet.",
+                    exit=9,
+                )
             row = signer.call(
                 "custody_off",
                 {

@@ -38,7 +38,9 @@ CUSTODY_FEATURE = "custody"
 IMAGES_FEATURE = "images"  # `stash` and `prepare {sequence}` naming pasted screenshots (core R3 part B)
 REVEAL_FEATURE = "reveal"  # `prepare {reveal_key}` and `sign`'s sealed `reveal` of a grant secret (core C7)
 BACKUP_KEY_FEATURE = "backup_key"  # `sign {sealed}`: the hub steps by click with the sealed backup key (core C10)
-SEALED_PASSPHRASE_FEATURE = "sealed_passphrase"  # `custody_off {begin}`, then `{sealed}`: the new passphrase sealed (core C12)
+SEALED_PASSPHRASE_FEATURE = (
+    "sealed_passphrase"  # `custody_off {begin}`, then `{sealed}`: the new passphrase sealed (core C12)
+)
 SEQUENCE_FEATURE = "sequence"  # `prepare {sequence}`: one review, N signatures (core batch 11)
 
 

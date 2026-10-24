@@ -189,11 +189,15 @@ def offer(signer):
 
 def sealed_for(got, secret, *, purpose="custody.passphrase", workspace=WS):
     ctx = sealed.Context(purpose, workspace, got["request_id"], got["view_digest"])
-    return {"request_id": got["request_id"], "view_digest": got["view_digest"], "sealed": {"custody.passphrase": sealed.seal(got["seal"]["pk"], secret, ctx)}}
+    return {
+        "request_id": got["request_id"],
+        "view_digest": got["view_digest"],
+        "sealed": {"custody.passphrase": sealed.seal(got["seal"]["pk"], secret, ctx)},
+    }
 
 
 def off(signer, **extra):
-    """Off the way the dashboard does it: a passphrase goes through begin, then sealed to the offered key (#1198 C12)."""
+    """Off as the dashboard does it: a passphrase goes through begin, then sealed to the offered key (#1198 C12)."""
     if "passphrase" in extra:
         extra = {**sealed_for(offer(signer), extra.pop("passphrase")), **extra}
     return signer.handle("custody_off", {"workspace_id": WS, **extra})
@@ -719,7 +723,7 @@ def test_the_leftover_sweep_runs_for_a_dashboard_off_without_a_passphrase(switch
     assert not store.exists(WS, device)
 
 
-# -- #1198 C12: the new passphrase of "One click off" arrives sealed -----------------------------------------------------
+# -- #1198 C12: the new passphrase of "One click off" arrives sealed -------------------------------------------
 
 
 def test_c12_the_offer_carries_a_key_a_digest_and_nothing_secret(switch):
@@ -766,14 +770,22 @@ def test_c12_a_weak_passphrase_uses_up_the_offer_and_a_new_one_works(switch):
 def test_c12_wrong_binding_is_refused_and_does_not_burn_the_offer(switch):
     signer, state, provider, *_ = switch
     on(signer, provider.passphrase)
-    got, other = offer(signer), None
+    got = offer(signer)
     # another request's context (the digest of a different offer), another purpose, a flipped bit: all refused
     wrong_purpose = sealed_for(got, STRONG)
     ctx = sealed.Context("hub.backup_key", WS, got["request_id"], got["view_digest"])
     wrong_purpose["sealed"]["custody.passphrase"] = sealed.seal(got["seal"]["pk"], STRONG, ctx)
     refused(lambda: signer.handle("custody_off", {"workspace_id": WS, **wrong_purpose}), "invalid.input")
     good = sealed_for(got, STRONG)
-    flipped = {**good, "sealed": {"custody.passphrase": {**good["sealed"]["custody.passphrase"], "ct": "A" + good["sealed"]["custody.passphrase"]["ct"][1:]}}}
+    flipped = {
+        **good,
+        "sealed": {
+            "custody.passphrase": {
+                **good["sealed"]["custody.passphrase"],
+                "ct": "A" + good["sealed"]["custody.passphrase"]["ct"][1:],
+            }
+        },
+    }
     refused(lambda: signer.handle("custody_off", {"workspace_id": WS, **flipped}), "invalid.input")
     assert flag(state)
     assert signer.handle("custody_off", {"workspace_id": WS, **good})["custody"] == "passphrase"  # still opens
@@ -784,8 +796,14 @@ def test_c12_another_digest_or_request_or_workspace_is_refused(switch):
     on(signer, provider.passphrase)
     got = offer(signer)
     args = sealed_for(got, STRONG)
-    refused(lambda: signer.handle("custody_off", {"workspace_id": WS, **args, "view_digest": "sha256:" + "0" * 64}), "invalid.input")
-    refused(lambda: signer.handle("custody_off", {"workspace_id": WS, **args, "request_id": "hr_" + "0" * 26}), "invalid.input")
+    refused(
+        lambda: signer.handle("custody_off", {"workspace_id": WS, **args, "view_digest": "sha256:" + "0" * 64}),
+        "invalid.input",
+    )
+    refused(
+        lambda: signer.handle("custody_off", {"workspace_id": WS, **args, "request_id": "hr_" + "0" * 26}),
+        "invalid.input",
+    )
     refused(lambda: signer.handle("custody_off", {"workspace_id": "f" * 32, **args}), "not_found")
     assert flag(state)
 

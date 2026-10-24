@@ -1209,7 +1209,7 @@ def _market_run(
 
 
 def market_fetch(
-    url: str, commit: str | None, host: str, address: str, staging: str, *, cap: int = MARKET_MAX_PACK
+    url: str, commit: str | None, host: str, address: str, staging: str, *, cap: int | None = None
 ) -> str:
     """Fetch ``commit`` (or the remote ``HEAD``) of a marketplace into the empty private directory ``staging`` (a
     fresh ``git init --template=``, object format by the length of ``commit``; sha1 for ``HEAD``). Returns the full
@@ -1221,6 +1221,7 @@ def market_fetch(
         raise MarketGitError("failed")
     fmt = "sha256" if commit is not None and len(commit) == 64 else "sha1"
     argv = market_fetch_argv(url, commit, host, address, staging)  # validates every operand before anything runs
+    cap = MARKET_MAX_PACK if cap is None else cap
     _market_run([_git_exe(), "init", "--quiet", "--template=", f"--object-format={fmt}", staging], staging, staging,
                 timeout=10, cap=MARKET_MAX_PACK)  # fmt: skip
     _market_run(argv, staging, staging, timeout=MARKET_FETCH_SECONDS, cap=cap)

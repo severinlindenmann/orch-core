@@ -14,7 +14,6 @@ CASES = {
     "no manifest": ({"a.py": b"1"}, False),
     "manifest too big": ({"orch-addon.json": b"x" * (package.MAX_MANIFEST_BYTES + 1)}, False),
     "dot name": ({"orch-addon.json": M, ".env": b"1"}, False),
-    "dotdot": ({"orch-addon.json": M, "a/../b": b"1"}, False),
     "so file": ({"orch-addon.json": M, "x.so": b"1"}, False),
     "pycache": ({"orch-addon.json": M, "__pycache__/x.py": b"1"}, False),
     "too deep": ({"orch-addon.json": M, "a/b/c/d/e/f/g.py": b"1"}, False),

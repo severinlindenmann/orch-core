@@ -264,15 +264,16 @@ def test_the_signer_compares_each_step_byte_for_byte(human, tmp_path, k):
 # --- AE3: the strongest step decides the confirmation ---------------------------------------------
 
 
-def test_ae3_publish_is_terminal_only_and_model_routing_is_a_click(human):
+def test_ae3_publish_and_model_routing_are_both_a_click(human):
     pub = sequence.validate_intent(enable(human, "publish"))
     models = sequence.validate_intent(enable(human, "model-routing"))
-    assert sequence.confirm_kind(pub) == "terminal"
+    assert sequence.confirm_kind(pub) == "click"  # #1198 C2: Publish is a click like every other add-on
     assert sequence.confirm_kind(models) == "click"  # capability-free add-on and a model choice (run 8, 1.6)
     assert not sequence.has_grant(pub) and not sequence.has_grant(models)  # a runner grant only
     # the early check by args, as the click signer asks it before prepare
-    assert protocol_class("settings.set", {"set": {"publish": PUBLISH}}) == "terminal"
-    assert protocol_class("addon.grant", {"name": "publish"}) == "terminal"  # also alone, not in a sequence
+    assert protocol_class("settings.set", {"set": {"publish": PUBLISH}}) == "click"
+    assert protocol_class("addon.grant", {"name": "publish"}) == "click"  # also alone, not in a sequence
+    assert protocol_class("grant", {}) == "terminal"  # nothing else became a click: the plain grant stays terminal
 
 
 def protocol_class(op, args):
@@ -330,10 +331,16 @@ def click_prepare(click_, intent):
     return click_.prepare(op, args, sequence=meta)
 
 
-def test_ae3_a_click_never_signs_publish_it_is_refused_at_prepare_and_at_sign(click, served, human):
-    intent = enable(human, "publish")
-    refused(lambda: click_prepare(click, intent), "human.click_refused", "terminal_only")
-    assert click.signatures == 0 and not on(human, "publish")
+def test_ae3_publish_is_one_plain_click_and_the_view_shows_both_servers(click, served, human):
+    p = click_prepare(click, enable(human, "publish"))
+    v = click.view(p["request_id"])
+    assert v["view"]["confirm"] == {"kind": "click"}
+    shown = "\n".join(v["view"]["lines"])
+    assert PUBLISH["server"] in shown and PUBLISH["share"] in shown  # what is signed is on screen
+    click.mono.t += 2
+    out = click.sign(p["request_id"], v["view_digest"])
+    assert out["duplicate"] is False and click.signatures == 2
+    assert on(human, "publish")
 
 
 def test_ae3_publish_is_refused_at_sign_when_the_stored_kind_is_forced_down(click, served, human, monkeypatch):
@@ -748,18 +755,20 @@ def test_low3_the_click_messages_do_not_say_ticket_for_an_add_on(click, served, 
 # --- review round 2 --------------------------------------------------------------------------------
 
 
-def test_publish_is_never_turned_on_by_a_click_whatever_the_route(click, served, human):
+def test_publish_is_turned_on_by_a_click_on_every_route_but_a_grant_stays_terminal(click, served, human):
     from orch.click import protocol
 
-    assert protocol.op_class("addon.grant", args={"name": "publish"}) == "terminal"
-    assert protocol.op_class("addon.grant", events=[{"name": "publish"}]) == "terminal"
+    assert protocol.op_class("addon.grant", args={"name": "publish"}) == "click"
+    assert protocol.op_class("addon.grant", events=[{"name": "publish"}]) == "click"
     assert protocol.op_class("addon.grant", args={"name": "usage"}) == "click"
     assert protocol.op_class("addon.grant", events=[{"name": "usage"}]) == "click"
-    # at prepare: the plain grant of Publish is refused before the host is asked
+    # nothing else became a click: a runner grant and the hub ops are not in this route
+    assert protocol.op_class("grant", args={}) == "terminal"
+    assert protocol.op_class("hub.join", args={}) == "terminal"
+    # at prepare: the plain grant of Publish is accepted now, and signs nothing until the person clicks
     human.run("settings.set", {"set": {"publish": PUBLISH}})
-    refused(lambda: click.prepare("addon.grant", {"name": "publish"}), "human.click_refused", "terminal_only")
+    click.prepare("addon.grant", {"name": "publish"})
     assert click.signatures == 0 and not on(human, "publish")
-    # at sign, check_prepared classes the request by its signed events with the same function (asserted above)
 
 
 def test_the_publish_addresses_are_read_by_a_person_not_by_an_agent_with_a_grant(human, served):

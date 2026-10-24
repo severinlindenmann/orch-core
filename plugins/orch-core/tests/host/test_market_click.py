@@ -39,3 +39,25 @@ def test_a_market_install_is_one_click_with_the_whole_review(click, served, read
     click.mono.t += 2
     out = click.sign(p["request_id"], v["view_digest"])
     assert click.signatures == 1 and out["duplicate"] is False
+
+
+def _plain(**market):
+    from orch.host import signcontent
+
+    ev = {
+        "type": "addon.granted", "name": "standup", "version": "1.0.0", "package_sha256": "sha256:" + "aa" * 32,
+        "capabilities": ["network"], "artifact_kinds": [], "fields": {}, "sections": [],
+    }  # fmt: skip
+    block = {"url": "https://example.test/m", "publisher": {"fingerprint": None, "tofu": "new"}, **market}
+    return signcontent.build(
+        {"op": "addon.grant", "events": [ev], "material": {"kind": "payload", "ticket": None, "market": block}},
+        verified=True,
+    )
+
+
+def test_stale_and_dev_folder_are_in_the_plain_note_not_only_in_the_details():
+    plain = " ".join(_plain(stale=False, **{"class": "official"})["notes"])
+    assert "STALE" not in plain and "DEV:" not in plain
+    both = " ".join(_plain(stale=True, **{"class": "dev-folder"})["notes"])
+    assert "STALE: the marketplace index is past its expiry" in both and "DEV: a local folder" in both
+    assert both.count("per host, not signed") >= 3

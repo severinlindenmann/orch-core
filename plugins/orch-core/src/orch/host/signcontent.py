@@ -1166,9 +1166,14 @@ def _payload(
         tofu = {"new": "first use of this publisher key", "known": "same publisher as before"}.get(
             _s(market["publisher"].get("tofu")), "unsigned"
         )
+        warn = ""  # one click has no typed word: what the person must not miss sits in the plain note itself
+        if market.get("stale") is True:
+            warn += " STALE: the marketplace index is past its expiry (per host, not signed)."
+        if market.get("class") == "dev-folder":
+            warn += " DEV: a local folder, not a marketplace package (per host, not signed)."
         out.setdefault("notes", []).append(
             f"Where it comes from (per host, not signed): {_s(market.get('url'))}, {tofu}. "
-            "A key shows the same publisher as last time, not who they are."
+            "A key shows the same publisher as last time, not who they are." + warn
         )
     issued = [ev.get("grant") for ev in events if ev.get("type") == "grant.issued"]
     revoked = [ev.get("grant") for ev in events if ev.get("type") == "grant.revoked"]

@@ -135,9 +135,7 @@ def test_r3_the_tty_fingerprint_must_match(tmp):
     f.dispatch("POST", "secrets/confirm", {}, {"words": words_for(r)})
     _, rv = f.dispatch("POST", "review", {}, {})
     ports.expect(f.review.plan)
-    out = f.dispatch(
-        "POST", "create", {}, {"review_id": rv["review_id"], "digest": rv["digest"]}
-    )[1]
+    out = f.dispatch("POST", "create", {}, {"review_id": rv["review_id"], "digest": rv["digest"]})[1]
     f.thread.join(10)
     p = progress(f, out["run_id"])
     assert p["error"]["code"] == "tty.declined" and p["error"]["finishable"] is False

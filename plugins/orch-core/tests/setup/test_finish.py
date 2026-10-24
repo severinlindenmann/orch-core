@@ -221,9 +221,7 @@ def test_finish_runs_without_genesis_and_with_the_persons_own_custody(tmp):
     rv = f.dispatch("POST", "review", {}, {})[1]
     ports.terminal.answers[:] = ["yes"]
     ports.expect(f.review.plan)
-    out = f.dispatch(
-        "POST", "create", {}, {"review_id": rv["review_id"], "digest": rv["digest"]}
-    )[1]
+    out = f.dispatch("POST", "create", {}, {"review_id": rv["review_id"], "digest": rv["digest"]})[1]
     f.thread.join(10)
     p = progress(f, out["run_id"])
     n = names(ports)

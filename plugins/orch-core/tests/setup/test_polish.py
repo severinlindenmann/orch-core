@@ -127,9 +127,7 @@ def test_a_set_up_workspace_never_ends_as_paused(tmp):
 
 def test_rows_carry_the_event_fields_and_name_their_placeholder_lines(tmp):
     """Core says which lines are values the host draws at signing; the page hides exactly those, by position."""
-    f, ports, p, rv = run_ok(
-        tmp, {**PROFILE, "agent_grant": True, "agent_hours": 24, "addons": ["dashboard"]}
-    )
+    f, ports, p, rv = run_ok(tmp, {**PROFILE, "agent_grant": True, "agent_hours": 24, "addons": ["dashboard"]})
     row = next(r for r in rv["items"] if r["id"] == "runner_grant")
     assert row["type"] == "grant.issued" and row["fields"]["hours"] == 24 and row["fields"]["scope"] == "workable"
     hidden = [row["lines"][i] for i in row["placeholders"]]
@@ -152,9 +150,7 @@ def test_rows_carry_the_event_fields_and_name_their_placeholder_lines(tmp):
 def test_the_placeholder_positions_are_part_of_the_digest(tmp):
     from orch.setup import review as rv_mod
 
-    f, ports, p, rv = run_ok(
-        tmp, {**PROFILE, "agent_grant": True, "agent_hours": 24, "addons": ["dashboard"]}
-    )
+    f, ports, p, rv = run_ok(tmp, {**PROFILE, "agent_grant": True, "agent_hours": 24, "addons": ["dashboard"]})
     plan = f.review.plan
     before = plan.digest
     plan.rows[0]["placeholders"] = [*plan.rows[0]["placeholders"], 0]

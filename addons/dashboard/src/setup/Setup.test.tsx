@@ -299,14 +299,15 @@ test('long runner access is one plain click after the review; digest and fingerp
   await screen.findByRole('heading', { name: 'Review your setup' })
   expect(screen.getByText('This Mac’s agent runner may work on any ticket you can see, as you, for 3 days')).toBeInTheDocument()
   expect(screen.queryByText(/scope workable/)).toBeNull() // the raw values are only in the technical details
-  expect(screen.getByText(/look at your terminal: orch asks you to confirm there/)).toHaveTextContent('demo not real, type yes there.')
+  expect(screen.getByText(/Return to the terminal window where you started orch setup/)).toBeInTheDocument()
+  expect(screen.getByText(/Check that the terminal shows the same words/)).toHaveTextContent('demo not real. If they match, type yes in the terminal and press Enter.')
   // everything signed stays inspectable, collapsed in one disclosure
   expect(screen.getByText('Show technical details').closest('details')).not.toHaveAttribute('open')
   expect(screen.getByText("this machine's runner, never shown")).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Create workspace' })).toBeEnabled()
   expect(screen.queryByLabelText(/Type/)).toBeNull()
   // B11: the terminal asks only after Create; the review says so instead of "confirm in your terminal" now
-  expect(screen.getByRole('heading', { name: 'How to finish' })).toBeInTheDocument()
+  expect(screen.getByRole('heading', { name: 'One more confirmation after you click' })).toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }))
   await screen.findByRole('heading', { name: 'Confirm in your terminal' })
   // three large tiles, in order; the browser draws no imitation of the terminal

@@ -1075,19 +1075,25 @@ export function Setup({ api }: { api: SetupAPI }) {
               </details>
               {review.tty_confirm && (
                 <div className="inset">
-                  <h2>How to finish</h2>
+                  <h2>One more confirmation after you click</h2>
                   <ol>
-                    <li>Press {state.mode === 'finish' ? 'Finish setup' : 'Create workspace'} below.</li>
+                    <li>Click {state.mode === 'finish' ? 'Finish setup' : 'Create workspace'} below.</li>
+                    <li>Return to the terminal window where you started orch setup. Leave this page open to compare the three words.</li>
                     <li>
-                      Then look at your terminal: orch asks you to confirm there. It shows three words. If they match <Words words={review.fingerprint} />,
-                      type yes there.
+                      Check that the terminal shows the same words in the same order: <Words words={review.fingerprint} />. If they match, type yes in the terminal
+                      and press Enter.
                     </li>
                   </ol>
+                  <p>If any word is different, do not type yes. Close the terminal window and run orch setup again.</p>
                 </div>
               )}
               {terminalReviewMissing && (
                 <p role="alert">Terminal confirmation is missing. Return to your terminal to restart setup.</p>
               )}
+              <p>
+                Clicking {state.mode === 'finish' ? 'Finish setup' : 'Create workspace'} approves the choices shown above
+                {review.tty_confirm ? ' and starts the final check.' : ' and starts creating your workspace.'}
+              </p>
               <footer>
                 <button
                   className="primary"

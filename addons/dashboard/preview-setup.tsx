@@ -20,13 +20,13 @@ const state = {
 const review = {
   review_id: 'r', digest: 'd', fingerprint: ['a', 'b', 'c'],
   items: [{ id: 'settings', title: 'Settings', lines: [], details: [], volatile: [], type: 'settings.changed', fields: { set: { grant_hours: 72, sign_methods: ['click'] } }, placeholders: [], placeholder_details: [] }],
-  runner_grant: null,
+  runner_grant: new URLSearchParams(location.search).has('grant') ? { hours: 72, scope: 'workable', holder: "this machine's runner, never shown" } : null,
   flags: [
     { id: 'custody', text: 'Approvals on this Mac need only one click. Anything running as you could approve too.' },
     { id: 'records', text: "Keep a history of your tickets on this computer, saved automatically (never uploaded)." },
   ],
   risk: { text: 'Convenience signing: agents running as you, or anything that takes over this dashboard, could sign.' },
-  tty_confirm: false,
+  tty_confirm: new URLSearchParams(location.search).has('grant'),
   workspace: { prefix: 'TST', name: 'Demo', dir: '/Users/demo/project', lines: ['Workspace TST for Demo', 'Folder: /Users/demo/project'] },
 }
 const fetcher = async (url: RequestInfo | URL, init?: RequestInit) => {

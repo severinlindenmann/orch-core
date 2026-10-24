@@ -14,7 +14,7 @@ from types import SimpleNamespace
 import pytest
 
 from orch.addons import envtree, install
-from orch.addons.runner import RunnerError, call
+from orch.addons.runner import RunnerError, propose
 from orch.host import addonenv
 from orch.market import download
 from tests.host import dep_helpers as D
@@ -86,7 +86,7 @@ def granted_and_package(served, name="standup"):
 
 def run_addon(served, name="standup"):
     pkg, granted = granted_and_package(served, name)
-    return call(pkg, granted, trigger="t", ticket=TICKET, env=location(served))
+    return propose(pkg, granted, trigger="t", ticket=TICKET, env=location(served))
 
 
 def env_path(served, name="standup"):
@@ -295,7 +295,7 @@ def test_no_network_is_touched_to_verify_or_to_run(served, human, net, ready, re
     monkeypatch.setattr(download, "get", boom)
     monkeypatch.setattr(download.Cache, "fetch", boom)
     envtree.verify(location(served).state, location(served).ws, "standup", granted.package_sha256, PY["kind"])
-    assert call(pkg, granted, trigger="t", ticket=TICKET, env=location(served)) == {"value": "from-the-dependency"}
+    assert propose(pkg, granted, trigger="t", ticket=TICKET, env=location(served)) == {"value": "from-the-dependency"}
 
 
 def test_runtime_and_env_must_agree_in_the_runner(served, human, net, ready, registry):
@@ -304,10 +304,10 @@ def test_runtime_and_env_must_agree_in_the_runner(served, human, net, ready, reg
     for bad in (None, {"kind": "node-package-lock", "lock": "package-lock.json", "packages": 1}):
         g = SimpleNamespace(**{**granted.__dict__, "runtime": bad})
         with pytest.raises(RunnerError) as e:
-            call(pkg, g, trigger="t", ticket=TICKET, env=location(served))
+            propose(pkg, g, trigger="t", ticket=TICKET, env=location(served))
         assert e.value.code == "market.env_changed"
     with pytest.raises(RunnerError) as e:  # a missing env location for an add-on with dependencies
-        call(pkg, granted, trigger="t", ticket=TICKET)
+        propose(pkg, granted, trigger="t", ticket=TICKET)
     assert e.value.code == "market.env_changed"
 
 
@@ -484,3 +484,66 @@ def test_a_runtime_grant_inside_a_batch_is_refused_by_the_signer():
     with pytest.raises(signer.SignerRefused):
         signer._deps({}, [{"type": "log.added"}, grant])
     signer._deps({}, [{"type": "addon.granted"}, {"type": "log.added"}])  # no runtime: nothing to require
+
+
+# ------------------------------------------------------------------------------------------------ Q10: G6 {python}
+def test_a_bare_python_is_refused_for_every_add_on_at_load_and_at_run():
+    from orch.addons.manifest import ManifestError, load_manifest
+    from tests.addons.test_manifest import raw, runtime_manifest
+
+    for cmd0 in ("python3", "python", "python3.14"):
+        with pytest.raises(ManifestError):
+            load_manifest(raw(runtime_manifest(cmd0=cmd0)))
+        plain = {
+            "schema": "orch.addon/3", "name": "p", "version": "1.0.0", "title": "P", "api": ">=1.1,<2",
+            "entry": {"cmd": [cmd0, "{pkg}/m.py"]},
+        }  # fmt: skip
+        with pytest.raises(ManifestError):
+            load_manifest(raw(plain))
+
+
+def test_a_python_runtime_add_on_must_start_with_the_python_token_and_node_with_node():
+    from orch.addons.manifest import ManifestError, load_manifest
+    from tests.addons.test_manifest import raw, runtime_manifest
+
+    load_manifest(raw(runtime_manifest(cmd0="{python}")))
+    for cmd0 in ("node", "/usr/bin/python3"):
+        with pytest.raises(ManifestError):
+            load_manifest(raw(runtime_manifest(cmd0=cmd0)))
+
+
+def test_the_runtime_interpreter_line_is_g6s_minus_dash_e(served, human, net, ready, registry, monkeypatch):
+    from orch.addons import runner
+
+    built(served, human, net, registry)
+    seen = {}
+    real = runner.subprocess.Popen
+
+    def spy(argv, **kw):
+        seen["argv"], seen["env"] = list(argv), kw["env"]
+        return real(argv, **kw)
+
+    monkeypatch.setattr(runner.subprocess, "Popen", spy)
+    assert run_addon(served) == {"value": "from-the-dependency"}
+    joined = " ".join(seen["argv"])
+    assert " -B -s -S " in joined + " " and " -E " not in joined + " "  # kept -B -s -S, dropped -E
+    path = seen["env"]["PYTHONPATH"].split(":")
+    assert len(path) == 2 and path[1].endswith(str(env_path(served).name))  # <pkg>:<verified env>, from nothing
+    assert set(seen["env"]) == {
+        "PATH", "LANG", "HOME", "TMPDIR", "PYTHONDONTWRITEBYTECODE", "PYTHONPATH", "ORCH_ADDON",
+        "ORCH_ADDON_CAPABILITIES",
+    }  # fmt: skip
+
+
+def test_a_dependency_import_fails_when_the_environment_is_not_verified(served, human, net, ready, registry):
+    t = built(served, human, net, registry)
+    (t / "idna/__init__.py").write_text("VALUE = 'evil'\n")
+    with pytest.raises(RunnerError) as e:
+        run_addon(served)  # verify runs inside the call: the add-on is never started
+    assert (e.value.code, e.value.detail) == ("market.env_changed", "changed")
+
+
+def test_a_non_runtime_add_on_keeps_g6s_full_line(tmp_path):
+    from orch.addons import runner
+
+    assert "-E" in runner.PYTHON_ARGV and {"-B", "-s", "-S"} <= set(runner.PYTHON_ARGV)

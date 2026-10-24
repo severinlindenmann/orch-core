@@ -39,7 +39,7 @@ def dep_files(
 ) -> dict[str, bytes]:  # fmt: skip
     """The files of a package with a lockfile. The manifest's command names the interpreter of the lock kind."""
     rt = dict(runtime or PY)
-    cmd = "node" if rt["kind"] == "node-package-lock" else "python3"
+    cmd = "node" if rt["kind"] == "node-package-lock" else "{python}"
     m = json.loads(manifest(name, version, caps, runtime=rt))
     m["entry"] = {"cmd": [cmd, "{pkg}/main"]}
     return {

@@ -931,3 +931,22 @@ describe('manual acceptance signing paths', () => {
     setFeatures(null)
   })
 })
+
+it('market approval is Terminal only and displays the exact package name and stage sent', async () => {
+  const { workspaceRequest } = await import('./hostHarness')
+  const { state } = await import('./handoffHarness')
+  const { clickEligible } = await import('@/api/click')
+  const { visible } = await import('@/components/sign/visible')
+  const action = { action: 'market_grant' as const, name: 'calendar', staged: 'demo-stage\u202e' }
+  const request = workspaceRequest('addon.grant', { type: 'addon.granted', name: action.name, staged: action.staged })
+  vi.spyOn(api, 'getWorkspaces').mockResolvedValue([])
+  vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods: ['terminal'] } as Awaited<ReturnType<typeof api.getHostSettings>>)
+  vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'terminal', is_default: true, allowed: ['terminal'] })
+  const prepare = vi.spyOn(api, 'prepareHandoff').mockResolvedValue(request)
+  vi.spyOn(api, 'getHandoff').mockResolvedValue(state(request))
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SignPopover ws={"a".repeat(32)} title="Approve add-on package" action={action} autoStart onClose={() => {}} /></QueryClientProvider>)
+  await waitFor(() => expect(prepare).toHaveBeenCalledWith('a'.repeat(32), action, 0))
+  expect(await screen.findByText(visible(action.staged), { exact: false })).toBeVisible()
+  expect(screen.getAllByText(action.name, { exact: false }).length).toBeGreaterThan(0)
+  expect(clickEligible(action)).toBe(false)
+})

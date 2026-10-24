@@ -95,6 +95,11 @@ class Manifest:
         return None if rt is None else dict(rt)
 
     @property
+    def settings(self) -> dict[str, Any] | None:
+        """``{title, schema}`` of the settings the person can configure (addon-api 1.1), or ``None``."""
+        return self.doc.get("settings")
+
+    @property
     def agents_md(self) -> str:
         return self.doc.get("agents_md", "")
 
@@ -111,15 +116,19 @@ def load_manifest(raw: bytes) -> Manifest:
         raise ManifestError(
             f"orch-addon.json{e.path}: {e.message}".encode("ascii", "backslashreplace").decode()
         ) from None
+    if _BARE_PYTHON.fullmatch(doc["entry"]["cmd"][0]):
+        # python is never taken from PATH (V3 G6/G4, no legacy): the command the owner reads is the one that runs
+        raise ManifestError("orch-addon.json/entry/cmd: use {python}, never a python found on PATH")
     rt = doc.get("runtime")
     if rt is not None:
         _check_runtime(doc, rt)
     return Manifest(doc)
 
 
+_BARE_PYTHON = re.compile(r"python[0-9.]*")
 #: ``runtime.kind`` -> the interpreter the entry command must name (design G4 §2): the command is what the owner
 #: reads, and the runner starts exactly the interpreter the dependencies were chosen for
-RUNTIME_COMMANDS = {"python-requirements": "python3", "node-package-lock": "node"}
+RUNTIME_COMMANDS = {"python-requirements": "{python}", "node-package-lock": "node"}
 
 
 def _check_runtime(doc: dict[str, Any], rt: dict[str, Any]) -> None:

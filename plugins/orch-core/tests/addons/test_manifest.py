@@ -406,14 +406,14 @@ def test_core_declares_its_addon_api():
 
 
 def runtime_manifest(
-    kind="python-requirements", lock="requirements.txt", cmd0="python3", schema_="orch.addon/3", **more
+    kind="python-requirements", lock="requirements.txt", cmd0="{python}", schema_="orch.addon/3", **more
 ):
     m = {
         "schema": schema_, "name": "dep", "version": "1.0.0", "title": "Dep", "entry": {"cmd": [cmd0, "{pkg}/main.py"]},
         "runtime": {"kind": kind, "lock": lock}, **more,
     }  # fmt: skip
     if schema_ == "orch.addon/3":
-        m["api"] = ">=1.0,<2"
+        m["api"] = ">=1.1,<2"
     return m
 
 
@@ -436,7 +436,7 @@ def test_runtime_is_an_optional_key_with_a_kind_and_a_lock_path():
         runtime_manifest(lock="req uirements.txt"),
         runtime_manifest(lock=""),
         runtime_manifest(cmd0="node"),  # a Python lock starts python3
-        runtime_manifest("node-package-lock", "package-lock.json", "python3"),
+        runtime_manifest("node-package-lock", "package-lock.json", "{python}"),
         runtime_manifest(schema_="orch.addon/2"),  # only orch.addon/3
         {**runtime_manifest(), "runtime": {"kind": "python-requirements"}},
         {**runtime_manifest(), "runtime": {"kind": "python-requirements", "lock": "r.txt", "index": "https://x"}},

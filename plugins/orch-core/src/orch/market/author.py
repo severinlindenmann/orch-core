@@ -46,8 +46,8 @@ def scaffold(name: str) -> dict[str, bytes]:
         )
     title = name.replace("-", " ").title()
     manifest = {
-        "schema": "orch.addon/3", "name": name, "version": "0.1.0", "title": title, "api": ">=1.0,<2",
-        "min_core": CORE_VERSION, "capabilities": [], "entry": {"cmd": ["python3", "{pkg}/main.py"]},
+        "schema": "orch.addon/3", "name": name, "version": "0.1.0", "title": title, "api": ">=1.1,<2",
+        "min_core": CORE_VERSION, "capabilities": [], "entry": {"cmd": ["{python}", "{pkg}/main.py"]},
         "fields": {"note": {"type": "string", "max_len": 200, "set_by": ["addon", "member"]}},
         "agents_md": f"{title}: the field {name}.note is a one-line note this add-on proposes.",
     }  # fmt: skip

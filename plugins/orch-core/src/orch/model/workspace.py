@@ -11,6 +11,7 @@ import copy
 from collections.abc import Callable
 from typing import Any
 
+from orch.addons.settings_value import KEY as ADDONS_KEY
 from orch.canon import HashError, check_repo_identity, event_head, same_repo_identity
 
 from . import addon_rules, authz, generations, hubledger, identity, policies
@@ -313,6 +314,8 @@ def settings_changed(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
         # hub protocol 8.8 (V3-D29): sign_methods, repos, publish, models, icon ... stay off the channel, whatever the
         # hub signed; one place for append and replay
         return Refusal(Code.SETTINGS_INVALID, f"a hub may not set {', '.join(bad)}")
+    if ADDONS_KEY in s and len(s) != 1:  # G6: one add-on per event, nothing else beside it (one review, one word)
+        return Refusal(Code.SETTINGS_INVALID, "addons: add-on settings are changed on their own")
     repos = dict(ws.repos)
     for name, v in s.get("repos", {}).items():
         if v is None:
@@ -357,6 +360,21 @@ def settings_changed(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
                 if harness not in MODEL_CHOICES or any(m not in MODEL_CHOICES[harness] for m in per.values()):
                     return Refusal(Code.SETTINGS_INVALID, "models: a model that orch does not offer for its harness")
             ws.settings["models"] = {h: dict(sorted(per.items())) for h, per in sorted(table.items()) if per}
+    if ADDONS_KEY in s:  # G6: the settings of one add-on; replay checks the general shape only, the host the schema
+        from orch.addons import settings_value
+
+        if (why := settings_value.check_changes(s[ADDONS_KEY])) is not None:
+            return Refusal(Code.SETTINGS_INVALID, f"addons: {why}")
+        ((name, value),) = s[ADDONS_KEY].items()
+        held = dict(ws.settings.get(ADDONS_KEY) or {})
+        if value is None:
+            held.pop(name, None)
+        else:
+            held[name] = copy.deepcopy(value)
+        if held:
+            ws.settings[ADDONS_KEY] = dict(sorted(held.items()))
+        else:
+            ws.settings.pop(ADDONS_KEY, None)
     if (
         "icon" in s
     ):  # the workspace icon: a pair of ids of the closed lists; null clears it (the default comes from the id)
@@ -564,6 +582,12 @@ def addon_event(core: Core, e: dict[str, Any]) -> Refusal | None:
                 old.enabled = False
             else:
                 old.purged = True
+                held = dict(ws.settings.get(ADDONS_KEY) or {})  # G6: its signed settings go with it
+                if held.pop(name, None) is not None:
+                    if held:
+                        ws.settings[ADDONS_KEY] = held
+                    else:
+                        ws.settings.pop(ADDONS_KEY, None)
 
     def per_ticket(t: TCore) -> None:
         if typ == "addon.purged":  # §8.1: purge removes the addon's data from the derived state of every ticket

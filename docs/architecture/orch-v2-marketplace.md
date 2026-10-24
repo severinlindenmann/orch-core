@@ -398,7 +398,7 @@ review line "installs these packages" is derived from the granted manifest and l
 reference checker on every `lock` vector, and its rows (name, version, hashes, markers, flags) are the only source of
 what the review shows, what an update diff compares, what is downloaded and what is installed. Lock text never reaches
 an installer. Limits: the file at most 1 MiB of UTF-8 without control characters, at most 1000 rows. A `python-requirements`
-manifest's `entry.cmd[0]` is `python3` and a `node-package-lock` manifest's is `node` (the command the owner reads is the
+manifest's `entry.cmd[0]` is `{python}` (never a python found on PATH, for any add-on; needs add-on API 1.1) and a `node-package-lock` manifest's is `node` (the command the owner reads is the
 interpreter the dependencies were chosen for). The signed `addon.granted` carries `runtime {kind, lock, packages}`
 (D6: more code arrives after the signature, so the signature names it); the review lists every locked package, and
 whether it is compiled, not on this computer, or development only.
@@ -765,7 +765,7 @@ add-ons run with the host interpreter and `-S`), D8 (`python-requirements` is `u
   entry is kept; an end record that lies about its count is refused at the first surplus entry); tarball 20 000 members counted as they stream, 64 MiB per file, decompressed bytes counted by
   a reading wrapper (`MAX_BYTES` plus a small allowance per member), PAX and long-name headers 8 KiB, no sparse member;
   environment tree 20 000 entries, 64 levels, 256 MiB, 240 characters per path; pip 300 s and 8 MiB of log; stamp 4 KiB.
-- **Run time:** Python `-S -B` with `PYTHONPATH=<package>:<environment>`; Node `node_modules` link to the environment,
+- **Run time:** Python is G6's interpreter line without `-E` (`-B -s -S`; `-E` would ignore the `PYTHONPATH=<package>:<environment>` that carries the dependencies, and the environment is built from nothing anyway); Node `node_modules` link to the environment,
   `node` looked up in `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`.
 - **Not done / residual:** native builds are refused (O7); an add-on without `network` can still connect until #287
   (O5); Node resolves packages above the run root only in Tier A terms (O4); the full tree hash per run costs about half

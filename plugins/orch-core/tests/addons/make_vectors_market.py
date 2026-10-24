@@ -53,8 +53,8 @@ def manifest(addon: str, version: str = "1.0.0", caps: list[str] | None = None, 
         "name": addon,
         "version": version,
         "title": addon.title(),
-        "entry": {"cmd": ["python3", "{pkg}/main.py"]},
-        "api": ">=1.0,<2",
+        "entry": {"cmd": ["{python}", "{pkg}/main.py"]},
+        "api": ">=1.1,<2",
         "min_core": "2.0.0",
         "capabilities": sorted(caps or []),
     }
@@ -175,7 +175,7 @@ def build() -> None:
         caps=["network", "serve_http"],
         signer="jane",
         summary="Jira tickets as orch tickets",
-        api=">=1.0,<2",
+        api=">=1.1,<2",
         runtime={"kind": "python-requirements", "lock": "requirements.txt"},
     )
     add("index_valid_full", "index", {"index": index(OTHER, [e, full])}, ok(addons=["standup", "jira"]))

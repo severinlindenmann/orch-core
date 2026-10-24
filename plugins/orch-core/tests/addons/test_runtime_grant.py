@@ -16,8 +16,8 @@ from orch.market import MarketError
 
 def dep_package(lock: bytes | None, with_runtime: bool = True):
     m = {
-        "schema": "orch.addon/3", "name": "dep", "version": "1.0.0", "title": "Dep", "api": ">=1.0,<2",
-        "entry": {"cmd": ["python3", "{pkg}/main.py"]},
+        "schema": "orch.addon/3", "name": "dep", "version": "1.0.0", "title": "Dep", "api": ">=1.1,<2",
+        "entry": {"cmd": ["{python}", "{pkg}/main.py"]},
     }  # fmt: skip
     if with_runtime:
         m["runtime"] = {"kind": "python-requirements", "lock": "requirements.txt"}

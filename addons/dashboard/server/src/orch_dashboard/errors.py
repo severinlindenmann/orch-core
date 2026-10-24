@@ -62,6 +62,7 @@ def status(code: str) -> int:
         "peer.denied",
         "host.required",
         "sign.hub_only",
+        "market.actor_refused",
     } or code.startswith("grant."):
         return 403
     if code in {"intent.ended", "intent.done", "intent.expired"}:

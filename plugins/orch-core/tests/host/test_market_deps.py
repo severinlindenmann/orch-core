@@ -166,7 +166,7 @@ def test_an_update_that_adds_or_reversions_a_package_is_widened_and_shows_the_li
     install_v1(served, human, net, py_lock(registry.IDNA))
     u = update(served, net, "1.1.0", py_lock(registry.py("idna", "3.11"), registry.SIX))["update"]
     assert u["widened"] is True
-    assert u["deps"] == {
+    assert {k: v for k, v in u["deps"].items() if k != "lines"} == {
         "runtime": None,
         "added": [{"name": "six", "version": "1.16.0"}],
         "removed": [],
@@ -185,7 +185,12 @@ def test_an_update_that_only_removes_a_package_is_not_widened(served, human, net
 def test_an_update_with_the_same_lock_is_not_widened_by_dependencies(served, human, net, ready, registry):
     install_v1(served, human, net, py_lock(registry.IDNA))
     u = update(served, net, "1.0.1", py_lock(registry.IDNA))["update"]
-    assert u["widened"] is False and u["deps"] == {"runtime": None, "added": [], "removed": [], "changed": []}
+    assert u["widened"] is False and {k: v for k, v in u["deps"].items() if k != "lines"} == {
+        "runtime": None,
+        "added": [],
+        "removed": [],
+        "changed": [],
+    }
 
 
 def test_a_changed_hash_at_the_same_version_counts_as_changed(served, human, net, ready, registry):
@@ -214,3 +219,65 @@ def test_runtime_removed_and_a_changed_kind(served, human, net, ready, registry)
     u = update(served, net, "1.1.0", None, with_runtime=False, registry=registry)["update"]
     assert u["deps"]["runtime"] == "removed" and u["widened"] is False  # a removal alone does not widen
     assert "- dependencies (Python, removed)" in u["changes"]
+
+
+# ---- the click view (one click in the browser: the signer's view is all the person sees)
+
+
+def click_view(served, human, st):
+    from orch.click import view as views
+
+    prepared = human.prepare("addon.grant", {"name": "standup", "staged": st["stage"]})
+    return views.build(
+        prepared, lambda w: ("Acme", "DEMO") if w == served.wid else None, kind="click", device="d_" + "1" * 32,
+        expires_at="2026-10-24T12:00:00Z", artifacts=None,
+    )  # fmt: skip
+
+
+def test_the_click_view_shows_the_runtime_the_packages_and_the_compiled_notes(served, human, net, ready, registry):
+    wheel = registry.py(
+        "six", "1.16.0", tag="cp314-cp314-" + __import__("packaging.tags", fromlist=["x"]).platform_tags().__next__()
+    )
+    publish(served, net, lock=py_lock(registry.IDNA, wheel))
+    st = ok(stage(served))["data"]
+    v = click_view(served, human, st)
+    assert v["confirm"] == {"kind": "click"}
+    full = "\n".join(v["lines"])
+    assert "runtime: " in full and "dependencies (listed by this computer from the lockfile" in full
+    assert "dep idna 3.10" in full and "dep six 1.16.0 (compiled code)" in full
+    c = v["content"]
+    assert v["headline"] == "Grant the add-on standup"  # never the short "Turn on" view for an add-on with runtime
+    assert any("Also installs 2 Python packages listed in requirements.txt after you sign" in n for n in c["notes"])
+    rows = {r["field"]: r["after"] for r in c["fields_changed"]}
+    assert "idna 3.10" in rows["packages (listed by this computer from the lockfile; covered by the digest)"]
+    assert (
+        "six 1.16.0 (compiled code)"
+        in rows["packages (listed by this computer from the lockfile; covered by the digest)"]
+    )
+
+
+def test_the_click_view_shows_the_update_diff_and_widened(served, human, net, ready, registry):
+    publish(served, net, lock=py_lock(registry.IDNA))
+    M.install(served, human)
+    publish(served, net, "1.1.0", py_lock(registry.IDNA, registry.SIX))
+    st = ok(stage(served, update=True))["data"]
+    v = click_view(served, human, st)
+    full = "\n".join(v["lines"])
+    assert "update of the dependencies (host-derived, not signed): WIDENED" in full
+    assert "dep change + dep six 1.16.0 (new)" in full
+    rows = {r["field"]: r["after"] for r in v["content"]["fields_changed"]}
+    assert rows["dependency changes (host-derived, not signed)"].startswith("WIDENED: + dep six 1.16.0 (new)")
+
+
+def test_the_signer_checks_the_diff_block(served, human, net, ready, registry):
+    publish(served, net, lock=py_lock(registry.IDNA))
+    M.install(served, human)
+    publish(served, net, "1.1.0", py_lock(registry.IDNA, registry.SIX))
+    st = ok(stage(served, update=True))["data"]
+    prepared = human.prepare("addon.grant", {"name": "standup", "staged": st["stage"]})
+    human.check(prepared)
+    for bad in ({"lines": ["x\ny"], "widened": True}, {"lines": ["x"], "widened": 1}, {"lines": ["x"]}, "x"):
+        p = copy.deepcopy(prepared)
+        p["material"]["deps"]["diff"] = bad
+        with pytest.raises(signer.SignerRefused):
+            human.check(p)

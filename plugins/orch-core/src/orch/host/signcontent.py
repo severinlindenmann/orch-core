@@ -1125,6 +1125,14 @@ def _payload(
     deps = material.get("deps")
     if deps is not None:
         _row(out, "packages (listed by this computer from the lockfile; covered by the digest)", _deps_words(deps))
+        diff = deps.get("diff") if isinstance(deps, Mapping) else None
+        if isinstance(diff, Mapping) and isinstance(diff.get("lines"), list):
+            _row(
+                out,
+                "dependency changes (host-derived, not signed)",
+                ("WIDENED: " if diff.get("widened") is True else "not widened: ")
+                + "; ".join(one(x) for x in diff["lines"]),
+            )
     issued = [ev.get("grant") for ev in events if ev.get("type") == "grant.issued"]
     revoked = [ev.get("grant") for ev in events if ev.get("type") == "grant.revoked"]
     if issued and revoked:  # an Extend: the access it replaces must be another one than the new access

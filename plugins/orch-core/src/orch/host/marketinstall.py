@@ -428,6 +428,10 @@ def _stage(service: WorkspaceService, plan: dict[str, Any], call: Call | None = 
         except (PackageError, ManifestError):
             old = None
         change = mi.diff(old, manifest, prior, facts, old_plan, planned)
+        if dep_view is not None or change["deps"]["runtime"] is not None:
+            diff = {"lines": list(change["deps"]["lines"])[:200], "widened": bool(change["widened"])}
+            if dep_view is not None:
+                dep_view["diff"] = diff  # carried to the signer: host-derived, labelled, not signed
         review += [f"update: {x}" for x in change["changes"]]
         review.append("widened: yes, read all of it" if change["widened"] else "widened: no")
     stage = "st_" + secrets.token_hex(16)

@@ -629,6 +629,7 @@ def _market(material: Mapping[str, Any], events: list[Mapping[str, Any]]) -> Non
 _DEP_KINDS = ("python-requirements", "node-package-lock")
 _DEP_NOTES = (None, "compiled", "other_platform", "dev")
 _DEP_NAME = re.compile(r"[A-Za-z0-9@._~/ >+-]{1,200}")
+_DEP_LINE = re.compile(r"[A-Za-z0-9@._~/ >+()!,:-]{1,300}")
 _DEP_VERSION = re.compile(r"[0-9A-Za-z.+!_-]{1,60}")
 
 
@@ -651,7 +652,7 @@ def _deps(material: Mapping[str, Any], events: list[Mapping[str, Any]]) -> None:
     if (
         signed is None
         or not isinstance(block, dict)
-        or set(block) != {"kind", "lock", "count", "bytes", "rows"}
+        or set(block) - {"diff"} != {"kind", "lock", "count", "bytes", "rows"}
         or not isinstance(rows, list)
         or (block["kind"], block["lock"], block["count"]) != (signed["kind"], signed["lock"], signed["packages"])
         or block["kind"] not in _DEP_KINDS
@@ -661,6 +662,16 @@ def _deps(material: Mapping[str, Any], events: list[Mapping[str, Any]]) -> None:
         or not 0 <= block["bytes"] <= 1 << 30
     ):
         _refuse("material.deps is malformed")
+    d = block.get("diff")
+    if d is not None and not (
+        isinstance(d, dict)
+        and set(d) == {"lines", "widened"}
+        and type(d["widened"]) is bool
+        and isinstance(d["lines"], list)
+        and len(d["lines"]) <= 200
+        and all(isinstance(x, str) and 0 < len(x) <= 300 and _DEP_LINE.fullmatch(x) for x in d["lines"])
+    ):
+        _refuse("material.deps has a malformed diff")
     for r in rows:
         if (
             not isinstance(r, dict)
@@ -990,6 +1001,13 @@ def render(
             note = {None: "", "compiled": " (compiled code)", "other_platform": " (not on this computer)",
                     "dev": " (development, not installed)"}[r["note"]]  # fmt: skip
             out.append(f"dep {_clean(r['name'])} {_clean(r['version'])}{note}")
+    if deps is not None and deps.get("diff") is not None:
+        d = deps["diff"]
+        out.append(
+            "update of the dependencies (host-derived, not signed): "
+            + ("WIDENED, read all of it" if d["widened"] else "not widened")
+        )
+        out += [f"dep change {_clean(x)}" for x in d["lines"]]
     for path, value in sorted((material.get("before") or {}).items()):
         label = "current value according to the host, not signed" if not path.startswith(("ticket.", "body.")) else ""
         out.append(f"before {_clean(path)}{' (' + label + ')' if label else ''}:")

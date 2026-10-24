@@ -46,6 +46,18 @@ def view(lock_path: str, lock: Lock, planned: Sequence[Planned], found: Mapping[
     return {"kind": lock.kind, "lock": lock_path, "count": len(rows), "bytes": total, "rows": rows}
 
 
+def diff_ok(d: Any) -> bool:
+    """The update diff a stage carries to the signer: ``{lines: [short plain strings], widened: bool}``."""
+    return (
+        isinstance(d, dict)
+        and set(d) == {"lines", "widened"}
+        and type(d["widened"]) is bool
+        and isinstance(d["lines"], list)
+        and len(d["lines"]) <= 200
+        and all(isinstance(x, str) and 0 < len(x) <= 300 for x in d["lines"])
+    )
+
+
 def consistent(kept: Any, fresh: Mapping[str, Any]) -> bool:
     """Is ``kept`` (the block a stage file holds: it also knows the download size and which wheels are compiled) the
     block recomputed now from the lockfile of this package? Names, versions, install flags, kind, lock and count must be
@@ -53,7 +65,9 @@ def consistent(kept: Any, fresh: Mapping[str, Any]) -> bool:
     ``bytes`` must be a plain size within the download cap. Anything else is not used."""
     from .download import MAX_TOTAL
 
-    if not isinstance(kept, dict) or set(kept) != set(fresh):
+    if not isinstance(kept, dict) or set(kept) - {"diff"} != set(fresh):
+        return False
+    if "diff" in kept and not diff_ok(kept["diff"]):
         return False
     rows = kept["rows"]
     if (

@@ -228,5 +228,5 @@ def diff(
         "removed": removed,
         "widened": widened,
         "publisher": publisher,
-        "deps": {k: dep[k] for k in ("runtime", "added", "removed", "changed")},
+        "deps": {k: dep[k] for k in ("runtime", "added", "removed", "changed", "lines")},
     }

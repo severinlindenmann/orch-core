@@ -998,7 +998,8 @@ def test_c21_a_brief_store_lock_does_not_leave_one_click_unavailable(click, serv
     p = click.prepare("log", {"ref": key, "text": "lock"})
     v = click.view(p["request_id"])
     click.mono.t += 2
-    row = lambda: next(w for w in click.signer.status({})["workspaces"] if w["workspace_id"] == served.wid)  # noqa: E731
+    ok_status = lambda st, w: {"custody": "convenience", "device": click.owner.device}  # noqa: E731
+    row = lambda: click.signer._row(click.entry, ok_status)  # noqa: E731
 
     def locked(*a):
         raise CustodyError("locked")

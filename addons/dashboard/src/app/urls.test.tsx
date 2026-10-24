@@ -213,9 +213,9 @@ describe('permanent URLs in the app', () => {
     const { router, address } = renderApp('/w/DEMO/board', { viewer: 'p_sev' })
     await screen.findByRole('heading', { level: 1, name: 'Board' }, T)
     await act(async () => void router.history.push('/w/CLI/board'))
-    await waitFor(() => expect(within(switcher()).getByText('CLI')).toBeInTheDocument(), T)
+    await waitFor(() => expect(switcher()).toHaveTextContent(/\(CLI\)/), T)
     await act(async () => router.history.back())
-    await waitFor(() => expect(within(switcher()).getByText('DEMO')).toBeInTheDocument(), T)
+    await waitFor(() => expect(switcher()).toHaveTextContent(/\(DEMO\)/), T)
     expect(address()).toBe('/w/DEMO/board')
   })
 

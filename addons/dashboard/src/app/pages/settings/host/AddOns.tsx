@@ -4,8 +4,10 @@
 import { Inline, plain } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
 import { AddonSetup } from './AddonSetup'
+import { HostDevices } from './Devices'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ChevronDown, ChevronRight, Cpu, FolderOpen, GitBranch, Globe, Loader2, Puzzle, Rocket, Ruler, Terminal, Gauge, type LucideIcon } from 'lucide-react'
+import { ChevronDown, ChevronRight, Cpu, FolderOpen, GitBranch, Globe, Loader2, Puzzle, Smartphone, Rocket, Ruler, Terminal, Gauge, type LucideIcon } from 'lucide-react'
 import { useState } from 'react'
 import { canChangeSettings } from '@/api/settings'
 import { queries } from '@/api/queries'
@@ -33,6 +35,7 @@ export function HostAddOns({ workspace }: { workspace: Workspace }) {
   const role = useViewerRole(workspace)
   const qc = useQueryClient()
   const [open, setOpen] = useState<Record<string, boolean>>({})
+  const [devicesOpen, setDevicesOpen] = useState(false)
   // The row being switched: its switch keeps the old position (nothing is shown before the host confirms) and says what is happening.
   const [busy, setBusy] = useState<{ id: string; turningOn: boolean; stage: 'review' | 'signing' | 'waiting' } | null>(null)
   const { ask, dialog } = useSettingsHandoff(workspace.id, async () => {
@@ -45,7 +48,6 @@ export function HostAddOns({ workspace }: { workspace: Workspace }) {
       qc.invalidateQueries({ queryKey: queries.hostSettings(workspace.id).queryKey }),
     ])
   })
-  if (data.isError) return <LoadFailed what="add-ons" onRetry={() => void data.refetch()} />
   const owner = canChangeSettings(role)
 
   const flip = (row: AddOnRow) => {
@@ -83,7 +85,9 @@ export function HostAddOns({ workspace }: { workspace: Workspace }) {
         <p className="mb-2 text-[13px] text-text-muted">
           Add-ons give you and your agents more to work with. Turning one on or off is a change you sign, like the other settings: you see exactly what changes first.
         </p>
-        {!data.data ? (
+        {data.isError ? (
+          <LoadFailed what="add-ons" onRetry={() => void data.refetch()} />
+        ) : !data.data ? (
           <p className="text-[13px] text-text-muted">Reading the add-ons…</p>
         ) : !data.data.available ? (
           <p className="text-[13px] text-text-muted">This host does not say which add-ons there are.</p>
@@ -158,6 +162,31 @@ export function HostAddOns({ workspace }: { workspace: Workspace }) {
           </ul>
         )}
       </Section>
+      <Section title="Phone">
+        <ul aria-label="Phone">
+          <li data-testid="addon-phone" className="py-3 text-[13px]">
+            <div className="flex items-center gap-3">
+              <Smartphone aria-hidden className="size-4 shrink-0 text-text-muted" />
+              <div className="min-w-0 flex-1">
+                <span className="font-medium">Phone</span>
+                <p className="text-text-muted">Pair the orch app on your phone, and see, rename or remove the devices that can approve.</p>
+              </div>
+              <Button size="sm" variant="secondary" data-testid="addon-phone-devices" onClick={() => setDevicesOpen(true)}>Manage devices</Button>
+            </div>
+          </li>
+        </ul>
+      </Section>
+      {devicesOpen && (
+        <Dialog open onOpenChange={(o) => !o && setDevicesOpen(false)}>
+          <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto border-border bg-surface">
+            <DialogHeader>
+              <DialogTitle>Phone and devices</DialogTitle>
+              <DialogDescription>Pairing, and the devices that can approve for this workspace.</DialogDescription>
+            </DialogHeader>
+            <HostDevices key={workspace.id} workspace={workspace} />
+          </DialogContent>
+        </Dialog>
+      )}
       {setup && <AddonSetup ws={workspace.id} name={setup.name} enabling={setup.enabling} close={() => setSetup(null)} submit={(title, action) => { setSetup(null); ask({ title, action, autoStart: true }) }} />}
       {dialog}
     </div>

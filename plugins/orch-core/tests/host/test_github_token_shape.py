@@ -80,8 +80,6 @@ def test_token_pattern_has_one_source():
     duplicates = [
         str(path.relative_to(root))
         for path in root.rglob("*.py")
-        if path != root / "tokenshape.py"
-        and root / "github" not in path.parents
-        and GITHUB_TOKEN_SHAPE.pattern in path.read_text()
+        if path != root / "tokenshape.py" and GITHUB_TOKEN_SHAPE.pattern in path.read_text()
     ]
     assert duplicates == []

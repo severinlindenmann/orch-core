@@ -72,6 +72,7 @@ SHOWN: dict[str, frozenset[str]] = {
     "artifact.replaced": frozenset({"name", "kind", "label", "ac", "task", "replaces", "bytes", "sha256"}),
     "device.added": frozenset({"device", "cert"}),
     "device.exposed": frozenset({"device", "reason"}),
+    "device.removed": frozenset({"device", "reason"}),
     "device.rotated": frozenset({"old", "device", "cert", "rotation"}),
     "gate.approved": frozenset({"gate", "source_sha"}),
     "gate.changes_requested": frozenset({"gate", "text"}),
@@ -930,6 +931,7 @@ class _Ctx:
 
     def __init__(self, verified: bool) -> None:
         self.verified = verified
+        self.removed_device: Any = None  # material["removed_device"] (#1198 C15): whose device, per host, not signed
         self.grants: Any = None  # material["grants"]: the host's word about each access taken back (not signed)
         self.taken = 0  # how many accesses the request takes back, and how many rows were made so far
         self.rows = 0
@@ -1109,6 +1111,7 @@ def _payload(
     ref = _ref(ticket)
     heads: list[str] = []
     ctx.grants = material.get("grants")
+    ctx.removed_device = material.get("removed_device")
     taken = [_grant_words(ev, ctx)[0] for ev in events if ev.get("type") == "grant.revoked"]
     ctx.taken = len(taken)
     if len(set(taken)) != len(taken):  # two accesses that read alike are never shown as one
@@ -1356,6 +1359,18 @@ def _event(
         _row(out, "device", ev.get("device"))
         _cert_rows(out, "certificate", ev.get("cert"))
         return "Add a paired device to your devices"
+    if typ == "device.removed":  # #1198 C15: one click; the lockout guards are the host's and the signer's
+        _row(out, "device", ev.get("device"))
+        held = ctx.removed_device
+        if isinstance(held, Mapping) and held.get("device") == ev.get("device"):
+            _row(out, "belongs to (per host, not signed)", _s(held.get("holder")))
+        if ev.get("reason") is not None:
+            _row(out, "reason", ev.get("reason"))
+        out.setdefault("notes", []).append(
+            "This device can no longer sign for this workspace, and the change stays in its log. To use that phone or "
+            "computer again, pair it again as a new device."
+        )
+        return "Remove a device from this workspace"
     if typ == "device.exposed":  # #1097: the mark written before a key enters one-click custody
         _row(out, "device", ev.get("device"))
         _row(out, "reason", ev.get("reason"))

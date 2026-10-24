@@ -808,6 +808,9 @@ function install() {
     return { ok: true, commit: 'd'.repeat(40), pushed: push, url: push ? LONG_URL : null }
   })
   set('recordsAutoOff', async () => ({ ok: true }))
+  set('recordsInit', async () => ({ ok: true }))
+  set('recordsMark', async () => ({ ok: true }))
+  set('recordsPushInitial', async (_ws: string, url: string) => ({ ok: true, commit: 'd'.repeat(40), pushed: true, url }))
   set('getIdentity', async (...args: never[]) => ({ ...((await (original.getIdentity as (...a: never[]) => Promise<object>)(...args)) as object), runner: { connected: true, enabled: current === 'runner-on', terminals: true } }))
   // The signing card: the same card on every read; a switch answers with "result unknown" (the card's own reload follows).
   // Only the signing-* scenarios answer from the fixture; every other scenario keeps the api's own method.

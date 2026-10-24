@@ -169,6 +169,7 @@ CLICK_OPS = frozenset(
         "hub.join",  # #1198 C10: only with the backup key sealed to the signer (SEALED_OPS); see view.check_prepared
         "hub.mode",
         "hub.leave",
+        "device.remove",  # #1198 C15: refused for the signing device and an owner's last device (device.lockout)
         "addon.grant",  # every add-on, publish included (#1198 C2); the review lists what is signed
         "publish.share",  # #1198 C2: the staged copy's own words are the review; the person clicks
         # #1198 C1: these were the typed-word class; the person reads the review and clicks, nothing is typed

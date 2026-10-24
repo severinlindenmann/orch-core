@@ -98,6 +98,7 @@ HOST_PERSON_OPS: dict[str, frozenset[str]] = {
     "hub.leave": frozenset({"hub.left"}),
     "device.mark_exposed": frozenset({"device.exposed"}),  # #1097: written before a key enters convenience custody
     "device.rotate": frozenset({"device.rotated"}),  # #1097: the new device replaces the old (recovery code)
+    "device.remove": frozenset({"device.removed"}),  # #1198 C15: one click, with lockout guards
 }
 _NOT_PERSON = frozenset({"import.v1"})  # import v1 is direct mode
 

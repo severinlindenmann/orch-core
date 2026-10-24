@@ -1010,3 +1010,36 @@ def test_c21_a_brief_store_lock_does_not_leave_one_click_unavailable(click, serv
     monkeypatch.undo()
     assert click.sign(p["request_id"], v["view_digest"])["duplicate"] is False
     assert row()["available"] is True
+
+
+def test_device_remove_is_a_click_and_the_view_names_the_device(click, served, human, lab):
+    """#1198 C15: removing a device is a plain click. The View names the device, whose it is and what follows.
+    The device that signs the click is refused with its own plain reason (the lockout guard). The reader that fails
+    the readers condition may be removed by click: the rule runs on the state after the removal."""
+    member = lab.add_member()  # has not declared that it knows convenience signatures: it fails the readers rule
+    other = member.device
+    p = click.prepare("device.remove", {"device": other})
+    shown = click.view(p["request_id"])
+    v = shown["view"]
+    assert v["confirm"] == {"kind": "click"}
+    text = "\n".join(v["lines"]) + json.dumps(v["content"])
+    assert other in text and "can no longer sign" in text and "belongs to" in text and "quinn" in text
+    click.mono.t += 2
+    assert click.sign(p["request_id"], shown["view_digest"])["duplicate"] is False
+    with pytest.raises(ClickError) as info:
+        click.prepare("device.remove", {"device": click.owner.device})
+    assert info.value.code == "device.lockout" and "device you are signing with" in info.value.message
+
+
+def test_a_removal_cannot_clear_the_readers_rule_while_another_reader_still_fails_it(click, served, human, lab):
+    """Q1 (Opus): only the device being removed is judged as gone. Another undeclared reader still blocks the click,
+    and so does any other op."""
+    first, second = lab.add_member(), lab.add_member()
+    with pytest.raises(ClickError) as info:
+        click.prepare("device.remove", {"device": first.device})
+    assert info.value.code == "sign.convenience_unavailable" and second.device in (info.value.detail or {}).get(
+        "devices", []
+    )
+    _, key = human.ticket()
+    with pytest.raises(ClickError):  # no blanket exemption: other ops stay refused
+        click.prepare("log", {"ref": key, "text": "x"})

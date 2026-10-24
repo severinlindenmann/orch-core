@@ -245,3 +245,58 @@ def test_empty_labels_reach_set():
         "set",
         {"ref": "DEMO-0001", "pairs": ["labels="]},
     )
+
+
+def test_c15_records_admin_actions_carry_the_reviewed_address(client, token, stub, m6, monkeypatch, gateway):
+    """#1198 C15: init, mark/unmark the remote private and the first push are plain clicks. The address the person saw
+    goes to the child as the address that must match; the actions need the ops the host serves."""
+    script, link = m6
+    link.welcome["ops"]["records.remote_private"] = 1
+    calls = []
+    monkeypatch.setattr(client.app.state.records_child, "run", lambda *a, **k: calls.append((a, k)) or {"ok": True})
+    base = f"/api/w/{stub.ws}/records"
+    url = "https://git.example.test/records"
+    cases = [
+        ("init", {}, "init", None),
+        ("remote", {"on": True, "url": url}, "mark", url),
+        ("remote", {"on": False}, "unmark", None),
+        ("push-initial", {"url": url}, "push-initial", url),
+    ]
+    for suffix, body, action, expect in cases:
+        assert client.post(f"{base}/{suffix}", json=body, headers={"Origin": ORIGIN}).status_code == 401
+        assert client.post(f"{base}/{suffix}", json=body, headers=headers(token)).status_code == 200
+        (args, kwargs) = calls[-1]
+        assert args == (stub.ws,) and kwargs["action"] == action and kwargs["url"] == expect
+    # shapes that are not one of the three: refused before anything runs
+    n = len(calls)
+    bad = [
+        ("init", {"x": 1}),
+        ("remote", {"on": True}),
+        ("remote", {"on": False, "url": url}),
+        ("remote", {"on": True, "url": "has space"}),
+        ("remote", {"on": True, "url": url, "argv": []}),
+        ("push-initial", {}),
+        ("push-initial", {"url": "x‮y"}),
+        ("push-initial", {"url": url, "remote": "other"}),
+    ]
+    for suffix, body in bad:
+        assert client.post(f"{base}/{suffix}", json=body, headers=headers(token)).status_code in (400, 422), (
+            suffix,
+            body,
+        )
+    assert len(calls) == n
+    # a host without the owner's mark op cannot be asked to mark
+    del link.welcome["ops"]["records.remote_private"]
+    assert client.post(f"{base}/remote", json={"on": True, "url": url}, headers=headers(token)).status_code == 501
+    assert client.post(f"{base}/init", json={}, headers=headers(token)).status_code == 200
+
+
+def test_c15_records_admin_refusal_from_the_host_stops_before_the_child(client, token, stub, m6, monkeypatch):
+    script, link = m6
+    link.welcome["ops"]["records.remote_private"] = 1
+    script["refusal"] = HostError({"code": "role.denied", "message": "owner or maintainer", "retryable": False}, 3)
+    monkeypatch.setattr(client.app.state.records_child, "run", lambda *a, **k: pytest.fail("must not spawn"))
+    base = f"/api/w/{stub.ws}/records"
+    for suffix, body in [("init", {}), ("remote", {"on": False}), ("push-initial", {"url": "https://a.example/r"})]:
+        res = client.post(f"{base}/{suffix}", json=body, headers=headers(token))
+        assert res.status_code == 403 and res.json()["error"]["code"] == "role.denied"

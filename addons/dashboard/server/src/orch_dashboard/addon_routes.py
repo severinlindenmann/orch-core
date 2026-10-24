@@ -9,7 +9,7 @@ from .adapters import addons as adapt
 from .adapters import host_status
 from .errors import fail
 from .reads import ContentQuery, UiStatus, workspace
-from .records_child import RecordsChild
+from .records_child import RecordsChild, valid_url
 
 
 class QuickQuery(BaseModel):
@@ -24,6 +24,24 @@ class QuickQuery(BaseModel):
 class Commit(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     push: bool
+
+
+class Empty(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+
+class Address(BaseModel):
+    """The remote's address exactly as the page showed it in the review (#1198 C15). The core tool refuses unless git
+    resolves to this very address, so a change after the review cannot be clicked through."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    url: Annotated[str, Field(min_length=1, max_length=2048)]
+
+
+class Mark(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    on: bool
+    url: Annotated[str, Field(min_length=1, max_length=2048)] | None = None
 
 
 def register(app, gateway):
@@ -75,6 +93,34 @@ def register(app, gateway):
             raise fail("op.unsupported", exit=1)
         link.call("records.status", {})  # authorize this person before any local process is started
         return child.run(ws, push=push, auto_off=auto_off, state=gateway.state, run_dir=gateway.run)
+
+    def admin(ws, action, url=None):
+        """The records admin actions (#1198 C15). The page showed the review (the exact address, where there is one) and
+        the person clicked: the child runs with `--yes` and the address as `--expect-url`. The host still decides who
+        may (an owner marks a remote; an owner or maintainer sets up and pushes)."""
+        link = records_link(ws, write=True)
+        if link is None or (
+            action in ("mark", "unmark") and link.welcome.get("ops", {}).get("records.remote_private") != 1
+        ):
+            raise fail("op.unsupported", exit=1)
+        link.call("records.status", {})  # authorize this person before any local process is started
+        return child.run(ws, action=action, url=url, state=gateway.state, run_dir=gateway.run)
+
+    @app.post("/api/w/{ws}/records/init")
+    def init(body: Empty, ws: str = Depends(workspace)):
+        return admin(ws, "init")
+
+    @app.post("/api/w/{ws}/records/remote")
+    def remote(body: Mark, ws: str = Depends(workspace)):
+        if body.on != (body.url is not None) or (body.url is not None and not valid_url(body.url)):
+            raise fail("invalid.input", exit=5)
+        return admin(ws, "mark" if body.on else "unmark", body.url)
+
+    @app.post("/api/w/{ws}/records/push-initial")
+    def push_initial(body: Address, ws: str = Depends(workspace)):
+        if not valid_url(body.url):
+            raise fail("invalid.input", exit=5)
+        return admin(ws, "push-initial", body.url)
 
     @app.post("/api/w/{ws}/records/commit")
     def commit(body: Commit, ws: str = Depends(workspace)):

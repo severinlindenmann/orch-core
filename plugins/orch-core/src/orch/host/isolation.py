@@ -11,8 +11,8 @@ result for at most 60 s.
   ``/run/orch/<person uid>`` walked to a fixed depth (setgid 2750 person:agent, only sockets <= 0660 and the dirs
   leading to them group-accessible, every other file 0600 and dir 0700, no ACL anywhere); no protected path
   (state, keys) readable by the agent (r or x on every real ancestor, ACLs evaluated); no root-equivalent socket
-  (docker, podman, lxd, incus) connectable by the agent; no sudoers rule naming it (when readable); SSH logins
-  denied for it).
+  (docker, podman, lxd, incus) connectable by the agent; sudo and SSH policy unchanged since the root setup step
+  recorded that the agent has no sudo rule and cannot log in over SSH (stat signatures only, no parsing).
 - ``same_user``: no agent user, or a platform without the separation (macOS, Windows): tier A.
 - ``broken``: the agent user exists but a fact fails. Each failed fact is a ``Reason`` of kind ``exposure`` (an agent
   could reach the key or act as the person: callers pause click signing) or ``availability`` (nothing exposed,
@@ -20,8 +20,7 @@ result for at most 60 s.
 At least one protected path must exist (always include the ``<state>`` directory): none present is a failure, nothing
 is proven. Fails closed.
 
-The host runs unprivileged, so it normally cannot read /etc/sudoers: that is no fact here (the root-time setup plan
-refuses a sudo rule); a sudoers file this process can read and that names the agent is an exposure fact.
+The unprivileged host never parses root-written policy (sudoers, sshd): see ``_policy``.
 """
 
 from __future__ import annotations
@@ -30,8 +29,7 @@ from dataclasses import dataclass
 from typing import Final, Literal
 
 from ..setup.osfacts import OsFacts
-from ..setup.osrules import sshd_denies
-from ..setup.osusers import AGENT_HOME_ROOT, AGENT_PREFIX, AGENT_SHELL, PRIVILEGED_GROUPS, sudo_exposed
+from ..setup.osusers import AGENT_HOME_ROOT, AGENT_PREFIX, AGENT_SHELL, POLICY_FILES, PRIVILEGED_GROUPS
 
 __all__ = ["EXPOSURE", "AVAILABILITY", "IsolationResult", "Reason", "detect"]
 
@@ -50,8 +48,6 @@ ROOT_SOCKETS: Final = (
     "/var/lib/incus/unix.socket",
     "/run/incus/unix.socket",
 )
-SSHD_CONFIG: Final = "/etc/ssh/sshd_config"
-SSHD_DIR: Final = "/etc/ssh/sshd_config.d"
 EXPOSURE: Final = "exposure"
 AVAILABILITY: Final = "availability"
 _SYSTEM_UID_MAX = 999
@@ -149,6 +145,8 @@ def detect(
     pin = facts.pin(agent.uid)
     if not (isinstance(pin, dict) and pin.get("class") == "agent" and pin.get("host_uid") == person_uid):
         reasons.append(Reason("no_pin", f"'{name}' has no valid root-owned pin."))
+    else:
+        reasons += _policy(facts, name, pin)
     reasons += _run_tree(facts, f"{run_root}/{person_uid}", person_uid, agent.gid)
     if facts.stat(state_dir) is None:
         reasons.append(Reason("protected_missing", "The state directory to protect does not exist: nothing is proven."))
@@ -160,7 +158,6 @@ def detect(
     for sock in ROOT_SOCKETS:
         if facts.stat(sock) is not None and facts.can_connect(agent.uid, sock):
             reasons.append(Reason("root_socket", f"The agent user can reach {sock}, which gives root power."))
-    reasons += _sudo_and_ssh(facts, name, agent)
     reasons += _runner(facts, name, agent.uid, agent.gid, person_uid)
     return _result("linux", reasons)
 
@@ -191,37 +188,32 @@ def _runner(facts: OsFacts, name: str, agent_uid: int, agent_gid: int, person_ui
     return out
 
 
-def _sudo_and_ssh(facts: OsFacts, name: str, agent) -> list[Reason]:
-    out: list[Reason] = []
-    # sudo's own answer when this process may ask; else the parser over /etc/sudoers if readable (usually it is not for
-    # an unprivileged host: the root-time setup plan is the check there; the residual risk is a rule written later).
-    if sudo_exposed(facts, agent):
-        out.append(Reason("sudoers_entry", f"'{name}' has a sudo rule."))
-    denied = facts.sshd_denies(name)  # ``sshd -T -C user=...`` when runnable (needs root), else read the files
-    if denied is None:
-        try:
-            main = facts.read_text(SSHD_CONFIG)
-        except PermissionError:  # e.g. RHEL's 0600 sshd_config: trust only orch's own 0644 drop-in, can not see Include
-            try:
-                dropin = facts.read_text(f"{SSHD_DIR}/10-orch-agents.conf")
-            except OSError:
-                dropin = None
-            if dropin is None or not sshd_denies(lambda _p: dropin, lambda _d: [], name, "x"):
-                out.append(Reason("ssh_unknown", "The SSH configuration could not be read, so it is not trusted."))
-            return out
-        except OSError:
-            out.append(Reason("ssh_unknown", "The SSH configuration could not be read, so it is not trusted."))
-            return out
-        if main is None:
-            return out  # no sshd configured at all
-        try:
-            denied = sshd_denies(facts.read_text, facts.listdir, name, SSHD_CONFIG)
-        except OSError:
-            out.append(Reason("ssh_unknown", "The SSH configuration could not be read, so it is not trusted."))
-            return out
-    if not denied:
-        out.append(Reason("ssh_not_denied", f"SSH logins are not forbidden for '{name}'."))
-    return out
+def _policy(facts: OsFacts, name: str, pin: dict) -> list[Reason]:
+    """Root-written policy (sudoers, sshd) is never judged by parsing it here. The root-owned pin records the verdict of
+    sudo and sshd themselves, taken by the setup step, plus the stat signature of each policy file. Here we only check
+    that the verdict is good and that nothing changed since (size, mtime, inode, and the set of files in the drop-in
+    directories). Anything else, including a missing field, asks for the admin step again. Limit: a file that sudo or
+    sshd include from outside these paths is not watched."""
+    bad = Reason(
+        "policy_changed_since_setup",
+        f"The sudo or SSH rules may have changed since setup for '{name}'. Run the admin step again.",
+    )
+    pol = pin.get("policy")
+    if not isinstance(pol, dict) or pol.get("sudo") != "none" or pol.get("ssh") != "denied":
+        return [bad]
+    files = pol.get("files")
+    if pol.get("ssh_dropin") is not True or not isinstance(files, dict) or not set(POLICY_FILES) <= set(files):
+        return [bad]
+    now = {p: facts.file_sig(p) for p in files}
+    for path, recorded in files.items():
+        sig = now[path]
+        if (None if sig is None else list(sig)) != recorded:
+            return [bad]
+    for folder in (p for p in POLICY_FILES if p.endswith(".d")):  # a file added since: not in the record
+        for entry in facts.listdir(folder):
+            if f"{folder}/{entry}" not in files:
+                return [bad]
+    return []
 
 
 def _run_tree(facts: OsFacts, root: str, person_uid: int, agent_gid: int) -> list[Reason]:

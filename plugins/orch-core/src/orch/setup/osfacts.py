@@ -13,7 +13,6 @@ import errno
 import grp
 import os
 import pwd
-import re
 import stat
 import struct
 import sys
@@ -84,67 +83,12 @@ class OsFacts(Protocol):
     def listdir(self, path: str) -> list[str]: ...
     def can_read(self, uid: int, path: str) -> bool: ...  # True unless provably unreadable (dirs: r or x counts)
     def can_connect(self, uid: int, path: str) -> bool: ...  # write on the socket and search on every ancestor
-    def read_text(self, path: str) -> str | None: ...  # None = missing; raises OSError when unreadable
-    def sudoers_lines(self) -> list[str] | None:
-        """Active logical lines of /etc/sudoers with ``@include``/``#include``/``includedir`` inlined, or None when this
-        process cannot read them (the host runs unprivileged, so that is the normal case)."""
-        from .osrules import sudoers_logical_lines
-
-        out: list[str] = []
-
-        def load(path: str, depth: int) -> None:
-            if depth > 8:
-                raise PermissionError("sudoers include nesting")
-            text = self.read_text(path)
-            if text is None:
-                return
-            for line in sudoers_logical_lines(text):
-                m = re.match(r"[@#](include|includedir)\s+(\S+)", line, re.I)
-                if not m:
-                    out.append(line)
-                    continue
-                target = m.group(2).strip('"')
-                if m.group(1).lower() == "includedir":
-                    if os.path.isdir(target):
-                        for n in sorted(os.listdir(target)):
-                            if "." not in n and not n.endswith("~"):
-                                load(f"{target}/{n}", depth + 1)
-                else:
-                    load(target, depth + 1)
-
-        try:
-            load("/etc/sudoers", 0)
-        except PermissionError:
-            return None
-        return out
-
-    def _run(self, argv: list[str]) -> tuple[int, str] | None:
-        import subprocess
-
-        try:
-            done = subprocess.run(argv, capture_output=True, text=True, timeout=10, check=False, env={})
-        except (OSError, subprocess.SubprocessError):
-            return None
-        return done.returncode, done.stdout + done.stderr
-
-    def sudo_allows(self, user: str) -> bool | None:
-        res = self._run(["/usr/bin/sudo", "-n", "-l", "-U", user])
-        if res is None:
-            return None
-        text = res[1]
-        if "is not allowed to run sudo" in text:
-            return False
-        if "may run the following commands" in text:
-            return True
-        return None
-
-    def sshd_denies(self, user: str) -> bool | None:
-        res = self._run(["/usr/sbin/sshd", "-T", "-C", f"user={user},host=localhost,addr=127.0.0.1"])
-        if res is None or res[0] != 0:
-            return None
-        pats = [p for ln in res[1].splitlines() if ln.lower().startswith("denyusers ") for p in ln.split()[1:]]
-        return any(fnmatch(user, p) for p in pats)
-
+    # Root-written policy is never parsed here. A root process asks the authoritative tools (setup, L2); the host only
+    # compares stat signatures with what the root-owned pin recorded.
+    def sudo_allows(self, user: str) -> bool | None: ...  # ``sudo -l -U``: True = a rule, False = none
+    def sshd_denies(self, user: str, host: str, addr: str) -> bool | None: ...  # ``sshd -T -C ...``; None = unknown
+    def file_sig(self, path: str) -> tuple[int, int, int] | None: ...  # (size, mtime_ns, inode); None = absent
+    def unit_state(self, unit: str) -> UnitState: ...
     def pin(self, uid: int) -> dict | None: ...  # root-owned pin for a UID; None = no pin; broken = a "*" agent pin
 
 
@@ -308,28 +252,47 @@ class RealOsFacts:
     def can_connect(self, uid: int, path: str) -> bool:
         return uid == 0 or self._reach(uid, path, 0o1, 0o2, 0o2)
 
-    def read_text(self, path: str) -> str | None:
+    def file_sig(self, path: str) -> tuple[int, int, int] | None:
         try:
-            with open(path, encoding="utf-8", errors="replace") as handle:
-                return handle.read(1 << 20)
+            st = os.stat(path)
         except FileNotFoundError:
             return None
+        return (st.st_size, st.st_mtime_ns, st.st_ino)
 
-    def sudoers_lines(self) -> list[str] | None:
-        """Active lines of /etc/sudoers and /etc/sudoers.d/*, or None when this process cannot read them (the host
-        runs unprivileged, so that is the normal case here; the root-time setup plan is where this is enforced)."""
-        lines: list[str] = []
+    @staticmethod
+    def _run(argv: list[str]) -> tuple[int, str] | None:
+        import subprocess
+
         try:
-            files = ["/etc/sudoers"]
-            if os.path.isdir("/etc/sudoers.d"):
-                files += [f"/etc/sudoers.d/{n}" for n in sorted(os.listdir("/etc/sudoers.d")) if "." not in n]
-            for name in files:
-                text = self.read_text(name)
-                if text is not None:
-                    lines += [ln.strip() for ln in text.splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
-        except PermissionError:
+            done = subprocess.run(argv, capture_output=True, text=True, timeout=10, check=False, env={})
+        except (OSError, subprocess.SubprocessError):
             return None
-        return lines
+        return done.returncode, done.stdout + done.stderr
+
+    def sudo_allows(self, user: str) -> bool | None:
+        """sudo's own verdict for ``user`` (``sudo -l -U``; needs root). No sudo installed means no sudo rule."""
+        sudo = next((b for b in ("/usr/bin/sudo", "/bin/sudo") if os.path.exists(b)), None)
+        if sudo is None:
+            return False
+        res = self._run([sudo, "-n", "-l", "-U", user])
+        if res is None:
+            return None
+        if "is not allowed to run sudo" in res[1]:
+            return False
+        if "may run the following commands" in res[1]:
+            return True
+        return None
+
+    def sshd_denies(self, user: str, host: str, addr: str) -> bool | None:
+        """sshd's own effective ``denyusers`` for a connection context (``sshd -T -C``; needs root)."""
+        sshd = next((b for b in ("/usr/sbin/sshd", "/sbin/sshd") if os.path.exists(b)), None)
+        if sshd is None:
+            return None
+        res = self._run([sshd, "-T", "-C", f"user={user},host={host},addr={addr}"])
+        if res is None or res[0] != 0:
+            return None
+        pats = [p for ln in res[1].splitlines() if ln.lower().startswith("denyusers ") for p in ln.split()[1:]]
+        return any(fnmatch(user, p) for p in pats)
 
     def pin(self, uid: int) -> dict | None:
         from ..host.pins import AgentPins

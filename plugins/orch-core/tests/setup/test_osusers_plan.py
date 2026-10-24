@@ -211,12 +211,21 @@ def test_slots_pinned_to_another_person_say_so() -> None:
     assert r.code == "slot_other_person" and "4242" in r.message and "another person" in r.message
 
 
-def test_sudoers_entry_for_agent_is_refused() -> None:
+def test_plan_asks_sudo_itself_never_parses_sudoers() -> None:
     f = FakeOsFacts()
     _existing_agent(f)
-    f.sudoers = ["# comment", "orch-agent-sev ALL=(ALL) NOPASSWD: ALL"]
+    assert plan(f, PERSON, UID).ok  # sudo -l -U: no rule
+    f.sudo_answer = True
     assert [r.code for r in plan(f, PERSON, UID).refusals] == ["sudoers_entry"]
-    f.sudoers = ["%orch-agent-sev ALL=(ALL) ALL"]
-    assert [r.code for r in plan(f, PERSON, UID).refusals] == ["sudoers_entry"]
-    f.sudoers = ["orch-agent-sevx ALL=(ALL) ALL", "sev ALL=(ALL) ALL"]
-    assert plan(f, PERSON, UID).ok
+    f.sudo_answer = None  # could not ask: refuse rather than guess
+    assert [r.code for r in plan(f, PERSON, UID).refusals] == ["policy_unknown"]
+
+
+def test_pin_document_carries_the_recorded_policy() -> None:
+    from orch.setup.osusers import PinEntry, assess_policy
+
+    f = FakeOsFacts()
+    v = assess_policy(f, "orch-agent-sev")
+    doc = PinEntry("orch-agent-sev", "agent", UID, 990, v.document()).document()
+    assert doc["policy"]["sudo"] == "none" and doc["class"] == "agent"
+    assert "policy" not in PinEntry("orch-addon-1", "addon", UID, 985).document()

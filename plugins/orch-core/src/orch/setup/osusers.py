@@ -19,7 +19,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .osfacts import OsFacts, UserInfo
-from .osrules import sudoers_names
 
 __all__ = [
     "AGENT_PREFIX",
@@ -32,8 +31,9 @@ __all__ = [
     "SSHD_DROPIN",
     "SSHD_DROPIN_TEXT",
     "FileSpec",
-    "sudo_exposed",
-    "sudoers_names",
+    "POLICY_FILES",
+    "PolicyVerdict",
+    "assess_policy",
     "SLOT_PREFIX",
     "OsPlanRefusal",
     "Plan",
@@ -106,12 +106,16 @@ class PinEntry:
     cls: str  # "agent" | "addon"
     host_uid: int | None  # the person's UID; None until the person exists (root case)
     uid: int | None  # the pinned user's UID; None until the user exists
+    policy: dict[str, Any] | None = None  # agent pins: ``assess_policy(...).document()``, added by the apply step (L2)
 
     def path(self) -> str | None:
         return None if self.uid is None else f"/etc/orch/pins/{self.uid}.json"
 
     def document(self) -> dict[str, Any]:
-        return {"class": self.cls, "host_uid": self.host_uid, "workspaces": "*"}
+        doc: dict[str, Any] = {"class": self.cls, "host_uid": self.host_uid, "workspaces": "*"}
+        if self.policy is not None:
+            doc["policy"] = self.policy
+        return doc
 
 
 @dataclass(frozen=True)
@@ -261,18 +265,57 @@ def _check_existing(facts: OsFacts, want: UserPlan, person_uid: int | None, refu
         refusals.append(
             Refusal("wrong_properties", want.name, f"'{want.name}' exists but {bad}. Setup will not fix it.")
         )
-    if sudo_exposed(facts, info):
-        refusals.append(Refusal("sudoers_entry", want.name, f"'{want.name}' has a sudo rule. Remove it."))
+    sudo = facts.sudo_allows(want.name)  # sudo's own answer (the plan runs as root); never our own parsing
+    if sudo is not False:
+        what = "has a sudo rule" if sudo else "could not be checked for sudo rules"
+        refusals.append(Refusal("sudoers_entry" if sudo else "policy_unknown", want.name, f"'{want.name}' {what}."))
     return UserPlan(want.name, want.role, "keep", info.uid, want.home, want.shell, want.group)
 
 
-def sudo_exposed(facts: OsFacts, info: UserInfo) -> bool:
-    """Whether sudo rules give ``info`` anything: sudo's own answer when we may ask, else our conservative parser."""
-    answer = facts.sudo_allows(info.name)
-    if answer is not None:
-        return answer
-    lines = facts.sudoers_lines()
-    return bool(lines and sudoers_names(lines, info.name, info.uid, info.gids, info.groups))
+# Root-written policy files whose stat signature the pin records (no content is ever parsed by the unprivileged host):
+POLICY_FILES = ("/etc/sudoers", "/etc/sudoers.d", "/etc/ssh/sshd_config", "/etc/ssh/sshd_config.d")
+_POLICY_DIRS = ("/etc/sudoers.d", "/etc/ssh/sshd_config.d")
+# Representative sshd connection contexts for ``sshd -T -C``; the user must be denied in every one.
+SSH_CONTEXTS = (("localhost", "127.0.0.1"), ("example.com", "203.0.113.9"), ("host.internal", "10.0.0.5"))
+
+
+@dataclass(frozen=True)
+class PolicyVerdict:
+    """What root learned from the authoritative tools, to be recorded in the agent's root-owned pin (L2)."""
+
+    sudo: str  # "none" | "allowed" | "unknown"
+    ssh: str  # "denied" | "allowed" | "unknown"
+    ssh_dropin: bool  # orch's own drop-in is present with the expected content (the plain file check)
+    files: dict[str, list[int] | None]  # path -> [size, mtime_ns, inode], or None while absent
+
+    @property
+    def ok(self) -> bool:
+        return self.sudo == "none" and self.ssh == "denied" and self.ssh_dropin
+
+    def document(self) -> dict[str, Any]:
+        return {"sudo": self.sudo, "ssh": self.ssh, "ssh_dropin": self.ssh_dropin, "files": self.files}
+
+
+def assess_policy(facts: OsFacts, user: str, *, dropin_text: str | None = None) -> PolicyVerdict:
+    """Run as root (the setup apply step, after the user and the sshd drop-in exist): ask sudo and sshd themselves for
+    ``user`` and take the stat signatures of the policy files. Never parses policy text."""
+    sudo = facts.sudo_allows(user)
+    answers = [facts.sshd_denies(user, host, addr) for host, addr in SSH_CONTEXTS]
+    ssh = "unknown" if any(a is None for a in answers) else "denied" if all(answers) else "allowed"
+    files: dict[str, list[int] | None] = {}
+    for path in POLICY_FILES:
+        sig = facts.file_sig(path)
+        files[path] = None if sig is None else list(sig)
+    for folder in _POLICY_DIRS:
+        for entry in facts.listdir(folder):
+            sig = facts.file_sig(f"{folder}/{entry}")
+            files[f"{folder}/{entry}"] = None if sig is None else list(sig)
+    return PolicyVerdict(
+        "unknown" if sudo is None else "allowed" if sudo else "none",
+        ssh,
+        facts.file_sig(SSHD_DROPIN) is not None and (dropin_text is None or dropin_text == SSHD_DROPIN_TEXT),
+        files,
+    )
 
 
 def _wrong_properties(facts: OsFacts, want: UserPlan, info: UserInfo) -> str:

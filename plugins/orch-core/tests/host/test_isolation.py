@@ -9,6 +9,7 @@ import pytest
 
 from orch.host.isolation import detect
 from orch.setup.osfacts import UnitState
+from orch.setup.osusers import SSHD_DROPIN, assess_policy
 from tests.osfacts_fake import FakeOsFacts
 
 UID, AUID, AGID = 1000, 990, 990
@@ -33,7 +34,16 @@ def _active(uid, **kw) -> UnitState:
 def _good() -> FakeOsFacts:
     f = FakeOsFacts()
     f.add_user("orch-agent-sev", AUID, home="/var/lib/orch/agents/orch-agent-sev/home")
-    f.pins[AUID] = {"class": "agent", "host_uid": UID, "workspaces": "*"}
+    f.add_path(SSHD_DROPIN)
+    f.sigs[SSHD_DROPIN] = (40, 111, 7)
+    f.sigs["/etc/sudoers"] = (900, 222, 3)
+    f.sigs["/etc/ssh/sshd_config"] = (500, 333, 4)
+    f.pins[AUID] = {
+        "class": "agent",
+        "host_uid": UID,
+        "workspaces": "*",
+        "policy": assess_policy(f, "orch-agent-sev").document(),
+    }
     f.add_path("/run/orch/1000", uid=UID, gid=AGID, mode=0o2750, kind="dir")
     f.add_path("/run/orch/1000/host.sock", uid=UID, gid=AGID, mode=0o660, kind="sock")
     f.add_path(STATE, uid=UID, gid=UID, mode=0o700, kind="dir")
@@ -340,28 +350,6 @@ def test_root_equivalent_socket_reachable_by_agent(sock: str) -> None:
     assert _codes(f) == {"root_socket"} and r.pause_click_signing
 
 
-def test_sudoers_entry_naming_agent_is_exposure_and_unreadable_is_no_fact() -> None:
-    f = _good()
-    f.sudoers = None  # an unprivileged host cannot read it: the root-time plan is the check
-    assert detect(f, "sev", UID, STATE, [KEY]).isolated
-    f.sudoers = ["orch-agent-sev ALL=(ALL) NOPASSWD:ALL"]
-    assert _codes(f) == {"sudoers_entry"}
-
-
-def test_ssh_must_be_denied_for_the_agent_when_sshd_is_configured() -> None:
-    f = _good()
-    assert detect(f, "sev", UID, STATE, [KEY]).isolated  # no sshd configured at all
-    f.files["/etc/ssh/sshd_config"] = "Include /etc/ssh/sshd_config.d/*.conf\nPort 22\n"
-    assert _codes(f) == {"ssh_not_denied"}
-    f.add_path("/etc/ssh/sshd_config.d/10-orch-agents.conf")
-    f.files["/etc/ssh/sshd_config.d/10-orch-agents.conf"] = "DenyUsers orch-agent-* orch-addon-*\n"
-    assert detect(f, "sev", UID, STATE, [KEY]).isolated
-    f.files["/etc/ssh/sshd_config.d/10-orch-agents.conf"] = "# DenyUsers orch-agent-*\n"
-    assert _codes(f) == {"ssh_not_denied"}
-    f.unreadable.add("/etc/ssh/sshd_config")
-    assert _codes(f) == {"ssh_unknown"}
-
-
 # ---- RealOsFacts with patched readers (no real users, no root) ----
 
 
@@ -581,3 +569,82 @@ def test_transitional_runner_with_a_process_gets_the_exposure_checks() -> None:
         f.units[RUNNER] = replace(_active(AUID), state="transitional", **kw)
         r = detect(f, "sev", UID, STATE, [KEY])
         assert r.pause_click_signing and "runner_restarting" in {x.code for x in r.availability}, kw
+
+
+def _policy_codes(f: FakeOsFacts) -> set[str]:
+    return {r.code for r in detect(f, "sev", UID, STATE, [KEY]).exposure}
+
+
+def test_policy_verdict_recorded_in_the_pin_and_unchanged_is_fine() -> None:
+    f = _good()
+    assert f.pins[AUID]["policy"]["sudo"] == "none" and f.pins[AUID]["policy"]["ssh"] == "denied"
+    assert detect(f, "sev", UID, STATE, [KEY]).isolated
+
+
+@pytest.mark.parametrize(
+    "path,sig",
+    [
+        ("/etc/sudoers", (901, 222, 3)),  # size
+        ("/etc/sudoers", (900, 999, 3)),  # mtime
+        ("/etc/sudoers", (900, 222, 8)),  # replaced (inode)
+        ("/etc/sudoers", None),  # removed
+        ("/etc/ssh/sshd_config", (500, 334, 4)),
+        (SSHD_DROPIN, (40, 112, 7)),
+        ("/etc/sudoers.d", (0, 1, 2)),  # directory appeared (absent at setup)
+    ],
+)
+def test_changed_policy_file_is_an_exposure_fact(path: str, sig) -> None:
+    f = _good()
+    if sig is None:
+        del f.sigs[path]
+    else:
+        f.sigs[path] = sig
+    r = detect(f, "sev", UID, STATE, [KEY])
+    assert _policy_codes(f) == {"policy_changed_since_setup"} and r.pause_click_signing
+
+
+def test_a_new_file_in_a_policy_directory_is_an_exposure_fact() -> None:
+    f = _good()
+    f.add_path("/etc/sudoers.d/90-agent")
+    f.sigs["/etc/sudoers.d/90-agent"] = (30, 1, 99)
+    assert _policy_codes(f) == {"policy_changed_since_setup"}
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda pin: pin.pop("policy"),
+        lambda pin: pin["policy"].pop("sudo"),
+        lambda pin: pin["policy"].pop("ssh"),
+        lambda pin: pin["policy"].pop("files"),
+        lambda pin: pin["policy"].__setitem__("sudo", "allowed"),
+        lambda pin: pin["policy"].__setitem__("sudo", "unknown"),
+        lambda pin: pin["policy"].__setitem__("ssh", "allowed"),
+        lambda pin: pin["policy"].__setitem__("ssh", "unknown"),
+        lambda pin: pin["policy"].__setitem__("ssh_dropin", False),
+        lambda pin: pin["policy"].__setitem__("files", {"/etc/sudoers": [900, 222, 3]}),  # baseline files missing
+        lambda pin: pin.__setitem__("policy", "denied"),
+    ],
+)
+def test_missing_or_bad_policy_fields_in_the_pin_are_an_exposure_fact(mutate) -> None:
+    f = _good()
+    mutate(f.pins[AUID])
+    assert _policy_codes(f) == {"policy_changed_since_setup"}
+
+
+def test_assess_policy_unknown_answers_are_recorded_as_unknown() -> None:
+    f = _good()
+    f.sudo_answer = None
+    f.sshd_answer = None
+    v = assess_policy(f, "orch-agent-sev")
+    assert (v.sudo, v.ssh, v.ok) == ("unknown", "unknown", False)
+    f.sudo_answer, f.sshd_answer = True, False
+    v = assess_policy(f, "orch-agent-sev")
+    assert (v.sudo, v.ssh) == ("allowed", "allowed")
+
+
+def test_assess_policy_requires_every_ssh_context_to_deny() -> None:
+    f = _good()
+    seen = []
+    f.sshd_denies = lambda user, host, addr: (seen.append((host, addr)), len(seen) != 2)[1]
+    assert assess_policy(f, "orch-agent-sev").ssh == "allowed" and len(seen) >= 2

@@ -17,11 +17,9 @@ class FakeOsFacts:
         self.pins: dict[int, dict] = {}
         self.units: dict[str, UnitState] = {}
         self.connectable: dict[tuple[int, str], bool] = {}
-        self.files: dict[str, str] = {}
-        self.unreadable: set[str] = set()
-        self.sudoers: list[str] | None = []
-        self.sudo_answer: bool | None = None
-        self.sshd_answer: bool | None = None
+        self.sigs: dict[str, tuple[int, int, int]] = {}
+        self.sudo_answer: bool | None = False  # sudo -l -U: no rule
+        self.sshd_answer: bool | None = True  # sshd -T -C: denied
 
     def add_user(self, name, uid, *, gid=None, home="/home/x", shell="/bin/bash", groups=(), extra_gids=()) -> None:
         gid = uid if gid is None else gid
@@ -65,16 +63,11 @@ class FakeOsFacts:
     def can_connect(self, uid, path):
         return self.connectable.get((uid, path), False)
 
-    def read_text(self, path):
-        if path in self.unreadable:
-            raise PermissionError(path)
-        return self.files.get(path)
-
-    def sudoers_lines(self):
-        return self.sudoers
-
     def sudo_allows(self, user):
         return self.sudo_answer
 
-    def sshd_denies(self, user):
+    def sshd_denies(self, user, host, addr):
         return self.sshd_answer
+
+    def file_sig(self, path):
+        return self.sigs.get(path)

@@ -141,9 +141,9 @@ describe('start settings wording and layout (MR3/MR4)', () => {
 
 describe('the model of a start', () => {
   it('shows the model an add-on chose, says who chose it, and keeps the command behind Details', async () => {
-    s.preview.mockResolvedValue(preview({ model: 'sonnet', model_source: 'addon', model_by: 'Model routing' }))
+    s.preview.mockResolvedValue(preview({ model: 'sonnet', model_source: 'addon', model_by: 'model-routing' }))
     mount()
-    expect(await screen.findByTestId('agent-model-line', {}, T)).toHaveTextContent('Sonnet (chosen by Model routing)')
+    expect(await screen.findByTestId('agent-model-line', {}, T)).toHaveTextContent('Sonnet (chosen by model-routing)')
     expect(screen.getByTestId('agent-details')).not.toHaveAttribute('open')
   })
 
@@ -514,7 +514,7 @@ describe('a short, calm dialog (U6)', () => {
 
   it.each([
     ['the command changed', preview({ display: 'claude --other' })],
-    ['the model changed', preview({ model: 'haiku', model_source: 'addon', model_by: 'Model routing' })],
+    ['the model changed', preview({ model: 'haiku', model_source: 'addon', model_by: 'model-routing' })],
     ['a new warning appeared', preview({ warnings: ['A new thing to read.'] })],
     ['a new environment name appeared', preview({ env: ['NEW_SECRET_NAME'] })],
     ['an unread login-shell notice appeared', preview({ warnings: [LOGIN_NOTICE] })],

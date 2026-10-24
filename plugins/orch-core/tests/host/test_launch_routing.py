@@ -62,8 +62,10 @@ ANSWER = {"model": s.get(params["harness"], {}).get(params["mode"])}
 @pytest.fixture(autouse=True)
 def _fresh_memo():
     routing._memo.clear()
+    routing._failed.clear()
     yield
     routing._memo.clear()
+    routing._failed.clear()
 
 
 def build(w, tmp_path, body=FROM_SETTINGS, name=NAME, caps=("choose_model",)) -> tuple[Path, Path]:
@@ -129,7 +131,7 @@ def test_the_add_ons_model_is_in_the_argv_the_spec_and_the_record(ready, tmp_pat
     _, key = ready.ticket()
     got = preview(c, ticket=key, harness="claude-code", mode="work")
     assert got["blocked"] is None and got["model"] == "sonnet" and got["model_source"] == "addon"
-    assert got["model_by"] == "Model routing"
+    assert got["model_by"] == NAME
     assert got["argv"][:2] == [got["program"], "--model"] and got["argv"][2] == "sonnet"
     assert preview(c, ticket=key, harness="claude-code", mode="fix")["model"] is None  # the add-on said null
     assert preview(c, ticket=key, harness="codex", mode="fix")["model"] == "gpt-5.4"
@@ -274,3 +276,26 @@ def test_a_person_run_shell_is_never_routed(ready, tmp_path):
     c = ready.conn()
     ok(c.call("term.preview", {"harness": "claude-code"}))
     assert calls(log) == []
+
+
+def test_b2_3_a_failure_before_the_call_is_launch_invalid_too(ready, tmp_path, monkeypatch):
+    route(ready, tmp_path)
+    from orch.addons import install
+
+    def boom(*a, **k):
+        raise ValueError("unexpected")
+
+    monkeypatch.setattr(install, "read_installed", boom)
+    got = pre(ready)
+    assert got["blocked"]["code"] == "launch.invalid" and got["blocked"]["message"] == routing.UNANSWERED
+
+
+def test_b2_4_a_failed_answer_is_not_asked_again_for_a_while(ready, tmp_path, monkeypatch):
+    _, log = route(ready, tmp_path, body="sys.exit(3)\nANSWER = None\n", table=None)
+    pre(ready)
+    pre(ready)
+    assert len(calls(log)) == 1  # the second preview did not run the add-on
+    t = [routing.time.monotonic() + routing.FAIL_SECONDS + 1]
+    monkeypatch.setattr(routing.time, "monotonic", lambda: t[0])
+    pre(ready)
+    assert len(calls(log)) == 2

@@ -310,7 +310,6 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
     except ConfigError as exc:
         config = RunnerConfig()
         p.block("launch.invalid", str(exc))
-    routed_title: str | None = None
     source, routed_by = ("chosen" if model is not None else "default"), None
     if agent and model is None and mode is not None and harness in HARNESSES:
         # an add-on that holds choose_model proposes; core checks the answer against its closed list, and the person's
@@ -322,7 +321,6 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
             p.block("launch.invalid", routed.problem)
         elif routed.model is not None:
             model, source, routed_by = routed.model, "addon", routed.by
-            routed_title = routed.title
     for name, value, of in (("model", model, harness), ("subagent_model", sub, "claude-code")):
         bad = check_model(name, value, of)
         if bad:
@@ -417,7 +415,7 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
         {*env_names, *env_fixed, "TERM", "COLORTERM", *(("ORCH_GRANT", "ORCH_SESSION") if agent else ())}
     )
     out: dict[str, Any] = {
-        "spec": digest, "model": model, "model_source": source, "model_by": routed_title, "argv": argv,
+        "spec": digest, "model": model, "model_source": source, "model_by": routed_by, "argv": argv,
         "display": display(argv), "login_shell": login, "program": program, "cwd": where["cwd"],
         "cwd_path": where["path"],
         "env": shown_env, "blocked": p.blocked, "warnings": p.warnings[:8],

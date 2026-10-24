@@ -5,14 +5,14 @@ from orch_dashboard.adapters import runs as project
 
 
 def test_the_preview_shows_the_model_and_who_chose_it():
-    got = project.agent_preview({"model": "sonnet", "model_source": "addon", "model_by": "Model routing", "cwd": {}})
-    assert got["model"] == "sonnet" and got["model_source"] == "addon" and got["model_by"] == "Model routing"
+    got = project.agent_preview({"model": "sonnet", "model_source": "addon", "model_by": "model-routing", "cwd": {}})
+    assert got["model"] == "sonnet" and got["model_source"] == "addon" and got["model_by"] == "model-routing"
     odd = project.agent_preview({"model": "bad name", "model_source": "somebody", "model_by": "x", "cwd": {}})
     assert odd["model"] is None and odd["model_source"] is None and odd["model_by"] is None
     old = project.agent_preview({"model": "sonnet", "model_source": "workspace", "cwd": {}})
     assert old["model_source"] is None  # the signed table is gone: no such source
     chosen = project.agent_preview(
-        {"model": "sonnet", "model_source": "chosen", "model_by": "Model routing", "cwd": {}}
+        {"model": "sonnet", "model_source": "chosen", "model_by": "model-routing", "cwd": {}}
     )
     assert chosen["model_by"] is None  # only an add-on's choice names the add-on
 

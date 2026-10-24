@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import threading
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -35,21 +36,29 @@ TIMEOUT = 3.0
 UNANSWERED = "Model routing did not answer: pick a model or turn it off"
 _TOO_MANY = "More than one add-on chooses models: turn all but one off, or pick a model"
 _MEMO_MAX = 64
+FAIL_SECONDS = 30.0
 
 
 @dataclass(frozen=True)
 class Routed:
-    """``model`` the add-on chose (``None``: the harness default), ``by`` the add-on's name and ``title`` its title
-    (the title is the package's own word, not signed), or a ``problem`` that blocks the start."""
+    """``model`` the add-on chose (``None``: the harness default), ``by`` the add-on's SIGNED name (the only word the
+    review shows; a package's own title is not signed), or a ``problem`` that blocks the start."""
 
     model: str | None = None
     by: str | None = None
-    title: str | None = None
     problem: str | None = None
 
 
 _memo: dict[tuple[str, str, str, str], str | None] = {}
+_failed: dict[tuple[str, str, str, str], float] = {}  # key -> monotonic time until which a failure stands
 _lock = threading.Lock()
+
+
+def _fail(key: tuple[str, str, str, str]) -> None:
+    with _lock:
+        if len(_failed) >= _MEMO_MAX:
+            _failed.pop(next(iter(_failed)))
+        _failed[key] = time.monotonic() + FAIL_SECONDS
 
 
 def _remember(key: tuple[str, str, str, str], model: str | None) -> None:
@@ -60,7 +69,16 @@ def _remember(key: tuple[str, str, str, str], model: str | None) -> None:
 
 
 def choose(service: WorkspaceService, harness: str, mode: str) -> Routed:
-    """What the active ``choose_model`` add-on picks for ``harness`` in ``mode``. Call it outside the store lock."""
+    """What the active ``choose_model`` add-on picks for ``harness`` in ``mode``. Call it outside the store lock.
+    Whatever goes wrong, at any step, is the one ``launch.invalid`` problem of the caller."""
+    try:
+        return _choose(service, harness, mode)
+    except Exception:  # noqa: BLE001  (fail closed: the start is blocked, nothing is guessed)
+        LOG.exception("model routing failed before or around the add-on call")
+        return Routed(problem=UNANSWERED)
+
+
+def _choose(service: WorkspaceService, harness: str, mode: str) -> Routed:
     from orch.addons import install, runner
     from orch.addons.manifest import ManifestError
     from orch.addons.package import PackageError
@@ -93,11 +111,15 @@ def choose(service: WorkspaceService, harness: str, mode: str) -> Routed:
         key = (granted.package_sha256, hashlib.sha256(canon.dumps(settings)).hexdigest(), harness, mode)
     except (ValueError, TypeError, RecursionError):
         return Routed(problem=UNANSWERED)
+    now = time.monotonic()
     with _lock:
         hit = key in _memo
         cached = _memo.get(key)
+        failed = _failed.get(key, 0.0) > now
     if hit:
-        return Routed(cached, granted.name, manifest.title)
+        return Routed(cached, granted.name)
+    if failed:  # a failed answer is not asked again for a short while: a hung add-on holds no worker per preview
+        return Routed(problem=UNANSWERED)
     try:
         answer: Any = runner.call(
             package,
@@ -108,15 +130,18 @@ def choose(service: WorkspaceService, harness: str, mode: str) -> Routed:
         )
     except runner.RunnerError as exc:
         LOG.warning("model routing add-on %s: %s", granted.name, exc.code)
+        _fail(key)
         return Routed(problem=UNANSWERED)
     except Exception:  # noqa: BLE001  (fail closed: whatever went wrong, the start is blocked)
         LOG.exception("model routing add-on %s failed", granted.name)
+        _fail(key)
         return Routed(problem=UNANSWERED)
     model = _checked(answer, harness)
     if model is False:
+        _fail(key)
         return Routed(problem="Model routing gave a model orch does not offer here: pick a model or turn it off")
     _remember(key, model)  # type: ignore[arg-type]
-    return Routed(model, granted.name, manifest.title)  # type: ignore[arg-type]
+    return Routed(model, granted.name)  # type: ignore[arg-type]
 
 
 def _checked(answer: Any, harness: str) -> str | None | bool:

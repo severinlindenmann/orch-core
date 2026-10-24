@@ -36,7 +36,7 @@ describe('shownModel', () => {
     const shown = shownModel({ harness: 'claude-code', mode: 'work', model: '' })
     const seen = reviewed({ choice: { harness: 'claude-code', mode: 'work', model: '' }, model: shown })
     expect(compareStart(preview({ model: null, model_source: 'default' }), seen, args, ACK).ok).toBe(true)
-    expect(compareStart(preview({ model: 'opus', model_source: 'addon', model_by: 'Model routing' }), seen, args, ACK).ok).toBe(false)
+    expect(compareStart(preview({ model: 'opus', model_source: 'addon', model_by: 'model-routing' }), seen, args, ACK).ok).toBe(false)
   })
 })
 

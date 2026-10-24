@@ -9,7 +9,8 @@ closed-ticket rules (amendment of 11 Oct 2026), and v1.5 answers §9 item 8 (set
 grant and session fields, the live-tail payload with its workspace-topic filter fix, artifact and commit listings;
 §0.8.5). §0.8.6 adds click-to-sign (H5c, D-P2-23, owner decisions of 12 Oct 2026; built, off by default per workspace). **v1.6** (§12, decided 12 Oct 2026, with three owner decisions) adds the phase-2
 addons on the host side: the runner, terminals, start agent, worktrees, records and quick tasks (caps `run/1`, `term/1`,
-`worktree/1`, `records/1`, `quick/1`, and `runner/1` on a new runner socket). Changes go through the coordination log.
+`worktree/1`, `records/1`, `quick/1`, and `runner/1` on a new runner socket). §13 (24 Oct 2026, #1198 H1) specifies tier B:
+agents and add-ons as their own OS user. Changes go through the coordination log.
 
 Built on `origin/develop` 908f2511. Decisions are numbered **D-P2-n**, each with a one-line reason.
 
@@ -83,8 +84,8 @@ The schemas below use a compact notation:
     worker connection (§0.5). It serves the jobs of **every** workspace, and each job names its `workspace_id`. A
     worker-UID connection to a workspace or control socket is `fatal` `peer.denied`, and so is any other UID on the
     worker socket.
-  - One runner socket, `<run>/runner/host.sock` (v1.6, §12.3.3; tier A: directory 0700, host UID; tier B: 0750, group
-    `orch-runner`, socket 0660), for one runner connection per runner UID, accepted only from the runner unit's main
+  - One runner socket, `<run>/runner/host.sock` (v1.6, §12.3.3; tier A: directory 0700, host UID; tier B: the setgid run
+    directory of §13.3, group `orch-agent-<user>`, socket 0660), for one runner connection per runner UID, accepted only from the runner unit's main
     PID. The runner's own terminal socket `<run>/term/<runner uid>/term.sock` is not a host socket (§12.6.1).
 - **Frame.** A 4-byte unsigned big-endian length `n`, then `n` bytes, with `1 ≤ n ≤ 2 097 152`. Readers handle partial
   and coalesced reads. The body must arrive within 10 s of the first byte of its length prefix.
@@ -1692,8 +1693,8 @@ change only where marked: gate `material.texts`, and `op` in the fingerprint inp
     event that signs a `source_sha`, the host reads each linked repo's head again through its git reader (under the
     caller's principal) and refuses with `gate.stale` when it differs from the signed source list, or with
     `observe.unavailable` when the reader cannot answer (fail closed). The working tree's cleanliness is
-    `tree.check` at prepare and at binding (N3); in tier A the host runs it itself (H10a, below D-P2-19), in tier B
-    `verdict` and `approve code` answer `observe.unavailable` until the worker (H10) takes the job over.
+    `tree.check` at prepare and at binding (N3); the host runs it itself (H10a, below D-P2-19), in tier B too, on the
+    agent's clone through `orch.gitread` (§13.4).
 12. **Gate texts.** Gate material carries `texts` for every section in `input.sections` (next to `material.policy`);
     the signer checks each against `input.sections` and shows them with the criteria, tasks, links and policy, as P1's
     review did. `gate_gen` and `source_sha` are shown labelled as host attestations; the policy hash is recomputed from
@@ -2347,8 +2348,10 @@ prompts (D-P2-15); the prepare → check and recompute → sign → submit contr
 and the fingerprint are unchanged; `orch sign CODE` (H5b) stays available **whether the flag is on or off** (item 8: the terminal hand-off keeps working while the flag is on).
 **Accepted risk, shown when click-to-sign is switched on, in the workspace settings and in the docs (amended 16 Oct 2026,
 "As built in B6": no longer on every sign panel): "Convenience signing: agents running as you, or anything that takes
-over this dashboard, could sign."** This supersedes D41's per-signature presence for phase 1; H9 (Touch ID) and tier B bring
-isolation back in phase 3, and only after migration, UID separation and removal of the old convenience devices.
+over this dashboard, could sign."** This supersedes D41's per-signature presence for phase 1. **Tier B (§13.7, owner decision of 24 Oct 2026):** one click
+stays allowed when agents run as their own OS user, and is on by default only where `isolation.detect()` finds that;
+elsewhere it is off by default and the line reads "Agents run as you. Anything an agent runs can sign with One click and
+read your files."
 
 **0. The trust boundary (read this first).** The signer constructs and validates the review data and binds signing to
 the corresponding immutable signing bytes. **The dashboard HTTP process and its browser application are trusted to
@@ -2364,8 +2367,8 @@ dashboard.** This is a separate exposure from the same-UID agent risk, which is 
 
 - Click-to-sign is enabled per workspace by the host-state file `<state>/host/convenience.json` (0600, host UID, in
   the D-P2-17 custody list): `{"v":1, "workspaces":{"<ws id>":{"enabled":true, "at":Time}}}`, written by
-  `orch host convenience on|off --workspace W` (a host-UID CLI command, not a socket op), or, in tier A only, by the
-  click signer's custody switch (item 3a, amended 15 Oct 2026). **It is off for every workspace until switched on**: the
+  `orch host convenience on|off --workspace W` (a host-UID CLI command, not a socket op), or by the click signer's
+  custody switch (item 3a, amended 15 Oct 2026; in both tiers since §13). **It is off for every workspace until switched on**: the
   compatibility gate (item 6) is met first.
 - **The condition.** Convenience signing is allowed only while every reader of the workspace's log is local and
   updated: no relay pairing, no phone device, no other member's devices or cores, and a model that knows the value. The
@@ -2464,8 +2467,8 @@ imported by `orch.custody`'s package init, the host or the dashboard's HTTP proc
   `<state>/person/`, a relative name that is a person-custody file (`d_….key`, `custody.json`, `click.jsonl`,
   `dk.key.json`; a `dir_fd` walk cannot be resolved from the audit event), a working directory inside those places, a
   `ctypes.dlopen` of `Security.framework`, and an import of `orch.click`, `orch.custody.convenience`,
-  `orch.custody.keychain`, `orch.custody.select` or `orch.custody.cli`. In tier A this is not an OS security
-  boundary. In tier B, permissions separate the host UID from person custody.
+  `orch.custody.keychain`, `orch.custody.select` or `orch.custody.cli`. This is not an OS security boundary:
+  in tier B (§13) the host is the person's UID too; tier B separates agents and add-ons from person custody, not the host.
 
 **3. Lifecycle** (`orch keys`, terminal CLI). Creation and custody changes are terminal CLI workflows and are not
 exposed through host APIs; the one dashboard path is the click signer's switch of item 3a. `ORCH_GRANT` refuses every `orch keys` subcommand but `status`, and the changing
@@ -2498,9 +2501,8 @@ envelope.
   does not report complete revocation while any workspace remains outstanding.
 
 **3a. The dashboard's switch** (owner decision 15 Oct 2026, amending item 3 and D-P2-23; fixed forward after the
-Opus review of #539, owner decision relayed by orch-d6 15 Oct 2026 22:45). **Tier A only**: in tier B the signer runs
-as the person UID and cannot write the host-UID flag file, so the switch is not offered there (the terminal commands
-are). The click signer (item 5) has two more channel ops, advertised as `features: ["custody"]` in its `status` (no
+Opus review of #539, owner decision relayed by orch-d6 15 Oct 2026 22:45). **Both tiers** (amended 24 Oct 2026, §13.7): tier B keeps
+host = person, so the signer can write the flag file; the earlier "tier A only" assumed a separate host UID. The click signer (item 5) has two more channel ops, advertised as `features: ["custody"]` in its `status` (no
 contract change). **The invariant, enforced in the signer and nowhere else: the dashboard turns click-to-sign on only
 by proving the passphrase of a key that is in passphrase custody now, and it never chooses a passphrase.**
 
@@ -2884,7 +2886,7 @@ is `hub_too_old`. Contract and vectors: orch-hub `docs/protocol.md` §5 and §9.
 
 | Threat | Answer |
 |---|---|
-| Same-UID agent | Accepted: can acquire or use convenience signing authority. H9/tier B improve isolation only after migration, applicable UID separation and revocation of old convenience devices. |
+| Same-UID agent | Tier A: accepted, can acquire or use convenience signing authority (One click is then off by default, §13.7). Tier B (§13): agents run as their own UID and can neither read the key nor reach the signer or (Linux) the dashboard port. |
 | Host | Honest host code never handles person keys. A compromised tier-A host has the accepted same-UID access. A separate-UID host cannot directly read person custody, but its reported origin and attestations remain untrusted. Signer checks establish specified consistency properties, not truth of every host assertion. |
 | Another local user | Cannot directly read correctly protected person custody under ordinary OS permissions. Can reach loopback HTTP; signing additionally depends on bearer and session security. A stolen bearer crosses this boundary. |
 | Remote web page | Without credentials, same-origin execution or another vulnerability, browser requests are constrained by bearer, Host/Origin validation, CORS and framing controls. A page gaining same-origin script execution can drive signing. |
@@ -4833,7 +4835,7 @@ tolerated when the registry is read (any other value is refused) and never writt
 version in the project root is served as unavailable with the message that says to delete it (there is no migration).
 
 - The class and mapping rules are §0.5 and §0.8.3. The mapping is checked at registration and again on every request.
-- **Machines without agent UIDs** (dev, or a Mac before H3c) are tier A (§0.5).
+- **Machines without agent UIDs** (dev, no admin step done, Windows, or a Mac before M1) are tier A (§0.5); tier B is §13.
 
 ## 2. The socket
 
@@ -5141,7 +5143,7 @@ UID. P2 adds no keychain.**
 | A direct CLI with another state directory (H2a) | Ownership lives in `<state>/hosts/<ws>`, so a direct-mode CLI with a different `ORCH_STATE_DIR` or `XDG_CONFIG_HOME` does not see the registration and can write to a served workspace (trusting its genesis on first use in that directory). Known limit of D-P2-18 in tier A. Tier B closes it, because only the host can write the store files. A follow-up may have the host hold a lock inside the workspace while it serves. |
 | A job takes over the worker role | Worker connections are accepted only from the service manager's main PID (N1). |
 | A worktree that blocks or misleads the check | `O_NONBLOCK`, regular files only, symlinks by target, escaped names (N3). |
-| Click-to-sign (phase 1, D-P2-23) | §0.8.6 item 8. Accepted: a same-UID agent, and anything that takes over the dashboard (XSS, stolen bearer, code execution in the HTTP process), can sign (shown on the card). The signer signs only requests it prepared itself, binds the full signing inputs, and keeps the key out of the HTTP process against passive disclosure. Readers that do not know `convenience` are excluded per workspace. |
+| Click-to-sign (phase 1, D-P2-23) | §0.8.6 item 8. Tier A accepted (tier B: §13.9): a same-UID agent, and anything that takes over the dashboard (XSS, stolen bearer, code execution in the HTTP process), can sign (shown on the card). The signer signs only requests it prepared itself, binds the full signing inputs, and keeps the key out of the HTTP process against passive disclosure. Readers that do not know `convenience` are excluded per workspace. |
 | A prepared request that smuggles an extra event | The signer checks every event against `EMITS_V1[op]`, one log, one `based_on` and its own person, and lists every event (N4). The fingerprint covers the events (N2). |
 
 
@@ -5230,9 +5232,8 @@ UID. P2 adds no keychain.**
   - There is no worker UID in tier A, so the host runs the `tree.check` job itself: `TreeCheckInput` from the repo's
     pins, one `python -I -m orch.gitread` child through the launcher (fixed argv, empty environment, the §0.11 limits,
     the child's audit hook) under the `worktree` profile, and the child's raw answer checked and escaped into
-    `TreeCheckResult` by the host (`orch.gitread.treecheck`, `orch.gitread.treejob`). The phase-3 worker takes over
-    the same job kind and input; only the caller of the child changes. A tier-B workspace has no check until then
-    (fail closed).
+    `TreeCheckResult` by the host (`orch.gitread.treecheck`, `orch.gitread.treejob`). The phase-3 worker may take over
+    the same job kind and input; only the caller of the child changes. Tier B (§13.4) keeps the host as the caller.
   - It also compares the index with `HEAD`'s tree, so a staged change, an unmerged entry or an `intent-to-add` entry
     is a change (`why:"modified"`; a path of `HEAD` missing from the index: `"deleted"`).
   - **Clean at the signed commit.** `TreeCheckResult` also carries `head` and `head_ref` (host-side, never shown):
@@ -5482,24 +5483,22 @@ dispatch is turned on.
    - **`diff`'s linked-repo check becomes a confidentiality boundary.** In tier B the check that `repo` is in the
      ticket's `links.repos` must be a real boundary (commit provenance, or per-person repo visibility in
      `settings.repos`), because agent UIDs then cannot read the disk themselves. In phase 1 it is accepted (§7 v1.5).
-11. **Tier B for the phase-2 addons (§12).**
-   - **Runner:** one per agent UID as a system service (`UserName=`/`User=`), installed by the H3c helper; runner socket
-     group `orch-runner`; the term socket directory 0750 with a group holding the person, socket 0660.
-   - **Shells from the dashboard run as the agent UID** ("this terminal runs as orch-agent-…; it cannot read your keys");
-     no "shell as me" from the dashboard. This is #307's original "terminals behind the agent UID".
+11. **Tier B for the phase-2 addons (§12).** Specified in §13 (24 Oct 2026), which replaces the earlier list here:
+   - **Runner:** one system unit per agent user (§13.2 item 7); runner socket in the setgid run directory (§13.3); the
+     terminal socket in the agent's own run directory with an ACL for the person.
+   - **Shells from the dashboard run as the agent user** ("This terminal runs as orch-agent-<user>. It cannot read your
+     keys."); no "shell as me" from the dashboard (§13.5).
    - **Columns become real:** an agent-UID process is class `agent`, never P, so `term.*`, `agent.start` and
      `grant.deposit` are refused to it. Owners may need to see other persons' runs on a shared host.
    - **Runner grants** per (workspace, person, agent UID); `grant.deposit` names the runner UID; a UID-restricted grant
      (item 4) becomes useful; "own" means the same grant (item 10).
-   - **Grant signing:** H9 or the terminal; click-to-sign ends after migration (§0.8.6).
-   - **Environment:** agent UIDs get their own home and credentials; nothing of the person's (`SSH_AUTH_SOCK`, API keys)
-     is carried by default.
-   - **Resource limits and an orphan sweep per agent UID** become possible and are reconsidered.
-   - **Worktrees** are owned by the agent UID and must be group-readable by the worker UID for `tree.check` (runner
-     umask 002, directory group `orch-<ws>`).
+   - **Grant signing:** one click stays allowed in tier B (§13.7, owner decision of 24 Oct 2026; this reverses the
+     earlier "click-to-sign ends after migration").
+   - **Environment:** the agent user's own home and credentials; nothing of the person's (§13.5).
+   - **Resource limits** per agent unit (§13.2 item 7).
+   - **Worktrees** are worktrees of the agent's own clone, read by the host through `orch.gitread` (§13.4).
    - **Terminal rendering** moves to a separate restricted origin (deferred from D-P2-30).
-   - **Records** stay person-side (on a Mac the person UID is the host UID); the store files are host-owned and
-     group-readable.
+   - **Records** stay person-side; the store files are host-owned.
 12. **Person `new` with labels in one signed request** (quick add by click, §12.9): extend `EMITS_V1["new"]` for
     persons to `ticket.created` plus one `ticket.updated` (labels, priority, size), reviewed in H5a's style; until then
     the click flow signs twice.
@@ -11996,7 +11995,7 @@ Opus delta pass.
 
 **Phase 2 is tier A.** Agents, the runner, the dashboard server, the click signer and the person are one UID. No column,
 switch or process split below is a boundary against a same-UID process; each says what it is (policy, fault separation,
-protection against passive disclosure). §9 item 11 lists what tier B (phase 3) changes. Windows stays in direct mode.
+protection against passive disclosure). §9 item 11 and §13 give what tier B changes. Windows stays in direct mode.
 
 ### 12.1 Overview
 
@@ -12032,7 +12031,7 @@ Records tool (python -I -m orch.records, one shot, person UID): from `orch recor
 | **D-P2-28** | **Launch specs are computed by core** from a closed harness registry (`claude-code`, `codex`, `shell`; the F1 `actor.id` values) and validated values (ticket, mode, model, subagent model). Argv only; the prompt is one element ("data to the OS, instructions to the harness"). `agent.preview` returns a `spec` digest; `agent.start {…, spec}` recomputes it and refuses `launch.changed` on any difference; preview has no side effects. **Agents start through the person's login shell** in exec form `[$SHELL, "-l", "-c", 'exec "$0" "$@"', argv…]` (a POSIX shell is required, else `harness.shell_unsupported`); the preview says "the program is found and started through your login shell; your shell profile runs first and can change what runs". Opt-out: `runner.json {login_shell:false, programs:{…absolute paths…}}`. Environment allow-list (§12.5.3) with a `pass_env` deny-list. | The client chooses values, never a command; without the login shell launchd-started harnesses are not found on a normal Mac. | **SC** |
 | **D-P2-29** | **Supervision.** Every child starts through a fixed trampoline (`python -I -m orch.runner.exec`). Linux: each run enters its own cgroup **before** `exec` and stops with `cgroup.kill` until `populated=0`. macOS: process group plus a sweep of the run's session id, **best-effort cleanup, not containment** (a `setsid()` descendant escapes). `run.stop` answers `cleanup:"complete"\|"incomplete"\|"unknown"`. Every signal targets a (pid, birth time) pair re-read right before `kill`; the runner kills only its own runs, never by name, never UID-wide. **No CPU, memory or process-count limits in phase 2** (agents are the person's own programs; revisit with tier B). | Honest claims; "kill only own PIDs" on a shared machine. | **SC** |
 | **D-P2-30** | **Terminal transport.** The runner reads every PTY continuously into a 1 MiB ring; a slow or absent viewer never blocks an agent. **Attach is read-only by default**; the write lease is taken only when the capability is consumed, only if nobody holds it, or with explicit `take:true`; a reconnect or remount never takes it implicitly. Writes and resizes carry the **lease generation** and an **input id**, both checked at the runner; replay never generates input; a `gap` resets the client's parser. Control frames are never dropped. xterm.js runs with the hardened configuration of §12.6.7 (no links in phase 2). A separate restricted origin for terminal rendering is **deferred to phase 3** (accepted risk, owner FYI). | Fixes double input, lease ping-pong and answerback injection. | **SC** |
-| **D-P2-31** | **Dashboard execution** (**owner decision, 12 Oct 2026: accepted**; start agent and terminals may be switched on per workspace from the terminal; tier B narrows it in phase 3). One machine switch, `orch runner enable --workspace W` (terminal only: `/dev/tty`, refused under `ORCH_GRANT`, prints the risk, requires typing the workspace prefix, records time and text), gates agent start, worktree git and terminals; the workspace also needs the addon granted (`addon.granted`). `--no-terminals` is a UX preference only and does not make agent execution safe. The dashboard has no op that turns it on; a same-UID process can. **Card line** (workspace card, Start dialog, terminal header): **"Dashboard execution: agents and terminals started here run as you. Anything that takes over this dashboard, or any agent it starts, can run commands and read your files and keys."** Owner's plain-language risk: *"Anything that takes over the dashboard (a bug in the web page, a stolen login token, a malicious dependency), or any agent it starts, can run any command as you and read your files, SSH keys and orch keys. Today a takeover can already sign as you; after this it can also run code."* | As soon as the dashboard can start an agent, a takeover is code execution as the person, terminals or not. | **SC** |
+| **D-P2-31** | **Dashboard execution** (**owner decision, 12 Oct 2026: accepted**; start agent and terminals may be switched on per workspace from the terminal; tier B narrows it in phase 3). One machine switch, `orch runner enable --workspace W` (terminal only: `/dev/tty`, refused under `ORCH_GRANT`, prints the risk, requires typing the workspace prefix, records time and text), gates agent start, worktree git and terminals; the workspace also needs the addon granted (`addon.granted`). `--no-terminals` is a UX preference only and does not make agent execution safe. The dashboard has no op that turns it on; a same-UID process can. **Card line** (workspace card, Start dialog, terminal header): **"Dashboard execution: agents and terminals started here run as you. Anything that takes over this dashboard, or any agent it starts, can run commands and read your files and keys."** Owner's plain-language risk: *"Anything that takes over the dashboard (a bug in the web page, a stolen login token, a malicious dependency), or any agent it starts, can run any command as you and read your files, SSH keys and orch keys. Today a takeover can already sign as you; after this it can also run code."* In tier B the card line is §13.5's ("This terminal runs as orch-agent-<user>. It cannot read your keys."). | As soon as the dashboard can start an agent, a takeover is code execution as the person, terminals or not. | **SC** |
 | **D-P2-32** | **Worktrees.** One per (ticket, linked repo) at the host-chosen path `<repo path>.worktrees/<WS8>-<KEY>` (`WS8` = the first 8 characters of the workspace id), on the ticket's current `links.branches` branch, created and removed by the runner's git under a per-repo lock. The host then pins it and records a **registration generation**. Prepared requests, every `human.get` binding and the D58 precommit bind (workspace, ticket uid, repo, branch ref, source sha, worktree pin, generation); a new registration invalidates outstanding preparations, and nothing ever falls back to the declared working copy. HEAD is rechecked against the current branch; one ticket per branch (`worktree.branch_in_use`). A clean tree is an observation of that directory at that moment, not proof that tests ran on those bytes. Amends D-P2-19 "Declared paths" and H10a. | As built, D58 and `tree.check` read only the declared working copy; binding the registration closes "prepare against worktree A, swap the registration". | **SC** |
 | **D-P2-33** | **Records** are the store's own files (never `.state/`), committed by a person-side one-shot tool `python -I -m orch.records`, never by the host or the runner, into a **dedicated records repo** only. The tool commits exactly the manifest the host names (`records.snapshot`): a temporary index built **from empty**, the written tree checked against the manifest before `commit-tree`; history validated once (or a fresh orphan history); the real index refreshed only by compare-and-swap; single-read hashing under a pinned root; byte limits. Push is **fast-forward only**: the lease guards the race, it never authorizes a non-fast-forward; no rebase. Git commits are unsigned transport: authority comes only from F1 replay and checkpoints. | Correctness (no `.state/` in history, no clobbered index, no torn line); no git in the host; push credentials are the person's. | **SC** |
 | **D-P2-34** | **A records push adds a reader** (**owner decision, 12 Oct 2026: the private remote is allowed**; one exact remote URL marked "only I read this"; the docs and the UI state that orch trusts the owner's word). Every push path calls `records.export_check {manifest, sha, url, ref}` right before pushing; while the convenience flag is on or the history holds `auth:"convenience"` events it answers `sign.convenience_readers` unless that exact normalized URL is in this machine's `private_remotes` (set in the terminal only). **As built (#441):** "the history" is the merged history, **or** the durable `convenience_seen` mark (§0.8.6 item 1; never cleared by a restore), **or** the records tool's scan of the event logs reachable from the pushed commit (`history_convenience`, which refuses that push only and never writes the mark), reported before any network call; any error fails closed. The tool resolves the effective push URL once and uses that literal string for `ls-remote` and `push`. This is a policy orch enforces on its own export paths, not information-flow control (manual git can still push). Owner's plain-language risk: *"orch trusts your word; if someone else can read that remote, they get your convenience-signed history."* | A records remote is a copy of the workspace log that other cores may read; a per-workspace boolean would silently follow a changed remote. | **SC** |
@@ -12541,8 +12540,8 @@ Where the code differs from or adds to §12.3, §12.4 and §0.8.6 item 6, the co
 
 - **Location.** The runner listens on `<run>/term/<runner uid>/term.sock`. `<run>` is the same run directory the host
   and its clients use (`--run`, else `ORCH_HOST_RUN_DIR`, else `<state>/run`: `orch.host.enable.run_dir_for`). The
-  directory `<run>/term/<uid>/` is created by the runner, owned by the runner UID, mode 0700 in tier A (tier B: 0750
-  with a group holding the person, §9 item 11); the socket is 0600 (tier B 0660). The same ancestor rules as D-P2-6
+  directory `<run>/term/<uid>/` is created by the runner, owned by the runner UID, mode 0700 in tier A (tier B: §13.3,
+  `/run/orch/agents/<agent uid>/` with an ACL for the person); the socket is 0600 (tier B 0660). The same ancestor rules as D-P2-6
   apply; the path stays under 100 bytes.
 - **Discovery.** The runner reports `term_socket` in `runner.hello`; the host accepts it only if it equals
   `<run>/term/<runner uid>/term.sock` and returns it in every `term.attach` answer as `socket`, with
@@ -13389,3 +13388,254 @@ The add-on `publish` ships inside orch-core (capability `network`); `addon.grant
   servers in words, and the staged copy's own words are the share's review. `orch sign CODE` stays the backup.
   `click/protocol.op_class` still classes `settings.set` by key (`SETTINGS_TERMINAL_KEYS`, now empty) from the
   request's `set` before prepare and from the prepared events at sign time; the sign-time class wins.
+
+## 13. Tier B: agents and add-ons as their own OS user (#1198 H1, #287)
+
+**Status: spec, 24 Oct 2026, not built.** Tasks L1–L13, A1–A4, E1, M1–M3 of #1198 build it. **Owner decisions of 24 Oct
+2026** (not reopened): Linux (a headless VPS) first, then Windows, then macOS; One click is on by default only where
+isolation is detected (13.7), elsewhere off with a red line; a VPS where the person logs in as `root` gets a normal
+person user `orch` from the installer, which runs host, dashboard and keys; dashboard terminals run as the agent user
+(a shell as the person stays with SSH); one agent user per person for now; add-ons get slot users (#287) with the
+marketplace stream's requirements R-M1 to R-M4 (13.8).
+
+This section is authoritative for tier B. Where it differs from earlier text (D-P2-2, D-P2-5, D-P2-6, D-P2-24, D-P2-27,
+D-P2-31, §0.2, §0.8.6, §9 items 10 and 11, §12.4, §12.6, §12.7, H3c), this section wins and the earlier text is
+amended to point here. **No migration:** tier A is not a compatibility path. It stays only where tier B does not exist
+(no admin step done, Windows, macOS before M1, and the dev sandbox's tests), and the dashboard says so (13.7). On Linux,
+once L1–L7 are built, dashboard execution (agent start, terminals) requires tier B.
+
+### 13.1 Principals (Linux)
+
+The host stays the person's UID: **host = the person's OS user**. The threat tier B answers is agents and add-ons, not
+the host; a separate host UID stays possible later and nothing here blocks it.
+
+| OS user | Runs | Holds |
+|---|---|---|
+| the person, e.g. `sev` (= host UID) | host, dashboard server, click signer, CLI, `orch sign` | One-click key, passphrase key, WSK, host state, add-on credentials, the person's checkouts |
+| `orch-agent-<user>` (system user, password locked, shell `/bin/bash`) | the runner (system unit), every agent run, every dashboard terminal | its own HOME, its Claude/Codex login, its clones and worktrees, the grants deposited to it |
+| `orch-addon-1` … `orch-addon-8` (system users, `nologin`) | one add-on slot runner each and the calls assigned to it | nothing persistent; a per-call work dir |
+
+One agent user per person (not per workspace): a person's agents can read every repository that person shares with
+them. Per-workspace agent users are a later option the layout allows. The worker role (H10) is unchanged by this step.
+Classes are §0.5's: an agent-user connection is class `agent` (column N, or G with a verified grant), never P or C,
+so `human.*`, `term.*`, `agent.start`, `grant.deposit` and the control ops are refused by the kernel UID, not by an
+environment variable.
+
+### 13.2 The one admin step: `orch-os-setup`
+
+Root is needed once, at install, never at run time: no setuid binary, no capabilities, no root daemon, no polkit rule.
+`orch-os-setup` is a short Python program in the release. The installer runs it when it is root (most VPSs); otherwise
+setup shows one line to copy, `sudo <release>/bin/orch-os-setup --person <user>`, with a "Check again" button. It
+computes a plan from OS facts, prints it, applies it, and may run again: it repairs, it never widens. It uses fixed
+absolute binaries.
+
+1. **Users.** `useradd --system --user-group --home-dir /var/lib/orch/agents/<user>/home --create-home --shell
+   /bin/bash orch-agent-<user>`, password locked; `orch-addon-1..8` with `/usr/sbin/nologin` and home
+   `/var/lib/orch/addons/<n>`. A pre-existing user of one of these names without orch's pin is refused, never adopted.
+2. **Privileged groups refused.** If an agent or slot user is in `sudo`, `wheel`, `admin`, `adm`, `docker`, `lxd`,
+   `libvirt`, `disk` or `shadow` (each is root or close to it), the helper refuses. The host checks again at every
+   start (13.6).
+3. **Pins.** Root-owned `/etc/orch/pins/<uid>.json`: `{"class":"agent"|"addon","host_uid":…,"workspaces":"*"}`
+   (the `orch.host.pins` format; class `addon` is new). A pinned UID is never a person.
+4. **Run directories** (`/etc/tmpfiles.d/orch.conf`):
+   - `d /run/orch 0755 root root`;
+   - `d /run/orch/<person uid> 2750 <person> orch-agent-<user>`: setgid, so every socket the host creates inside
+     carries the agent's group without the person joining it; the host `chmod`s each socket it shares to 0660. The
+     control directory inside stays 0700;
+   - `d /run/orch/agents/<agent uid> 0750 orch-agent-<user> orch-agent-<user>` plus the ACL `u:<person>:rwx`,
+     default `u:<person>:rw`, so the dashboard (the person) can reach the runner's terminal socket without joining any
+     group (a group change needs a re-login of the person's systemd user manager).
+5. **Agent tree.** `/var/lib/orch/agents/<user>/{home,state,repos}`, owned by the agent, 0700, except `repos` 0750
+   with the default ACL `d:u:<person>:rX` (the host reads clones through `orch.gitread`).
+6. **Person-side sharing**, set **as the person** by the CLI right after (no root needed for one's own files):
+   `u:<agent>:x` on each ancestor of the release, the interpreter and each workspace repository inside the person's
+   home; `u:<agent>:rX` plus a default ACL on the release tree and on `<repo>/.git` only. Each ACL is read back and
+   verified.
+7. **Units.** `orch-runner@.service` (instance = the agent user) and `orch-addon@.service` (instance = the slot),
+   enabled and started: `User=%i`, `Delegate=yes` (per-run cgroups, D-P2-29), `NoNewPrivileges=yes`, `PrivateTmp=yes`,
+   `ProtectSystem=strict`, `ProtectHome=read-only`, `ReadWritePaths=/var/lib/orch/agents/%i /run/orch/agents/%i`,
+   `RestrictSUIDSGID=yes`, `TasksMax=`, `MemoryMax=` (agent: 80 % of RAM by default; D-P2-29's "no limits in phase 2"
+   was a tier-A limit). `ExecStart` is the person's `<release>/current`. On a new release the host sends
+   `runner.restart`; the runner exits when idle and `Restart=always` starts the new code, so updates need no root.
+8. **Report.** It prints what it did. A root login: the installer creates the person user `orch` first and the tunnel
+   line uses it. Running the dashboard as root would still separate agents, but a dashboard takeover would then be a
+   takeover of the server.
+
+### 13.3 Run directory and sockets (amends D-P2-2, D-P2-6, §0.2, §12.6.1)
+
+- `<run>` = `/run/orch/<person uid>`, mode 2750, owner the person, group `orch-agent-<user>` (setgid). This replaces,
+  for Linux tier B, D-P2-6's mode 0711 and per-workspace `orch-<ws>` groups (they stay the later per-workspace option).
+  The ancestor rules of D-P2-6 apply; a root-owned `/run/orch` 0755 is the helper-made parent.
+- Workspace sockets `<run>/<ws>/host.sock` and the runner socket `<run>/runner/host.sock`: owner the person, group the
+  agent's (inherited), socket 0660. The control socket directory stays 0700: `host.*` stay person-only.
+- The runner connects as before (D-P2-24): peer UID = the registered runner UID, bound to the unit's `MainPID` read over
+  systemd's D-Bus (readable by any user); the runner checks that its peer is the host UID.
+- The terminal socket moves to `/run/orch/agents/<agent uid>/term.sock` (agent-owned directory with the person's ACL,
+  socket 0660). §12.6.1's checks apply with that path: the directory owned by the runner UID, no write for others
+  except the person's ACL entry, peer UID and PID equal the runner's.
+- The agent's `orch` CLI finds the host by `ORCH_HOST_RUN_DIR=/run/orch/<person uid>` from the runner's environment.
+- No abstract Unix sockets on the person's side (everyone can reach those); kept as a tested invariant.
+
+### 13.4 Files, and the agent's own clone
+
+| Thing | Owner, mode | Agent can |
+|---|---|---|
+| One-click key `<state>/person/<ws>/devices/<d>.key` | person, 0600 in 0700 dirs | nothing |
+| passphrase key, WSK, host state, add-on credentials, all of `<state>/` | person, 0700/0600 | nothing |
+| person's `~/.ssh`, `~/.config/gh`, `~/.claude`, `~/.codex` | person | nothing if 0700/0600; **an other-readable file in a home the agent may traverse is readable** (the doctor lists and fixes these, L13) |
+| person's working tree (incl. untracked `.env`) | person | nothing |
+| person's `<repo>/.git` | person + ACL `u:agent:rX` | read (fetch) |
+| workspace store `<root>/.orch/` | person | nothing directly; only through the host socket |
+| agent clone `/var/lib/orch/agents/<u>/repos/<ws8>/<name>/` and its worktrees | agent + default ACL `u:person:rX` | everything |
+| release and interpreter | person + ACL `u:agent:rX` | read, execute |
+
+**Worktrees are worktrees of a clone the agent owns** (amends §12.7). A `git worktree add` into the person's
+repository would put the agent's metadata, refs and objects into the person's `.git`; across UIDs that needs a
+writable `.git`, and a writable `.git` lets the agent plant `config` or hooks that the person's next `git` runs as the
+person, a full escape. So there is one clone per (agent user, repository), fetched as the agent from the person's
+`.git`, and per-ticket worktrees of that clone. `safe.directory` is passed on the command line
+(`-c safe.directory=<exact path>`), never written to a file and never `*`. The gitsafe owner rule becomes "owned by the
+pinned person UID" for the fetch source and "owned by me" for the clone. The way back is unchanged in kind: `diff`,
+`tree.check` and landing read the agent's clone through `orch.gitread` as the host (the host runs `tree.check` itself,
+as in tier A; the worker split of H10 is not required for tier B), landing imports objects into the host's bare
+repository (`land/git.py`). The person's own `git` refuses the agent's clone (dubious ownership); the doctor warns on
+`safe.directory=*`. A ticket without a codebase works in a work folder inside the agent's tree (L6 fixes the path),
+not in the person's project root (§12.4.4), which the agent cannot write.
+
+**The store and the guard.** The agent reaches `.orch/` only through the host socket. Direct mode (D-P2-18) under an
+agent UID refuses with a plain message ("this workspace is served by its host"), not with `EACCES` (L7). The plugin's
+hooks (`orch instructions hook …`) run as the agent through the socket; `instructions.hook` must accept the agent
+class (today it is P-only and works because a tier-A agent is person class).
+
+### 13.5 Runner, environment, terminals, sign-in (amends D-P2-24, D-P2-27, D-P2-31, §12.4.3, §12.6)
+
+- **The runner is the agent user** (one system unit per agent user, 13.2 item 7), so it starts runs through the existing
+  trampoline (`runner/exec.py`) without any UID change. Grants deposited to it are bound to the runner UID (§9 item 11).
+- **Environment.** The run's environment comes from the runner's own (the `ENV_FROM_RUNNER` allow-list): `HOME` is the
+  agent's; `SSH_AUTH_SOCK` and the person's API keys and tokens do not exist there. Agents push only through landing or
+  a deploy key of their own. Docker through the person's daemon is refused (the `docker` group is root); rootless
+  podman as the agent is fine.
+- **Terminals run as the agent user**, never as the person; there is no "shell as me" in the dashboard (a shell as the
+  person stays with SSH). **Card line** in tier B (terminal header, Start dialog, workspace card), replacing D-P2-31's
+  line there: **"This terminal runs as orch-agent-<user>. It cannot read your keys."** D-P2-31's line ("…run as you…")
+  stays only where tier B is not active. D-P2-27's risk sentence for the runner grant stays (a dashboard takeover can
+  still give agents standing authority).
+- **Agent sign-in.** Agents log in to Claude Code and Codex once, as themselves, in an agent terminal ("Sign in your
+  agents": `claude` login, `codex login --device-auth` on a headless VPS), or with a pasted token or API key that
+  reaches the runner sealed and is written into the agent's own HOME 0600 (L10). They never use the person's login,
+  SSH key or GitHub token. The Claude trust file is written into the agent's HOME (unchanged code, different HOME).
+
+### 13.6 `isolation.detect()` (L11)
+
+Isolation is read from OS facts on every call (cached at most 60 s, with the ancestor checks of D-P2-6), never from a
+flag, a setting or a file the person's UID could write. It answers per role `isolated`, `same_user` or `broken`, with the
+first failed fact named.
+
+- **Agents `isolated`** only if all hold: the runner's peer UID ≠ the person UID; a root-owned pin
+  `/etc/orch/pins/<uid>.json` with class `agent` and this `host_uid`; the agent user in none of the privileged groups of
+  13.2 item 2 (from the group database, not the user's claim); the runner unit active with `User=` that UID (D-Bus);
+  `<run>`, the control directory and the person's `<state>` with the owners and modes of 13.2–13.4 and no ACL entry for
+  the agent on `<state>` or the key files.
+- **Add-ons `isolated`** only if, for the slot in question: a root-owned pin with class `addon`; slot UID ≠ person UID
+  and ≠ any agent UID; not in a privileged group; `orch-addon@<n>` active with that `User=`; the add-on's package and
+  environment readable by that slot and **not readable by any other slot** (ACL read back), and not writable by the slot
+  (R-M2).
+- **`same_user`**: no agent or slot users (tier A). **`broken`**: users exist but a fact fails; it is treated as
+  `same_user` everywhere and the doctor names the fact.
+- Used by: the One-click default (13.7), the dashboard's status line ("Agents run as their own user" or the red line),
+  the marketplace gate (13.8, #929) and setup's "Check again".
+
+### 13.7 One click in tier B (reverses §9 item 11 "click-to-sign ends after migration")
+
+- **One click is allowed in tier B.** With host = person, the click signer keeps running as the person next to the
+  dashboard (§0.8.6 item 5); the signer needs no change. Agents cannot read the key file and cannot reach the signer
+  (a `socketpair` child of the dashboard server, no path to connect to).
+- **Default.** On by default where `isolation.detect()` says agents are `isolated`. Off by default elsewhere (no admin
+  step, Windows, macOS before M1, `broken`): turning it on is one click after the red line **"Agents run as you.
+  Anything an agent runs can sign with One click and read your files."** (plus the step-up of §0.8.6 10.5 on a remote session).
+  If isolation later turns `broken` while One click is on, One click stays as the person set it; the status line turns
+  red and names the fact, and the doctor reports it.
+- **§0.8.6 item 3a works in tier B.** The host-state flag file is the person's (host = person), so the dashboard's custody
+  switch is offered in both tiers.
+- **The dashboard port (L8, Linux).** The dashboard server drops loopback TCP connections whose socket owner UID
+  (`sock_diag` or `/proc/net/tcp{,6}`) is not the person. The SSH tunnel's forwarding runs as the person, so the VPS path
+  keeps working; an agent does not even reach the login. macOS has no equivalent; there the bearer remains the gate.
+- Memory: another UID cannot `ptrace` the person's processes or read their `/proc/<pid>/environ` or `mem`. `argv` is
+  world-readable unless `/proc` is mounted `hidepid=invisible` (doctor hint), so secrets stay out of `argv` (tested
+  invariant).
+
+### 13.8 Add-ons under slot users (#287)
+
+- **Slots, not per-install users.** Making a user needs root; an install must not. The helper makes
+  `orch-addon-1..8` and their units once. Granting a community add-on assigns a free slot (host state, person-owned) and
+  sets `u:orch-addon-<n>:rX` on that add-on's package and G4 environment only. No free slot: refused with "run setup
+  again to add slots".
+- **Call path.** The slot runner connects to `<run>/addon/host.sock` (one connection per slot UID, from the unit's
+  `MainPID`, like the runner). The host sends `{call, package path, request}`; the slot runs the existing
+  `addons/runner.call` (G4's environment verify inside, closed environment, a per-call work dir in its own home, a cgroup
+  per call so a `setsid` escape is killed too).
+- **Built-in and official add-ons** may keep running as today or move to a shared slot later; tier B does not block
+  either.
+- **R-M1, check order (A4).** Lifting `market.community_unisolated` (#929) never bypasses hub policy: on a hub-joined
+  workspace the marketplace spec's D14/G7 decide first which marketplaces are allowed, then isolation. `isolation.detect()` only removes the
+  isolation refusal. A4's T0 includes a hub refusal with isolation detected: it stays refused.
+- **R-M2, the environment is read-only for the slot (A2, checked in A1).** G4 environments are built and verified by the
+  host user (`host/addonenv.py`, the envtree stamp). The slot can read the env and its stamp but not write them
+  (person-owned, no write ACL), so an add-on cannot defeat the runtime verify. A2 reads the ACL back and fails on any
+  write bit for the slot; A1 keeps `envtree.verify` inside the call.
+- **R-M3, the credential stays host-owned (A3).** The credential file (`<state>/hosts/<ws>/addons/<name>/credential`,
+  0600, host user) stays host-owned with #1179's fd-relative store; the host passes it on stdin per call. The slot never
+  gets a path or a descriptor to it. Marketplace spec §15.1's tier-A credential limit closes.
+- **R-M4, `{python}` under the slot (A2, tested in A1).** G4's `{python}` line (`-B -s -S`, `PYTHONPATH` from an empty
+  environment) must work as the slot: the interpreter and its stdlib, the package copy and the env are readable and the
+  interpreter executable by the slot (ACL `rX`, set and read back by A2). A1's T0 runs a `{python}` add-on as the slot.
+
+### 13.9 Threat model
+
+| Attacker | Tier A (no isolation) | Tier B |
+|---|---|---|
+| **Agent** (prompt-injected or malicious) | Runs as the person: reads the One-click key and signs anything it allows; reads SSH keys, tokens and every file; calls every person and control op except signing without a key (§7); drives the dashboard locally; writes the store files directly | Column G ops of its grant; reads the shared repositories' `.git` and its own files; its own Claude/Codex credentials (it can leak those: give it a separate key with a spend limit); the network; the other runs of the same agent user (no per-run isolation). **Cannot** read or use the keys, reach the signer or (Linux) the dashboard port, call human or control ops, write the store, write the person's files, or push with the person's credentials |
+| **Paths from an agent to the person** that tier B leaves | — | (a) content it writes that the dashboard renders (ticket text, artifacts, terminal output): an XSS there is an escalation, so strict CSP and safe rendering are now the main boundary; (b) social engineering in what the person approves (the review shows what is signed; hub steps need the backup key); (c) the person running the agent's code as themselves (`npm install`, tests); (d) kernel or setup bugs (an unpatched kernel; an agent in a privileged group, refused by the helper and the host) |
+| **Compromised dashboard** (XSS, stolen bearer, malicious dependency of the server) | Everything | Unchanged: it runs as the person, so it can click-sign everything One click covers and start agents. Hub ops still need the backup key; secrets travel sealed. Shrunk by idle auto-off, the short bearer and passkey step-up (§0.8.6 item 10), the key at rest (H3) and L8 (an agent can no longer be the local attacker that takes it over) |
+| **Malicious add-on** (community, after #287) | Runs as the person: everything; therefore community marketplaces are refused (`market.community_unisolated`) | Its slot UID only: its env (read-only), its per-call work dir, its credential for one call (stdin), the network if granted. Not the keys, not agents' files, not other add-ons' credentials or envs |
+| **Another local user** | As §0.8.6 item 8 | Same; plus L8 drops their loopback connections to the dashboard on Linux |
+| **Root** | Out of scope | Out of scope |
+
+**What tier A honestly loses.** Without isolation, anything an agent runs can sign with One click and read every file
+of the person, including SSH keys and tokens; the column split of §0.5 is policy, not a boundary; community add-ons
+stay refused. The dashboard shows the red line "Agents run as you" and One click is off by default. An unprivileged
+bubblewrap sandbox could hide paths from a same-user agent, but it is weaker (same UID, shared loopback; Ubuntu 24.04
+restricts unprivileged user namespaces) and is not part of this plan.
+
+### 13.10 Windows (after the Windows host)
+
+Today there is no host, runner or click signer on Windows (D-P2-38): agents a person starts there run as the person,
+can use the One-click key and read every file of the person. The dashboard says so and One click is off by default.
+**Planned** (design first, with the Windows host port): a local standard account `orch-agent` created by the installer
+(one UAC prompt), never in Administrators; the runner as a Windows service under that account (or a virtual service
+account `NT SERVICE\orch-runner`); host named pipes with an explicit DACL and the client token's SID checked; the
+dashboard's loopback peer check by owning PID (`GetExtendedTcpTable`) to token SID; keys in the person's
+`%LOCALAPPDATA%` (the profile ACL excludes other standard users) plus DPAPI user scope (H3); repository sharing with
+`icacls`; ConPTY terminals as the agent account. Not protected even then: an administrator account, and anything the
+person runs as themselves.
+
+### 13.11 macOS (last, M1–M3)
+
+**Until M1:** tier A, with the same red line and One click off by default. **Planned:** a hidden role user
+(`sysadminctl -addUser orch-agent-<user>`, `IsHidden`), not in `admin` or `staff`; the runner as a LaunchDaemon with
+`UserName`; run directory `/Users/Shared/orch/run/<uid>` (H3c; BSD semantics give new files the directory's group, so no
+setgid is needed); ACLs with `chmod +a`; one admin password prompt at install. The person's login keychain is in their
+0700 `~/Library`, out of the agent's reach. **What is not protected or does not work:** there is no kernel peer check
+for loopback TCP, so an agent can reach the dashboard's login and only the bearer stops it; repositories under
+`~/Documents`, `~/Desktop` or `~/Downloads` are TCC-protected and a daemon user gets no prompt (setup says "keep code
+outside these folders"); Claude Code under a daemon user has no unlocked keychain and uses `claude setup-token` or an API
+key in the agent's own file. Touch ID and the keychain stay extras for the person's key. This replaces H3c's agent-user
+part; H3c's per-workspace groups and worker daemon stay later options.
+
+### 13.12 Build tasks
+
+L1 setup plan (pure) → L2 apply and `bin/orch-os-setup`; L3 runner as system unit; L4 run directory and sockets; L5
+person-side ACLs; L6 agent clone and worktrees; L7 agent CLI (served mode only, `instructions.hook`, environment); L8
+dashboard peer-UID check; L9 terminals as the agent; L10 agent sign-in; L11 `isolation.detect()`; L12 the setup step;
+L13 doctor; A1–A4 slots, ACLs, credentials per call, #929; E1 e2e `vps-agent-uid` on the dev VPS; M1–M3 macOS. Real
+cross-UID tests run in a CI job with root (`needs_root`, `tests/osusers/`); locally they skip.

@@ -51,7 +51,7 @@ _TEMPLATE = (
     "Work in $ORCH_WORKDIR/$ORCH_WORKTREE; add files: `{orch:artifact.add} FILE`.",
     "",
     "## When you are unsure",
-    'Ask: `{orch:ask} "…" --options a,b --rec a`, then `{orch:wait}`.',
+    "Ask: `{orch:ask} \"…\" --option 'a | Title | text' --option 'b | Title | text' --rec a`, then `{orch:wait}`.",
     "Never ask to approve a gate; the person sees it.",
     "",
     "## Never",

@@ -19,7 +19,7 @@ WORKFLOWS: dict[str, tuple[str, list[tuple[str, str]]]] = {
     "ask": (
         "ask a person instead of guessing, then wait for the answer",
         [
-            ("ask", "orch ask 'question' --options a,b --rec a"),
+            ("ask", "orch ask 'question' --option 'a | Title | text' --option 'b | Title | text' --rec a"),
             ("wait", "orch wait"),
         ],
     ),
@@ -34,7 +34,7 @@ WORKFLOWS: dict[str, tuple[str, list[tuple[str, str]]]] = {
             # the plan gate also needs decisions (feature, bug, spike): without them the person has nothing to approve
             ("section.set", "orch section set decisions --file -"),
             ("task.add", "orch task add 'text' --verify 'one-command, no shell operators' --proves AC1"),
-            ("ask", "orch ask 'question' --options a,b --rec a"),
+            ("ask", "orch ask 'question' --option 'a | Title | text' --option 'b | Title | text' --rec a"),
         ],
     ),
     "parallel": (

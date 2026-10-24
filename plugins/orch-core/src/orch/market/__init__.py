@@ -14,8 +14,9 @@ ADDONS = "addons"
 
 class MarketError(Exception):
     """One refusal. ``code`` is a ``market.*`` code of the catalog; the text is the catalog's fixed one, never index
-    or package content."""
+    or package content. ``reason`` is a fixed word that tells apart the causes of one code (``market.env_failed``)."""
 
-    def __init__(self, code: str) -> None:
+    def __init__(self, code: str, reason: str | None = None) -> None:
         super().__init__(code)
         self.code = code
+        self.reason = reason

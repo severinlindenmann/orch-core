@@ -602,6 +602,34 @@
         ]
       },
       "uniqueItems": true
+    },
+    "runtime": {
+      "type": "object",
+      "description": "V3 G4 (D6): present when the add-on installs dependencies after this grant: the lockfile kind, its path in the package and the number of locked packages. Absent for an add-on without dependencies.",
+      "properties": {
+        "kind": {
+          "enum": [
+            "python-requirements",
+            "node-package-lock"
+          ]
+        },
+        "lock": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "packages": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        }
+      },
+      "required": [
+        "kind",
+        "lock",
+        "packages"
+      ],
+      "additionalProperties": false
     }
   },
   "required": [

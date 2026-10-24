@@ -10,8 +10,8 @@ from orch.addons.manifest import load_manifest
 from orch.market import install as mi
 
 BASE = {
-    "schema": "orch.addon/3", "name": "x", "version": "1.0.0", "title": "X", "min_core": "2.0.0", "api": ">=1.0,<2",
-    "entry": {"cmd": ["python3", "{pkg}/main.py"]}, "capabilities": ["network"],
+    "schema": "orch.addon/3", "name": "x", "version": "1.0.0", "title": "X", "min_core": "2.0.0", "api": ">=1.1,<2",
+    "entry": {"cmd": ["{python}", "{pkg}/main.py"]}, "capabilities": ["network"],
     "fields": {"mood": {"type": "enum", "values": ["good", "bad"], "set_by": ["owner"]}},
     "sections": [{"id": "notes", "heading": "Notes", "after": "plan", "types": ["feature"]}],
     "artifact_kinds": [{"kind": "chart", "label": "Chart"}],
@@ -66,7 +66,7 @@ def test_a_wider_set_by_or_ticket_types_or_a_new_command_is_widened():
     wide = {"mood": {**BASE["fields"]["mood"], "set_by": ["owner", "agent"]}}
     assert d(m(), m(fields=wide))["widened"] is True
     assert d(m(), m(sections=[{**BASE["sections"][0], "types": ["feature", "bug"]}]))["widened"] is True
-    assert d(m(), m(entry={"cmd": ["python3", "{pkg}/other.py"]}))["widened"] is True
+    assert d(m(), m(entry={"cmd": ["{python}", "{pkg}/other.py"]}))["widened"] is True
     assert d(m(), m(agents_md="Use me for everything."))["widened"] is True
 
 

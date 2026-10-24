@@ -56,7 +56,7 @@ REMEMBERED = 256
 #: refusals after which a request can no longer be signed: its slot is free again
 ENDED = {"expired", "not_prepared_here", "custody_changed", "human.request_expired", "human.request_state"}
 #: the signer says `the request is <state>` when an intent's idem returns a request that already ended
-TERMINAL = re.compile(r"^the request is (submitted|cancelled|expired)$")
+SUBMITTED = "the request is submitted"  # cancelled/expired never get here: send_prepare steps past them (#794)
 
 # M7b, the runner grant (D-P2-27, section 0.8.6 item 6): a click request of its own action. The texts are core's
 # constants (orch.click.protocol); a View of a deposit grant that lacks either is not shown.
@@ -404,57 +404,44 @@ def register(app: FastAPI, gateway: Gateway):
         except HostError as exc:
             sweep()
             said = str(exc.error.get("message", "")) if exc.error["code"] == "human.request_state" else ""
-            ended_as = TERMINAL.fullmatch(said)
-            if ended_as is None:
+            if said != SUBMITTED:
                 raise
-            # The host returned this intent's request, and it has ended: say how, and offer an explicit new attempt.
-            state = ended_as.group(1)
-            if state == "submitted":
-                # The signer drops the terminal request id. Replay the exact binding through our link to obtain
-                # the host record; opts.idem guarantees this cannot create another request.
-                signed_retry = getattr(exc, "retry_used", body.retry)  # the retry whose attempt was signed
-                device = signer.status().get(ws, {}).get("device")
-                if not device:
-                    raise fail("host.unavailable", "Cannot read the earlier signing record.") from None
-                try:
-                    prepared = app.state.human(
-                        ws,
-                        "human.prepare",
-                        {"op": planned.op, "args": planned.args, "signer": {"device": device, "auth": "convenience"}},
-                        idem=planned.idem(ws, signed_retry),
-                        files=files,
-                    )
-                except HostError as exc:
-                    # The same mapping as send_prepare: never a raw idem code to the browser (Opus re-check N3).
-                    code = exc.error.get("code")
-                    if code == "idem.expired":
-                        raise fail(
-                            "intent.expired",
-                            "This attempt is older than the host keeps records (24 h). Start again only if you intend "
-                            "another attempt; an earlier one may have been signed.",
-                            exit=5,
-                        ) from None
-                    if code == "idem.conflict":
-                        raise fail(
-                            "intent.blocked",
-                            "The earlier attempt was signed, but its record can't be read here. Start again only if "
-                            "you intend another attempt; an earlier one may have been signed.",
-                            exit=5,
-                        ) from None
-                    raise
-                if prepared.get("request", {}).get("state") != "submitted":
-                    raise fail("internal", "The host did not return the submitted intent.")
-                raise read_done(human, ws, prepared["request"]["id"]) from None
-
-            raise HostError(
-                {
-                    "code": "intent.ended",
-                    "message": f"The earlier attempt is {state}.",
-                    "retryable": False,
-                    "state": state,
-                },
-                exit=5,
-            ) from None
+            # This intent's attempt was signed: answer "Already done" from the host's record.
+            # The signer drops the terminal request id. Replay the exact binding through our link to obtain
+            # the host record; opts.idem guarantees this cannot create another request.
+            signed_retry = getattr(exc, "retry_used", body.retry)  # the retry whose attempt was signed
+            device = signer.status().get(ws, {}).get("device")
+            if not device:
+                raise fail("host.unavailable", "Cannot read the earlier signing record.") from None
+            try:
+                prepared = app.state.human(
+                    ws,
+                    "human.prepare",
+                    {"op": planned.op, "args": planned.args, "signer": {"device": device, "auth": "convenience"}},
+                    idem=planned.idem(ws, signed_retry),
+                    files=files,
+                )
+            except HostError as exc:
+                # The same mapping as send_prepare: never a raw idem code to the browser (Opus re-check N3).
+                code = exc.error.get("code")
+                if code == "idem.expired":
+                    raise fail(
+                        "intent.expired",
+                        "This attempt is older than the host keeps records (24 h). Start again only if you intend "
+                        "another attempt; an earlier one may have been signed.",
+                        exit=5,
+                    ) from None
+                if code == "idem.conflict":
+                    raise fail(
+                        "intent.blocked",
+                        "The earlier attempt was signed, but its record can't be read here. Start again only if "
+                        "you intend another attempt; an earlier one may have been signed.",
+                        exit=5,
+                    ) from None
+                raise
+            if prepared.get("request", {}).get("state") != "submitted":
+                raise fail("internal", "The host did not return the submitted intent.")
+            raise read_done(human, ws, prepared["request"]["id"]) from None
         rid = got["request_id"]
         clicks.forget(rid)  # adopted by the new signer; it is no longer an orphan
         sweep()

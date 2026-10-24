@@ -251,8 +251,9 @@ person. The dashboard adds:
   of that person may view, poll, sign and cancel it; an id nobody here prepared looks like one that never existed. The
   per-session quota counts a shared request once. This process remembers nothing the invariant depends on.
   What the person sees: a request that is `submitted` is **"Already done"** with an explicit **"Do it again"** (retry + 1,
-  so a second identical comment is possible, but only by that click); a `cancelled` or `expired` one offers **"Start
-  again"** (also retry + 1); a lost answer is retried with the same `retry` and returns the same request. `idem.conflict`
+  so a second identical comment is possible, but only by that click); a `cancelled` or `expired` one is stepped past by
+  the server (#794: the next retry, at most 16 hops), so pressing the action again is one fresh request to view and
+  sign, and the ended one is never signed; a lost answer is retried with the same `retry` and returns the same request. `idem.conflict`
   means a different path or signer binding. `human.pending` determines whether an op+key request is open:
   if so, show its expiry; otherwise offer explicit "Start again" with a prior-signature warning.
   Neither dashboard nor signer sends `auth.session`, so a restart preserves the host binding.

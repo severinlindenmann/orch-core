@@ -655,3 +655,31 @@ These are the spec's answers; each is marked **provisional** until the owner con
 
     The spec, schema and vectors implement Option A. Option B adds one field to `orch.hub-policy/1`
     (`pinned_keys: {url -> key}`) and one branch at step 4; it needs no change to the index format.
+
+## 16. Install, update and remove as built (V3 G3, #921)
+
+Design note `state/design-g3.md`; conditions C1 to C6. What the code does, where it lives:
+
+- **Fetch and export:** `gitsafe.market_export_package` runs `ls-tree -r -z -l` on the commit (or `commit:subdir`), judges the whole
+  listing (modes, `check_path`, case twins, file/directory clash, counts, sizes, manifest on top) before it reads a blob, then reads
+  every blob with ONE `cat-file --batch` whose output is capped at the listed total. The package fetch has its own pack cap
+  (`MARKET_PACKAGE_PACK`), never the index's. `fetch.fetch_package` resolves and checks the entry host like the index fetch.
+- **Stage:** `market.stage {id, url?, update?}` (human, owner) runs steps 0 to 16 and writes ONE stage file
+  `<state>/hosts/<ws>/market/staged/<stage>.json` (the package in memory form as base64, digest, origin, commit, publisher key, TOFU
+  status; 30 minutes; one live stage per add-on name). Nothing is written to `addons/` and no record changes.
+- **Grant:** `addon.grant {name, staged}`. The package comes from the stage file (read once, digest and manifest agreement
+  checked again), the signed body is only `grant_event`, the marketplace block travels as `material["market"]` and is shown "per
+  host, not signed". Under the store lock, before the journal write, `marketinstall.recheck` judges the stage and the install record
+  as they are now (C2). After the append, `human.finish` calls `marketinstall.after_grant`: the directory is swapped by digest
+  (`.<name>.new-*`, `.<name>.old-*`; a crash is finished by `marketinstall.recover` at start), then `installs.json` gets the
+  origin, `seen` is raised and the publisher key is remembered (C3). `installs.json` changes nowhere else.
+- **Plain grant (C1):** `addon.grant` without `staged` signs only the bytes of a built-in add-on or the bytes the install record of
+  that name holds (a re-enable). A folder copied into `addons/` is `market.not_installed`.
+- **Remove:** `market.uninstall {name}` refuses while the add-on is enabled (`market.still_enabled`), deletes the package, drops
+  the origin; `seen` and the publisher key stay. `orch addon remove` signs `addon.disable` first.
+- **Sandbox marketplace (C5):** `<root>/state/host/dev.json` may carry `market: {url, keys}`. Only a dev host reads it, and only a
+  workspace that passes S1 to S6 now gets class `dev` for that URL (the official rules with those keys, reserved ids as for any
+  non-official marketplace). Every address rule applies unchanged.
+- **Signer (C4):** `material.market` has exactly the keys `url, class, commit, source_note, publisher{fingerprint, tofu},
+  index_version, stale, summary, replaces` and only on a request that signs one `addon.granted`; it is rendered under "per host, not
+  signed".

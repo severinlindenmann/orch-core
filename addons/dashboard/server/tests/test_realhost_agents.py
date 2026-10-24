@@ -314,7 +314,7 @@ def test_a_grant_forgotten_before_its_hand_over_is_a_rejected_deposit_with_its_r
     `rejected`, names the grant (Revoke uses it) and the static reason, and never the secret."""
     from orch.host.control_client import new_idem
 
-    assert core_contract() == 2
+    assert core_contract() == 3
     forgotten = []
 
     def between(op, args, res):  # timing only: the host's answer is passed on unchanged
@@ -344,7 +344,7 @@ def test_an_unknown_deposit_resolves_to_rejected_with_the_reason_from_deposit_st
 
     from tests.host.test_runner_socket import GEN2, Runner
 
-    assert core_contract() == 2
+    assert core_contract() == 3
     aw.w.h.host.runners.command_timeout = 1.0
     aw.runner.link.drop_reports.add("grant.put")
     rid, _view, signed = issue_grant(aw)

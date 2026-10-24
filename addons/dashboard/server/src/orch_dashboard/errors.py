@@ -262,7 +262,6 @@ CLICK_REFUSALS = (
     "expired",
     "view_changed",
     "too_soon",
-    "word",
     "custody_changed",
     "busy",
     "check_failed",

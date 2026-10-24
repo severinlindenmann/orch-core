@@ -915,8 +915,6 @@ def step_setup(ctx: Ctx, prefix: str, name: str) -> None:
         review = route("POST", api + "review", {}, token)
         seen["fp"] = review["fingerprint"]
         create = {"review_id": review["review_id"], "digest": review["digest"]}
-        if review.get("typed_word"):
-            create["typed_word"] = review["typed_word"]
         run_id = route("POST", api + "create", create, token)["run_id"]
         while True:
             if time.monotonic() > deadline or not thread.is_alive():

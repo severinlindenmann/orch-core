@@ -296,8 +296,6 @@ class SetupFlow:
         plan = self.review.plan
         if body.get("review_id") != self.review.id or body.get("digest") != plan.digest:
             raise SetupError("review.changed", "the review changed; read it again", 409)
-        if plan.typed_word is not None and body.get("typed_word") != plan.typed_word:
-            raise SetupError("typed_word.required", "type the word shown to continue", 403)
         if self.mode == "new" and not (self.secrets and self.secrets.confirmed):
             raise SetupError("secrets.not_confirmed", "confirm the recovery code first", 409)
         if self.mode == "finish":  # R7: the facts are read again; a different answer than the review's is a new review

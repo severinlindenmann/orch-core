@@ -1,4 +1,4 @@
-"""B9 step 4: the review (plain rows via signcontent, the R1 digest, R2 typed word, R3 fingerprint) and the
+"""B9 step 4: the review (plain rows via signcontent, the R1 digest, R2 no typed word, R3 fingerprint) and the
 signing-time re-check against what the host prepared."""
 
 from __future__ import annotations
@@ -40,10 +40,10 @@ def test_review_has_the_contract_fields_and_plain_rows(flow):
         "runner_grant",
         "flags",
         "risk",
-        "typed_word",
         "tty_confirm",
     ):
         assert k in out
+    assert "typed_word" not in out
     ids = [i["id"] for i in out["items"]]
     assert ids == ["addon:dashboard", "addon:terminals", "addon:worktrees"]
     term = out["items"][1]
@@ -59,19 +59,19 @@ def test_terminal_default_has_no_settings_item_and_no_word(flow):
     out = to_review(flow, {**PROFILE, "addons": ["dashboard"]})
     # the dashboard is locked on: its grant is the one item of a default workspace (it is what makes the workspace show)
     assert [i["id"] for i in out["items"]] == ["addon:dashboard"]
-    assert out["typed_word"] is None and out["tty_confirm"] is False
+    assert out["tty_confirm"] is False
     assert out["fingerprint"] is None
 
 
-def test_r2_typed_word_for_long_agent_hours_and_for_a_runner_grant(flow):
+def test_r2_long_agent_hours_and_a_runner_grant_need_no_typed_word(flow):
     out = to_review(flow, {**PROFILE, "agent_hours": 24})
-    assert out["typed_word"] == "AGENTS"
+    assert "typed_word" not in out
     assert [i["id"] for i in out["items"]][:1] == ["settings"]
     row = out["items"][0]
     assert any("grant_hours" in line and "24" in line for line in row["lines"])
     f2 = rev_flow(flow)
     out = to_review(f2, {**PROFILE, "agent_grant": True, "agent_hours": 8, "addons": ["dashboard", "start-agent"]})
-    assert out["typed_word"] == "GRANT" and out["tty_confirm"] is True and len(out["fingerprint"]) == 3
+    assert "typed_word" not in out and out["tty_confirm"] is True and len(out["fingerprint"]) == 3
     assert out["runner_grant"] == {"hours": 8, "scope": "workable", "holder": "this machine's runner, never shown"}
     grant = next(i for i in out["items"] if i["id"] == "runner_grant")
     assert "grant: set at signing" in grant["volatile"]

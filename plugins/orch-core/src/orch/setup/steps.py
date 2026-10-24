@@ -53,7 +53,7 @@ __all__ = [
 CONFIRM_ATTEMPTS = 5
 CODE_WORDS = 24
 #: what the person types on the setup terminal once the page shows the same three words (R3)
-TTY_WORD = "yes"  # distinct from the page's typed word GRANT: two prompts, two answers
+TTY_WORD = "yes"
 
 
 def tty_confirm_text(words: str) -> str:

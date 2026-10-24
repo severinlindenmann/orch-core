@@ -88,7 +88,8 @@ def catalog(manifest: Callable[[str], bytes] | None = None, *, optional: bool = 
         ),
         "publish": (
             "Publish",
-            "Share files from a ticket with a link, on a server you choose. Nothing leaves this computer until you sign.",
+            "Share files from a ticket with a link, on a server you choose. "
+            "Nothing leaves this computer until you sign.",
             False,
             False,
         ),

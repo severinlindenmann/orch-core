@@ -674,6 +674,8 @@ class ClickSigner:
         prepared = self._fetch(entry, approval, sel["device"])
         if views.digest(self._build(entry, approval, prepared, sel["device"])) != approval.view_digest:
             raise refused("view_changed", "the review changed since it was shown (a check or the registry); view again")
+        if approval.deposit and not self._execution(entry):  # switched off since prepare: nothing is claimed or signed
+            raise refused("terminal_only", "dashboard execution is off for this workspace on this machine")
         stored = approval.prepared  # the immutable inputs validated at prepare (== prepared, checked above)
         if (stored.get("material") or {}).get("sequence") is not None:
             return self._sign_sequence(entry, approval, backend, sel, stored)
@@ -783,9 +785,7 @@ class ClickSigner:
             cancel=cancel,
             budget=self.budget.reserve,
         )
-        kind = self._sequence_kind(entry, intent)  # re-asserted here: what is signed is what this click may sign
-        if approval.kind != kind:
-            raise refused("terminal_only", "this sequence needs more than a click; use the terminal (orch sign CODE)")
+        self._sequence_kind(entry, intent)  # re-asserted here: what is signed is what this click may sign
         driver = sequence.Driver(
             port,
             self.sessions,

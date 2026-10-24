@@ -16,15 +16,24 @@ class FakeOsFacts:
         self.readable: dict[tuple[int, str], bool] = {}
         self.pins: dict[int, dict] = {}
         self.units: dict[str, UnitState] = {}
+        self.connectable: dict[tuple[int, str], bool] = {}
+        self.files: dict[str, str] = {}
+        self.unreadable: set[str] = set()
+        self.sudoers: list[str] | None = []
 
-    def add_user(self, name, uid, *, gid=None, home="/home/x", shell="/bin/bash", groups=()) -> None:
+    def add_user(self, name, uid, *, gid=None, home="/home/x", shell="/bin/bash", groups=(), extra_gids=()) -> None:
         gid = uid if gid is None else gid
-        self.users[name] = UserInfo(name, uid, gid, home, shell, frozenset({name, *groups}))
         self.groups.setdefault(name, GroupInfo(name, gid, frozenset()))
+        gids = {gid, *extra_gids}
+        for g in groups:  # extra groups by name: reuse the group's gid or invent a fresh one
+            if g not in self.groups:
+                self.groups[g] = GroupInfo(g, 5000 + len(self.groups), frozenset())
+            gids.add(self.groups[g].gid)
+        self.users[name] = UserInfo(name, uid, gid, home, shell, frozenset({name, *groups}), frozenset(gids))
 
-    def add_path(self, path, *, uid=0, gid=0, mode=0o755, kind="file") -> None:
+    def add_path(self, path, *, uid=0, gid=0, mode=0o755, kind="file", acl=False) -> None:
         t = {"dir": stat.S_IFDIR, "sock": stat.S_IFSOCK, "link": stat.S_IFLNK, "file": stat.S_IFREG}[kind]
-        self.paths[path] = PathInfo(uid, gid, t | mode, kind == "dir", kind == "sock", kind == "link")
+        self.paths[path] = PathInfo(uid, gid, t | mode, kind == "dir", kind == "sock", kind == "link", acl)
 
     def user(self, name):
         return self.users.get(name)
@@ -50,3 +59,14 @@ class FakeOsFacts:
 
     def unit_state(self, unit):
         return self.units.get(unit, UnitState("unknown"))
+
+    def can_connect(self, uid, path):
+        return self.connectable.get((uid, path), False)
+
+    def read_text(self, path):
+        if path in self.unreadable:
+            raise PermissionError(path)
+        return self.files.get(path)
+
+    def sudoers_lines(self):
+        return self.sudoers

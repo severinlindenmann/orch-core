@@ -11,7 +11,7 @@ PERSON, UID = "sev", 1000
 
 
 def _existing_agent(f: FakeOsFacts, uid: int = 990, **kw) -> None:
-    kw = {"home": "/var/lib/orch/agents/sev/home", "shell": "/bin/bash", **kw}
+    kw = {"home": "/var/lib/orch/agents/orch-agent-sev/home", "shell": "/bin/bash", **kw}
     f.add_user("orch-agent-sev", uid, **kw)
     f.pins[uid] = {"class": "agent", "host_uid": UID, "workspaces": "*"}
 
@@ -23,7 +23,8 @@ def test_fresh_system_plans_agent_slots_pins_units() -> None:
     assert p.agent.useradd_args()[:3] == ["--system", "--user-group", "--home-dir"]
     assert [s.name for s in p.slots] == [f"orch-addon-{n}" for n in range(1, 9)]
     assert all(
-        s.shell == "/usr/sbin/nologin" and s.home == f"/var/lib/orch/addons/{n}" for n, s in enumerate(p.slots, 1)
+        s.shell == "/usr/sbin/nologin" and s.home == f"/var/lib/orch/addons/orch-addon-{n}"
+        for n, s in enumerate(p.slots, 1)
     )
     assert len(p.groups()) == 9
     assert [u.name for u in p.units] == ["orch-runner@.service", "orch-addon@.service"]
@@ -43,14 +44,29 @@ def test_plan_is_pure() -> None:
     assert before == (f.users, f.groups, f.paths)
 
 
-def test_tmpfiles_needs_agent_uid_then_renders_setgid_dir() -> None:
-    p = plan(FakeOsFacts(), PERSON, UID)
-    with pytest.raises(OsPlanRefusal):
-        p.tmpfiles()
-    text = p.tmpfiles(agent_uid=991)
-    assert "d /run/orch/1000 2750 sev orch-agent-sev -" in text
-    assert "d /run/orch/agents/991 0750 orch-agent-sev orch-agent-sev -" in text
+def test_tmpfiles_is_keyed_by_user_name_not_uid() -> None:
+    text = plan(FakeOsFacts(), PERSON, UID).tmpfiles()
+    assert "d /run/orch/1000 2750 sev orch-agent-sev -" in text  # the person's run dir keeps the UID (13.1)
+    assert "d /run/agents" not in text
+    assert "d /run/orch/agents/orch-agent-sev 0750 orch-agent-sev orch-agent-sev -" in text
     assert "u:sev:rwx,d:u:sev:rw" in text
+
+
+def test_units_and_paths_share_one_naming_key() -> None:
+    p = plan(FakeOsFacts(), PERSON, UID)
+    runner, addon = p.units
+    assert (
+        "ReadWritePaths=/var/lib/orch/agents/%i /run/orch/agents/%i" in runner.content and "User=%i" in runner.content
+    )
+    assert "ReadWritePaths=/var/lib/orch/addons/%i" in addon.content and "User=%i" in addon.content
+    assert addon.instances[0] == "orch-addon-1" and p.slots[0].home.endswith("/orch-addon-1")
+    assert "CapabilityBoundingSet=" in runner.content and "NoNewPrivileges=yes" in runner.content
+
+
+def test_plan_denies_ssh_logins_for_service_users() -> None:
+    (spec,) = plan(FakeOsFacts(), PERSON, UID).files
+    assert spec.path == "/etc/ssh/sshd_config.d/10-orch-agents.conf" and spec.mode == 0o644
+    assert spec.content == "DenyUsers orch-agent-* orch-addon-*\n"
 
 
 def test_existing_pinned_agent_is_kept_with_known_uid() -> None:
@@ -58,14 +74,14 @@ def test_existing_pinned_agent_is_kept_with_known_uid() -> None:
     _existing_agent(f)
     p = plan(f, PERSON, UID)
     assert p.ok and p.agent.action == "keep" and p.agent.uid == 990
-    assert "d /run/orch/agents/990 0750" in p.tmpfiles()
+    assert "d /run/orch/agents/orch-agent-sev 0750" in p.tmpfiles()
     assert p.pins[0].path() == "/etc/orch/pins/990.json"
     assert "orch-agent-sev" not in p.groups()
 
 
 def test_unpinned_same_name_user_is_refused_never_adopted() -> None:
     f = FakeOsFacts()
-    f.add_user("orch-agent-sev", 990, home="/var/lib/orch/agents/sev/home")
+    f.add_user("orch-agent-sev", 990, home="/var/lib/orch/agents/orch-agent-sev/home")
     p = plan(f, PERSON, UID)
     assert not p.ok and p.refusals[0].code == "foreign_user"
     assert p.agent.action == "create"  # nothing is claimed about the foreign user
@@ -88,7 +104,9 @@ def test_agent_in_privileged_group_is_refused(group: str) -> None:
 
 def test_slot_in_docker_is_refused() -> None:
     f = FakeOsFacts()
-    f.add_user("orch-addon-3", 985, home="/var/lib/orch/addons/3", shell="/usr/sbin/nologin", groups=["docker"])
+    f.add_user(
+        "orch-addon-3", 985, home="/var/lib/orch/addons/orch-addon-3", shell="/usr/sbin/nologin", groups=["docker"]
+    )
     f.pins[985] = {"class": "addon", "host_uid": UID, "workspaces": "*"}
     r = plan(f, PERSON, UID).refusals
     assert [(x.code, x.subject) for x in r] == [("privileged_group", "orch-addon-3")]
@@ -116,12 +134,13 @@ def test_root_person_plans_a_normal_orch_user() -> None:
     assert p.steps()[0].startswith("Create a normal user 'orch'")
     assert not p.complete and p.run_dir is None
     with pytest.raises(OsPlanRefusal):
-        p.tmpfiles(agent_uid=990)
+        p.tmpfiles()
 
 
 def test_root_person_after_orch_exists_plans_for_it() -> None:
     f = FakeOsFacts()
     f.add_user("orch", 1001, home="/home/orch")
+    f.add_path("/home/orch", uid=1001, kind="dir", mode=0o750)
     p = plan(f, "root", 0)
     assert not p.create_person and p.person_uid == 1001 and p.run_dir == "/run/orch/1001"
 
@@ -145,3 +164,59 @@ def test_other_platforms_refuse_with_plain_reason(platform: str) -> None:
     p = plan(FakeOsFacts(platform), PERSON, UID)
     assert not p.ok and p.refusals[0].code == "unsupported_platform" and p.agent is None
     assert "run as you" in p.steps()[0]
+
+
+def test_exact_gids_gid_zero_and_foreign_groups_refused() -> None:
+    for extra in ({"extra_gids": [0]}, {"extra_gids": [1000]}, {"groups": ["incus-admin"]}, {"groups": ["staff"]}):
+        f = FakeOsFacts()
+        _existing_agent(f, **extra)
+        assert [r.code for r in plan(f, PERSON, UID).refusals] == ["privileged_group"], extra
+
+
+@pytest.mark.parametrize(
+    "kw",
+    [{"uid": 0}, {"uid": 500}, {"shell": "/usr/sbin/nologin"}, {"home": "/home/orch", "mkhome": False}],
+)
+def test_existing_orch_user_must_be_a_normal_login_user(kw: dict) -> None:
+    f = FakeOsFacts()
+    uid = kw.get("uid", 1001)
+    home = kw.get("home", "/home/orch")
+    f.add_user("orch", uid, home=home, shell=kw.get("shell", "/bin/bash"))
+    if kw.get("mkhome", True):
+        f.add_path(home, uid=uid, kind="dir", mode=0o750)
+    codes = [r.code for r in plan(f, "root", 0).refusals]
+    assert codes == ["bad_person"]
+
+
+def test_existing_orch_user_with_home_is_accepted() -> None:
+    f = FakeOsFacts()
+    f.add_user("orch", 1001, home="/home/orch")
+    f.add_path("/home/orch", uid=1001, kind="dir", mode=0o750)
+    assert plan(f, "root", 0).ok
+
+
+def test_slot_uid_equal_to_agent_uid_is_refused() -> None:
+    f = FakeOsFacts()
+    _existing_agent(f)
+    f.add_user("orch-addon-1", 990, home="/var/lib/orch/addons/orch-addon-1", shell="/usr/sbin/nologin")
+    f.pins[990] = {"class": "addon", "host_uid": UID, "workspaces": "*"}
+    assert "foreign_user" in [r.code for r in plan(f, PERSON, UID).refusals]
+
+
+def test_slots_pinned_to_another_person_say_so() -> None:
+    f = FakeOsFacts()
+    f.add_user("orch-addon-2", 985, home="/var/lib/orch/addons/orch-addon-2", shell="/usr/sbin/nologin")
+    f.pins[985] = {"class": "addon", "host_uid": 4242, "workspaces": "*"}
+    (r,) = plan(f, PERSON, UID).refusals
+    assert r.code == "slot_other_person" and "4242" in r.message and "another person" in r.message
+
+
+def test_sudoers_entry_for_agent_is_refused() -> None:
+    f = FakeOsFacts()
+    _existing_agent(f)
+    f.sudoers = ["# comment", "orch-agent-sev ALL=(ALL) NOPASSWD: ALL"]
+    assert [r.code for r in plan(f, PERSON, UID).refusals] == ["sudoers_entry"]
+    f.sudoers = ["%orch-agent-sev ALL=(ALL) ALL"]
+    assert [r.code for r in plan(f, PERSON, UID).refusals] == ["sudoers_entry"]
+    f.sudoers = ["orch-agent-sevx ALL=(ALL) ALL", "sev ALL=(ALL) ALL"]
+    assert plan(f, PERSON, UID).ok

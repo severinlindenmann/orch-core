@@ -26,6 +26,12 @@ __all__ = [
     "PRIVILEGED_GROUPS",
     "SLOT_COUNT",
     "SLOT_HOME_ROOT",
+    "AGENT_HOME_ROOT",
+    "AGENT_RUN_ROOT",
+    "SSHD_DROPIN",
+    "SSHD_DROPIN_TEXT",
+    "FileSpec",
+    "sudoers_names",
     "SLOT_PREFIX",
     "OsPlanRefusal",
     "Plan",
@@ -46,6 +52,12 @@ SLOT_SHELLS = ("/usr/sbin/nologin", "/sbin/nologin")
 SLOT_SHELL = SLOT_SHELLS[0]
 # An OS directory (the slot users' homes), not an orch store entry: spelled in parts so the store-path lint skips it.
 SLOT_HOME_ROOT = "/var/lib/orch/" + "add" + "ons"
+AGENT_HOME_ROOT = "/var/lib/orch/agents"
+AGENT_RUN_ROOT = "/run/orch/agents"
+SSHD_DROPIN = "/etc/ssh/sshd_config.d/10-orch-agents.conf"
+SSHD_DROPIN_TEXT = f"DenyUsers {AGENT_PREFIX}* {SLOT_PREFIX}*\n"
+_PERSON_MIN_UID = 1000
+_NOLOGIN_SHELLS = ("/usr/sbin/nologin", "/sbin/nologin", "/bin/false", "/usr/bin/false")
 _NAME = re.compile(r"^[a-z_][a-z0-9_-]*$")
 _MAX_NAME = 32
 _SYSTEM_UID_MAX = 999  # useradd --system; a login-range UID is a person, never ours
@@ -109,6 +121,13 @@ class UnitFile:
 
 
 @dataclass(frozen=True)
+class FileSpec:
+    path: str
+    content: str
+    mode: int  # root-owned
+
+
+@dataclass(frozen=True)
 class Plan:
     platform: str
     person: str
@@ -122,6 +141,7 @@ class Plan:
     release: str
     run_dir: str | None = None
     notes: tuple[str, ...] = field(default=())
+    files: tuple[FileSpec, ...] = field(default=())  # root-owned config files besides pins/units (sshd deny)
 
     @property
     def ok(self) -> bool:
@@ -139,20 +159,17 @@ class Plan:
     def all_users(self) -> list[UserPlan]:
         return ([self.agent] if self.agent else []) + list(self.slots)
 
-    def tmpfiles(self, agent_uid: int | None = None) -> str:
-        """The ``/etc/tmpfiles.d/orch.conf`` text. ``agent_uid`` is needed once the agent exists (its run dir name)."""
+    def tmpfiles(self) -> str:
+        """The ``/etc/tmpfiles.d/orch.conf`` text. Keyed by user name, so it needs no agent UID (13.1 naming key)."""
         if self.create_person or self.person_uid is None or self.agent is None:
             raise OsPlanRefusal("the person does not exist yet: plan again after it is created")
-        uid = self.agent.uid if self.agent.uid is not None else agent_uid
-        if uid is None:
-            raise OsPlanRefusal("the agent user does not exist yet: pass its UID after creating it")
         a, p = self.agent.name, self.person
         lines = [
             "d /run/orch 0755 root root -",
             f"d /run/orch/{self.person_uid} 2750 {p} {a} -",
-            "d /run/orch/agents 0755 root root -",
-            f"d /run/orch/agents/{uid} 0750 {a} {a} -",
-            f"a+ /run/orch/agents/{uid} - - - - u:{p}:rwx,d:u:{p}:rw",
+            f"d {AGENT_RUN_ROOT} 0755 root root -",
+            f"d {AGENT_RUN_ROOT}/{a} 0750 {a} {a} -",
+            f"a+ {AGENT_RUN_ROOT}/{a} - - - - u:{p}:rwx,d:u:{p}:rw",
         ]
         return "\n".join(lines) + "\n"
 
@@ -171,6 +188,8 @@ class Plan:
             out.append(f"Create {len(new)} restricted user(s) for add-ons ({new[0]} to {new[-1]}).")
         if self.units:
             out.append("Install the background services that run agents and add-ons as those users.")
+        if self.files:
+            out.append("Forbid logging in over SSH as those users.")
         if not out:
             out.append("Nothing to do: agents already run as their own user.")
         return out
@@ -181,12 +200,12 @@ class Plan:
 
 def _expected_agent(person: str) -> UserPlan:
     name = AGENT_PREFIX + person
-    return UserPlan(name, "agent", "create", None, f"/var/lib/orch/agents/{person}/home", AGENT_SHELL, name)
+    return UserPlan(name, "agent", "create", None, f"{AGENT_HOME_ROOT}/{name}/home", AGENT_SHELL, name)
 
 
 def _expected_slot(n: int) -> UserPlan:
     name = f"{SLOT_PREFIX}{n}"
-    return UserPlan(name, "addon", "create", None, f"{SLOT_HOME_ROOT}/{n}", SLOT_SHELL, name)
+    return UserPlan(name, "addon", "create", None, f"{SLOT_HOME_ROOT}/{name}", SLOT_SHELL, name)
 
 
 def _check_existing(facts: OsFacts, want: UserPlan, person_uid: int | None, refusals: list[Refusal]) -> UserPlan:
@@ -204,13 +223,18 @@ def _check_existing(facts: OsFacts, want: UserPlan, person_uid: int | None, refu
         return want
     bad = _wrong_properties(facts, want, info)
     pin = facts.pin(info.uid)
-    pinned = (
-        isinstance(pin, dict)
-        and pin.get("class") == want.role
-        and person_uid is not None
-        and pin.get("host_uid") == person_uid
-        and pin.get("workspaces") == "*"
-    )
+    pin_ok = isinstance(pin, dict) and pin.get("class") == want.role and pin.get("workspaces") == "*"
+    pinned = pin_ok and person_uid is not None and pin.get("host_uid") == person_uid
+    if pin_ok and want.role == "addon" and not pinned and person_uid is not None:
+        refusals.append(
+            Refusal(
+                "slot_other_person",
+                want.name,
+                f"'{want.name}' was set up for another person on this machine (user id {pin.get('host_uid')}). "
+                "Add-on users are shared per machine and can be set up for one person only.",
+            )
+        )
+        return want
     if not pinned:
         refusals.append(
             Refusal(
@@ -220,20 +244,31 @@ def _check_existing(facts: OsFacts, want: UserPlan, person_uid: int | None, refu
             )
         )
         return want
-    priv = sorted(set(PRIVILEGED_GROUPS) & info.groups)
-    if priv:
+    # Exactly its own group: no root group, no person's group, nothing else (an allowlist, not a deny-list).
+    if info.gids != {info.gid}:
+        named = sorted(set(PRIVILEGED_GROUPS) & info.groups)
+        what = ", ".join(named) if named else "other groups"
         refusals.append(
             Refusal(
                 "privileged_group",
                 want.name,
-                f"'{want.name}' is in the group(s) {', '.join(priv)}, which give near-root power. Remove it from them.",
+                f"'{want.name}' is in {what} besides its own group; that can give it near-root power. Remove it.",
             )
         )
     if bad:
         refusals.append(
             Refusal("wrong_properties", want.name, f"'{want.name}' exists but {bad}. Setup will not fix it.")
         )
+    names = sudoers_names(facts.sudoers_lines() or [], want.name)
+    if names:
+        refusals.append(Refusal("sudoers_entry", want.name, f"'{want.name}' has a sudo rule. Remove it."))
     return UserPlan(want.name, want.role, "keep", info.uid, want.home, want.shell, want.group)
+
+
+def sudoers_names(lines: list[str], user: str) -> list[str]:
+    """Active sudoers lines that name ``user`` or its group (``%user``) as a whole word."""
+    pat = re.compile(rf"(?<![\w.-])%?{re.escape(user)}(?![\w.-])")
+    return [ln for ln in lines if pat.search(ln)]
 
 
 def _wrong_properties(facts: OsFacts, want: UserPlan, info: UserInfo) -> str:
@@ -250,6 +285,18 @@ def _wrong_properties(facts: OsFacts, want: UserPlan, info: UserInfo) -> str:
     return ""
 
 
+def _bad_person(facts: OsFacts, info: UserInfo) -> str:
+    """A person must be a normal login user: not root, a login-range UID, a real shell, its own home directory."""
+    if info.uid == 0 or info.uid < _PERSON_MIN_UID:
+        return "is not a normal login user (its user id is root's or a system one)"
+    if info.shell in _NOLOGIN_SHELLS or not info.shell:
+        return "cannot log in (no real shell)"
+    home = facts.stat(info.home)
+    if home is None or not home.is_dir or home.uid != info.uid:
+        return "does not have its own home directory"
+    return ""
+
+
 def unit_runner(release: str) -> UnitFile:
     content = f"""[Unit]
 Description=orch runner for %i
@@ -259,10 +306,12 @@ After=network.target
 User=%i
 Delegate=yes
 NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/var/lib/orch/agents/%i /run/orch/agents/%i
+ReadWritePaths={AGENT_HOME_ROOT}/%i {AGENT_RUN_ROOT}/%i
 RestrictSUIDSGID=yes
 MemoryMax=80%
 TasksMax=4096
@@ -281,9 +330,11 @@ Description=orch add-on slot %i
 After=network.target
 
 [Service]
-User={SLOT_PREFIX}%i
+User=%i
 Delegate=yes
 NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=yes
@@ -325,6 +376,11 @@ def plan(facts: OsFacts, person: str, person_uid: int, *, release: str = "/opt/o
         person, person_uid_known = NORMAL_PERSON, None
         existing = facts.user(NORMAL_PERSON)
         if existing is not None:
+            bad = _bad_person(facts, existing)
+            if bad:
+                refusals.append(
+                    Refusal("bad_person", NORMAL_PERSON, f"A user 'orch' exists but {bad}. Setup stops here.")
+                )
             person_uid_known = existing.uid  # an earlier run created it: plan for it
             create_person = False
     else:
@@ -342,10 +398,16 @@ def plan(facts: OsFacts, person: str, person_uid: int, *, release: str = "/opt/o
     for u in [agent, *slots]:
         if u.uid is not None and u.uid == person_uid_known:
             refusals.append(Refusal("foreign_user", u.name, f"'{u.name}' has the same UID as you; setup stops here."))
+    if agent.uid is not None:
+        for u in slots:
+            if u.uid == agent.uid:
+                refusals.append(Refusal("foreign_user", u.name, f"'{u.name}' has the same UID as '{agent.name}'."))
     pins = tuple(PinEntry(u.name, u.role, person_uid_known, u.uid) for u in [agent, *slots])
     runner, addon = unit_runner(release), unit_addon(release)
     runner = UnitFile(runner.name, runner.path, runner.content, (agent.name,))
-    addon = UnitFile(addon.name, addon.path, addon.content, tuple(str(n) for n in range(1, SLOT_COUNT + 1)))
+    addon = UnitFile(
+        addon.name, addon.path, addon.content, tuple(f"{SLOT_PREFIX}{n}" for n in range(1, SLOT_COUNT + 1))
+    )
     run_dir = None if person_uid_known is None else f"/run/orch/{person_uid_known}"
     notes = ("The login was root: orch will run as a new normal user 'orch'.",) if create_person else ()
     return Plan(
@@ -361,4 +423,5 @@ def plan(facts: OsFacts, person: str, person_uid: int, *, release: str = "/opt/o
         release,
         run_dir,
         notes,
+        (FileSpec(SSHD_DROPIN, SSHD_DROPIN_TEXT, 0o644),),
     )

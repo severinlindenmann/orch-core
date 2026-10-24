@@ -9,16 +9,22 @@ reads as accessible, so a check that wants "not readable by the agent" fails rat
 
 from __future__ import annotations
 
+import errno
 import grp
 import os
 import pwd
 import stat
+import struct
 import sys
 from dataclasses import dataclass
+from functools import reduce
+from operator import or_
 from pathlib import Path
 from typing import Protocol
 
 __all__ = ["GroupInfo", "OsFacts", "PathInfo", "RealOsFacts", "UnitState", "UserInfo"]
+
+_SYSTEMCTL = ("/usr/bin/systemctl", "/bin/systemctl")
 
 
 @dataclass(frozen=True)
@@ -28,7 +34,8 @@ class UserInfo:
     gid: int
     home: str
     shell: str
-    groups: frozenset[str]  # every group the user is in, primary included, by name
+    groups: frozenset[str]  # names of every group the user is in, primary included (for messages only)
+    gids: frozenset[int]  # every gid of the user (``os.getgrouplist``), primary included: what checks compare
 
 
 @dataclass(frozen=True)
@@ -46,12 +53,19 @@ class PathInfo:
     is_dir: bool
     is_socket: bool
     is_symlink: bool
+    has_acl: bool = False  # an access or default ACL is present (or could not be ruled out)
 
 
 @dataclass(frozen=True)
 class UnitState:
-    state: str  # "active" (uid set) | "inactive" (clearly down) | "unknown" (anything unclear)
+    # "active" (identity fields set) | "inactive" (clearly down) | "transitional" (activating, deactivating,
+    # reloading, auto-restart: availability only) | "unknown" (error, parse failure, inconsistency: not trusted)
+    state: str
     uid: int | None = None
+    gids: frozenset[int] | None = None  # the process's real/effective gid and ``Groups:`` from /proc/<pid>/status
+    no_new_privs: bool | None = None
+    cap_eff: int | None = None
+    cap_amb: int | None = None
 
 
 class OsFacts(Protocol):
@@ -62,13 +76,24 @@ class OsFacts(Protocol):
     def group(self, name: str) -> GroupInfo | None: ...
     def stat(self, path: str) -> PathInfo | None: ...
     def listdir(self, path: str) -> list[str]: ...
-    def can_read(self, uid: int, path: str) -> bool: ...
+    def can_read(self, uid: int, path: str) -> bool: ...  # True unless provably unreadable (dirs: r or x counts)
+    def can_connect(self, uid: int, path: str) -> bool: ...  # write on the socket and search on every ancestor
+    def read_text(self, path: str) -> str | None: ...  # None = missing; raises OSError when unreadable
+    def sudoers_lines(self) -> list[str] | None: ...  # None = not readable by this process
     def unit_state(self, unit: str) -> UnitState: ...
     def pin(self, uid: int) -> dict | None: ...  # root-owned pin for a UID; None = no pin; broken = a "*" agent pin
 
 
 def _platform() -> str:
     return {"linux": "linux", "darwin": "darwin", "win32": "windows"}.get(sys.platform, sys.platform)
+
+
+_ACL_ACCESS = "system.posix_acl_access"
+_ACL_NAMES = (_ACL_ACCESS, "system.posix_acl_default")
+
+
+class _Unprovable(Exception):
+    """A permission fact could not be established: callers fail closed."""
 
 
 class RealOsFacts:
@@ -78,11 +103,17 @@ class RealOsFacts:
         self._pin_dir = pin_dir
 
     def _info(self, entry: pwd.struct_passwd) -> UserInfo:
-        groups: set[str] = set()
-        for g in grp.getgrall():
-            if g.gr_gid == entry.pw_gid or entry.pw_name in g.gr_mem:
-                groups.add(g.gr_name)
-        return UserInfo(entry.pw_name, entry.pw_uid, entry.pw_gid, entry.pw_dir, entry.pw_shell, frozenset(groups))
+        names = {g.gr_name for g in grp.getgrall() if g.gr_gid == entry.pw_gid or entry.pw_name in g.gr_mem}
+        gids = frozenset(os.getgrouplist(entry.pw_name, entry.pw_gid))  # also sees sssd/LDAP and pam_group
+        names |= {n for n in (self._gname(g) for g in gids) if n}
+        return UserInfo(entry.pw_name, entry.pw_uid, entry.pw_gid, entry.pw_dir, entry.pw_shell, frozenset(names), gids)
+
+    @staticmethod
+    def _gname(gid: int) -> str | None:
+        try:
+            return grp.getgrgid(gid).gr_name
+        except KeyError:
+            return None
 
     def user(self, name: str) -> UserInfo | None:
         try:
@@ -103,6 +134,14 @@ class RealOsFacts:
             return None
         return GroupInfo(g.gr_name, g.gr_gid, frozenset(g.gr_mem))
 
+    def _has_acl(self, path: str) -> bool:
+        try:
+            return any(a in _ACL_NAMES for a in os.listxattr(path, follow_symlinks=False))
+        except AttributeError:
+            return False
+        except OSError as exc:
+            return exc.errno not in (errno.ENOTSUP, errno.ENOENT)  # cannot tell: assume an ACL
+
     def stat(self, path: str) -> PathInfo | None:
         try:
             st = os.lstat(path)
@@ -115,6 +154,7 @@ class RealOsFacts:
             stat.S_ISDIR(st.st_mode),
             stat.S_ISSOCK(st.st_mode),
             stat.S_ISLNK(st.st_mode),
+            self._has_acl(path),
         )
 
     def listdir(self, path: str) -> list[str]:
@@ -123,41 +163,109 @@ class RealOsFacts:
         except OSError:
             return []
 
-    def _gids(self, uid: int) -> set[int]:
+    def _acl_bytes(self, path: str) -> bytes | None:
+        try:
+            return os.getxattr(path, _ACL_ACCESS)
+        except AttributeError:
+            return None
+        except OSError as exc:
+            if exc.errno in (errno.ENODATA, errno.ENOTSUP):
+                return None
+            raise _Unprovable(path) from exc
+
+    def _perm(self, st: os.stat_result, path: str, uid: int, gids: frozenset[int]) -> int:
+        """The rwx bits (0-7) ``uid`` with ``gids`` gets on ``path``: POSIX ACL algorithm when an ACL exists."""
+        raw = self._acl_bytes(path)
+        if raw is None:
+            if st.st_uid == uid:
+                return (st.st_mode >> 6) & 7
+            return (st.st_mode >> 3) & 7 if st.st_gid in gids else st.st_mode & 7
+        try:
+            if len(raw) < 4 or struct.unpack_from("<I", raw)[0] != 2 or (len(raw) - 4) % 8:
+                raise _Unprovable(path)
+            entries = [struct.unpack_from("<HHI", raw, 4 + i) for i in range(0, len(raw) - 4, 8)]
+        except struct.error as exc:
+            raise _Unprovable(path) from exc
+        owner = group_obj = other = 0
+        users: dict[int, int] = {}
+        groups: dict[int, int] = {}
+        mask = 7
+        for tag, perm, ident in entries:
+            if tag == 0x01:
+                owner = perm
+            elif tag == 0x02:
+                users[ident] = perm
+            elif tag == 0x04:
+                group_obj = perm
+            elif tag == 0x08:
+                groups[ident] = perm
+            elif tag == 0x10:
+                mask = perm
+            elif tag == 0x20:
+                other = perm
+        if st.st_uid == uid:
+            return owner & 7
+        if uid in users:
+            return users[uid] & mask & 7
+        matched = [p for g, p in groups.items() if g in gids]
+        if st.st_gid in gids:
+            matched.append(group_obj)
+        if matched:
+            return reduce(or_, matched, 0) & mask & 7
+        return other & 7
+
+    @staticmethod
+    def _ancestors(real: str) -> list[Path]:
+        return list(reversed(Path(real).parents))
+
+    def _reach(self, uid: int, path: str, ancestor_bits: int, final_file_bits: int, final_dir_bits: int) -> bool:
+        """True unless provably denied. Every ancestor of the real path (symlinks resolved) must give one of
+        ``ancestor_bits``; the target one of the final bits. ACL entries are evaluated, not assumed open."""
         info = self.user_by_uid(uid)
-        if info is None:
-            return set()
-        gids = {info.gid}
-        gids.update(g.gr_gid for g in grp.getgrall() if info.name in g.gr_mem)
-        return gids
-
-    def _has_acl(self, path: str) -> bool:
+        gids = info.gids if info else frozenset()
         try:
-            return any(a.startswith("system.posix_acl") for a in os.listxattr(path, follow_symlinks=False))
-        except (OSError, AttributeError):
-            return False
-
-    def _allowed(self, st: os.stat_result, path: str, uid: int, gids: set[int], bit: int) -> bool:
-        if uid == 0:
-            return True
-        if self._has_acl(path):
-            return True  # cannot prove it closed from mode bits alone
-        shift = 6 if st.st_uid == uid else 3 if st.st_gid in gids else 0
-        return bool(st.st_mode & (bit << shift))
-
-    def can_read(self, uid: int, path: str) -> bool:
-        """True unless ``uid`` provably cannot read ``path`` (search on every ancestor, read on the path)."""
-        gids = self._gids(uid)
-        p = Path(os.path.abspath(path))
-        try:
-            for anc in reversed(p.parents):
-                if not self._allowed(os.stat(anc), str(anc), uid, gids, 0o1):
+            real = os.path.realpath(path)
+            for anc in self._ancestors(real):
+                if not self._perm(os.stat(anc), str(anc), uid, gids) & ancestor_bits:
                     return False
-            return self._allowed(os.stat(p), str(p), uid, gids, 0o4)
+            st = os.stat(real)
+            bits = final_dir_bits if stat.S_ISDIR(st.st_mode) else final_file_bits
+            return bool(self._perm(st, real, uid, gids) & bits)
         except FileNotFoundError:
             return False
-        except OSError:
+        except (OSError, _Unprovable):
             return True
+
+    def can_read(self, uid: int, path: str) -> bool:
+        """r or x on every ancestor (a 0711 directory still lets a known file name be opened), r on a file, r or x on
+        a directory."""
+        return uid == 0 or self._reach(uid, path, 0o5, 0o4, 0o5)
+
+    def can_connect(self, uid: int, path: str) -> bool:
+        return uid == 0 or self._reach(uid, path, 0o1, 0o2, 0o2)
+
+    def read_text(self, path: str) -> str | None:
+        try:
+            with open(path, encoding="utf-8", errors="replace") as handle:
+                return handle.read(1 << 20)
+        except FileNotFoundError:
+            return None
+
+    def sudoers_lines(self) -> list[str] | None:
+        """Active lines of /etc/sudoers and /etc/sudoers.d/*, or None when this process cannot read them (the host
+        runs unprivileged, so that is the normal case here; the root-time setup plan is where this is enforced)."""
+        lines: list[str] = []
+        try:
+            files = ["/etc/sudoers"]
+            if os.path.isdir("/etc/sudoers.d"):
+                files += [f"/etc/sudoers.d/{n}" for n in sorted(os.listdir("/etc/sudoers.d")) if "." not in n]
+            for name in files:
+                text = self.read_text(name)
+                if text is not None:
+                    lines += [ln.strip() for ln in text.splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
+        except PermissionError:
+            return None
+        return lines
 
     def pin(self, uid: int) -> dict | None:
         from ..host.pins import AgentPins
@@ -167,8 +275,9 @@ class RealOsFacts:
     def _show(self, unit: str) -> tuple[str, int]:
         import subprocess
 
+        binary = next((b for b in _SYSTEMCTL if os.path.exists(b)), _SYSTEMCTL[0])
         out = subprocess.run(  # fixed absolute binary, no shell, fixed arguments
-            ["/usr/bin/systemctl", "show", "-p", "ActiveState", "-p", "MainPID", "--", unit],
+            [binary, "show", "-p", "ActiveState", "-p", "MainPID", "--", unit],
             capture_output=True,
             text=True,
             timeout=5,
@@ -178,22 +287,48 @@ class RealOsFacts:
         vals = dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
         return vals["ActiveState"], int(vals["MainPID"])
 
+    @staticmethod
+    def _in_unit_cgroup(pid: int, unit: str) -> bool:
+        """The unified-hierarchy line ``0::<path>`` must contain the unit as a whole path segment."""
+        with open(f"/proc/{pid}/cgroup", encoding="utf-8") as handle:
+            for line in handle.read().splitlines():
+                if line.startswith("0::") and unit in line[3:].split("/"):
+                    return True
+        return False
+
+    @staticmethod
+    def _proc_status(pid: int) -> dict[str, str]:
+        with open(f"/proc/{pid}/status", encoding="utf-8") as handle:
+            return dict(ln.split(":", 1) for ln in handle.read().splitlines() if ":" in ln)
+
     def unit_state(self, unit: str) -> UnitState:
-        """Clearly inactive, or active with the UID its main process really has, else unknown (never a guess)."""
+        """Inactive (clearly down), transitional (restarting), or active with the identity of its main process read
+        from /proc/<pid>/status; anything unclear is ``unknown`` (never a guess)."""
         import subprocess
 
         try:
             state, pid = self._show(unit)
             if state in ("inactive", "failed") and pid == 0:
                 return UnitState("inactive")
-            if state != "active" or pid <= 0:
-                return UnitState("unknown")  # transitional (activating, deactivating, reloading) or odd
-            with open(f"/proc/{pid}/cgroup", encoding="utf-8") as handle:
-                if f"/{unit}" not in handle.read():
-                    return UnitState("unknown")  # the PID is not in the unit's cgroup (reused, or moved)
-            uid = os.stat(f"/proc/{pid}").st_uid
+            if state in ("activating", "deactivating", "reloading"):
+                return UnitState("transitional")
+            if state != "active" or pid <= 0 or not self._in_unit_cgroup(pid, unit):
+                return UnitState("unknown")
+            status = self._proc_status(pid)
+            uids = {int(x) for x in status["Uid"].split()}
+            gid_list = {int(x) for x in status["Gid"].split()} | {int(x) for x in status.get("Groups", "").split()}
+            if len(uids) != 1:
+                return UnitState("unknown")  # real/effective/saved/fs differ: not a plain service identity
+            result = UnitState(
+                "active",
+                next(iter(uids)),
+                frozenset(gid_list),
+                status["NoNewPrivs"].strip() == "1",
+                int(status["CapEff"].strip(), 16),
+                int(status["CapAmb"].strip(), 16),
+            )
             if self._show(unit) != (state, pid):
-                return UnitState("unknown")  # changed while we looked
-            return UnitState("active", uid)
+                return UnitState("unknown")  # changed while we looked (PID reuse, restart)
+            return result
         except (OSError, ValueError, KeyError, subprocess.SubprocessError):
             return UnitState("unknown")

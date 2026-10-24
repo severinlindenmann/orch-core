@@ -301,9 +301,12 @@ def test_the_install_record_is_rechecked_at_submit(served, human, ready):
     with f.commit_installs() as write:
         cur = f.installs()
         cur["seen"] = {}
-        cur["keys"][f"{H.OFFICIAL}|standup"] = "B" * 87
+        cur["keys"][f"{H.OFFICIAL}|standup"] = "B" * 87  # a key this release does not pin (a retired one)
         write(cur)
-    assert err(human.submit_res(prepared["request"]["id"], signed.events)) == "market.publisher_key_changed"
+    # official class (#1191): the staged key is pinned by this release, so a record on another key is a rotation; the
+    # strict TOFU recheck of a key change is in test_market_update (pins changed) and test_rotation (other classes)
+    ok(human.submit_res(prepared["request"]["id"], signed.events))
+    assert f.installs()["keys"] == {f"{H.OFFICIAL}|standup": H.KEY_B64}
 
 
 # ------------------------------------------------------------------------------------------------ C1: the plain gate

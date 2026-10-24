@@ -190,6 +190,7 @@ OP = operation(
         err("market.version_reused"),
         err("market.rollback"),
         err("market.publisher_key_changed"),
+        err("market.official_unsigned"),
         err("market.revoked"),
         err("market.not_allowed"),
         err("market.manifest_mismatch"),

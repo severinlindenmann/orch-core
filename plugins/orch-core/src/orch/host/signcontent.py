@@ -37,6 +37,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from orch import canon
+from orch.addons.settings_value import KEY as ADDONS_KEY
 
 __all__ = ["DETAILS_ONLY", "SHOWN", "TECHNICAL_KEYS", "PlainUnavailable", "build", "clean_tree", "headline", "text"]
 
@@ -511,6 +512,48 @@ def _models_rows(out: dict[str, Any], value: Any, before: Any, ctx: Any) -> bool
         "Start agent uses these models for new agents. You still see the model before each start."
     )
     return True
+
+
+def _leaf_word(v: Any) -> str:
+    return "true" if v is True else "false" if v is False else "(nothing)" if v in ({}, []) else _show(v) or "null"
+
+
+def _addons_rows(out: dict[str, Any], value: Any, before: Any, ctx: Any) -> str | None:
+    """``settings.changed`` ``set.addons`` (G6): ONE add-on's settings, one row per leaf (``path = value``), nothing
+    folded, a leaf that goes away shown as removed. The name is the signed one; the host's current values are labelled
+    ``per host, not signed``. The headline when it is plain, else ``None`` (the caller raises: no plain view)."""
+    from orch.addons import settings_value as sv
+
+    if sv.check_changes(value) is not None:
+        return None
+    ((name, new),) = value.items()
+    old = before.get(name) if isinstance(before, Mapping) else None
+    if sv.check_shape(old) is not None:
+        old = None  # not plain data: show nothing of it rather than guess
+    now = dict(sv.leaves(new)) if new is not None else {}
+    was = dict(sv.leaves(old)) if old is not None else {}
+    if new is None:
+        _row(
+            out,
+            one(name),
+            "(removed: the add-on uses its defaults)",
+            "(set)" if old is not None else None,
+            ctx.note(False),
+        )
+    for path in sorted(set(now) | set(was)):
+        label = f"{name}: {path}" if path else name
+        _row(
+            out,
+            label,
+            _leaf_word(now[path]) if path in now else "(removed)",
+            _leaf_word(was[path]) if path in was else None,
+            ctx.note(False),
+        )
+    out.setdefault("notes", []).append(
+        f"Only {one(name)} reads these settings. It gets exactly these values when orch runs it; "
+        "orch checks them against what it declared."
+    )
+    return f"Settings of {one(name)} (add-on)"
 
 
 def _icon_word(v: Any) -> str | None:
@@ -1219,6 +1262,13 @@ def _event(
             _row(out, "reason", ev["reason"])
         return "Take back agent access"  # signed words only: which access is in the labelled row (the host's word)
     if typ == "settings.changed":
+        if ADDONS_KEY in (ev.get("set") or {}):
+            if len(ev["set"]) != 1:
+                raise PlainUnavailable("add-on settings are signed on their own")
+            head = _addons_rows(out, ev["set"][ADDONS_KEY], before.get(ADDONS_KEY), ctx)
+            if head is None:
+                raise PlainUnavailable("the add-on settings are not plain data")
+            return head
         for key, value in sorted((ev.get("set") or {}).items()):
             if key == "repos" and _repo_rows(out, value, before.get(key), ctx):
                 continue

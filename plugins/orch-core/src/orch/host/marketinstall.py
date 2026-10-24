@@ -226,7 +226,7 @@ def _plan_dev(call: Call, args: dict[str, Any]) -> dict[str, Any]:
     return {
         "op": "market.dev_stage", "id": None, "path": args["path"], "rev": args.get("rev"),
         "subdir": args.get("subdir"), "root": str(_store_root(service)), "now": service.clock(),
-        "addons": dict(install.as_addons(service.store.state.workspace.addons)), "person": call.viewer,
+        "granted": dict(install.as_addons(service.store.state.workspace.addons)), "person": call.viewer,
     }  # fmt: skip
 
 
@@ -423,7 +423,7 @@ def _dev_stage(service: WorkspaceService, plan: dict[str, Any]) -> dict[str, Any
     if name in files_.installs()[ADDONS]:
         raise MarketError("market.origin_changed")  # installed from a marketplace: dev never replaces it
     event = install.grant_event(manifest, pkg)
-    review = install.review_lines(manifest, pkg, event, plan["addons"].get(name))
+    review = install.review_lines(manifest, pkg, event, plan["granted"].get(name))
     now = plan["now"]
     stage = "st_" + secrets.token_hex(16)
     expires = now + constants.STAGE_TTL

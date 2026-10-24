@@ -231,11 +231,13 @@ def test_cancel_cancels_on_the_host(world, click):
     assert click.post("view", {"request_id": got["request_id"]}).status_code == 404
 
 
-def test_a_click_workspace_prepares_no_terminal_handoff(world, click):
-    """ONE signing path per workspace (owner decision, 12 Oct 2026): with the flag on, /handoff is refused."""
+def test_a_click_workspace_still_prepares_a_terminal_handoff(world, click):
+    """#1170: with the flag on, /handoff works (the code for `orch sign`)."""
     res = world.client.post(f"/api/w/{world.ws.ws_id}/handoff", json=approve(world, "three"), headers=click.headers())
-    assert res.status_code == 409 and res.json()["error"]["code"] == "sign.click_only", res.text
-    assert world.ws.ws_id in res.json()["error"]["message"]
+    assert res.status_code == 200, res.text
+    world.client.delete(
+        f"/api/w/{world.ws.ws_id}/handoff/{res.json()['id']}", headers=click.headers()
+    )  # leave none open
 
 
 def test_with_the_flag_off_the_host_refuses_and_the_card_says_so(world, click):

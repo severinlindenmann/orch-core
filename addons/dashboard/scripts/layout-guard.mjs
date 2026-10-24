@@ -495,6 +495,8 @@ async function run(send, close) {
                 await new Promise((r) => setTimeout(r, 400))
                 return true
               }, sel, rx.source)
+            // Click the first element a selector matches (a switch has no text of its own).
+            const clickSel = (sel) => clickText(sel, /[\s\S]*/)
             // Fixture answers arrive a moment after the page: wait for the element (up to 8 s) before calling it missing, then let the layout settle.
             const present = async (sel) => {
               const found = await evaluate(async (s) => {
@@ -581,15 +583,15 @@ async function run(send, close) {
             const CARD = [['the signing card', '[data-testid="workspace-card-signing"]']]
             if (!ONLY || ONLY.test('real-host-signing-on')) {
               await go('/__layout/signing-on')
-              const opened = (await present('[data-testid="workspace-card-signing"]')) && (await clickText('button', /^Turn on…$/))
+              const opened = (await present('[data-testid="workspace-card-signing"]')) && (await clickSel('[data-testid="workspace-card-signing"] button[role="switch"]'))
               await settle()
-              await check(config, 'real-host-signing-on', opened ? await need([...CARD, ['the conversion text', '[data-testid="signing-conversion"]'], ['the password field', '#signing-passphrase[type="password"]']]) : ['the Turn on… button is missing'])
+              await check(config, 'real-host-signing-on', opened ? await need([...CARD, ['the conversion text', '[data-testid="signing-conversion"]'], ['the password field', '#signing-passphrase[type="password"]']]) : ['the One click switch is missing'])
             }
             if (!ONLY || ONLY.test('real-host-signing-off')) {
               await go('/__layout/signing-off')
-              const opened = (await present('[data-testid="workspace-card-signing"]')) && (await clickText('button', /^Turn off$/))
+              const opened = (await present('[data-testid="workspace-card-signing"]')) && (await clickSel('[data-testid="workspace-card-signing"] button[role="switch"]'))
               await settle()
-              await check(config, 'real-host-signing-off', opened ? await need([...CARD, ['the move-back command', '[data-testid="signing-move-back"] code'], ['the copy button', '[data-testid="signing-move-back"] button']]) : ['the Turn off button is missing'])
+              await check(config, 'real-host-signing-off', opened ? await need([...CARD, ['the off explanation', '[data-testid="signing-off-explain"]'], ['the new passphrase field', '#signing-new-passphrase[type="password"]']]) : ['the One click switch is missing'])
             }
             if (!ONLY || ONLY.test('real-host-signing-terminal-on')) {
               await go('/__layout/signing-terminal-on')
@@ -601,11 +603,11 @@ async function run(send, close) {
             }
             if (!ONLY || ONLY.test('real-host-signing-unknown')) {
               await go('/__layout/signing-unknown')
-              const opened = (await present('[data-testid="workspace-card-signing"]')) && (await clickText('button', /^Turn on…$/))
+              const opened = (await present('[data-testid="workspace-card-signing"]')) && (await clickSel('[data-testid="workspace-card-signing"] button[role="switch"]'))
               const typed = opened && (await typeInto('#signing-passphrase', 'placeholder'))
               const sent = typed && (await clickText('button', /^Turn on$/))
               await settle()
-              await check(config, 'real-host-signing-unknown', sent ? await need([...CARD, ['the result-unknown line', '[data-testid="signing-error"]']]) : ['the Turn on… form did not open or send'])
+              await check(config, 'real-host-signing-unknown', sent ? await need([...CARD, ['the result-unknown line', '[data-testid="signing-error"]']]) : ['the One click form did not open or send'])
             }
             // Pair a phone: Create pairing link, then Show QR and link: the QR, Copy link and the typed fallback at 720 px.
             if (!ONLY || ONLY.test('real-host-pair-link')) {

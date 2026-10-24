@@ -33,7 +33,6 @@ failures never lock out another. ``human.get`` with ``signer`` binds the request
 from __future__ import annotations
 
 import base64
-import contextlib
 import copy
 import logging
 import os
@@ -323,11 +322,6 @@ class HumanOps:
             if same is not None:
                 return same  # the same request, in its current state
         try:
-            if handoff:  # §0.8.6 item 8: the flag check and the request file are one step against `convenience on`
-                svc = call.service
-                with convenience.workspace_lock(svc.state_dir, svc.workspace_id, svc.host_uid):
-                    convenience.refuse_handoff(svc)
-                    return self._prepare(call, args, dry_run, intent)
             return self._prepare(call, args, dry_run, intent)
         except BaseException:
             if intent is not None:
@@ -843,8 +837,7 @@ class HumanOps:
             events=record["prepared"]["events"],
             readers=record.get("readers") or [],
         )
-        if record.get("code"):  # §0.8.6 item 8: a hand-off request is dead once click-to-sign is on
-            convenience.refuse_handoff(call.service)
+        convenience.refuse_hub_op(record["op"], signer["auth"])  # #1170: a hub op is never bound to the one-click key
         if record.get("sequence") is not None and signer["auth"] not in ("passphrase", "convenience"):
             # a sequence is bound to the passphrase or one-click custody only, here as at prepare (not the phone)
             raise HostError("invalid.input", "a sequence is signed with the passphrase or one-click custody only")
@@ -1105,30 +1098,19 @@ class HumanOps:
                 events=record["prepared"]["events"],
                 readers=record.get("readers") or [],
             )
-            with contextlib.ExitStack() as stack:
-                if record.get("code"):  # §0.8.6 item 8: the flag read and the journal write are one step against
-                    # `convenience on`. Lock order: submit takes store -> convenience, while prepare takes
-                    # convenience -> store. Safe: both run on the workspace's single worker thread, and the other
-                    # processes (the CLI, direct mode) take only one of the two; the 2 s wait is the backstop
-                    # (lock.busy, never a deadlock)
-                    stack.enter_context(
-                        convenience.workspace_lock(service.state_dir, service.workspace_id, service.host_uid)
-                    )
-                    convenience.refuse_handoff(service)
-                git = service.caps_for(call.principal).git
-                self._judge(store, record, events, git)
-                log = record["prepared"]["log"]
-                view = store.ticket(log) if log != "workspace" else None
-                key = view.key if view is not None else None
-                outcomes = service.outcomes
-                outcomes.plan(intent, [Planned(log, e["id"], e["type"], e["actor"]) for e in events], key)
-                record = {
-                    **record,
-                    "submit": {"events": events, "outcome_key": intent.key},
-                    "submitted_at": requests.clock(),
-                }
-                requests.write(record)  # fsync before the first append: a crash after it is rolled forward at start
-                stack.close()  # the flag can no longer be read as off by a submit that is already journalled
+            git = service.caps_for(call.principal).git
+            self._judge(store, record, events, git)
+            log = record["prepared"]["log"]
+            view = store.ticket(log) if log != "workspace" else None
+            key = view.key if view is not None else None
+            outcomes = service.outcomes
+            outcomes.plan(intent, [Planned(log, e["id"], e["type"], e["actor"]) for e in events], key)
+            record = {
+                **record,
+                "submit": {"events": events, "outcome_key": intent.key},
+                "submitted_at": requests.clock(),
+            }
+            requests.write(record)  # fsync before the first append: a crash after it is rolled forward at start
             return finish(service, requests, record)
 
     @staticmethod

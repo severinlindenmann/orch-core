@@ -15,12 +15,12 @@ function mount(owner = true, supported: boolean | null = true, custody: 'conveni
 it('saves allowed methods through the signed settings flow and keeps reserved methods disabled', async () => {
   vi.spyOn(api, 'phoneAvailable').mockResolvedValue({ phones: 1 })
   mount()
-  const phone = screen.getByLabelText('Phone (Face ID)')
+  const phone = await screen.findByLabelText('Phone (Face ID)')
   await waitFor(() => expect(phone).toBeEnabled())
   await waitFor(() => expect(screen.getByLabelText('One click on this computer')).toBeChecked())
   expect(screen.getByLabelText('Terminal (always)')).toBeDisabled()
-  expect(screen.getByLabelText(/Touch ID/)).toBeDisabled()
-  expect(screen.getByLabelText(/Security key/)).toBeDisabled()
+  expect(screen.queryByLabelText(/Touch ID/)).toBeNull() // not offered at all until it exists
+  expect(screen.queryByLabelText(/Security key/)).toBeNull()
   expect(screen.queryByTestId('click-risk')).toBeNull() // the risk line lives on the Sign in the dashboard card only
   fireEvent.click(phone)
   fireEvent.click(screen.getByRole('button', { name: 'Save allowed methods' }))
@@ -30,7 +30,8 @@ it('saves personal default and fallback without a workspace signature', async ()
   const put = vi.spyOn(api, 'putSignDefault').mockResolvedValue({ method: 'terminal', fallback: 'click', allowed: ['terminal', 'click', 'phone'], is_default: false })
   mount(false)
   await waitFor(() => expect(screen.getByLabelText('Default')).toBeEnabled())
-  expect(screen.getByLabelText('Phone (Face ID)')).toBeDisabled()
+  expect(await screen.findByText(/Phone: no phone is paired yet|Phone: add the Phone add-on first/)).toBeInTheDocument()
+  expect(screen.queryByLabelText('Phone (Face ID)')).toBeNull() // not set up: no checkbox that looks usable
   fireEvent.change(screen.getByLabelText('Default'), { target: { value: 'terminal' } })
   fireEvent.change(screen.getByLabelText('Fallback'), { target: { value: 'click' } })
   expect(screen.queryAllByRole('option', { name: /Approve on your phone/ })).toHaveLength(0) // phone is no personal default yet
@@ -44,7 +45,7 @@ it('hides the personal controls and says one line when the host gives no prefere
   await screen.findByText(/Your own way of approving is not available on this host yet/)
   expect(screen.queryByLabelText('Default')).toBeNull()
   expect(screen.queryByRole('button', { name: 'Save my preference' })).toBeNull()
-  expect(screen.getByLabelText('One click on this computer')).toBeDisabled()
+  expect(await screen.findByLabelText('One click on this computer')).toBeDisabled()
 })
 
 it('shows the personal controls once the host serves preferences, and none of them before', async () => {
@@ -57,8 +58,8 @@ it('does not show Phone as allowed in an unrestricted workspace without a paired
   vi.spyOn(api, 'phoneAvailable').mockResolvedValue({ phones: 0 })
   mount(true, null)
   await screen.findByText(/No limit is set/)
-  expect(screen.getByLabelText('Phone (Face ID)')).not.toBeChecked()
-  expect(screen.getByText(/relay add-on/)).toBeInTheDocument()
+  expect(screen.queryByLabelText('Phone (Face ID)')).toBeNull()
+  expect(await screen.findByText(/add the Phone add-on first/)).toBeInTheDocument()
   await waitFor(() => expect(screen.getByLabelText('One click on this computer')).toBeChecked())
 })
 
@@ -67,11 +68,10 @@ it('N11: on a terminal workspace One click is off and not offered, and the boxes
   mount(true, null, 'none')
   await screen.findByText(/No limit is set/)
   await waitFor(() => expect(screen.getByTestId('click-next-step')).toBeInTheDocument())
-  expect(screen.getByLabelText('One click on this computer')).not.toBeChecked()
-  expect(screen.getByLabelText('One click on this computer')).toBeDisabled()
-  expect(screen.getByLabelText('Phone (Face ID)')).not.toBeChecked()
-  expect(screen.getByTestId('click-next-step')).toHaveTextContent('run orch setup in this folder and choose One click')
-  expect(screen.getByText('Phone needs the relay add-on (coming later)')).toBeInTheDocument()
+  expect(screen.queryByLabelText('One click on this computer')).toBeNull() // not set up: no checkbox that looks usable
+  expect(screen.queryByLabelText('Phone (Face ID)')).toBeNull()
+  expect(screen.getByTestId('click-next-step')).toHaveTextContent('One click is not set up on this computer')
+  expect(screen.getByText('Phone: add the Phone add-on first.')).toBeInTheDocument()
   expect(screen.queryByText(/not available on this host/)).toBeNull()
   await waitFor(() => expect(screen.getByLabelText('Default')).toBeEnabled())
   // My settings offers no one-click fallback either.

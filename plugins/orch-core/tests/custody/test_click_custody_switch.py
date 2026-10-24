@@ -130,13 +130,6 @@ def test_wrong_passphrases_are_limited_then_the_window_passes(switch):
     assert on(signer, provider.passphrase)["enabled"] is True
 
 
-def test_on_waits_for_pending_terminal_handoffs(switch, monkeypatch):
-    signer, state, provider, *_ = switch
-    monkeypatch.setattr(convenience, "pending_handoffs", lambda *a, **k: [{"id": "hr_1", "op": "approve", "code": "x"}])
-    refused(lambda: on(signer, provider.passphrase), "sign.click_only")
-    assert not flag(state) and select.status(state, WS)["custody"] == "passphrase"
-
-
 def test_off_without_a_passphrase_keeps_the_key_in_the_store(switch):
     signer, state, provider, store, _, _ = switch
     device = on(signer, provider.passphrase)["device"]
@@ -484,38 +477,20 @@ def test_l3_the_slow_part_runs_outside_the_flag_lock(switch, monkeypatch):
     assert on(signer, provider.passphrase)["enabled"] is True and seen == ["free"]
 
 
-def test_l3_a_handoff_prepared_during_the_slow_part_undoes_the_move(switch, monkeypatch):
-    signer, state, provider, store, _, _ = switch
-    before = select.status(state, WS)
-    put = store.put
-
-    def put_then_a_handoff_arrives(*a, **k):
-        put(*a, **k)
-        monkeypatch.setattr(
-            convenience, "pending_handoffs", lambda *a, **k: [{"id": "hr_1", "op": "approve", "code": "x"}]
-        )
-
-    monkeypatch.setattr(store, "put", put_then_a_handoff_arrives)
-    refused(lambda: on(signer, provider.passphrase), "sign.click_only")
-    assert not flag(state)
-    assert select.status(state, WS) == before and legacy_file(state).exists()
-    assert not store.exists(WS, before["device"])
-
-
 def test_l3_a_custody_change_during_the_slow_part_is_not_overwritten(switch, monkeypatch):
     signer, state, provider, store, _, _ = switch
     calls = []
+    real = select.finish_convenience
 
-    def someone_else_changes_custody(*a, **k):  # the second call is the re-check under the lock, after staging
+    def someone_else_changes_custody(*a, **k):  # under the lock, after staging
         calls.append(1)
-        if len(calls) == 2:
-            sel = select.read_selection(state, WS)
-            select._write_selection(state, WS, {**sel, "gen": sel.gen + 5})
-        return []
+        sel = select.read_selection(state, WS)
+        select._write_selection(state, WS, {**sel, "gen": sel.gen + 5})
+        return real(*a, **k)
 
-    monkeypatch.setattr(convenience, "pending_handoffs", someone_else_changes_custody)
+    monkeypatch.setattr(select, "finish_convenience", someone_else_changes_custody)
     refused(lambda: on(signer, provider.passphrase), "custody.unavailable")
-    assert len(calls) == 2 and not flag(state)
+    assert len(calls) == 1 and not flag(state)
     assert select.read_selection(state, WS)["gen"] == 6  # the other change is kept, not overwritten
 
 
@@ -550,14 +525,14 @@ def test_f1_a_conversion_staged_meanwhile_is_not_resumed_with_a_dashboard_passph
     passphrase, so any string used to finish it and turn the flag on. Only the terminal resumes."""
     signer, state, provider, store, _, _ = switch
     staged = []
-    real = convenience.pending_handoffs
+    real = select.stage_convenience
 
     def the_terminal_stages_meanwhile(*a, **k):
         if not staged:
-            staged.append(select.stage_convenience(state, WS, store=store))  # orch keys custody convenience, cut short
+            staged.append(real(state, WS, store=store))  # orch keys custody convenience, cut short
         return real(*a, **k)
 
-    monkeypatch.setattr(convenience, "pending_handoffs", the_terminal_stages_meanwhile)
+    monkeypatch.setattr(select, "stage_convenience", the_terminal_stages_meanwhile)
     refused(lambda: on(signer, "not the passphrase"), "custody.unavailable")
     assert not flag(state)
     assert select.read_selection(state, WS) == staged[0]  # left for the terminal to finish

@@ -987,7 +987,7 @@
     },
     "files": {
      "main.py": "print('hello')\n",
-     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"slack\", \"runtime\": {\"kind\": \"node-package-lock\", \"lock\": \"package-lock.json\"}, \"schema\": \"orch.addon/3\", \"title\": \"Slack\", \"version\": \"1.0.0\"}",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"node\", \"{pkg}/main.js\"]}, \"min_core\": \"2.0.0\", \"name\": \"slack\", \"runtime\": {\"kind\": \"node-package-lock\", \"lock\": \"package-lock.json\"}, \"schema\": \"orch.addon/3\", \"title\": \"Slack\", \"version\": \"1.0.0\"}",
      "package-lock.json": "{\"lockfileVersion\": 3, \"packages\": {\"\": {\"name\": \"x\"}, \"node_modules/left-pad\": {\"integrity\": \"sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==\", \"resolved\": \"https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz\", \"version\": \"1.3.0\"}}}"
     },
     "id": "slack",
@@ -1000,7 +1000,7 @@
        "commit": "0123456789abcdef0123456789abcdef01234567",
        "id": "slack",
        "min_orch": "2.0.0",
-       "package_sha256": "sha256:ccfebde86fa09f55f297f81b6e22261a7f00e702b37b7c8794ba6a537174242c",
+       "package_sha256": "sha256:25e5dc405c3bd9c3944b2d5040ef04252585406fc830ff3c77e18aa11c654dfe",
        "runtime": {
         "kind": "node-package-lock",
         "lock": "package-lock.json"
@@ -1025,7 +1025,7 @@
     "ok": {
      "class": "other",
      "id": "slack",
-     "package_sha256": "sha256:ccfebde86fa09f55f297f81b6e22261a7f00e702b37b7c8794ba6a537174242c",
+     "package_sha256": "sha256:25e5dc405c3bd9c3944b2d5040ef04252585406fc830ff3c77e18aa11c654dfe",
      "tofu": "unsigned",
      "version": "1.0.0"
     }
@@ -4063,7 +4063,7 @@
     },
     "files": {
      "main.py": "print('hello')\n",
-     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"jira\", \"runtime\": {\"kind\": \"node-package-lock\", \"lock\": \"package-lock.json\"}, \"schema\": \"orch.addon/3\", \"title\": \"Jira\", \"version\": \"1.0.0\"}",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"node\", \"{pkg}/main.js\"]}, \"min_core\": \"2.0.0\", \"name\": \"jira\", \"runtime\": {\"kind\": \"node-package-lock\", \"lock\": \"package-lock.json\"}, \"schema\": \"orch.addon/3\", \"title\": \"Jira\", \"version\": \"1.0.0\"}",
      "package-lock.json": "{\"lockfileVersion\": 3, \"packages\": {\"\": {}, \"node_modules/x\": {\"resolved\": \"https://registry.npmjs.org/x.tgz\"}}}"
     },
     "id": "jira",
@@ -4076,7 +4076,7 @@
        "commit": "0123456789abcdef0123456789abcdef01234567",
        "id": "jira",
        "min_orch": "2.0.0",
-       "package_sha256": "sha256:bea30de88737f101d290adf56fbdcc46f416a9c2a91e5f7c1014de33ac0dbd12",
+       "package_sha256": "sha256:a3874c8f2c119f81428b84c1b1aae22e63d245ef66339d9c8dc8a23b53d879d4",
        "runtime": {
         "kind": "node-package-lock",
         "lock": "package-lock.json"
@@ -4135,7 +4135,7 @@
     },
     "files": {
      "main.py": "print('hello')\n",
-     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"python3\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"jira\", \"runtime\": {\"kind\": \"node-package-lock\", \"lock\": \"package-lock.json\"}, \"schema\": \"orch.addon/3\", \"title\": \"Jira\", \"version\": \"1.0.0\"}",
+     "orch-addon.json": "{\"api\": \">=1.0,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"node\", \"{pkg}/main.js\"]}, \"min_core\": \"2.0.0\", \"name\": \"jira\", \"runtime\": {\"kind\": \"node-package-lock\", \"lock\": \"package-lock.json\"}, \"schema\": \"orch.addon/3\", \"title\": \"Jira\", \"version\": \"1.0.0\"}",
      "package-lock.json": "{\"lockfileVersion\": 3, \"packages\": {\"\": {}, \"node_modules/x\": {\"resolved\": \"git+ssh://git@evil.example/x.git\", \"integrity\": \"sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==\"}}}"
     },
     "id": "jira",
@@ -4148,7 +4148,7 @@
        "commit": "0123456789abcdef0123456789abcdef01234567",
        "id": "jira",
        "min_orch": "2.0.0",
-       "package_sha256": "sha256:ca7f0563c3fbeb10b88b4ee1125f9c8a0cf1406c4215568d2250afb3bff5405d",
+       "package_sha256": "sha256:77f52e035ff2126b3228fc8bed9eb9c024a73dd93cd9783267cd23a0876b1148",
        "runtime": {
         "kind": "node-package-lock",
         "lock": "package-lock.json"

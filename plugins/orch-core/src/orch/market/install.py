@@ -5,7 +5,7 @@ functions give the answer ``tests/addons/market_ref.install`` gives on the same 
 * :func:`check_entry`: steps 6 to 9, on the entry of the index (revoked, host, reserved id, origin, version, rollback,
   publisher and TOFU, ``min_orch``). The hub ceiling is the policy hook's (``orch.market.policy``).
 * :func:`check_package`: steps 13 and 14, 16, on the bytes of a package that was read once: digest, manifest agreement,
-  compatibility. Step 15 (lockfiles) is G4's slot.
+  compatibility, and step 15 (the lockfile named by the manifest's ``runtime``, V3 G4).
 * :func:`diff`: what an update changes, and whether it ``widened`` what the add-on may do."""
 
 from __future__ import annotations
@@ -16,10 +16,12 @@ from typing import Any
 
 from orch import canon
 from orch.addons import builtin
+from orch.addons.install import read_lock
+from orch.addons.lockfile import Lock
 from orch.addons.manifest import Manifest, ManifestError, _core_key, declarations, incompatibility, load_manifest
 from orch.addons.package import MANIFEST_FILE, Package
 
-from . import ADDONS, MarketError, index
+from . import ADDONS, MarketError, deps, index
 from .url import host_of
 
 __all__ = ["Ctx", "Facts", "check_entry", "check_package", "diff", "semver"]
@@ -102,16 +104,15 @@ def check_entry(ctx: Ctx, doc: Mapping[str, Any], addon_id: str) -> Facts:
 
 
 def check_package(facts: Facts, pkg: Package, core_version: str) -> Manifest:
-    """Steps 13, 14 and 16 on the bytes read once. ``market.digest_mismatch``, ``market.manifest_mismatch``, and the
+    """Steps 13 to 16 on the bytes read once. ``market.digest_mismatch``, ``market.manifest_mismatch`` (``runtime`` of
+    the manifest and of the entry must be equal, both present or both absent), ``market.lock_missing`` and
+    ``market.lock_invalid`` (step 15: the lockfile the MANIFEST names, nothing else is ever a lockfile), and the
     existing incompatibility (``market.min_orch`` is the entry's; a package that does not fit this core is
     ``market.manifest_mismatch`` here, never a silent install)."""
     entry = facts.entry
     if pkg.digest != entry["package_sha256"]:
         raise MarketError("market.digest_mismatch")
     try:
-        raw = canon.loads_strict(pkg.files[MANIFEST_FILE])
-        if not isinstance(raw, dict) or "runtime" in raw or "runtime" in entry:
-            raise ManifestError("runtime is not understood yet (G4)")  # until G4 adds the key to the schema
         manifest = load_manifest(pkg.files[MANIFEST_FILE])
     except (canon.JcsError, ValueError, ManifestError, RecursionError, UnicodeError):
         raise MarketError("market.manifest_mismatch") from None
@@ -122,8 +123,11 @@ def check_package(facts: Facts, pkg: Package, core_version: str) -> Manifest:
         and manifest.version == entry["version"]
         and manifest.capabilities == entry["capabilities"]
         and doc.get("min_core") == entry["min_orch"]
+        and doc.get("runtime") == entry.get("runtime")  # the manifest decides; the index copy must agree
     ):
         raise MarketError("market.manifest_mismatch")
+    if manifest.runtime is not None:
+        read_lock(manifest, pkg)  # step 15: MarketError lock_missing / lock_invalid
     if incompatibility(manifest, core_version) is not None:
         raise MarketError("market.manifest_mismatch")
     return manifest
@@ -138,13 +142,22 @@ def _set_by(f: Mapping[str, Any]) -> set[str]:
     return set(f.get("set_by", ()))
 
 
-def diff(old: Manifest | None, new: Manifest, prev: Mapping[str, Any], facts: Facts) -> dict[str, Any]:
+def diff(
+    old: Manifest | None,
+    new: Manifest,
+    prev: Mapping[str, Any],
+    facts: Facts,
+    old_lock: Lock | None = None,
+    new_lock: Lock | None = None,
+) -> dict[str, Any]:
     """What the update changes against the add-on that is installed (``old``, read from its directory; ``None`` when it
     cannot be read: everything then counts as widened) and the install record ``prev``. ``changes`` are lines for a
     person; ``widened`` is True when the new package may do more than the old one: a capability, a field (or a wider
     ``set_by`` or gate change), a section or a wider ticket-type list, a needs rule, a CLI or agent hint, an artifact
-    kind, a new entry command or skills, or a publisher key seen for the first time. The host labels it as index-derived
-    where it comes from the index."""
+    kind, a new entry command or skills, or a publisher key seen for the first time, or (V3 G4, C6) a dependency
+    runtime that is added or changes kind, or any locked package that is added or re-versioned (removals do not widen).
+    ``old_lock``/``new_lock`` are the checked lockfiles of each side (``None``: no lock, or the old one is unreadable).
+    The host labels it as index-derived where it comes from the index."""
     ev_new = declarations(new)
     added: dict[str, list[str]] = {k: [] for k in ("capabilities", "fields", "sections", "needs", "artifact_kinds")}
     removed: dict[str, list[str]] = {k: [] for k in added}
@@ -183,6 +196,14 @@ def diff(old: Manifest | None, new: Manifest, prev: Mapping[str, Any], facts: Fa
                 changes.append(f"{k.replace('_', ' ')} changed")
                 widened = True  # a new command, hint, CLI or skills: what the add-on tells agents or runs
         widened = widened or any(added[k] for k in ("capabilities", "fields", "sections", "needs", "artifact_kinds"))
+    dep = deps.diff(
+        None if old is None or old.runtime is None else old.runtime["kind"],
+        old_lock,
+        None if new.runtime is None else new.runtime["kind"],
+        new_lock,
+    )
+    changes += dep["lines"]
+    widened = widened or dep["widened"]
     old_key = prev.get("publisher_key")
     if facts.tofu == "unsigned":
         publisher = "unsigned"
@@ -202,4 +223,5 @@ def diff(old: Manifest | None, new: Manifest, prev: Mapping[str, Any], facts: Fa
         "removed": removed,
         "widened": widened,
         "publisher": publisher,
+        "deps": {k: dep[k] for k in ("runtime", "added", "removed", "changed")},
     }

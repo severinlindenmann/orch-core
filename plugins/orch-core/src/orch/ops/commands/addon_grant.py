@@ -7,6 +7,7 @@ from typing import Any
 from orch.addons import install
 from orch.addons.manifest import ManifestError
 from orch.addons.package import PackageError
+from orch.market import MarketError
 from orch.ops._dsl import STR, S, err, obj, operation
 from orch.ops.base import Context, Result
 from orch.ops.errors import OrchError
@@ -74,6 +75,28 @@ def _staged(h: Human, ctx: Context, name: str, stage: str) -> tuple[Any, Any, An
     return doc, package, manifest
 
 
+def _dependencies(ctx: Context, manifest: Any, package: Any, stage_doc: Any) -> None:
+    """The package list of the review (``material["deps"]``). From the stage when there is one (it also knows the
+    download sizes and which wheels are compiled); else from the checked lockfile alone (a re-enable). Either way every
+    name and version comes from the lockfile of THIS package: a stage block that does not match it is not used."""
+    from orch.addons import lockfile
+    from orch.market import deps
+
+    if ctx.prepare is None:
+        return
+    lock = install.read_lock(manifest, package)
+    planned = lockfile.plan(lock, lockfile.current_host())
+    fresh = deps.view(manifest.runtime["lock"], lock, planned, None)
+    kept = stage_doc.get("deps") if stage_doc is not None else None
+    same = (
+        isinstance(kept, dict)
+        and [(r["name"], r["version"], r["installs"]) for r in kept.get("rows", ())]
+        == [(r["name"], r["version"], r["installs"]) for r in fresh["rows"]]
+        and (kept["kind"], kept["lock"]) == (fresh["kind"], fresh["lock"])
+    )
+    ctx.prepare.deps = kept if same else fresh
+
+
 def handle(ctx: Context, args: dict[str, Any]) -> Result:
     """The grant is built from the package bytes read once (ticket-format 8.1): exactly the manifest's capabilities and
     its declared fields, sections and artifact kinds. The owner reads a summary on the terminal and types the addon's
@@ -90,8 +113,9 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
         raise OrchError("invalid.input", refusal, hint="set it up in Settings, Add-ons, then turn it on")
     root = h.store.layout.store  # addons/ lives in the store
     stage = args.get("staged")
+    stage_doc = None
     if stage is not None:
-        _, package, manifest = _staged(h, ctx, name, stage)
+        stage_doc, package, manifest = _staged(h, ctx, name, stage)
     else:
         try:
             directory = install.package_dir(root, name)
@@ -105,10 +129,14 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
             package, manifest = install.read_installed(root, name)
         except (PackageError, ManifestError) as e:
             raise OrchError("invalid.input", f"addons/{name}: {e}") from None
-    event = install.grant_event(manifest, package)
+    try:
+        event = install.grant_event(manifest, package)
+    except MarketError as e:
+        raise _market_refusal(e) from None
+    if manifest.runtime is not None:
+        _dependencies(ctx, manifest, package, stage_doc)
     if stage is None:  # C1: a folder is signed only when it is built in or the bytes the install record holds
         from orch.host import marketinstall
-        from orch.market import MarketError
 
         try:
             marketinstall.gate_plain(_market_files(h), event)
@@ -121,7 +149,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
         raise OrchError("invalid.input", f"section heading {clash[0]!r} is already used by another granted addon")
     previous = install.as_addons(view).get(name)
     caps = ",".join(event["capabilities"]) or "none"
-    review = install.review_lines(manifest, package, event, previous)
+    review = install.review_lines(manifest, package, event, previous, None if ctx.prepare is None else ctx.prepare.deps)
     done = h.run(event, "workspace", f"grant addon {name} {manifest.version} capabilities {caps}", review=review)
     lines = [
         f"version {manifest.version}",
@@ -163,6 +191,9 @@ OP = operation(
         err("market.revoked"),
         err("market.not_allowed"),
         err("market.manifest_mismatch"),
+        err("market.lock_missing"),
+        err("market.lock_invalid"),
+        err("market.env_failed"),
         err("market.community_unisolated"),
         err("market.state_invalid"),
     ),

@@ -795,6 +795,8 @@ class HumanOps:
             }
         if capture.market is not None and "addon.granted" in types:
             material["market"] = copy.deepcopy(capture.market)  # V3 G3: the host's word on the source, not signed
+        if capture.deps is not None and "addon.granted" in types:
+            material["deps"] = copy.deepcopy(capture.deps)  # V3 G4: the package list, from the checked lockfile
         seq = getattr(capture, "sequence", None)
         if seq is not None and seq["step"] == 0:  # the whole intent is in the material: bound by review_digest
             material["sequence"] = {"digest": seq["digest"], "of": seq["of"], "intent": copy.deepcopy(seq["intent"])}

@@ -30,10 +30,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from orch import __version__ as CORE_VERSION
-from orch.addons import builtin, install
+from orch.addons import builtin, install, lockfile
 from orch.addons.manifest import ManifestError
 from orch.addons.package import PackageError, from_files, read_package
-from orch.market import ADDONS, MarketError, constants, fetch, index, policy
+from orch.market import ADDONS, MarketError, constants, deps, fetch, index, policy
 from orch.market import install as mi
 from orch.market.url import canonical_market_url
 from orch.ops.errors import ERRORS
@@ -79,7 +79,8 @@ _STAGE_CODES = (
     "market.min_orch", "market.address_refused", "market.fetch_failed", "market.commit_mismatch",
     "market.package_invalid", "market.digest_mismatch", "market.manifest_mismatch", "market.index_unsigned",
     "market.source_mismatch", "market.unpinned", "market.bad_digest_format", "market.duplicate_id",
-    "market.refresh_running", "market.capability_ceiling",
+    "market.refresh_running", "market.capability_ceiling", "market.lock_missing", "market.lock_invalid",
+    "market.env_failed",
 )  # fmt: skip
 #: the codes each op can raise (the per-op declaration; a test checks every raise site against it)
 OP_CODES: dict[str, tuple[str, ...]] = {
@@ -127,10 +128,10 @@ def files_of(service: WorkspaceService) -> MarketFiles:
     return _files(service)
 
 
-def _refuse(op: str, code: str) -> HostError:
+def _refuse(op: str, code: str, reason: str | None = None) -> HostError:
     from .marketops import _refuse as refuse
 
-    return refuse(op, code)
+    return refuse(op, code, reason)
 
 
 def _store_root(service: WorkspaceService) -> Path:
@@ -179,7 +180,7 @@ def serve(call: Call, op: str, args: dict[str, Any]) -> dict[str, Any]:
             return ok_result(_uninstall(service, args["name"]))
         return {"plan": _plan_stage(call, args)}
     except MarketError as exc:
-        raise _refuse(op, exc.code) from None
+        raise _refuse(op, exc.code, exc.reason) from None
 
 
 def _plan_stage(call: Call, args: dict[str, Any]) -> dict[str, Any]:
@@ -256,7 +257,7 @@ def run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
         out = _stage(service, plan, call)
     except MarketError as exc:
         _audit(call, "market.stage.refused", id=plan["id"], code=exc.code)
-        raise _refuse("market.stage", exc.code) from None
+        raise _refuse("market.stage", exc.code, exc.reason) from None
     _audit(call, "market.stage", id=plan["id"], stage=out.get("stage"), up_to_date=out.get("up_to_date", False))
     return ok_result(out)
 
@@ -307,18 +308,23 @@ def _stage(service: WorkspaceService, plan: dict[str, Any], call: Call | None = 
     policy.evaluate("entry", plan.get("policy"), {"url": url, "id": name, "version": entry["version"]})
     LOG.warning("market.stage fetch %s@%s from %s", name, entry["version"], entry["source"]["git"])  # S13 greps this
     pkg = fetch.fetch_package(entry)
-    manifest = mi.check_package(facts, pkg, CORE_VERSION)
+    manifest = mi.check_package(facts, pkg, CORE_VERSION)  # steps 13 to 16, the lockfile (15) included
     event = install.grant_event(manifest, pkg)
-    review = install.review_lines(manifest, pkg, event, plan["previous"])
+    lock, dep_view = _dependencies(manifest, pkg)
+    review = install.review_lines(manifest, pkg, event, plan["previous"], dep_view)
     change = None
     if prior is not None:
+        old_lock = None
         try:
             opkg, old = install.read_installed(plan["root"], name)
             if plan["previous"] is None or opkg.digest != plan["previous"].package_sha256:
                 old = None  # not the bytes of the signed grant: everything counts as widened (review F1)
+            elif old.runtime is not None:
+                with contextlib.suppress(MarketError):  # unreadable old lock: every row of the new one counts as new
+                    old_lock = install.read_lock(old, opkg)
         except (PackageError, ManifestError):
             old = None
-        change = mi.diff(old, manifest, prior, facts)
+        change = mi.diff(old, manifest, prior, facts, old_lock, lock)
         review += [f"update: {x}" for x in change["changes"]]
         review.append("widened: yes, read all of it" if change["widened"] else "widened: no")
     stage = "st_" + secrets.token_hex(16)
@@ -337,7 +343,9 @@ def _stage(service: WorkspaceService, plan: dict[str, Any], call: Call | None = 
             "origin": url, "commit": entry["commit"], "publisher_key": facts.publisher_key, "tofu": facts.tofu,
             "index_version": v.doc["version"], "prev_digest": None if prior is None else prior["package_sha256"],
             "created_at": now, "expires_at": expires, "class": cls, "summary": entry.get("summary"),
-            "stale": v.stale, "entry": {k: entry[k] for k in ("id", "version", "capabilities", "min_orch")},
+            "stale": v.stale,
+            "entry": {k: entry[k] for k in ("id", "version", "capabilities", "min_orch", "runtime") if k in entry},
+            "deps": dep_view,
             "files": {p: base64.b64encode(b).decode("ascii") for p, b in pkg.files.items()},
         }
     )  # fmt: skip
@@ -345,7 +353,19 @@ def _stage(service: WorkspaceService, plan: dict[str, Any], call: Call | None = 
     return {
         "stage": stage, "expires_at": int(expires), "name": name, "version": entry["version"],
         "package_sha256": pkg.digest, "grant": body, "review": review, "market": market, "update": change,
+        "deps": dep_view,
     }  # fmt: skip
+
+
+def _dependencies(manifest: Any, pkg: Any) -> tuple[Any, dict[str, Any] | None]:
+    """``(Lock, deps view)`` of a package that declares ``runtime`` (the lock was checked at step 15), else
+    ``(None, None)``. The plan decides what this computer installs: a lock that cannot be installed here is refused
+    now (``market.env_failed``), before the person signs."""
+    if manifest.runtime is None:
+        return None, None
+    lock = install.read_lock(manifest, pkg)
+    planned = lockfile.plan(lock, lockfile.current_host())
+    return lock, deps.view(manifest.runtime["lock"], lock, planned, None)
 
 
 # ------------------------------------------------------------------------------------------------ read the stage

@@ -59,6 +59,8 @@ def manifest(addon: str, version: str = "1.0.0", caps: list[str] | None = None, 
         "capabilities": sorted(caps or []),
     }
     m.update(extra)
+    if m.get("runtime", {}).get("kind") == "node-package-lock":  # the command names the interpreter (design G4)
+        m["entry"] = {"cmd": ["node", "{pkg}/main.js"]}
     return json.dumps(m, sort_keys=True)
 
 

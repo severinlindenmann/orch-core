@@ -26,3 +26,10 @@ OFFICIAL_IDS: tuple[str, ...] = ()
 MOVED_IDS: tuple[str, ...] = ()
 #: A staged package is kept this long before the review is signed (design G3 section 2).
 STAGE_TTL = 30 * 60
+
+#: Where an add-on's dependencies may be downloaded from, per lockfile kind (spec 8.2, design G4). A host is compared
+#: whole (never a suffix or prefix); the node registry here is the one ``orch.addons.lockfile`` lets a lock name.
+DEP_HOSTS: dict[str, tuple[str, ...]] = {
+    "python-requirements": ("pypi.org", "files.pythonhosted.org"),
+    "node-package-lock": ("registry.npmjs.org",),
+}

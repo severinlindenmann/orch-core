@@ -1122,6 +1122,9 @@ def _payload(
             f"Where it comes from (per host, not signed): {_s(market.get('url'))}, {tofu}. "
             "A key shows the same publisher as last time, not who they are."
         )
+    deps = material.get("deps")
+    if deps is not None:
+        _row(out, "packages (listed by this computer from the lockfile; covered by the digest)", _deps_words(deps))
     issued = [ev.get("grant") for ev in events if ev.get("type") == "grant.issued"]
     revoked = [ev.get("grant") for ev in events if ev.get("type") == "grant.revoked"]
     if issued and revoked:  # an Extend: the access it replaces must be another one than the new access
@@ -1429,6 +1432,23 @@ def _addon(typ: str, ev: Mapping[str, Any], out: dict[str, Any]) -> str:
         _row(out, "dependencies", runtime)
         out.setdefault("notes", []).append(_runtime_words(runtime))
     return f"Grant the add-on {name}"
+
+
+_DEP_NOTES = {
+    None: "", "compiled": " (compiled code)", "other_platform": " (not on this computer)",
+    "dev": " (development, not installed)",
+}  # fmt: skip
+
+
+def _deps_words(deps: Any) -> str:
+    """``material["deps"]`` (the host's list of the packages an add-on installs, checked by the signer) as one row:
+    every package, in lockfile order. A shape this view does not know is the full review."""
+    rows = deps.get("rows") if isinstance(deps, Mapping) else None
+    if not isinstance(rows, list) or not all(
+        isinstance(r, Mapping) and r.get("note") in _DEP_NOTES and isinstance(r.get("name"), str) for r in rows
+    ):
+        raise PlainUnavailable("the plain view does not know these packages")
+    return "; ".join(f"{one(r['name'])} {one(r.get('version'))}{_DEP_NOTES[r['note']]}" for r in rows)
 
 
 _RUNTIME_KINDS = {"python-requirements": "Python", "node-package-lock": "Node"}

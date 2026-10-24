@@ -124,10 +124,17 @@ def as_addons(view: Mapping[str, Any]) -> dict[str, Addon]:
     return out
 
 
-def review_lines(manifest: Manifest, package: Package, event: Mapping[str, Any], previous: Addon | None) -> list[str]:
+def review_lines(
+    manifest: Manifest,
+    package: Package,
+    event: Mapping[str, Any],
+    previous: Addon | None,
+    deps: Mapping[str, Any] | None = None,
+) -> list[str]:
     """What the owner reads before signing a grant (§8.1): what runs, what it may do, what it tells agents, who may
     write its fields, and on a re-grant what changed since the last one. Text from the package is shown as data,
-    escaped to printable ASCII."""
+    escaped to printable ASCII. ``deps`` (V3 G4) is the dependency block of ``orch.market.deps.view``: one line for the
+    lockfile and one per package, listed by this computer from the checked lockfile."""
 
     def show(x: object) -> str:
         return ascii(str(x))[1:-1]  # printable ASCII only: control characters and look-alikes are escaped
@@ -138,6 +145,10 @@ def review_lines(manifest: Manifest, package: Package, event: Mapping[str, Any],
         f"command {show(shlex.join(manifest.entry_cmd))}",  # quoted: an argument with a space cannot hide in it
         f"capabilities {', '.join(event['capabilities']) or 'none'} (granted exactly as the package declares them)",
     ]
+    if deps is not None:
+        from orch.market import deps as market_deps
+
+        out += market_deps.lines(deps, show)
     if manifest.agents_md:
         out.append(f"agents see: - addon {manifest.name} (hint, grants nothing): {show(manifest.agents_md)}")
     for rule in manifest.needs:

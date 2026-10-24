@@ -3689,12 +3689,13 @@ these actions need a passkey assertion bound to the review shown, made within th
 6. adding a passkey or a device (the "Add a device" link);
 7. removing a passkey.
 
-Everything else, including turning things off and turning remote access off, is a plain click. The step-up WebAuthn challenge is `SHA-256("orch/v2/dash-stepup|" || nonce || vd)`, where `nonce` is 32 fresh random bytes
-kept server-side for 120 s, single use, and `vd` is the 32 raw bytes of the request's `view_digest` (`sha256:<hex>`).
-The server answers a listed op without a fresh step-up with `passkey.stepup_required`. The click signer refuses a listed
-op from a remote session unless the server hands it the assertion, which the signer verifies itself against the passkey
-store and the `view_digest` of the View it built (R1-6), so a server bug cannot skip the check. The step-up rule does not
-apply on loopback, where the person is at the machine or behind the SSH tunnel.
+Everything else, including turning things off and turning remote access off, is a plain click. The step-up WebAuthn
+challenge is `SHA-256("orch/v2/dash-stepup|" || nonce || vd)`, where `nonce` is 32 fresh random bytes kept server-side
+for 120 s, single use, and `vd` is the 32 raw bytes of the request's `view_digest` (`sha256:<hex>`). The server answers
+a listed op without a fresh step-up with `passkey.stepup_required`. The click signer refuses a listed op from a remote
+session unless the server hands it the assertion, which the signer verifies itself against the passkey store and the
+`view_digest` of the View it built (R1-6), so a server bug cannot skip the check. The step-up rule does not apply on
+loopback, where the person is at the machine or behind the SSH tunnel.
 
 **10.6 WebAuthn verification contract (`orch_dashboard.passkeys`, vectors `addons/dashboard/server/tests/vectors/webauthn_*.json`).**
 An own small verifier on `cryptography` (already a core dependency), not the `webauthn` PyPI package: it would add

@@ -1398,14 +1398,6 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
     return Plan(op, args, host_files(body), base, person, meta)
 
 
-CLICK_ONLY = (
-    "This workspace now signs with one click: use Sign in the dashboard (the page is updating; press Try "
-    "again). To sign in "
-    "the terminal instead, run `orch host convenience off --workspace {ws}` and then move the key back with "
-    "`orch keys custody passphrase --workspace {ws} --in-place`."
-)
-
-
 #: How many earlier ENDED (cancelled, expired) attempts of one action a single press steps past. The cap bounds the
 #: work per press: walking only replays idem records the host already holds (it creates nothing), so a press costs at
 #: most NEXT_RETRY_HOPS + 1 host calls and makes exactly one new request, at the first retry whose attempt has not
@@ -1755,10 +1747,6 @@ def register(app: FastAPI, gateway: Gateway):
     def prepare(body: PrepareBody, request: Request, ws: str = Depends(workspace)):
         token = request.state.token
         gateway.enabled(ws)
-        if gateway.one_path_is_click(ws) and not isinstance(body, MarketGrant):  # terminal only: nothing to click
-            raise HostError(
-                {"code": "sign.click_only", "message": CLICK_ONLY.format(ws=ws), "retryable": False}, exit=3
-            )
         with handoffs.lock:
             handoffs.reserve(token)  # checks and takes a slot atomically: concurrent prepares cannot overshoot
         try:

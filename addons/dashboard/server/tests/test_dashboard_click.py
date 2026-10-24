@@ -1300,21 +1300,13 @@ def test_already_signed_and_an_unreadable_record_never_cancel_or_forget_the_requ
     assert client.post(url(stub, "state"), json={"request_id": REQ}, headers=hdr(token)).json()["state"] == "submitted"
 
 
-# -- ONE signing path per workspace (owner decision, 12 Oct 2026) -----------------------------------------------
+# -- the terminal hand-off stays available where click-to-sign is on (#1170) -----------------------------------------
 
 
-def test_a_click_workspace_prepares_no_terminal_handoff(client, token, stub, script, rich):
+def test_a_click_workspace_still_prepares_a_terminal_handoff(client, token, stub, script, rich):
     res = client.post(f"/api/w/{stub.ws}/handoff", json=comment(1), headers=hdr(token))
-    err = res.json()["error"]
-    assert res.status_code == 409 and err["code"] == "sign.click_only"
-    assert "convenience off" in err["message"] and "Sign" in err["message"]
-    assert client.app.state.handoffs.active == {}
-
-
-def test_an_enabled_but_unavailable_signer_is_still_click_only(client, token, stub, script, rich):
-    script.available = False  # e.g. no key right now: an honest error, never a hand-off
-    res = client.post(f"/api/w/{stub.ws}/handoff", json=comment(1), headers=hdr(token))
-    assert res.json()["error"]["code"] == "sign.click_only"
+    assert res.status_code == 200, res.text
+    assert res.json().get("code")  # the code for `orch sign`
 
 
 def test_the_flag_flipped_off_ends_the_open_click_request(client, token, stub, script, host_check, rich):
@@ -1625,12 +1617,6 @@ def test_runner_grant_prepares_a_deposit_grant_with_hours_and_scope_only(client,
 def test_runner_grant_bodies_are_closed(client, token, stub, deposits, body):
     assert prepare(client, token, stub, body).status_code == 400
     assert [c for cl in deposits.clients for c in cl.calls if c[0] == "prepare"] == []
-
-
-def test_runner_grant_handoff_is_refused_where_the_workspace_signs_by_one_click(client, token, stub, deposits):
-    # B11-P1: the terminal hand-off exists for terminal-approval workspaces; a one-click workspace keeps its refusal.
-    res = client.post(f"/api/w/{stub.ws}/handoff", json=runner_grant(), headers=hdr(token))
-    assert res.status_code == 409 and res.json()["error"]["code"] == "sign.click_only"
 
 
 def test_runner_grant_view_is_checked_against_the_callers_grant(client, token, stub, deposits, host_check):

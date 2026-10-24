@@ -63,3 +63,30 @@ def test_a_python_marker_change_that_installs_here_is_widened():
     new = plan(f"a==1 ; sys_platform == 'darwin' --hash=sha256:{h}\n")
     assert deps.diff(kind, old, kind, new)["widened"] is True
     assert deps.diff(kind, new, kind, new)["widened"] is False
+
+
+def test_two_rows_with_one_display_name_each_get_their_own_line():
+    """Same name twice (two Python marker lines; two npm paths): only one changes, and the line names ITS versions."""
+    h = "a" * 64
+    kind = "python-requirements"
+
+    def plan(w, d):
+        text = (
+            f"a=={w} ; sys_platform == 'win32' --hash=sha256:{h}\na=={d} ; sys_platform == 'darwin' --hash=sha256:{h}\n"
+        )
+        return lockfile.plan(lockfile.check(kind, text.encode()), HOST)
+
+    d = deps.diff(kind, plan("1.0", "2.0"), kind, plan("1.0", "2.1"))
+    assert d["changed"] == [{"name": "a", "from": "2.0", "to": "2.1"}]
+    assert d["lines"] == ["~ dep a 2.0 -> 2.1"] and d["widened"] is True
+    same_flip = deps.diff(kind, plan("1.0", "2.0"), kind, plan("1.1", "2.0"))
+    assert same_flip["lines"] == ["~ dep a 1.0 -> 1.1"]  # the win32 row changed, not the darwin one
+
+
+def test_two_same_named_npm_packages_at_different_paths():
+    old = {"node_modules/x": npm("x", "1.0.0"), "node_modules/a/node_modules/x": npm("x", "2.0.0")}
+    new = {"node_modules/x": npm("x", "1.0.0"), "node_modules/a/node_modules/x": npm("x", "2.0.1")}
+    d = diff(old, new)
+    assert d["lines"] == ["~ dep a > x 2.0.0 -> 2.0.1"] and d["changed"] == [
+        {"name": "a > x", "from": "2.0.0", "to": "2.0.1"}
+    ]

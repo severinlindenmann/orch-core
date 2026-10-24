@@ -74,6 +74,7 @@ WRITE_OPS = (
     "member.add",
     "member.role",
     "member.remove",
+    "device.remove",
     "grant.revoke",
     "addon.grant",
     "addon.disable",

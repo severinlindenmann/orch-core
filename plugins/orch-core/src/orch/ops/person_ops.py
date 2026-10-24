@@ -457,6 +457,41 @@ def handle_device_rotate(ctx: Context, args: dict[str, Any]) -> Result:
     return h.workspace_result(done, {"old": args["old"], "device": device}, "your old device key no longer signs")
 
 
+def handle_device_remove(ctx: Context, args: dict[str, Any]) -> Result:
+    """``device.remove {device}`` (#1198 C15): a device stops signing for the workspace (``device.removed``). Done by the
+    device's own person or an owner (the model's rule, ``workspace.device_removed``). Two lockout guards, in plain
+    words (``device.lockout``): never the device that signs this very removal (once it is known: a bound click or
+    terminal signer; the signer re-checks it when it signs), and never the last working device of an owner, whoever
+    asks, because that owner could then never sign again."""
+    h = _Human(ctx, "device.remove")
+    person, signing = h.who()
+    ws = h.store.state.workspace
+    device = args["device"]
+    target = ws.devices.get(device)
+    if target is None or target.removed:
+        raise OrchError("not_found", "that device is not in this workspace (or it was removed already)")
+    mine = ws.members.get(person)
+    if person != target.person and (mine is None or mine.role != "owner"):
+        raise OrchError("role.denied", "a device is removed by its own person or by an owner")
+    if device == signing and (ctx.prepare is None or ctx.prepare.device is not None):
+        raise OrchError(
+            "device.lockout",
+            "This is the device you are signing with. Removing it would end your own access. Remove it from another "
+            "device of yours.",
+        )
+    holder = ws.members.get(target.person)
+    if holder is not None and holder.role == "owner":
+        working = [d for d in ws.devices.values() if d.person == target.person and not d.removed and not d.revoked]
+        if len(working) <= 1:
+            raise OrchError(
+                "device.lockout",
+                "This is the last working device of an owner. Removing it would lock that owner out for good. Pair "
+                "or add another device first.",
+            )
+    done = h.run({"type": "device.removed", "device": device}, "workspace", f"remove the device {device}", review=[])
+    return h.workspace_result(done, {"device": device}, "the device can no longer sign for this workspace")
+
+
 _HEX32 = {"type": "string", "pattern": "^[0-9a-f]{32}$"}
 DEVICE_MARK_EXPOSED = operation(
     "device.mark_exposed",
@@ -489,6 +524,20 @@ DEVICE_ROTATE = operation(
     data=obj({"old": STR, "device": STR}),
     errors=(err("role.denied"),),
     handler=handle_device_rotate,
+)
+DEVICE_REMOVE = operation(
+    "device.remove",
+    "Human only",
+    "Remove a device: it can no longer sign for this workspace. Refused for the device that signs the removal and for "
+    "the last working device of an owner.",
+    who="human",
+    props={"device": {"type": "string", "pattern": "^d_[0-9a-f]{32}$", "description": "the device to remove"}},
+    required=("device",),
+    emits=("device.removed",),
+    text="ok device.removed {device} seq={seq}\nnext: {next}",
+    data=obj({"device": STR}),
+    errors=(err("role.denied"), err("not_found"), err("device.lockout")),
+    handler=handle_device_remove,
 )
 HUB_JOIN = operation(
     "hub.join",
@@ -748,6 +797,7 @@ OPS: dict[str, Operation] = {
         HUB_LEAVE,
         DEVICE_MARK_EXPOSED,
         DEVICE_ROTATE,
+        DEVICE_REMOVE,
         AC_ACCEPT,
         AC_UNACCEPT,
         TASK_MARK_DONE,

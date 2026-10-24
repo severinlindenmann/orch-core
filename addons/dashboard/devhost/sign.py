@@ -46,9 +46,12 @@ OP_WORDS = {
     "member.add": "add a member to the workspace",
     "member.role": "change the role of a member",
     "member.remove": "remove a member from the workspace",
+    "device.remove": "remove a device: it can no longer sign for the workspace",
     "grant.revoke": "revoke a grant",
 }
-WORKSPACE_OPS = ("settings.set", "policy.set", "member.add", "member.role", "member.remove", "grant.revoke")
+WORKSPACE_OPS = (
+    "settings.set", "policy.set", "member.add", "member.role", "member.remove", "device.remove", "grant.revoke",
+)  # fmt: skip
 MEMBER_OPS = ("member.add", "member.role", "member.remove")
 WARNING = "only sign a code you created yourself"
 

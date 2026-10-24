@@ -1010,3 +1010,24 @@ def test_c21_a_brief_store_lock_does_not_leave_one_click_unavailable(click, serv
     monkeypatch.undo()
     assert click.sign(p["request_id"], v["view_digest"])["duplicate"] is False
     assert row()["available"] is True
+
+
+def test_device_remove_is_a_click_and_the_view_names_the_device(click, served, human, lab):
+    """#1198 C15: removing a device is a plain click; the View names the device and what follows. The device that signs
+    the click itself is refused with its own plain reason (the lockout guard)."""
+    from tests.host.test_reader_gate import declare
+
+    member = lab.add_member()
+    declare(served, member)  # a reader that knows convenience signatures, so the readers condition holds
+    other = member.device
+    p = click.prepare("device.remove", {"device": other})
+    shown = click.view(p["request_id"])
+    v = shown["view"]
+    assert v["confirm"] == {"kind": "click"}
+    text = "\n".join(v["lines"]) + json.dumps(v["content"])
+    assert other in text and "can no longer sign" in text
+    click.mono.t += 2
+    assert click.sign(p["request_id"], shown["view_digest"])["duplicate"] is False
+    with pytest.raises(ClickError) as info:
+        click.prepare("device.remove", {"device": click.owner.device})
+    assert info.value.code == "device.lockout" and "device you are signing with" in info.value.message

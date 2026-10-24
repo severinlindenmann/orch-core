@@ -362,6 +362,16 @@ def _person_op(prepared: Mapping[str, Any]) -> None:
                 and e.get("device") == e["actor"].get("device")
                 and e.get("old") != e.get("device")
             )
+        elif op == "device.remove":  # #1198 C15: one device.removed, never the signer's own device (lockout guard)
+            ok = (
+                len(events) == 1
+                and log == "workspace"
+                and e["type"] == "device.removed"
+                and set(e) - review.ENVELOPE == {"device"}
+                and isinstance(e.get("device"), str)
+                and _DEVICE.fullmatch(e["device"]) is not None
+                and e.get("device") != e["actor"].get("device")
+            )
         elif op == "settings.set":
             sets = e.get("set")
             ok = e["type"] == "settings.changed" and log == "workspace" and isinstance(sets, dict) and bool(sets)
@@ -760,6 +770,7 @@ _PLAIN = {
     "hub.mode": "switch hub {hub_id} to {mode} mode: the hub will be able to read everything in this workspace",
     "hub.leave": "leave hub {hub_id} (binding {binding_seq}) and tell it that this workspace is no longer bound",
     "device.mark_exposed": "record that your device key {device} was in one-click custody (it only loses authority)",
+    "device.remove": "remove the device {device}; it can no longer sign for this workspace",
     "device.rotate": "replace your device key {old} with the new key {device}; the old key stops signing everywhere",
 }
 

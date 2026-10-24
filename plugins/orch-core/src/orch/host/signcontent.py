@@ -72,6 +72,7 @@ SHOWN: dict[str, frozenset[str]] = {
     "artifact.replaced": frozenset({"name", "kind", "label", "ac", "task", "replaces", "bytes", "sha256"}),
     "device.added": frozenset({"device", "cert"}),
     "device.exposed": frozenset({"device", "reason"}),
+    "device.removed": frozenset({"device"}),
     "device.rotated": frozenset({"old", "device", "cert", "rotation"}),
     "gate.approved": frozenset({"gate", "source_sha"}),
     "gate.changes_requested": frozenset({"gate", "text"}),
@@ -1356,6 +1357,13 @@ def _event(
         _row(out, "device", ev.get("device"))
         _cert_rows(out, "certificate", ev.get("cert"))
         return "Add a paired device to your devices"
+    if typ == "device.removed":  # #1198 C15: one click; the guards (not your own device, not an owner's last) are the host's
+        _row(out, "device", ev.get("device"))
+        out.setdefault("notes", []).append(
+            "This device can no longer sign for this workspace, and the change stays in its log. To use that phone or "
+            "computer again, pair it again as a new device."
+        )
+        return "Remove a device from this workspace"
     if typ == "device.exposed":  # #1097: the mark written before a key enters one-click custody
         _row(out, "device", ev.get("device"))
         _row(out, "reason", ev.get("reason"))

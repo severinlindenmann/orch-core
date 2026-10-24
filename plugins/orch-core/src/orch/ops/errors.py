@@ -585,6 +585,16 @@ _SPECS = [
         "There is no joined hub on the workspace log.",
     ),
     _e(
+        "device.lockout",
+        3,
+        False,
+        "removing this device would lock someone out",
+        "remove it from another device, or add another device first",
+        ["orch", "status"],
+        "A device is not removed when it signs the removal itself, or when it is the last working device of an owner "
+        "(#1198 C15).",
+    ),
+    _e(
         "retry.later",
         9,
         True,

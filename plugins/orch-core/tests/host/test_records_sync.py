@@ -450,6 +450,24 @@ def test_push_with_convenience_needs_the_mark_for_the_exact_url(r):
     assert git(r.tmp, "--git-dir", url_b[len("file://") :], "for-each-ref") == ""
 
 
+def test_c15_the_dashboards_click_binds_the_address_it_showed(r):
+    """#1198 C15: ``--expect-url`` is the address the person reviewed. Another address marks and pushes nothing, and
+    the refusal does not echo either address."""
+    r.init()
+    r.commit()
+    url_a, url_b = r.bare("a"), r.bare("b")
+    git(r.store, "remote", "add", "origin", url_a)
+    code, out = r.cli("remote-private", "--yes", "--expect-url", url_b)
+    assert code == 3 and out["code"] == "records.remote_invalid"
+    assert url_a not in json.dumps(out) and url_b not in json.dumps(out)
+    assert not [a for op, a in r.calls if op == "records.remote_private"]  # the host was never asked
+    code, out = r.cli("push", "--initial", "--yes", "--expect-url", url_b)
+    assert code == 3 and out["code"] == "records.remote_invalid"
+    assert git(r.tmp, "--git-dir", url_a[len("file://") :], "for-each-ref") == ""  # nothing was pushed
+    code, out = r.cli("remote-private", "--yes", "--expect-url", url_a)
+    assert code == 0 and out["detail"]["private_remote"]["url"] == url_a
+
+
 @pytest.mark.slow
 def test_a_pushurl_or_insteadof_change_after_marking_is_refused(r):
     r.init()

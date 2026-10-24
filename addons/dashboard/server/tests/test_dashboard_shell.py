@@ -145,7 +145,7 @@ def test_shell_p1_reads(client, token, stub):
         "read_ext2",
         *(
             f"do:{op}"
-            for op in ("settings.set", "policy.set", "member.add", "member.role", "member.remove", "grant.revoke")
+            for op in ("settings.set", "policy.set", "member.add", "member.role", "member.remove", "device.remove", "grant.revoke")
         ),
     ]
     assert workspaces[0]["features"] == every

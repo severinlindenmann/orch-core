@@ -20,6 +20,20 @@ from .gateway import WORKSPACE_ID, state_dir
 BUDGET = 60
 OUTPUT_LIMIT = 65_536  # each pipe; stderr is drained but never returned or logged
 ENV_KEYS = ("HOME", "PATH", "SSH_AUTH_SOCK", "LANG")
+#: #1198 C15: the fixed argv of each admin action the page clicks (`--yes`: the click replaces the typed answer; the
+#: core tool still checks the owner, the address and the convenience rules itself)
+ACTIONS = {
+    "init": ["init"],
+    "mark": ["remote-private", "--yes"],
+    "unmark": ["remote-private", "--off"],
+    "push-initial": ["push", "--initial", "--yes"],
+}
+NEEDS_URL = frozenset({"mark", "push-initial"})
+
+
+def valid_url(url):
+    """The address as shown in the review: printable, no spaces, within the core bound. The core tool checks the rest."""
+    return isinstance(url, str) and 0 < len(url) <= 2048 and url.isprintable() and not any(c.isspace() for c in url)
 
 
 class Projection(BaseModel):
@@ -201,8 +215,15 @@ class RecordsChild:
         self.lock = threading.Lock()
         self.active = set()
 
-    def run(self, ws, *, push=False, auto_off=False, status=False, state=None, run_dir=None):
+    def run(self, ws, *, push=False, auto_off=False, status=False, action=None, url=None, state=None, run_dir=None):
+        """`action` (#1198 C15) is one of `ACTIONS`: init, mark the remote private (with the address the person saw),
+        remove the mark, or create the remote branch (with that address). The address is passed to the child as
+        `--expect-url`, so the child refuses unless git resolves to exactly that address."""
         if not isinstance(ws, str) or not WORKSPACE_ID.fullmatch(ws):
+            raise fail("invalid.input", exit=5)
+        if action is not None and (action not in ACTIONS or (action in NEEDS_URL) != (url is not None)):
+            raise fail("invalid.input", exit=5)
+        if url is not None and not valid_url(url):
             raise fail("invalid.input", exit=5)
         with self.lock:
             if ws in self.active:
@@ -214,7 +235,13 @@ class RecordsChild:
             env["ORCH_STATE_DIR"] = str(state_dir({**os.environ, **({"ORCH_STATE_DIR": str(state)} if state else {})}))
             env["ORCH_HOST_RUN_DIR"] = str(run_dir or os.path.join(env["ORCH_STATE_DIR"], "run"))
             argv = [sys.executable, "-I", "-m", "orch.records"]
-            argv += ["status"] if status else ["auto", "off"] if auto_off else ["commit", *(["--push"] if push else [])]
+            if action is not None:
+                argv += ACTIONS[action]
+                argv += ["--expect-url", url] if url is not None else []
+            else:
+                argv += (
+                    ["status"] if status else ["auto", "off"] if auto_off else ["commit", *(["--push"] if push else [])]
+                )
             argv += ["--workspace", ws, "--json"]
             return self._execute(argv, env)
         finally:

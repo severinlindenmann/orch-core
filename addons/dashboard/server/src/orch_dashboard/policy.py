@@ -54,8 +54,8 @@ class ListenerPolicy:
     scheme: str  # "http" or "https": the scheme of the Origin the browser sends
     host: str  # the one Host this listener answers to (with its port when it is not the default)
     csp_template: str
-    csp_name: str
     port: int
+    terminals: bool  # the `/term` WebSocket (a shell on the server): off by default on the remote listener
     widget_frames: bool  # the locked `/widget-frame/` route and its own CSP
     pre_login_only: bool  # True: before login only `pre_login` answers
     launch_codes: bool  # the local launch-code exchange (`/auth/session`) is a loopback credential
@@ -65,7 +65,7 @@ class ListenerPolicy:
     asset_hosts: tuple = ()
 
     # -- Host and Origin --
-    def hosts_for(self, path: str, setup_host: bool) -> tuple[str, ...]:
+    def hosts_for(self, setup_host: bool) -> tuple[str, ...]:
         return (self.host, *self.asset_hosts) if setup_host else (self.host,)
 
     def origin_for(self, host: str) -> str:
@@ -73,15 +73,15 @@ class ListenerPolicy:
 
     # -- CSP --
     def csp(self) -> str:
-        return self.csp_template.format(port=self.port, name=self.csp_name)
+        return self.csp_template.format(port=self.port, name=self.host)
 
     # -- WebSocket --
     def websocket_ok(self, path: str, hosts: list[str], origins: list[str]) -> bool:
         """Only `/term`; Host and Origin exactly this listener's (a missing or `null` Origin refused)."""
-        return path == TERM_PATH and hosts == [self.host] and origins == [self.origin_for(self.host)]
+        return self.terminals and path == TERM_PATH and hosts == [self.host] and origins == [self.origin_for(self.host)]
 
     # -- Pre-login routes --
-    def pre_login(self, path: str, raw_path: bytes | None = None) -> bool:
+    def pre_login(self, path: str, raw_path: bytes | None = None, method: str = "GET") -> bool:
         """May this path answer without a session? Loopback: every route checks its own credential, so True. Remote:
         only the app shell, its assets, `/auth/passkey/*` and `/auth/enroll/*`, matched exactly and case-sensitively
         on the decoded path AND on the raw bytes (which must be the same string: no escape of any kind)."""
@@ -99,10 +99,14 @@ class ListenerPolicy:
             return False
         if segments == []:
             return True
+        from .app import ROOT_FILES, SPA_PATH  # late: app imports security imports this module
+
+        if method in ("GET", "HEAD") and (segments[0] != "api" and SPA_PATH.fullmatch(path[1:])):
+            return True  # a reload or a pasted URL: the browser sends no bearer, the shell is public (it holds no data)
         head, rest = segments[0], segments[1:]
         if head == "assets":
             return len(rest) == 1 and bool(_ASSET.fullmatch(rest[0])) and ".." not in rest[0]
-        if segments in (["favicon.svg"], ["loading.css"]):
+        if len(segments) == 1 and segments[0] in ROOT_FILES:
             return True
         if head == "auth" and len(rest) >= 2 and rest[0] in ("passkey", "enroll"):
             tail = rest[1:]
@@ -121,8 +125,8 @@ def loopback_policy(port: int) -> ListenerPolicy:
         scheme="http",
         host=f"127.0.0.1:{port}",
         csp_template=_CSP_LOOPBACK,
-        csp_name="",
         port=port,
+        terminals=True,
         widget_frames=True,
         pre_login_only=False,
         launch_codes=True,
@@ -143,8 +147,8 @@ def remote_policy(name: str) -> ListenerPolicy:
         scheme="https",
         host=name,
         csp_template=_CSP_REMOTE,
-        csp_name=name,
-        port=443,
+        port=443,  # the front's port; nothing here binds it
+        terminals=False,
         widget_frames=False,
         pre_login_only=True,
         launch_codes=False,

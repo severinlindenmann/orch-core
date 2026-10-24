@@ -4,6 +4,7 @@ The loopback listener's behaviour is pinned by a golden recorded from the code B
 same requests must still get the same status, headers and body. Regenerate only on purpose:
 ``ORCH_RECORD_GOLDEN=1 uv run pytest tests/test_dashboard_policy.py -k golden``."""
 
+import dataclasses
 import itertools
 import json
 import os
@@ -206,6 +207,7 @@ def test_loopback_golden(client, token):
 
 # ---- the remote policy (defined here, wired to no listener until R1-4) ----
 
+from orch_dashboard.app import SPA_PATH  # noqa: E402
 from orch_dashboard.auth import Auth  # noqa: E402
 from orch_dashboard.policy import clean_path, loopback_policy, remote_policy  # noqa: E402
 from orch_dashboard.security import Security  # noqa: E402
@@ -216,8 +218,8 @@ LOOPBACK = loopback_policy(PORT)
 
 
 def test_loopback_policy_values():
-    assert LOOPBACK.hosts_for("/api/x", False) == (f"127.0.0.1:{PORT}",)
-    assert LOOPBACK.hosts_for("/setup", True) == (f"127.0.0.1:{PORT}", f"localhost:{PORT}")
+    assert LOOPBACK.hosts_for(False) == (f"127.0.0.1:{PORT}",)
+    assert LOOPBACK.hosts_for(True) == (f"127.0.0.1:{PORT}", f"localhost:{PORT}")
     assert LOOPBACK.origin_for(f"127.0.0.1:{PORT}") == ORIGIN
     assert f"ws://127.0.0.1:{PORT}" in LOOPBACK.csp() and "frame-src http://127.0.0.1" in LOOPBACK.csp()
     assert LOOPBACK.pre_login("/anything") and LOOPBACK.launch_codes and LOOPBACK.widget_frames
@@ -227,14 +229,17 @@ def test_loopback_policy_values():
 
 
 def test_remote_policy_values():
-    assert REMOTE.hosts_for("/setup", True) == (NAME,) == REMOTE.hosts_for("/api/x", False)
+    assert REMOTE.hosts_for(True) == (NAME,) == REMOTE.hosts_for(False)
     assert REMOTE.origin_for(NAME) == f"https://{NAME}"
     csp = REMOTE.csp()
     assert f"connect-src 'self' wss://{NAME};" in csp and "frame-src 'none'" in csp and "127.0.0.1" not in csp
     assert "frame-ancestors 'none'" in csp and "unsafe" not in csp
     assert not REMOTE.launch_codes and not REMOTE.widget_frames
     assert REMOTE.session_kind_ok("remote") and not REMOTE.session_kind_ok("local")
-    assert REMOTE.websocket_ok("/term", [NAME], [f"https://{NAME}"])
+    assert not REMOTE.terminals and LOOPBACK.terminals
+    assert not REMOTE.websocket_ok("/term", [NAME], [f"https://{NAME}"])  # terminals are off until switched on
+    with_terminals = dataclasses.replace(REMOTE, terminals=True)
+    assert with_terminals.websocket_ok("/term", [NAME], [f"https://{NAME}"])
     for hosts, origins in (
         ([NAME], [f"http://{NAME}"]),
         ([NAME], []),
@@ -243,8 +248,8 @@ def test_remote_policy_values():
         ([f"127.0.0.1:{PORT}"], [ORIGIN]),
         ([NAME, NAME], [f"https://{NAME}"]),
     ):
-        assert not REMOTE.websocket_ok("/term", hosts, origins)
-    assert not REMOTE.websocket_ok("/other", [NAME], [f"https://{NAME}"])
+        assert not with_terminals.websocket_ok("/term", hosts, origins)
+    assert not with_terminals.websocket_ok("/other", [NAME], [f"https://{NAME}"])
 
 
 @pytest.mark.parametrize(
@@ -276,6 +281,11 @@ ALLOWED = [
     "/auth/passkey/login",
     "/auth/passkey/login/options",
     "/auth/enroll/AbC-123_x",
+    "/w/ws_1/board",
+    "/w/ws_1",
+    "/ticket/ABC-12",
+    "/checklist",
+    "/w/ws_1/settings/addon/wiki",
 ]
 REFUSED = [
     "",
@@ -308,6 +318,14 @@ REFUSED = [
     "/api/state",
     "/api/setup/status",
     "/term",
+    "/w//board",
+    "/w/ws_1/board/",
+    "/w/ws_1/Board",
+    "/w/ws_1/%62oard",
+    "/w/ws_1/../api/state",
+    "/w/ws_1/api/state",
+    "/api/w/ws_1/board",
+    "/ticket/abc",
     "/widget-frame/x",
     "/index.html",
     "/favicon.svg/",
@@ -348,7 +366,11 @@ def test_prelogin_fuzz_no_bypass():
     """Mutate allowed and sensitive paths with encodings, dots, slashes and case: the parser must never allow a path
     outside the allowlist's shape, and never raise."""
     rng = random.Random(1198)
-    seeds = ALLOWED + ["/api/state", "/setup", "/term", "/auth/session", "/api/w/x/click/sign"]
+    seeds = (
+        ALLOWED
+        + ["/w/ws_1/tickets/new", "/w/ws_1/settings/hub", "/addon/wiki/home"]
+        + ["/api/state", "/setup", "/term", "/auth/session", "/api/w/x/click/sign"]
+    )
     pieces = [
         "%2e",
         "%2E",
@@ -373,6 +395,7 @@ def test_prelogin_fuzz_no_bypass():
     shape = [
         lambda s: s == "/",
         lambda s: s in ("/favicon.svg", "/loading.css"),
+        lambda s: SPA_PATH.fullmatch(s[1:]) is not None,
         lambda s: s.startswith("/assets/") and s.count("/") == 2,
         lambda s: s.startswith(("/auth/passkey/", "/auth/enroll/")),
     ]
@@ -417,17 +440,18 @@ async def _app(scope, receive, send):
     await send({"type": "http.response.body", "body": b"ok"})
 
 
-def _remote_client():
-    auth = Auth()
-    token = auth.exchange(auth.launch(PORT)["code"])[0]["token"]
+def _remote_client(policy=REMOTE):
     from fastapi.testclient import TestClient
 
-    return TestClient(Security(_app, 443, auth, REMOTE), base_url=f"https://{NAME}"), token
+    auth = Auth()
+    local = auth.exchange(auth.launch(PORT)["code"])[0]["token"]
+    remote = auth.exchange(auth.launch(PORT)["code"], kind="remote")[0]["token"]
+    return TestClient(Security(_app, auth, policy), base_url=f"https://{NAME}"), local, remote
 
 
 def test_remote_listener_requests():
-    client, token = _remote_client()
-    bearer = {"authorization": f"Bearer {token}"}
+    client, local, remote = _remote_client()
+    bearer = {"authorization": f"Bearer {remote}"}
     ok = client.get("/")
     assert ok.status_code == 200
     assert ok.headers["strict-transport-security"] == "max-age=31536000"
@@ -439,8 +463,16 @@ def test_remote_listener_requests():
     assert client.get("/api/state", headers={"authorization": "Bearer nope"}).status_code == 404
     # a session of this listener passes the allowlist, then the usual checks apply
     assert client.get("/api/state", headers=bearer).status_code == 200
+    # a LOCAL (launch-code) session is not a remote session: the front never accepts it, anywhere
+    other = {"authorization": f"Bearer {local}"}
+    assert client.get("/api/state", headers=other).status_code == 404
+    assert client.post("/auth/logout", headers={**other, "origin": f"https://{NAME}"}, json={}).status_code == 404
+    assert client.post("/auth/logout", headers={**bearer, "origin": f"https://{NAME}"}, json={}).status_code == 200
     # launch codes are a local credential: refused on the front, even with a session
     assert client.post("/auth/session", json={}, headers={"origin": f"https://{NAME}"}).status_code == 404
+    assert client.post("/auth/session", json={}, headers={**bearer, "origin": f"https://{NAME}"}).status_code == 404
+    # the widget frame is off, with or without a session
+    assert client.get(f"/widget-frame/clock@1/{HEX}", headers=bearer).status_code == 404
     # Host and Origin are exact; the loopback spelling is refused on the front
     assert client.get("/", headers={"host": f"127.0.0.1:{PORT}"}).status_code == 421
     assert client.get("/", headers={"host": f"{NAME}:443"}).status_code == 421
@@ -448,11 +480,35 @@ def test_remote_listener_requests():
     assert client.post("/auth/passkey/login", json={}, headers={"origin": f"http://{NAME}"}).status_code == 403
     assert client.post("/auth/passkey/login", json={}).status_code == 403  # a mutation needs its Origin
     assert client.post("/auth/passkey/login", json={}, headers={"origin": f"https://{NAME}"}).status_code == 200
-    with client.websocket_connect("/term", headers={"host": NAME, "origin": f"https://{NAME}"}):
+
+
+def test_remote_spa_reload_before_login():
+    client, _, _ = _remote_client()
+    for path in ("/w/ws_1/board", "/ticket/ABC-12", "/w/ws_1/settings/hub", "/checklist"):
+        assert client.get(path).status_code == 200, path
+        assert client.head(path).status_code == 200, path
+    # only a read: no write, and no near miss
+    assert client.post("/w/ws_1/board", json={}, headers={"origin": f"https://{NAME}"}).status_code == 404
+    for path in ("/w/ws_1/board/", "/w/ws_1/nope", "/w/ws_1/%62oard", "/w//board"):
+        assert client.get(path).status_code == 404, path
+
+
+def test_remote_terminals_off_until_switched_on():
+    for policy, accepted in ((REMOTE, False), (dataclasses.replace(REMOTE, terminals=True), True)):
+        client, _, _ = _remote_client(policy)
+        good = {"host": NAME, "origin": f"https://{NAME}"}
+        if accepted:
+            with client.websocket_connect("/term", headers=good):
+                pass
+        else:
+            with pytest.raises(WebSocketDisconnect) as closed, client.websocket_connect("/term", headers=good):
+                pass
+            assert closed.value.code == 1008
+    with (
+        pytest.raises(WebSocketDisconnect) as closed,
+        client.websocket_connect("/term", headers={"host": NAME, "origin": f"http://{NAME}"}),
+    ):
         pass
-    with pytest.raises(WebSocketDisconnect) as closed:
-        with client.websocket_connect("/term", headers={"host": NAME, "origin": f"http://{NAME}"}):
-            pass
     assert closed.value.code == 1008
 
 
@@ -461,6 +517,6 @@ def test_loopback_listener_refuses_the_public_name():
     from fastapi.testclient import TestClient
 
     auth = Auth()
-    client = TestClient(Security(_app, PORT, auth), base_url=ORIGIN)
+    client = TestClient(Security(_app, auth, LOOPBACK), base_url=ORIGIN)
     assert client.get("/", headers={"host": NAME}).status_code == 421
     assert client.get("/").status_code == 200

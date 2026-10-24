@@ -2,7 +2,7 @@ import contextlib
 
 from . import widget_frame
 from .errors import response
-from .policy import ListenerPolicy, loopback_policy
+from .policy import ListenerPolicy
 from .testrun import UPLOAD_LIMIT
 
 # Frames: only the locked Widgets route (see policy.py).
@@ -24,9 +24,12 @@ CLICK_STEP = ("/view", "/sign", "/cancel", "/state", "/custody")
 class Security:
     """ASGI checks before routing, including duplicate headers and streamed body limits."""
 
-    def __init__(self, app, port, auth, policy: ListenerPolicy | None = None):
-        self.app, self.port, self.auth = app, port, auth
-        self.policy = policy or loopback_policy(port)
+    def __init__(self, app, auth, policy: ListenerPolicy):
+        self.app, self.auth, self.policy = app, auth, policy
+
+    def session_ok(self, token):
+        """A live session of a kind this listener accepts (a local launch-code session is not a remote one)."""
+        return self.auth.valid(token) and self.policy.session_kind_ok(self.auth.login_kind(token))
 
     async def __call__(self, scope, receive, send):
         if scope["type"] == "websocket":
@@ -52,7 +55,7 @@ class Security:
                     # the dashboard). One place, whatever the route set.
                     hs = [(k, v) for k, v in hs if k.lower() not in _FRAME_OWN]
                     hs += [
-                        (b"content-security-policy", widget_frame.frame_csp(path, self.port).encode()),
+                        (b"content-security-policy", widget_frame.frame_csp(path, self.policy.port).encode()),
                         (b"cross-origin-resource-policy", b"same-origin"),
                         (b"x-content-type-options", b"nosniff"),
                         (b"referrer-policy", b"no-referrer"),
@@ -77,7 +80,7 @@ class Security:
         setup = path == "/setup" or path == "/auth/setup" or path.startswith("/api/setup/")
         host = values(b"host")
         setup_host = setup or path.startswith("/assets/") or path in ("/favicon.svg", "/loading.css")
-        allowed = self.policy.hosts_for(path, setup_host)
+        allowed = self.policy.hosts_for(setup_host)
         origin = self.policy.origin_for(host[0]) if len(host) == 1 else ""
         if len(host) != 1 or host[0] not in allowed:
             return await reject("host.bad", 421)
@@ -87,11 +90,13 @@ class Security:
         api = path == "/api" or path.startswith("/api/")
         if not self.policy.launch_codes and path == "/auth/session":
             return await reject("not_found", 404)
-        if not self.policy.pre_login(path, scope.get("raw_path")):
+        if not self.policy.widget_frames and path.startswith(widget_frame.PREFIX):
+            return await reject("not_found", 404)  # off means off, before and after login
+        if not self.policy.pre_login(path, scope.get("raw_path"), method):
             # Before login only the policy's routes answer; everything else needs a session of this listener.
             auth = values(b"authorization")
             bearer = auth[0][7:] if len(auth) == 1 and auth[0].startswith("Bearer ") else ""
-            if not self.auth.valid(bearer):
+            if not self.session_ok(bearer):
                 return await reject("not_found", 404)
         if api or path == "/auth/logout":
             auth = values(b"authorization")
@@ -99,7 +104,7 @@ class Security:
             if setup:
                 tokens = values(b"x-setup-token")
                 token = tokens[0] if len(tokens) == 1 and len(tokens[0]) <= 200 else ""
-            if not (self.auth.valid_setup(token) if setup else self.auth.valid(token)):
+            if not (self.auth.valid_setup(token) if setup else self.session_ok(token)):
                 return await reject("session.required", 401)
             scope.setdefault("state", {})["token"] = token
         if method not in ("GET", "HEAD", "OPTIONS"):

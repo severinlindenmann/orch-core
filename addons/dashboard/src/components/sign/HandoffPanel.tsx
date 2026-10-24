@@ -277,9 +277,8 @@ export function HandoffPanel({ request, workspace = null, why, whyAction }: { re
       </> : <p className="text-[13px] text-warning">This request has no code any more.</p>}
       <p className="text-[13px] text-text-muted">2. Paste it into Terminal and press Return.</p>
       <p className="text-[13px] text-text-muted">
-        3. Check that the verification code <code data-testid="handoff-fingerprint" className="font-mono text-[13px] text-text">{request.fingerprint}</code> matches the one in Terminal, then type the word shown.
+        3. Check that the verification code <code data-testid="handoff-fingerprint" className="font-mono text-[13px] text-text">{request.fingerprint}</code> matches the one in Terminal, read what Terminal shows (that is what you approve), then type{request.content && word ? <> <span className="whitespace-nowrap"><Raw>{word}</Raw></span></> : ' the word shown'}.
       </p>
-      {request.content && word && <p className="text-[12px] text-text-muted">In your terminal you type <Raw>{word}</Raw> to continue.</p>}
       {request.op === 'grant' && <p className="text-[12px] text-text-muted" data-testid="grant-handoff-note">After you sign, the terminal asks what to do with the new access. Press r to hand it to the orch runner, otherwise the runner has no access and agents stay off.</p>}
       {request.content && hostStated && <p role="note" className="text-[12px] text-text-muted">Some values come from orch on this Mac (see details)</p>}
       {!request.content && <SignDetails>{technical}</SignDetails>}

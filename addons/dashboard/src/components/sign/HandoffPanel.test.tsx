@@ -54,7 +54,7 @@ it('separates the command from the verification fingerprint', () => {
   expect(screen.getByText('2. Paste it into Terminal and press Return.')).toBeVisible()
   expect(screen.getByTestId('handoff-command')).toHaveTextContent(`orch sign ${request.code}`)
   const note = screen.getByTestId('handoff-fingerprint').parentElement!
-  expect(note).toHaveTextContent(`3. Check that the verification code ${request.fingerprint} matches the one in Terminal, then type the word shown.`)
+  expect(note).toHaveTextContent(`3. Check that the verification code ${request.fingerprint} matches the one in Terminal, read what Terminal shows (that is what you approve), then type DEMO-0044/0000000A.`)
   expect(note).not.toHaveTextContent('same code')
   expect(screen.queryByTestId('handoff-runner-note')).toBeNull()
 })

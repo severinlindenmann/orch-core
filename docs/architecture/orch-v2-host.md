@@ -2807,8 +2807,10 @@ operations and future additions fail closed (terminal-only). There is one confir
   SHA-256 of the key's text, so `view_digest` covers the key) and the lines `REVEAL_RISK` ("The secret will be shown
   once in this browser. Anyone who controls this dashboard could read it.") and `REVEAL_LINE`. `sign` must carry the
   prepared `reveal_key`; the signer draws the secret, signs, submits, and answers `reveal {purpose:"grant.secret",
-  envelope}`, the secret sealed to that key, at most once per approval and never to a key it already sealed to. The
-  page opens it, shows it once and drops its key. Contract: [orch-v2-sealed-field.md](orch-v2-sealed-field.md) §7.
+  envelope}`, the secret sealed to that key, at most once per approval. A key is reserved for one request at
+  prepare: a second prepare with the same key is refused and its host request cancelled, and sealing refuses a key
+  reserved for another request. The host caps a member's grant at the workspace `grant_hours`; an owner's (or a
+  maintainer's) can run to 168 h. The page opens it, shows it once and drops its key. Contract: [orch-v2-sealed-field.md](orch-v2-sealed-field.md) §7.
   **Until the passkey step-up (item 10.5, R1-6) is built**, the dashboard server prepares a reveal grant only for a
   session opened on this computer (`login_kind` `local`); a remote or unknown session is refused before the signer is
   asked.
@@ -2841,7 +2843,7 @@ escalation through the allowed member, policy or add-on operations.
 **Hub ops and the owner proof** (#1198 C8, merged contract; host enforcement from C9). `hub.join`, `hub.mode` and
 `hub.leave` stay out of `CLICK_OPS`, and a hub op signed by the One-click key is refused (item 8), until the host
 checks an **owner proof**: a `hub.owner_proof` object `{workspace_id, person_id, op, payload, request_id, issued_ms,
-expires_ms, dev}` signed by the person key `PK` (derived from the backup key, the recovery code, and never stored)
+expires_ms, dev}` signed by the person key `PK` (derived once from the owner's recovery code, never stored)
 under the domain `orch/v2/sig/hub-owner-proof|`, bound to the host request and to the event payload without its
 `owner_proof` member, valid at most 10 minutes; `hub.joined` and `hub.left` record it so the hub and readers can check
 it. The hub card gains a signed `reader` level that never goes down; a card below the workspace's `required_reader`
@@ -2887,7 +2889,7 @@ is `hub_too_old`. Contract and vectors: orch-hub `docs/protocol.md` §5 and §9.
 | Another local user | Cannot directly read correctly protected person custody under ordinary OS permissions. Can reach loopback HTTP; signing additionally depends on bearer and session security. A stolen bearer crosses this boundary. |
 | Remote web page | Without credentials, same-origin execution or another vulnerability, browser requests are constrained by bearer, Host/Origin validation, CORS and framing controls. A page gaining same-origin script execution can drive signing. |
 | HTTP bug or compromise | A passive disclosure of HTTP memory does not directly disclose signer-resident keys. Disclosure of a bearer can disclose signing authority. Active control of the HTTP workflow can obtain unseen signatures through the signer API. Code execution in it can read the key. |
-| Stolen bearer | Can request unseen signatures for click-eligible operations while valid, including (v1.6) a deposit-only runner grant of up to the workspace `grant_hours` (at most 7 days; **owner-accepted 16 Oct 2026, B8**: a longer bearer window, mitigated by the secret never being in the browser (runner-held, 0600), one-click Stop and a visible expiry in the dashboard header, every agent action attributed, grants never covering human-only operations, and the 8 h default), and (#1198 C7) a reveal grant whose secret it can read under its own page key (reveal grants are prepared only for a session opened on this computer until the step-up of 10.5). No typed word would have prevented this (the word was in the View). Any other grant stays terminal-only. |
+| Stolen bearer | Can request unseen signatures for click-eligible operations while valid, including (v1.6) a deposit-only runner grant of up to the workspace `grant_hours` (at most 7 days; **owner-accepted 16 Oct 2026, B8**: a longer bearer window, mitigated by the secret never being in the browser (runner-held, 0600), one-click Stop and a visible expiry in the dashboard header, every agent action attributed, grants never covering human-only operations, and the 8 h default), and (#1198 C7) a reveal grant whose secret it can read under its own page key (until the step-up of 10.5, reveal grants are prepared only for a session opened on this computer; that gate limits remote sessions only: a stolen local-session token can still prepare a reveal grant and read its secret). No typed word would have prevented this (the word was in the View). Any other grant stays terminal-only. |
 | Agent-prepared request | Signer-local preparation registration excludes foreign or historical pending requests from click eligibility. Host-reported PID equality alone does not. |
 | Host lies in material | Signer recomputation rejects mismatches between supplied material and signing inputs. It does not prove the truth of mutually consistent fabricated input or fields explicitly classified as host attestations. |
 | View swap | Full signing-input binding rejects changes to an approved record. It does not detect the dashboard displaying one record while requesting a signature for another. |

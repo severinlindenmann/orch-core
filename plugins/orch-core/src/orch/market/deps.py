@@ -7,6 +7,7 @@ changes kind, or any row is added or re-versioned; removals do not widen)."""
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -16,6 +17,9 @@ from . import constants
 
 __all__ = ["KIND_WORDS", "NOTES", "diff", "lines", "row_name", "view"]
 
+#: the characters of a diff line (the signer and the stage file apply the same one)
+DIFF_LINE = re.compile(r"[A-Za-z0-9@._~/ >+()!,:-]{1,300}")
+MAX_DIFF_LINES = 2 * 1000 + 1  # at most 1000 rows per lock: every old and new row, plus the runtime line
 KIND_WORDS = {"python-requirements": "Python", "node-package-lock": "Node"}
 #: ``note`` of a row: what a person should know about it (``None``: nothing)
 NOTES = ("compiled", "other_platform", "dev")
@@ -53,8 +57,8 @@ def diff_ok(d: Any) -> bool:
         and set(d) == {"lines", "widened"}
         and type(d["widened"]) is bool
         and isinstance(d["lines"], list)
-        and len(d["lines"]) <= 200
-        and all(isinstance(x, str) and 0 < len(x) <= 300 for x in d["lines"])
+        and len(d["lines"]) <= MAX_DIFF_LINES
+        and all(isinstance(x, str) and DIFF_LINE.fullmatch(x) for x in d["lines"])
     )
 
 
@@ -147,8 +151,8 @@ def diff(
         out.append(f"- dependencies ({KIND_WORDS[old_kind or '']}, removed)")
     elif runtime == "kind_changed":
         out.append(f"~ dependencies {KIND_WORDS[old_kind or '']} -> {KIND_WORDS[new_kind or '']}")
-    out += [f"+ dep {a['name']} {a['version']} (new)" for a in added]
-    for _, o, p in pairs:
+    # changed rows first, a same-version change (contents or install status) before a re-version, then added, removed
+    for _, o, p in sorted(pairs, key=lambda t: t[1].row.version != t[2].row.version):
         if o.row.version != p.row.version:
             suffix = ""
         elif o.row.hashes != p.row.hashes:
@@ -156,6 +160,7 @@ def diff(
         else:
             suffix = " (install status changed)"
         out.append(f"~ dep {row_name(p.row)} {o.row.version} -> {p.row.version}{suffix}")
+    out += [f"+ dep {a['name']} {a['version']} (new)" for a in added]
     out += [f"- dep {x['name']} (removed)" for x in removed]
     return {
         "runtime": runtime, "added": added, "removed": removed, "changed": changed, "lines": out,

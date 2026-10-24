@@ -44,7 +44,6 @@ from __future__ import annotations
 import contextlib
 import json
 import os
-import re
 import selectors
 import shutil
 import signal
@@ -62,7 +61,7 @@ from jsonschema import exceptions as jsonschema_exceptions
 from orch import __version__ as CORE_VERSION
 from orch import canon
 from orch.addons import envtree
-from orch.addons.manifest import ManifestError, incompatibility, load_manifest
+from orch.addons.manifest import BARE_PYTHON, ManifestError, incompatibility, load_manifest
 from orch.addons.package import MANIFEST_FILE, Package, PackageError, check_path, package_digest, read_package
 from orch.market import MarketError
 from orch.model.types import Addon
@@ -75,7 +74,6 @@ PATH = "/usr/local/bin:/usr/bin:/bin"
 NODE_DIRS = "/opt/homebrew/bin:/usr/local/bin:/usr/bin"
 MAX_REQUEST = 64 << 10
 PYTHON_TOKEN = "{python}"
-_BARE_PYTHON = re.compile(r"python[0-9.]*")  # a bare interpreter name would be looked up on PATH
 #: what ``{python}`` expands to: core's interpreter, no bytecode, no PYTHON* environment, no user or system
 #: site-packages (so an add-on cannot import orch). Not ``-I``: it would drop the script directory.
 PYTHON_ARGV = (sys.executable, "-B", "-E", "-s", "-S")
@@ -417,7 +415,7 @@ def call(
         cmd = manifest.entry_cmd
         if any(PYTHON_TOKEN in a for a in cmd[1:]) or (PYTHON_TOKEN in cmd[0] and cmd[0] != PYTHON_TOKEN):
             raise RunnerError("addon.start_failed", "the python placeholder is only the whole of the command")
-        if cmd[0] != PYTHON_TOKEN and _BARE_PYTHON.fullmatch(cmd[0]):
+        if cmd[0] != PYTHON_TOKEN and BARE_PYTHON.fullmatch(cmd[0]):
             raise RunnerError("addon.start_failed", "python is never taken from PATH: the command is {python}")
         if py_env is not None:
             # dependencies arrive through PYTHONPATH (from-nothing env), so ``-E`` is dropped; ``-B -s -S`` stay

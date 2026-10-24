@@ -1175,6 +1175,8 @@ def _payload(
         _row(out, "packages (listed by this computer from the lockfile; covered by the digest)", _deps_words(deps))
         diff = deps.get("diff") if isinstance(deps, Mapping) else None
         if isinstance(diff, Mapping) and isinstance(diff.get("lines"), list):
+            if len(diff["lines"]) > 1000:  # too long for the short view: the full review shows every line
+                raise PlainUnavailable("the plain view does not show this many dependency changes")
             _row(
                 out,
                 "dependency changes (host-derived, not signed)",

@@ -644,8 +644,10 @@ def _market(material: Mapping[str, Any], events: list[Mapping[str, Any]]) -> Non
 _DEP_KINDS = ("python-requirements", "node-package-lock")
 _DEP_NOTES = (None, "compiled", "other_platform", "dev")
 _DEP_NAME = re.compile(r"[A-Za-z0-9@._~/ >+-]{1,200}")
-_DEP_LINE = re.compile(r"[A-Za-z0-9@._~/ >+()!,:-]{1,300}")
 _DEP_VERSION = re.compile(r"[0-9A-Za-z.+!_-]{1,60}")
+
+
+from orch.market.deps import DIFF_LINE as deps_diff_line  # noqa: E402
 
 
 def _deps(material: Mapping[str, Any], events: list[Mapping[str, Any]]) -> None:
@@ -683,8 +685,8 @@ def _deps(material: Mapping[str, Any], events: list[Mapping[str, Any]]) -> None:
         and set(d) == {"lines", "widened"}
         and type(d["widened"]) is bool
         and isinstance(d["lines"], list)
-        and len(d["lines"]) <= 200
-        and all(isinstance(x, str) and 0 < len(x) <= 300 and _DEP_LINE.fullmatch(x) for x in d["lines"])
+        and len(d["lines"]) <= 2 * 1000 + 1
+        and all(isinstance(x, str) and 0 < len(x) <= 300 and deps_diff_line.fullmatch(x) for x in d["lines"])
     ):
         _refuse("material.deps has a malformed diff")
     for r in rows:

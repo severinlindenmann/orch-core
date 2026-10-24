@@ -429,7 +429,7 @@ def _stage(service: WorkspaceService, plan: dict[str, Any], call: Call | None = 
             old = None
         change = mi.diff(old, manifest, prior, facts, old_plan, planned)
         if dep_view is not None or change["deps"]["runtime"] is not None:
-            diff = {"lines": list(change["deps"]["lines"])[:200], "widened": bool(change["widened"])}
+            diff = {"lines": list(change["deps"]["lines"]), "widened": bool(change["widened"])}
             if dep_view is not None:
                 dep_view["diff"] = diff  # carried to the signer: host-derived, labelled, not signed
         review += [f"update: {x}" for x in change["changes"]]

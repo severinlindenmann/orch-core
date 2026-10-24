@@ -281,3 +281,38 @@ def test_the_signer_checks_the_diff_block(served, human, net, ready, registry):
         p["material"]["deps"]["diff"] = bad
         with pytest.raises(signer.SignerRefused):
             human.check(p)
+
+
+def test_a_big_update_keeps_every_line_and_puts_contents_changed_first(served, human, net, ready, registry):
+    """201 added packages and one hash change at the same version: nothing is cut, the change comes first."""
+    publish(served, net, lock=py_lock(registry.IDNA))
+    M.install(served, human)
+    many = [registry.py(f"pkg{i}", "1.0") for i in range(201)]
+    changed = registry.py("idna", "3.10", {"idna/__init__.py": "x = 2\n"})
+    publish(served, net, "1.1.0", py_lock(changed, *many))
+    st = ok(stage(served, update=True))["data"]
+    lines = st["deps"]["diff"]["lines"]
+    assert len(lines) == 202 and lines[0] == "~ dep idna 3.10 -> 3.10 (contents changed)"
+    v = click_view(served, human, st)
+    assert any("dep change ~ dep idna 3.10 -> 3.10 (contents changed)" in x for x in v["lines"])
+    assert any(
+        "contents changed" in r["after"] for r in v["content"]["fields_changed"] if "dependency changes" in r["field"]
+    )
+
+
+def test_more_than_a_thousand_diff_lines_fall_back_to_the_full_review(served, human, net, ready, registry):
+    from orch.host import signcontent
+
+    publish(served, net, lock=py_lock(registry.IDNA))
+    st = ok(stage(served))["data"]
+    prepared = human.prepare("addon.grant", {"name": "standup", "staged": st["stage"]})
+    prepared["material"]["deps"]["diff"] = {"lines": ["+ dep x 1 (new)"] * 1001, "widened": True}
+    signer._deps(prepared["material"], prepared["events"])  # the signer accepts up to 2 x 1000 + 1 lines
+    with pytest.raises(signcontent.PlainUnavailable):
+        signcontent.build(prepared, verified=True)
+    prepared["material"]["deps"]["diff"] = {"lines": ["+ dep x 1 (new)"] * 2002, "widened": True}
+    with pytest.raises(signer.SignerRefused):
+        signer._deps(prepared["material"], prepared["events"])
+    prepared["material"]["deps"]["diff"] = {"lines": ["+ dep x\u202e1"], "widened": True}
+    with pytest.raises(signer.SignerRefused):
+        signer._deps(prepared["material"], prepared["events"])

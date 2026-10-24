@@ -491,7 +491,7 @@ def test_a_bare_python_is_refused_for_every_add_on_at_load_and_at_run():
     from orch.addons.manifest import ManifestError, load_manifest
     from tests.addons.test_manifest import raw, runtime_manifest
 
-    for cmd0 in ("python3", "python", "python3.14"):
+    for cmd0 in ("python3", "python", "python3.14", "Python3", "PYTHON", "python3.13t", "Python3.14T"):
         with pytest.raises(ManifestError):
             load_manifest(raw(runtime_manifest(cmd0=cmd0)))
         plain = {

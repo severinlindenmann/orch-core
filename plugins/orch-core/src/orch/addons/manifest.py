@@ -116,7 +116,7 @@ def load_manifest(raw: bytes) -> Manifest:
         raise ManifestError(
             f"orch-addon.json{e.path}: {e.message}".encode("ascii", "backslashreplace").decode()
         ) from None
-    if _BARE_PYTHON.fullmatch(doc["entry"]["cmd"][0]):
+    if BARE_PYTHON.fullmatch(doc["entry"]["cmd"][0]):
         # python is never taken from PATH (V3 G6/G4, no legacy): the command the owner reads is the one that runs
         raise ManifestError("orch-addon.json/entry/cmd: use {python}, never a python found on PATH")
     rt = doc.get("runtime")
@@ -125,7 +125,9 @@ def load_manifest(raw: bytes) -> Manifest:
     return Manifest(doc)
 
 
-_BARE_PYTHON = re.compile(r"python[0-9.]*")
+#: a bare interpreter name would be looked up on PATH; case-insensitive (the file system may be), one pattern for the
+#: manifest and the runner
+BARE_PYTHON = re.compile(r"python[0-9.]*t?", re.I)
 #: ``runtime.kind`` -> the interpreter the entry command must name (design G4 §2): the command is what the owner
 #: reads, and the runner starts exactly the interpreter the dependencies were chosen for
 RUNTIME_COMMANDS = {"python-requirements": "{python}", "node-package-lock": "node"}

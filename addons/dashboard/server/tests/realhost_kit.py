@@ -122,13 +122,20 @@ def confirm_rules(passphrase: str = PASSPHRASE) -> list[tuple[str, Callable]]:
 
 
 class Workspace:
-    def __init__(self, base: Path, prefix: str = "DEMO", dirname: str = "billing", owner: str = "Demo Owner"):
+    def __init__(
+        self,
+        base: Path,
+        prefix: str = "DEMO",
+        dirname: str = "billing",
+        owner: str = "Demo Owner",
+        state_name: str = "s",
+    ):
         self.base, self.prefix, self.dirname, self.owner = Path(base), prefix, dirname, owner
         self.state, self.home = (
-            self.base / "s",
-            self.base / "h",
-        )  # short: host sockets are <run>/<workspace id>/host.sock, 100 bytes max
-        self.run = self.state / "run"  # setup finds the host at <state>/run (connect_host ignores ORCH_HOST_RUN_DIR)
+            self.base / state_name,
+            self.base / "home",
+        )  # short names: host sockets are <run>/<workspace id>/host.sock, 100 bytes max
+        self.run = self.state / "run"
         self.root = self.base / dirname
         self.grant_secret: str | None = None
         self.passphrase = PASSPHRASE  # replaced by the one `orch setup` generated (setup_driver)
@@ -434,6 +441,32 @@ def _walk(ws, post, get, fail, thread, box, pty_run, rules, fp, problems, deadli
         raise fail(f"driver error {box['exc']!r}")
     if pty_run.code != 0:
         raise fail(f"exited {pty_run.code}")
+
+
+def sandbox_bring_up(ws: Workspace, sandbox_id: str, *, relay_origin: str = "https://relay.dev.example") -> None:
+    """Make a dev-pair sandbox workspace (prefix ``SBX``) with `orch setup` (V3-D38), in the one place that knows the
+    order: the sandbox files that make a host a dev host need ids that exist only after setup, so the first dev host is
+    **pending** (the manifest has only ``id`` and ``root``; it admits the one fresh SBX genesis and has no dev powers),
+    then: setup -> stop the host (own PID) -> bind person, workspace row and marker -> start the full dev host.
+
+    ``ws`` must be ``Workspace(..., prefix="SBX", owner=devsandbox.owner_name(sandbox_id), state_name="state")`` and its
+    ``orch`` must add ``--dev-sim-convenience`` to ``host run --foreground`` (as the hub scenarios do). The host started
+    here keeps running; the caller grants, installs add-ons and stops it as before."""
+    from orch import devsandbox
+
+    if ws.state != ws.base / "state":
+        raise RuntimeError('a sandbox needs Workspace(..., state_name="state"): devsandbox keeps dev.json there')
+    ws.make_dirs()
+    devsandbox.write_manifest(ws.base, sandbox_id)
+    (ws.state / "host").mkdir(mode=0o700, exist_ok=True)
+    devsandbox.write_dev_json(ws.base, sandbox_id, relay_origin)
+    ws.start_host()  # pending dev host
+    ws.init()
+    ws.stop_host()
+    wid = ws.ws_id.removeprefix("w_")
+    devsandbox.write_manifest(ws.base, sandbox_id, person_id=ws.person, workspaces=[(wid, ws.root)])
+    devsandbox.write_marker(ws.root, sandbox_id, wid)
+    ws.start_host()  # the full dev host proves S1 to S5 for the bound workspace
 
 
 def new_session(ws: Workspace, n: int) -> None:

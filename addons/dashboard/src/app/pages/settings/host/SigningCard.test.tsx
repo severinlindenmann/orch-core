@@ -310,7 +310,7 @@ describe('Sign in the dashboard', () => {
 
 it('says the risk in one plain line and keeps the full notice under Details', async () => {
   mount({ ...ON, risk_ack: null })
-  expect(await screen.findByTestId('click-risk')).toHaveTextContent('anyone using this browser session could approve')
+  expect(await screen.findByTestId('click-risk')).toHaveTextContent('anyone using this browser session, and agents running as you, could approve')
   expect(screen.getByTestId('click-risk-full')).toHaveTextContent('Convenience signing:')
   await waitFor(() => expect(screen.getByTestId('signing-state')).toHaveTextContent('On: you approve here with one click'))
 })

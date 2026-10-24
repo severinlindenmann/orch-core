@@ -23,12 +23,22 @@ it('the Settings link is offered when the host serves it, with only the reduced 
   expect(screen.queryByText('Relay & devices')).not.toBeInTheDocument()
 })
 
-it('Devices on a real host: pairing a phone is not available yet, and no pairing request is made', async () => {
-  show('/w/DEMO/settings/devices')
+it('Devices have one home, the Phone row of Add-ons: pairing is not available yet, and no pairing request is made', async () => {
+  const user = userEvent.setup()
+  show('/w/DEMO/settings/addons')
+  await user.click(await screen.findByTestId('addon-phone-devices', {}, T))
   expect(await screen.findByTestId('pair-unavailable', {}, T)).toHaveTextContent('Pairing a phone comes later. For now you approve on this computer, in the terminal.')
   expect(state.host.calls.filter((c) => /pair|device/.test(c.path))).toEqual([])
   expect(state.host.posts()).toEqual([])
   expect(screen.queryByRole('button', { name: 'Create pairing link' })).toBeNull()
+})
+
+it('/settings/devices is gone: it falls back to General like any unknown tab, and there is no Devices tab', async () => {
+  show('/w/DEMO/settings/devices')
+  const nav = within(await screen.findByRole('navigation', { name: 'Settings' }, T))
+  await waitFor(() => expect(nav.getByRole('link', { name: 'General' })).toHaveAttribute('aria-current', 'page'))
+  expect(screen.queryByTestId('pair-unavailable')).toBeNull()
+  expect(within(screen.getByRole('navigation', { name: 'Settings' })).queryByRole('link', { name: /devices/i })).toBeNull()
 })
 
 it('General shows what the host says, marks defaults and lists repositories with what the host sees on disk', async () => {
@@ -369,6 +379,10 @@ it('Agent access: an owner stops any active access in one step (a reason, one bu
   expect(await screen.findByRole('heading', { name: 'Agent access' }, T)).toBeInTheDocument()
   expect(await screen.findAllByTestId('grant-card', {}, T)).toHaveLength(2)
   expect(screen.getByRole('article', { name: 'Tom’s agents' })).toHaveTextContent('Claude Code')
+  // The one shared agent mark (components/agents/AgentIcon), for both agents.
+  const card = screen.getByRole('article', { name: 'Tom’s agents' })
+  expect(card.querySelector('[data-agent-icon="claude-code"]')).not.toBeNull()
+  expect(card.querySelector('[data-agent-icon="codex"]')).not.toBeNull()
   expect(screen.getByText(GRANT_A)).toBeInTheDocument() // the id is in the closed details
   expect(screen.getByRole('button', { name: 'Stop access for Tom' })).toBeEnabled()
   await user.click(screen.getByRole('button', { name: 'Stop access for Tom' }))

@@ -4,7 +4,7 @@ import { runnerQuery } from '@/api/agents'
 import { canRevokeHostGrant, type HostGrant } from '@/api/settings'
 import { hasFeature } from '@/api/features'
 import type { Workspace } from '@/api/types'
-import { AgentName } from '@/components/agent/AgentMark'
+import { AgentName } from '@/components/agents/AgentIcon'
 import { LoadFailed } from '@/components/LoadFailed'
 import { SignPopover } from '@/components/sign/SignPopover'
 import { Button } from '@/components/ui/button'
@@ -119,7 +119,7 @@ export function HostGrants({ workspace }: { workspace: Workspace }) {
                   {g.label === 'runner' && <span data-testid="runner-grant-tag" className="text-[11px] text-text-faint">on this computer</span>}
                 </div>
                 <div className="flex flex-wrap gap-x-4 gap-y-1">
-                  {AGENTS.map((a) => <AgentName key={a} agent={a} />)}
+                  {AGENTS.map((a) => <AgentName key={a} harness={a} />)}
                 </div>
                 <p className="text-[13px]">Can work on tickets they are allowed to.</p>
                 <p className="text-[13px] tabular-nums text-text-muted">

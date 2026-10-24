@@ -23,7 +23,7 @@ import { CopyButton } from '../../ticket/Header'
 import { Section } from '../../ticket/shared'
 import { fmtDateTime } from '@/lib/time'
 
-const CLICK_RISK_SHORT = 'One click signs for you from this browser on this computer; anyone using this browser session could approve. You can turn it off any time.'
+const CLICK_RISK_SHORT = 'One click signs for you from this browser on this computer; anyone using this browser session, and agents running as you, could approve. You can turn it off any time.'
 
 /** Refusals after which nothing changed: the signer said so before (or instead of) moving anything. */
 /** The shortest passphrase core accepts (custody/strength.py MIN_CHARS); core still judges the strength. */

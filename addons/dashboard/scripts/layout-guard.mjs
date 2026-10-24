@@ -495,6 +495,8 @@ async function run(send, close) {
                 await new Promise((r) => setTimeout(r, 400))
                 return true
               }, sel, rx.source)
+            // Click the first element a selector matches (a switch has no text of its own).
+            const clickSel = (sel) => clickText(sel, /[\s\S]*/)
             // Fixture answers arrive a moment after the page: wait for the element (up to 8 s) before calling it missing, then let the layout settle.
             const present = async (sel) => {
               const found = await evaluate(async (s) => {
@@ -581,13 +583,13 @@ async function run(send, close) {
             const CARD = [['the signing card', '[data-testid="workspace-card-signing"]']]
             if (!ONLY || ONLY.test('real-host-signing-on')) {
               await go('/__layout/signing-on')
-              const opened = (await present('[data-testid="workspace-card-signing"]')) && (await clickText('[data-testid="workspace-card-signing"] button[role="switch"]', /^$/))
+              const opened = (await present('[data-testid="workspace-card-signing"]')) && (await clickSel('[data-testid="workspace-card-signing"] button[role="switch"]'))
               await settle()
               await check(config, 'real-host-signing-on', opened ? await need([...CARD, ['the conversion text', '[data-testid="signing-conversion"]'], ['the password field', '#signing-passphrase[type="password"]']]) : ['the One click switch is missing'])
             }
             if (!ONLY || ONLY.test('real-host-signing-off')) {
               await go('/__layout/signing-off')
-              const opened = (await present('[data-testid="workspace-card-signing"]')) && (await clickText('[data-testid="workspace-card-signing"] button[role="switch"]', /^$/))
+              const opened = (await present('[data-testid="workspace-card-signing"]')) && (await clickSel('[data-testid="workspace-card-signing"] button[role="switch"]'))
               await settle()
               await check(config, 'real-host-signing-off', opened ? await need([...CARD, ['the off explanation', '[data-testid="signing-off-explain"]'], ['the new passphrase field', '#signing-new-passphrase[type="password"]']]) : ['the One click switch is missing'])
             }
@@ -601,7 +603,7 @@ async function run(send, close) {
             }
             if (!ONLY || ONLY.test('real-host-signing-unknown')) {
               await go('/__layout/signing-unknown')
-              const opened = (await present('[data-testid="workspace-card-signing"]')) && (await clickText('[data-testid="workspace-card-signing"] button[role="switch"]', /^$/))
+              const opened = (await present('[data-testid="workspace-card-signing"]')) && (await clickSel('[data-testid="workspace-card-signing"] button[role="switch"]'))
               const typed = opened && (await typeInto('#signing-passphrase', 'placeholder'))
               const sent = typed && (await clickText('button', /^Turn on$/))
               await settle()

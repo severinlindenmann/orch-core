@@ -116,6 +116,9 @@ export function usePageScroll(main: RefObject<HTMLElement | null>) {
   }, [resolved, main])
 }
 
+/** The rows that follow the page fade: opted-in rows, cards and list items. Never table rows (a transform on a `tr` shifts the table's layout). */
+export const STAGGER_SELECTOR = '[data-row], article, ul[aria-label] > li'
+
 /** Wraps the page: fades it in when another page is shown (see the top of this file). */
 export function PageFade({ children }: { children: ReactNode }) {
   const fadeKey = fadeKeyOf(useShownPath())
@@ -130,7 +133,7 @@ export function PageFade({ children }: { children: ReactNode }) {
     el.getAnimations?.().forEach((a) => a.cancel())
     el.animate([HIDDEN_FRAME, SHOWN_FRAME], { duration: FADE_MS, easing: EASE_OUT })
     // The first rows of the page follow one after the other (at most eight, only those on screen).
-    const rows = [...el.querySelectorAll<HTMLElement>('[data-row], tbody > tr, article, ul[aria-label] > li')].filter((r) => r.offsetParent !== null).slice(0, STAGGER_ROWS)
+    const rows = [...el.querySelectorAll<HTMLElement>(STAGGER_SELECTOR)].filter((r) => r.offsetParent !== null).slice(0, STAGGER_ROWS)
     rows.forEach((row, i) => row.animate?.([HIDDEN_FRAME, SHOWN_FRAME], { duration: FADE_MS, delay: (i + 1) * STAGGER_MS, easing: EASE_OUT, fill: 'backwards' }))
   }, [fadeKey])
   return (

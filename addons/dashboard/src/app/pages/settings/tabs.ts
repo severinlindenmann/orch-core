@@ -25,15 +25,9 @@ export const HOST_TABS = [
   { id: 'hub', label: 'Hub', feature: 'hub' },
 ] as const
 
-/**
- * Pages that are still served but are not tabs: the paired devices and the phone pairing live under the Phone add-on
- * (Add-ons), and records are part of General > Advanced. A link to `/settings/records` goes to General.
- */
-export const HIDDEN_HOST_TABS = ['devices'] as const
-
 /** The tabs this build shows: the mockup's, or the reduced ones on a real host. */
 export const settingsTabs = (workspace?: string): readonly { id: string; label: string; preview?: boolean }[] =>
   isRealHost() ? HOST_TABS.filter((t) => !('feature' in t) || hasFeature(t.feature, workspace)) : TABS
 
-/** The known /settings/$tab values on this build; anything else redirects to General. */
-export const knownSettingsTab = (tab: string): boolean => (isRealHost() ? [...HOST_TABS.map((t) => t.id), ...HIDDEN_HOST_TABS] : TABS.map((t) => t.id)).some((id) => id === tab)
+/** The known /settings/$tab values on this build; anything else (also the old /settings/devices and /settings/records) redirects to General. Devices and phone pairing live on the Phone row of Add-ons, records in General > Advanced. */
+export const knownSettingsTab = (tab: string): boolean => (isRealHost() ? HOST_TABS.map((t) => t.id) : TABS.map((t) => t.id)).some((id) => id === tab)

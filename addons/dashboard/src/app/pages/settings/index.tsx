@@ -21,7 +21,6 @@ import { HostGeneral } from './host/General'
 import { HostAddOns } from './host/AddOns'
 import { HostGrants } from './host/Grants'
 import { HostMembers } from './host/Members'
-import { HostDevices } from './host/Devices'
 import { CopyLinkButton } from '../../shell/CopyLinkButton'
 import { useMe } from '@/app/useMe'
 
@@ -52,7 +51,6 @@ export function SettingsPage({ tab, addon }: { tab?: string; addon?: string }) {
         {tab === 'grants' && <HostGrants workspace={workspace} />}
         {tab === 'addons' && <HostAddOns key={workspace.id} workspace={workspace} />}
         {tab === 'hub' && <HubTab key={workspace.id} workspace={workspace} />}
-        {tab === 'devices' && <HostDevices key={workspace.id} workspace={workspace} />}
       </SettingsFrame>
     )
   }

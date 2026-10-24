@@ -178,6 +178,9 @@ front-page warning name both. That is why the split layout is the recommendation
   - A hub restored from backup starts a new `generation`, signed under `HK_root`, so it is not locked out for good.
     A `generation` is accepted only if it is strictly higher than the pinned one and signed by `HK_root`.
   - Each snapshot is stored in the workspace ledger, so readers and restores can verify old events.
+  - Every snapshot also carries the hub-wide **marketplace policy** (`market_policy`, required, signed with the rest): which
+    marketplaces, add-ons and capabilities the company allows. The hub admin edits it in the console; a change raises every
+    workspace's snapshot `version`. Core can only refuse by it (marketplace spec §9; hub protocol 7.1).
 - Every grant and membership change is signed by the acting admin's `UK`, with a channel proof as in §5.
 - **Removing a user** from every group that reaches a workspace makes the hub drop their channel sessions for it;
   the workspace sees the new snapshot. No `WK_e` rotation is needed, because the user never held `WK_e` (D73, D74).

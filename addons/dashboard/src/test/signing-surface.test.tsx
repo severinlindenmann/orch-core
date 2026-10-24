@@ -851,28 +851,27 @@ it('addon enable confirms the grant name and renders the workspace review withou
   const { clickEligible } = await import('@/api/click')
   const { HandoffPanel } = await import('@/components/sign/HandoffPanel')
   const { fakeRequest } = await import('@/test/handoffHarness')
-  const models = { codex: { work: 'gpt-5.4' } }
-  const event = { id: 'event-settings', type: 'settings.changed', actor: { kind: 'person', id: 'p_owner', device: null }, auth: null, set: { models } }
+  const publish = { server: 'https://files.example.test', share: 'https://links.example.test' }
+  const event = { id: 'event-settings', type: 'settings.changed', actor: { kind: 'person', id: 'p_owner', device: null }, auth: null, set: { publish } }
   const material = {
     kind: 'payload' as const, ticket: null,
-    review: [{ event_id: event.id, type: event.type, payload: { set: { models } }, derived: {} }],
-    sequence: { digest: 'sha256:demo', of: 2, intent: { v: 1, kind: 'addon_enable', name: 'model-routing', settings: { models } } },
+    review: [{ event_id: event.id, type: event.type, payload: { set: { publish } }, derived: {} }],
+    sequence: { digest: 'sha256:demo', of: 2, intent: { v: 1, kind: 'addon_enable', name: 'publish', settings: { publish } } },
   }
   const request = { ...fakeRequest(), key: null, op: 'settings.set', events: [event], material,
-    review_digest: reviewDigestOf(material), content: { headline: 'Turn on Model routing', notes: ['Choose GPT-5.4 for work. Settings first, then turn on Model routing.'] },
+    review_digest: reviewDigestOf(material), content: { headline: 'Turn on Publish', notes: ['Files are sent to the server. Settings first, then turn on Publish.'] },
   }
   request.fingerprint = fingerprintOf(request.review_digest, request.events, request.op)
   const workspace = { prefix: 'DEMO', id: '0123456789abcdef0123456789abcdef' }
   expect(requestIsConsistent(request)).toBe(true)
-  expect(workspaceConfirmWord(request, workspace)).toBe('model-routing~89abcdef')
-  expect(clickEligible({ action: 'addon_enable', name: 'model-routing', models })).toBe(true)
+  expect(workspaceConfirmWord(request, workspace)).toBe('publish~89abcdef')
   expect(clickEligible({ action: 'addon_enable', name: 'publish', publish: { server: 'https://files.example.test', share: 'https://links.example.test' } })).toBe(false) // Publish: terminal only
   expect(clickEligible({ action: 'addon_grant', name: 'publish' })).toBe(false)
   expect(clickEligible({ action: 'addon_grant', name: 'usage' })).toBe(true)
   render(<HandoffPanel request={request} workspace={workspace} />)
   expect(screen.getByTestId('handoff-command')).toHaveTextContent('orch sign')
-  expect(screen.getByText('Choose GPT-5.4 for work. Settings first, then turn on Model routing.')).toBeVisible()
-  expect(screen.getAllByText('model-routing~89abcdef').length).toBeGreaterThan(0)
+  expect(screen.getByText('Files are sent to the server. Settings first, then turn on Publish.')).toBeVisible()
+  expect(screen.getAllByText('publish~89abcdef').length).toBeGreaterThan(0)
 })
 it('reviews the exact task edit and relays that action through the existing handoff', async () => {
   const { fakeRequest, state } = await import('./handoffHarness')

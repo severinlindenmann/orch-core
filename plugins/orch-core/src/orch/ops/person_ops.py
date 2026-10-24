@@ -29,7 +29,6 @@ from orch.addons.settings_value import KEY as ADDONS_KEY
 from orch.canon import HashError, canonical_policy
 from orch.model import claims
 from orch.model.types import GRANT_MAX_HOURS
-from orch.modelchoices import MODEL_CHOICES, ROUTE_MODES
 from orch.ops._dsl import REF, STR, E, S, err, obj, operation
 from orch.ops.base import Context, Operation, Result
 from orch.ops.errors import GLOBAL_ERRORS, OrchError
@@ -85,24 +84,6 @@ _ICON = {  # the workspace icon: an icon and a colour of the closed lists, or nu
         {"type": "null"},
     ]
 }
-_MODELS = {  # Model routing: harness -> Start agent mode -> a model of that harness's closed list; null clears all
-    "oneOf": [
-        {
-            "type": "object",
-            "properties": {
-                harness: {
-                    "type": "object",
-                    "properties": {mode: {"enum": list(names)} for mode in ROUTE_MODES},
-                    "additionalProperties": False,
-                }
-                for harness, names in MODEL_CHOICES.items()
-            },
-            "minProperties": 1,
-            "additionalProperties": False,
-        },
-        {"type": "null"},
-    ]
-}
 _SET = {
     "type": "object",
     "properties": {
@@ -128,7 +109,6 @@ _SET = {
                 {"type": "null"},
             ]
         },
-        "models": _MODELS,
         ADDONS_KEY: {  # G6: the settings of ONE add-on (checked by the host against its granted manifest)
             "type": "object",
             "minProperties": 1,
@@ -225,33 +205,12 @@ def handle_policy(ctx: Context, args: dict[str, Any]) -> Result:
     return h.workspace_result(done, {"gates": names}, "orch show")
 
 
-def _routing_on(h: Human) -> bool:
-    from orch.addons import settings_needs
-
-    return settings_needs.is_on(h.store.state.workspace.addons, "model-routing")
-
-
-def _enabling_routing(ctx: Context) -> bool:
-    """Is this the first step of the signer's ``addon_enable`` sequence for Model routing? Then the table is set before
-    the add-on is turned on (the sequence's next step); ``check_meta`` made the op and args the intent's."""
-    seq = getattr(ctx.prepare, "sequence", None)
-    return (
-        isinstance(seq, dict)
-        and seq.get("step") == 0
-        and isinstance(seq.get("intent"), dict)
-        and seq["intent"].get("kind") == "addon_enable"
-        and seq["intent"].get("name") == "model-routing"
-    )
-
-
 def handle_settings(ctx: Context, args: dict[str, Any]) -> Result:
     from orch.addons import settings_needs, settings_value
 
     h = _Human(ctx, "settings.set")
     _owner(h, "settings.set")
     changes = args["set"]
-    if changes.get("models") is not None and not _routing_on(h) and not _enabling_routing(ctx):
-        raise OrchError("invalid.input", "model routing is off: turn it on in Settings, Add-ons first")
     if ADDONS_KEY in changes:  # G6: the general bounds, then the granted schema, on the state as it is now
         if len(changes) != 1:
             raise OrchError("invalid.input", "add-on settings are changed on their own")

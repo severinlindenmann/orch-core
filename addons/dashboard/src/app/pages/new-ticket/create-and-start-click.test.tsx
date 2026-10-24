@@ -28,8 +28,8 @@ let s: { preview: ReturnType<typeof vi.spyOn>; start: ReturnType<typeof vi.spyOn
 beforeEach(() => {
   const real = api.getWorkspaces.bind(api)
   vi.spyOn(api, 'getWorkspaces').mockImplementation(async () => (await real()).map((w) => ({ ...w, click: { custody: 'convenience' as const, enabled: true, available: true } })))
-  vi.spyOn(api, 'getHostSettings').mockResolvedValue({ available: true, grant_hours: 168, models: null } as Awaited<ReturnType<typeof api.getHostSettings>>)
-  vi.spyOn(routingApi, 'choices').mockResolvedValue({ harnesses: [{ id: 'claude-code', label: 'Claude', models: [] }, { id: 'codex', label: 'Codex', models: [] }], modes: [] })
+  vi.spyOn(api, 'getHostSettings').mockResolvedValue({ available: true, grant_hours: 168 } as Awaited<ReturnType<typeof api.getHostSettings>>)
+  vi.spyOn(routingApi, 'choices').mockResolvedValue({ harnesses: [{ id: 'claude-code', label: 'Claude', models: [] }, { id: 'codex', label: 'Codex', models: [] }] })
   vi.spyOn(agentsApi, 'runner').mockResolvedValue({ runner: { connected: true, enabled: true, terminals: false, grant: null } })
   vi.spyOn(agentsApi, 'riskNotices').mockResolvedValue({ acknowledged: { start_agent: true } })
   vi.spyOn(api, 'prepareClick').mockResolvedValue({ request_id: REQ, expires_at: new Date(Date.now() + 600_000).toISOString(), op: 'new', confirm: 'word' })

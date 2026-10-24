@@ -3595,6 +3595,161 @@ methods).** Presentation only: the signed events, `material`, `review_digest` an
    signatures (the second request is prepared after the first lands and checked against the review the person
    confirmed). The dashboard keeps its two hand-offs until one is chosen.
 
+**10. Remote dashboard (#1198 R1, owner decisions of 24 Oct 2026).** A dashboard on a headless Linux server (a VPS)
+is reached over HTTPS on the server's own web name, and people log in with a passkey. Off unless configured; Windows
+and macOS keep the loopback dashboard only. Design: `design-r1-remote-dashboard.md` (kit state). The SSH tunnel to the
+loopback listener stays the IT and break-glass path. A hub's browser channel is the company path; a workspace in hub
+mode may keep remote mode on, but remote mode signs nothing for the hub (D81).
+
+**10.1 Threat model.** The dashboard can start terminals and drive the click signer, so it is a shell on the server
+with signing authority. Remote mode adds one new surface: the front socket is reachable from the internet before
+login.
+
+| Threat | Answer |
+|---|---|
+| Anyone on the internet, before login | Only the pre-login surface of 10.3 answers; passkeys cannot be guessed; per-source rate limits; every parse error fails closed. Pre-login code is kept small and fuzzed (R1-3). |
+| Phishing site with a look-alike name | The passkey is bound to the RP ID; a different name gets no assertion. |
+| DNS hijack or a mis-issued certificate for the real name | Not ours to stop; reduced by a CAA record (setup prints it as advice) and HSTS. A passkey does not help against a valid certificate for the same name. |
+| A TLS-terminating proxy in between (NetBird proxy, Cloudflare, a provider's load balancer) | Forbidden (10.2). Whoever serves the page's JavaScript can change it, read every typed secret before the sealed field encrypts it and click Sign. The start refuses any front other than the configured local socket. |
+| The enrollment link leaks | At least 128 random bits, single use, 15 min, first browser wins; 5 wrong codes in total kill every open link. Anyone on the internet can use that to kill open links without logging in (accepted: a denial of service only; IT makes a new link over SSH). The terminal and the dashboard show "A passkey was added: <name>, <time>" and list all passkeys with Remove; IT can reset over SSH. |
+| Stolen bearer (XSS, an extension, a copied tab) | As in item 8, plus 2 h idle and 12 h absolute life, and step-up (10.5) for each listed action: one assertion per op, bound to that op's review. |
+| Stolen laptop with a passkey | User verification is required (device unlock). Remove the passkey from another device or over SSH. |
+| Lockout by brute-force traffic | Per-source buckets (IPv4 /32, IPv6 /64), so one source's traffic does not use the owner's budget. A distributed flood that reaches the global CPU cap can delay remote login; then the SSH tunnel is the fallback. |
+| Replay of a WebAuthn response | Single-use challenge, 120 s, bound to its ceremony. A step-up nonce is minted, held and consumed by the click signer and bound to the request and its `view_digest` (10.5), so not even the dashboard server can replay one. |
+| Cloned passkey | The sign counter is not relied on (synced passkeys report 0); it is recorded and shown only. |
+| Host header or listener confusion | The policy belongs to the listener (10.2); no header switches it. |
+| Another local user | Cannot open the front socket (peer UID check); reaches loopback HTTP and needs a bearer, as today. |
+| Same-UID agent on the server | Can write the passkey store and add its own login, as it can already sign with the One-click key. **Isolation depends on #1198 H1 (agents as their own OS user):** with H1 the store, the signer and the front socket are out of the agent's reach. Until H1 is built and active on the server, setup and Settings say "Agents on this server can act as you", and remote mode is not offered by default. |
+| Root on the server | Out of scope: root holds the keys. |
+
+**10.2 The front and the listeners.**
+
+- **Never behind a third-party TLS terminator.** TLS ends on the server itself, in the front. No NetBird reverse proxy,
+  CDN, tunnel service or provider load balancer may terminate TLS for the dashboard. A future TLS passthrough name (the
+  edge routes by SNI and sees only ciphertext) does not break this rule; it is not specified here.
+- **The front is Caddy**, installed and configured by one admin step (`orch remote enable --name <name>`, run with
+  sudo): its own system user `orch-front`, a generated Caddyfile that only does `reverse_proxy` to the front socket,
+  ACME for the configured name, TLS 1.2 or later (1.3 preferred), HSTS `max-age=31536000` (no preload), a 10 s header
+  timeout and at most 32 open unauthenticated connections. Port 80 answers only the ACME challenge and a redirect. The
+  front runs on the same machine as root-installed infrastructure, inside the server's trust boundary like sshd.
+- **Own domain only.** No "no domain" quick start through a public wildcard DNS service (sslip.io, nip.io): that
+  service could point the name elsewhere. `orch remote enable` checks that the name resolves to this server and that
+  ports 80 and 443 are reachable, and stops before changing anything if not (`remote.name_mismatch`).
+- **Two listeners, one frozen policy each**, built once at start. A header never changes which policy applies.
+  - Loopback TCP, `127.0.0.1:<port>`, unchanged: exact Host `127.0.0.1:<port>`, Origin `http://127.0.0.1:<port>`,
+    launch codes. A request carrying the public name is refused here. Headless installs get a fixed port
+    (`dashboard.port`) so the printed `ssh -L` line stays true.
+  - The front socket, a Unix socket `<run>/dashboard/front.sock`. The server checks the peer UID of every connection
+    against the configured front UID and closes any other. Every request on it is remote. Host must be exactly the
+    configured name (port 443 implied, no other spelling); Origin must be exactly `https://<name>` on every non-GET and
+    every `/api` call that carries one; a mutation without Origin is refused; Fetch Metadata applies as on loopback. A
+    loopback Host is refused here. The client address is read from the single header `X-Orch-Client` that the front
+    sets, only on this socket; generic proxy headers stay off.
+- **CSP** on the front: as item 7, with `connect-src 'self' wss://<name>` and `frame-src https://<name>/widget-frame/`.
+- **Missing any of these keeps remote mode off.** The server refuses to open the front socket and names what is
+  missing (`remote.not_configured`).
+
+**10.3 Login and enrollment.**
+
+- **Session = passkey.** WebAuthn with RP ID = the configured name, origin exactly `https://<name>`,
+  `userVerification: "required"`, discoverable credentials (`residentKey: "required"`), `attestation: "none"`,
+  `pubKeyCredParams` ES256 (-7) and EdDSA (-8) only. The verification contract is 10.6. After success the server mints
+  a bearer as today (tab memory or `sessionStorage`; never a cookie, never in a URL). **Launch codes are refused on the
+  front**: they are a local credential.
+- **Remote session kind**: 12 h absolute, 2 h idle (local keeps 24 h / 12 h). Logout ends it at once; Settings has "Log
+  out everywhere"; a restart of the dashboard ends every session.
+- **Rate limits** for passkey login, in buckets of their own: 20 per minute per source, the source being the client's
+  IPv4 address (/32) or its IPv6 /64 prefix. A global cap of 600 per minute only guards the CPU, far above any single
+  source; when a distributed flood reaches it, remote login waits and the SSH tunnel is the fallback. The loopback
+  launch limiter stays as it is, so internet traffic cannot lock out the local owner.
+- **Enrollment.** `orch remote enable` (and later "Add a device" in Settings, a step-up action) prints or shows one link
+  `https://<name>/#enroll=<code>`: the code is at least 128 random bits (`secrets.token_urlsafe(16)` or longer) and is
+  compared in constant time; single use, 15 min, the first browser that completes a registration wins; 5 wrong codes in
+  total kill every open link (`enroll.expired`). The fragment never reaches a server log.
+- **The passkey store** `<state>/dashboard/passkeys.json`: mode 0600, owned by the person UID, holding per passkey the
+  credential id, the user handle, the COSE public key, its algorithm, the backup-eligible flag of the registration, a
+  name ("MacBook, Chrome"), created, last used and the last sign count. No secret is in it, but writing it adds a login,
+  so it is read with the `O_NOFOLLOW`, owner and mode checks of the pins file and fails closed.
+- **Pre-login surface**: the app shell and its assets, `/auth/passkey/*` and `/auth/enroll/*`. Nothing else answers
+  without a remote session; `/setup` and `/api/setup/*` need a remote session (the setup token stays, on top).
+- **Terminals are off remotely by default.** `/term` on the front needs the bearer ticket, Origin `https://<name>`
+  (`wss://<name>` connection) and the Settings switch "Terminals over remote access", which is off after enable. A
+  terminal is a shell on the server.
+
+**10.4 What makes a plain click the owner's.** All of 10.2 and 10.3, plus: no ambient credential (no cookie), so a
+cross-site request carries nothing; exact Origin; JSON bodies only; no CORS; `frame-ancestors 'none'`. Every admin action
+stays a plain click after the shown review (owner decision of 24 Oct 2026); the listed few add a fingerprint touch
+(10.5), never typing.
+
+**10.5 Step-up (owner decision of 24 Oct 2026, "all as recommended": exactly this list).** On a remote session each of
+these actions needs its own passkey assertion:
+
+1. turning One click on (the custody switch of item 3a);
+2. a hub join or a hub mode change;
+3. `device.rotate`;
+4. a grant whose secret is revealed;
+5. turning dashboard execution on;
+6. adding a passkey or a device (the "Add a device" link);
+7. removing a passkey.
+
+Everything else, including turning things off and turning remote access off, is a plain click. The step-up rule does not
+apply on loopback, where the person is at the machine or behind the SSH tunnel.
+
+- **One assertion per op, no elevation.** A step-up covers exactly one listed op: it is made for that op's View, used
+  once when that op is signed, and at most 120 s after its challenge was issued. There is no session-wide "recently
+  verified" state (no `last_uv_at`): a step-up never covers another op, another View or a later click.
+- **The signer owns the nonce (R1-6).** When the sign panel shows the View of a listed op on a remote session, the
+  dashboard server asks the click signer for a step-up challenge for that request. The signer draws `nonce` (32 random
+  bytes), keeps `(nonce, request_id, view_digest, issued at)` in memory (monotonic clock) and returns the challenge
+  `SHA-256("orch/v2/dash-stepup|" || nonce || vd)`, where `vd` is the 32 raw bytes of the `view_digest` (`sha256:<hex>`)
+  of the View it built. The browser runs `navigator.credentials.get` with that challenge; the server passes the response
+  on with the sign call.
+- **The signer checks it.** It signs a listed op from a remote session only if the nonce is one it issued for this
+  request and this View, unused and issued at most 120 s ago, and the assertion verifies (10.6) against the passkey
+  store, which the signer reads itself with the store's checks. It marks the nonce used before anything else, whatever
+  the outcome; a restart forgets every nonce, so a new challenge is needed. Otherwise the answer is
+  `passkey.stepup_required`. So a buggy server, or an attacker who only drives its HTTP workflow, cannot replay an old
+  assertion, even when two Views of the same op have the same `view_digest` (code execution as the person is item 0's
+  accepted boundary). The server may check the assertion too, for an early answer; the signer's check
+  is the one that counts.
+
+**10.6 WebAuthn verification contract (`orch_dashboard.passkeys`, vectors `addons/dashboard/server/tests/vectors/webauthn_*.json`).**
+An own small verifier on `cryptography` (already a core dependency), not the `webauthn` PyPI package: it would add
+`cbor2`, `asn1crypto` and every attestation format (TPM, Android, Apple, packed with x5c) to an internet-facing pre-login
+path, and its defaults (user verification preferred, RSA allowed) would have to be overridden at every call. The verifier
+accepts exactly what 10.3 asks for and nothing else. Any failure raises `PasskeyError` (catalog code `passkey.invalid`)
+with an internal reason that is logged, never sent before login.
+
+- **Inputs** are the decoded bytes of the browser's response (strict base64url: no padding, URL-safe alphabet, zero
+  trailing bits) with size limits: `clientDataJSON` 4 KiB, `attestationObject` 8 KiB, `authenticatorData` 4 KiB,
+  signature 128 bytes, credential id 16 to 1023 bytes.
+- **RP ID and origin.** The RP ID is a lower-case DNS name with at least two labels, not an IP address; the expected
+  origin is exactly `https://` + RP ID.
+- **clientDataJSON**: UTF-8 JSON object, duplicate keys refused; `type` exactly `webauthn.create` (registration) or
+  `webauthn.get` (assertion); `challenge` a strict base64url string equal (constant time) to the expected challenge;
+  `origin` exactly the expected origin; `crossOrigin`, if present, `false`; `topOrigin` absent; `tokenBinding.status`
+  not `present`. Other keys are ignored (browsers add some on purpose).
+- **authenticatorData**: `rpIdHash` equal to SHA-256(RP ID); flags UP and UV both set; BS set without BE is refused;
+  the 4-byte sign count is returned, never enforced. Registration: AT set, the attested credential data parses exactly
+  (AAGUID, credential id length and id, one COSE key), an ED extension map if flagged, and nothing after. Assertion: AT
+  not set; without ED the data is exactly 37 bytes, with ED one extension map and nothing after.
+- **CBOR**: a strict subset (unsigned and negative integers, byte and text strings, arrays, maps, `true`/`false`);
+  shortest-form lengths, definite lengths only, no tags, no floats, no null or undefined, unique map keys, map keys
+  integers or text, depth at most 8, no trailing bytes.
+- **attestationObject**: a map with exactly `fmt`, `attStmt` and `authData`; `fmt` must be `"none"` and `attStmt` an
+  empty map. The credential id in it must equal the id the browser reported.
+- **COSE keys**, exactly these labels: ES256 `{1: 2, 3: -7, -1: 1, -2: x(32), -3: y(32)}`, a point on P-256; EdDSA
+  `{1: 1, 3: -8, -1: 6, -2: x(32)}`, Ed25519, not one of the 14 encodings of small-order points (libsodium's blocklist,
+  non-canonical spellings included). Any other algorithm, curve or label is refused.
+- **Signature** over `authenticatorData || SHA-256(clientDataJSON)`: ES256 in strict DER (re-encoding must give the same
+  bytes), EdDSA as 64 raw bytes.
+- **Ceremonies.** Login and enrollment challenges are 32 random bytes, stored server-side with their ceremony kind, 120
+  s, single use (R1-5); step-up nonces are the signer's (10.5). The caller finds the credential by its id; the verifier
+  then checks that a `userHandle` in the response, if present, equals the stored one, and that the BE flag equals the
+  one stored at registration (it never changes for a credential).
+- The hub's planned `webauthn` channel contract (orch-hub #908) should reuse these vectors; core imports no hub code
+  (D79).
+
 **As built in H5c** (the core PR #407 and its follow-ups; the wire schemas above are unchanged):
 
 1. The click signer is `orch.click` (`signer`, `view`, `server`, `spawn`, `client`, `protocol`, `log`), run as

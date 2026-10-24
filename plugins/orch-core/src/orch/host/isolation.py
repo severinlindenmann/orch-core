@@ -156,10 +156,20 @@ def _detect(
         if facts.can_read(agent.uid, path):
             reasons.append(Reason("readable_by_agent", f"The agent user can read {path}."))
     for sock in ROOT_SOCKETS:
-        if facts.stat(sock) is not None and facts.can_connect(agent.uid, sock):
+        if _may_exist(facts, sock) and facts.can_connect(agent.uid, sock):
             reasons.append(Reason("root_socket", f"The agent user can reach {sock}, which gives root power."))
     reasons += _runner(facts, name, agent.uid, agent.gid, person_uid)
     return _result("linux", reasons)
+
+
+def _may_exist(facts: OsFacts, path: str) -> bool:
+    """Whether ``path`` could exist. A folder this process may not search (a root-only container folder) hides the entry
+    from the person; that is neither "absent" nor an error. ``can_connect`` then decides from the agent's own access to
+    every folder on the way (it fails closed when it cannot tell)."""
+    try:
+        return facts.stat(path) is not None
+    except PermissionError:
+        return True
 
 
 def _runner(facts: OsFacts, name: str, agent_uid: int, agent_gid: int, person_uid: int) -> list[Reason]:
@@ -288,6 +298,11 @@ def _run_tree(facts: OsFacts, root: str, person_uid: int, agent_gid: int) -> lis
     return out
 
 
+def _where(exc: OSError) -> str:
+    name = getattr(exc, "filename", None)
+    return f" at {name}" if isinstance(name, str) and name else ""
+
+
 def detect(
     facts: OsFacts,
     person: str,
@@ -308,7 +323,8 @@ def detect(
             getattr(facts, "platform", "linux"),
             (
                 Reason(
-                    "facts_unreadable", f"A system fact could not be read ({type(exc).__name__}), so it is not trusted."
+                    "facts_unreadable",
+                    f"A system fact could not be read ({type(exc).__name__}{_where(exc)}), so it is not trusted.",
                 ),
             ),
         )

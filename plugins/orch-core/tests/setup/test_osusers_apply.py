@@ -536,3 +536,73 @@ def test_a_refused_run_does_not_say_nothing_to_change() -> None:
     ex2.files, ex2.active, ex2.enabled = dict(ex.files), set(ex.active), set(ex.enabled)
     again = apply(facts, ex2, PERSON, UID, is_root=True)
     assert again.ok and again.report() == "Nothing to change."
+
+
+class _Recording(FakeOsFacts):
+    """Notes every path detect() asks about, so the test can check that the person could really answer it."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.touched: set[str] = set()
+
+    def stat(self, path):
+        self.touched.add(path)
+        return super().stat(path)
+
+    def listdir(self, path):
+        self.touched.add(path)
+        return super().listdir(path)
+
+    def file_sig(self, path):
+        self.touched.add(path)
+        return super().file_sig(path)
+
+
+def _person_can_traverse(facts: FakeOsFacts, path: str, uid: int) -> str | None:
+    """None when ``uid`` (a plain user, no group of the agent) can search every folder above ``path`` in the world as
+    it stands after apply; else the folder that stops it. Folders the fake does not know are root 0755."""
+    from orch.setup.osapply import USER
+
+    parts = path.strip("/").split("/")
+    for i in range(1, len(parts)):
+        anc = "/" + "/".join(parts[:i])
+        st = facts.paths.get(anc)
+        if st is None:
+            continue
+        bits = (st.mode >> 6) & 1 if st.uid == uid else st.mode & 1
+        acl = facts.__dict__.get("acls", {}).get(anc, (None, None))[0]
+        granted = (
+            acl is not None
+            and any(  # an access ACL entry "user:<uid>:--x" written by apply
+                int.from_bytes(acl[4 + 8 * k : 6 + 8 * k], "little") == USER
+                and int.from_bytes(acl[8 + 8 * k : 12 + 8 * k], "little") == uid
+                and int.from_bytes(acl[6 + 8 * k : 8 + 8 * k], "little") & 1
+                for k in range((len(acl) - 4) // 8)
+            )
+        )
+        if not (bits or granted):
+            return anc
+    return None
+
+
+def test_every_fact_detect_reads_after_apply_is_reachable_by_the_person() -> None:
+    from orch.host.isolation import ROOT_SOCKETS, detect
+
+    facts = _Recording()
+    facts.add_user(PERSON, UID, home="/home/sev")
+    facts.add_path("/opt/orch/release", kind="dir", mode=0o755)
+    ex = FakeExec(facts)
+    assert apply(facts, ex, PERSON, UID, is_root=True).ok
+    state = "/home/sev/.local/state/orch"
+    facts.add_path("/home/sev", uid=UID, gid=UID, mode=0o750, kind="dir")
+    facts.add_path(state, uid=UID, gid=UID, mode=0o700, kind="dir")
+    facts.touched.clear()
+    detect(facts, PERSON, UID, state, [f"{state}/key"])
+    assert state in facts.touched and set(ROOT_SOCKETS) <= facts.touched
+    agent_dirs = [p for p in facts.touched if p.startswith("/var/lib/orch/agents/orch-agent-sev/")]
+    assert not agent_dirs, agent_dirs  # detect never looks inside the agent's own 0700 folders
+    for path in sorted(facts.touched):
+        assert _person_can_traverse(facts, path, UID) is None, f"the person cannot reach {path}"
+    # and the model really can say no: the agent's folder without the ACL stops the person
+    facts.__dict__["acls"].clear()
+    assert _person_can_traverse(facts, "/var/lib/orch/agents/orch-agent-sev/state", UID) is not None

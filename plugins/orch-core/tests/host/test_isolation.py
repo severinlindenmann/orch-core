@@ -719,3 +719,33 @@ def test_the_runner_unit_asked_for_is_the_bare_person_instance() -> None:
     f.unit_state = lambda unit: (asked.append(unit), real(unit))[1]
     detect(f, "sev", UID, STATE, [KEY])
     assert asked == ["orch-runner@sev.service"]  # not orch-runner@orch-agent-sev.service
+
+
+def test_facts_unreadable_names_the_path() -> None:
+    class Boom(FakeOsFacts):
+        def stat(self, path):
+            raise PermissionError(13, "Permission denied", path)
+
+    b = Boom()
+    b.__dict__.update(_good().__dict__)
+    r = detect(b, "sev", UID, STATE, [KEY])
+    assert [x.code for x in r.reasons] == ["facts_unreadable"] and "PermissionError at /" in r.reasons[0].message
+
+
+def test_a_root_only_container_folder_hides_a_socket_without_breaking_detect() -> None:
+    """A root-only /run/podman (0700) makes lstat of its socket fail for the person: unknown, not an error."""
+    f = _good()
+    hidden = "/run/podman/podman.sock"
+    real_stat = f.stat
+
+    def stat(path):
+        if path == hidden:
+            raise PermissionError(13, "Permission denied", path)
+        return real_stat(path)
+
+    f.stat = stat
+    f.connectable[(AUID, hidden)] = False  # the agent cannot get through the folder either
+    r = detect(f, "sev", UID, STATE, [KEY])
+    assert r.isolated, [(x.code, x.message) for x in r.reasons]
+    f.connectable[(AUID, hidden)] = True  # but if the agent could, that is the exposure it always was
+    assert "root_socket" in {x.code for x in detect(f, "sev", UID, STATE, [KEY]).reasons}

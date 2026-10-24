@@ -262,7 +262,7 @@ export function HandoffPanel({ request, workspace = null, why, whyAction }: { re
     <div data-handoff-panel className="space-y-3">
       {request.content && <SignContent content={request.content} ws={workspace?.id} technical={technical} />}
       <p data-testid="terminal-why" className="text-[13px] font-medium text-text">
-        {why === 'terminal_only' ? 'This one is done in your terminal.' : why === 'click_off' ? 'One click is off, so sign in Terminal on this Mac.' : 'Sign in your terminal.'}
+        {why === 'terminal_only' ? 'This one is approved in Terminal on this Mac.' : why === 'click_off' ? 'One click is off, so sign in Terminal on this Mac.' : 'Sign in your terminal.'}
         {why === 'click_off' && whyAction && <span className="ml-2 font-normal">{whyAction}</span>}
       </p>
       {runnerGrant && (

@@ -30,7 +30,6 @@ const MESSAGES: Record<string, string> = {
   'custody.wrong_passphrase': 'That passphrase was refused. Nothing changed.',
   'custody.no_key': 'This computer holds no device key for this workspace.',
   'custody.unavailable': 'The key store is locked, refused access, or a custody change is unfinished. Check in the terminal: orch keys custody status',
-  'sign.click_only': 'A sign request is waiting in a terminal. Let it expire (10 minutes), then try again.',
   'role.denied': 'Only an owner switches signing in the dashboard.',
   'click.contract': 'Update orch-core: its signing helper cannot switch signing yet.',
   'lock.busy': 'Something else is changing signing right now. Try again in a moment.',

@@ -248,12 +248,6 @@ export function SignPopover(p: SignPopoverProps) {
   }
   const again = () => {
     if (!p.action) return
-    if (method === 'click' && phase === 'error' && run.error?.code === 'sign.click_only') {
-      // The switch moved after the page chose the terminal: a NEW request, the way the host answers now.
-      run.reset()
-      startMethod(Math.max(run.retry, click.retry) + 1)
-      return
-    }
     run.reset(phase === 'unknown' || phase === 'error') // the same key where the host may already have the request
     void run.prepare(p.action)
   }

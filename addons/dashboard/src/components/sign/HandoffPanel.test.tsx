@@ -87,7 +87,7 @@ it('says some values come from orch on this Mac when the host named the access t
 it('says why the terminal is used, once, above the command', () => {
   const request = { ...fakeRequest(), content: { headline: 'Approve' } }
   const { rerender } = render(<HandoffPanel request={request} why="terminal_only" />)
-  expect(screen.getByTestId('terminal-why')).toHaveTextContent('This one is done in your terminal.')
+  expect(screen.getByTestId('terminal-why')).toHaveTextContent('This one is approved in Terminal on this Mac.')
   rerender(<HandoffPanel request={request} why="click_off" whyAction={<a href="/settings/general">Turn on One click</a>} />)
   expect(screen.getByTestId('terminal-why')).toHaveTextContent('One click is off, so sign in Terminal on this Mac.')
   expect(screen.getByRole('link', { name: 'Turn on One click' })).toBeVisible()

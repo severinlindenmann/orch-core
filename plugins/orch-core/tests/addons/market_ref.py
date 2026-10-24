@@ -150,7 +150,7 @@ def is_canonical_url(url: str) -> bool:
     return not (host in CASE_INSENSITIVE_HOSTS and url != url.lower())
 
 
-CAPABILITIES = ("git_push", "network", "pty", "serve_http", "spawn_agent")
+CAPABILITIES = ("choose_model", "credential", "git_push", "network", "pty", "serve_http", "spawn_agent")
 
 
 def hub_policy_ok(hub: Any) -> bool:

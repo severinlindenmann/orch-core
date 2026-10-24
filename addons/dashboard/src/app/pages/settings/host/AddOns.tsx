@@ -7,7 +7,7 @@ import { AddonSetup } from './AddonSetup'
 import { HostDevices } from './Devices'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ChevronDown, ChevronRight, Cpu, FolderOpen, GitBranch, Globe, Loader2, Puzzle, Smartphone, Rocket, Ruler, Terminal, Gauge, type LucideIcon } from 'lucide-react'
+import { ChevronDown, ChevronRight, FolderOpen, GitBranch, Globe, Loader2, Puzzle, Smartphone, Rocket, Ruler, Terminal, Gauge, type LucideIcon } from 'lucide-react'
 import { useState } from 'react'
 import { canChangeSettings } from '@/api/settings'
 import { queries } from '@/api/queries'
@@ -17,20 +17,19 @@ import { LoadFailed } from '@/components/LoadFailed'
 import { Switch } from '@/components/ui/switch'
 import { Section } from '../../ticket/shared'
 import { OwnerNote } from '../OwnerNote'
-import { ModelRouting } from './ModelRouting'
 import { PublishServer } from './PublishServer'
 import { useSettingsHandoff } from './useSettingsHandoff'
 import { useViewerRole } from './useViewerRole'
 
-type Switchable = 'start-agent' | 'terminals' | 'worktrees' | 'publish' | 'usage' | 'estimate' | 'explorer' | 'model-routing'
+type Switchable = 'start-agent' | 'terminals' | 'worktrees' | 'publish' | 'usage' | 'estimate' | 'explorer'
 /** Add-ons with settings of their own: they open in place, under their row. */
-const WITH_SETTINGS: readonly string[] = ['publish', 'model-routing']
-const SWITCHABLE: readonly string[] = ['start-agent', 'terminals', 'worktrees', 'publish', 'usage', 'estimate', 'explorer', 'model-routing']
+const WITH_SETTINGS: readonly string[] = ['publish']
+const SWITCHABLE: readonly string[] = ['start-agent', 'terminals', 'worktrees', 'publish', 'usage', 'estimate', 'explorer']
 
-const ICONS: Record<string, LucideIcon> = { 'start-agent': Rocket, terminals: Terminal, worktrees: GitBranch, publish: Globe, usage: Gauge, estimate: Ruler, explorer: FolderOpen, 'model-routing': Cpu }
+const ICONS: Record<string, LucideIcon> = { 'start-agent': Rocket, terminals: Terminal, worktrees: GitBranch, publish: Globe, usage: Gauge, estimate: Ruler, explorer: FolderOpen }
 
 export function HostAddOns({ workspace }: { workspace: Workspace }) {
-  const [setup, setSetup] = useState<{ name: 'publish' | 'model-routing'; enabling: boolean } | null>(null)
+  const [setup, setSetup] = useState<{ name: 'publish'; enabling: boolean } | null>(null)
   const data = useQuery(queries.addOns(workspace.id))
   const role = useViewerRole(workspace)
   const qc = useQueryClient()
@@ -54,7 +53,7 @@ export function HostAddOns({ workspace }: { workspace: Workspace }) {
     if (!SWITCHABLE.includes(row.id)) return
     const name = row.id as Switchable
     const turningOn = row.state !== 'on'
-    if (turningOn && row.needs && row.set_up !== true && (name === 'publish' || name === 'model-routing')) {
+    if (turningOn && row.needs && row.set_up !== true && name === 'publish') {
       setSetup({ name, enabling: true })
       return
     }
@@ -101,7 +100,7 @@ export function HostAddOns({ workspace }: { workspace: Workspace }) {
               const on = row.state === 'on'
               const Icon = ICONS[row.id] ?? Puzzle
               const mine = busy?.id === row.id ? busy : null
-              const needsSetup = owner && on && row.needs && row.set_up === false && (row.id === 'publish' || row.id === 'model-routing')
+              const needsSetup = owner && on && row.needs && row.set_up === false && row.id === 'publish'
               return (
                 <li key={row.id} data-testid={`addon-${row.id}`} className="py-3 text-[13px]">
                   <div className="flex items-center gap-3">
@@ -133,7 +132,7 @@ export function HostAddOns({ workspace }: { workspace: Workspace }) {
                         <p className="text-[12px] text-text-muted">Its files changed since you approved it. Turn it on again to approve what it is now.</p>
                       )}
                     </div>
-                    {needsSetup && <Button size="sm" variant="secondary" onClick={() => setSetup({ name: row.id as 'publish' | 'model-routing', enabling: false })}>Set up</Button>}
+                    {needsSetup && <Button size="sm" variant="secondary" onClick={() => setSetup({ name: 'publish', enabling: false })}>Set up</Button>}
                     {mine && mine.stage !== 'review' && (
                       <span role="status" data-testid={`addon-${row.id}-pending`} className="inline-flex items-center gap-1.5 text-[12px] text-text-muted">
                         <Loader2 className="size-3.5 animate-spin" aria-hidden /> {mine.turningOn ? 'Turning on…' : 'Turning off…'}
@@ -153,7 +152,6 @@ export function HostAddOns({ workspace }: { workspace: Workspace }) {
                   {on && open[row.id] && (
                     <div id={`addon-${row.id}-panel`}>
                       {row.id === 'publish' && <PublishServer workspace={workspace} owner={owner} embedded />}
-                      {row.id === 'model-routing' && <ModelRouting workspace={workspace} owner={owner} embedded />}
                     </div>
                   )}
                 </li>
@@ -187,7 +185,7 @@ export function HostAddOns({ workspace }: { workspace: Workspace }) {
           </DialogContent>
         </Dialog>
       )}
-      {setup && <AddonSetup ws={workspace.id} name={setup.name} enabling={setup.enabling} close={() => setSetup(null)} submit={(title, action) => { setSetup(null); ask({ title, action, autoStart: true }) }} />}
+      {setup && <AddonSetup name={setup.name} enabling={setup.enabling} close={() => setSetup(null)} submit={(title, action) => { setSetup(null); ask({ title, action, autoStart: true }) }} />}
       {dialog}
     </div>
   )

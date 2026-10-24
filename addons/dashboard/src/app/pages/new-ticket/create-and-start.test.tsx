@@ -48,11 +48,10 @@ const CHOICES: RoutingChoices = {
     { id: 'claude-code', label: 'Claude', models: [{ id: 'opus', label: 'Opus' }, { id: 'sonnet', label: 'Sonnet' }] },
     { id: 'codex', label: 'Codex', models: [{ id: 'gpt-5.4', label: 'GPT-5.4' }] },
   ],
-  modes: [{ id: 'work', label: 'Do the work' }],
 }
 let GRANT = { id: 'gr_01M4Y46B485AXD4CBEJZ15Z1TV', until: '', scope: 'workable' as const }
 const preview = (over: Partial<AgentPreview> = {}): AgentPreview => ({
-  spec: 'f'.repeat(64), ticket: 'DEMO-0044', display: 'claude "work on DEMO-0044"', display_hidden: false, model: 'opus', model_source: 'workspace',
+  spec: 'f'.repeat(64), ticket: 'DEMO-0044', display: 'claude "work on DEMO-0044"', display_hidden: false, model: null, model_source: 'default',
   cwd: { kind: 'workspace' }, cwd_path: '/w/billing', cwd_path_hidden: false, will_create_worktree: false, login_shell: false,
   env: ['TERM'], grant: GRANT, blocked: null, warnings: [], ...over,
 })
@@ -62,7 +61,7 @@ let s: { runner: ReturnType<typeof vi.spyOn>; preview: ReturnType<typeof vi.spyO
 function setup(opts: { grant?: typeof GRANT | null; runner?: { connected: boolean; enabled: boolean } | null; acked?: { start_agent?: boolean; login_shell?: boolean } } = {}) {
   const grant = opts.grant === undefined ? GRANT : opts.grant
   const runner = opts.runner === undefined ? { connected: true, enabled: true } : opts.runner
-  vi.spyOn(api, 'getHostSettings').mockResolvedValue({ available: true, grant_hours: 168, models: { 'claude-code': { work: 'opus', refine: 'opus' } } } as Awaited<ReturnType<typeof api.getHostSettings>>)
+  vi.spyOn(api, 'getHostSettings').mockResolvedValue({ available: true, grant_hours: 168 } as Awaited<ReturnType<typeof api.getHostSettings>>)
   vi.spyOn(routingApi, 'choices').mockResolvedValue(CHOICES)
   s = {
     runner: vi.spyOn(agentsApi, 'runner').mockResolvedValue({ runner: runner ? { ...runner, terminals: false, grant } : null }),
@@ -226,7 +225,7 @@ describe('after the ticket exists', () => {
 
   it.each([
     ['a different model', { model: 'sonnet', model_source: 'chosen' as const }],
-    ['a different model source', { model_source: 'default' as const }],
+    ['a different model source', { model_source: 'addon' as const }],
     ['a new worktree', { will_create_worktree: true }],
     ['a different grant', { grant: { ...GRANT, id: 'gr_01M4Y46B485AXD4CBEJZ15Z1TW' } }],
     ['no grant', { grant: null }],

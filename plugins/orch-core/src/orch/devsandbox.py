@@ -2,13 +2,14 @@
 
 **Accident prevention, not containment.** Same-UID code can forge every file here. What keeps a real workspace safe is
 its signed genesis: only a workspace whose genesis has the reserved prefix ``SBX`` and the owner name
-``orch dev sandbox <id8>`` is ever a sandbox workspace (§11A.17.3, S3), and production ``orch init`` gives ``SBX`` only
+``orch dev sandbox <id8>`` is ever a sandbox workspace (§11A.17.3, S3), and production ``orch setup`` gives ``SBX`` only
 to a fresh throwaway person.
 
 The files (all 0600 regular files of this UID, opened with ``O_NOFOLLOW`` through a pinned directory descriptor):
 
-* ``<root>/.orch-dev-sandbox``, the **manifest** (``dev-pair up`` writes it first, then adds ``person_id`` and
-  ``workspaces`` after ``orch init``)::
+* ``<root>/.orch-dev-sandbox``, the **manifest** (``dev-pair up`` writes it first with neither ``person_id`` nor
+  ``workspaces``: a **pending** dev host starts from that, admits one fresh ``SBX`` bootstrap by ``orch setup``, and
+  is stopped; the kit then adds ``person_id`` and ``workspaces`` and starts the full dev host (V3-D38))::
 
       {"id": "<8 or more lowercase hex>", "root": {"st_dev": int, "st_ino": int},
        "person_id": "p_<32 hex>",

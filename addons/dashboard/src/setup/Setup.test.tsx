@@ -76,7 +76,6 @@ const review: Review = {
   runner_grant: null,
   flags: [],
   risk: null,
-  typed_word: null,
   tty_confirm: false,
 }
 function fake(
@@ -84,7 +83,6 @@ function fake(
     finish?: boolean
     attempts?: number
     typed?: boolean
-    agents?: boolean
     waiting?: string
     running?: boolean
     stateError?: boolean
@@ -144,10 +142,8 @@ function fake(
               },
             }),
         tty_confirm: !!options.finish,
-        ...(options.agents ? { typed_word: 'AGENTS' } : {}),
         ...(options.typed
           ? {
-              typed_word: 'GRANT',
               tty_confirm: true,
               runner_grant: { hours: 72, scope: 'tickets', holder: "this machine's runner, never shown" },
               items: [
@@ -291,7 +287,7 @@ test('run 8: the records history is ticked by default, can be switched off, and 
   expect(f.calls.find((c) => c.path === 'profile')?.body).toMatchObject({ records: false })
 })
 
-test('typed word gates long runner access; digest and fingerprint stay bound while waiting for terminal', async () => {
+test('long runner access is one plain click after the review; digest and fingerprint stay bound while waiting for terminal', async () => {
   const f = fake({ typed: true })
   render(<Setup api={f.api} />)
   await approval()
@@ -307,10 +303,10 @@ test('typed word gates long runner access; digest and fingerprint stay bound whi
   // everything signed stays inspectable, collapsed in one disclosure
   expect(screen.getByText('Show technical details').closest('details')).not.toHaveAttribute('open')
   expect(screen.getByText("this machine's runner, never shown")).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'Create workspace' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Create workspace' })).toBeEnabled()
+  expect(screen.queryByLabelText(/Type/)).toBeNull()
   // B11: the terminal asks only after Create; the review says so instead of "confirm in your terminal" now
   expect(screen.getByRole('heading', { name: 'How to finish' })).toBeInTheDocument()
-  fireEvent.change(screen.getByLabelText(/Type.*GRANT/), { target: { value: 'GRANT' } })
   fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }))
   await screen.findByRole('heading', { name: 'Confirm in your terminal' })
   // three large tiles, in order; the browser draws no imitation of the terminal
@@ -322,7 +318,6 @@ test('typed word gates long runner access; digest and fingerprint stay bound whi
   expect(f.calls.find((c) => c.path === 'create')?.body).toEqual({
     review_id: 'demo-review',
     digest: 'demo-digest',
-    typed_word: 'GRANT',
   })
 })
 
@@ -375,19 +370,6 @@ test('review.changed rebuilds the review without trying to reveal secrets again'
   await screen.findByRole('heading', { name: 'Review your setup' })
   expect(f.calls.filter((c) => c.path === 'secrets/reveal')).toHaveLength(1)
   expect(f.calls.filter((c) => c.path === 'review')).toHaveLength(2)
-})
-
-test('long access cannot be submitted when core omits its required typed word', async () => {
-  const f = fake()
-  render(<Setup api={f.api} />)
-  await approval()
-  fireEvent.click(screen.getByRole('button', { name: '7 days' }))
-  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
-  await screen.findByRole('heading', { name: 'Your secret words' })
-  await check()
-  await screen.findByRole('heading', { name: 'Review your setup' })
-  expect(screen.getByRole('button', { name: 'Create workspace' })).toBeDisabled()
-  expect(screen.getByRole('alert')).toHaveTextContent('typed confirmation is required')
 })
 
 test('the shared launch link (root with to=/setup) and a reload of /setup are the setup page; a login link is not', () => {
@@ -453,8 +435,8 @@ test('state failure shows core message and a next step', async () => {
   expect(screen.getByText(/in this folder to resume/)).toBeInTheDocument()
 })
 
-test('AGENTS gates extended access without a runner grant', async () => {
-  const f = fake({ agents: true })
+test('extended access without a runner grant is one plain click, with no word to type', async () => {
+  const f = fake()
   render(<Setup api={f.api} />)
   await approval()
   fireEvent.click(screen.getByRole('button', { name: '1 day' }))
@@ -462,10 +444,9 @@ test('AGENTS gates extended access without a runner grant', async () => {
   await screen.findByRole('heading', { name: 'Your secret words' })
   await check()
   await screen.findByRole('heading', { name: 'Review your setup' })
-  expect(screen.getByRole('button', { name: 'Create workspace' })).toBeDisabled()
-  fireEvent.change(screen.getByLabelText(/Type.*AGENTS/), { target: { value: 'AGENTS' } })
+  expect(screen.queryByLabelText(/Type/)).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }))
-  await waitFor(() => expect(f.calls.find(c => c.path === 'create')?.body).toMatchObject({ typed_word: 'AGENTS' }))
+  await waitFor(() => expect(f.calls.find(c => c.path === 'create')?.body).toEqual({ review_id: 'demo-review', digest: 'demo-digest' }))
   expect(f.calls.find(c => c.path === 'profile')?.body).toMatchObject({ agent_grant: false, agent_hours: 24 })
 })
 
@@ -1014,7 +995,6 @@ test('after the terminal confirms, the words are replaced by a matched notice', 
   await screen.findByRole('heading', { name: 'Your secret words' })
   await check()
   await screen.findByRole('heading', { name: 'Review your setup' })
-  fireEvent.change(screen.getByLabelText(/Type.*GRANT/), { target: { value: 'GRANT' } })
   fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }))
   expect(await screen.findByText('The three words matched. Your choices are confirmed.')).toBeInTheDocument()
   expect(screen.queryByRole('list', { name: 'Your three words' })).toBeNull()

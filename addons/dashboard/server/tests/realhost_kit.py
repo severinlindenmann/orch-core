@@ -430,8 +430,6 @@ def _walk(ws, post, get, fail, thread, box, pty_run, rules, fp, problems, deadli
     review = post(api + "review", None, token)
     fp["words"] = review["fingerprint"]
     create = {"review_id": review["review_id"], "digest": review["digest"]}
-    if review.get("typed_word"):
-        create["typed_word"] = review["typed_word"]
     run_id = post(api + "create", create, token)["run_id"]
     while True:
         if time.time() > deadline or not thread.is_alive():

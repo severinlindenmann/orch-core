@@ -209,7 +209,7 @@ def test_finish_review_has_only_the_missing_items_and_needs_the_tty(tmp):
     f.dispatch("POST", "profile", {}, PROF)
     rv = f.dispatch("POST", "review", {}, {})[1]
     assert [i["id"] for i in rv["items"]] == ["addon:worktrees", "runner_grant"]
-    assert rv["tty_confirm"] is True and len(rv["fingerprint"]) == 3 and rv["typed_word"] == "GRANT"
+    assert rv["tty_confirm"] is True and len(rv["fingerprint"]) == 3 and "typed_word" not in rv
     assert f.dispatch("GET", "state", {}, None)[1]["missing"] == ["addon:worktrees", "runner_grant"]
 
 
@@ -222,7 +222,7 @@ def test_finish_runs_without_genesis_and_with_the_persons_own_custody(tmp):
     ports.terminal.answers[:] = ["yes"]
     ports.expect(f.review.plan)
     out = f.dispatch(
-        "POST", "create", {}, {"review_id": rv["review_id"], "digest": rv["digest"], "typed_word": "GRANT"}
+        "POST", "create", {}, {"review_id": rv["review_id"], "digest": rv["digest"]}
     )[1]
     f.thread.join(10)
     p = progress(f, out["run_id"])
@@ -242,7 +242,7 @@ def test_finish_create_with_changed_facts_asks_for_a_new_review(tmp):
     rv = f.dispatch("POST", "review", {}, {})[1]
     box[0] = mkfacts(addons=frozenset({"dashboard", "terminals", "worktrees"}))  # someone granted them meanwhile
     with pytest.raises(SetupError) as e:
-        f.dispatch("POST", "create", {}, {"review_id": rv["review_id"], "digest": rv["digest"], "typed_word": "GRANT"})
+        f.dispatch("POST", "create", {}, {"review_id": rv["review_id"], "digest": rv["digest"]})
     assert e.value.code == "review.changed" and names(ports) == []
 
 

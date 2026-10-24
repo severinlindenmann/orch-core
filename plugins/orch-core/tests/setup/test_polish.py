@@ -51,14 +51,14 @@ def test_finish_state_has_current_values_and_words_and_never_custody(tmp):
     assert not any(w.startswith(("addon:", "runner_")) for w in st["missing_words"])
 
 
-def test_finish_with_a_set_agent_time_asks_for_no_typed_word(tmp):
+def test_finish_with_a_set_agent_time_has_no_typed_word(tmp):
     box = [mkfacts(addons=frozenset({"dashboard"}), grant_hours=72, grant_hours_set=True)]
     f = finish_flow(tmp, FakePorts(), box)
     f.dispatch(
         "POST", "profile", {}, {**PROF, "addons": ["dashboard", "terminals"], "agent_hours": 72, "agent_grant": False}
     )
     rv = f.dispatch("POST", "review", {}, {})[1]
-    assert rv["typed_word"] is None and [i["id"] for i in rv["items"]] == ["addon:terminals"]
+    assert "typed_word" not in rv and [i["id"] for i in rv["items"]] == ["addon:terminals"]
 
 
 def test_labels_read_in_words():
@@ -128,7 +128,7 @@ def test_a_set_up_workspace_never_ends_as_paused(tmp):
 def test_rows_carry_the_event_fields_and_name_their_placeholder_lines(tmp):
     """Core says which lines are values the host draws at signing; the page hides exactly those, by position."""
     f, ports, p, rv = run_ok(
-        tmp, {**PROFILE, "agent_grant": True, "agent_hours": 24, "addons": ["dashboard"]}, typed="GRANT"
+        tmp, {**PROFILE, "agent_grant": True, "agent_hours": 24, "addons": ["dashboard"]}
     )
     row = next(r for r in rv["items"] if r["id"] == "runner_grant")
     assert row["type"] == "grant.issued" and row["fields"]["hours"] == 24 and row["fields"]["scope"] == "workable"
@@ -153,7 +153,7 @@ def test_the_placeholder_positions_are_part_of_the_digest(tmp):
     from orch.setup import review as rv_mod
 
     f, ports, p, rv = run_ok(
-        tmp, {**PROFILE, "agent_grant": True, "agent_hours": 24, "addons": ["dashboard"]}, typed="GRANT"
+        tmp, {**PROFILE, "agent_grant": True, "agent_hours": 24, "addons": ["dashboard"]}
     )
     plan = f.review.plan
     before = plan.digest

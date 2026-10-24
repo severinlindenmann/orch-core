@@ -26,7 +26,7 @@ const review = {
     { id: 'records', text: "Keep a history of your tickets on this computer, saved automatically (never uploaded)." },
   ],
   risk: { text: 'Convenience signing: agents running as you, or anything that takes over this dashboard, could sign.' },
-  typed_word: null, tty_confirm: false,
+  tty_confirm: false,
   workspace: { prefix: 'TST', name: 'Demo', dir: '/Users/demo/project', lines: ['Workspace TST for Demo', 'Folder: /Users/demo/project'] },
 }
 const fetcher = async (url: RequestInfo | URL, init?: RequestInit) => {

@@ -305,3 +305,36 @@ def test_secure_dir_reports_a_race_instead_of_raising(tmp_path, monkeypatch) -> 
     monkeypatch.setattr(os, "mkdir", racing_mkdir)
     changed, problem = secure_dir(str(base), _spec("a"), base_uid=ME)
     assert not changed and problem and "could not be created safely" in problem
+
+
+def test_install_puts_the_previous_copy_back_when_the_second_rename_fails(tmp_path, monkeypatch) -> None:
+    tmp_path.chmod(0o755)
+    dest = tmp_path / "os-setup"
+    dest.mkdir()
+    (dest / "marker").write_text("old")
+    real = os.rename
+
+    def failing(src, dst, *a, **k):
+        if str(src).startswith(str(dest) + ".new-"):
+            raise OSError(5, "boom")
+        return real(src, dst, *a, **k)
+
+    monkeypatch.setattr(os, "rename", failing)
+    with pytest.raises(OSError):
+        install(_staging(tmp_path), dest=str(dest), owner=ME)
+    assert (dest / "marker").read_text() == "old"
+    assert not list(tmp_path.glob("os-setup.old-*"))
+
+
+def test_osinstall_script_refuses_a_staging_parent_others_can_write(tmp_path) -> None:
+    parent = tmp_path / "wide"
+    parent.mkdir()
+    staging = _staging(parent)
+    parent.chmod(0o777)
+    try:
+        done = subprocess.run(
+            [sys.executable, "-I", "-S", str(staging / INSTALLER_FILE)], capture_output=True, text=True, check=False
+        )
+    finally:
+        parent.chmod(0o755)
+    assert done.returncode == 2 and "can be written by others" in done.stderr

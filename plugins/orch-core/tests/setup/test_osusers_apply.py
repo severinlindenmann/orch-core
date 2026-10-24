@@ -474,3 +474,44 @@ def test_the_runner_instance_is_the_bare_person_and_the_prefix_is_in_the_templat
     assert p.units[0].instances == ("sev",) and "User=orch-agent-%i" in p.units[0].content
     assert p.units[1].instances == tuple("12345678") and "User=orch-addon-%i" in p.units[1].content
     assert "User=%i" not in p.units[0].content + p.units[1].content
+
+
+def test_a_foreign_user_sharing_the_agents_uid_stops_the_runner_and_drops_the_verdict() -> None:
+    res, ex, facts = _go()
+    assert res.ok
+    agent_uid = facts.users["orch-agent-sev"].uid
+    facts.add_user("someone-else", agent_uid + 500, home="/home/x")
+    facts.users["someone-else"] = type(facts.users["someone-else"])(  # same UID as the agent, another name
+        "someone-else", agent_uid, 1, "/home/x", "/bin/bash", frozenset(), frozenset({1})
+    )
+    facts.users["orch-addon-1"] = type(facts.users["orch-addon-1"])(
+        "orch-addon-1", agent_uid, facts.users["orch-addon-1"].gid, facts.users["orch-addon-1"].home,
+        "/usr/sbin/nologin", frozenset(), facts.users["orch-addon-1"].gids,
+    )  # fmt: skip
+    ex2 = FakeExec(facts)
+    ex2.files, ex2.active, ex2.enabled = dict(ex.files), set(ex.active), set(ex.enabled)
+    res2 = apply(facts, ex2, PERSON, UID, is_root=True)
+    assert not res2.ok and any("orch-addon-1" in p for p in res2.problems)  # the refusal names the other user
+    assert [BIN["systemctl"], "disable", "--now", "orch-runner@sev.service"] in ex2.commands
+    assert "policy" not in json.loads(ex2.files[f"/etc/orch/pins/{agent_uid}.json"])
+
+
+def test_quarantine_always_stops_and_rewrites_even_when_queries_and_reads_fail() -> None:
+    res, ex, facts = _go()
+    facts.sudo_answer = True
+    ex2 = FakeExec(facts)
+    ex2.files, ex2.active, ex2.enabled = dict(ex.files), set(ex.active), set(ex.enabled)
+    ex2.query = lambda argv: RunResult(5, "boom")  # is-enabled / is-active fail
+    real_read = ex2.read_file
+
+    def flaky(path):
+        if path.startswith("/etc/orch/pins/"):
+            raise OSError(5, "I/O error")
+        return real_read(path)
+
+    ex2.read_file = flaky
+    res2 = apply(facts, ex2, PERSON, UID, is_root=True)
+    assert not res2.ok
+    assert [BIN["systemctl"], "disable", "--now", "orch-runner@sev.service"] in ex2.commands
+    uid = facts.users["orch-agent-sev"].uid
+    assert "policy" not in json.loads(ex2.files[f"/etc/orch/pins/{uid}.json"])

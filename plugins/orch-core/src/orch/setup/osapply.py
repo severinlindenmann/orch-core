@@ -486,18 +486,27 @@ class _Apply:
         if agent is None or agent.action != "keep" or uid is None:
             return
         entry = next(e for e in p.pins if e.user == agent.name)
-        base = PinEntry(entry.user, entry.cls, entry.host_uid, uid).document()
-        have = self.ex.read_file(f"{PIN_DIR}/{uid}.json")
-        if have is not None and have != _json(base):
-            self.put(f"{PIN_DIR}/{uid}.json", _json(base), 0o644, replace=True)
+        base = _json(PinEntry(entry.user, entry.cls, entry.host_uid, uid).document())
+        path = f"{PIN_DIR}/{uid}.json"
+        try:
+            have: str | None = self.ex.read_file(path)
+        except (OSError, ValueError):
+            have = None  # unreadable: write it anyway
+        if have != base:
+            self.res.actions.append(f"write {path} (mode 0644, root; without the policy verdict)")
+            try:
+                self.ex.write_file(path, base, 0o644)
+            except OSError as exc:
+                self.res.fail(f"{path} could not be rewritten ({exc.strerror}).")
         sysctl = BIN["systemctl"]
         for unit in p.units:
             if unit.name.startswith("orch-runner@"):
                 for inst in unit.instances:
-                    name = f"orch-runner@{inst}.service"
-                    if any(self.ex.query([sysctl, q, "--quiet", name]).rc == 0 for q in ("is-enabled", "is-active")):
-                        self.run([sysctl, "disable", "--now", name])
-                        self.res.notes.append(f"the runner of '{agent.name}' was stopped until the check passes again")
+                    argv = [sysctl, "disable", "--now", f"orch-runner@{inst}.service"]
+                    # always, whatever the queries would say; "not loaded" is fine, so the result is not a failure
+                    self.res.actions.append(" ".join(argv))
+                    self.ex.run(argv)
+                    self.res.notes.append(f"the runner of '{agent.name}' was stopped until the check passes again")
 
     def policy_pin(self, p: Plan) -> None:
         agent = p.agent
@@ -554,8 +563,7 @@ def apply(
     if p.refusals:
         for r in p.refusals:
             res.fail(r.message)
-        if p.agent is not None and any(r.subject == p.agent.name for r in p.refusals):
-            _Apply(facts, ex, res).quarantine(p)  # a kept agent that now fails must not keep running
+        _Apply(facts, ex, res).quarantine(p)  # on ANY refusal a kept agent must not keep running or stay recorded
         return res
     rel = facts.stat(release)
     if rel is None or rel.is_symlink or not rel.is_dir or rel.uid != 0 or rel.mode & 0o022:

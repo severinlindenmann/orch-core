@@ -31,6 +31,15 @@ if __name__ == "__main__" and not __package__:  # run as a script under ``python
     if _info.st_uid != os.geteuid() or stat.S_IMODE(_info.st_mode) & 0o077:
         sys.stderr.write(f"{_root} is not a private (0700) directory of the installing user. Nothing was changed.\n")
         raise SystemExit(2)
+    _node = str(_root)
+    while True:  # every parent too: a directory others can write to could swap the staging tree before the import
+        _p = os.lstat(_node)
+        if _p.st_uid not in (0, os.geteuid()) or _p.st_mode & 0o022:
+            sys.stderr.write(f"{_node} is not root's or can be written by others. Nothing was changed.\n")
+            raise SystemExit(2)
+        if os.path.dirname(_node) == _node:
+            break
+        _node = os.path.dirname(_node)
     sys.path.insert(0, str(_root))
 
 from orch.setup.oslauncher import (  # noqa: E402
@@ -102,9 +111,15 @@ def install(source: Path, dest: str = TRUSTED_ROOT, *, owner: int = 0) -> str:
         got = {str(p.relative_to(staging)): _digest(p) for p in staging.rglob("*") if p.is_file()}
         if got != want:
             raise InstallRefused("the copy does not match the verified source; nothing was installed")
-        if os.path.lexists(dest):
+        had_old = os.path.lexists(dest)
+        if had_old:
             os.rename(dest, old)
-        os.rename(staging, dest)
+        try:
+            os.rename(staging, dest)
+        except OSError:
+            if had_old:
+                os.rename(old, dest)  # put the previous copy back
+            raise
         shutil.rmtree(old, ignore_errors=True)
     finally:
         shutil.rmtree(staging, ignore_errors=True)

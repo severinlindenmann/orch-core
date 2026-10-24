@@ -132,8 +132,8 @@ def agent_preview(data):
             shown[key] = value
     ticket, spec = data.get("ticket"), data.get("spec")
     model, source = data.get("model"), data.get("model_source")
-    # A ticket without a codebase runs in its work folder: whether it exists and is empty (the page starts a NEW ticket's
-    # agent unattended only in a new or empty folder, so a missing answer must read as "not known", never empty).
+    # A ticket without a codebase runs in its work folder: whether it exists and is empty. The page starts a NEW
+    # ticket's agent unattended only in a new or empty folder, so a missing answer must read as "not known".
     folder = data.get("workdir")
     workdir = (
         {"exists": folder.get("exists") is True, "empty": folder.get("empty") is True}

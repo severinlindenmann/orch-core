@@ -40,7 +40,7 @@ from .errors import HostError, fail, host_response, response
 from .explorer import routes as explorer_routes
 from .gateway import Gateway, state_dir
 from .live import Live, SessionStream
-from .policy import loopback_policy
+from .policy import LOOPBACK, loopback_policy
 from .security import Security
 from .wiki import routes as wiki_routes
 
@@ -120,7 +120,10 @@ SPA_PATH = re.compile(
 ROOT_FILES = frozenset({"favicon.svg", "loading.css"})
 
 
-def create_app(port: int, gateway=None, auth=None, static=None, setup_proxy=None):
+def create_app(port: int, gateway=None, auth=None, static=None, setup_proxy=None, remote=None, remote_problem=None):
+    """``remote``: the front listener's policy (`remote_policy`), or None when remote access is off. One app serves both
+    listeners; the server that accepted the connection says which policy applies (`scope["orch_listener"]`, set by
+    `front.Front`), never a header."""
     gateway, auth = gateway or Gateway(), auth or Auth()
     static = Path(static) if static else Path(__file__).parent / "static"
 
@@ -142,7 +145,9 @@ def create_app(port: int, gateway=None, auth=None, static=None, setup_proxy=None
     app.state.auth = auth
     app.state.live = live
     app.state.term_tickets = tickets
-    app.add_middleware(Security, auth=auth, policy=loopback_policy(port))
+    app.state.remote_problem = remote_problem
+    app.state.policies = {p.name: p for p in (loopback_policy(port), *([remote] if remote else []))}
+    app.add_middleware(Security, auth=auth, policy=app.state.policies[LOOPBACK], registry=app.state.policies)
 
     @app.exception_handler(HostError)
     async def host_error(request, exc):
@@ -158,7 +163,7 @@ def create_app(port: int, gateway=None, auth=None, static=None, setup_proxy=None
 
     @app.post("/auth/session")
     def session(body: LaunchCode):
-        value, status = auth.exchange(body.code)
+        value, status = auth.exchange(body.code, "local")
         return (
             JSONResponse(value) if value else response("rate.limited" if status == 429 else "session.required", status)
         )
@@ -194,6 +199,8 @@ def create_app(port: int, gateway=None, auth=None, static=None, setup_proxy=None
             "login": auth.login_kind(request.state.token) or "unknown",
             "features": sorted({f for ws in workspaces for f in ws.features}),
             "workspaces": {ws.id: ws.features for ws in workspaces},
+            # a wrong remote.json or an unopenable front socket: remote access is off and this says why
+            **({"remote_problem": app.state.remote_problem} if app.state.remote_problem else {}),
         }
 
     @app.get("/api/workspaces")

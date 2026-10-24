@@ -28,12 +28,12 @@ def test_fresh_system_plans_agent_slots_pins_units() -> None:
     )
     assert len(p.groups()) == 9
     assert [u.name for u in p.units] == ["orch-runner@.service", "orch-addon@.service"]
-    assert p.units[0].instances == ("orch-agent-sev",) and len(p.units[1].instances) == 8
+    assert p.units[0].instances == ("sev",) and len(p.units[1].instances) == 8
     assert "NoNewPrivileges=yes" in p.units[0].content and "Delegate=yes" in p.units[0].content
     assert p.run_dir == "/run/orch/1000"
     assert {e.cls for e in p.pins} == {"agent", "addon"} and all(e.host_uid == UID for e in p.pins)
     assert p.pins[0].document() == {"class": "agent", "host_uid": UID, "workspaces": "*"}
-    assert p.admin_command() == "sudo /opt/orch/release/bin/orch-os-setup --person sev"
+    assert p.admin_command() == ("sudo /usr/lib/orch/os-setup/orch-os-setup --person sev --release /opt/orch/release")
     assert any("orch-agent-sev" in s for s in p.steps())
 
 
@@ -56,10 +56,13 @@ def test_units_and_paths_share_one_naming_key() -> None:
     p = plan(FakeOsFacts(), PERSON, UID)
     runner, addon = p.units
     assert (
-        "ReadWritePaths=/var/lib/orch/agents/%i /run/orch/agents/%i" in runner.content and "User=%i" in runner.content
+        "ReadWritePaths=/var/lib/orch/agents/orch-agent-%i /run/orch/agents/orch-agent-%i" in runner.content
+        and "User=orch-agent-%i" in runner.content
     )
-    assert "ReadWritePaths=/var/lib/orch/addons/%i" in addon.content and "User=%i" in addon.content
-    assert addon.instances[0] == "orch-addon-1" and p.slots[0].home.endswith("/orch-addon-1")
+    assert (
+        "ReadWritePaths=/var/lib/orch/addons/orch-addon-%i" in addon.content and "User=orch-addon-%i" in addon.content
+    )
+    assert addon.instances[0] == "1" and p.slots[0].home.endswith("/orch-addon-1")
     assert "CapabilityBoundingSet=" in runner.content and "NoNewPrivileges=yes" in runner.content
 
 

@@ -1,0 +1,391 @@
+"""H1 L2: the root-owned copy, its launcher and the descriptor-relative directory step (real files, no root needed)."""
+
+from __future__ import annotations
+
+import contextlib
+import os
+import shutil
+import stat
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+import pytest
+
+from orch.setup import osapply, oslauncher
+from orch.setup.osapply import DirSpec, secure_dir
+from orch.setup.osinstall import INSTALLER_FILE, InstallRefused, check_source, install
+
+ME = os.getuid()
+
+
+@pytest.fixture
+def tmp_path():
+    """A private base whose whole ancestor chain the product check accepts (root's or ours, no group/other write).
+
+    pytest's own tmp_path sits under /tmp on Linux (1777), which the trust check rightly refuses, so the tests build
+    their trees under a 0700 directory in HOME, or in the checkout, whichever has an acceptable chain."""
+    candidates = [Path.home(), Path(__file__).resolve().parents[2]]
+    for parent in candidates:
+        try:
+            oslauncher.check_chain(str(parent), (0, ME))
+        except (oslauncher.Untrusted, OSError):
+            continue
+        base = Path(tempfile.mkdtemp(prefix=".orch-l2-test-", dir=parent))
+        break
+    else:
+        msg = "no directory with an acceptable ancestor chain for the trust tests"
+        if os.environ.get("CI"):
+            pytest.fail(msg)
+        pytest.skip(msg)
+    try:
+        yield base
+    finally:
+        for p in [base, *base.rglob("*")]:
+            with contextlib.suppress(OSError):
+                p.chmod(0o700 if p.is_dir() and not p.is_symlink() else 0o600)
+        shutil.rmtree(base, ignore_errors=True)
+
+
+def _staging(tmp_path: Path) -> Path:
+    """A sealed staging directory (ours instead of root's) holding the release's orch tree."""
+    src = Path(oslauncher.__file__).parents[2]
+    staging = tmp_path / "staging"
+    for rel in (*oslauncher.TRUSTED_FILES, INSTALLER_FILE):
+        (staging / rel).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src / rel, staging / rel)
+    for p in [staging, *staging.rglob("*")]:
+        p.chmod(0o700 if p.is_dir() else 0o600)
+    return staging
+
+
+def _copy(tmp_path: Path) -> Path:
+    dest = tmp_path / "os-setup"
+    tmp_path.chmod(0o755)
+    install(_staging(tmp_path), dest=str(dest), owner=ME)
+    return dest
+
+
+def test_install_copies_exactly_the_trusted_files_and_a_shebang_launcher(tmp_path) -> None:
+    dest = _copy(tmp_path)
+    found = {str(p.relative_to(dest)) for p in dest.rglob("*") if p.is_file()}
+    assert found == {*oslauncher.TRUSTED_FILES, "orch-os-setup"}
+    launcher = (dest / "orch-os-setup").read_text()
+    assert launcher.startswith("#!/usr/bin/python3 -I -S\n")
+    assert stat.S_IMODE((dest / "orch-os-setup").stat().st_mode) == 0o755
+    assert stat.S_IMODE((dest / "orch/setup/osapply.py").stat().st_mode) == 0o644
+    oslauncher.check_tree(str(dest), owner=(0, ME))  # a fresh copy passes (owner = us instead of root here)
+
+
+def test_the_copy_is_stdlib_only() -> None:
+    import ast
+
+    for rel in oslauncher.TRUSTED_FILES:
+        tree = ast.parse((Path(oslauncher.__file__).parents[2] / rel).read_text())
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                tops = [a.name.split(".")[0] for a in node.names]
+            elif isinstance(node, ast.ImportFrom) and not node.level:
+                tops = [(node.module or "").split(".")[0]]
+            else:
+                continue
+            for top in tops:
+                assert top in sys.stdlib_module_names or top == "orch", f"{rel} imports {top}"
+
+
+def test_check_tree_refuses_an_extra_code_file(tmp_path) -> None:
+    dest = _copy(tmp_path)
+    (dest / "orch" / "setup" / "evil.py").write_text("x = 1\n")
+    with pytest.raises(oslauncher.Untrusted, match="unexpected code files"):
+        oslauncher.check_tree(str(dest), owner=(0, ME))
+
+
+def test_check_tree_refuses_a_symlink_a_wide_mode_and_a_missing_file(tmp_path) -> None:
+    dest = _copy(tmp_path)
+    target = dest / "orch/setup/osapply.py"
+    target.chmod(0o664)
+    with pytest.raises(oslauncher.Untrusted, match="written by others"):
+        oslauncher.check_tree(str(dest), owner=(0, ME))
+    target.chmod(0o644)
+    (dest / "orch/setup/link.txt").symlink_to("/etc/passwd")
+    with pytest.raises(oslauncher.Untrusted, match="symlink"):
+        oslauncher.check_tree(str(dest), owner=(0, ME))
+    (dest / "orch/setup/link.txt").unlink()
+    (dest / "orch/setup/osusers.py").unlink()
+    with pytest.raises(oslauncher.Untrusted, match="missing"):
+        oslauncher.check_tree(str(dest), owner=(0, ME))
+
+
+def test_check_tree_refuses_files_not_owned_by_root(tmp_path) -> None:
+    dest = _copy(tmp_path)
+    if ME == 0:
+        pytest.skip("running as root")
+    with pytest.raises(oslauncher.Untrusted):
+        oslauncher.check_tree(str(dest))  # owner defaults to root: our files fail
+
+
+def test_a_writable_ancestor_is_refused(tmp_path) -> None:
+    dest = _copy(tmp_path)
+    tmp_path.chmod(0o775)
+    try:
+        with pytest.raises(oslauncher.Untrusted, match="written by others"):
+            oslauncher.check_tree(str(dest), owner=(0, ME))
+    finally:
+        tmp_path.chmod(0o755)
+
+
+def test_the_launcher_refuses_a_non_isolated_interpreter_and_an_untrusted_tree(tmp_path, capsys) -> None:
+    with pytest.raises(oslauncher.Untrusted, match="-I -S"):
+        oslauncher.check_interpreter()  # pytest runs without -I -S
+    assert oslauncher.run(["--person", "x"], root=str(tmp_path)) == 2
+    assert "will not run" in capsys.readouterr().err
+
+
+def test_admin_command_never_names_the_release() -> None:
+    from orch.setup.osusers import plan
+    from tests.osfacts_fake import FakeOsFacts
+
+    cmd = plan(FakeOsFacts(), "sev", 1000, release="/home/sev/.local/share/orch/releases/current").admin_command()
+    assert cmd.startswith("sudo /usr/lib/orch/os-setup/orch-os-setup ")
+    assert "/bin/orch-os-setup" not in cmd
+
+
+# secure_dir: descriptor-relative, never follows ---------------------------------------------------------------------
+def _spec(*chain: str, mode: int = 0o700, allowed: int = 0o700, fresh: bool = False, acl=None) -> DirSpec:
+    return DirSpec(chain, ME, os.getgid(), mode, allowed, acl, acl, fresh)
+
+
+def test_secure_dir_creates_and_then_leaves_alone(tmp_path) -> None:
+    base = tmp_path / "base"
+    base.mkdir(mode=0o755)
+    assert secure_dir(str(base), _spec("a"), base_uid=ME) == (True, None)
+    assert secure_dir(str(base), _spec("a", "state"), base_uid=ME) == (True, None)
+    assert stat.S_IMODE((base / "a/state").stat().st_mode) == 0o700
+    assert secure_dir(str(base), _spec("a", "state"), base_uid=ME) == (False, None)
+
+
+def test_secure_dir_does_not_follow_a_symlink_and_leaves_the_target_untouched(tmp_path) -> None:
+    base = tmp_path / "base"
+    (base / "a").mkdir(parents=True, mode=0o755)
+    victim = tmp_path / "victim"
+    victim.mkdir(mode=0o755)
+    (base / "a" / "repos").symlink_to(victim)
+    for fresh in (False, True):
+        changed, problem = secure_dir(
+            str(base), _spec("a", "repos", mode=0o750, allowed=0o750, fresh=fresh), base_uid=ME
+        )
+        assert not changed and problem and "symlink" in problem
+    assert stat.S_IMODE(victim.stat().st_mode) == 0o755  # not chmodded through the link
+    assert not list(victim.iterdir())
+
+
+def test_secure_dir_refuses_a_symlinked_parent_component(tmp_path) -> None:
+    base = tmp_path / "base"
+    base.mkdir(mode=0o755)
+    victim = tmp_path / "victim"
+    victim.mkdir(mode=0o755)
+    (base / "a").symlink_to(victim)
+    changed, problem = secure_dir(str(base), _spec("a", "state"), base_uid=ME)
+    assert not changed and problem
+    assert not (victim / "state").exists()
+
+
+def test_secure_dir_refuses_a_wider_existing_directory_and_never_loosens(tmp_path) -> None:
+    base = tmp_path / "base"
+    (base / "a").mkdir(parents=True, mode=0o755)
+    (base / "a").chmod(0o755)
+    changed, problem = secure_dir(str(base), _spec("a"), base_uid=ME)
+    assert not changed and "more open" in problem
+    assert stat.S_IMODE((base / "a").stat().st_mode) == 0o755  # untouched, not even tightened
+
+
+def test_secure_dir_fresh_sets_the_exact_mode(tmp_path) -> None:
+    base = tmp_path / "base"
+    (base / "a").mkdir(parents=True, mode=0o755)
+    assert secure_dir(str(base), _spec("a", fresh=True), base_uid=ME) == (True, None)
+    assert stat.S_IMODE((base / "a").stat().st_mode) == 0o700
+
+
+def test_secure_dir_refuses_a_base_others_can_write(tmp_path) -> None:
+    base = tmp_path / "base"
+    base.mkdir()
+    base.chmod(0o777)
+    changed, problem = secure_dir(str(base), _spec("a"), base_uid=ME)
+    assert not changed and "written by others" in problem
+
+
+def test_secure_dir_refuses_a_base_that_is_a_symlink(tmp_path) -> None:
+    real = tmp_path / "real"
+    real.mkdir(mode=0o755)
+    link = tmp_path / "link"
+    link.symlink_to(real)
+    changed, problem = secure_dir(str(link), _spec("a"), base_uid=ME)
+    assert not changed and problem and not (real / "a").exists()
+
+
+def _acl_for(uid: int) -> bytes:
+    o = osapply
+    return o._acl(((o.USER_OBJ, 7), (o.USER, 1, uid), (o.GROUP_OBJ, 0), (o.MASK, 1), (o.OTHER, 0)))
+
+
+def test_secure_dir_compares_exact_acl_entries(tmp_path) -> None:
+    if not hasattr(os, "setxattr"):
+        if os.environ.get("CI"):
+            pytest.fail("CI must run the exact-ACL test, but this system has no xattr support")
+        pytest.skip("no xattrs here")
+    base = tmp_path / "base"
+    base.mkdir(mode=0o755)
+    want = _acl_for(4242)
+    spec = _spec("a", allowed=0o710, acl=want)
+    changed, problem = secure_dir(str(base), spec, base_uid=ME)
+    if problem and "could not be set" in problem:
+        if os.environ.get("CI"):
+            pytest.fail(f"CI must support ACLs: {problem}")
+        pytest.skip("filesystem without ACL support")
+    assert problem is None and changed
+    assert secure_dir(str(base), spec, base_uid=ME) == (False, None)
+    other = _acl_for(4243)
+    changed, problem = secure_dir(str(base), _spec("a", allowed=0o710, acl=other), base_uid=ME)
+    assert problem and "other ACL entries" in problem
+
+
+# the installer step ----
+def test_install_refuses_a_source_that_is_not_root_owned() -> None:
+    if ME == 0:
+        pytest.skip("running as root")
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as d:
+        staging = _staging(Path(d))
+        with pytest.raises(InstallRefused, match="owned by root"):
+            install(staging, dest=str(Path(d) / "dest"))  # owner defaults to root: our sealed dir is not root's
+        assert not (Path(d) / "dest").exists()
+
+
+def test_install_refuses_a_wide_or_unsealed_source(tmp_path) -> None:
+    staging = _staging(tmp_path)
+    staging.chmod(0o755)
+    with pytest.raises(InstallRefused, match="0700"):
+        install(staging, dest=str(tmp_path / "dest"), owner=ME)
+    staging.chmod(0o700)
+    (staging / "orch/setup/osapply.py").chmod(0o666)
+    with pytest.raises(InstallRefused, match="written by others"):
+        install(staging, dest=str(tmp_path / "dest"), owner=ME)
+    (staging / "orch/setup/osapply.py").chmod(0o600)
+    (staging / "orch/setup/extra.py").write_text("x = 1\n")
+    with pytest.raises(InstallRefused, match="unexpected code"):
+        check_source(staging, ME)
+    assert not (tmp_path / "dest").exists()
+
+
+def test_install_refuses_when_the_copy_does_not_match_the_source(tmp_path, monkeypatch) -> None:
+    staging = _staging(tmp_path)
+    real = shutil.copyfile
+
+    def corrupting(src, dst):
+        real(src, dst)
+        if str(dst).endswith("osusers.py"):
+            Path(dst).write_text("evil = 1\n")
+
+    monkeypatch.setattr(shutil, "copyfile", corrupting)
+    tmp_path.chmod(0o755)
+    with pytest.raises(InstallRefused, match="does not match"):
+        install(staging, dest=str(tmp_path / "dest"), owner=ME)
+    assert not (tmp_path / "dest").exists()
+    assert not list(tmp_path.glob("dest.*"))
+
+
+def test_install_refuses_a_destination_chain_others_can_write(tmp_path) -> None:
+    staging = _staging(tmp_path)
+    parent = tmp_path / "lib"
+    parent.mkdir(mode=0o775)
+    parent.chmod(0o775)
+    with pytest.raises(InstallRefused, match="trusted copy cannot live there"):
+        install(staging, dest=str(parent / "os-setup"), owner=ME)
+
+
+def test_osinstall_runs_as_a_script_under_isolated_python_without_site(tmp_path) -> None:
+    """Stdlib only: the documented command works (here it stops at 'must run as root')."""
+    if ME == 0:
+        pytest.skip("running as root")
+    staging = _staging(tmp_path)
+    done = subprocess.run(
+        [sys.executable, "-I", "-S", str(staging / INSTALLER_FILE)], capture_output=True, text=True, check=False
+    )
+    assert done.returncode == 2 and "must run as root" in done.stderr, done.stderr
+
+
+def test_osinstall_script_refuses_an_unsealed_staging_directory(tmp_path) -> None:
+    staging = _staging(tmp_path)
+    staging.chmod(0o755)
+    done = subprocess.run(
+        [sys.executable, "-I", "-S", str(staging / INSTALLER_FILE)], capture_output=True, text=True, check=False
+    )
+    assert done.returncode == 2 and "private (0700)" in done.stderr
+
+
+def test_secure_dir_reports_a_race_instead_of_raising(tmp_path, monkeypatch) -> None:
+    base = tmp_path / "base"
+    base.mkdir(mode=0o755)
+
+    def racing_mkdir(*a, **k):
+        raise FileExistsError(17, "File exists")
+
+    monkeypatch.setattr(os, "mkdir", racing_mkdir)
+    changed, problem = secure_dir(str(base), _spec("a"), base_uid=ME)
+    assert not changed and problem and "could not be created safely" in problem
+
+
+def test_install_puts_the_previous_copy_back_when_the_second_rename_fails(tmp_path, monkeypatch) -> None:
+    tmp_path.chmod(0o755)
+    dest = tmp_path / "os-setup"
+    dest.mkdir()
+    (dest / "marker").write_text("old")
+    real = os.rename
+
+    def failing(src, dst, *a, **k):
+        if str(src).startswith(str(dest) + ".new-"):
+            raise OSError(5, "boom")
+        return real(src, dst, *a, **k)
+
+    monkeypatch.setattr(os, "rename", failing)
+    with pytest.raises(OSError):
+        install(_staging(tmp_path), dest=str(dest), owner=ME)
+    assert (dest / "marker").read_text() == "old"
+    assert not list(tmp_path.glob("os-setup.old-*"))
+
+
+def test_osinstall_script_refuses_a_staging_parent_others_can_write(tmp_path) -> None:
+    parent = tmp_path / "wide"
+    parent.mkdir()
+    staging = _staging(parent)
+    parent.chmod(0o777)
+    try:
+        done = subprocess.run(
+            [sys.executable, "-I", "-S", str(staging / INSTALLER_FILE)], capture_output=True, text=True, check=False
+        )
+    finally:
+        parent.chmod(0o755)
+    assert done.returncode == 2 and "can be written by others" in done.stderr
+
+
+def test_can_stat_asks_about_the_entry_not_its_target(tmp_path) -> None:
+    """A symlinked drop-in pointing into a root-only folder stays 'statable' by its own name: it is recorded, the host
+    then fails on the target and reads it as changed (fail closed)."""
+    from orch.setup.osfacts import RealOsFacts
+
+    open_dir = tmp_path / "open"
+    open_dir.mkdir(mode=0o755)
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    (locked / "target").write_text("x")
+    (open_dir / "link").symlink_to(locked / "target")
+    locked.chmod(0o000)
+    try:
+        facts = RealOsFacts()
+        assert facts.can_stat(ME or 1, str(open_dir / "link")) is True or ME == 0
+        assert facts.can_stat(ME or 1, str(locked / "target")) is False or ME == 0  # the folder itself is closed
+        assert facts.file_sig(str(open_dir / "link")) == (-1, -1, -1, -1)  # the host cannot follow it
+    finally:
+        locked.chmod(0o700)

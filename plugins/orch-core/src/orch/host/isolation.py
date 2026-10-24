@@ -156,14 +156,24 @@ def _detect(
         if facts.can_read(agent.uid, path):
             reasons.append(Reason("readable_by_agent", f"The agent user can read {path}."))
     for sock in ROOT_SOCKETS:
-        if facts.stat(sock) is not None and facts.can_connect(agent.uid, sock):
+        if _may_exist(facts, sock) and facts.can_connect(agent.uid, sock):
             reasons.append(Reason("root_socket", f"The agent user can reach {sock}, which gives root power."))
     reasons += _runner(facts, name, agent.uid, agent.gid, person_uid)
     return _result("linux", reasons)
 
 
+def _may_exist(facts: OsFacts, path: str) -> bool:
+    """Whether ``path`` could exist. A folder this process may not search (a root-only container folder) hides the entry
+    from the person; that is neither "absent" nor an error. ``can_connect`` then decides from the agent's own access to
+    every folder on the way (it fails closed when it cannot tell)."""
+    try:
+        return facts.stat(path) is not None
+    except PermissionError:
+        return True
+
+
 def _runner(facts: OsFacts, name: str, agent_uid: int, agent_gid: int, person_uid: int) -> list[Reason]:
-    unit = facts.unit_state(f"orch-runner@{name}.service")
+    unit = facts.unit_state(f"orch-runner@{name.removeprefix(AGENT_PREFIX)}.service")  # instance = the person
     if unit.state == "inactive":
         return [Reason("runner_down", "The agent service is not running.", AVAILABILITY)]
     out: list[Reason] = []
@@ -193,31 +203,53 @@ def _policy(facts: OsFacts, name: str, pin: dict) -> list[Reason]:
     sudo and sshd themselves, taken by the setup step, plus the stat signature of each policy file. Here we only check
     that the verdict is good and that nothing changed since (size, mtime, inode, and the set of files in the drop-in
     directories). Anything else, including a missing field, asks for the admin step again. Limits: a file that sudo or
-    sshd include from outside these paths is not watched; sudo rules from LDAP or sssd are not seen; where a policy
-    directory is unreadable to this process (RHEL: 0750/0700) a new file inside is caught through the directory's own
-    signature, and an unstat-able entry reads as changed."""
-    bad = Reason(
-        "policy_changed_since_setup",
-        f"The sudo or SSH rules may have changed since setup for '{name}'. Run the admin step again.",
-    )
+    sshd include from outside these paths is not watched; sudo rules from LDAP or sssd are not seen.
+
+    Folders this process cannot search (Ubuntu and RHEL: ``/etc/sudoers.d`` is 0750 root): root's setup step records
+    only the folder's own signature, not the entries inside (``assess_policy(host_uid=…)``), because the host could
+    never stat them. An entry added, removed or renamed there moves the folder's signature and shows as changed. An
+    in-place edit of an existing file inside such a folder, with no rename, is NOT seen by this unprivileged check
+    (it needs root; §13.9); the root-side recheck at each runner start (L3, ``--recheck``) is planned to close it.
+    A folder the person can list but not search is also covered by the folder signature; if one of its entries was
+    not recorded, ``listdir`` shows it as new and the check refuses ("is new"). That is acceptable: it fails closed.
+    An entry the host cannot stat that was recorded (for example a symlink to a root-only target) reads as changed."""
+
+    def bad(what: str = "") -> Reason:
+        return Reason(
+            "policy_changed_since_setup",
+            f"The sudo or SSH rules may have changed since setup for '{name}'{what}. Run the admin step again.",
+        )
+
     pol = pin.get("policy")
     if not isinstance(pol, dict) or pol.get("sudo") != "none" or pol.get("ssh") != "denied":
-        return [bad]
+        return [bad(" (the recorded check is missing or not clean)")]
     files = pol.get("files")
     if pol.get("ssh_dropin") is not True or not isinstance(files, dict) or not set(POLICY_FILES) <= set(files):
-        return [bad]
+        return [bad(" (the recorded check is incomplete)")]
     now = {p: facts.file_sig(p) for p in files}
     for path, recorded in files.items():
         sig = now[path]
         if sig == UNREADABLE or recorded == list(UNREADABLE):  # a failed stat never matches, even another failed stat
-            return [bad]
-        if (None if sig is None else list(sig)) != recorded:
-            return [bad]
+            return [bad(f": {path} cannot be read")]
+        have = None if sig is None else list(sig)
+        if have != recorded:
+            return [bad(f": {path} {_what_differs(recorded, have)}")]
     for folder in (p for p in POLICY_FILES if p.endswith(".d")):  # a file added since: not in the record
         for entry in facts.listdir(folder):
             if f"{folder}/{entry}" not in files:
-                return [bad]
+                return [bad(f": {folder}/{entry} is new")]
     return []
+
+
+def _what_differs(recorded: object, have: list[int] | None) -> str:
+    if recorded is None:
+        return "appeared"
+    if have is None:
+        return "disappeared"
+    names = ("size", "modification time", "change time", "inode")
+    if not isinstance(recorded, list) or len(recorded) != len(names):
+        return "has a malformed record"
+    return "differs in " + ", ".join(n for n, a, b in zip(names, recorded, have, strict=True) if a != b)
 
 
 def _run_tree(facts: OsFacts, root: str, person_uid: int, agent_gid: int) -> list[Reason]:
@@ -288,6 +320,11 @@ def _run_tree(facts: OsFacts, root: str, person_uid: int, agent_gid: int) -> lis
     return out
 
 
+def _where(exc: OSError) -> str:
+    name = getattr(exc, "filename", None)
+    return f" at {name}" if isinstance(name, str) and name else ""
+
+
 def detect(
     facts: OsFacts,
     person: str,
@@ -308,7 +345,8 @@ def detect(
             getattr(facts, "platform", "linux"),
             (
                 Reason(
-                    "facts_unreadable", f"A system fact could not be read ({type(exc).__name__}), so it is not trusted."
+                    "facts_unreadable",
+                    f"A system fact could not be read ({type(exc).__name__}{_where(exc)}), so it is not trusted.",
                 ),
             ),
         )

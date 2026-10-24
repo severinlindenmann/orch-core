@@ -13,7 +13,7 @@ from orch.setup.osusers import SSHD_DROPIN, assess_policy
 from tests.osfacts_fake import FakeOsFacts
 
 UID, AUID, AGID = 1000, 990, 990
-RUNNER = "orch-runner@orch-agent-sev.service"
+RUNNER = "orch-runner@sev.service"
 STATE = "/home/sev/.local/state/orch"
 KEY = f"{STATE}/person/key"
 
@@ -531,7 +531,7 @@ def test_real_cgroup_match_is_a_whole_path_segment(monkeypatch, tmp_path) -> Non
     def fake_open(text):
         return lambda *a, **k: io.StringIO(text)
 
-    unit = "orch-runner@orch-agent-sev.service"
+    unit = "orch-runner@sev.service"
     for text, want in [
         (f"0::/system.slice/{unit}\n", True),
         (f"0::/system.slice/{unit}/sub\n", True),
@@ -710,3 +710,42 @@ def test_doas_conf_present_at_setup_makes_the_verdict_unknown() -> None:
     f.sigs["/etc/doas.conf"] = (10, 1, 1, 9)
     v = assess_policy(f, "orch-agent-sev")
     assert v.sudo == "unknown" and not v.ok
+
+
+def test_the_runner_unit_asked_for_is_the_bare_person_instance() -> None:
+    asked: list[str] = []
+    f = _good()
+    real = f.unit_state
+    f.unit_state = lambda unit: (asked.append(unit), real(unit))[1]
+    detect(f, "sev", UID, STATE, [KEY])
+    assert asked == ["orch-runner@sev.service"]  # not orch-runner@orch-agent-sev.service
+
+
+def test_facts_unreadable_names_the_path() -> None:
+    class Boom(FakeOsFacts):
+        def stat(self, path):
+            raise PermissionError(13, "Permission denied", path)
+
+    b = Boom()
+    b.__dict__.update(_good().__dict__)
+    r = detect(b, "sev", UID, STATE, [KEY])
+    assert [x.code for x in r.reasons] == ["facts_unreadable"] and "PermissionError at /" in r.reasons[0].message
+
+
+def test_a_root_only_container_folder_hides_a_socket_without_breaking_detect() -> None:
+    """A root-only /run/podman (0700) makes lstat of its socket fail for the person: unknown, not an error."""
+    f = _good()
+    hidden = "/run/podman/podman.sock"
+    real_stat = f.stat
+
+    def stat(path):
+        if path == hidden:
+            raise PermissionError(13, "Permission denied", path)
+        return real_stat(path)
+
+    f.stat = stat
+    f.connectable[(AUID, hidden)] = False  # the agent cannot get through the folder either
+    r = detect(f, "sev", UID, STATE, [KEY])
+    assert r.isolated, [(x.code, x.message) for x in r.reasons]
+    f.connectable[(AUID, hidden)] = True  # but if the agent could, that is the exposure it always was
+    assert "root_socket" in {x.code for x in detect(f, "sev", UID, STATE, [KEY]).reasons}

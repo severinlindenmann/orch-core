@@ -186,3 +186,31 @@ def test_too_many_members_including_empty_directories(tmp_path):
 def test_a_sparse_member_is_refused(tmp_path):
     blob = tgz(("package/s", None, {"type": tarfile.GNUTYPE_SPARSE}))
     assert reason(tmp_path, blob) in ("link", "package")
+
+
+def sparse_tgz(realsize, key="GNU.sparse.size"):
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz", format=tarfile.PAX_FORMAT) as t:
+        ti = tarfile.TarInfo("package/big.bin")
+        ti.size = 1
+        ti.pax_headers = {key: str(realsize), "GNU.sparse.map": f"{realsize - 1},1"}
+        t.addfile(ti, io.BytesIO(b"x"))
+    return buf.getvalue()
+
+
+@pytest.mark.parametrize("key", ["GNU.sparse.size", "GNU.sparse.realsize", "GNU.sparse.major"])
+def test_a_pax_sparse_member_is_refused_before_a_byte_is_written(tmp_path, key):
+    blob = sparse_tgz(8 << 20, key)
+    assert reason(tmp_path, blob) == "link"
+    assert [p for p in (tmp_path / "out").rglob("*") if p.is_file()] == []
+
+
+def test_members_in_interleaved_directories_each_land_in_their_own(tmp_path):
+    members = [
+        (f"package/{d}/{n}", b"x", None) for d, n in (("a", "1"), ("b", "1"), ("a", "2"), ("c/d", "1"), ("a", "3"))
+    ]
+    info, out = run(tmp_path, tgz(*members))
+    assert info.files == 5
+    assert sorted(str(p.relative_to(out)) for p in out.rglob("*") if p.is_file()) == [
+        "a/1", "a/2", "a/3", "b/1", "c/d/1",
+    ]  # fmt: skip

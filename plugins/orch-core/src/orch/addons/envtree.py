@@ -80,7 +80,11 @@ class TreeError(Exception):
 
 @dataclass
 class Budget:
-    """THE way a parser consumes bytes or entries (design G4, the resource-cap invariant): every input-driven loop and
+    """THE way a parser consumes bytes or entries. The invariant of the dependency code: **what orch judged is exactly
+    what gets written, and every written byte comes out of a Budget.** Whatever a hostile artifact makes a consumer
+    (pip's ``zipfile``, ``tarfile``) write must have been listed and drawn from here first, or the artifact is refused;
+    when orch and the consumer parse a format, the two views must be identical (``addonenv.scan_zip`` checks it).
+    Every input-driven loop and
     buffer draws from one of these BEFORE it allocates, and the object is shared by everything one operation reads (all
     tarballs and wheels of one environment, every file of one walk), so N archives together cannot exceed what one may.
     ``bytes`` counts what comes out of a decompressor (headers included) or the bytes a file or download delivers;
@@ -165,63 +169,61 @@ def _norm_mode(st: int, is_dir: bool) -> int:
 # ------------------------------------------------------------------------------------------------ the walk
 def walk(root: str | os.PathLike[str] | int, budget: Budget | None = None) -> Tree:
     """Hash the tree below ``root`` (a path, or an open directory descriptor) without following any link: every
-    component is opened ``O_NOFOLLOW``; only regular files with one link and directories are allowed; limits on the
-    entries, the depth, the total bytes. Raises :class:`TreeError`; ``OSError`` is ``link`` (it means a swap or a
-    non-file where we looked)."""
-    fd = root if isinstance(root, int) else os.open(root, _DIR)
+    component is opened ``O_NOFOLLOW``; only regular files with one link and directories are allowed; entries, depth and
+    bytes are drawn from the ``budget`` (default: the environment limits). Depth first: only the chain of parent
+    directories is open at any time (at most ``MAX_DEPTH + 1`` descriptors), never one per sibling. Raises
+    :class:`TreeError`; ``OSError`` is ``link`` (a swap, or a non-file where we looked)."""
+    own = not isinstance(root, int)
+    fd = os.open(root, _DIR) if own else root
     entries: list[tuple[str, str, int]] = []
     dirs: list[tuple[str, int]] = []
-    total = 0
     budget = budget if budget is not None else Budget(bytes=MAX_BYTES, entries=MAX_ENTRIES)
+    total = [0]
+
+    def visit(dfd: int, prefix: str, depth: int) -> None:
+        names = os.listdir(dfd)
+        if len({n.casefold() for n in names}) != len(names):
+            raise TreeError("package")  # two names that differ only in case
+        for name in sorted(names):
+            rel = prefix + name
+            budget.take(n_entries=1)  # before the entry is looked at
+            check_paths([rel]) if not prefix else _check_name(rel)
+            st = os.stat(name, dir_fd=dfd, follow_symlinks=False)
+            if stat.S_ISDIR(st.st_mode):
+                if depth + 1 > MAX_DEPTH:
+                    raise TreeError("path_escape")
+                dirs.append((rel, _norm_mode(st.st_mode, True)))
+                child = os.open(name, _DIR, dir_fd=dfd)
+                try:
+                    visit(child, rel + "/", depth + 1)
+                finally:
+                    os.close(child)
+            elif stat.S_ISREG(st.st_mode):
+                f = os.open(name, _FLAGS | getattr(os, "O_NONBLOCK", 0), dir_fd=dfd)
+                try:
+                    info = os.fstat(f)
+                    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                        raise TreeError("link")
+                    h = hashlib.sha256()
+                    while chunk := os.read(f, 1 << 16):
+                        total[0] += len(chunk)
+                        budget.take(len(chunk))
+                        h.update(chunk)
+                finally:
+                    os.close(f)
+                entries.append((rel, h.hexdigest(), _norm_mode(info.st_mode, False)))
+            else:
+                raise TreeError("link")  # a symbolic link, device, pipe or socket
+
     try:
-        stack = [(fd, "", 0)]
-        while stack:
-            dfd, prefix, depth = stack.pop()
-            try:
-                names = os.listdir(dfd)
-                if len({n.casefold() for n in names}) != len(names):
-                    raise TreeError("package")  # two names that differ only in case
-                for name in sorted(names):
-                    rel = prefix + name
-                    budget.take(n_entries=1)  # before the entry is looked at
-                    check_paths([rel]) if not prefix else _check_name(rel)
-                    st = os.stat(name, dir_fd=dfd, follow_symlinks=False)
-                    if stat.S_ISDIR(st.st_mode):
-                        if depth + 1 > MAX_DEPTH:
-                            raise TreeError("path_escape")
-                        dirs.append((rel, _norm_mode(st.st_mode, True)))
-                        stack.append((os.open(name, _DIR, dir_fd=dfd), rel + "/", depth + 1))
-                    elif stat.S_ISREG(st.st_mode):
-                        f = os.open(name, _FLAGS | getattr(os, "O_NONBLOCK", 0), dir_fd=dfd)
-                        try:
-                            info = os.fstat(f)
-                            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-                                raise TreeError("link")
-                            h = hashlib.sha256()
-                            size = 0
-                            while chunk := os.read(f, 1 << 16):
-                                size += len(chunk)
-                                total += len(chunk)
-                                budget.take(len(chunk))
-                                h.update(chunk)
-                        finally:
-                            os.close(f)
-                        entries.append((rel, h.hexdigest(), _norm_mode(info.st_mode, False)))
-                    else:
-                        raise TreeError("link")  # a symbolic link, device, pipe or socket
-            except OSError:
-                raise TreeError("link") from None
-            finally:
-                if dfd != fd:
-                    os.close(dfd)
+        visit(fd, "", 0)
+    except OSError:
+        raise TreeError("link") from None
     finally:
-        for dfd, _, _ in stack:
-            if dfd != fd:
-                os.close(dfd)
-        if not isinstance(root, int):
+        if own:
             os.close(fd)
     return Tree(
-        tuple(sorted(entries, key=lambda e: e[0].encode())), tuple(sorted(dirs, key=lambda d: d[0].encode())), total
+        tuple(sorted(entries, key=lambda e: e[0].encode())), tuple(sorted(dirs, key=lambda d: d[0].encode())), total[0]
     )
 
 

@@ -63,7 +63,11 @@ def test_pax_sparse_member_is_refused_or_charged(tmp_path):
 # ------------------------------------------------------------------ F2: zip64 polyglot: scan_zip and zipfile disagree
 def _lfh(name: bytes, data: bytes) -> bytes:
     crc = zlib.crc32(data)
-    return struct.pack("<4sHHHHHLLLHH", b"PK\x03\x04", 20, 0, 0, 0, 0, crc, len(data), len(data), len(name), 0) + name + data
+    return (
+        struct.pack("<4sHHHHHLLLHH", b"PK\x03\x04", 20, 0, 0, 0, 0, crc, len(data), len(data), len(name), 0)
+        + name
+        + data
+    )
 
 
 def _cdh(name: bytes, data: bytes, off: int) -> bytes:

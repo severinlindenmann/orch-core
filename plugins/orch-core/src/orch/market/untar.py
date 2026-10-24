@@ -11,6 +11,7 @@ link is made, npm is never started. ``dest_fd=None`` judges the tarball without 
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import tarfile
@@ -113,7 +114,7 @@ def unpack(fd: int, dest_fd: int | None, budget: Budget) -> Unpacked:
     seen_files: set[str] = set()
     seen_dirs: set[str] = set()
     folded: dict[str, str] = {}  # casefolded full path -> path as written
-    opened: dict[str, int] = {"": dest_fd} if dest_fd is not None else {}
+    chain = _Chain(dest_fd)
     total = 0
     compiled = False
     f = os.fdopen(os.dup(fd), "rb")
@@ -121,6 +122,8 @@ def unpack(fd: int, dest_fd: int | None, budget: Budget) -> Unpacked:
         with tarfile.open(fileobj=_Gunzip(f.fileno(), budget), mode="r|", tarinfo=_Info) as tar:
             for m in tar:
                 budget.take(n_entries=1)  # every member counts, the root entry and skipped ones too
+                if m.sparse is not None or any(k.startswith("GNU.sparse") for k in m.pax_headers):
+                    raise TreeError("link")  # tarfile would expand the holes into bytes nobody drew from the budget
                 if m.isdir():
                     kind = "d"
                 elif m.isreg():
@@ -144,7 +147,7 @@ def unpack(fd: int, dest_fd: int | None, budget: Budget) -> Unpacked:
                         raise TreeError("package")
                     seen_dirs.add(d)
                 if kind == "d":
-                    _make_dirs(opened, dest_fd, parts)
+                    chain.dir(parts)
                     continue
                 key = rel.casefold()
                 if rel in seen_files or rel in seen_dirs or folded.setdefault(key, rel) != rel:
@@ -159,7 +162,7 @@ def unpack(fd: int, dest_fd: int | None, budget: Budget) -> Unpacked:
                     while data.read(1 << 16):
                         pass
                     continue
-                parent = _make_dirs(opened, dest_fd, parts[:-1])
+                parent = chain.dir(parts[:-1])
                 out = os.open(
                     parts[-1], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=parent
                 )
@@ -179,9 +182,7 @@ def unpack(fd: int, dest_fd: int | None, budget: Budget) -> Unpacked:
         raise TreeError("package") from None
     finally:
         f.close()
-        for rel, ofd in opened.items():
-            if rel and ofd != dest_fd:
-                os.close(ofd)
+        chain.close()
     return Unpacked(len(seen_files), total, compiled)
 
 
@@ -191,20 +192,38 @@ def _write_all(fd: int, data: bytes) -> None:
         view = view[os.write(fd, view) :]
 
 
-def _make_dirs(opened: dict[str, int], dest_fd: int | None, parts: list[str]) -> int:
-    """Descriptor of ``dest/<parts>``, creating each missing directory (mode 0755) without following a link."""
-    if dest_fd is None:
-        return -1
-    cur = ""
-    fd = dest_fd
-    for part in parts:
-        cur = f"{cur}/{part}" if cur else part
-        if cur not in opened:
-            try:
+class _Chain:
+    """The directories of the member being written: only the CURRENT ancestor chain is held open (at most MAX_DEPTH
+    descriptors, never one per directory of the archive); a member in another directory closes what it does not share
+    and opens the rest below the destination. Nothing is followed: every open is ``O_NOFOLLOW | O_DIRECTORY``."""
+
+    def __init__(self, root: int | None) -> None:
+        self.root = root
+        self.parts: list[str] = []
+        self.fds: list[int] = []
+
+    def dir(self, parts: list[str]) -> int:
+        """Descriptor of ``dest/<parts>``, creating each missing directory (mode 0755)."""
+        if self.root is None:
+            return -1
+        k = 0
+        while k < len(self.parts) and k < len(parts) and self.parts[k] == parts[k]:
+            k += 1
+        while len(self.fds) > k:
+            os.close(self.fds.pop())
+            self.parts.pop()
+        fd = self.fds[-1] if self.fds else self.root
+        for part in parts[k:]:
+            with contextlib.suppress(FileExistsError):
                 os.mkdir(part, 0o755, dir_fd=fd)
-            except FileExistsError:
-                pass
-            opened[cur] = os.open(part, _DIR, dir_fd=fd)
-            os.fchmod(opened[cur], 0o755)
-        fd = opened[cur]
-    return fd
+            nxt = os.open(part, _DIR, dir_fd=fd)
+            os.fchmod(nxt, 0o755)
+            self.fds.append(nxt)
+            self.parts.append(part)
+            fd = nxt
+        return fd
+
+    def close(self) -> None:
+        while self.fds:
+            os.close(self.fds.pop())
+        self.parts.clear()

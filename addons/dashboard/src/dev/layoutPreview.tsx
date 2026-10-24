@@ -784,8 +784,15 @@ function install() {
   termTransport.connect = fixtureConnect
   // M7b: the Start agent dialog's routes answer from fixtures.
   const ag = agentsApi as unknown as Record<string, unknown>
-  for (const name of ['preview', 'runner', 'start', 'depositStatus', 'forget', 'riskNotices', 'acknowledge']) originals.set(`agents.${name}`, ag[name])
+  for (const name of ['runnerReview', 'runnerSwitch', 'preview', 'runner', 'start', 'depositStatus', 'forget', 'riskNotices', 'acknowledge']) originals.set(`agents.${name}`, ag[name])
   ag.preview = async () => agentPreview(current)
+  ag.runnerReview = async (_ws: string, b: { on: boolean }) => ({
+    view: { op: b.on ? 'runner.on' : 'runner.off', on: b.on, lines: b.on
+      ? ['Turn on dashboard execution for Demo.', 'Agents may run commands on this computer as you when you start them.', 'Dashboard execution: agents and terminals started here run as you. Anything that takes over this dashboard, or any agent it starts, can run commands and read your files and keys.', 'That includes reading your SSH keys and your orch keys. The dashboard can then start agents, create worktrees and open terminals for this workspace, as you.']
+      : ['Turn off dashboard execution for Demo.', 'Agents and terminals already running keep running; the dashboard starts no new ones.'] },
+    view_digest: 'sha256:' + 'a'.repeat(64),
+  })
+  ag.runnerSwitch = async (_ws: string, b: { on: boolean }) => ({ enabled: b.on, terminals: b.on })
   ag.riskNotices = async () => ({ acknowledged: current === 'agent-dialog-acked' ? { start_agent: true, login_shell: true } : {} })
   ag.acknowledge = async () => ({ acknowledged: { start_agent: true } })
   originals.set('shares.list', sharesApi.list)
@@ -856,7 +863,7 @@ function install() {
     add_ons: [
       { id: 'dashboard', title: 'Dashboard', desc: "This workspace's dashboard (locked on).", state: 'on', locked: 'The dashboard is always on: it is what shows this workspace.', blocked: null },
       { id: 'start-agent', title: 'Start agents', desc: 'Start an agent from the dashboard. It runs on this computer, as you.', state: 'on', locked: null, blocked: 'Stop first: an agent of yours is running right now.' },
-      { id: 'terminals', title: 'Terminals', desc: 'Open a terminal on this computer from the dashboard. It runs as you.', state: 'off', locked: null, blocked: 'Needs dashboard execution first. In your terminal run: orch runner enable' },
+      { id: 'terminals', title: 'Terminals', desc: 'Open a terminal on this computer from the dashboard. It runs as you.', state: 'off', locked: null, blocked: 'Needs dashboard execution first. Turn it on here, then switch this on.', runner_switch: true },
       { id: 'worktrees', title: 'Worktrees', desc: 'Each ticket gets its own copy of your project folder, so agents do not overwrite each other.', state: 'off', locked: null, blocked: null },
       { id: 'publish', title: 'Publish', desc: 'Share files of a ticket with a link.', state: current.startsWith('addons-publish') ? 'on' : 'off', locked: null, blocked: null },
       { id: 'quick', title: 'Quick tasks', desc: 'Small one-off tasks. Always available; there is nothing to switch on.', state: 'on', locked: 'Always available. There is nothing to switch.', blocked: null },

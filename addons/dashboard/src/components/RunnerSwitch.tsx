@@ -23,7 +23,7 @@ export function RunnerSwitch({ ws, on, terminals: withTerminals = true, testId =
 }) {
   const qc = useQueryClient()
   const [open, setOpen] = useState(false)
-  const [terminals, setTerminals] = useState(true)
+  const [terminals, setTerminals] = useState(false)
   const [review, setReview] = useState<RunnerReview | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -45,7 +45,7 @@ export function RunnerSwitch({ ws, on, terminals: withTerminals = true, testId =
   }
   useEffect(() => () => { seq.current++ }, [])
 
-  const start = () => { setOpen(true); setTerminals(true); void read(true) }
+  const start = () => { setOpen(true); setTerminals(false); void read(false) }
   const close = () => { seq.current++; setOpen(false); setReview(null); setError(null) }
   const confirm = async () => {
     if (!review || busy) return
@@ -74,7 +74,7 @@ export function RunnerSwitch({ ws, on, terminals: withTerminals = true, testId =
       {on && withTerminals && (
         <label className="flex items-center gap-2 text-text-muted">
           <input type="checkbox" data-testid={`${testId}-terminals`} checked={terminals} disabled={busy} onChange={(e) => { setTerminals(e.target.checked); void read(e.target.checked) }} />
-          Also allow terminals in the dashboard
+          Also allow terminals in the dashboard (an extra: a shell that runs as you)
         </label>
       )}
       {error && <p role="alert" id={errorId} data-testid={`${testId}-error`} className="text-warning">{error}</p>}

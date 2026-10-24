@@ -24,22 +24,22 @@ it('shows core\'s review first and switches on only that review\'s digest', asyn
   expect(await screen.findByText(RUNNER_LINE)).toBeInTheDocument()
   expect(sw).not.toHaveBeenCalled() // reading is not switching
   await user.click(screen.getByTestId('runner-switch-confirm'))
-  await waitFor(() => expect(sw).toHaveBeenCalledWith('w1', { on: true, terminals: true, view_digest: D1 }))
-  expect(rv).toHaveBeenCalledWith('w1', { on: true, terminals: true })
+  await waitFor(() => expect(sw).toHaveBeenCalledWith('w1', { on: true, terminals: false, view_digest: D1 }))
+  expect(rv).toHaveBeenCalledWith('w1', { on: true, terminals: false })
 })
 
-it('unchecking terminals reads the review again and sends the new digest', async () => {
+it('checking terminals reads the review again and sends the new digest', async () => {
   const user = userEvent.setup()
   const rv = vi.spyOn(agentsApi, 'runnerReview').mockResolvedValueOnce(review(true)).mockResolvedValueOnce(review(true, D2))
-  const sw = vi.spyOn(agentsApi, 'runnerSwitch').mockResolvedValue({ enabled: true, terminals: false })
+  const sw = vi.spyOn(agentsApi, 'runnerSwitch').mockResolvedValue({ enabled: true, terminals: true })
   mount(true)
   await user.click(screen.getByTestId('runner-switch'))
   await screen.findByText(RUNNER_LINE)
   await user.click(screen.getByTestId('runner-switch-terminals'))
-  await waitFor(() => expect(rv).toHaveBeenLastCalledWith('w1', { on: true, terminals: false }))
+  await waitFor(() => expect(rv).toHaveBeenLastCalledWith('w1', { on: true, terminals: true }))
   await waitFor(() => expect(screen.getByTestId('runner-switch-confirm')).toBeEnabled())
   await user.click(screen.getByTestId('runner-switch-confirm'))
-  await waitFor(() => expect(sw).toHaveBeenCalledWith('w1', { on: true, terminals: false, view_digest: D2 }))
+  await waitFor(() => expect(sw).toHaveBeenCalledWith('w1', { on: true, terminals: true, view_digest: D2 }))
 })
 
 it('a review of turning it on that lacks core\'s sentence is not shown and cannot be confirmed', async () => {
@@ -70,5 +70,5 @@ it('turning it off is the same two steps without the terminals choice', async ()
   await screen.findByText('Turn off dashboard execution for Demo.')
   expect(screen.queryByTestId('runner-switch-terminals')).toBeNull()
   await user.click(screen.getByTestId('runner-switch-confirm'))
-  await waitFor(() => expect(sw).toHaveBeenCalledWith('w1', { on: false, terminals: true, view_digest: D1 }))
+  await waitFor(() => expect(sw).toHaveBeenCalledWith('w1', { on: false, terminals: false, view_digest: D1 }))
 })

@@ -4,12 +4,14 @@ page, the prompt; the full dump behind ``d`` / ``--details``. Same signed materi
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import pty
 import re
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
@@ -289,7 +291,7 @@ VALUES = {
     "device": "d_" + "1" * 32, "cert": CERT, "device_cert": CERT, "pk_pub": "marker-pubkey", "person": "p_" + "2" * 32,
     "role": "maintainer", "outcome": "pass", "text": "marker text", "source_sha": [{"repo": "app", "ref": "refs/heads/x", "sha": "a" * 40}],
     "grant": "gr_" + "3" * 26, "scope": "workable", "verbs": "agent", "hours": 7, "issued_at": "2026-10-16T10:00:00Z",
-    "expires_at": "2026-10-16T17:00:00Z", "reason": "marker-reason", "question": "q1", "option": "a", "qid": "q9",
+    "expires_at": "2026-10-16T17:00:00Z", "reason": "marker-reason", "question": "Q1", "option": "a", "qid": "q9",
     "duplicate_of": "DEMO-0007", "resolution": "duplicate", "key": "DEMO-0002", "ticket_type": "chore", "title": "Marker Title",
     "owner": "p_" + "4" * 32, "add": ["p_" + "7" * 32], "remove": ["p_" + "8" * 32], "from": "open", "to": "backlog", "gate": "plan",
     "gates": {"plan": POLICY}, "set": {"grant_hours": 5},
@@ -310,7 +312,7 @@ def sample(typ: str) -> dict:
     if typ == "question.asked":
         event["question"] = "marker question"
     if typ == "question.answered":
-        event["question"] = "q1"
+        event["question"], event["hash"] = "Q1", "sha256:" + "ab" * 32
     return {"type": typ, "actor": {"kind": "person", "id": "p_" + "5" * 32, "device": "d_" + "6" * 32}, **event}
 
 
@@ -326,7 +328,14 @@ def material_for(typ: str, event: dict) -> dict:
         return {
             "kind": "question",
             "ticket": ticket,
-            "question": {"id": "q1", "text": "marker question?", "options": [{"key": "a", "label": "Marker option"}]},
+            "question": {
+                "id": "Q1",
+                "to": "ticket_owner",
+                "blocking": True,
+                "kind": "choice",
+                "text": "marker question?",
+                "options": [{"key": "a", "label": "Marker option"}, {"key": "b", "label": "Other option"}],
+            },  # fmt: skip
         }
     out = {
         "kind": "payload",
@@ -581,36 +590,6 @@ def test_an_unverified_build_labels_every_before_and_leaves_out_the_policy(human
         {"op": "settings.set", "events": [settings], "material": material_for("settings.changed", settings)}, False
     )
     assert c["fields_changed"][0]["before_note"] == "per host, not checked"
-
-
-def test_a_question_shows_its_options_and_labels_what_the_question_hash_does_not_bind():
-    ev = {
-        "type": "question.answered",
-        "question": "q1",
-        "option": "a",
-        "text": "because",
-        "hash": "sha256:" + "ab" * 32,
-    }
-    material = {
-        "kind": "question",
-        "ticket": {"key": "DEMO-0001", "uid": UID},
-        "question": {
-            "id": "q1",
-            "text": "Which way?",
-            "options": [{"key": "a", "label": "Left", "cost": "1d"}, {"key": "b", "label": "Right"}],
-            "to": "p_" + "7" * 32,
-            "blocking": True,
-        },
-    }
-    c = build({"op": "answer", "events": [ev], "material": material})
-    rows = {r["field"]: r["after"] for r in c["fields_changed"]}
-    assert rows["option a"] == "Left (cost 1d)" and rows["option b"] == "Right"
-    assert rows["addressed to (per host)"] == "p_" + "7" * 32 and rows["blocks the ticket (per host)"] == "yes"
-    assert c["fields_title"] == "About this question"  # no "- ->" before values
-    assert c["headline"].startswith("Answer “Which way?” on DEMO-0001") and c["headline"].endswith("with Left")
-    material["question"]["future"] = 1
-    with pytest.raises(signcontent.PlainUnavailable):
-        build({"op": "answer", "events": [ev], "material": material})
 
 
 # --- round 1 of the Opus review ---------------------------------------------------------------------------------------
@@ -926,66 +905,6 @@ def test_f7_turning_an_addon_off_is_plain():
     )
 
 
-def _answer(question_extra=None, option="hello", text=None):
-    ev = {"type": "question.answered", "question": "Q1", "option": option, "hash": "sha256:" + "ab" * 32}
-    if text:
-        ev["text"] = text
-    q = {
-        "id": "Q1", "text": "Which greeting should I write?", "to": "owner", "blocking": True, "recommended": "hello",
-        "why": "I need to know before I write the file.",
-        "options": [{"key": "hello", "label": "Hello"}, {"key": "hi", "label": "Hi"}],
-    }  # fmt: skip
-    q.update(question_extra or {})
-    return {
-        "op": "answer", "events": [ev],
-        "material": {"kind": "question", "ticket": {"key": "RA-0001", "uid": UID}, "question": q},
-    }  # fmt: skip
-
-
-def test_f7_an_answer_to_a_question_with_why_and_a_recommendation_is_plain():
-    c = build(_answer())
-    assert c["headline"].startswith("Answer “Which greeting should I write?” on RA-0001") and c["headline"].endswith(
-        "with Hello"
-    )
-    rows = {r["field"]: r["after"] for r in c["fields_changed"]}
-    assert rows["your choice"] == "Hello (option hello)"
-    assert rows["option hello"] == "Hello" and rows["option hi"] == "Hi"
-    assert rows["recommended option"] == "Hello"  # bound by the question hash since #1123
-    assert any(s["title"] == "Why it was asked" and "before I write" in s["text"] for s in c["sections"])
-    assert c["ticket"]["key"] == "RA-0001"
-    view = "\n".join(signcontent.text(c, signer._clean))
-    assert "{" not in view and "options" not in view.replace("option ", "")
-
-
-def test_f7_an_answer_outside_the_options_says_so_and_a_new_question_key_still_falls_back():
-    c = build(_answer(option="nope"))
-    assert {r["field"]: r["after"] for r in c["fields_changed"]}["your choice"] == "nope (not one of the options)"
-    with pytest.raises(signcontent.PlainUnavailable):
-        build(_answer({"surprise": 1}))
-
-
-def test_f7_two_options_with_the_same_label_are_told_apart_in_the_choice_row():
-    opts = {"options": [{"key": "a", "label": "Yes"}, {"key": "b", "label": "Yes"}], "recommended": "a"}
-    for key in ("a", "b"):
-        c = build(_answer(opts, option=key))
-        assert {r["field"]: r["after"] for r in c["fields_changed"]}["your choice"] == f"Yes (option {key})"
-
-
-def test_f7_the_note_is_titled_your_note_and_a_label_equal_to_the_key_is_not_repeated():
-    c = build(_answer(text="because"))
-    assert [s["title"] for s in c["sections"] if s["id"] == "answer"] == ["Your note"]
-    c = build(_answer({"options": [{"key": "Hello", "label": "Hello"}]}, option="Hello"))
-    assert {r["field"]: r["after"] for r in c["fields_changed"]}["your choice"] == "Hello"
-    # label == key stays suffixed when another option carries that label: {a: "b"} next to {b: "b"}
-    dup = {"options": [{"key": "a", "label": "b"}, {"key": "b", "label": "b"}], "recommended": "a"}
-    for key in ("a", "b"):
-        c = build(_answer(dup, option=key))
-        assert {r["field"]: r["after"] for r in c["fields_changed"]}["your choice"] == f"b (option {key})"
-    # a free-text answer (no option) keeps "Your answer" for its text
-    c = build(_answer(option=None, text="my words"))
-    assert [s["title"] for s in c["sections"] if s["id"] == "answer"] == ["Your answer"]
-
-
 _ME = "p_42e1c38e0488b742" + "0" * 14
 MEMBERS = [{"person": _ME, "name": "Severin"}]
 
@@ -1049,13 +968,6 @@ def test_f7_a_host_name_never_replaces_or_hides_the_id():
             {"headline": "x", "fields_changed": [{"field": "owner", "before": None, "after": _ME}]}, signer._clean
         )
     )
-
-
-def test_f7_a_question_with_the_same_option_key_twice_falls_back():
-    q = _answer()
-    q["material"]["question"]["options"].append({"key": "hello", "label": "Other"})
-    with pytest.raises(signcontent.PlainUnavailable):
-        build(q)
 
 
 def _stop(grant: str, reason: str | None = None) -> dict:
@@ -1466,3 +1378,140 @@ def test_788_the_hosts_word_never_reaches_a_headline_or_summary_as_if_it_were_si
     assert all(
         "per host, not signed" in x.lower() for x in ext["summary"]["lines"] if "this computer's runner, until" in x
     )
+
+
+# --- #1123 B2: the FROZEN signer View of an answer (design-question-options.md section 4) ------------------------------
+
+_F1_QUESTIONS = Path(__file__).parents[1] / "vectors/f1/questions.json"
+
+
+def _f1_question(form: str) -> tuple[dict, str]:
+    """The raw question and its hash of one frozen fixture form (``choice_full``, ``text_with_why_and_details``)."""
+    forms = {f["name"]: f for f in json.loads(_F1_QUESTIONS.read_text())["forms"]}
+    raw = forms[form]["raw_event"]
+    return copy.deepcopy(raw["question"]), raw["hash"]
+
+
+def _answer_request(form: str = "choice_full", *, option=None, text=None, question=None) -> dict:
+    q, h = _f1_question(form)
+    if question is not None:
+        question(q)  # mutates q
+    ev = {"type": "question.answered", "question": q["id"], "hash": h}
+    if option is not None:
+        ev["option"] = option
+    if text is not None:
+        ev["text"] = text
+    return {
+        "op": "answer", "events": [ev],
+        "material": {"kind": "question", "ticket": {"key": "DEMO-0001", "uid": UID}, "question": q},
+    }  # fmt: skip
+
+
+def _ids(c: dict) -> list[str]:
+    return [s["id"] for s in c.get("sections", [])]
+
+
+def _rows(c: dict) -> list[str]:
+    return [r["field"] for r in c.get("fields_changed", [])]
+
+
+def _bound_values(q: dict) -> list[str]:
+    """Every hash-bound string of a raw question (text, why, details, each option's key, title, text, facts, cost)."""
+    out = [q["text"], *(q[k] for k in ("why", "details", "recommended") if k in q)]
+    for o in q.get("options", []):
+        out += [o["key"], o["label"], *([o["text"]] if "text" in o else []), *([o["cost"]] if "cost" in o else [])]
+        out += [x for pair in o.get("facts", []) for x in pair]
+    return out
+
+
+def test_b2_a_choice_answer_has_the_frozen_section_and_row_order():
+    c = build(_answer_request(option="csv"))
+    assert _ids(c) == ["selected", "question", "details", "why"]
+    assert _rows(c) == [
+        "recommended", "an answer in your own words is allowed", "option csv", "option api", "option other",
+        "addressed to (per host)", "blocks the ticket (per host)", "question hash",
+    ]  # fmt: skip
+    sec = {s["id"]: s for s in c["sections"]}
+    assert sec["selected"]["text"] == (
+        "A. Monthly CSV (key csv)\nOne file a month, checked by hand\nEffort: ½ day\nCost: CHF 400\nOption cost: ½ day"
+    )
+    assert sec["details"]["text"] == "If you pick CSV, we import monthly.\n\tAPI means a daily pull."  # full, not cut
+    rows = {r["field"]: r["after"] for r in c["fields_changed"]}
+    assert rows["recommended"] == "A. Monthly CSV (key csv)"  # bound: no "per host"
+    assert rows["option api"] == "B. Tariff API (key api); Daily pull, no manual step; Effort: 2 days"
+    assert rows["option other"] == "C. Keep the old seeds (key other)"  # letters by stored order
+    assert rows["question hash"] == _f1_question("choice_full")[1]
+    assert rows["addressed to (per host)"] == "the ticket owner" and rows["blocks the ticket (per host)"] == "yes"
+    assert c["headline"].startswith("Answer “Which export should feed the tariff tables?") and c["headline"].endswith(
+        "with Monthly CSV"
+    )
+    assert "your choice" not in _rows(c)  # the old label-only row is gone
+
+
+def test_b2_a_note_follows_the_selected_option_and_names_the_choice():
+    c = build(_answer_request(option="api", text="as discussed\nwith Mara"))
+    assert _ids(c) == ["selected", "note", "question", "details", "why"]
+    note = c["sections"][1]
+    assert note["title"] == "Your note; the choice is api" and note["text"] == "as discussed\nwith Mara"
+    assert c["sections"][0]["text"].startswith("B. Tariff API (key api)")
+
+
+def test_b2_other_shows_something_else_and_the_whole_typed_text():
+    long = "Neither: keep the seeds and ask finance. " * 20
+    c = build(_answer_request(text=long))
+    assert _ids(c) == ["selected", "answer", "question", "details", "why"]
+    assert c["sections"][0] == {"id": "selected", "title": "Your choice", "text": "Something else"}
+    assert c["sections"][1]["text"] == long  # unclamped
+    assert c["headline"].endswith("with your own words")
+
+
+def test_b2_a_text_question_renders_answer_only():
+    c = build(_answer_request("text_with_why_and_details", text="Acme Bank"))
+    assert _ids(c) == ["answer", "question", "details", "why"]
+    assert not [r for r in _rows(c) if r.startswith("option ") or r == "recommended"]
+    assert _rows(c)[-1] == "question hash"
+    assert c["sections"][0] == {"id": "answer", "title": "Your answer", "text": "Acme Bank"}
+
+
+@pytest.mark.parametrize(
+    ("form", "option", "text"),
+    [("choice_full", "csv", None), ("choice_full", "other", "a note"), ("choice_full", None, "own words"),
+     ("text_with_why_and_details", None, "Acme Bank")],
+)  # fmt: skip
+def test_b2_the_terminal_plain_view_holds_every_bound_field(form, option, text):
+    p = _answer_request(form, option=option, text=text)
+    q = p["material"]["question"]
+    out = "\n".join(signcontent.text(build(p), signer._clean))
+    for value in [*_bound_values(q), *([text] if text else []), p["events"][0]["hash"]]:
+        for line in value.split("\n"):
+            assert signer._clean(line) in out, f"{line!r} is not in the terminal review"
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda q: q.update(future=1),  # a question key the view does not know
+        lambda q: q["options"][0].update(image="x"),  # an option key it does not know
+        lambda q: q.update(kind="date"),  # a kind without a renderer
+        lambda q: q["options"].append(dict(q["options"][0])),  # the same option key twice
+        lambda q: q["options"][0].update(facts=[["Effort"]]),  # facts that are not [label, value]
+    ],
+)
+def test_b2_an_unknown_or_malformed_question_falls_back_to_the_full_review(change):
+    with pytest.raises(signcontent.PlainUnavailable):
+        build(_answer_request(option="csv", question=change))
+
+
+def test_b2_an_answer_the_kind_does_not_take_falls_back():
+    with pytest.raises(signcontent.PlainUnavailable):
+        build(_answer_request(option="nope"))  # not one of the options
+    with pytest.raises(signcontent.PlainUnavailable):  # Other without allow_other
+        build(_answer_request(text="mine", question=lambda q: q.pop("allow_other")))
+    with pytest.raises(signcontent.PlainUnavailable):  # a text question takes no option
+        build(_answer_request("text_with_why_and_details", option="csv", text="x"))
+    with pytest.raises(signcontent.PlainUnavailable):  # no answer at all
+        build(_answer_request())
+    p = _answer_request(option="csv")
+    p["events"][0]["question"] = "Q2"
+    with pytest.raises(signcontent.PlainUnavailable):
+        build(p)

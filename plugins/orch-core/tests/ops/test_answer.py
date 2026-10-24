@@ -87,3 +87,65 @@ def test_answering_a_question_with_approve_never_approves_a_gate(hws, agent, me)
     assert r.code == 0, r.err
     assert [e["type"] for e in hws.events("1") if e["type"].startswith("gate.")] == []
     assert not hws.view("1").gates["requirements"].approved
+
+
+# --- #1123 B2: the terminal review is the signed View's plain text ---------------------------------------------------
+
+
+def test_the_terminal_review_is_the_signer_view_and_shows_every_bound_field(hws, agent, me):
+    key = make_ticket(agent)
+    ask(agent, "Which export?\nPick one.", "--why", "The seeds are stale.")
+    assert me("answer", "Q1", "--option", "api", "-m", "as discussed", "--ref", key).code == 0
+    review = hws.reviews[-1]
+    q = hws.view("1").questions[0]
+    for needle in (
+        "Your choice", "B. api (key api)", "Your note; the choice is api", "| as discussed", "Question",
+        "| Which export?", "| Pick one.", "Why it was asked", "| The seeds are stale.", "recommended: A. csv (key csv)",
+        "option csv: A. csv (key csv)", "option api: B. api (key api)", f"question hash: {q.hash}",
+    ):  # fmt: skip
+        assert needle in review, f"{needle!r} not in the review:\n{review}"
+    assert review.index("Your choice") < review.index("Your note") < review.index("Question")
+    assert "your choice:" not in review  # the old label-only row is gone
+    assert "(per host)" not in review.split("recommended:")[1].split("\n")[0]  # bound, never the host's word
+
+
+def test_the_terminal_review_holds_every_field_of_the_frozen_questions():
+    """The full #1123 shape (title, text, facts, cost, details, why, recommended, allow_other) from the frozen
+    fixtures, through the same function ``orch answer`` shows the person."""
+    import json
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from orch.ops.commands import answer
+
+    fixture = json.loads((Path(__file__).parents[1] / "vectors/f1/questions.json").read_text())
+    forms = {f["name"]: f["raw_event"] for f in fixture["forms"]}
+    view = SimpleNamespace(key="DEMO-0001", uid="01J9ZK4Q7M3R8T2V6X0B5N1C9D")
+    h = SimpleNamespace(header=lambda v: [f"ticket: {v.key}", ""])
+    cases = [("choice_full", {"option": "csv"}), ("choice_full", {"text": "own words"}),
+             ("text_with_why_and_details", {"text": "Acme Bank"})]  # fmt: skip
+    for form, answer_ in cases:
+        raw = forms[form]
+        q = raw["question"]
+        event = {"type": "question.answered", "question": "Q1", "hash": raw["hash"], **answer_}
+        out = "\n".join(answer._review(h, view, q, event))
+        bound = [q["text"], q["why"], q["details"], raw["hash"], *answer_.values()]
+        for o in q.get("options", []):
+            bound += [
+                o["key"],
+                o["label"],
+                o.get("text", ""),
+                o.get("cost", ""),
+                *(x for f in o.get("facts", []) for x in f),
+            ]
+        for value in bound:
+            for line in value.replace("\t", "⟨U+0009⟩").split("\n"):
+                assert line in out, f"{form}: {line!r} not in the terminal review"
+
+
+def test_wait_labels_a_note_with_the_choice(hws, agent, me):
+    key = make_ticket(agent)
+    ask(agent)
+    assert me("answer", "Q1", "--option", "csv", "-m", "as discussed", "--ref", key).code == 0
+    r = agent("wait", "--ref", key, "--timeout", "1")
+    assert r.code == 0 and "--- your note; the choice is csv [" in r.out and "as discussed" in r.out

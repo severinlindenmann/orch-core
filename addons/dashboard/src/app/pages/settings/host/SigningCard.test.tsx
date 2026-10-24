@@ -2,8 +2,9 @@
 // sent, what is shown, and that the passphrase is never kept in the form after a refusal.
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/api/client'
+import * as sealed from '@/api/sealed'
 import type { ClickCard } from '@/api/click'
 import { ApiError, type Workspace } from '@/api/types'
 import { SigningCard } from './SigningCard'
@@ -38,6 +39,17 @@ async function typeAndSubmit(pw = 'pw') {
   fireEvent.change(screen.getByLabelText(/Your passphrase/), { target: { value: pw } })
   fireEvent.click(screen.getByRole('button', { name: 'Turn on' }))
 }
+
+const REQ = 'hr_01M5PVRB46WS3X8H5X2RQK04S9'
+const DIGEST = 'sha256:' + 'a'.repeat(64)
+let pair: CryptoKeyPair
+let offer: (over?: object) => object
+beforeEach(async () => {
+  pair = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits'])
+  const pk = sealed.b64urlEncode(new Uint8Array(await crypto.subtle.exportKey('raw', pair.publicKey)))
+  offer = (over = {}) => ({ request_id: REQ, view_digest: DIGEST, seal: { v: 1, alg: sealed.ALG, pk, purposes: ['custody.passphrase'] }, expires_in: 300, ...over })
+  vi.spyOn(api, 'custodySeal').mockImplementation(async () => offer() as never)
+})
 
 afterEach(() => {
   cleanup()
@@ -92,8 +104,9 @@ describe('Sign in the dashboard', () => {
     expect(await screen.findByTestId('signing-error')).toHaveTextContent('Try again in 10 min')
   })
 
-  it('turning off asks for a new passphrase twice and moves the key back under it (V3-D31)', async () => {
+  it('turning off asks for a new passphrase twice and sends it sealed, never in the clear (V3-D31, C12)', async () => {
     const sw = vi.spyOn(api, 'switchClick').mockResolvedValue({ ...OFF, custody: 'passphrase' })
+    const seal = vi.spyOn(sealed, 'seal')
     mount(ON)
     fireEvent.click(await openSwitch())
     expect(screen.getByTestId('signing-off-explain')).toHaveTextContent(/protect your key with a new passphrase/)
@@ -106,15 +119,65 @@ describe('Sign in the dashboard', () => {
     fireEvent.change(one, { target: { value: 'short' } })
     fireEvent.change(two, { target: { value: 'short' } })
     expect(submit()).toBeDisabled() // under 14 characters
+    expect(screen.getByTestId('signing-short')).toHaveTextContent('5 of at least 14 characters so far')
     fireEvent.change(one, { target: { value: 'violet harbour 7 kettles' } })
     fireEvent.change(two, { target: { value: 'violet harbour 7 kettle' } })
     expect(screen.getByTestId('signing-mismatch')).toBeInTheDocument()
     expect(submit()).toBeDisabled()
     fireEvent.change(two, { target: { value: 'violet harbour 7 kettles' } })
     fireEvent.click(submit())
-    await waitFor(() => expect(sw).toHaveBeenCalledWith(WS, { on: false, passphrase: 'violet harbour 7 kettles' }))
+    // the fields are empty the moment the click is taken, before anything is sealed or sent
+    expect(one).toHaveValue('')
+    expect(two).toHaveValue('')
+    await waitFor(() => expect(sw).toHaveBeenCalledTimes(1))
+    expect(seal).toHaveBeenCalledWith(expect.any(String), 'violet harbour 7 kettles', { purpose: 'custody.passphrase', workspace_id: WS, request_id: REQ, view_digest: DIGEST })
+    const body = sw.mock.calls[0][1] as Record<string, unknown>
+    expect(Object.keys(body).sort()).toEqual(['on', 'request_id', 'sealed', 'view_digest'])
+    expect(body).toMatchObject({ on: false, request_id: REQ, view_digest: DIGEST })
+    const env = (body.sealed as Record<string, Record<string, unknown>>)['custody.passphrase']
+    expect(Object.keys(env).sort()).toEqual(['alg', 'ct', 'epk', 'v'])
+    expect(JSON.stringify(body)).not.toContain('violet')
     await waitFor(() => expect(screen.getByTestId('signing-state')).toHaveTextContent(/^Off/))
     expect(screen.queryByLabelText('New passphrase again')).toBeNull()
+  })
+
+  it('each try asks the signer for a fresh key (a refused passphrase uses its key up)', async () => {
+    const sw = vi.spyOn(api, 'switchClick').mockRejectedValue(new ApiError(409, { code: 'custody.unavailable', message: 'that passphrase is on the list of common ones', retryable: false }))
+    mount(ON)
+    for (let i = 1; i <= 2; i++) {
+      if (i === 1) fireEvent.click(await openSwitch())
+      fireEvent.change(screen.getByLabelText(/^New passphrase \(at least/), { target: { value: 'password123456' } })
+      fireEvent.change(screen.getByLabelText('New passphrase again'), { target: { value: 'password123456' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Turn off' }))
+      await waitFor(() => expect(sw).toHaveBeenCalledTimes(i))
+      await waitFor(() => expect(screen.getByLabelText(/^New passphrase \(at least/)).not.toBeDisabled())
+    }
+    expect(api.custodySeal).toHaveBeenCalledTimes(2)
+  })
+
+  it('a key the page cannot seal to changes nothing and says so', async () => {
+    const sw = vi.spyOn(api, 'switchClick')
+    vi.spyOn(api, 'custodySeal').mockResolvedValue(offer({ seal: { v: 1, alg: sealed.ALG, pk: 'not-a-key', purposes: ['custody.passphrase'] } }) as never)
+    mount(ON)
+    fireEvent.click(await openSwitch())
+    fireEvent.change(screen.getByLabelText(/^New passphrase \(at least/), { target: { value: 'violet harbour 7 kettles' } })
+    fireEvent.change(screen.getByLabelText('New passphrase again'), { target: { value: 'violet harbour 7 kettles' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Turn off' }))
+    expect(await screen.findByTestId('signing-error')).toHaveTextContent(/could not be locked in this window. Nothing changed/)
+    expect(sw).not.toHaveBeenCalled()
+    expect(screen.getByLabelText(/^New passphrase \(at least/)).toHaveValue('')
+  })
+
+  it('a dashboard that is not opened on this computer says so and nothing is sent', async () => {
+    vi.spyOn(api, 'custodySeal').mockRejectedValue(new ApiError(409, { code: 'human.click_refused', message: 'x', retryable: false }))
+    const sw = vi.spyOn(api, 'switchClick')
+    mount(ON)
+    fireEvent.click(await openSwitch())
+    fireEvent.change(screen.getByLabelText(/^New passphrase \(at least/), { target: { value: 'violet harbour 7 kettles' } })
+    fireEvent.change(screen.getByLabelText('New passphrase again'), { target: { value: 'violet harbour 7 kettles' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Turn off' }))
+    expect(await screen.findByTestId('signing-error')).toHaveTextContent(/opened on this computer. Nothing changed/)
+    expect(sw).not.toHaveBeenCalled()
   })
 
   it('a too-weak new passphrase is reported by core, the fields are cleared and signing is still on', async () => {
@@ -144,6 +207,39 @@ describe('Sign in the dashboard', () => {
     expect(screen.queryByRole('button', { name: /Turn on/ })).toBeNull()
     expect(document.querySelectorAll('input[type=password]')).toHaveLength(0)
     expect(sw).not.toHaveBeenCalled()
+  })
+
+  it('says in plain words that One click switched itself off after idle hours', async () => {
+    mount({ custody: 'convenience', enabled: false, available: false, problem: 'idle', idle_hours: 12, switchable: true })
+    expect(await screen.findByTestId('signing-idle-off')).toHaveTextContent('One click switched itself off after 12 hours without use. Turn it on again to continue.')
+    expect(screen.getByTestId('signing-state')).toHaveTextContent('Off: you approve in the terminal')
+  })
+
+  it('turns One click on again with a plain click after the review and the risk notice, no passphrase', async () => {
+    const sw = vi.spyOn(api, 'switchClick').mockResolvedValue(ON)
+    mount({ custody: 'convenience', enabled: false, available: false, problem: 'idle', idle_hours: 12, switchable: true })
+    fireEvent.click(await openSwitch())
+    expect(screen.getByTestId('signing-resume')).toHaveTextContent('switches itself off again after 12 hours')
+    expect(screen.getByTestId('resume-risk')).toHaveTextContent(/agents running as you/)
+    expect(document.querySelectorAll('input[type=password]')).toHaveLength(0)
+    expect(sw).not.toHaveBeenCalled() // nothing before the click on Turn on
+    fireEvent.click(screen.getByRole('button', { name: 'Turn on' }))
+    await waitFor(() => expect(sw).toHaveBeenCalledWith(WS, { on: true, resume: true }))
+    await waitFor(() => expect(screen.getByTestId('signing-state')).toHaveTextContent(/^On: you approve here/))
+  })
+
+  it('the resume panel and the idle line show the configured limit, also after a manual off', async () => {
+    mount({ custody: 'convenience', enabled: false, available: false, problem: 'disabled', idle_hours: 24, switchable: true })
+    fireEvent.click(await openSwitch())
+    expect(screen.getByTestId('signing-resume')).toHaveTextContent('switches itself off again after 24 hours')
+  })
+
+  it('a refused resume (not a dashboard on this computer) keeps the terminal command', async () => {
+    vi.spyOn(api, 'switchClick').mockRejectedValue(new ApiError(403, { code: 'custody.terminal_needed', message: 'needs this computer', retryable: false }))
+    mount({ custody: 'convenience', enabled: false, available: false, problem: 'idle', idle_hours: 12, switchable: true })
+    fireEvent.click(await openSwitch())
+    fireEvent.click(screen.getByRole('button', { name: 'Turn on' }))
+    expect(await screen.findByTestId('signing-error')).toHaveTextContent('orch host convenience on --workspace INT')
   })
 
   it('the on form shows what moves where, and the field asks for the current passphrase', async () => {

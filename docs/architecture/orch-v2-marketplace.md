@@ -546,7 +546,9 @@ granted add-on today runs as the person, and a third-party add-on with `network`
 publisher's code with the person's files and keys within reach. A review cannot make that safe; isolation can.
 
 Isolation is a property core detects (a configured, working per-add-on user), not a setting the owner or an index can
-claim. (Whether a hub-pinned company marketplace may be allowed earlier is open point 12 in §15.3.) When #287 lands, G-follow-up #929 flips this check; the format and the flow do not change. The local folder used
+claim. (Whether a hub-pinned company marketplace may be allowed earlier is open point 12 in §15.3.) When #287 lands, G-follow-up #929 flips this check; the format and the flow do not change. The slot users, the facts
+`isolation.detect()` reads and the requirements R-M1 to R-M4 (hub policy first, env read-only for the slot, credential
+host-owned on stdin, `{python}` under the slot) are in orch-v2-host.md §13.6 and §13.8. The local folder used
 by `orch addon dev` is not a marketplace source: it works only in workspaces marked `dev`.
 
 ## 11. Who may do what
@@ -672,7 +674,8 @@ The install record (TOFU keys, highest versions seen, origins, the host allow li
 isolation flag are files on the person's own account, and a same-user agent (tier A) can write them. For the official
 shelf that is harmless: the key is pinned in core, the digest binds the bytes, and the grant needs the person's
 signature. For any other marketplace (after #287) TOFU and `allow-host` are *advisory* against such an agent. Isolation
-(#287) MUST be detected from the operating system, never from a same-user-writable flag; a test keeps that.
+(#287) MUST be detected from the operating system, never from a same-user-writable flag; a test keeps that. With slot
+users (orch-v2-host.md §13.8) the credential reaches the add-on on stdin for one call only and this limit closes.
 
 Crash safety: between appending `addon.granted` and the directory rename (step 18) the registry sees `changed` and
 fails closed; recovery at start finishes or rolls the rename back by comparing digests with the last grant

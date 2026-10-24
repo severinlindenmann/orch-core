@@ -1591,6 +1591,8 @@ def append_signed(
                 landed.append(int(done.event["seq"]))
         finally:
             store.append_check = old_check
+    if landed and signed_by is None and any(e.get("auth") == "convenience" for e in events):
+        convenience.touch(service.state_dir, service.workspace_id, service.host_uid)  # #1198 C17: resets the idle clock
     return landed, error
 
 

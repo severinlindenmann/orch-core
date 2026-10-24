@@ -69,6 +69,10 @@ export type HubCommandRequest =
   | { kind: 'share_add' | 'share_remove'; rule: HubRule }
   | { kind: 'share_revoke'; ref: string }
 
+/** `POST /hub/connect` (#1198 C11): tell the hub about a join just signed by click. `idem` is `a_` + a ULID-shaped id. */
+export interface HubConnectRequest { idem: string; invite: string; hub_card: string }
+export interface HubConnected { connected: true; mode: HubMode | null }
+
 export interface HubCommand {
   command: string
   kind: HubCommandRequest['kind']
@@ -103,8 +107,21 @@ export function hubChip(s: HubStatus | null | undefined): HubChip | null {
   return { tone: 'amber', label: 'Hub mode not known', short: 'Hub: unknown', icon: 'alert' }
 }
 
-/** The words the owner must type to start the switch to full mode (A3.2). */
-export const FULL_ACCESS_WORDS = 'full access'
+/**
+ * The hub a pasted hub card names (`{"o": {"hub_id": ...}}`), for the join by click. `id` goes to the signer with the
+ * card; `short` is the form the person compares with what the hub admin says. Only a look: the host verifies the card.
+ */
+export function hubCardId(text: string): { id: string; short: string } | null {
+  try {
+    const card: unknown = JSON.parse(text)
+    const o = card && typeof card === 'object' ? (card as { o?: unknown }).o : null
+    const id = o && typeof o === 'object' ? (o as { hub_id?: unknown }).hub_id : null
+    if (typeof id !== 'string' || !/^[0-9a-f]{8,64}$/.test(id)) return null
+    return { id, short: id.slice(0, 16).replace(/(.{4})(?=.)/g, '$1 ') }
+  } catch {
+    return null
+  }
+}
 
 /**
  * The hub id an invite names (`<hub_id>:<code>`, core#1110), in the short form the person compares: the first 16 hex

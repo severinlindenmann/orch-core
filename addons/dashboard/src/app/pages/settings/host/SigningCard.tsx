@@ -3,13 +3,16 @@
 // who takes over this dashboard does not have); core's signer moves the device key into the key store with it and
 // sets the workspace flag. A key already in the key store with signing off is switched on in the terminal: there is
 // nothing to prove here. Off (V3-D31) takes the authority away AND moves the key back under a NEW passphrase the
-// person types here twice (core accepts it only while signing is on, in the same locked step). Passphrases are sent
+// person types here twice (core accepts it only while signing is on, in the same locked step). The NEW passphrase is
+// sealed in this browser to the signing helper's one-use key (sealed field, purpose custody.passphrase; #1198 C12), so
+// the dashboard server relays ciphertext only; the fields are emptied before anything is sent. Passphrases are sent
 // once and never kept here.
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { Loader2 } from 'lucide-react'
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { api } from '@/api/client'
+import { seal, SealedError } from '@/api/sealed'
 import type { ClickCard, ClickSwitch } from '@/api/click'
 import { convenienceOffCommand, convenienceOnCommand, custodyPassphraseCommand } from '@/api/pairing'
 import { DEV_HOST_SENTENCE, DEV_REFUSED, devRefusedSentence, signerProblem } from '@/api/refusals'
@@ -37,6 +40,7 @@ const MESSAGES: Record<string, string> = {
   'click.contract': 'Update orch-core: its signing helper cannot switch signing yet.',
   'lock.busy': 'Something else is changing signing right now. Try again in a moment.',
   'invalid.input': 'The dashboard refused that request. Nothing changed.',
+  'human.click_refused': 'A new passphrase for your key can only be set from a dashboard opened on this computer. Nothing changed.',
 }
 
 /** A command the person copies into a terminal, or, when the workspace prefix can't be put in one safely (it comes
@@ -83,7 +87,7 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
   const status = useQuery({ queryKey: ['click-status', workspace.id], queryFn: () => api.clickStatus(workspace.id) })
   const card: ClickCard | null = status.data ?? workspace.click ?? null
   const on = !!card && card.enabled
-  const [mode, setMode] = useState<'idle' | 'on' | 'off'>('idle')
+  const [mode, setMode] = useState<'idle' | 'on' | 'off' | 'resume'>('idle')
   const [pass, setPass] = useState('')
   const [pass2, setPass2] = useState('')
   const [busy, setBusy] = useState(false)
@@ -102,7 +106,7 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
   // message and show the new state. The passphrase goes with it (#580).
   const cardState = card ? `${card.custody}|${card.enabled}|${card.available}|${card.switchable !== false}` : 'none'
   const openedOn = useRef<string | null>(null)
-  const open = (m: 'on' | 'off') => {
+  const open = (m: 'on' | 'off' | 'resume') => {
     openedOn.current = card ? cardState : null // opened before the first answer: that answer is not a change
     setMode(m)
   }
@@ -115,20 +119,30 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
   const terminalOn = !!card && !on && card.custody === 'convenience'
   // Off with a key in the key store moves it back under a new passphrase (V3-D31); with another custody it is the flag only.
   const moveBack = !!card && card.custody === 'convenience'
-  const canFlip = owner && !!card && card.problem !== 'dev_host' && card.switchable !== false && !terminalOn
+  const canFlip = owner && !!card && card.problem !== 'dev_host' && card.switchable !== false
   const newOk = [...pass].length >= MIN_NEW_PASSPHRASE && pass === pass2
-  const submit = async (body: ClickSwitch) => {
+  /** `body` is ready to send; for "off with a new passphrase" it is made here from `typed`, sealed to the signer's
+   * one-use key. `typed` is read once; the form fields were emptied before this runs. */
+  const submit = async (body: ClickSwitch, typed?: string) => {
     if (inFlight.current) return
     inFlight.current = true
     setBusy(true)
     setError(null)
     try {
-      const got = await api.switchClick(workspace.id, body)
+      let send = body
+      if (typed !== undefined) {
+        const offer = await api.custodySeal(workspace.id)
+        let text: string | undefined = typed
+        const sealed = await seal(offer.seal.pk, text, { purpose: 'custody.passphrase', workspace_id: workspace.id, request_id: offer.request_id, view_digest: offer.view_digest })
+        text = undefined
+        send = { on: false, request_id: offer.request_id, view_digest: offer.view_digest, sealed: { 'custody.passphrase': sealed } }
+      }
+      const got = await api.switchClick(workspace.id, send)
       qc.setQueryData(['click-status', workspace.id], got)
       void qc.invalidateQueries({ queryKey: ['workspaces'] })
       reset()
     } catch (e) {
-      setError(failure(e, body.on, workspace.prefix))
+      setError(e instanceof SealedError ? { text: 'Your passphrase could not be locked in this window. Nothing changed. Enter it again.' } : failure(e, body.on, workspace.prefix))
       setPass('')
       setPass2('')
       // whatever the answer, the card shows what the signer says now (a stale form after a refusal, orch-9d M2)
@@ -152,7 +166,7 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
             checked={on}
             aria-labelledby="one-click-label"
             disabled={!canFlip || mode !== 'idle'}
-            onCheckedChange={() => open(on ? 'off' : 'on')}
+            onCheckedChange={() => open(on ? 'off' : terminalOn ? 'resume' : 'on')}
           />
         </div>
         <details className="text-[12px] text-text-muted">
@@ -167,6 +181,11 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
               ? `On, but not available now.${card?.problem ? ` ${signerProblem(card.problem)}` : ''} Approve in the terminal.`
               : 'Off: you approve in the terminal with your passphrase.'}
         </p>
+        {card?.problem === 'idle' && (
+          <p data-testid="signing-idle-off" className="text-text-muted">
+            {card.idle_hours ? `One click switched itself off after ${card.idle_hours} hours without use.` : 'One click switched itself off after a while without use.'} Turn it on again to continue.
+          </p>
+        )}
         {card?.problem === 'dev_host' && (
           <p data-testid="signing-dev-host" className="rounded-md border border-danger/40 bg-danger-soft px-3 py-2 text-danger">
             {DEV_HOST_SENTENCE}
@@ -186,12 +205,49 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
             This version of orch cannot switch it here. Update orch, or use the terminal:{' '}
             <Command command={on ? convenienceOffCommand(workspace.prefix) : convenienceOnCommand(workspace.prefix)} what={`orch host convenience ${on ? 'off' : 'on'}`} />
           </p>
-        ) : terminalOn ? (
+        ) : terminalOn && mode === 'idle' ? (
           <p data-testid="signing-terminal-on" className="text-text-muted">
-            Your key is already saved on this computer, so there is no passphrase to check here. Switch it on in the terminal:{' '}
+            Your key is already saved on this computer, so there is no passphrase to check. Use the switch to turn it on after a short review, or in the terminal:{' '}
             <Command command={convenienceOnCommand(workspace.prefix)} what="orch host convenience on" />
           </p>
-        ) : mode === 'idle' ? null : mode === 'on' ? (
+        ) : mode === 'idle' ? null : mode === 'resume' ? (
+          <form
+            className="space-y-2"
+            onSubmit={(e) => {
+              e.preventDefault()
+              void submit({ on: true, resume: true })
+            }}
+          >
+            <dl data-testid="signing-resume" className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
+              <dt className="text-text-muted">Workspace</dt>
+              <dd className="min-w-0 break-words">
+                {workspace.name} ({workspace.prefix})
+              </dd>
+              <dt className="text-text-muted">Change</dt>
+              <dd className="min-w-0">One click approves for you again. Your key stays where it is. It switches itself off again after {card?.idle_hours ? `${card.idle_hours} hours` : 'a while'} without use.</dd>
+            </dl>
+            <p data-testid="resume-risk" className="text-text-muted">{CLICK_RISK}</p>
+            {error && (
+              <p role="alert" id={errorId} data-testid="signing-error" className="text-warning">
+                {error.text}
+                {error.command && (
+                  <>
+                    {' '}
+                    <Command {...error.command} />
+                  </>
+                )}
+              </p>
+            )}
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="ghost" onClick={reset} disabled={busy}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={busy}>
+                {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null} Turn on
+              </Button>
+            </div>
+          </form>
+        ) : mode === 'on' ? (
           <form
             className="space-y-2"
             onSubmit={(e) => {
@@ -251,7 +307,11 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
             className="space-y-2"
             onSubmit={(e) => {
               e.preventDefault()
-              if (moveBack ? newOk : true) void submit(moveBack ? { on: false, passphrase: pass } : { on: false })
+              if (!(moveBack ? newOk : true)) return
+              const typed = pass
+              setPass('') // emptied before anything is sealed or sent: the text lives in this one closure
+              setPass2('')
+              void submit({ on: false }, moveBack ? typed : undefined)
             }}
           >
             {moveBack ? (
@@ -287,12 +347,17 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
                   onChange={(e) => setPass2(e.target.value)}
                   disabled={busy}
                 />
+                {pass !== '' && [...pass].length < MIN_NEW_PASSPHRASE && (
+                  <p data-testid="signing-short" className="text-text-muted">
+                    {[...pass].length} of at least {MIN_NEW_PASSPHRASE} characters so far.
+                  </p>
+                )}
                 {pass2 !== '' && pass !== pass2 && (
                   <p data-testid="signing-mismatch" className="text-warning">
                     Passphrases don't match. Enter the same passphrase in both fields.
                   </p>
                 )}
-                <p className="text-text-muted">The dashboard sends your passphrase once, to protect your key and check its strength. It does not save it.</p>
+                <p className="text-text-muted">Encrypted in this browser before it is sent, so only the signing helper on this computer can read it. It is used once and not saved.</p>
               </>
             ) : (
               <>

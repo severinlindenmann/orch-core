@@ -132,6 +132,7 @@ DETAIL_KEYS: dict[str, dict[str, tuple[str, ...] | str]] = {
     "ticket.key_not_next": {"next_key": KEY},
     "sign.convenience_unavailable": {
         "reason": (
+            "idle",
             "disabled",
             "relay_paired",
             "other_member",

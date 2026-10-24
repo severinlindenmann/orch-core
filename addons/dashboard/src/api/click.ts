@@ -19,6 +19,8 @@ export interface ClickCard {
   enabled: boolean
   available: boolean
   problem?: string
+  /** C17: the configured idle limit in hours, on or off (One click switches itself off after this long without use). */
+  idle_hours?: number
   switchable?: boolean
   /** The device key (`d_` + 32 hex) the switch would move into this computer's key store. */
   device?: string
@@ -27,9 +29,21 @@ export interface ClickCard {
 /**
  * The switch: `on` proves the person's CURRENT passphrase (the key must be in passphrase custody now); `off` turns the
  * flag off and, with a NEW passphrase (V3-D31), moves the key back under it in the same step (core accepts it only
- * while signing is on).
+ * while signing is on). The new passphrase is never sent in the clear: it is sealed to the signer's key (C12).
  */
-export type ClickSwitch = { on: true; passphrase: string } | { on: false; passphrase?: string }
+export type ClickSwitch =
+  | { on: true; passphrase: string }
+  | { on: true; resume: true }
+  | { on: false }
+  | { on: false; request_id: string; view_digest: string; sealed: { 'custody.passphrase': import('./sealed').Envelope } }
+
+/** The signer's one-use key for the NEW passphrase of "off" (#1198 C12, sealed purpose custody.passphrase). */
+export interface CustodySealOffer {
+  request_id: string
+  view_digest: string
+  seal: { v: 1; alg: string; pk: string; purposes: string[] }
+  expires_in: number
+}
 
 export interface ClickPrepared {
   request_id: string

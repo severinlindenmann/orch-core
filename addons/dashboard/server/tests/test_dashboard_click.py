@@ -44,6 +44,7 @@ class Script:
         self.ws, self.enabled, self.available, self.contract = ws, True, True, 3
         self.features: list | None = None  # `status.features`: ["custody"] for a signer with the switch
         self.refuse: dict[str, ClickError] = {}
+        self.offer: dict = {}  # the answer to `custody_off {begin}`
         self.view = {"view": {"risk": RISK, "lines": [CANARY], "op": "approve"}, "view_digest": HASH}
         self.prepared = 0
         self.intents: dict[str, dict] = {}  # the host's idem record: idem -> {binding, request id, state}
@@ -72,6 +73,8 @@ class Script:
             return out
         if op == "stash":
             return {"state": "complete"}
+        if op == "custody_off" and args.get("begin"):
+            return self.offer
         if op in ("custody_on", "custody_off"):
             self.enabled = self.available = op == "custody_on"
             row = {"workspace_id": self.ws, "custody": "convenience", "enabled": self.enabled}
@@ -1782,24 +1785,152 @@ def test_switching_on_sends_the_passphrase_to_the_signer_only(client, token, stu
     assert PASSPHRASE not in caplog.text + out + err + res.text
 
 
-def test_switching_off_needs_no_passphrase_but_may_carry_a_new_one(client, token, stub, script, caplog, capfd):
-    """V3-D31 (narrowing Opus H2 on #539): off without a passphrase is the flag only; a NEW passphrase is relayed to the
-    signer, which decides (only while the switch is on); an explicit null is invalid; never logged or echoed."""
-    script.features = ["custody"]
+SEAL_OFFER = {
+    "request_id": "hr_" + "0" * 25 + "1",
+    "view_digest": HASH,
+    "seal": {"v": 1, "alg": "P256-HKDF-SHA256-A256GCM", "pk": "B" + "Q" * 86, "purposes": ["custody.passphrase"]},
+    "expires_in": 300,
+}
+PASS_ENV = {"v": 1, "alg": "P256-HKDF-SHA256-A256GCM", "epk": "B" + "Q" * 86, "ct": "C" * 363}
+
+
+@pytest.fixture
+def local(monkeypatch):
+    from orch_dashboard.auth import Auth
+
+    monkeypatch.setattr(Auth, "login_kind", lambda self, token: "local", raising=False)
+
+
+def seal_post(client, token, stub):
+    return client.post(url(stub, "custody/seal"), json={}, headers=hdr(token))
+
+
+def sealed_off(**over):
+    return {
+        "on": False,
+        "request_id": SEAL_OFFER["request_id"],
+        "view_digest": HASH,
+        "sealed": {"custody.passphrase": PASS_ENV},
+        **over,
+    }
+
+
+def test_switching_off_is_the_flag_only_and_a_clear_passphrase_is_refused(client, token, stub, script, caplog, capfd):
+    """#1198 C12: off without a sealed passphrase is the flag only; a new passphrase in the clear is invalid and the
+    signer is never asked; an explicit null is invalid too; nothing is logged or echoed."""
+    script.features = ["custody", "sealed_passphrase"]
     res = switch(client, token, stub, {"on": False})
     assert res.status_code == 200 and res.json()["enabled"] is False and res.json()["problem"] == "disabled"
     caplog.set_level(logging.DEBUG)
-    bad = switch(client, token, stub, {"on": False, "passphrase": None})
-    assert bad.status_code == 400 and bad.json()["error"]["code"] == "invalid.input"
-    moved = switch(client, token, stub, {"on": False, "passphrase": PASSPHRASE})
-    assert moved.status_code == 200 and PASSPHRASE not in moved.text
+    for body in ({"on": False, "passphrase": None}, {"on": False, "passphrase": PASSPHRASE}):
+        bad = switch(client, token, stub, body)
+        assert bad.status_code == 400 and bad.json()["error"]["code"] == "invalid.input" and PASSPHRASE not in bad.text
     calls = [c for c in script.clients[-1].calls if c[0].startswith("custody")]
-    assert calls == [
-        ("custody_off", {"workspace_id": stub.ws}),
-        ("custody_off", {"workspace_id": stub.ws, "passphrase": PASSPHRASE}),
-    ]
+    assert calls == [("custody_off", {"workspace_id": stub.ws})]
     out, err = capfd.readouterr()
     assert PASSPHRASE not in caplog.text + out + err
+
+
+def test_c12_the_seal_offer_is_relayed_for_an_owner_on_a_local_session(client, token, stub, script, local):
+    script.features = ["custody", "sealed_passphrase"]
+    script.offer = SEAL_OFFER
+    res = seal_post(client, token, stub)
+    assert res.status_code == 200 and res.json() == SEAL_OFFER
+    assert [c for c in script.clients[-1].calls if c[0] == "custody_off"] == [
+        ("custody_off", {"workspace_id": stub.ws, "begin": True})
+    ]
+
+
+def test_c12_the_seal_offer_needs_a_local_session_and_an_owner(client, token, stub, script, monkeypatch):
+    from orch_dashboard import adapters
+    from orch_dashboard.auth import Auth
+
+    script.offer = SEAL_OFFER
+    script.features = ["custody", "sealed_passphrase"]
+    monkeypatch.setattr(Auth, "login_kind", lambda self, token: "remote", raising=False)
+    assert seal_post(client, token, stub).status_code == 409
+    monkeypatch.setattr(Auth, "login_kind", lambda self, token: "local", raising=False)
+    real = adapters.members
+    monkeypatch.setattr(adapters, "members", lambda d: [m.model_copy(update={"role": "maintainer"}) for m in real(d)])
+    assert seal_post(client, token, stub).json()["error"]["code"] == "role.denied"
+    assert not any(c[0] == "custody_off" for cl in script.clients for c in cl.calls)
+
+
+def test_c12_the_seal_offer_needs_a_signer_that_can(client, token, stub, script, local):
+    script.offer = SEAL_OFFER
+    script.features = ["custody"]
+    assert seal_post(client, token, stub).json()["error"]["code"] == "click.contract"
+    assert not any(c[0] == "custody_off" for cl in script.clients for c in cl.calls)
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"request_id": "x"},
+        {"seal": {"v": 1, "alg": "P256-HKDF-SHA256-A256GCM", "pk": "B" + "Q" * 86, "purposes": ["hub.backup_key"]}},
+        {"seal": {"v": 1, "alg": "P256-HKDF-SHA256-A256GCM", "pk": "short", "purposes": ["custody.passphrase"]}},
+        {"extra": 1},
+    ],
+)
+def test_c12_an_odd_offer_from_the_signer_is_not_passed_on(client, token, stub, script, local, over):
+    script.features = ["custody", "sealed_passphrase"]
+    script.offer = {**SEAL_OFFER, **over}
+    assert seal_post(client, token, stub).status_code == 409
+
+
+def test_c12_off_relays_the_sealed_passphrase_as_ciphertext_only(client, token, stub, script, local, caplog, capfd):
+    script.features = ["custody", "sealed_passphrase"]
+    caplog.set_level(logging.DEBUG)
+    res = switch(client, token, stub, sealed_off())
+    assert res.status_code == 200, res.text
+    assert [c for c in script.clients[-1].calls if c[0] == "custody_off"] == [
+        (
+            "custody_off",
+            {
+                "workspace_id": stub.ws,
+                "request_id": SEAL_OFFER["request_id"],
+                "view_digest": HASH,
+                "sealed": {"custody.passphrase": PASS_ENV},
+            },
+        )
+    ]
+    out, err = capfd.readouterr()
+    assert PASS_ENV["ct"] not in caplog.text + out + err + res.text
+
+
+def test_c12_sealed_off_needs_a_local_session(client, token, stub, script, monkeypatch):
+    from orch_dashboard.auth import Auth
+
+    script.features = ["custody", "sealed_passphrase"]
+    monkeypatch.setattr(Auth, "login_kind", lambda self, token: "remote", raising=False)
+    assert switch(client, token, stub, sealed_off()).status_code == 409
+    assert not any(c[0] == "custody_off" for cl in script.clients for c in cl.calls)
+
+
+def test_c12_sealed_off_needs_a_signer_that_takes_it(client, token, stub, script, local):
+    script.features = ["custody"]  # an older signer would take the passphrase in the clear: never asked
+    assert switch(client, token, stub, sealed_off()).json()["error"]["code"] == "click.contract"
+    assert not any(c[0] == "custody_off" for cl in script.clients for c in cl.calls)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"on": False, "request_id": SEAL_OFFER["request_id"]},
+        {"on": False, "sealed": {"custody.passphrase": PASS_ENV}},
+        sealed_off(extra=1),
+        sealed_off(sealed={"hub.backup_key": PASS_ENV}),
+        sealed_off(sealed={"custody.passphrase": {**PASS_ENV, "v": 2}}),
+        sealed_off(sealed={"custody.passphrase": {**PASS_ENV, "ct": "short"}}),
+        sealed_off(request_id="nope"),
+        {**sealed_off(), "on": True, "passphrase": PASSPHRASE},
+    ],
+)
+def test_c12_sealed_bodies_are_closed(client, token, stub, script, local, body):
+    script.features = ["custody", "sealed_passphrase"]
+    res = switch(client, token, stub, body)
+    assert res.status_code == 400 and res.json()["error"]["code"] == "invalid.input"
+    assert not any(c[0].startswith("custody") for cl in script.clients for c in cl.calls)
 
 
 @pytest.mark.parametrize(
@@ -2617,3 +2748,39 @@ def test_a_sealed_sign_on_a_non_local_session_never_reaches_the_signer(client, t
     res = sign_hub(client, token, stub, sealed={"hub.backup_key": BACKUP_ENV})
     assert res.status_code == 409 and res.json()["error"]["reason"] == "check_failed"
     assert sent_of(backup, "sign") == []
+
+
+def test_c17_a_plain_click_resumes_one_click_from_a_local_dashboard(client, token, stub, script, auth):
+    script.features = ["custody"]
+    script.enabled = script.available = False
+    auth.kinds[token] = "local"
+    res = switch(client, token, stub, {"on": True, "resume": True})
+    assert res.status_code == 200, res.text
+    assert res.json()["enabled"] is True
+    calls = [c for c in script.clients[-1].calls if c[0].startswith("custody")]
+    assert calls == [("custody_on", {"workspace_id": stub.ws, "resume": True})]
+
+
+def test_c17_a_resume_from_any_other_session_keeps_the_terminal_command(client, token, stub, script, auth):
+    script.features = ["custody"]
+    script.enabled = script.available = False
+    for kind in ("remote", "passkey", None):
+        auth.kinds[token] = kind
+        res = switch(client, token, stub, {"on": True, "resume": True})
+        assert res.json()["error"]["code"] == "custody.terminal_needed", res.text
+        assert "orch host convenience on --workspace" in res.json()["error"]["message"]
+    assert not any(c[0] == "custody_on" for cl in script.clients for c in cl.calls)
+
+
+def test_c17_resume_is_on_without_a_passphrase_only(client, token, stub, script, auth):
+    script.features = ["custody"]
+    auth.kinds[token] = "local"
+    sealed = {"request_id": "hr_" + "0" * 26, "view_digest": "0" * 64}
+    for body in (
+        {"on": False, "resume": True},
+        {"on": True, "resume": True, "passphrase": PASSPHRASE},
+        {"on": True, "resume": True, **sealed},
+    ):
+        res = switch(client, token, stub, body)
+        assert res.json()["error"]["code"] == "invalid.input" and PASSPHRASE not in res.text
+    assert not any(c[0] == "custody_on" for cl in script.clients for c in cl.calls)

@@ -104,6 +104,7 @@ export const LAYOUT_SCENARIOS = [
   'signing-on',
   'signing-off',
   'signing-terminal-on',
+  'signing-idle-off', // #1198 C17: One click switched itself off; a plain click turns it on again
   'signing-unsafe',
   'signing-unknown',
   // Core D1 (#582): the dev sandbox host. The DEV SANDBOX badge (normal and with a long workspace name), the alarms list,
@@ -150,8 +151,13 @@ const LONG_WORD = 'U'.repeat(90)
 const PLACEHOLDER_DEVICE = 'd_' + '0123456789abcdef'.repeat(2)
 const SIGNING_LONG_NAME = 'The quarterly orchestration workspace of the very long named organisation ' + LONG_WORD
 const SIGNING_LONG_PREFIX = 'LONGPREFIX-' + 'WORKSPACE-'.repeat(5) + 'END' // 64 characters at most: a safe shell word
+let idleResumed = false // the signing-idle-off fixture after its plain click
 const signingCard = (scenario: LayoutScenario): ClickCard =>
-  scenario === 'signing-dev-host'
+  scenario === 'signing-idle-off'
+    ? idleResumed
+      ? { custody: 'convenience', enabled: true, available: true, switchable: true, device: PLACEHOLDER_DEVICE }
+      : { custody: 'convenience', enabled: false, available: false, problem: 'idle', idle_hours: 12, switchable: true, device: PLACEHOLDER_DEVICE }
+    : scenario === 'signing-dev-host'
     ? { custody: 'passphrase', enabled: false, available: false, problem: 'dev_host', switchable: true, device: PLACEHOLDER_DEVICE }
     : scenario === 'signing-on' || scenario === 'signing-unknown'
     ? { custody: 'passphrase', enabled: false, available: false, problem: 'not_convenience', switchable: true, device: PLACEHOLDER_DEVICE }
@@ -721,6 +727,7 @@ const originals = new Map<string, unknown>()
 
 /** Test cleanup: undo every mock api swap before another test uses the shared client. */
 export function resetLayoutPreview() {
+  idleResumed = false
   const a = api as unknown as Record<string, unknown>
   const r = runsApi as unknown as Record<string, unknown>
   for (const [name, fn] of originals) {
@@ -750,7 +757,7 @@ function install() {
   if (installed) return
   installed = true
   const a = api as unknown as Record<string, (...args: never[]) => unknown>
-  const original = { getIdentity: a.getIdentity, getTicket: a.getTicket, clickStatus: a.clickStatus, switchClick: a.switchClick }
+  const original = { getIdentity: a.getIdentity, getTicket: a.getTicket, clickStatus: a.clickStatus, switchClick: a.switchClick, custodySeal: a.custodySeal }
   const set = (name: string, fn: (...args: never[]) => unknown) => {
     originals.set(name, a[name])
     a[name] = fn
@@ -812,8 +819,18 @@ function install() {
     return hostInfoFor(current)
   })
   set('clickStatus', async (...args: never[]) => (current.startsWith('signing-') ? signingCard(current) : original.clickStatus(...args)))
+  // The sealed new passphrase (C12): the fixture's workspace id is not a real one (the seal binds a 32-hex id), so the
+  // preview shows the refusal a remote dashboard gets; the real seal is covered by SigningCard.test.tsx.
+  set('custodySeal', async (...args: never[]) => {
+    if (!current.startsWith('signing-')) return (original.custodySeal as (...a: never[]) => Promise<object>)(...args)
+    throw new ApiError(409, { code: 'human.click_refused', message: 'fixture', retryable: false })
+  })
   set('switchClick', async (...args: never[]) => {
     if (!current.startsWith('signing-')) return original.switchClick(...args)
+    if (current === 'signing-idle-off') {
+      idleResumed = true
+      return signingCard(current)
+    }
     throw new TypeError('fixture: the connection was lost')
   })
   set('prepareHandoff', async (_ws: string, action: Record<string, unknown>) => {

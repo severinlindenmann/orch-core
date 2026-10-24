@@ -121,7 +121,10 @@ def _parser() -> argparse.ArgumentParser:
     unreg.add_argument("--state", type=Path)
     unreg.add_argument("--run", type=Path)
     conv = sub.add_parser("convenience", help="click-to-sign per workspace (orch-v2-host §0.8.6); off by default")
-    conv.add_argument("switch", choices=("on", "off", "show"))
+    conv.add_argument("switch", choices=("on", "off", "show", "idle"))
+    conv.add_argument(
+        "--hours", type=int, help="idle: hours without a click signature before One click switches itself off (1-168)"
+    )
     conv.add_argument("--workspace", required=False, help="workspace id or prefix (on/off)")
     conv.add_argument("--state", type=Path)
     rdr = sub.add_parser(
@@ -810,6 +813,17 @@ def _convenience(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) 
     if len(match) != 1:
         return write_error(out, False, "not_found", f"no single registered workspace {args.workspace}")
     wid = match[0]["workspace_id"]
+    if args.switch == "idle":  # #1198 C17: the idle limit; takes effect at the next read
+        if args.hours is None:
+            return write_error(out, False, "invalid.input", "--hours is required (1 to 168)")
+        try:
+            convenience.set_idle_hours(state, wid, args.hours, uid)
+        except HostError as exc:
+            return write_error(out, False, exc.code, exc.message, hint=exc.hint)
+        out.write(
+            f"One click switches itself off for {match[0].get('prefix')} ({wid}) after {args.hours} hours without use\n"
+        )
+        return 0
     if here is not None:  # named before acting, so a wrong folder is seen
         out.write(f"this folder belongs to {match[0].get('prefix')} ({wid}): switching click-to-sign off for it\n")
     try:

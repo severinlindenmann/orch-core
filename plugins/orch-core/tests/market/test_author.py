@@ -193,3 +193,19 @@ def test_the_same_digest_through_the_install_fetch_path(repo, monkeypatch):
         == b""
     )
     _ = package_commit
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("extensions.partialclone", "origin"),
+        ("remote.origin.promisor", "true"),
+        ("remote.o.partialclonefilter", "blob:none"),
+    ],
+)
+def test_pack_refuses_a_partial_clone(repo, key, value):
+    commit_files(repo, author.scaffold(NAME))
+    git(repo, "config", key, value)
+    with pytest.raises(author.AuthorError) as e:
+        author.pack(str(repo))
+    assert e.value.code == "invalid.input" and "partial clone" in e.value.message

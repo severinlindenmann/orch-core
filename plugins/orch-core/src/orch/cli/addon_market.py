@@ -26,6 +26,7 @@ review, and records no install."""
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import sys
@@ -175,16 +176,32 @@ def _new(a: argparse.Namespace) -> dict[str, Any]:
     name = a.rest[0]
     files = _author(author.scaffold, name)
     target = Path.cwd() / name
+    made = False
     try:
-        target.mkdir(mode=0o755)
-        for rel, data in sorted(files.items()):
-            fd = os.open(target / rel, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
-            with os.fdopen(fd, "wb") as f:
-                f.write(data)
+        os.mkdir(target, 0o755)
+        made = True
+        # open the new directory ONCE, without following a link, and create every file through that descriptor: a
+        # swap of ./NAME for a link after the mkdir is never followed
+        dir_fd = os.open(target, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            for rel, data in sorted(files.items()):
+                fd = os.open(rel, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644, dir_fd=dir_fd)
+                with os.fdopen(fd, "wb") as f:
+                    f.write(data)
+        except OSError:
+            for rel in sorted(files):  # only what this call created, by name below its own directory descriptor
+                with contextlib.suppress(OSError):
+                    os.unlink(rel, dir_fd=dir_fd)
+            raise
+        finally:
+            os.close(dir_fd)
     except FileExistsError:
         raise _Fail("invalid.input", f"{target} already exists; nothing was written", 2) from None
     except OSError as exc:
-        raise _Fail("invalid.input", f"cannot write {target}: {exc.strerror}", 2) from None
+        if made:
+            with contextlib.suppress(OSError):
+                os.rmdir(target)  # empty again, or not ours any more: rmdir never removes a non-empty directory
+        raise _Fail("invalid.input", f"cannot write {target}: {exc.strerror}; nothing was kept", 2) from None
     return {"name": name, "path": str(target), "files": sorted(files)}
 
 

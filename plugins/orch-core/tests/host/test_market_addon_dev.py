@@ -65,7 +65,7 @@ def test_in_a_dev_workspace_the_signed_grant_installs_the_commit_and_records_no_
         assert st["commit"] == packed.commit and not addon_dir(served, NAME).exists()  # staged is not installed
         h = Human(served)
         prepared = h.prepare("addon.grant", {"name": NAME, "staged": st["stage"]})
-        assert "market" not in prepared["material"] or prepared["material"]["market"] is None
+        assert prepared["material"]["market"]["class"] == "dev-folder"  # labelled, per host, not signed
         assert prepared["events"][0]["package_sha256"] == st["package_sha256"]
         ok(h.submit_res(prepared["request"]["id"], h.sign(prepared).events))
         assert package.read_package(addon_dir(served, NAME)).digest == packed.digest
@@ -224,6 +224,28 @@ def test_pack_and_dev_agree_on_the_digest_of_a_commit_with_crlf_and_filters(tmp_
         st = ok(dev_stage(served, repo))["data"]
         assert st["package_sha256"] == author.pack(str(repo)).digest
         assert subprocess.run(["git", "-C", str(repo), "status", "--porcelain"], capture_output=True).stdout == b""
+    finally:
+        served.close()
+        lab.close()
+
+
+def test_the_dev_review_carries_a_per_host_not_signed_dev_folder_block(tmp_path, repo):
+    from orch.host import signer
+
+    lab, served = sbx(tmp_path)
+    try:
+        st = ok(dev_stage(served, repo))["data"]
+        prepared = Human(served).prepare("addon.grant", {"name": NAME, "staged": st["stage"]})
+        block = prepared["material"]["market"]
+        assert block["class"] == "dev-folder" and block["commit"] == st["commit"] and block["url"] == "local folder"
+        text = signer.render(prepared, lambda w: ("Acme", "DEMO"))
+        assert "DEV add-on from a local folder, not from a marketplace (per host, not signed)" in text
+        assert st["commit"] in text and "marketplace commit" not in text
+        # the strict shape: a dev-folder block with the marketplace note is refused
+        bad = {**block, "source_note": "source as claimed by the marketplace"}
+        with pytest.raises(signer.SignerRefused):
+            signer._market({"market": bad}, prepared["events"])
+        signer._market({"market": block}, prepared["events"])
     finally:
         served.close()
         lab.close()

@@ -1343,6 +1343,26 @@ def _export_package(repo: str, work: str, commit: str, subdir: str | None) -> di
 _LOCAL_REV = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64}|[A-Za-z0-9][A-Za-z0-9._/-]{0,99})(?![\s\S])")
 
 
+def _plain_dot_git(repo: str) -> str:
+    """``realpath(<repo>/.git)`` when ``<repo>/.git`` is a real directory of its own (not a link, not a gitfile) with no
+    alternate object store; else :class:`Unsafe`. A folder whose ``.git`` points elsewhere, or whose objects come from
+    another repository, would export bytes the person did not name."""
+    path = os.path.join(os.path.realpath(repo), ".git")
+    try:
+        st = os.lstat(path)
+    except OSError:
+        raise Unsafe("the folder is not the root of a git repository") from None
+    if not stat.S_ISDIR(st.st_mode):
+        raise Unsafe("the folder's .git is a link or a file; orch reads only a repository with its own .git directory")
+    try:
+        os.lstat(os.path.join(path, "objects", "info", "alternates"))
+    except FileNotFoundError:
+        return path
+    except OSError:
+        raise Unsafe("the repository's object store cannot be checked") from None
+    raise Unsafe("the repository borrows objects from another one (objects/info/alternates); orch does not read it")
+
+
 def market_local_export(repo: str, rev: str | None, subdir: str | None) -> tuple[str, dict[str, bytes]]:
     """``(full commit id, package files)`` of a commit of the LOCAL repository ``repo`` (an absolute path), for
     ``orch addon pack`` and ``orch addon dev`` (V3 G5): the same plumbing-only export as :func:`market_export_package`,
@@ -1362,9 +1382,26 @@ def market_local_export(repo: str, rev: str | None, subdir: str | None) -> tuple
     if rev is not None and (_LOCAL_REV.fullmatch(rev) is None or ".." in rev or rev.endswith((".lock", "/", "."))):
         raise Unsafe("invalid revision")
     own = {"PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin"}
-    gate(repo, own)
+    dot_git = _plain_dot_git(repo)  # before ANY git process: only this folder's own object store is read
+    entries = gate(repo, own)
+    for _scope, key, _value in entries:  # L1: a lazy fetch (partial clone) would make the export touch the network
+        k = key.lower()
+        promisor = k.startswith("remote.") and k.endswith((".promisor", ".partialclonefilter"))
+        if k == "extensions.partialclone" or promisor:
+            raise Unsafe("this repository is a partial clone; orch reads only complete local repositories")
     work = tempfile.mkdtemp(prefix="orch-pack-")  # 0700; HOME and scratch of the git commands below
     try:
+        # RACE NOTE (G5): the gate above and the git processes below are not atomic, as for every gated call. The
+        # window is benign: plumbing only (rev-parse, ls-tree, cat-file --batch) runs no filter, hook or program,
+        # and the command-scope pins in _MARKET_C (core.fsmonitor=false, core.hooksPath=/dev/null, credential.helper=,
+        # no global or system config) override a local key written after the gate. ``work`` is a fresh 0700
+        # directory; ``repo`` is never walked or written.
+        where = [_git_exe(), "-C", repo, *_MARKET_C, "rev-parse", "--path-format=absolute", "--git-common-dir"]
+        dirs = _market_run([*where, "--git-dir"], work, work, timeout=10, cap=MARKET_MAX_PACK)
+        dirs = dirs.decode("utf-8", "surrogateescape")
+        found = dirs.splitlines()
+        if len(found) != 2 or any(os.path.realpath(d) != dot_git for d in found):
+            raise Unsafe("the repository's git directory is not the folder's own .git")
         want = f"{rev or 'HEAD'}^{{commit}}"
         out = _market_run([_git_exe(), "-C", repo, *_MARKET_C, "rev-parse", "--verify", "--quiet", want], work, work,
                           timeout=10, cap=MARKET_MAX_PACK)  # fmt: skip

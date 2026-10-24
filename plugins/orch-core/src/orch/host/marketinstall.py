@@ -56,6 +56,7 @@ __all__ = [
     "OP_CODES",
     "READS",
     "SCHEMAS",
+    "DEV_NOTE",
     "SOURCE_NOTE",
     "after_grant",
     "files_of",
@@ -78,6 +79,7 @@ READS = frozenset({"market.installed"})
 NETWORK_OPS = frozenset({"market.stage", "market.dev_stage"})  # the fetch / the git read: off the worker, no lock held
 HUMAN_ONLY = frozenset({"market.stage", "market.unstage", "market.uninstall", "market.dev_stage"})
 SOURCE_NOTE = "source as claimed by the marketplace"
+DEV_NOTE = "a local folder at this commit (orch addon dev), not a marketplace"
 _STAGE_CODES = (
     "market.actor_refused", "market.state_invalid", "market.malformed", "market.community_unisolated",
     "market.not_allowed", "market.unknown_addon", "market.ambiguous_addon", "market.not_installed", "market.revoked",

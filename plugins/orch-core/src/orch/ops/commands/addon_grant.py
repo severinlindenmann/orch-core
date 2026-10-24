@@ -64,7 +64,12 @@ def _staged(h: Human, ctx: Context, name: str, stage: str) -> tuple[Any, Any, An
     except MarketError as e:
         raise _market_refusal(e) from None
     ctx.prepare.staged = {"stage": stage, "name": name}
-    if doc.get("dev") is True:  # V3 G5: a dev folder has no marketplace, so there is no market block to show
+    if doc.get("dev") is True:  # V3 G5: a local folder at a commit: the block says so, labelled "per host, not signed"
+        ctx.prepare.market = {
+            "url": "local folder", "class": "dev-folder", "commit": doc["commit"],
+            "source_note": marketinstall.DEV_NOTE, "publisher": {"fingerprint": None, "tofu": "unsigned"},
+            "index_version": 0, "stale": False, "summary": None, "replaces": None,
+        }  # fmt: skip
         return doc, package, manifest
     key = doc["publisher_key"]
     ctx.prepare.market = {

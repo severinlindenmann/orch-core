@@ -148,8 +148,9 @@ cannot change a byte), so it equals the digest an install of that commit compute
 meet `market.digest_mismatch`. `pack` refuses a repository whose own config could make git run a program, writes
 nothing, and talks to no host.
 
-`PATH` must be the root of the repository (default: the current directory); a package inside a repository is
-`--subdir`. Without `--git` the entry carries a placeholder URL that you must replace. Two limits to know: the whole
+`PATH` must be the root of the repository (default: the current directory) with its own `.git` directory (not a link,
+a gitfile, a linked worktree, a partial clone or a repository with `objects/info/alternates`); a package inside a
+repository is `--subdir`. Without `--git` the entry carries a placeholder URL that you must replace. Two limits to know: the whole
 commit tree must fit the fetch cap (about 24 MB, no partial clone), and the entry's `publisher` block is not made
 by `pack`: it signs for **one marketplace**, so the marketplace owner adds it (and `expires_at`, the index signature)
 when the marketplace requires them.

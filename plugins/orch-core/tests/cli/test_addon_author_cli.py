@@ -156,3 +156,33 @@ def test_the_top_level_command_reaches_it(here):
     out, err = io.StringIO(), io.StringIO()
     assert orch_main(["addon", "new", "viathecli", "--json"], env={}, stdout=out, stderr=err) == 0
     assert (here / "viathecli" / "orch-addon.json").is_file()
+
+
+def test_new_writes_through_one_directory_descriptor_and_cleans_up_after_a_failure(here, monkeypatch):
+    real = os.open
+    seen: list[bool] = []
+
+    def flaky(path, flags, mode=0o777, *, dir_fd=None):
+        if str(path) == "main.py":
+            seen.append(dir_fd is not None)
+            raise OSError(28, "No space left on device")
+        return real(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "open", flaky)
+    code, out = run(["new", "changelog"])
+    assert code == 2 and "nothing was kept" in json.loads(out)["message"] and seen == [True]
+    assert not (here / "changelog").exists()  # its own new directory, and what it created in it, are gone
+
+
+def test_new_files_are_created_below_a_directory_descriptor(here, monkeypatch):
+    real = os.open
+    rels: list[tuple[str, bool]] = []
+
+    def spy(path, flags, mode=0o777, *, dir_fd=None):
+        if str(path) in ("orch-addon.json", "main.py", "README.md"):
+            rels.append((str(path), dir_fd is not None))
+        return real(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "open", spy)
+    assert run(["new", "changelog"])[0] == 0
+    assert sorted(rels) == [("README.md", True), ("main.py", True), ("orch-addon.json", True)]

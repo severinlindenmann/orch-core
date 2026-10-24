@@ -571,7 +571,7 @@ market_policy = { "markets": [ {"url": <canonical URL>, "class": "official" | "c
 - **Evaluation** (core, orch-core#928) is specified by the `evaluate` vector cases: unlisted market `market.not_allowed`,
   company index without a pinned signature `market.index_unsigned`, `id` or `id@version` blocked `market.blocked`,
   `allow` set and id not in it `market.addon_not_allowed`, publisher key not pinned `market.publisher_unpinned`,
-  capabilities beyond `ceiling` `market.capability_ceiling`; an unreadable or malformed policy is `market.not_allowed`.
+  capabilities beyond `ceiling` `market.capability_ceiling`; an unreadable or malformed policy is `market.not_allowed`. The `run` stage (before each run, from the pinned snapshot) checks block and ceiling for every add-on and, for a marketplace add-on (`market_url` not empty), also that the origin is listed, `allow`, and for a `company` origin that the key its install record holds is still pinned (no key = `market.publisher_unpinned`).
 
 **Selective mode (D80).** The host verifies and stores snapshots, but hub roles grant nothing in a selective
 workspace: it accepts `UK` signatures only from users the owner grants explicitly at the host terminal (by default only

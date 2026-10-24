@@ -29,7 +29,8 @@ class Auth:
         self.files: dict[str, Path] = {}
         self.sessions: dict[str, tuple[float, float]] = {}
         # How each session was opened. Every launch code is made by `orch dashboard` on this computer, so a session is
-        # "local"; a hub or remote sign-in would pass its own kind to `exchange` (the page shows "Log out" only for those).
+        # "local"; a hub or remote sign-in would pass its own kind to `exchange` (the page shows "Log out" only for
+        # those).
         self.kinds: dict[str, str] = {}
         self.setup_sessions: dict[str, str] = {}
         self.attempts = deque()

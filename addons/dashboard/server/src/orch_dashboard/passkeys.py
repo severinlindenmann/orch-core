@@ -24,7 +24,6 @@ from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 
 ALG_ES256 = -7
 ALG_EDDSA = -8
-ALGORITHMS = (ALG_ES256, ALG_EDDSA)
 
 CHALLENGE_BYTES = 32
 STEPUP_LABEL = b"orch/v2/dash-stepup|"
@@ -129,6 +128,15 @@ def b64u_decode(text: str, max_len: int) -> bytes:
 
 def b64u_encode(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+
+def _check_credential_id(credential_id) -> None:
+    if not isinstance(credential_id, bytes) or not MIN_CREDENTIAL_ID <= len(credential_id) <= MAX_CREDENTIAL_ID:
+        raise PasskeyError("credential_id")
+
+
+def _is_user_handle(value) -> bool:
+    return isinstance(value, bytes) and 1 <= len(value) <= MAX_USER_HANDLE
 
 
 def check_rp(rp_id: str, origin: str) -> None:
@@ -350,8 +358,7 @@ def verify_registration(
 ) -> Registration:
     """A `navigator.credentials.create` response, `credential_id` being the raw id the browser reported."""
     check_rp(rp_id, origin)
-    if not isinstance(credential_id, bytes) or not MIN_CREDENTIAL_ID <= len(credential_id) <= MAX_CREDENTIAL_ID:
-        raise PasskeyError("credential_id")
+    _check_credential_id(credential_id)
     _check_client_data(client_data_json, "webauthn.create", challenge, origin)
     if not isinstance(attestation_object, bytes) or len(attestation_object) > MAX_ATTESTATION_OBJECT:
         raise PasskeyError("attestation_size")
@@ -395,25 +402,37 @@ def verify_assertion(
     client_data_json: bytes,
     authenticator_data: bytes,
     signature: bytes,
+    user_handle: bytes | None,
     public_key: bytes,
+    expected_user_handle: bytes,
+    expected_backup_eligible: bool,
     challenge: bytes,
     rp_id: str,
     origin: str,
 ) -> Assertion:
-    """A `navigator.credentials.get` response against the stored COSE `public_key` of `credential_id`.
+    """A `navigator.credentials.get` response against the stored record of `credential_id`.
 
-    For a step-up, `challenge` is `stepup_challenge(nonce, view_digest)`. Finding the credential, its user handle and
-    the single use of the challenge are the caller's (R1-5, R1-6).
+    `user_handle` is what the browser reported (None when it sent none); `public_key`, `expected_user_handle` and
+    `expected_backup_eligible` come from the stored registration. For a step-up, `challenge` is
+    `stepup_challenge(nonce, view_digest)`. Finding the credential by its id and the single use of the challenge are
+    the caller's (R1-5, R1-6).
     """
     check_rp(rp_id, origin)
-    if not isinstance(credential_id, bytes) or not MIN_CREDENTIAL_ID <= len(credential_id) <= MAX_CREDENTIAL_ID:
-        raise PasskeyError("credential_id")
+    _check_credential_id(credential_id)
+    if not _is_user_handle(expected_user_handle) or not isinstance(expected_backup_eligible, bool):
+        raise PasskeyError("stored_record")
+    if user_handle is not None and not (
+        _is_user_handle(user_handle) and hmac.compare_digest(user_handle, expected_user_handle)
+    ):
+        raise PasskeyError("user_handle")
     alg, pub = parse_public_key(public_key)
     _check_client_data(client_data_json, "webauthn.get", challenge, origin)
     data = authenticator_data
     if not isinstance(data, bytes) or len(data) > MAX_AUTH_DATA:
         raise PasskeyError("auth_data_type")
     flags, count = _check_auth_data_head(data, rp_id)
+    if bool(flags & FLAG_BE) != expected_backup_eligible:
+        raise PasskeyError("backup_eligible")  # BE is fixed for a credential's life (WebAuthn L3 §6.1.3)
     if flags & FLAG_AT:
         raise PasskeyError("attested_data_in_assertion")
     _check_extensions(data, 37, flags)

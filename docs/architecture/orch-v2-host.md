@@ -3611,11 +3611,11 @@ login.
 | Phishing site with a look-alike name | The passkey is bound to the RP ID; a different name gets no assertion. |
 | DNS hijack or a mis-issued certificate for the real name | Not ours to stop; reduced by a CAA record (setup prints it as advice) and HSTS. A passkey does not help against a valid certificate for the same name. |
 | A TLS-terminating proxy in between (NetBird proxy, Cloudflare, a provider's load balancer) | Forbidden (10.2). Whoever serves the page's JavaScript can change it, read every typed secret before the sealed field encrypts it and click Sign. The start refuses any front other than the configured local socket. |
-| The enrollment link leaks | Single use, 15 min, first browser wins; 5 wrong codes in total kill every open link. The terminal and the dashboard show "A passkey was added: <name>, <time>" and list all passkeys with Remove; IT can reset over SSH. |
-| Stolen bearer (XSS, an extension, a copied tab) | As in item 8, plus 2 h idle and 12 h absolute life, and step-up (10.5) for the big actions, bound to the review shown. |
+| The enrollment link leaks | At least 128 random bits, single use, 15 min, first browser wins; 5 wrong codes in total kill every open link. Anyone on the internet can use that to kill open links without logging in (accepted: a denial of service only; IT makes a new link over SSH). The terminal and the dashboard show "A passkey was added: <name>, <time>" and list all passkeys with Remove; IT can reset over SSH. |
+| Stolen bearer (XSS, an extension, a copied tab) | As in item 8, plus 2 h idle and 12 h absolute life, and step-up (10.5) for each listed action: one assertion per op, bound to that op's review. |
 | Stolen laptop with a passkey | User verification is required (device unlock). Remove the passkey from another device or over SSH. |
-| Lockout by brute-force traffic | Per-source buckets, so an attacker's traffic does not use the owner's budget; the SSH tunnel stays. |
-| Replay of a WebAuthn response | Single-use server-side challenge, 120 s, bound to its ceremony; a step-up challenge is also bound to `view_digest` (10.5). |
+| Lockout by brute-force traffic | Per-source buckets (IPv4 /32, IPv6 /64), so one source's traffic does not use the owner's budget. A distributed flood that reaches the global CPU cap can delay remote login; then the SSH tunnel is the fallback. |
+| Replay of a WebAuthn response | Single-use challenge, 120 s, bound to its ceremony. A step-up nonce is minted, held and consumed by the click signer and bound to the request and its `view_digest` (10.5), so not even the dashboard server can replay one. |
 | Cloned passkey | The sign counter is not relied on (synced passkeys report 0); it is recorded and shown only. |
 | Host header or listener confusion | The policy belongs to the listener (10.2); no header switches it. |
 | Another local user | Cannot open the front socket (peer UID check); reaches loopback HTTP and needs a bearer, as today. |
@@ -3658,15 +3658,18 @@ login.
   front**: they are a local credential.
 - **Remote session kind**: 12 h absolute, 2 h idle (local keeps 24 h / 12 h). Logout ends it at once; Settings has "Log
   out everywhere"; a restart of the dashboard ends every session.
-- **Rate limits** for passkey login: 20 per minute per client address and 120 per minute in total, in buckets of their
-  own (the loopback launch limiter stays as it is, so internet traffic cannot lock out the local owner).
-- **Enrollment.** `orch remote enable` (and later "Add a device" in Settings, a step-up action) prints or shows one
-  link `https://<name>/#enroll=<code>`: single use, 15 min, the first browser that completes a registration wins; 5
-  wrong codes in total kill every open link (`enroll.expired`). The fragment never reaches a server log.
+- **Rate limits** for passkey login, in buckets of their own: 20 per minute per source, the source being the client's
+  IPv4 address (/32) or its IPv6 /64 prefix. A global cap of 600 per minute only guards the CPU, far above any single
+  source; when a distributed flood reaches it, remote login waits and the SSH tunnel is the fallback. The loopback
+  launch limiter stays as it is, so internet traffic cannot lock out the local owner.
+- **Enrollment.** `orch remote enable` (and later "Add a device" in Settings, a step-up action) prints or shows one link
+  `https://<name>/#enroll=<code>`: the code is at least 128 random bits (`secrets.token_urlsafe(16)` or longer) and is
+  compared in constant time; single use, 15 min, the first browser that completes a registration wins; 5 wrong codes in
+  total kill every open link (`enroll.expired`). The fragment never reaches a server log.
 - **The passkey store** `<state>/dashboard/passkeys.json`: mode 0600, owned by the person UID, holding per passkey the
-  credential id, the user handle, the COSE public key, its algorithm, a name ("MacBook, Chrome"), created, last used and the last sign
-  count. No secret is in it, but writing it adds a login, so it is read with the `O_NOFOLLOW`, owner and mode checks of
-  the pins file and fails closed.
+  credential id, the user handle, the COSE public key, its algorithm, the backup-eligible flag of the registration, a
+  name ("MacBook, Chrome"), created, last used and the last sign count. No secret is in it, but writing it adds a login,
+  so it is read with the `O_NOFOLLOW`, owner and mode checks of the pins file and fails closed.
 - **Pre-login surface**: the app shell and its assets, `/auth/passkey/*` and `/auth/enroll/*`. Nothing else answers
   without a remote session; `/setup` and `/api/setup/*` need a remote session (the setup token stays, on top).
 - **Terminals are off remotely by default.** `/term` on the front needs the bearer ticket, Origin `https://<name>`
@@ -3678,8 +3681,8 @@ cross-site request carries nothing; exact Origin; JSON bodies only; no CORS; `fr
 stays a plain click after the shown review (owner decision of 24 Oct 2026); the listed few add a fingerprint touch
 (10.5), never typing.
 
-**10.5 Step-up (owner decision of 24 Oct 2026, "all as recommended": exactly this list).** On a remote session
-these actions need a passkey assertion bound to the review shown, made within the last 10 minutes:
+**10.5 Step-up (owner decision of 24 Oct 2026, "all as recommended": exactly this list).** On a remote session each of
+these actions needs its own passkey assertion:
 
 1. turning One click on (the custody switch of item 3a);
 2. a hub join or a hub mode change;
@@ -3689,13 +3692,26 @@ these actions need a passkey assertion bound to the review shown, made within th
 6. adding a passkey or a device (the "Add a device" link);
 7. removing a passkey.
 
-Everything else, including turning things off and turning remote access off, is a plain click. The step-up WebAuthn
-challenge is `SHA-256("orch/v2/dash-stepup|" || nonce || vd)`, where `nonce` is 32 fresh random bytes kept server-side
-for 120 s, single use, and `vd` is the 32 raw bytes of the request's `view_digest` (`sha256:<hex>`). The server answers
-a listed op without a fresh step-up with `passkey.stepup_required`. The click signer refuses a listed op from a remote
-session unless the server hands it the assertion, which the signer verifies itself against the passkey store and the
-`view_digest` of the View it built (R1-6), so a server bug cannot skip the check. The step-up rule does not apply on
-loopback, where the person is at the machine or behind the SSH tunnel.
+Everything else, including turning things off and turning remote access off, is a plain click. The step-up rule does not
+apply on loopback, where the person is at the machine or behind the SSH tunnel.
+
+- **One assertion per op, no elevation.** A step-up covers exactly one listed op: it is made for that op's View, used
+  once when that op is signed, and at most 120 s after its challenge was issued. There is no session-wide "recently
+  verified" state (no `last_uv_at`): a step-up never covers another op, another View or a later click.
+- **The signer owns the nonce (R1-6).** When the sign panel shows the View of a listed op on a remote session, the
+  dashboard server asks the click signer for a step-up challenge for that request. The signer draws `nonce` (32 random
+  bytes), keeps `(nonce, request_id, view_digest, issued at)` in memory (monotonic clock) and returns the challenge
+  `SHA-256("orch/v2/dash-stepup|" || nonce || vd)`, where `vd` is the 32 raw bytes of the `view_digest` (`sha256:<hex>`)
+  of the View it built. The browser runs `navigator.credentials.get` with that challenge; the server passes the response
+  on with the sign call.
+- **The signer checks it.** It signs a listed op from a remote session only if the nonce is one it issued for this
+  request and this View, unused and issued at most 120 s ago, and the assertion verifies (10.6) against the passkey
+  store, which the signer reads itself with the store's checks. It marks the nonce used before anything else, whatever
+  the outcome; a restart forgets every nonce, so a new challenge is needed. Otherwise the answer is
+  `passkey.stepup_required`. So a buggy server, or an attacker who only drives its HTTP workflow, cannot replay an old
+  assertion, even when two Views of the same op have the same `view_digest` (code execution as the person is item 0's
+  accepted boundary). The server may check the assertion too, for an early answer; the signer's check
+  is the one that counts.
 
 **10.6 WebAuthn verification contract (`orch_dashboard.passkeys`, vectors `addons/dashboard/server/tests/vectors/webauthn_*.json`).**
 An own small verifier on `cryptography` (already a core dependency), not the `webauthn` PyPI package: it would add
@@ -3723,13 +3739,14 @@ with an internal reason that is logged, never sent before login.
 - **attestationObject**: a map with exactly `fmt`, `attStmt` and `authData`; `fmt` must be `"none"` and `attStmt` an
   empty map. The credential id in it must equal the id the browser reported.
 - **COSE keys**, exactly these labels: ES256 `{1: 2, 3: -7, -1: 1, -2: x(32), -3: y(32)}`, a point on P-256; EdDSA
-  `{1: 1, 3: -8, -1: 6, -2: x(32)}`, Ed25519, not one of the 8 small-order encodings. Any other algorithm, curve or
-  label is refused.
+  `{1: 1, 3: -8, -1: 6, -2: x(32)}`, Ed25519, not one of the 14 encodings of small-order points (libsodium's blocklist,
+  non-canonical spellings included). Any other algorithm, curve or label is refused.
 - **Signature** over `authenticatorData || SHA-256(clientDataJSON)`: ES256 in strict DER (re-encoding must give the same
   bytes), EdDSA as 64 raw bytes.
-- **Ceremonies.** Login and enrollment challenges are 32 random bytes; the step-up challenge is the hash of 10.5. Each is
-  stored server-side with its ceremony kind, 120 s, single use (R1-5). The credential is found by its id; a `userHandle`
-  in the response, if present, must equal the stored one.
+- **Ceremonies.** Login and enrollment challenges are 32 random bytes, stored server-side with their ceremony kind, 120
+  s, single use (R1-5); step-up nonces are the signer's (10.5). The caller finds the credential by its id; the verifier
+  then checks that a `userHandle` in the response, if present, equals the stored one, and that the BE flag equals the
+  one stored at registration (it never changes for a credential).
 - The hub's planned `webauthn` channel contract (orch-hub #908) should reuse these vectors; core imports no hub code
   (D79).
 

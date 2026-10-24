@@ -243,8 +243,25 @@ def registration_cases():
 # --- assertion -----------------------------------------------------------------------------------------------------
 
 
+USER_HANDLE = hashlib.sha256(b"r1-2 user").digest()
+OTHER_USER = hashlib.sha256(b"r1-2 other user").digest()
+SAME = object()
+
+
 def asr_case(
-    name, expect, *, key="es", flags=UP | UV, cd=None, ad=None, sig=None, sign_key=None, challenge=CHALLENGE, count=7
+    name,
+    expect,
+    *,
+    key="es",
+    flags=UP | UV,
+    cd=None,
+    ad=None,
+    sig=None,
+    sign_key=None,
+    challenge=CHALLENGE,
+    count=7,
+    user_handle=SAME,
+    expected_be=None,
 ):
     cose = cbor(cose_es()) if key == "es" else cbor(cose_ed())
     cred = CRED_ES if key == "es" else CRED_ED
@@ -264,6 +281,10 @@ def asr_case(
         "authenticator_data": b64u(ad),
         "signature": b64u(sig),
         "challenge": b64u(challenge),
+        # What the browser reported (null: none) and what the store holds for this credential.
+        "user_handle": b64u(USER_HANDLE if user_handle is SAME else user_handle) if user_handle is not None else None,
+        "expected_user_handle": b64u(USER_HANDLE),
+        "expected_backup_eligible": bool((ad[32] if len(ad) > 32 else 0) & BE) if expected_be is None else expected_be,
         "expect": expect,
         **({"sign_count": count} if expect == "ok" else {}),
     }
@@ -295,6 +316,12 @@ def assertion_cases():
         asr_case("eddsa", "ok", key="ed"),
         asr_case("es256 high-s accepted", "ok", sig=high_s),
         asr_case("synced passkey count 0", "ok", flags=UP | UV | BE | BS, count=0),
+        asr_case("no userHandle in the response", "ok", user_handle=None),
+        asr_case("userHandle of another user", "user_handle", user_handle=OTHER_USER),
+        asr_case("empty userHandle", "user_handle", user_handle=b""),
+        asr_case("userHandle too long", "user_handle", user_handle=bytes(65)),
+        asr_case("BE set now, registered without", "backup_eligible", flags=UP | UV | BE, expected_be=False),
+        asr_case("BE clear now, registered with", "backup_eligible", expected_be=True),
         asr_case("extension output", "ok", ad=auth_head(UP | UV | ED, 7) + cbor({"credProtect": 2})),
         asr_case(
             "chrome extra clientData key",

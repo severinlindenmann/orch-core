@@ -37,7 +37,10 @@ def run_assertion(v, case, challenge=None):
         client_data_json=d(case["client_data_json"]),
         authenticator_data=d(case["authenticator_data"]),
         signature=d(case["signature"]),
+        user_handle=None if case["user_handle"] is None else d(case["user_handle"]),
         public_key=d(case["public_key"]),
+        expected_user_handle=d(case["expected_user_handle"]),
+        expected_backup_eligible=case["expected_backup_eligible"],
         challenge=d(case["challenge"]) if challenge is None else challenge,
         rp_id=v["rp_id"],
         origin=v["origin"],
@@ -314,3 +317,26 @@ def test_registration_rejects_each_small_order_key():
         with pytest.raises(PasskeyError) as e:
             run_registration(REG, {**GOOD_REG, "attestation_object": b64u_encode(att)})
         assert e.value.reason == "cose_eddsa_small_order"
+
+
+@pytest.mark.parametrize(
+    "stored",
+    [
+        {"expected_user_handle": ""},
+        {"expected_user_handle": b64u_encode(bytes(65))},
+        {"expected_backup_eligible": 0},
+        {"expected_backup_eligible": None},
+    ],
+)
+def test_a_bad_stored_record_fails_closed(stored):
+    with pytest.raises(PasskeyError) as e:
+        run_assertion(ASR, {**GOOD_ASR, **stored})
+    assert e.value.reason == "stored_record"
+
+
+def test_user_handle_and_backup_eligibility_are_enforced_by_the_verifier():
+    names = {c["name"]: c["expect"] for c in ASR["cases"]}
+    assert names["userHandle of another user"] == "user_handle"
+    assert names["no userHandle in the response"] == "ok"
+    assert names["BE set now, registered without"] == "backup_eligible"
+    assert names["BE clear now, registered with"] == "backup_eligible"

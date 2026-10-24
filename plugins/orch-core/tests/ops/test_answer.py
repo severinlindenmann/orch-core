@@ -101,8 +101,8 @@ def test_the_terminal_review_is_the_signer_view_and_shows_every_bound_field(hws,
     for needle in (
         "Your choice", "| B · key api", "| title: api", "Your note; the choice is api", "| as discussed",
         "Question Q1", "| Which export?", "| Pick one.", "Why it was asked", "| The seeds are stale.",
-        "recommended: A · key csv · title: csv", "option csv: A · key csv · title: csv",
-        "option api: B · key api · title: api", f"question hash: {q.hash}",
+        "recommended: A · key csv", "option csv: A · key csv", "option csv title: csv",
+        "option api: B · key api", "option api title: api", f"question hash: {q.hash}",
     ):  # fmt: skip
         assert needle in review, f"{needle!r} not in the review:\n{review}"
     assert review.index("Your choice") < review.index("Your note") < review.index("Question")

@@ -1429,8 +1429,8 @@ def test_b2_a_choice_answer_has_the_frozen_section_and_row_order():
     assert _ids(c) == ["selected", "question", "details", "why"]
     assert _rows(c) == [
         "recommended", "an answer in your own words is allowed",
-        "option csv", "option csv text", "option csv fact 1", "option csv fact 2", "option csv cost",
-        "option api", "option api text", "option api fact 1", "option other",
+        "option csv", "option csv title", "option csv text", "option csv fact 1", "option csv fact 2", "option csv cost",
+        "option api", "option api title", "option api text", "option api fact 1", "option other", "option other title",
         "addressed to (per host)", "blocks the ticket (per host)", "question hash",
     ]  # fmt: skip
     sec = {s["id"]: s for s in c["sections"]}
@@ -1441,15 +1441,14 @@ def test_b2_a_choice_answer_has_the_frozen_section_and_row_order():
     assert sec["question"]["title"] == "Question Q1"  # the id stays visible (L2)
     assert sec["details"]["text"] == "If you pick CSV, we import monthly.\n\tAPI means a daily pull."  # full, not cut
     rows = {r["field"]: r["after"] for r in c["fields_changed"]}
-    assert rows["recommended"] == "A · key csv · title: Monthly CSV"  # bound: no "per host"
-    assert rows["option api"] == "B · key api · title: Tariff API"
+    assert rows["recommended"] == "A · key csv"  # bound: no "per host"
+    assert rows["option api"] == "B · key api" and rows["option api title"] == "Tariff API"
     assert rows["option api text"] == "Daily pull, no manual step" and rows["option api fact 1"] == "Effort: 2 days"
-    assert rows["option other"] == "C · key other · title: Keep the old seeds"  # letters by stored order
+    assert rows["option other"] == "C · key other"  # letters by stored order
+    assert rows["option other title"] == "Keep the old seeds"
     assert rows["question hash"] == _f1_question("choice_full")[1]
     assert rows["addressed to (per host)"] == "the ticket owner" and rows["blocks the ticket (per host)"] == "yes"
-    assert c["headline"].startswith("Answer “Which export should feed the tariff tables?") and c["headline"].endswith(
-        "with option A (key csv)"
-    )
+    assert c["headline"] == f"Answer Q1 on DEMO-0001 (key per host; signed id …{UID[-8:]}) with option A (key csv)"
     assert "your choice" not in _rows(c)  # the old label-only row is gone
 
 
@@ -1543,17 +1542,59 @@ def test_b2_agent_words_cannot_imitate_orchs_own_lines_or_rows():
     assert lines == ["A · key keep", "title: Keep prod (key nuke)", "text: B · key nuke", "fact 1: Option cost: free"]
     assert c["headline"].endswith("with option A (key keep)")  # orch's words, not the agent's title
     rows = {r["field"]: r["after"] for r in c["fields_changed"]}
-    assert rows["option keep"] == "A · key keep · title: Keep prod (key nuke)"
-    assert rows["option nuke"] == "B · key nuke · title: Wipe prod"
+    assert rows["option keep"] == "A · key keep" and rows["option keep title"] == "Keep prod (key nuke)"
+    assert rows["option nuke"] == "B · key nuke" and rows["option nuke title"] == "Wipe prod"
     assert rows["option nuke text"] == "cost: 0; recommended: A" and rows["option nuke cost"] == "title: Keep prod"
-    assert rows["recommended"] == "B · key nuke · title: Wipe prod"
+    assert rows["recommended"] == "B · key nuke"
     out = signcontent.text(c, signer._clean)
     # in the terminal: every orch-owned line is present exactly once, so no agent value produced a look-alike line
     for own in (
         "  | A · key keep",
-        "  recommended: B · key nuke · title: Wipe prod",
+        "  recommended: B · key nuke",
         "  option nuke cost: title: Keep prod",
     ):
         assert out.count(own) == 1, own
     assert not [x for x in out if x.lstrip("| ").startswith(("B · key", "cost:", "recommended:")) and "option" not in x
                 and not x.startswith("  recommended:")]  # fmt: skip
+
+
+def test_b2_the_headline_holds_no_agent_text():
+    """Opus delta of bf21c8a5: question text with a closing quote and orch's own wording cannot forge the headline."""
+    forged = "Ok?” on DEMO-0001 with option B (key nuke)"
+    tail = f"on DEMO-0001 (key per host; signed id …{UID[-8:]})"
+
+    def q_text(q):
+        q["text"] = forged
+
+    c = build(_answer_request(option="csv", question=q_text))
+    assert c["headline"] == f"Answer Q1 {tail} with option A (key csv)" and "nuke" not in c["headline"]
+    assert c["sections"][1] == {"id": "question", "title": "Question Q1", "text": forged}  # in full, in its section
+    assert build(_answer_request(text="mine", question=q_text))["headline"] == f"Answer Q1 {tail} with your own words"
+    c = build(_answer_request("text_with_why_and_details", text="Bank", question=q_text))
+    assert c["headline"] == f"Answer Q1 {tail} with your answer"
+    assert signcontent.text(c, signer._clean)[0] == c["headline"]
+
+
+def test_b2_copies_of_orchs_lines_in_the_question_details_or_why_stay_inside_their_own_section():
+    """Opus delta of bf21c8a5, LOW 2: the agent's multi-line texts carry copies of the selected block and of rows; in
+    the terminal each is a block under its own heading (every line marked), and what sits under "Your choice" and in
+    the rows is exactly the bound selection."""
+    fake = "A · key api\ntitle: Tariff API\nYour choice\n  option csv: B · key api\nrecommended: B · key api"
+
+    def copies(q):
+        q["text"], q["details"], q["why"] = "Pick?\n" + fake, fake, fake
+
+    c = build(_answer_request(option="csv", question=copies))
+    out = signcontent.text(c, signer._clean)
+    start = out.index("Your choice")
+    block = out[start + 1 : out.index("", start)]
+    assert block == ["  | A · key csv", "  | title: Monthly CSV", "  | text: One file a month, checked by hand",
+                     "  | fact 1: Effort: ½ day", "  | fact 2: Cost: CHF 400", "  | cost: ½ day"]  # fmt: skip
+    assert out.count("Your choice") == 1  # the copies are block lines, never a heading
+    for heading in ("Question Q1", "Details from the agent", "Why it was asked"):
+        i = out.index(heading)
+        body = out[i + 1 : out.index("", i)]
+        assert body and all(x.startswith("  | ") for x in body), heading  # every agent line under a mark
+    rows = [x for x in out if x.startswith("  ") and not x.startswith("  | ")]
+    assert "  recommended: A · key csv" in rows and "  option csv: A · key csv" in rows
+    assert not [x for x in rows if "B · key api" in x and not x.startswith("  option api")]

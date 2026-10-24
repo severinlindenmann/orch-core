@@ -140,11 +140,6 @@ def one(value: Any) -> str:
     return " ⏎ ".join(_s(value).replace("\r\n", "\n").replace("\r", "\n").split("\n"))
 
 
-def _line1(value: Any, limit: int = 80) -> str:
-    one = " ".join(_s(value).split())
-    return one if len(one) <= limit else one[: limit - 1] + "…"
-
-
 def _title(sid: str) -> str:
     return sid.replace("_", " ").replace(".", " ").capitalize()
 
@@ -1110,21 +1105,19 @@ def _question(material: Mapping[str, Any], events: list[Mapping[str, Any]], tick
         sections.append({"id": "details", "title": "Details from the agent", "text": q["details"]})
     if "why" in q:
         sections.append({"id": "why", "title": "Why it was asked", "text": q["why"]})
-    out["headline"] = f"Answer “{_line1(q['text'], 60)}” on {_ref(ticket)} with {answer}"
+    # orch's words only (Opus delta of bf21c8a5): no agent text in the headline, the question is in its own section
+    out["headline"] = f"Answer {q['id']} on {_ref(ticket)} with {answer}"
     out["sections"] = sections
 
     out["fields_title"] = "About this question"  # facts of the question, not changes: no "- ->" before values
     if "recommended" in q:  # bound by the question hash: an ordinary row, never "per host"
         r = q["recommended"]
-        _row(
-            out, "recommended", f"{_option_head(index[r], options[index[r]])} · title: {_s(options[index[r]]['label'])}"
-        )
+        _row(out, "recommended", _option_head(index[r], options[index[r]]))  # its title is in the option's rows
     if "allow_other" in q:
         _row(out, "an answer in your own words is allowed", "yes")
-    for i, o in enumerate(options):  # one row per option (letter, key, title), then one sub-row per other agent field
-        parts = _option_parts(o)
-        _row(out, f"option {_s(o['key'])}", f"{_option_head(i, o)} · title: {parts[0][1]}")
-        for name, value in parts[1:]:
+    for i, o in enumerate(options):  # one row per option (letter and key only), then one sub-row per agent field
+        _row(out, f"option {_s(o['key'])}", _option_head(i, o))
+        for name, value in _option_parts(o):
             _row(out, f"option {_s(o['key'])} {name}", value)
     # who it is addressed to and whether it blocks are routing, the host's word: the question hash does not bind them
     _row(out, "addressed to (per host)", "the ticket owner" if q["to"] == "ticket_owner" else _s(q["to"]))

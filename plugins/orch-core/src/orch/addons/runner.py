@@ -231,16 +231,23 @@ def _forms(secret: str | None) -> tuple[str, ...]:
     return () if not secret else (secret, json.dumps(secret)[1:-1])
 
 
-def _redact(text: str, secret: str | None, truncated: bool = False) -> str:
-    """Every full copy of ``secret`` (raw and JSON-escaped) becomes ``[redacted]``. When ``truncated`` (the collection
-    stopped at its cap, so a copy may have been cut), a trailing text that is a prefix of any form is dropped too."""
-    forms = _forms(secret)
-    for form in forms:
-        text = text.replace(form, "[redacted]")
-    if truncated:
-        longest = max((k for f in forms for k in range(len(f) - 1, 0, -1) if text.endswith(f[:k])), default=0)
-        text = text[: len(text) - longest]
-    return text
+def _strip_partial(raw: bytes, forms: Sequence[bytes]) -> bytes:
+    """Drop a trailing run of bytes that is a prefix of any form (a copy cut short, whatever cut it)."""
+    longest = max((k for f in forms for k in range(len(f) - 1, 0, -1) if raw.endswith(f[:k])), default=0)
+    return raw[: len(raw) - longest]
+
+
+def _safe_text(raw: bytes, secret: str | None, cap: int) -> str:
+    """The ONE way child stderr becomes text: from raw bytes, with the secret's forms (raw and JSON-escaped) and nothing
+    else. Whole copies become ``[redacted]``; a trailing partial copy is always dropped (the pipe may have ended early,
+    been cut, killed or timed out); then the text is cut to ``cap`` bytes and a partial copy dropped again; decoding
+    last, so a split UTF-8 character can only become U+FFFD."""
+    forms = [f.encode() for f in _forms(secret)]
+    for f in forms:
+        raw = raw.replace(f, b"[redacted]")
+    raw = _strip_partial(raw, forms)
+    raw = _strip_partial(raw[:cap], forms)
+    return raw.decode("utf-8", errors="replace")
 
 
 def _holds(doc: Any, secret: str) -> bool:
@@ -361,8 +368,7 @@ def call(
         slack = max((len(f.encode()) for f in _forms(secret)), default=0)  # a cut must not leave a prefix of it
         out, err, overflow = _converse(proc, request, deadline, limits, slack)
         _kill(proc)  # the group is killed; a process that left it (setsid) is not tracked in P1
-        # redact first (whole copies), then drop a trailing partial copy, and only then cut to the cap
-        errtext = _redact(_text(err), secret, len(err) >= limits.max_stderr + slack)[: limits.max_stderr]
+        errtext = _safe_text(err, secret, limits.max_stderr)
         if overflow == "timeout":
             raise RunnerError("addon.timeout", f"no complete answer within {limits.timeout:g} s", errtext)
         if overflow == "output":
@@ -442,10 +448,6 @@ def _converse(
         return bytes(out), bytes(err), ""
     finally:
         sel.close()
-
-
-def _text(raw: bytes) -> str:
-    return raw.decode("utf-8", errors="replace")
 
 
 def _parse(raw: bytes, stderr: str) -> Any:

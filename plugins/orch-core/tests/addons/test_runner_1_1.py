@@ -206,19 +206,44 @@ def test_stderr_is_redacted_when_the_call_fails(tmp_path):
     assert SECRET not in e.stderr and "[redacted]" in e.stderr
 
 
-def test_redact_secret_straddling_the_collection_boundary_at_every_offset():
-    forms = (SECRET, json.dumps(SECRET)[1:-1])
-    for secret in (SECRET, 'a"b\\c-secret'):
-        slack = max(len(f) for f in runner._forms(secret))  # noqa: SLF001
-        for cap in (0, 5, 16):
-            for pad in range(0, 3 * slack):
-                collected = ("x" * pad + secret + "tail")[: cap + slack]  # what _converse keeps
-                truncated = len("x" * pad + secret + "tail") > cap + slack
-                out = runner._redact(collected, secret, truncated)[:cap]  # noqa: SLF001
-                for f in runner._forms(secret):  # noqa: SLF001
-                    for k in range(2, len(f) + 1):
-                        assert f[:k] not in out, (pad, cap, k)
-    assert forms
+def _no_part_of_it(out: str, secret: str, minimum: int = 2) -> None:
+    for form in runner._forms(secret):  # noqa: SLF001
+        for k in range(minimum, len(form) + 1):
+            assert form[:k] not in out, (form[:k], out)
+
+
+def test_safe_text_leaks_no_part_of_the_secret_at_any_cut_offset_or_cap():
+    for secret in (SECRET, 'a"b\\c-secret', "Zq9"):
+        for around in ("", "é", "日本", "\U0001f680"):
+            full = (around + "x" + secret + around + "tail " + secret + around).encode()
+            for cut in range(len(full) + 1):  # the pipe ended (EOF, kill, timeout, slack boundary) at every offset
+                for cap in (0, 1, 3, 8, 16, 1000):
+                    out = runner._safe_text(full[:cut], secret, cap)  # noqa: SLF001
+                    assert len(out.encode()) <= cap + 3 * out.count("\ufffd")
+                    _no_part_of_it(out, secret)
+
+
+def test_safe_text_keeps_the_rest_and_marks_whole_copies():
+    assert runner._safe_text(f"a {SECRET} b".encode(), SECRET, 100) == "a [redacted] b"  # noqa: SLF001
+    assert runner._safe_text(b"plain text", None, 100) == "plain text"  # noqa: SLF001
+    assert runner._safe_text(b"plain text", None, 5) == "plain"  # noqa: SLF001
+    assert runner._safe_text(b"caf\xc3\xa9", None, 4) == "caf\ufffd"  # noqa: SLF001
+
+
+def test_a_killed_child_leaves_no_partial_secret_in_stderr(tmp_path):
+    package, granted = make(tmp_path, caps=("credential", "network"))
+    e = refused(
+        "addon.timeout",
+        call,
+        package,
+        granted,
+        "propose",
+        {"mode": "stderr_then_hang"},
+        Limits(timeout=1),
+        credential=lambda: SECRET,
+    )
+    assert "\u00e9" in e.stderr or e.stderr == ""
+    assert SECRET[:2] not in e.stderr
 
 
 def test_a_secret_cut_at_the_stderr_cap_leaves_no_prefix_end_to_end(tmp_path):

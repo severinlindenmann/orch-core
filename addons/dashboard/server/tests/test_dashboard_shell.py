@@ -104,7 +104,6 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/market/stage",
         "/api/w/{ws}/market/stage/{stage_id}",
         "/api/w/{ws}/market/uninstall",
-        "/api/w/{ws}/market/add",
         "/api/w/{ws}/market/refresh",
         "/api/w/{ws}/runner",
         "/api/w/{ws}/runner/deposits/{deposit_id}",

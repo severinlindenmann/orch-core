@@ -92,12 +92,7 @@ export function permissionEffect(value: string): string {
     spawn_agent: 'Starts agents',
     pty: 'Opens terminals',
     git_push: 'Pushes code',
-    internet: 'Connects to the internet',
-    fields: 'Adds fields to tickets',
-    sections: 'Adds sections to tickets',
-    spawn: 'Starts agents',
     secrets: 'Uses service tokens',
-    'ticket.fields': 'Adds fields to tickets',
   }
   if (value.startsWith('network:')) return `Connects to ${value.slice(8)}`
   if (value.startsWith('secret:')) return `Uses your ${value.slice(7)} token`
@@ -109,11 +104,22 @@ export function publisherWording(key: PublisherKey): string {
 export function widened(stage: MarketStage): boolean {
   return !!stage.update && (stage.update.widened || stage.update.publisher === 'first_use' || Object.values(stage.update.added).some((a) => a.length > 0))
 }
+/** The host's review lines in the host's order. A line is marked NEW only from the structured diff (`update.added`):
+ * a `capabilities <list> (...)` or `field <name> (...)` line whose listed names include an added value, compared whole. */
 export function reviewLines(stage: MarketStage): { text: string; added: boolean }[] {
-  const added = Object.values(stage.update?.added ?? {}).flat() as string[]
-  return stage.review
-    .map((text) => ({ text, added: added.some((value) => text.includes(value) || text === permissionEffect(value)) }))
-    .sort((a, b) => Number(b.added) - Number(a.added))
+  const added = stage.update?.added
+  const names = (text: string, kind: 'capabilities' | 'field'): string[] | null => {
+    const m = kind === 'capabilities' ? /^capabilities ([^(]*?)(?: \(|$)/.exec(text) : /^field (.+?)(?: \(|$)/.exec(text)
+    return m ? (kind === 'field' ? [m[1]] : m[1].split(/[\s,]+/).filter(Boolean)) : null
+  }
+  return stage.review.map((text) => {
+    const caps = names(text, 'capabilities')
+    const field = names(text, 'field')
+    return {
+      text,
+      added: !!added && ((!!caps && caps.some((c) => added.capabilities.includes(c))) || (!!field && field.some((f) => added.fields.includes(f)))),
+    }
+  })
 }
 export function marketError(error: unknown): string {
   const code = (error as { code?: string })?.code

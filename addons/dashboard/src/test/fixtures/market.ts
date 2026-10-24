@@ -34,7 +34,14 @@ export const stage = (over: Partial<MarketStage> = {}): MarketStage => ({
   name: 'calendar',
   version: '1.2.0',
   package_sha256: 'demo-package-digest',
-  review: ['Adds fields to tickets', 'Connects to calendar.example.test'],
+  // the shape of core's addons.install.review_lines (host prefixes around manifest strings)
+  review: [
+    'addon calendar 1.2.0 (Calendar)',
+    'package sha256:demo-package-digest',
+    "command 'python3' '{pkg}/main.py'",
+    'capabilities network (granted exactly as the package declares them)',
+    'field greeting (string) set by addon',
+  ],
   market: {
     url: market().url,
     class: 'official',
@@ -63,6 +70,12 @@ export const installedAddon = (over: Partial<InstalledAddon> = {}): InstalledAdd
 })
 export const updateStage = (wide: boolean) =>
   stage({
+    review: [
+      'addon calendar 1.2.0 (Calendar)',
+      'package sha256:demo-package-digest',
+      'capabilities network:calendar.example.test (granted exactly as the package declares them)',
+      'field Calendar link (string) set by addon',
+    ],
     update: {
       from: { version: '1.0.0', package_sha256: 'demo-old-digest', commit: 'demo-old-commit' },
       changes: ['Dependency lock updated'],

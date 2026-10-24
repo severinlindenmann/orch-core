@@ -68,7 +68,6 @@ WRITES = [
     ),
     ("delete", f"/stage/{STAGE}", None, "market.unstage", {"stage": STAGE}),
     ("post", "/uninstall", {"name": "echo"}, "market.uninstall", {"name": "echo"}),
-    ("post", "/add", {"url": "https://x.test/m"}, "market.add", {"url": "https://x.test/m"}),
     ("post", "/refresh", {}, "market.refresh", {}),
     ("post", "/refresh", {"url": "https://x.test/m"}, "market.refresh", {"url": "https://x.test/m"}),
 ]
@@ -87,10 +86,8 @@ def test_writes_map_to_their_ops_with_a_fresh_idem(client, token, stub, host, me
 
 
 @pytest.mark.parametrize("method,path,body,op,args", WRITES)
-def test_an_agent_is_refused_by_the_host_and_the_refusal_reaches_the_page(
-    client, token, stub, host, method, path, body, op, args
-):
-    """The dashboard session is the person's; an agent's grant is refused by the host (column P + owner, human only)."""
+def test_a_host_refusal_of_an_agent_reaches_the_page_as_403(client, token, stub, host, method, path, body, op, args):
+    """The host refuses an agent (core tests prove who); with that refusal faked, only the mapping is proved here."""
     host.answers[op] = refused()
     kw = {"json": body} if body is not None else {}
     res = getattr(client, method)(url(stub, path), headers=hdr(token), **kw)
@@ -108,8 +105,6 @@ def test_an_agent_is_refused_by_the_host_and_the_refusal_reaches_the_page(
         ("/stage", {}),
         ("/uninstall", {"name": "echo", "force": True}),
         ("/uninstall", {"name": ""}),
-        ("/add", {"url": "https://x.test/m", "extra": 1}),
-        ("/add", {"url": "https://x.test/m", "commit": "main"}),
         ("/refresh", {"commit": "a" * 40}),  # a commit pin is human only at the host: not an argument here
         ("/refresh", {"url": "https://x.test/m", "x": 1}),
     ],
@@ -135,7 +130,8 @@ def test_routes_need_a_session_and_same_origin_writes(client, token, stub, host)
 
 def test_the_market_feature_needs_every_page_op():
     assert set(gateway_module.MARKET_PAGE_OPS) <= set(hostlink.OPS)
-    assert "market.add" in hostlink.OPS and "market.add" not in gateway_module.MARKET_PAGE_OPS
+    assert "market.add" not in hostlink.OPS  # until "Add marketplace" ships
+    assert client_has_no_add_route()
 
 
 def test_the_market_feature_flag_is_on_only_when_the_host_serves_the_ops(client, token, stub, gateway):
@@ -219,3 +215,9 @@ def test_the_click_route_names_no_other_market_path():
     from orch_dashboard import click
 
     assert click.MarketGrant is MarketGrant
+
+
+def client_has_no_add_route():
+    from orch_dashboard.app import create_app
+
+    return not any("market/add" in getattr(r, "path", "") for r in create_app(1).routes)

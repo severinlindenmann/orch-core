@@ -9,8 +9,9 @@ The host is the authority for who may do what; this module only fixes the op, cl
 | POST   /market/stage                   | market.stage       | P, owner, human only (agent: market.actor_refused) |
 | DELETE /market/stage/{stage}           | market.unstage     | P, owner, human only                              |
 | POST   /market/uninstall               | market.uninstall   | P, owner, human only                              |
-| POST   /market/add                     | market.add         | P, owner, human only                              |
 | POST   /market/refresh                 | market.refresh     | P and G; no `commit` argument (human only) |
+
+`market.add` is not served until "Add marketplace" ships.
 
 Nothing here signs. Installing is a Terminal hand-off of `addon.grant {name, staged}` (`MarketGrant` in handoff.py,
 never click-eligible). All text the host returns about a marketplace or an add-on is untrusted data: this module passes
@@ -33,7 +34,6 @@ from .gateway import Gateway
 from .handoff import MarketName, StageId
 
 Url = Annotated[str, StringConstraints(pattern=r"^[\x21-\x7e]{1,200}$")]
-Commit = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{40,64}$")]
 _CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
 
@@ -52,12 +52,6 @@ class StageBody(BaseModel):
 class UninstallBody(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     name: MarketName
-
-
-class AddBody(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
-    url: Url
-    commit: Commit | None = None
 
 
 class RefreshBody(BaseModel):
@@ -93,10 +87,6 @@ def register(app: FastAPI, gateway: Gateway) -> None:
     @app.post("/api/w/{ws}/market/uninstall")
     def uninstall(body: UninstallBody, ws: str = Depends(reads.workspace)):
         return write(ws, "market.uninstall", {"name": body.name})
-
-    @app.post("/api/w/{ws}/market/add")
-    def add(body: AddBody, ws: str = Depends(reads.workspace)):
-        return write(ws, "market.add", body.model_dump(exclude_none=True))
 
     @app.post("/api/w/{ws}/market/refresh")
     def refresh(body: RefreshBody, ws: str = Depends(reads.workspace)):

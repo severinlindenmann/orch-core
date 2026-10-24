@@ -16,6 +16,19 @@ SANDBOX_ID = "5130aaaa"
 meta = json.loads((STATE / "commits.json").read_text())
 
 
+SANDBOX_ROOT = (Path.home() / "orch-dev").resolve()
+
+
+def checked_base(base, new=False):
+    """BASE must be under ~/orch-dev/ (never a mistyped ~ or /); for `up` it must be new or empty."""
+    b = Path(base).expanduser().resolve()
+    if SANDBOX_ROOT not in b.parents:
+        sys.exit(f"refusing BASE {b}: it must be inside {SANDBOX_ROOT}/")
+    if new and b.exists() and any(b.iterdir()):
+        sys.exit(f"refusing BASE {b}: not empty")
+    return b
+
+
 def load(base):
     ws = Workspace(Path(base) / "ws", prefix="SBX", dirname="ws", owner=devsandbox.owner_name(SANDBOX_ID))
     ws.base = Path(base) / "ws"
@@ -60,6 +73,7 @@ def denv(ws):
 
 
 def stop_pid(path, *needles):
+    """SIGTERM the recorded host only while its command line still names THIS sandbox state (a reused PID is left alone)."""
     if path.exists():
         pid = int(path.read_text())
         out = subprocess.run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True).stdout
@@ -69,7 +83,8 @@ def stop_pid(path, *needles):
 
 
 def main():
-    cmd, base = sys.argv[1], sys.argv[2]
+    cmd = sys.argv[1]
+    base = str(checked_base(sys.argv[2], new=cmd == "up"))
     if cmd == "up":
         return up(base)
     ws = load(base)
@@ -79,10 +94,12 @@ def main():
     if cmd == "sign":
         print(ws.sign(sys.argv[3])[-600:]); return
     if cmd == "cli":
+        if sys.argv[3] not in ("human", "agent"):
+            sys.exit("cli takes only human or agent")
         print(getattr(ws, sys.argv[3])(*sys.argv[4:])); return
     if cmd == "down":
         subprocess.run([sys.executable, "-m", "orch_dashboard", "stop"], env=denv(ws), capture_output=True)
-        stop_pid(ws.base / "host.pid", "orch", "host")
+        stop_pid(ws.base / "host.pid", "orch", "host", str(ws.state))
 
 
 main()

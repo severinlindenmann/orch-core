@@ -73,13 +73,13 @@ it('Cancel deletes the stage', async () => {
   await userEvent.click(within(d).getByRole('button', { name: 'Cancel' }))
   await waitFor(() => expect(state.host.calls.some((c) => c.method === 'DELETE' && c.path.endsWith('/market/stage/demo-stage'))).toBe(true))
 })
-it('expanded widened review puts new lines first and shows additions and removals', async () => {
+it('expanded widened review marks new lines in host order and shows additions and removals', async () => {
   ws().marketStage = updateStage(true)
   const d = await openReview('installed')
   expect(within(d).getByText('This update asks for more than before.')).toBeInTheDocument()
   expect(within(d).getByText('+ fields:', { exact: false })).toHaveTextContent('Calendar link')
   expect(within(d).getByText('- fields:', { exact: false })).toHaveTextContent('Old link')
-  expect(within(d).getByRole('list', { name: 'Full review' }).firstChild).toHaveTextContent('Connects to calendar.example.test')
+  expect(within(d).getByText('capabilities network:calendar.example.test', { exact: false }).closest('li')).toHaveClass('text-success')
   expect(within(d).queryByText('Show full review')).toBeNull()
   // The warning leads, then the permissions, then the diff, then the source (Codex a10c).
   const before = (a: HTMLElement, b: HTMLElement) => expect(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
@@ -87,7 +87,7 @@ it('expanded widened review puts new lines first and shows additions and removal
   const review = within(d).getByRole('list', { name: 'Full review' })
   before(warning, review)
   before(review, within(d).getByRole('region', { name: 'Update changes' }))
-  expect(d.textContent!.indexOf('Connects to calendar.example.test')).toBeLessThan(d.textContent!.indexOf('from https://'))
+  expect(d.textContent!.indexOf('capabilities network:calendar.example.test')).toBeLessThan(d.textContent!.indexOf('from https://'))
   expect(state.host.calls.find((c) => c.path.endsWith('/market/stage'))?.body).toEqual({ id: 'calendar', update: true })
 })
 it('non-widened updates offer the compact disclosure', async () => {

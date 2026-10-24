@@ -294,7 +294,19 @@ def register(app: FastAPI, gateway: Gateway):
         token = request.state.token
         gateway.enabled(ws)  # pinned workspace, dashboard addon enabled in it (the hand-off's `human()` does this)
         refuse_if_hub_only(gateway, ws)  # V3 C11: full hub mode takes no click signature (the host refuses it too)
-        if isinstance(body, MarketGrant | PublishSetup | PublishShare) or (
+        if isinstance(body, MarketGrant):
+            # A stricter dashboard choice, not a security boundary (core's signer would take it with the typed word):
+            # an add-on package is approved in the Terminal, where the whole review and the word are shown.
+            raise HostError(
+                {
+                    "code": "human.click_refused",
+                    "message": "Installing or updating an add-on is approved in your terminal, not by click.",
+                    "retryable": False,
+                    "reason": "terminal_only",
+                },
+                3,
+            )
+        if isinstance(body, PublishSetup | PublishShare) or (
             isinstance(body, AddonEnable | AddonGrant) and body.name == "publish"
         ):
             # Where files go, and the signature that lets them leave: terminal only, never one click. Refused here,

@@ -66,14 +66,18 @@ function Review({
     return () => clearInterval(timer)
   }, [])
   const expired = Date.parse(s.expires_at) <= now
+  // The host's review lines wrap manifest text (title, command, agents text, needs text): all of it is the add-on's, so
+  // the whole list sits in one frame (the provenance rule is about where the bytes come from, not who composed the line).
   const full = (
-    <ul aria-label="Full review" className="space-y-2">
-      {reviewLines(s).map((line, i) => (
-        <li key={i} className={line.added ? 'border-l-2 border-success pl-3 text-success' : ''}>
-          <Inline>{line.text}</Inline>
-        </li>
-      ))}
-    </ul>
+    <AddonFrame addon={s.name} title="Package review (from the add-on, per host, not signed)">
+      <ul aria-label="Full review" className="space-y-2">
+        {reviewLines(s).map((line, i) => (
+          <li key={i} className={line.added ? 'border-l-2 border-success pl-3 text-success' : ''}>
+            <Inline>{line.text}</Inline>
+          </li>
+        ))}
+      </ul>
+    </AddonFrame>
   )
   return (
     <Dialog open onOpenChange={(open) => !open && !busy && cancel()}>
@@ -471,7 +475,6 @@ function MarketWorkspace() {
             })
           }
           proceed={() => {
-            setPending((p) => [...p, stage.name])
             setHandoff(stage)
           }}
         />

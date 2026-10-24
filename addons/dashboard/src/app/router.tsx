@@ -1,4 +1,3 @@
-import { queries } from '@/api/queries'
 import type { QueryClient } from '@tanstack/react-query'
 import { createBrowserHistory, createMemoryHistory, createRootRouteWithContext, createRoute, createRouter, Outlet, redirect, useRouterState } from '@tanstack/react-router'
 import { Shell } from './shell/Shell'
@@ -11,6 +10,7 @@ import { addonPageData, agentsData, artifactsData, boardData, loadShell, pageLoa
 import { validateAgentsSearch, validateArtifactsSearch, validateBoardSearch, validateTicketSearch } from './search'
 import { workspaceRewrite, type UrlState } from './urls'
 import { hasFeature, isRealHost } from '@/api/features'
+import { queries } from '@/api/queries'
 
 // Every page is its own chunk. The route loaders load it (and warm the page's data) before the router shows the page:
 // the old page stays until then, or until `PENDING_MS`, after which the page's skeleton shows (see routeData.ts).

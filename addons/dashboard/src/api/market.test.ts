@@ -17,11 +17,18 @@ it('describes effects and publisher memory without claiming safety', () => {
   expect(publisherWording('changed')).toBe('Key changed - review required')
   expect(marketError({ code: 'market.not_allowed' })).toBe(EXTERNAL_HELP)
 })
-it('keeps widened reviews full, with new lines first', () => {
+it('keeps the host order and marks only lines the structured diff names', () => {
   expect(widened(stage())).toBe(false)
   expect(widened(updateStage(false))).toBe(false)
   expect(widened(updateStage(true))).toBe(true)
-  expect(reviewLines(updateStage(true))[0]).toEqual({ text: 'Connects to calendar.example.test', added: true })
+  const lines = reviewLines(updateStage(true))
+  expect(lines.map((l) => l.text)).toEqual(updateStage(true).review) // never reordered
+  expect(lines.map((l) => l.added)).toEqual([false, false, true, true])
+  expect(reviewLines(updateStage(false)).some((l) => l.added)).toBe(false)
+  // no substring matching: an added field named "a" does not mark every line
+  const s = updateStage(true)
+  s.update!.added.fields = ['a']
+  expect(reviewLines(s).map((l) => l.added)).toEqual([false, false, true, false])
 })
 it('market grants are never click eligible', () => {
   expect(clickEligible({ action: 'market_grant', name: 'calendar', staged: 'demo-stage' })).toBe(false)

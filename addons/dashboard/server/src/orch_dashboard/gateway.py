@@ -80,7 +80,7 @@ WRITE_OPS = (
 )
 
 
-#: what the Add-ons page calls (all of it; `market.add` is not needed: "Add marketplace" is off for now)
+#: what the Add-ons page calls (all of it)
 MARKET_PAGE_OPS = (
     "market.list",
     "market.installed",
@@ -318,9 +318,9 @@ class Gateway:
                 ("grant.forget", "run/1"),
                 ("whoami", "ops/1"),
             ],
-            # V3 A7: the Hub tab, the top-bar chip and the Tickets column (reads; every change is a Terminal command).
             # V3 A10: the Add-ons page (Browse, Installed, Marketplaces); every install is a Terminal hand-off
             "market": [(op, "ops/1") for op in MARKET_PAGE_OPS],
+            # V3 A7: the Hub tab, the top-bar chip and the Tickets column (reads; every change is a Terminal command).
             "hub": [
                 ("hub.status", "hub/1")
             ],  # share.* is checked by its own routes: an older host degrades in the page

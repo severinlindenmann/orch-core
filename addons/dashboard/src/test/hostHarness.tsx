@@ -35,7 +35,6 @@ export interface FakeWs {
   market?: import('@/api/market').MarketList
   marketInstalled?: import('@/api/market').MarketInstalled
   marketStage?: import('@/api/market').StageResult
-  marketAddError?: string
   id: string
   prefix: string
   name: string
@@ -273,8 +272,7 @@ export class FakeHost {
     if (rest === 'market/stage' && method === 'POST') return json(ws.marketStage)
     if (rest.startsWith('market/stage/') && method === 'DELETE') return json({ removed: true })
     if (rest === 'market/uninstall') return json({ name: body?.name, removed: true })
-    if (rest === 'market/add' && ws.marketAddError) return json({ ok: false, error: { code: ws.marketAddError, message: ws.marketAddError, retryable: false } }, 403)
-    if (rest === 'market/add' || rest === 'market/refresh') return json({ refreshed: true })
+    if (rest === 'market/refresh') return json({ refreshed: true })
     if (rest === 'today') return json(today)
     if (rest === 'board' || rest === 'tickets') return json({ ...board, next_page: null })
     if (rest === 'tickets/DEMO-0001') return json({ ...ticket, title: ws.title })

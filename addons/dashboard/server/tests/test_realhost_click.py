@@ -159,6 +159,8 @@ def test_the_workspace_card_and_the_flag(world, click):
     assert "click" in ws["features"], (ws["click"], ws["features"])
     card = dict(ws["click"])
     assert re.fullmatch(r"d_[0-9a-f]{32}", card.pop("device"))  # the validated device key (#578), never a raw value
+    # B6 (b238af89): the card says when the One click risk notice was acknowledged; enabling One click records it.
+    assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", card.pop("risk_ack"))
     assert card == {"custody": "convenience", "enabled": True, "available": True}
     card = world.client.get(click.url("status"), headers=click.headers(False)).json()
     assert card["custody"] == "convenience"
@@ -340,15 +342,24 @@ def test_signed_once_then_already_done_and_only_an_explicit_click_repeats_it(wor
     click.post("cancel", {"request_id": more.json()["request_id"]})
 
 
-def test_a_cancelled_attempt_is_ended_and_start_again_is_explicit(world, click):
-    body = {"action": "comment", "key": world.keys["three"], "message": f"cancel then start again {time.time()}"}
+def test_a_cancelled_attempt_stays_ended_and_pressing_again_is_a_fresh_request_signed_only_on_purpose(world, click):
+    """#794 (12a19e82, merge train #974): the server steps past an attempt that ended unsigned, so pressing the action
+    again is one fresh request instead of `intent.ended`. The cancelled request is never signed afterwards, and the
+    fresh one adds nothing to the log until the person views and signs it."""
+    body = {"action": "comment", "key": world.keys["three"], "message": f"cancel then press again {time.time()}"}
+    before = _head(click, world)
     made = click.prepare(body, fresh=False).json()
+    view = click.post("view", {"request_id": made["request_id"]}).json()
     assert click.post("cancel", {"request_id": made["request_id"]}).status_code == 200
-    res = click.prepare(body, fresh=False)
-    assert res.status_code == 409 and res.json()["error"]["code"] == "intent.ended", res.text
-    fresh = click.prepare({**body, "retry": 1}, fresh=False)
-    assert fresh.status_code == 200 and fresh.json()["request_id"] != made["request_id"]
-    click.post("cancel", {"request_id": fresh.json()["request_id"]})
+    time.sleep(1.2)
+    late = click.post("sign", {"request_id": made["request_id"], "view_digest": view["view_digest"]})
+    assert late.status_code in (404, 409), late.text  # the cancelled attempt stays cancelled
+    again = click.prepare(body, fresh=False)
+    assert again.status_code == 200 and again.json()["request_id"] != made["request_id"], again.text
+    twin = click.prepare(body, fresh=False)  # a double click or a second tab: the same open request
+    assert twin.status_code == 200 and twin.json()["request_id"] == again.json()["request_id"], twin.text
+    assert _head(click, world) == before  # nothing was signed
+    click.post("cancel", {"request_id": again.json()["request_id"]})
 
 
 # -- host idem and the signer's durable record, together (core #416 idem, #431 record) ---------------------------------

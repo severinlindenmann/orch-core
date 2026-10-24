@@ -104,6 +104,8 @@ class Script:
         if op == "view":
             return self.view
         if op == "sign":
+            if self.states.get(args["request_id"]) != "bound":  # the signer signs only a bound request
+                raise ClickError("human.request_state", f"the request is {self.states.get(args['request_id'])}")
             self.states[args["request_id"]] = "submitted"
             return {"result": {"data": {"secret": "no"}, "key": "DEMO-0001", "seq": 7}, "duplicate": False}
         if op == "cancel":
@@ -491,9 +493,7 @@ def test_views_words_and_credentials_are_never_logged(client, token, stub, scrip
     caplog.set_level(logging.DEBUG)
     prepare(client, token, stub)
     client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token))
-    client.post(
-        url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH}, headers=hdr(token)
-    )
+    client.post(url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH}, headers=hdr(token))
     out = capfd.readouterr()
     for text in (caplog.text, out.out, out.err):
         assert CANARY not in text and "TYPED-WORD" not in text and token not in text
@@ -1216,6 +1216,26 @@ def test_n15_a_cancelled_or_expired_attempt_is_ended_and_pressing_again_is_a_fre
     # an open request is the same one for a second press (double click, second tab)
     twin = client.post(url(stub, "prepare"), json=comment(1), headers=hdr(token))
     assert twin.json()["request_id"] == third.json()["request_id"] and script.prepared == 3
+
+
+@pytest.mark.parametrize("ended", ["cancelled", "expired"])
+def test_1087_an_ended_attempt_is_never_signed_later_and_pressing_again_is_a_fresh_request(
+    client, token, stub, script, rich, ended
+):
+    """#794 removed `intent.ended`: the server steps past an attempt that ended unsigned. The ended request stays
+    ended (a late sign of it is refused and changes nothing); only the fresh request can be signed, by its own sign."""
+    prepare(client, token, stub, comment(1))
+    if ended == "cancelled":
+        assert client.post(url(stub, "cancel"), json={"request_id": REQ}, headers=hdr(token)).status_code == 200
+    else:
+        script.states[REQ] = "expired"  # the host let it expire
+    late = client.post(url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH}, headers=hdr(token))
+    assert late.status_code != 200 and script.states[REQ] == ended, late.text
+    fresh = client.post(url(stub, "prepare"), json=comment(1), headers=hdr(token))
+    assert fresh.status_code == 200, fresh.text
+    rid = fresh.json()["request_id"]
+    assert rid != REQ and script.prepared == 2 and script.states[REQ] == ended
+    assert script.states[rid] == "bound"  # prepared, not signed: signing it is the person's own next click
 
 
 def test_794_a_signed_attempt_is_already_done_even_after_earlier_cancels(client, token, stub, script, rich):

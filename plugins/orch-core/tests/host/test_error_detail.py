@@ -17,6 +17,8 @@ ALLOWED = {
     "sign.convenience_unavailable": {"reason": "other_member", "devices": ["d_" + "1" * 32]},
     "sign.convenience_readers": {"reason": "reader_too_old", "devices": ["d_" + "2" * 32]},
     "sign.hub_only": {"reason": "hub"},  # V3 C11
+    "market.env_failed": {"reason": "sdist_only"},  # V3 G4: a fixed word, never the installer's text
+    "market.env_changed": {"reason": "abi"},
     # §11A.17 (D1): the closed reason of a dev-host refusal
     "host.dev_refused": {"reason": "sandbox_workspace"},
     # P5: why the publish server said no (a closed reason, never its body)

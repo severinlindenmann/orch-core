@@ -60,19 +60,33 @@ def test_the_review_says_what_turning_it_on_allows_and_changes_nothing(signer):
     s, state, _ = signer
     got = review(s, True)
     assert RUNNER_LINE in got["view"]["lines"] and enablement.CARD_TEXT in got["view"]["lines"]
-    assert got["view"]["confirm"] == {"kind": "click"} and got["view"]["terminals"] is True
+    assert got["view"]["confirm"] == {"kind": "click"} and got["view"]["terminals"] is False
     assert enablement.state_of(state, WID, os.getuid())["enabled"] is False
 
 
 def test_on_then_off_is_the_cli_switch(signer, manager):
     s, state, _ = signer
-    assert act(s, True) == {"workspace_id": WID, "enabled": True, "terminals": True}
+    assert act(s, True, terminals=True) == {"workspace_id": WID, "enabled": True, "terminals": True}
     assert enablement.state_of(state, WID, os.getuid()) == {"enabled": True, "terminals": True}
     entry = enablement.read(state, os.getuid())["workspaces"][WID]
     assert RUNNER_LINE not in entry["text"] and enablement.CARD_TEXT in entry["text"]  # the CLI's own risk text
     assert manager.ran, "the runner service was installed through the host's manager"
     assert act(s, False) == {"workspace_id": WID, "enabled": False, "terminals": False}
     assert enablement.state_of(state, WID, os.getuid())["enabled"] is False
+
+
+def test_terminals_are_off_unless_asked_for(signer):
+    s, state, _ = signer
+    assert act(s, True) == {"workspace_id": WID, "enabled": True, "terminals": False}  # no `terminals` sent
+    assert enablement.state_of(state, WID, os.getuid())["terminals"] is False
+
+
+def test_the_off_review_says_open_terminals_close(signer):
+    s, _, _ = signer
+    from orch.click.protocol import RUNNER_OFF_LINE
+
+    assert "Open terminals close within a second" in RUNNER_OFF_LINE
+    assert RUNNER_OFF_LINE in review(s, False)["view"]["lines"]
 
 
 def test_on_without_terminals(signer):
@@ -116,6 +130,7 @@ def test_a_host_running_as_another_user_is_terminal_only(signer):
     with pytest.raises(ClickError) as info:
         review(s, True)
     assert info.value.code == "custody.terminal_needed"
+    assert "orch runner enable|disable" in info.value.message and "convenience" not in info.value.message
 
 
 @pytest.mark.parametrize("bad", [{"on": "yes"}, {"on": True, "terminals": 1}, {"on": True, "extra": 1}, {}])

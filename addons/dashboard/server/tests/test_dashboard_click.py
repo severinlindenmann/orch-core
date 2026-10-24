@@ -81,6 +81,7 @@ class Script:
                 lines = [f"Turn {'on' if on else 'off'} dashboard execution for demo."]
                 lines += ["Agents may run commands on this computer as you when you start them."] if on else []
                 view = {"op": f"runner.{'on' if on else 'off'}", "workspace": {"id": self.ws}, "on": on,
+                        "terminals": bool(on and args.get("terminals")),
                         "confirm": {"kind": "click"}, "lines": lines}  # fmt: skip
                 return {"view": view, "view_digest": HASH}
             self.runner_on = on
@@ -3014,4 +3015,26 @@ def test_c14_a_review_that_is_not_the_one_asked_for_is_not_shown(client, token, 
 
     script.handler = odd
     res = client.post(url(stub, "runner/review"), json={"on": True}, headers=hdr(token))
+    assert res.status_code == 409 and res.json()["error"]["reason"] == "check_failed"
+
+
+def test_c14_terminals_default_to_off_in_what_is_sent_to_the_signer(client, token, stub, script, local):
+    script.features = ["custody", "runner_switch"]
+    assert client.post(url(stub, "runner/review"), json={"on": True}, headers=hdr(token)).status_code == 200
+    client.post(url(stub, "runner"), json={"on": True, "view_digest": HASH}, headers=hdr(token))
+    assert [c[1]["terminals"] for c in runner_calls(script)] == [False, False]
+
+
+def test_c14_a_review_for_other_terminals_than_asked_is_not_shown(client, token, stub, script, local):
+    script.features = ["custody", "runner_switch"]
+    real = script.handler
+
+    def odd(op, args):
+        got = real(op, args)
+        if op == "runner" and args.get("review"):
+            got["view"]["terminals"] = True  # the person asked for none
+        return got
+
+    script.handler = odd
+    res = client.post(url(stub, "runner/review"), json={"on": True, "terminals": False}, headers=hdr(token))
     assert res.status_code == 409 and res.json()["error"]["reason"] == "check_failed"

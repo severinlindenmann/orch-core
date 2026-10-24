@@ -88,7 +88,9 @@ DEPOSIT_MAX_HOURS = GRANT_MAX_HOURS
 #: ``orch runner enable|disable``, not a signed event, so it goes through its own signer op (like the custody switches),
 #: after a review the signer builds: the page shows these words and the signer only acts on the digest of that review.
 RUNNER_LINE = "Agents may run commands on this computer as you when you start them."
-RUNNER_OFF_LINE = "Agents and terminals already running keep running; the dashboard starts no new ones."
+RUNNER_OFF_LINE = (
+    "Open terminals close within a second; agents already running keep running; the dashboard starts no new ones."
+)
 OPS = ("prepare", "view", "sign", "cancel", "status", "custody_on", "custody_off", "stash", "rotate", "runner")
 #: what this signer can do beyond its contract, in ``status.features``: ``custody`` is ``custody_on``/``custody_off``,
 #: the dashboard's click-to-sign switch (§0.8.6 item 3a); ``sequence`` is ``prepare {sequence}``: one review, N

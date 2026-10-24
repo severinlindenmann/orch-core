@@ -328,7 +328,7 @@ class RunnerBody(BaseModel):
 
     model_config = ConfigDict(extra="forbid", strict=True)
     on: bool
-    terminals: bool = True
+    terminals: bool = False  # an extra the person asks for; never on by default
     view_digest: ViewDigest | None = None
 
 
@@ -621,6 +621,7 @@ def register(app: FastAPI, gateway: Gateway):
             and isinstance(lines, list)
             and all(isinstance(x, str) for x in lines)
             and (RUNNER_LINE in lines) is body.on
+            and (view.get("terminals") is body.terminals if body.on else True)
         )
 
     @app.post("/api/w/{ws}/click/runner/review")

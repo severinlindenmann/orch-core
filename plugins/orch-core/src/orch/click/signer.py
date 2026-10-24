@@ -1871,8 +1871,14 @@ class ClickSigner:
         from orch.runner import enablement
 
         entry = self._entry(args.get("workspace_id"))
-        wid, uid = self._tier_a(entry)
-        on, terminals = args.get("on"), args.get("terminals", True)
+        wid, uid = str(entry["workspace_id"]), int(entry["host_uid"])
+        if uid != self.uid:
+            raise ClickError(
+                "custody.terminal_needed",
+                "the host runs as another user here (tier B); switch dashboard execution in the terminal: "
+                f"orch runner enable|disable --workspace {entry.get('prefix') or wid}",
+            )
+        on, terminals = args.get("on"), args.get("terminals", False)
         review = args.get("review") is True
         allowed = {"workspace_id", "on", "terminals", "review"} | (set() if review else {"view_digest"})
         if type(on) is not bool or type(terminals) is not bool or set(args) - allowed or (review != ("review" in args)):

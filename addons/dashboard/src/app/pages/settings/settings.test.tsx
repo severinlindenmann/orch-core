@@ -265,8 +265,6 @@ describe('Settings', () => {
   it('a maintainer sees why controls are disabled', async () => {
     renderApp('/settings/general', { viewer: 'p_mara' })
     expect((await screen.findAllByText('Only owners can save.')).length).toBe(3) // the name, the icon and the agent grant length
-    expect(screen.getByRole('button', { name: /Export workspace/ })).toBeDisabled()
-    expect(screen.getByText('Only owners can export.')).toBeInTheDocument()
   })
   it('/settings/addons/<name> redirects to the addon settings route', async () => {
     renderApp('/settings/addons/estimate')

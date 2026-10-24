@@ -223,7 +223,7 @@ def test_loopback_policy_values():
     assert LOOPBACK.origin_for(f"127.0.0.1:{PORT}") == ORIGIN
     assert f"ws://127.0.0.1:{PORT}" in LOOPBACK.csp() and "frame-src http://127.0.0.1" in LOOPBACK.csp()
     assert LOOPBACK.pre_login("/anything") and LOOPBACK.launch_codes and LOOPBACK.widget_frames
-    assert LOOPBACK.session_kind_ok("local") and not LOOPBACK.session_kind_ok("remote")
+    assert LOOPBACK.session_kind_ok("local") and LOOPBACK.session_kind_ok("remote")  # unchanged: any kind
     assert LOOPBACK.websocket_ok("/term", [f"127.0.0.1:{PORT}"], [ORIGIN])
     assert not LOOPBACK.websocket_ok("/term", [f"localhost:{PORT}"], [f"http://localhost:{PORT}"])
 

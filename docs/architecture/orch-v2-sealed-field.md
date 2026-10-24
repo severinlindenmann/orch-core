@@ -128,6 +128,14 @@ only the garbage collector releases; in the browser, overwrite the `Uint8Array` 
   when the op reveals a grant secret. **The signer refuses a `sealed` whose keys are not exactly the View's
   `purposes`**: a purpose the View did not ask for, or a missing one, is `invalid.input` before anything is opened (C10
   and the other wiring tasks test this).
+- **"One click off" passphrase (C12, `in`, `custody.passphrase`).** There is no host request behind it, so the signer
+  makes a small review of its own: `custody_off {workspace_id, begin: true}` answers `{request_id, view_digest, seal:
+  {v, alg, pk, purposes: ["custody.passphrase"]}, expires_in}` (a fresh key bound to a new `hr_` request id and to the
+  digest of `{op: "custody.off", workspace_id, request_id, seal}`; one offer per workspace, 5 minutes, one use). The
+  page seals the NEW passphrase to `pk` and calls `custody_off {workspace_id, request_id, view_digest, sealed:
+  {"custody.passphrase": envelope}}`. The first open that succeeds uses the offer up (a refused passphrase needs a new
+  `begin`); a refusal before that leaves it. A clear `passphrase` is `invalid.input`. The dashboard server offers
+  `POST /api/w/{ws}/click/custody/seal` and relays the envelope in `POST .../click/custody`, local sessions only.
 - **Grant reveal (C7, `out`).** The View carries `"seal": {"v": 1, "alg": ..., "purposes": ["grant.secret"], "for": <the full SHA-256 (64 hex) of
   the page key's base64url text>}` (no `pk`: the page brings its own key) plus a risk line (`REVEAL_RISK`) and
   `REVEAL_LINE` in `lines`. The page sends `reveal_key` at **`prepare`** (the key is part of the review the person

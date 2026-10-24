@@ -750,7 +750,7 @@ function install() {
   if (installed) return
   installed = true
   const a = api as unknown as Record<string, (...args: never[]) => unknown>
-  const original = { getIdentity: a.getIdentity, getTicket: a.getTicket, clickStatus: a.clickStatus, switchClick: a.switchClick }
+  const original = { getIdentity: a.getIdentity, getTicket: a.getTicket, clickStatus: a.clickStatus, switchClick: a.switchClick, custodySeal: a.custodySeal }
   const set = (name: string, fn: (...args: never[]) => unknown) => {
     originals.set(name, a[name])
     a[name] = fn
@@ -809,6 +809,12 @@ function install() {
     return hostInfoFor(current)
   })
   set('clickStatus', async (...args: never[]) => (current.startsWith('signing-') ? signingCard(current) : original.clickStatus(...args)))
+  // The sealed new passphrase (C12): the fixture's workspace id is not a real one (the seal binds a 32-hex id), so the
+  // preview shows the refusal a remote dashboard gets; the real seal is covered by SigningCard.test.tsx.
+  set('custodySeal', async (...args: never[]) => {
+    if (!current.startsWith('signing-')) return (original.custodySeal as (...a: never[]) => Promise<object>)(...args)
+    throw new ApiError(409, { code: 'human.click_refused', message: 'fixture', retryable: false })
+  })
   set('switchClick', async (...args: never[]) => {
     if (!current.startsWith('signing-')) return original.switchClick(...args)
     throw new TypeError('fixture: the connection was lost')

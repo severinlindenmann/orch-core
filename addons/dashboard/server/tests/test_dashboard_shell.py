@@ -45,6 +45,7 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/click/sign",
         "/api/w/{ws}/click/cancel",
         "/api/w/{ws}/click/custody",
+        "/api/w/{ws}/click/custody/seal",
         "/api/w/{ws}/click/images",  # R3 part B: pasted-screenshot chunks relayed to the signer (digest-checked)
         "/api/w/{ws}/settings",
         "/api/w/{ws}/add-ons",

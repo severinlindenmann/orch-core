@@ -77,7 +77,9 @@ OPS = ("prepare", "view", "sign", "cancel", "status", "custody_on", "custody_off
 #: (R3 part B); ``reveal`` (#1198 C7) is a ``grant`` without ``deposit``: ``sign`` takes ``reveal_key`` and answers
 #: ``reveal`` (the secret sealed to the page's key); a signer without it answers ``terminal_only`` for that grant.
 #: ``backup_key`` (#1198 C10) is the hub steps by click: the View carries ``seal`` and ``sign`` takes ``sealed``
-FEATURES = ("custody", "sequence", "images", "reveal", "backup_key")
+#: ``sealed_passphrase`` (#1198 C12) is ``custody_off {begin}`` then ``custody_off {request_id, view_digest, sealed}``:
+#: the new passphrase of "One click off" arrives sealed; a clear ``passphrase`` is refused
+FEATURES = ("custody", "sequence", "images", "reveal", "backup_key", "sealed_passphrase")
 #: the host's ``sign.convenience_unavailable`` reasons (orch-v2-host §0.8.6 item 1), from the host's closed schema
 REASONS: tuple[str, ...] = tuple(_HOST_DETAIL["sign.convenience_unavailable"]["reason"])  # type: ignore[arg-type]
 #: ``human.click_refused`` reasons (§0.8.6 item 5)

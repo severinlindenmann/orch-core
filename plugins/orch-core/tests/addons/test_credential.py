@@ -57,7 +57,7 @@ def test_secret_is_opaque():
         hash(s)
 
 
-@pytest.mark.parametrize("bad", ["", "a b", "tab\t", "é", "x" * 1025, "nl\n", 5, None])
+@pytest.mark.parametrize("bad", ["a\\b", 'a"b', "a\x01b", "", "a b", "tab\t", "é", "x" * 1025, "nl\n", 5, None])
 def test_shape_refused(bad):
     assert not cr.valid(bad)
     with pytest.raises(ValueError):

@@ -106,7 +106,7 @@ def test_login_reads_nothing_from_stdin_env_or_argv(lab, monkeypatch):
     assert code == 1 and "own terminal" in err
 
 
-@pytest.mark.parametrize("typed", ["", "has space", "x" * 1025, "tab\there"])
+@pytest.mark.parametrize("typed", ["back\\slash", 'quo"te', "", "has space", "x" * 1025, "tab\there"])
 def test_shape_refused(lab, typed):
     tmp, run, st, _ = lab
     assert run("login", "demo", typed=typed)[0] == 1

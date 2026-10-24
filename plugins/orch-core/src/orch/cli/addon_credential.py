@@ -92,7 +92,10 @@ def _login(a: argparse.Namespace, env: Mapping[str, str], state: Path, wid: str,
         raise _Refusal("invalid.input", "orch addon login needs your own terminal (it never reads stdin)") from None
     value = raw.rstrip("\r\n")
     if not credential.valid(value):
-        raise _Refusal("invalid.input", f"a key is 1 to {credential.MAX_LEN} printable characters without spaces")
+        raise _Refusal(
+            "invalid.input",
+            f"a key is 1 to {credential.MAX_LEN} printable characters without spaces, backslashes or double quotes",
+        )
     uid = os.getuid()
     credential.store(state, wid, uid, a.name, credential.Secret(value), now())
     securitylog.record(state, uid, now(), "addon.login", addon=a.name)

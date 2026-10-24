@@ -76,8 +76,9 @@ class Secret:
 
 
 def valid(value: object) -> bool:
-    """Shape check only: printable ASCII, 1 to 1024 characters (no space)."""
-    return type(value) is str and 1 <= len(value) <= MAX_LEN and all("!" <= c <= "~" for c in value)
+    """Shape check only: printable ASCII, 1 to 1024 characters (no space), and none of ``\\`` or ``"`` (JSON would
+    escape them, giving a second form of the key to redact; control characters are already outside the range)."""
+    return type(value) is str and 1 <= len(value) <= MAX_LEN and all("!" <= c <= "~" and c not in '\\"' for c in value)
 
 
 def _name(name: str) -> str:

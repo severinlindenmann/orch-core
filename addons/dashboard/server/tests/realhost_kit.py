@@ -443,7 +443,13 @@ def _walk(ws, post, get, fail, thread, box, pty_run, rules, fp, problems, deadli
         raise fail(f"exited {pty_run.code}")
 
 
-def sandbox_bring_up(ws: Workspace, sandbox_id: str, *, relay_origin: str = "https://relay.dev.example") -> None:
+def sandbox_bring_up(
+    ws: Workspace,
+    sandbox_id: str,
+    *,
+    relay_origin: str = "https://relay.dev.example",
+    on_host: Callable[[Workspace], object] | None = None,
+) -> None:
     """Make a dev-pair sandbox workspace (prefix ``SBX``) with `orch setup` (V3-D38), in the one place that knows the
     order: the sandbox files that make a host a dev host need ids that exist only after setup, so the first dev host is
     **pending** (the manifest has only ``id`` and ``root``; it admits the one fresh SBX genesis and has no dev powers),
@@ -451,7 +457,8 @@ def sandbox_bring_up(ws: Workspace, sandbox_id: str, *, relay_origin: str = "htt
 
     ``ws`` must be ``Workspace(..., prefix="SBX", owner=devsandbox.owner_name(sandbox_id), state_name="state")`` and its
     ``orch`` must add ``--dev-sim-convenience`` to ``host run --foreground`` (as the hub scenarios do). The host started
-    here keeps running; the caller grants, installs add-ons and stops it as before."""
+    here keeps running; the caller grants, installs add-ons and stops it as before. ``on_host(ws)`` runs after each host
+    start (the e2e kit records the host's pid there, so a run that dies half-way still stops it)."""
     from orch import devsandbox
 
     if ws.state != ws.base / "state":
@@ -461,12 +468,16 @@ def sandbox_bring_up(ws: Workspace, sandbox_id: str, *, relay_origin: str = "htt
     (ws.state / "host").mkdir(mode=0o700, exist_ok=True)
     devsandbox.write_dev_json(ws.base, sandbox_id, relay_origin)
     ws.start_host()  # pending dev host
+    if on_host:
+        on_host(ws)
     ws.init()
     ws.stop_host()
     wid = ws.ws_id.removeprefix("w_")
     devsandbox.write_manifest(ws.base, sandbox_id, person_id=ws.person, workspaces=[(wid, ws.root)])
     devsandbox.write_marker(ws.root, sandbox_id, wid)
     ws.start_host()  # the full dev host proves S1 to S5 for the bound workspace
+    if on_host:
+        on_host(ws)
 
 
 def new_session(ws: Workspace, n: int) -> None:

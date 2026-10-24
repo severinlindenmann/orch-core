@@ -24,6 +24,7 @@ from orch.crypto import suite as S
 from orch.host import hubops, publishing, signcontent
 from orch.host.publishing import PUBLISH_OPS
 from orch.publishclient import approval, flow
+from tests.host.test_click import Click, click  # noqa: F401
 from tests.host import human_helpers
 from tests.host.dispatch_helpers import SESSION, err, ok
 from tests.host.human_helpers import Human
@@ -554,6 +555,22 @@ def test_the_review_shows_the_exact_files_server_and_link_kind(w):
     assert hashlib.sha256(REPORT).hexdigest()[:16] in section["text"]
     assert any("only after you sign" in n for n in content["notes"])
     w.human.check(prepared)  # the independent signer re-derives and accepts the review
+
+
+def test_a_share_is_signed_with_a_plain_click_and_the_view_shows_everything(w, click):
+    """#1198 C2: ``publish.share`` is a click op; its View carries the signed words: files, link kind, both servers."""
+    uid, key = w.ticket_with(**{"report.md": REPORT})
+    got = w.prepare(key, "report.md", kind="once", views=3, days=1)
+    p = click.prepare("publish.share", {"staged_id": got["staged_id"]})
+    shown = click.view(p["request_id"])
+    v = shown["view"]
+    assert v["confirm"] == {"kind": "click"}
+    text = "\n".join(v["lines"])
+    for needle in ("report.md", SERVER, SHARE, "show-once link", key):
+        assert needle in text, needle
+    click.mono.t += 2
+    click.sign(p["request_id"], shown["view_digest"])
+    assert click.signatures == 1
 
 
 def test_the_signer_refuses_a_share_approval_that_is_not_one_note_on_a_ticket(w):

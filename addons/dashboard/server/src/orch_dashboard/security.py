@@ -166,7 +166,7 @@ class Security:
             else 8192
             if records_admin
             else CLICK_BODY_LIMIT
-            if click_step
+            if click_step or path.startswith(("/auth/passkey/", "/auth/enroll/"))  # pre-login, from the internet
             else 1_048_576
         )
         if method == "POST" and path.startswith("/api/testrun/") and path.endswith("/images"):

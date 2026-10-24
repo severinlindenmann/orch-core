@@ -20,6 +20,7 @@ from remote_kit import (  # noqa: F401
     front,
     local,
     loop,
+    passkey_store,
     remote,
     terminals_app,
 )
@@ -45,6 +46,15 @@ def test_every_route_of_the_app_has_a_remote_rule(app):
     assert routes - set(TABLE) == set(), "a route without a remote rule: add it to routegate.TABLE"
     assert set(TABLE) - routes == set(), "a table entry for a route that does not exist"
     assert all(rule in routegate.RULES for rule, _ in TABLE.values())
+
+
+def test_the_passkey_routes_are_the_only_ones_before_login():
+    assert {k for k, (rule, _) in TABLE.items() if rule == PRE_LOGIN} == {
+        ("POST", "/auth/passkey/options"),
+        ("POST", "/auth/passkey/login"),
+        ("POST", "/auth/enroll/options"),
+        ("POST", "/auth/enroll/register"),
+    }
 
 
 def fill(template):

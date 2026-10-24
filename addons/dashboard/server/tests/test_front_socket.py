@@ -26,6 +26,7 @@ from remote_kit import (  # noqa: F401
     front,
     local,
     loop,
+    passkey_store,
     remote,
     socket_dir,
     terminals_app,

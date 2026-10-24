@@ -43,6 +43,11 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     (GET, "/api/me"): (ALLOWED, ""),
     (GET, W + "/head"): (ALLOWED, ""),
     (GET, W + "/identity"): (ALLOWED, ""),
+    # --- passkey login and enrollment (the only pre-login routes besides the shell)
+    (POST, "/auth/passkey/options"): (PRE_LOGIN, "login challenge"),
+    (POST, "/auth/passkey/login"): (PRE_LOGIN, "login assertion"),
+    (POST, "/auth/enroll/options"): (PRE_LOGIN, "enrollment challenge, needs the one-time code"),
+    (POST, "/auth/enroll/register"): (PRE_LOGIN, "enrollment registration, needs the one-time code"),
     # --- first-run setup: the setup page is run on the computer (decision for R1-7/R1-8 whether it opens remotely)
     (POST, "/auth/setup"): (REFUSED, "the setup nonce is minted on the computer"),
     (GET, "/api/setup/{route:path}"): (REFUSED, "setup is local until the remote setup flow is built"),

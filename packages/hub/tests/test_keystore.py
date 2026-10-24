@@ -41,6 +41,7 @@ SAMPLES = {
     "hub.channel_push": GB.channel_push()["o"],
     "hub.space_proposal": G4.proposal()["o"],
     "share.item": G4.share_item()["o"],
+    "hub.owner_proof": G.owner_proof()["o"],
     "link.w2h": G.link("snapshot_get", {})["o"],
     "link.h2w": G.link("route_in", {"envelope": "eA"}, direction="h2w", key="hk_op")["o"],
 }
@@ -62,6 +63,7 @@ ALLOWED = {
     KS.ChannelSigner: {"hub.channel_register", "hub.channel_auth", "hub.channel_push"},
     KS.WskSigner: {"hub.binding", "hub.unbound", "space.item", "space.accept", "share.item", "link.w2h"},
     KS.OwnerDeviceSigner: {"hub.publish_approval"},
+    KS.PersonSigner: {"hub.owner_proof"},
 }
 KEY = {
     KS.RootSigner: "hk_root",
@@ -70,6 +72,7 @@ KEY = {
     KS.ChannelSigner: "channel_alice_phone",
     KS.WskSigner: "wsk_a",
     KS.OwnerDeviceSigner: "dk_alice_mac.sig",
+    KS.PersonSigner: "pk_alice",
 }
 EVERY_LABEL = sorted(H.L.values())
 

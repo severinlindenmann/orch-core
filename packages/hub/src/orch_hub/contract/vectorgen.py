@@ -125,12 +125,53 @@ def card(op: dict[str, Any] | None = None, op_key: str = "hk_op", root: str = "h
         "relay_url": None,
         "tls_spki_sha256": b64u(S.fake_seed("hub/tls_spki")),
         "card_seq": 1,
+        "reader": H.HUB_READER,
         "issued_ms": NOW - DAY,
         "dev": True,
         **kw,
     }
+    for k, v in list(o.items()):
+        if v is DROP:
+            del o[k]
     c = signed(op_key, "sig_hub_card", o)
     return {"o": c["o"], "op_cert": op if op is not None else op_cert(key=op_key, root=root), "sig": c["sig"]}
+
+
+REQ_ID = "hr_01J9ZP00000000000000000RQ1"
+REQ_OTHER = "hr_01J9ZP00000000000000000RQ2"
+JOINED_PAYLOAD = {
+    "hub_id": HUB_ID,
+    "hk_root_pub": b64u(K.pub["hk_root"]),
+    "mode": "selective",
+    "binding_seq": 1,
+    "aliases": [{"person_id": P_ALICE, "user_id": U_ALICE}],
+}
+
+
+def owner_proof(
+    op: str = "hub.join",
+    payload: dict[str, Any] | None = None,
+    pk: str = "pk_alice",
+    label: str = "sig_hub_owner_proof",
+    **kw: Any,
+) -> dict[str, Any]:
+    """§9.6: the owner proof, signed by ``PK``. Defaults: Alice joins hub selectively at binding_seq 1."""
+    o = {
+        **hdr("hub.owner_proof"),
+        "workspace_id": WS_A,
+        "person_id": H.person_id(K.pub[pk]) if pk.startswith("pk_") else P_ALICE,
+        "op": op,
+        "payload": copy.deepcopy(payload if payload is not None else JOINED_PAYLOAD),
+        "request_id": REQ_ID,
+        "issued_ms": NOW - 1_000,
+        "expires_ms": NOW + 300_000,
+        "dev": True,
+        **kw,
+    }
+    for k, v in list(o.items()):
+        if v is DROP:
+            del o[k]
+    return signed(pk, label, o)
 
 
 def uk_cert(
@@ -1660,13 +1701,7 @@ def build() -> dict[str, Any]:
          {**adm, "card": v2_card(), "pk_pub": K.b("pk_mallory")}, {"error": "other_person"}, 2)  # fmt: skip
 
     # ---- hub.joined payload, aliases
-    pay = {
-        "hub_id": HUB_ID,
-        "hk_root_pub": root,
-        "mode": "selective",
-        "binding_seq": 1,
-        "aliases": [{"person_id": P_ALICE, "user_id": U_ALICE}],
-    }
+    pay = {**JOINED_PAYLOAD, "owner_proof": None}
     case("joined_valid", "joined_payload", {"payload": pay}, {"ok": {"aliases": {P_ALICE: U_ALICE}}}, 2)
     case(
         "joined_alias_repointed",
@@ -1697,6 +1732,181 @@ def build() -> dict[str, Any]:
         2,
     )
     case("joined_extra_field", "joined_payload", {"payload": {**pay, "wk": "x"}}, {"error": "malformed"}, 2)
+    case("joined_without_owner_proof_member", "joined_payload", {"payload": JOINED_PAYLOAD}, {"error": "malformed"}, 5,
+         "#1198 C8: the member is required (null when the passphrase key signed)")  # fmt: skip
+    case("joined_owner_proof_not_an_object", "joined_payload", {"payload": {**pay, "owner_proof": "x"}},
+         {"error": "malformed"}, 5)  # fmt: skip
+    left_pay = {"hub_id": HUB_ID, "binding_seq": 1}
+    case("left_valid", "left_payload", {"payload": {**left_pay, "owner_proof": None}}, {"ok": left_pay}, 5)
+    case("left_without_owner_proof_member", "left_payload", {"payload": left_pay}, {"error": "malformed"}, 5)
+    case("left_extra_field", "left_payload", {"payload": {**left_pay, "owner_proof": None, "mode": "full"}},
+         {"error": "malformed"}, 5)  # fmt: skip
+
+    # ---- the owner proof of a hub op (#1198 C8, protocol 9.6)
+    full2 = {**JOINED_PAYLOAD, "mode": "full", "binding_seq": 2}
+    pf = {**base, "pk_pub": K.b("pk_alice"), "workspace_id": WS_A, "op": "hub.join", "payload": JOINED_PAYLOAD,
+          "request_id": REQ_ID}  # fmt: skip
+    ok_p = {"ok": {"op": "hub.join", "person_id": P_ALICE}}
+    bad = {"error": "proof_invalid"}
+    case("owner_proof_join_valid", "owner_proof", {**pf, "signed": owner_proof()}, ok_p, 5)
+    case("owner_proof_mode_valid", "owner_proof",
+         {**pf, "op": "hub.mode", "payload": full2, "signed": owner_proof("hub.mode", full2)},
+         {"ok": {"op": "hub.mode", "person_id": P_ALICE}}, 5)  # fmt: skip
+    case("owner_proof_leave_valid", "owner_proof",
+         {**pf, "op": "hub.leave", "payload": left_pay, "signed": owner_proof("hub.leave", left_pay)},
+         {"ok": {"op": "hub.leave", "person_id": P_ALICE}}, 5)  # fmt: skip
+    case("owner_proof_signed_by_device_key", "owner_proof", {**pf, "signed": owner_proof(pk="dk_alice_mac.sig")},
+         bad, 5, "the One-click device key cannot make the proof: only PK")  # fmt: skip
+    case("owner_proof_under_device_cert_label", "owner_proof",
+         {**pf, "signed": owner_proof(label="sig_device_cert")}, bad, 5, "wrong domain")  # fmt: skip
+    case("owner_proof_by_other_person", "owner_proof", {**pf, "signed": owner_proof(pk="pk_mallory")}, bad, 5)
+    case("owner_proof_person_id_not_of_pk", "owner_proof",
+         {**pf, "signed": owner_proof(person_id=H.person_id(K.pub["pk_mallory"]))}, bad, 5)  # fmt: skip
+    case("owner_proof_other_workspace", "owner_proof", {**pf, "signed": owner_proof(workspace_id=WS_B)}, bad, 5)
+    case("owner_proof_for_other_op", "owner_proof",
+         {**pf, "op": "hub.mode", "payload": JOINED_PAYLOAD, "signed": owner_proof()}, bad, 5)  # fmt: skip
+    case("owner_proof_for_other_request", "owner_proof", {**pf, "signed": owner_proof(request_id=REQ_OTHER)}, bad, 5,
+         "a proof is for one host request")  # fmt: skip
+    case("owner_proof_payload_other_mode", "owner_proof",
+         {**pf, "payload": {**JOINED_PAYLOAD, "mode": "full"}, "signed": owner_proof()}, bad, 5,
+         "a selective proof never becomes a full join")  # fmt: skip
+    case("owner_proof_payload_other_aliases", "owner_proof",
+         {**pf, "payload": {**JOINED_PAYLOAD, "aliases": [{"person_id": P_ALICE, "user_id": U_BOB}]},
+          "signed": owner_proof()}, bad, 5)  # fmt: skip
+    rogue_pay = {**JOINED_PAYLOAD, "hub_id": ROGUE_HUB_ID, "hk_root_pub": K.b("hk_root_rogue")}
+    case("owner_proof_payload_other_hub", "owner_proof", {**pf, "payload": rogue_pay, "signed": owner_proof()}, bad,
+         5, "the taken-over dashboard's own hub")  # fmt: skip
+    sel2 = {**JOINED_PAYLOAD, "binding_seq": 2}
+    case("owner_proof_mode_to_selective", "owner_proof",
+         {**pf, "op": "hub.mode", "payload": sel2, "signed": owner_proof("hub.mode", sel2)}, bad, 5,
+         "hub.mode only goes to full (9.1)")  # fmt: skip
+    case("owner_proof_payload_hub_id_not_of_root", "owner_proof",
+         {**pf, "payload": {**JOINED_PAYLOAD, "hub_id": ROGUE_HUB_ID},
+          "signed": owner_proof(payload={**JOINED_PAYLOAD, "hub_id": ROGUE_HUB_ID})}, bad, 5)  # fmt: skip
+    with_member = {**JOINED_PAYLOAD, "owner_proof": None}
+    case("owner_proof_payload_with_owner_proof_member", "owner_proof",
+         {**pf, "payload": with_member, "signed": owner_proof(payload=with_member)}, bad, 5,
+         "the proof names the payload without its own member")  # fmt: skip
+    case("owner_proof_expired", "owner_proof", {**pf, "now_ms": NOW + 300_000, "signed": owner_proof()},
+         {"error": "proof_expired"}, 5)  # fmt: skip
+    case("owner_proof_issued_in_future", "owner_proof",
+         {**pf, "signed": owner_proof(issued_ms=NOW + 300_001, expires_ms=NOW + 600_000)}, bad, 5)  # fmt: skip
+    case("owner_proof_lifetime_max", "owner_proof",
+         {**pf, "signed": owner_proof(issued_ms=NOW - 1_000, expires_ms=NOW + 599_000)}, ok_p, 5)  # fmt: skip
+    case("owner_proof_lifetime_too_long", "owner_proof",
+         {**pf, "signed": owner_proof(issued_ms=NOW - 1_000, expires_ms=NOW + 599_001)}, bad, 5)  # fmt: skip
+    case("owner_proof_expires_before_issued", "owner_proof",
+         {**pf, "signed": owner_proof(issued_ms=NOW, expires_ms=NOW)}, bad, 5)  # fmt: skip
+    case("owner_proof_extra_field", "owner_proof", {**pf, "signed": owner_proof(device_id="x")}, bad, 5)
+    case("owner_proof_missing_dev_marker", "owner_proof", {**pf, "signed": owner_proof(dev=DROP)}, bad, 5)
+    case("owner_proof_request_id_not_a_request", "owner_proof",
+         {**pf, "request_id": "hr_x", "signed": owner_proof(request_id="hr_x")}, bad, 5)  # fmt: skip
+    case("owner_proof_wrong_suite", "owner_proof", {**pf, "signed": owner_proof(suite=1)}, bad, 5)
+    case("owner_proof_future_hv", "owner_proof", {**pf, "signed": owner_proof(hv=1)}, bad, 5)
+    case("owner_proof_op_unknown", "owner_proof",
+         {**pf, "op": "hub.repin", "signed": owner_proof(op="hub.repin")}, bad, 5)  # fmt: skip
+    case("owner_proof_sig_not_canonical", "owner_proof",
+         {**pf, "signed": {**owner_proof(), "sig": owner_proof()["sig"] + "="}}, bad, 5)  # fmt: skip
+    case("owner_proof_real_at_dev_verifier", "owner_proof", {**pf, "signed": owner_proof(dev=False)},
+         {"error": "dev_mismatch"}, 5)  # fmt: skip
+    case("owner_proof_dev_at_real_verifier", "owner_proof", {**pf, "dev_mode": False, "signed": owner_proof()},
+         {"error": "dev_refused"}, 5)  # fmt: skip
+
+    # the hub's check at link join / mode-switch binding_put (9.6 "At the hub")
+    b2 = binding(seq=2, mode="full")
+    jp = {**base, "pk_pub": K.b("pk_alice"), "workspace_id": WS_A, "hub_id": HUB_ID, "binding": b1["o"],
+          "op": "hub.join"}  # fmt: skip
+    case("join_proof_valid", "owner_proof_join", {**jp, "signed": owner_proof()}, {"ok": {"op": "hub.join"}}, 5)
+    case("join_proof_mode_switch_valid", "owner_proof_join",
+         {**jp, "op": "hub.mode", "binding": b2["o"], "signed": owner_proof("hub.mode", full2)},
+         {"ok": {"op": "hub.mode"}}, 5)  # fmt: skip
+    case("join_proof_names_other_hub", "owner_proof_join", {**jp, "signed": owner_proof(payload=rogue_pay)}, bad, 5)
+    case("join_proof_other_binding_seq", "owner_proof_join",
+         {**jp, "signed": owner_proof(payload={**JOINED_PAYLOAD, "binding_seq": 2})}, bad, 5)  # fmt: skip
+    case("join_proof_selective_for_full_binding", "owner_proof_join",
+         {**jp, "op": "hub.mode", "binding": b2["o"], "signed": owner_proof("hub.mode", sel2)}, bad, 5)  # fmt: skip
+    case("join_proof_join_proof_on_mode_switch", "owner_proof_join",
+         {**jp, "op": "hub.mode", "binding": b2["o"], "signed": owner_proof("hub.join", full2)}, bad, 5)  # fmt: skip
+    case("join_proof_leave_op", "owner_proof_join",
+         {**jp, "op": "hub.leave", "signed": owner_proof("hub.leave", left_pay)}, bad, 5)  # fmt: skip
+    case("join_proof_by_other_person", "owner_proof_join", {**jp, "signed": owner_proof(pk="pk_mallory")}, bad, 5)
+    case("join_proof_other_workspace", "owner_proof_join", {**jp, "signed": owner_proof(workspace_id=WS_B)}, bad, 5)
+    case("join_proof_expired", "owner_proof_join", {**jp, "now_ms": NOW + 300_000, "signed": owner_proof()},
+         {"error": "proof_expired"}, 5)  # fmt: skip
+
+    # readers of the workspace log (9.6 "Readers"): no clock, the proof is bound to its binding_seq
+    rp = {"dev_mode": True, "event_type": "hub.joined", "workspace_id": WS_A, "actor_person_id": P_ALICE,
+          "pk_pub": K.b("pk_alice"), "auth": "convenience"}  # fmt: skip
+    joined_with = {**JOINED_PAYLOAD, "owner_proof": owner_proof()}
+    case("recorded_convenience_with_proof", "owner_proof_recorded", {**rp, "payload": joined_with},
+         {"ok": {"proof": "hub.join"}}, 5)  # fmt: skip
+    case("recorded_convenience_without_proof", "owner_proof_recorded", {**rp, "payload": pay},
+         {"error": "proof_missing"}, 5, "the One-click key alone never binds a workspace to a hub")  # fmt: skip
+    case("recorded_passphrase_without_proof", "owner_proof_recorded", {**rp, "auth": "passphrase", "payload": pay},
+         {"ok": {"proof": None}}, 5, "the terminal path: the passphrase key's signature is the proof")  # fmt: skip
+    case("recorded_no_auth_without_proof", "owner_proof_recorded", {**rp, "auth": None, "payload": pay},
+         {"ok": {"proof": None}}, 5)  # fmt: skip
+    case("recorded_hub_auth_without_proof", "owner_proof_recorded", {**rp, "auth": "hub", "payload": pay},
+         {"error": "proof_missing"}, 5)  # fmt: skip
+    case("recorded_unknown_auth_without_proof", "owner_proof_recorded", {**rp, "auth": "webauthn", "payload": pay},
+         {"error": "proof_missing"}, 5, "fail closed: only absent or passphrase may go without")  # fmt: skip
+    case("recorded_passphrase_with_bad_proof", "owner_proof_recorded",
+         {**rp, "auth": "passphrase", "payload": {**JOINED_PAYLOAD, "owner_proof": owner_proof(pk="pk_mallory")}},
+         bad, 5, "a proof that is there is always checked")  # fmt: skip
+    case("recorded_payload_differs_from_proof", "owner_proof_recorded",
+         {**rp, "payload": {**joined_with, "aliases": [{"person_id": P_ALICE, "user_id": U_BOB}]}}, bad, 5)  # fmt: skip
+    case("recorded_proof_of_other_actor", "owner_proof_recorded",
+         {**rp, "actor_person_id": H.person_id(K.pub["pk_mallory"]), "pk_pub": K.b("pk_mallory"),
+          "payload": joined_with}, bad, 5)  # fmt: skip
+    case("recorded_actor_not_the_proofs_person", "owner_proof_recorded",
+         {**rp, "actor_person_id": H.person_id(K.pub["pk_mallory"]), "payload": joined_with}, bad, 5)  # fmt: skip
+    case("recorded_unknown_person_key", "owner_proof_recorded", {**rp, "pk_pub": None, "payload": joined_with}, bad,
+         5)  # fmt: skip
+    case("recorded_mode_proof_on_joined", "owner_proof_recorded",
+         {**rp, "payload": {**full2, "owner_proof": owner_proof("hub.mode", full2)}},
+         {"ok": {"proof": "hub.mode"}}, 5)  # fmt: skip
+    case("recorded_left_valid", "owner_proof_recorded",
+         {**rp, "event_type": "hub.left", "payload": {**left_pay, "owner_proof": owner_proof("hub.leave", left_pay)}},
+         {"ok": {"proof": "hub.leave"}}, 5)  # fmt: skip
+    case("recorded_join_proof_on_left", "owner_proof_recorded",
+         {**rp, "event_type": "hub.left", "payload": {**left_pay, "owner_proof": owner_proof()}}, bad, 5)  # fmt: skip
+    case("recorded_other_workspace", "owner_proof_recorded", {**rp, "workspace_id": WS_B, "payload": joined_with},
+         bad, 5)  # fmt: skip
+    case("recorded_long_after_expiry", "owner_proof_recorded",
+         {**rp, "payload": {**JOINED_PAYLOAD, "owner_proof": owner_proof(issued_ms=1_000, expires_ms=2_000)}},
+         {"ok": {"proof": "hub.join"}}, 5, "readers never use a clock")  # fmt: skip
+    case("recorded_real_proof_at_dev_reader", "owner_proof_recorded",
+         {**rp, "payload": {**JOINED_PAYLOAD, "owner_proof": owner_proof(dev=False)}}, {"error": "dev_mismatch"},
+         5)  # fmt: skip
+    case("recorded_other_event_type", "owner_proof_recorded",
+         {**rp, "event_type": "hub.pinned", "payload": joined_with}, {"error": "malformed"}, 5)  # fmt: skip
+
+    # ---- the card's reader level (#1198 C8, protocol 5)
+    case("card_reader_level_1", "card_reader", {**base, "card": c}, {"ok": {"reader": 1}}, 5)
+    case("card_reader_level_0", "card_reader", {**base, "card": card(reader=0)}, {"ok": {"reader": 0}}, 5,
+         "a declaration, not a refusal: the host decides (hub_reader)")  # fmt: skip
+    case("card_reader_missing", "card_reader", {**base, "card": card(reader=DROP)}, {"error": "malformed"}, 5)
+    case("card_reader_negative", "card_reader", {**base, "card": card(reader=-1)}, {"error": "malformed"}, 5)
+    case("card_reader_text", "card_reader", {**base, "card": card(reader="1")}, {"error": "malformed"}, 5)
+    case("card_reader_bool", "card_reader", {**base, "card": card(reader=True)}, {"error": "malformed"}, 5)
+    case("card_reader_above_uint31", "card_reader", {**base, "card": card(reader=2**31)}, {"error": "malformed"}, 5)
+    case("card_reader_max_uint31", "card_reader", {**base, "card": card(reader=2**31 - 1)},
+         {"ok": {"reader": 2**31 - 1}}, 5)  # fmt: skip
+    case("card_reader_downgrade_same_op_cert", "card_reader",
+         {**base, "held_card": c, "card": card(card_seq=2, reader=0)}, {"error": "reader_downgrade"}, 5,
+         "a hub never lowers its reader level")  # fmt: skip
+    nxt = op_cert(cert_id=OP_CERT_NEXT, key="hk_op_next")
+    case("card_reader_downgrade_new_op_cert", "card_reader",
+         {**base, "held_card": c, "card": card(op=nxt, op_key="hk_op_next", reader=0)},
+         {"error": "reader_downgrade"}, 5, "not even under a rotated op cert")  # fmt: skip
+    case("card_reader_upgrade", "card_reader", {**base, "held_card": card(reader=0), "card": card(card_seq=2)},
+         {"ok": {"reader": 1}}, 5)  # fmt: skip
+    case("hub_reader_level_1_required_1", "hub_reader", {**base, "card": c, "required_reader": 1},
+         {"ok": {"reader": 1}}, 5)  # fmt: skip
+    case("hub_reader_level_0_required_1", "hub_reader", {**base, "card": card(reader=0), "required_reader": 1},
+         {"error": "hub_too_old"}, 5, "One click on or convenience history: the hub must read auth convenience")  # fmt: skip
+    case("hub_reader_level_0_required_0", "hub_reader", {**base, "card": card(reader=0), "required_reader": 0},
+         {"ok": {"reader": 0}}, 5)  # fmt: skip
 
     # ---- link
     ln = {**base, "hub_id": HUB_ID, "workspace_id": WS_A, "mode": "selective"}
@@ -3370,6 +3580,7 @@ def build() -> dict[str, Any]:
     ap = approval()
     sig_entry("publish_approval", "dk_alice_mac.sig", "sig_hub_publish_approval", ap)
     sig_entry("device_cert_alice_mac", "pk_alice", "sig_device_cert", ap["device_cert"])
+    sig_entry("owner_proof", "pk_alice", "sig_hub_owner_proof", owner_proof())
 
     # ---- phase 4 (V3-D23): protocol.md §6.3, §8.4-§8.5, §10.4 proposals, §10.5 channel events, §10.7, §10.8
     from .vectorgen_p4 import build_p4
@@ -3399,11 +3610,12 @@ def build() -> dict[str, Any]:
         "id": "01J9ZP0000000000000000JOIN",
         "type": "hub.joined",
         "actor": {"kind": "person", "id": "p_" + P_ALICE, "device": "d_" + H.device_id(K.pub["dk_alice_mac.sig"])},
-        "auth": "passphrase",
+        "auth": "convenience",
         "based_on": "sha256:" + S.fake_seed("hub/ws_head").hex(),
         "roster_v": 1,
         "hash_v": 1,
-        **pay,
+        **JOINED_PAYLOAD,
+        "owner_proof": owner_proof(),
     }
     joined_bytes = L["sig_ws_event"] + cj(H.signed_context(WS_A, "workspace", joined_e))
     joined_vec = {
@@ -3499,6 +3711,7 @@ def build() -> dict[str, Any]:
             "unbound_a_1": u1,
             "op_revoked": rev,
             "publish_approval": ap,
+            "owner_proof_join_a": owner_proof(),
             "audit_1": audit_chain()[0],
             "space_e1": space_rec(1),
             "space_wrap_b_e1": space_wrap(),

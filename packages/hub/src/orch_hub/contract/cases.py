@@ -208,6 +208,31 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
         return {"binding_seq": s["binding_seq"], "status": s["status"]}
     if check == "joined_payload":
         return {"aliases": H.check_joined_payload(a["payload"], prior_aliases=a.get("prior_aliases", {}))}
+    if check == "left_payload":
+        return H.check_left_payload(a["payload"])
+    if check == "owner_proof":  # #1198 C8, protocol 9.6: the host at binding and at submit
+        o = H.check_owner_proof(
+            a["signed"], pk_pub=unb64u(a["pk_pub"], 65), workspace_id=a["workspace_id"], op=a["op"],
+            payload=a["payload"], request_id=a["request_id"], now_ms=now, dev_mode=dev,
+        )  # fmt: skip
+        return {"op": o["op"], "person_id": o["person_id"]}
+    if check == "owner_proof_join":  # the hub at link join / mode-switch binding_put
+        o = H.check_join_proof(
+            a["signed"], pk_pub=unb64u(a["pk_pub"], 65), workspace_id=a["workspace_id"], hub_id_=a["hub_id"],
+            binding=a["binding"], op=a["op"], now_ms=now, dev_mode=dev,
+        )  # fmt: skip
+        return {"op": o["op"]}
+    if check == "owner_proof_recorded":  # readers of hub.joined / hub.left (no clock)
+        pk = None if a["pk_pub"] is None else unb64u(a["pk_pub"], 65)
+        o = H.check_recorded_owner_proof(
+            a["event_type"], a["payload"], auth=a["auth"], workspace_id=a["workspace_id"],
+            actor_person_id=a["actor_person_id"], pk_pub=pk, dev_mode=dev,
+        )  # fmt: skip
+        return {"proof": None if o is None else o["op"]}
+    if check == "card_reader":
+        return {"reader": _held(a)["card"]["reader"]}
+    if check == "hub_reader":
+        return {"reader": H.check_hub_reader(_held(a), a["required_reader"])}
     if check == "link":
         o = H.verify_link(
             a["signed"],

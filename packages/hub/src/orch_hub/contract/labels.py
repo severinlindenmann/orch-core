@@ -40,6 +40,8 @@ HUB_LABELS: dict[str, str] = {
     "sig_publish_hub": "orch/v2/publish-hub|",  # a publish request on the hub path (L2-2); v2 keeps orch/v2/publish|
     # signature by the workspace owner's device key (V3-D4)
     "sig_hub_publish_approval": "orch/v2/sig/hub-publish-approval|",
+    # signature by the person key PK (derived from the recovery code; #1198 C8, §9.6): the owner proof of a hub op
+    "sig_hub_owner_proof": "orch/v2/sig/hub-owner-proof|",
     # hashes
     "h_hub_id": "orch/v2/id/hub|",
     "h_channel_id": "orch/v2/id/channel|",

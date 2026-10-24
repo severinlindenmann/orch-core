@@ -27,6 +27,16 @@ NONCE_RETENTION_MS = 240_000
 ROLES = ("read", "edit", "admin")
 FACTORS = ("se-unlocked", "passkey", "password+totp")
 MODES = ("selective", "full")
+#: §5: the reader level a hub declares on its card (orch-v2-host §0.8.6 item 9: level 1 understands ``auth:
+#: "convenience"`` on every event it reads and refuses an unknown ``auth``). This hub is level 1.
+HUB_READER = 1
+READER_MAX = 2**31 - 1
+#: §9.6: the hub ops an owner proof authorises, the longest a proof may live, and the host request id it names
+OWNER_PROOF_OPS = ("hub.join", "hub.mode", "hub.leave")
+OWNER_PROOF_MAX_MS = 600_000
+REQUEST_ID = re.compile(r"hr_[0-7][0-9A-HJKMNP-TV-Z]{25}")
+JOINED_KEYS = frozenset({"hub_id", "hk_root_pub", "mode", "binding_seq", "aliases"})
+LEFT_KEYS = frozenset({"hub_id", "binding_seq"})
 
 
 class Refused(Exception):
@@ -143,6 +153,7 @@ FIELDS: dict[str, dict[str, Check]] = {
         "relay_url": _relay_url,
         "tls_spki_sha256": _b64u_n(32),
         "card_seq": _int_min(1),
+        "reader": lambda x: type(x) is int and 0 <= x <= READER_MAX,
         "issued_ms": _int_min(0),
         "dev": _bool,
     },
@@ -316,6 +327,17 @@ FIELDS: dict[str, dict[str, Check]] = {
         "expires_ms": _int_min(1),
         "dev": _bool,
     },
+    # #1198 C8 (§9.6): the owner's proof, signed by PK, that a hub op is the owner's own (not only the device key's)
+    "hub.owner_proof": {
+        "workspace_id": _hex16,
+        "person_id": _hex16,
+        "op": _enum(*OWNER_PROOF_OPS),
+        "payload": lambda x: type(x) is dict,
+        "request_id": lambda x: type(x) is str and REQUEST_ID.fullmatch(x) is not None,
+        "issued_ms": _int_min(0),
+        "expires_ms": _int_min(1),
+        "dev": _bool,
+    },
     "hub.publish_approval": {
         "workspace_id": _hex16,
         "hub_id": _hex16,
@@ -335,6 +357,7 @@ LABEL_OF_KIND = {
     "hub.binding": "sig_hub_binding",
     "hub.unbound": "sig_hub_unbound",
     "hub.publish_approval": "sig_hub_publish_approval",
+    "hub.owner_proof": "sig_hub_owner_proof",
     "hub.space": "sig_hub_space",
     "hub.space_wrap": "sig_hub_space_wrap",
     "hub.audit": "sig_hub_audit",
@@ -498,7 +521,19 @@ def verify_card(
                 raise Refused("stale_card")
             if o["card_seq"] == held["card"]["card_seq"] and cj(card) != cj(held["signed"]):
                 raise Refused("stale_card")
+        if o["reader"] < held["card"]["reader"]:
+            raise Refused("reader_downgrade")
     return {"card": o, "op_cert": op, "hk_op_pub": hk_op, "hk_root_pub": root, "signed": card}
+
+
+def check_hub_reader(held: Mapping[str, Any], required: int) -> int:
+    """§5 "Reader level" (#1198 C8): the host's gate before it binds the workspace to a hub. ``held`` is a verified
+    card (:func:`verify_card`), ``required`` the workspace's ``required_reader`` (orch-v2-host §0.8.6 item 9.4: 1 while
+    One click is on or the history holds a convenience event, else 0). A card below it is ``hub_too_old``."""
+    level = held["card"]["reader"]
+    if type(required) is not int or required < 0 or level < required:
+        raise Refused("hub_too_old")
+    return level
 
 
 def _under_card(
@@ -1011,25 +1046,46 @@ def check_hub_join(
 # --- the hub.joined payload and aliases ------------------------------------------------------------------------------
 
 
-def check_joined_payload(p: Any, *, prior_aliases: Mapping[str, str] = {}) -> dict[str, str]:
-    """The payload of the workspace-log event ``hub.joined`` (signed by the owner's device key like any person event,
-    ``orch/v2/sig/ws-event|``). Returns the alias map person_id -> user_id after it. Aliases are never re-pointed."""
-    if type(p) is not dict or set(p) != {"hub_id", "hk_root_pub", "mode", "binding_seq", "aliases"}:
-        raise Refused("malformed")
-    if not (
-        _pub(p["hk_root_pub"])
+def _joined_shape(p: Any) -> bool:
+    """The members of a ``hub.joined`` payload other than ``owner_proof`` (types and ``hub_id`` only)."""
+    return (
+        type(p) is dict
+        and set(p) == JOINED_KEYS
+        and _pub(p["hk_root_pub"])
         and _hex16(p["hub_id"])
         and p["mode"] in MODES
         and _int_min(1)(p["binding_seq"])
         and type(p["aliases"]) is list
-    ):
+    )
+
+
+def _left_shape(p: Any) -> bool:
+    return type(p) is dict and set(p) == LEFT_KEYS and _hex16(p["hub_id"]) and _int_min(1)(p["binding_seq"])
+
+
+def _proof_member(p: Any, keys: frozenset[str]) -> dict[str, Any]:
+    """Split ``owner_proof`` off an event payload: the member is required, ``null`` or a signed object (§9.1)."""
+    if type(p) is not dict or set(p) != {*keys, "owner_proof"}:
         raise Refused("malformed")
-    if p["hub_id"] != hub_id(unb64u(p["hk_root_pub"], 65)):
+    proof = p["owner_proof"]
+    if proof is not None and type(proof) is not dict:
+        raise Refused("malformed")
+    return {k: v for k, v in p.items() if k != "owner_proof"}
+
+
+def check_joined_payload(p: Any, *, prior_aliases: Mapping[str, str] = {}) -> dict[str, str]:
+    """The payload of the workspace-log event ``hub.joined`` (signed by the owner's device key like any person event,
+    ``orch/v2/sig/ws-event|``). Returns the alias map person_id -> user_id after it. Aliases are never re-pointed.
+    The ``owner_proof`` member is checked here for its place only; :func:`check_recorded_owner_proof` verifies it."""
+    q = _proof_member(p, JOINED_KEYS)
+    if not _joined_shape(q):
+        raise Refused("malformed")
+    if q["hub_id"] != hub_id(unb64u(q["hk_root_pub"], 65)):
         raise Refused("hub_id_mismatch")
     out = dict(prior_aliases)
     users = {u: pid for pid, u in prior_aliases.items()}
     pids = []
-    for a in p["aliases"]:
+    for a in q["aliases"]:
         if (
             type(a) is not dict
             or set(a) != {"person_id", "user_id"}
@@ -1044,6 +1100,163 @@ def check_joined_payload(p: Any, *, prior_aliases: Mapping[str, str] = {}) -> di
     if pids != sorted(set(pids)):
         raise Refused("malformed")
     return out
+
+
+def check_left_payload(p: Any) -> dict[str, Any]:
+    """The payload of ``hub.left``: ``{hub_id, binding_seq, owner_proof}`` exactly (§9.1)."""
+    q = _proof_member(p, LEFT_KEYS)
+    if not _left_shape(q):
+        raise Refused("malformed")
+    return q
+
+
+# --- the owner proof of a hub op (#1198 C8, §9.6) -------------------------------------------------------------------
+
+
+def _proof_payload_ok(op: str, p: Any) -> bool:
+    """The payload a proof names has the exact shape of its event's payload without ``owner_proof``: ``hub.join`` and
+    ``hub.mode`` a ``hub.joined`` payload (``hub.mode`` only to ``full``, §9.1 "Mode switch"), ``hub.leave`` a
+    ``hub.left`` payload."""
+    if op == "hub.leave":
+        return _left_shape(p)
+    if not _joined_shape(p) or (op == "hub.mode" and p["mode"] != "full"):
+        return False
+    try:
+        if p["hub_id"] != hub_id(unb64u(p["hk_root_pub"], 65)):
+            return False
+        check_joined_payload({**p, "owner_proof": None})
+    except Refused, CanonError:
+        return False
+    return True
+
+
+def _owner_proof(signed: Any, pk_pub: Any) -> dict[str, Any]:
+    """§9.6 steps 1-4: one code, ``proof_invalid``, for every way the object itself is wrong (the person is never
+    asked to tell a bad signature from a bad field; nothing is echoed)."""
+    if type(pk_pub) is not bytes or not S.valid_public_key(pk_pub):
+        raise Refused("proof_invalid")
+    try:
+        o = _envelope(signed, "hub.owner_proof")
+        _signature(signed, L["sig_hub_owner_proof"], pk_pub)
+        _fields(o, "hub.owner_proof")
+    except Refused:
+        raise Refused("proof_invalid") from None
+    if o["person_id"] != person_id(pk_pub) or not _proof_payload_ok(o["op"], o["payload"]):
+        raise Refused("proof_invalid")
+    if o["expires_ms"] <= o["issued_ms"] or o["expires_ms"] - o["issued_ms"] > OWNER_PROOF_MAX_MS:
+        raise Refused("proof_invalid")
+    return o
+
+
+def _proof_time(o: Mapping[str, Any], now_ms: int) -> None:
+    if o["issued_ms"] > now_ms + CLOCK_SKEW_MS:
+        raise Refused("proof_invalid")
+    if now_ms >= o["expires_ms"]:
+        raise Refused("proof_expired")
+
+
+def check_owner_proof(
+    signed: Any,
+    *,
+    pk_pub: bytes,
+    workspace_id: str,
+    op: str,
+    payload: Mapping[str, Any],
+    request_id: str,
+    now_ms: int,
+    dev_mode: bool,
+) -> dict[str, Any]:
+    """§9.6 "At the host": the proof a hub op carries, at binding and again at submit. ``pk_pub`` is the acting
+    owner's person key from the roster; ``payload`` the event payload the op signs, without ``owner_proof``;
+    ``request_id`` the host request being bound or submitted. Every argument is required: nothing is skipped."""
+    o = _owner_proof(signed, pk_pub)
+    if o["workspace_id"] != workspace_id or o["op"] != op or o["request_id"] != request_id:
+        raise Refused("proof_invalid")
+    try:
+        same = cj(o["payload"]) == cj(dict(payload))
+    except CanonError:
+        same = False
+    if not same:
+        raise Refused("proof_invalid")
+    _proof_time(o, now_ms)
+    _dev(o, dev_mode)
+    return o
+
+
+def check_join_proof(
+    signed: Any,
+    *,
+    pk_pub: bytes,
+    workspace_id: str,
+    hub_id_: str,
+    binding: Mapping[str, Any],
+    op: str,
+    now_ms: int,
+    dev_mode: bool,
+) -> dict[str, Any]:
+    """§9.6 "At the hub": the proof with a link ``join`` (``op`` ``hub.join``) or a mode-switch ``binding_put``
+    (``op`` ``hub.mode``). ``pk_pub`` is the owner key the join's card was verified under (§9.5), ``binding`` the
+    verified ``hub.binding`` object. The hub has no request id and no alias book to compare: it checks the workspace,
+    the op, and that the proof names this hub, this root, this mode and this ``binding_seq``."""
+    if op not in ("hub.join", "hub.mode"):
+        raise Refused("proof_invalid")
+    o = _owner_proof(signed, pk_pub)
+    p = o["payload"]
+    if (
+        o["workspace_id"] != workspace_id
+        or o["op"] != op
+        or p["hub_id"] != hub_id_
+        or p["hub_id"] != binding["hub_id"]
+        or p["hk_root_pub"] != binding["hk_root_pub"]
+        or p["mode"] != binding["mode"]
+        or p["binding_seq"] != binding["binding_seq"]
+    ):
+        raise Refused("proof_invalid")
+    _proof_time(o, now_ms)
+    _dev(o, dev_mode)
+    return o
+
+
+RECORDED_OPS = {"hub.joined": ("hub.join", "hub.mode"), "hub.left": ("hub.leave",)}
+
+
+def check_recorded_owner_proof(
+    event_type: str,
+    payload: Mapping[str, Any],
+    *,
+    auth: Any,
+    workspace_id: str,
+    actor_person_id: str,
+    pk_pub: bytes | None,
+    dev_mode: bool,
+) -> dict[str, Any] | None:
+    """§9.6 "Readers": a ``hub.joined`` / ``hub.left`` on the workspace log (the host model, another member's core,
+    the hub's log view). ``payload`` is the event's payload with ``owner_proof``; ``auth`` the event's ``auth``;
+    ``pk_pub`` the actor's person key from the roster (``None`` when unknown: refused). A ``null`` proof is allowed
+    only when ``auth`` is absent or ``"passphrase"`` (fail closed: ``convenience``, ``hub`` and every unknown value
+    need one). No clock: a proof is bound to its ``binding_seq``, which never repeats (§9.2)."""
+    allowed = RECORDED_OPS.get(event_type)
+    if allowed is None or type(payload) is not dict or "owner_proof" not in payload:
+        raise Refused("malformed")
+    proof = payload["owner_proof"]
+    if proof is None:
+        if auth is None or auth == "passphrase":
+            return None
+        raise Refused("proof_missing")
+    if pk_pub is None:
+        raise Refused("proof_invalid")
+    o = _owner_proof(proof, pk_pub)
+    rest = {k: v for k, v in payload.items() if k != "owner_proof"}
+    if o["workspace_id"] != workspace_id or o["person_id"] != actor_person_id or o["op"] not in allowed:
+        raise Refused("proof_invalid")
+    try:
+        same = cj(o["payload"]) == cj(rest)
+    except CanonError:
+        same = False
+    if not same:
+        raise Refused("proof_invalid")
+    _dev(o, dev_mode)
+    return o
 
 
 # --- link messages ------------------------------------------------------------------------------------------------

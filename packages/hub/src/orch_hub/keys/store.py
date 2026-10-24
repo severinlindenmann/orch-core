@@ -414,6 +414,7 @@ class HubKeys:
             "relay_url": relay_url,
             "tls_spki_sha256": tls,
             "card_seq": card_seq,
+            "reader": H.HUB_READER,
             "issued_ms": now,
             "dev": DEV,
         }

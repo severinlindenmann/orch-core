@@ -173,6 +173,7 @@ literal `orch/v2/hub-…|` names.
 | `sig_hub_link_auth` | `orch/v2/sig/hub-link-auth\|` | `WSK` | the link-open challenge, bound to TLS | 10 |
 | `sig_publish_hub` | `orch/v2/publish-hub\|` | `WSK` | a publish request on the hub path, with `hub_id` and the approval (L2-2) | 11 |
 | `sig_hub_publish_approval` | `orch/v2/sig/hub-publish-approval\|` | owner's `dk_sig` | `cj(o)` of `hub.publish_approval` | 11 |
+| `sig_hub_owner_proof` | `orch/v2/sig/hub-owner-proof\|` | owner's `PK` | `cj(o)` of `hub.owner_proof` (the owner proof of a hub op) | 9.6 |
 | `sig_hub_space` | `orch/v2/hub-space\|` | `HK_op` | `cj(o)` of `hub.space` | 10.4 |
 | `sig_hub_space_wrap` | `orch/v2/hub-space-wrap\|` | `HK_op` | `cj(o)` of `hub.space_wrap` | 10.4 |
 | `sig_space_item` | `orch/v2/sig/space-item\|` | `WSK` | `cj(o)` of `space.item` | 10.4 |
@@ -195,10 +196,12 @@ members are prefix-free among themselves and with every fixed label. **A key sig
 `hub-space-proposal|`, `hub-relay-req|` and `hub-api-origin|`), `UK` under the custodial family, a channel
 key under `hub-channel-proof`, once `hub-channel-reg` (its own registration), and (§6.4, §10.8.4) `hub-channel-auth`,
 `hub-channel-push` and `hub-channel-relay-req` for its own channel only, `WSK` under its four `sig/hub-*` labels, `sig/share-item|`, `sig/space-item|`, `sig/space-accept|` and `orch/v2/publish-hub|`, the owner's
-device key under `sig/hub-publish-approval|`.
+device key under `sig/hub-publish-approval|`, the person key `PK` under `sig/hub-owner-proof|` (§9.6; the form of v2's
+other `PK` labels, `sig/device-cert|` and `sig/ws-delegation|`).
 
 **Enforced in code, not by convention (L2-4).** `orch_hub.contract.keystore` is the contract's only signing API: one
-signer per key kind (`RootSigner`, `OpSigner`, `UkSigner`, `ChannelSigner`, `WskSigner`, `OwnerDeviceSigner`). Each
+signer per key kind (`RootSigner`, `OpSigner`, `UkSigner`, `ChannelSigner`, `WskSigner`, `OwnerDeviceSigner`,
+`PersonSigner`). Each
 takes only the objects (by `kind`, and for `hub.link` by direction) or the exact fields it may sign, builds its label
 itself, and raises `KeyUseError` for anything else; none has a "sign these bytes under this label" call. A hub key
 store wraps each private key in its signer once and never hands out the raw key. `tests/test_keystore.py` checks every
@@ -250,7 +253,7 @@ hxk_pub, relay_url, dev}`, plus the pinned TLS key (spec §4a).
 
 ```
 card = {"o": {"v": 2, "suite": 2, "kind": "hub.card", "hv": 0, "hub_id", "hk_root_pub", "hxk_pub", "relay_url",
-              "tls_spki_sha256", "card_seq", "issued_ms", "dev"},
+              "tls_spki_sha256", "card_seq", "reader", "issued_ms", "dev"},
         "op_cert": <hub.op_cert>,
         "sig": b64u(Sign(HK_op, "orch/v2/hub-card|" || cj(o)))}
 ```
@@ -261,6 +264,7 @@ card = {"o": {"v": 2, "suite": 2, "kind": "hub.card", "hv": 0, "hub_id", "hk_roo
 | `relay_url` | `null`, or v2 §7.1's form; `null` until the relay has hub accounts (phase 4) |
 | `tls_spki_sha256` | b64u of `H(SubjectPublicKeyInfo DER)` of the hub's TLS key: the pin of spec §4a |
 | `card_seq` | integer ≥ 1; a holder keeps the highest it verified |
+| `reader` | integer, `0 ≤ reader ≤ 2^31 − 1`: the hub's reader level (below, #1198 C8). This hub declares `1` |
 
 The card has exactly the three members `o`, `op_cert`, `sig` (an exception to §2.2, like v2's card).
 
@@ -275,7 +279,22 @@ The card has exactly the three members `o`, `op_cert`, `sig` (an exception to §
 7. against the card the holder already holds, if any (L2-1): another `hk_root_pub` → `other_hub`; a lower `op_seq`,
    or the same `op_seq` under another `cert_id` → `stale_op_cert` (whatever its `card_seq`); within one op cert a
    lower `card_seq`, or the same `card_seq` with other content → `stale_card`; a higher `op_seq` is accepted and
-   replaces the held card (and with it the TLS pin and `hxk_pub`).
+   replaces the held card (and with it the TLS pin and `hxk_pub`). After those order checks, a `reader` below the
+   held card's → `reader_downgrade`, under the same or a newer op cert (a hub never lowers its level).
+
+**Reader level (#1198 C8).** The card's `reader` is the hub's signed declaration of the events it can read, in the
+levels of orch-v2-host §0.8.6 item 9 (the levels a phone or another member's core declares, and the relay in
+`GET /v2/relay-info`): level 1 means the hub understands `auth: "convenience"` (One click) on every event it reads
+and refuses an unknown `auth`. orch-hub is level 1: it checks `auth` only on custodial events (§8.3) and treats every
+other event as data. The level sits inside the `HK_op`-signed card, so a holder trusts it exactly as far as it
+trusts the card, and it only goes up (`reader_downgrade`).
+
+The host's gate, before it binds (C9; reference `check_hub_reader`, vectors `hub_reader_*`): a selective join makes
+the hub a reader of the shared tickets, and a full join a reader of everything. `hub.join` and `hub.mode` are refused
+when the card's `reader` is below the workspace's `required_reader` (orch-v2-host §0.8.6 item 9.4: `1` while One
+click is on, the durable mark is set or the history holds a convenience event, else `0`) → `hub_too_old`; the host
+reports it as `sign.convenience_readers` with reason `hub_too_old`, like `relay_too_old`. A level-0 card is a
+declaration, not a refusal (vector `card_reader_level_0`): the host decides.
 
 **Check at use (L2-1).** Every use of a held card (§6, §7, §8, §10) first checks the held card's op cert against the
 **current** revoked set → `revoked`. A revocation that arrives after the card was admitted stops it at once; no caller
@@ -914,8 +933,13 @@ These are workspace-log person events (ticket-format §5.4.2 additions), signed 
 `orch/v2/sig/ws-event|` exactly like any person event (ticket-format §5.3 bytes; vector `hub_joined`). Human-only
 verbs at the host terminal (`orch hub join`, `orch hub leave`); never an agent, never the hub.
 
-`hub.joined` payload, exactly: `{hub_id, hk_root_pub, mode: "selective" | "full", binding_seq, aliases}`.
-`hub.left` payload, exactly: `{hub_id, binding_seq}`.
+`hub.joined` payload, exactly: `{hub_id, hk_root_pub, mode: "selective" | "full", binding_seq, aliases, owner_proof}`.
+`hub.left` payload, exactly: `{hub_id, binding_seq, owner_proof}`.
+
+- `owner_proof` (#1198 C8) is a required member: the signed `hub.owner_proof` of §9.6, or `null`. `null` is allowed
+  only when the event's `auth` is absent or `"passphrase"` (the owner's own key at the terminal; its signature is the
+  proof). Every other `auth` (`"convenience"`, `"hub"`, any unknown value) needs a proof → `proof_missing`. A proof
+  that is present is always verified, whatever the `auth` (§9.6 "Readers").
 
 - `hub_id == hub_id(hk_root_pub)` → `hub_id_mismatch`; this is where the host pins `HK_root`.
 - `binding_seq` is the `binding_seq` of the `hub.binding` the host signs next (§9.2); `hub.left` names the binding it
@@ -1019,6 +1043,87 @@ From then on the hub verifies link auth (§10.1), every w2h link message and eve
 this hub (vector `hub_join_squat_before_real_owner`); the real owner's join is refused, visibly, and a
 `workspace_id` is 16 random bytes that only the host knows before it publishes its card.
 
+### 9.6 The owner proof of a hub op (#1198 C8)
+
+**Purpose.** Binding a workspace to a hub (or switching it to full mode, or leaving) is done in the dashboard with
+a click, and the click is signed by the One-click device key (`auth: "convenience"`). That key may not bind the
+workspace to a hub by itself: a full join hands the hub `WK_e` and from then on the hub signs for the workspace, so a
+taken-over dashboard could hand the workspace to its own hub, and that outlives switching One click off. The op
+therefore also carries an **owner proof**, signed by the person key `PK`. `PK` is derived from the owner's recovery
+code (the long backup key, orch-core `identity/recovery.py`: scrypt, then FIPS 186-5 A.2.1). The person types the
+code once; the signer next to the workspace derives `PK`, signs the proof and wipes the code and `PK` (C10). The
+host, the hub and every reader of the log check the proof; none of them ever sees the code.
+
+```
+proof = {"o": {"v": 2, "suite": 2, "kind": "hub.owner_proof", "hv": 0, "workspace_id", "person_id", "op",
+               "payload", "request_id", "issued_ms", "expires_ms", "dev"},
+         "sig": b64u(Sign(PK, "orch/v2/sig/hub-owner-proof|" || cj(o)))}
+```
+
+| Field | Value |
+|---|---|
+| `workspace_id` | hex; the workspace the op runs in |
+| `person_id` | hex; `person_id(PK)` (v2 §4), the owner who signs |
+| `op` | `"hub.join"`, `"hub.mode"` or `"hub.leave"` |
+| `payload` | the exact payload of the event the op appends, **without** its `owner_proof` member: for `hub.join` and `hub.mode` a `hub.joined` payload `{hub_id, hk_root_pub, mode, binding_seq, aliases}` (§9.1 rules: `hub_id == hub_id(hk_root_pub)`, aliases sorted and unique; `hub.mode` only with `mode: "full"`), for `hub.leave` a `hub.left` payload `{hub_id, binding_seq}` |
+| `request_id` | the host request the proof is made for: `hr_` and a ULID (`hr_[0-7][0-9A-HJKMNP-TV-Z]{25}`) |
+| `issued_ms`, `expires_ms` | integers, `issued_ms < expires_ms ≤ issued_ms + 600 000` (a host request lives at most 600 s) |
+| `dev` | boolean (§2.4) |
+
+What it binds, and why: the workspace and the person (no other workspace or person can use it); the op and the full
+payload (the hub, its root, the mode, the `binding_seq` and the aliases are exactly what the person reviewed; the
+payload is shown verbatim in the review, orch-v2-host §0.8.1); the request id (one proof, one request: the host
+refuses it on any other request); a short lifetime. The payload is named without the proof member, so the proof and
+the event never refer to each other in a circle. It does not bind the device key that signs the event: the proof is
+the authority, the device signature only carries it.
+
+**Bytes.** `signed = "orch/v2/sig/hub-owner-proof|" || cj(o)` (the `owner_proof` entry of `signatures`; the event
+`hub_joined` carries one).
+
+**Verification, steps 1–4 (everyone).** Given the owner's `pk_pub` (from the roster at the host and at readers, from
+the join's §9.5 card at the hub):
+
+1. envelope, header, signature under `pk_pub` with `orch/v2/sig/hub-owner-proof|`, exact field set and types;
+2. `person_id == person_id(pk_pub)`; `payload` has the exact shape its `op` names (above);
+3. `issued_ms < expires_ms ≤ issued_ms + 600 000`;
+4. the caller's bindings (below).
+
+**Every failure of steps 1–4 is the one code `proof_invalid`** (the person is never asked to tell a bad signature
+from a bad field, and nothing is echoed). Then, where the verifier has a clock: `issued_ms > now + 300 s` →
+`proof_invalid`, `now ≥ expires_ms` → `proof_expired`; last, the dev marker (§2.4: `dev_refused`, `dev_mismatch`).
+
+**At the host** (C9; reference `check_owner_proof`, vectors `owner_proof_*`), at binding and again at submit, under
+the store lock: `workspace_id` is this workspace, `op` is the op being run, `cj(payload)` equals the payload the
+op's event carries (without `owner_proof`), `request_id` is the request being bound or submitted; `pk_pub` is the
+acting owner's `PK` from the roster (the actor must be an owner, as for every hub op). With the host's clock. A hub
+op whose event will carry `auth: "convenience"` and no proof is refused before anything is signed (`proof_missing`).
+
+**At the hub** (reference `check_join_proof`, vectors `join_proof_*`): with a link `join` (`op` `hub.join`) and with a
+`binding_put` whose binding switches the mode (`op` `hub.mode`), after §9.5: `workspace_id` is the card's, `op` is
+the link op's, and the payload's `hub_id` is this hub's and its `hub_id`, `hk_root_pub`, `mode` and `binding_seq`
+are the binding's. `pk_pub` is the join's owner key (§9.5 step 2), for a `binding_put` the pinned owner's. With the
+hub's clock. The hub has no request id and no alias book to compare, and does not need them: the host and the
+readers do.
+
+**Readers** (the host model, another member's core, the hub's `log_sync` view; reference
+`check_recorded_owner_proof`, vectors `recorded_*`), for every `hub.joined` / `hub.left` on the workspace log: the
+`owner_proof` member as in §9.1 (`null` only with `auth` absent or `"passphrase"`, else `proof_missing`); a present
+proof passes steps 1–4 with `pk_pub` the actor's `PK` from the roster (unknown → `proof_invalid`), `workspace_id`
+this workspace, `person_id` the actor's, `op` `hub.join` or `hub.mode` on `hub.joined` and `hub.leave` on
+`hub.left`, and `cj(payload)` equal to the event's payload without `owner_proof`; then the dev marker. **No clock:**
+a recorded proof is bound to its `binding_seq`, which never repeats in a workspace (§9.2), and the host checked its
+freshness when it appended the event (vector `recorded_long_after_expiry`).
+
+**The terminal path.** `orch hub join / mode / leave` at the terminal, signed with the passphrase device key, needs
+no proof (`owner_proof: null`): the owner's own key is the proof. It may still ask for the recovery code and attach
+one; then it is checked like any other.
+
+**Rollout.** The card's `reader` ships now on both sides (it changes the signed card, so hub and core deploy
+together; a dev hub re-issues its card, `reissue_card`, to get one). The `owner_proof` payload member, the `join` and
+mode-switch `binding_put` bodies that carry the proof (§10.2), the host checks and the signer ship together with
+orch-core C9/C10, because they change what core sends; until then the reference functions and the vectors pin the
+bytes.
+
 ## 10. The host↔hub link
 
 **Purpose.** The only channel between a host and its hub (D68). The host dials out; both sides authenticate; every
@@ -1063,9 +1168,9 @@ unknown `op` is `unknown_op`.
 | `route_in` | h2w | both | `{"envelope": b64u}` | `{}` |
 | `wk_seal` | w2h | full | `{"epoch", "wrap": b64u}`: `WK_e` sealed to `HXK` (v2 §5.3) | `{}` |
 | `publish_out` | w2h | both | `{"request": {method, host, target, headers, body_hex}}` (§11) | `{"status", "body_hex"}` |
-| `join` | w2h | both | `{"invite", "card", "pk_pub", "binding"}`: the v2 card, the owner's PK, the binding (§9.5) | `{}` |
+| `join` | w2h | both | `{"invite", "card", "pk_pub", "binding"}`: the v2 card, the owner's PK, the binding (§9.5); with C9 also `"owner_proof"` (§9.6: the proof, or `null` for a terminal join) | `{}` |
 | `card_put` | w2h | both | `{"card", "pk_pub"}`: the workspace's v2 card, checked against the join pin, forwarded to orch-publish (§11.2 "Admission through the hub"); refusals: `other_person`, `other_workspace`, `wsk_mismatch`, `stale_card`, `not_bound`, and orch-publish's (`unknown_workspace`, `owner_not_allowed`, `workspace_blocked`, `delegation_changed`, `delegation_refused`, `delegation_mismatch`, `bad_signature`, `unavailable`) | `{}` |
-| `binding_put` | w2h | both | `{"object"}`: a `hub.binding` or `hub.unbound`, forwarded as is | `{}` |
+| `binding_put` | w2h | both | `{"object"}`: a `hub.binding` or `hub.unbound`, forwarded as is; with C9 a binding that switches the mode also carries `"owner_proof"` (§9.6) | `{}` |
 | `audit_ack` | w2h | both | `{"seq", "head": b64u(32)}` | `{"acked": seq}` (§10.5) |
 | `audit_get` | w2h | both | `{"since"}` | `{"records": [{"record": <hub.audit>, "event"?}], "head", "op_certs": [<hub.op_cert>]}` (D4, §10.5; added) |
 | `share_put` | w2h | selective | `{"item_id", "sealed": b64u}` | `{}` |
@@ -2080,6 +2185,11 @@ v2 codes keep their meaning (v2 §14). New in H0:
 | `bad_channel_proof`, `factor_mismatch`, `factor_too_weak` | custodial | §8.3 |
 | `wsk_mismatch`, `not_yet_valid`, `binding_conflict`, `stale_binding`, `unbound` | binding store | §9 |
 | `alias_repointed` | `hub.joined` | §9.1 |
+| `proof_invalid` | owner proof | §9.6: the proof does not verify under the owner's `PK`, names another workspace, person, op, payload or request, lives longer than 600 s, or is issued in the future; one code for all of them |
+| `proof_expired` | owner proof | §9.6: `now ≥ expires_ms` at the host or the hub (readers use no clock) |
+| `proof_missing` | owner proof | §9.1, §9.6: a `hub.joined` / `hub.left` (or the op that would append one) with `auth` other than absent or `"passphrase"` and no proof |
+| `reader_downgrade` | card | §5 step 7: a newer card declares a lower `reader` than the held one |
+| `hub_too_old` | card at join (host) | §5 "Reader level": the card's `reader` is below the workspace's `required_reader`; the host's `sign.convenience_readers` reason |
 | `unknown_op`, `wrong_mode` | link | §10 |
 | `bad_wrap` | `wk_seal` reply | the wrap does not open under `HXK`, is not bound to this `hub_id`, this workspace and the stated epoch, or is another wrap for an epoch already sealed (§10.2a) |
 | `bad_epoch` | `wk_seal` reply | v2 code reused: the epoch is lower than the newest one held for the live binding (§10.2a) |
@@ -2150,7 +2260,7 @@ link errors travel as `{"error": code}` reply bodies; host-side refusals are loc
 | `objects` | one valid instance of every object |
 | `signatures` | per object: signer, label, `canonical_hex` = `cj(o)`, `signed_hex` = label ‖ `cj(o)`, `sig` |
 | `custodial` | an event with `digest_hex`, the proof's and the UK's signed bytes |
-| `hub_joined` | the owner-signed workspace-log event and its ticket-format §5.3 bytes |
+| `hub_joined` | the owner-signed workspace-log event and its ticket-format §5.3 bytes; a One-click (`auth: "convenience"`) join that carries its `owner_proof` (§9.6) |
 | `publish` | a forwarded request: `wsk_signed_hex` (hub-path bytes), `approval_hash_hex`, `hub_signed_hex`, `request_hash` |
 | `link_auth` | challenge, exporter, signed bytes, signature |
 | `audit`, `admin_read` | V3-D4 / F3: a 4-record chain with its events and hashes; the admin read signed bytes, a request and a row |
@@ -2158,7 +2268,7 @@ link errors travel as `{"error": code}` reply bodies; host-side refusals are loc
 | `phase4` | p4: the `log_sync` lines, heads, view key, AAD and one sealed page; a ticket projection `proj_ticket`, a ticket page carrying it and its plaintext bytes (D15b); a prepared context and digest; a relay request and its bytes; the relay routes' request bytes and one sealed push payload (`relay_routes`); the custodial type table; the `space.accept` built from the vector proposal |
 | `share_item_f1` | C3b addendum: a ticket item with an `f1` block and its `item_hash` (§10.2b, §8.6) |
 | `phase4.channel_api` | B stream: a pairing link and its fingerprint, a signed `hub.api_origin`, a `session_ref`, a signed `hub.channel_auth` and `hub.channel_push`, a channel → relay request with its signed bytes, the mailbox list answer |
-| `cases` | 962 cases (247 positive, 715 negative; 51 of them phase 5, §8.8): `check`, `args`, `expect` (`{"ok": …}` or `{"error": code}`), `phase` |
+| `cases` | 1048 cases (269 positive, 779 negative; 128 of them phase 5: §8.8, and #1198 C8 §5 and §9.6): `check`, `args`, `expect` (`{"ok": …}` or `{"error": code}`), `phase` |
 
 The negative cases cover, per object where it applies: wrong domain, wrong signer, expired, binding for another
 workspace, unbound after leave, missing dev marker, dev at a real verifier, extra or unknown field, non-canonical
@@ -2175,7 +2285,8 @@ relay `channel_request` and `channel_route`. C3b addendum: orch-core runs `custo
 `deliver_next` (the host's reading of its own replies) and `share_item` incl. `f1` (it builds them); the hub runs all,
 plus `selective_build`. D15b: orch-core builds the `log_sync_proj_*` pages (its seal of `phase4.log_sync.proj_ticket`
 must equal `page_ticket_with_proj` byte for byte) and the hub runs `proj_build`; both run `workspace_roster_v*` (hub: `project_workspace`, core: its replay's
-`roster_v`). The hub also runs `hub_join`. Each case carries its `phase`; the L2 cases name their finding in `note`. The cross-repo contract job (V3-D8) runs from phase 2.
+`roster_v`). The hub also runs `hub_join`. #1198 C8 (§5, §9.6): orch-core runs `card_reader`, `hub_reader`, `owner_proof`,
+`owner_proof_recorded`, `joined_payload` and `left_payload`; the hub runs all of them and `owner_proof_join`. Each case carries its `phase`; the L2 cases name their finding in `note`. The cross-repo contract job (V3-D8) runs from phase 2.
 
 ## 16. Decided here, and open points for L2
 

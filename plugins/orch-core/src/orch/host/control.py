@@ -4,8 +4,8 @@
 * ``host.wsk_create``: a new workspace id and key, ``O_CREAT|O_EXCL`` in a fresh 0700 directory; never replaces a key.
 * ``host.register``: adopt a workspace (D-P2-18): ownership lock, registration, serving, unlock.
 * ``host.unregister``: stop serving and remove the registration, which restores direct mode.
-* ``host.bootstrap``: append a signed genesis with the new key as ``seq`` 1, then register (the hosted create of ``orch setup``,
-  whose client side is :func:`orch.ops.workspace_init._hosted_bootstrap`).
+* ``host.bootstrap``: append a signed genesis with the new key as ``seq`` 1, then register (the hosted create of
+  ``orch setup``, whose client side is :func:`orch.ops.workspace_init._hosted_bootstrap`).
 * ``host.outcome``: the stored outcome of a control write.
 * ``host.restart``: drain (D-P2-4).
 The three writes are control writes: ``opts.idem`` is required, an intent is fsynced before anything changes, and

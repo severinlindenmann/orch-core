@@ -15,6 +15,9 @@ CODE_TTL = 30
 # The one-time nonce of `orch setup` lives 5 min: the person may copy the printed link into another terminal or
 # browser. Still single use, and the claim still binds the first browser; only the window to present it is longer.
 SETUP_CODE_TTL = 300
+# The code `--print-url` prints on a headless machine (#1198 R1-1) lives 5 min too: the person has to open an
+# `ssh -L` tunnel on their own computer before they can use it. Still single use; desktops keep CODE_TTL.
+TUNNEL_CODE_TTL = 300
 
 
 class Auth:
@@ -39,13 +42,13 @@ class Auth:
     def probe(self, nonce):
         return hmac.new(bytes.fromhex(self.probe_key), (nonce + self.instance).encode(), hashlib.sha256).hexdigest()
 
-    def launch(self, port, setup=False):
+    def launch(self, port, setup=False, tunnel=False):
         with self.lock:
             now = self.clock()
             for stale in [c for c, until in self.codes.items() if until <= now]:
                 self._forget(stale)
             code = secrets.token_urlsafe(32)
-            ttl = SETUP_CODE_TTL if setup else CODE_TTL
+            ttl = SETUP_CODE_TTL if setup else TUNNEL_CODE_TTL if tunnel else CODE_TTL
             self.codes[code] = now + ttl
             if setup:
                 self.setup_codes.add(code)

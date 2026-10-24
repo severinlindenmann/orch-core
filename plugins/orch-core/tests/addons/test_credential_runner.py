@@ -11,8 +11,8 @@ import os
 import pytest
 
 from orch.addons import credential as cr
-from orch.addons.runner import Limits, call
-from tests.addons.test_runner_1_1 import make, refused
+from orch.addons.runner import Limits
+from tests.addons.test_runner_1_1 import call, make, refused
 
 UID = os.getuid()
 SECRET = "sk-live-SECRET-0123456789_abcdef"

@@ -97,7 +97,7 @@ SITES: dict[tuple[str, str], tuple[int, str]] = {
     ("peerops.py", "_check"): (2, "unreachable (peer.* are not R ops); a relay peer is not column P or G"),
     ("shareops.py", "_owner"): (2, "unreachable (share.* are not R ops); R is not P, so it would be refused"),
     ("marketops.py", "_check"): (4, "unreachable (market.* are not R ops); R is not P or G, so it would be refused"),
-    ("marketops.py", "serve"): (2, "unreachable (market.* are not R ops); after _check, which refused R"),
+    ("marketops.py", "_serve_checked"): (2, "unreachable (market.* are not R ops); after _check, which refused R"),
     ("spaceops.py", "_owner"): (2, "unreachable (space.* are not R ops); R is not P, so it would be refused"),
     ("spaceops.py", "_check"): (2, "unreachable (space.* are not R ops); a relay peer is not column P or G"),
     ("worktrees.py", "_claim_ok"): (4, "unreachable (worktree.* are not R ops)"),

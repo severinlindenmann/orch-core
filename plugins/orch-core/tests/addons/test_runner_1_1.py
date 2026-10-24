@@ -14,9 +14,15 @@ import pytest
 from orch.addons import runner
 from orch.addons.manifest import declarations, load_package_manifest
 from orch.addons.package import read_package
-from orch.addons.runner import PYTHON_ARGV, Limits, RunnerError, call, child_env
+from orch.addons.runner import PYTHON_ARGV, Limits, RunnerError, child_env
+from orch.addons.runner import call as _call
 from orch.model.types import Addon
 from tests.addons.helpers import FIXTURES, manifest
+
+
+def call(*a, **kw):  # standalone: these tests are not about the hub policy
+    return _call(*a, gate=None, **kw)
+
 
 SETTINGS = {
     "title": "Routing",

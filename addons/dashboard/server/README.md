@@ -39,7 +39,7 @@ core.
 
 Use a disposable P1 workspace and its existing host state, not a production workspace.
 The stub uses the P1 signed store and registry; it does not seed mock tickets. Initialize a
-disposable workspace through P1's `orch init --prefix DEMO` in your own terminal (or use a
+disposable workspace through P1's `orch setup` (prefix DEMO) in your own terminal (or use a
 workspace prepared by the dev-kit). The terminal handles its signing factors.
 
 1. Explicitly mark that workspace and its separate dev state directory with an empty
@@ -69,7 +69,7 @@ workspace prepared by the dev-kit). The terminal handles its signing factors.
    short (under 100 UTF-8 bytes). `ORCH_HOST_RUN_DIR` must be a short **real directory**, with no symlink aliases; for the stub it
    must remain inside the marked dev state (for example `/private/tmp/orch-m1/state/run`; macOS `/tmp` is a symlink
    to `/private/tmp`, so do not use it). The `orch` CLI needs the workspace signing key (WSK) under
-   `$ORCH_STATE_DIR/hosts/<workspace-id>/keys` to append; a workspace not made by `orch init` has none and stays read-only.
+   `$ORCH_STATE_DIR/hosts/<workspace-id>/keys` to append; a workspace not made by `orch setup` has none and stays read-only.
 4. In another terminal, launch the server and browser:
 
    ```sh

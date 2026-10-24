@@ -972,7 +972,7 @@ class RealPorts:
 
             write_workspace_files(
                 root, store=layout_mod.store_of(root)
-            )  # as `orch init`: a failure here leaves the workspace in place
+            )  # as `orch setup`: a failure here leaves the workspace in place
         except Exception:  # noqa: BLE001
             pass
         pub = factory(wi.person_dir(self.state, st.wid)).public_key("dk")

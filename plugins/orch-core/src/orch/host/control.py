@@ -474,7 +474,7 @@ class ControlOps:
 
         # an existing project is fine; a name the store writes is not (rollback owns them, a project's file is never
         # written over): one rule for setup, init and here (rootclaim)
-        why = rootclaim.refusal(rootclaim.inspect(root), init_lock_ok=True)
+        why = rootclaim.refusal(rootclaim.inspect(root))
         if why is not None:
             raise HostError("invalid.input", f"{root}: {why}")
 
@@ -656,7 +656,7 @@ class ControlOps:
 
     @staticmethod
     def _foreign_root(root: str, workspace_id: str, planned_id: str) -> bool:
-        """Did another workspace take over ``root`` after the host died? A direct ``orch init`` may have: a
+        """Did another workspace take over ``root`` after the host died? A direct ``orch setup`` may have: a
         ``config.json`` that does not name ``workspace_id`` (unreadable counts), or an ``events/workspace.jsonl``
         whose first line is a genesis other than the planned one (``config.json`` is installed only after that line).
         Its files are not ours to delete."""

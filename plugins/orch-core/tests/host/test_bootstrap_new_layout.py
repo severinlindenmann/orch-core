@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from orch.host.registry import registry_path
-from orch.ops import workspace_init as wi
+from tests.host.hosted_create import create_hosted
 from tests.host.lifecycle_helpers import Lab
 from tests.host.test_bootstrap import ctx_for, fresh_root, ok, passphrases, recording, term  # noqa: F401  (fixtures)
 
@@ -43,7 +43,7 @@ def test_init_through_the_host_bootstraps_into_dot_orch(
     (root / "config.json").write_text('{"name": "my own project file"}')  # no collision in the new layout
     monkeypatch.chdir(root)
     with lab.host() as h:
-        res = wi.create_workspace_hosted(ctx_for(root, lab.state), {"prefix": "DEMO", "name": "Severin", "host": True})
+        res = create_hosted(ctx_for(root, lab.state), {"prefix": "DEMO", "name": "Severin", "host": True})
         wid = res.data["workspace_id"]
         store = root / ".orch"
         assert stat.S_IMODE(store.stat().st_mode) == 0o700

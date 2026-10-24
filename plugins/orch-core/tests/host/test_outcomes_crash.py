@@ -205,9 +205,7 @@ def killed_bootstrap(lab, tmp_path):
 def test_recovery_leaves_a_root_whose_config_names_another_workspace(lab, tmp_path):
     root, created, idem = killed_bootstrap(lab, tmp_path)
     foreign = {"workspace": {"id": "b" * 32, "prefix": "DIRECT"}}
-    (root / ".orch" / "config.json").write_text(
-        json.dumps(foreign)
-    )  # a direct `orch init` ran here after the host died
+    (root / ".orch" / "config.json").write_text(json.dumps(foreign))  # a direct creation ran here after the host died
     (root / ".orch" / "events").mkdir(exist_ok=True)
     (root / ".orch" / "events" / "workspace.jsonl").write_text("direct init genesis\n")
     with lab.host() as h, h.client() as c:
@@ -231,7 +229,7 @@ def test_recovery_still_cleans_a_root_whose_config_names_this_workspace(lab, tmp
 
 def test_recovery_leaves_a_root_whose_workspace_log_starts_with_another_genesis(lab, tmp_path):
     root, created, idem = killed_bootstrap(lab, tmp_path)
-    # a direct `orch init` that landed its genesis line but not yet its config.json
+    # a direct creation that landed its genesis line but not yet its config.json
     for name in ("config.json",):
         (root / ".orch" / name).unlink(missing_ok=True)
     (root / ".orch" / "events").mkdir(exist_ok=True)

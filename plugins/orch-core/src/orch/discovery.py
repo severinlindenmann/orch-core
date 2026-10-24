@@ -34,7 +34,7 @@ opens something else under the root first checks it is still that directory (:fu
   is not a candidate: the walk goes on past it.
 * The walk **stops** (no workspace) at the first directory that is sticky or other-writable (``/tmp``,
   ``/private/tmp``, ``/Users/Shared``): it is neither a candidate nor walked past, so a workspace planted in or above
-  a shared directory is never used, and it never blocks ``orch init`` below it. The stop applies to every directory
+  a shared directory is never used, and it never blocks ``orch setup`` below it. The stop applies to every directory
   the walk visits, the start included: standing in ``/tmp`` itself finds nothing, standing in ``/tmp/x`` (a folder of
   one's own) checks ``/tmp/x`` and stops at ``/tmp``. A workspace directly in a sticky directory is found from a
   working directory inside it, or through ``ORCH_WORKSPACE``.

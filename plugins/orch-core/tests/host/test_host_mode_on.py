@@ -21,8 +21,10 @@ import os
 import plistlib
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 import pytest
 
@@ -250,6 +252,33 @@ def world(tmp_path, monkeypatch, fake):
     remove_tree(short)
 
 
+def init_ws(world: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    """A workspace on disk with its keys, NOT registered with any host: it is made through a throwaway in-process host
+    (V3-D38: ``orch setup`` is the only product path, and it registers), which is then stopped and whose registry
+    is dropped, so the tests of ``host register``/``enable`` start from "a workspace this host does not serve yet"."""
+    from orch.ops.base import Context
+    from orch.ops.caps import Files
+    from orch.ops.runtime import Workspace
+    from tests.host.hosted_create import create_hosted
+
+    env, root, fake = world["env"], world["root"], world["fake"]
+    ctx = Context(
+        env=env,
+        grant=None,
+        human_presence=True,
+        now=time.time,
+        workspace=Workspace(env, time.time, cwd=str(root), files=Files.direct()),
+    )
+    state = Path(env["ORCH_STATE_DIR"])
+    with (
+        mock.patch.dict(os.environ, {"ORCH_HOST_RUN_DIR": env["ORCH_HOST_RUN_DIR"]}),  # where the library looks (#1193)
+        HostThread(state, world["run"], pins=fake.pins),
+    ):
+        res = create_hosted(ctx, {"prefix": "DEMO", "name": "Severin"})
+    (state / "host" / "workspaces.json").unlink()
+    return 0, {"ok": True, "data": {"workspace_id": res.data["workspace_id"], "prefix": "DEMO"}}
+
+
 def cli(env: dict[str, str], *argv: str) -> tuple[int, dict[str, Any]]:
     from orch.cli.main import main
 
@@ -261,7 +290,7 @@ def cli(env: dict[str, str], *argv: str) -> tuple[int, dict[str, Any]]:
 @pytest.mark.slow
 def test_a_fresh_workspace_init_register_then_the_cli_and_the_dashboard_work(world):
     env, root, fake = world["env"], world["root"], world["fake"]
-    code, doc = cli(env, "init", "--prefix", "DEMO", "--name", "Severin")
+    code, doc = init_ws(world)
     assert code == 0, doc
     wid = doc["data"]["workspace_id"]
 
@@ -375,7 +404,7 @@ def test_register_without_a_device_key_here_asks_for_the_mapping(world, tmp_path
 
 def test_status_names_the_fix_for_a_registered_workspace_without_a_host(world):
     env, root = world["env"], world["root"]
-    assert cli(env, "init", "--prefix", "DEMO", "--name", "Severin")[0] == 0
+    assert init_ws(world)[0] == 0
     assert host(["register", str(root), "--dev"], env)[0] == 0
     world["fake"].stop_host()
     code, text = host(["status"], env)
@@ -387,7 +416,7 @@ def test_status_names_the_fix_for_a_registered_workspace_without_a_host(world):
 
 def test_a_running_host_is_used_as_it_is_and_no_service_is_touched(world):
     env, root, fake = world["env"], world["root"], world["fake"]
-    assert cli(env, "init", "--prefix", "DEMO", "--name", "Severin")[0] == 0
+    assert init_ws(world)[0] == 0
     state = Path(env["ORCH_STATE_DIR"])
     with HostThread(state, world["run"], pins=fake.pins):  # a dev host (orch host run --foreground)
         code, out = host(["register", str(root), "--dev"], env)
@@ -500,7 +529,7 @@ def test_a_service_for_another_setup_is_never_replaced_silently(world):
     """Opus 1: one label per UID. A unit installed for state A is not re-targeted by enable or register from state B;
     ``enable --replace`` does it on purpose, and status names the fields that differ."""
     env, root, fake = world["env"], world["root"], world["fake"]
-    assert cli(env, "init", "--prefix", "DEMO", "--name", "Severin")[0] == 0
+    assert init_ws(world)[0] == 0
     assert host(["register", str(root), "--dev"], env)[0] == 0  # the service now serves state A
     unit = fake.plan
     assert unit is not None
@@ -527,7 +556,7 @@ def test_a_service_for_another_setup_is_never_replaced_silently(world):
 def test_the_peer_default_ignores_a_dead_device_key(world, monkeypatch):
     """Opus 6: the key on this machine is the evidence for the default; a removed, revoked or expired one is none."""
     env, root = world["env"], world["root"]
-    assert cli(env, "init", "--prefix", "DEMO", "--name", "Severin")[0] == 0
+    assert init_ws(world)[0] == 0
     state = Path(env["ORCH_STATE_DIR"])
     assert list(host_cli.default_peers(state, root, env)) == [str(UID)]
     monkeypatch.setattr(host_cli, "_dead_device", lambda device, person, ws: "revoked")

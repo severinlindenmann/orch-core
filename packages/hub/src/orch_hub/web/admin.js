@@ -182,6 +182,7 @@ export function adminView(d) {
   // The admin's own changes (draft against its base) laid onto the latest policy. Where someone else changed the same
   // thing differently the admin's value wins but is listed in ``overwrites`` and needs an explicit confirm.
   function rebase(base, mine, latest) {
+    const shortKey = (k) => "key " + k.slice(0, 8) + "…" + k.slice(-4);
     const over = [], same = (a, b) => canon(a) === canon(b);
     const listMerge = (b, m, l) => { const B = new Set(b), M = new Set(m), out = new Set(l); for (const x of M) if (!B.has(x)) out.add(x); for (const x of B) if (!M.has(x)) out.delete(x); return [...out].sort(); };
     const field = (label, b, m, l) => {
@@ -194,7 +195,7 @@ export function adminView(d) {
     for (const [url, m] of M) {
       const b = B.get(url), l = res.get(url);
       if (b === undefined) { if (l !== undefined && !same(l, m)) over.push("Marketplace " + url + " was added elsewhere with other keys"); res.set(url, m); }
-      else if (!same(m, b)) { if (l === undefined) over.push("Marketplace " + url + " was removed elsewhere; your key change adds it back"); else if (!same(l, b) && !same(l, m)) over.push("Keys of " + url + " were changed elsewhere"); res.set(url, m); }
+      else if (!same(m, b)) { if (l === undefined) over.push("Marketplace " + url + " was removed elsewhere; your key change adds it back"); else if (!same(l, b) && !same(l, m)) { const back = m.keys.filter((k) => !l.keys.includes(k)), gone = l.keys.filter((k) => !m.keys.includes(k)); over.push("Keys of " + url + " were changed elsewhere" + (back.length ? "; your version brings back " + back.map(shortKey).join(", ") : "") + (gone.length ? "; it drops " + gone.map(shortKey).join(", ") : "")); } res.set(url, m); }
     }
     for (const [url, b] of B) if (!M.has(url)) { const l = res.get(url); if (l !== undefined && !same(l, b)) over.push("Keys of " + url + " were changed elsewhere before you removed it"); res.delete(url); }
     const policy = {

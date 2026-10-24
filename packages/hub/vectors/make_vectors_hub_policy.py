@@ -21,7 +21,15 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from orch_hub.contract.canon import cj
 
 OFFICIAL_URL = "https://github.com/severinlindenmann/orch-marketplace"  # orch-core orch.market.constants
-CAPABILITIES = ("git_push", "network", "pty", "serve_http", "spawn_agent")  # orch-core addons.manifest
+CAPABILITIES = (
+    "choose_model",
+    "credential",
+    "git_push",
+    "network",
+    "pty",
+    "serve_http",
+    "spawn_agent",
+)  # core addons.manifest
 CASE_INSENSITIVE_HOSTS = ("github.com", "gitlab.com", "bitbucket.org")
 MAX_MARKETS, MAX_KEYS, MAX_IDS = 16, 2, 256  # these bound cj(policy) below 48 KiB (case policy_max_size)
 HASH_LABEL = b"orch/v2/hub-market-policy|"

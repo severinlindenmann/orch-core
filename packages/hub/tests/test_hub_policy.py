@@ -36,6 +36,10 @@ def test_validator_agrees_with_the_vectors(case):
         assert MP.check_policy(p) is p and MP.policy_hash(p) == case["expect"]["policy_hash"]
 
 
+def test_the_vector_file_states_the_validators_capability_list():
+    assert tuple(DOC["capabilities"]) == MP.CAPABILITIES
+
+
 def test_default_is_official_only_and_matches_the_vector():
     d = MP.default_policy()
     assert [m["url"] for m in d["markets"]] == [MP.OFFICIAL_URL] and d["addons"] == {"allow": None, "block": []}

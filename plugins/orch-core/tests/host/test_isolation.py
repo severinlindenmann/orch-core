@@ -5,9 +5,11 @@ from __future__ import annotations
 import pytest
 
 from orch.host.isolation import detect
+from orch.setup.osfacts import UnitState
 from tests.osfacts_fake import FakeOsFacts
 
 UID, AUID, AGID = 1000, 990, 990
+RUNNER = "orch-runner@orch-agent-sev.service"
 KEY = "/home/sev/.local/state/orch/person/key"
 
 
@@ -19,7 +21,7 @@ def _good() -> FakeOsFacts:
     f.add_path("/run/orch/1000/host.sock", uid=UID, gid=AGID, mode=0o660, kind="sock")
     f.add_path(KEY, uid=UID, gid=UID, mode=0o600)
     f.readable[(AUID, KEY)] = False
-    f.units["orch-runner@orch-agent-sev.service"] = AUID
+    f.units[RUNNER] = UnitState("active", AUID)
     return f
 
 
@@ -126,7 +128,7 @@ def test_wrong_home_or_shell() -> None:
 
 def test_runner_down_is_availability_and_does_not_pause_signing() -> None:
     f = _good()
-    del f.units["orch-runner@orch-agent-sev.service"]
+    f.units[RUNNER] = UnitState("inactive")
     r = detect(f, "sev", UID, [KEY])
     assert r.status == "broken" and [x.code for x in r.availability] == ["runner_down"]
     assert not r.exposure and not r.pause_click_signing
@@ -134,14 +136,14 @@ def test_runner_down_is_availability_and_does_not_pause_signing() -> None:
 
 def test_runner_peer_uid_is_person_pauses_signing() -> None:
     f = _good()
-    f.units["orch-runner@orch-agent-sev.service"] = UID
+    f.units[RUNNER] = UnitState("active", UID)
     r = detect(f, "sev", UID, [KEY])
     assert _codes(f) == {"runner_is_person"} and r.pause_click_signing
 
 
 def test_runner_as_wrong_user_is_exposure() -> None:
     f = _good()
-    f.units["orch-runner@orch-agent-sev.service"] = 4321
+    f.units[RUNNER] = UnitState("active", 4321)
     assert _codes(f) == {"runner_wrong_user"}
 
 
@@ -174,3 +176,45 @@ def test_uid_to_name_must_agree_with_name_to_uid() -> None:
     other = agent.__class__("other", AUID, AGID, "/", "/bin/sh", frozenset({"other"}))
     f.users = {"other": other, "orch-agent-sev": agent}  # getpwuid(AUID) now answers "other"
     assert "name_uid_mismatch" in _codes(f)
+
+
+@pytest.mark.parametrize("state", [UnitState("unknown"), UnitState("active", None)])
+def test_unclear_runner_state_is_exposure_and_pauses_signing(state) -> None:
+    f = _good()
+    f.units[RUNNER] = state
+    r = detect(f, "sev", UID, [KEY])
+    assert [x.code for x in r.exposure] == ["runner_unknown"] and not r.availability and r.pause_click_signing
+
+
+def test_missing_unit_entry_reads_unknown_not_down() -> None:
+    f = _good()
+    del f.units[RUNNER]
+    assert _codes(f) == {"runner_unknown"}
+
+
+def test_real_unit_state_three_way(monkeypatch) -> None:
+    import subprocess
+
+    from orch.setup.osfacts import RealOsFacts
+
+    real = RealOsFacts()
+    answers = iter([])
+
+    def show(unit):
+        v = next(answers)
+        if isinstance(v, Exception):
+            raise v
+        return v
+
+    monkeypatch.setattr(real, "_show", show)
+    answers = iter([("inactive", 0)])
+    assert real.unit_state("u").state == "inactive"
+    answers = iter([("failed", 0)])
+    assert real.unit_state("u").state == "inactive"
+    for odd in [("activating", 0), ("deactivating", 77), ("active", 0), ("inactive", 5)]:
+        answers = iter([odd])
+        assert real.unit_state("u").state == "unknown"
+    answers = iter([subprocess.CalledProcessError(1, "systemctl")])
+    assert real.unit_state("u").state == "unknown"
+    answers = iter([("active", 99999999)])  # no such /proc entry: PID gone
+    assert real.unit_state("u").state == "unknown"

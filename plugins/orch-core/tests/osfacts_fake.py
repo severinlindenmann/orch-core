@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import stat
 
-from orch.setup.osfacts import GroupInfo, PathInfo, UserInfo
+from orch.setup.osfacts import GroupInfo, PathInfo, UnitState, UserInfo
 
 
 class FakeOsFacts:
@@ -15,7 +15,7 @@ class FakeOsFacts:
         self.paths: dict[str, PathInfo] = {}
         self.readable: dict[tuple[int, str], bool] = {}
         self.pins: dict[int, dict] = {}
-        self.units: dict[str, int] = {}
+        self.units: dict[str, UnitState] = {}
 
     def add_user(self, name, uid, *, gid=None, home="/home/x", shell="/bin/bash", groups=()) -> None:
         gid = uid if gid is None else gid
@@ -48,5 +48,5 @@ class FakeOsFacts:
     def pin(self, uid):
         return self.pins.get(uid)
 
-    def unit_uid(self, unit):
-        return self.units.get(unit)
+    def unit_state(self, unit):
+        return self.units.get(unit, UnitState("unknown"))

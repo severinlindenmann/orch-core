@@ -124,12 +124,14 @@ def detect(
             continue  # absent means nothing to read (a key not created yet)
         if facts.can_read(agent.uid, path):
             reasons.append(Reason("readable_by_agent", f"The agent user can read {path}."))
-    runner_uid = facts.unit_uid(f"orch-runner@{name}.service")
-    if runner_uid is None:
+    unit = facts.unit_state(f"orch-runner@{name}.service")
+    if unit.state == "inactive":
         reasons.append(Reason("runner_down", "The agent service is not running.", AVAILABILITY))
-    elif runner_uid == person_uid:
+    elif unit.state != "active" or unit.uid is None:
+        reasons.append(Reason("runner_unknown", "The agent service state could not be read, so it is not trusted."))
+    elif unit.uid == person_uid:
         reasons.append(Reason("runner_is_person", "The agent service runs as you."))
-    elif runner_uid != agent.uid:
+    elif unit.uid != agent.uid:
         reasons.append(Reason("runner_wrong_user", "The agent service runs as the wrong user."))
     return _result("linux", reasons)
 

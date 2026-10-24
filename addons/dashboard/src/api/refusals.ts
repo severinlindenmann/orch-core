@@ -5,7 +5,7 @@
 import { ApiError } from './types'
 
 export const UNAVAILABLE_REASONS = ['disabled', 'relay_paired', 'other_member', 'phone_device', 'reader_version', 'pair_device', 'dev_host'] as const
-export const READERS_REASONS = ['no_declaration', 'reader_too_old', 'declaration_unknown', 'relay_too_old', 'unknown_readers'] as const
+export const READERS_REASONS = ['no_declaration', 'reader_too_old', 'declaration_unknown', 'relay_too_old', 'hub_too_old', 'unknown_readers'] as const
 export type UnavailableReason = (typeof UNAVAILABLE_REASONS)[number]
 export type ReadersReason = (typeof READERS_REASONS)[number]
 
@@ -42,6 +42,8 @@ export const READERS_SENTENCE: Record<ReadersReason, string> = {
     'The host does not hold this device’s current reader declaration (the host’s records were lost or rolled back, or the app was downgraded). Declare again from the device, then try again.',
   relay_too_old:
     'The relay is too old to carry click-signed entries, so this workspace cannot be linked to it while click-to-sign is on or has been used here.',
+  hub_too_old:
+    'This hub is too old to read click-signed entries, so this workspace cannot join it while click-to-sign is on or has been used here. Update the hub, or switch click-to-sign off first.',
   unknown_readers:
     'This would hand the workspace’s records to readers it does not know, while click-to-sign is on or has been used here, and they may not read click-signed entries. It was refused.',
 }

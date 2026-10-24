@@ -69,6 +69,8 @@ class World:
     def _build(self, log: str, typ: str, actor: dict[str, Any], payload: dict[str, Any], **env: Any) -> dict[str, Any]:
         events = self.ws if log == "workspace" else self.tl.get(log, [])
         prev = canon.event_head(events[-1]) if events else None
+        if typ in ("hub.joined", "hub.left"):  # #1198 C9: the member is required; the test verifier checks no proof
+            payload = {"owner_proof": None, **payload}
         e: dict[str, Any] = {
             "v": 2,
             "id": env.pop("id", None) or self.nid(),

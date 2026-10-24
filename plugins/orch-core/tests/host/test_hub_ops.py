@@ -237,6 +237,7 @@ JOINED = {
     "mode": "selective",
     "binding_seq": 1,
     "aliases": [],
+    "owner_proof": None,  # #1198 C9: the signer fills it after the review
 }
 
 
@@ -256,8 +257,12 @@ def test_the_signer_refuses_what_hub_join_must_not_sign():
         signer._person_op(_prepared("hub.join", JOINED, log="DEMO-1"))
     with pytest.raises(signer.SignerRefused):  # another op cannot carry the event either
         signer._person_op(_prepared("settings.set", JOINED))
-    left = {"type": "hub.left", "hub_id": HUB_ID, "binding_seq": 1}
+    left = {"type": "hub.left", "hub_id": HUB_ID, "binding_seq": 1, "owner_proof": None}
     signer._person_op(_prepared("hub.leave", left))
+    with pytest.raises(signer.SignerRefused):  # a prepared event never carries a proof: the signer makes it
+        signer._person_op(_prepared("hub.leave", {**left, "owner_proof": {"o": {}, "sig": "x"}}))
+    with pytest.raises(signer.SignerRefused):  # and never lacks the member
+        signer._person_op(_prepared("hub.leave", {k: v for k, v in left.items() if k != "owner_proof"}))
     with pytest.raises(signer.SignerRefused):
         signer._person_op(_prepared("hub.leave", {**left, "extra": 1}))
     with pytest.raises(signer.SignerRefused):
@@ -331,7 +336,8 @@ def test_join_then_connect_sends_the_selective_binding_and_never_a_key(human, se
     assert got["status"] == "bound" and got["binding_seq"] == 1 and got["hub_id"] == HUB_ID
     assert stub.ops() == ["join"]
     body = stub.sent[0]["o"]["body"]
-    assert set(body) == {"invite", "card", "pk_pub", "binding"}
+    assert set(body) == {"invite", "card", "pk_pub", "binding", "owner_proof"}
+    assert body["owner_proof"]["o"]["op"] == "hub.join"  # #1198 C9: the proof the signed log holds goes to the hub
     b = body["binding"]["o"]
     assert (b["mode"], b["binding_seq"], b["dev"], b["hub_id"]) == ("selective", 1, True, HUB_ID)
     keys = set()
@@ -442,17 +448,16 @@ def test_a_leave_before_any_connect_has_nothing_to_tell_the_hub(human, served, s
     assert got["unbound"] is False and stub.sent == []
 
 
-def test_a_convenience_key_never_signs_a_hub_op(human, served):
-    from orch.host import convenience
-
+def test_a_convenience_key_cannot_prepare_a_hub_op_without_the_proof(human, served):
     for op in ("hub.join", "hub.leave"):
-        with pytest.raises(Exception) as e:
-            convenience.refuse_hub_op(op, "convenience")
-        assert getattr(e.value, "code", "") == "sign.convenience_unavailable"
-        convenience.refuse_hub_op(op, "passphrase")  # the owner's key at the terminal
-    convenience.refuse_hub_op("settings.set", "convenience")  # other ops keep their own rules
-    body = {"op": "hub.join", "args": join_args(), "signer": {**human.signer, "auth": "convenience"}}
-    assert err(human.c.req("human.prepare", body)) == "sign.convenience_unavailable"
+        body = {
+            "op": op,
+            "args": join_args() if op == "hub.join" else {},
+            "signer": {**human.signer, "auth": "convenience"},
+        }
+        res = human.c.req("human.prepare", body)
+        assert err(res) == "hub.proof_invalid"
+        assert res["error"]["detail"] == {"reason": "proof_missing"}
     assert hub_state(served)[0] == {}
 
 
@@ -674,3 +679,43 @@ def test_status_warns_when_a_routine_rotation_was_not_resealed(human, served, st
     ok(c.req("hub.connect", {"hub_card": copy.deepcopy(CARD)}, idem=True))
     assert ok(c.req("hub.status", {}, idem=False))["data"]["reseal_needed"] is False
     assert _unwrap([m for m in stub.sent if m["o"]["op"] == "wk_seal"][1], served.wid, 2) == keystore.wk(2)
+
+
+# --- #1198 C9: the proof ran out before the hub took the join -------------------------------------------------------
+
+
+class ExpiringHub(StubHub):
+    """A hub that refuses the link ``join`` with ``proof_expired`` while ``expired`` is set."""
+
+    expired = True
+
+    def send(self, message):
+        from tests.hub.fake import sign_with
+        from tests.hub.vec import private_key
+
+        reply = super().send(message)
+        m = message["o"]
+        if self.expired and m["op"] == "join":
+            o = {**reply["o"], "body": {"error": "proof_expired"}}
+            return sign_with(private_key("hk_op"), "sig_hub_route", o)
+        return reply
+
+
+def test_an_expired_proof_at_connect_leaves_a_way_out_leave_then_join_again(human, served, monkeypatch, stub):
+    from tests.host.dispatch_helpers import ok
+
+    hub = ExpiringHub()
+    monkeypatch.setattr(hubops, "TRANSPORT", lambda service, hub_id: hub)
+    c = served.client()
+    human.run("hub.join", join_args())
+    res = c.req("hub.connect", connect_args(), idem=True)
+    assert err(res) == "hub.refused"
+    assert "proof_expired" in res["error"]["message"] and "orch hub leave" in res["error"]["hint"]
+    assert hub_state(served)[0]["status"] == "joined"  # the log says joined, the hub never bound
+    assert err(human.prepare_res("hub.join", join_args())) == "hub.already_joined"  # so a second join is refused
+    human.run("hub.leave", {})  # the way out: leave (works with the hub down)
+    assert hub_state(served)[0]["status"] == "left"
+    hub.expired = False
+    human.run("hub.join", join_args())  # a new join: a new proof, binding 2
+    got = ok(c.req("hub.connect", connect_args(), idem=True))["data"]
+    assert got["status"] == "bound" and got["binding_seq"] == 2

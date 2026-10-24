@@ -103,6 +103,8 @@ PLANNED_LABELS: dict[str, str] = {
     "sig_share_item": "orch/v2/sig/share-item|",
     # #1097 (key exposure): the person key's fresh, workspace-bound statement that a new device replaces an old one.
     "sig_device_rotate": "orch/v2/sig/device-rotate|",
+    # #1198 C9 (hub contract 9.6): the person key's owner proof of a hub join, mode switch or leave.
+    "sig_hub_owner_proof": "orch/v2/sig/hub-owner-proof|",
     "aad_hub_share": "orch/v2/hub-share-aad|",
     "h_share_item": "orch/v2/hub-share-item|",
 }

@@ -253,6 +253,30 @@
           }
         }
       }
+    },
+    "owner_proof": {
+      "description": "Hub contract 9.6 (#1198 C9): the owner proof, signed by the owner's person key PK. null in a prepared event; the signer fills it after the review. A recorded event without a valid proof is refused by the model.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": [
+            "o",
+            "sig"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "o": {
+              "type": "object"
+            },
+            "sig": {
+              "$ref": "https://schemas.orch.dev/v2/common#/$defs/sig"
+            }
+          }
+        }
+      ]
     }
   },
   "required": [
@@ -270,7 +294,8 @@
     "hk_root_pub",
     "mode",
     "binding_seq",
-    "aliases"
+    "aliases",
+    "owner_proof"
   ],
   "additionalProperties": false,
   "allOf": [

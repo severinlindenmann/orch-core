@@ -684,6 +684,51 @@ def check_hub_join(
     return {"workspace_id": ws, "owner_person_id": co["owner_person_id"], "wsk_pub": co["wsk_pub"]}
 
 
+def check_join_proof(
+    signed: Any,
+    *,
+    pk_pub: bytes,
+    workspace_id: str,
+    hub_id_: str,
+    binding: Mapping[str, Any],
+    op: str,
+    now_ms: int,
+    dev_mode: bool,
+) -> dict[str, Any]:
+    """#1198 C9, protocol 9.6 "At the hub" (test-side port of the hub's ``check_join_proof``, built on core's
+    production proof object check): the proof with a link ``join`` (``hub.join``) or a binding_put that is new or
+    switches the mode (``hub.mode``). ``null`` is ``proof_missing``; everything wrong with the object, its bindings to
+    this hub, root, mode and ``binding_seq`` is ``proof_invalid``; then the hub's clock and dev marker."""
+    from orch.hubclient import wire
+    from orch.hubclient.errors import HubRefused
+
+    if op not in ("hub.join", "hub.mode"):
+        raise Refused("proof_invalid")
+    if signed is None:
+        raise Refused("proof_missing")
+    try:
+        o = wire._owner_proof(signed, pk_pub)  # noqa: SLF001 - the production object check (steps 1-3)
+        p = o["payload"]
+        if (
+            o["workspace_id"] != workspace_id
+            or o["op"] != op
+            or p["hub_id"] != hub_id_
+            or p["hub_id"] != binding["hub_id"]
+            or p["hk_root_pub"] != binding["hk_root_pub"]
+            or p["mode"] != binding["mode"]
+            or p["binding_seq"] != binding["binding_seq"]
+        ):
+            raise HubRefused("proof_invalid")
+        if o["issued_ms"] > now_ms + wire.CLOCK_SKEW_MS:
+            raise HubRefused("proof_invalid")
+        if now_ms >= o["expires_ms"]:
+            raise HubRefused("proof_expired")
+        wire.check_dev(o["dev"], dev_mode)
+    except HubRefused as exc:
+        raise Refused(exc.code) from None
+    return o
+
+
 # --- the hub.joined payload and aliases ------------------------------------------------------------------------------
 
 
@@ -746,10 +791,15 @@ LINK_OPS: dict[str, tuple[str, str | None, dict[str, Check]]] = {
             "card": lambda x: type(x) is dict,
             "pk_pub": _pub,
             "binding": lambda x: type(x) is dict,
+            "owner_proof": lambda x: x is None or type(x) is dict,  # #1198 C9
         },
     ),
     "card_put": ("w2h", None, {"card": lambda x: type(x) is dict, "pk_pub": _pub}),
-    "binding_put": ("w2h", None, {"object": lambda x: type(x) is dict}),
+    "binding_put": (
+        "w2h",
+        None,
+        {"object": lambda x: type(x) is dict, "owner_proof": lambda x: x is None or type(x) is dict},  # #1198 C9
+    ),
     "audit_ack": ("w2h", None, {"seq": _int_min(1), "head": _b64u_n(32)}),
     "log_sync": (
         "w2h",

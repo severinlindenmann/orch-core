@@ -155,12 +155,22 @@ def human_only_types() -> frozenset[str]:
     return _AGENT_ONLY_TYPES
 
 
+def hub_only_position(ws: WsCore) -> bool:
+    """Is the workspace in a joined full-mode position for the D78 rule? ``unknown`` (a refused owner hub event,
+    ``ws.hub["invalid"]``) counts as full: fail closed (#1198 C9)."""
+    h = ws.hub
+    if not h:
+        return False
+    if h.get("invalid"):
+        return True
+    return h.get("status") == "joined" and h.get("mode") == "full"
+
+
 def agent_refusal(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
     """The same choke point for agents (C8, orchestrator note): in a joined full-mode position an agent line of a
     human-only type (a decision, a close, a grant) is refused, however its grant reads.
     Agents keep every other write."""
-    h = ws.hub
-    if not h or h.get("status") != "joined" or h.get("mode") != "full":
+    if not hub_only_position(ws):
         return None
     if e["type"] in human_only_types():
         return Refusal(Code.SIGN_HUB_ONLY, f"{e['type']} is signed through the hub in a full-mode workspace")
@@ -170,7 +180,6 @@ def agent_refusal(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
 def local_refusal(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
     """The model's D78 rule for one person event (see the module docstring). ``None``: not in a joined full-mode
     position, or a break-glass event done as allowed."""
-    h = ws.hub
     typ = e["type"]
     if (
         typ == "hub.joined"
@@ -180,7 +189,7 @@ def local_refusal(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
         and signer_kind(ws, e) in ("exposed", "convenience")
     ):  # #1097 E2: full-mode entry (first join, selective -> full) never from a convenience key
         return Refusal(Code.SIGN_KEY_EXPOSED, "full hub mode needs a device key that was never in one-click custody")
-    if not h or h.get("status") != "joined" or h.get("mode") != "full" or e.get("auth") == "hub":
+    if not hub_only_position(ws) or e.get("auth") == "hub":
         return None
     row = next((r for r in BREAK_GLASS.values() if r.matches(ws, e)), None)
     if row is None:

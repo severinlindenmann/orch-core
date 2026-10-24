@@ -63,6 +63,7 @@ conflict.section 8 retry:true
 conflict.field 8 retry:true
 quick.unlabelled 9 retry:true
 hub.refused 3 retry:false
+hub.proof_invalid 3 retry:false
 hub.already_joined 3 retry:false
 hub.not_joined 3 retry:false
 retry.later 9 retry:true

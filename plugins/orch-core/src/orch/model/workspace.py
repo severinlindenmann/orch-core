@@ -661,6 +661,36 @@ def restore(core: Core, lc: LogCore, e: dict[str, Any], v: Verifier) -> Refusal 
 HUB_MODES = ("selective", "full")
 
 
+def hub_owner_proof(ws: WsCore, e: dict[str, Any], v: Verifier, *, dev: bool) -> Refusal | None:
+    """#1198 C9 (hub contract 9.6 "Readers"): every ``hub.joined`` and ``hub.left`` carries a valid owner proof,
+    whatever its ``auth``. The deciding inputs are the model's own: the actor's ``PK`` from the roster, the last hub
+    event it holds (``ws.hub``, read BEFORE this event changes it) and the append time of the host-signed chained
+    line (``e["at"]``, never a body field or a deliverer's value). A verifier without the method refuses (fail
+    closed)."""
+    if (r := _owner_only(ws, e)) is not None:
+        return r
+    check = getattr(v, "verify_hub_owner_proof", None)
+    if check is None:
+        return Refusal(Code.HUB_INVALID, "owner_proof: unavailable")
+    actor = e["actor"]["id"]
+    member = ws.members.get(actor)
+    h = ws.hub
+    prior = None
+    if h and h.get("status") in ("joined", "left"):
+        joined = h["status"] == "joined"
+        prior = {
+            "type": "hub.joined" if joined else "hub.left",
+            "hub_id": h["hub_id"],
+            "mode": h["mode"] if joined else None,
+            "binding_seq": h["binding_seq"],
+        }
+    code = check(
+        e, workspace_id=ws.workspace_id, actor_person_id=actor.removeprefix("p_"),
+        pk_pub=None if member is None else member.pk_pub, prior=prior, at_ms=ts(e["at"]) * 1000, dev=dev,
+    )  # fmt: skip
+    return None if code is None else Refusal(Code.HUB_INVALID, f"owner_proof: {code}")
+
+
 def hub_joined(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
     """``hub.joined`` (owner only, owner-signed): a new binding of the one hub. A selective one adds no member (D80);
     a full one makes the hub a member of kind ``hub`` (D74). ``binding_seq`` is strictly higher than any earlier one
@@ -673,7 +703,7 @@ def hub_joined(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
     h = ws.hub
     if e["mode"] not in HUB_MODES:
         return Refusal(Code.HUB_INVALID, "unknown hub mode")
-    if h and h["status"] == "joined":
+    if h and h.get("status") == "joined":
         switch = h["mode"] == "selective" and e["mode"] == "full" and e["hub_id"] == h["hub_id"]
         if not switch or e["hk_root_pub"] != h["hk_root_pub"]:
             return Refusal(Code.HUB_INVALID, "this workspace is already joined to a hub; leave it first")
@@ -718,6 +748,7 @@ def hub_joined(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
         "alias_book": {**book, e["hub_id"]: dict(aliases)},
         "ledger": ledger,
         "user_hub": user_hub,
+        "owner_proof": e.get("owner_proof"),  # #1198 C9: hub.connect sends the proof the signed log holds
         **({"joined_at": e["at"]} if "at" in e else {}),  # C8 P2-b: nothing made before this binding lands under it
         **({"member": {"kind": "hub", "hub_id": e["hub_id"]}} if e["mode"] == "full" else {}),
     }
@@ -735,7 +766,7 @@ def hub_left(ws: WsCore, e: dict[str, Any], core: Core | None = None) -> Refusal
     if (r := _owner_only(ws, e)) is not None:
         return r
     h = ws.hub
-    if not h or h["status"] != "joined":
+    if not h or h.get("status") != "joined":
         return Refusal(Code.HUB_INVALID, "this workspace is not joined to a hub")
     if e["hub_id"] != h["hub_id"] or e["binding_seq"] != h["binding_seq"]:
         return Refusal(Code.HUB_INVALID, "hub.left must name the hub and binding that are joined")
@@ -745,6 +776,8 @@ def hub_left(ws: WsCore, e: dict[str, Any], core: Core | None = None) -> Refusal
         ws.hub = {
             **{k: v for k, v in h.items() if k != "member"},
             "status": "left",
+            "owner_proof": None,
+            "invalid": False,
         }  # the hub member goes with the leave
         for grant in ws.grants.values():
             if grant.hub_id == hub_id:

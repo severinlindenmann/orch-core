@@ -186,6 +186,7 @@ class World:
         monkeypatch.setattr(hubops, "TRANSPORT", lambda service, hub_id: self.hub)
         monkeypatch.setattr(hubops, "CARD_SOURCE", lambda service: card)
         monkeypatch.setattr(hubops, "workspace_dev", lambda service: True)
+        human_helpers.sync_dev_store(served)  # #1198 C9: the store is dev when workspace_dev says so
         monkeypatch.setattr(hubpolicy, "stored", lambda service: None)  # the Publish tests are not about the hub policy
         if join:
             self.join()

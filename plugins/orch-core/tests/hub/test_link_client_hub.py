@@ -84,3 +84,26 @@ def test_real_hub_join_then_snapshot(hub: dict) -> None:
             timeout=10,
         )
     assert e.value.code == "auth_failed"
+
+
+def test_real_hub_refuses_a_join_without_the_owner_proof_and_with_a_forged_one(hub: dict) -> None:
+    """#1198 C9, protocol 9.6 "At the hub": the real hub wants the owner's proof whatever the host sends."""
+    wsk = suite.private_key_from_scalar(hub["wsk_scalar"])
+
+    def sign(msg: bytes) -> bytes:
+        return suite.sign(wsk, msg)
+
+    def first_link() -> LinkClient:
+        return LinkClient.open(
+            "127.0.0.1", hub["port"], tls_spki_sha256=hub["spki"], hub_id=hub["hub_id"],
+            workspace_id=hub["workspace_id"], sign=sign, hk_op_pub=unb64u(hub["hk_op_pub"], 65), timeout=10,
+            wsk_pub=suite.public_bytes(wsk),
+        )  # fmt: skip
+
+    forged = dict(hub["join"]["owner_proof"], sig=hub["join"]["owner_proof"]["sig"][:-2] + "AA")
+    for proof, code in ((None, "proof_missing"), (forged, "proof_invalid")):
+        with first_link() as c, pytest.raises(LinkError) as e:
+            c.request("join", {**hub["join"], "owner_proof": proof}, sign=sign, seq=1)
+        assert e.value.code == code
+    with first_link() as c:  # nothing was pinned or consumed: the real join still works
+        assert c.request("join", hub["join"], sign=sign, seq=1) == {}

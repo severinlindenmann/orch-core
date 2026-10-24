@@ -124,7 +124,7 @@ def hub_joined(service: WorkspaceService) -> bool:
     ``hub.left``; a hub record that says anything but ``unbound`` or cannot be read also counts as joined (a join in
     progress is joined). The hub's policy is G7: until then a joined workspace allows no marketplace."""
     model = dict(service.store.state.workspace.hub) if service.store is not None else {}
-    if model.get("status") == "joined":
+    if model.get("status") == "joined" or model.get("invalid"):
         return True
     from . import hubops
 

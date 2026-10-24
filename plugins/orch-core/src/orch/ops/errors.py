@@ -556,6 +556,17 @@ _SPECS = [
         "The hub card or the join did not verify (hub contract section 14: bad signature, other hub, dev mismatch).",
     ),
     _e(
+        "hub.proof_invalid",
+        3,
+        False,
+        "the hub step is not backed by your backup key",
+        "sign it again with your backup key at the terminal: orch sign",
+        ["orch", "sign"],
+        "A hub step (join, switch to full, leave) needs the owner proof, signed with the person key derived from the "
+        "backup key (hub contract 9.6). Detail reason: proof_invalid, proof_expired, proof_missing, dev_mismatch or "
+        "dev_refused.",
+    ),
+    _e(
         "hub.already_joined",
         3,
         False,

@@ -41,6 +41,7 @@ class Env:
         self.people: dict[str, Person] = {"owner": self.owner}
         self.store: Store | None = None
         self.grant_id: str | None = None
+        self.hub_dev = False  # a test that serves a dev workspace sets it: its second stores replay as dev too
 
     # -- opening
     def open(self, **kw: Any) -> Store:
@@ -59,6 +60,7 @@ class Env:
         kw.setdefault("host_state_dir", self.host_state)
         kw.setdefault("clock", lambda: self.clock[0])
         kw.setdefault("load", "all")
+        kw.setdefault("hub_dev", self.hub_dev)
         return Store.open(self.root, expected_workspace_id=self.ws_id, **kw)
 
     # -- person events

@@ -50,6 +50,7 @@ RUN_CHECKS = frozenset(
         "hub_reader",
         "owner_proof",  # #1198 C8 (protocol 9.6): the host's check, PRODUCTION wire.check_owner_proof
         "owner_proof_recorded",  # readers of hub.joined / hub.left, PRODUCTION wire.check_recorded_owner_proof
+        "owner_proof_join",  # #1198 C9: the hub's check at link join / binding_put (test-side port, contract.py)
     }
 )
 SKIPPED_CHECKS = {
@@ -83,7 +84,6 @@ SKIPPED_CHECKS = {
     "selective_build": "core#1036: the selective-mode build (8.6), not replayed by core yet",
     "cutover": "core#1036: the relay cut-over (10.8.3), hub and relay side",
     "deliver_next": "core#1036: the hub's event_deliver queue, hub side",
-    "owner_proof_join": "hub side (protocol 9.6 'At the hub'): the hub checks the proof with link join / binding_put",
 }
 #: cases of a check core runs whose rules core has not implemented yet (orch-core#1036): non-strict xfail, so CI shows
 #: them and a fix turns them into XPASS
@@ -221,7 +221,7 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
         return _run_log_sync(a)
     if check == "left_payload":
         return H.check_left_payload(a["payload"])
-    if check in ("card_reader", "hub_reader", "owner_proof", "owner_proof_recorded"):
+    if check in ("card_reader", "hub_reader", "owner_proof", "owner_proof_recorded", "owner_proof_join"):
         return _run_owner_proof(check, a)
     if check == "roster_v":
         from .roster_replay import replay_roster_v
@@ -352,6 +352,12 @@ def _run_owner_proof(check: str, a: dict[str, Any]) -> dict[str, Any]:
             payload=a["payload"], request_id=a["request_id"], now_ms=now, dev_mode=dev,
         )  # fmt: skip
         return {"op": o["op"], "person_id": o["person_id"]}
+    if check == "owner_proof_join":
+        o = H.check_join_proof(
+            a["signed"], pk_pub=unb64u(a["pk_pub"], 65), workspace_id=a["workspace_id"], hub_id_=a["hub_id"],
+            binding=a["binding"], op=a["op"], now_ms=now, dev_mode=dev,
+        )  # fmt: skip
+        return {"op": o["op"]}
     pk = None if a["pk_pub"] is None else unb64u(a["pk_pub"], 65)
     o = wire.check_recorded_owner_proof(
         a["event_type"], a["payload"], at_ms=a["at_ms"], prior=a["prior"], workspace_id=a["workspace_id"],

@@ -39,6 +39,8 @@ from typing import Any
 from orch import canon
 from orch.addons.settings_value import KEY as ADDONS_KEY
 
+from .review import OWNER_PROOF_LINE
+
 __all__ = ["DETAILS_ONLY", "SHOWN", "TECHNICAL_KEYS", "PlainUnavailable", "build", "clean_tree", "headline", "text"]
 
 
@@ -53,7 +55,7 @@ TECHNICAL_KEYS = frozenset(
         "v", "id", "type", "actor", "auth", "hash_v", "roster_v", "based_on", "sig", "seq", "at", "prev", "ws_seq",
         "host_sig",
         # hashes and attestations the details carry
-        "gate_gen", "hash", "policy_hash", "base_rev", "secret_hash",
+        "gate_gen", "hash", "policy_hash", "base_rev", "secret_hash", "owner_proof",
         # C10: the id of the grant.requested a host-actor grant.issued answers; a person never signs it
         "request",
     }
@@ -1272,6 +1274,7 @@ def _event(
         _row(out, "hub key fingerprint", _fp(ev.get("hk_root_pub")))
         _row(out, "mode", mode)
         _row(out, "binding", ev.get("binding_seq"))
+        _row(out, "owner proof", OWNER_PROOF_LINE)
         aliases = ev.get("aliases") if isinstance(ev.get("aliases"), list) else []
         for a in aliases:
             if not isinstance(a, dict) or set(a) != {"person_id", "user_id"}:
@@ -1294,6 +1297,7 @@ def _event(
     if typ == "hub.left":
         _row(out, "hub", ev.get("hub_id"))
         _row(out, "binding", ev.get("binding_seq"))
+        _row(out, "owner proof", OWNER_PROOF_LINE)
         out.setdefault("notes", []).append(
             "The workspace tells the hub and publish that it is no longer bound. This does not take back what the "
             "hub already read. If the hub was in full mode, the workspace key is replaced by a new one that the hub "

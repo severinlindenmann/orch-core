@@ -24,7 +24,7 @@ from orch.hubclient import (
 )
 from tests.wsproto import r6kit
 
-from .fake import FakeHub, HostLink
+from .fake import FakeHub, HostLink, host_join_proof, owner_proof_for
 from .vec import V, private_key, pub
 
 WS = V["ids"]["workspace_a"]
@@ -98,9 +98,21 @@ class Host:
         self.state = HubState.from_json(copy.deepcopy(s.to_json()))
 
     def common(self, **over: Any) -> dict[str, Any]:
-        return dict(state=self.state, transport=self.wire, save=self._save, **{**self.kw, **over})
+        kw = {**self.kw, **over}
+        kw.setdefault(
+            "owner_proof",
+            host_join_proof(
+                self.state, now_ms=NOW, mode=kw.get("mode", "selective"), binding_seq=kw.get("binding_seq"),
+                workspace_id=WS,
+            ),
+        )  # fmt: skip
+        return dict(state=self.state, transport=self.wire, save=self._save, **kw)
 
     def join_full(self, **over: Any):
+        over.setdefault(
+            "owner_proof",
+            host_join_proof(self.state, now_ms=NOW, mode="full", binding_seq=over.get("binding_seq"), workspace_id=WS),
+        )
         kw = self.common(**over)
         return join_full(
             epochs=self.epochs, record_joined=lambda p: self.log.append(("hub.joined", p)),
@@ -116,7 +128,12 @@ class Host:
     def switch(self, seq: int = 2, **over: Any):
         keep = {"state", "hub_card", "workspace_id", "wsk_pub", "sign_wsk", "dev_mode", "now_ms", "transport", "save"}
         kw = {k: v for k, v in self.common(**over).items() if k in keep}
-        return switch_full(binding_seq=seq, epochs=self.epochs, **kw)
+        card = V["objects"]["card"]["o"]
+        proof = over.get("owner_proof") or owner_proof_for(
+            {"hub_id": card["hub_id"], "hk_root_pub": card["hk_root_pub"], "mode": "full", "binding_seq": seq},
+            WS, "hub.mode", NOW,
+        )  # fmt: skip
+        return switch_full(binding_seq=seq, epochs=self.epochs, owner_proof=proof, **kw)
 
     def seal(self, **over: Any):
         return seal_to_hub(

@@ -332,14 +332,17 @@ def _person_op(prepared: Mapping[str, Any]) -> None:
                 and e["type"] == "hub.joined"
                 and e.get("mode") in (("full",) if op == "hub.mode" else ("selective", "full"))
                 and (op == "hub.join" or e.get("aliases") == [])
-                and set(e) - review.ENVELOPE == {"hub_id", "hk_root_pub", "mode", "binding_seq", "aliases"}
+                and set(e) - review.ENVELOPE
+                == {"hub_id", "hk_root_pub", "mode", "binding_seq", "aliases", "owner_proof"}
+                and e["owner_proof"] is None  # #1198 C9: the signer fills it after the review
             )
         elif op == "hub.leave":  # V3 C2a: one hub.left on the workspace log, naming the hub and the binding it ends
             ok = (
                 len(events) == 1
                 and log == "workspace"
                 and e["type"] == "hub.left"
-                and set(e) - review.ENVELOPE == {"hub_id", "binding_seq"}
+                and set(e) - review.ENVELOPE == {"hub_id", "binding_seq", "owner_proof"}
+                and e["owner_proof"] is None  # #1198 C9: the signer fills it after the review
             )
         elif op == "device.mark_exposed":  # #1097: one device.exposed, the signer's own device, nothing else
             ok = (
@@ -963,6 +966,8 @@ def render(
                 out.append(f"ticket_key: {_clean(value)} (ticket key per host)")
             elif key == "reader":
                 out.append(review.reader_line(int(value)))
+            elif key == "owner_proof":
+                out.append(f"owner proof: {_clean(value)}")
             elif key == "statement":
                 out.append("statement:")
                 out += ["| " + _clean(line) for line in value.split("\n")]
@@ -1148,9 +1153,18 @@ class Signed:
         return f"Signed({len(self.events)} events, secret={'<redacted>' if self._secret else None})"
 
 
-def sign(prepared: Mapping[str, Any], *, backend: Any, key_id: str, workspace_id: str) -> Signed:
+def sign(
+    prepared: Mapping[str, Any],
+    *,
+    backend: Any,
+    key_id: str,
+    workspace_id: str,
+    owner_proof: Mapping[str, Any] | None = None,
+) -> Signed:
     """Sign every event (after :func:`check` and the person's confirmation). A ``grant.issued`` gets its secret here:
-    32 random bytes, hashed into the event before the signing bytes are built. Nothing else changes in an event."""
+    32 random bytes, hashed into the event before the signing bytes are built. A ``hub.joined`` / ``hub.left`` gets
+    its ``owner_proof`` (#1198 C9: made by the owner's person key, see :func:`terminal_owner_proof`) here, before the
+    signing bytes are built, and is refused without one. Nothing else changes in an event."""
     from orch.identity import GrantToken, format_grant, sign_person_event
 
     log = prepared["log"]
@@ -1173,9 +1187,60 @@ def sign(prepared: Mapping[str, Any], *, backend: Any, key_id: str, workspace_id
                 token = GrantToken(ev["grant"], _secrets.token_bytes(32))
                 ev["secret_hash"] = canon.grant_secret_hash(token.secret)
                 secret = format_grant(token)
+            if ev["type"] in review.OWNER_PROOF_TYPES:
+                if owner_proof is None or ev.get("owner_proof") is not None:
+                    raise SignerRefused("refusing to sign: a hub step needs the owner proof of your backup key")
+                ev["owner_proof"] = copy.deepcopy(dict(owner_proof))
             ev["sig"] = sign_person_event(be, key_id, workspace_id, log, ev, action=f"{prepared['op']} ({ev['type']})")
             out.append(ev)
     return Signed(out, secret)
+
+
+#: how long a terminal-made owner proof lives: the contract's maximum (hub contract 9.6; a host request lives as long)
+OWNER_PROOF_LIFE_MS = 600_000
+
+
+def terminal_owner_proof(
+    prepared: Mapping[str, Any],
+    request_id: str,
+    *,
+    workspace_id: str,
+    person: str,
+    now_ms: Callable[[], int] | None = None,
+    pk_factory: Callable[..., Any] | None = None,
+) -> dict[str, Any]:
+    """#1198 C9, the Terminal (backup) path of a hub step: ask for the backup key (the recovery code, typed on
+    ``/dev/tty``, never stored), derive the person key ``PK``, check that it is ``person``'s (before anything is
+    signed), make the owner proof over the event payload the person just reviewed, and let the key go again.
+    ``pk_factory`` is :class:`~orch.custody.personkey.RecoveryCodeSource` (a seam for tests); it signs only
+    ``sig_hub_owner_proof`` here."""
+    import time
+
+    from orch.hubclient import wire
+    from orch.hubclient.errors import HubRefused
+
+    from . import hubproof
+
+    events, facts = prepared["events"], prepared.get("owner_proof")
+    if len(events) != 1 or not isinstance(facts, dict) or type(facts.get("dev")) is not bool:
+        _refuse("the hub step carries no dev marker for its owner proof")
+    if pk_factory is None:
+        from orch.custody.personkey import RecoveryCodeSource as pk_factory  # noqa: N813
+    clock = now_ms or (lambda: int(time.time() * 1000))
+    issued = clock()
+    with pk_factory(
+        labels=("sig_hub_owner_proof",),
+        person_id=bytes.fromhex(person.removeprefix("p_")),
+        action="sign the hub step with your backup key",
+    ) as pk:
+        try:
+            return wire.build_owner_proof(
+                workspace_id=workspace_id, pk_pub=pk.pk_pub, op=prepared["op"],
+                payload=hubproof.payload_of(events[0]), request_id=request_id, issued_ms=issued,
+                expires_ms=issued + OWNER_PROOF_LIFE_MS, dev=facts["dev"], sign=pk.signer("sig_hub_owner_proof"),
+            )  # fmt: skip
+        except HubRefused as exc:
+            raise SignerRefused(f"refusing to sign: the owner proof is not well formed ({exc.code})") from None
 
 
 def check_uploads(prepared: Mapping[str, Any], files: Mapping[str, Any] | None) -> None:
@@ -1215,6 +1280,7 @@ def run(
     idem: str,
     files: dict[str, Any] | None = None,
     on_secret: Callable[[str], list[str]] | None = None,
+    owner_proof: Callable[[Mapping[str, Any], str], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """The CLI composite of a person op in host mode. ``call(op, args, **opts)`` sends one request on the pinned
     workspace connection and returns its ``result`` (raising the host's error); ``confirm(text, word)`` shows the
@@ -1238,6 +1304,7 @@ def run(
         idem=idem,
         files=files or {},  # every artifact event must name bytes this client uploaded: none uploaded, none passes
         on_secret=on_secret,
+        owner_proof=owner_proof,
     )
 
 
@@ -1304,6 +1371,7 @@ def finish(
     before: Callable[[], None] | None = None,
     prefix: str = "",
     on_secret: Callable[[str], list[str]] | None = None,
+    owner_proof: Callable[[Mapping[str, Any], str], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """The tail every signing client shares (the composite and ``orch sign``): ``before`` (a client's own extra
     checks), :func:`check`, :func:`check_uploads` (when ``files`` is given), the review (``prefix``, then
@@ -1319,7 +1387,13 @@ def finish(
         text = plain(prepared, workspace, artifacts=artifacts, prefix=prefix, members=members_of(call))
         if not confirm(text, confirm_word(prepared, workspace)):
             _refuse("not confirmed")
-        signed = sign(prepared, backend=backend, key_id=key_id, workspace_id=workspace_id)
+        proof = None
+        if any(e.get("type") in review.OWNER_PROOF_TYPES for e in prepared["events"]):  # #1198 C9: the backup key
+            make = owner_proof or (
+                lambda p, rid: terminal_owner_proof(p, rid, workspace_id=workspace_id, person=person)
+            )
+            proof = make(prepared, request_id)
+        signed = sign(prepared, backend=backend, key_id=key_id, workspace_id=workspace_id, owner_proof=proof)
     except BaseException as exc:
         cancel_request(call, request_id, exc)
         raise

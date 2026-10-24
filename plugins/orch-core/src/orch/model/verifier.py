@@ -93,6 +93,24 @@ class Verifier(Protocol):
         ``member_role`` is the F1 role of the canonical person in selective mode. ``None`` when it holds, else the
         contract code."""
 
+    def verify_hub_owner_proof(
+        self,
+        event: Mapping[str, Any],
+        *,
+        workspace_id: str,
+        actor_person_id: str,
+        pk_pub: str | None,
+        prior: Mapping[str, Any] | None,
+        at_ms: int,
+        dev: bool,
+    ) -> str | None:
+        """#1198 C9 (hub contract 9.6 "Readers"): the ``owner_proof`` of a ``hub.joined`` / ``hub.left``. ``pk_pub``
+        is the actor's person key from the replayed roster (``None``: refused), ``prior`` the model's own record of the
+        last hub event (``{type, hub_id, mode, binding_seq}`` or ``None``), ``at_ms`` the append time of the host-signed
+        chained line (never the event body or a deliverer's value). ``None`` when it holds, else the contract
+        code
+        (``proof_missing``, ``proof_invalid``, ``proof_expired``, ``stale_binding``, ``dev_*``, ``malformed``)."""
+
 
 class RefuseHub:
     """Fail-closed defaults for the three C3b methods: a verifier that does not inherit real ones refuses every hub
@@ -107,4 +125,7 @@ class RefuseHub:
         return "unavailable"
 
     def verify_hub_actor(self, event: Mapping[str, Any], **kw: Any) -> str | None:
+        return "unavailable"
+
+    def verify_hub_owner_proof(self, event: Mapping[str, Any], **kw: Any) -> str | None:
         return "unavailable"

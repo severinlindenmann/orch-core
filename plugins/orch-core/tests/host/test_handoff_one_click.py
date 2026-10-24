@@ -240,10 +240,10 @@ def test_a_hub_op_handoff_with_the_one_click_key_is_refused_at_binding_and_nothi
     convenience.set_enabled(served.lab.state, served.wid, True, UID)
     rid = ok(human.prepare_res("hub.join", join_args(), handoff=True))["data"]["request"]["id"]
     res = human.get(rid, signer=conv(human))
-    assert err(res) == "sign.convenience_unavailable"
+    assert err(res) == "hub.proof_invalid"
     assert human.backend.payloads == []
-    # still unbound: it is refused at binding every time, never bound for nothing
-    assert err(human.get(rid, signer=conv(human))) == "sign.convenience_unavailable"
+    # still unbound: it is refused at binding (no owner proof) every time, never bound for nothing
+    assert err(human.get(rid, signer=conv(human))) == "hub.proof_invalid"
     rec = ok(human.c.req("human.pending", {"request_id": rid}))["data"]["requests"][0]
     assert rec["state"] == "prepared"
     # the owner's own passphrase key still binds it

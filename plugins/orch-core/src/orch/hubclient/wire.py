@@ -548,14 +548,15 @@ def _joined_shape(p: Any) -> bool:
         return False
     if p["hub_id"] != hub_id(unb64u(p["hk_root_pub"], 65)):
         return False
-    pids = []
+    pids, uids = [], []
     for a in p["aliases"]:
         if type(a) is not dict or set(a) != {"person_id", "user_id"}:
             return False
         if not (hex16(a["person_id"]) and hex16(a["user_id"])):
             return False
         pids.append(a["person_id"])
-    return pids == sorted(set(pids))
+        uids.append(a["user_id"])
+    return pids == sorted(set(pids)) and len(set(uids)) == len(uids)  # one user id never names two people
 
 
 def _left_shape(p: Any) -> bool:
@@ -663,44 +664,63 @@ def check_owner_proof(
     return o
 
 
+PRIOR_TYPES = ("hub.joined", "hub.left")
+
+
+def _placement(op: str, payload: Mapping[str, Any], prior: Any) -> None:
+    """Section 9.6 "Readers" step 2: from the reader's own record of the last ``hub.joined`` / ``hub.left``
+    (``prior``: ``None`` or ``{type, hub_id, mode, binding_seq}``, ``mode`` ``None`` after a leave). A join follows
+    nothing or a leave; a mode switch a selective join of the same hub; a leave a join of the same hub."""
+    if prior is not None and not (
+        type(prior) is dict
+        and set(prior) == {"type", "hub_id", "mode", "binding_seq"}
+        and prior["type"] in PRIOR_TYPES
+        and hex16(prior["hub_id"])
+        and type(prior["binding_seq"]) is int
+        and prior["binding_seq"] >= 1
+        and (prior["mode"] in MODES if prior["type"] == "hub.joined" else prior["mode"] is None)
+    ):
+        raise HubRefused("malformed")
+    last = 0 if prior is None else prior["binding_seq"]
+    joined = prior is not None and prior["type"] == "hub.joined"
+    same_hub = prior is not None and prior["hub_id"] == payload["hub_id"]
+    if op == "hub.join":
+        ok = not joined and payload["binding_seq"] == last + 1
+    elif op == "hub.mode":
+        ok = joined and same_hub and prior["mode"] == "selective" and payload["binding_seq"] == last + 1
+    else:
+        ok = joined and same_hub and payload["binding_seq"] == last
+    if not ok:
+        raise HubRefused("stale_binding")
+
+
 def check_recorded_owner_proof(
     event_type: str,
     payload: Mapping[str, Any],
     *,
-    auth: Any,
-    signer_exposed: Any,
     at_ms: Any,
-    prior_binding_seq: Any,
+    prior: Any,
     workspace_id: str,
     actor_person_id: str,
     pk_pub: bytes | None,
     dev_mode: bool,
-) -> dict[str, Any] | None:
-    """Section 9.6 "Readers": a ``hub.joined`` / ``hub.left`` on the workspace log. The deciding inputs are the
-    reader's own facts, never fields the signer chose: ``signer_exposed`` (the roster's convenience-custody evidence for
-    the signing device, ``exposed`` #1097; unknown device = True), ``at_ms`` (the host-assigned append time),
-    ``prior_binding_seq`` (the last ``hub.joined`` / ``hub.left`` before it, 0 if none), ``pk_pub`` (the actor's ``PK``
-    from the roster, ``None``: refused). Steps: the event's place (``stale_binding``); a ``null`` proof only with
-    ``auth: "passphrase"`` and a signer that is not exposed (``proof_missing``); the proof itself; the append time
-    inside the proof's life (``proof_expired``); the dev marker."""
+) -> dict[str, Any]:
+    """Section 9.6 "Readers": every ``hub.joined`` / ``hub.left`` carries a valid owner proof (``null`` is
+    ``proof_missing``, whatever the ``auth``). The deciding inputs are the reader's own facts: ``pk_pub`` (the actor's
+    ``PK`` from the roster, ``None``: refused), ``prior`` (see :func:`_placement`) and ``at_ms``, the append time of the
+    host's chained, host-signed log line (never the event body or a deliverer's value). Steps: the proof and its
+    bindings, the place (``stale_binding``), the time inside the proof's life (``proof_expired``), the dev marker."""
     allowed = RECORDED_OPS.get(event_type)
-    if allowed is None or type(payload) is not dict or "owner_proof" not in payload:
+    keys = JOINED_KEYS if event_type == "hub.joined" else LEFT_KEYS
+    if allowed is None or type(at_ms) is not int or at_ms < 0:
         raise HubRefused("malformed")
-    ints = (at_ms, prior_binding_seq)
-    if type(signer_exposed) is not bool or any(type(x) is not int or x < 0 for x in ints):
+    if type(payload) is not dict or set(payload) != {*keys, "owner_proof"}:
         raise HubRefused("malformed")
-    seq = payload.get("binding_seq")
-    if type(seq) is not int:
-        raise HubRefused("malformed")
-    if event_type == "hub.joined" and seq != prior_binding_seq + 1:
-        raise HubRefused("stale_binding")
-    if event_type == "hub.left" and (prior_binding_seq < 1 or seq != prior_binding_seq):
-        raise HubRefused("stale_binding")
     proof = payload["owner_proof"]
     if proof is None:
-        if auth == "passphrase" and signer_exposed is False:
-            return None
         raise HubRefused("proof_missing")
+    if type(proof) is not dict:
+        raise HubRefused("malformed")
     if pk_pub is None:
         raise HubRefused("proof_invalid")
     o = _owner_proof(proof, pk_pub)
@@ -709,6 +729,7 @@ def check_recorded_owner_proof(
         raise HubRefused("proof_invalid")
     if not _same(o["payload"], rest):
         raise HubRefused("proof_invalid")
+    _placement(o["op"], rest, prior)
     if not o["issued_ms"] - CLOCK_SKEW_MS <= at_ms <= o["expires_ms"]:
         raise HubRefused("proof_expired")
     check_dev(o["dev"], dev_mode)

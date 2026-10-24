@@ -69,12 +69,22 @@ def test_a_device_key_signature_is_not_a_proof():
     assert e.value.code == "proof_invalid"
 
 
-def test_recorded_check_never_trusts_the_auth_label_alone():
+def test_recorded_check_requires_the_proof_whatever_the_auth():
     payload = {**copy.deepcopy(OBJ["payload"]), "owner_proof": None}
-    kw = {"workspace_id": OBJ["workspace_id"], "actor_person_id": OBJ["person_id"], "pk_pub": pub("pk_alice"),
-          "dev_mode": True, "at_ms": V["now_ms"], "prior_binding_seq": 0}  # fmt: skip
-    assert wire.check_recorded_owner_proof("hub.joined", payload, auth="passphrase", signer_exposed=False, **kw) is None
-    for auth, exposed in (("passphrase", True), (None, False), ("convenience", False)):
-        with pytest.raises(HubRefused) as e:
-            wire.check_recorded_owner_proof("hub.joined", payload, auth=auth, signer_exposed=exposed, **kw)
-        assert e.value.code == "proof_missing"
+    with pytest.raises(HubRefused) as e:
+        wire.check_recorded_owner_proof(
+            "hub.joined", payload, at_ms=V["now_ms"], prior=None, workspace_id=OBJ["workspace_id"],
+            actor_person_id=OBJ["person_id"], pk_pub=pub("pk_alice"), dev_mode=True,
+        )  # fmt: skip
+    assert e.value.code == "proof_missing"
+
+
+def test_one_user_id_never_names_two_people():
+    twice = copy.deepcopy(OBJ["payload"])
+    twice["aliases"] = sorted(
+        [twice["aliases"][0], {"person_id": "00" * 16, "user_id": twice["aliases"][0]["user_id"]}],
+        key=lambda a: a["person_id"],
+    )
+    with pytest.raises(HubRefused) as e:
+        _build(payload=twice)
+    assert e.value.code == "malformed"

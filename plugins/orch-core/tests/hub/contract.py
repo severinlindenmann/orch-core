@@ -688,11 +688,13 @@ def check_hub_join(
 def check_joined_payload(p: Any, *, prior_aliases: Mapping[str, str] = {}) -> dict[str, str]:
     """The payload of the workspace-log event ``hub.joined`` (signed by the owner's device key like any person event,
     ``orch/v2/sig/ws-event|``). Returns the alias map person_id -> user_id after it. Aliases are never re-pointed.
-    #1198 C8: the ``owner_proof`` member is required (``null`` or an object; verified by the production
+    #1198 C8: the ``owner_proof`` member is required (``null`` is ``proof_missing``; verified by the production
     ``wire.check_recorded_owner_proof``)."""
     if type(p) is not dict or set(p) != {"hub_id", "hk_root_pub", "mode", "binding_seq", "aliases", "owner_proof"}:
         raise Refused("malformed")
-    if p["owner_proof"] is not None and type(p["owner_proof"]) is not dict:
+    if p["owner_proof"] is None:
+        raise Refused("proof_missing")
+    if type(p["owner_proof"]) is not dict:
         raise Refused("malformed")
     if not (
         _pub(p["hk_root_pub"])
@@ -894,7 +896,9 @@ def check_left_payload(p: Any) -> dict[str, Any]:
     """``hub.left``: ``{hub_id, binding_seq, owner_proof}`` exactly (protocol 9.1, #1198 C8)."""
     if type(p) is not dict or set(p) != {"hub_id", "binding_seq", "owner_proof"}:
         raise Refused("malformed")
-    if p["owner_proof"] is not None and type(p["owner_proof"]) is not dict:
+    if p["owner_proof"] is None:
+        raise Refused("proof_missing")
+    if type(p["owner_proof"]) is not dict:
         raise Refused("malformed")
     if not (_hex16(p["hub_id"]) and _int_min(1)(p["binding_seq"])):
         raise Refused("malformed")

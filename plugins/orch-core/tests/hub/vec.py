@@ -84,7 +84,6 @@ SKIPPED_CHECKS = {
     "cutover": "core#1036: the relay cut-over (10.8.3), hub and relay side",
     "deliver_next": "core#1036: the hub's event_deliver queue, hub side",
     "owner_proof_join": "hub side (protocol 9.6 'At the hub'): the hub checks the proof with link join / binding_put",
-    "ws_card_admission": "orch-publish side (protocol 11.2): admission of a forwarded workspace card",
 }
 #: cases of a check core runs whose rules core has not implemented yet (orch-core#1036): non-strict xfail, so CI shows
 #: them and a fix turns them into XPASS

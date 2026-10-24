@@ -5,8 +5,6 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from orch.addons.settings_value import KEY as ADDONS_KEY
-
 # a stdlib-only leaf (no custody, no I/O): the dashboard side may import it (§0.8.6 "Packaging and versions")
 from orch.host.errors import DETAIL_KEYS as _HOST_DETAIL
 from orch.host.errors import DEVICE_ID, DEVICES_MAX
@@ -145,12 +143,12 @@ WORD_OPS = frozenset(
 
 
 #: ``settings.set`` keys that need more than a click. ``publish`` decides where shared files go: terminal only (the
-#: dashboard signs it through ``orch sign CODE``). ``repos``, ``sign_methods`` and ``grant_hours`` need the typed word,
-#: and so does ``addons`` (free-form values an add-on reads; owner choice, G6).
+#: dashboard signs it through ``orch sign CODE``). ``repos``, ``sign_methods`` and ``grant_hours`` need the typed word.
+#: (``addons``, the values an add-on reads, is a click too: owner V3-D38, 24 Oct.)
 #: ``models`` (a pick from a closed list, no authority change) is a click (run 8, owner item 1.6).
 #: ``icon`` (the workspace icon) is deliberately in none of the sets: a closed-list cosmetic choice, signed by a click.
 SETTINGS_TERMINAL_KEYS = frozenset({"publish"})
-SETTINGS_WORD_KEYS = frozenset({"repos", "sign_methods", "grant_hours", ADDONS_KEY})
+SETTINGS_WORD_KEYS = frozenset({"repos", "sign_methods", "grant_hours"})
 _RANK = {"click": 0, "word": 1, "terminal": 2}
 
 
@@ -168,25 +166,14 @@ def _settings_class(changes: list[Any]) -> str:
 
 def _grant_class(events: list[dict[str, Any]] | None, args: dict[str, Any] | None) -> str:
     """``addon.grant``: ``publish`` decides where files go, so it is terminal only, however it is asked (args at
-    prepare, the signed event at sign time, which wins). A plain click needs ALL of: an empty SIGNED capability
-    list, a built-in add-on name, and the digest of exactly that built-in package (``builtin.is_builtin_package``:
-    an unknown add-on, even one without capabilities, keeps the word). Any capability (network, pty, spawn_agent,
-    serve_http: code, network or a server as you) keeps the typed word. A missing or malformed list fails closed.
-    From ``args`` alone (the early check, before the host has built the event) the capabilities are not known:
-    the word, the ceiling. That early class is only used to refuse terminal-only ops; the signed event decides
-    click versus word."""
-    from orch.addons import builtin
-
+    prepare, the signed event at sign time, which wins). Every other add-on is ONE CLICK (owner V3-D38, 24 Oct:
+    installing is always one click in the browser), whatever its capabilities: the signed capability list, the package
+    digest and the marketplace block ("per host, not signed") are in the review the person reads before the click, and
+    the signer checks the event against the host's material first. Malformed events fail closed in the signer's own
+    checks, not here."""
     if events is None:
-        return "terminal" if (args or {}).get("name") == "publish" else "word"
-    out = "click"
-    for ev in events:
-        if ev.get("name") == "publish":
-            return "terminal"
-        caps = ev.get("capabilities")
-        if not isinstance(caps, list) or caps or not builtin.is_builtin_package(ev):
-            out = "word"
-    return out
+        return "terminal" if (args or {}).get("name") == "publish" else "click"
+    return "terminal" if any(ev.get("name") == "publish" for ev in events) else "click"
 
 
 def op_class(op: str, events: list[dict[str, Any]] | None = None, args: dict[str, Any] | None = None) -> str:

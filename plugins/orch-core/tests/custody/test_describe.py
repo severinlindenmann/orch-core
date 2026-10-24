@@ -145,6 +145,7 @@ CASES: dict[str, tuple[str, dict]] = {
             "fields": {"risk": {"type": "integer", "set_by": ["owner"], "gate": ["plan"]}},
             "sections": [{"id": "dash.notes", "types": ["feature"], "gate": ["plan"]}],
             "artifact_kinds": ["chart"],
+            "runtime": {"kind": "python-requirements", "lock": "requirements.txt", "packages": 3},
         },
     ),
     "addon.disabled": ("workspace", {"name": "dash"}),

@@ -25,6 +25,9 @@ errors:
   market.version_reused (exit 3): raise the version | fix: orch market list
   role.denied (exit 3): ask an owner or maintainer | fix: orch status
   lock.busy (exit 4 retry): retry in a moment | fix: orch status
+  market.env_failed (exit 5): see the add-on's lockfile | fix: orch market list
+  market.lock_invalid (exit 5): fix the package | fix: orch market list
+  market.lock_missing (exit 5): fix the package | fix: orch market list
   market.state_invalid (exit 5): the host does not guess: repair or remove the market directory | fix: orch market list
   members.stale (exit 9 retry): retry; the person re-signs | fix: orch status
 out: ok addon.granted {name} seq={seq} / next: {next}

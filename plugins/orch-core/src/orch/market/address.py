@@ -35,9 +35,9 @@ def check_address(text: object) -> str:
     return str(ip)
 
 
-def resolve(host: str, timeout: float) -> list[str]:
-    """Every address of ``host`` (port 443), each checked. The lookup runs under a deadline (a thread: a resolver
-    cannot be interrupted). No result, a timeout or any refused address is refused."""
+def lookup(host: str, timeout: float) -> list[str]:
+    """Every address text of ``host`` (port 443), sorted, NOT judged. The lookup runs under a deadline (a thread: a
+    resolver cannot be interrupted). No result or a timeout is ``market.fetch_failed``."""
     box: list[list[str]] = []
 
     def work() -> None:
@@ -55,4 +55,9 @@ def resolve(host: str, timeout: float) -> list[str]:
     found = box[0] if box else []
     if not found:
         raise MarketError("market.fetch_failed")
-    return [check_address(a) for a in found]  # all of them, in a fixed order; the first is pinned by the caller
+    return found
+
+
+def resolve(host: str, timeout: float) -> list[str]:
+    """Every address of ``host`` (port 443), each checked. No result, a timeout or any refused address is refused."""
+    return [check_address(a) for a in lookup(host, timeout)]  # all of them, in a fixed order; the first is pinned

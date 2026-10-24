@@ -27,7 +27,7 @@ import { usePageHeader } from '@/app/shell/ShellUi'
 import { useWorkspace } from '@/app/workspace'
 import { useRole } from '@/app/useRole'
 
-const HELP = 'You will approve this exact version and these permissions in the Terminal. Nothing is enabled until you sign.'
+const HELP = 'Next, review and approve the installation with one click. The add-on will be installed turned off.'
 const cell = 'p-2 align-top break-words @max-[800px]:block @max-[800px]:before:block @max-[800px]:before:text-text-faint @max-[800px]:before:content-[attr(data-label)]'
 function Table({ columns, children }: { columns: string[]; children: ReactNode }) {
   return (
@@ -69,7 +69,7 @@ function Review({
   // The host's review lines wrap manifest text (title, command, agents text, needs text): all of it is the add-on's, so
   // the whole list sits in one frame (the provenance rule is about where the bytes come from, not who composed the line).
   const full = (
-    <AddonFrame addon={s.name} title="Package review (from the add-on, per host, not signed)">
+    <AddonFrame addon={s.name} title="From the add-on package (not verified)">
       <ul aria-label="Full review" className="space-y-2">
         {reviewLines(s).map((line, i) => (
           <li key={i} className={line.added ? 'border-l-2 border-success pl-3 text-success' : ''}>
@@ -111,7 +111,7 @@ function Review({
                 ),
               )}
             </AddonFrame>
-            <p>Publisher: {s.update.publisher === 'same' ? 'Matches remembered key' : s.update.publisher === 'first_use' ? publisherWording('new') : 'Unsigned'}</p>
+            <p>Publisher: {s.update.publisher === 'same' ? publisherWording('known') : s.update.publisher === 'first_use' ? publisherWording('new') : 'Unsigned'}</p>
           </section>
         )}
         {s.update && !widened(s) && (
@@ -126,13 +126,13 @@ function Review({
         {s.market.stale && <p className="text-warning">Out of date - refresh</p>}
         {s.market.summary && (
           <AddonFrame addon={s.name} title="From the addon">
-            <p className="text-xs text-text-muted">Per host, not signed</p>
+            <p className="text-xs text-text-muted">Marketplace details (shown by this computer, not signed)</p>
             <Inline>{s.market.summary}</Inline>
           </AddonFrame>
         )}
         {s.deps && (
           <p>
-            Also installs: {s.deps.count} software dependencies. {s.deps.verified ? 'Lock and hashes verified' : 'Lock and hashes not verified'}
+            Also installs {s.deps.count} required software {s.deps.count === 1 ? 'component' : 'components'}. {s.deps.verified ? 'Checked against the add-on\u2019s lock file.' : 'Not checked against a lock file.'}
           </p>
         )}
         <p>
@@ -171,7 +171,7 @@ function Review({
             </Button>
           ) : (
             <Button disabled={busy} onClick={proceed}>
-              Continue in Terminal
+              Review installation
             </Button>
           )}
         </DialogFooter>
@@ -310,7 +310,7 @@ function MarketWorkspace() {
                       <AddonFrame addon={a.id} title="From the addon" compact className="flex-1 items-start text-sm">
                         <Inline>{a.from_marketplace.summary}</Inline>
                       </AddonFrame>
-                      <p className="text-[11px] text-text-faint">The text above is from the add-on's package, per host, not signed.</p>
+                      <p className="text-[11px] text-text-faint">The text above comes from the add-on package: not verified.</p>
                       <div className="flex flex-wrap gap-1">
                         {a.capabilities.map((p) => (
                           <span className="rounded-full border border-border px-2 text-xs" key={p}>
@@ -442,7 +442,7 @@ function MarketWorkspace() {
                   ))}
                 </Table>
               )}
-              <p className="text-xs text-text-muted">Allowed by, added by and publisher signature: per host, not signed.</p>
+              <p className="text-xs text-text-muted">Allowed by, added by and publisher signature: shown by this computer, not covered by your approval.</p>
               <p>{EXTERNAL_HELP}</p>
               {mayWrite && (
                 <div className="space-y-1">
@@ -458,7 +458,7 @@ function MarketWorkspace() {
           )}
         </>
       )}
-      {mayWrite && stage && (
+      {mayWrite && stage && !handoff && (
         <Review
           stage={stage}
           busy={busy}
@@ -483,8 +483,21 @@ function MarketWorkspace() {
         <SignPopover
           title="Approve add-on package"
           ws={ws}
+          anchor={null} // the review dialog is folded away while this one is open (Cancel here brings it back)
           action={{ action: 'market_grant', name: handoff.name, staged: handoff.stage }}
           autoStart
+          lead={
+            <div data-testid="install-summary" className="rounded border border-border p-3 text-sm">
+              <p className="font-medium">
+                <Inline>{handoff.name}</Inline> · Version <Inline>{handoff.version}</Inline>
+              </p>
+              <p>After installation: turned off. You turn it on later in Settings.</p>
+              <p className="text-text-muted">The marketplace lines below are shown by this computer, are not signed and are not verified. Your approval does not cover them.</p>
+              {widened(handoff) && <p role="alert" className="font-medium text-warning">This update asks for more than before.</p>}
+              {handoff.market.stale && <p className="text-warning">This review is out of date: the marketplace may have changed. Cancel and review again.</p>}
+              {handoff.market.class === 'dev' && <p className="text-warning">This comes from a test marketplace (dev sandbox only).</p>}
+            </div>
+          }
           onClose={() => {
             setPending((p) => p.filter((n) => n !== handoff.name))
             setHandoff(null)

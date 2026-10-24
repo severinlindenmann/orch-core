@@ -239,6 +239,39 @@
         ]
       },
       {
+        "code": "market.env_failed",
+        "exit": 5,
+        "retryable": false,
+        "hint": "see the add-on's lockfile",
+        "fix": [
+          "orch",
+          "market",
+          "list"
+        ]
+      },
+      {
+        "code": "market.lock_invalid",
+        "exit": 5,
+        "retryable": false,
+        "hint": "fix the package",
+        "fix": [
+          "orch",
+          "market",
+          "list"
+        ]
+      },
+      {
+        "code": "market.lock_missing",
+        "exit": 5,
+        "retryable": false,
+        "hint": "fix the package",
+        "fix": [
+          "orch",
+          "market",
+          "list"
+        ]
+      },
+      {
         "code": "market.state_invalid",
         "exit": 5,
         "retryable": false,

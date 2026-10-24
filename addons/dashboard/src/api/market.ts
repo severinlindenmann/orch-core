@@ -51,7 +51,7 @@ export interface MarketStage {
   review: string[]
   market: {
     url: string
-    class: 'official' | 'community'
+    class: 'official' | 'community' | 'dev'
     commit: string
     source_note: string
     publisher: { fingerprint: string | null; tofu: 'unsigned' | 'new' | 'known' }
@@ -76,7 +76,7 @@ export type MarketInstalled = { addons: InstalledAddon[] }
 export const EXTERNAL_HELP = "External marketplaces aren't available in this workspace yet"
 export function stateLabel(state?: string, pending = false): string {
   return pending || state === 'pending'
-    ? 'Awaiting Terminal approval'
+    ? 'Waiting for installation approval'
     : !state
       ? 'Available'
       : state === 'disabled'
@@ -99,7 +99,7 @@ export function permissionEffect(value: string): string {
   return effects[value] ?? `Requests permission: ${value}`
 }
 export function publisherWording(key: PublisherKey): string {
-  return { unsigned: 'Unsigned', new: 'First use - key will be remembered', known: 'Matches remembered key', changed: 'Key changed - review required' }[key]
+  return { unsigned: 'Unsigned', new: 'First use - key will be remembered', known: 'Publisher key matches the one previously saved on this computer', changed: 'Key changed - review required' }[key]
 }
 export function widened(stage: MarketStage): boolean {
   return !!stage.update && (stage.update.widened || stage.update.publisher === 'first_use' || Object.values(stage.update.added).some((a) => a.length > 0))

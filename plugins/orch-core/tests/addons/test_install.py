@@ -192,7 +192,7 @@ def test_the_owner_reads_what_runs_before_the_passphrase(hws, me):
         agents_md="Estimates are hints only.",
         needs=[{"id": "big", "when": ["gt", ["field", "points"], 3], "who": ["owner"], "text": "large"}],
     )
-    man["entry"] = {"cmd": ["python3", "{pkg}/addon.py", "--flag", "a b"]}
+    man["entry"] = {"cmd": ["/usr/bin/env-python", "{pkg}/addon.py", "--flag", "a b"]}
     installed_package(hws, man=man)
     assert me("addon", "grant", "echo").code == 0
     text = hws.reviews[-1]
@@ -201,7 +201,7 @@ def test_the_owner_reads_what_runs_before_the_passphrase(hws, me):
     for needle in (
         "addon echo 1.0.0",
         pkg_digest,
-        "command python3 '{pkg}/addon.py' --flag 'a b'",  # shlex-quoted: a space inside an argument shows
+        "command /usr/bin/env-python '{pkg}/addon.py' --flag 'a b'",  # shlex-quoted: a space inside an argument shows
         "capabilities serve_http",
         "agents see: - addon echo (hint, grants nothing): Estimates are hints only.",
         "needs rule big for owner: large",
@@ -245,7 +245,7 @@ def test_the_review_of_a_regrant_says_what_changed(hws, me):
 def test_text_from_the_package_is_shown_as_escaped_ascii(hws, me):
     man = manifest()
     man["needs"] = [{"id": "r", "when": True, "who": ["owner"], "text": "caf\u00e9 \u0430 look-alike"}]
-    man["entry"] = {"cmd": ["python3", "{pkg}/caf\u00e9"]}
+    man["entry"] = {"cmd": ["/usr/bin/env-python", "{pkg}/caf\u00e9"]}
     installed_package(hws, man=man)
     assert me("addon", "grant", "echo").code == 0
     text = hws.reviews[-1]

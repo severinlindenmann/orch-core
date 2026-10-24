@@ -104,11 +104,15 @@ _SCHEMAS.update(marketinstall.SCHEMAS)
 _VALIDATORS = {op: Draft202012Validator(s) for op, s in _SCHEMAS.items()}
 
 
-def _refuse(op: str, code: str) -> HostError:
-    """The one place that turns a code into a refusal: declared for the op, fixed catalog text, nothing else."""
+def _refuse(op: str, code: str, reason: str | None = None) -> HostError:
+    """The one place that turns a code into a refusal: declared for the op, fixed catalog text, nothing else.
+    ``reason`` (``market.env_failed`` / ``market.env_changed`` only) is one of the closed words of
+    ``orch.host.errors.DETAIL_KEYS``; the socket drops any other value."""
     if code not in OP_CODES[op] and code not in ("not_found", "role.denied", "invalid.input", "workspace.degraded"):
         raise AssertionError(f"{op} raised {code}, which it does not declare")
-    return HostError(code, ERRORS[code].message if code in ERRORS else code)
+    return HostError(
+        code, ERRORS[code].message if code in ERRORS else code, detail=None if reason is None else {"reason": reason}
+    )
 
 
 def _files(service: WorkspaceService) -> MarketFiles:

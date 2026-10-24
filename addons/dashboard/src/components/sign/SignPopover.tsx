@@ -90,6 +90,8 @@ export interface SignPopoverProps {
   children?: ReactNode
   /** Choices that are part of what is signed (agent access length): shown above the review in every state but signing. A change of `action` needs a new key on this component, which prepares again. */
   controls?: ReactNode
+  /** A plain-words summary above the review, in every state but signing. Unlike `controls` it never holds back the preparation. */
+  lead?: ReactNode
   /** Exact action summary, kept visible while preparing and reviewing. */
   summary?: ReactNode
   /** Said above the panel while it is open: a warning that the page changed under it. */
@@ -248,12 +250,6 @@ export function SignPopover(p: SignPopoverProps) {
   }
   const again = () => {
     if (!p.action) return
-    if (method === 'click' && phase === 'error' && run.error?.code === 'sign.click_only') {
-      // The switch moved after the page chose the terminal: a NEW request, the way the host answers now.
-      run.reset()
-      startMethod(Math.max(run.retry, click.retry) + 1)
-      return
-    }
     run.reset(phase === 'unknown' || phase === 'error') // the same key where the host may already have the request
     void run.prepare(p.action)
   }
@@ -324,6 +320,7 @@ export function SignPopover(p: SignPopoverProps) {
       }}
     >
       {p.controls && !signing && phase !== 'waiting' && <div data-testid="sign-controls">{p.controls}</div>}
+      {p.lead && !signing && <div data-testid="sign-lead">{p.lead}</div>}
       {(!(click.view?.view.content || run.request?.content) || isBareContent(click.view?.view.content ?? run.request?.content)) && p.summary}
       {phase === 'idle' && !clickOpen && p.children}
 
@@ -425,7 +422,7 @@ export function SignPopover(p: SignPopoverProps) {
       {footerShown && <div className={`${STICKY_FOOTER} flex flex-wrap items-center gap-2 sm:justify-between`} data-testid="sign-footer-row">
         <span aria-live="polite" className="text-[12px] text-text-muted">
           {phase === 'idle' && p.hint}
-          {phase === 'waiting' && 'Waiting for your signature'}
+          {phase === 'waiting' && 'Waiting for approval in Terminal…'}
         </span>
         <div className="flex flex-wrap gap-2">
           {phase === 'idle' && !clickOpen && !(autoNow && p.action) && (

@@ -10,12 +10,15 @@ author tools ``new | pack | dev`` (V3 G5, #923; spec 5.1.1 "Digest of the author
                                                                   validate a commit, print digest and index entry
     orch addon dev PATH [--commit REV] [--subdir D] [--workspace W] [--json]
                                                                   try a local commit in a DEV workspace (not an install)
+    orch addon setup NAME [--workspace W] [--json]                (re)install the add-on's dependencies (G4)
 
 Everything except ``update --check`` is a person's command: with ``ORCH_GRANT`` or ``ORCH_SESSION`` set it is refused
 (``market.actor_refused``) before the host is asked, so nothing is fetched on an agent's behalf; the host refuses an
 agent again. ``install`` and ``update`` end in the existing ``addon.grant`` review and signature at the person's
 terminal; the package is the one the host staged, never a folder. ``remove`` signs ``addon.disable`` when the add-on is
-on and then asks the host to delete the package; data stays until ``orch addon purge``.
+on and then asks the host to delete the package; data stays until ``orch addon purge``. An add-on that declares
+dependencies (``runtime``) gets them installed by the host right after the signature (``market.env_build``);
+``setup`` runs that step again (a retry, a changed environment, a new machine).
 
 ``new`` and ``pack`` are local and offline (no host, no key, nothing signed), so an agent may run them. ``pack`` hashes
 a COMMIT of a local git repository with the same closed export an install uses, never the working tree, so its digest is
@@ -39,8 +42,8 @@ from orch.market import ADDONS  # the store-layout lint matches the bare word
 __all__ = ["main"]
 
 _USAGE = (
-    "usage: orch addon {install ID [--from URL] | update NAME | update [NAME] --check | remove NAME | new NAME | "
-    "pack [PATH] [--commit REV] [--subdir D] [--git URL] | dev PATH [--commit REV] [--subdir D]} "
+    "usage: orch addon {install ID [--from URL] | update NAME | update [NAME] --check | remove NAME | setup NAME | "
+    "new NAME | pack [PATH] [--commit REV] [--subdir D] [--git URL] | dev PATH [--commit REV] [--subdir D]} "
     "[--workspace W] [--json]"
 )
 
@@ -58,7 +61,7 @@ class _Fail(Exception):
 
 def _parser() -> argparse.ArgumentParser:
     p = _Quiet(prog="orch addon", add_help=False)
-    p.add_argument("cmd", choices=("install", "update", "remove", "new", "pack", "dev"))
+    p.add_argument("cmd", choices=("install", "update", "remove", "setup", "new", "pack", "dev"))
     p.add_argument("rest", nargs="*")
     p.add_argument("--from", dest="url")
     p.add_argument("--check", action="store_true")
@@ -130,9 +133,10 @@ def main(
             out.write(_USAGE + "\n\n" + (__doc__ or "").split("\n\n", 1)[0] + "\n")
             return 0
         a = _parser().parse_intermixed_args(argv)
-        want = {"install": (1, 1), "update": (0, 1), "remove": (1, 1), "new": (1, 1), "pack": (0, 1), "dev": (1, 1)}[
-            a.cmd
-        ]
+        want = {
+            "install": (1, 1), "update": (0, 1), "remove": (1, 1), "setup": (1, 1), "new": (1, 1), "pack": (0, 1),
+            "dev": (1, 1),
+        }[a.cmd]  # fmt: skip
         if not want[0] <= len(a.rest) <= want[1] or (a.cmd == "update" and not a.check and not a.rest):
             raise _Fail("invalid.input", _USAGE, 2)
         if (a.check and a.cmd != "update") or (a.url and a.cmd != "install"):
@@ -271,8 +275,12 @@ def _done(a: argparse.Namespace, result: dict[str, Any]) -> str:
         return f"ok addon update {result['name']}: already up to date ({result['version']})\n"
     if a.cmd == "remove":
         return f"ok addon remove {result['name']}: package deleted; data stays (orch addon purge {result['name']})\n"
+    if a.cmd == "setup":
+        return f"ok addon setup {result['name']}: {result['count']} files of dependencies installed and checked\n"
     st = result["stage"]
-    return f"ok addon {a.cmd} {st['name']} {st['version']}: signed and installed\nnext: orch addon list\n"
+    deps = result.get("env")
+    more = f"; dependencies installed ({deps['count']} files)" if deps else ""
+    return f"ok addon {a.cmd} {st['name']} {st['version']}: signed and installed{more}\nnext: orch addon list\n"
 
 
 def _check(a: argparse.Namespace, env: Mapping[str, str]) -> dict[str, Any]:
@@ -343,6 +351,8 @@ def _signed(a: argparse.Namespace, env: Mapping[str, str], out: TextIO, as_json:
             if row["state"] == "enabled":
                 _sign(conn, backend, device, wid, person, label, "addon.disable", {"name": name})
             return conn.call("market.uninstall", {"name": name})["data"]
+        if a.cmd == "setup":  # the host installs the dependencies of the granted package again
+            return conn.call("market.env_build", {"name": a.rest[0]}, timeout=900.0)["data"]
         if a.cmd == "dev":
             dev: dict[str, Any] = {"path": a.rest[0]}  # resolved once, in main()
             if a.commit:
@@ -382,7 +392,10 @@ def _signed(a: argparse.Namespace, env: Mapping[str, str], out: TextIO, as_json:
         _sign(
             conn, backend, device, wid, person, label, "addon.grant", {"name": stage["name"], "staged": stage["stage"]}
         )
-        return {"stage": stage, "installed": True}
+        result: dict[str, Any] = {"stage": stage, "installed": True}
+        if stage["grant"].get("runtime") is not None:  # the dependencies the signature promised, now that it exists
+            result["env"] = conn.call("market.env_build", {"name": stage["name"]}, timeout=900.0)["data"]
+        return result
     except signer.SignerRefused as exc:
         raise _Fail("invalid.input", f"{exc}; nothing was signed", 2) from None
     finally:

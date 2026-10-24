@@ -23,8 +23,8 @@ GIT = "https://github.com/acme/"
 
 def manifest(name: str = "standup", version: str = "1.0.0", caps: tuple[str, ...] = ("network",), **more: Any) -> bytes:
     doc = {
-        "schema": "orch.addon/3", "name": name, "version": version, "title": name.title(), "api": ">=1.0,<2",
-        "min_core": "2.0.0.dev0", "capabilities": sorted(caps), "entry": {"cmd": ["python3", "{pkg}/main.py"]},
+        "schema": "orch.addon/3", "name": name, "version": version, "title": name.title(), "api": ">=1.1,<2",
+        "min_core": "2.0.0.dev0", "capabilities": sorted(caps), "entry": {"cmd": ["{python}", "{pkg}/main.py"]},
         **more,
     }  # fmt: skip
     return json.dumps(doc, sort_keys=True).encode()

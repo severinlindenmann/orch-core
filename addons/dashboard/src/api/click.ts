@@ -123,10 +123,10 @@ export const clickReady = (w: Pick<Workspace, 'click'> | undefined | null): bool
 const CLICK_ACTIONS: ReadonlySet<string> = new Set<HandoffAction['action']>([
   'accept_criterion', 'withdraw_acceptance', 'mark_task_done',
   'approve', 'request_changes', 'verdict', 'answer', 'comment', 'label', 'close', 'reopen', 'move', 'new', 'new_sequence', 'edit_sequence', 'quick_start', 'details', 'section',
-  'settings_set', 'icon_set', 'models_set', 'repo_set', 'repo_remove', 'policy_set', 'member_add', 'member_role', 'member_remove', 'grant_revoke', 'runner_grant', 'addon_grant', 'addon_disable', 'addon_enable',
+  'settings_set', 'icon_set', 'models_set', 'repo_set', 'repo_remove', 'policy_set', 'member_add', 'member_role', 'member_remove', 'grant_revoke', 'runner_grant', 'addon_grant', 'market_grant', 'addon_disable', 'addon_enable',
 ])
 // Publish decides where files go: terminal only, also when it is turned on together with its address
-export const clickEligible = (a: ClickAction | null): boolean => !!a && CLICK_ACTIONS.has(a.action) && !((a.action === 'addon_enable' || a.action === 'addon_grant') && a.name === 'publish')
+export const clickEligible = (a: ClickAction | null): boolean => !!a && CLICK_ACTIONS.has(a.action) && !((a.action === 'addon_enable' || a.action === 'addon_grant' || a.action === 'market_grant') && a.name === 'publish')
 
 export type ClickNext =
   /** Sign again (the review is unchanged). */
@@ -235,8 +235,6 @@ export function clickProblem(e: unknown): ClickProblem {
       return { title: 'The earlier attempt ended', body: e.message, next: 'prepare' }
     case 'intent.open':
       return { title: 'An attempt for this is already open', body: e.message || 'The host holds an open request for this action. Wait until it ends or expires.', next: 'open' }
-    case 'sign.click_only':
-      return { title: 'This workspace signs in the dashboard', body: e.message, next: 'retry' }
     case 'sign.convenience_readers': {
       const r = refusalOf(e)!
       // A known reason is said in plain words; without one (a host before H12d-2) the host's own message stays.

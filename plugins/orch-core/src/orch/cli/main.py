@@ -312,7 +312,9 @@ def main(
         from orch.cli.addon_credential import main as addon_credential_main
 
         return addon_credential_main(args[1:], env=env, out=out, err=err, now=now)
-    if args[:1] == ["addon"] and args[1:2] in (["install"], ["update"], ["remove"], ["new"], ["pack"], ["dev"]):
+    if args[:1] == ["addon"] and args[1:2] in (
+        ["install"], ["update"], ["remove"], ["setup"], ["new"], ["pack"], ["dev"],
+    ):  # fmt: skip
         # add-ons from a marketplace (V3 G3) and the author tools (G5): host clients that sign at the person's terminal
         from orch.cli.addon_market import main as addon_market_main
 

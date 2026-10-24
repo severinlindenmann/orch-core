@@ -1027,7 +1027,6 @@ export class ApiError extends Error {
 export const SIGNING_METHOD_STALE = 'orch:signing-method-stale'
 /** A refusal that means the page chose the wrong way to sign because the switch moved (the host decides, never the page). */
 export const signingMethodStale = (e: { code: string; reason?: string; detail?: { reason?: string } }): boolean =>
-  e.code === 'sign.click_only' ||
   ((e.code === 'human.click_refused' || e.code === 'sign.convenience_unavailable') && (e.reason ?? e.detail?.reason) === 'disabled')
 function notifySigningMethodStale() {
   try { if (typeof window !== 'undefined') window.dispatchEvent(new Event(SIGNING_METHOD_STALE)) } catch { /* no window: nothing to refresh */ }

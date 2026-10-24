@@ -30,7 +30,7 @@ def build(prepared, verified=True):
 APPROVE = """\
 Approve the requirements of DEMO-0001 (key per host; signed id …<TAIL>)
 in workspace Acme (DEMO)
-Verification fingerprint: <FP>
+Verification code: <FP>
 
 Context
   | the context
@@ -54,7 +54,7 @@ Empty, not shown: Summary.
 NEW = """\
 Create ticket DEMO-0002 · Elefant Chart (key per host; signed id …<TAIL>)
 in workspace Acme (DEMO)
-Verification fingerprint: <FP>
+Verification code: <FP>
 
 Details
   type: chore
@@ -68,9 +68,9 @@ def test_the_plain_view_of_an_approval_is_headline_and_content_without_hashes(hu
     p = human.prepare("approve", {"ref": key, "gate": "requirements"})
     text = signer.plain(p, WS)
     assert str(text) == APPROVE.replace("<TAIL>", p["log"][-8:]).replace("<FP>", p["fingerprint"])
-    # A-3: the dashboard says "check that this matches the fingerprint in your terminal": the same 12 hex, labelled,
+    # A-3: the dashboard says "check that the verification code matches the one in Terminal": the same 12 hex, labelled,
     # on the third line, before any content (and the full review's own `fingerprint:` line is still in the details)
-    assert text.splitlines()[2] == f"Verification fingerprint: {p['fingerprint']}" and re.fullmatch(
+    assert text.splitlines()[2] == f"Verification code: {p['fingerprint']}" and re.fullmatch(
         r"[0-9a-f]{12}", p["fingerprint"]
     )
     for hidden in ("sha256", "uid ", "pid ", "self-declared", "policy", "gate input"):

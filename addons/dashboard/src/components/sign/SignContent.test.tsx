@@ -291,78 +291,109 @@ it('renders a host manual-acceptance annotation under the criterion', () => {
   expect(screen.getByRole('listitem')).toHaveTextContent('AC2: accepted manually by Severin (no automated check)')
 })
 
-const QUESTION = {
-  headline: 'Answer',
-  ticket: { key: 'TST-0001', title: '', uid_tail: 'ab12cd34', key_note: 'key per host' },
-  fields_changed: [{ field: 'option a', before: null, after: 'Monthly CSV' }, { field: 'question hash', before: null, after: 'sha256:' + 'a'.repeat(64) }],
-}
+const HASH = 'sha256:' + 'a'.repeat(64)
+const ROW = (field: string, after: string) => ({ field, before: null, after })
+const ROUTING = [ROW('addressed to (per host)', 'the ticket owner'), ROW('blocks the ticket (per host)', 'yes')]
+const OPTIONS = [ROW('option csv', 'A · key csv'), ROW('option csv title', 'Monthly CSV'), ROW('option api', 'B · key api'), ROW('option api title', 'Tariff API')]
+const HASH_ROW = ROW('question hash', HASH)
+const Q = { id: 'question', title: 'Question Q1', text: 'Which export?' }
+const TICKET = { key: 'TST-0001', title: '', uid_tail: 'ab12cd34', key_note: 'key per host' }
+const SEL = { id: 'selected', title: 'Your choice', text: 'A · key csv\ntitle: Monthly CSV' }
+// The exact View core builds (host/signcontent._question): a choice, with the options, the routing rows, the hash last.
+const QUESTION = { headline: 'Answer Q1 on TST-0001 with option A (key csv)', ticket: TICKET, sections: [SEL, Q], fields_changed: [...OPTIONS, ...ROUTING, HASH_ROW] }
+const TEXT_Q = { headline: 'Answer Q1 on TST-0001 with your answer', ticket: TICKET, sections: [{ id: 'answer', title: 'Your answer', text: 'Acme Bank' }, Q], fields_changed: [...ROUTING, HASH_ROW] }
 
-it('compact answer: the selected option and a note are unclamped, question and details are clamped with Show all', () => {
-  const long = 'Monthly CSV\n' + 'one more line of what this costs\n'.repeat(12)
+it('compact answer: a choice shows the selected option unclamped, question and details clamped with Show all', () => {
+  const long = 'A · key csv\ntitle: Monthly CSV\n' + 'cost: one more line of what this costs\n'.repeat(12)
   const details = 'background line\n'.repeat(20)
   render(<SignContent compact content={{ ...QUESTION, sections: [
-    { id: 'selected', title: 'Your choice', text: long },
-    { id: 'note', title: 'Your note', text: 'my note\n'.repeat(12) },
-    { id: 'question', title: 'Question', text: 'Which export?\n'.repeat(12) },
+    { ...SEL, text: long }, { ...Q, text: 'Which export?\n'.repeat(12) },
     { id: 'details', title: 'Details from the agent', text: details },
   ] }} />)
   const choice = screen.getByTestId('sign-choice')
   expect(choice.textContent).toContain('one more line of what this costs')
   expect(choice.querySelector('.max-h-32')).toBeNull()
-  expect(screen.getByTestId('sign-note').querySelector('.max-h-32')).toBeNull()
-  expect(screen.getByRole('region', { name: 'Question' }).querySelector('.max-h-32')).not.toBeNull()
+  expect(screen.getByRole('region', { name: 'Question Q1' }).querySelector('.max-h-32')).not.toBeNull()
   const d = screen.getByTestId('sign-details')
   expect(d.querySelector('.max-h-32')).not.toBeNull()
   expect(within(d).getByRole('button', { name: 'Show all' })).toBeInTheDocument()
-  // each of them once: the expander does not repeat what the strip drew
-  expect(screen.getAllByText(/Monthly CSV/)).toHaveLength(2) // the box and the option row under Details
+})
+
+it('compact answer: a choice with a note shows both, the note unclamped', () => {
+  render(<SignContent compact content={{ ...QUESTION, sections: [SEL, { id: 'note', title: 'Your note; the choice is csv', text: 'my note\n'.repeat(12) }, Q, { id: 'why', title: 'Why it was asked', text: 'because' }] }} />)
+  expect(screen.getByTestId('sign-choice')).toHaveTextContent('Monthly CSV')
+  expect(screen.getByTestId('sign-note').querySelector('.max-h-32')).toBeNull()
+  expect(screen.getByTestId('sign-note')).toHaveTextContent('my note')
+  expect(screen.getByText('because')).toBeInTheDocument() // `why` is in the Details expander
 })
 
 it('compact answer: Other shows Something else and the typed text; a text question shows only the answer', () => {
   const { unmount } = render(<SignContent compact content={{ ...QUESTION, sections: [
     { id: 'selected', title: 'Your choice', text: 'Something else' },
-    { id: 'answer', title: 'Your answer', text: 'Neither, keep the seeds' },
-    { id: 'question', title: 'Question', text: 'Which export?' },
+    { id: 'answer', title: 'Your answer', text: 'Neither, keep the seeds' }, Q,
   ] }} />)
   expect(screen.getByTestId('sign-choice')).toHaveTextContent('Something else')
   expect(screen.getByTestId('sign-answer')).toHaveTextContent('Neither, keep the seeds')
   unmount()
-  render(<SignContent compact content={{ ...QUESTION, fields_changed: [QUESTION.fields_changed[1]], sections: [
-    { id: 'answer', title: 'Your answer', text: 'Acme Bank' },
-    { id: 'question', title: 'Question', text: 'Which bank?' },
-  ] }} />)
+  render(<SignContent compact content={TEXT_Q as never} />)
   expect(screen.queryByTestId('sign-choice')).toBeNull()
   expect(screen.getByTestId('sign-answer')).toHaveTextContent('Acme Bank')
 })
 
+it('compact answer: the frozen View of each kind is compact, with recommended and the allow-other row too', () => {
+  expect(compactAnswer(QUESTION as never)).not.toBeNull()
+  expect(compactAnswer(TEXT_Q as never)).not.toBeNull()
+  const rich = { ...QUESTION, fields_changed: [ROW('recommended', 'B · key api'), ROW('an answer in your own words is allowed', 'yes'),
+    ROW('option csv', 'A · key csv'), ROW('option csv title', 'Monthly CSV'), ROW('option csv text', 't'), ROW('option csv fact 1', 'Effort: 1 day'), ROW('option csv fact 2', 'Cost: 5'), ROW('option csv cost', '5'),
+    ROW('option api', 'B · key api'), ROW('option api title', 'Tariff API'), ...ROUTING, HASH_ROW] }
+  expect(compactAnswer(rich as never)).not.toBeNull()
+})
+
 it('compact answer: no answer part (neither selected nor answer) shows the full review, never a compact one', () => {
-  render(<SignContent compact content={{ ...QUESTION, sections: [{ id: 'question', title: 'Question', text: 'Which?' }] }} />)
+  render(<SignContent compact content={{ ...QUESTION, sections: [Q] }} />)
   expect(screen.queryByTestId('sign-compact')).toBeNull()
 })
 
 it('exposes the question hash of the View', () => {
-  expect(viewQuestionHash(QUESTION as never)).toBe('sha256:' + 'a'.repeat(64))
+  expect(viewQuestionHash(QUESTION as never)).toBe(HASH)
   expect(viewQuestionHash({ headline: 'x' })).toBeNull()
 })
 
-it('compact answer enforces the frozen shape in one place (dialog path included)', () => {
-  const H = { field: 'question hash', before: null, after: 'sha256:' + 'a'.repeat(64) }
-  const q = { id: 'question', title: 'Question', text: 'Which?' }
-  const base = { headline: 'Answer', ticket: { key: 'T-1', title: '', uid_tail: 'ab12cd34', key_note: '' } }
-  // today's host: option + note as `answer` titled "Your note", a `your choice` row, no question hash row
-  const old = { ...base, sections: [q, { id: 'answer', title: 'Your note', text: 'because' }], fields_changed: [{ field: 'your choice', before: null, after: 'DATE' }] }
-  expect(compactAnswer(old as never)).toBeNull()
+it('compact answer refuses any unknown, missing, extra or misplaced id and shows the full review', () => {
+  const none = (c: unknown) => expect(compactAnswer(c as never)).toBeNull()
+  const rows = (...r: ReturnType<typeof ROW>[]) => ({ ...QUESTION, fields_changed: r })
+  // today's host: option + note as `answer`, a `your choice` row, no question hash row
+  const old = { headline: 'Answer', ticket: TICKET, sections: [Q, { id: 'answer', title: 'Your note', text: 'because' }], fields_changed: [ROW('your choice', 'DATE')] }
+  none(old)
   render(<SignContent compact content={old as never} />)
   expect(screen.queryByTestId('sign-compact')).toBeNull()
   expect(screen.getByText('DATE')).toBeVisible() // the chosen option stays in the full review
-  // the same with a hash row: still not compact (your choice row)
-  expect(compactAnswer({ ...old, fields_changed: [...old.fields_changed, H] } as never)).toBeNull()
-  // note without selected, option rows without selected
-  expect(compactAnswer({ ...base, sections: [q, { id: 'answer', title: 'Your answer', text: 'x' }, { id: 'note', title: 'Note', text: 'n' }], fields_changed: [H] } as never)).toBeNull()
-  expect(compactAnswer({ ...base, sections: [q, { id: 'answer', title: 'Your answer', text: 'x' }], fields_changed: [{ field: 'option a', before: null, after: 'A' }, H] } as never)).toBeNull()
-  // the frozen shapes
-  expect(compactAnswer({ ...base, sections: [q, { id: 'answer', title: 'Your answer', text: 'x' }], fields_changed: [H] } as never)).not.toBeNull()
-  expect(compactAnswer({ ...base, sections: [{ id: 'selected', title: 'Your choice', text: 'A' }, { id: 'note', title: 'Note', text: 'n' }, q], fields_changed: [{ field: 'option a', before: null, after: 'A' }, H] } as never)).not.toBeNull()
+  none({ ...old, fields_changed: [ROW('your choice', 'DATE'), ...OPTIONS, ...ROUTING, HASH_ROW] })
+  // sections: unknown id, duplicate, wrong order, note without selected, answer and note together, selected without a listed option
+  none({ ...QUESTION, sections: [SEL, Q, { id: 'extra', title: 'x', text: 'x' }] })
+  none({ ...QUESTION, sections: [SEL, Q, Q] })
+  none({ ...QUESTION, sections: [Q, SEL] })
+  none({ ...TEXT_Q, sections: [{ id: 'answer', title: 'a', text: 'x' }, { id: 'note', title: 'n', text: 'n' }, Q] })
+  none({ ...QUESTION, sections: [SEL, { id: 'answer', title: 'a', text: 'x' }, { id: 'note', title: 'n', text: 'n' }, Q] })
+  none({ ...QUESTION, sections: [{ id: 'note', title: 'n', text: 'n' }, Q] })
+  none({ ...QUESTION, sections: [{ ...SEL, text: 'B · key csv\ntitle: x' }, Q] }) // letter does not match the option's place
+  none({ ...QUESTION, sections: [{ ...SEL, text: 'C · key zzz\ntitle: x' }, Q] }) // key is not an option
+  none({ ...QUESTION, sections: [{ ...SEL, text: 'Monthly CSV' }, Q] }) // the old free-text selection
+  none({ ...QUESTION, sections: [{ id: 'selected', title: 'c', text: 'Something else' }, Q] }) // Other without its answer
+  none({ ...TEXT_Q, fields_changed: [...OPTIONS, ...ROUTING, HASH_ROW] }) // a text question with option rows
+  // rows: unknown, missing, extra, misordered, hash not last or twice
+  none(rows(...OPTIONS, ...ROUTING, ROW('mystery', 'x'), HASH_ROW))
+  none(rows(...OPTIONS, ROUTING[0], HASH_ROW)) // blocks row missing
+  none(rows(...OPTIONS, ...ROUTING, ROW('option csv cost', '1'), HASH_ROW)) // sub-row of an option out of its place
+  none(rows(OPTIONS[0], OPTIONS[2], ...ROUTING, HASH_ROW)) // no title row
+  none(rows(ROW('option csv', 'A · key csv'), ROW('option csv title', 'x'), ROW('option csv title', 'y'), ...ROUTING, HASH_ROW))
+  none(rows(ROW('option csv', 'B · key csv'), ROW('option csv title', 'x'), ...ROUTING, HASH_ROW)) // wrong letter
+  none(rows(ROW('option csv', 'A · key other'), ROW('option csv title', 'x'), ...ROUTING, HASH_ROW))
+  none(rows(...OPTIONS, ...ROUTING, HASH_ROW, ROW('option api cost', '1')))
+  none(rows(...OPTIONS, HASH_ROW, ...ROUTING))
+  none(rows(...OPTIONS, ...ROUTING, HASH_ROW, HASH_ROW))
+  none(rows(ROW('recommended', 'A · key nope'), ...OPTIONS, ...ROUTING, HASH_ROW))
+  none(rows(ROW('option csv fact 2', 'a: b'), ...OPTIONS, ...ROUTING, HASH_ROW))
 })
 
 it('viewQuestionHash is the one contract row: null for none or several', () => {

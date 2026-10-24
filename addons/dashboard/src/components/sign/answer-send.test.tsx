@@ -34,14 +34,22 @@ const view = (id: string, over: Partial<ClickViewAnswer['view']> = {}, choice = 
     device: 'd_x',
     artifacts: null,
     content: {
-      headline: 'Answer',
+      headline: 'Answer Q2 on DEMO-0043 with option A (key a)',
       ticket: { key: 'DEMO-0043', uid_tail: 'abcd1234' },
-      // The frozen signer View (design-question-options.md section 4): selected first, the question, one row per option,
-      // the question hash last.
-      sections: [{ id: 'selected', title: 'Your choice', text: choice }, { id: 'question', title: 'Question', text: question }, ...extra],
+      // The frozen signer View (design-question-options.md section 4, rev 5): `selected` first (orch-owned line names), the
+      // question, one row per option (letter and key only) with its title sub-row, the routing rows, the question hash last.
+      sections: [
+        { id: 'selected', title: 'Your choice', text: `${choice.startsWith('TIMESTAMP') ? 'B · key b' : 'A · key a'}\ntitle: ${choice}` },
+        { id: 'question', title: 'Question Q2', text: question },
+        ...extra,
+      ],
       fields_changed: [
-        { field: 'option a', before: null, after: 'DATE' },
-        { field: 'option b', before: null, after: 'TIMESTAMP' },
+        { field: 'option a', before: null, after: 'A · key a' },
+        { field: 'option a title', before: null, after: 'DATE' },
+        { field: 'option b', before: null, after: 'B · key b' },
+        { field: 'option b title', before: null, after: 'TIMESTAMP' },
+        { field: 'addressed to (per host)', before: null, after: 'the ticket owner' },
+        { field: 'blocks the ticket (per host)', before: null, after: 'yes' },
         { field: 'question hash', before: null, after: hash },
       ],
     },
@@ -320,7 +328,7 @@ describe('Send answer in the card, one-click custody', () => {
     expect(choice).toHaveTextContent('DATE (option a)')
     expect(choice).not.toHaveTextContent('Approve deploy')
     // the choice box comes before any text someone else wrote, and the question is clamped with a way to read it all
-    const question = strip.querySelector('section[aria-label="Question"]')!
+    const question = strip.querySelector('section[aria-label="Question Q2"]')!
     expect(choice.compareDocumentPosition(question) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(question.querySelector('.max-h-32')).not.toBeNull()
     expect(screen.getByRole('button', { name: 'Show all' })).toBeInTheDocument()

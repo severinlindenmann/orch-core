@@ -150,22 +150,87 @@ export function viewQuestionHash(content: Content | null | undefined): string | 
   return rows.length === 1 && typeof rows[0].after === 'string' && rows[0].after ? rows[0].after : null
 }
 
+const OPTION_KEY = '[a-z][a-z0-9_]*'
+const OPTION_HEAD = new RegExp(`^([A-F]) · key (${OPTION_KEY})$`)
+
+/** Whether the View's rows are exactly the frozen set, in order: `recommended`, the allow-other row, one `option <key>` row per
+ * option (letters A, B, C by stored order) each followed only by its own `title` (always), `text`, `fact N`, `cost` rows in that
+ * order, the two routing rows, and `question hash` last. Returns the option keys, or null for any unknown/missing/extra row. */
+function frozenRows(rows: NonNullable<Content['fields_changed']>): { keys: string[]; recommended: string | null } | null {
+  let i = 0
+  const keys: string[] = []
+  let recommended: string | null = null
+  const head = (v: unknown) => typeof v === 'string' ? OPTION_HEAD.exec(v) : null
+  if (rows[i]?.field === 'recommended') {
+    const m = head(rows[i].after)
+    if (!m) return null
+    recommended = m[2]
+    i++
+  }
+  if (rows[i]?.field === 'an answer in your own words is allowed') { if (rows[i].after !== 'yes') return null; i++ }
+  while (i < rows.length && rows[i].field.startsWith('option ')) {
+    const m = new RegExp(`^option (${OPTION_KEY})$`).exec(rows[i].field)
+    const h = head(rows[i].after)
+    if (!m || !h || h[2] !== m[1] || h[1] !== String.fromCharCode(65 + keys.length) || keys.includes(m[1]) || keys.length >= 6) return null
+    const key = m[1]
+    keys.push(key)
+    i++
+    const pre = `option ${key} `
+    let stage = 0 // title(0) text(1) facts(2) cost(3): in this order, each at most once (facts: numbered 1, 2, ...)
+    let facts = 0
+    if (rows[i]?.field !== `${pre}title`) return null
+    i++
+    stage = 1
+    while (i < rows.length && rows[i].field.startsWith(pre)) {
+      const name = rows[i].field.slice(pre.length)
+      if (typeof rows[i].after !== 'string') return null
+      if (name === 'text' && stage <= 1) stage = 2
+      else if (/^fact [1-9][0-9]*$/.test(name) && stage <= 2 && name === `fact ${facts + 1}`) { stage = 2; facts++ }
+      else if (name === 'cost' && stage <= 2) stage = 4
+      else return null
+      i++
+    }
+  }
+  if (rows[i]?.field !== 'addressed to (per host)') return null
+  i++
+  if (rows[i]?.field !== 'blocks the ticket (per host)') return null
+  i++
+  if (rows[i]?.field !== 'question hash' || i !== rows.length - 1) return null
+  if (recommended !== null && !keys.includes(recommended)) return null
+  return { keys, recommended }
+}
+
 /**
  * The compact answer review, by the frozen signer View shape (design-question-options.md section 4), enforced HERE and
- * nowhere else. Null (the caller shows the full review) unless: the View has exactly one `question hash` row and a
- * `question` section; a choice has `selected` (`note` only together with it, option rows only with it); a text question
- * has `answer` and no `selected`, no `note` and no option rows; Other has `selected` and `answer`. A View of any other
- * shape (an older host: `your choice` row, a note called `answer`) is never compact: it must not hide the chosen option.
+ * nowhere else. Null (the caller shows the full review, every bound byte) on ANY other shape: an unknown, missing, extra,
+ * repeated or misplaced section or row id. Sections, in order: `selected` (choice) | `answer` (Other or a text question) |
+ * `note` (only after `selected`), then `question`, `details`, `why`. A choice names an option row it selected, Other is
+ * "Something else" with an `answer`, a text question has `answer` and no `selected`, `note` or option rows. The View's
+ * `question hash` (the last row, exactly one) is matched with the card's hash by the caller.
  */
 export function compactAnswer(content: Content | null | undefined) {
   if (!content || content.summary || !content.ticket || content.ticket.new === true) return null
   if (viewQuestionHash(content) === null) return null
-  const sec = (id: string) => content.sections?.find(s => s.id === id)
+  const secs = content.sections ?? []
+  const order = ['selected', 'answer', 'note', 'question', 'details', 'why']
+  let last = -1
+  for (const s of secs) { // known ids, in the frozen order, none twice
+    const at = order.indexOf(s.id)
+    if (at <= last || typeof s.text !== 'string') return null
+    last = at
+  }
+  const sec = (id: string) => secs.find(s => s.id === id)
   const selected = sec('selected'), answer = sec('answer'), note = sec('note'), question = sec('question')
-  if (!question || (!selected && !answer)) return null
-  const optionRows = (content.fields_changed ?? []).some(f => f.field.startsWith('option '))
-  if (!selected && (note || optionRows)) return null
-  if (content.fields_changed?.some(f => f.field === 'your choice')) return null
+  if (!question || (!selected && !answer) || (answer && note)) return null
+  if (note && !selected) return null
+  const rows = frozenRows(content.fields_changed ?? [])
+  if (!rows) return null
+  if (selected && answer) { // Other
+    if (selected.text !== 'Something else' || rows.keys.length < 2) return null
+  } else if (selected) { // a choice: the first line names an option row
+    const m = OPTION_HEAD.exec(selected.text.split('\n', 1)[0])
+    if (!m || rows.keys.indexOf(m[2]) !== m[1].charCodeAt(0) - 65) return null
+  } else if (rows.keys.length > 0 || rows.recommended !== null) return null // a text question
   return { ticket: content.ticket, selected, answer, note, question, details: sec('details') }
 }
 

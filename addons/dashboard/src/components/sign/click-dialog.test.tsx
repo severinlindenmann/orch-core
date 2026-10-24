@@ -674,15 +674,19 @@ describe('[rev818] adversarial: the switch moving never re-binds or signs an ope
 describe('answering a question in one-click mode', () => {
   const ANSWER = { kind: 'answer', question: 'Q2', option: 'date' } as const
   const content = {
-    headline: 'Answer “Which date?” on DEMO-0043 with DATE (local midnight)',
+    headline: 'Answer Q2 on DEMO-0043 with option A (key date)',
     sections: [
-      { id: 'selected', title: 'Your choice', text: 'DATE (local midnight)' },
-      { id: 'question', title: 'Question', text: 'Which date should the report use?' },
+      { id: 'selected', title: 'Your choice', text: 'A · key date\ntitle: DATE (local midnight)' },
+      { id: 'question', title: 'Question Q2', text: 'Which date should the report use?' },
     ],
     ticket: { key: 'DEMO-0043', uid_tail: 'abcd1234' },
     fields_changed: [
-      { field: 'option a', before: null, after: 'DATE (local midnight)' },
-      { field: 'option b', before: null, after: 'TIMESTAMP' },
+      { field: 'option date', before: null, after: 'A · key date' },
+      { field: 'option date title', before: null, after: 'DATE (local midnight)' },
+      { field: 'option ts', before: null, after: 'B · key ts' },
+      { field: 'option ts title', before: null, after: 'TIMESTAMP' },
+      { field: 'addressed to (per host)', before: null, after: 'the ticket owner' },
+      { field: 'blocks the ticket (per host)', before: null, after: 'yes' },
       { field: 'question hash', before: null, after: 'sha256:' + 'a'.repeat(64) },
     ],
   }

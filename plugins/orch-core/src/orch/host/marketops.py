@@ -27,10 +27,12 @@ from typing import TYPE_CHECKING, Any
 
 from jsonschema import Draft202012Validator
 
-from orch.market import ADDONS, MarketError, fetch, index, policy
+from orch.market import ADDONS, MarketError, fetch, index
 from orch.market.constants import AGENT_MIN_INTERVAL
+from orch.market.install import semver
 from orch.ops.errors import ERRORS
 
+from . import marketinstall
 from .errors import HostError
 from .marketstate import MarketFiles
 
@@ -39,9 +41,10 @@ if TYPE_CHECKING:
 
 __all__ = ["MARKET_OPS", "MARKET_READS", "NETWORK_OPS", "OP_CODES", "execute", "hub_joined", "serve"]
 
-MARKET_READS = frozenset({"market.list"})
-MARKET_OPS: dict[str, int] = {"market.add": 1, "market.list": 1, "market.refresh": 1}
-NETWORK_OPS = frozenset({"market.add", "market.refresh"})  # these two reach the network: off the workspace worker
+MARKET_READS = frozenset({"market.list"}) | marketinstall.READS
+MARKET_OPS: dict[str, int] = {"market.add": 1, "market.list": 1, "market.refresh": 1, **marketinstall.MARKET_OPS}
+#: these reach the network: off the workspace worker (add and refresh, and the package fetch of stage)
+NETWORK_OPS = frozenset({"market.add", "market.refresh"}) | marketinstall.NETWORK_OPS
 
 _COMMON = ("market.actor_refused", "market.state_invalid", "market.malformed")
 #: the codes each op can raise (the per-op declaration; a test checks every raise site against it)
@@ -79,6 +82,7 @@ OP_CODES: dict[str, tuple[str, ...]] = {
         "market.refresh_running",
         "market.publisher_key_changed",
     ),  # fmt: skip
+    **marketinstall.OP_CODES,
 }
 _COMMIT = {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"}
 _URL = {"type": "string", "minLength": 1, "maxLength": 200}
@@ -96,6 +100,7 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
         "additionalProperties": False,
     },
 }
+_SCHEMAS.update(marketinstall.SCHEMAS)
 _VALIDATORS = {op: Draft202012Validator(s) for op, s in _SCHEMAS.items()}
 
 
@@ -140,7 +145,8 @@ def _check(call: Call) -> tuple[str, dict[str, Any]]:
     if service.state == "unavailable" or service.store is None:
         raise HostError("workspace.unavailable", f"the workspace cannot be served: {service.cause}")
     person = call.column.name == "P" and call.viewer is not None
-    if op == "market.add" or (op == "market.refresh" and "commit" in args):  # human-only: before anything else (E1)
+    if op in ("market.add", *marketinstall.HUMAN_ONLY) or (op == "market.refresh" and "commit" in args):
+        # human-only: before anything else (E1); a person's column P, never an agent's grant or a mandate
         if not person:
             raise _refuse(op, "market.actor_refused")
         member = service.store.state.workspace.members.get(call.viewer)
@@ -159,32 +165,32 @@ def serve(call: Call) -> dict[str, Any]:
     op, args = _check(call)
     service = call.service
     now = service.clock()
+    if op in marketinstall.MARKET_OPS:
+        return marketinstall.serve(call, op, args)
     try:
         if op == "market.list":
             return ok_result(_list(service, bool(args.get("entries")), now))
-        joined = hub_joined(service)
         files = _files(service)
         records = files.load()
         if op == "market.add":
-            policy.gate(args["url"], hub_joined=joined)
+            classes = {args["url"]: marketinstall.market_class(service, args["url"])}
             if args["url"] in records:
                 raise MarketError("market.already_added")
             urls = [args["url"]]
         elif "url" in args:
-            policy.gate(args["url"], hub_joined=joined)
+            classes = {args["url"]: marketinstall.market_class(service, args["url"])}
             if args["url"] not in records:
                 raise HostError("not_found", "that marketplace was not added: orch market list")
             urls = [args["url"]]
         else:
             urls = sorted(records)
-            for u in urls:
-                policy.gate(u, hub_joined=joined)
+            classes = {u: marketinstall.market_class(service, u) for u in urls}
     except MarketError as exc:
         raise _refuse(op, exc.code) from None
     return {
         "plan": {
             "op": op, "urls": urls, "commit": args.get("commit"), "agent": call.column.name != "P",
-            "all": op == "market.refresh" and "url" not in args,
+            "all": op == "market.refresh" and "url" not in args, "classes": classes,
         }
     }  # fmt: skip
 
@@ -194,6 +200,8 @@ async def execute(call: Call, planned: dict[str, Any]) -> dict[str, Any]:
 
     if "plan" not in planned:
         return planned
+    if planned["plan"]["op"] in marketinstall.MARKET_OPS:
+        return await marketinstall.execute(call, planned)
     return await asyncio.to_thread(_run, call, planned["plan"])
 
 
@@ -211,10 +219,11 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
     for url in plan["urls"]:
         try:
+            cls, keys = plan["classes"][url]
             if op == "market.add":
-                row = _add(files, url, plan["commit"], service.clock())
+                row = _add(files, url, plan["commit"], service.clock(), cls, tuple(keys))
             else:
-                row = _refresh(files, url, plan["commit"], plan["agent"], service.clock)
+                row = _refresh(files, url, plan["commit"], plan["agent"], service.clock, cls, tuple(keys))
         except MarketError as exc:
             if not plan["all"]:
                 _audit(call, "market.refused", op=op, code=exc.code)
@@ -232,12 +241,12 @@ def _sha(raw: bytes) -> str:
 
 
 def _record(
-    rec: dict[str, Any] | None, got: str, raw: bytes, v: index.Verdict, official: bool, **more: Any
+    rec: dict[str, Any] | None, got: str, raw: bytes, v: index.Verdict, cls: str, **more: Any
 ) -> dict[str, Any]:
     """The new record. A floor (``last_version``, ``payload_sha256``) comes only from a verified index (E2)."""
     old = rec or {"last_version": None, "payload_sha256": None, "sig_key": None, "pinned": False}
     new = {
-        "class": "official" if official else "other",
+        "class": cls,
         "added_at": old.get("added_at", 0),
         "index_commit": got,
         "index_sha256": _sha(raw),
@@ -248,22 +257,24 @@ def _record(
     }
     if v.verified:
         new["last_version"], new["payload_sha256"] = v.doc["version"], v.payload_sha256
-        if not official and rec is None:  # the index key of a non-official market is remembered at a human add only
+        if cls == "other" and rec is None:  # the index key of a non-official market is remembered at a human add only
             new["sig_key"] = v.doc["signature"]["key"]
     new.update(more)
     return new
 
 
-def _add(files: MarketFiles, url: str, commit: str | None, now: float) -> dict[str, Any]:
+def _add(
+    files: MarketFiles, url: str, commit: str | None, now: float, cls: str, keys: tuple[str, ...]
+) -> dict[str, Any]:
     with files.refresh_lock(url):
         files.stamp(url, now)
         got, raw = fetch.fetch_index(url, commit)
-        v = index.evaluate(raw, url, official=True, now=now)  # only the official URL passes the gate
+        v = marketinstall.verdict(raw, url, cls, keys, now)  # only the official URL and a sandbox's test URL pass
         with files.commit() as write:
             records = files.load()
             if url in records:
                 raise MarketError("market.already_added")
-            rec = _record(None, got, raw, v, True, added_at=int(now), pinned=commit is not None)
+            rec = _record(None, got, raw, v, cls, added_at=int(now), pinned=commit is not None)
             write({**records, url: rec}, {url: raw})
     return _summary(url, rec, v)
 
@@ -276,7 +287,9 @@ def _summary(url: str, rec: dict[str, Any], v: index.Verdict) -> dict[str, Any]:
     }  # fmt: skip
 
 
-def _refresh(files: MarketFiles, url: str, commit: str | None, agent: bool, clock: Any) -> dict[str, Any]:
+def _refresh(
+    files: MarketFiles, url: str, commit: str | None, agent: bool, clock: Any, cls: str, keys: tuple[str, ...]
+) -> dict[str, Any]:
     now = clock()
     rec = files.load().get(url)
     if rec is None:
@@ -284,11 +297,10 @@ def _refresh(files: MarketFiles, url: str, commit: str | None, agent: bool, cloc
     last = files.last_fetch(url)
     if agent and last is not None and 0 <= now - last < AGENT_MIN_INTERVAL:  # E5: no network at all
         return {"url": url, "skipped": "fresh", "moved": False}
-    official = rec["class"] == "official"
     with files.refresh_lock(url):
         files.stamp(url, now)
         got, raw = fetch.fetch_index(url, commit)
-        v = index.evaluate(raw, url, official=official, now=now)
+        v = marketinstall.verdict(raw, url, cls, keys, now)
         _check_index_key(rec, v)
         index.check_floor(rec["last_version"], rec["payload_sha256"], v)
         if rec["pinned"] and commit is None:  # E4: reported, never moved by a plain refresh
@@ -302,7 +314,7 @@ def _refresh(files: MarketFiles, url: str, commit: str | None, agent: bool, cloc
             if cur is None:
                 raise MarketError("market.malformed")
             index.check_floor(cur["last_version"], cur["payload_sha256"], v)  # again, against the record as it is now
-            new = _record(cur, got, raw, v, official, pinned=cur["pinned"] or commit is not None)
+            new = _record(cur, got, raw, v, cls, pinned=cur["pinned"] or commit is not None)
             write({**records, url: new}, {url: raw})
     return _summary(url, new, v)
 
@@ -310,7 +322,7 @@ def _refresh(files: MarketFiles, url: str, commit: str | None, agent: bool, cloc
 def _check_index_key(rec: dict[str, Any], v: index.Verdict) -> None:
     """A non-official index's signature key is remembered at the human ``add``; a refresh never writes it and refuses
     a changed or dropped key (spec 4.4). Unreachable before #287 (only the official URL passes the gate)."""
-    if rec["class"] == "official" or rec["sig_key"] is None:
+    if rec["class"] != "other" or rec["sig_key"] is None:
         return
     sig = v.doc.get("signature")
     if sig is None or sig["key"] != rec["sig_key"]:
@@ -321,6 +333,19 @@ def fingerprint(key_b64: str) -> str:
     """``SHA256:`` of the 65 key bytes, as ssh and ``orch.land.key.fingerprint`` show a key."""
     raw = base64.urlsafe_b64decode(key_b64 + "=" * (-len(key_b64) % 4))
     return "SHA256:" + base64.b64encode(hashlib.sha256(raw).digest()).decode().rstrip("=")
+
+
+def _installed_row(service: WorkspaceService, name: str, rec: dict[str, Any] | None, url: str) -> dict[str, Any] | None:
+    """``{version, state}`` of the add-on when it came from this marketplace, else ``None``."""
+    if rec is None or rec["origin"] != url:
+        return None
+    return {"version": rec["version"], "state": marketinstall.state_of(service, name)}
+
+
+def _update_available(rec: dict[str, Any] | None, url: str, entry: dict[str, Any]) -> bool:
+    if rec is None or rec["origin"] != url:
+        return False
+    return semver(entry["version"]) > semver(rec["version"])
 
 
 def _list(service: WorkspaceService, entries: bool, now: float) -> dict[str, Any]:
@@ -338,9 +363,10 @@ def _list(service: WorkspaceService, entries: bool, now: float) -> dict[str, Any
         }  # fmt: skip
         raw = files.read_cache(url)
         try:
-            if raw is None or _sha(raw) != rec["index_sha256"]:
+            cls, keys = marketinstall.market_class(service, url)  # the class is decided now, never read from the record
+            if raw is None or _sha(raw) != rec["index_sha256"] or cls != rec["class"]:
                 raise MarketError("market.malformed")
-            v = index.evaluate(raw, url, official=rec["class"] == "official", now=now)
+            v = marketinstall.verdict(raw, url, cls, keys, now)
         except MarketError:
             row["cache"] = "invalid"  # never trusted: run orch market refresh
             rows.append(row)
@@ -353,9 +379,12 @@ def _list(service: WorkspaceService, entries: bool, now: float) -> dict[str, Any
             "from_marketplace": {"name": doc["name"], "title": doc.get("title")},
         }  # fmt: skip
         if entries:
+            have = files.installs()[ADDONS]
             row[ADDONS] = [
                 {
                     "id": e["id"],
+                    "installed": _installed_row(service, e["id"], have.get(e["id"]), url),
+                    "update": _update_available(have.get(e["id"]), url, e),
                     "version": e["version"],
                     "capabilities": e["capabilities"],
                     "revoked": f"{e['id']}@{e['version']}" in revoked,

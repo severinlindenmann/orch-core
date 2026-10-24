@@ -6,7 +6,7 @@ import { hasFeature } from '@/api/features'
 import type { Workspace } from '@/api/types'
 import { AgentName } from '@/components/agent/AgentMark'
 import { LoadFailed } from '@/components/LoadFailed'
-import { HandoffDialog } from '@/components/sign/HandoffDialog'
+import { SignPopover } from '@/components/sign/SignPopover'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -30,7 +30,7 @@ function StopDialog({ ws, grant, name, onClose }: { ws: string; grant: HostGrant
   const [reason, setReason] = useState('')
   const text = reason.trim()
   return (
-    <HandoffDialog
+    <SignPopover
       title={`Stop access for ${visible(name)}`}
       ws={ws}
       action={{ action: 'grant_revoke', grant: grant.id, ...(text ? { reason: text } : {}) }}
@@ -42,7 +42,7 @@ function StopDialog({ ws, grant, name, onClose }: { ws: string; grant: HostGrant
         <Input id="revoke-reason" value={reason} maxLength={200} onChange={(e) => setReason(e.target.value)} />
         <p className="text-[12px] text-text-faint">Every agent running with this access stops saving changes. One line, at most 200 characters.</p>
       </div>
-    </HandoffDialog>
+    </SignPopover>
   )
 }
 

@@ -14,7 +14,7 @@ import { MAX_CRITERIA, MAX_SECTION_BYTES, MAX_SEQUENCE_STEPS, type HandoffAction
 import { SECTIONS_BY_TYPE, SECTION_ORDER, sectionLabel, type SectionName } from '@/api/sections'
 import { branchProblem, MAX_LINK_REPOS, suggestedBranch } from '@/api/links'
 import type { TicketDocument, TicketLinks } from '@/api/types'
-import { HandoffDialog } from '@/components/sign/HandoffDialog'
+import { SignPopover } from '@/components/sign/SignPopover'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -311,7 +311,7 @@ export function EditDialog({ ticket, viewer, focus, onClose, onBusy }: { ticket:
           </Dialog>
         )}
         {signing && ws && (
-          <HandoffDialog
+          <SignPopover
             title={`Edit ${ticket.key}`}
             ws={ws.id}
             action={signing}

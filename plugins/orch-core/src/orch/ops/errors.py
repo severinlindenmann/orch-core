@@ -673,6 +673,10 @@ _MARKET = (
     ),
     ("market.refresh_running", 9, True, "a refresh of this marketplace is already running", "try again in a moment"),
     ("market.already_added", 3, False, "this marketplace is already added", "orch market refresh"),
+    # V3 G3: install, update, remove
+    ("market.not_installed", 3, False, "this add-on was not installed from a marketplace", "orch addon install ID"),
+    ("market.ambiguous_addon", 3, False, "more than one added marketplace lists this id", "name one with --from URL"),
+    ("market.still_enabled", 3, False, "the add-on is still turned on", "orch addon disable NAME, then remove it"),
 )
 _SPECS += [
     _e(code, exit_, retry, msg, hint, ["orch", "market", "list"], "Marketplace refusal (spec section 13): " + msg + ".")

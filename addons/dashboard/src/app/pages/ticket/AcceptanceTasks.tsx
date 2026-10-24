@@ -8,6 +8,7 @@ import type { AcceptanceStatus, TaskStatus, TicketDocument } from '@/api/types'
 import { Raw } from '@/components/sign/visible'
 import { diffstat } from '@/api/gates'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { availableActions } from './actions'
 import { agentName, fmtDuration, fmtTime, Mono, Pill, Section, type Jump, type TabProps } from './shared'
 
 type AcState = 'open' | 'evidenced' | 'done'
@@ -174,20 +175,38 @@ function leaseText(t: TaskStatus): string {
   return `${agentName(t.lease.agent)}${sub ? ' ' + sub : ''}`
 }
 
-export function AcceptanceTasks({ ticket, viewer, jump }: TabProps) {
+/** The Acceptance tab's verdict card (run 8, 7.5): the same "Give verdict" Today offers; Pass is the accept-all. */
+function VerdictBanner({ ticket, viewer, jump, sign }: TabProps) {
+  const can = availableActions(ticket, viewer).verdict
+  const head = ticket.branch.head
+  const changes = (
+    <button type="button" onClick={() => jump({ tab: 'changes' })} className="text-brand underline-offset-2 hover:underline">
+      Open changes
+    </button>
+  )
+  return (
+    <div data-testid="evidence-changes" className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border border-border bg-surface px-3 py-2.5 text-[13px] text-text-muted">
+      <div className="min-w-0 flex-1 space-y-0.5">
+        {can && <p className="font-medium text-text">Ready for your verdict. Check the evidence below, then give your verdict.</p>}
+        <p>
+          {head ? (
+            <>Evidence and code together: the verdict covers commit <Mono className="text-text">{head}</Mono> ({diffstat(ticket.branch)} against {ticket.branch.base}).</>
+          ) : (
+            'No code is linked to this ticket: the verdict covers the criteria and the files below.'
+          )}{' '}
+          {head && changes}
+        </p>
+      </div>
+      {can && <Button size="sm" onClick={() => sign({ kind: 'verdict' })}>Give verdict</Button>}
+    </div>
+  )
+}
+
+export function AcceptanceTasks({ ticket, viewer, jump, sign }: TabProps) {
   const edit = useTicketEdit()
   return (
     <ManualAcceptanceProvider ticket={ticket} viewer={viewer}><div className="space-y-5">
-      {ticket.status === 'testing' && (
-        <p data-testid="evidence-changes" className="flex flex-wrap items-center gap-x-2 rounded-md border border-border bg-surface px-3 py-2 text-[13px] text-text-muted">
-          <span>
-            Evidence and code together: the verdict signs commit <Mono className="text-text">{ticket.branch.head}</Mono> ({diffstat(ticket.branch)} against {ticket.branch.base}).
-          </span>
-          <button type="button" onClick={() => jump({ tab: 'changes' })} className="text-brand underline-offset-2 hover:underline">
-            Open changes
-          </button>
-        </p>
-      )}
+      {ticket.status === 'testing' && <VerdictBanner ticket={ticket} viewer={viewer} jump={jump} sign={sign} />}
       <Section title={<>Acceptance criteria <span className="font-normal text-text-muted">· {ticket.acceptance_state.filter((a) => a.state === 'proven').length}/{ticket.acceptance_state.length} evidenced</span></>}>
         {ticket.acceptance_state.length === 0 ? (
           <p className="text-[13px] text-text-faint">No acceptance criteria yet.</p>

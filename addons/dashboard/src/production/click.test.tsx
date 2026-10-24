@@ -60,7 +60,8 @@ it('click-to-sign end to end: Sign, the signer’s View only, 500 ms, Sign, Sign
   expect(sign).toBeDisabled()
   await waitFor(() => expect(sign).toBeEnabled(), { timeout: ARM_MS + 3000 })
   press(sign)
-  await within(dialog).findByText('Signed', {}, T)
+  await waitFor(() => expect(state.host.clickSigned).toHaveLength(1), T)
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull(), T) // closes by itself; one toast says it
   expect(state.host.clickSigned).toEqual([{ request_id: 'hr_' + '1'.padStart(26, '0'), view_digest: 'sha256:' + '9'.repeat(64) }])
   expect(state.host.clickCancelled).toEqual([])
 })

@@ -79,7 +79,6 @@ export const LAYOUT_SCENARIOS = [
   'agent-dialog-acked',
   'agent-blocked',
   'agent-grant',
-  'agent-outcomes',
   // Model routing: the Start agent dialog with a model chosen by the workspace, and Settings > Add-ons with the box.
   'agent-model',
   'addons-model-routing',
@@ -223,9 +222,10 @@ const quickRows = (scenario: LayoutScenario): QuickRow[] =>
     ? Array.from({ length: 60 }, (_, i) => quickRow(i, { title: i % 7 === 0 ? `Fix ${LONG_URL}` : `Quick task number ${i} with a title that goes on for a while to see how a row wraps`, labels: i % 3 === 0 ? ['quick', 'docs'] : ['quick'], quick: { commits: i % 5 === 0 ? null : i, files: i % 4 === 0 ? null : i * 2, over: i % 6 === 0 ? true : i % 5 === 0 ? null : false } }))
     : [
         quickRow(1, { title: `Read ${LONG_URL} and fix the link`, labels: ['quick', 'docs', 'a-rather-long-label-name', 'web'], quick: { commits: 4, files: 7, over: true } }),
-        quickRow(2, { title: LONG_WORD, status: 'in-progress' }),
-        quickRow(3, { title: 'No repository is linked yet', status: 'backlog', quick: { commits: null, files: null, over: null } }),
+        quickRow(2, { title: LONG_WORD, status: 'in-progress', claim: { agent: 'claude-code', for: 'p_sev', session: 's1', live: true } }),
+        quickRow(3, { title: 'No repository is linked yet', status: 'backlog', quick: { commits: null, files: null, over: null }, awaiting_gate: 'verify' }),
         quickRow(4, { title: 'Fix the typo in CONTRIBUTING' }),
+        quickRow(5, { title: 'Choose a photo format', open_questions: 1, claim: { agent: 'codex', for: 'p_sev', session: 's2', live: true } }),
       ]
 
 const gatePolicy = (over: Partial<HostPolicy> = {}): HostPolicy => ({ approvers: ['owner'], count: 1, not: [], applies: 'all', independent: false, ...over })
@@ -533,7 +533,7 @@ const agentPreview = (scenario: LayoutScenario): AgentPreview => {
   }
   if (scenario === 'agent-model') return { ...base, display: `claude --model sonnet 'Run orch status, then work on ticket DEMO-0043.'`, model: 'sonnet', model_source: 'workspace' }
   if (scenario === 'agent-blocked') return { ...base, grant: null, blocked: { code: 'runner.disabled', message: `dashboard execution is off for this workspace on this machine ${LONG_WORD}`, detail: { missing: 'machine' } } }
-  if (scenario === 'agent-grant' || scenario === 'agent-outcomes') return { ...base, grant: null, blocked: { code: 'launch.no_grant', message: 'no usable runner grant', detail: { reason: 'expiring' } } }
+  if (scenario === 'agent-grant') return { ...base, grant: null, blocked: { code: 'launch.no_grant', message: 'no usable runner grant', detail: { reason: 'expiring' } } }
   return base
 }
 /** What a shell with colours prints: ls, git status and diff, a failing test, all 16 ANSI colours (layout preview only). */
@@ -895,8 +895,7 @@ export function LayoutPreview({ name }: { name: string }) {
     return <div className="p-4"><AgentAccess ws={workspace.id} previewStopped={scenario === 'agent-pill-stopped'} /></div>
   if (scenario.startsWith('agent-'))
     return (
-      <StartAgentDialog ws={workspace.id} ticket="DEMO-0043" open onClose={() => {}}
-        grantStep={scenario === 'agent-outcomes' ? { kind: 'unknown', grant: AGENT_GRANT } : undefined} />
+      <StartAgentDialog ws={workspace.id} ticket="DEMO-0043" open choose onClose={() => {}} />
     )
   if (scenario.startsWith('drop-'))
     return (
@@ -1072,7 +1071,7 @@ function SignBPreview({ scenario, ws }: { scenario: string; ws: string }) {
     : kind === 'plan' ? { action: 'approve', key: 'TESTOR-0007', gate: 'plan' }
     : { action: 'runner_grant', hours: 72, scope: 'workable', extend: 'gr_old' }) as import('@/api/click').ClickAction
   const answer: import('@/api/click').ClickViewAnswer = { view_digest: 'sha256:' + 'a'.repeat(64), view: { risk: CLICK_RISK, op: 'x', workspace: { id: ws, name: 'Sevi’s workspace', prefix: 'TESTOR' }, fingerprint: '7d8b2e954b7d', lines: ['x'], checks: [], confirm: word ? { kind: 'word', word } : { kind: 'click' }, expires_at: new Date(nowMs() + 600_000).toISOString(), auth: 'convenience', device: 'Sevi’s MacBook · local signing key', artifacts: null, content } }
-  return <div className="mx-auto max-w-lg space-y-4 rounded-lg border border-border bg-surface p-4"><h2 className="text-base font-semibold">{content.title}</h2><ClickSignPanel ws={ws} answer={answer} problem={null} signing={false} onSign={() => {}} onCancel={() => {}} story={storyOf(action)} onPhone={kind === 'plan' ? () => {} : undefined} /></div>
+  return <div className="mx-auto max-w-lg space-y-4 rounded-lg border border-border bg-surface p-4"><h2 className="text-base font-semibold">{content.title}</h2><ClickSignPanel ws={ws} answer={answer} problem={null} signing={false} onSign={() => {}} onCancel={() => {}} story={storyOf(action)} /></div>
 }
 
 /** Preview only: opens the one add-on that is On (the person's click on its title, then on Customize models). */

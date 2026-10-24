@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "market.ambiguous_addon",
+    "message": "more than one added marketplace lists this id",
+    "hint": "name one with --from URL",
+    "fix": {
+      "argv": [
+        "orch",
+        "market",
+        "list"
+      ]
+    },
+    "retryable": false
+  }
+}

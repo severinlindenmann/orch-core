@@ -486,6 +486,26 @@
       },
       "uniqueItems": true
     },
+    "settings": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "schema": {
+          "type": "object",
+          "description": "a closed JSON-Schema subset, checked further in validate() (addon-api.md section 8)"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "title",
+        "schema"
+      ],
+      "description": "addon-api 1.1: the schema of this add-on's settings value"
+    },
     "needs": {
       "type": "array",
       "maxItems": 16,
@@ -549,6 +569,29 @@
     "entry"
   ],
   "allOf": [
+    {
+      "if": {
+        "properties": {
+          "capabilities": {
+            "contains": {
+              "const": "credential"
+            }
+          }
+        },
+        "required": [
+          "capabilities"
+        ]
+      },
+      "then": {
+        "properties": {
+          "capabilities": {
+            "contains": {
+              "const": "network"
+            }
+          }
+        }
+      }
+    },
     {
       "if": {
         "properties": {

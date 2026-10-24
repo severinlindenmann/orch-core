@@ -100,7 +100,7 @@ function Review({
             <p>
               <Inline>{s.update.from.version}</Inline> → <Inline>{s.version}</Inline>
             </p>
-            {s.update.changes.map((line, i) => (
+            {s.update.changes.filter((line) => !/^version\b/i.test(line)).map((line, i) => (
               <p key={i}>
                 <Inline>{line}</Inline>
               </p>
@@ -302,7 +302,7 @@ function MarketWorkspace() {
                         </h2>
                       </div>
                       <p className="text-xs text-text-muted">
-                        <Inline>{`${m.class === 'official' ? 'official - ' : ''}${m.from_marketplace.name} - ${a.version}`}</Inline>
+                        <Inline>{`${m.class === 'official' ? 'official - ' : ''}${m.url.replace(/^https:\/\/github\.com\//, '')} - ${a.version}`}</Inline>
                       </p>
                       {m.class === 'official' && <p className="text-xs">Official marketplace</p>}
                       <AddonFrame addon={a.id} title="From the addon" className="flex-1">
@@ -316,11 +316,10 @@ function MarketWorkspace() {
                           </span>
                         ))}
                       </div>
-                      <p>{a.revoked || m.revoked ? 'Withdrawn by its publisher' : a.blocked ? 'Blocked by your hub' : stateLabel(a.installed?.state, pending.includes(a.id))}</p>
+                      <p>{a.revoked ? 'Withdrawn by its publisher' : a.blocked ? 'Blocked by your hub' : stateLabel(a.installed?.state, pending.includes(a.id))}</p>
                       {a.installed && <p className="text-xs text-text-muted">Installed{a.installed.state === 'disabled' ? ' · Turn on in Settings > Add-ons' : ''}</p>}
                       {mayWrite &&
                         !a.revoked &&
-                        !m.revoked &&
                         (a.blocked ? (
                           <Button disabled>Ask an admin</Button>
                         ) : (
@@ -402,7 +401,7 @@ function MarketWorkspace() {
                         {m.cache === 'invalid' ? <p>Needs refresh</p> : m.stale && <p>Out of date - refresh</p>}
                       </td>
                       <td className={`${cell} font-mono text-xs`} data-label="Repo">
-                        <Inline>{m.url}</Inline>
+                        <Inline>{m.url.replace(/^https:\/\/github\.com\//, '')}</Inline>
                       </td>
                       <td className={cell} data-label="Allowed by">
                         <Inline>{m.allowed_by ?? 'Not reported'}</Inline>
@@ -417,7 +416,7 @@ function MarketWorkspace() {
                         {m.entries}
                       </td>
                       <td className={cell} data-label="Last refreshed">
-                        <Inline>{m.last_fetch ?? 'Never'}</Inline>
+                        <Inline>{m.last_fetch ? new Date(m.last_fetch * 1000).toLocaleString() : 'Never'}</Inline>
                       </td>
                       <td className={cell} data-label="Actions">
                         {mayWrite && (

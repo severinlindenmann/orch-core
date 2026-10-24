@@ -15,14 +15,15 @@ export interface Market {
   class: 'official' | 'community'
   pinned: boolean
   index_commit: string
-  last_fetch: string | null
+  last_fetch: number | null
   cache: 'ok' | 'invalid'
   version: number
   verified: boolean
   stale: boolean
   expires_at: string | null
   entries: number
-  revoked: boolean
+  /** How many entries of this index the publisher withdrew (a count; each entry has its own flag). */
+  revoked: number
   from_marketplace: { name: string; title: string }
   addons: MarketAddon[]
   allowed_by?: 'orch' | 'you' | 'hub'
@@ -35,7 +36,7 @@ export interface InstalledAddon {
   package_sha256: string
   origin: string | null
   commit: string
-  installed_at: string
+  installed_at: number
   state: string
   publisher: string | null
   available: null | { version: string; package_sha256: string; capabilities_added: string[]; revoked: boolean; stale: boolean }
@@ -87,6 +88,10 @@ export function stateLabel(state?: string, pending = false): string {
 export function permissionEffect(value: string): string {
   const effects: Record<string, string> = {
     network: 'Connects to the internet',
+    serve_http: 'Serves its own web page',
+    spawn_agent: 'Starts agents',
+    pty: 'Opens terminals',
+    git_push: 'Pushes code',
     internet: 'Connects to the internet',
     fields: 'Adds fields to tickets',
     sections: 'Adds sections to tickets',

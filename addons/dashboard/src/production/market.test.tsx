@@ -33,7 +33,7 @@ it('shows a source on every card, states and a permanent nav link', async () => 
   show('/w/DEMO/addons')
   await screen.findByText('Available', {}, T)
   for (const text of ['Off', 'On', 'Awaiting Terminal approval', 'Withdrawn by its publisher']) expect(screen.getByText(text)).toBeInTheDocument()
-  for (const card of screen.getAllByRole('article')) expect(within(card).getByText('official - orch-marketplace - 1.2.0')).toBeInTheDocument()
+  for (const card of screen.getAllByRole('article')) expect(within(card).getByText('official - demo-example/market - 1.2.0')).toBeInTheDocument()
   expect(screen.getByRole('link', { name: 'Add-ons' })).toHaveAttribute('href', '/w/DEMO/addons')
 })
 it('stages the exact source, hands off in Terminal and refreshes after submission', async () => {

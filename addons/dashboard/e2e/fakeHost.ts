@@ -16,6 +16,7 @@ export const CODE = '7F3K-Q2MA'
 
 export interface Call { method: string; path: string; body?: Record<string, any> }
 
+const fixture = (n: string) => JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, '../src/test/fixtures/server-m2', n), 'utf8'))
 const MIME: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.json': 'application/json', '.woff2': 'font/woff2', '.png': 'image/png' }
 const FEATURES = ['identity', 'today', 'tickets', 'board', 'ticket', 'changes', 'evidence', 'settings', 'members', 'settings_read', 'grant_list', 'read_ext2', 'actions', 'market']
 
@@ -32,15 +33,15 @@ export function marketList() {
         url: OFFICIAL, class: 'official', pinned: false, index_commit: 'a'.repeat(40), last_fetch: 1_790_000_000, cache: 'ok', version: 7, verified: true, stale: false, expires_at: null,
         entries: 3, revoked: 0, from_marketplace: { name: 'orch-marketplace', title: 'Official' }, allowed_by: 'orch', publisher_key: 'known',
         addons: [
-          entry('jira', '1.2.0', { capabilities: ['net', 'fields'], from_marketplace: { summary: 'Link tickets to Jira issues and show their status.' }, publisher: 'SHA256:7F3Aexample' }),
-          entry('github', '1.2.0', { capabilities: ['net'], from_marketplace: { summary: 'Read pull requests and checks on tickets.' }, installed: { version: '1.1.0', state: 'active' }, update: true }),
+          entry('jira', '1.2.0', { capabilities: ['network'], from_marketplace: { summary: 'Link tickets to Jira issues and show their status.' }, publisher: 'SHA256:7F3Aexample' }),
+          entry('github', '1.2.0', { capabilities: ['network'], from_marketplace: { summary: 'Read pull requests and checks on tickets.' }, installed: { version: '1.1.0', state: 'active' }, update: true }),
           entry('changelog', '0.3.1', { from_marketplace: { summary: 'Writes a changelog line on every finished feature ticket.' }, installed: { version: '0.3.1', state: 'disabled' } }),
         ],
       },
       {
         url: ACME, class: 'community', pinned: true, index_commit: 'b'.repeat(40), last_fetch: 1_790_000_000, cache: 'ok', version: 2, verified: false, stale: false, expires_at: null,
         entries: 1, revoked: 0, from_marketplace: { name: 'acme-market', title: 'ACME internal' }, allowed_by: 'you', added_by: 'Sev', publisher_key: 'new',
-        addons: [entry('deploy-preview', '1.0.0', { capabilities: ['net', 'push'], from_marketplace: { summary: 'Pushes a preview branch and posts the link.' } })],
+        addons: [entry('deploy-preview', '1.0.0', { capabilities: ['network', 'git_push'], from_marketplace: { summary: 'Pushes a preview branch and posts the link.' } })],
       },
     ],
   }
@@ -51,7 +52,7 @@ export function installed() {
     addons: [
       { name: 'github', version: '1.1.0', package_sha256: 'sha256:' + '1'.repeat(64), origin: OFFICIAL, commit: 'c'.repeat(40), installed_at: 1_789_000_000, state: 'active', publisher: 'SHA256:7F3Aexample', available: { version: '1.2.0', package_sha256: 'sha256:' + '2'.repeat(64), capabilities_added: [], revoked: false, stale: false } },
       { name: 'changelog', version: '0.3.1', package_sha256: 'sha256:' + '3'.repeat(64), origin: OFFICIAL, commit: 'c'.repeat(40), installed_at: 1_789_000_000, state: 'disabled', publisher: null, available: null },
-      { name: 'schedules', version: '2.0.0', package_sha256: 'sha256:' + '4'.repeat(64), origin: OFFICIAL, commit: 'c'.repeat(40), installed_at: 1_789_000_000, state: 'active', publisher: null, available: { version: '2.1.0', package_sha256: 'sha256:' + '5'.repeat(64), capabilities_added: ['starts agents'], revoked: false, stale: false } },
+      { name: 'schedules', version: '2.0.0', package_sha256: 'sha256:' + '4'.repeat(64), origin: OFFICIAL, commit: 'c'.repeat(40), installed_at: 1_789_000_000, state: 'active', publisher: null, available: { version: '2.1.0', package_sha256: 'sha256:' + '5'.repeat(64), capabilities_added: ['spawn_agent'], revoked: false, stale: false } },
     ],
   }
 }
@@ -62,7 +63,7 @@ export function stage(id: string, update: boolean) {
   const base = { expires_at: new Date(Date.now() + 600_000).toISOString(), package_sha256: 'sha256:' + (update ? '2' : '4').repeat(64), market: market(OFFICIAL) }
   if (id === 'schedules') {
     return { ...base, stage: STAGE_WIDE, name: 'schedules', version: '2.1.0', review: ['Starts agents on a timetable (NEW)', 'Adds a field "Next run" to tickets', 'Reads your tickets'], deps: { count: 2, verified: true },
-      update: { from: { version: '2.0.0', package_sha256: 'sha256:' + '4'.repeat(64), commit: 'c'.repeat(40) }, changes: ['version 2.0.0 -> 2.1.0', 'capability + starts agents'], added: { capabilities: ['starts agents'], fields: ['Next run'], sections: [], needs: [], artifact_kinds: [] }, removed: { capabilities: [], fields: [], sections: [], needs: [], artifact_kinds: [] }, widened: true, publisher: 'same' } }
+      update: { from: { version: '2.0.0', package_sha256: 'sha256:' + '4'.repeat(64), commit: 'c'.repeat(40) }, changes: ['version 2.0.0 -> 2.1.0', 'capability + spawn_agent'], added: { capabilities: ['spawn_agent'], fields: ['Next run'], sections: [], needs: [], artifact_kinds: [] }, removed: { capabilities: [], fields: [], sections: [], needs: [], artifact_kinds: [] }, widened: true, publisher: 'same' } }
   }
   if (update) {
     return { ...base, stage: STAGE_UPDATE, name: id, version: '1.2.0', review: ['Connects to github.com', 'Uses your GitHub token'], deps: { count: 0, verified: true },
@@ -122,12 +123,24 @@ export class FakeServer {
       return res.end(fs.readFileSync(f))
     }
     this.calls.push({ method, path: p + url.search, body })
+    if (p === '/api/events') { // the live stream: ready, then silence (heartbeat comments keep it open)
+      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store' })
+      res.write('event: ready\ndata: []\n\n')
+      const t = setInterval(() => res.write(': hb\n\n'), 5000)
+      res.on('close', () => clearInterval(t))
+      return
+    }
+    if (p === '/api/host') return json({})
     if (p === '/api/session') return json({ features: FEATURES, workspaces: { [WS]: FEATURES } })
     if (p === '/api/workspaces') return json([{ id: WS, prefix: 'DEMO', name: 'Dev workspace', members: [{ person: OWNER, name: 'Sev', role: 'owner', devices: 1 }], needs_you: 0, host_state: 'ok', features: FEATURES, click: null }])
     if (p === '/api/me') return json([{ person: OWNER, name: 'Sev', role: 'owner', tier: 'A', workspace: WS }])
     const m = /^\/api\/w\/[0-9a-f]{32}\/(.*)$/.exec(p)
     const rest = m?.[1] ?? ''
-    if (rest === 'market' && method === 'GET') return json(marketList())
+    if (rest === 'market' && method === 'GET') {
+      const l = marketList() // a package whose grant was signed shows as installed (Off until turned on)
+      for (const m of l.markets) for (const a of m.addons) if (this.installedNames.has(a.id) && !a.installed) a.installed = { version: a.version, state: 'disabled' }
+      return json(l)
+    }
     if (rest === 'market/installed' && method === 'GET') return json(installed())
     if (rest === 'market/stage' && method === 'POST') return json(stage(String(body?.id), !!body?.update))
     if (rest.startsWith('market/stage/') && method === 'DELETE') return json({ removed: true })
@@ -140,14 +153,16 @@ export class FakeServer {
     const h = /^handoff\/(hr_[0-9A-Z]+)$/.exec(rest)
     if (h && method === 'GET') {
       const r = this.requests.get(h[1]); const signed = this.submitted.has(h[1])
-      if (signed) this.installedNames.add(String(r?.events[0] && (r.events[0] as any).name))
+      if (signed) this.installedNames.add(String((r?.events[0] as any)?.name))
       return r ? json({ id: r.id, state: signed ? 'submitted' : 'prepared', op: r.op, key: null, expires_at: r.expires_at, event_ids: signed ? ['01J9ZP0000000000000000SIGN'] : [], seq: signed ? 7 : null }) : json({ ok: false, error: { code: 'not_found', message: 'x', retryable: false } }, 404)
     }
     if (h && method === 'DELETE') return json({ id: h[1], state: 'cancelled' })
+    if (rest === 'me/sign_default') return json({ method: 'terminal', is_default: true, allowed: ['terminal'] })
     if (rest === 'identity') return json({ uuid: WS, prefix: 'DEMO', genesis: 'sha256:' + 'f'.repeat(64), epoch: 3, key_fingerprint: 'AB12 CD34', created_at: null, tier: 'A', me: { person: OWNER, name: 'Sev', role: 'owner', tier: 'A', workspace: WS } })
     if (rest === 'settings') return json({ gates: {}, sign_methods: ['terminal'], grant_hours: 8, claim_ttl_min: 60, lease_ttl_min: 60 })
     if (rest === 'members') return json([{ person: OWNER, name: 'Sev', role: 'owner', devices: [] }])
-    if (rest === 'today' || rest === 'board' || rest === 'tickets') return json({ rows: [], next_page: null, total: 0, sub_cursor: null, columns: [], cards: [] })
+    if (rest === 'today') return json(fixture('today.json'))
+    if (rest === 'board' || rest === 'tickets') return json({ ...fixture('board-page.json'), next_page: null })
     return json({ ok: false, error: { code: 'not_found', message: 'No such route in the fake', retryable: false } }, 404)
   }
 }

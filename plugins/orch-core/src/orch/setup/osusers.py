@@ -14,11 +14,14 @@ Rules the plan enforces (design-h1-agent-user §1.1, §7):
 
 from __future__ import annotations
 
+import os
 import re
+import shlex
 from dataclasses import dataclass, field
 from typing import Any
 
 from .osfacts import UNREADABLE, OsFacts, UserInfo
+from .oslauncher import LAUNCHER_PATH
 
 __all__ = [
     "AGENT_PREFIX",
@@ -62,7 +65,12 @@ _PERSON_MIN_UID = 1000
 _NOLOGIN_SHELLS = ("/usr/sbin/nologin", "/sbin/nologin", "/bin/false", "/usr/bin/false")
 _NAME = re.compile(r"^[a-z_][a-z0-9_-]*$")
 _MAX_NAME = 32
+_RELEASE = re.compile(r"^/[A-Za-z0-9_.+/-]*$")  # no whitespace, control characters, '%' or '$': it goes into unit text
 _SYSTEM_UID_MAX = 999  # useradd --system; a login-range UID is a person, never ours
+
+
+def _good_release(release: str) -> bool:
+    return bool(_RELEASE.match(release)) and os.path.normpath(release) == release and release != "/"
 
 
 class OsPlanRefusal(Exception):
@@ -123,7 +131,7 @@ class UnitFile:
     name: str  # template file name, e.g. orch-runner@.service
     path: str
     content: str
-    instances: tuple[str, ...]  # instances to enable and start
+    instances: tuple[str, ...]  # instances to enable and start: the person (runner), the slot numbers (add-ons)
 
 
 @dataclass(frozen=True)
@@ -201,7 +209,8 @@ class Plan:
         return out
 
     def admin_command(self) -> str:
-        return f"sudo {self.release}/bin/orch-os-setup --person {self.person}"
+        """The one line setup shows. Always the root-owned copy at a fixed path, never the person's release."""
+        return f"sudo {LAUNCHER_PATH} --person {shlex.quote(self.person)} --release {shlex.quote(self.release)}"
 
 
 def _expected_agent(person: str) -> UserPlan:
@@ -302,9 +311,15 @@ class PolicyVerdict:
         return {"sudo": self.sudo, "ssh": self.ssh, "ssh_dropin": self.ssh_dropin, "files": self.files}
 
 
-def assess_policy(facts: OsFacts, user: str, *, dropin_text: str | None = None) -> PolicyVerdict:
+def assess_policy(
+    facts: OsFacts, user: str, *, dropin_text: str | None = None, host_uid: int | None = None
+) -> PolicyVerdict:
     """Run as root (the setup apply step, after the user and the sshd drop-in exist): ask sudo and sshd themselves for
-    ``user`` and take the stat signatures of the policy files. Never parses policy text."""
+    ``user`` and take the stat signatures of the policy files. Never parses policy text. With ``host_uid`` (the person
+    whose host will compare later), an entry inside a folder that person cannot search (Ubuntu: ``/etc/sudoers.d`` is
+    0750 root) is not recorded on its own: the host can never stat it, so recording it would make every later check
+    fail. The folder's own signature stays recorded and catches an entry added, removed or renamed; an in-place edit of
+    such a file is the documented limit (it needs root, §13.9)."""
     sudo = facts.sudo_allows(user)
     ports = facts.sshd_ports()
     answers = (
@@ -319,6 +334,8 @@ def assess_policy(facts: OsFacts, user: str, *, dropin_text: str | None = None) 
         files[path] = None if sig is None else list(sig)
     for folder in _POLICY_DIRS:
         for entry in facts.listdir(folder):
+            if host_uid is not None and not facts.can_stat(host_uid, f"{folder}/{entry}"):
+                continue
             sig = facts.file_sig(f"{folder}/{entry}")
             files[f"{folder}/{entry}"] = None if sig is None else list(sig)
     doas = files.get("/etc/doas.conf") is not None  # doas rules are not checked with doas itself: refuse while present
@@ -357,13 +374,15 @@ def _bad_person(facts: OsFacts, info: UserInfo) -> str:
     return ""
 
 
+# The unit instance is the bare person (runner) or slot number (add-on); the prefix lives in the template, so an
+# instance such as 'root' can never run as root.
 def unit_runner(release: str) -> UnitFile:
     content = f"""[Unit]
-Description=orch runner for %i
+Description=orch runner for %i (user orch-agent-%i)
 After=network.target
 
 [Service]
-User=%i
+User=orch-agent-%i
 Delegate=yes
 NoNewPrivileges=yes
 CapabilityBoundingSet=
@@ -371,11 +390,12 @@ AmbientCapabilities=
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths={AGENT_HOME_ROOT}/%i {AGENT_RUN_ROOT}/%i
+ReadWritePaths={AGENT_HOME_ROOT}/orch-agent-%i {AGENT_RUN_ROOT}/orch-agent-%i
 RestrictSUIDSGID=yes
 MemoryMax=80%
 TasksMax=4096
-ExecStart={release}/current/bin/orch runner serve
+ExecStart={release}/current/bin/orch-runner run \\
+  --state {AGENT_HOME_ROOT}/orch-agent-%i/state --run {AGENT_RUN_ROOT}/orch-agent-%i
 Restart=always
 
 [Install]
@@ -385,12 +405,14 @@ WantedBy=multi-user.target
 
 
 def unit_addon(release: str) -> UnitFile:
+    # TODO(L3): the slot runner launcher (orch-addon-slot) does not exist yet; setup writes this template but does not
+    # enable it. L3 builds the launcher and enables the instances the plan already lists.
     content = f"""[Unit]
 Description=orch add-on slot %i
 After=network.target
 
 [Service]
-User=%i
+User=orch-addon-%i
 Delegate=yes
 NoNewPrivileges=yes
 CapabilityBoundingSet=
@@ -398,11 +420,11 @@ AmbientCapabilities=
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=yes
-ReadWritePaths={SLOT_HOME_ROOT}/%i
+ReadWritePaths={SLOT_HOME_ROOT}/orch-addon-%i
 RestrictSUIDSGID=yes
 MemoryMax=2G
 TasksMax=512
-ExecStart={release}/current/bin/orch addon-slot serve
+ExecStart={release}/current/bin/orch-addon-slot
 Restart=always
 
 [Install]
@@ -431,6 +453,25 @@ def plan(facts: OsFacts, person: str, person_uid: int, *, release: str = "/opt/o
             release,
         )
     refusals: list[Refusal] = []
+    if not _good_release(release):
+        return Plan(
+            "linux",
+            person,
+            person_uid,
+            False,
+            None,
+            (),
+            (),
+            (),
+            (
+                Refusal(
+                    "bad_release",
+                    release,
+                    "The release path must be an absolute, plain path (letters, digits, . _ + -).",
+                ),
+            ),
+            release,
+        )
     create_person = person_uid == 0 or person == "root"
     if create_person:
         person, person_uid_known = NORMAL_PERSON, None
@@ -464,10 +505,8 @@ def plan(facts: OsFacts, person: str, person_uid: int, *, release: str = "/opt/o
                 refusals.append(Refusal("foreign_user", u.name, f"'{u.name}' has the same UID as '{agent.name}'."))
     pins = tuple(PinEntry(u.name, u.role, person_uid_known, u.uid) for u in [agent, *slots])
     runner, addon = unit_runner(release), unit_addon(release)
-    runner = UnitFile(runner.name, runner.path, runner.content, (agent.name,))
-    addon = UnitFile(
-        addon.name, addon.path, addon.content, tuple(f"{SLOT_PREFIX}{n}" for n in range(1, SLOT_COUNT + 1))
-    )
+    runner = UnitFile(runner.name, runner.path, runner.content, (person,))
+    addon = UnitFile(addon.name, addon.path, addon.content, tuple(str(n) for n in range(1, SLOT_COUNT + 1)))
     run_dir = None if person_uid_known is None else f"/run/orch/{person_uid_known}"
     notes = ("The login was root: orch will run as a new normal user 'orch'.",) if create_person else ()
     return Plan(

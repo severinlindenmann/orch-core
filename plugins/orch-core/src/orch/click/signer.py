@@ -558,12 +558,23 @@ class ClickSigner:
 
         return {"path": {"blob": upload(_Conn(), data, None)}}
 
+    def _sequence_kind(self, entry: dict[str, Any], intent: Mapping[str, Any]) -> str:
+        """The confirmation of a sequence (always ``click``, else ``terminal_only``). Its own rule, not part of any
+        confirmation class: a sequence that ends in a grant to the runner needs dashboard execution on this machine."""
+        from orch.host import sequence
+
+        if sequence.confirm_kind(intent) == "terminal":
+            raise refused("terminal_only", "this sequence needs more than a click; use the terminal (orch sign CODE)")
+        if sequence.has_grant(intent) and not self._execution(entry):
+            raise refused("terminal_only", "dashboard execution is off for this workspace on this machine")
+        return "click"
+
     def _sequence_ok(
         self, entry: dict[str, Any], op: str, inner: dict[str, Any], seq: Any, deposit: bool, files: Any
     ) -> None:
         """A sequence (one review, N signatures, batch 11) starts with ``new`` and nothing else; the confirmation of
-        the whole is that of its strongest step: a click, or (with a grant to the runner last) the GRANT word, which
-        needs dashboard execution on this machine. A terminal step means the terminal."""
+        the whole is a click (a grant to the runner last also needs dashboard execution on this machine).
+        A terminal step means the terminal."""
         from orch.host import sequence
 
         if deposit or files or not isinstance(seq, dict) or seq.get("step") != 0:
@@ -574,10 +585,7 @@ class ClickSigner:
             raise ClickError("invalid.input", f"sequence: {exc}") from None
         if op != sequence.steps(intent)[0]["op"]:  # a new ticket starts with new, an edit with its first change
             raise ClickError("invalid.input", "a sequence starts with the first op of its intent")
-        kind = sequence.confirm_kind(intent, self._person(entry))
-        # a grant to the runner needs dashboard execution on this machine; a people change: click plus the typed word
-        if kind == "terminal" or (kind == "word" and sequence.has_grant(intent) and not self._execution(entry)):
-            raise refused("terminal_only", "this sequence needs more than a click; use the terminal (orch sign CODE)")
+        self._sequence_kind(entry, intent)
 
     def view(self, args: Mapping[str, Any]) -> dict[str, Any]:
         entry, approval = self._approval(args)
@@ -605,7 +613,6 @@ class ClickSigner:
         return views.build(
             prepared,
             self._names(entry),
-            kind=approval.kind,
             device=device,
             expires_at=approval.expires_at,
             artifacts=artifacts,
@@ -667,10 +674,6 @@ class ClickSigner:
         prepared = self._fetch(entry, approval, sel["device"])
         if views.digest(self._build(entry, approval, prepared, sel["device"])) != approval.view_digest:
             raise refused("view_changed", "the review changed since it was shown (a check or the registry); view again")
-        if approval.kind == "word":
-            expected = views.word(prepared, self._names(entry))
-            if args.get("word") != expected:
-                raise refused("word", "type the word the review shows")
         stored = approval.prepared  # the immutable inputs validated at prepare (== prepared, checked above)
         if (stored.get("material") or {}).get("sequence") is not None:
             return self._sign_sequence(entry, approval, backend, sel, stored)
@@ -780,12 +783,8 @@ class ClickSigner:
             cancel=cancel,
             budget=self.budget.reserve,
         )
-        kind = sequence.confirm_kind(intent, person)  # re-asserted here: what is signed is what this click may sign
-        if (
-            kind == "terminal"
-            or (kind == "word" and sequence.has_grant(intent) and not self._execution(entry))
-            or approval.kind != kind
-        ):
+        kind = self._sequence_kind(entry, intent)  # re-asserted here: what is signed is what this click may sign
+        if approval.kind != kind:
             raise refused("terminal_only", "this sequence needs more than a click; use the terminal (orch sign CODE)")
         driver = sequence.Driver(
             port,

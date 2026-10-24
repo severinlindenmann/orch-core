@@ -302,7 +302,7 @@ def test_ae8_existing_kinds_keep_their_digests_steps_and_confirmations():
     assert sequence.digest_of(wid, person, new) == PIN_NEW
     assert sequence.digest_of(wid, person, q) == PIN_QUICK
     assert sequence.digest_of(wid, person, edit) == PIN_EDIT
-    assert [sequence.confirm_kind(i) for i in (new, q, edit)] == ["click", "click", "word"]
+    assert [sequence.confirm_kind(i) for i in (new, q, edit)] == ["click", "click", "click"]
     assert [s["kind"] for s in sequence.steps(new)] == ["new", "set", "section", "section"]
     assert all("log" not in s for i in (new, q, edit) for s in sequence.steps(i))  # only the add-on kind names a log
     assert sequence_terminal.labels_for(new) == (canon.LABELS["sig_ticket_event"].encode("ascii"),)
@@ -339,12 +339,12 @@ def test_ae3_a_click_never_signs_publish_it_is_refused_at_prepare_and_at_sign(cl
 def test_ae3_publish_is_refused_at_sign_when_the_stored_kind_is_forced_down(click, served, human, monkeypatch):
     """The sign step re-asserts the kind of the stored intent: a prepare that slipped through still signs nothing."""
     intent = enable(human, "model-routing")
-    p = click_prepare(click, intent)  # a word sequence: accepted
+    p = click_prepare(click, intent)  # accepted
     v = click.view(p["request_id"])
     click.mono.t += 2
     monkeypatch.setattr(sequence, "confirm_kind", lambda i, person=None: "terminal")
     refused(
-        lambda: click.sign(p["request_id"], v["view_digest"], word=v["view"]["confirm"].get("word")),
+        lambda: click.sign(p["request_id"], v["view_digest"]),
         "human.click_refused",
         "terminal_only",
     )
@@ -448,15 +448,13 @@ def json_text(content):
     return json.dumps(content, sort_keys=True)
 
 
-def test_ae3_the_word_is_the_add_ons_not_the_settings_word(human, tmp_path):
-    from orch.click import view as views
+def test_ae3_the_terminal_word_is_the_add_ons_not_the_settings_word(human, tmp_path):
     from orch.host import signer
 
     rig = Rig(human, tmp_path, enable(human, "model-routing"))
     first = rig.first()
     want = f"model-routing~{human.served.wid[-8:]}"
     assert signer.confirm_word(first) == want
-    assert views.word(first, lambda w: ("Acme", "DEMO")) == want
     plain = human.prepare("settings.set", {"set": {"grant_hours": 9}})
     assert signer.confirm_word(plain, lambda w: ("Acme", "DEMO")).endswith(
         "/SETTINGS"
@@ -680,7 +678,7 @@ def test_a_click_refuses_to_start_what_a_live_session_holds(click, served, human
     v = click.view(p["request_id"])
     click.mono.t += 2
     refused(
-        lambda: click.sign(p["request_id"], v["view_digest"], word=v["view"]["confirm"].get("word")),
+        lambda: click.sign(p["request_id"], v["view_digest"]),
         "human.click_refused",
         "resumable",
     )
@@ -740,7 +738,7 @@ def test_low3_the_click_messages_do_not_say_ticket_for_an_add_on(click, served, 
     v = click.view(p["request_id"])
     click.mono.t += 2
     e = refused(
-        lambda: click.sign(p["request_id"], v["view_digest"], word=v["view"]["confirm"].get("word")),
+        lambda: click.sign(p["request_id"], v["view_digest"]),
         "human.click_refused",
         "resumable",
     )

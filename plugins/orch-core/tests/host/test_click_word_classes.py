@@ -1,11 +1,13 @@
-"""Run 8 (owner 1.6): the confirmation class of an add-on grant comes from the SIGNED capability list; settings keys
-and the other word ops keep their class. Publish stays terminal-only; add-on grants are one click (V3-D38)."""
+"""The confirmation class of an op. #1198 C1: the typed-word class is gone, every former word op is a plain click;
+Publish and ``grant`` stay terminal-only (a click only for the runner deposit). Add-on grants are one click (V3-D38)."""
 
 import pytest
 
 from orch.addons import builtin
 from orch.addons.package import MANIFEST_FILE, package_digest
-from orch.click.protocol import op_class
+from orch.click import protocol
+from orch.click import view as views
+from orch.click.protocol import CLICK_OPS, CONTRACT, REFUSALS, op_class
 
 
 def digest(name):
@@ -53,13 +55,27 @@ def test_settings_classes():
     sets = lambda **kw: op_class("settings.set", args={"set": kw})  # noqa: E731
     assert sets(models={"codex": {"work": "x"}}) == "click"
     assert sets(addons={"demo": {"mode": "fast"}}) == "click"  # V3-D38
-    for key in ("repos", "grant_hours", "sign_methods"):
-        assert sets(**{key: None}) == "word"
+    for key in ("repos", "grant_hours", "sign_methods"):  # were the typed word
+        assert sets(**{key: None}) == "click"
     assert sets(publish=None) == "terminal"
+    assert op_class("settings.set", args={"set": "not a map"}) == "terminal"  # fails closed
 
 
 @pytest.mark.parametrize(
     "op", ["member.add", "member.role", "member.remove", "policy.set", "people.set", "addon.purge"]
 )
-def test_authority_ops_keep_the_word(op):
-    assert op_class(op) == "word"
+def test_every_former_word_op_is_a_plain_click(op):
+    assert op in CLICK_OPS
+    assert op_class(op) == "click"
+
+
+@pytest.mark.parametrize("op", ["grant", "publish.share", "device.rotate", "unknown.op", "hub.join"])
+def test_terminal_only_ops_are_still_refused_on_click(op):
+    assert op_class(op) == "terminal"
+
+
+def test_the_word_class_and_refusal_are_gone():
+    assert "word" not in REFUSALS
+    assert not hasattr(protocol, "WORD_OPS") and not hasattr(protocol, "SETTINGS_WORD_KEYS")
+    assert not hasattr(views, "word")
+    assert CONTRACT == 3

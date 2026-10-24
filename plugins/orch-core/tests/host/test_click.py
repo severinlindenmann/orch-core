@@ -368,22 +368,14 @@ def test_view_digest_ignores_the_check_times_only():
     assert views.digest(v) != views.digest(w)
 
 
-def test_op_classes_fail_closed_and_repo_settings_need_the_word():
-    assert op_class("approve") == "click" and op_class("member.remove") == "word" and op_class("policy.set") == "word"
+def test_op_classes_fail_closed_and_every_former_word_op_is_a_click():
+    assert op_class("approve") == "click" and op_class("member.remove") == "click" and op_class("policy.set") == "click"
     assert op_class("grant") == "terminal" and op_class("some.future.op") == "terminal"
-    assert op_class("settings.set", [{"type": "settings.changed", "set": {"grant_hours": 4}}]) == "word"  # B8
+    assert op_class("settings.set", [{"type": "settings.changed", "set": {"grant_hours": 4}}]) == "click"  # B8
     assert op_class("settings.set", [{"type": "settings.changed", "set": {"claim_ttl_min": 30}}]) == "click"
-    assert op_class("settings.set", [{"type": "settings.changed", "set": {"repos": {}}}]) == "word"
-    assert op_class("settings.set", [{"type": "settings.changed", "set": "odd"}]) == "word"
-
-
-def test_workspace_scope_words_carry_the_prefix_and_the_workspace_fragment():
-    wid = "0123456789abcdef0123456789abcdef"
-    names = lambda w: ("acme", "DEMO") if w == wid else None  # noqa: E731
-    base = {"workspace_id": wid, "material": {}, "events": [{"name": "lint"}]}
-    assert views.word({**base, "op": "policy.set"}, names) == "DEMO~89abcdef/POLICY"
-    assert views.word({**base, "op": "settings.set"}, names) == "DEMO~89abcdef/SETTINGS"
-    assert views.word({**base, "op": "addon.grant"}, names) == "lint~89abcdef"
+    assert op_class("settings.set", [{"type": "settings.changed", "set": {"repos": {}}}]) == "click"
+    assert op_class("settings.set", [{"type": "settings.changed", "set": {"publish": {}}}]) == "terminal"
+    assert op_class("settings.set", [{"type": "settings.changed", "set": "odd"}]) == "terminal"  # fails closed
 
 
 def test_the_budget_counts_event_signatures_on_monotonic_time():
@@ -406,7 +398,7 @@ def test_the_budget_counts_event_signatures_on_monotonic_time():
 
 def test_status_reads_metadata_without_loading_a_key(click, served):
     out = click.signer.status({})
-    assert out["contract"] == 2 and out["core"]
+    assert out["contract"] == 3 and out["core"]
     (row,) = out["workspaces"]
     assert row["workspace_id"] == served.wid and row["enabled"] is True
     assert click.store.gets == 0
@@ -447,7 +439,7 @@ def test_the_real_child_answers_status_and_exits_when_the_channel_closes(tmp_pat
     client = spawn.start(env)
     try:
         out = client.call("status", {}, timeout=60)
-        assert out["contract"] == 2 and out["workspaces"] == []
+        assert out["contract"] == 3 and out["workspaces"] == []
         with pytest.raises(ClickError) as info:
             client.call("view", {"workspace_id": "0" * 32, "request_id": "hr_" + "0" * 26}, timeout=60)
         assert info.value.code == "not_found"
@@ -523,18 +515,14 @@ def test_a_member_add_signed_before_convenience_events_is_refused_at_submit(serv
         c.close()
 
 
-def test_the_typed_word_is_required_at_sign(click, served, human, monkeypatch):
-    monkeypatch.setattr(views, "op_class", lambda op, events=None: "word")  # log treated as a word op
+def test_every_view_confirms_by_a_click_and_a_stray_word_is_ignored(click, served, human):
     _, key = human.ticket()
     p = click.prepare("log", {"ref": key, "text": "x"})
+    assert p["confirm"] == "click"
     v = click.view(p["request_id"])
-    assert v["view"]["confirm"]["kind"] == "word"
-    word = v["view"]["confirm"]["word"]
+    assert v["view"]["confirm"] == {"kind": "click"}
     click.mono.t += 2
-    refused(lambda: click.sign(p["request_id"], v["view_digest"]), "human.click_refused", "word")
-    refused(lambda: click.sign(p["request_id"], v["view_digest"], word=word + "x"), "human.click_refused", "word")
-    assert click.signatures == 0
-    assert click.sign(p["request_id"], v["view_digest"], word=word)["result"]["key"] == key
+    assert click.sign(p["request_id"], v["view_digest"], word="whatever")["result"]["key"] == key  # not read
     assert click.signatures == 1
 
 
@@ -873,7 +861,7 @@ def test_the_signer_exits_when_its_parent_goes(tmp_path):
     b.close()
     pid = int(mid.stdout.readline().strip())
     try:
-        assert ClickClient(a).call("status", {}, timeout=60)["contract"] == 2  # running, its parent watch started
+        assert ClickClient(a).call("status", {}, timeout=60)["contract"] == 3  # running, its parent watch started
         mid.stdin.write("go\n")
         mid.stdin.flush()
         mid.wait(30)

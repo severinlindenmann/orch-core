@@ -112,10 +112,10 @@ def test_custody_not_the_label_decides_while_click_is_left_out(human, served):
     assert landed == [] and error is not None and error.code == "sign.convenience_unavailable"
 
 
-def test_a_sign_methods_change_is_signed_with_a_typed_word_not_a_click():
+def test_a_sign_methods_change_is_a_click():
     assert op_class("settings.set", [{"type": "settings.changed", "set": {"claim_ttl_min": 30}}]) == "click"
-    assert op_class("settings.set", [{"type": "settings.changed", "set": {"grant_hours": 4}}]) == "word"  # B8
-    assert op_class("settings.set", [{"type": "settings.changed", "set": {"sign_methods": ["terminal"]}}]) == "word"
+    assert op_class("settings.set", [{"type": "settings.changed", "set": {"grant_hours": 4}}]) == "click"  # B8
+    assert op_class("settings.set", [{"type": "settings.changed", "set": {"sign_methods": ["terminal"]}}]) == "click"
 
 
 def test_switching_click_to_sign_on_records_the_risk_acknowledgement(served):

@@ -1060,7 +1060,7 @@ def test_everything_that_sends_or_redirects_is_terminal_only_never_click_or_word
     for changed in ({"publish": {"server": SERVER, "share": SHARE}}, {"publish": None}, {"publish": None, "repos": {}}):
         assert op_class("settings.set", [{"set": changed}]) == "terminal", changed  # at sign time
         assert op_class("settings.set", None, {"set": changed}) == "terminal", changed  # early, before prepare
-    assert op_class("settings.set", None, {"set": {"repos": {}}}) == "word"
-    assert op_class("settings.set", None, {"set": {"sign_methods": ["terminal"]}}) == "word"
+    assert op_class("settings.set", None, {"set": {"repos": {}}}) == "click"
+    assert op_class("settings.set", None, {"set": {"sign_methods": ["terminal"]}}) == "click"
     assert op_class("settings.set", [{"set": {"claim_ttl_min": 30}}]) == "click"  # other settings keep their class
     assert op_class("settings.set", None, {"set": {"claim_ttl_min": 30}}) == "click"

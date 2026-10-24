@@ -3,7 +3,7 @@
 Everything runs against a disposable state: an explicit `ORCH_STATE_DIR`, `HOME` and `XDG_CONFIG_HOME` under `base`
 (with `.orch-dev` markers), never `~/.config/orch`. The person's terminal is a pty: `Pty` answers the passphrase prompt,
 the confirmations of `orch setup` and the "Type KEY and Enter" confirmations, exactly as a person at a keyboard would
-(the test passphrase is public and protects nothing).
+(the passphrase is the one setup generated, kept in <base>/passphrase-<dir>; it protects only a disposable sandbox).
 
 `base` must be SHORT and outside any sticky directory such as /tmp: the host refuses ancestors it does not trust, and a unix
 socket path (`<state>/run/<ws>/host.sock`, `<state>/dashboard/ctl.sock`) holds about 100 bytes. `short_run_root()` gives
@@ -30,7 +30,6 @@ from pathlib import Path
 
 CORE = Path(__file__).resolve().parents[4] / "plugins" / "orch-core"
 ADDON = Path(__file__).resolve().parents[2]
-PASSPHRASE = "orange-pelican-vault-3917-demo"
 SESSION = "s_01M4QWK11VJHV7YX18VRQSZ1CA"
 
 
@@ -110,9 +109,12 @@ class Pty:
         return self
 
 
-def confirm_rules(passphrase: str = PASSPHRASE) -> list[tuple[str, Callable]]:
+def confirm_rules(passphrase: str | Callable[[], str]) -> list[tuple[str, Callable]]:
+    """Answers for a person's terminal. ``passphrase`` is the text or, better, a callable read when the prompt appears
+    (the rules are built before `orch setup` has generated the passphrase)."""
+    get = passphrase if callable(passphrase) else (lambda: passphrase)
     return [
-        (r"[Pp]assphrase: $", lambda m, t: passphrase),
+        (r"[Pp]assphrase: $", lambda m, t: get()),
         (r"Type (\S+) and Enter[^\n]*: $", lambda m, t: m.group(1)),
         (
             r"Type (\S+) to continue[^\n]*: $",
@@ -138,7 +140,6 @@ class Workspace:
         self.run = self.state / "run"
         self.root = self.base / dirname
         self.grant_secret: str | None = None
-        self.passphrase = PASSPHRASE  # replaced by the one `orch setup` generated (setup_driver)
         self.session = SESSION
         self.host: subprocess.Popen | None = None
         self.log: Path = self.base / "host.log"
@@ -160,8 +161,34 @@ class Workspace:
         env.update(extra)
         return env
 
+    @property
+    def passphrase_file(self) -> Path:
+        return self.base / f"passphrase-{self.dirname}"
+
+    @property
+    def passphrase(self) -> str:
+        """The passphrase `orch setup` generated, from ``<base>/passphrase-<dirname>`` (written by :func:`setup_driver`).
+        There is no default: a workspace that was not made by setup has none, and asking for it fails loudly."""
+        try:
+            text = self.passphrase_file.read_text().strip()
+        except OSError as exc:
+            raise RuntimeError(
+                f"no generated passphrase: {self.passphrase_file} is missing (the workspace was not made by `orch setup`)"
+            ) from exc
+        if not text:
+            raise RuntimeError(f"no generated passphrase: {self.passphrase_file} is empty")
+        return text
+
+    @passphrase.setter
+    def passphrase(self, value: str) -> None:
+        self.passphrase_file.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        self.passphrase_file.unlink(missing_ok=True)
+        fd = os.open(self.passphrase_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as fh:
+            fh.write(value + "\n")
+
     def rules(self) -> list[tuple[str, Callable]]:
-        return confirm_rules(self.passphrase)
+        return confirm_rules(lambda: self.passphrase)
 
     def make_dirs(self) -> None:
         for path in (self.base, self.state, self.home, self.home / ".config", self.root):

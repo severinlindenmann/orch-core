@@ -717,3 +717,25 @@ def test_a_key_in_one_click_custody_with_click_off_is_told_plainly_and_nothing_i
     with pytest.raises(HostError) as other:  # a passphrase key never gets this rewrite
         handoff._sign_code_explained(entry, refuse, backend=Passphrase())
     assert other.value.message.startswith("disabled: convenience signing is off")
+
+
+def test_orch_sign_says_the_key_has_no_passphrase_only_for_a_convenience_key(human, served, monkeypatch):
+    """#1170 A3: with One click on, `orch sign` works and tells the person what kind of key signs."""
+    from orch.host import convenience
+
+    class ConvenienceKey(CliBackend):
+        auth = "convenience"
+
+    _, key = human.ticket()
+    cli = Cli(human, served, monkeypatch, backend=ConvenienceKey(human.person, "convenience"))
+    convenience.set_enabled(served.lab.state, served.wid, True, UID)
+    code = human.prepare("log", {"ref": key, "text": "one click"}, handoff=True)["request"]["code"]
+    rc, doc, errs = cli(code)
+    assert rc == 0, doc
+    assert handoff.NO_PASSPHRASE in errs
+    assert served.lab.ws.events(key)[-1]["auth"] == "convenience"
+    plain = Cli(human, served, monkeypatch)
+    code = human.prepare("log", {"ref": key, "text": "passphrase"}, handoff=True)["request"]["code"]
+    convenience.set_enabled(served.lab.state, served.wid, False, UID)
+    rc, doc, errs = plain(code)
+    assert rc == 0 and handoff.NO_PASSPHRASE not in errs

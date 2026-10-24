@@ -381,7 +381,8 @@ def refuse_hub_op(op: str, auth: str | None) -> None:
         raise HostError(
             "sign.convenience_unavailable",
             "joining or leaving a hub is signed with your own key at the terminal, never with click-to-sign",
-            hint="sign in your terminal with orch sign CODE (or run orch hub join / mode / leave there)",
+            hint="first move the key back to a passphrase: orch keys custody passphrase --workspace W --in-place, "
+            "then run the hub step again",
         )
 
 
@@ -602,6 +603,7 @@ def _flock(state_dir: Path, name: str, host_uid: int) -> Iterator[None]:
 
 
 def workspace_lock(state_dir: Path, workspace_id: str, host_uid: int) -> contextlib.AbstractContextManager[None]:
-    """An exclusive ``flock`` on ``<state>/host/convenience-<ws>.lock``: it serializes, across processes (the host and
-    ``orch host convenience on``), a hand-off prepare against switching the flag on, so exactly one wins."""
+    """An exclusive ``flock`` on ``<state>/host/convenience-<ws>.lock``: it serializes, across processes (the host,
+    ``orch host convenience on`` and the click signer's custody switch), changes of the flag and of the custody
+    selection, so exactly one wins."""
     return _flock(state_dir, f"convenience-{workspace_id}.lock", host_uid)

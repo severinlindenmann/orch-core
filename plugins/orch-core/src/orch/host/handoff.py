@@ -343,6 +343,9 @@ def _own_workspaces(state: Path, uid: int, pick: str | None) -> list[dict[str, A
     return out
 
 
+NO_PASSPHRASE = "This key has no passphrase (One click is on): anything running as you could sign with it."
+
+
 def _sign_code_explained(entry: dict[str, Any], run: Callable[..., Any], *a: Any, backend: Any, **kw: Any) -> Any:
     """:func:`sign_code`, with the one refusal the person cannot act on made plain: a key in one-click custody binds
     ``auth: convenience`` (the key has no passphrase), and while click-to-sign is off the host refuses that binding
@@ -419,6 +422,8 @@ def main(
         wid = entry["workspace_id"]
         person = entry["peers"][str(uid)]["person"]
         backend = _backend(state, wid)
+        if getattr(backend, "auth", None) == "convenience":  # #1170: the review says what kind of key signs
+            err.write(NO_PASSPHRASE + "\n")
         device = device_ref(backend.public_key(human.KEY_ID))
         name = Path(str(entry.get("root") or wid)).name
 

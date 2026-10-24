@@ -288,3 +288,16 @@ def test_orch_sign_is_human_only_for_an_agent_grant(served, human):
     convenience.set_enabled(served.lab.state, served.wid, True, UID)
     res = human.prepare_res("log", {"ref": key, "text": "x"}, handoff=True, grant=served.grant, session=SESSION)
     assert err(res) == "human_only"
+
+
+def test_a_handoff_bound_with_the_passphrase_cannot_be_rebound_with_the_one_click_key(served, human):
+    """Opus finding 2: bound with the passphrase key, then the key moves to One click (custody_on): `orch sign`
+    coming back with the convenience backend fails closed and nothing is signed."""
+    _, key = human.ticket()
+    rid = ok(hand(human, key, "bound first"))["data"]["request"]["id"]
+    ok(human.get(rid, signer=human.signer))  # bound with the passphrase
+    convenience.set_enabled(served.lab.state, served.wid, True, UID)
+    before = len(human.backend.payloads)
+    res = human.get(rid, signer=conv(human))
+    assert err(res) == "human.request_state" and "another device" in res["error"]["message"]
+    assert len(human.backend.payloads) == before and logged_events(served, key) == []

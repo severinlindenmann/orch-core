@@ -1098,7 +1098,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                         review_id: review.review_id,
                         digest: review.digest,
                       })
-                                        setRun(result.run_id)
+                      setRun(result.run_id)
                     })
                   }
                 >

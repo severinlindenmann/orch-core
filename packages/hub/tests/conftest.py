@@ -14,6 +14,85 @@ from orch_hub.link.ops import StubSnapshots
 
 NOW = G.NOW
 
+# --- #1198 C9: the reference host signs an owner proof (9.6) with every join and every new or mode-switching binding.
+# The link tests do not care about it, so the client adds one when a test did not say (a test that names
+# ``owner_proof`` itself, e.g. test_owner_proof_link.py, gets exactly that).
+_STATE: dict[str, dict] = {}  # workspace_id -> {"pk": key name, "status", "mode", "hub_id", "binding_seq"}
+_orig_request = LinkClient.request
+
+
+def _key_name(pk_b64: str) -> str:
+    return next(n for n in G.K.pub if n.startswith("pk_") and b64u(G.K.pub[n]) == pk_b64)
+
+
+def _proof(o: dict, ws: str, pk: str, op: str, now: int = NOW) -> dict:
+    payload = {
+        "hub_id": o["hub_id"],
+        "hk_root_pub": o["hk_root_pub"],
+        "mode": o["mode"],
+        "binding_seq": o["binding_seq"],
+        "aliases": [{"person_id": G.P_ALICE, "user_id": G.U_ALICE}],
+    }
+    return G.owner_proof(op, payload, pk=pk, workspace_id=ws, issued_ms=now - 1_000, expires_ms=now + 300_000)
+
+
+def _request(self, op, body):
+    sent = body
+    try:
+        if op == "join" and "owner_proof" not in body:
+            b = body["binding"]["o"]
+            pk = _key_name(body["pk_pub"])
+            sent = {**body, "owner_proof": _proof(b, b["workspace_id"], pk, "hub.join", self._now())}
+        elif op == "binding_put" and "owner_proof" not in body:
+            obj = body["object"]
+            o = obj["o"]
+            proof = None
+            if o["kind"] == "hub.binding":
+                held = _STATE.get(o["workspace_id"])
+                if held is not None and held["status"] == "bound" and held["binding_seq"] == o["binding_seq"]:
+                    pass  # an identical re-send takes no proof
+                else:
+                    switch = (
+                        held is not None
+                        and held["status"] == "bound"
+                        and held["mode"] == "selective"
+                        and o["mode"] == "full"
+                    )
+                    pk = held["pk"] if held is not None else "pk_alice"
+                    proof = _proof(o, o["workspace_id"], pk, "hub.mode" if switch else "hub.join", self._now())
+            sent = {**body, "owner_proof": proof}
+    except KeyError, TypeError, StopIteration:
+        sent = body
+    out = _orig_request(self, op, sent)
+    try:  # remember what the hub accepted
+        if op == "join":
+            b = body["binding"]["o"]
+            _STATE[b["workspace_id"]] = {
+                "pk": _key_name(body["pk_pub"]),
+                "status": "bound",
+                "mode": b["mode"],
+                "binding_seq": b["binding_seq"],
+            }
+        elif op == "binding_put":
+            o = body["object"]["o"]
+            held = _STATE.setdefault(o["workspace_id"], {"pk": "pk_alice"})
+            if o["kind"] == "hub.binding":
+                held.update(status="bound", mode=o["mode"], binding_seq=o["binding_seq"])
+            else:
+                held.update(status="unbound", binding_seq=o["binding_seq"])
+    except KeyError, TypeError, StopIteration:
+        pass
+    return out
+
+
+LinkClient.request = _request
+
+
+@pytest.fixture(autouse=True)
+def _fresh_proof_state():
+    _STATE.clear()
+    yield
+
 
 class Invites:
     def __init__(self, **bound: str | None) -> None:

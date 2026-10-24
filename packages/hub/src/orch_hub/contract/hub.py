@@ -1319,10 +1319,20 @@ LINK_OPS: dict[str, tuple[str, str | None, dict[str, Check]]] = {
             "card": lambda x: type(x) is dict,
             "pk_pub": _pub,
             "binding": lambda x: type(x) is dict,
+            "owner_proof": lambda x: x is None or type(x) is dict,  # #1198 C9: required member; null is proof_missing
         },
     ),
     "card_put": ("w2h", None, {"card": lambda x: type(x) is dict, "pk_pub": _pub}),
-    "binding_put": ("w2h", None, {"object": lambda x: type(x) is dict}),
+    "binding_put": (
+        "w2h",
+        None,
+        {
+            "object": lambda x: type(x) is dict,
+            # #1198 C9: a binding that is new or switches the mode needs it (null is proof_missing); an unbound or a
+            # re-sent identical binding takes null
+            "owner_proof": lambda x: x is None or type(x) is dict,
+        },
+    ),
     "audit_ack": ("w2h", None, {"seq": _int_min(1), "head": _b64u_n(32)}),
     "share_put": ("w2h", "selective", {"item_id": _hex16, "sealed": _b64u_any}),
     "share_revoke": ("w2h", "selective", {"item_id": _hex16}),

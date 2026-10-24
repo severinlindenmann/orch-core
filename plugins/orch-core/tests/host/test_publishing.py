@@ -25,11 +25,11 @@ from orch.host import hubops, publishing, signcontent
 from orch.host.publishing import PUBLISH_OPS
 from orch.publishclient import approval, flow
 from tests.host import human_helpers
-from tests.host.test_click import Click, click  # noqa: F401
 from tests.host.dispatch_helpers import SESSION, err, ok
 from tests.host.human_helpers import Human
 from tests.host.test_artifact_get import stored
 from tests.host.test_blobs import add, sha, upload
+from tests.host.test_click import Click, click  # noqa: F401
 from tests.host.test_hub_ops import HUB_ID, connect_args, join_args
 from tests.hub import contract as H
 from tests.hub.fake import sign_with

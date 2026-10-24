@@ -118,18 +118,56 @@ def test_the_origin_is_pinned(served, human, net, v1):
     assert net.fetches == ["standup"]  # only the install fetched
 
 
-def test_a_changed_publisher_key_is_refused(served, human, net, v1, monkeypatch):
+def _new_key():
     from cryptography.hazmat.primitives.asymmetric import ec
     from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
     from orch.crypto.encoding import b64u
 
-    other = ec.generate_private_key(ec.SECP256R1())
-    other_b64 = b64u(other.public_key().public_bytes(Encoding.X962, PublicFormat.UncompressedPoint))
-    monkeypatch.setattr(constants, "OFFICIAL_KEYS", (H.KEY_B64, other_b64))
-    publish(served, net, "1.1.0", key=(other, other_b64))
-    assert err(stage(served, update=True)) == "market.publisher_key_changed"
+    k = ec.generate_private_key(ec.SECP256R1())
+    return k, b64u(k.public_key().public_bytes(Encoding.X962, PublicFormat.UncompressedPoint))
+
+
+def test_an_official_key_rotation_updates_and_moves_the_remembered_key(served, human, net, v1, monkeypatch):
+    """#1191: the official entry is re-keyed to the other pinned key; the update goes through (shown as a new key,
+    widened) and the TOFU record moves to the new key. The version floor is untouched."""
+    nxt = _new_key()
+    monkeypatch.setattr(constants, "OFFICIAL_KEYS", (H.KEY_B64, nxt[1]))
+    publish(served, net, "1.1.0", key=nxt)
+    st = ok(stage(served, update=True))["data"]
+    assert st["update"]["publisher"] == "first_use" and st["update"]["widened"] is True
+    assert any("publisher key changed" in x for x in st["update"]["changes"])
+    prepared = human.prepare("addon.grant", {"name": "standup", "staged": st["stage"]})
+    assert prepared["material"]["market"]["publisher"]["tofu"] == "new"
+    ok(human.submit_res(prepared["request"]["id"], human.sign(prepared).events))
+    rec = mfiles(served).installs()
+    assert rec["keys"] == {f"{H.OFFICIAL}|standup": nxt[1]} and rec["addons"]["standup"]["publisher_key"] == nxt[1]
+    assert rec["seen"][f"{H.OFFICIAL}|standup"] == "1.1.0"
+    # the next release pins (next, new-next): an index still signed by the retired key is refused at refresh
+    monkeypatch.setattr(constants, "OFFICIAL_KEYS", (nxt[1], _new_key()[1]))
+    net.version += 1
+    markets = ok(person(served, "market.refresh"))["data"]["markets"]
+    assert markets == [{"url": H.OFFICIAL, "error": "market.index_unsigned"}]
+
+
+def test_rotation_to_a_key_this_release_does_not_pin_is_refused(served, human, net, v1, monkeypatch):
+    stranger = _new_key()
+    publish(served, net, "1.1.0", key=stranger)  # OFFICIAL_KEYS is (H.KEY_B64,)
+    assert err(stage(served, update=True)) == "market.official_unsigned"
     assert mfiles(served).installs()["keys"] == {f"{H.OFFICIAL}|standup": H.KEY_B64}  # the remembered key stays
+
+
+def test_submit_rechecks_the_rotation_against_the_keys_pinned_now(served, human, net, v1, monkeypatch):
+    """Staged under (current, next) as a rotation; the pins change before the grant lands: recheck refuses."""
+    nxt = _new_key()
+    monkeypatch.setattr(constants, "OFFICIAL_KEYS", (H.KEY_B64, nxt[1]))
+    publish(served, net, "1.1.0", key=nxt)
+    st = ok(stage(served, update=True))["data"]
+    prepared = human.prepare("addon.grant", {"name": "standup", "staged": st["stage"]})
+    signed = human.sign(prepared)
+    monkeypatch.setattr(constants, "OFFICIAL_KEYS", (H.KEY_B64,))  # the next key is no longer pinned
+    assert err(human.submit_res(prepared["request"]["id"], signed.events)) == "market.official_unsigned"  # C1
+    assert mfiles(served).installs()["keys"] == {f"{H.OFFICIAL}|standup": H.KEY_B64}
 
 
 def test_widened_is_not_fooled_by_a_tampered_installed_directory(served, human, net, v1):

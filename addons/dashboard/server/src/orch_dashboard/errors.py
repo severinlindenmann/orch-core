@@ -65,7 +65,7 @@ def status(code: str) -> int:
         "market.actor_refused",
     } or code.startswith("grant."):
         return 403
-    if code in {"intent.ended", "intent.done", "intent.expired"}:
+    if code in {"intent.done", "intent.expired"}:
         return 409
     if code == "human.request_expired":
         return 410
@@ -291,7 +291,6 @@ REASONS: dict[str, tuple[str, ...] | re.Pattern] = {
 }
 #: `state`, closed per code: the human request's terminal state on this server's own `intent.*` answers (N15)
 STATES: dict[str, tuple[str, ...]] = {
-    "intent.ended": ("cancelled", "expired"),
     "intent.done": ("submitted",),
     "intent.failed": ("submitted",),
 }

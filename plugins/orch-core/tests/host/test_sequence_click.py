@@ -243,3 +243,15 @@ def test_1070_self_as_assignee_and_reviewer_is_a_click_at_prepare_and_at_sign(cl
     out = click.sign(p["request_id"], v["view_digest"])  # accepted at sign time
     got = ok(served.client().req("ticket.get", {"ref": out["result"]["key"]}))["data"]["doc"]
     assert got["people"]["assignees"] == [me] and got["people"]["reviewers"] == [me]
+
+
+def test_c21_a_missing_key_refuses_a_sequence_before_any_step_is_claimed(click, served, human):
+    _, p = prepare(click)
+    v = click.view(p["request_id"])
+    click.mono.t += 2
+    gone = click.store.items.pop((served.wid, click.owner.device))
+    refused(lambda: click.sign(p["request_id"], v["view_digest"]), "custody.no_key")
+    assert click.signatures == 0 and (served.wid, p["request_id"]) not in click.signer._attempted
+    click.store.items[(served.wid, click.owner.device)] = gone
+    assert click.sign(p["request_id"], v["view_digest"])["duplicate"] is False
+    assert click.signatures == 4

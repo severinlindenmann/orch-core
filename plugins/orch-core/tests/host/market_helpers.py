@@ -155,7 +155,7 @@ def write_stage(f: MarketFiles, name: str = "standup", version: str = "1.0.0", p
     f.write_stage(
         {
             "v": 1, "stage": stage, "name": name, "version": version, "digest": digest, "origin": H.OFFICIAL,
-            "commit": "a" * 40, "publisher_key": None, "tofu": "unsigned", "index_version": 1, "prev_digest": None,
+            "commit": "a" * 40, "publisher_key": H.KEY_B64, "tofu": "new", "index_version": 1, "prev_digest": None,
             "created_at": now, "expires_at": now + 10_000_000_000, "class": "official", "summary": None,
             "stale": False,
             "entry": {"id": name, "version": version, "capabilities": ["network"], "min_orch": "2.0.0.dev0"},

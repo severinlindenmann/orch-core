@@ -128,6 +128,15 @@ only the garbage collector releases; in the browser, overwrite the `Uint8Array` 
   when the op reveals a grant secret. **The signer refuses a `sealed` whose keys are not exactly the View's
   `purposes`**: a purpose the View did not ask for, or a missing one, is `invalid.input` before anything is opened (C10
   and the other wiring tasks test this).
+- **Grant reveal (C7, `out`).** The View carries `"seal": {"v": 1, "alg": ..., "purposes": ["grant.secret"], "for": <the full SHA-256 (64 hex) of
+  the page key's base64url text>}` (no `pk`: the page brings its own key) plus a risk line (`REVEAL_RISK`) and
+  `REVEAL_LINE` in `lines`. The page sends `reveal_key` at **`prepare`** (the key is part of the review the person
+  approves; `view_digest` covers its fingerprint) and again at `sign`; the signer refuses a sign whose `reveal_key`
+  differs from the prepared one, refuses a key it already sealed to, and seals at most once per approval. A retried
+  `sign` in the same signer process returns the same envelope to the same key; after a restart there is none (the secret
+  is kept nowhere). **Stated trade-off:** whoever controls the dashboard channel can prepare a grant under its own key
+  and read the secret; the review says so ("Anyone who controls this dashboard could read it"). A passkey step-up for
+  the reveal (R1) is the follow-up.
 - `sign` result: `"reveal": {"purpose": "grant.secret", "envelope": <envelope>}`. The dashboard server passes it
   through untouched and never logs it.
 - The click log and the records never hold an envelope (a ciphertext under a key that is dropped is harmless, but the

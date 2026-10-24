@@ -180,7 +180,7 @@ function equalBytes(a: Uint8Array, b: Uint8Array): boolean {
 }
 
 /**
- * The browser's key for one sign call that expects a grant-secret reveal. Create it with `newRevealKey(bound)`, send
+ * The browser's key for one sign call that expects a grant-secret reveal. Create it with `newRevealKey()`, send the public key at prepare, `bind()` it when the request id is known, send
  * `publicKeyB64` as `reveal_key`, call `open()` once on the reveal, then `close()` it.
  * The context of every open is built from the caller's own state (the approval it holds), never from the envelope or the server.
  */
@@ -188,14 +188,21 @@ export class RevealKey {
   readonly publicKey: Uint8Array
   #priv: CryptoKey | null
   readonly #seen = new Set<string>()
-  readonly #bound: Bound
+  #bound: Bound | null
   #pinnedDigest: string | null = null
 
-  /** Use newRevealKey(). Taking a ready key pair is for sealed.testing.ts (fixed vector keys). */
-  constructor(pair: KeyPair, bound: Bound) {
-    if (!bound || !WORKSPACE_RE.test(bound.workspace_id) || !REQUEST_RE.test(bound.request_id)) throw new SealedError('context')
+  /** Use newRevealKey(). Taking a ready key pair is for sealed.testing.ts (fixed vector keys). Unbound until bind(). */
+  constructor(pair: KeyPair) {
     this.publicKey = pair.publicKey
     this.#priv = pair.privateKey
+    this.#bound = null
+  }
+  /**
+   * Bind the key to its approval once. The grant reveal sends the public key when it PREPARES the request (the key is
+   * part of the review), before the request id exists; the id is bound as soon as prepare answers. open() refuses until bound.
+   */
+  bind(bound: Bound): void {
+    if (this.#bound || !bound || !WORKSPACE_RE.test(bound.workspace_id) || !REQUEST_RE.test(bound.request_id)) throw new SealedError('context')
     this.#bound = { workspace_id: bound.workspace_id, request_id: bound.request_id }
   }
   get publicKeyB64(): string {
@@ -219,7 +226,8 @@ export class RevealKey {
     if (!priv) throw new SealedError('closed')
     // context (and the direction: the browser opens "out" values only), then this key's own approval and pinned View
     if (validContext(ctx) !== 'out') throw new SealedError('context')
-    if (ctx.workspace_id !== this.#bound.workspace_id || ctx.request_id !== this.#bound.request_id) throw new SealedError('context')
+    const bound = this.#bound
+    if (!bound || ctx.workspace_id !== bound.workspace_id || ctx.request_id !== bound.request_id) throw new SealedError('context')
     if (this.#pinnedDigest !== null && ctx.view_digest !== this.#pinnedDigest) throw new SealedError('context')
     // exactly v, alg, epk, ct; v the integer 1; the one algorithm
     if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)) throw new SealedError('malformed')
@@ -264,6 +272,6 @@ export class RevealKey {
   }
 }
 
-export async function newRevealKey(bound: Bound): Promise<RevealKey> {
-  return new RevealKey(await newKeyPair(), bound)
+export async function newRevealKey(): Promise<RevealKey> {
+  return new RevealKey(await newKeyPair())
 }

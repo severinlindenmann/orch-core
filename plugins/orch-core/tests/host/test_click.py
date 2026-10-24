@@ -291,7 +291,7 @@ def test_view_and_sign_refuse_a_request_the_signer_did_not_prepare(click, served
 
 
 def test_terminal_only_ops_are_refused_before_the_host_is_asked(click, served, human):
-    for op in ("grant", "frobnicate", "init", "member.rename"):
+    for op in ("frobnicate", "init", "member.rename"):
         refused(lambda op=op: click.prepare(op, {}), "human.click_refused", "terminal_only")
     assert click.conns == []
 
@@ -388,7 +388,7 @@ def test_view_digest_ignores_the_check_times_only():
 
 def test_op_classes_fail_closed_and_every_former_word_op_is_a_click():
     assert op_class("approve") == "click" and op_class("member.remove") == "click" and op_class("policy.set") == "click"
-    assert op_class("grant") == "terminal" and op_class("some.future.op") == "terminal"
+    assert op_class("grant") == "click" and op_class("some.future.op") == "terminal"
     assert op_class("settings.set", [{"type": "settings.changed", "set": {"grant_hours": 4}}]) == "click"  # B8
     assert op_class("settings.set", [{"type": "settings.changed", "set": {"claim_ttl_min": 30}}]) == "click"
     assert op_class("settings.set", [{"type": "settings.changed", "set": {"repos": {}}}]) == "click"
@@ -954,3 +954,59 @@ def test_an_existing_workspace_with_convenience_history_counts_as_seen(click, se
         convenience.refuse_reader_op(service, "member.add", history=True)
     assert info.value.code == "sign.convenience_readers"
     assert path.exists()  # the scan that found them set the mark
+
+
+def test_c21_a_missing_key_refuses_before_the_claim_and_the_request_stays_signable(click, served, human):
+    _, key = human.ticket()
+    p = click.prepare("log", {"ref": key, "text": "key back"})
+    rid = p["request_id"]
+    v = click.view(rid)
+    click.mono.t += 2
+    gone = click.store.items.pop((served.wid, click.owner.device))
+    e = refused(lambda: click.sign(rid, v["view_digest"]), "custody.no_key")
+    assert "no signing key" in e.message
+    assert click.signatures == 0 and pending(served, rid)["state"] == "bound"
+    assert click.signer.records.get(served.wid, rid) is None  # nothing was claimed
+    assert (served.wid, rid) not in click.signer._attempted
+    click.store.items[(served.wid, click.owner.device)] = gone  # the key is back: the same request signs
+    res = click.sign(rid, v["view_digest"])
+    assert res["duplicate"] is False and click.signatures == 1
+
+
+def test_c21_an_unreadable_key_store_is_unavailable_not_uncertain(click, served, human, monkeypatch):
+    from orch.custody.base import CustodyError
+
+    _, key = human.ticket()
+    p = click.prepare("log", {"ref": key, "text": "locked"})
+    v = click.view(p["request_id"])
+    click.mono.t += 2
+
+    def locked(*a):
+        raise CustodyError("locked")
+
+    monkeypatch.setattr(click.store, "get", locked)
+    refused(lambda: click.sign(p["request_id"], v["view_digest"]), "custody.unavailable")
+    assert click.signatures == 0 and click.signer.records.get(served.wid, p["request_id"]) is None
+    monkeypatch.undo()
+    assert click.sign(p["request_id"], v["view_digest"])["duplicate"] is False
+
+
+def test_c21_a_brief_store_lock_does_not_leave_one_click_unavailable(click, served, human, monkeypatch):
+    from orch.custody.base import CustodyError
+
+    _, key = human.ticket()
+    p = click.prepare("log", {"ref": key, "text": "lock"})
+    v = click.view(p["request_id"])
+    click.mono.t += 2
+    ok_status = lambda st, w: {"custody": "convenience", "device": click.owner.device}  # noqa: E731
+    row = lambda: click.signer._row(click.entry, ok_status)  # noqa: E731
+
+    def locked(*a):
+        raise CustodyError("locked")
+
+    monkeypatch.setattr(click.store, "get", locked)
+    refused(lambda: click.sign(p["request_id"], v["view_digest"]), "custody.unavailable")
+    assert row()["available"] is False
+    monkeypatch.undo()
+    assert click.sign(p["request_id"], v["view_digest"])["duplicate"] is False
+    assert row()["available"] is True

@@ -57,6 +57,8 @@ export interface ClickView {
   deposit?: boolean
   /** Core's constant `DEPOSIT_LINE`, when `deposit` is true. */
   deposit_line?: string
+  /** #1198 C7: a grant whose secret is shown once in this page. `for` names the page key this review was made for. */
+  seal?: { v: number; alg: string; purposes: string[]; for: string }
 }
 
 export interface ClickViewAnswer {
@@ -88,6 +90,8 @@ export interface ClickSigned {
   grant?: string | null
   /** H11c-2, only when `deposit` is `rejected`: a closed code, never host text. */
   deposit_reason?: DepositReason
+  /** #1198 C7, agent access only: the secret sealed to this page's key (ciphertext; null if it could not be delivered). */
+  reveal?: { purpose: 'grant.secret'; envelope: import('./sealed').Envelope } | null
 }
 
 export type DepositOutcome = 'confirmed' | 'rejected' | 'unknown'
@@ -96,8 +100,14 @@ export type DepositReason = 'grant.forgotten' | 'grant.not_runner' | 'grant.verb
 /** M7b: the runner grant, a click request, or a terminal hand-off with runner set by this server, never by the browser. The signer sets label and verbs. */
 export type RunnerGrantAction = Extract<HandoffAction, { action: 'runner_grant' }>
 
+/**
+ * #1198 C7: agent access for a tool outside the dashboard. The secret comes back sealed to `reveal_key`, the page's
+ * one-use public key, which is sent at prepare so the review the person approves is of that key.
+ */
+export type AgentAccessAction = { action: 'agent_access'; hours: number; scope: 'workable' | 'all'; label?: string; reveal_key: string }
+
 /** Every typed action a click request may carry. */
-export type ClickAction = HandoffAction | RunnerGrantAction
+export type ClickAction = HandoffAction | RunnerGrantAction | AgentAccessAction
 
 /** Core's constant (orch.click.protocol DEPOSIT_LINE): a deposit View must carry it, or Sign is not offered. */
 export const DEPOSIT_LINE = 'The secret goes to your orch runner on this machine and is never shown'
@@ -112,17 +122,33 @@ export const depositViewOk = (view: ClickView, ws: string): boolean =>
   view.workspace?.id === ws && view.confirm.kind === 'click' &&
   view.deposit === true && view.deposit_line === DEPOSIT_LINE && view.lines.includes(DEPOSIT_LINE) && view.lines.includes(DEPOSIT_RISK)
 
+/** Core's constants (orch.click.protocol REVEAL_LINE, REVEAL_RISK): a shown-secret View lacking either is not offered. */
+export const REVEAL_LINE = 'The secret is shown once, on this page, only to you. orch keeps only a fingerprint of it'
+export const REVEAL_RISK = 'The secret will be shown once in this browser. Anyone who controls this dashboard could read it.'
+
+/** The page key as the signer's View names it: the full SHA-256 (64 hex) of its base64url text (golden vectors: plugins/orch-core/tests/click_reveal_fingerprint.json). */
+export async function keyFingerprint(publicKeyB64: string): Promise<string> {
+  const d = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(publicKeyB64)))
+  return Array.from(d, (b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+/** A shown-secret View is offered a Sign button only when it is for THIS page's key, the grant.secret purpose, both constants and this workspace. */
+export const revealViewOk = async (view: ClickView, ws: string, publicKeyB64: string): Promise<boolean> =>
+  view.workspace?.id === ws && view.confirm.kind === 'click' && view.deposit !== true &&
+  view.seal?.purposes?.length === 1 && view.seal.purposes[0] === 'grant.secret' && view.seal.for === (await keyFingerprint(publicKeyB64)) &&
+  view.lines.includes(REVEAL_LINE) && view.lines.includes(REVEAL_RISK)
+
 /** The flag of a workspace: the signer says click-to-sign is on and it can sign there now (real host only). */
 export const clickReady = (w: Pick<Workspace, 'click'> | undefined | null): boolean => !!w?.click && w.click.enabled && w.click.available
 
 /**
  * Which typed actions are offered a Sign button: the ones the signer's allowlist serves as click.
- * `grant` is not an action of the dashboard at all (terminal only); anything not listed here is terminal only.
+ * The runner grant and the shown-secret agent access are click requests too; anything not listed here is terminal only.
  */
-const CLICK_ACTIONS: ReadonlySet<string> = new Set<HandoffAction['action']>([
+const CLICK_ACTIONS: ReadonlySet<string> = new Set<ClickAction['action']>([
   'accept_criterion', 'withdraw_acceptance', 'mark_task_done',
   'approve', 'request_changes', 'verdict', 'answer', 'comment', 'label', 'close', 'reopen', 'move', 'new', 'new_sequence', 'edit_sequence', 'quick_start', 'details', 'section',
-  'settings_set', 'icon_set', 'repo_set', 'repo_remove', 'policy_set', 'member_add', 'member_role', 'member_remove', 'grant_revoke', 'runner_grant', 'addon_grant', 'market_grant', 'addon_disable', 'addon_enable', 'publish_setup', 'publish_share',
+  'settings_set', 'icon_set', 'repo_set', 'repo_remove', 'policy_set', 'member_add', 'member_role', 'member_remove', 'grant_revoke', 'runner_grant', 'agent_access', 'addon_grant', 'market_grant', 'addon_disable', 'addon_enable', 'publish_setup', 'publish_share',
 ])
 export const clickEligible = (a: ClickAction | null): boolean => !!a && CLICK_ACTIONS.has(a.action)
 
@@ -242,7 +268,7 @@ export function clickProblem(e: unknown): ClickProblem {
     case 'rate.limited':
       return { title: 'Too many signatures', body: `The signing helper allows only so many signatures per minute and hour. Try again in ${Math.max(1, Math.ceil((e.retry_after_ms ?? 1000) / 1000))} s.`, next: 'retry', waitMs: e.retry_after_ms ?? 1000 }
     case 'custody.no_key':
-      return { title: 'No key on this computer', body: 'There is no device key for this workspace in convenience custody here. '+OFF, next: 'terminal' }
+      return { title: 'No key on this computer', body: 'There is no signing key on this computer. Nothing was signed. Turn One click off and on again, or sign in Terminal.'+OFF, next: 'terminal' }
     case 'custody.unavailable':
       return { title: 'The key store is not available', body: 'The key store is locked or refused access. Unlock it.'+OFF, next: 'terminal' }
     case 'host.version_mismatch':

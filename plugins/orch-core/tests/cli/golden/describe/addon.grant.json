@@ -153,6 +153,17 @@
         ]
       },
       {
+        "code": "market.official_unsigned",
+        "exit": 3,
+        "retryable": false,
+        "hint": "wait",
+        "fix": [
+          "orch",
+          "market",
+          "list"
+        ]
+      },
+      {
         "code": "market.origin_changed",
         "exit": 3,
         "retryable": false,

@@ -17,6 +17,7 @@ errors:
   market.manifest_mismatch (exit 3): the entry is refused | fix: orch market list
   market.not_allowed (exit 3): ask the hub admin, or reconnect: orch hub status --refresh | fix: orch market list
   market.not_installed (exit 3): orch addon install ID | fix: orch market list
+  market.official_unsigned (exit 3): wait | fix: orch market list
   market.origin_changed (exit 3): orch addon list | fix: orch market list
   market.publisher_key_changed (exit 3): orch market trust --replace | fix: orch market list
   market.revoked (exit 3): pick another version | fix: orch market list

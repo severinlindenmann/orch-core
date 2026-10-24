@@ -43,8 +43,6 @@ def base(code="human.click_refused", **extra):
         ("records.push_failed", "commit", SHA256),
         ("records.push_failed", "message_hidden", True),
         ("intent.failed", "reason", "human.request_state"),
-        ("intent.ended", "state", "cancelled"),
-        ("intent.ended", "state", "expired"),
         ("intent.done", "state", "submitted"),
         ("intent.failed", "state", "submitted"),
     ]
@@ -108,7 +106,8 @@ def test_the_whole_allowed_shape_passes_unchanged():
         ("host.unavailable", "reason", "terminal_only"),  # a code without a reason set
         ("intent.failed", "reason", "Not A Code"),
         ("intent.failed", "reason", ["x"]),
-        ("intent.ended", "state", "submitted"),  # state: only the closed set of its code
+        ("intent.done", "state", "cancelled"),  # state: only the closed set of its code
+        ("intent.ended", "state", "cancelled"),  # no longer a code of this server (#794): no state
         ("intent.done", "state", "/tmp/x"),
         ("host.unavailable", "state", "submitted"),
     ],
@@ -287,7 +286,7 @@ def test_l2_the_terminal_end_frame_checks_code_and_retry_after():
     "code,key,value",
     [
         ("host.busy", "summary", "A similar thing was signed"),
-        ("intent.ended", "summary", "[]"),
+        ("intent.failed", "summary", "[]"),
         ("host.busy", "signed_at", "2026-10-15T12:00:00Z"),
         ("host.busy", "op", "answer"),
         ("host.busy", "request_id", RID),

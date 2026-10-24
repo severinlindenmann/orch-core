@@ -24,12 +24,25 @@ from orch.addons.package import MANIFEST_FILE, Package
 from . import ADDONS, MarketError, deps, index, policy
 from .url import host_of
 
-__all__ = ["Ctx", "Facts", "check_entry", "check_package", "diff", "semver"]
+__all__ = ["Ctx", "Facts", "check_entry", "check_package", "diff", "key_change_ok", "semver"]
+
+ROTATED = "publisher key changed: a key this add-on has not used before (official keys rotate with orch releases)"
 
 
 def semver(v: str) -> tuple[int, int, int]:
     a, b, c = v.split(".")
     return int(a), int(b), int(c)
+
+
+def key_change_ok(cls: str, keys: Sequence[str], known: str | None, new: str | None) -> bool:
+    """Whether an entry signed by ``new`` may follow the remembered key ``known`` (#1191). No record, or the same key:
+    yes. A change (or a dropped key): only for the official class, and only to a key this core release pins
+    (``keys`` = ``index.official_keys()`` read now). The old key need not still be pinned: a first install already
+    accepts any pinned key, and a record left on a retired key must not block the next update. A retired key itself
+    is never accepted (it is not in ``keys``); every other class keeps strict TOFU (``trust --replace``)."""
+    if known is None or new == known:
+        return True
+    return cls == "official" and new is not None and new in keys
 
 
 @dataclass(frozen=True)
@@ -55,7 +68,7 @@ class Ctx:
 @dataclass(frozen=True)
 class Facts:
     entry: dict[str, Any]
-    tofu: str  # "unsigned" | "new" | "known" | "pinned" (a company key the hub pins: no TOFU)
+    tofu: str  # "unsigned" | "new" (also an official key rotation) | "known" | "pinned" (a company key the hub pins)
     publisher_key: str | None
     prior: Mapping[str, Any] | None  # the install record of this name, if installed
 
@@ -107,9 +120,10 @@ def check_entry(ctx: Ctx, doc: Mapping[str, Any], addon_id: str) -> Facts:
         if pub is not None and not index.verify_entry(entry, ctx.url):
             raise MarketError("market.bad_signature")
         known = ctx.known_keys.get(f"{ctx.url}|{entry['id']}")
-        if known is not None and (pub is None or pub["key"] != known):
+        if not key_change_ok(ctx.cls, ctx.keys, known, None if pub is None else pub["key"]):
             raise MarketError("market.publisher_key_changed")
-        tofu = "unsigned" if pub is None else ("known" if known is not None else "new")
+        # a rotated official key counts as a first use of that key: shown as new, remembered when the grant is signed
+        tofu = "unsigned" if pub is None else ("known" if known == pub["key"] else "new")
     policy.evaluate("manifest", ctx.hub, {"url": ctx.url, "capabilities": entry.get("capabilities", [])})  # step 8
     need, have = _core_key(entry["min_orch"]), _core_key(ctx.core_version)
     if need is None or have is None or have < need:
@@ -228,9 +242,11 @@ def diff(
         publisher = "unsigned"
     elif facts.tofu == "pinned":
         publisher = "pinned"  # the hub pins the key: a change of key is the hub's, and shows as a refusal, not a diff
-    elif old_key is None:
-        publisher = "first_use"
+    elif old_key is None or old_key != facts.publisher_key:
+        publisher = "first_use"  # a key seen for the first time, also after an official key rotation (#1191)
         widened = True
+        if old_key is not None:
+            changes.append(ROTATED)
     else:
         publisher = "same"
     for name, lst in added.items():

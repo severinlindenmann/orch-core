@@ -972,7 +972,7 @@ from the action (`person`, `workspace_id`, `op`, `args` exactly as sent, `base` 
 same for every tab, session and retry; the browser sends no key, only `retry`, which an explicit "Do it again" / "Start again" advances
 (`handoff.py` `plan()` and `send_prepare()`, used by both `click.py` and the hand-off route). Consequences, all tested: two tabs prepare one
 request; a lost answer or logout/login returns the same request; a landed action answers `intent.done` ("Already done"); cancelled/expired
-answers `intent.ended`; `idem.conflict` (other path or signer binding) becomes `intent.open` only while a matching request is open,
+is stepped past by `send_prepare()` (#794): pressing again is one fresh request, the ended one is never signed; `idem.conflict` (other path or signer binding) becomes `intent.open` only while a matching request is open,
 otherwise `intent.blocked` offers explicit Start again; neither case automatically prepares;
 `idem.expired` becomes `intent.expired` (HTTP 409), with no new prepare; only an explicit "Start again" advances `retry`.
 Requests belong to the (person, workspace) (`Handoffs.owned`); any session of the person may view,

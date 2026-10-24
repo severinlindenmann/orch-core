@@ -4,11 +4,9 @@
 import { Inline, plain } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
 import { AddonSetup } from './AddonSetup'
-import { vLabel } from '@/api/versions'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ChevronDown, ChevronRight } from 'lucide-react'
+import { ChevronDown, ChevronRight, Cpu, FolderOpen, GitBranch, Globe, Loader2, Puzzle, Rocket, Ruler, Terminal, Gauge, type LucideIcon } from 'lucide-react'
 import { useState } from 'react'
-import { shareQueries } from '@/api/shares'
 import { canChangeSettings } from '@/api/settings'
 import { queries } from '@/api/queries'
 import type { AddOnRow } from '@/api/addOnSwitches'
@@ -22,28 +20,12 @@ import { PublishServer } from './PublishServer'
 import { useSettingsHandoff } from './useSettingsHandoff'
 import { useViewerRole } from './useViewerRole'
 
-const STATE_WORD = { on: 'On', off: 'Off', attention: 'Needs approval again' } as const
 type Switchable = 'start-agent' | 'terminals' | 'worktrees' | 'publish' | 'usage' | 'estimate' | 'explorer' | 'model-routing'
 /** Add-ons with settings of their own: they open in place, under their row. */
 const WITH_SETTINGS: readonly string[] = ['publish', 'model-routing']
 const SWITCHABLE: readonly string[] = ['start-agent', 'terminals', 'worktrees', 'publish', 'usage', 'estimate', 'explorer', 'model-routing']
 
-/** One plain line: what this add-on needs before it works. Publish reads the saved addresses only while it is on. */
-function NeedsLine({ id, on, ws }: { id: string; on: boolean; ws: string }) {
-  const list = useQuery({ ...shareQueries.list(ws), enabled: id === 'publish' && on })
-  let text: string
-  if (id === 'publish') {
-    if (!on) text = 'Needs a publish server address before it can share. You set it up right after turning it on.'
-    else if (!list.data) text = 'Checking what it needs…'
-    else if (!list.data.available) text = 'The host does not say whether a server is set up.'
-    else if (!list.data.configured) text = 'Needs a publish server address. No server is set up yet, so nothing can be shared.'
-    else if (!list.data.live) text = 'Server set up, but it is not answering right now.'
-    else text = 'Ready: a server is set up and answering.'
-  } else {
-    text = 'Needs nothing: every agent uses its own default model until you customize them.'
-  }
-  return <p data-testid={`addon-${id}-needs`} className="text-[12px] text-text-muted">{text}</p>
-}
+const ICONS: Record<string, LucideIcon> = { 'start-agent': Rocket, terminals: Terminal, worktrees: GitBranch, publish: Globe, usage: Gauge, estimate: Ruler, explorer: FolderOpen, 'model-routing': Cpu }
 
 export function HostAddOns({ workspace }: { workspace: Workspace }) {
   const [setup, setSetup] = useState<{ name: 'publish' | 'model-routing'; enabling: boolean } | null>(null)
@@ -51,10 +33,17 @@ export function HostAddOns({ workspace }: { workspace: Workspace }) {
   const role = useViewerRole(workspace)
   const qc = useQueryClient()
   const [open, setOpen] = useState<Record<string, boolean>>({})
-  const { ask, dialog } = useSettingsHandoff(workspace.id, () => {
-    void qc.invalidateQueries({ queryKey: ['add-ons', workspace.id] })
-    void qc.invalidateQueries({ queryKey: ['workspaces'] })
-    void qc.invalidateQueries({ queryKey: queries.hostSettings(workspace.id).queryKey })
+  // The row being switched: its switch keeps the old position (nothing is shown before the host confirms) and says what is happening.
+  const [busy, setBusy] = useState<{ id: string; turningOn: boolean; stage: 'review' | 'signing' | 'waiting' } | null>(null)
+  const { ask, dialog } = useSettingsHandoff(workspace.id, async () => {
+    setBusy((b) => (b ? { ...b, stage: 'waiting' } : b))
+    // One read of everything the page and the sidebar are built from; the switch moves when these have answered.
+    await Promise.all([
+      qc.invalidateQueries({ queryKey: ['add-ons', workspace.id] }),
+      qc.invalidateQueries({ queryKey: ['workspaces'] }),
+      qc.invalidateQueries({ queryKey: ['workspace-addons', workspace.id] }),
+      qc.invalidateQueries({ queryKey: queries.hostSettings(workspace.id).queryKey }),
+    ])
   })
   if (data.isError) return <LoadFailed what="add-ons" onRetry={() => void data.refetch()} />
   const owner = canChangeSettings(role)
@@ -67,15 +56,21 @@ export function HostAddOns({ workspace }: { workspace: Workspace }) {
       setSetup({ name, enabling: true })
       return
     }
+    const name_ = plain(row.title)
+    setBusy({ id: row.id, turningOn, stage: 'review' })
     ask({
-      title: turningOn ? `Turn on ${plain(row.title)}` : `Turn off ${plain(row.title)}`,
+      title: turningOn ? `Turn on ${name_}` : `Turn off ${name_}`,
       action: { action: turningOn ? 'addon_grant' : 'addon_disable', name },
       autoStart: true,
+      confirmLabel: turningOn ? 'Sign and turn on' : 'Sign and turn off',
+      doneToast: turningOn ? `${name_} is on` : `${name_} is off`,
+      onSigning: (signing) => setBusy((b) => (b && signing ? { ...b, stage: 'signing' } : b)),
+      onEnd: () => setBusy(null),
       summary: (
         <p className="text-[13px] text-text-muted">
           {turningOn
-            ? `${plain(row.title)} becomes available to you and your agents in this workspace.`
-            : `${plain(row.title)} is switched off for you and your agents in this workspace. What it already saved stays, and you can switch it back on at any time. You will type the add-on's name in your terminal to confirm.`}
+            ? `${name_} becomes available to you and your agents in this workspace.`
+            : `${name_} is switched off for you and your agents in this workspace. What it already saved stays, and you can switch it back on at any time.`}
         </p>
       ),
     })
@@ -100,54 +95,56 @@ export function HostAddOns({ workspace }: { workspace: Workspace }) {
               // Off and blocked: greyed. On and blocked (work is running): cannot be turned off now.
               const disabled = fixed || !owner || row.blocked !== null
               const on = row.state === 'on'
+              const Icon = ICONS[row.id] ?? Puzzle
+              const mine = busy?.id === row.id ? busy : null
+              const needsSetup = owner && on && row.needs && row.set_up === false && (row.id === 'publish' || row.id === 'model-routing')
               return (
                 <li key={row.id} data-testid={`addon-${row.id}`} className="py-3 text-[13px]">
-                  <div className="flex items-start gap-3">
-                  <div className="min-w-0 flex-1 space-y-0.5">
-                    <div className="flex flex-wrap items-center gap-2">
-                      {on && WITH_SETTINGS.includes(row.id) ? (
-                        <button
-                          type="button"
-                          aria-expanded={!!open[row.id]}
-                          aria-controls={`addon-${row.id}-panel`}
-                          aria-label={`${row.title} settings`}
-                          data-testid={`addon-${row.id}-expand`}
-                          className="-ml-1 inline-flex items-center gap-1 rounded px-1 font-medium hover:bg-surface-2 focus-visible:outline focus-visible:outline-2"
-                          onClick={() => setOpen((o) => ({ ...o, [row.id]: !o[row.id] }))}
-                        >
-                          {open[row.id] ? <ChevronDown aria-hidden className="size-3.5" /> : <ChevronRight aria-hidden className="size-3.5" />}
-                          <Inline>{row.title}</Inline>
-                        </button>
-                      ) : (
-                        <span className="font-medium"><Inline>{row.title}</Inline></span>
+                  <div className="flex items-center gap-3">
+                    <Icon aria-hidden className="size-4 shrink-0 text-text-muted" />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-x-2">
+                        {on && WITH_SETTINGS.includes(row.id) ? (
+                          <button
+                            type="button"
+                            aria-expanded={!!open[row.id]}
+                            aria-controls={`addon-${row.id}-panel`}
+                            aria-label={`${row.title} settings`}
+                            data-testid={`addon-${row.id}-expand`}
+                            className="-ml-1 inline-flex items-center gap-1 rounded px-1 font-medium hover:bg-surface-2 focus-visible:outline focus-visible:outline-2"
+                            onClick={() => setOpen((o) => ({ ...o, [row.id]: !o[row.id] }))}
+                          >
+                            {open[row.id] ? <ChevronDown aria-hidden className="size-3.5" /> : <ChevronRight aria-hidden className="size-3.5" />}
+                            <Inline>{row.title}</Inline>
+                          </button>
+                        ) : (
+                          <span className="font-medium"><Inline>{row.title}</Inline></span>
+                        )}
+                        {fixed && <span className="text-[11px] text-text-faint">Always on</span>}
+                        {needsSetup && <span data-testid={`addon-${row.id}-state`} className="rounded-full border border-warning/50 px-1.5 text-[11px] leading-4 text-warning">Needs setup</span>}
+                      </div>
+                      <p className="text-text-muted"><Inline>{row.desc}</Inline></p>
+                      {why && <OwnerNote id={`addon-${row.id}-why`}>{why}</OwnerNote>}
+                      {row.state === 'attention' && !why && (
+                        <p className="text-[12px] text-text-muted">Its files changed since you approved it. Turn it on again to approve what it is now.</p>
                       )}
-                      {row.version && <span data-testid={`addon-${row.id}-version`} className="font-mono text-[11px] text-text-faint">{vLabel(row.version)}</span>}
-                      <span
-                        data-testid={`addon-${row.id}-state`}
-                        className={on ? 'rounded-full border border-border px-1.5 text-[11px] leading-4 text-success' : 'rounded-full border border-border px-1.5 text-[11px] leading-4 text-text-muted'}
-                      >
-                        {fixed ? 'Always on' : row.needs && on && row.set_up === false ? 'On, needs setup' : row.needs && row.state === 'off' && row.set_up === true ? 'Set up, not on' : STATE_WORD[row.state]}
-                      </span>
                     </div>
-                    <p className="text-text-muted"><Inline>{row.desc}</Inline></p>
-                    {why && <OwnerNote id={`addon-${row.id}-why`}>{why}</OwnerNote>}
-                    {WITH_SETTINGS.includes(row.id) && !fixed && <NeedsLine id={row.id} on={on} ws={workspace.id} />}
-                    {row.state === 'attention' && !why && (
-                      <p className="text-[12px] text-text-muted">Its files changed since you approved it. Turn it on again to approve what it is now.</p>
+                    {needsSetup && <Button size="sm" variant="secondary" onClick={() => setSetup({ name: row.id as 'publish' | 'model-routing', enabling: false })}>Set up</Button>}
+                    {mine && mine.stage !== 'review' && (
+                      <span role="status" data-testid={`addon-${row.id}-pending`} className="inline-flex items-center gap-1.5 text-[12px] text-text-muted">
+                        <Loader2 className="size-3.5 animate-spin" aria-hidden /> {mine.turningOn ? 'Turning on…' : 'Turning off…'}
+                      </span>
                     )}
-                  </div>
-                  {owner && on && row.needs && row.set_up === false && (row.id === 'publish' || row.id === 'model-routing') && (
-                    <Button size="sm" variant="secondary" onClick={() => setSetup({ name: row.id as 'publish' | 'model-routing', enabling: false })}>Set up</Button>
-                  )}
-                  {!fixed && (
-                    <Switch
-                      aria-label={`${plain(row.title)}`}
-                      aria-describedby={why ? `addon-${row.id}-why` : undefined}
-                      checked={on}
-                      disabled={disabled}
-                      onCheckedChange={() => flip(row)}
-                    />
-                  )}
+                    {!fixed && (
+                      <Switch
+                        aria-label={`${plain(row.title)}`}
+                        aria-describedby={why ? `addon-${row.id}-why` : undefined}
+                        aria-busy={mine ? true : undefined}
+                        checked={on}
+                        disabled={disabled || !!busy}
+                        onCheckedChange={() => flip(row)}
+                      />
+                    )}
                   </div>
                   {on && open[row.id] && (
                     <div id={`addon-${row.id}-panel`}>

@@ -1,7 +1,7 @@
 // The real-host pages the layout guard draws from fixtures (`/__layout/<scenario>`, src/dev/layoutPreview.tsx). The guard enters
 // that block when `--only` matches any of these names, so `--only pair` or `--only terminal` finds its pages.
 export const REAL_HOST_PAGES = [
-  'real-host-quick', 'real-host-quick-many', 'real-host-quick-limits', 'real-host-quick-normal-ticket', 'real-host-quick-add',
+  'real-host-quick', 'real-host-quick-many', 'real-host-quick-normal-ticket', 'real-host-quick-add',
   'real-host-records', 'real-host-records-hidden-url', 'real-host-records-first-commit', 'real-host-records-push-failed',
   'real-host-records-push-mismatch', 'real-host-records-push', 'real-host-records-push-confirm',
   'real-host-runner-on', 'real-host-runner-off', 'real-host-addons', 'real-host-agent-model', 'real-host-addons-model-routing', 'real-host-addons-model-routing-open', 'real-host-addons-publish', 'real-host-addons-publish-open', 'real-host-addons-publish-unset',

@@ -4,9 +4,9 @@ import { fakeRequest, state } from '@/test/handoffHarness'
 import { renderApp } from '@/test/renderApp'
 
 vi.mock('@/api/features', async (orig) => ({ ...(await orig<typeof import('@/api/features')>()), handoffMode: () => true }))
-// The signing dialog is its own feature (HandoffDialog tests); here it only reports how each signature ended.
-vi.mock('@/components/sign/HandoffDialog', () => ({
-  HandoffDialog: (p: { title: string; action: { action: string; key?: string }; onSettled?: (phase: string, st: unknown, req: unknown) => void; onClose: () => void }) => {
+// The signing dialog is its own feature (SignPopover tests); here it only reports how each signature ended.
+vi.mock('@/components/sign/SignPopover', () => ({
+  SignPopover: (p: { title: string; action: { action: string; key?: string }; onSettled?: (phase: string, st: unknown, req: unknown) => void; onClose: () => void }) => {
     const isNew = p.action.action === 'new' || p.action.action === 'new_sequence'
     const req = { ...fakeRequest({ key: 'DEMO-0044', id: 'hr_' + '0'.repeat(25) + '7' }), op: 'new' }
     return (
@@ -28,8 +28,8 @@ async function fill() {
   await r.user.click(await screen.findByRole('button', { name: /New ticket/ }, T))
   const sheet = await screen.findByRole('dialog', { name: 'New ticket' }, T)
   await r.user.type(await within(sheet).findByLabelText('Title', {}, T), 'Export CSV')
-  await r.user.type(within(sheet).getByLabelText(/^Requirements/), 'Empty months export a header row')
-  await r.user.click(within(sheet).getByRole('button', { name: 'Review ticket' }))
+  await r.user.type(within(sheet).getByLabelText(/^What should be true/), 'Empty months export a header row')
+  await r.user.click(within(sheet).getByRole('button', { name: 'Create ticket' }))
   return r
 }
 const gone = () => waitFor(() => expect(screen.queryByRole('dialog', { name: 'New ticket' })).toBeNull(), T)
@@ -56,13 +56,13 @@ describe('New ticket with signed hand-off', () => {
     await r.user.click(await screen.findByRole('button', { name: /New ticket/ }, T))
     const sheet = await screen.findByRole('dialog', { name: 'New ticket' }, T)
     await r.user.type(await within(sheet).findByLabelText('Title', {}, T), 'Export CSV')
-    await r.user.type(within(sheet).getByLabelText(/^Requirements/), 'Empty months export a header row')
-    await r.user.click(within(sheet).getByRole('button', { name: /More sections/ }))
+    await r.user.type(within(sheet).getByLabelText(/^What should be true/), 'Empty months export a header row')
+    await r.user.click(within(sheet).getByRole('button', { name: /More options/ }))
     await r.user.type(within(sheet).getByLabelText('New acceptance criterion'), 'A header row is exported')
     await r.user.click(within(sheet).getByRole('button', { name: 'Add' }))
     await r.user.selectOptions(within(sheet).getByLabelText('Owner'), 'p_sev') // the signed-in person: already the owner
     await r.user.click(within(within(sheet).getByRole('group', { name: 'Assignees' })).getByRole('button', { name: 'Mara' }))
-    await r.user.click(within(sheet).getByRole('button', { name: 'Review ticket' }))
+    await r.user.click(within(sheet).getByRole('button', { name: 'Create ticket' }))
     const sent = JSON.parse((await screen.findByTestId('sent-action')).textContent ?? '{}')
     expect(sent).toEqual({
       action: 'new_sequence',
@@ -80,10 +80,10 @@ describe('New ticket with signed hand-off', () => {
     await r.user.click(await screen.findByRole('button', { name: /New ticket/ }, T))
     const sheet = await screen.findByRole('dialog', { name: 'New ticket' }, T)
     await r.user.type(await within(sheet).findByLabelText('Title', {}, T), 'Export CSV')
-    await r.user.type(within(sheet).getByLabelText(/^Requirements/), 'Empty months export a header row')
-    await r.user.click(within(sheet).getByRole('button', { name: /More sections/ }))
+    await r.user.type(within(sheet).getByLabelText(/^What should be true/), 'Empty months export a header row')
+    await r.user.click(within(sheet).getByRole('button', { name: /More options/ }))
     await r.user.type(within(sheet).getByLabelText('New acceptance criterion'), 'A header row is exported')
-    await r.user.click(within(sheet).getByRole('button', { name: 'Review ticket' }))
+    await r.user.click(within(sheet).getByRole('button', { name: 'Create ticket' }))
     const sent = JSON.parse((await screen.findByTestId('sent-action')).textContent ?? '{}')
     expect(sent.acceptance).toEqual(['A header row is exported'])
   })
@@ -93,6 +93,6 @@ describe('New ticket with signed hand-off', () => {
     await r.user.click(await screen.findByRole('button', { name: 'cancelled' }))
     const sheet = (await screen.findAllByRole('dialog', { name: 'New ticket' }, T))[0]
     expect(within(sheet).getByLabelText('Title')).toHaveValue('Export CSV')
-    expect(within(sheet).getByLabelText(/^Requirements/)).toHaveValue('Empty months export a header row')
+    expect(within(sheet).getByLabelText(/^What should be true/)).toHaveValue('Empty months export a header row')
   })
 })

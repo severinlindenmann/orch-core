@@ -115,7 +115,7 @@ describe('the hub sign panel in a full-mode workspace', () => {
   it('an action the hub cannot build yet says so and names the way to stop an agent', async () => {
     const hub = vi.spyOn(api, 'hubSign')
     full()
-    const { HandoffDialog } = await import('./HandoffDialog')
+    const { SignPopover } = await import('./SignPopover')
     const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query')
     const { render } = await import('@testing-library/react')
     const { mount: m } = await import('@/test/handoffHarness')
@@ -123,7 +123,7 @@ describe('the hub sign panel in a full-mode workspace', () => {
     cleanup()
     render(
       <QueryClientProvider client={new QueryClient()}>
-        <HandoffDialog title="Grant access" ws={ws} action={{ action: 'grant' } as never} onClose={() => {}} />
+        <SignPopover title="Grant access" ws={ws} action={{ action: 'grant' } as never} onClose={() => {}} />
       </QueryClientProvider>,
     )
     const none = await screen.findByTestId('hub-unavailable', {}, T)

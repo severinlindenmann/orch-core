@@ -217,12 +217,10 @@ const reads = {
   getAddOns: (ws: string) => call<import('./addOnSwitches').AddOnsData>(`${w(ws)}/add-ons`),
   getReaders: (ws: string) => call<HostReaders>(`${w(ws)}/readers`),
   listHostGrants: (ws: string, active = true) => call<HostGrant[]>(`${w(ws)}/grants?active=${active}`),
-  // Quick tasks and records (M6). The limits are this browser's own setting; the server saves nothing.
+  // Quick tasks and records (M6). The host measures how big a quick task has grown.
   getQuick: (ws: string, p: QuickParams = {}) => {
     const q = new URLSearchParams()
     for (const s of p.status ?? []) q.append('status', s)
-    if (p.max_commits !== undefined) q.set('max_commits', String(p.max_commits))
-    if (p.max_files !== undefined) q.set('max_files', String(p.max_files))
     q.set('limit', String(p.limit ?? 200))
     if (p.page) q.set('page', p.page)
     return call<QuickPage>(`${w(ws)}/quick?${q.toString()}`)

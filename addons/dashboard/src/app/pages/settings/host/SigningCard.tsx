@@ -210,7 +210,7 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
                 {workspace.name} ({workspace.prefix})
               </dd>
               <dt className="text-text-muted">Change</dt>
-              <dd className="min-w-0">One click approves for you again. Your key stays where it is. It switches itself off again after {card?.idle_hours ?? 12} hours without use.</dd>
+              <dd className="min-w-0">One click approves for you again. Your key stays where it is. It switches itself off again after {card?.idle_hours ? `${card.idle_hours} hours` : 'a while'} without use.</dd>
             </dl>
             <p data-testid="resume-risk" className="text-text-muted">{CLICK_RISK}</p>
             {error && (

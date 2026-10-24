@@ -165,6 +165,12 @@ describe('Sign in the dashboard', () => {
     await waitFor(() => expect(screen.getByTestId('signing-state')).toHaveTextContent(/^On: you approve here/))
   })
 
+  it('the resume panel and the idle line show the configured limit, also after a manual off', async () => {
+    mount({ custody: 'convenience', enabled: false, available: false, problem: 'disabled', idle_hours: 24, switchable: true })
+    fireEvent.click(await openSwitch())
+    expect(screen.getByTestId('signing-resume')).toHaveTextContent('switches itself off again after 24 hours')
+  })
+
   it('a refused resume (not a dashboard on this computer) keeps the terminal command', async () => {
     vi.spyOn(api, 'switchClick').mockRejectedValue(new ApiError(403, { code: 'custody.terminal_needed', message: 'needs this computer', retryable: false }))
     mount({ custody: 'convenience', enabled: false, available: false, problem: 'idle', idle_hours: 12, switchable: true })

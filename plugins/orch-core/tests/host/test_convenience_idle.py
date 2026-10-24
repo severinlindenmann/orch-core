@@ -114,6 +114,14 @@ def test_the_signer_refuses_with_the_plain_reason_and_the_status_says_why(served
         row = c.signer._row(entry, lambda state, wid: {"custody": "convenience", "device": "d_" + "0" * 32})
         assert row["enabled"] is False and row["problem"] == "idle" and row["idle_hours"] == 12
         assert row["available"] is False
+        convenience.set_idle_hours(served.lab.state, served.wid, 30, UID)  # the configured limit, off or on
+        assert (
+            c.signer._row(entry, lambda state, wid: {"custody": "convenience", "device": "d_" + "0" * 32})["idle_hours"]
+            == 30
+        )
+        convenience.set_enabled(served.lab.state, served.wid, False, UID)
+        row = c.signer._row(entry, lambda state, wid: {"custody": "convenience", "device": "d_" + "0" * 32})
+        assert row["idle_hours"] == 30 and row["problem"] == "disabled"  # a manual off is not "idle"
     finally:
         c.close()
 

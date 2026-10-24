@@ -20,6 +20,8 @@ class FakeOsFacts:
         self.files: dict[str, str] = {}
         self.unreadable: set[str] = set()
         self.sudoers: list[str] | None = []
+        self.sudo_answer: bool | None = None
+        self.sshd_answer: bool | None = None
 
     def add_user(self, name, uid, *, gid=None, home="/home/x", shell="/bin/bash", groups=(), extra_gids=()) -> None:
         gid = uid if gid is None else gid
@@ -70,3 +72,9 @@ class FakeOsFacts:
 
     def sudoers_lines(self):
         return self.sudoers
+
+    def sudo_allows(self, user):
+        return self.sudo_answer
+
+    def sshd_denies(self, user):
+        return self.sshd_answer

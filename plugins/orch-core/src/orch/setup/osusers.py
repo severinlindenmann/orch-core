@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .osfacts import OsFacts, UserInfo
+from .osrules import sudoers_names
 
 __all__ = [
     "AGENT_PREFIX",
@@ -31,6 +32,7 @@ __all__ = [
     "SSHD_DROPIN",
     "SSHD_DROPIN_TEXT",
     "FileSpec",
+    "sudo_exposed",
     "sudoers_names",
     "SLOT_PREFIX",
     "OsPlanRefusal",
@@ -259,16 +261,18 @@ def _check_existing(facts: OsFacts, want: UserPlan, person_uid: int | None, refu
         refusals.append(
             Refusal("wrong_properties", want.name, f"'{want.name}' exists but {bad}. Setup will not fix it.")
         )
-    names = sudoers_names(facts.sudoers_lines() or [], want.name)
-    if names:
+    if sudo_exposed(facts, info):
         refusals.append(Refusal("sudoers_entry", want.name, f"'{want.name}' has a sudo rule. Remove it."))
     return UserPlan(want.name, want.role, "keep", info.uid, want.home, want.shell, want.group)
 
 
-def sudoers_names(lines: list[str], user: str) -> list[str]:
-    """Active sudoers lines that name ``user`` or its group (``%user``) as a whole word."""
-    pat = re.compile(rf"(?<![\w.-])%?{re.escape(user)}(?![\w.-])")
-    return [ln for ln in lines if pat.search(ln)]
+def sudo_exposed(facts: OsFacts, info: UserInfo) -> bool:
+    """Whether sudo rules give ``info`` anything: sudo's own answer when we may ask, else our conservative parser."""
+    answer = facts.sudo_allows(info.name)
+    if answer is not None:
+        return answer
+    lines = facts.sudoers_lines()
+    return bool(lines and sudoers_names(lines, info.name, info.uid, info.gids, info.groups))
 
 
 def _wrong_properties(facts: OsFacts, want: UserPlan, info: UserInfo) -> str:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -12,11 +13,20 @@ from tests.osfacts_fake import FakeOsFacts
 
 UID, AUID, AGID = 1000, 990, 990
 RUNNER = "orch-runner@orch-agent-sev.service"
-KEY = "/home/sev/.local/state/orch/person/key"
+STATE = "/home/sev/.local/state/orch"
+KEY = f"{STATE}/person/key"
 
 
 def _active(uid, **kw) -> UnitState:
-    base = {"gids": frozenset({AGID}), "no_new_privs": True, "cap_eff": 0, "cap_amb": 0}
+    base = {
+        "gids": frozenset({AGID}),
+        "no_new_privs": True,
+        "cap_eff": 0,
+        "cap_amb": 0,
+        "cap_prm": 0,
+        "cap_inh": 0,
+        "cap_bnd": 0,
+    }
     return UnitState("active", uid, **{**base, **kw})
 
 
@@ -26,18 +36,20 @@ def _good() -> FakeOsFacts:
     f.pins[AUID] = {"class": "agent", "host_uid": UID, "workspaces": "*"}
     f.add_path("/run/orch/1000", uid=UID, gid=AGID, mode=0o2750, kind="dir")
     f.add_path("/run/orch/1000/host.sock", uid=UID, gid=AGID, mode=0o660, kind="sock")
+    f.add_path(STATE, uid=UID, gid=UID, mode=0o700, kind="dir")
     f.add_path(KEY, uid=UID, gid=UID, mode=0o600)
     f.readable[(AUID, KEY)] = False
+    f.readable[(AUID, STATE)] = False
     f.units[RUNNER] = _active(AUID)
     return f
 
 
-def _codes(f: FakeOsFacts, paths=(KEY,)) -> set[str]:
-    return {r.code for r in detect(f, "sev", UID, list(paths)).reasons}
+def _codes(f: FakeOsFacts, keys=(KEY,), state=STATE) -> set[str]:
+    return {r.code for r in detect(f, "sev", UID, state, list(keys)).reasons}
 
 
 def test_tier_b_when_everything_checks_out() -> None:
-    r = detect(_good(), "sev", UID, [KEY])
+    r = detect(_good(), "sev", UID, STATE, [KEY])
     assert (
         r.isolated
         and r.status == "isolated"
@@ -49,7 +61,7 @@ def test_tier_b_when_everything_checks_out() -> None:
 
 
 def test_no_agent_user_is_tier_a() -> None:
-    r = detect(FakeOsFacts(), "sev", UID, [KEY])
+    r = detect(FakeOsFacts(), "sev", UID, STATE, [KEY])
     assert r.status == "same_user" and r.tier == "A" and [x.code for x in r.reasons] == ["no_agent_user"]
 
 
@@ -71,13 +83,24 @@ def test_unknown_readability_fails_closed() -> None:
     assert _codes(f) == {"readable_by_agent"}
 
 
-def test_no_protected_paths_proves_nothing() -> None:
-    assert _codes(_good(), paths=()) == {"protected_missing"}
-    assert _codes(_good(), paths=("/home/sev/wrong-path",)) == {"protected_missing"}
+def test_state_dir_is_always_checked_and_must_exist() -> None:
+    f = _good()
+    assert _codes(f, keys=()) == set()  # the state dir alone proves it
+    assert _codes(f, state="/home/sev/wrong-path") == {"protected_missing"}
+    f.readable[(AUID, STATE)] = True  # a readable state dir fails even with no key files given
+    assert _codes(f, keys=()) == {"readable_by_agent"}
+
+
+def test_state_dir_is_a_required_argument() -> None:
+    import inspect
+
+    sig = inspect.signature(detect)
+    assert list(sig.parameters)[:4] == ["facts", "person", "person_uid", "state_dir"]
+    assert sig.parameters["state_dir"].default is inspect.Parameter.empty
 
 
 def test_missing_protected_path_is_skipped() -> None:
-    assert detect(_good(), "sev", UID, [KEY, "/home/sev/absent"]).isolated
+    assert detect(_good(), "sev", UID, STATE, [KEY, "/home/sev/absent"]).isolated
 
 
 def test_agent_is_person_uid() -> None:
@@ -137,7 +160,7 @@ def test_wrong_home_or_shell() -> None:
 def test_runner_down_is_availability_and_does_not_pause_signing() -> None:
     f = _good()
     f.units[RUNNER] = UnitState("inactive")
-    r = detect(f, "sev", UID, [KEY])
+    r = detect(f, "sev", UID, STATE, [KEY])
     assert r.status == "broken" and [x.code for x in r.availability] == ["runner_down"]
     assert not r.exposure and not r.pause_click_signing
 
@@ -145,7 +168,7 @@ def test_runner_down_is_availability_and_does_not_pause_signing() -> None:
 def test_runner_peer_uid_is_person_pauses_signing() -> None:
     f = _good()
     f.units[RUNNER] = _active(UID)
-    r = detect(f, "sev", UID, [KEY])
+    r = detect(f, "sev", UID, STATE, [KEY])
     assert _codes(f) == {"runner_is_person"} and r.pause_click_signing
 
 
@@ -166,7 +189,7 @@ def test_runner_as_wrong_user_is_exposure() -> None:
 def test_exposure_facts_pause_click_signing(mutate, code) -> None:
     f = _good()
     mutate(f)
-    r = detect(f, "sev", UID, [KEY])
+    r = detect(f, "sev", UID, STATE, [KEY])
     assert r.status == "broken" and r.pause_click_signing and code in {x.code for x in r.exposure}
 
 
@@ -175,7 +198,7 @@ def test_control_dir_must_be_0700_person() -> None:
     f.add_path("/run/orch/1000/control", uid=UID, gid=AGID, mode=0o750, kind="dir")
     assert _codes(f) == {"control_dir_wrong"}
     f.add_path("/run/orch/1000/control", uid=UID, gid=UID, mode=0o700, kind="dir")
-    assert detect(f, "sev", UID, [KEY]).isolated
+    assert detect(f, "sev", UID, STATE, [KEY]).isolated
 
 
 def test_uid_to_name_must_agree_with_name_to_uid() -> None:
@@ -190,7 +213,7 @@ def test_uid_to_name_must_agree_with_name_to_uid() -> None:
 def test_unclear_runner_state_is_exposure_and_pauses_signing(state) -> None:
     f = _good()
     f.units[RUNNER] = state
-    r = detect(f, "sev", UID, [KEY])
+    r = detect(f, "sev", UID, STATE, [KEY])
     assert [x.code for x in r.exposure] == ["runner_unknown"] and not r.availability and r.pause_click_signing
 
 
@@ -203,7 +226,7 @@ def test_missing_unit_entry_reads_unknown_not_down() -> None:
 def test_transitional_runner_state_is_availability_only() -> None:
     f = _good()
     f.units[RUNNER] = UnitState("transitional")
-    r = detect(f, "sev", UID, [KEY])
+    r = detect(f, "sev", UID, STATE, [KEY])
     assert [x.code for x in r.availability] == ["runner_restarting"] and not r.exposure and not r.pause_click_signing
 
 
@@ -233,13 +256,17 @@ def test_agent_own_group_gid_must_match_primary() -> None:
         ({"no_new_privs": None}, "runner_privileged"),
         ({"cap_eff": 1 << 21}, "runner_privileged"),
         ({"cap_amb": 1}, "runner_privileged"),
+        ({"cap_prm": 1}, "runner_privileged"),
+        ({"cap_inh": 1}, "runner_privileged"),
+        ({"cap_bnd": (1 << 41) - 1}, "runner_privileged"),
+        ({"cap_bnd": None}, "runner_privileged"),
         ({"cap_eff": None}, "runner_privileged"),
     ],
 )
 def test_runner_process_identity_and_privileges(kw: dict, code: str) -> None:
     f = _good()
     f.units[RUNNER] = _active(AUID, **kw)
-    r = detect(f, "sev", UID, [KEY])
+    r = detect(f, "sev", UID, STATE, [KEY])
     assert code in {x.code for x in r.exposure} and r.pause_click_signing
 
 
@@ -257,7 +284,7 @@ def _tree(f: FakeOsFacts) -> None:
 def test_nested_workspace_sockets_are_walked_and_accepted_when_correct() -> None:
     f = _good()
     _tree(f)
-    assert detect(f, "sev", UID, [KEY]).isolated
+    assert detect(f, "sev", UID, STATE, [KEY]).isolated
 
 
 @pytest.mark.parametrize(
@@ -307,28 +334,28 @@ def test_run_dir_acl_and_depth_and_size_bounds() -> None:
 def test_root_equivalent_socket_reachable_by_agent(sock: str) -> None:
     f = _good()
     f.add_path(sock, uid=0, gid=0, mode=0o660, kind="sock")
-    assert detect(f, "sev", UID, [KEY]).isolated  # present but not reachable
+    assert detect(f, "sev", UID, STATE, [KEY]).isolated  # present but not reachable
     f.connectable[(AUID, sock)] = True
-    r = detect(f, "sev", UID, [KEY])
+    r = detect(f, "sev", UID, STATE, [KEY])
     assert _codes(f) == {"root_socket"} and r.pause_click_signing
 
 
 def test_sudoers_entry_naming_agent_is_exposure_and_unreadable_is_no_fact() -> None:
     f = _good()
     f.sudoers = None  # an unprivileged host cannot read it: the root-time plan is the check
-    assert detect(f, "sev", UID, [KEY]).isolated
+    assert detect(f, "sev", UID, STATE, [KEY]).isolated
     f.sudoers = ["orch-agent-sev ALL=(ALL) NOPASSWD:ALL"]
     assert _codes(f) == {"sudoers_entry"}
 
 
 def test_ssh_must_be_denied_for_the_agent_when_sshd_is_configured() -> None:
     f = _good()
-    assert detect(f, "sev", UID, [KEY]).isolated  # no sshd configured at all
+    assert detect(f, "sev", UID, STATE, [KEY]).isolated  # no sshd configured at all
     f.files["/etc/ssh/sshd_config"] = "Include /etc/ssh/sshd_config.d/*.conf\nPort 22\n"
     assert _codes(f) == {"ssh_not_denied"}
     f.add_path("/etc/ssh/sshd_config.d/10-orch-agents.conf")
     f.files["/etc/ssh/sshd_config.d/10-orch-agents.conf"] = "DenyUsers orch-agent-* orch-addon-*\n"
-    assert detect(f, "sev", UID, [KEY]).isolated
+    assert detect(f, "sev", UID, STATE, [KEY]).isolated
     f.files["/etc/ssh/sshd_config.d/10-orch-agents.conf"] = "# DenyUsers orch-agent-*\n"
     assert _codes(f) == {"ssh_not_denied"}
     f.unreadable.add("/etc/ssh/sshd_config")
@@ -445,6 +472,9 @@ def _status(uid="990\t990\t990\t990", **kw):
         "NoNewPrivs": "1",
         "CapEff": "0000000000000000",
         "CapAmb": "0000000000000000",
+        "CapPrm": "0000000000000000",
+        "CapInh": "0000000000000000",
+        "CapBnd": "0000000000000000",
     }
     return {**base, **kw}
 
@@ -474,7 +504,9 @@ def test_real_unit_state_classifies_every_case(monkeypatch) -> None:
         ([("failed", 0)], {}, "inactive"),
         ([("activating", 0)], {}, "transitional"),
         ([("deactivating", 55)], {}, "transitional"),
+        ([("activating", 0)], {}, "transitional"),
         ([("reloading", 55)], {}, "transitional"),
+        ([("activating", 55)], {"in_cgroup": False}, "unknown"),
         ([("inactive", 5)], {}, "unknown"),
         ([("active", 0)], {}, "unknown"),
         ([("weird", 5)], {}, "unknown"),
@@ -521,3 +553,31 @@ def test_real_cgroup_match_is_a_whole_path_segment(monkeypatch, tmp_path) -> Non
     ]:
         monkeypatch.setattr(builtins, "open", fake_open(text))
         assert RealOsFacts._in_unit_cgroup(1, unit) is want, text
+
+
+def test_real_transitional_with_a_running_process_carries_its_identity(monkeypatch) -> None:
+    from orch.setup.osfacts import RealOsFacts
+
+    real = RealOsFacts()
+    _patch_unit(monkeypatch, real, [("activating", 7), ("activating", 7)], status=_status(Groups="990 0"))
+    st = real.unit_state("u")
+    assert st.state == "transitional" and st.uid == 990 and st.gids == frozenset({990, 0})
+    _patch_unit(monkeypatch, real, [("activating", 0)])
+    assert real.unit_state("u") == UnitState("transitional")  # no process: no identity
+    # the process vanished between the two reads (a crash loop): still just transitional
+    _patch_unit(monkeypatch, real, [("activating", 7)])
+    monkeypatch.setattr(
+        real, "_in_unit_cgroup", staticmethod(lambda pid, unit: (_ for _ in ()).throw(FileNotFoundError()))
+    )
+    assert real.unit_state("u").state == "transitional"
+
+
+def test_transitional_runner_with_a_process_gets_the_exposure_checks() -> None:
+    f = _good()
+    f.units[RUNNER] = UnitState("transitional", AUID, frozenset({AGID}), True, 0, 0, 0, 0, 0)
+    r = detect(f, "sev", UID, STATE, [KEY])
+    assert [x.code for x in r.reasons] == ["runner_restarting"] and not r.pause_click_signing
+    for kw in ({"uid": UID}, {"gids": frozenset({AGID, 0})}, {"no_new_privs": False}, {"cap_prm": 1}):
+        f.units[RUNNER] = replace(_active(AUID), state="transitional", **kw)
+        r = detect(f, "sev", UID, STATE, [KEY])
+        assert r.pause_click_signing and "runner_restarting" in {x.code for x in r.availability}, kw

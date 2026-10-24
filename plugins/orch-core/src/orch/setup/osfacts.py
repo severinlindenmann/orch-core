@@ -13,10 +13,12 @@ import errno
 import grp
 import os
 import pwd
+import re
 import stat
 import struct
 import sys
 from dataclasses import dataclass
+from fnmatch import fnmatch
 from functools import reduce
 from operator import or_
 from pathlib import Path
@@ -58,14 +60,18 @@ class PathInfo:
 
 @dataclass(frozen=True)
 class UnitState:
-    # "active" (identity fields set) | "inactive" (clearly down) | "transitional" (activating, deactivating,
-    # reloading, auto-restart: availability only) | "unknown" (error, parse failure, inconsistency: not trusted)
+    # "active" (identity fields set) | "inactive" (clearly down) | "transitional" (activating, deactivating, reloading,
+    # auto-restart; identity fields are set when a process runs, none when no process runs) | "unknown" (error, parse
+    # failure, inconsistency: not trusted)
     state: str
     uid: int | None = None
     gids: frozenset[int] | None = None  # the process's real/effective gid and ``Groups:`` from /proc/<pid>/status
     no_new_privs: bool | None = None
     cap_eff: int | None = None
     cap_amb: int | None = None
+    cap_prm: int | None = None
+    cap_inh: int | None = None
+    cap_bnd: int | None = None
 
 
 class OsFacts(Protocol):
@@ -79,8 +85,66 @@ class OsFacts(Protocol):
     def can_read(self, uid: int, path: str) -> bool: ...  # True unless provably unreadable (dirs: r or x counts)
     def can_connect(self, uid: int, path: str) -> bool: ...  # write on the socket and search on every ancestor
     def read_text(self, path: str) -> str | None: ...  # None = missing; raises OSError when unreadable
-    def sudoers_lines(self) -> list[str] | None: ...  # None = not readable by this process
-    def unit_state(self, unit: str) -> UnitState: ...
+    def sudoers_lines(self) -> list[str] | None:
+        """Active logical lines of /etc/sudoers with ``@include``/``#include``/``includedir`` inlined, or None when this
+        process cannot read them (the host runs unprivileged, so that is the normal case)."""
+        from .osrules import sudoers_logical_lines
+
+        out: list[str] = []
+
+        def load(path: str, depth: int) -> None:
+            if depth > 8:
+                raise PermissionError("sudoers include nesting")
+            text = self.read_text(path)
+            if text is None:
+                return
+            for line in sudoers_logical_lines(text):
+                m = re.match(r"[@#](include|includedir)\s+(\S+)", line, re.I)
+                if not m:
+                    out.append(line)
+                    continue
+                target = m.group(2).strip('"')
+                if m.group(1).lower() == "includedir":
+                    if os.path.isdir(target):
+                        for n in sorted(os.listdir(target)):
+                            if "." not in n and not n.endswith("~"):
+                                load(f"{target}/{n}", depth + 1)
+                else:
+                    load(target, depth + 1)
+
+        try:
+            load("/etc/sudoers", 0)
+        except PermissionError:
+            return None
+        return out
+
+    def _run(self, argv: list[str]) -> tuple[int, str] | None:
+        import subprocess
+
+        try:
+            done = subprocess.run(argv, capture_output=True, text=True, timeout=10, check=False, env={})
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return done.returncode, done.stdout + done.stderr
+
+    def sudo_allows(self, user: str) -> bool | None:
+        res = self._run(["/usr/bin/sudo", "-n", "-l", "-U", user])
+        if res is None:
+            return None
+        text = res[1]
+        if "is not allowed to run sudo" in text:
+            return False
+        if "may run the following commands" in text:
+            return True
+        return None
+
+    def sshd_denies(self, user: str) -> bool | None:
+        res = self._run(["/usr/sbin/sshd", "-T", "-C", f"user={user},host=localhost,addr=127.0.0.1"])
+        if res is None or res[0] != 0:
+            return None
+        pats = [p for ln in res[1].splitlines() if ln.lower().startswith("denyusers ") for p in ln.split()[1:]]
+        return any(fnmatch(user, p) for p in pats)
+
     def pin(self, uid: int) -> dict | None: ...  # root-owned pin for a UID; None = no pin; broken = a "*" agent pin
 
 
@@ -301,34 +365,49 @@ class RealOsFacts:
         with open(f"/proc/{pid}/status", encoding="utf-8") as handle:
             return dict(ln.split(":", 1) for ln in handle.read().splitlines() if ":" in ln)
 
+    def _identity(self, unit: str, pid: int) -> dict:
+        """Who the main process really is, from /proc/<pid>/status; raises on anything inconsistent."""
+        if not self._in_unit_cgroup(pid, unit):
+            raise ValueError("pid is not in the unit's cgroup")
+        status = self._proc_status(pid)
+        uids = {int(x) for x in status["Uid"].split()}
+        if len(uids) != 1:
+            raise ValueError("real/effective/saved/fs uids differ")  # not a plain service identity
+        gids = {int(x) for x in status["Gid"].split()} | {int(x) for x in status.get("Groups", "").split()}
+        cap = {k: int(status[f"Cap{k}"].strip(), 16) for k in ("Eff", "Amb", "Prm", "Inh", "Bnd")}
+        return {
+            "uid": next(iter(uids)),
+            "gids": frozenset(gids),
+            "no_new_privs": status["NoNewPrivs"].strip() == "1",
+            "cap_eff": cap["Eff"],
+            "cap_amb": cap["Amb"],
+            "cap_prm": cap["Prm"],
+            "cap_inh": cap["Inh"],
+            "cap_bnd": cap["Bnd"],
+        }
+
     def unit_state(self, unit: str) -> UnitState:
-        """Inactive (clearly down), transitional (restarting), or active with the identity of its main process read
-        from /proc/<pid>/status; anything unclear is ``unknown`` (never a guess)."""
+        """Inactive (clearly down), transitional (restarting; with the identity of its process if one runs), or active
+        with the identity of its main process; anything unclear is ``unknown`` (never a guess)."""
         import subprocess
 
         try:
             state, pid = self._show(unit)
             if state in ("inactive", "failed") and pid == 0:
                 return UnitState("inactive")
-            if state in ("activating", "deactivating", "reloading"):
-                return UnitState("transitional")
-            if state != "active" or pid <= 0 or not self._in_unit_cgroup(pid, unit):
+            transitional = state in ("activating", "deactivating", "reloading")
+            if transitional and pid == 0:
+                return UnitState("transitional")  # no process runs: nothing to be exposed by
+            if (state != "active" and not transitional) or pid <= 0:
                 return UnitState("unknown")
-            status = self._proc_status(pid)
-            uids = {int(x) for x in status["Uid"].split()}
-            gid_list = {int(x) for x in status["Gid"].split()} | {int(x) for x in status.get("Groups", "").split()}
-            if len(uids) != 1:
-                return UnitState("unknown")  # real/effective/saved/fs differ: not a plain service identity
-            result = UnitState(
-                "active",
-                next(iter(uids)),
-                frozenset(gid_list),
-                status["NoNewPrivs"].strip() == "1",
-                int(status["CapEff"].strip(), 16),
-                int(status["CapAmb"].strip(), 16),
-            )
+            try:
+                ident = self._identity(unit, pid)
+            except FileNotFoundError:
+                if transitional:
+                    return UnitState("transitional")  # the process ended between the two reads (a crash loop)
+                return UnitState("unknown")
             if self._show(unit) != (state, pid):
                 return UnitState("unknown")  # changed while we looked (PID reuse, restart)
-            return result
+            return UnitState("transitional" if transitional else "active", **ident)
         except (OSError, ValueError, KeyError, subprocess.SubprocessError):
             return UnitState("unknown")

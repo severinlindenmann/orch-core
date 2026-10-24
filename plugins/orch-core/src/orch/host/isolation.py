@@ -27,11 +27,11 @@ refuses a sudo rule); a sudoers file this process can read and that names the ag
 from __future__ import annotations
 
 from dataclasses import dataclass
-from fnmatch import fnmatch
 from typing import Final, Literal
 
 from ..setup.osfacts import OsFacts
-from ..setup.osusers import AGENT_HOME_ROOT, AGENT_PREFIX, AGENT_SHELL, PRIVILEGED_GROUPS, sudoers_names
+from ..setup.osrules import sshd_denies
+from ..setup.osusers import AGENT_HOME_ROOT, AGENT_PREFIX, AGENT_SHELL, PRIVILEGED_GROUPS, sudo_exposed
 
 __all__ = ["EXPOSURE", "AVAILABILITY", "IsolationResult", "Reason", "detect"]
 
@@ -107,9 +107,16 @@ def _same_user(platform: str, reason: Reason) -> IsolationResult:
 
 
 def detect(
-    facts: OsFacts, person: str, person_uid: int, protected_paths: list[str], *, run_root: str = RUN_ROOT
+    facts: OsFacts,
+    person: str,
+    person_uid: int,
+    state_dir: str,
+    key_paths: list[str] | tuple[str, ...] = (),
+    *,
+    run_root: str = RUN_ROOT,
 ) -> IsolationResult:
-    """``protected_paths``: the person's key and state files/directories the agent must not read."""
+    """``state_dir``: the person's state directory (always checked, and it must exist); ``key_paths``: key files
+    that the agent must not read either (absent ones are skipped, e.g. a key not created yet)."""
     if facts.platform != "linux":
         word = {"darwin": "a Mac", "windows": "Windows"}.get(facts.platform, "this system")
         return _same_user(
@@ -143,18 +150,17 @@ def detect(
     if not (isinstance(pin, dict) and pin.get("class") == "agent" and pin.get("host_uid") == person_uid):
         reasons.append(Reason("no_pin", f"'{name}' has no valid root-owned pin."))
     reasons += _run_tree(facts, f"{run_root}/{person_uid}", person_uid, agent.gid)
-    existing = [path for path in protected_paths if facts.stat(path) is not None]
-    if not existing:
-        reasons.append(
-            Reason("protected_missing", "None of the key or state paths to check exists, so nothing is proven.")
-        )
-    for path in existing:
+    if facts.stat(state_dir) is None:
+        reasons.append(Reason("protected_missing", "The state directory to protect does not exist: nothing is proven."))
+    for path in [state_dir, *key_paths]:
+        if facts.stat(path) is None:
+            continue  # an absent key is nothing to read
         if facts.can_read(agent.uid, path):
             reasons.append(Reason("readable_by_agent", f"The agent user can read {path}."))
     for sock in ROOT_SOCKETS:
         if facts.stat(sock) is not None and facts.can_connect(agent.uid, sock):
             reasons.append(Reason("root_socket", f"The agent user can reach {sock}, which gives root power."))
-    reasons += _sudo_and_ssh(facts, name)
+    reasons += _sudo_and_ssh(facts, name, agent)
     reasons += _runner(facts, name, agent.uid, agent.gid, person_uid)
     return _result("linux", reasons)
 
@@ -163,51 +169,59 @@ def _runner(facts: OsFacts, name: str, agent_uid: int, agent_gid: int, person_ui
     unit = facts.unit_state(f"orch-runner@{name}.service")
     if unit.state == "inactive":
         return [Reason("runner_down", "The agent service is not running.", AVAILABILITY)]
-    if unit.state == "transitional":  # starting, stopping, restarting: an agent crash-looping its runner pauses nothing
-        return [Reason("runner_restarting", "The agent service is restarting.", AVAILABILITY)]
-    if unit.state != "active" or unit.uid is None:
-        return [Reason("runner_unknown", "The agent service state could not be read, so it is not trusted.")]
     out: list[Reason] = []
+    if unit.state == "transitional":
+        out.append(Reason("runner_restarting", "The agent service is restarting.", AVAILABILITY))
+        if (
+            unit.uid is None
+        ):  # no process runs: nothing is exposed, and an agent crash-looping its runner pauses nothing
+            return out
+        # a process runs while restarting: its identity is checked like an active one
+    elif unit.state != "active" or unit.uid is None:
+        return [Reason("runner_unknown", "The agent service state could not be read, so it is not trusted.")]
     if unit.uid == person_uid:
         out.append(Reason("runner_is_person", "The agent service runs as you."))
     elif unit.uid != agent_uid:
         out.append(Reason("runner_wrong_user", "The agent service runs as the wrong user."))
     if unit.gids != {agent_gid}:
         out.append(Reason("runner_groups", "The agent service runs with groups beyond its own."))
-    if unit.no_new_privs is not True or unit.cap_eff != 0 or unit.cap_amb != 0:
+    caps = (unit.cap_eff, unit.cap_amb, unit.cap_prm, unit.cap_inh, unit.cap_bnd)  # bnd == 0 mirrors the unit file
+    if unit.no_new_privs is not True or any(c != 0 for c in caps):
         out.append(Reason("runner_privileged", "The agent service can gain privileges."))
     return out
 
 
-def _sudo_and_ssh(facts: OsFacts, name: str) -> list[Reason]:
+def _sudo_and_ssh(facts: OsFacts, name: str, agent) -> list[Reason]:
     out: list[Reason] = []
-    lines = facts.sudoers_lines()  # None: unreadable to this process (normal); the setup plan checks as root
-    if lines and sudoers_names(lines, name):
+    # sudo's own answer when this process may ask; else the parser over /etc/sudoers if readable (usually it is not for
+    # an unprivileged host: the root-time setup plan is the check there; the residual risk is a rule written later).
+    if sudo_exposed(facts, agent):
         out.append(Reason("sudoers_entry", f"'{name}' has a sudo rule."))
-    try:
-        main = facts.read_text(SSHD_CONFIG)
-        if main is not None:
-            texts = [main]
-            if "sshd_config.d" in main:
-                for entry in sorted(facts.listdir(SSHD_DIR)):
-                    if entry.endswith(".conf"):
-                        text = facts.read_text(f"{SSHD_DIR}/{entry}")
-                        if text is not None:
-                            texts.append(text)
-            if not _ssh_denied(texts, name):
-                out.append(Reason("ssh_not_denied", f"SSH logins are not forbidden for '{name}'."))
-    except OSError:
-        out.append(Reason("ssh_unknown", "The SSH configuration could not be read, so it is not trusted."))
+    denied = facts.sshd_denies(name)  # ``sshd -T -C user=...`` when runnable (needs root), else read the files
+    if denied is None:
+        try:
+            main = facts.read_text(SSHD_CONFIG)
+        except PermissionError:  # e.g. RHEL's 0600 sshd_config: trust only orch's own 0644 drop-in, can not see Include
+            try:
+                dropin = facts.read_text(f"{SSHD_DIR}/10-orch-agents.conf")
+            except OSError:
+                dropin = None
+            if dropin is None or not sshd_denies(lambda _p: dropin, lambda _d: [], name, "x"):
+                out.append(Reason("ssh_unknown", "The SSH configuration could not be read, so it is not trusted."))
+            return out
+        except OSError:
+            out.append(Reason("ssh_unknown", "The SSH configuration could not be read, so it is not trusted."))
+            return out
+        if main is None:
+            return out  # no sshd configured at all
+        try:
+            denied = sshd_denies(facts.read_text, facts.listdir, name, SSHD_CONFIG)
+        except OSError:
+            out.append(Reason("ssh_unknown", "The SSH configuration could not be read, so it is not trusted."))
+            return out
+    if not denied:
+        out.append(Reason("ssh_not_denied", f"SSH logins are not forbidden for '{name}'."))
     return out
-
-
-def _ssh_denied(texts: list[str], name: str) -> bool:
-    for text in texts:
-        for line in text.splitlines():
-            parts = line.split("#", 1)[0].split()
-            if parts and parts[0].lower() == "denyusers" and any(fnmatch(name, pat) for pat in parts[1:]):
-                return True
-    return False
 
 
 def _run_tree(facts: OsFacts, root: str, person_uid: int, agent_gid: int) -> list[Reason]:

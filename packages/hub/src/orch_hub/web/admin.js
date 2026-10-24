@@ -213,7 +213,7 @@ export function adminView(d) {
   const mpDirty = () => ui !== null && canon(toPolicy()) !== canon(ui.base.policy);
   const syncMp = () => { if (ui === null || !mpDirty()) ui = fromPolicy(data.policy); };
   const mpPaint = () => {
-    mpRoot.replaceChildren(...buildMp());
+    mpRoot.replaceChildren(...buildMp().filter(Boolean));
     if (mpFocus) { document.getElementById(mpFocus)?.focus(); mpFocus = null; }
   };
   const mpFail = (field, msg) => { ui.err = { field, msg }; mpFocus = "mp-" + field; mpPaint(); };

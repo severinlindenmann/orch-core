@@ -54,6 +54,8 @@ export function storyOf(action: ClickAction | null | undefined, ctx: StoryContex
       if (action.gate === 'requirements') return { signLabel: 'Sign requirements', scope: 'This signs the requirements only, not the plan.', steps: ['You sign.', 'The requirements are locked as shown.', 'The plan still needs your approval, separately.'] }
       if (action.gate === 'plan') return { signLabel: 'Sign and start building', steps: ['You sign.', 'The agent may start building the plan shown here.', 'You review the result and give the final verdict.'] }
       return { signLabel: 'Sign approval', steps: ['You sign.', 'Your approval of this step is recorded as shown.'] }
+    case 'market_grant':
+      return { signLabel: 'Approve package in Terminal', steps: ['You sign approval for this exact package and its permissions.', 'The host installs the approved package.'] }
     case 'answer':
       return { signLabel: 'Send answer', steps: [], compact: true }
     case 'runner_grant': {

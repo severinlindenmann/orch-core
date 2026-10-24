@@ -25,6 +25,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from orch import canon
+from orch.addons.settings_value import KEY as ADDONS_KEY
 
 from . import review, signcontent
 
@@ -241,7 +242,17 @@ _MOVE_TO = frozenset({"backlog", "open"})
 _GATES = frozenset({"requirements", "plan", "verify", "code"})
 _PEOPLE_ROLES = ("owner", "assignees", "reviewers")  # watchers: not offered by the dashboard yet
 _SETTINGS_KEYS = frozenset(
-    {"grant_hours", "claim_ttl_min", "lease_ttl_min", "sign_methods", "repos", "publish", "models", "icon"}
+    {
+        "grant_hours",
+        "claim_ttl_min",
+        "lease_ttl_min",
+        "sign_methods",
+        "repos",
+        "publish",
+        "models",
+        "icon",
+        ADDONS_KEY,
+    }  # fmt: skip
 )
 
 
@@ -353,6 +364,10 @@ def _person_op(prepared: Mapping[str, Any]) -> None:
             sets = e.get("set")
             ok = e["type"] == "settings.changed" and log == "workspace" and isinstance(sets, dict) and bool(sets)
             ok = ok and set(sets) <= _SETTINGS_KEYS
+            if ok and ADDONS_KEY in sets:  # G6: one add-on, alone, within the general bounds (rendered from the event)
+                from orch.addons import settings_value
+
+                ok = len(sets) == 1 and settings_value.check_changes(sets[ADDONS_KEY]) is None
         else:
             return
         if not ok:
@@ -605,10 +620,15 @@ def _market(material: Mapping[str, Any], events: list[Mapping[str, Any]]) -> Non
     short = lambda v, n: isinstance(v, str) and len(v) <= n  # noqa: E731
     ok = (
         short(block["url"], 200)
-        and block["class"] in ("official", "dev")
+        and block["class"] in ("official", "dev", "dev-folder")
         and isinstance(block["commit"], str)
         and re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", block["commit"]) is not None
-        and block["source_note"] == "source as claimed by the marketplace"
+        and block["source_note"]
+        == (
+            "a local folder at this commit (orch addon dev), not a marketplace"
+            if block["class"] == "dev-folder"
+            else "source as claimed by the marketplace"
+        )
         and (pub["fingerprint"] is None or short(pub["fingerprint"], 60))
         and pub["tofu"] in _TOFU
         and type(block["index_version"]) is int
@@ -903,6 +923,14 @@ def render(
         pub = market["publisher"]
         who = {"unsigned": "unsigned (no publisher key)", "new": "first use: remembered when you sign",
                "known": "same publisher as before"}[pub["tofu"]]  # fmt: skip
+        if market["class"] == "dev-folder":
+            commit = _clean(market["commit"])
+            out.append(
+                f"DEV add-on from a local folder, not from a marketplace (per host, not signed): commit {commit}"
+            )
+            out.append(f"source (per host, not signed): {_clean(market['source_note'])}")
+            market = None
+    if market is not None:
         out.append(f"marketplace (per host, not signed): {_clean(market['url'])} ({_clean(market['class'])})")
         out.append(f"marketplace commit (per host, not signed): {_clean(market['commit'])}")
         out.append(f"source (per host, not signed): {_clean(market['source_note'])}")

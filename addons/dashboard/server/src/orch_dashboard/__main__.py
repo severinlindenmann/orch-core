@@ -9,6 +9,7 @@ import hashlib
 import hmac
 import html
 import json
+import math
 import os
 import secrets
 import socket
@@ -26,7 +27,7 @@ from pathlib import Path
 import uvicorn
 
 from .app import create_app
-from .auth import CODE_TTL, SETUP_CODE_TTL, TUNNEL_CODE_TTL, Auth
+from .auth import CODE_TTL, SETUP_CODE_TTL, Auth
 from .gateway import Gateway, RunDirectoryError, run_dir, state_dir
 from .hostlink import check_uid, encode, receive
 
@@ -220,11 +221,25 @@ def tunnel_line(port, environ=None, user=None, host=None):
     user = user or getpass.getuser()
     if not (_plain(host) and _plain(user)):
         raise RuntimeError("cannot name this machine or user for an ssh command; build the tunnel line yourself")
-    return f"ssh -L {port}:127.0.0.1:{port} {user}@{host}"
+    return f"ssh -o ExitOnForwardFailure=yes -L {port}:127.0.0.1:{port} {user}@{host}"
 
 
 def _plain(value):
-    return bool(value) and all(c.isalnum() or c in "-_.:" for c in value)
+    # no leading "-": ssh would read a user or host like "-oFoo" as an option
+    return bool(value) and not value.startswith("-") and all(c.isalnum() or c in "-_.:" for c in value)
+
+
+def bind_listener(wanted):
+    """The loopback listener. SO_REUSEADDR so a restart on a fixed port is not refused while the old connections sit
+    in TIME_WAIT (on Linux it never lets anyone take a port that is still listening)."""
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        listener.bind(("127.0.0.1", wanted))
+    except BaseException:
+        listener.close()
+        raise
+    return listener
 
 
 def serve(lock_held=False, port=None):
@@ -251,10 +266,9 @@ def _serve(directory, lock_fd=None, port=None):
     if redirects != directory:
         sweep_redirects(redirects)
     auth = Auth(directory=redirects)
-    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     wanted = listen_port(directory, port=port)
     try:
-        listener.bind(("127.0.0.1", wanted))
+        listener = bind_listener(wanted)
     except OSError as exc:
         if wanted and exc.errno == errno.EADDRINUSE:
             raise RuntimeError(
@@ -486,11 +500,11 @@ def open_dashboard(path="/", print_url=False, emit_url_fd=None, no_browser=False
     fragment = urllib.parse.urlencode({"launch": launch["code"], "to": path})
     url = f"http://127.0.0.1:{launch['port']}/#{fragment}"
     if print_url:
-        ttl = CODE_TTL if kind is None else TUNNEL_CODE_TTL  # setup's nonce lives as long as the tunnel one
+        left = math.ceil(float(launch["expires_at"]) - time.time())  # what the server really granted
         print(
-            f"Single-use dashboard link; expires in {ttl // 60} min."
-            if ttl >= 60
-            else f"Single-use dashboard link; expires in {ttl} s."
+            f"Single-use dashboard link; expires in {left // 60} min."
+            if left >= 60
+            else f"Single-use dashboard link; expires in {max(left, 0)} s."
         )
         if headless:
             print(f"On your own computer, first run:  {tunnel_line(launch['port'])}")

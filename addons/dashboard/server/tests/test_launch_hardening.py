@@ -2,6 +2,7 @@
 
 import subprocess
 import sys
+import time
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
@@ -402,12 +403,18 @@ def test_port_in_use_is_named(tmp_path, monkeypatch):
 
 def test_print_url_tunnel_line_uses_the_real_user_and_the_ssh_address():
     env = {"SSH_CONNECTION": "1.2.3.4 5555 203.0.113.9 22"}
-    assert launcher.tunnel_line(47821, env, user="alice") == "ssh -L 47821:127.0.0.1:47821 alice@203.0.113.9"
+    assert (
+        launcher.tunnel_line(47821, env, user="alice")
+        == "ssh -o ExitOnForwardFailure=yes -L 47821:127.0.0.1:47821 alice@203.0.113.9"
+    )
 
 
 def test_print_url_tunnel_line_falls_back_to_the_host_name(monkeypatch):
     monkeypatch.setattr(launcher.socket, "getfqdn", lambda: "box.example.org")
-    assert launcher.tunnel_line(1234, {}, user="bob") == "ssh -L 1234:127.0.0.1:1234 bob@box.example.org"
+    assert (
+        launcher.tunnel_line(1234, {}, user="bob")
+        == "ssh -o ExitOnForwardFailure=yes -L 1234:127.0.0.1:1234 bob@box.example.org"
+    )
 
 
 def test_print_url_tunnel_line_refuses_odd_names():
@@ -415,7 +422,7 @@ def test_print_url_tunnel_line_refuses_odd_names():
         launcher.tunnel_line(1234, {}, user="bob", host="x; rm -rf ~")
 
 
-def test_print_url_tunnel_code_lives_5_minutes_and_stays_single_use(tmp_path, monkeypatch):
+def test_print_url_tunnel_code_lives_5_minutes_and_stays_single_use():
     now = [1000.0]
     auth = Auth(clock=lambda: now[0])
     tunnel = auth.launch(PORT, tunnel=True)
@@ -428,7 +435,7 @@ def test_print_url_tunnel_code_lives_5_minutes_and_stays_single_use(tmp_path, mo
     assert auth.exchange(tunnel["code"])[1] == 401  # single use
 
 
-def _print_url_run(tmp_path, monkeypatch, capsys, environ):
+def _print_url_run(tmp_path, monkeypatch, capsys, environ, tunnel=False):
     kinds = []
     for name in ("SSH_CONNECTION", "DISPLAY", "WAYLAND_DISPLAY"):
         monkeypatch.delenv(name, raising=False)
@@ -445,18 +452,49 @@ def _print_url_run(tmp_path, monkeypatch, capsys, environ):
             {"release": launcher.code_digest()} if command == "hello" else kinds.append(kind) or issued
         ),
     )
+    if tunnel:  # the server's answer decides the printed time, not the kind asked for
+        issued["expires_at"] = int(time.time()) + 300
     launcher.open_dashboard("/", print_url=True)
     return kinds, capsys.readouterr().out
 
 
 def test_print_url_headless_asks_for_a_tunnel_code_and_prints_the_ssh_line(tmp_path, monkeypatch, capsys):
-    kinds, out = _print_url_run(tmp_path, monkeypatch, capsys, {"SSH_CONNECTION": "1.2.3.4 5 203.0.113.9 22"})
+    kinds, out = _print_url_run(
+        tmp_path, monkeypatch, capsys, {"SSH_CONNECTION": "1.2.3.4 5 203.0.113.9 22"}, tunnel=True
+    )
     assert kinds == ["tunnel"]
     assert "expires in 5 min" in out
-    assert f"ssh -L {PORT}:127.0.0.1:{PORT} alice@203.0.113.9" in out
+    assert f"ssh -o ExitOnForwardFailure=yes -L {PORT}:127.0.0.1:{PORT} alice@203.0.113.9" in out
 
 
 def test_print_url_on_a_desktop_keeps_30_seconds_and_no_ssh_line(tmp_path, monkeypatch, capsys):
     kinds, out = _print_url_run(tmp_path, monkeypatch, capsys, {"DISPLAY": ":0"})
     assert kinds == [None]
     assert "expires in 30 s" in out and "ssh -L" not in out
+
+
+def test_print_url_text_follows_the_servers_expiry_not_the_kind(tmp_path, monkeypatch, capsys):
+    # an older server answers "tunnel" with a 30 s code: the text must say 30 s
+    _kinds, out = _print_url_run(tmp_path, monkeypatch, capsys, {"SSH_CONNECTION": "1.2.3.4 5 203.0.113.9 22"})
+    assert "expires in 30 s" in out and "5 min" not in out
+
+
+@pytest.mark.parametrize("user,host", [("-oProxyCommand=x", "box"), ("bob", "-oFoo"), ("bob", "-x.example")])
+def test_print_url_tunnel_line_rejects_a_leading_dash(user, host):
+    with pytest.raises(RuntimeError):
+        launcher.tunnel_line(1234, {}, user=user, host=host)
+
+
+def test_port_listener_can_rebind_after_a_connection_closed():
+    import socket as _socket
+
+    first = launcher.bind_listener(0)
+    first.listen(1)
+    port = first.getsockname()[1]
+    client = _socket.create_connection(("127.0.0.1", port))
+    conn, _ = first.accept()
+    conn.close()
+    client.close()
+    first.close()
+    second = launcher.bind_listener(port)  # without SO_REUSEADDR the closed connection's TIME_WAIT can refuse this
+    second.close()

@@ -19,7 +19,7 @@ const view = (): ClickViewAnswer => ({
   view_digest: DIGEST,
   view: {
     risk: CLICK_RISK, op: 'new', workspace: { id: 'x'.repeat(32), name: 'billing', prefix: 'DEMO' }, fingerprint: '0123456789ab',
-    lines: ['Create DEMO-0044: Export CSV'], checks: [], confirm: { kind: 'word', word: 'GRANT' },
+    lines: ['Create DEMO-0044: Export CSV'], checks: [], confirm: { kind: 'click' },
     expires_at: new Date(Date.now() + 600_000).toISOString(), auth: 'convenience', device: 'd_x', artifacts: null,
   },
 })
@@ -32,7 +32,7 @@ beforeEach(() => {
   vi.spyOn(routingApi, 'choices').mockResolvedValue({ harnesses: [{ id: 'claude-code', label: 'Claude', models: [] }, { id: 'codex', label: 'Codex', models: [] }], modes: [] })
   vi.spyOn(agentsApi, 'runner').mockResolvedValue({ runner: { connected: true, enabled: true, terminals: false, grant: null } })
   vi.spyOn(agentsApi, 'riskNotices').mockResolvedValue({ acknowledged: { start_agent: true } })
-  vi.spyOn(api, 'prepareClick').mockResolvedValue({ request_id: REQ, expires_at: new Date(Date.now() + 600_000).toISOString(), op: 'new', confirm: 'word' })
+  vi.spyOn(api, 'prepareClick').mockResolvedValue({ request_id: REQ, expires_at: new Date(Date.now() + 600_000).toISOString(), op: 'new', confirm: 'click' })
   vi.spyOn(api, 'viewClick').mockResolvedValue(view())
   vi.spyOn(api, 'cancelClick').mockResolvedValue({ id: REQ, state: 'cancelled' })
   s = {

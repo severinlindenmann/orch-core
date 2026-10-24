@@ -2,7 +2,7 @@
 
 A closed set of typed routes, like the hand-off. The browser names a typed action (the same bodies as the hand-off);
 the op and its arguments are chosen here, in `host_call`, never by the browser. The View comes from the signer and is
-passed on unchanged: **this server never builds a preview for a click request, never logs a View, a word or a
+passed on unchanged: **this server never builds a preview for a click request, never logs a View or a
 credential, and never signs.** It also never calls the signer from an addon route: only these four handlers do.
 
 **One action intent -> at most one request -> at most one signature.** The idem handed to the signer's `prepare` is
@@ -53,7 +53,6 @@ from .reads import workspace
 # The card text, verbatim (owner decision, 12 Oct 2026). A View that carries anything else is not shown.
 RISK = "Convenience signing: agents running as you, or anything that takes over this dashboard, could sign."
 ViewDigest = Annotated[str, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
-Word = Annotated[str, StringConstraints(min_length=1, max_length=128)]
 TTL = 660  # a request lives 10 minutes at most (the signer caps it); the session forgets it a minute later
 REMEMBERED = 256
 #: refusals after which a request can no longer be signed: its slot is free again
@@ -68,7 +67,6 @@ DEPOSIT_RISK = (
     "Anything that takes over the dashboard can give agents standing authority to act for you on tickets for as long "
     "as the grant lasts (up to 7 days, the length you choose); you can stop it at any time."
 )
-GRANT_WORD = re.compile(r"^[A-Z][A-Z0-9]{0,15}~[0-9a-f]{8}/GRANT$")
 DEPOSITS = ("confirmed", "rejected", "unknown")
 #: H11c-2's closed set of `deposit_reason` codes (static codes, never host text); anything else reads `other`
 DEPOSIT_REASONS = (
@@ -115,8 +113,8 @@ ClickBody = PrepareBody
 
 def deposit_view_ok(view: dict, ws: str) -> bool:
     """A deposit grant's View (section 0.8.6 item 6): `deposit:true`, core's deposit line in `deposit_line` and in
-    `lines`, the owner's risk sentence in `lines`, this workspace, and the typed word `<PREFIX>~<WS8>/GRANT` of THIS
-    workspace (review L3: bound to `ws`, not any workspace's word)."""
+    `lines`, the owner's risk sentence in `lines`, this workspace and a plain click
+    confirmation (no typed word)."""
     confirm = view.get("confirm")
     lines = view.get("lines")
     workspace = view.get("workspace")
@@ -124,17 +122,12 @@ def deposit_view_ok(view: dict, ws: str) -> bool:
         isinstance(workspace, dict)
         and workspace.get("id") == ws
         and isinstance(confirm, dict)
-        and isinstance(confirm.get("word"), str)
-        and confirm["word"].endswith(f"~{ws[-8:]}/GRANT")
         and view.get("deposit") is True
         and view.get("deposit_line") == DEPOSIT_LINE
         and isinstance(lines, list)
         and DEPOSIT_LINE in lines
         and DEPOSIT_RISK in lines
-        and isinstance(confirm, dict)
-        and confirm.get("kind") == "word"
-        and isinstance(confirm.get("word"), str)
-        and GRANT_WORD.fullmatch(confirm["word"]) is not None
+        and confirm == {"kind": "click"}
     )
 
 
@@ -172,7 +165,6 @@ class Step(BaseModel):
 
 class Sign(Step):
     view_digest: ViewDigest
-    word: Word | None = None
 
 
 class Clicks:
@@ -318,18 +310,6 @@ def register(app: FastAPI, gateway: Gateway):
 
     def _prepare(body, token, ws):
         grant = isinstance(body, RunnerGrant)
-        if grant and not signer.deposits():
-            # A contract-1 signer reads every grant as terminal only: say so before anything is prepared (H11c-2).
-            raise HostError(
-                {
-                    "code": "human.click_refused",
-                    "message": UPDATE_ORCH,
-                    "retryable": False,
-                    "reason": "terminal_only",
-                    "why": "update_orch",
-                },
-                3,
-            )
         if isinstance(body, NewTicketSequence | EditTicket | QuickStart | AddonEnable) and not signer.sequences():
             # an older signer would ignore `sequence` and sign the first step only
             raise fail(
@@ -553,11 +533,8 @@ def register(app: FastAPI, gateway: Gateway):
         # replaces the signer under it, and the mark is already there if the answer is lost. (A second signature of
         # the request is refused by the signer and the host, which are the ones that know.)
         handoffs.begin_sign(ws, rid, handoffs.clock() + TTL + 60)
-        args = {"view_digest": body.view_digest}
-        if body.word is not None:
-            args["word"] = body.word  # exactly as typed
         try:
-            got = signer.call("sign", {"workspace_id": ws, "request_id": rid, **args}, lost=lost_sign())
+            got = signer.call("sign", {"workspace_id": ws, "request_id": rid, "view_digest": body.view_digest}, lost=lost_sign())
         except HostError as exc:
             # Before follow-up host reads, which may themselves fail. A definite failure never clears an earlier or a
             # concurrent unknown outcome; the rule lives in Handoffs.end_sign.

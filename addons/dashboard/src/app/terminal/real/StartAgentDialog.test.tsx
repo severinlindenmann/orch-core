@@ -22,7 +22,6 @@ const GRANT = 'gr_01M4Y46B485AXD4CBEJZ15Z1TV'
 const REQ = 'hr_01M4Y46B485AXD4CBEJZ15Z1TV'
 const UNTIL = '2026-10-15T20:00:00Z'
 const SOON = new Date(Date.now() + 2 * 86_400_000).toISOString() // a grant that is still valid
-const WORD = `DEMO~${WS.slice(-8)}/GRANT`
 
 const preview = (over: Partial<AgentPreview> = {}): AgentPreview => ({
   spec: 'f'.repeat(64), ticket: 'DEMO-1', display: "claude 'Run orch status, then work on ticket DEMO-1.'", display_hidden: false,
@@ -38,7 +37,7 @@ const grantView = (over: Partial<ClickViewAnswer['view']> = {}): ClickViewAnswer
   view_digest: 'sha256:' + 'c'.repeat(64),
   view: {
     risk: CLICK_RISK, op: 'grant', workspace: { id: WS, name: 'billing', prefix: 'DEMO' }, fingerprint: '0123456789ab',
-    lines: ['grant to agents, 8 hours, workable', '', DEPOSIT_RISK, DEPOSIT_LINE], checks: [], confirm: { kind: 'word', word: WORD },
+    lines: ['grant to agents, 8 hours, workable', '', DEPOSIT_RISK, DEPOSIT_LINE], checks: [], confirm: { kind: 'click' },
     expires_at: new Date(Date.now() + 600_000).toISOString(), auth: 'convenience', device: 'd_x', artifacts: null,
     deposit: true, deposit_line: DEPOSIT_LINE, ...over,
   },
@@ -66,7 +65,7 @@ beforeEach(() => {
     forget: vi.spyOn(agentsApi, 'forget').mockResolvedValue({ forgotten: true }),
     notices: vi.spyOn(agentsApi, 'riskNotices').mockResolvedValue({ acknowledged: {} }),
     acknowledge: vi.spyOn(agentsApi, 'acknowledge').mockResolvedValue({ acknowledged: { start_agent: true } }),
-    prepare: vi.spyOn(api, 'prepareClick').mockResolvedValue({ request_id: REQ, expires_at: new Date(Date.now() + 600_000).toISOString(), op: 'grant', confirm: 'word' }),
+    prepare: vi.spyOn(api, 'prepareClick').mockResolvedValue({ request_id: REQ, expires_at: new Date(Date.now() + 600_000).toISOString(), op: 'grant', confirm: 'click' }),
     view: vi.spyOn(api, 'viewClick').mockResolvedValue(grantView()),
     sign: vi.spyOn(api, 'signClick').mockResolvedValue({ state: 'submitted', duplicate: false, deposit: 'confirmed', deposit_id: REQ.slice(3), grant: GRANT }),
     cancel: vi.spyOn(api, 'cancelClick').mockResolvedValue({ id: REQ, state: 'cancelled' }),
@@ -600,7 +599,6 @@ describe('review fixes', () => {
   })
 
   it.each([
-    [{ confirm: { kind: 'word' as const, word: 'DEMO~0a1b2c3d/GRANT' } }],
     [{ workspace: { id: 'f'.repeat(32), name: 'other', prefix: 'DEMO' } }],
   ])('L3: a grant View of another workspace gets no Sign button (%o)', async (over) => {
     s.preview.mockResolvedValue(noGrant())

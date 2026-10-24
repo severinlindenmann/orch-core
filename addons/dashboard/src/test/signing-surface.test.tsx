@@ -742,9 +742,9 @@ it('records current-destination confirmation warning preserves the exact URL thr
 })
 
 // M7b: Start agent (Tier A, no signature) shows exactly the host's preview and posts exactly the previewed values plus
-// its spec; the runner grant (the one signed step) is the signer's View with the deposit line and the word, confirmed by holding Sign.
+// its spec; the runner grant (the one signed step) is the signer's View with the deposit line, confirmed by holding Sign.
 describe('start agent', () => {
-  it.each([false, true])('runner grant (extend=%s) carries the deposit line and word before Sign', async (extend) => {
+  it.each([false, true])('runner grant (extend=%s) carries the deposit line before Sign', async (extend) => {
     const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query')
     const { agentsApi } = await import('@/api/agents')
     const { CLICK_RISK, DEPOSIT_LINE, DEPOSIT_RISK } = await import('@/api/click')
@@ -760,10 +760,10 @@ describe('start agent', () => {
       blocked: { code: 'launch.no_grant', message: 'none', detail: { reason: 'none' } },
     })
     vi.spyOn(agentsApi, 'runner').mockResolvedValue({ runner: { connected: true, enabled: true, terminals: false, grant: null } })
-    const prepare = vi.spyOn(api, 'prepareClick').mockResolvedValue({ request_id: 'hr_' + '1'.repeat(26), expires_at: new Date(Date.now() + 6e5).toISOString(), op: 'grant', confirm: 'word' })
+    const prepare = vi.spyOn(api, 'prepareClick').mockResolvedValue({ request_id: 'hr_' + '1'.repeat(26), expires_at: new Date(Date.now() + 6e5).toISOString(), op: 'grant', confirm: 'click' })
     vi.spyOn(api, 'viewClick').mockResolvedValue({ view_digest: 'sha256:' + 'd'.repeat(64), view: {
       risk: CLICK_RISK, op: 'grant', workspace: { id: WS, name: 'demo', prefix: 'DEMO' }, fingerprint: '0123456789ab', checks: [], artifacts: null,
-      lines: ['grant', '', DEPOSIT_RISK, DEPOSIT_LINE], confirm: { kind: 'word', word: 'DEMO~bbbbbbbb/GRANT' }, expires_at: new Date(Date.now() + 6e5).toISOString(),
+      lines: ['grant', '', DEPOSIT_RISK, DEPOSIT_LINE], confirm: { kind: 'click' }, expires_at: new Date(Date.now() + 6e5).toISOString(),
       auth: 'convenience', device: 'd_x', deposit: true, deposit_line: DEPOSIT_LINE } })
     vi.spyOn(api, 'cancelClick').mockResolvedValue({ id: 'x', state: 'cancelled' })
     render(<QueryClientProvider client={new QueryClient()}>{extend
@@ -781,7 +781,7 @@ describe('start agent', () => {
     const panel = await screen.findByTestId('click-panel', {}, T)
     expect(panel.textContent).toContain(DEPOSIT_LINE)
     expect(panel.textContent).toContain(DEPOSIT_RISK)
-    expect(within(panel).queryByRole('textbox')).toBeNull() // no typed word
+    expect(within(panel).queryByRole('textbox')).toBeNull() // nothing is typed
     expect(within(panel).getByTestId('access-length')).toHaveTextContent('Let agents work for you for 8 h.')
     expect(within(panel).getByRole('button', { name: extend ? 'Sign and extend' : 'Sign and start agent' })).toBeDisabled() // until armed
     expect(prepare.mock.calls[0][1]).toEqual({ action: 'runner_grant', hours: 8, scope: 'workable', ...(extend ? { extend: 'gr_old' } : {}) })

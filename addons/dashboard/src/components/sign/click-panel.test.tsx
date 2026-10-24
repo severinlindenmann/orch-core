@@ -198,23 +198,9 @@ describe('Sign is armed by presentation', () => {
   })
 })
 
-describe('a View that still says confirm: word (until C4)', () => {
-  const WORD = 'DEMO~a94c935c/POLICY'
-  const mountWord = (props: Partial<React.ComponentProps<typeof ClickSignPanel>> = {}) => mount(answer({ confirm: { kind: 'word', word: WORD } }), props)
-
-  it('has no input and no word hint: it signs on one click after arming, sending no word', () => {
-    const { onSign } = mountWord()
-    expect(screen.queryByRole('textbox')).toBeNull()
-    expect(screen.queryByTestId('word-hint')).toBeNull()
-    expect(sign()).toBeDisabled()
-    arm()
-    press(sign())
-    expect(onSign).toHaveBeenCalledTimes(1)
-    expect(onSign).toHaveBeenCalledWith()
-  })
-
+describe('agent access on a click View', () => {
   it('names the agent access, its length and what agents may do, when the story gives access', () => {
-    mountWord({ story: { signLabel: 'Sign and start agent', steps: ['You sign.'], access: { length: '7 days' } } })
+    mount(answer(), { story: { signLabel: 'Sign and start agent', steps: ['You sign.'], access: { length: '7 days' } } })
     expect(screen.getByTestId('access-length')).toHaveTextContent('Let agents work for you for 7 days.')
     expect(screen.getByTestId('agent-access')).toHaveTextContent('Agents (Claude Code) may read and change files in the project folder and run its commands.')
     expect(screen.queryByRole('textbox')).toBeNull()

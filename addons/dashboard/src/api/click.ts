@@ -35,7 +35,7 @@ export interface ClickPrepared {
   request_id: string
   expires_at: string
   op: string
-  confirm: 'click' | 'word'
+  confirm: 'click'
 }
 
 /** The signer's View, as it came (the server adds nothing). `lines` are core's terminal review, already escaped. */
@@ -48,7 +48,7 @@ export interface ClickView {
   fingerprint: string
   lines: string[]
   checks: { repo: string; clean: boolean; attested_by: string; at: string }[]
-  confirm: { kind: 'click' } | { kind: 'word'; word: string }
+  confirm: { kind: 'click' }
   expires_at: string
   auth: string
   device: string
@@ -105,19 +105,18 @@ export const DEPOSIT_LINE = 'The secret goes to your orch runner on this machine
 export const DEPOSIT_RISK = 'Anything that takes over the dashboard can give agents standing authority to act for you on tickets for as long as the grant lasts (up to 7 days, the length you choose); you can stop it at any time.'
 
 /**
- * A deposit View is shown with a Sign button only when it says so, carries both constants, and is of this workspace
- * with this workspace's word (`<PREFIX>~<ws[-8:]>/GRANT`, review L3). The server checks too.
+ * A deposit View is shown with a Sign button only when it says so, carries both constants, and is of this workspace.
+ * The server checks too.
  */
 export const depositViewOk = (view: ClickView, ws: string): boolean =>
-  view.workspace?.id === ws && view.confirm.kind === 'word' && view.confirm.word.endsWith(`~${ws.slice(-8)}/GRANT`) &&
-  view.deposit === true && view.deposit_line === DEPOSIT_LINE && view.lines.includes(DEPOSIT_LINE) && view.lines.includes(DEPOSIT_RISK) &&
-  view.confirm.kind === 'word' && /^[A-Z][A-Z0-9]{0,15}~[0-9a-f]{8}\/GRANT$/.test(view.confirm.word)
+  view.workspace?.id === ws && view.confirm.kind === 'click' &&
+  view.deposit === true && view.deposit_line === DEPOSIT_LINE && view.lines.includes(DEPOSIT_LINE) && view.lines.includes(DEPOSIT_RISK)
 
 /** The flag of a workspace: the signer says click-to-sign is on and it can sign there now (real host only). */
 export const clickReady = (w: Pick<Workspace, 'click'> | undefined | null): boolean => !!w?.click && w.click.enabled && w.click.available
 
 /**
- * Which typed actions are offered a Sign button: the ones the signer's allowlist serves as click or click + word.
+ * Which typed actions are offered a Sign button: the ones the signer's allowlist serves as click.
  * `grant` is not an action of the dashboard at all (terminal only); anything not listed here is terminal only.
  */
 const CLICK_ACTIONS: ReadonlySet<string> = new Set<HandoffAction['action']>([
@@ -172,7 +171,6 @@ const REFUSED: Record<string, ClickProblem> = {
   expired: { title: 'Expired', body: 'The request ran out of time before it was signed. Prepare it again.', next: 'prepare' },
   view_changed: { title: 'The review changed', body: 'What you would sign is no longer what you were shown. Nothing was signed. Read the new review.', next: 'review' },
   too_soon: { title: 'Too soon', body: 'The review was on screen for less than a second. Nothing was signed. Press Sign again.', next: 'retry' },
-  word: { title: 'Not the word shown', body: 'Type the word exactly as the review shows it. Nothing was signed.', next: 'retry' },
   custody_changed: { title: 'The key moved', body: 'The custody of your device key changed since the review. Nothing was signed. Prepare the request again.', next: 'prepare' },
   busy: { title: 'Busy', body: 'Another signature is in progress. Wait a moment, then press Sign again.', next: 'retry' },
   check_failed: { title: 'A check failed', body: 'The signing helper refused what the host sent (it did not match). Nothing was signed.'+OFF, next: 'terminal' },

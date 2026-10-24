@@ -22,7 +22,7 @@ import pytest
 from conftest import ORIGIN, PORT
 from fastapi.testclient import TestClient
 from orch.click.client import ClickClient
-from realhost_kit import Pty, Workspace, confirm_rules, key_of, ready_requirements, short_run_root
+from realhost_kit import Pty, Workspace, key_of, ready_requirements, short_run_root
 
 from orch_dashboard.app import create_app
 from orch_dashboard.auth import Auth
@@ -66,7 +66,7 @@ def world(tmp_path_factory):
             [sys.executable, "-I", CHILD, "cli", "keys", "custody", "convenience", "--workspace", ws.ws_id],
             ws.env(),
             ws.root,
-            confirm_rules(),
+            ws.rules(),
             90,
         ).run()
         assert convert.code == 0, convert.output[-1500:]

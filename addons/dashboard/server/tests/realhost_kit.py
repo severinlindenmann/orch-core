@@ -2,12 +2,12 @@
 
 Everything runs against a disposable state: an explicit `ORCH_STATE_DIR`, `HOME` and `XDG_CONFIG_HOME` under `base`
 (with `.orch-dev` markers), never `~/.config/orch`. The person's terminal is a pty: `Pty` answers the passphrase prompt,
-the recovery-code check of `orch init` and the "Type KEY and Enter" confirmations, exactly as a person at a keyboard would
+the confirmations of `orch setup` and the "Type KEY and Enter" confirmations, exactly as a person at a keyboard would
 (the test passphrase is public and protects nothing).
 
 `base` must be SHORT and outside any sticky directory such as /tmp: the host refuses ancestors it does not trust, and a unix
 socket path (`<state>/run/<ws>/host.sock`, `<state>/dashboard/ctl.sock`) holds about 100 bytes. `short_run_root()` gives
-`~/.cache/orch-rh` unless `XDG_RUNTIME_DIR` is a real 0700 directory.
+`~/.rh` unless `XDG_RUNTIME_DIR` is a real 0700 directory.
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -42,7 +43,7 @@ def short_run_root() -> Path:
     if runtime and Path(runtime).is_dir() and (Path(runtime).stat().st_mode & 0o777) == 0o700:
         root = Path(runtime) / "orch-rh"
     else:
-        root = Path.home() / ".cache" / "orch-rh"
+        root = Path.home() / ".rh"  # short: a workspace socket is <state>/run/<workspace id>/host.sock, 100 bytes max
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     return root
 
@@ -72,6 +73,7 @@ class Pty:
                     if not data:
                         break
                     buf += data.decode("utf-8", "replace")
+                    self.output = buf.replace("\r", "")  # live: a driver in another thread reads the link from it
                     for rx, answer in self.rules:
                         found = None
                         for found in re.finditer(rx, buf[fired:].replace("\r", "")):
@@ -122,10 +124,14 @@ def confirm_rules(passphrase: str = PASSPHRASE) -> list[tuple[str, Callable]]:
 class Workspace:
     def __init__(self, base: Path, prefix: str = "DEMO", dirname: str = "billing", owner: str = "Demo Owner"):
         self.base, self.prefix, self.dirname, self.owner = Path(base), prefix, dirname, owner
-        self.state, self.home = self.base / "state", self.base / "home"
-        self.run = self.state / "run"
+        self.state, self.home = (
+            self.base / "s",
+            self.base / "h",
+        )  # short: host sockets are <run>/<workspace id>/host.sock, 100 bytes max
+        self.run = self.state / "run"  # setup finds the host at <state>/run (connect_host ignores ORCH_HOST_RUN_DIR)
         self.root = self.base / dirname
         self.grant_secret: str | None = None
+        self.passphrase = PASSPHRASE  # replaced by the one `orch setup` generated (setup_driver)
         self.session = SESSION
         self.host: subprocess.Popen | None = None
         self.log: Path = self.base / "host.log"
@@ -147,6 +153,9 @@ class Workspace:
         env.update(extra)
         return env
 
+    def rules(self) -> list[tuple[str, Callable]]:
+        return confirm_rules(self.passphrase)
+
     def make_dirs(self) -> None:
         for path in (self.base, self.state, self.home, self.home / ".config", self.root):
             path.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -160,7 +169,7 @@ class Workspace:
 
     def human(self, *args: str, timeout: int = 90, ok: bool = True) -> str:
         """A person's command at their own terminal: the passphrase and the confirmation word are typed for them."""
-        run = Pty(self.orch(*args), self.env(), self.root, confirm_rules(), timeout).run()
+        run = Pty(self.orch(*args), self.env(), self.root, self.rules(), timeout).run()
         if ok and run.code != 0:
             raise RuntimeError(f"orch {' '.join(args)} exited {run.code}:\n{run.output[-1500:]}")
         return run.output
@@ -187,25 +196,20 @@ class Workspace:
 
     def sign(self, code: str, *extra: str, timeout: int = 90) -> str:
         """`orch sign CODE` at the person's terminal (H5b): the real signer, in a pty, with the confirmation typed."""
-        run = Pty(self.orch("sign", code, *extra), self.env(), self.root, confirm_rules(), timeout).run()
+        run = Pty(self.orch("sign", code, *extra), self.env(), self.root, self.rules(), timeout).run()
         if run.code != 0:
             raise RuntimeError(f"orch sign {code} exited {run.code}:\n{run.output[-2000:]}")
         return run.output
 
     # -- bring-up ---------------------------------------------------------------------------------------------------
     def init(self) -> None:
+        """Create the workspace with the real `orch setup --no-browser` (V3-D38: the only way). The host must be running
+        (:meth:`start_host`): setup creates the workspace through it and registers it. A person's browser is played by
+        :func:`setup_driver` over the setup socket; the terminal answers are typed in the pty."""
         self.make_dirs()
-
-        def word(m, t):
-            code = re.findall(r"\d+ ([a-z]+)", re.findall(r"\n\n((?: *\d+ [a-z]+(?: +\d+ [a-z]+)*\n){4})", t)[-1])
-            return code[int(m.group(1)) - 1]
-
-        rules = [(r"Press Enter[^\n]*: $", lambda m, t: ""), (r"Word (\d+): $", word), *confirm_rules()]
-        run = Pty(
-            self.orch("init", "--prefix", self.prefix, "--name", self.owner), self.env(), self.root, rules, 120
-        ).run()
-        if run.code != 0:
-            raise RuntimeError(f"orch init failed:\n{run.output[-1500:]}")
+        if self.host is None or self.host.poll() is not None:
+            raise RuntimeError("orch setup needs the host: call start_host() first")
+        setup_driver(self)
 
     @property
     def config(self) -> dict:
@@ -290,20 +294,109 @@ class Workspace:
             raise RuntimeError(f"host register failed: {done.stdout}{done.stderr}")
 
     def bring_up(self, seeding: Callable[[Workspace], object] | None = None) -> object:
-        """init, grant, dashboard addon, then `seeding` through the direct CLI, then the host serves it.
+        """start the host, `orch setup`, grant, dashboard addon, then `seeding` through the direct CLI, then the host serves it.
 
         Seeding runs before `register` on purpose: since core H4b (#409) the CLI of a registered workspace talks to the
         host, but `orch task done` still answers not_implemented there (H3b2, #412), and seeding done tasks needs it.
         After `register` the same CLI writes through the running host (used for the live-update checks).
         Leaves the host running.
         """
-        self.init()
+        self.make_dirs()
+        self.start_host()
+        self.init()  # `orch setup` registers the workspace with the running host
         self.grant()
         self.install_dashboard()
-        seeded = seeding(self) if seeding else None
-        self.start_host()
-        self.register()
-        return seeded
+        return seeding(self) if seeding else None
+
+
+# -- `orch setup` without a browser: the page played over the setup socket ----------------------------------------------
+_LINK = re.compile(r"http://127\.0\.0\.1:(\d{1,5})/#launch=([A-Za-z0-9_-]{20,100})&to=")
+
+
+def setup_driver(ws: Workspace, *, timeout: int = 180) -> None:
+    """Run the real `orch setup --no-browser` in a pty and answer it like a person: read the single-use link from the
+    terminal, claim it on the setup socket, then walk the same routes the page calls (profile, secrets, review, create,
+    progress, finish). Test-only: the product has no scripted path. Sets ``ws.passphrase`` to the generated one."""
+    sys.path.insert(0, str(CORE / "tests" / "setup"))
+    try:
+        from helpers import call  # the unix-socket HTTP client of core's setup tests
+    finally:
+        sys.path.pop(0)
+
+    rules = [(r"type (\S+): $", lambda m, t: m.group(1)), *ws.rules()]
+    pty_run = Pty(ws.orch("setup", "--no-browser"), ws.env(), ws.root, rules, timeout)
+    box: dict[str, object] = {}
+
+    def work() -> None:
+        try:
+            pty_run.run()
+        except BaseException as exc:  # noqa: BLE001 - reported to the caller below
+            box["exc"] = exc
+
+    thread = threading.Thread(target=work, name="setup-pty", daemon=True)
+    thread.start()
+
+    def fail(what: str) -> RuntimeError:
+        return RuntimeError(f"orch setup: {what}\n{pty_run.output[-1500:]}")
+
+    deadline = time.time() + timeout
+    link = None
+    while link is None:
+        if time.time() > deadline or not thread.is_alive():
+            raise fail("no setup link on the terminal")
+        link = _LINK.search(pty_run.output.replace("\n", ""))  # the tty wraps a long link
+        time.sleep(0.2)
+    port = int(link.group(1))  # the link's own code is the dashboard's; the setup server's is in its 0600 code file
+    sock = str(ws.state / "setup" / "setup.sock")
+    code = json.loads((ws.state / "setup" / "setup.code").read_text())["code"]
+    host = f"127.0.0.1:{port}"
+
+    def post(route: str, body: object | None = None, token: str | None = None) -> dict:
+        status, out, _ = call(sock, "POST", route, body if body is not None else {}, token=token, host=host)
+        if status != 200:
+            raise fail(f"{route} -> {status} {out}")
+        return out
+
+    def get(route: str, token: str) -> dict:
+        status, out, _ = call(sock, "GET", route, token=token, host=host)
+        if status != 200:
+            raise fail(f"{route} -> {status} {out}")
+        return out
+
+    token = post("/claim", {"code": code, "port": port})["token"]
+    api = "/api/setup/"
+    profile = {
+        "name": ws.owner, "prefix": ws.prefix, "addons": [], "method": "terminal",
+        "agent_hours": 8, "agent_grant": False, "relay": False,
+    }  # fmt: skip
+    post(api + "profile", profile, token)
+    secrets = post(api + "secrets/reveal", None, token)
+    words = {str(p): secrets["recovery_words"][p - 1] for p in secrets["check_positions"]}
+    if not post(api + "secrets/confirm", {"words": words}, token).get("ok"):
+        raise fail("the recovery words were refused")
+    ws.passphrase = secrets["passphrase"]
+    review = post(api + "review", None, token)
+    create = {"review_id": review["review_id"], "digest": review["digest"]}
+    if review.get("typed_word"):
+        create["typed_word"] = review["typed_word"]
+    run_id = post(api + "create", create, token)["run_id"]
+    while True:
+        if time.time() > deadline or not thread.is_alive():
+            raise fail("the run did not finish")
+        progress = get(api + f"progress?run_id={run_id}", token)
+        if progress["error"]:
+            raise fail(f"the run failed: {progress['error']} {progress['reasons']}")
+        if progress["done"]:
+            break
+        time.sleep(0.3)
+    post(api + "finish", None, token)
+    thread.join(30)
+    if thread.is_alive():
+        raise fail("orch setup did not exit")
+    if "exc" in box:
+        raise fail(f"driver error {box['exc']!r}")
+    if pty_run.code != 0:
+        raise fail(f"exited {pty_run.code}")
 
 
 def new_session(ws: Workspace, n: int) -> None:
@@ -464,7 +557,7 @@ def _demo(argv: list[str]) -> int:
         pidfile.write_text(str(ws.host.pid))
         (base / "keys.json").write_text(json.dumps(keys, indent=1))
         print(f"host pid {ws.host.pid}, workspace {ws.ws_id}, tickets {keys}")
-        print(f"state {ws.state} (ORCH_STATE_DIR), passphrase '{PASSPHRASE}'")
+        print(f"state {ws.state} (ORCH_STATE_DIR), passphrase '{ws.passphrase}'")
         print(f"next: {sys.executable} {__file__} open {base}")
         return 0
     if command == "open":

@@ -36,6 +36,7 @@ TIMEOUT = {
 #: the signer can switch click-to-sign on and off (`custody_on`/`custody_off`, section 0.8.6 item 3a)
 CUSTODY_FEATURE = "custody"
 IMAGES_FEATURE = "images"  # `stash` and `prepare {sequence}` naming pasted screenshots (core R3 part B)
+REVEAL_FEATURE = "reveal"  # `prepare {reveal_key}` and `sign`'s sealed `reveal` of a grant secret (core C7)
 SEQUENCE_FEATURE = "sequence"  # `prepare {sequence}`: one review, N signatures (core batch 11)
 
 
@@ -162,6 +163,16 @@ class Signer:
             except HostError:
                 return False
             return SEQUENCE_FEATURE in self.features
+
+    def reveals(self) -> bool:
+        """Can the running signer seal a grant secret to the page's key (`reveal`)? An older one answers
+        `terminal_only` for that grant, so it is never asked. Never raises."""
+        with self.lock:
+            try:
+                self._ensure()
+            except HostError:
+                return False
+            return REVEAL_FEATURE in self.features
 
     def images(self) -> bool:
         """Can the running signer hold a pasted screenshot (`stash`)? An older one would ignore `images` of the intent

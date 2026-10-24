@@ -104,6 +104,8 @@ class Script:
         if op == "view":
             return self.view
         if op == "sign":
+            if self.states.get(args["request_id"]) != "bound":  # the signer signs only a bound request
+                raise ClickError("human.request_state", f"the request is {self.states.get(args['request_id'])}")
             self.states[args["request_id"]] = "submitted"
             return {"result": {"data": {"secret": "no"}, "key": "DEMO-0001", "seq": 7}, "duplicate": False}
         if op == "cancel":
@@ -491,9 +493,7 @@ def test_views_words_and_credentials_are_never_logged(client, token, stub, scrip
     caplog.set_level(logging.DEBUG)
     prepare(client, token, stub)
     client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token))
-    client.post(
-        url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH}, headers=hdr(token)
-    )
+    client.post(url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH}, headers=hdr(token))
     out = capfd.readouterr()
     for text in (caplog.text, out.out, out.err):
         assert CANARY not in text and "TYPED-WORD" not in text and token not in text
@@ -1216,6 +1216,26 @@ def test_n15_a_cancelled_or_expired_attempt_is_ended_and_pressing_again_is_a_fre
     # an open request is the same one for a second press (double click, second tab)
     twin = client.post(url(stub, "prepare"), json=comment(1), headers=hdr(token))
     assert twin.json()["request_id"] == third.json()["request_id"] and script.prepared == 3
+
+
+@pytest.mark.parametrize("ended", ["cancelled", "expired"])
+def test_1087_an_ended_attempt_is_never_signed_later_and_pressing_again_is_a_fresh_request(
+    client, token, stub, script, rich, ended
+):
+    """#794 removed `intent.ended`: the server steps past an attempt that ended unsigned. The ended request stays
+    ended (a late sign of it is refused and changes nothing); only the fresh request can be signed, by its own sign."""
+    prepare(client, token, stub, comment(1))
+    if ended == "cancelled":
+        assert client.post(url(stub, "cancel"), json={"request_id": REQ}, headers=hdr(token)).status_code == 200
+    else:
+        script.states[REQ] = "expired"  # the host let it expire
+    late = client.post(url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH}, headers=hdr(token))
+    assert late.status_code != 200 and script.states[REQ] == ended, late.text
+    fresh = client.post(url(stub, "prepare"), json=comment(1), headers=hdr(token))
+    assert fresh.status_code == 200, fresh.text
+    rid = fresh.json()["request_id"]
+    assert rid != REQ and script.prepared == 2 and script.states[REQ] == ended
+    assert script.states[rid] == "bound"  # prepared, not signed: signing it is the person's own next click
 
 
 def test_794_a_signed_attempt_is_already_done_even_after_earlier_cancels(client, token, stub, script, rich):
@@ -2126,3 +2146,274 @@ def test_pictures_need_a_signer_that_holds_them(client, token, stub, script):
     body = {"sha256": f"sha256:{DIGEST}", "size": 3, "offset": 0, "b64": "AAEC", "last": True}
     res = client.post(url(stub, "images"), json=body, headers=hdr(token))
     assert res.status_code >= 400 and "orch-core" in res.text
+
+
+# -- #1198 C7: agent access whose secret is shown once in the page, sealed to its own key -------------
+
+PAGE_KEY = "B" + "A" * 86  # 87 base64url characters: the shape of a P-256 point; the server never decodes it
+REVEAL_LINE = "The secret is shown once, on this page, only to you. orch keeps only a fingerprint of it"
+REVEAL_RISK = "The secret will be shown once in this browser. Anyone who controls this dashboard could read it."
+ENVELOPE = {"v": 1, "alg": "P256-HKDF-SHA256-A256GCM", "epk": "C" + "A" * 86, "ct": "D" * 342}
+
+
+def agent_access(**kw):
+    return {"action": "agent_access", "reveal_key": PAGE_KEY, **kw}
+
+
+def reveal_view(**over):
+    import hashlib
+
+    seal = {
+        "v": 1,
+        "alg": "P256-HKDF-SHA256-A256GCM",
+        "purposes": ["grant.secret"],
+        "for": hashlib.sha256(PAGE_KEY.encode()).hexdigest(),
+    }
+    view = {
+        "risk": RISK,
+        "op": "grant",
+        "workspace": {"id": GRANT_WS, "name": "billing", "prefix": "DEMO"},
+        "fingerprint": "0123456789ab",
+        "lines": ["grant for Demo Owner", "", REVEAL_RISK, REVEAL_LINE],
+        "seal": seal,
+        "confirm": {"kind": "click"},
+    }
+    return {"view": {**view, **over}, "view_digest": HASH}
+
+
+@pytest.fixture
+def reveals(script, monkeypatch, host_check):
+    global GRANT_WS
+    GRANT_WS = script.ws
+    script.features = ["custody", "reveal"]
+    host_check.verified = {"fingerprint": "0123456789ab"}
+    script.sign_answer = {
+        "result": {"data": {"grant": GRANT, "secret": f"{GRANT}.{SECRET}"}, "seq": 9},
+        "duplicate": False,
+        "reveal": {"purpose": "grant.secret", "envelope": dict(ENVELOPE)},
+        "auth": {"grant": f"{GRANT}.{SECRET}"},
+    }
+    base = script.handler
+
+    def handler(op, args):
+        if op == "sign" and script.view["view"].get("op") == "grant":
+            script.states[args["request_id"]] = "submitted"
+            return dict(script.sign_answer)
+        return base(op, args)
+
+    script.handler = handler
+    script.view = reveal_view()
+    return script
+
+
+def sent_of(script, op):
+    return [c for cl in script.clients for c in cl.calls if c[0] == op]
+
+
+def test_agent_access_sends_the_page_key_at_prepare_and_the_grant_args_only(client, token, stub, reveals):
+    res = prepare(client, token, stub, agent_access(hours=24, scope="all", label="my tool"))
+    assert res.status_code == 200, res.text
+    sent = sent_of(reveals, "prepare")[0][1]
+    assert sent["op"] == "grant" and sent["args"] == {"hours": 24, "scope": "all", "label": "my tool"}
+    assert sent["reveal_key"] == PAGE_KEY and "deposit" not in sent
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        agent_access(hours=169),
+        agent_access(label="runner"),
+        agent_access(label="x" * 41),
+        agent_access(verbs="log"),
+        agent_access(runner=True),
+        agent_access(reveal_key="short"),
+        {"action": "agent_access"},  # no key
+    ],
+)
+def test_agent_access_bodies_are_closed(client, token, stub, reveals, body):
+    assert prepare(client, token, stub, body).status_code == 400
+    assert sent_of(reveals, "prepare") == []
+
+
+def test_agent_access_needs_a_signer_that_can_seal(client, token, stub, reveals):
+    reveals.features = ["custody"]
+    res = prepare(client, token, stub, agent_access())
+    assert res.status_code != 200 and sent_of(reveals, "prepare") == []
+
+
+def test_agent_access_is_not_a_terminal_hand_off(client, token, stub, reveals):
+    res = client.post(f"/api/w/{stub.ws}/handoff", json=agent_access(), headers=hdr(token))
+    assert res.status_code == 400
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"seal": None},
+        {"seal": {"v": 1, "alg": "x", "purposes": ["grant.secret"], "for": "0" * 64}},  # another key
+        {"seal": {"v": 1, "alg": "x", "purposes": ["grant.secret"], "for": "0" * 16}},  # a truncated fingerprint
+        {"seal": {"v": 1, "alg": "x", "purposes": ["hub.backup_key"], "for": "x"}},
+        {"lines": ["grant", REVEAL_LINE]},  # no risk line
+        {"lines": ["grant", REVEAL_RISK]},
+        {"deposit": True},
+        {"confirm": {}},
+        {"workspace": {"id": "f" * 32, "name": "other", "prefix": "DEMO"}},
+        {"fingerprint": "ffffffffffff"},
+    ],
+)
+def test_an_agent_access_view_without_the_reveal_parts_is_not_shown(client, token, stub, reveals, over):
+    reveals.view = reveal_view(**over)
+    prepare(client, token, stub, agent_access())
+    res = client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token))
+    assert res.status_code == 409 and res.json()["error"]["reason"] == "check_failed"
+
+
+def test_a_view_of_another_action_that_claims_a_seal_is_not_shown(client, token, stub, script):
+    script.view = {"view": {**script.view["view"], "seal": reveal_view()["view"]["seal"]}, "view_digest": HASH}
+    prepare(client, token, stub)
+    res = client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token))
+    assert res.status_code == 409 and res.json()["error"]["reason"] == "check_failed"
+
+
+def test_the_agent_access_view_is_shown_as_the_signer_made_it(client, token, stub, reveals):
+    prepare(client, token, stub, agent_access())
+    res = client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token))
+    assert res.status_code == 200, res.text
+    assert res.json() == reveals.view
+
+
+def test_the_agent_access_sign_answer_is_the_grant_id_and_the_sealed_envelope_only(client, token, stub, reveals):
+    prepare(client, token, stub, agent_access())
+    res = client.post(
+        url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH, "reveal_key": PAGE_KEY}, headers=hdr(token)
+    )
+    assert res.status_code == 200, res.text
+    assert res.json() == {
+        "state": "submitted",
+        "duplicate": False,
+        "grant": GRANT,
+        "reveal": {"purpose": "grant.secret", "envelope": ENVELOPE},
+    }
+    assert SECRET not in res.text and "auth" not in res.text and "result" not in res.json()
+    assert sent_of(reveals, "sign")[0][1]["reveal_key"] == PAGE_KEY
+
+
+def test_a_swapped_reveal_key_never_reaches_the_signer(client, token, stub, reveals):
+    prepare(client, token, stub, agent_access())
+    other = "E" + "A" * 86
+    for key in (other, None):
+        body = {"request_id": REQ, "view_digest": HASH} | ({"reveal_key": key} if key else {})
+        res = client.post(url(stub, "sign"), json=body, headers=hdr(token))
+        assert res.status_code in (400, 409), res.text
+    assert sent_of(reveals, "sign") == []
+
+
+def test_reveal_key_is_refused_on_any_other_sign(client, token, stub, script):
+    prepare(client, token, stub)
+    res = client.post(
+        url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH, "reveal_key": PAGE_KEY}, headers=hdr(token)
+    )
+    assert res.status_code in (400, 409) and sent_of(script, "sign") == []
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"v": 2},
+        {"alg": "x"},
+        {"epk": "short"},
+        {"ct": ""},
+        {"extra": 1},
+    ],
+)
+def test_a_malformed_envelope_is_dropped_not_repaired_and_the_secret_is_never_passed(client, token, stub, reveals, bad):
+    reveals.sign_answer = {
+        **reveals.sign_answer,
+        "reveal": {"purpose": "grant.secret", "envelope": {**ENVELOPE, **bad}},
+    }
+    prepare(client, token, stub, agent_access())
+    res = client.post(
+        url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH, "reveal_key": PAGE_KEY}, headers=hdr(token)
+    )
+    assert res.json()["reveal"] is None and res.json()["grant"] == GRANT
+    assert SECRET not in res.text
+
+
+def test_the_server_logs_never_hold_the_envelope_or_the_secret(client, token, stub, reveals, caplog):
+    import logging
+
+    caplog.set_level(logging.DEBUG)
+    prepare(client, token, stub, agent_access())
+    client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token))
+    client.post(
+        url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH, "reveal_key": PAGE_KEY}, headers=hdr(token)
+    )
+    assert SECRET not in caplog.text and ENVELOPE["ct"] not in caplog.text
+
+
+def test_expected_admits_only_the_callers_agent_access():
+    from orch_dashboard.handoff import AgentAccess, expected
+
+    me = "p_" + "1" * 32
+    good = {
+        "type": "grant.issued",
+        "verbs": "agent",
+        "hours": 8,
+        "scope": "workable",
+        "label": "tool",
+        "actor": {"kind": "person", "id": me, "device": None},
+    }
+    check = expected(AgentAccess(action="agent_access", reveal_key=PAGE_KEY, label="tool"), me)
+    assert check([good])
+    for bad in ({"label": "runner"}, {"label": None}, {"verbs": ["log"]}, {"hours": 9}, {"scope": "all"}, {"extra": 1}):
+        assert not check([{**good, **bad}]), bad
+    assert not check([good, good])
+
+
+def test_a_new_page_key_is_a_new_request_and_the_same_key_the_same_one():
+    from orch_dashboard.handoff import AgentAccess
+
+    other = "E" + "A" * 86
+    a = AgentAccess(action="agent_access", reveal_key=PAGE_KEY)
+    b = AgentAccess(action="agent_access", reveal_key=other)
+    from orch_dashboard.handoff import intent_idem
+
+    def idem(body):
+        return intent_idem(
+            "p_" + "1" * 32,
+            "0" * 32,
+            "grant",
+            {"hours": 8, "scope": "workable"},
+            {"reveal_key": body.reveal_key},
+            None,
+            0,
+        )
+
+    assert idem(a) == idem(a) and idem(a) != idem(b)
+
+
+def test_the_page_key_fingerprint_matches_the_golden_vectors_shared_with_core_and_the_page():
+    import json
+    from pathlib import Path
+
+    from orch_dashboard.click import key_fingerprint
+
+    path = Path(__file__).resolve().parents[4] / "plugins/orch-core/tests/click_reveal_fingerprint.json"
+    cases = json.loads(path.read_text())["cases"]
+    assert cases
+    for case in cases:
+        assert len(case["fingerprint"]) == 64 and key_fingerprint(case["key"]) == case["fingerprint"]
+
+
+def test_agent_access_is_refused_on_any_session_that_is_not_a_local_one(client, token, stub, reveals, auth):
+    """Until the passkey step-up (R1-6) exists, a remote or unknown session kind never prepares agent_access."""
+    from orch_dashboard.click import REVEAL_SESSION_KINDS
+
+    assert REVEAL_SESSION_KINDS == {"local"}
+    for kind in ("remote", "hub", "passkey", None):
+        auth.kinds[token] = kind
+        res = prepare(client, token, stub, agent_access())
+        assert res.status_code == 409, (kind, res.text)
+    assert sent_of(reveals, "prepare") == []
+    auth.kinds[token] = "local"
+    assert prepare(client, token, stub, agent_access()).status_code == 200

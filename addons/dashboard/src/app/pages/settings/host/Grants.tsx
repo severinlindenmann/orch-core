@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { runnerQuery } from '@/api/agents'
 import { canRevokeHostGrant, type HostGrant } from '@/api/settings'
+import { clickReady } from '@/api/click'
 import { hasFeature } from '@/api/features'
 import type { Workspace } from '@/api/types'
 import { AgentName } from '@/components/agents/AgentIcon'
@@ -18,6 +19,7 @@ import { Raw, visible } from '@/components/sign/visible'
 import { RunnerGrantCard } from '@/app/terminal/real/StartAgentDialog'
 import { Mono } from '../../ticket/shared'
 import { OwnerNote } from '../OwnerNote'
+import { GrantReveal } from './GrantReveal'
 import { useViewerPerson, useViewerRole } from './useViewerRole'
 
 const state = (g: HostGrant, now: number) => (g.revoked ? 'revoked' : Date.parse(g.expires_at) <= now ? 'expired' : 'active')
@@ -73,6 +75,48 @@ function GiveAccess({ ws }: { ws: string }) {
   )
 }
 
+/** #1198 C7: access for a tool outside the dashboard. Its secret is shown once in this page, sealed to a key made here. */
+function GiveToolAccess({ workspace, onChanged }: { workspace: Workspace; onChanged: () => void }) {
+  const [step, setStep] = useState<'closed' | 'form' | 'run'>('closed')
+  const [hours, setHours] = useState(24)
+  const [label, setLabel] = useState('')
+  const name = label.trim()
+  const [busy, setBusy] = useState(false)
+  if (!clickReady(workspace)) return null
+  return (
+    <>
+      <Button variant="outline" data-testid="give-tool-access" onClick={() => setStep('form')}>Give a tool access</Button>
+      {step !== 'closed' && (
+        <Dialog open onOpenChange={(o) => !o && !busy && setStep('closed')}>
+          <DialogContent className="max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Give a tool access</DialogTitle>
+              <DialogDescription>For a tool that runs outside this dashboard. You get a secret to give it, shown once.</DialogDescription>
+            </DialogHeader>
+            {step === 'form' ? (
+              <div className="space-y-4">
+                <div role="radiogroup" aria-label="Access for" className="grid grid-cols-3 gap-2">
+                  {([[24, '1 day'], [72, '3 days'], [168, '7 days']] as const).map(([h, text]) => (
+                    <button key={h} type="button" role="radio" aria-checked={h === hours} onClick={() => setHours(h)} className={`min-h-11 rounded-lg border px-2 py-2 text-sm font-medium ${h === hours ? 'border-warning bg-warning/10 text-warning' : 'border-border bg-surface text-text hover:bg-bg'}`}>{text}</button>
+                  ))}
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="tool-name">Name of the tool (optional)</Label>
+                  <Input id="tool-name" value={label} maxLength={40} onChange={(e) => setLabel(e.target.value)} />
+                </div>
+                <p className="text-[12px] text-text-muted">Anyone who holds the secret can act for you on tickets you may work on until the access ends. You can stop it at any time.</p>
+                <Button className="w-full" onClick={() => setStep('run')}>Continue to the review</Button>
+              </div>
+            ) : (
+              <GrantReveal ws={workspace.id} hours={hours} scope="workable" label={name || undefined} onChanged={onChanged} onBusy={setBusy} onClose={() => { setBusy(false); setStep('closed') }} />
+            )}
+          </DialogContent>
+        </Dialog>
+      )}
+    </>
+  )
+}
+
 /** Agent access as the host gives it to this person: an owner sees everyone's, anyone else their own. Stopping is one step: a reason (optional) and one sign button. */
 export function HostGrants({ workspace }: { workspace: Workspace }) {
   const [ended, setEnded] = useState(false)
@@ -93,7 +137,10 @@ export function HostGrants({ workspace }: { workspace: Workspace }) {
   const past = rows.filter((g) => state(g, now) !== 'active')
   return (
     <div className="space-y-4">
-      <h2 className="text-base font-semibold">Agent access</h2>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-base font-semibold">Agent access</h2>
+        <GiveToolAccess workspace={workspace} onChanged={() => void grants.refetch()} />
+      </div>
       <p className="text-[13px] text-text-muted">
         {role === 'owner' ? 'Who has let agents work in this workspace, and until when.' : 'The access you have given to your agents.'}
       </p>

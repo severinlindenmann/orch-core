@@ -1,0 +1,14 @@
+{
+ "format": "orch.reveal-fingerprint-vectors/1",
+ "note": "sha256 hex (64) of the base64url text of the page's reveal key; core view.key_fingerprint, the dashboard server and click.ts keyFingerprint all match this file",
+ "cases": [
+  {
+   "key": "BAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+   "fingerprint": "793f3af538dc852399a5782ab97948262fc31b742052dd5dde24828c227ce2cb"
+  },
+  {
+   "key": "BB_jH-WgRIdeB7CNmDvyasN1KVMvYlDZn-fUwNIPWkTsxyuJgGcMRwGKSpIbhazGQob3Bno-5YbiXpQCwwWl3hI",
+   "fingerprint": "102718000580cc37ee986f24c14bc6dbe8ae22da2d373d452c48c59e6cb5f88b"
+  }
+ ]
+}

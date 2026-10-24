@@ -58,6 +58,10 @@ export function storyOf(action: ClickAction | null | undefined, ctx: StoryContex
       return { signLabel: 'Approve and install', steps: ['You sign approval for this exact package and its permissions.', 'The host installs the approved package.'] }
     case 'answer':
       return { signLabel: 'Send answer', steps: [], compact: true }
+    case 'agent_access': {
+      const length = accessLength(action.hours)
+      return { signLabel: 'Sign and show the secret', access: { length }, steps: ['You sign.', `The secret is shown once on this page. Agents that hold it may work for you for ${length} from now.`] }
+    }
     case 'runner_grant': {
       const length = accessLength(action.hours)
       return action.extend

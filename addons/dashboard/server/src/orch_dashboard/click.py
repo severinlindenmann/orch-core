@@ -593,8 +593,8 @@ def register(app: FastAPI, gateway: Gateway):
         return {**(adapters.click_card(row) or {}), "switchable": True}
 
     def runner_gate(request: Request, ws: str, body: RunnerBody) -> None:
-        """An owner, a signer that can. ON: a dashboard opened on this computer only (until the passkey step-up); OFF only
-        takes authority away and is a plain click everywhere."""
+        """An owner, a signer that can. ON: a dashboard opened on this computer only (until the passkey
+        step-up); OFF only takes authority away and is a plain click everywhere."""
         gateway.enabled(ws)
         if not owner(ws):
             raise fail("role.denied", "Only an owner switches dashboard execution.", exit=3)

@@ -57,8 +57,6 @@ SETTINGS_TABS = (
     "gates",
     "grants",
     "addons",
-    "records",
-    "devices",
     "hub",
 )  # HOST_TABS (settings/tabs.ts)
 SPA_ROUTES = (

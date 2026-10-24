@@ -176,7 +176,6 @@ def test_shell_p1_reads(client, token, stub):
         "/w/DEMO/settings/general",
         "/w/DEMO/settings/grants",
         "/w/DEMO/settings/addons",  # R2-2: the Add-ons tab
-        "/w/DEMO/settings/records",  # M6: a reload or pasted link of the records tab (e2e found a 404)
         "/w/DEMO/quick",
         "/w/DEMO/activity",
         "/w/DEMO/usage",

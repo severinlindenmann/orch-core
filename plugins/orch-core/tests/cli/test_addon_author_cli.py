@@ -95,13 +95,13 @@ def test_pack_prints_the_digest_and_an_entry_ready_to_paste(here, host):
     assert host.called == [] and host.connected == []
 
 
-def test_pack_defaults_to_the_current_directory(here):
+def test_pack_defaults_to_the_current_directory(here, monkeypatch):
     run(["new", "changelog"])
     repo = here / "changelog"
     sh(repo, "init", "-q", "-b", "main")
     sh(repo, "add", "-A")
     sh(repo, "commit", "-q", "-m", "first")
-    os.chdir(repo)
+    monkeypatch.chdir(repo)
     code, out = run(["pack"])
     assert code == 0 and json.loads(out)["data"]["name"] == "changelog"
 

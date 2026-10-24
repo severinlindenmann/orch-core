@@ -1032,6 +1032,17 @@ _OPTION_SHOWN = frozenset({"key", "label", "text", "facts", "cost"})
 _RENDERED_KINDS = frozenset({"choice", "text"})
 
 
+#: the question rows that hold agent words or orch's own (never a person id): the terminal shows them verbatim, never
+#: through the member-name lookup (Opus delta of f250708a: a title shaped like ``p_<hex>`` must not become a name)
+_QUESTION_VERBATIM_ROWS = frozenset(
+    {"recommended", "an answer in your own words is allowed", "blocks the ticket (per host)", "question hash"}
+)
+
+
+def _verbatim_row(field: str) -> bool:
+    return field.startswith("option ") or field in _QUESTION_VERBATIM_ROWS
+
+
 def _letter(i: int) -> str:
     return chr(ord("A") + i)  # by STORED order (2..6 options), never by submission or recommendation
 
@@ -1691,6 +1702,9 @@ def text(
             title or ("Changes" if any(c["before"] is not None for c in content["fields_changed"]) else "Fields")
         )
         for c in content["fields_changed"]:
+            if _verbatim_row(c["field"]):  # agent words or orch's own: never read as a person id
+                out.append(f"  {v(c['field'])}: {v(c['after'])}")
+                continue
             new = "(not set)" if c["after"] is None else who(c["after"])
             if c["before"] is None:
                 out.append(f"  {v(c['field'])}: {new}")

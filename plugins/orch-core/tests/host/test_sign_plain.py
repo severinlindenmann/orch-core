@@ -1598,3 +1598,22 @@ def test_b2_copies_of_orchs_lines_in_the_question_details_or_why_stay_inside_the
     rows = [x for x in out if x.startswith("  ") and not x.startswith("  | ")]
     assert "  recommended: A · key csv" in rows and "  option csv: A · key csv" in rows
     assert not [x for x in rows if "B · key api" in x and not x.startswith("  option api")]
+
+
+def test_b2_an_option_value_shaped_like_a_person_id_is_shown_verbatim():
+    """Opus delta of f250708a: option titles, texts and costs are agent words; the terminal's member-name lookup never
+    rewrites them, even when they look like a member's person id. The addressee row still gets the lookup."""
+
+    def person_shaped(q):
+        q["options"][1]["label"] = _ME
+        q["options"][1]["cost"] = "p_dead..."
+        q["options"][0]["text"] = _ME
+        q["to"] = _ME
+
+    out = signcontent.text(build(_answer_request(option="csv", question=person_shaped)), signer._clean, members=MEMBERS)
+    assert f"  option api title: {_ME}" in out and "  option api cost: p_dead..." in out
+    assert f"  option csv text: {_ME}" in out and f"  | text: {_ME}" in out
+    assert [x for x in out if "Severin" in x] == [
+        "  addressed to (per host): Severin (p_42e1c38e0488…; name per host, not signed)"
+    ]
+    assert not [x for x in out if "unknown person" in x]

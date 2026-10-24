@@ -78,6 +78,7 @@ def test_the_defaults_are_marked_and_the_four_gates_are_given(w):
         "gates",
         "defaults",
         "sign_methods",
+        "addons",
         "icon",
         "models",
         "publish",

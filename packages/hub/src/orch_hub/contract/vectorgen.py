@@ -19,6 +19,7 @@ from . import suite as S
 from .canon import b64u, cj
 from .cases import outcome
 from .labels import HUB_LABELS, V2_REUSED, L, custodial_label
+from .market_policy import default_policy, policy_hash
 
 NOW = 1_790_000_000_000
 DAY = 86_400_000
@@ -215,6 +216,7 @@ def snapshot(
     roles: dict[str, str] | None = None,
     revoked: list[str] | None = None,
     signer: str = "hk_op",
+    drop: str | None = None,
     **kw: Any,
 ) -> dict[str, Any]:
     o = {
@@ -227,9 +229,12 @@ def snapshot(
         "issued_ms": NOW - 60_000,
         "roles": roles if roles is not None else {U_ALICE: "admin", U_BOB: "read"},
         "revoked_channels": revoked if revoked is not None else [],
+        "market_policy": default_policy(),
         "dev": True,
         **kw,
     }
+    if drop is not None:
+        del o[drop]
     return signed(signer, "sig_hub_snapshot", o)
 
 
@@ -686,6 +691,16 @@ AUDIT_EVENTS: list[tuple[str, dict[str, Any]]] = [
             "workspace_id": WS_B,
             "actor_user_id": U_ALICE,
             "nonce": nonce32("space"),
+        },
+    ),
+    # D14 (§7.1): hub-wide, so no scope tag
+    (
+        "market_policy",
+        {
+            "version": 2,
+            "policy_hash": policy_hash(default_policy()),
+            "actor_user_id": U_ALICE,
+            "nonce": nonce32("market_policy"),
         },
     ),
 ]
@@ -1145,6 +1160,59 @@ def build() -> dict[str, Any]:
         {**with_card, "signed": snapshot(roles={U_ALICE: "owner"}), "workspace_id": WS_A, "pinned": None},
         {"error": "malformed"},
         3,
+    )
+    # D14 (orch-core#927): the required field market_policy (protocol.md §7.1), validated like vectors_hub_policy.json
+    comp_key = K.b("hk_op")
+    company = {
+        "markets": [
+            {"url": "https://git.acme.example/tools/orch-market", "class": "company", "keys": [comp_key]},
+            {"url": "https://github.com/severinlindenmann/orch-marketplace", "class": "official", "keys": []},
+        ],
+        "addons": {"allow": ["dashboard", "wiki"], "block": ["wiki@1.0.0"]},
+        "ceiling": ["git_push", "pty"],
+    }
+    company["markets"].sort(key=lambda m: m["url"])
+    case(
+        "snapshot_market_policy_ok",
+        "snapshot",
+        {**with_card, "signed": snapshot(market_policy=company), "workspace_id": WS_A, "pinned": None},
+        {"ok": {"version": 3}},
+        3,
+        "a company marketplace, a pinned key, allow and block lists, a capability ceiling",
+    )
+    case(
+        "snapshot_market_policy_missing",
+        "snapshot",
+        {**with_card, "signed": snapshot(drop="market_policy"), "workspace_id": WS_A, "pinned": None},
+        {"error": "malformed"},
+        3,
+        "the field is required: there is no snapshot without a policy (no legacy)",
+    )
+    for tag, bad in (
+        ("null", None),
+        ("empty_object", {}),
+        ("unsorted_markets", {**company, "markets": list(reversed(company["markets"]))}),
+        (
+            "official_with_keys",
+            {**default_policy(), "markets": [{**default_policy()["markets"][0], "keys": [comp_key]}]},
+        ),
+        ("old_spec_shape", {"allow": [], "block": [], "ceiling": []}),
+        ("extra_key", {**default_policy(), "extra": 1}),
+    ):
+        case(
+            f"snapshot_market_policy_malformed_{tag}",
+            "snapshot",
+            {**with_card, "signed": snapshot(market_policy=bad), "workspace_id": WS_A, "pinned": None},
+            {"error": "malformed"},
+            3,
+        )
+    case(
+        "snapshot_market_policy_changed_same_version",
+        "snapshot",
+        {**with_card, "signed": snapshot(market_policy=company), "workspace_id": WS_A, "pinned": snap_o},
+        {"error": "snapshot_conflict"},
+        3,
+        "same version with another policy is a conflict like any other content change",
     )
     case(
         "snapshot_unsorted_revocations",
@@ -2818,6 +2886,33 @@ def build() -> dict[str, Any]:
         {"ok": {"seq": 1, "hash": AU.chain_hash(audit_rec(1, AU.GENESIS_PREV, *AUDIT_EVENTS[2]))}},
         3,
     )
+    mp_typ, mp_ev = AUDIT_EVENTS[-1]
+    mp_rec = audit_rec(1, AU.GENESIS_PREV, mp_typ, mp_ev)
+    case(
+        "audit_market_policy_ok",
+        "audit",
+        {**au, "signed": mp_rec, "event": mp_ev},
+        {"ok": {"seq": 1, "hash": AU.chain_hash(mp_rec)}},
+        3,
+        "hub-wide: scope_tag is null, every workspace gets the event",
+    )
+    for tag, bad_mp in (
+        ("short_hash", {**mp_ev, "policy_hash": b64u(bytes(16))}),
+        ("version_zero", {**mp_ev, "version": 0}),
+        ("no_actor", {k: v for k, v in mp_ev.items() if k != "actor_user_id"}),
+        ("workspace_scoped", {**mp_ev, "workspace_id": WS_A}),
+    ):
+        case(
+            f"audit_market_policy_malformed_{tag}",
+            "audit",
+            {
+                **au,
+                "signed": audit_rec(1, AU.GENESIS_PREV, mp_typ, bad_mp, add_nonce=False, scope=None),
+                "event": bad_mp,
+            },
+            {"error": "malformed"},
+            3,
+        )
     case(
         "audit_type_not_the_events",
         "audit",
@@ -3782,7 +3877,7 @@ def build() -> dict[str, Any]:
         "spaces": spaces_vec,
         "audit": {
             "chain": audit_chain(),
-            "events": [{"type": t, "event": e} for t, e in AUDIT_EVENTS],
+            "events": [{"type": t, "event": e} for t, e in AUDIT_EVENTS[:4]],
             "hashes": [AU.chain_hash(r) for r in audit_chain()],
             "genesis_prev": AU.GENESIS_PREV,
         },

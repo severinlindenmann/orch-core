@@ -51,6 +51,7 @@ HUB_LABELS: dict[str, str] = {
     "h_hub_audit_chain": "orch/v2/hub-audit-chain|",  # D4: hash of one signed audit record (the chain link)
     "h_hub_audit_scope": "orch/v2/hub-audit-scope|",  # L2P-4: blinded workspace tag of an audit record
     "h_hub_audit_event": "orch/v2/hub-audit-event|",  # D4: hash of an audit event, signed into its record
+    "h_hub_market_policy": "orch/v2/hub-market-policy|",  # D14: hash of the hub marketplace policy (audit + console)
     "h_space_members": "orch/v2/hub-space-members|",  # L2P-1: an item signs the member set of its epoch
     "h_sk_commit": "orch/v2/hub-sk-commit|",  # V3-D8: commitment to SK_e inside the signed space record
     # AAD of a sealed space item

@@ -91,6 +91,11 @@ class AuditLog:
     def access_change(self, ev: dict[str, Any]) -> dict[str, Any]:
         """The observer of D3's ``Access`` (grant and membership changes)."""
         actor = ev.get("actor_user_id") or OPERATOR
+        if ev["kind"] == "market_policy":
+            return self.append(
+                "market_policy",
+                {"version": ev["version"], "policy_hash": ev["policy_hash"], "actor_user_id": ev["actor_user_id"]},
+            )
         if ev["kind"] == "grant":
             return self.append(
                 "grant",

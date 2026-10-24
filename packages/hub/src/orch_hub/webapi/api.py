@@ -43,6 +43,7 @@ from ..access.store import check_name
 from ..channels import Channels
 from ..channels.service import ChannelError
 from ..contract import channelapi as CA
+from ..contract import market_policy as MP
 from ..contract import phase4 as P4
 from ..contract import suite as S
 from ..contract.canon import CanonError, loads_strict, unb64u
@@ -77,6 +78,7 @@ STATUS = {
     "exists": 409,
     "channel_exists": 409,
     "key_in_use": 409,
+    "conflict": 409,
     "stale_snapshot": 409,
     "unknown_snapshot": 409,
     "no_session": 401,
@@ -279,6 +281,14 @@ ROUTES: tuple[Route, ...] = (
     _r("GET", "/admin/workspaces", "admin", "a_workspaces", "List workspaces with mode, binding status and grants"),
     _r("GET", "/admin/channels", "admin", "a_channels", "List every channel (optional ?user_id=)"),
     _r("POST", "/admin/channels/{channel_id}/revoke", "admin", "revoke", "Revoke any channel (permanent)"),
+    _r("GET", "/admin/market-policy", "admin", "a_market_policy", "Read the hub marketplace policy (D14)"),
+    _r(
+        "PUT",
+        "/admin/market-policy",
+        "admin",
+        "a_market_policy_set",
+        "Replace the hub marketplace policy ({base_version, policy}); 409 conflict when base_version is stale",
+    ),
     _r("GET", "/admin/audit", "admin", "a_audit", "Read the audit chain (?since=N, up to 100 records)"),
 )
 #: handler -> the session scopes that may call it (protocol §6.4). ``full`` is the browser's cookie session; ``pairing``
@@ -1067,6 +1077,13 @@ class WebApi:
     def _h_a_channels(self, c: Ctx, p: dict, q: dict, b: dict | None):
         u = q.get("user_id")
         return 200, {"channels": self.d.channels.channels(_hex32(u) if u is not None else None)}
+
+    def _h_a_market_policy(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        return 200, {**self.d.access.market_policy(), "official_url": MP.OFFICIAL_URL}  # display: the one official URL
+
+    def _h_a_market_policy_set(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        b = _need(b, base_version=int, policy=dict)
+        return 200, self.d.access.set_market_policy(b["base_version"], b["policy"], actor=c.user_id)
 
     def _h_a_audit(self, c: Ctx, p: dict, q: dict, b: dict | None):
         since = q.get("since", "0")

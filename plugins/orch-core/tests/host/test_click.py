@@ -989,3 +989,23 @@ def test_c21_an_unreadable_key_store_is_unavailable_not_uncertain(click, served,
     assert click.signatures == 0 and click.signer.records.get(served.wid, p["request_id"]) is None
     monkeypatch.undo()
     assert click.sign(p["request_id"], v["view_digest"])["duplicate"] is False
+
+
+def test_c21_a_brief_store_lock_does_not_leave_one_click_unavailable(click, served, human, monkeypatch):
+    from orch.custody.base import CustodyError
+
+    _, key = human.ticket()
+    p = click.prepare("log", {"ref": key, "text": "lock"})
+    v = click.view(p["request_id"])
+    click.mono.t += 2
+    row = lambda: next(w for w in click.signer.status({})["workspaces"] if w["workspace_id"] == served.wid)  # noqa: E731
+
+    def locked(*a):
+        raise CustodyError("locked")
+
+    monkeypatch.setattr(click.store, "get", locked)
+    refused(lambda: click.sign(p["request_id"], v["view_digest"]), "custody.unavailable")
+    assert row()["available"] is False
+    monkeypatch.undo()
+    assert click.sign(p["request_id"], v["view_digest"])["duplicate"] is False
+    assert row()["available"] is True

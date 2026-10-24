@@ -356,6 +356,8 @@ class ClickSigner:
                 "custody.unavailable",
                 "The signing key cannot be read on this computer. Unlock the key store, or sign in Terminal.",
             ) from None
+        if self.problems.get(wid) == "custody_unavailable":  # the store works again: only this problem kind clears
+            self.problems.pop(wid, None)
 
     def _approval(self, args: Mapping[str, Any]) -> tuple[dict[str, Any], Approval]:
         entry = self._entry(args.get("workspace_id"))

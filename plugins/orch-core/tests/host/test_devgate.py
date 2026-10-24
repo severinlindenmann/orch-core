@@ -565,8 +565,8 @@ def test_init_refuses_sbx_with_other_owner_name(sbx, tmp_path):
 
 def test_init_refuses_sbx_with_entered_recovery_code(tmp_path, monkeypatch):
     """Only a recovery code this setup run generated (``generated=True``) may sign an SBX genesis; a typed, restored or
-    imported code is refused before any key is made. The one genesis path (the hosted bootstrap) passes ``generated=True``
-    and the library itself generates no code (``orch setup``'s secrets do)."""
+    imported code is refused before any key is made. The one genesis path (the hosted bootstrap) passes
+    ``generated=True`` and the library itself generates no code (``orch setup``'s secrets do)."""
     import inspect
 
     from orch.identity import generate_recovery_code

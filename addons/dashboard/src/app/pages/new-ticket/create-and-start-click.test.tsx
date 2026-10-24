@@ -19,7 +19,7 @@ const view = (): ClickViewAnswer => ({
   view_digest: DIGEST,
   view: {
     risk: CLICK_RISK, op: 'new', workspace: { id: 'x'.repeat(32), name: 'billing', prefix: 'DEMO' }, fingerprint: '0123456789ab',
-    lines: ['Create DEMO-0044: Export CSV'], checks: [], confirm: { kind: 'word', word: 'GRANT' },
+    lines: ['Create DEMO-0044: Export CSV'], checks: [], confirm: { kind: 'click' },
     expires_at: new Date(Date.now() + 600_000).toISOString(), auth: 'convenience', device: 'd_x', artifacts: null,
   },
 })
@@ -32,7 +32,7 @@ beforeEach(() => {
   vi.spyOn(routingApi, 'choices').mockResolvedValue({ harnesses: [{ id: 'claude-code', label: 'Claude', models: [] }, { id: 'codex', label: 'Codex', models: [] }] })
   vi.spyOn(agentsApi, 'runner').mockResolvedValue({ runner: { connected: true, enabled: true, terminals: false, grant: null } })
   vi.spyOn(agentsApi, 'riskNotices').mockResolvedValue({ acknowledged: { start_agent: true } })
-  vi.spyOn(api, 'prepareClick').mockResolvedValue({ request_id: REQ, expires_at: new Date(Date.now() + 600_000).toISOString(), op: 'new', confirm: 'word' })
+  vi.spyOn(api, 'prepareClick').mockResolvedValue({ request_id: REQ, expires_at: new Date(Date.now() + 600_000).toISOString(), op: 'new', confirm: 'click' })
   vi.spyOn(api, 'viewClick').mockResolvedValue(view())
   vi.spyOn(api, 'cancelClick').mockResolvedValue({ id: REQ, state: 'cancelled' })
   s = {
@@ -59,7 +59,6 @@ async function signed() {
   const dialog = (await screen.findAllByRole('dialog', {}, T)).find((d) => d.hasAttribute('data-handoff-dialog'))!
   expect(await within(dialog).findByTestId('not-signed-start')).toBeInTheDocument() // the real dialog carries the unsigned block
   await within(dialog).findByTestId('click-panel', {}, T)
-  fireEvent.change(within(dialog).getByLabelText(/Type GRANT to confirm/), { target: { value: 'GRANT' } })
   const go = within(dialog).getByRole('button', { name: 'Sign and start agent' })
   await waitFor(() => expect(go).toBeEnabled(), { timeout: ARM_MS + 3000 })
   fireEvent.pointerDown(go)

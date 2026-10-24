@@ -99,7 +99,7 @@ def test_every_leaf_of_the_question_is_in_the_full_review_and_the_click_lines(hu
     p = _prepared_with(human, q)
     full = signer.plain(p, SHOWN_WS)
     text = str(full) + "\n" + (full.details or "")
-    v = view.build(p, SHOWN_WS, kind="click", device=p["events"][0]["actor"]["device"],
+    v = view.build(p, SHOWN_WS, device=p["events"][0]["actor"]["device"],
                    expires_at="2026-01-01T00:00:00Z", artifacts=None)  # fmt: skip
     lines = "\n".join(v["lines"])
     for leaf in _leaves({k: val for k, val in q.items() if k != "id"}):

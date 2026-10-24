@@ -968,7 +968,7 @@ export interface ActionResult {
 export interface ApiErrorBody {
   ok: false
   exit?: number
-  error: { code: string; message: string; hint?: string; fix?: string | { argv: string[] }; retryable: boolean; retry_after_ms?: number; reason?: string; request_id?: string; signed_at?: string | null; op?: string; summary?: string; commit?: string; message_hidden?: boolean; why?: string; detail?: ErrorDetail }
+  error: { code: string; message: string; hint?: string; fix?: string | { argv: string[] }; retryable: boolean; retry_after_ms?: number; reason?: string; request_id?: string; signed_at?: string | null; op?: string; summary?: string; commit?: string; message_hidden?: boolean; detail?: ErrorDetail }
 }
 
 /** `Error.detail` (host contract v1.9): the server forwards it only for the click-to-sign refusal codes (H12d-2). */
@@ -996,8 +996,6 @@ export class ApiError extends Error {
   /** The records child's message had characters that are hidden: it is withheld (null) and the code stands. */
   readonly message_hidden?: boolean
   readonly exit?: number
-  /** M7b: why a runner grant is terminal only (`update_orch`: the signer is too old to hand it to the runner). */
-  readonly why?: string
   /** H12d-2: `reason` and `devices` of `sign.convenience_unavailable` / `sign.convenience_readers` (read through `refusalOf`). */
   readonly detail?: ErrorDetail
   constructor(status: number, body: ApiErrorBody['error'], exit?: number) {
@@ -1017,7 +1015,6 @@ export class ApiError extends Error {
     this.commit = body.commit
     this.message_hidden = body.message_hidden
     this.exit = exit
-    this.why = body.why
     this.detail = body.detail
     if (signingMethodStale(this)) notifySigningMethodStale()
   }

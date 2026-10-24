@@ -31,7 +31,6 @@ def base(code="human.click_refused", **extra):
         ("host.restarting", "retryable", True),
         ("rate.limited", "retry_after_ms", 0),
         ("rate.limited", "retry_after_ms", 3_600_000),
-        ("human.click_refused", "why", "update_orch"),
         ("human.click_refused", "request_id", RID),
         ("human.click_refused", "request_id", RID[3:]),
         ("intent.done", "signed_at", "2026-10-15T12:00:00Z"),
@@ -170,16 +169,13 @@ def test_a_non_dict_host_error_answers_internal():
 
 # ---- the server's own errors keep what the page reads ---------------------------------------------------------------
 def test_the_servers_own_errors_pass_whole():
-    from orch_dashboard.click import UPDATE_ORCH, refusal_check
+    from orch_dashboard.click import refusal_check
     from orch_dashboard.click_signer import lost_sign
     from orch_dashboard.errors import fail
     from orch_dashboard.handoff import done_error
 
     assert body(refusal_check("x").error)[1]["error"]["reason"] == "check_failed"
     assert body(lost_sign().error)[1]["error"]["reason"] == "uncertain"
-    grant = {"code": "human.click_refused", "message": UPDATE_ORCH, "retryable": False}
-    got = body({**grant, "reason": "terminal_only", "why": "update_orch"})[1]["error"]
-    assert (got["reason"], got["why"], got["message"]) == ("terminal_only", "update_orch", UPDATE_ORCH)
     done = done_error(
         {"request": {"submitted_at": "2026-10-15T12:00:00Z"}, "op": "answer", "material": {"review": ["a"]}},
         {"seq": 3},

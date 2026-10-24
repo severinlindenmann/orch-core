@@ -168,7 +168,7 @@ describe('Sign is armed by presentation', () => {
     arm()
     press(sign())
     expect(onSign).toHaveBeenCalledTimes(1)
-    expect(onSign).toHaveBeenCalledWith(undefined)
+    expect(onSign).toHaveBeenCalledWith()
     fireEvent.click(sign()) // the same activation is not reusable
     expect(onSign).toHaveBeenCalledTimes(1)
     fireEvent.keyDown(sign(), { key: 'Enter' })
@@ -176,17 +176,14 @@ describe('Sign is armed by presentation', () => {
     expect(onSign).toHaveBeenCalledTimes(2)
   })
 
-  it('a new View resets the confirmation: disabled again, the typed word gone', () => {
-    const word = { kind: 'word', word: 'p_abc' } as const
-    const { onSign, again } = mount(answer({ confirm: word }))
+  it('a new View resets the confirmation: disabled again until armed again', () => {
+    const { onSign, again } = mount(answer())
     arm()
-    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'p_abc' } })
     expect(sign()).toBeEnabled()
-    again(answer({ confirm: word, lines: ['changed'] }, 'sha256:' + 'b'.repeat(64)))
+    again(answer({ lines: ['changed'] }, 'sha256:' + 'b'.repeat(64)))
     expect(sign()).toBeDisabled()
-    expect(screen.getByRole('textbox')).toHaveValue('')
     wait(ARM_MS * 2)
-    expect(sign()).toBeDisabled() // armed again, but the word is not typed
+    expect(sign()).toBeEnabled()
     expect(onSign).not.toHaveBeenCalled()
   })
 
@@ -201,61 +198,15 @@ describe('Sign is armed by presentation', () => {
   })
 })
 
-describe('a word op', () => {
-  const WORD = 'DEMO~a94c935c/POLICY'
-  const mountWord = (props: Partial<React.ComponentProps<typeof ClickSignPanel>> = {}) => mount(answer({ confirm: { kind: 'word', word: WORD } }), props)
-  const type = (v: string) => fireEvent.change(screen.getByRole('textbox'), { target: { value: v } })
-
-  it('asks for the word in a field next to Sign, which stays off, and says why', () => {
-    mountWord()
-    expect(screen.getByLabelText(new RegExp(`Type ${WORD.replace(/[~/]/g, '.')} to confirm`))).toBe(screen.getByRole('textbox'))
-    expect(screen.queryByRole('button', { name: /Hold to sign/ })).toBeNull()
-    arm()
-    expect(sign()).toBeDisabled()
-    expect(screen.getByTestId('word-hint')).toHaveTextContent(`Type ${WORD} above to continue.`)
-  })
-
-  it('a wrong or partly typed word keeps Sign off; the exact word turns it on', () => {
-    const { onSign } = mountWord()
-    arm()
-    type(WORD.slice(0, -1))
-    expect(sign()).toBeDisabled()
-    type(WORD.toLowerCase())
-    expect(sign()).toBeDisabled()
-    type(WORD + ' ')
-    expect(sign()).toBeDisabled()
-    press(sign())
-    expect(onSign).not.toHaveBeenCalled()
-    type(WORD)
-    expect(sign()).toBeEnabled()
-  })
-
-  it('signs exactly once, with the View’s word, only after arming and the typed word', () => {
-    const { onSign } = mountWord()
-    type(WORD)
-    expect(sign()).toBeDisabled() // the word alone does not arm it
-    arm()
-    press(sign())
-    expect(onSign).toHaveBeenCalledTimes(1)
-    expect(onSign).toHaveBeenCalledWith(WORD)
-    fireEvent.click(sign())
-    expect(onSign).toHaveBeenCalledTimes(1)
-  })
-
-  it('a press that began before the word was typed does not sign', () => {
-    const { onSign } = mountWord()
-    arm()
-    fireEvent.pointerDown(sign()) // disabled: dropped
-    type(WORD)
-    fireEvent.click(sign())
-    expect(onSign).not.toHaveBeenCalled()
-  })
-
+describe('agent access on a click View', () => {
   it('names the agent access, its length and what agents may do, when the story gives access', () => {
-    mountWord({ story: { signLabel: 'Sign and start agent', steps: ['You sign.'], access: { length: '7 days' } } })
+    mount(answer(), { story: { signLabel: 'Sign and start agent', steps: ['You sign.'], access: { length: '7 days' } } })
     expect(screen.getByTestId('access-length')).toHaveTextContent('Let agents work for you for 7 days.')
-    expect(screen.getByTestId('typed-word')).toHaveTextContent('Agents (Claude Code) may read and change files in the project folder and run its commands.')
-    expect(screen.getByRole('button', { name: 'Sign and start agent' })).toBeDisabled()
+    expect(screen.getByTestId('agent-access')).toHaveTextContent('Agents (Claude Code) may read and change files in the project folder and run its commands.')
+    expect(screen.queryByRole('textbox')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Sign and start agent' })).toBeDisabled() // until armed
+    arm()
+    expect(screen.getByRole('button', { name: 'Sign and start agent' })).toBeEnabled()
   })
 })
 

@@ -41,7 +41,7 @@ class Fake:
 
 class Script:
     def __init__(self, ws):
-        self.ws, self.enabled, self.available, self.contract = ws, True, True, 1
+        self.ws, self.enabled, self.available, self.contract = ws, True, True, 3
         self.features: list | None = None  # `status.features`: ["custody"] for a signer with the switch
         self.refuse: dict[str, ClickError] = {}
         self.view = {"view": {"risk": RISK, "lines": [CANARY], "op": "approve"}, "view_digest": HASH}
@@ -236,9 +236,9 @@ def test_no_click_feature_unless_the_flag_is_on_and_the_signer_can_sign(
     assert ws["click"]["problem"] == "disabled"
 
 
-@pytest.mark.parametrize("contract", [3, 0, True, "2", None, 2.0])
+@pytest.mark.parametrize("contract", [1, 2, 4, 0, True, "3", None, 3.0])
 def test_a_signer_of_another_contract_is_refused(client, token, stub, script, contract):
-    script.contract = contract  # strict: only the ints 1 and 2 (True == 1 and 2.0 == 2 in Python must not pass)
+    script.contract = contract  # strict: only the int 3 (3.0 == 3 in Python must not pass)
     ws = client.get("/api/workspaces", headers=hdr(token, False)).json()[0]
     assert "click" not in ws["features"] and ws["click"] is None
     assert script.clients[0].closed  # that child is stopped
@@ -248,13 +248,13 @@ def test_a_signer_of_another_contract_is_refused(client, token, stub, script, co
     assert [c for c in script.clients[0].calls if c[0] == "prepare"] == []
 
 
-def test_a_contract_2_signer_is_accepted_and_remembered(client, token, stub, script, gateway):
-    script.contract = 2  # H11c-2: deposit-only grant mode
+def test_a_contract_3_signer_is_accepted_and_remembered(client, token, stub, script, gateway):
+    script.contract = 3
     ws = client.get("/api/workspaces", headers=hdr(token, False)).json()[0]
     assert "click" in ws["features"] and ws["click"]["available"] is True
     res = prepare(client, token, stub)
     assert res.status_code == 200, res.text
-    assert gateway.click.contract == 2
+    assert gateway.click.contract == 3
 
 
 def test_prepare_chooses_the_op_here_and_derives_the_idem_from_the_action(client, token, stub, script, auth):
@@ -324,26 +324,21 @@ def test_view_is_the_signers_view_unchanged(client, token, stub, script):
     assert call[1] == {"workspace_id": stub.ws, "request_id": REQ}
 
 
-def test_sign_sends_exactly_what_was_typed_and_answers_without_the_hosts_result(client, token, stub, script):
+def test_sign_sends_exactly_the_digest_and_answers_without_the_hosts_result(client, token, stub, script):
     prepare(client, token, stub)
-    body = {"request_id": REQ, "view_digest": HASH, "word": "  DEMO~ab  "}
+    body = {"request_id": REQ, "view_digest": HASH}
     res = client.post(url(stub, "sign"), json=body, headers=hdr(token))
     assert res.status_code == 200
     assert res.json() == {"state": "submitted", "duplicate": False, "key": "DEMO-0001", "seq": 7}
     sent = [c for c in script.clients[0].calls if c[0] == "sign"][0][1]
-    assert sent == {"workspace_id": stub.ws, "request_id": REQ, "view_digest": HASH, "word": "  DEMO~ab  "}
-    plain = {"request_id": "hr_" + "0" * 25 + "2", "view_digest": HASH}
-    prepare(client, token, stub, {**comment(2), "message": "another action"})
-    client.post(url(stub, "sign"), json=plain, headers=hdr(token))
-    assert "word" not in [c for c in script.clients[0].calls if c[0] == "sign"][1][1]
+    assert sent == {"workspace_id": stub.ws, "request_id": REQ, "view_digest": HASH}
 
 
 @pytest.mark.parametrize(
     "body",
     [
         {"request_id": REQ, "view_digest": "sha256:short"},
-        {"request_id": REQ, "view_digest": HASH, "word": ""},
-        {"request_id": REQ, "view_digest": HASH, "word": "x" * 129},
+        {"request_id": REQ, "view_digest": HASH, "word": "DEMO~ab"},  # no word field any more
         {"request_id": "not-a-request", "view_digest": HASH},
         {"request_id": REQ, "view_digest": HASH, "extra": 1},
     ],
@@ -497,7 +492,7 @@ def test_views_words_and_credentials_are_never_logged(client, token, stub, scrip
     prepare(client, token, stub)
     client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token))
     client.post(
-        url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH, "word": "TYPED-WORD"}, headers=hdr(token)
+        url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH}, headers=hdr(token)
     )
     out = capfd.readouterr()
     for text in (caplog.text, out.out, out.err):
@@ -506,7 +501,7 @@ def test_views_words_and_credentials_are_never_logged(client, token, stub, scrip
 
 def test_the_sign_routes_take_small_bodies(client, token, stub, script):
     prepare(client, token, stub)
-    big = {"request_id": REQ, "view_digest": HASH, "word": "x" * 20000}
+    big = {"request_id": REQ, "view_digest": HASH, "pad": "x" * 20000}
     assert client.post(url(stub, "sign"), json=big, headers=hdr(token)).status_code == 413
 
 
@@ -1544,19 +1539,18 @@ def grant_view(**over):
         "lines": ["grant for Demo Owner", "", DEPOSIT_RISK, DEPOSIT_LINE],
         "deposit": True,
         "deposit_line": DEPOSIT_LINE,
-        "confirm": {"kind": "word", "word": f"DEMO~{GRANT_WS[-8:]}/GRANT"},
+        "confirm": {"kind": "click"},
     }
     return {"view": {**view, **over}, "view_digest": HASH}
 
 
 @pytest.fixture
 def deposits(script, monkeypatch, host_check):
-    """A contract-2 signer whose `sign` of a grant answers like core's: the deposit fields, plus things that must never
+    """A contract-3 signer whose `sign` of a grant answers like core's: the deposit fields, plus things that must never
     leave this server (the host's `result` with a secret in it, and an unknown field)."""
     global GRANT_WS
     GRANT_WS = script.ws
     host_check.verified = {"fingerprint": "0123456789ab"}
-    script.contract = 2  # accepted since #489
     script.sign_answer = {
         "result": {"data": {"grant": GRANT, "secret": f"{GRANT}.{SECRET}"}, "seq": 9},
         "duplicate": False,
@@ -1577,15 +1571,6 @@ def deposits(script, monkeypatch, host_check):
     script.handler = handler
     script.view = grant_view()
     return script
-
-
-def test_runner_grant_needs_a_contract_2_signer_else_update_orch(client, token, stub, script):
-    res = prepare(client, token, stub, runner_grant())
-    assert res.status_code == 409, res.text
-    err = res.json()["error"]
-    assert err["code"] == "human.click_refused" and err["reason"] == "terminal_only" and err["why"] == "update_orch"
-    assert err["message"] == "This orch version can't hand a grant to the runner; update orch."
-    assert [c for cl in script.clients for c in cl.calls if c[0] == "prepare"] == []
 
 
 def test_runner_grant_prepares_a_deposit_grant_with_hours_and_scope_only(client, token, stub, deposits):
@@ -1634,10 +1619,9 @@ def test_runner_grant_view_is_checked_against_the_callers_grant(client, token, s
         {"deposit_line": "The secret is shown here"},
         {"lines": ["grant", DEPOSIT_LINE]},  # no risk sentence
         {"lines": ["grant", DEPOSIT_RISK]},  # no deposit line in the lines
-        {"confirm": {"kind": "click"}},
-        {"confirm": {"kind": "word", "word": "DEMO~0a1b2c3d"}},
-        # review L3: another workspace's word, or another workspace
-        {"confirm": {"kind": "word", "word": "DEMO~0a1b2c3d/GRANT"}},
+        {"confirm": {"kind": "word", "word": "DEMO~0a1b2c3d/GRANT"}},  # a typed word is no longer a confirmation
+        {"confirm": {}},
+        # review L3: another workspace
         {"workspace": {"id": "f" * 32, "name": "other", "prefix": "DEMO"}},
         # review I1: a View of another record than the one verified
         {"fingerprint": "ffffffffffff"},
@@ -1659,7 +1643,7 @@ def test_a_view_of_another_op_that_claims_a_deposit_is_not_shown(client, token, 
 
 def test_the_grant_sign_answer_is_the_deposit_fields_only_and_never_the_secret(client, token, stub, deposits):
     prepare(client, token, stub, runner_grant())
-    body = {"request_id": REQ, "view_digest": HASH, "word": "DEMO~0a1b2c3d/GRANT"}
+    body = {"request_id": REQ, "view_digest": HASH}
     res = client.post(url(stub, "sign"), json=body, headers=hdr(token))
     assert res.status_code == 200, res.text
     assert res.json() == {
@@ -1688,7 +1672,7 @@ def test_the_grant_sign_answer_is_the_deposit_fields_only_and_never_the_secret(c
 def test_each_deposit_field_is_checked(client, token, stub, deposits, answer, out):
     deposits.sign_answer = {**deposits.sign_answer, **answer}
     prepare(client, token, stub, runner_grant())
-    body = {"request_id": REQ, "view_digest": HASH, "word": "DEMO~0a1b2c3d/GRANT"}
+    body = {"request_id": REQ, "view_digest": HASH}
     got = client.post(url(stub, "sign"), json=body, headers=hdr(token)).json()
     for key, value in out.items():
         assert got[key] == value
@@ -1917,13 +1901,11 @@ def test_an_older_signer_is_never_asked_for_a_sequence(client, token, stub, scri
         },
     ],
 )
-def test_publish_setup_and_share_are_never_one_click(client, token, stub, script, host_check, rich, body):
-    # P6: terminal only. Refused before a slot is taken and before the signer is asked, whatever the flag says.
+def test_publish_setup_and_share_are_one_click(client, token, stub, script, host_check, rich, body):
+    # #1198 C2: Publish is a click like every other op; the signer is asked and a slot is taken.
     res = client.post(url(stub, "prepare"), json=body, headers=hdr(token))
-    err = res.json()["error"]
-    assert res.status_code == 409 and err["code"] == "human.click_refused" and err["reason"] == "terminal_only"
-    assert script.prepared == 0
-    assert client.app.state.handoffs.active == {}
+    # (the stub host lacks some of the ops, so only the old terminal-only refusal is asserted away)
+    assert res.json().get("error", {}).get("reason") != "terminal_only", res.text
 
 
 MARKET = {"action": "market_grant", "name": "echo", "staged": "st_" + "0" * 32}
@@ -1953,9 +1935,9 @@ def test_a_market_install_is_one_click_and_the_signer_gets_the_host_review_mater
     assert other.status_code == 200 and script.prepared == 2
 
 
-def test_a_market_install_for_publish_is_still_not_a_thing(client, token, stub, script, rich, host_serves_grant):
+def test_a_market_install_for_publish_is_a_click_too(client, token, stub, script, rich, host_serves_grant):
     res = prepare(client, token, stub, {**MARKET, "name": "publish"})
-    assert res.status_code == 409 and res.json()["error"]["reason"] == "terminal_only" and script.prepared == 0
+    assert res.json().get("error", {}).get("reason") != "terminal_only", res.text
 
 
 def test_a_stopped_sequence_says_which_ticket_exists_and_that_the_agent_access_is_last(

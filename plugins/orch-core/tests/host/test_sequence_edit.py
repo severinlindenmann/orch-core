@@ -48,9 +48,8 @@ def test_the_review_shows_criteria_and_people_and_needs_the_word_for_another_mem
     assert [a["text"] for a in content["acceptance"]] == ["It opens"]
     assert any(f["field"] == "assignees: add" and f["after"] == quinn.ref for f in content["fields_changed"])
     assert content["subline"] == "Includes its text (2 sections), 1 acceptance check, its people"
-    # #1070: naming ANOTHER member keeps the word (approval rights / worker role go to a third party)
-    assert sequence.confirm_kind(rig.intent, human.person.ref) == "word"
-    assert sequence.confirm_kind(rig.intent) == "word"
+    # #1198 C1: naming ANOTHER member is a click too; the review's notes say what the role allows
+    assert sequence.confirm_kind(rig.intent) == "click"
     assert any("Assignees do the work" in n for n in content["notes"])
     assert "It opens" in signer.render(first, lambda w: ("ws", "ORCH"))
 

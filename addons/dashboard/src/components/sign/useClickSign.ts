@@ -35,7 +35,7 @@ export interface ClickRun {
   start: (action: ClickAction, retryFloor?: number, freshIfEnded?: boolean) => Promise<void>
   /** Read the View again (it changed). The same request. */
   review: () => Promise<void>
-  sign: (word?: string) => Promise<void>
+  sign: () => Promise<void>
   cancel: () => Promise<void>
   /**
    * "Try again" / "Prepare again" / "Do it again": a request that is still open is cancelled first (no leaked slot) and
@@ -182,13 +182,13 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
   }, [read, fail])
 
   const sign = useCallback(
-    async (word?: string) => {
+    async () => {
       const { prepared: open, ws: where } = live.current
       if (!open || !where || !view || busy.current || live.current.phase !== 'ready') return
       busy.current = true
       setPhase('signing')
       try {
-        const got = await api.signClick(where, open.request_id, view.view_digest, word)
+        const got = await api.signClick(where, open.request_id, view.view_digest)
         if (!mounted.current) return
         setSigned(got)
         setPhase('done')

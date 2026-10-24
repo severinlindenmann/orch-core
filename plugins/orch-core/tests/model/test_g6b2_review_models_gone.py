@@ -46,7 +46,7 @@ def test_no_signed_path_knows_models():
     assert "models" not in signer._SETTINGS_KEYS
     assert "models" not in person_ops._SET["properties"]
     assert person_ops._SET.get("additionalProperties") is False
-    assert "models" not in protocol.SETTINGS_WORD_KEYS | protocol.SETTINGS_TERMINAL_KEYS
+    assert "models" not in protocol.SETTINGS_TERMINAL_KEYS
     ws = schema.load("workspace") if hasattr(schema, "load") else None
     if ws is not None:
         assert "models" not in str(ws)

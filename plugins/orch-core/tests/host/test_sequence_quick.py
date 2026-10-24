@@ -182,7 +182,7 @@ def test_the_grant_lands_last_and_the_review_is_honest_about_its_reach(human, tm
         and "GRANT" in note
     )
     assert signer.confirm_word(first) == "GRANT"
-    assert sequence.confirm_kind(rig.intent) == "word"
+    assert sequence.confirm_kind(rig.intent) == "click"  # the terminal still types GRANT
     out = rig.driver().run(first)
     assert out["landed"] == 9
     types = [e["type"] for _, ev, _ in rig.submitted for e in ev]
@@ -408,18 +408,14 @@ def test_the_grant_is_only_ever_the_last_step():
     assert kinds.index("grant") == len(kinds) - 1 and kinds.count("grant") == 1  # the grant is only ever last
 
 
-def test_a_grant_needs_the_typed_word_and_goes_to_the_runner_last(click, served, human):  # noqa: F811
-    from tests.host.test_click import refused
-
+def test_a_grant_is_one_click_and_goes_to_the_runner_last(click, served, human):  # noqa: F811
     click.signer._execution = lambda entry: True
     p = click_prepare(click, quick(agent={"hours": 8, "scope": "workable"}))
     v = click.view(p["request_id"])
-    assert v["view"]["confirm"]["kind"] == "word" and v["view"]["confirm"]["word"].endswith("/GRANT")
+    assert v["view"]["confirm"] == {"kind": "click"}
     assert "Agents may work on any ticket they are allowed to work on" in "\n".join(v["view"]["lines"])
     click.mono.t += 2
-    refused(lambda: click.sign(p["request_id"], v["view_digest"]), "human.click_refused", "word")
-    assert click.signatures == 0
-    out = click.sign(p["request_id"], v["view_digest"], word=v["view"]["confirm"]["word"])
+    out = click.sign(p["request_id"], v["view_digest"])
     assert click.signatures == 9
     assert out["deposit"] in ("confirmed", "rejected", "unknown") and out["grant"].startswith("gr_")
 

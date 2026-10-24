@@ -29,6 +29,7 @@ from tests.host.dispatch_helpers import SESSION, err, ok
 from tests.host.human_helpers import Human
 from tests.host.test_artifact_get import stored
 from tests.host.test_blobs import add, sha, upload
+from tests.host.test_click import Click, click  # noqa: F401
 from tests.host.test_hub_ops import HUB_ID, connect_args, join_args
 from tests.hub import contract as H
 from tests.hub.fake import sign_with
@@ -557,6 +558,22 @@ def test_the_review_shows_the_exact_files_server_and_link_kind(w):
     w.human.check(prepared)  # the independent signer re-derives and accepts the review
 
 
+def test_a_share_is_signed_with_a_plain_click_and_the_view_shows_everything(w, click):  # noqa: F811
+    """#1198 C2: ``publish.share`` is a click op; its View carries the signed words: files, link kind, both servers."""
+    uid, key = w.ticket_with(**{"report.md": REPORT})
+    got = w.prepare(key, "report.md", kind="once", views=3, days=1)
+    p = click.prepare("publish.share", {"staged_id": got["staged_id"]})
+    shown = click.view(p["request_id"])
+    v = shown["view"]
+    assert v["confirm"] == {"kind": "click"}
+    text = "\n".join(v["lines"])
+    for needle in ("report.md", SERVER, SHARE, "show-once link", key):
+        assert needle in text, needle
+    click.mono.t += 2
+    click.sign(p["request_id"], shown["view_digest"])
+    assert click.signatures == 1
+
+
 def test_the_signer_refuses_a_share_approval_that_is_not_one_note_on_a_ticket(w):
     from orch.host import signer
 
@@ -1053,15 +1070,16 @@ def test_a_server_that_forgot_the_workspace_drops_the_cached_registration(w):
     ok(w.send(staged))  # allowed again: the copy goes, registering first
 
 
-def test_everything_that_sends_or_redirects_is_terminal_only_never_click_or_word():
+def test_publish_is_a_click_and_only_the_non_human_ops_stay_terminal():
     from orch.click.protocol import op_class
 
-    for op in ("publish.share", "publish.send", "publish.revoke", "publish.register"):
+    assert op_class("publish.share") == "click"  # #1198 C2: the View lists files and both servers
+    for op in ("publish.send", "publish.revoke", "publish.register"):  # not human ops: never signed by click
         assert op_class(op) == "terminal", op
     for changed in ({"publish": {"server": SERVER, "share": SHARE}}, {"publish": None}, {"publish": None, "repos": {}}):
-        assert op_class("settings.set", [{"set": changed}]) == "terminal", changed  # at sign time
-        assert op_class("settings.set", None, {"set": changed}) == "terminal", changed  # early, before prepare
-    assert op_class("settings.set", None, {"set": {"repos": {}}}) == "word"
-    assert op_class("settings.set", None, {"set": {"sign_methods": ["terminal"]}}) == "word"
+        assert op_class("settings.set", [{"set": changed}]) == "click", changed  # at sign time
+        assert op_class("settings.set", None, {"set": changed}) == "click", changed  # early, before prepare
+    assert op_class("settings.set", None, {"set": {"repos": {}}}) == "click"
+    assert op_class("settings.set", None, {"set": {"sign_methods": ["terminal"]}}) == "click"
     assert op_class("settings.set", [{"set": {"claim_ttl_min": 30}}]) == "click"  # other settings keep their class
     assert op_class("settings.set", None, {"set": {"claim_ttl_min": 30}}) == "click"

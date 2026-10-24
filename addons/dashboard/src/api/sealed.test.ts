@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { b64urlEncode, importKeyPair, newRevealKey, open, revealKeyFromPair, seal, SealedError, type SealedContext } from './sealed'
+import { __sealWithEphemeralForTests, b64urlEncode, importKeyPair, newRevealKey, open, revealKeyFromPair, seal, SealedError, type SealedContext } from './sealed'
 
 type Jwk = { x: string; y: string; d: string }
 type SealVector = { name: string; context: SealedContext; ephemeral_jwk: Jwk; recipient_jwk: Jwk; recipient_public: string; plaintext: string; envelope: { v: 1; alg: string; epk: string; ct: string } }
@@ -24,7 +24,7 @@ describe('seal vectors (byte for byte)', () => {
   for (const v of inCases) {
     it(v.name, async () => {
       const eph = await importKeyPair(v.ephemeral_jwk)
-      const env = await seal(v.recipient_public, v.plaintext, v.context, eph)
+      const env = await __sealWithEphemeralForTests(v.recipient_public, v.plaintext, v.context, eph)
       expect(env).toEqual(v.envelope)
     })
   }

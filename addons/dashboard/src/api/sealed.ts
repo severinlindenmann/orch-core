@@ -146,10 +146,18 @@ function padSecret(secret: Uint8Array): Uint8Array {
 
 /**
  * Seal `secret` (UTF-8 text) to the signer's public key `signerPk` (65 bytes, or base64url from the View's `seal.pk`).
- * `ephemeral` exists for the test vectors only: every real call omits it, because the nonce is derived from the key
- * agreement and a reused ephemeral key would reuse a nonce.
+ * The ephemeral key is always fresh: the nonce is derived from the key agreement, so a reused key would reuse a nonce.
  */
-export async function seal(signerPk: Uint8Array | string, secret: string, ctx: SealedContext, ephemeral?: KeyPair): Promise<Envelope> {
+export function seal(signerPk: Uint8Array | string, secret: string, ctx: SealedContext): Promise<Envelope> {
+  return sealWith(signerPk, secret, ctx, undefined)
+}
+
+/** TEST ONLY (the vectors fix the ephemeral key). Never call from page code. */
+export function __sealWithEphemeralForTests(signerPk: Uint8Array | string, secret: string, ctx: SealedContext, ephemeral: KeyPair): Promise<Envelope> {
+  return sealWith(signerPk, secret, ctx, ephemeral)
+}
+
+async function sealWith(signerPk: Uint8Array | string, secret: string, ctx: SealedContext, ephemeral: KeyPair | undefined): Promise<Envelope> {
   const dir = validContext(ctx)
   if (dir !== 'in') throw new SealedError('context')
   const rpk = typeof signerPk === 'string' ? b64urlDecodeStrict(signerPk) : signerPk

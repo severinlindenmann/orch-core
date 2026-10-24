@@ -20,6 +20,8 @@ __all__ = [
     "DEPOSIT_RISK",
     "OPS",
     "REVEAL_LINE",
+    "SEALED_OPS",
+    "BACKUP_KEY_LINE",
     "REVEAL_RISK",
     "REASONS",
     "REFUSALS",
@@ -56,6 +58,15 @@ REVEAL_LINE = "The secret is shown once, on this page, only to you. orch keeps o
 #: the plain risk of a shown secret (#1198 C7): the page's key is chosen by the page, so whoever controls the dashboard
 #: could ask for the secret under its own key; the review says so
 REVEAL_RISK = "The secret will be shown once in this browser. Anyone who controls this dashboard could read it."
+#: #1198 C10: the hub steps are clicks only together with the person's backup key, typed once in the page and sealed to
+#: the signer's per-request key (sealed-field contract, purpose ``hub.backup_key``). op -> purposes its View asks for
+SEALED_OPS: dict[str, tuple[str, ...]] = {
+    "hub.join": ("hub.backup_key",),
+    "hub.mode": ("hub.backup_key",),
+    "hub.leave": ("hub.backup_key",),
+}
+#: the View of a hub step ends with this line (and carries ``backup_key_line``); the page asks for the key
+BACKUP_KEY_LINE = "This step also needs your backup key. You type it once here; orch does not keep it"
 #: a deposit grant lasts at most this many hours (D-P2-27)
 DEPOSIT_MAX_HOURS = GRANT_MAX_HOURS
 OPS = ("prepare", "view", "sign", "cancel", "status", "custody_on", "custody_off", "stash")
@@ -64,8 +75,9 @@ OPS = ("prepare", "view", "sign", "cancel", "status", "custody_on", "custody_off
 #: signatures (batch 11); an older signer has no ``features`` and no switch, and ignores ``sequence`` (never asked)
 #: ``images`` is ``stash`` (a pasted screenshot, in chunks, held by the signer) and ``prepare {sequence}`` naming it
 #: (R3 part B); ``reveal`` (#1198 C7) is a ``grant`` without ``deposit``: ``sign`` takes ``reveal_key`` and answers
-#: ``reveal`` (the secret sealed to the page's key); a signer without it answers ``terminal_only`` for that grant
-FEATURES = ("custody", "sequence", "images", "reveal")
+#: ``reveal`` (the secret sealed to the page's key); a signer without it answers ``terminal_only`` for that grant.
+#: ``backup_key`` (#1198 C10) is the hub steps by click: the View carries ``seal`` and ``sign`` takes ``sealed``
+FEATURES = ("custody", "sequence", "images", "reveal", "backup_key")
 #: the host's ``sign.convenience_unavailable`` reasons (orch-v2-host §0.8.6 item 1), from the host's closed schema
 REASONS: tuple[str, ...] = tuple(_HOST_DETAIL["sign.convenience_unavailable"]["reason"])  # type: ignore[arg-type]
 #: ``human.click_refused`` reasons (§0.8.6 item 5)
@@ -137,6 +149,9 @@ CLICK_OPS = frozenset(
         "grant",  # #1198 C7: with the secret sealed to the page (``reveal_key``), or deposited (``deposit``)
         "addon.disable",
         "settings.set",
+        "hub.join",  # #1198 C10: only with the backup key sealed to the signer (SEALED_OPS); see view.check_prepared
+        "hub.mode",
+        "hub.leave",
         "addon.grant",  # every add-on, publish included (#1198 C2); the review lists what is signed
         "publish.share",  # #1198 C2: the staged copy's own words are the review; the person clicks
         # #1198 C1: these were the typed-word class; the person reads the review and clicks, nothing is typed

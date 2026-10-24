@@ -265,7 +265,12 @@ def test_ae3_publish_is_a_click(human):
     # the early check by args, as the click signer asks it before prepare
     assert protocol_class("settings.set", {"set": {"publish": PUBLISH}}) == "click"
     assert protocol_class("addon.grant", {"name": "publish"}) == "click"  # also alone, not in a sequence
-    assert protocol_class("hub.join", {}) == "terminal"  # nothing else became a click
+    from orch.click import protocol
+
+    # #1198 C10: a hub step is a click only together with the sealed backup key (check_prepared refuses it otherwise)
+    assert protocol_class("hub.join", {}) == "click" and "hub.join" in protocol.SEALED_OPS
+    assert protocol_class("device.rotate", {}) == "terminal"  # nothing else became a click
+    assert protocol_class("keys.rotate", {}) == "terminal"
 
 
 def protocol_class(op, args):
@@ -727,7 +732,8 @@ def test_publish_is_turned_on_by_a_click_on_every_route_but_a_grant_stays_termin
     assert protocol.op_class("addon.grant", events=[{"name": "usage"}]) == "click"
     # nothing else became a click: a runner grant and the hub ops are not in this route
     assert protocol.op_class("grant", args={}) == "click"  # #1198 C7: with the sealed reveal
-    assert protocol.op_class("hub.join", args={}) == "terminal"
+    assert protocol.op_class("hub.join", args={}) == "click" and "hub.join" in protocol.SEALED_OPS  # C10: sealed only
+    assert protocol.op_class("device.rotate", args={}) == "terminal"
     # at prepare: the plain grant of Publish is accepted now, and signs nothing until the person clicks
     human.run("settings.set", {"set": {"publish": PUBLISH}})
     click.prepare("addon.grant", {"name": "publish"})

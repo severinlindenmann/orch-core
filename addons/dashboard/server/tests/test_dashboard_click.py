@@ -2430,3 +2430,190 @@ def test_c21_a_missing_key_at_sign_is_a_definite_refusal_not_uncertain(client, t
     assert client.app.state.handoffs.is_unsettled(REQ) is None  # nothing is unsettled: it can be tried again
     del script.refuse["sign"]
     assert sign_lost(client, token, stub).status_code == 200
+
+
+# -- #1198 C10: hub steps by click, with the backup key sealed to the signer ----------------------------
+
+BACKUP_LINE = "This step also needs your backup key. You type it once here; orch does not keep it"
+SIGNER_PK = "B" + "Q" * 86
+BACKUP_ENV = {"v": 1, "alg": "P256-HKDF-SHA256-A256GCM", "epk": "C" + "A" * 86, "ct": "D" * 363}
+HUB_ID = "a" * 32
+
+
+def hub_join(**kw):
+    return {"action": "hub_join", "hub_card": '{"o":{"hub_id":"' + HUB_ID + '"}}', "hub_id": HUB_ID, **kw}
+
+
+def backup_view(**over):
+    seal = {"v": 1, "alg": "P256-HKDF-SHA256-A256GCM", "pk": SIGNER_PK, "purposes": ["hub.backup_key"]}
+    view = {
+        "risk": RISK,
+        "op": "hub.join",
+        "workspace": {"id": GRANT_WS, "name": "billing", "prefix": "DEMO"},
+        "fingerprint": "0123456789ab",
+        "lines": ["join the hub", "", BACKUP_LINE],
+        "seal": seal,
+        "backup_key_line": BACKUP_LINE,
+        "confirm": {"kind": "click"},
+    }
+    return {"view": {**view, **over}, "view_digest": HASH}
+
+
+@pytest.fixture
+def backup(script, monkeypatch, host_check):
+    global GRANT_WS
+    GRANT_WS = script.ws
+    script.features = ["custody", "backup_key"]
+    host_check.verified = {"fingerprint": "0123456789ab"}
+    monkeypatch.setattr(client_login_kind(), "login_kind", lambda self, token: "local", raising=False)
+    script.view = backup_view()
+    return script
+
+
+def client_login_kind():
+    from orch_dashboard.auth import Auth
+
+    return Auth
+
+
+def sign_hub(client, token, stub, **body):
+    return client.post(url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH, **body}, headers=hdr(token))
+
+
+def test_a_hub_join_prepares_the_hub_op_and_the_card_only(client, token, stub, backup):
+    res = prepare(client, token, stub, hub_join())
+    assert res.status_code == 200, res.text
+    sent = sent_of(backup, "prepare")[0][1]
+    assert sent["op"] == "hub.join" and sent["args"] == {
+        "hub_card": {"o": {"hub_id": HUB_ID}},
+        "hub_id": HUB_ID,
+        "mode": "selective",
+    }
+    assert "reveal_key" not in sent and "deposit" not in sent
+    left = prepare(client, token, stub, {"action": "hub_leave"})
+    assert sent_of(backup, "prepare")[-1][1]["op"] == "hub.leave" and left.status_code in (200, 409)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        hub_join(mode="full"),  # a full join needs the key in passphrase custody: the terminal's
+        hub_join(hub_id="XYZ"),
+        hub_join(hub_card="not json"),
+        hub_join(hub_card="[]"),
+        hub_join(extra=1),
+        {"action": "hub_leave", "hub_id": HUB_ID},
+    ],
+)
+def test_hub_bodies_are_closed(client, token, stub, backup, body):
+    assert prepare(client, token, stub, body).status_code == 400
+    assert sent_of(backup, "prepare") == []
+
+
+def test_a_hub_step_needs_a_signer_that_takes_the_backup_key_and_a_local_session(
+    client, token, stub, backup, monkeypatch
+):
+    backup.features = ["custody"]
+    res = prepare(client, token, stub, hub_join())
+    assert res.status_code != 200 and sent_of(backup, "prepare") == []
+    backup.features = ["custody", "backup_key"]
+    monkeypatch.setattr(client_login_kind(), "login_kind", lambda self, token: "remote", raising=False)
+    res = prepare(client, token, stub, hub_join())
+    assert res.status_code == 409 and sent_of(backup, "prepare") == []
+
+
+def test_a_hub_step_is_not_a_terminal_hand_off(client, token, stub, backup):
+    assert client.post(f"/api/w/{stub.ws}/handoff", json=hub_join(), headers=hdr(token)).status_code == 400
+    assert client.post(f"/api/w/{stub.ws}/handoff", json={"action": "hub_leave"}, headers=hdr(token)).status_code == 400
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"seal": None},
+        {"seal": {"v": 1, "alg": "P256-HKDF-SHA256-A256GCM", "pk": SIGNER_PK, "purposes": ["custody.passphrase"]}},
+        {
+            "seal": {
+                "v": 1,
+                "alg": "P256-HKDF-SHA256-A256GCM",
+                "pk": SIGNER_PK,
+                "purposes": ["hub.backup_key", "github.token"],
+            }
+        },
+        {"seal": {"v": 1, "alg": "P256-HKDF-SHA256-A256GCM", "purposes": ["hub.backup_key"], "for": "0" * 64}},
+        {"seal": {"v": 1, "alg": "P256-HKDF-SHA256-A256GCM", "pk": "short", "purposes": ["hub.backup_key"]}},
+        {"lines": ["join the hub"]},
+        {"backup_key_line": "something else"},
+        {"deposit": True},
+        {"confirm": {}},
+        {"workspace": {"id": "f" * 32, "name": "other", "prefix": "DEMO"}},
+    ],
+)
+def test_a_hub_view_without_the_backup_key_parts_is_not_shown(client, token, stub, backup, over):
+    backup.view = backup_view(**over)
+    prepare(client, token, stub, hub_join())
+    res = client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token))
+    assert res.status_code == 409 and res.json()["error"]["reason"] == "check_failed"
+
+
+def test_a_view_of_another_action_that_asks_for_the_backup_key_is_not_shown(client, token, stub, script):
+    script.view = {"view": {**script.view["view"], "seal": backup_view()["view"]["seal"]}, "view_digest": HASH}
+    prepare(client, token, stub)
+    res = client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token))
+    assert res.status_code == 409
+
+
+def test_the_hub_view_is_shown_as_the_signer_made_it(client, token, stub, backup):
+    prepare(client, token, stub, hub_join())
+    res = client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token))
+    assert res.status_code == 200, res.text
+    assert res.json() == backup.view
+
+
+def test_the_sealed_backup_key_is_relayed_as_it_came_and_not_kept(client, token, stub, backup, caplog):
+    prepare(client, token, stub, hub_join())
+    with caplog.at_level("DEBUG"):
+        res = sign_hub(client, token, stub, sealed={"hub.backup_key": BACKUP_ENV})
+    assert res.status_code == 200, res.text
+    assert sent_of(backup, "sign")[0][1]["sealed"] == {"hub.backup_key": BACKUP_ENV}
+    assert BACKUP_ENV["ct"] not in res.text and BACKUP_ENV["ct"] not in caplog.text
+    assert res.json() == {"state": "submitted", "duplicate": False} | {
+        k: v for k, v in res.json().items() if k in ("key", "seq")
+    }
+
+
+@pytest.mark.parametrize(
+    "sealed",
+    [
+        None,
+        {},
+        {"hub.backup_key": {**BACKUP_ENV, "extra": 1}},
+        {"hub.backup_key": {**BACKUP_ENV, "v": 2}},
+        {"hub.backup_key": {**BACKUP_ENV, "alg": "x"}},
+        {"hub.backup_key": {**BACKUP_ENV, "ct": "short"}},
+        {"hub.backup_key": BACKUP_ENV, "custody.passphrase": BACKUP_ENV},
+        {"custody.passphrase": BACKUP_ENV},
+        {"hub.backup_key": "plain words typed here"},
+    ],
+)
+def test_a_hub_sign_without_a_well_formed_sealed_key_never_reaches_the_signer(client, token, stub, backup, sealed):
+    prepare(client, token, stub, hub_join())
+    body = {} if sealed is None else {"sealed": sealed}
+    res = sign_hub(client, token, stub, **body)
+    assert res.status_code in (400, 409), res.text
+    assert sent_of(backup, "sign") == []
+
+
+def test_a_sealed_value_on_any_other_action_is_refused(client, token, stub, script):
+    prepare(client, token, stub)
+    res = sign_hub(client, token, stub, sealed={"hub.backup_key": BACKUP_ENV})
+    assert res.status_code == 400
+    assert sent_of(script, "sign") == []
+
+
+def test_a_sealed_sign_on_a_non_local_session_never_reaches_the_signer(client, token, stub, backup, monkeypatch):
+    prepare(client, token, stub, hub_join())
+    monkeypatch.setattr(client_login_kind(), "login_kind", lambda self, token: "remote", raising=False)
+    res = sign_hub(client, token, stub, sealed={"hub.backup_key": BACKUP_ENV})
+    assert res.status_code == 409 and res.json()["error"]["reason"] == "check_failed"
+    assert sent_of(backup, "sign") == []

@@ -908,6 +908,31 @@ class AgentAccess(Action):
         return v
 
 
+MAX_HUB_CARD_BYTES = 16 * 1024
+
+
+class HubJoin(Action):
+    """#1198 C10, join a hub (selective only: a full join needs the key in passphrase custody, so it is the terminal's).
+    Click only: the backup key is typed once in the page, sealed to the signer, and makes the owner proof; never a
+    terminal hand-off. The card is the hub's own file, as text (strict JSON); the host verifies it, not this server."""
+
+    action: Literal["hub_join"]
+    hub_card: Annotated[str, StringConstraints(min_length=2, max_length=MAX_HUB_CARD_BYTES)]
+    hub_id: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{8,64}$")]
+    mode: Literal["selective"] = "selective"
+
+    @model_validator(mode="after")
+    def check_card(self):
+        _strict_json_object(self.hub_card)
+        return self
+
+
+class HubLeave(Action):
+    """#1198 C10, leave the hub this workspace is joined to. Click only, with the backup key sealed (see HubJoin)."""
+
+    action: Literal["hub_leave"]
+
+
 PrepareBody = Annotated[
     Approve
     | RequestChanges
@@ -943,7 +968,9 @@ PrepareBody = Annotated[
     | PublishShare
     | GrantRevoke
     | RunnerGrant
-    | AgentAccess,
+    | AgentAccess
+    | HubJoin
+    | HubLeave,
     Field(discriminator="action"),
 ]
 
@@ -1120,6 +1147,14 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
             return "grant", {"hours": action.hours, "scope": action.scope} | (
                 {"label": action.label} if action.label else {}
             )
+        case HubJoin():
+            return "hub.join", {
+                "hub_card": _strict_json_object(action.hub_card),
+                "hub_id": action.hub_id,
+                "mode": "selective",
+            }
+        case HubLeave():
+            return "hub.leave", {}
     raise AssertionError("closed allowlist")  # pragma: no cover
 
 
@@ -1288,6 +1323,23 @@ def expected(action: Action, person: str | None = None):
                 one(ev, "grant.issued", verbs="agent", hours=action.hours, scope=action.scope, label=action.label)
                 and set(ev[0]) <= GRANT_ISSUED_KEYS
                 and ev[0].get("label") != "runner"
+                and person is not None
+                and isinstance(ev[0].get("actor"), dict)
+                and ev[0]["actor"].get("kind") == "person"
+                and ev[0]["actor"].get("id") == person
+            )
+        case HubJoin():
+            # exactly one `hub.joined`: a selective binding to the hub the person was told, the caller as its person
+            return lambda ev: (
+                one(ev, "hub.joined", mode="selective", hub_id=action.hub_id)
+                and person is not None
+                and isinstance(ev[0].get("actor"), dict)
+                and ev[0]["actor"].get("kind") == "person"
+                and ev[0]["actor"].get("id") == person
+            )
+        case HubLeave():
+            return lambda ev: (
+                one(ev, "hub.left")
                 and person is not None
                 and isinstance(ev[0].get("actor"), dict)
                 and ev[0]["actor"].get("kind") == "person"
@@ -1762,6 +1814,12 @@ def register(app: FastAPI, gateway: Gateway):
                 raise fail(
                     "invalid.input",
                     "Agent access with a shown secret is signed with one click in the dashboard.",
+                    exit=1,
+                )
+            if isinstance(body, HubJoin | HubLeave):  # the backup key is typed in the page and sealed: a click only
+                raise fail(
+                    "invalid.input",
+                    "A hub step is signed with one click in the dashboard, with your backup key.",
                     exit=1,
                 )
             planned = plan(gateway, ws, body)

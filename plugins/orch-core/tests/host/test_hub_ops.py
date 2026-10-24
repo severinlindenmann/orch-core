@@ -51,7 +51,8 @@ def test_click_and_convenience_never_sign_it():
     from orch.click import protocol
 
     for op in ("hub.join", "hub.mode", "hub.leave"):
-        assert protocol.op_class(op) == "terminal"  # not a click op, not a typed-word op: terminal only
+        # #1198 C10: a click op only together with the sealed backup key (the signer's check_prepared enforces it)
+        assert protocol.op_class(op) == "click" and op in protocol.SEALED_OPS
 
 
 def test_join_selective_signs_hub_joined_and_adds_no_member(human, served):
@@ -446,19 +447,6 @@ def test_a_leave_before_any_connect_has_nothing_to_tell_the_hub(human, served, s
     human.run("hub.leave", {})
     got = ok(served.client().req("hub.unbind", {}, idem=True))["data"]
     assert got["unbound"] is False and stub.sent == []
-
-
-def test_a_convenience_key_cannot_prepare_a_hub_op_without_the_proof(human, served):
-    for op in ("hub.join", "hub.leave"):
-        body = {
-            "op": op,
-            "args": join_args() if op == "hub.join" else {},
-            "signer": {**human.signer, "auth": "convenience"},
-        }
-        res = human.c.req("human.prepare", body)
-        assert err(res) == "hub.proof_invalid"
-        assert res["error"]["detail"] == {"reason": "proof_missing"}
-    assert hub_state(served)[0] == {}
 
 
 def test_same_hub_rejoin_delivers_the_owed_unbound_first_then_binds(human, served, stub, monkeypatch):

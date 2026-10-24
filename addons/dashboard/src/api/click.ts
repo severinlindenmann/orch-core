@@ -58,7 +58,9 @@ export interface ClickView {
   /** Core's constant `DEPOSIT_LINE`, when `deposit` is true. */
   deposit_line?: string
   /** #1198 C7: a grant whose secret is shown once in this page. `for` names the page key this review was made for. */
-  seal?: { v: number; alg: string; purposes: string[]; for: string }
+  seal?: { v: number; alg: string; purposes: string[]; for?: string; pk?: string }
+  /** #1198 C10: a hub step (core's constants, when the View asks for the backup key). */
+  backup_key_line?: string
 }
 
 export interface ClickViewAnswer {
@@ -106,8 +108,12 @@ export type RunnerGrantAction = Extract<HandoffAction, { action: 'runner_grant' 
  */
 export type AgentAccessAction = { action: 'agent_access'; hours: number; scope: 'workable' | 'all'; label?: string; reveal_key: string }
 
+/** #1198 C10: join a hub (selective only; a full join is the Terminal's) or leave it, with the backup key sealed to the signer. */
+export type HubJoinAction = { action: 'hub_join'; hub_card: string; hub_id: string; mode?: 'selective' }
+export type HubLeaveAction = { action: 'hub_leave' }
+
 /** Every typed action a click request may carry. */
-export type ClickAction = HandoffAction | RunnerGrantAction | AgentAccessAction
+export type ClickAction = HandoffAction | RunnerGrantAction | AgentAccessAction | HubJoinAction | HubLeaveAction
 
 /** Core's constant (orch.click.protocol DEPOSIT_LINE): a deposit View must carry it, or Sign is not offered. */
 export const DEPOSIT_LINE = 'The secret goes to your orch runner on this machine and is never shown'
@@ -138,6 +144,15 @@ export const revealViewOk = async (view: ClickView, ws: string, publicKeyB64: st
   view.seal?.purposes?.length === 1 && view.seal.purposes[0] === 'grant.secret' && view.seal.for === (await keyFingerprint(publicKeyB64)) &&
   view.lines.includes(REVEAL_LINE) && view.lines.includes(REVEAL_RISK)
 
+/** Core's constants (orch.click.protocol BACKUP_KEY_LINE, BACKUP_KEY_RISK): a hub View lacking either is not offered. */
+export const BACKUP_KEY_LINE = 'This step also needs your backup key. You type it once here; orch does not keep it'
+
+/** A hub View gets the backup-key field only when it asks for exactly `hub.backup_key` with the signer's key, carries the backup-key line (`BACKUP_KEY_LINE`, in `lines` and as `backup_key_line`) and is of this workspace. */
+export const backupViewOk = (view: ClickView, ws: string): boolean =>
+  view.workspace?.id === ws && view.confirm.kind === 'click' && view.deposit !== true &&
+  view.seal?.purposes?.length === 1 && view.seal.purposes[0] === 'hub.backup_key' && typeof view.seal.pk === 'string' && view.seal.pk.length === 87 &&
+  view.lines.includes(BACKUP_KEY_LINE) && view.backup_key_line === BACKUP_KEY_LINE
+
 /** The flag of a workspace: the signer says click-to-sign is on and it can sign there now (real host only). */
 export const clickReady = (w: Pick<Workspace, 'click'> | undefined | null): boolean => !!w?.click && w.click.enabled && w.click.available
 
@@ -148,7 +163,7 @@ export const clickReady = (w: Pick<Workspace, 'click'> | undefined | null): bool
 const CLICK_ACTIONS: ReadonlySet<string> = new Set<ClickAction['action']>([
   'accept_criterion', 'withdraw_acceptance', 'mark_task_done',
   'approve', 'request_changes', 'verdict', 'answer', 'comment', 'label', 'close', 'reopen', 'move', 'new', 'new_sequence', 'edit_sequence', 'quick_start', 'details', 'section',
-  'settings_set', 'icon_set', 'repo_set', 'repo_remove', 'policy_set', 'member_add', 'member_role', 'member_remove', 'grant_revoke', 'runner_grant', 'agent_access', 'addon_grant', 'market_grant', 'addon_disable', 'addon_enable', 'publish_setup', 'publish_share',
+  'settings_set', 'icon_set', 'repo_set', 'repo_remove', 'policy_set', 'member_add', 'member_role', 'member_remove', 'grant_revoke', 'runner_grant', 'agent_access', 'hub_join', 'hub_leave', 'addon_grant', 'market_grant', 'addon_disable', 'addon_enable', 'publish_setup', 'publish_share',
 ])
 export const clickEligible = (a: ClickAction | null): boolean => !!a && CLICK_ACTIONS.has(a.action)
 

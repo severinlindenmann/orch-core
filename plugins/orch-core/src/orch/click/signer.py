@@ -38,6 +38,7 @@ from .protocol import (
     OP_NAME,
     REASONS,
     REQ,
+    SEALED_OPS,
     WS_ID,
     ClickError,
     op_class,
@@ -122,6 +123,9 @@ class Approval:
     #: sealing; the secret itself is never kept
     reveal_pk: str | None = None
     reveal_env: dict[str, Any] | None = None
+    #: #1198 C10: the signer's per-request key that opens the typed secret of an op in ``SEALED_OPS`` (the hub backup
+    #: key); its public half is in the View. Closed (private key dropped) when the approval ends. Never logged
+    seal: sealed.Recipient | None = None
     deposit_result: dict[str, Any] | None = None
     #: R3 part B: the bytes of the pasted screenshots of a sequence by name, held HERE (verified against the intent)
     images: dict[str, bytes] | None = None
@@ -372,11 +376,18 @@ class ClickSigner:
     def _expired(self, approval: Approval) -> bool:
         return self.mono() >= approval.deadline
 
-    def _fetch(self, entry: dict[str, Any], approval: Approval, device: str) -> dict[str, Any]:
-        """``human.get`` with this signer (already bound at prepare) and the byte-for-byte binding check."""
-        prepared = self._call(
-            entry, "human.get", {"request_id": approval.request_id, "signer": {"device": device, "auth": "convenience"}}
-        )["data"]
+    def _fetch(
+        self, entry: dict[str, Any], approval: Approval, device: str, proof: Mapping[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """``human.get`` with this signer (already bound at prepare) and the byte-for-byte binding check. A hub step
+        (#1198 C10) is read without the signer until the owner proof exists (``proof``): then ``human.get`` checks the
+        proof at the bind, and a One-click signer without one is refused there (``hub.proof_invalid``)."""
+        body: dict[str, Any] = {"request_id": approval.request_id}
+        if approval.seal is None or proof is not None:
+            body["signer"] = {"device": device, "auth": "convenience"}
+        if proof is not None:
+            body["owner_proof"] = dict(proof)
+        prepared = self._call(entry, "human.get", body)["data"]
         if views.invariant(prepared) != approval.binding:
             raise refused("view_changed", "the host's answer differs from the request this signer prepared")
         views.check_prepared(
@@ -387,6 +398,7 @@ class ClickSigner:
             files=approval.files,
             deposit=approval.deposit,
             reveal=approval.reveal,
+            sealed_op=approval.seal is not None,
         )
         return prepared
 
@@ -432,6 +444,9 @@ class ClickSigner:
             reveal_key = self._reveal_key_arg(args)  # bound into the review: the page sends it at prepare
             if reveal_key is None:
                 raise ClickError("invalid.input", "a shown grant takes a reveal_key at prepare")
+        elif op in SEALED_OPS:  # #1198 C10: a hub step by click, with the backup key sealed to this signer
+            if seq is not None or files or deposit:
+                raise ClickError("invalid.input", "a hub step takes no sequence, files or deposit")
         elif op_class(op, args=inner) == "terminal":
             raise refused("terminal_only", f"{op} is signed in the terminal (orch sign CODE)")
         if len(self.approvals) >= MAX_APPROVALS:
@@ -462,6 +477,7 @@ class ClickSigner:
             files=files,
             deposit=deposit,
             reveal=reveal,
+            sealed_op=op in SEALED_OPS,
         )
         key = (entry["workspace_id"], rid)
         if reveal_key is not None and self._reveal_keys.setdefault(reveal_key, key) != key:
@@ -487,6 +503,9 @@ class ClickSigner:
                 deposit=deposit,
                 reveal=reveal,
                 reveal_pk=reveal_key,
+                seal=sealed.Recipient("in", workspace_id=entry["workspace_id"], request_id=rid)
+                if op in SEALED_OPS
+                else None,
                 images=images or None,
                 image_digests=tuple(sorted({canon.artifact_digest(b) for b in images.values()})) if images else (),
             )
@@ -647,7 +666,7 @@ class ClickSigner:
     def view(self, args: Mapping[str, Any]) -> dict[str, Any]:
         entry, approval = self._approval(args)
         if self._expired(approval):
-            self.approvals.pop((approval.workspace_id, approval.request_id), None)
+            self._drop(approval)
             raise refused("expired", "the request expired; prepare it again")
         _, sel = self._convenience(entry)
         if sel.gen != approval.gen:
@@ -675,6 +694,7 @@ class ClickSigner:
             artifacts=artifacts,
             deposit=approval.deposit,
             reveal=approval.reveal_pk,
+            seal_in=None if approval.seal is None else (approval.seal.public, SEALED_OPS[approval.op]),
         )
 
     def sign(self, args: Mapping[str, Any]) -> dict[str, Any]:
@@ -724,14 +744,13 @@ class ClickSigner:
                 "signing this request was attempted but no record of it exists; this signer does not sign it again",
             )
         if self._expired(approval):
-            self.approvals.pop((approval.workspace_id, approval.request_id), None)
+            self._drop(approval)
             raise refused("expired", "the request expired; prepare it again")
         if approval.reveal and reveal_key != approval.reveal_pk:  # the key approved in the review, nothing else
             raise ClickError("invalid.input", "reveal_key is not the key this review was made for")
         if not approval.reveal and reveal_key is not None:
             raise ClickError("invalid.input", "only a grant shown in the page takes reveal_key")
-        if "sealed" in args:  # no review asks for a typed secret yet (C10, C12, C13 and C16 add them)
-            raise ClickError("invalid.input", "this review asks for no sealed value")
+        envelopes = self._sealed_arg(approval, args)  # exactly the View's purposes (sealed-field contract section 7)
         if approval.view_digest is None or vd != approval.view_digest:
             raise refused("view_changed", "that is not the review this signer built for the request")
         if approval.built_at is None or self.mono() - approval.built_at < DWELL_SECONDS:
@@ -747,6 +766,10 @@ class ClickSigner:
             raise refused("terminal_only", "dashboard execution is off for this workspace on this machine")
         self._key_ready(entry, backend)  # before every claim, on every sign path (single, sequence, deposit, reveal)
         stored = approval.prepared  # the immutable inputs validated at prepare (== prepared, checked above)
+        proof = None
+        if envelopes is not None:  # #1198 C10: the owner proof, before any claim: a wrong key signs nothing
+            proof = self._owner_proof(entry, approval, prepared, envelopes["hub.backup_key"])
+            self._fetch(entry, approval, sel["device"], proof)  # human.get checks the proof at the bind
         if (stored.get("material") or {}).get("sequence") is not None:
             return self._sign_sequence(entry, approval, backend, sel, stored)
         self.budget.reserve(len(stored["events"]))
@@ -771,7 +794,12 @@ class ClickSigner:
         # signs event by event), so any failure leaves the claim and that request fails closed.
         # before any signature can exist
         self._attempted.add((approval.workspace_id, approval.request_id))
-        signed = host_signer.sign(stored, backend=backend, key_id=KEY_ID, workspace_id=approval.workspace_id)
+        signed = host_signer.sign(
+            stored, backend=backend, key_id=KEY_ID, workspace_id=approval.workspace_id, owner_proof=proof
+        )
+        proof = None
+        if approval.seal is not None:  # signed: the signer's key for the typed secret is dropped with its use
+            approval.seal.close()
         # the secret (a deposit grant only) stays in this frame: never in the approval, a record, a log or a result
         secret = signed.secret
         if secret is not None and not (approval.deposit or approval.reveal):  # refused earlier; never near the channel
@@ -987,6 +1015,61 @@ class ClickSigner:
         if approval is not None and outcome in ("confirmed", "rejected"):
             approval.deposit_result = out
         return {**res, **out}
+
+    # -- the hub backup key by click (#1198 C10, sealed-field purpose hub.backup_key) ---------------------------------
+    @staticmethod
+    def _sealed_arg(approval: Approval, args: Mapping[str, Any]) -> dict[str, Any] | None:
+        """``sealed`` of a sign call: absent for a review that asks for none; for one that does, an object whose keys
+        are exactly the View's purposes, each an object (the envelope; opened later, by the recipient only).
+        Anything else is refused before anything is opened."""
+        want = () if approval.seal is None else SEALED_OPS[approval.op]
+        have = args.get("sealed")
+        if not want:
+            if "sealed" in args:
+                raise ClickError("invalid.input", "this review asks for no sealed value")
+            return None
+        if type(have) is not dict or set(have) != set(want) or any(type(v) is not dict for v in have.values()):
+            raise ClickError("invalid.input", "this review needs the backup key sealed for this request")
+        return have
+
+    def _owner_proof(
+        self, entry: dict[str, Any], approval: Approval, prepared: Mapping[str, Any], envelope: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Open the sealed backup key (recipient bound to this workspace, request and review), derive the person key
+        ``PK``, check it is this person's, sign the owner proof over the reviewed payload and nothing else, then wipe
+        the code and ``PK``. A refusal is static (never the key or crypto detail) and leaves the request signable."""
+        from orch.custody.base import CustodyError
+        from orch.custody.personkey import PersonMismatch, TypedCodeSource
+        from orch.host import signer as host_signer
+
+        assert approval.seal is not None and approval.view_digest is not None
+        ctx = sealed.Context("hub.backup_key", approval.workspace_id, approval.request_id, approval.view_digest)
+        try:
+            code = approval.seal.open(envelope, ctx)
+        except sealed.SealedError as exc:
+            self._note(
+                "refused", workspace=approval.workspace_id, request=approval.request_id, code=f"sealed.{exc.reason}"
+            )
+            raise refused("check_failed", "the backup key could not be read; type it again") from None
+        person = self._person(entry)
+        try:
+            return host_signer.terminal_owner_proof(
+                prepared,
+                approval.request_id,
+                workspace_id=approval.workspace_id,
+                person=person,
+                now_ms=lambda: int(self.wall() * 1000),
+                pk_factory=lambda **kw: TypedCodeSource(code, **kw),
+            )
+        except CustodyError as exc:  # a wrong or mistyped key (PersonMismatch, BadRecoveryCode): static texts only
+            reason = "that backup key is not yours" if isinstance(exc, PersonMismatch) else "that is not a backup key"
+            self._note("refused", workspace=approval.workspace_id, request=approval.request_id, code="backup_key")
+            raise refused("check_failed", f"{reason}; nothing was signed") from None
+        except host_signer.SignerRefused as exc:
+            raise refused("check_failed", str(exc)) from None
+        finally:
+            for i in range(len(code)):  # best effort: the source wipes it as it enters; this covers an early failure
+                code[i] = 0
 
     # -- the grant secret shown once in the page (#1198 C7, sealed-field contract section 3) -------------------------
     @staticmethod
@@ -1429,14 +1512,21 @@ class ClickSigner:
     # -- bookkeeping ---------------------------------------------------------------------------------------------------
     def _drop(self, approval: Approval) -> None:
         self.approvals.pop((approval.workspace_id, approval.request_id), None)
+        if approval.seal is not None:
+            approval.seal.close()
 
     def _sweep(self) -> None:
         for key, a in list(self.approvals.items()):
             if self._expired(a) or a.result is not None:
                 self.approvals.pop(key, None)
+                if a.seal is not None:
+                    a.seal.close()
         # ``_attempted`` is deliberately not swept: it lives as long as the process (see its definition).
 
     def close(self) -> None:
+        for a in self.approvals.values():
+            if a.seal is not None:
+                a.seal.close()
         for c in self.conns.values():
             try:
                 c.close()

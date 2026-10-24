@@ -30,3 +30,7 @@ describe('depositViewOk on a contract-3 click View', () => {
     expect(depositViewOk(view({ lines: ['grant'] }), WS)).toBe(false)
   })
 })
+it('hub steps are click-eligible (#1198 C10) and carry no word', () => {
+  expect(clickEligible({ action: 'hub_join', hub_card: '{}', hub_id: 'a'.repeat(32) })).toBe(true)
+  expect(clickEligible({ action: 'hub_leave' })).toBe(true)
+})

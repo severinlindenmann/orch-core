@@ -36,6 +36,11 @@ def create_hosted(ctx: Context, args: dict[str, Any]) -> Result:
     wi.TERMINAL.show(f"shown now, once.\n\n{format_code_numbered(code)}\n")
     try:
         wi._hosted_bootstrap(ctx, sd, root, prefix, owner_name, passphrase, code, st)
+    except KeyboardInterrupt:  # Ctrl-C: as `orch setup` does, keep the key of a bootstrap whose outcome is unknown
+        wi._drop_unless_pending(sd, st.wid, st.pending)
+        if st.pending is not None:
+            raise wi._unavailable("setup was interrupted during host.bootstrap", st.pending) from None
+        raise wi._refuse("stop", "cancelled; nothing was created") from None
     except BaseException:
         wi._drop_unless_pending(sd, st.wid, st.pending)
         raise

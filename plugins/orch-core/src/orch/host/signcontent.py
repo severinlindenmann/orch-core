@@ -1703,6 +1703,8 @@ def text(
         )
         for c in content["fields_changed"]:
             if _verbatim_row(c["field"]):  # agent words or orch's own: never read as a person id
+                if c["before"] is not None or c.get("before_note"):  # a fact of the question, never a change
+                    raise PlainUnavailable(f"the question row {c['field']!r} carries a value before")
                 out.append(f"  {v(c['field'])}: {v(c['after'])}")
                 continue
             new = "(not set)" if c["after"] is None else who(c["after"])

@@ -1617,3 +1617,9 @@ def test_b2_an_option_value_shaped_like_a_person_id_is_shown_verbatim():
         "  addressed to (per host): Severin (p_42e1c38e0488…; name per host, not signed)"
     ]
     assert not [x for x in out if "unknown person" in x]
+
+
+def test_b2_a_verbatim_question_row_with_a_before_value_is_refused():
+    row = {"field": "option csv title", "before": "Old title", "after": "Monthly CSV"}
+    with pytest.raises(signcontent.PlainUnavailable):
+        signcontent.text({"headline": "x", "fields_changed": [row]}, signer._clean)

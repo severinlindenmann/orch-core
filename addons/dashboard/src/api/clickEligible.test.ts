@@ -11,8 +11,10 @@ it('settings actions the signer serves by click are click-eligible', () => {
   expect(clickEligible({ action: 'settings_set', sign_methods: ['terminal', 'click'] })).toBe(true) // #1161: core classes it click
   expect(clickEligible({ action: 'repo_remove', name: 'a' })).toBe(true)
 })
-it('terminal-only actions stay terminal-only', () => {
-  expect(clickEligible({ action: 'publish_setup', server: 'https://a.test', share: 'https://b.test' })).toBe(false)
+it('Publish is click-eligible (#1198 C2)', () => {
+  expect(clickEligible({ action: 'publish_setup', server: 'https://a.test', share: 'https://b.test' })).toBe(true)
+  expect(clickEligible({ action: 'publish_share', key: 'DEMO-1', staged_id: 's' })).toBe(true)
+  expect(clickEligible({ action: 'addon_enable', name: 'publish' })).toBe(true)
 })
 
 import { DEPOSIT_LINE, DEPOSIT_RISK, depositViewOk, type ClickView } from './click'

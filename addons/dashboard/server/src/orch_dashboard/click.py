@@ -29,13 +29,9 @@ from .errors import HostError, fail
 from .gateway import Gateway
 from .handoff import (
     AddonEnable,
-    AddonGrant,
     EditTicket,
-    MarketGrant,
     NewTicketSequence,
     PrepareBody,
-    PublishSetup,
-    PublishShare,
     QuickStart,
     RequestId,
     RunnerGrant,
@@ -286,20 +282,6 @@ def register(app: FastAPI, gateway: Gateway):
         token = request.state.token
         gateway.enabled(ws)  # pinned workspace, dashboard addon enabled in it (the hand-off's `human()` does this)
         refuse_if_hub_only(gateway, ws)  # V3 C11: full hub mode takes no click signature (the host refuses it too)
-        if isinstance(body, PublishSetup | PublishShare) or (
-            isinstance(body, AddonEnable | AddonGrant | MarketGrant) and body.name == "publish"
-        ):
-            # Where files go, and the signature that lets them leave: terminal only, never one click. Refused here,
-            # before a slot is taken or the signer is asked (core's op_class also reads `publish.share` as terminal).
-            raise HostError(
-                {
-                    "code": "human.click_refused",
-                    "message": "Sharing files and choosing where they go are signed in your terminal, not by click.",
-                    "retryable": False,
-                    "reason": "terminal_only",
-                },
-                3,
-            )
         with handoffs.lock:
             handoffs.reserve(token)  # check and take a slot in one step (shared with the hand-off)
         try:
@@ -534,7 +516,8 @@ def register(app: FastAPI, gateway: Gateway):
         # the request is refused by the signer and the host, which are the ones that know.)
         handoffs.begin_sign(ws, rid, handoffs.clock() + TTL + 60)
         try:
-            got = signer.call("sign", {"workspace_id": ws, "request_id": rid, "view_digest": body.view_digest}, lost=lost_sign())
+            sent = {"workspace_id": ws, "request_id": rid, "view_digest": body.view_digest}
+            got = signer.call("sign", sent, lost=lost_sign())
         except HostError as exc:
             # Before follow-up host reads, which may themselves fail. A definite failure never clears an earlier or a
             # concurrent unknown outcome; the rule lives in Handoffs.end_sign.

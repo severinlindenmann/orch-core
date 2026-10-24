@@ -866,8 +866,8 @@ it('addon enable confirms the grant name and renders the workspace review withou
   expect(requestIsConsistent(request)).toBe(true)
   expect(workspaceConfirmWord(request, workspace)).toBe('model-routing~89abcdef')
   expect(clickEligible({ action: 'addon_enable', name: 'model-routing', models })).toBe(true)
-  expect(clickEligible({ action: 'addon_enable', name: 'publish', publish: { server: 'https://files.example.test', share: 'https://links.example.test' } })).toBe(false) // Publish: terminal only
-  expect(clickEligible({ action: 'addon_grant', name: 'publish' })).toBe(false)
+  expect(clickEligible({ action: 'addon_enable', name: 'publish', publish: { server: 'https://files.example.test', share: 'https://links.example.test' } })).toBe(true) // Publish: click (#1198 C2)
+  expect(clickEligible({ action: 'addon_grant', name: 'publish' })).toBe(true)
   expect(clickEligible({ action: 'addon_grant', name: 'usage' })).toBe(true)
   render(<HandoffPanel request={request} workspace={workspace} />)
   expect(screen.getByTestId('handoff-command')).toHaveTextContent('orch sign')
@@ -932,7 +932,7 @@ describe('manual acceptance signing paths', () => {
   })
 })
 
-it('market approval (terminal fallback) displays the exact package name and stage sent; it is click-eligible, except Publish', async () => {
+it('market approval (terminal fallback) displays the exact package name and stage sent; it is click-eligible, Publish too', async () => {
   const { workspaceRequest } = await import('./hostHarness')
   const { state } = await import('./handoffHarness')
   const { clickEligible } = await import('@/api/click')
@@ -949,15 +949,15 @@ it('market approval (terminal fallback) displays the exact package name and stag
   expect(await screen.findByText(visible(action.staged), { exact: false })).toBeVisible()
   expect(screen.getAllByText(action.name, { exact: false }).length).toBeGreaterThan(0)
   expect(clickEligible(action)).toBe(true) // V3-D38: one click where click-to-sign is on, this Terminal review where it is off
-  expect(clickEligible({ ...action, name: 'publish' })).toBe(false)
+  expect(clickEligible({ ...action, name: 'publish' })).toBe(true)
 })
 
 it('a Terminal-only action with One click on shows the Terminal hand-off: why line, exact command, pending, no click prepare', async () => {
   const { workspaceRequest } = await import('./hostHarness')
   const { state } = await import('./handoffHarness')
   const ws = 'b'.repeat(32)
-  const action = { action: 'publish_setup' as const, server: 'https://files.example.test', share: 'https://links.example.test' }
-  const request = workspaceRequest('settings.set', { type: 'settings.changed', publish: { server: action.server, share: action.share } })
+  const action = { action: 'pair_device' as const, offer: 'offer-1' }
+  const request = workspaceRequest('relay.pair_device', { type: 'device.added' })
   vi.spyOn(api, 'getWorkspaces').mockResolvedValue([{ id: ws, click: { custody: 'convenience', enabled: true, available: true } }] as unknown as Awaited<ReturnType<typeof api.getWorkspaces>>)
   vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods: ['terminal', 'click'] } as Awaited<ReturnType<typeof api.getHostSettings>>)
   vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'click', is_default: true, allowed: ['terminal', 'click'] })

@@ -1901,13 +1901,11 @@ def test_an_older_signer_is_never_asked_for_a_sequence(client, token, stub, scri
         },
     ],
 )
-def test_publish_setup_and_share_are_never_one_click(client, token, stub, script, host_check, rich, body):
-    # P6: terminal only. Refused before a slot is taken and before the signer is asked, whatever the flag says.
+def test_publish_setup_and_share_are_one_click(client, token, stub, script, host_check, rich, body):
+    # #1198 C2: Publish is a click like every other op; the signer is asked and a slot is taken.
     res = client.post(url(stub, "prepare"), json=body, headers=hdr(token))
-    err = res.json()["error"]
-    assert res.status_code == 409 and err["code"] == "human.click_refused" and err["reason"] == "terminal_only"
-    assert script.prepared == 0
-    assert client.app.state.handoffs.active == {}
+    # (the stub host lacks some of the ops, so only the old terminal-only refusal is asserted away)
+    assert res.json().get("error", {}).get("reason") != "terminal_only", res.text
 
 
 MARKET = {"action": "market_grant", "name": "echo", "staged": "st_" + "0" * 32}
@@ -1937,9 +1935,9 @@ def test_a_market_install_is_one_click_and_the_signer_gets_the_host_review_mater
     assert other.status_code == 200 and script.prepared == 2
 
 
-def test_a_market_install_for_publish_is_still_not_a_thing(client, token, stub, script, rich, host_serves_grant):
+def test_a_market_install_for_publish_is_a_click_too(client, token, stub, script, rich, host_serves_grant):
     res = prepare(client, token, stub, {**MARKET, "name": "publish"})
-    assert res.status_code == 409 and res.json()["error"]["reason"] == "terminal_only" and script.prepared == 0
+    assert res.json().get("error", {}).get("reason") != "terminal_only", res.text
 
 
 def test_a_stopped_sequence_says_which_ticket_exists_and_that_the_agent_access_is_last(

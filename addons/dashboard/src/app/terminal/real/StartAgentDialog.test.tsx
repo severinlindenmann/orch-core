@@ -247,7 +247,6 @@ const noGrant = (reason: 'none' | 'expiring' | 'scope' | 'revoked' = 'none') =>
 async function issueAndSign() {
   fireEvent.click(await screen.findByTestId('runner-grant-issue', {}, T))
   const panel = await screen.findByTestId('click-panel', {}, T)
-  fireEvent.change(within(panel).getByRole('textbox'), { target: { value: WORD } }) // the View's word, typed
   const sign = within(panel).getByRole('button', { name: /^Sign and allow access$/ })
   await waitFor(() => expect(sign).toBeEnabled(), { timeout: ARM_MS + 2000 })
   fireEvent.pointerDown(sign)
@@ -298,7 +297,7 @@ describe('the runner grant', () => {
     s.runner.mockResolvedValue({ runner: runner({ grant: { id: GRANT, until: UNTIL, scope: 'all' } }) })
     await issueAndSign()
     expect(s.prepare.mock.calls[0][1]).toEqual({ action: 'runner_grant', hours: 24, scope: 'all' })
-    expect(s.sign.mock.calls[0][3]).toBe(WORD)
+    expect(s.sign.mock.calls[0][3]).toBeUndefined() // nothing typed, no word sent
     expect(await screen.findByTestId('runner-grant-confirmed', {}, T)).toBeInTheDocument()
   })
 
@@ -490,7 +489,7 @@ describe('a short, calm dialog (U6)', () => {
     expect(await screen.findByTestId('agent-start', {}, T)).toHaveTextContent('Sign and start agent')
   })
 
-  it('no access: signing the access (word typed inline) starts the agent and says it once', async () => {
+  it('no access: signing the access (one click) starts the agent and says it once', async () => {
     s.runner.mockResolvedValue({ runner: runner() })
     s.preview.mockResolvedValue(noGrant())
     const { onStarted } = mount()
@@ -501,7 +500,6 @@ describe('a short, calm dialog (U6)', () => {
     expect(s.prepare.mock.calls[0][1]).toEqual({ action: 'runner_grant', hours: 8, scope: 'workable' })
     s.runner.mockResolvedValue({ runner: runner({ grant: { id: GRANT, until: SOON, scope: 'workable' } }) })
     s.preview.mockResolvedValue(preview())
-    fireEvent.change(within(panel).getByRole('textbox'), { target: { value: WORD } })
     const sign = within(panel).getByRole('button', { name: /^Sign and start agent$/ })
     await waitFor(() => expect(sign).toBeEnabled(), { timeout: ARM_MS + 2000 })
     fireEvent.pointerDown(sign)
@@ -529,7 +527,6 @@ describe('a short, calm dialog (U6)', () => {
     const panel = await screen.findByTestId('click-panel', {}, T)
     s.runner.mockResolvedValue({ runner: runner({ grant: { id: GRANT, until: SOON, scope: 'workable' } }) })
     s.preview.mockResolvedValue(after)
-    fireEvent.change(within(panel).getByRole('textbox'), { target: { value: WORD } })
     const sign = within(panel).getByRole('button', { name: /^Sign and start agent$/ })
     await waitFor(() => expect(sign).toBeEnabled(), { timeout: ARM_MS + 2000 })
     fireEvent.pointerDown(sign)

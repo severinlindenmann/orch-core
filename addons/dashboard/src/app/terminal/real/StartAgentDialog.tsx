@@ -679,7 +679,7 @@ export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initi
         }} onClose={() => setHandoff(false)} />}
       {(click.phase === 'preparing' || click.phase === 'viewing') && <Skeleton className="h-16" />}
       {view && (click.phase === 'ready' || click.phase === 'signing') && (viewOk ? (
-        <ClickSignPanel ws={ws} story={storyOf(action)} answer={view} problem={click.problem} signing={click.phase === 'signing'} onSign={(w) => void click.sign(w)} onCancel={() => void click.cancel().then(() => click.reset(true))} />
+        <ClickSignPanel ws={ws} story={storyOf(action)} answer={view} problem={click.problem} signing={click.phase === 'signing'} onSign={() => void click.sign()} onCancel={() => void click.cancel().then(() => click.reset(true))} />
       ) : (
         <p role="alert" className="text-danger" data-testid="runner-grant-bad-view">The review does not say where the grant goes. Nothing was signed. <Button size="xs" variant="ghost" onClick={() => void click.cancel().then(() => click.reset(true))}>Cancel</Button></p>
       ))}
@@ -712,7 +712,7 @@ function RevokeStep({ grant, click }: { grant: string; click: ReturnType<typeof 
   const action: ClickAction = { action: 'grant_revoke', grant }
   if (click.phase === 'done') return <p className="text-text">Revoked.</p>
   if (click.view && (click.phase === 'ready' || click.phase === 'signing'))
-    return <ClickSignPanel answer={click.view} problem={click.problem} signing={click.phase === 'signing'} onSign={(w) => void click.sign(w)} onCancel={() => void click.cancel().then(() => click.reset(true))} />
+    return <ClickSignPanel answer={click.view} problem={click.problem} signing={click.phase === 'signing'} onSign={() => void click.sign()} onCancel={() => void click.cancel().then(() => click.reset(true))} />
   return (
     <div className="mt-1 flex flex-wrap items-center gap-2">
       <Button size="xs" variant="outline" disabled={click.phase !== 'idle' && click.phase !== 'failed'} onClick={() => void (click.phase === 'failed' ? click.again(action) : click.start(action))}>Revoke grant</Button>

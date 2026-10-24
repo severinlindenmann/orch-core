@@ -96,7 +96,8 @@ describe('open behaviour', () => {
   it('makes its keys non-extractable at birth (no private key ever exportable)', async () => {
     const spy = vi.spyOn(globalThis.crypto.subtle, 'generateKey')
     try {
-      const k = await newRevealKey(ok.bound)
+      const k = await newRevealKey()
+      k.bind(ok.bound)
       await seal(V.seal[0].recipient_public, 'x', V.seal[0].context)
       expect(spy).toHaveBeenCalledTimes(2)
       for (const call of spy.mock.calls) expect(call[1]).toBe(false)

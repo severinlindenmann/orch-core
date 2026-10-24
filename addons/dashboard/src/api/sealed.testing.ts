@@ -17,7 +17,9 @@ export async function importKeyPair(jwk: { x: string; y: string; d: string }): P
 }
 
 export function revealKeyFromPair(pair: KeyPair, bound: Bound): RevealKey {
-  return new RevealKey(pair, bound)
+  const key = new RevealKey(pair)
+  key.bind(bound)
+  return key
 }
 
 /** seal() with a fixed ephemeral key, to reproduce the vectors byte for byte. */

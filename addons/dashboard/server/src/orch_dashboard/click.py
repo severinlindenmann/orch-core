@@ -15,6 +15,7 @@ A request obtained through an intent belongs to the PERSON in that workspace: an
 poll and cancel it (the signer separately refuses anything it did not prepare itself, and signs a request once).
 """
 
+import hashlib
 import re
 import threading
 from collections import OrderedDict
@@ -29,6 +30,7 @@ from .errors import HostError, fail
 from .gateway import Gateway
 from .handoff import (
     AddonEnable,
+    AgentAccess,
     EditTicket,
     NewTicketSequence,
     PrepareBody,
@@ -63,6 +65,9 @@ DEPOSIT_RISK = (
     "Anything that takes over the dashboard can give agents standing authority to act for you on tickets for as long "
     "as the grant lasts (up to 7 days, the length you choose); you can stop it at any time."
 )
+#: core's constants (orch.click.protocol REVEAL_LINE, REVEAL_RISK): a shown-secret View that lacks either is not shown
+REVEAL_LINE = "The secret is shown once, on this page, only to you. orch keeps only a fingerprint of it"
+REVEAL_RISK = "The secret will be shown once in this browser. Anyone who controls this dashboard could read it."
 DEPOSITS = ("confirmed", "rejected", "unknown")
 #: H11c-2's closed set of `deposit_reason` codes (static codes, never host text); anything else reads `other`
 DEPOSIT_REASONS = (
@@ -126,6 +131,61 @@ def deposit_view_ok(view: dict, ws: str) -> bool:
     )
 
 
+def key_fingerprint(key: str) -> str:
+    """Core's `view.key_fingerprint`: the full SHA-256 (64 hex) of the key's base64url text (golden vectors shared
+    with core and the page: `plugins/orch-core/tests/click_reveal_fingerprint.json`)."""
+    return hashlib.sha256(key.encode()).hexdigest()
+
+
+#: How a session was opened (`Auth.login_kind`) for which `agent_access` may be prepared. Until the passkey step-up for
+#: a grant secret exists (R1-6), only a session opened by `orch dashboard` on this computer may; an unknown kind and
+#: any remote or hub kind are refused (fail closed), so the remote dashboard cannot ship the reveal unprotected.
+REVEAL_SESSION_KINDS = frozenset({"local"})
+
+
+def reveal_view_ok(view: dict, ws: str, reveal_key: str) -> bool:
+    """A shown-secret grant's View: no deposit, the sealed field's `grant.secret` purpose bound to the page's own key
+    (its fingerprint), core's risk and reveal lines, this workspace and a plain click."""
+    seal = view.get("seal")
+    lines = view.get("lines")
+    workspace = view.get("workspace")
+    return (
+        isinstance(workspace, dict)
+        and workspace.get("id") == ws
+        and view.get("deposit") is None
+        and isinstance(seal, dict)
+        and seal.get("purposes") == ["grant.secret"]
+        and seal.get("for") == key_fingerprint(reveal_key)
+        and isinstance(lines, list)
+        and REVEAL_LINE in lines
+        and REVEAL_RISK in lines
+        and view.get("confirm") == {"kind": "click"}
+    )
+
+
+def reveal_answer(got: dict) -> dict:
+    """Of a shown-secret grant's `sign` answer, only the grant id and the sealed envelope, checked for shape and size:
+    exactly `v`, `alg`, `epk`, `ct` with the sealed field's values. Never `result`. The envelope is ciphertext for the
+    page's key; it is relayed and never logged. A malformed one is dropped (`reveal: null`), never repaired."""
+    grant = (got.get("result") or {}).get("data", {}).get("grant") if isinstance(got.get("result"), dict) else None
+    out: dict = {"grant": grant if isinstance(grant, str) and GRANT_ID.fullmatch(grant) else None, "reveal": None}
+    rev = got.get("reveal")
+    env = rev.get("envelope") if isinstance(rev, dict) and rev.get("purpose") == "grant.secret" else None
+    if (
+        isinstance(env, dict)
+        and set(env) == {"v", "alg", "epk", "ct"}
+        and env["v"] == 1
+        and type(env["v"]) is int
+        and env["alg"] == "P256-HKDF-SHA256-A256GCM"
+        and isinstance(env["epk"], str)
+        and re.fullmatch(r"[A-Za-z0-9_-]{87}", env["epk"])
+        and isinstance(env["ct"], str)
+        and re.fullmatch(r"[A-Za-z0-9_-]{1,6000}", env["ct"])
+    ):
+        out["reveal"] = {"purpose": "grant.secret", "envelope": dict(env)}
+    return out
+
+
 def deposit_answer(got: dict, request_id: str) -> dict:
     """Of a deposit grant's `sign` answer, only `deposit` (enum), `deposit_id` (the request's ULID), `grant` (a `gr_`
     id) and, when rejected, `deposit_reason` (the closed set). Never `result`, never anything else: the secret exists
@@ -160,6 +220,8 @@ class Step(BaseModel):
 
 class Sign(Step):
     view_digest: ViewDigest
+    #: a shown-secret grant only: the key the review was made for (the signer refuses any other)
+    reveal_key: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{87}$")] | None = None
 
 
 class Clicks:
@@ -279,6 +341,8 @@ def register(app: FastAPI, gateway: Gateway):
     @app.post("/api/w/{ws}/click/prepare")
     def prepare(body: ClickBody, request: Request, ws: str = Depends(workspace)):
         token = request.state.token
+        if isinstance(body, AgentAccess) and app.state.auth.login_kind(token) not in REVEAL_SESSION_KINDS:
+            raise refusal_check("Agent access with a shown secret needs a dashboard opened on this computer.")
         gateway.enabled(ws)  # pinned workspace, dashboard addon enabled in it (the hand-off's `human()` does this)
         refuse_if_hub_only(gateway, ws)  # V3 C11: full hub mode takes no click signature (the host refuses it too)
         with handoffs.lock:
@@ -291,6 +355,8 @@ def register(app: FastAPI, gateway: Gateway):
 
     def _prepare(body, token, ws):
         grant = isinstance(body, RunnerGrant)
+        if isinstance(body, AgentAccess) and not signer.reveals():
+            raise fail("click.contract", "Update orch-core: its signing helper cannot show a grant secret yet.", exit=9)
         if isinstance(body, NewTicketSequence | EditTicket | QuickStart | AddonEnable) and not signer.sequences():
             # an older signer would ignore `sequence` and sign the first step only
             raise fail(
@@ -327,6 +393,8 @@ def register(app: FastAPI, gateway: Gateway):
                 sent["files"] = files
             if planned.sequence:
                 sent["sequence"] = planned.sequence
+            if isinstance(body, AgentAccess):
+                sent["reveal_key"] = body.reveal_key  # public; bound into the review the signer builds
             if grant:
                 sent["deposit"] = True  # the deposit-only grant mode: the secret goes to the runner, never here
             return signer.call("prepare", sent)
@@ -421,7 +489,14 @@ def register(app: FastAPI, gateway: Gateway):
             raise refusal_check("The review does not say where the grant goes. Nothing was shown. Cancel it.")
         # Review I1: the grant's View must be of the very record `expected()` checked (the host's fingerprint), so the
         # hours and scope signed are the ones verified.
-        if isinstance(wanted, RunnerGrant) and (
+        # A shown-secret grant: the View must carry the sealed purpose for THIS page's key, and no other View may.
+        if isinstance(wanted, AgentAccess) != (shown.get("seal") is not None) or (
+            isinstance(wanted, AgentAccess) and not reveal_view_ok(shown, ws, wanted.reveal_key)
+        ):
+            raise refusal_check(
+                "The review does not say that the secret is shown here once. Nothing was shown. Cancel it."
+            )
+        if isinstance(wanted, RunnerGrant | AgentAccess) and (
             not isinstance(verified, dict)
             or not verified.get("fingerprint")
             or shown.get("fingerprint") != verified["fingerprint"]
@@ -503,6 +578,12 @@ def register(app: FastAPI, gateway: Gateway):
         handoffs.begin_sign(ws, rid, handoffs.clock() + TTL + 60)
         try:
             sent = {"workspace_id": ws, "request_id": rid, "view_digest": body.view_digest}
+            if isinstance(wanted, AgentAccess):
+                if body.reveal_key != wanted.reveal_key:  # the key of the review, nothing else (the signer checks too)
+                    raise fail("invalid.input", "reveal_key is not the key this review was made for", exit=1)
+                sent["reveal_key"] = body.reveal_key
+            elif body.reveal_key is not None:
+                raise fail("invalid.input", "only a grant shown in the page takes reveal_key", exit=1)
             got = signer.call("sign", sent, lost=lost_sign())
         except HostError as exc:
             # Before follow-up host reads, which may themselves fail. A definite failure never clears an earlier or a
@@ -535,6 +616,8 @@ def register(app: FastAPI, gateway: Gateway):
         handoffs.settled(rid)
         result = got.get("result") if isinstance(got.get("result"), dict) else {}
         out = {"state": "submitted", "duplicate": bool(got.get("duplicate"))}
+        if isinstance(wanted, AgentAccess):
+            return out | reveal_answer(got)  # the grant id and the sealed envelope; never `result`
         if not isinstance(wanted, RunnerGrant):
             # A ticket or quick task whose sequence ends in the agent access: the page needs the ticket's key to start
             # the agent for exactly that ticket, so the key and the seq are answered in this case too.

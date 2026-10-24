@@ -291,7 +291,7 @@ def test_view_and_sign_refuse_a_request_the_signer_did_not_prepare(click, served
 
 
 def test_terminal_only_ops_are_refused_before_the_host_is_asked(click, served, human):
-    for op in ("grant", "frobnicate", "init", "member.rename"):
+    for op in ("frobnicate", "init", "member.rename"):
         refused(lambda op=op: click.prepare(op, {}), "human.click_refused", "terminal_only")
     assert click.conns == []
 
@@ -388,7 +388,7 @@ def test_view_digest_ignores_the_check_times_only():
 
 def test_op_classes_fail_closed_and_every_former_word_op_is_a_click():
     assert op_class("approve") == "click" and op_class("member.remove") == "click" and op_class("policy.set") == "click"
-    assert op_class("grant") == "terminal" and op_class("some.future.op") == "terminal"
+    assert op_class("grant") == "click" and op_class("some.future.op") == "terminal"
     assert op_class("settings.set", [{"type": "settings.changed", "set": {"grant_hours": 4}}]) == "click"  # B8
     assert op_class("settings.set", [{"type": "settings.changed", "set": {"claim_ttl_min": 30}}]) == "click"
     assert op_class("settings.set", [{"type": "settings.changed", "set": {"repos": {}}}]) == "click"

@@ -73,4 +73,4 @@ def test_a_terminal_only_step_makes_the_sequence_terminal():
     from orch.click.protocol import op_class
 
     assert op_class("settings.set", args={"set": {"publish": None}}) == "click"
-    assert op_class("grant") == "terminal"  # an unknown or grant op fails closed
+    assert op_class("unknown.op") == "terminal"  # an unknown op fails closed

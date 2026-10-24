@@ -2611,7 +2611,7 @@ by proving the passphrase of a key that is in passphrase custody now, and it nev
   drift the registry digest does not see still fails closed in the signer's checks (`check_failed`). `status` also
   answers `core` (the orch-core version) and `contract`: **1** (H5c to H11b) or **2** (H11c-2, deposit support: `prepare {deposit}` and the
   `deposit`, `deposit_id`, `grant`, `deposit_reason` answers of `sign`). A contract-1 signer reads `deposit` as an unknown
-  argument and answers `invalid.input`, and refuses every `grant` as `terminal_only`; a client reads `contract` to tell
+  argument and answers `invalid.input`, and refuses a `grant` that has neither `deposit` nor the sealed reveal (`features` has `reveal`; `prepare` and `sign` carry `reveal_key`, the answer `reveal`, #1198 C7) as `terminal_only`; a client reads `contract` to tell
   the two apart. A client written for contract 2 accepts 1 and 2 (1: no click grants) and refuses any other value.
 - **Frames (normative)** on the socketpair: §0.2's codec (`orch.host.frames.encode` and `Decoder`: a 4-byte big-endian
   length, then strict JSON, at most 2 MiB; parsing and nesting limits before any validation), one request at a time:

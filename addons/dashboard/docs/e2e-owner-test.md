@@ -18,9 +18,9 @@ from the decided design and becomes runnable when the relay pairing ships.
 | # | Do | Check | Failure looks like |
 |---|---|---|---|
 | A1 | Step 1: venv outside any checkout, `pip install ./plugins/orch-core ./addons/dashboard/server` | `pip list` shows `orch-core 2.0.0.dev0` and `orch-dashboard 0.1.0`; no separate `npm run build` was needed | "the dashboard UI could not be built" (Node 24 missing) |
-| A2 | Step 2: `orch init` identity | recovery code shown once; you wrote it down | |
+| A2 | Step 2: `orch setup` identity | recovery code shown once; you wrote it down | |
 | A3 | Step 3: `orch host enable` (or the foreground host) | `orch host status` says the host is running | `host.busy`, a refusal naming a checkout path |
-| A4 | Step 4: `orch init --prefix TEST … --host`, `orch-dashboard addon-manifest --write .`, `orch addon grant dashboard` | `orch addon list`: `dashboard 0.1.0 active` | the dashboard later says `addon.disabled` |
+| A4 | Step 4: `orch setup` (prefix TEST), `orch-dashboard addon-manifest --write .`, `orch addon grant dashboard` | `orch addon list`: `dashboard 0.1.0 active` | the dashboard later says `addon.disabled` |
 
 ## Part B: the dashboard (first-use steps 5–7)
 

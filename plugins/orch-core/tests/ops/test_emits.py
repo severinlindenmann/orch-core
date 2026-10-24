@@ -8,10 +8,11 @@ import json
 import orch.ops as ops
 from orch.model import emits
 
-DIGEST_V1 = "dc086fd5ad0dee3afff93646a3d4f9a0369d1be6037ef969e2d74b36131bfe8a"
-DIGEST_V2 = "01ccface9a9524cf50c0b6286550a34c0fe8d1d66891140ee1c66a25a44d6a2e"
-DIGEST_V3 = "5c5f5f33f9acd7c6c26296f03006099432ef9d3e59f580517e2e38e7379648f5"
-HUMAN_ONLY_V1 = "63726a5fa56ebeabd06dbfc4f5b8a81d88c512c1544dc99e602b815ae58c7676"
+DIGEST_V1 = "deb64fba742883b0daef32a9e9170991353f139eefad78c4db14089a51970d87"
+DIGEST_V2 = "66a7375e81ae5d462aa4246333c0a31fcfedfbbb142fd2fb592cf5029de357f2"
+DIGEST_V3 = "da2b8b56cd3cc9fae37737c80c4d23665b0dafb10e90b0fb1acb40610efc950e"
+# V3-D38 dropped `init` from all three tables and from HUMAN_ONLY (nothing is in production: no new version)
+HUMAN_ONLY_V1 = "8a61d1edd61d03376e26cde56bdd89ceab1bfc9f74a361c11b127163dec888a7"
 
 
 def digest(table):

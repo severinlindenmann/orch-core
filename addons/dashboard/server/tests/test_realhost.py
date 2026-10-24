@@ -1,6 +1,6 @@
 """The dashboard server against a REAL orch host (core H6b and later): `orch host run --foreground` as a subprocess.
 
-A disposable workspace is created with the real `orch init` in a pty, seeded with the real CLI, served by a real host
+A disposable workspace is created with the real `orch setup` (the page played over the setup socket, the terminal in a pty), seeded with the real CLI, served by a real host
 and read through the server's TestClient. Every hand-off is signed with the real `orch sign CODE` in a pty. Nothing
 touches `~/.config/orch`: state, HOME and XDG_CONFIG_HOME are explicit and under a throwaway directory (see
 `realhost_kit`). Skipped when the host cannot start (no pty, no unix sockets, ...). Run: `uv run pytest -m realhost`.

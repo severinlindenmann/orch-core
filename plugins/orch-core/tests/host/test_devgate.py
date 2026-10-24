@@ -564,8 +564,9 @@ def test_init_refuses_sbx_with_other_owner_name(sbx, tmp_path):
 
 
 def test_init_refuses_sbx_with_entered_recovery_code(tmp_path, monkeypatch):
-    """Only a recovery code this init run generated (``_dialogue``, ``generated=True``) may sign an SBX genesis; a
-    typed, restored or imported code is refused before any key is made. Both init paths pass the generated code."""
+    """Only a recovery code this setup run generated (``generated=True``) may sign an SBX genesis; a typed, restored or
+    imported code is refused before any key is made. The one genesis path (the hosted bootstrap) passes
+    ``generated=True`` and the library itself generates no code (``orch setup``'s secrets do)."""
     import inspect
 
     from orch.identity import generate_recovery_code
@@ -587,7 +588,7 @@ def test_init_refuses_sbx_with_entered_recovery_code(tmp_path, monkeypatch):
         workspace_init._signed_genesis(None, tmp_path, "a" * 32, b"", "SBX", "n", "pw", code, generated=True)
     assert len(made) == 1
     source = inspect.getsource(workspace_init)
-    assert source.count("generated=True") == 2 and source.count("code = generate_recovery_code()") == 1
+    assert source.count("generated=True") == 1 and "generate_recovery_code(" not in source
 
 
 def test_host_bootstrap_reserved_prefix_on_a_dev_host(sbx):

@@ -125,7 +125,7 @@ def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
         "device.rotate",
     }  # H12c-e, B12D, P5, R3, V3 C2a, C2b, #1097
     assert set(HUMAN_OPS) == {"human.prepare", "human.get", "human.submit", "human.cancel", "human.pending"}
-    assert set(NOT_SERVED) == {"init", "import.v1"}
+    assert set(NOT_SERVED) == {"import.v1"}
     assert {"wait", "sub.open", "sub.close"} <= set(welcome["ops"])  # H6a: served on the bus
     # §0.4: every op at version 1 except task.done at 2 (H3b2's contract, listed since H7)
     assert {k: v for k, v in welcome["ops"].items() if v != 1} == {"task.done": 2}
@@ -138,7 +138,7 @@ def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
     assert welcome["peer"] == {"uid": UID, "class": "person", "person": served.lab.owner}
 
 
-@pytest.mark.parametrize("op", ["init", "nope", "host.list", "job.next", "human.sign"])
+@pytest.mark.parametrize("op", ["nope", "host.list", "job.next", "human.sign"])
 def test_an_op_outside_the_list_is_unknown_command(served, op):
     assert err(served.client().req(op)) == "unknown_command"
 

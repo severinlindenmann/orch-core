@@ -283,20 +283,6 @@ def test_a_failed_open_after_its_own_mkdir_removes_the_dot_orch_it_made(tmp_path
     assert os.listdir(p) == []  # nothing left behind
 
 
-def test_init_rollback_removes_only_the_dot_orch_it_made(tmp_path: Path) -> None:
-    from orch.ops.workspace_init import _rollback
-
-    p = _proj(tmp_path)
-    st = os.stat(p / ".orch")
-    _rollback(p, None, set(), [(st.st_dev, st.st_ino)])
-    assert not (p / ".orch").exists()
-    q = _proj(tmp_path / "q")
-    _rollback(q, None, set(), [])  # an open that made none records none
-    assert (q / ".orch").is_dir()
-    _rollback(q, None, set(), [(1, 2)])
-    assert (q / ".orch" / "config.json").is_file()
-
-
 def test_read_only_opens_never_make_the_project_directory(tmp_path: Path) -> None:
     missing = tmp_path / "nope"
     with pytest.raises(OSError):

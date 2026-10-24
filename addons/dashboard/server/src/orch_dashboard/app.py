@@ -120,7 +120,10 @@ SPA_PATH = re.compile(
 ROOT_FILES = frozenset({"favicon.svg", "loading.css"})
 
 
-def create_app(port: int, gateway=None, auth=None, static=None, setup_proxy=None):
+def create_app(port: int, gateway=None, auth=None, static=None, setup_proxy=None, remote=None):
+    """``remote``: the front listener's policy (`remote_policy`), or None when remote access is off. One app serves both
+    listeners; the server that accepted the connection says which policy applies (`scope["orch_listener"]`, set by
+    `front.Front`), never a header."""
     gateway, auth = gateway or Gateway(), auth or Auth()
     static = Path(static) if static else Path(__file__).parent / "static"
 
@@ -142,7 +145,7 @@ def create_app(port: int, gateway=None, auth=None, static=None, setup_proxy=None
     app.state.auth = auth
     app.state.live = live
     app.state.term_tickets = tickets
-    app.add_middleware(Security, auth=auth, policy=loopback_policy(port))
+    app.add_middleware(Security, auth=auth, policy=loopback_policy(port), others=(remote,) if remote else ())
 
     @app.exception_handler(HostError)
     async def host_error(request, exc):
@@ -158,7 +161,7 @@ def create_app(port: int, gateway=None, auth=None, static=None, setup_proxy=None
 
     @app.post("/auth/session")
     def session(body: LaunchCode):
-        value, status = auth.exchange(body.code)
+        value, status = auth.exchange(body.code, "local")
         return (
             JSONResponse(value) if value else response("rate.limited" if status == 429 else "session.required", status)
         )

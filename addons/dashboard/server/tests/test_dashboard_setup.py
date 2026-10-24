@@ -124,7 +124,7 @@ def test_scope_claim_and_no_workspace(setup):
     assert not auth.valid(token) and auth.valid_setup(token)
     assert token not in repr(auth.__dict__)
     assert client.get("/api/workspaces", headers={"Authorization": f"Bearer {token}"}).status_code == 401
-    normal = auth.exchange(auth.launch(PORT)["code"])[0]["token"]
+    normal = auth.exchange(auth.launch(PORT)["code"], "local")[0]["token"]
     assert client.get("/api/setup/state", headers={"X-Setup-Token": normal}).status_code == 401
     assert attempt(client).status_code == 403
     assert client.get("/api/setup/state", headers=headers).json()["phase"] == "profile"
@@ -253,7 +253,7 @@ def test_nonce_required_wrong_reused_expired(setup):
     assert path.exists() and not facts["claimed"]
     # a setup nonce opens no normal session
     nonce = auth.launch(PORT, setup=True)["code"]
-    assert auth.exchange(nonce)[0] is None
+    assert auth.exchange(nonce, "local")[0] is None
     assert client.post("/auth/session", json={"code": nonce}, headers={"Origin": ORIGIN}).status_code == 401
     # correct: bound once; the same nonce again is refused
     res = post({"nonce": nonce})

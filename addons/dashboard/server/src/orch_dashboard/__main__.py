@@ -28,8 +28,10 @@ import uvicorn
 
 from .app import create_app
 from .auth import CODE_TTL, SETUP_CODE_TTL, Auth
+from .front import Front, PeerChecked
 from .gateway import Gateway, RunDirectoryError, run_dir, state_dir
 from .hostlink import check_uid, encode, receive
+from .policy import remote_policy
 
 #: seconds a stopping server waits for open connections (a tab's live stream) before it cuts them
 GRACE = 3
@@ -44,6 +46,11 @@ EXPIRY_MARGIN = 1
 HEADLESS_PORT = 47821
 #: file in the dashboard state directory that fixes the port (one decimal number), on any machine
 PORT_FILE = "port"
+#: file in the dashboard state directory that turns remote access on: {"name": "<dns name>", "front_uid": <int>}
+#: (written by `orch remote enable`, R1-7). Absent: remote access is off and no front socket is opened.
+REMOTE_FILE = "remote.json"
+#: the front socket's file name, in `<run>/dashboard/`
+FRONT_SOCKET = "front.sock"
 
 
 class AgentRefused(RuntimeError):
@@ -209,6 +216,70 @@ def listen_port(directory, headless=None, port=None):
     return port
 
 
+def remote_config(directory):
+    """``(name, front_uid)`` from ``<dashboard>/remote.json``, or None when the file is absent (remote access off).
+    Anything wrong with a file that is there refuses the start (host spec 10.2: missing any of it keeps remote mode
+    off, and the server says which), never a silent fall back to loopback only: the administrator asked for remote
+    access and must see that it is not on. The file is read with the checks of the port file: a plain file of ours that
+    nobody else can write (writing it would choose who may use the front socket)."""
+    path = directory / REMOTE_FILE
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return None
+    except OSError:
+        raise RuntimeError(f"remote.not_configured: {path} must be a plain file") from None
+    with os.fdopen(fd) as file:
+        st = os.fstat(file.fileno())
+        if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid() or st.st_mode & 0o022 or st.st_size > 4096:
+            raise RuntimeError(f"remote.not_configured: {path} must be your own small file, not writable by others")
+        text = file.read(4097)
+    try:
+        data = json.loads(text)
+        name, uid = data["name"], data["front_uid"]
+        if set(data) != {"name", "front_uid"} or type(uid) is not int:
+            raise ValueError
+        remote_policy(name)  # the name must be a public DNS name
+    except (ValueError, KeyError, TypeError):
+        raise RuntimeError(
+            f"remote.not_configured: {path} must hold exactly a public DNS name and the front's user id"
+        ) from None
+    if uid <= 0 or uid == os.getuid():
+        # the front is its own system user: a front that shares our UID is no boundary (any process of ours passes)
+        raise RuntimeError("remote.not_configured: front_uid must be a user other than the person's and not root")
+    return name, uid
+
+
+def front_socket_path(run):
+    """``<run>/dashboard/front.sock``. The directory is ours and may be crossed (not listed) by the front's user; it
+    must not be a link or writable by anyone else."""
+    directory = run / "dashboard"
+    directory.mkdir(mode=0o711, parents=True, exist_ok=True)
+    st = directory.lstat()
+    if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid() or st.st_mode & 0o022:
+        raise RuntimeError(f"remote.not_configured: {directory} must be your own directory, not writable by others")
+    return directory / FRONT_SOCKET
+
+
+def bind_front(path, front_uid):
+    """The front socket: bound at ``path`` (mode 0666: who may connect is decided by the peer UID check of every
+    accepted connection, not by file permissions; the directory above decides who can reach it at all)."""
+    stale_socket(path)
+    sock = PeerChecked(front_uid)
+    old = os.umask(0o000)
+    try:
+        sock.bind(str(path))
+    except BaseException:
+        sock.close()
+        raise
+    finally:
+        os.umask(old)
+    os.chmod(path, 0o666)
+    sock.listen(128)
+    sock.setblocking(False)
+    return sock
+
+
 def tunnel_line(port, environ=None, user=None, host=None):
     """The command to run on the person's own computer: ``ssh -L <port>:127.0.0.1:<port> <user>@<host>``. The host is
     the address this very SSH session reached us on when there is one, else this machine's name."""
@@ -266,6 +337,7 @@ def _serve(directory, lock_fd=None, port=None):
     if redirects != directory:
         sweep_redirects(redirects)
     auth = Auth(directory=redirects)
+    remote = remote_config(directory)  # before anything is bound: a bad remote.json refuses the start
     wanted = listen_port(directory, port=port)
     try:
         listener = bind_listener(wanted)
@@ -277,8 +349,17 @@ def _serve(directory, lock_fd=None, port=None):
         raise
     listener.listen(128)
     port = listener.getsockname()[1]
+    front = None
+    try:
+        app = create_app(port, gateway=gateway, auth=auth, remote=remote_policy(remote[0]) if remote else None)
+        if remote:
+            front_path = front_socket_path(run_dir(state_dir()))
+            front = bind_front(front_path, remote[1])
+    except BaseException:
+        listener.close()
+        raise
     config = uvicorn.Config(
-        create_app(port, gateway=gateway, auth=auth),
+        app,
         proxy_headers=False,
         access_log=False,
         log_level="warning",
@@ -290,6 +371,22 @@ def _serve(directory, lock_fd=None, port=None):
         timeout_graceful_shutdown=GRACE,
     )
     server = uvicorn.Server(config)
+    front_server = front_thread = None
+    if front is not None:
+        front_server = uvicorn.Server(
+            uvicorn.Config(
+                Front(app),
+                proxy_headers=False,
+                access_log=False,
+                log_level="warning",
+                loop="asyncio",  # PeerChecked.accept must run: uvloop would accept in C and skip the peer check
+                lifespan="off",  # the loopback server owns the app's lifespan
+                ws="websockets",
+                ws_max_size=65536,
+                ws_per_message_deflate=False,
+                timeout_graceful_shutdown=GRACE,
+            )
+        )
     ctl = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     old = os.umask(0o177)
     try:
@@ -330,6 +427,8 @@ def _serve(directory, lock_fd=None, port=None):
                     elif req == {"command": "stop"}:
                         conn.sendall(encode({"ok": True}))
                         server.should_exit = True
+                        if front_server is not None:
+                            front_server.should_exit = True
                         # Free the control socket now, not after the shutdown: until then a launcher would connect
                         # to a server that no longer answers (and time out) instead of starting a new one.
                         retire()
@@ -351,11 +450,27 @@ def _serve(directory, lock_fd=None, port=None):
     thread = threading.Thread(target=ipc, daemon=True)
     thread.start()
     try:
+        if front_server is not None:
+            front_thread = threading.Thread(target=front_server.run, kwargs={"sockets": [front]}, daemon=True)
+            front_thread.start()
+            for _ in range(200):  # the front is up, or the start is refused (a half-open remote mode is not offered)
+                if front_server.started or not front_thread.is_alive():
+                    break
+                time.sleep(0.05)
+            if not front_server.started:
+                raise RuntimeError("remote.not_configured: the front socket did not start")
         server.run(sockets=[listener])
     finally:
         server.should_exit = True
+        if front_server is not None:
+            front_server.should_exit = True
         retire()
         thread.join(timeout=3)
+        if front_thread is not None:
+            front_thread.join(timeout=GRACE + 2)
+        if front is not None:
+            front.close()
+            front_path.unlink(missing_ok=True)
         listener.close()
 
 

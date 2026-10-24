@@ -444,8 +444,8 @@ def _remote_client(policy=REMOTE):
     from fastapi.testclient import TestClient
 
     auth = Auth()
-    local = auth.exchange(auth.launch(PORT)["code"])[0]["token"]
-    remote = auth.exchange(auth.launch(PORT)["code"], kind="remote")[0]["token"]
+    local = auth.exchange(auth.launch(PORT)["code"], "local")[0]["token"]
+    remote = auth.open_remote()["token"]
     return TestClient(Security(_app, auth, policy), base_url=f"https://{NAME}"), local, remote
 
 

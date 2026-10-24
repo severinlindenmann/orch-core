@@ -3702,6 +3702,15 @@ login.
   front**: they are a local credential.
 - **Remote session kind**: 12 h absolute, 2 h idle (local keeps 24 h / 12 h). Logout ends it at once; Settings has "Log
   out everywhere"; a restart of the dashboard ends every session.
+- **A session belongs to the listener that opened it (R1-4).** A launch code opens a `local` session on loopback; a
+  verified passkey login opens a `remote` one on the front. The bearer is refused on every other listener exactly like
+  an unknown token (loopback answers 401, the front 404), without ending the session, whatever else the request
+  carries. `Auth.exchange` takes the kind as a required argument and accepts `local` only. The local-only gates (One
+  click on/off with a typed passphrase, device rotate, dashboard execution on, a grant secret, a hub backup key) test
+  `login_kind` themselves too, so a remote session that somehow reached one is refused (fail closed) until the
+  step-up (10.5) exists. The front's `remote.json` (`{"name", "front_uid"}` in the dashboard state directory, mode
+  not writable by others, `front_uid` neither the person nor root) turns the front socket on; a file that is there
+  but wrong refuses the start (`remote.not_configured`).
 - **Rate limits** for passkey login, in buckets of their own: 20 per minute per source, the source being the client's
   IPv4 address (/32) or its IPv6 /64 prefix. A global cap of 600 per minute only guards the CPU, far above any single
   source; when a distributed flood reaches it, remote login waits and the SSH tunnel is the fallback. The loopback

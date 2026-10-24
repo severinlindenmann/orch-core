@@ -24,18 +24,34 @@ CLICK_STEP = ("/view", "/sign", "/cancel", "/state", "/custody")
 class Security:
     """ASGI checks before routing, including duplicate headers and streamed body limits."""
 
-    def __init__(self, app, auth, policy: ListenerPolicy):
+    def __init__(self, app, auth, policy: ListenerPolicy, others=()):
+        """``policy`` is the default listener (loopback). ``others`` are further listeners' policies; a request is
+        handled by the one named in ``scope["orch_listener"]``, which only the server that accepted the connection
+        sets (front.Front), never a header. A name that is not configured is refused (fail closed)."""
         self.app, self.auth, self.policy = app, auth, policy
+        self.policies = {p.name: p for p in (policy, *others)}
 
-    def session_ok(self, token):
-        """A live session of a kind this listener accepts (a local launch-code session is not a remote one)."""
-        return self.auth.valid(token) and self.policy.session_kind_ok(self.auth.login_kind(token))
+    def policy_of(self, scope):
+        return self.policies.get(scope.get("orch_listener", self.policy.name))
+
+    def session_ok(self, token, policy=None):
+        """A live session that belongs to this listener: opened on it (a remote bearer on loopback is as unknown as a
+        made-up token, and a launch-code session on the front too) and of a kind it accepts."""
+        policy = policy or self.policy
+        return (
+            self.auth.valid(token)
+            and self.auth.listener_of(token) == policy.name
+            and policy.session_kind_ok(self.auth.login_kind(token))
+        )
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] == "websocket":
-            return await self.websocket(scope, receive, send)
-        if scope["type"] != "http":
+        if scope["type"] not in ("http", "websocket"):
             return await self.app(scope, receive, send)
+        policy = self.policy_of(scope)
+        if policy is None:
+            return await self.refuse(scope, receive, send)
+        if scope["type"] == "websocket":
+            return await self.websocket(scope, receive, send, policy)
         path, method = scope["path"], scope["method"]
         headers = scope["headers"]
 
@@ -49,24 +65,24 @@ class Security:
             if message["type"] == "http.response.start":
                 started = True
                 hs = list(message.get("headers", []))
-                if self.policy.widget_frames and path.startswith(widget_frame.PREFIX):
+                if policy.widget_frames and path.startswith(widget_frame.PREFIX):
                     # The Widgets frame: its own CSP REPLACES the global one (two CSP headers would both apply), and
                     # it carries no X-Frame-Options (DENY would stop the dashboard framing it; `frame-ancestors` names
                     # the dashboard). One place, whatever the route set.
                     hs = [(k, v) for k, v in hs if k.lower() not in _FRAME_OWN]
                     hs += [
-                        (b"content-security-policy", widget_frame.frame_csp(path, self.policy.port).encode()),
+                        (b"content-security-policy", widget_frame.frame_csp(path, policy.port).encode()),
                         (b"cross-origin-resource-policy", b"same-origin"),
                         (b"x-content-type-options", b"nosniff"),
                         (b"referrer-policy", b"no-referrer"),
                     ]
                 else:
                     hs += [
-                        (b"content-security-policy", self.policy.csp().encode()),
+                        (b"content-security-policy", policy.csp().encode()),
                         (b"x-content-type-options", b"nosniff"),
                         (b"x-frame-options", b"DENY"),
                         (b"referrer-policy", b"no-referrer"),
-                        *self.policy.extra_headers,
+                        *policy.extra_headers,
                     ]
                 if path.startswith(("/api", "/auth")):
                     hs = [(k, v) for k, v in hs if k.lower() != b"cache-control"]
@@ -80,24 +96,23 @@ class Security:
         setup = path == "/setup" or path == "/auth/setup" or path.startswith("/api/setup/")
         host = values(b"host")
         setup_host = setup or path.startswith("/assets/") or path in ("/favicon.svg", "/loading.css")
-        allowed = self.policy.hosts_for(setup_host)
-        origin = self.policy.origin_for(host[0]) if len(host) == 1 else ""
+        allowed = policy.hosts_for(setup_host)
+        origin = policy.origin_for(host[0]) if len(host) == 1 else ""
         if len(host) != 1 or host[0] not in allowed:
             return await reject("host.bad", 421)
         origins = values(b"origin")
         if origins and origins != [origin]:
             return await reject("origin.bad", 403)
         api = path == "/api" or path.startswith("/api/")
-        if not self.policy.launch_codes and path == "/auth/session":
+        if not policy.launch_codes and path == "/auth/session":
             return await reject("not_found", 404)
-        if not self.policy.widget_frames and path.startswith(widget_frame.PREFIX):
+        if not policy.widget_frames and path.startswith(widget_frame.PREFIX):
             return await reject("not_found", 404)  # off means off, before and after login
-        if not self.policy.pre_login(path, scope.get("raw_path"), method):
+        if not policy.pre_login(path, scope.get("raw_path"), method):
             # Before login only the policy's routes answer; everything else needs a session of this listener.
-            # Until R1-4 wires the remote listener, a remote session is checked by its bearer token only.
             auth = values(b"authorization")
             bearer = auth[0][7:] if len(auth) == 1 and auth[0].startswith("Bearer ") else ""
-            if not self.session_ok(bearer):
+            if not self.session_ok(bearer, policy):
                 return await reject("not_found", 404)
         if api or path == "/auth/logout":
             auth = values(b"authorization")
@@ -105,7 +120,7 @@ class Security:
             if setup:
                 tokens = values(b"x-setup-token")
                 token = tokens[0] if len(tokens) == 1 and len(tokens[0]) <= 200 else ""
-            if not (self.auth.valid_setup(token) if setup else self.session_ok(token)):
+            if not (self.auth.valid_setup(token) if setup else self.session_ok(token, policy)):
                 return await reject("session.required", 401)
             scope.setdefault("state", {})["token"] = token
         if method not in ("GET", "HEAD", "OPTIONS"):
@@ -183,7 +198,13 @@ class Security:
             # No body/header interpolation in errors or logs.
             await reject("internal", 500)
 
-    async def websocket(self, scope, receive, send):
+    async def refuse(self, scope, receive, send):
+        if scope["type"] == "websocket":
+            await send({"type": "websocket.close", "code": 1008})
+            return
+        await response("not_found", 404)(scope, receive, send)
+
+    async def websocket(self, scope, receive, send, policy):
         """Section 12.6.6: only `/term`; closed before `accept` unless Host and Origin are exactly this server's
         (`localhost`, a missing or `null` Origin refused), with no subprotocol. Cookies are never read (dropped from the
         scope). permessage-deflate is off and `ws_max_size` is 64 KiB in the server's configuration (`__main__`). The
@@ -194,7 +215,7 @@ class Security:
             return [v.decode("latin1") for k, v in headers if k.lower() == name]
 
         if (
-            not self.policy.websocket_ok(scope["path"], values(b"host"), values(b"origin"))
+            not policy.websocket_ok(scope["path"], values(b"host"), values(b"origin"))
             or values(b"sec-websocket-protocol")
             or scope.get("subprotocols")
             or scope.get("query_string")

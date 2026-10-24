@@ -16,11 +16,25 @@ describe('new ticket page', () => {
     expect(bar?.className).toContain('-bottom-4')
     expect(bar?.className).toContain('@[60rem]/page:-bottom-6')
   })
+  it('is the simple form: three everyday types, title, one box, everything else folded, two footer buttons', async () => {
+    renderApp('/tickets/new')
+    const types = await screen.findByRole('radiogroup', { name: 'Ticket type' })
+    expect(within(types).getAllByRole('radio').map((r) => r.textContent)).toEqual(['featuresomething new', 'bugsomething broken', 'choresmall upkeep'])
+    expect(screen.getByRole('button', { name: /More types/ })).toBeInTheDocument()
+    expect(screen.getByLabelText('Title')).toBeInTheDocument()
+    expect(screen.getByLabelText(/^What should be true/)).toBeInTheDocument()
+    expect(screen.queryByLabelText('Priority')).toBeNull() // under More options, which is closed
+    expect(screen.queryByLabelText('Out of scope')).toBeNull()
+    const footer = screen.getByTestId('nt-footer')
+    expect(within(footer).getByRole('button', { name: 'Cancel' })).toBeInTheDocument()
+    expect(within(footer).getByTestId('nt-primary')).toBeInTheDocument()
+  })
   it('shows the sections a bug needs and hides absent ones', async () => {
     const { user } = renderApp('/tickets/new')
-    await user.click(await screen.findByRole('radio', { name: 'chore' }))
+    await user.click(await screen.findByRole('button', { name: /More options/ }))
+    await user.click(await screen.findByRole('radio', { name: /^chore/ }))
     expect(screen.queryByLabelText('Out of scope')).toBeNull()
-    await user.click(screen.getByRole('radio', { name: 'bug' }))
+    await user.click(screen.getByRole('radio', { name: /^bug/ }))
     expect(screen.getByLabelText('Out of scope')).toBeInTheDocument()
   })
   it('focuses Title; an empty submit shows inline errors and focuses the first invalid field', async () => {
@@ -34,14 +48,14 @@ describe('new ticket page', () => {
   })
   it('keeps shared section text when switching type', async () => {
     const { user } = renderApp('/tickets/new')
-    await user.type(await screen.findByLabelText(/^Requirements/), 'Must not loop')
-    await user.click(screen.getByRole('radio', { name: 'bug' }))
-    expect(screen.getByLabelText(/^Requirements/)).toHaveValue('Must not loop')
+    await user.type(await screen.findByLabelText(/^What should be true/), 'Must not loop')
+    await user.click(screen.getByRole('radio', { name: /^bug/ }))
+    expect(screen.getByLabelText(/^What should be true/)).toHaveValue('Must not loop')
   })
   it('creates the ticket and opens it', async () => {
     const { user } = renderApp('/tickets/new')
     await user.type(await screen.findByLabelText('Title'), 'Export fails on empty month')
-    await user.type(screen.getByLabelText(/^Requirements/), 'Empty months export a header row')
+    await user.type(screen.getByLabelText(/^What should be true/), 'Empty months export a header row')
     await user.click(screen.getByRole('button', { name: 'Create' }))
     expect(await screen.findByRole('heading', { level: 1, name: /Export fails on empty month/ })).toBeInTheDocument()
     // The ticket page renders the status chip as "Backlog" (STATUS_LABEL), not the raw id.
@@ -85,7 +99,7 @@ describe('new ticket page', () => {
     const { user } = renderApp('/tickets/new')
     const title = await screen.findByLabelText('Title')
     await user.type(title, 'Only once')
-    await user.type(screen.getByLabelText(/^Requirements/), 'One ticket please')
+    await user.type(screen.getByLabelText(/^What should be true/), 'One ticket please')
     fireEvent.keyDown(title, { key: 'Enter', metaKey: true })
     fireEvent.keyDown(title, { key: 'Enter', metaKey: true })
     expect(await screen.findByRole('heading', { level: 1, name: /Only once/ })).toBeInTheDocument()
@@ -94,6 +108,7 @@ describe('new ticket page', () => {
   })
   it('"Restricted to…" starts with the creator and the owners', async () => {
     const { user } = renderApp('/tickets/new', { viewer: 'p_mara' })
+    await user.click(await screen.findByRole('button', { name: /More options/ }))
     await user.selectOptions(await screen.findByRole('combobox', { name: 'Visibility' }), 'restricted')
     const group = screen.getByRole('group', { name: 'Can see this ticket' })
     expect(within(group).getByRole('button', { name: 'Mara' })).toHaveAttribute('aria-pressed', 'true')

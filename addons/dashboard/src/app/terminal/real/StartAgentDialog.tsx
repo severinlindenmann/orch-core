@@ -6,10 +6,11 @@
 // signer to the runner, never through this page.
 
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { KeyRound, Loader2 } from 'lucide-react'
+import { KeyRound } from 'lucide-react'
+import { toast } from 'sonner'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
-  agentsApi, blockedText, cwdText, DEPOSIT_UNKNOWN, depositReason, runnerQuery, SHARED_COPY, TERMINAL_GRANT,
+  AGENT_MODES, agentsApi, blockedText, HARNESSES, cwdText, DEPOSIT_UNKNOWN, depositReason, runnerQuery, SHARED_COPY, TERMINAL_GRANT,
   TERMINAL_ONLY, UPDATE_ORCH, LOGIN_NOTICE, worktreeLine, type AgentArgs, type AgentMode, type AgentPreview, type Harness, type Runner,
 } from '@/api/agents'
 import { clickReady, DEPOSIT_RISK, depositViewOk, type ClickAction } from '@/api/click'
@@ -17,12 +18,11 @@ import { newIdem, type Run } from '@/api/runs'
 import { ApiError } from '@/api/types'
 import { ClickSignPanel } from '@/components/sign/ClickSignPanel'
 import { storyOf } from '@/components/sign/story'
-import { HandoffDialog } from '@/components/sign/HandoffDialog'
+import { SignPopover } from '@/components/sign/SignPopover'
 import { useSignMethods } from '@/components/sign/SignMethods'
 import { useClickSign } from '@/components/sign/useClickSign'
 import { Inline, Prose, Raw } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -32,7 +32,13 @@ import { modelLabel, routingQueries, STRONG_MODELS } from '@/api/modelRouting'
 import { grantDefaultHours, runnerLengths } from '@/api/grants'
 import { fmtDateTime, fmtExact, nowMs } from '@/lib/time'
 import { EXECUTION_LINE } from './executionLine'
-import { AgentPick, ModelPick } from '@/components/agents/AgentChoice'
+import { MODE_LABEL, ModelPick } from '@/components/agents/AgentChoice'
+import { AgentIcon } from '@/components/agents/AgentIcon'
+import { AccessSelect } from '@/components/sign/AccessSelect'
+import { SignButton } from '@/components/sign/SignButton'
+import { lastTrigger, SignShell } from '@/components/sign/SignShell'
+import { ExactCommandLine } from '@/components/sign/HandoffPanel'
+import { usableGrant } from '@/app/pages/new-ticket/startAfterCreate'
 
 export { MODE_HELP, MODE_LABEL } from '@/components/agents/AgentChoice'
 
@@ -66,21 +72,38 @@ export interface StartInitial {
   idem?: string
 }
 
-export function StartAgentDialog({ ws, ticket, open, onClose, onStarted, grantStep, initial }: { ws: string; ticket?: string; open: boolean; onClose: () => void; onStarted?: (run: Run) => void; /** Dev layout preview only: the grant card's starting step. */ grantStep?: GrantStep; initial?: StartInitial }) {
-  return (
-    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose() }}>
-      <DialogContent className="max-h-[90vh] max-w-[calc(100%-2rem)] gap-2 overflow-y-auto border-border bg-surface p-4 sm:max-w-xl sm:p-5" data-start-agent>
-        {open && <StartAgent ws={ws} ticket={ticket} onClose={onClose} onStarted={onStarted} grantStep={grantStep} initial={initial} />}
-      </DialogContent>
-    </Dialog>
-  )
+const lastKey = (ws: string) => `orch.dashboard.start-agent.harness.${ws}`
+export function lastHarness(ws: string): Harness {
+  try {
+    const v = localStorage.getItem(lastKey(ws))
+    return HARNESSES.some((h) => h.id === v) ? (v as Harness) : 'claude-code'
+  } catch {
+    return 'claude-code'
+  }
+}
+function rememberHarness(ws: string, h: Harness) {
+  try { localStorage.setItem(lastKey(ws), h) } catch { /* not remembered */ }
 }
 
-function StartAgent({ ws, ticket, onClose, onStarted, grantStep, initial }: { ws: string; ticket?: string; onClose: () => void; onStarted?: (run: Run) => void; grantStep?: GrantStep; initial?: StartInitial }) {
+/**
+ * Start agent (run 8, V2). With valid access there is NO dialog: the host previews, and when nothing needs reading the
+ * agent starts and one toast says so. The dialog (a popover next to the button, a sheet on phones) opens only when
+ * something needs the person: first-start notice, missing or short access (the access length with the signature, the typed word
+ * where the host's review asks for it), a blocked reason, a failed start, or `choose` ("Change agent or model").
+ */
+export function StartAgentDialog({ ws, ticket, open, onClose, onStarted, initial, choose }: { ws: string; ticket?: string; open: boolean; onClose: () => void; onStarted?: (run: Run) => void; initial?: StartInitial; /** Show the form even when the agent could start right away. */ choose?: boolean }) {
+  if (!open) return null
+  return <StartAgent ws={ws} ticket={ticket} onClose={onClose} onStarted={onStarted} initial={initial} choose={choose} />
+}
+
+type Step = 'form' | 'sign' | 'starting'
+
+function StartAgent({ ws, ticket, onClose, onStarted, initial, choose }: { ws: string; ticket?: string; onClose: () => void; onStarted?: (run: Run) => void; initial?: StartInitial; choose?: boolean }) {
   const qc = useQueryClient()
-  // One idem per dialog opening, kept for every retry of Start (the run id is `r_` + its ULID).
+  const [anchor] = useState<HTMLElement | null>(() => lastTrigger())
+  // One idem per opening, kept for every retry of Start (the run id is `r_` + its ULID).
   const [idem] = useState(() => initial?.idem ?? newIdem())
-  const [harness, setHarness] = useState<Harness>(initial?.harness ?? 'claude-code')
+  const [harness, setHarness] = useState<Harness>(initial?.harness ?? lastHarness(ws))
   const [mode, setMode] = useState<AgentMode>(initial?.mode ?? 'work')
   const [model, setModel] = useState(initial?.model ?? '')
   const [subagent, setSubagent] = useState('')
@@ -94,8 +117,12 @@ function StartAgent({ ws, ticket, onClose, onStarted, grantStep, initial }: { ws
   const [note, setNote] = useState('')
   const reason = initial?.note ?? ''
   const [busy, setBusy] = useState(false)
+  const [step, setStep] = useState<Step>('form')
+  const [signing, setSigning] = useState(false)
   const asked = useRef(0)
   const runner = useQuery({ ...runnerQuery(ws) })
+  const workspaces = useQuery(queries.workspaces())
+  const prefix = workspaces.data?.find((w) => w.id === ws)?.prefix ?? ''
   // Model routing: the closed list of models for this agent (from core); the choice is a name of that list, never free text.
   const routing = hasFeature('model_routing', ws)
   const choices = useQuery({ ...routingQueries.choices(ws), enabled: routing })
@@ -103,6 +130,7 @@ function StartAgent({ ws, ticket, onClose, onStarted, grantStep, initial }: { ws
   const failing = useQuery({ ...queries.ticket(ws, ticket ?? ''), enabled: routing && !!ticket })
   const strong = (STRONG_MODELS[harness] ?? []).find((id) => models.some((m) => m.id === id))
   const checkFailing = !!failing.data?.tasks_state?.some((t) => t.state !== 'done' && t.state !== 'skipped' && t.receipt !== null && t.receipt.exit !== 0)
+  const agentName = HARNESSES.find((h) => h.id === harness)?.name ?? harness
 
   const preview = useCallback(async (args: AgentArgs) => {
     const n = ++asked.current
@@ -132,43 +160,13 @@ function StartAgent({ ws, ticket, onClose, onStarted, grantStep, initial }: { ws
   const badLabel = label.length > 40
   const stale = !shown || !same(shown.args, form)
   const data = shown?.data
-  const start = async () => {
-    if (!shown || stale || !data?.spec || data.blocked || busy) return
-    setBusy(true)
-    setError('')
-    setNote('')
-    try {
-      const { run } = await agentsApi.start(ws, shown.args, data.spec, idem)
-      if (ackRef.current.shownFull.length) void ackRef.current.acknowledge(ackRef.current.shownFull) // starting with the full notice on screen counts as reading it
-      void qc.invalidateQueries({ queryKey: ['runs', ws] })
-      onStarted?.(run)
-      onClose()
-    } catch (e) {
-      if (e instanceof ApiError && e.code === 'launch.changed') {
-        // What would run changed since the preview (also a new runner grant): show it again, ask for a new Start.
-        setNote('What would run changed since the last check. It has been checked again: read it, then start.')
-        await preview(shown.args)
-      } else {
-        // The same idem stays: Start again returns the recorded run, never a second one. A lost answer: read the list.
-        if (!(e instanceof ApiError) || e.status >= 500) void qc.invalidateQueries({ queryKey: ['runs', ws] })
-        setError(message(e))
-      }
-    } finally {
-      setBusy(false)
-    }
-  }
-  const noGrant = data?.blocked?.code === 'launch.no_grant'
-  // Review L2: nothing starts that the person could not read (a command or a folder withheld for invisible characters).
-  const unreadable = !!data && (data.display_hidden || data.cwd_path_hidden || data.display === null || data.cwd_path === null)
-  const ready = !badModel && !stale && !loading && !note && !!data && !data.blocked && !!data.spec && !unreadable
-  const warnings = data?.warnings ?? []
-  const loginNotice = warnings.filter(isLoginNotice)
-  const otherWarnings = warnings.filter((x) => !isLoginNotice(x))
   // The risk notice is shown in full until it is acknowledged once (kept by the dashboard server, per person and
   // workspace); afterwards it is one line whose Details hold the same words. A failed read counts as not acknowledged.
   const ack = useQuery({ queryKey: ['risk-notices', ws], queryFn: () => agentsApi.riskNotices(ws), retry: false })
-  // Pending or unreadable counts as not acknowledged (full notice); Start waits until the answer is in.
   const startFull = ack.data?.acknowledged.start_agent !== true
+  const warnings = data?.warnings ?? []
+  const loginNotice = warnings.filter(isLoginNotice)
+  const otherWarnings = warnings.filter((x) => !isLoginNotice(x))
   const loginFull = loginNotice.length > 0 && ack.data?.acknowledged.login_shell !== true
   const acknowledge = useCallback(async (notices: ('start_agent' | 'login_shell')[]) => {
     for (const n of notices) {
@@ -178,80 +176,250 @@ function StartAgent({ ws, ticket, onClose, onStarted, grantStep, initial }: { ws
     }
   }, [qc, ws])
   const shownFull = [...(startFull ? ['start_agent' as const] : []), ...(loginFull ? ['login_shell' as const] : [])]
+  const ackNow = useRef<{ login_shell?: boolean }>({})
+  ackNow.current = ack.data?.acknowledged ?? {}
   const ackRef = useRef({ shownFull, acknowledge })
   ackRef.current = { shownFull, acknowledge }
 
-  return (
-    <>
-      <DialogHeader className="mb-1 text-left">
-        <DialogTitle>Start agent{ticket ? ` on ${ticket}` : ''}</DialogTitle>
-        <DialogDescription className="sr-only">Choose an agent and what it should do.</DialogDescription>
-      </DialogHeader>
-      {reason && !ready && <p role="note" className="text-xs leading-5 text-warning" data-testid="agent-initial-note"><Inline>{reason}</Inline></p>}
-      <form className="grid grid-cols-1 items-center gap-x-3 gap-y-2 text-xs leading-5 sm:grid-cols-[110px_minmax(0,1fr)]" onSubmit={(e) => { e.preventDefault(); if (!badModel && !badLabel) void preview(form) }}>
-        <AgentPick harness={harness} mode={mode} onHarness={(h) => { setHarness(h); setModel('') }} onMode={setMode} />
-        <Label htmlFor="agent-label" className="text-xs text-text-muted">Label</Label>
-        <Input id="agent-label" className="h-9 min-w-0 text-xs sm:h-7" placeholder="optional, up to 40 characters" value={label} maxLength={40} autoComplete="off" onChange={(e) => setLabel(e.target.value)} />
-        <span className="text-text-muted">Project folder</span>
-        <label className="flex items-start gap-2 [&>input]:mt-1 [&>input]:shrink-0"><input type="checkbox" checked={worktree} onChange={(e) => setWorktree(e.target.checked)} /> Use this ticket's separate project folder when it has a branch</label>
-        {(models.length > 0) && (
-          <details className="group/more sm:col-span-2" data-testid="agent-more" open={moreOpen || (!!strong && checkFailing)} onToggle={(e) => setMoreOpen(e.currentTarget.open)}>
-            <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 text-text-muted underline-offset-4 before:size-1.5 before:shrink-0 before:rotate-45 before:border-t before:border-r before:border-current hover:underline [&::-webkit-details-marker]:hidden group-open/more:before:rotate-[135deg]">More choices</summary>
-            <div className="mt-2 grid grid-cols-1 items-center gap-x-3 gap-y-1.5 sm:grid-cols-[110px_minmax(0,1fr)] sm:gap-y-2">
-              <ModelPick models={models} model={model} onModel={setModel} />
-              {strong && checkFailing && model !== strong && (<>
-                <span className="hidden sm:block" />
-                <p className="-mt-1 text-warning" data-testid="agent-strong-suggestion" role="note">
-                  A check on this ticket is failing. A stronger model may do better.{' '}
-                  <button type="button" className="underline" onClick={() => setModel(strong)}>Use {modelLabel(choices.data, harness, strong)}</button>
-                </p>
-              </>)}
-              {harness === 'claude-code' && (<>
-                <Label htmlFor="agent-subagent" className="text-xs text-text-muted">Model for helper agents</Label>
-                <select id="agent-subagent" className="h-9 min-w-0 rounded border border-border bg-bg px-2 sm:h-7" value={subagent} onChange={(e) => setSubagent(e.target.value)}>
-                  <option value="">Chosen by the agent app</option>
-                  {models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
-                </select>
-              </>)}
-            </div>
-          </details>
-        )}
-      </form>
+  const noGrant = data?.blocked?.code === 'launch.no_grant'
+  // Review L2: nothing starts that the person could not read (a command or a folder withheld for invisible characters).
+  const unreadable = !!data && (data.display_hidden || data.cwd_path_hidden || data.display === null || data.cwd_path === null)
+  const ready = !badModel && !stale && !loading && !note && !!data && !data.blocked && !!data.spec && !unreadable
 
-      {/* One status line: what is happening or what blocks. Everything else is under Details. */}
-      <div className="space-y-1 text-xs leading-5" data-testid="agent-status">
-        {badModel && <p role="alert" className="text-danger">Choose a model from the list.</p>}
-        {!badModel && (loading || stale) && !error && <p role="status" className="text-text-muted" data-testid="agent-stale">Checking…</p>}
-        {!badModel && !stale && !loading && note && <p role="status" className="text-warning" data-testid="agent-changed">{note}</p>}
-        {/* M-1: one state line. After a Create and start the earlier "not started" sentence gives way to this one (it would contradict it). */}
-        {ready && <p className="text-success" data-testid="agent-ready" role="status">{reason ? `${ticket ?? 'The ticket'} is created. Check the details, then press Start agent.` : 'Ready to start.'}</p>}
-        {!stale && !loading && data?.blocked && !noGrant && (
-          <div role="alert" className="text-danger" data-testid="agent-blocked">
-            <p>Cannot start: {blockedText(data.blocked) ?? 'the host refused.'}{data.blocked.code && <span className="ml-1 font-mono text-[11px]">({data.blocked.code})</span>}</p>
-            {data.blocked.message && <p className="mt-1 text-text-muted">The host says: <Prose inline>{data.blocked.message}</Prose></p>}
+  const info = runner.data?.runner ?? null
+  const startable = usableGrant(info, nowMs())
+  const runnerOff = !!info && (!info.enabled || data?.blocked?.code === 'runner.disabled')
+  const needsAccess = !runner.isPending && !!info && info.enabled && (!startable || noGrant)
+
+  const toastId = `start-agent-${ticket ?? 'any'}`
+  /** Start with exactly the previewed values. Returns false (and says why on the form) when it did not start. */
+  const start = async (from?: { args: AgentArgs; data: AgentPreview }): Promise<boolean> => {
+    const at = from ?? shown
+    if (!at || !at.data.spec || at.data.blocked || busy) return false
+    setBusy(true)
+    setError('')
+    setNote('')
+    try {
+      const { run } = await agentsApi.start(ws, at.args, at.data.spec, idem)
+      if (ackRef.current.shownFull.length) void ackRef.current.acknowledge(ackRef.current.shownFull) // starting with the full notice on screen counts as reading it
+      rememberHarness(ws, at.args.harness)
+      void qc.invalidateQueries({ queryKey: ['runs', ws] })
+      toast.success(`${agentName} started${ticket ? ` on ${ticket}` : ''}`, { id: toastId })
+      onStarted?.(run)
+      onClose()
+      return true
+    } catch (e) {
+      toast.dismiss(toastId)
+      if (e instanceof ApiError && e.code === 'launch.changed') {
+        // What would run changed since the preview (also a new runner grant): show it again, ask for a new Start.
+        setNote('What would run changed since the last check. It has been checked again: read it, then start.')
+        await preview(at.args)
+      } else {
+        // The same idem stays: Start again returns the recorded run, never a second one. A lost answer: read the list.
+        if (!(e instanceof ApiError) || e.status >= 500) void qc.invalidateQueries({ queryKey: ['runs', ws] })
+        setError(message(e))
+      }
+      return false
+    } finally {
+      setBusy(false)
+      setStep('form')
+    }
+  }
+
+  // Instant: valid access and nothing to read means no dialog at all. Anything else falls through to the form.
+  const instantAllowed = !choose && !initial && (runner.isPending || !!startable)
+  const [fellThrough, setFellThrough] = useState(false)
+  // Only a dialog that has not left the form: once the access is being signed, the grant that lands (and makes the access
+  // valid) must not turn the dialog silent and remount the review under the person's hands.
+  const leftForm = useRef(false)
+  if (step !== 'form') leftForm.current = true
+  const quiet = instantAllowed && !fellThrough && !leftForm.current
+  const tried = useRef(false)
+  const settled = !runner.isPending && !ack.isPending && !!data && !stale && !loading
+  useEffect(() => {
+    if (!quiet || !settled || tried.current) return
+    tried.current = true
+    const fine = ready && !startFull && !loginFull && otherWarnings.length === 0 && !!shown
+    if (!fine) { setFellThrough(true); return }
+    toast.loading(`Starting ${agentName}…`, { id: toastId })
+    void start(shown!).then((ok) => { if (!ok) setFellThrough(true) })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quiet, settled])
+  // "Still starting…" when the host takes longer than 8 s.
+  useEffect(() => {
+    if (!busy) return
+    const t = setTimeout(() => toast.loading('Still starting…', { id: toastId }), 8000)
+    return () => clearTimeout(t)
+  }, [busy, toastId])
+  // A start that never reached the host (nothing started) must not leave its progress toast behind.
+  useEffect(() => () => { if (!tried.current) toast.dismiss(toastId) }, [toastId])
+
+  // Access: the length is signed together with the grant; after the signature the agent starts by itself.
+  const settings = useQuery({ ...queries.hostSettings(ws), retry: false })
+  const cap = grantDefaultHours({ grant_hours: settings.data?.grant_hours ?? workspaces.data?.find((w) => w.id === ws)?.grant_hours })
+  const lengths = runnerLengths(cap)
+  const [hoursChoice, setHours] = useState(8)
+  const hours = lengths.some(([h]) => h === hoursChoice) ? hoursChoice : (lengths[0]?.[0] ?? 8)
+  const afterGrant = async (deposit: string | undefined) => {
+    setStep('starting')
+    // The runner holds the grant once the deposit is confirmed; a terminal signature settles a little later: read again a few times.
+    let args = shown?.args ?? form
+    for (let i = 0; i < (deposit === 'confirmed' ? 1 : DEPOSIT_POLLS); i++) {
+      const r = (await runner.refetch()).data?.runner ?? null
+      if (usableGrant(r, nowMs())) {
+        try {
+          const data2 = await agentsApi.preview(ws, args)
+          const before = shown?.data ?? null
+          setShown({ args, data: data2 })
+          // Review L2: start by itself only what the person saw (same command, folder, model, no new worktree) and what the
+          // instant path would start (nothing to read first). Anything else goes back to the form for a press on Start.
+          const loginOpen = data2.warnings.some(isLoginNotice) && ackNow.current.login_shell !== true
+          const fine = !data2.blocked && !!data2.spec && !unreadableOf(data2) && !loginOpen && !data2.warnings.some((x) => !isLoginNotice(x))
+          if (fine && before && sameShown(before, data2)) { await start({ args, data: data2 }); return }
+          if (!data2.blocked) { setNote(CHANGED_NOTE); toast.dismiss(toastId); setStep('form'); return }
+        } catch (e) { setError(message(e)) }
+        break
+      }
+      if (deposit === 'rejected') break
+      await new Promise((r2) => setTimeout(r2, DEPOSIT_POLL_MS))
+    }
+    toast.dismiss(toastId)
+    setStep('form')
+    setError((e) => e || 'The access was signed, but the agent runner did not take it. Try again.')
+  }
+
+  const title = `Start ${agentName}${ticket ? ` on ${ticket}` : ''}`
+  const accessSelect = <AccessSelect hours={hours} onHours={setHours} lengths={lengths} prefix={prefix} agentName={agentName} />
+
+  if (quiet) return null
+  if (step === 'sign') {
+    return (
+      <SignPopover
+        key={hours}
+        ws={ws}
+        title="Give agents access"
+        action={{ action: 'runner_grant', hours, scope: 'workable' }}
+        autoStart
+        startsAgent
+        anchor={anchor}
+        controls={accessSelect}
+        doneToast=""
+        onSigning={setSigning}
+        onSettled={(phase, state) => { if (phase === 'done') void afterGrant(state?.deposit) }}
+        onClose={() => setStep((s) => (s === 'sign' ? 'form' : s))}
+      />
+    )
+  }
+
+  const statusLine = (
+    <div className="space-y-1 text-xs leading-5" data-testid="agent-status">
+      {badModel && <p role="alert" className="text-danger">Choose a model from the list.</p>}
+      {!badModel && !stale && !loading && note && <p role="status" className="text-warning" data-testid="agent-changed">{note}</p>}
+      {!stale && !loading && data?.blocked && !noGrant && !runnerOff && (
+        <div role="alert" className="text-danger" data-testid="agent-blocked">
+          <p>{blockedText(data.blocked) ?? 'The host would not start it.'}</p>
+          {data.blocked.message && <p className="mt-1 text-text-muted">The host says: <Prose inline>{data.blocked.message}</Prose></p>}
+        </div>
+      )}
+      {unreadable && !data?.blocked && <p role="alert" className="text-danger" data-testid="agent-unreadable">The command or the folder cannot be shown here, so it cannot be started from the dashboard. Fix it in the terminal (runner.json or the path), then press Start again.</p>}
+      {!stale && otherWarnings.map((x, i) => <p key={i} role="note" className="text-warning"><Prose inline>{x}</Prose></p>)}
+      {error && <p role="alert" className="text-danger" data-testid="agent-error"><Inline>{error}</Inline></p>}
+    </div>
+  )
+  const primaryDisabled = !data || !data.spec || !!data.blocked || unreadable || stale || busy || loading || ack.isPending
+  const primary = needsAccess
+    ? { label: 'Sign and start agent', go: () => setStep('sign'), disabled: runner.isPending || (!data && !noGrant) || stale || loading }
+    : { label: 'Start agent', go: () => void start(), disabled: primaryDisabled }
+
+  return (
+    <SignShell
+      anchor={anchor}
+      open={!signing}
+      onDismiss={() => !busy && onClose()}
+      title={title}
+      description={<span data-testid="agent-sentence">{MODE_SENTENCE(agentName)[mode]}</span>}
+      showClose
+      onOpenAutoFocus={(e) => e.preventDefault()}
+    >
+      <div data-start-agent className="space-y-3 text-xs leading-5">
+        {reason && !ready && <p role="note" className="text-warning" data-testid="agent-initial-note"><Inline>{reason}</Inline></p>}
+        {reason && ready && <p role="status" className="text-success" data-testid="agent-ready">{ticket ?? 'The ticket'} is created. Check the details, then press Start agent.</p>}
+        <div role="radiogroup" aria-label="Agent" className="flex flex-wrap gap-2">
+          {HARNESSES.map((h) => (
+            <button key={h.id} type="button" role="radio" aria-checked={h.id === harness} onClick={() => { setHarness(h.id); setModel('') }}
+              className={`inline-flex min-h-9 items-center gap-2 rounded-md border px-2.5 text-[13px] ${h.id === harness ? 'border-brand bg-brand-soft text-text' : 'border-border text-text-muted hover:text-text'}`}>
+              <AgentIcon harness={h.id} size={18} />{h.name}
+            </button>
+          ))}
+        </div>
+        {statusLine}
+        {!stale && !loading && runnerOff && (
+          <div data-testid="agent-runner-off" className="space-y-2">
+            <p className="text-[13px] text-text">The runner is off. Turn it on in your terminal.</p>
+            <ExactCommandLine command={`orch runner enable${prefix ? ` --workspace ${prefix}` : ''}`} testId="runner-enable-command" />
           </div>
         )}
-        {!stale && !loading && noGrant && <p role="status" className="text-text-muted" data-testid="agent-needs-grant">Agents need your permission to work for you first.</p>}
-        {unreadable && !data?.blocked && <p role="alert" className="text-danger" data-testid="agent-unreadable">The command or the folder cannot be shown here, so it cannot be started from the dashboard. Fix it in the terminal (runner.json or the path), then preview again.</p>}
-        {!stale && otherWarnings.map((x, i) => <p key={i} role="note" className="text-warning"><Prose inline>{x}</Prose></p>)}
+        {needsAccess && !runnerOff && accessSelect}
+        <RiskNotice startFull={startFull} loginFull={loginFull} loginNotice={loginNotice} onAcknowledge={() => void acknowledge(shownFull)} single={!!initial}>
+          {data && <PreviewLines ws={ws} data={data} ticket={ticket} harness={shown?.args.harness ?? harness} />}
+        </RiskNotice>
+        <details className="group/more" data-testid="agent-more" open={moreOpen || (!!strong && checkFailing)} onToggle={(e) => setMoreOpen(e.currentTarget.open)}>
+          <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 text-text-muted underline-offset-4 hover:underline [&::-webkit-details-marker]:hidden">More options</summary>
+          <form className="mt-2 grid grid-cols-1 items-center gap-x-3 gap-y-2 sm:grid-cols-[110px_minmax(0,1fr)]" onSubmit={(e) => { e.preventDefault(); if (!badModel && !badLabel) void preview(form) }}>
+            <Label htmlFor="agent-mode" className="text-xs text-text-muted">What it does</Label>
+            <select id="agent-mode" className="h-9 min-w-0 rounded border border-border bg-bg px-2 sm:h-7" value={mode} onChange={(e) => setMode(e.target.value as AgentMode)}>
+              {AGENT_MODES.map((m) => <option key={m} value={m}>{MODE_LABEL[m]}</option>)}
+            </select>
+            <Label htmlFor="agent-label" className="text-xs text-text-muted">Label</Label>
+            <Input id="agent-label" className="h-9 min-w-0 text-xs sm:h-7" placeholder="optional, up to 40 characters" value={label} maxLength={40} autoComplete="off" onChange={(e) => setLabel(e.target.value)} />
+            <span className="text-text-muted">Project folder</span>
+            <label className="flex items-start gap-2 [&>input]:mt-1 [&>input]:shrink-0"><input type="checkbox" checked={worktree} onChange={(e) => setWorktree(e.target.checked)} /> Use this ticket's separate project folder when it has a branch</label>
+            {models.length > 0 && <ModePickModels models={models} model={model} onModel={setModel} />}
+            {strong && checkFailing && model !== strong && (<>
+              <span className="hidden sm:block" />
+              <p className="-mt-1 text-warning" data-testid="agent-strong-suggestion" role="note">
+                A check on this ticket is failing. A stronger model may do better.{' '}
+                <button type="button" className="underline" onClick={() => setModel(strong)}>Use {modelLabel(choices.data, harness, strong)}</button>
+              </p>
+            </>)}
+            {harness === 'claude-code' && models.length > 0 && (<>
+              <Label htmlFor="agent-subagent" className="text-xs text-text-muted">Model for helper agents</Label>
+              <select id="agent-subagent" className="h-9 min-w-0 rounded border border-border bg-bg px-2 sm:h-7" value={subagent} onChange={(e) => setSubagent(e.target.value)}>
+                <option value="">Chosen by the agent app</option>
+                {models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+              </select>
+            </>)}
+          </form>
+        </details>
+        {loading && !data && <Skeleton className="h-6" />}
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button variant="ghost" size="sm" onClick={onClose} disabled={busy}>Cancel</Button>
+          <SignButton size="sm" label={primary.label} disabled={primary.disabled} after={busy || step === 'starting' ? 'Starting agent…' : null} slowLabel="Still starting…" onClick={primary.go} data-testid="agent-start" />
+        </div>
       </div>
-      {loading && !data && <Skeleton className="h-6" />}
-
-      <RiskNotice startFull={startFull} loginFull={loginFull} loginNotice={loginNotice} onAcknowledge={() => void acknowledge(shownFull)} single={!!initial}>
-        {data && <PreviewLines ws={ws} data={data} ticket={ticket} harness={shown?.args.harness ?? harness} />}
-      </RiskNotice>
-
-      <GrantSection initial={grantStep} ws={ws} runner={runner.data?.runner ?? null} loading={runner.isPending} blocked={noGrant ? data?.blocked ?? null : null}
-        onChanged={() => { void runner.refetch(); void preview(shown?.args ?? form) }} />
-      {error && <p role="alert" className="text-xs text-danger" data-testid="agent-error"><Inline>{error}</Inline></p>}
-      <DialogFooter className="mt-1 flex-row justify-end">
-        <Button variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
-        <Button size="sm" disabled={!data || !data.spec || !!data.blocked || unreadable || stale || busy || loading || ack.isPending} onClick={() => void start()} data-testid="agent-start">
-          {busy ? <><Loader2 className="size-4 animate-spin" aria-hidden /> Starting…</> : 'Start agent'}
-        </Button>
-      </DialogFooter>
-    </>
+    </SignShell>
   )
+}
+
+const MODE_SENTENCE = (name: string): Record<AgentMode, string> => ({
+  work: `${name} will work through this ticket and submit it for your review.`,
+  refine: `${name} will help write the requirements and the plan. It changes no code.`,
+  fix: `${name} will fix what a reviewer or a check sent back.`,
+  continue: `${name} will pick up where an earlier agent stopped.`,
+  context: `${name} will read the ticket and the code so you can ask questions. It changes nothing.`,
+})
+
+const CHANGED_NOTE = 'Something changed since you looked. Check and press Start again.'
+/** The preview the person had on screen and the one after the grant say the same about what runs, where and with which model. */
+const sameShown = (a: AgentPreview, b: AgentPreview) =>
+  a.display === b.display && a.cwd_path === b.cwd_path && a.cwd.kind === b.cwd.kind && a.cwd.repo === b.cwd.repo && a.cwd.ticket === b.cwd.ticket &&
+  (a.model ?? null) === (b.model ?? null) && (a.model_source ?? null) === (b.model_source ?? null) && a.will_create_worktree === b.will_create_worktree &&
+  a.env.length === b.env.length && a.env.every((n, i) => n === b.env[i])
+const unreadableOf = (d: AgentPreview) => d.display_hidden || d.cwd_path_hidden || d.display === null || d.cwd_path === null
+
+/** The model rows of the options fold (the model is a name from core's list, never typed text). */
+function ModePickModels({ models, model, onModel }: { models: { id: string; label: string }[]; model: string; onModel: (m: string) => void }) {
+  return <ModelPick models={models} model={model} onModel={onModel} />
 }
 
 const isLoginNotice = (w: string) => w === LOGIN_NOTICE
@@ -284,26 +452,6 @@ function RiskNotice({ startFull, loginFull, loginNotice, onAcknowledge, single, 
       </details>
     </section>
   )
-}
-
-/** One calm line when the runner already holds a valid grant; the full "Allow agents to work for you" box when it does not. */
-function GrantSection(props: { ws: string; runner: Runner | null; loading: boolean; blocked: AgentPreview['blocked']; onChanged: () => void; initial?: GrantStep }) {
-  const grant = props.runner?.grant ?? null
-  const valid = !!grant && Date.parse(grant.until) > nowMs()
-  const [open, setOpen] = useState(false)
-  // Once the full box was needed (no grant), it stays for this dialog: a grant just signed shows its own confirmation.
-  const [needed, setNeeded] = useState(false)
-  useEffect(() => { if (!props.loading && !valid) setNeeded(true) }, [props.loading, valid])
-  if (props.loading && !props.initial) return <Skeleton className="h-6" />
-  if (valid && grant && !open && !needed) {
-    return (
-      <p className="text-xs leading-5 text-text-muted" data-testid="agent-grant-line">
-        Agents can work for you until <time dateTime={grant.until}>{clock(grant.until)}</time> <span aria-hidden>·</span>{' '}
-        <button type="button" className="underline underline-offset-4" onClick={() => setOpen(true)}>Change</button>
-      </p>
-    )
-  }
-  return <RunnerGrantCard initial={props.initial} ws={props.ws} runner={props.runner} loading={props.loading} blocked={props.blocked} onChanged={props.onChanged} />
 }
 
 /** The host's preview, shown exactly: what runs, where (and whether a worktree is created first), env names, grant. */
@@ -520,7 +668,7 @@ export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initi
           {!runner?.enabled && runner && <span className="text-text-muted" data-testid="runner-grant-off">{TERMINAL_ONLY}</span>}
         </div>
       )}
-      {handoff && workspace && action.hours > 0 && <HandoffDialog ws={ws} title={extend ? 'Extend agent access' : 'Issue runner grant'} action={action} autoStart
+      {handoff && workspace && action.hours > 0 && <SignPopover ws={ws} title={extend ? 'Extend agent access' : 'Issue runner grant'} action={action} autoStart
         summary={extend ? <div className="space-y-1" data-testid="extend-summary">
           <p>Your current agent access ends {fmtDateTime(extend.until)} <span className="text-text-muted">(per host, not signed)</span>. The new access lasts {hoursText(hours)} from the moment you sign.</p>
         </div> : <p>Agents on this machine can act for you on {scope === 'all' ? 'all tickets' : 'the tickets you may work on'} for {hoursText(hours)}. When you sign in the terminal, you type GRANT to continue, then choose to hand the grant to the orch runner.</p>}

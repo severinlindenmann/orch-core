@@ -8,7 +8,7 @@ import type { HandoffAction } from '@/api/handoff'
 import { atLeast } from '@/api/permissions'
 import { queries } from '@/api/queries'
 import type { TicketDocument } from '@/api/types'
-import { HandoffDialog } from '@/components/sign/HandoffDialog'
+import { SignPopover } from '@/components/sign/SignPopover'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { Section } from '../ticket/shared'
@@ -103,7 +103,7 @@ export function TicketEstimate({ ticket }: { ticket: TicketDocument }) {
       )}
       </div>
       {action && (
-        <HandoffDialog
+        <SignPopover
           key={`${ticket.key}-${pick}`}
           title={`Estimate ${ticket.key}`}
           summary={

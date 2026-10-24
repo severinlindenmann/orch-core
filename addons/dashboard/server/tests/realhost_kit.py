@@ -112,6 +112,10 @@ def confirm_rules(passphrase: str = PASSPHRASE) -> list[tuple[str, Callable]]:
     return [
         (r"[Pp]assphrase: $", lambda m, t: passphrase),
         (r"Type (\S+) and Enter[^\n]*: $", lambda m, t: m.group(1)),
+        (
+            r"Type (\S+) to continue[^\n]*: $",
+            lambda m, t: m.group(1),
+        ),  # core's current prompt of `orch sign` and `addon grant`
     ]
 
 

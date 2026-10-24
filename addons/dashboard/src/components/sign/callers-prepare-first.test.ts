@@ -1,5 +1,5 @@
 // WYSIWYS: a dialog that has nothing to fill in prepares the request when it opens and shows the host's content; it never
-// offers a Sign button first. Every caller of HandoffDialog either sets `autoStart` or is a form (`confirmLabel`), whose
+// offers a Sign button first. Every caller of SignPopover either sets `autoStart` or is a form (`confirmLabel`), whose
 // button says the form's own verb and whose content is what the person typed.
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
@@ -12,10 +12,10 @@ function files(dir: string): string[] {
   })
 }
 
-/** The attribute text of each `<HandoffDialog ...>` opening tag in a source file. */
+/** The attribute text of each `<SignPopover ...>` opening tag in a source file. */
 function tags(src: string): string[] {
   const out: string[] = []
-  for (const m of src.matchAll(/<HandoffDialog\b/g)) {
+  for (const m of src.matchAll(/<SignPopover\b/g)) {
     let depth = 0
     let j = (m.index ?? 0) + m[0].length
     for (; j < src.length; j++) {
@@ -29,7 +29,7 @@ function tags(src: string): string[] {
   return out
 }
 
-describe('every HandoffDialog caller prepares on open or is a form', () => {
+describe('every SignPopover caller prepares on open or is a form', () => {
   const all = files(join(__dirname, '..', '..')).flatMap((f) => tags(readFileSync(f, 'utf8')).map((t) => ({ f, t })))
   it('finds the callers', () => expect(all.length).toBeGreaterThan(10))
   it.each(all.map((x, i) => [x.f.split('/src/')[1] + '#' + i, x.t]))('%s', (_name, tag) => {

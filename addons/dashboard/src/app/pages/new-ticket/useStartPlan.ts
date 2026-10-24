@@ -67,7 +67,7 @@ export function useStartPlan(workspace: Workspace, person: string) {
           : !info.connected ? 'No agent runner is connected.'
             : null
   const available = feature && !reason
-  // Usable means 15 minutes left: that changes with time alone, so it is read again every 30 s and, at submit, afresh.
+  // Startable means 20 minutes left: that changes with time alone, so it is read again every 30 s and, at submit, afresh.
   const [tick, setTick] = useState(0)
   useEffect(() => {
     if (!feature) return

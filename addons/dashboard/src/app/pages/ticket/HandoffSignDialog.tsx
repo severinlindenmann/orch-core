@@ -9,7 +9,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { signedNow } from '@/api/signedDrop'
 import type { HandoffAction, HandoffRequest } from '@/api/handoff'
 import type { Artifact, GateName, TicketDocument } from '@/api/types'
-import { HandoffDialog } from '@/components/sign/HandoffDialog'
+import { SignPopover } from '@/components/sign/SignPopover'
 import { Prose, Raw } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
@@ -27,6 +27,20 @@ function titleOf(a: HumanAction): string {
       return 'Give verdict (Verify)'
     case 'request_changes':
       return `Request changes on ${gateActionName(a.gate)}`
+  }
+}
+
+/** The ONE toast after the signature says the outcome, not the mechanism. */
+function doneToastOf(a: HumanAction): string {
+  switch (a.kind) {
+    case 'answer':
+      return 'Answer sent'
+    case 'approve':
+      return `${gateActionName(a.gate)} approved`
+    case 'verdict':
+      return 'Verdict recorded'
+    case 'request_changes':
+      return 'Changes requested'
   }
 }
 
@@ -112,15 +126,12 @@ export function HandoffSignDialog({
   }
 
   return (
-    <HandoffDialog
-      phoneRequest={(action.kind === 'approve' || action.kind === 'request_changes') && (action.gate === 'requirements' || action.gate === 'plan') && typeof ticket.gates[action.gate].gen === 'number'
-        ? { ref: ticket.key, gate: action.gate, gate_gen: ticket.gates[action.gate].gen! } : undefined}
+    <SignPopover
       title={title}
       ws={ws}
       action={request}
       autoStart={action.kind === 'approve' || action.kind === 'answer'}
-      closeWhenDone={action.kind === 'answer'}
-      doneToast={action.kind === 'answer' ? 'Answered' : undefined}
+      doneToast={doneToastOf(action)}
       confirmLabel={confirmLabel}
       hint={preview ? 'Go back to the verdict to sign' : hint}
       warning={warning}
@@ -182,6 +193,6 @@ export function HandoffSignDialog({
           {action.text?.trim() && <Prose className="text-text">{action.text.trim()}</Prose>}
         </section>
       )}
-    </HandoffDialog>
+    </SignPopover>
   )
 }

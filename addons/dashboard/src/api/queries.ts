@@ -10,7 +10,6 @@ import type { ArtifactQuery } from './types'
 import { running } from './workspaces'
 import { hostInfoOf } from './hostInfo'
 import type { HostGrant } from './settings'
-import type { QuickLimits } from './quickRecords'
 
 /** Query key of an addon's state; per-ticket requests sit under the addon's key, so invalidating it covers them. */
 /** Identity and the workspace list cost about ten host reads each (me, workspaces) and change only through events the live
@@ -65,12 +64,11 @@ export const queries = {
    */
   hostGrants: (ws: string, active: boolean) =>
     queryOptions<HostGrant[]>({ queryKey: ['settings-grants', ws, active], queryFn: () => api.listHostGrants(ws, active), refetchInterval: 30_000, refetchOnWindowFocus: true }),
-  /** Quick tasks of a real host (M6): one group of statuses, with this browser's limits (they are part of the key). */
-  quick: (ws: string, statuses: string[], limits: QuickLimits) =>
+  /** Quick tasks of a real host (M6): one group of statuses; the host measures size (no limits here). */
+  quick: (ws: string, statuses: string[]) =>
     queryOptions({
-      queryKey: ['quick', ws, statuses.join(','), limits.max_commits, limits.max_files],
-      queryFn: () =>
-        api.getQuick(ws, { status: statuses, ...(limits.max_commits ? { max_commits: limits.max_commits } : {}), ...(limits.max_files ? { max_files: limits.max_files } : {}) }),
+      queryKey: ['quick', ws, statuses.join(',')],
+      queryFn: () => api.getQuick(ws, { status: statuses }),
     }),
   /** The Activity page of a real host: pages of the timeline, newest first; follows `next_page`. */
   activity: (ws: string, filters: Omit<ActivityParams, 'page' | 'limit'>) =>

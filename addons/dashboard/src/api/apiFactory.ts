@@ -167,7 +167,7 @@ export function createApi(transport: Transport) {
     getReaders: (ws: string) => call<HostReaders>('GET', `/api/w/${ws}/readers`),
     /** `active: false` adds the grants that ended. An owner is given every entry, anyone else their own. */
     listHostGrants: (ws: string, active = true) => call<HostGrant[]>('GET', `/api/w/${ws}/grants?active=${active}`),
-    /** Quick tasks of a real host (M6): `available: false` without `quick/1`. The limits are the browser's own setting. */
+    /** Quick tasks of a real host (M6): `available: false` without `quick/1`. */
     getQuick: (ws: string, _p: QuickParams = {}) => call<QuickPage>('GET', `/api/w/${ws}/quick`),
     /** Marketplace reads and owner-only writes; approval uses the Terminal hand-off. */
     marketList: (ws: string) => call<MarketList>('GET', `/api/w/${ws}/market`),

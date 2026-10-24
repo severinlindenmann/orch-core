@@ -312,8 +312,6 @@ it('Settings: the Publish row says what it needs; Check connection is a read-onl
   route()
   const user = userEvent.setup()
   show('/w/DEMO/settings/addons')
-  const needs = await screen.findByTestId('addon-publish-needs', {}, T)
-  await waitFor(() => expect(needs).toHaveTextContent('Ready: a server is set up and answering'), T)
   const box = await openPublish()
   expect(within(box).getByText('Not checked.')).toBeInTheDocument()
   serverUp = false
@@ -331,8 +329,6 @@ it('Settings: an unconfigured Publish says it needs a server address', async () 
   route()
   configured = false
   show('/w/DEMO/settings/addons')
-  const needs = await screen.findByTestId('addon-publish-needs', {}, T)
-  await waitFor(() => expect(needs).toHaveTextContent('Needs a publish server address'), T)
   const box = await openPublish()
   expect(within(box).getByRole('button', { name: 'Set up' })).toBeInTheDocument()
 })

@@ -62,8 +62,8 @@ it('set up but off uses the plain grant', async () => {
   setup('model-routing', false, true)
   const user = userEvent.setup()
   show('/w/DEMO/settings/addons')
-  expect(await screen.findByTestId('addon-model-routing-state', {}, T)).toHaveTextContent('Set up, not on')
-  await user.click(screen.getByRole('switch', { name: 'Model routing' }))
+  await user.click(await screen.findByRole('switch', { name: 'Model routing' }, T))
+  expect(screen.queryByTestId('addon-model-routing-state')).toBeNull() // no state chip: the switch says it
   await waitFor(() => expect(posted()).toHaveLength(1), T)
   expect(posted()[0].body).toEqual({ action: 'addon_grant', name: 'model-routing' })
 })
@@ -72,7 +72,7 @@ it.each(['model-routing', 'publish'] as const)('on %s without settings signs set
   setup(name, true, false)
   const user = userEvent.setup()
   show('/w/DEMO/settings/addons')
-  expect(await screen.findByTestId(`addon-${name}-state`, {}, T)).toHaveTextContent('On, needs setup')
+  expect(await screen.findByTestId(`addon-${name}-state`, {}, T)).toHaveTextContent('Needs setup')
   await user.click(screen.getByRole('button', { name: 'Set up' }))
   const form = within(screen.getByRole('dialog'))
   if (name === 'publish') {
@@ -92,7 +92,6 @@ it('on and set up keeps the section and turns off with the switch', async () => 
   show('/w/DEMO/settings/addons')
   await user.click(await screen.findByTestId('addon-model-routing-expand', {}, T))
   expect(await screen.findByTestId('model-routing', {}, T)).toBeInTheDocument()
-  expect(screen.getByTestId('addon-model-routing-state')).toHaveTextContent(/^On$/)
   await user.click(screen.getByRole('switch', { name: 'Model routing' }))
   await waitFor(() => expect(posted()).toHaveLength(1), T)
   expect(posted()[0].body).toEqual({ action: 'addon_disable', name: 'model-routing' })

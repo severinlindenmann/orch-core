@@ -282,6 +282,7 @@ export class FakeHost {
     if (rest === 'tickets/DEMO-0001/changes') return json(changes)
     if (rest === 'identity') return json({ uuid: ws.id, prefix: ws.prefix, genesis: 'sha256:' + 'f'.repeat(64), epoch: 3, key_fingerprint: 'AB12 CD34', created_at: null, tier: 'A', me: { person: ws.me, name: 'Sev', role: ws.role, tier: 'A', workspace: ws.id }, ...(ws.runner !== undefined ? { runner: ws.runner } : {}) })
     if (rest === 'quick') return ws.quick === undefined ? missing() : json(typeof ws.quick === 'function' ? ws.quick(new URLSearchParams(query)) : ws.quick)
+    if (rest === 'runner') return json({ runner: ws.runner ? { ...ws.runner, grant: null } : null })
     if (rest === 'records') return ws.records === undefined ? missing() : json(ws.records)
     if (rest === 'settings') return json(ws.settings)
     if (rest === 'members') return json(ws.roster)

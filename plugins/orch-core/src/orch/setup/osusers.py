@@ -31,6 +31,7 @@ __all__ = [
     "SLOT_HOME_ROOT",
     "AGENT_HOME_ROOT",
     "AGENT_RUN_ROOT",
+    "RECHECK_COMMAND",
     "SSHD_DROPIN",
     "SSHD_DROPIN_TEXT",
     "FileSpec",
@@ -59,6 +60,7 @@ SLOT_SHELL = SLOT_SHELLS[0]
 SLOT_HOME_ROOT = "/var/lib/orch/" + "add" + "ons"
 AGENT_HOME_ROOT = "/var/lib/orch/agents"
 AGENT_RUN_ROOT = "/run/orch/agents"
+RECHECK_COMMAND = f"{LAUNCHER_PATH} --recheck"
 SSHD_DROPIN = "/etc/ssh/sshd_config.d/10-orch-agents.conf"
 SSHD_DROPIN_TEXT = f"DenyUsers {AGENT_PREFIX}* {SLOT_PREFIX}*\n"
 _PERSON_MIN_UID = 1000
@@ -377,11 +379,17 @@ def _bad_person(facts: OsFacts, info: UserInfo) -> str:
 # The unit instance is the bare person (runner) or slot number (add-on); the prefix lives in the template, so an
 # instance such as 'root' can never run as root.
 def unit_runner(release: str) -> UnitFile:
+    """The agent runner's system unit (spec 13.2 item 7). ``ExecStartPre=+`` runs the policy recheck as root (the ``+``
+    prefix: not as ``User=``, not sandboxed) from the root-owned trusted copy, never from the release: a failed recheck
+    refuses the start. The writable paths are the agent's own tree (``home`` for its Claude/Codex login, ``state``,
+    ``repos``) and its run directory; everything else is read-only or hidden. ``Delegate=yes`` needs a writable cgroup
+    tree, so ``ProtectControlGroups`` stays off. The state directory is the agent's own, never the person's."""
     content = f"""[Unit]
 Description=orch runner for %i (user orch-agent-%i)
 After=network.target
 
 [Service]
+Type=simple
 User=orch-agent-%i
 Delegate=yes
 NoNewPrivileges=yes
@@ -390,13 +398,24 @@ AmbientCapabilities=
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths={AGENT_HOME_ROOT}/orch-agent-%i {AGENT_RUN_ROOT}/orch-agent-%i
+ProtectProc=invisible
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+ProtectHostname=yes
+LockPersonality=yes
+RestrictRealtime=yes
 RestrictSUIDSGID=yes
+SystemCallArchitectures=native
+ReadWritePaths={AGENT_HOME_ROOT}/orch-agent-%i {AGENT_RUN_ROOT}/orch-agent-%i
 MemoryMax=80%
 TasksMax=4096
+ExecStartPre=+{RECHECK_COMMAND} %i
 ExecStart={release}/current/bin/orch-runner run \\
   --state {AGENT_HOME_ROOT}/orch-agent-%i/state --run {AGENT_RUN_ROOT}/orch-agent-%i
 Restart=always
+RestartSec=2
 
 [Install]
 WantedBy=multi-user.target

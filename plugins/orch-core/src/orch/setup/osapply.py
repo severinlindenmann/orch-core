@@ -22,6 +22,7 @@ import errno
 import json
 import os
 import pwd
+import re
 import secrets
 import stat
 import struct
@@ -34,8 +35,10 @@ from .osfacts import UNREADABLE, GroupInfo, OsFacts, RealOsFacts
 from .oslauncher import TRUSTED_ROOT
 from .osusers import (
     AGENT_HOME_ROOT,
+    AGENT_PREFIX,
     NORMAL_PERSON,
     SLOT_HOME_ROOT,
+    SLOT_PREFIX,
     SSHD_DROPIN,
     PinEntry,
     Plan,
@@ -54,6 +57,7 @@ __all__ = [
     "RealExecutor",
     "apply",
     "main",
+    "recheck",
     "why_not_ok",
 ]
 
@@ -69,6 +73,7 @@ _ALLOWED = frozenset(BIN.values())
 TMPFILES_CONF = "/etc/tmpfiles.d/orch.conf"
 PIN_DIR = "/etc/orch/pins"
 _ROOT = "root"
+_SAFE_NAME = re.compile(r"^[a-z_][a-z0-9_-]*$")
 _SSH_SERVICES = ("ssh.service", "sshd.service")
 
 
@@ -481,13 +486,13 @@ class _Apply:
                 if self.dry or self.ex.query([sysctl, "is-active", "--quiet", name]).rc != 0:
                     self.run([sysctl, "start", name])
 
-    def quarantine(self, p: Plan) -> None:
-        """The agent user no longer passes: drop any old verdict from its pin (the host then answers broken) and stop
-        its runner. Used when a re-run finds, for example, a new sudo rule. Never leaves a running runner behind."""
+    def drop_verdict(self, p: Plan) -> bool:
+        """Rewrite the agent's pin without the policy verdict (the host then answers broken). ``False``: there is
+        nothing to drop (the agent user is not kept) or the pin could not be written (a problem is recorded)."""
         agent = p.agent
         uid = None if agent is None else self.uid_of(agent.name)
         if agent is None or agent.action != "keep" or uid is None:
-            return
+            return False
         entry = next(e for e in p.pins if e.user == agent.name)
         base = _json(PinEntry(entry.user, entry.cls, entry.host_uid, uid).document())
         path = f"{PIN_DIR}/{uid}.json"
@@ -501,15 +506,34 @@ class _Apply:
                 self.ex.write_file(path, base, 0o644)
             except OSError as exc:
                 self.res.fail(f"{path} could not be rewritten ({exc.strerror}).")
+                return False
+        return True
+
+    def quarantine(self, p: Plan) -> None:
+        """The agent user no longer passes: drop any old verdict from its pin (the host then answers broken) and stop
+        its runner. Used when a re-run finds, for example, a new sudo rule. Never leaves a running runner behind: a
+        runner that is still active after ``disable --now`` failed is a problem, not a note."""
+        agent = p.agent
+        if agent is None or agent.action != "keep" or self.uid_of(agent.name) is None:
+            return
+        self.drop_verdict(p)
         sysctl = BIN["systemctl"]
+        stopped = True
         for unit in p.units:
             if unit.name.startswith("orch-runner@"):
                 for inst in unit.instances:
-                    argv = [sysctl, "disable", "--now", f"orch-runner@{inst}.service"]
+                    name = f"orch-runner@{inst}.service"
+                    argv = [sysctl, "disable", "--now", name]
                     # always, whatever the queries would say; "not loaded" is fine, so the result is not a failure
                     self.res.actions.append(" ".join(argv))
-                    self.ex.run(argv)
-        self.res.notes.append(f"the runner of '{agent.name}' was stopped until the check passes again")
+                    if self.ex.run(argv).rc != 0 and self.ex.query([sysctl, "is-active", "--quiet", name]).rc == 0:
+                        stopped = False
+                        self.res.fail(
+                            f"The runner of '{agent.name}' could not be stopped and is still running. "
+                            f"Stop it by hand: systemctl stop {name}"
+                        )
+        if stopped:
+            self.res.notes.append(f"the runner of '{agent.name}' was stopped until the check passes again")
 
     def policy_pin(self, p: Plan) -> None:
         agent = p.agent
@@ -538,6 +562,54 @@ class _Apply:
         self.put(f"{PIN_DIR}/{uid}.json", _json(doc), 0o644, replace=True)
         if self.res.ok:
             self.start_runner(p)  # only now: a runner never starts while the policy check fails
+
+
+_RECHECK_RELEASE = "/opt/orch/release"  # the plan needs a release path to be built; a recheck never reads or uses it
+
+
+def recheck(facts: OsFacts, ex: Executor, person: str, *, is_root: bool) -> ApplyResult:
+    """``orch-os-setup --recheck <person>``: the root-side policy check of the runner's ``ExecStartPre=+`` (spec 13.9).
+    Asks the authoritative tools again (``sudo -l -U`` and ``sshd -T``, so LDAP and sssd are covered too) and runs the
+    same plan checks as setup (groups, properties, pin). ``ok`` only if every answer still holds; then the pin is
+    refreshed with the new stat signatures (the verdict is what counts, the signatures are the host's change
+    detector). Otherwise the verdict is dropped from the pin (the host answers broken) and ``ok`` is false, which makes
+    systemd refuse the start. It never calls ``systemctl``: stopping the unit from inside its own start job would wait
+    on itself, and the failed start is the stop. Fails closed on every error."""
+    res = ApplyResult()
+    if not is_root:
+        return res.fail("orch-os-setup --recheck must run as root. The runner will not start.")
+    if (
+        not _SAFE_NAME.match(person)
+        or person.startswith((AGENT_PREFIX, SLOT_PREFIX))
+        or len(AGENT_PREFIX + person) > 32
+    ):
+        return res.fail(f"'{person}' is not a person orch set up agents for. The runner will not start.")
+    if facts.platform != "linux":
+        return res.fail("Agents run as their own user only on Linux. The runner will not start.")
+    info = facts.user(person)
+    if info is None or info.uid == 0:
+        return res.fail(f"There is no user '{person}' to run agents for. The runner will not start.")
+    st = _Apply(facts, ex, res)
+    p = plan(facts, person, info.uid, release=_RECHECK_RELEASE)
+    agent = p.agent
+    if p.refusals or agent is None or agent.action != "keep":
+        for r in p.refusals:
+            res.fail(r.message)
+        if not res.problems:
+            res.fail(f"The user '{AGENT_PREFIX}{person}' does not exist. Run orch-os-setup again.")
+        st.drop_verdict(p)
+        return res
+    verdict = assess_policy(facts, agent.name, dropin_text=ex.read_file(SSHD_DROPIN), host_uid=p.person_uid)
+    res.policy_ok = verdict.ok
+    if not verdict.ok:
+        res.fail(why_not_ok(verdict, agent.name))
+        st.drop_verdict(p)
+        return res
+    uid = agent.uid
+    entry = next(e for e in p.pins if e.user == agent.name)
+    doc = PinEntry(entry.user, entry.cls, entry.host_uid, uid, verdict.document()).document()
+    st.put(f"{PIN_DIR}/{uid}.json", _json(doc), 0o644, replace=True)
+    return res
 
 
 def _json(doc: dict) -> str:
@@ -651,10 +723,21 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog="orch-os-setup", description="Create the OS users that agents and add-ons run as."
     )
-    ap.add_argument("--person", required=True, help="the login name that runs orch (the host user)")
+    ap.add_argument("--person", help="the login name that runs orch (the host user)")
+    ap.add_argument(
+        "--recheck",
+        metavar="PERSON",
+        help="ask sudo and sshd again whether the agent user of PERSON is still safe (the runner's start check)",
+    )
     ap.add_argument("--release", default="/opt/orch/release", help="the release directory the services run")
     ap.add_argument("--dry-run", action="store_true", help="print the exact actions and change nothing")
     args = ap.parse_args(argv)
+    if bool(args.person) == bool(args.recheck):
+        print(
+            "Give exactly one of --person (set up) or --recheck (the start check). Nothing was changed.",
+            file=sys.stderr,
+        )
+        return 2
     if sys.platform != "linux":
         print("Agents run as their own user only on Linux for now; nothing was changed.", file=sys.stderr)
         return 2
@@ -668,6 +751,11 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
+    if args.recheck:
+        res = recheck(_RootFacts(), RealExecutor(), args.recheck, is_root=True)
+        if res.problems:
+            print(res.report(), file=sys.stderr)
+        return 0 if res.ok else 1
     try:
         uid = pwd.getpwnam(args.person).pw_uid
     except KeyError:

@@ -20,6 +20,9 @@ __all__ = [
     "DEPOSIT_RISK",
     "OPS",
     "REVEAL_LINE",
+    "ROTATE_LINE",
+    "ROTATE_OP",
+    "ROTATE_PURPOSES",
     "SEALED_OPS",
     "BACKUP_KEY_LINE",
     "REVEAL_RISK",
@@ -65,11 +68,21 @@ SEALED_OPS: dict[str, tuple[str, ...]] = {
     "hub.mode": ("hub.backup_key",),
     "hub.leave": ("hub.backup_key",),
 }
+#: #1198 C13: ``device.rotate`` (a new key for this computer) is a click only through the signer's own ``rotate`` op,
+#: never through ``prepare``: the NEW key signs it, so the signer makes that key itself. It takes the recovery code
+#: (to sign the new key's certificate) and the passphrase of the new key file, both typed once in the page and sealed
+#: to the signer's per-offer key. ``device.rotate`` stays terminal-only in :func:`op_class` (and so in ``prepare``).
+ROTATE_OP = "device.rotate"
+ROTATE_PURPOSES: tuple[str, ...] = ("device.recovery_code", "custody.passphrase")
+ROTATE_LINE = (
+    "This step also needs your recovery code and a passphrase for the new key. "
+    "You type them once here; orch does not keep them"
+)
 #: the View of a hub step ends with this line (and carries ``backup_key_line``); the page asks for the key
 BACKUP_KEY_LINE = "This step also needs your backup key. You type it once here; orch does not keep it"
 #: a deposit grant lasts at most this many hours (D-P2-27)
 DEPOSIT_MAX_HOURS = GRANT_MAX_HOURS
-OPS = ("prepare", "view", "sign", "cancel", "status", "custody_on", "custody_off", "stash")
+OPS = ("prepare", "view", "sign", "cancel", "status", "custody_on", "custody_off", "stash", "rotate")
 #: what this signer can do beyond its contract, in ``status.features``: ``custody`` is ``custody_on``/``custody_off``,
 #: the dashboard's click-to-sign switch (§0.8.6 item 3a); ``sequence`` is ``prepare {sequence}``: one review, N
 #: signatures (batch 11); an older signer has no ``features`` and no switch, and ignores ``sequence`` (never asked)
@@ -79,7 +92,9 @@ OPS = ("prepare", "view", "sign", "cancel", "status", "custody_on", "custody_off
 #: ``backup_key`` (#1198 C10) is the hub steps by click: the View carries ``seal`` and ``sign`` takes ``sealed``
 #: ``sealed_passphrase`` (#1198 C12) is ``custody_off {begin}`` then ``custody_off {request_id, view_digest, sealed}``:
 #: the new passphrase of "One click off" arrives sealed; a clear ``passphrase`` is refused
-FEATURES = ("custody", "sequence", "images", "reveal", "backup_key", "sealed_passphrase")
+#: ``device_rotate`` (#1198 C13) is ``rotate {begin}`` (the review: old and new key, and the signer's key for the two
+#: sealed secrets), then ``rotate {request_id, view_digest, sealed}``: a new device key for this computer
+FEATURES = ("custody", "sequence", "images", "reveal", "backup_key", "sealed_passphrase", "device_rotate")
 #: the host's ``sign.convenience_unavailable`` reasons (orch-v2-host §0.8.6 item 1), from the host's closed schema
 REASONS: tuple[str, ...] = tuple(_HOST_DETAIL["sign.convenience_unavailable"]["reason"])  # type: ignore[arg-type]
 #: ``human.click_refused`` reasons (§0.8.6 item 5)

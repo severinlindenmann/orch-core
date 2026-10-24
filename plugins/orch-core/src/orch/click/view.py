@@ -20,6 +20,9 @@ from .protocol import (
     REVEAL_LINE,
     REVEAL_RISK,
     RISK,
+    ROTATE_LINE,
+    ROTATE_OP,
+    ROTATE_PURPOSES,
     SEALED_OPS,
     op_class,
     refused,
@@ -34,6 +37,7 @@ __all__ = [
     "digest",
     "invariant",
     "reveal_checks",
+    "rotation",
 ]
 
 MAX_EVENTS = 16
@@ -243,3 +247,27 @@ def digest(view: Mapping[str, Any]) -> str:
     stable = copy.deepcopy(dict(view))
     stable["checks"] = [{k: v for k, v in c.items() if k != "at"} for c in stable.get("checks") or []]
     return "sha256:" + hashlib.sha256(canon.dumps(stable)).hexdigest()
+
+
+def rotation(*, workspace: Mapping[str, str], old: str, new: str, pk: str) -> dict[str, Any]:
+    """#1198 C13: the review of ``device.rotate`` from the dashboard: what is replaced (this computer's key, old and new
+    device id, as the terminal shows them), and the signer's per-offer key for the two typed secrets (the recovery code
+    and the passphrase of the new key file). No event exists yet: the new key signs it after the secrets are opened."""
+    lines = [
+        f"Replace the signing key of this computer for {signer._clean(workspace['name'])}.",
+        "The old key stops signing everywhere, also while a hub is down. The new key is signed by your recovery code "
+        "for this workspace only; nothing is re-shared with a hub.",
+        f"old device: {old}",
+        f"new device: {new}",
+        ROTATE_LINE,
+    ]
+    return {
+        "op": ROTATE_OP,
+        "workspace": {k: signer._clean(v) for k, v in workspace.items()},
+        "old": old,
+        "new": new,
+        "lines": lines,
+        "confirm": {"kind": "click"},
+        "seal": {"v": sealed.VERSION, "alg": sealed.ALG, "pk": pk, "purposes": list(ROTATE_PURPOSES)},
+        "rotate_line": ROTATE_LINE,
+    }

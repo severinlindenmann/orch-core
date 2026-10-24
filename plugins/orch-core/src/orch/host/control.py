@@ -225,6 +225,8 @@ class ControlOps:
         data: dict[str, Any] = {"workspaces": rows}
         if self.host.dev is not None:  # absent, not false, on a normal host (goldens unchanged)
             data["dev"] = {"sim_convenience": True, "sandbox": self.host.dev.id8}
+            if self.host.dev.pending:
+                data["dev"]["pending"] = True
         if self.host.dev_alarms:  # §11A.17.3 D3: absent while there is none
             data["alarms"] = [dict(a) for a in self.host.dev_alarms]
         return ok_result(data)
@@ -456,6 +458,11 @@ class ControlOps:
                 self.intents.abandon(intent)  # nothing was created: the same key may run again
                 raise
             # Only now may recovery undo anything, and only what this bootstrap creates from here on.
+            try:
+                self._claim_pending_genesis()
+            except BaseException:
+                self.intents.abandon(intent)
+                raise
             self.intents.update(intent, validated=True, validated_at=int(time.time()))
             return self._run_bootstrap(intent, root, peers, backend)
 
@@ -515,9 +522,28 @@ class ControlOps:
             pins=self.host.pins,
             person_valid=lambda person: person == owner and person_scope_ok(cert.get("o") or {}),
         )
-        devmode.check_admit(self.host.dev, workspace_id, root, _genesis_view(event))  # §11A.17: nothing appended
+        devmode.check_admit(self.host.dev, workspace_id, root, _genesis_view(event), fresh=True)  # nothing appended
         self._check_reserved_prefix(event)
+        self._check_pending_free()
         return peers, backend
+
+    def _check_pending_free(self) -> None:
+        """Read-only half of the pending rule (the validation runs twice per bootstrap): a pending dev host (V3-D38)
+        admits ONE genesis per process, and only into an empty registry."""
+        dev = self.host.dev
+        if dev is not None and dev.pending and (self.host.pending_admitted or self.host.registry.entries()):
+            raise devmode.refused("not_sandbox", "a pending dev host admits one fresh SBX genesis per process")
+
+    def _claim_pending_genesis(self) -> None:
+        """The claim, made once the second validation passed and before anything is appended, atomically with the check:
+        a second bootstrap (even a racing one) is ``not_sandbox``. A bootstrap that fails after this leaves the claim
+        taken; restart the host to try again."""
+        dev = self.host.dev
+        if dev is None or not dev.pending:
+            return
+        with self.host.pending_lock:
+            self._check_pending_free()
+            self.host.pending_admitted = True
 
     def _check_reserved_prefix(self, event: dict[str, Any]) -> None:
         """``SBX`` is reserved for dev-pair sandboxes (§11A.17.3 F1): ``host.bootstrap`` accepts it only for a fresh
@@ -604,7 +630,7 @@ class ControlOps:
                 peers,
             )
             with OwnershipLock(self.state_dir, workspace_id).exclusive(self.host.lock_wait):
-                admit(self.host, entry, _genesis_view(event))  # the one choke point (§11A.17.3 R5)
+                admit(self.host, entry, _genesis_view(event), fresh=True)  # the one choke point (§11A.17.3 R5)
                 self.host.serve_from_thread(entry)
         result = ok_result({"workspace_id": workspace_id, "seq": 1}, seq=1)
         return self.intents.complete(intent, result)["result"]

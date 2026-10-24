@@ -167,6 +167,9 @@ class Host:
         #: §11A.17: the passed start-up proof of ``--dev-sim-convenience`` (:class:`orch.host.devmode.DevHost`), fixed
         #: for the life of the process; ``None`` on every normal host
         self.dev = dev
+        #: V3-D38: a pending dev host (:attr:`dev` pending) has admitted its one fresh SBX genesis in this process
+        self.pending_admitted = False
+        self.pending_lock = threading.Lock()
         #: §11A.17.3 D3: registered workspaces a normal host skipped at start (an ``SBX`` genesis), as alarms
         self.dev_alarms: list[dict[str, Any]] = []
         self._dev_logger: asyncio.Task[None] | None = None

@@ -321,15 +321,16 @@ class Registry:
         return None  # the worker never connects to a workspace socket
 
 
-def admit(host: Any, entry: Entry, view: Any) -> None:
+def admit(host: Any, entry: Entry, view: Any, *, fresh: bool = False) -> None:
     """**The one registration choke point** (orch-v2-host §11A.17.3 R5, F5): every path that adds a workspace to a
     host's registry (``host.register``, ``host.bootstrap`` and its start-up recovery; a restore or a relay adopt
     reaches the registry only through ``host.register``) calls this. It is structural: :meth:`Registry._add` and
     ``_save`` add nothing without the :class:`AdmitToken` only this function can make (``registry_add_paths_table``
     pins the callers as an extra check). A dev host admits sandbox workspaces only; a normal host refuses every
     ``SBX`` genesis and every workspace with the sandbox marker (``host.dev_refused``,
-    :func:`orch.host.devmode.check_admit`). ``view`` is the workspace's :class:`orch.host.devmode.View`."""
+    :func:`orch.host.devmode.check_admit`). ``view`` is the workspace's :class:`orch.host.devmode.View`. ``fresh`` is set
+    by ``host.bootstrap`` only (a genesis this host just appended); only a pending dev host reads it (V3-D38)."""
     from .devmode import check_admit
 
-    check_admit(getattr(host, "dev", None), entry.workspace_id, entry.root, view)
+    check_admit(getattr(host, "dev", None), entry.workspace_id, entry.root, view, fresh=fresh)
     host.registry._add(entry, AdmitToken(_ADMIT_KEY, entry))  # noqa: SLF001 - the choke point itself

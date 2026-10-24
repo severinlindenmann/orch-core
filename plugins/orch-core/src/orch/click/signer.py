@@ -392,6 +392,9 @@ class ClickSigner:
                 files = {"path": {"b64": base64.b64encode(first).decode()}}
                 send_files = self._host_files(entry, first)
         reveal = op == "grant" and not deposit
+        reveal_key: str | None = None
+        if args.get("reveal_key") is not None and not reveal:
+            raise ClickError("invalid.input", "only a grant shown in the page takes reveal_key")
         if deposit:  # v1.6 (D-P2-27): the one click grant, handed straight to the runner, never shown
             if op != "grant":
                 raise ClickError("invalid.input", "deposit is for grant only")
@@ -400,6 +403,9 @@ class ClickSigner:
             if seq is not None or files:
                 raise ClickError("invalid.input", "a grant takes no sequence and no files")
             inner = self._reveal_args(inner)
+            reveal_key = self._reveal_key_arg(args)  # bound into the review: the page sends it at prepare
+            if reveal_key is None or reveal_key in self._reveal_keys:
+                raise ClickError("invalid.input", "a shown grant takes a new reveal_key at prepare")
         elif op_class(op, args=inner) == "terminal":
             raise refused("terminal_only", f"{op} is signed in the terminal (orch sign CODE)")
         if len(self.approvals) >= MAX_APPROVALS:
@@ -448,11 +454,12 @@ class ClickSigner:
                 files=files or None,
                 deposit=deposit,
                 reveal=reveal,
+                reveal_pk=reveal_key,
                 images=images or None,
                 image_digests=tuple(sorted({canon.artifact_digest(b) for b in images.values()})) if images else (),
             )
         approval = self.approvals[key]
-        if approval.deposit != deposit or approval.reveal != reveal:
+        if approval.deposit != deposit or approval.reveal != reveal or approval.reveal_pk != reveal_key:
             raise ClickError("idem.conflict", "this idem named a request prepared in another mode")
         self._note("prepared", workspace=entry["workspace_id"], request=rid, op=op)
         return {"request_id": rid, "expires_at": approval.expires_at, "op": op, "confirm": approval.kind}
@@ -635,7 +642,7 @@ class ClickSigner:
             expires_at=approval.expires_at,
             artifacts=artifacts,
             deposit=approval.deposit,
-            reveal=approval.reveal,
+            reveal=approval.reveal_pk,
         )
 
     def sign(self, args: Mapping[str, Any]) -> dict[str, Any]:
@@ -687,12 +694,12 @@ class ClickSigner:
         if self._expired(approval):
             self.approvals.pop((approval.workspace_id, approval.request_id), None)
             raise refused("expired", "the request expired; prepare it again")
-        if approval.reveal != (reveal_key is not None):  # before anything is claimed or signed
-            raise ClickError("invalid.input", "a grant shown in the page takes reveal_key; no other request does")
+        if approval.reveal and reveal_key != approval.reveal_pk:  # the key approved in the review, nothing else
+            raise ClickError("invalid.input", "reveal_key is not the key this review was made for")
+        if not approval.reveal and reveal_key is not None:
+            raise ClickError("invalid.input", "only a grant shown in the page takes reveal_key")
         if "sealed" in args:  # no review asks for a typed secret yet (C10, C12, C13 and C16 add them)
             raise ClickError("invalid.input", "this review asks for no sealed value")
-        if reveal_key is not None and reveal_key in self._reveal_keys:
-            raise ClickError("invalid.input", "reveal_key was used for another signature; make a new key")
         if approval.view_digest is None or vd != approval.view_digest:
             raise refused("view_changed", "that is not the review this signer built for the request")
         if approval.built_at is None or self.mono() - approval.built_at < DWELL_SECONDS:
@@ -973,7 +980,7 @@ class ClickSigner:
         except sealed.SealedError as exc:
             raise refused("check_failed", f"the secret cannot be sealed ({exc.reason})") from None
         self._reveal_keys.add(reveal_key)
-        approval.reveal_pk, approval.reveal_env = reveal_key, env
+        approval.reveal_env = env
 
     def _revealed(self, approval: Approval, reveal_key: str | None, res: dict[str, Any]) -> dict[str, Any]:
         """A reveal grant's answer gains ``reveal`` {purpose, envelope}: the envelope sealed at the signature, to the

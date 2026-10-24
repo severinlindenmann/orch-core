@@ -292,13 +292,22 @@ def test_the_contract_rule_is_three_and_documented():
 
 # -- #1198 C7: a grant without deposit shows its secret once in the page, sealed to the page key ------------
 class Page:
-    """The browser's side of the sealed field: a fresh key per sign call, bound to the request it signs."""
+    """The browser's side of the sealed field: a fresh key per request, sent at prepare, bound to the request once it
+    exists (the page learns the request id from prepare)."""
 
-    def __init__(self, served, request_id: str) -> None:
+    def __init__(self) -> None:
+        from cryptography.hazmat.primitives.asymmetric import ec
+
         from orch.click import sealed
 
-        self.sealed, self.wid, self.rid = sealed, served.wid, request_id
-        self.key = sealed.Recipient("out", workspace_id=served.wid, request_id=request_id)
+        self.sealed, self.priv = sealed, ec.generate_private_key(ec.SECP256R1())
+        self.public = sealed.encode_public(self.priv.public_key())
+        self.key = None
+
+    def bind(self, served, request_id: str) -> Page:
+        self.wid, self.rid = served.wid, request_id
+        self.key = self.sealed.Recipient._for_vectors("out", served.wid, request_id, self.priv)
+        return self
 
     def open(self, res: dict, view_digest: str) -> str:
         assert res["reveal"]["purpose"] == "grant.secret"
@@ -306,11 +315,12 @@ class Page:
         return bytes(self.key.open(res["reveal"]["envelope"], ctx)).decode()
 
 
-def reveal_flow(click, served, **args):
-    p = click.prepare("grant", {"hours": 2, "scope": "workable", **args})
+def reveal_flow(click, served, page=None, **args):
+    page = page or Page()
+    p = click.prepare("grant", {"hours": 2, "scope": "workable", **args}, reveal_key=page.public)
     v = click.view(p["request_id"])
     click.mono.t += 1.5
-    return p, v, Page(served, p["request_id"])
+    return p, v, page.bind(served, p["request_id"])
 
 
 def test_reveal_a_grant_secret_is_sealed_to_the_page_and_nowhere_else(world):
@@ -318,9 +328,13 @@ def test_reveal_a_grant_secret_is_sealed_to_the_page_and_nowhere_else(world):
     p, v, page = reveal_flow(click, served, label="codex")  # no dashboard execution needed: nothing goes to a runner
     view = v["view"]
     assert p["confirm"] == "click" and view["confirm"] == {"kind": "click"}
-    assert view["seal"] == {"v": 1, "alg": "P256-HKDF-SHA256-A256GCM", "purposes": ["grant.secret"]}
-    assert view["reveal_line"] in view["lines"] and "deposit" not in view
-    res = click.sign(p["request_id"], v["view_digest"], reveal_key=page.key.public)
+    from orch.click import protocol
+    from orch.click import view as cview
+
+    fp = cview.key_fingerprint(page.public)
+    assert view["seal"] == {"v": 1, "alg": "P256-HKDF-SHA256-A256GCM", "purposes": ["grant.secret"], "for": fp}
+    assert protocol.REVEAL_RISK in view["lines"] and protocol.REVEAL_LINE in view["lines"] and "deposit" not in view
+    res = click.sign(p["request_id"], v["view_digest"], reveal_key=page.public)
     secret = page.open(res, v["view_digest"])
     gid, _, tail = secret.partition(".")
     assert res["result"]["data"]["grant"] == gid and tail and "deposit" not in res
@@ -335,28 +349,41 @@ def test_reveal_a_grant_secret_is_sealed_to_the_page_and_nowhere_else(world):
     assert info.value.reason == "replay"
 
 
-def test_reveal_needs_the_page_key_and_only_a_reveal_grant_takes_one(world):
+def test_reveal_key_is_part_of_the_review_and_a_swapped_key_is_refused(world):
     served, click, _, _ = world
     p, v, page = reveal_flow(click, served)
-    refused(lambda: click.sign(p["request_id"], v["view_digest"]), "invalid.input")  # no key: nothing claimed
+    thief = Page()
+    refused(lambda: click.sign(p["request_id"], v["view_digest"], reveal_key=thief.public), "invalid.input")
+    refused(lambda: click.sign(p["request_id"], v["view_digest"]), "invalid.input")  # none at sign either
     assert click.signatures == 0
-    for bad in (5, "", "AAAA", page.key.public[:-4], page.key.public + "A", "A" * 87):
-        refused(lambda bad=bad: click.sign(p["request_id"], v["view_digest"], reveal_key=bad), "invalid.input")
+    # the same request prepared again (an idem retry) under another key is not the same request
+    p2, v2, page2 = reveal_flow(click, served)
+    assert v2["view_digest"] != v["view_digest"]  # a different key is a different review
+    res = click.sign(p["request_id"], v["view_digest"], reveal_key=page.public)
+    assert page.open(res, v["view_digest"])
+
+
+def test_reveal_keys_are_checked_at_prepare_and_at_sign(world):
+    served, click, _, _ = world
+    refused(lambda: click.prepare("grant", {"hours": 2}), "invalid.input")  # a shown grant must bring its key
+    for bad in (5, "", "AAAA", "A" * 87):
+        refused(lambda bad=bad: click.prepare("grant", {"hours": 2}, reveal_key=bad), "invalid.input")
+    p, v, page = reveal_flow(click, served)
+    refused(
+        lambda: click.sign(p["request_id"], v["view_digest"], reveal_key=page.public, sealed={}), "invalid.input"
+    )  # a review that asks for no sealed value takes none
     assert click.signatures == 0
-    refused(  # a review that asks for no sealed value takes none
-        lambda: click.sign(p["request_id"], v["view_digest"], reveal_key=page.key.public, sealed={}), "invalid.input"
-    )
-    assert click.signatures == 0
-    res = click.sign(p["request_id"], v["view_digest"], reveal_key=page.key.public)  # the same request still signs
+    res = click.sign(p["request_id"], v["view_digest"], reveal_key=page.public)  # the same request still signs
     assert page.open(res, v["view_digest"]) and click.signatures == 1
 
 
 def test_reveal_key_is_refused_on_a_request_that_has_no_secret(world):
     served, click, _, _ = world
     execution(served)
+    page = Page()
+    refused(lambda: click.prepare("grant", {"hours": 8}, deposit=True, reveal_key=page.public), "invalid.input")
     p, v = flow(click, served)  # a deposit grant
-    page = Page(served, p["request_id"])
-    refused(lambda: click.sign(p["request_id"], v["view_digest"], reveal_key=page.key.public), "invalid.input")
+    refused(lambda: click.sign(p["request_id"], v["view_digest"], reveal_key=page.public), "invalid.input")
     assert click.signatures == 0
     res = click.sign(p["request_id"], v["view_digest"])
     assert "reveal" not in res and res["deposit"] == "confirmed"
@@ -367,7 +394,7 @@ def test_reveal_is_bound_to_the_workspace_request_and_review(world):
 
     served, click, _, _ = world
     p, v, page = reveal_flow(click, served)
-    res = click.sign(p["request_id"], v["view_digest"], reveal_key=page.key.public)
+    res = click.sign(p["request_id"], v["view_digest"], reveal_key=page.public)
     env = res["reveal"]["envelope"]
     wid, rid, vd = served.wid, p["request_id"], v["view_digest"]
     other_req = "hr_" + ("0" * 25) + "1"
@@ -375,78 +402,74 @@ def test_reveal_is_bound_to_the_workspace_request_and_review(world):
     other_vd = "sha256:" + "0" * 64
     # a page key made for another request or workspace refuses before it decrypts
     for kw in ({"workspace_id": other_ws, "request_id": rid}, {"workspace_id": wid, "request_id": other_req}):
-        stray = sealed.Recipient("out", **kw)
+        stray = sealed.Recipient._for_vectors("out", kw["workspace_id"], kw["request_id"], page.priv)
         with pytest.raises(sealed.SealedError) as info:
             stray.open(env, sealed.Context("grant.secret", wid, rid, vd))
         assert info.value.reason == "context"
-    # a context built from other facts does not authenticate (the envelope names nothing, the opener supplies it)
+    # the right private key with other facts does not authenticate (the envelope names nothing, the opener supplies it)
     for ctx in (
         sealed.Context("grant.secret", other_ws, rid, vd),
         sealed.Context("grant.secret", wid, other_req, vd),
         sealed.Context("grant.secret", wid, rid, other_vd),
     ):
-        fresh = sealed.Recipient("out", workspace_id=ctx.workspace_id, request_id=ctx.request_id)
-        fresh._key, fresh.public = page.key._key, page.key.public  # the right private key, the wrong facts
-        fresh._raw = page.key._raw
+        fresh = sealed.Recipient._for_vectors("out", ctx.workspace_id, ctx.request_id, page.priv)
         with pytest.raises(sealed.SealedError) as info:
             fresh.open(env, ctx)
         assert info.value.reason == "open_failed"
-    # another page's key cannot open it either
-    thief = sealed.Recipient("out", workspace_id=wid, request_id=rid)
+    thief = Page().bind(served, rid)  # another page's key
     with pytest.raises(sealed.SealedError) as info:
-        thief.open(env, sealed.Context("grant.secret", wid, rid, vd))
+        thief.key.open(env, sealed.Context("grant.secret", wid, rid, vd))
     assert info.value.reason == "open_failed"
     assert page.open(res, vd)  # and the right one still does
 
 
-def test_reveal_key_is_used_for_one_signature_only(world):
+def test_reveal_key_is_used_for_one_request_only(world):
     served, click, _, _ = world
     p, v, page = reveal_flow(click, served)
-    click.sign(p["request_id"], v["view_digest"], reveal_key=page.key.public)
-    p2, v2, _ = reveal_flow(click, served)
-    refused(lambda: click.sign(p2["request_id"], v2["view_digest"], reveal_key=page.key.public), "invalid.input")
-    assert click.signatures == 1  # the second request is untouched
-    fresh = Page(served, p2["request_id"])
-    assert fresh.open(click.sign(p2["request_id"], v2["view_digest"], reveal_key=fresh.key.public), v2["view_digest"])
+    click.sign(p["request_id"], v["view_digest"], reveal_key=page.public)
+    refused(lambda: reveal_flow(click, served, page=page), "invalid.input")  # a used key is not accepted again
+    assert click.signatures == 1
 
 
 def test_reveal_a_repeated_sign_gives_the_same_envelope_to_the_same_key_and_signs_nothing_new(world):
     served, click, _, _ = world
     p, v, page = reveal_flow(click, served)
-    first = click.sign(p["request_id"], v["view_digest"], reveal_key=page.key.public)
-    again = click.sign(p["request_id"], v["view_digest"], reveal_key=page.key.public)
+    first = click.sign(p["request_id"], v["view_digest"], reveal_key=page.public)
+    again = click.sign(p["request_id"], v["view_digest"], reveal_key=page.public)
     assert again["duplicate"] is True and again["reveal"] == first["reveal"] and click.signatures == 1
-    refused(
-        lambda: click.sign(p["request_id"], v["view_digest"], reveal_key=Page(served, p["request_id"]).key.public),
-        "invalid.input",
-    )
+    refused(lambda: click.sign(p["request_id"], v["view_digest"], reveal_key=Page().public), "invalid.input")
 
 
 def test_reveal_after_a_signer_restart_has_no_secret_to_give(world):
     served, click, _, _ = world
     p, v, page = reveal_flow(click, served)
-    click.sign(p["request_id"], v["view_digest"], reveal_key=page.key.public)
+    click.sign(p["request_id"], v["view_digest"], reveal_key=page.public)
     click.signer.approvals.clear()  # a restart: the approval is gone, the record stays
-    res = click.sign(p["request_id"], v["view_digest"], reveal_key=Page(served, p["request_id"]).key.public)
+    res = click.sign(p["request_id"], v["view_digest"], reveal_key=page.public)
     assert res["duplicate"] is True and "reveal" not in res
 
 
 def test_reveal_grant_is_limited_to_a_plain_agent_grant(world):
     served, click, _, _ = world
-    refused(lambda: click.prepare("grant", {"hours": 169}), "human.click_refused", "terminal_only")
+    key = Page().public
+    refused(lambda: click.prepare("grant", {"hours": 169}, reveal_key=key), "human.click_refused", "terminal_only")
     for bad in ({"runner": True}, {"extend": "gr_" + "0" * 26}, {"verbs": "log"}, {"label": "runner"}, {"label": ""},
                 {"hours": "8"}, {"scope": "x"}, {"label": "x" * 41}):  # fmt: skip
-        refused(lambda bad=bad: click.prepare("grant", {"hours": 8, **bad}), "invalid.input")
-    refused(lambda: click.prepare("grant", {"hours": 8}, sequence={"step": 0, "intent": {}}), "invalid.input")
-
-
-def test_reveal_does_not_change_the_review_between_view_and_sign(world):
-    served, click, _, _ = world
-    p, v, page = reveal_flow(click, served)
-    other = click.view(p["request_id"])
-    assert other["view_digest"] == v["view_digest"]  # the seal block is part of the digest, stable across views
+        refused(lambda bad=bad: click.prepare("grant", {"hours": 8, **bad}, reveal_key=Page().public), "invalid.input")
     refused(
-        lambda: click.sign(p["request_id"], "sha256:" + "0" * 64, reveal_key=page.key.public),
+        lambda: click.prepare("grant", {"hours": 8}, reveal_key=key, sequence={"step": 0, "intent": {}}),
+        "invalid.input",
+    )
+
+
+def test_reveal_hours_and_scope_are_the_reviewed_ones(world):
+    served, click, _, _ = world
+    p, v, page = reveal_flow(click, served, hours=5, scope="all")
+    assert any("5" in line for line in v["view"]["lines"]) and any("all" in line for line in v["view"]["lines"])
+    other = click.view(p["request_id"])
+    assert other["view_digest"] == v["view_digest"]  # stable across views
+    refused(
+        lambda: click.sign(p["request_id"], "sha256:" + "0" * 64, reveal_key=page.public),
         "human.click_refused",
         "view_changed",
     )

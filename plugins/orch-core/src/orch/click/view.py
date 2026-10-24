@@ -12,7 +12,7 @@ from orch import canon
 from orch.host import signcontent, signer
 
 from . import sealed
-from .protocol import DEPOSIT_LINE, DEPOSIT_MAX_HOURS, DEPOSIT_RISK, REVEAL_LINE, RISK, op_class, refused
+from .protocol import DEPOSIT_LINE, DEPOSIT_MAX_HOURS, DEPOSIT_RISK, REVEAL_LINE, REVEAL_RISK, RISK, op_class, refused
 
 __all__ = [
     "MAX_EVENTS",
@@ -39,6 +39,11 @@ def invariant(prepared: Mapping[str, Any]) -> bytes:
 
 def _events(prepared: Mapping[str, Any]) -> Any:
     return prepared.get("events")
+
+
+def key_fingerprint(key: str) -> str:
+    """A short, stable name of the page's reveal key: 16 hex of its SHA-256."""
+    return hashlib.sha256(key.encode()).hexdigest()[:16]
 
 
 def deposit_checks(prepared: Mapping[str, Any]) -> None:
@@ -146,7 +151,7 @@ def build(
     expires_at: str,
     artifacts: str | None,
     deposit: bool = False,
-    reveal: bool = False,
+    reveal: str | None = None,
 ) -> dict[str, Any]:
     """The View (after :func:`check_prepared`). ``checks`` are listed apart from ``lines`` so their time can change
     without changing :func:`digest`. A deposit grant (and only one) gets ``deposit: true`` and ``deposit_line``, and
@@ -192,10 +197,17 @@ def build(
         view["lines"] = [*view["lines"], "", DEPOSIT_RISK, DEPOSIT_LINE]
         view["deposit"] = True
         view["deposit_line"] = DEPOSIT_LINE
-    if reveal:
+    if reveal is not None:
         reveal_checks(prepared)
-        view["lines"] = [*view["lines"], "", REVEAL_LINE]
-        view["seal"] = {"v": sealed.VERSION, "alg": sealed.ALG, "purposes": ["grant.secret"]}
+        view["lines"] = [*view["lines"], "", REVEAL_RISK, REVEAL_LINE]
+        # the page's key, bound at prepare, is part of what is approved: its fingerprint is in the digest
+        view["seal"] = {
+            "v": sealed.VERSION,
+            "alg": sealed.ALG,
+            "purposes": ["grant.secret"],
+            "for": key_fingerprint(reveal),
+        }
+        view["reveal_risk"] = REVEAL_RISK
         view["reveal_line"] = REVEAL_LINE
     if content is not None:
         view["headline"], view["content"] = content["headline"], content

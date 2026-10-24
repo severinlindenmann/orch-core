@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, Request
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
 from . import adapters
 from .errors import HostError, fail
@@ -887,6 +887,24 @@ class RunnerGrant(Action):
     extend: Annotated[str, StringConstraints(pattern=r"^gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")] | None = None
 
 
+class AgentAccess(Action):
+    """#1198 C7, agent access for a tool outside the dashboard: a click request whose secret comes back sealed to the
+    page's own key and is shown once there. Click only (never a terminal hand-off); the signer fixes the verbs
+    (`agent`) and refuses a runner label, so neither is the browser's to send. A runner grant is `RunnerGrant`."""
+
+    action: Literal["agent_access"]
+    hours: Annotated[int, Field(ge=1, le=168)] = 8  # core GRANT_MAX_HOURS
+    scope: Literal["all", "workable"] = "workable"
+    label: Annotated[str, StringConstraints(min_length=1, max_length=40, strip_whitespace=True)] | None = None
+
+    @field_validator("label")
+    @classmethod
+    def _plain_label(cls, v):
+        if v is not None and (v.lower() == "runner" or any(ord(c) < 32 or ord(c) == 127 for c in v)):
+            raise ValueError("label is plain text and not runner")
+        return v
+
+
 PrepareBody = Annotated[
     Approve
     | RequestChanges
@@ -921,7 +939,8 @@ PrepareBody = Annotated[
     | AddonEnable
     | PublishShare
     | GrantRevoke
-    | RunnerGrant,
+    | RunnerGrant
+    | AgentAccess,
     Field(discriminator="action"),
 ]
 
@@ -1094,6 +1113,10 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
             return "grant", {"hours": action.hours, "scope": action.scope} | (
                 {"extend": action.extend} if action.extend else {}
             )
+        case AgentAccess():
+            return "grant", {"hours": action.hours, "scope": action.scope} | (
+                {"label": action.label} if action.label else {}
+            )
     raise AssertionError("closed allowlist")  # pragma: no cover
 
 
@@ -1250,6 +1273,18 @@ def expected(action: Action, person: str | None = None):
                 and set(ev[0]) <= GRANT_ISSUED_KEYS
                 and type(ev[0].get("hours")) is int
                 and 1 <= ev[0]["hours"] <= 168
+                and person is not None
+                and isinstance(ev[0].get("actor"), dict)
+                and ev[0]["actor"].get("kind") == "person"
+                and ev[0]["actor"].get("id") == person
+            )
+        case AgentAccess():
+            # Exactly one `grant.issued` of verbs agent, the hours, scope and label asked for (no label when none was),
+            # nothing a future field could add, and the caller as its person. A runner label never passes.
+            return lambda ev: (
+                one(ev, "grant.issued", verbs="agent", hours=action.hours, scope=action.scope, label=action.label)
+                and set(ev[0]) <= GRANT_ISSUED_KEYS
+                and ev[0].get("label") != "runner"
                 and person is not None
                 and isinstance(ev[0].get("actor"), dict)
                 and ev[0]["actor"].get("kind") == "person"
@@ -1714,6 +1749,8 @@ def register(app: FastAPI, gateway: Gateway):
                 body, RepoSet
             ):  # the host's path check, before any request exists (plain refusal in the dialog)
                 gateway.check_repo_path(ws, body.path)
+            if isinstance(body, AgentAccess):  # the secret is shown only in the page, sealed: a click request, never here
+                raise fail("invalid.input", "Agent access with a shown secret is signed with one click in the dashboard.", exit=1)
             planned = plan(gateway, ws, body)
             if planned.sequence and planned.sequence["intent"].get("images"):
                 raise fail(

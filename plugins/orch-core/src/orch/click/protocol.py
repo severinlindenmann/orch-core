@@ -20,6 +20,7 @@ __all__ = [
     "DEPOSIT_RISK",
     "OPS",
     "REVEAL_LINE",
+    "REVEAL_RISK",
     "REASONS",
     "REFUSALS",
     "CONTRACT",
@@ -52,6 +53,9 @@ DEPOSIT_RISK = (
 #: #1198 C7: the View of a grant whose secret is shown once in the page (sealed to the page's key) carries this line
 #: (and in ``lines``) and ``seal.purposes == ["grant.secret"]``
 REVEAL_LINE = "The secret is shown once, on this page, only to you. orch keeps only a fingerprint of it"
+#: the plain risk of a shown secret (#1198 C7): the page's key is chosen by the page, so whoever controls the dashboard
+#: could ask for the secret under its own key; the review says so
+REVEAL_RISK = "The secret will be shown once in this browser. Anyone who controls this dashboard could read it."
 #: a deposit grant lasts at most this many hours (D-P2-27)
 DEPOSIT_MAX_HOURS = GRANT_MAX_HOURS
 OPS = ("prepare", "view", "sign", "cancel", "status", "custody_on", "custody_off", "stash")

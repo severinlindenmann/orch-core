@@ -11,7 +11,7 @@ import { cn } from '@/lib/utils'
 let last: Element | null = null
 if (typeof document !== 'undefined') {
   const note = (e: Event) => {
-    const t = e.target instanceof Element ? e.target.closest('button, [role="button"], [role="menuitem"], a') : null
+    const t = e.target instanceof Element ? e.target.closest('button, [role="button"], [role="menuitem"], [role="switch"], a') : null
     if (t) last = t
   }
   document.addEventListener('pointerdown', note, true)
@@ -50,7 +50,7 @@ export interface SignShellProps {
 }
 
 /** The row with Cancel and the sign button: it stays at the bottom of the scrolling review, so Cancel is always reachable (phone sheet and popover). */
-export const STICKY_FOOTER = 'sticky bottom-0 z-10 -mx-4 -mb-4 border-t border-border bg-surface px-4 pb-4 pt-3'
+export const STICKY_FOOTER = 'sticky -bottom-4 z-10 -mx-4 -mb-4 border-t border-border bg-surface px-4 pb-4 pt-3'
 
 const BODY = 'grid max-h-[85dvh] grid-cols-[minmax(0,1fr)] gap-3 overflow-y-auto'
 
@@ -101,7 +101,7 @@ export function SignShell(p: SignShellProps) {
         onOpenAutoFocus={p.onOpenAutoFocus}
       >
         <header className="space-y-1">
-          <DialogTitle className="flex items-center gap-2">
+          <DialogTitle className="flex items-center gap-2 pr-8">
             <ShieldCheck className="size-4 text-brand" aria-hidden />
             {p.title}
           </DialogTitle>

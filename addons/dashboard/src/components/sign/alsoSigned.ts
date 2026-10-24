@@ -20,6 +20,8 @@ export interface DerivedRow {
   label: string
   /** The text signed for that row (multi-line allowed). */
   text: string
+  /** The text is a person id: shown as the name with the short id. */
+  person?: boolean
 }
 
 const norm = (s: string | null | undefined) => (s ?? '').normalize('NFC').replace(/\r\n?/g, '\n').replace(/^\n+|\n+$/g, '').trim()
@@ -79,7 +81,7 @@ export function alsoSigned(content: SignContent, typed: QuickTyped): AlsoSigned 
     { label: 'Plan', text: plan.text },
     { label: 'Acceptance checks', text: acceptance.map((a) => a.text).join('\n') },
     { label: 'Tasks', text: tasks.map((k) => k.title + (k.verify?.length ? ` (checked by ${k.verify.join('; ')})` : '')).join('\n') },
-    ...fields.map((f) => ({ label: f.field.charAt(0).toUpperCase() + f.field.slice(1), text: f.field === 'type' ? 'Chore' : f.after! })),
+    ...fields.map((f) => ({ label: f.field.charAt(0).toUpperCase() + f.field.slice(1), text: f.field === 'type' ? 'Chore' : f.after!, ...(f.field === 'owner' ? { person: true } : {}) })),
   ]
   return { rows }
 }

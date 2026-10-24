@@ -1,5 +1,5 @@
 // "Give agents access for [8 hours]": the one signed choice a start can need (shown only when access is missing or short).
-// The sentence under it says the real scope: the grant covers every agent the runner starts, on the tickets they are allowed to.
+// The sentence under it says when it ends and that it covers every agent the runner starts; what it allows is the review's own sentence (the signed scope), never restated here.
 import { useId } from 'react'
 import { nowMs, fmtExact } from '@/lib/time'
 import { Label } from '@/components/ui/label'
@@ -14,8 +14,8 @@ export function AccessSelect({ hours, onHours, lengths, prefix, agentName, disab
         {lengths.map(([h, text]) => <option key={h} value={h}>{text}</option>)}
       </select>
       <p className="text-[12px] text-text-muted" data-testid="agent-access-until">
-        Agents may work on tickets they are allowed to{prefix ? ` in ${prefix}` : ''}, until <time dateTime={until}>{fmtExact(until)}</time>.
-        {agentName ? ` Every agent the runner starts can use this access, not only ${agentName}.` : ''}
+        Access{prefix ? ` in ${prefix}` : ''} ends <time dateTime={until}>{fmtExact(until)}</time>.
+        {agentName ? ` Every agent the runner starts can use it, not only ${agentName}.` : ''}
       </p>
     </div>
   )

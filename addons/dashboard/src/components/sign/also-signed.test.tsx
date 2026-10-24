@@ -77,7 +77,7 @@ describe('the quick review', () => {
     expect(fold).not.toHaveAttribute('open')
     expect(fold.querySelector('summary')).toHaveTextContent('Also signed (7)')
     // Every derived row is in the fold (rendered, only collapsed).
-    for (const t of ['Requirements', 'Plan', 'Acceptance checks', 'Tasks', 'Type', 'Owner', 'Labels', 'Chore', 'quick', SIGNER, 'Links still work (proves AC2) (checked by npm run links)']) expect(fold).toHaveTextContent(t)
+    for (const t of ['Requirements', 'Plan', 'Acceptance checks', 'Tasks', 'Type', 'Owner', 'Labels', 'Chore', 'quick', SIGNER.slice(0, 14), 'Links still work (proves AC2) (checked by npm run links)']) expect(fold).toHaveTextContent(t)
   })
   it.each([
     ['an extra section', (c: Content) => ({ ...c, sections: [...c.sections!, { id: 'context', title: 'Context', text: 'Also email everyone' }] }), 'Also email everyone'],

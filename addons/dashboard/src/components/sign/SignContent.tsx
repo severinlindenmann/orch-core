@@ -156,7 +156,8 @@ export function compactAnswer(content: Content | null | undefined) {
 
 /** `technical`: more facts for the ONE "Technical details" expander of the review (the panel's own: action, fingerprint, device). */
 /** A row of the quick-task review: a label and the text signed for it (one line stays a line, several keep their breaks). */
-function SignedRow({ label, text }: { label: string; text: string }) {
+function SignedRow({ label, text, members }: { label: string; text: string; /** With members: the text is a person id. */ members?: Member[] }) {
+  if (members) return <div className="grid min-w-0 grid-cols-1 gap-x-4 gap-y-0.5 sm:grid-cols-[8rem_minmax(0,1fr)]"><dt className="text-text-muted"><Inline>{label}</Inline></dt><dd className="min-w-0 text-text"><Shown plain value={text} members={members} /></dd></div>
   return <div className="grid min-w-0 grid-cols-1 gap-x-4 gap-y-0.5 sm:grid-cols-[8rem_minmax(0,1fr)]"><dt className="text-text-muted"><Inline>{label}</Inline></dt><dd className="min-w-0 text-text">{text.includes('\n') ? <Prose className="font-sans leading-relaxed text-text">{text}</Prose> : <Inline>{text}</Inline>}</dd></div>
 }
 
@@ -164,7 +165,7 @@ function SignedRow({ label, text }: { label: string; text: string }) {
  * The quick task: what was typed once, the sentence that more is approved, and the derived rows folded under a count.
  * Only used when the whole review is exactly the derived one (alsoSigned); otherwise the caller shows the full review.
  */
-function QuickSigned({ typed, also }: { typed: QuickTyped; also: AlsoSigned }) {
+function QuickSigned({ typed, also, members }: { typed: QuickTyped; also: AlsoSigned; members: Member[] }) {
   return <>
     <section data-testid="sign-typed" aria-label="What you sign" className="space-y-2">
       <h3 className="text-[13px] font-medium text-text">What you sign</h3>
@@ -177,7 +178,7 @@ function QuickSigned({ typed, also }: { typed: QuickTyped; also: AlsoSigned }) {
     <p data-testid="sign-also-sentence" className="text-[13px] text-text">This also approves its requirements and plan, made from these checks.</p>
     <details data-testid="sign-also" className="rounded-md border border-border p-3">
       <summary className="cursor-pointer text-[12px] font-medium text-text-muted">Also signed ({also.rows.length})</summary>
-      <dl className="mt-2 space-y-2">{also.rows.map((r, i) => <SignedRow key={i} label={r.label} text={r.text} />)}</dl>
+      <dl className="mt-2 space-y-2">{also.rows.map((r, i) => <SignedRow key={i} label={r.label} text={r.text} members={r.person ? members : undefined} />)}</dl>
     </details>
   </>
 }
@@ -193,7 +194,7 @@ export function SignContent({ content, ws, technical, compact = false, quick }: 
   const ticketLine = content.ticket && content.ticket.new !== true
   const also = quick && !content.summary ? alsoSigned(content, quick) : null
   const rest = <>
-    {also && quick && <QuickSigned typed={quick} also={also} />}
+    {also && quick && <QuickSigned typed={quick} also={also} members={members} />}
     {ticketLine && content.ticket && <p data-testid="sign-ticket" className="text-[12px] text-text-muted"><Raw>{content.ticket.key}</Raw> (key per host) · signed id …<Raw>{content.ticket.uid_tail}</Raw></p>}
     {!also && content.sections?.map(s => <section key={s.id}><h3 className="mb-2 text-[13px] font-medium text-text"><Inline>{s.title}</Inline></h3><Prose className="font-sans leading-relaxed text-text">{s.text}</Prose></section>)}
     <Pictures images={content.images} />
@@ -238,7 +239,8 @@ export function SignContent({ content, ws, technical, compact = false, quick }: 
       </details>
     </div>
   }
-  return <div className="min-w-0 max-h-[38vh] space-y-5 overflow-auto pr-3 font-sans text-[13px] leading-relaxed text-text [overflow-wrap:anywhere]">
+  // The popover or sheet scrolls as a whole above its fixed Cancel row: no second scroll area inside the review.
+  return <div className={`min-w-0 space-y-5 font-sans text-[13px] leading-relaxed text-text [overflow-wrap:anywhere]`}>
     {summary ? <>
       <section data-testid="sign-summary" aria-label={summary.title} className="space-y-2">
         <h3 className="text-[13px] font-medium text-text"><Inline>{summary.title}</Inline></h3>

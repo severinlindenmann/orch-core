@@ -410,7 +410,15 @@ def _model_knows() -> bool:
 
 
 def why(
-    store: Any, state_dir: Path, workspace_id: str, host_uid: int, person: str, device: str, *, gated: bool = False
+    store: Any,
+    state_dir: Path,
+    workspace_id: str,
+    host_uid: int,
+    person: str,
+    device: str,
+    *,
+    gated: bool = False,
+    removing: frozenset[str] = frozenset(),
 ) -> tuple[str, list[str]] | None:
     """The first reason convenience signing is not allowed now and the readers below level 1 it names, or None.
     H12d-2 (§0.8.6 item 9.9): ``other_member`` and ``phone_device`` count only readers below level 1 (a current
@@ -426,7 +434,7 @@ def why(
     if _relay_paired(state_dir, workspace_id):
         return "relay_paired", []
     ws = store.state.workspace
-    found = below_level(ws, levels(state_dir, workspace_id, store.state, host_uid), person, device, None)
+    found = below_level(ws, levels(state_dir, workspace_id, store.state, host_uid), person, device, None, removing)
     if found is not None:
         return found
     if not _model_knows():
@@ -476,7 +484,7 @@ def unavailable(reason: str, devices: list[str], *, hours: int | None = None) ->
     )
 
 
-def check(service: Any, person: str, device: str, *, gate: Any = None) -> None:
+def check(service: Any, person: str, device: str, *, gate: Any = None, removing: frozenset[str] = frozenset()) -> None:
     """Raise ``sign.convenience_unavailable`` (message ``<reason>: …``, detail ``{reason, devices}``) unless the
     condition holds. §11A.17: on a dev host every path but column R's gate is ``dev_host``; for a column-R event
     with a :class:`~orch.host.devmode.DevGate` of this workspace, the gate stands in for the flag (``disabled`` does
@@ -486,7 +494,10 @@ def check(service: Any, person: str, device: str, *, gate: Any = None) -> None:
     gated = isinstance(gate, DevGate) and gate.workspace_id == service.workspace_id
     if getattr(service, "dev", None) is not None and not gated:
         raise unavailable(DEV_HOST, [])
-    found = why(service.store, service.state_dir, service.workspace_id, service.host_uid, person, device, gated=gated)
+    found = why(
+        service.store, service.state_dir, service.workspace_id, service.host_uid, person, device, gated=gated,
+        removing=removing,
+    )  # fmt: skip
     if found is not None:
         if found[0] == "idle":
             raise unavailable("idle", [], hours=idle_hours(service.state_dir, service.workspace_id, service.host_uid))

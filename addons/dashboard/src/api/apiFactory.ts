@@ -185,6 +185,10 @@ export function createApi(transport: Transport) {
     getRecords: (ws: string) => call<RecordsStatus>('GET', `/api/w/${ws}/records`),
     recordsCommit: (ws: string, push: boolean) => call<RecordsRun>('POST', `/api/w/${ws}/records/commit`, { push }),
     recordsAutoOff: (ws: string) => call<RecordsRun>('POST', `/api/w/${ws}/records/auto-off`),
+    /** #1198 C15: the admin clicks. The address is the one the review showed; the tool refuses if git now resolves to another. */
+    recordsInit: (ws: string) => call<RecordsRun>('POST', `/api/w/${ws}/records/init`, {}),
+    recordsMark: (ws: string, url: string | null) => call<RecordsRun>('POST', `/api/w/${ws}/records/remote`, url === null ? { on: false } : { on: true, url }),
+    recordsPushInitial: (ws: string, url: string) => call<RecordsRun>('POST', `/api/w/${ws}/records/push-initial`, { url }),
     /** Dry run of a code review policy: the tickets it would move back to testing or to done (owners). */
     previewCodeReview: (ws: string, req: { count: number; applies: CodeReviewApplies }) =>
       call<{ back: { keys: string[]; hidden: number }; done: { keys: string[]; hidden: number } }>('POST', `/api/workspaces/${ws}/code-review-preview`, req),

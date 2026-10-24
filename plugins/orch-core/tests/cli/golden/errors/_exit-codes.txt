@@ -66,6 +66,7 @@ hub.refused 3 retry:false
 hub.proof_invalid 3 retry:false
 hub.already_joined 3 retry:false
 hub.not_joined 3 retry:false
+device.lockout 3 retry:false
 retry.later 9 retry:true
 quota.unattended 9 retry:true
 members.stale 9 retry:true

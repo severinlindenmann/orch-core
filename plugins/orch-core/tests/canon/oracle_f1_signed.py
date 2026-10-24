@@ -514,6 +514,20 @@ def devices_scenarios() -> list[dict[str, Any]]:
          expect="device.unknown", note="self-signed by the new device while sev has valid devices")  # fmt: skip
     out.append(w.scenario())
 
+    w = base_world(
+        "owner_last_device", "device.removed: the last device of an owner that can sign now stays (#1198 C15)"
+    )
+    sev = w.actor("sev")
+    w.ev("workspace", "device.removed", sev, {"device": did("sev1")}, expect="device.lockout",
+         note="sev1 is the only device of the owner sev: refused, even by sev1 itself")  # fmt: skip
+    w.ev("workspace", "device.added", sev, _dev_added("sev", "sev2"), note="a second device")
+    w.ev("workspace", "device.removed", sev, {"device": did("sev1")}, note="sev2 can sign, so sev1 may go")
+    w.ev("workspace", "device.removed", w.actor("sev", "sev2"), {"device": did("sev2")}, expect="device.lockout",
+         note="now sev2 is the last one")  # fmt: skip
+    w.ev("workspace", "device.removed", w.actor("lena"), {"device": did("lena1")},
+         note="a member may lose their only device")  # fmt: skip
+    out.append(w.scenario())
+
     w = base_world("device_recovery", "recovery: a new device signs its own device.added only when none is left")
     lena = w.actor("lena")
     w.ev("workspace", "device.added", {**lena, "device": did("lena2")}, _dev_added("lena", "lena2"),

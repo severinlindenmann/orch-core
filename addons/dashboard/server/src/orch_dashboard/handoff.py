@@ -731,6 +731,17 @@ class MemberRemove(Action):
     person: Person
 
 
+DeviceId = Annotated[str, StringConstraints(pattern=r"^d_[0-9a-f]{32}$")]
+
+
+class DeviceRemove(Action):
+    """#1198 C15, `device.remove {device}`: one click. Core refuses the device that signs the click and the last working
+    device of an owner (`device.lockout`); this server only relays the device id the page showed."""
+
+    action: Literal["device_remove"]
+    device: DeviceId
+
+
 # the dashboard add-on is always on; no other package is offered here
 AddonName = Literal["start-agent", "terminals", "worktrees", "publish", "usage", "estimate", "explorer", "wiki"]
 
@@ -960,6 +971,7 @@ PrepareBody = Annotated[
     | MemberAdd
     | MemberRole
     | MemberRemove
+    | DeviceRemove
     | AddonGrant
     | MarketGrant
     | AddonDisable
@@ -1131,6 +1143,8 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
             return "member.role", {"person": action.person, "role": action.role}
         case MemberRemove():
             return "member.remove", {"person": action.person}
+        case DeviceRemove():
+            return "device.remove", {"device": action.device}
         case AddonGrant():
             return "addon.grant", {"name": action.name}
         case MarketGrant():
@@ -1167,6 +1181,7 @@ WORKSPACE_OPS = (
     "member.add",
     "member.role",
     "member.remove",
+    "device.remove",
     "grant.revoke",
     "move",
     "addon.grant",
@@ -1273,6 +1288,10 @@ def expected(action: Action, person: str | None = None):
             return lambda ev: one(ev, "role.changed", person=action.person, role=action.role)
         case MemberRemove():
             return lambda ev: one(ev, "member.removed", person=action.person)
+        case DeviceRemove():
+            return lambda ev: one(ev, "device.removed", device=action.device) and set(ev[0]) <= (
+                set(adapters.handoff.ENVELOPE) | {"device"}
+            )
         case AddonGrant():
             return lambda ev: one(ev, "addon.granted", name=action.name)
         case MarketGrant():

@@ -40,6 +40,7 @@ EMITS = {
     "member.add": ("member.added",),
     "member.role": ("role.changed",),
     "member.remove": ("member.removed",),
+    "device.remove": ("device.removed",),
     "grant.revoke": ("grant.revoked",),
 }
 

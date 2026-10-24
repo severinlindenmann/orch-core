@@ -40,6 +40,7 @@ from .errors import HostError, fail, host_response, response
 from .explorer import routes as explorer_routes
 from .gateway import Gateway, state_dir
 from .live import Live, SessionStream
+from .policy import loopback_policy
 from .security import Security
 from .wiki import routes as wiki_routes
 
@@ -141,7 +142,7 @@ def create_app(port: int, gateway=None, auth=None, static=None, setup_proxy=None
     app.state.auth = auth
     app.state.live = live
     app.state.term_tickets = tickets
-    app.add_middleware(Security, port=port, auth=auth)
+    app.add_middleware(Security, auth=auth, policy=loopback_policy(port))
 
     @app.exception_handler(HostError)
     async def host_error(request, exc):

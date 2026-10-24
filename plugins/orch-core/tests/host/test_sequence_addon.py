@@ -258,13 +258,14 @@ def test_the_signer_compares_each_step_byte_for_byte(human, tmp_path, k):
 # --- AE3: the strongest step decides the confirmation ---------------------------------------------
 
 
-def test_ae3_publish_is_terminal_only(human):
+def test_ae3_publish_is_a_click(human):
     pub = sequence.validate_intent(enable(human, "publish"))
-    assert sequence.confirm_kind(pub) == "terminal"
+    assert sequence.confirm_kind(pub) == "click"  # #1198 C2: Publish is a click like every other add-on
     assert not sequence.has_grant(pub)  # a runner grant only
     # the early check by args, as the click signer asks it before prepare
-    assert protocol_class("settings.set", {"set": {"publish": PUBLISH}}) == "terminal"
-    assert protocol_class("addon.grant", {"name": "publish"}) == "terminal"  # also alone, not in a sequence
+    assert protocol_class("settings.set", {"set": {"publish": PUBLISH}}) == "click"
+    assert protocol_class("addon.grant", {"name": "publish"}) == "click"  # also alone, not in a sequence
+    assert protocol_class("grant", {}) == "terminal"  # nothing else became a click: the plain grant stays terminal
 
 
 def protocol_class(op, args):
@@ -294,7 +295,7 @@ def test_ae8_existing_kinds_keep_their_digests_steps_and_confirmations():
     assert sequence.digest_of(wid, person, new) == PIN_NEW
     assert sequence.digest_of(wid, person, q) == PIN_QUICK
     assert sequence.digest_of(wid, person, edit) == PIN_EDIT
-    assert [sequence.confirm_kind(i) for i in (new, q, edit)] == ["click", "click", "word"]
+    assert [sequence.confirm_kind(i) for i in (new, q, edit)] == ["click", "click", "click"]
     assert [s["kind"] for s in sequence.steps(new)] == ["new", "set", "section", "section"]
     assert all("log" not in s for i in (new, q, edit) for s in sequence.steps(i))  # only the add-on kind names a log
     assert sequence_terminal.labels_for(new) == (canon.LABELS["sig_ticket_event"].encode("ascii"),)
@@ -322,23 +323,44 @@ def click_prepare(click_, intent):
     return click_.prepare(op, args, sequence=meta)
 
 
-def test_ae3_a_click_never_signs_publish_it_is_refused_at_prepare_and_at_sign(click, served, human):
+def test_ae3_publish_is_one_plain_click_and_the_view_shows_both_servers(click, served, human):
+    p = click_prepare(click, enable(human, "publish"))
+    v = click.view(p["request_id"])
+    assert v["view"]["confirm"] == {"kind": "click"}
+    shown = "\n".join(v["view"]["lines"])
+    assert PUBLISH["server"] in shown and PUBLISH["share"] in shown  # what is signed is on screen
+    click.mono.t += 2
+    out = click.sign(p["request_id"], v["view_digest"])
+    assert out["duplicate"] is False and click.signatures == 2
+    assert on(human, "publish")
+
+
+def test_ae3_publish_is_refused_at_sign_when_the_stored_kind_is_forced_down(click, served, human, monkeypatch):
+    """The sign step re-asserts the kind of the stored intent: a prepare that slipped through still signs nothing."""
     intent = enable(human, "publish")
-    refused(lambda: click_prepare(click, intent), "human.click_refused", "terminal_only")
+    p = click_prepare(click, intent)  # accepted
+    v = click.view(p["request_id"])
+    click.mono.t += 2
+    monkeypatch.setattr(sequence, "confirm_kind", lambda i, person=None: "terminal")
+    refused(
+        lambda: click.sign(p["request_id"], v["view_digest"]),
+        "human.click_refused",
+        "terminal_only",
+    )
     assert click.signatures == 0 and not on(human, "publish")
 
 
-def test_a_grant_step_with_capabilities_is_a_click_for_a_non_built_in_add_on(human):
-    """V3-D38 (ported from the model-routing test): the grant step of a sequence is classed from the signed event the
-    way ``confirm_kind`` does it (``op_class("addon.grant", events=[grant])``); a market add-on that is not built in is
-    one click whatever its capability list, while Publish stays terminal-only."""
+def test_a_grant_step_with_capabilities_is_a_click_for_every_add_on(human):
+    """V3-D38 + #1198 C2: the grant step of a sequence is classed from the signed event the way ``confirm_kind`` does it
+    (``op_class("addon.grant", events=[grant])``); every add-on grant, Publish included, is one click whatever its
+    capability list (the review lists them)."""
     from orch.click import protocol
 
     base = enable(human, "publish")["grant"]
     market = {**base, "name": "market-addon", "package_sha256": "sha256:" + "0" * 64}
     for caps in ([], ["network"], ["network", "choose_model"], ["credential", "network"]):
         assert protocol.op_class("addon.grant", events=[{**market, "capabilities": caps}]) == "click"
-    assert protocol.op_class("addon.grant", events=[{**base, "capabilities": ["network"]}]) == "terminal"
+    assert protocol.op_class("addon.grant", events=[{**base, "capabilities": ["network"]}]) == "click"
 
 
 # --- the terminal path: the word, the review, both add-ons ----------------------------------------
@@ -415,15 +437,13 @@ def json_text(content):
     return json.dumps(content, sort_keys=True)
 
 
-def test_ae3_the_word_is_the_add_ons_not_the_settings_word(human, tmp_path):
-    from orch.click import view as views
+def test_ae3_the_terminal_word_is_the_add_ons_not_the_settings_word(human, tmp_path):
     from orch.host import signer
 
     rig = Rig(human, tmp_path, enable(human, "publish"))
     first = rig.first()
     want = f"publish~{human.served.wid[-8:]}"
     assert signer.confirm_word(first) == want
-    assert views.word(first, lambda w: ("Acme", "DEMO")) == want
     plain = human.prepare("settings.set", {"set": {"grant_hours": 9}})
     assert signer.confirm_word(plain, lambda w: ("Acme", "DEMO")).endswith(
         "/SETTINGS"
@@ -617,6 +637,23 @@ def test_signed_but_not_confirmed_resumes_with_the_same_bytes(human, tmp_path):
     )
 
 
+def test_a_click_refuses_to_start_what_a_live_session_holds(click, served, human, tmp_path):
+    rig = Rig(human, tmp_path, enable(human))
+    rig.sessions = click.signer.sessions
+    first = rig.first()
+    rig.hooks[1] = lambda rid, events, idem: (_ for _ in ()).throw(RuntimeError("lost"))
+    with pytest.raises(Aborted):
+        rig.driver().run(first)
+    p = click_prepare(click, enable(human))
+    v = click.view(p["request_id"])
+    click.mono.t += 2
+    refused(
+        lambda: click.sign(p["request_id"], v["view_digest"]),
+        "human.click_refused",
+        "resumable",
+    )
+
+
 # --- review round (Opus LOW-1, LOW-3) --------------------------------------------------------------------------------
 
 
@@ -660,21 +697,41 @@ def test_low3_the_add_on_sequence_never_says_ticket(human, tmp_path):
     assert "ticket" not in info.value.reason
 
 
+def test_low3_the_click_messages_do_not_say_ticket_for_an_add_on(click, served, human, tmp_path):
+    rig = Rig(human, tmp_path, enable(human))
+    rig.sessions = click.signer.sessions
+    first = rig.first()
+    rig.hooks[1] = lambda rid, events, idem: (_ for _ in ()).throw(RuntimeError("lost"))
+    with pytest.raises(Aborted):
+        rig.driver().run(first)
+    p = click_prepare(click, enable(human))
+    v = click.view(p["request_id"])
+    click.mono.t += 2
+    e = refused(
+        lambda: click.sign(p["request_id"], v["view_digest"]),
+        "human.click_refused",
+        "resumable",
+    )
+    assert "ticket" not in str(e).lower() and "terminal" in str(e)
+
+
 # --- review round 2 --------------------------------------------------------------------------------
 
 
-def test_publish_is_never_turned_on_by_a_click_whatever_the_route(click, served, human):
+def test_publish_is_turned_on_by_a_click_on_every_route_but_a_grant_stays_terminal(click, served, human):
     from orch.click import protocol
 
-    assert protocol.op_class("addon.grant", args={"name": "publish"}) == "terminal"
-    assert protocol.op_class("addon.grant", events=[{"name": "publish"}]) == "terminal"
+    assert protocol.op_class("addon.grant", args={"name": "publish"}) == "click"
+    assert protocol.op_class("addon.grant", events=[{"name": "publish"}]) == "click"
     assert protocol.op_class("addon.grant", args={"name": "usage"}) == "click"
     assert protocol.op_class("addon.grant", events=[{"name": "usage"}]) == "click"
-    # at prepare: the plain grant of Publish is refused before the host is asked
+    # nothing else became a click: a runner grant and the hub ops are not in this route
+    assert protocol.op_class("grant", args={}) == "terminal"
+    assert protocol.op_class("hub.join", args={}) == "terminal"
+    # at prepare: the plain grant of Publish is accepted now, and signs nothing until the person clicks
     human.run("settings.set", {"set": {"publish": PUBLISH}})
-    refused(lambda: click.prepare("addon.grant", {"name": "publish"}), "human.click_refused", "terminal_only")
+    click.prepare("addon.grant", {"name": "publish"})
     assert click.signatures == 0 and not on(human, "publish")
-    # at sign, check_prepared classes the request by its signed events with the same function (asserted above)
 
 
 def test_the_publish_addresses_are_read_by_a_person_not_by_an_agent_with_a_grant(human, served):

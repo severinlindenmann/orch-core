@@ -91,8 +91,9 @@ describe('Settings', () => {
     expect(panel.closest('tr')?.previousElementSibling).toBe(screen.getByRole('row', { name: /^Estimate \d/ }))
     await user.click(within(panel).getByRole('button', { name: 'Cancel' }))
     await waitFor(() => expect(screen.queryByRole('group', { name: /Estimate settings/ })).toBeNull())
-    expect(screen.getByRole('heading', { name: 'Addons' })).toBeInTheDocument()
-    expect(screen.queryByRole('link', { name: /Back to Addons/ })).toBeNull()
+    // closing the panel and re-drawing the list are separate renders: wait for the list (CI flaked on a sync read)
+    expect(await screen.findByRole('heading', { name: 'Addons' })).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByRole('link', { name: /Back to Addons/ })).toBeNull())
     await waitFor(() => expect(within(screen.getByRole('row', { name: /^Estimate \d/ })).getByRole('button', { name: 'Settings' })).toHaveFocus())
   })
   it('the footer Save is the form submit (form=id), and the form draws no button of its own', async () => {

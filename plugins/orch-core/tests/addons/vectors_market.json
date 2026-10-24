@@ -727,7 +727,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -800,7 +799,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -883,7 +881,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {
@@ -968,7 +965,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -1046,7 +1042,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": false,
      "known_keys": {},
@@ -1129,89 +1124,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": {
-      "allow": [
-       "https://github.com/acme/orch-market"
-      ],
-      "block": [],
-      "ceiling": [
-       "network",
-       "serve_http"
-      ]
-     },
-     "installed": {},
-     "isolation": true,
-     "known_keys": {},
-     "last_version": null,
-     "market_repo": "https://github.com/acme/orch-market",
-     "moved": [],
-     "official": {
-      "key": "BAYGApN98T-m-Q1gqXbIky7trtXKFfaI_RSPgR10Ypqgi5I_8C7edQPRlq56hZe_venVzP_SBaWTXXm6dr45hPs",
-      "repo": "https://github.com/severinlindenmann/orch-marketplace"
-     },
-     "official_ids": [
-      "github",
-      "landing"
-     ],
-     "seen": {}
-    },
-    "files": {
-     "main.py": "print('hello')\n",
-     "orch-addon.json": "{\"api\": \">=1.1,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"{python}\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"standup\", \"schema\": \"orch.addon/3\", \"title\": \"Standup\", \"version\": \"1.0.0\"}"
-    },
-    "id": "standup",
-    "index": {
-     "addons": [
-      {
-       "capabilities": [
-        "network"
-       ],
-       "commit": "0123456789abcdef0123456789abcdef01234567",
-       "id": "standup",
-       "min_orch": "2.0.0",
-       "package_sha256": "sha256:e267e2511527befc96cc8c2a22529e1b8587fa35983a1e7c5a240e169b7e4d9b",
-       "source": {
-        "git": "https://github.com/acme/standup",
-        "subdir": "pkg"
-       },
-       "version": "1.0.0"
-      }
-     ],
-     "format": "orch.market/1",
-     "name": "acme-market",
-     "source": {
-      "git": "https://github.com/acme/orch-market"
-     },
-     "version": 7
-    }
-   },
-   "check": "install",
-   "expect": {
-    "ok": {
-     "class": "other",
-     "id": "standup",
-     "package_sha256": "sha256:e267e2511527befc96cc8c2a22529e1b8587fa35983a1e7c5a240e169b7e4d9b",
-     "tofu": "unsigned",
-     "version": "1.0.0"
-    }
-   },
-   "name": "install_ok_hub_allowed_in_ceiling"
-  },
-  {
-   "args": {
-    "ctx": {
-     "actor": "human",
-     "builtin": [
-      "wiki",
-      "terminals",
-      "dashboard"
-     ],
-     "core_version": "2.0.1",
-     "git_hosts": [
-      "github.com",
-      "gitlab.com"
-     ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -1284,7 +1196,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {
       "standup": {
        "origin": "https://github.com/acme/orch-market",
@@ -1362,7 +1273,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -1429,7 +1339,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -1496,7 +1405,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -1563,7 +1471,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -1631,7 +1538,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -1692,160 +1598,11 @@
       "terminals",
       "dashboard"
      ],
-     "core_version": "2.0.1",
-     "git_hosts": [
-      "github.com",
-      "gitlab.com"
-     ],
-     "hub": {
-      "allow": [
-       "https://github.com/acme/orch-market"
-      ],
-      "block": [],
-      "ceiling": [
-       "serve_http"
-      ]
-     },
-     "installed": {},
-     "isolation": true,
-     "known_keys": {},
-     "last_version": null,
-     "market_repo": "https://github.com/acme/orch-market",
-     "moved": [],
-     "official": {
-      "key": "BAYGApN98T-m-Q1gqXbIky7trtXKFfaI_RSPgR10Ypqgi5I_8C7edQPRlq56hZe_venVzP_SBaWTXXm6dr45hPs",
-      "repo": "https://github.com/severinlindenmann/orch-marketplace"
-     },
-     "official_ids": [
-      "github",
-      "landing"
-     ],
-     "seen": {}
-    },
-    "files": {
-     "main.py": "print('hello')\n",
-     "orch-addon.json": "{\"api\": \">=1.1,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"{python}\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"standup\", \"schema\": \"orch.addon/3\", \"title\": \"Standup\", \"version\": \"1.0.0\"}"
-    },
-    "id": "standup",
-    "index": {
-     "addons": [
-      {
-       "capabilities": [
-        "network"
-       ],
-       "commit": "0123456789abcdef0123456789abcdef01234567",
-       "id": "standup",
-       "min_orch": "2.0.0",
-       "package_sha256": "sha256:e267e2511527befc96cc8c2a22529e1b8587fa35983a1e7c5a240e169b7e4d9b",
-       "source": {
-        "git": "https://github.com/acme/standup",
-        "subdir": "pkg"
-       },
-       "version": "1.0.0"
-      }
-     ],
-     "format": "orch.market/1",
-     "name": "acme-market",
-     "source": {
-      "git": "https://github.com/acme/orch-market"
-     },
-     "version": 7
-    }
-   },
-   "check": "install",
-   "expect": {
-    "refuse": "market.capability_ceiling"
-   },
-   "name": "install_capability_outside_ceiling"
-  },
-  {
-   "args": {
-    "ctx": {
-     "actor": "human",
-     "builtin": [
-      "wiki",
-      "terminals",
-      "dashboard"
-     ],
-     "core_version": "2.0.1",
-     "git_hosts": [
-      "github.com",
-      "gitlab.com"
-     ],
-     "hub": {
-      "allow": [
-       "https://github.com/acme/orch-market"
-      ],
-      "block": [],
-      "ceiling": []
-     },
-     "installed": {},
-     "isolation": true,
-     "known_keys": {},
-     "last_version": null,
-     "market_repo": "https://github.com/acme/orch-market",
-     "moved": [],
-     "official": {
-      "key": "BAYGApN98T-m-Q1gqXbIky7trtXKFfaI_RSPgR10Ypqgi5I_8C7edQPRlq56hZe_venVzP_SBaWTXXm6dr45hPs",
-      "repo": "https://github.com/severinlindenmann/orch-marketplace"
-     },
-     "official_ids": [
-      "github",
-      "landing"
-     ],
-     "seen": {}
-    },
-    "files": {
-     "main.py": "print('hello')\n",
-     "orch-addon.json": "{\"api\": \">=1.1,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"{python}\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"standup\", \"schema\": \"orch.addon/3\", \"title\": \"Standup\", \"version\": \"1.0.0\"}"
-    },
-    "id": "standup",
-    "index": {
-     "addons": [
-      {
-       "capabilities": [
-        "network"
-       ],
-       "commit": "0123456789abcdef0123456789abcdef01234567",
-       "id": "standup",
-       "min_orch": "2.0.0",
-       "package_sha256": "sha256:e267e2511527befc96cc8c2a22529e1b8587fa35983a1e7c5a240e169b7e4d9b",
-       "source": {
-        "git": "https://github.com/acme/standup",
-        "subdir": "pkg"
-       },
-       "version": "1.0.0"
-      }
-     ],
-     "format": "orch.market/1",
-     "name": "acme-market",
-     "source": {
-      "git": "https://github.com/acme/orch-market"
-     },
-     "version": 7
-    }
-   },
-   "check": "install",
-   "expect": {
-    "refuse": "market.capability_ceiling"
-   },
-   "name": "install_empty_ceiling"
-  },
-  {
-   "args": {
-    "ctx": {
-     "actor": "human",
-     "builtin": [
-      "wiki",
-      "terminals",
-      "dashboard"
-     ],
      "core_version": "1.9.0",
      "git_hosts": [
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -1912,7 +1669,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -1979,7 +1735,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {
@@ -2058,7 +1813,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {
@@ -2133,7 +1887,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -2210,7 +1963,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": false,
      "known_keys": {},
@@ -2277,309 +2029,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": {
-      "allow": [
-       "https://github.com/other/market"
-      ],
-      "block": [],
-      "ceiling": null
-     },
-     "installed": {},
-     "isolation": true,
-     "known_keys": {},
-     "last_version": null,
-     "market_repo": "https://github.com/acme/orch-market",
-     "moved": [],
-     "official": {
-      "key": "BAYGApN98T-m-Q1gqXbIky7trtXKFfaI_RSPgR10Ypqgi5I_8C7edQPRlq56hZe_venVzP_SBaWTXXm6dr45hPs",
-      "repo": "https://github.com/severinlindenmann/orch-marketplace"
-     },
-     "official_ids": [
-      "github",
-      "landing"
-     ],
-     "seen": {}
-    },
-    "files": {
-     "main.py": "print('hello')\n",
-     "orch-addon.json": "{\"api\": \">=1.1,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"{python}\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"standup\", \"schema\": \"orch.addon/3\", \"title\": \"Standup\", \"version\": \"1.0.0\"}"
-    },
-    "id": "standup",
-    "index": {
-     "addons": [
-      {
-       "capabilities": [
-        "network"
-       ],
-       "commit": "0123456789abcdef0123456789abcdef01234567",
-       "id": "standup",
-       "min_orch": "2.0.0",
-       "package_sha256": "sha256:e267e2511527befc96cc8c2a22529e1b8587fa35983a1e7c5a240e169b7e4d9b",
-       "source": {
-        "git": "https://github.com/acme/standup",
-        "subdir": "pkg"
-       },
-       "version": "1.0.0"
-      }
-     ],
-     "format": "orch.market/1",
-     "name": "acme-market",
-     "source": {
-      "git": "https://github.com/acme/orch-market"
-     },
-     "version": 7
-    }
-   },
-   "check": "install",
-   "expect": {
-    "refuse": "market.not_allowed"
-   },
-   "name": "install_hub_not_allowed"
-  },
-  {
-   "args": {
-    "ctx": {
-     "actor": "human",
-     "builtin": [
-      "wiki",
-      "terminals",
-      "dashboard"
-     ],
-     "core_version": "2.0.1",
-     "git_hosts": [
-      "github.com",
-      "gitlab.com"
-     ],
-     "hub": {
-      "allow": [],
-      "block": [],
-      "ceiling": null
-     },
-     "installed": {},
-     "isolation": true,
-     "known_keys": {},
-     "last_version": null,
-     "market_repo": "https://github.com/acme/orch-market",
-     "moved": [],
-     "official": {
-      "key": "BAYGApN98T-m-Q1gqXbIky7trtXKFfaI_RSPgR10Ypqgi5I_8C7edQPRlq56hZe_venVzP_SBaWTXXm6dr45hPs",
-      "repo": "https://github.com/severinlindenmann/orch-marketplace"
-     },
-     "official_ids": [
-      "github",
-      "landing"
-     ],
-     "seen": {}
-    },
-    "files": {
-     "main.py": "print('hello')\n",
-     "orch-addon.json": "{\"api\": \">=1.1,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"{python}\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"standup\", \"schema\": \"orch.addon/3\", \"title\": \"Standup\", \"version\": \"1.0.0\"}"
-    },
-    "id": "standup",
-    "index": {
-     "addons": [
-      {
-       "capabilities": [
-        "network"
-       ],
-       "commit": "0123456789abcdef0123456789abcdef01234567",
-       "id": "standup",
-       "min_orch": "2.0.0",
-       "package_sha256": "sha256:e267e2511527befc96cc8c2a22529e1b8587fa35983a1e7c5a240e169b7e4d9b",
-       "source": {
-        "git": "https://github.com/acme/standup",
-        "subdir": "pkg"
-       },
-       "version": "1.0.0"
-      }
-     ],
-     "format": "orch.market/1",
-     "name": "acme-market",
-     "source": {
-      "git": "https://github.com/acme/orch-market"
-     },
-     "version": 7
-    }
-   },
-   "check": "install",
-   "expect": {
-    "refuse": "market.not_allowed"
-   },
-   "name": "install_hub_empty_allow_list"
-  },
-  {
-   "args": {
-    "ctx": {
-     "actor": "human",
-     "builtin": [
-      "wiki",
-      "terminals",
-      "dashboard"
-     ],
-     "core_version": "2.0.1",
-     "git_hosts": [
-      "github.com",
-      "gitlab.com"
-     ],
-     "hub": {
-      "allow": [
-       "https://github.com/acme/orch-market"
-      ],
-      "block": [
-       "https://github.com/acme/orch-market"
-      ],
-      "ceiling": null
-     },
-     "installed": {},
-     "isolation": true,
-     "known_keys": {},
-     "last_version": null,
-     "market_repo": "https://github.com/acme/orch-market",
-     "moved": [],
-     "official": {
-      "key": "BAYGApN98T-m-Q1gqXbIky7trtXKFfaI_RSPgR10Ypqgi5I_8C7edQPRlq56hZe_venVzP_SBaWTXXm6dr45hPs",
-      "repo": "https://github.com/severinlindenmann/orch-marketplace"
-     },
-     "official_ids": [
-      "github",
-      "landing"
-     ],
-     "seen": {}
-    },
-    "files": {
-     "main.py": "print('hello')\n",
-     "orch-addon.json": "{\"api\": \">=1.1,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"{python}\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"standup\", \"schema\": \"orch.addon/3\", \"title\": \"Standup\", \"version\": \"1.0.0\"}"
-    },
-    "id": "standup",
-    "index": {
-     "addons": [
-      {
-       "capabilities": [
-        "network"
-       ],
-       "commit": "0123456789abcdef0123456789abcdef01234567",
-       "id": "standup",
-       "min_orch": "2.0.0",
-       "package_sha256": "sha256:e267e2511527befc96cc8c2a22529e1b8587fa35983a1e7c5a240e169b7e4d9b",
-       "source": {
-        "git": "https://github.com/acme/standup",
-        "subdir": "pkg"
-       },
-       "version": "1.0.0"
-      }
-     ],
-     "format": "orch.market/1",
-     "name": "acme-market",
-     "source": {
-      "git": "https://github.com/acme/orch-market"
-     },
-     "version": 7
-    }
-   },
-   "check": "install",
-   "expect": {
-    "refuse": "market.blocked"
-   },
-   "name": "install_hub_block_beats_allow"
-  },
-  {
-   "args": {
-    "ctx": {
-     "actor": "human",
-     "builtin": [
-      "wiki",
-      "terminals",
-      "dashboard"
-     ],
-     "core_version": "2.0.1",
-     "git_hosts": [
-      "github.com",
-      "gitlab.com"
-     ],
-     "hub": {
-      "allow": [
-       "https://github.com/acme/orch-market"
-      ],
-      "block": [],
-      "ceiling": null
-     },
-     "installed": {},
-     "isolation": true,
-     "known_keys": {},
-     "last_version": null,
-     "market_repo": "https://github.com/severinlindenmann/orch-marketplace",
-     "moved": [],
-     "official": {
-      "key": "BAYGApN98T-m-Q1gqXbIky7trtXKFfaI_RSPgR10Ypqgi5I_8C7edQPRlq56hZe_venVzP_SBaWTXXm6dr45hPs",
-      "repo": "https://github.com/severinlindenmann/orch-marketplace"
-     },
-     "official_ids": [
-      "github",
-      "landing"
-     ],
-     "seen": {}
-    },
-    "files": {
-     "main.py": "print('hello')\n",
-     "orch-addon.json": "{\"api\": \">=1.1,<2\", \"capabilities\": [\"git_push\", \"network\"], \"entry\": {\"cmd\": [\"{python}\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"github\", \"schema\": \"orch.addon/3\", \"title\": \"Github\", \"version\": \"1.0.0\"}"
-    },
-    "id": "github",
-    "index": {
-     "addons": [
-      {
-       "capabilities": [
-        "git_push",
-        "network"
-       ],
-       "commit": "0123456789abcdef0123456789abcdef01234567",
-       "id": "github",
-       "min_orch": "2.0.0",
-       "package_sha256": "sha256:ea14c2a157bc5c5f360f35ec993e2a8d315610012de7482bc73ba932d8e5a570",
-       "publisher": {
-        "key": "BAYGApN98T-m-Q1gqXbIky7trtXKFfaI_RSPgR10Ypqgi5I_8C7edQPRlq56hZe_venVzP_SBaWTXXm6dr45hPs",
-        "sig": "hGq5ttm-fyE0JR5-YSiWjaO33b5G-fe7uk0Uf2F2yzt2N-5w2Z90_zG7l9GgHrfEeNESJHWEhgw68K_KT-IFow"
-       },
-       "source": {
-        "git": "https://github.com/acme/github",
-        "subdir": "pkg"
-       },
-       "version": "1.0.0"
-      }
-     ],
-     "expires_at": 1800000000,
-     "format": "orch.market/1",
-     "name": "orch-marketplace",
-     "signature": {
-      "key": "BAYGApN98T-m-Q1gqXbIky7trtXKFfaI_RSPgR10Ypqgi5I_8C7edQPRlq56hZe_venVzP_SBaWTXXm6dr45hPs",
-      "sig": "fNGvswZm0q4kD24EHHTcKNld7ZQX0R2GZN1iHTs1bUdhEyGdbkRZJpvwUNP7p2pXPl60_CyscurC7JRo1-BnDQ"
-     },
-     "source": {
-      "git": "https://github.com/severinlindenmann/orch-marketplace"
-     },
-     "version": 7
-    }
-   },
-   "check": "install",
-   "expect": {
-    "refuse": "market.not_allowed"
-   },
-   "name": "install_hub_blocks_official_not_listed"
-  },
-  {
-   "args": {
-    "ctx": {
-     "actor": "human",
-     "builtin": [
-      "wiki",
-      "terminals",
-      "dashboard"
-     ],
-     "core_version": "2.0.1",
-     "git_hosts": [
-      "github.com",
-      "gitlab.com"
-     ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -2646,7 +2095,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -2713,7 +2161,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -2780,7 +2227,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -2845,7 +2291,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {
       "standup": {
        "origin": "https://github.com/someone/else",
@@ -2917,7 +2362,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -2990,7 +2434,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -3067,7 +2510,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -3134,7 +2576,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -3201,7 +2642,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -3268,7 +2708,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -3335,7 +2774,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -3402,7 +2840,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -3469,7 +2906,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -3540,7 +2976,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -3612,7 +3047,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -3684,7 +3118,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -3756,7 +3189,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -3828,7 +3260,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -3900,7 +3331,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -3972,7 +3402,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -4044,7 +3473,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -4116,7 +3544,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -4188,7 +3615,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -4419,7 +3845,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -4496,7 +3921,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -4575,7 +3999,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {
       "standup": {
        "origin": "https://github.com/acme/orch-market",
@@ -4911,7 +4334,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -4977,7 +4399,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -5049,7 +4470,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -5682,7 +5102,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {
@@ -5761,7 +5180,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -5828,7 +5246,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -5895,7 +5312,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -5962,7 +5378,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -6029,7 +5444,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": false,
      "known_keys": {},
@@ -6103,7 +5517,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": false,
      "known_keys": {},
@@ -6185,7 +5598,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": false,
      "known_keys": {},
@@ -6257,7 +5669,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": false,
      "known_keys": {},
@@ -6329,7 +5740,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": false,
      "known_keys": {},
@@ -6406,7 +5816,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": false,
      "known_keys": {},
@@ -6483,7 +5892,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": false,
      "known_keys": {},
@@ -6560,7 +5968,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": false,
      "known_keys": {},
@@ -6638,7 +6045,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": false,
      "known_keys": {},
@@ -6714,7 +6120,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": false,
      "known_keys": {},
@@ -6794,7 +6199,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": false,
      "known_keys": {},
@@ -6880,7 +6284,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -6957,7 +6360,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -7028,661 +6430,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": {
-      "allow": "https://github.com/acme/orch-market-mirror",
-      "block": [],
-      "ceiling": null
-     },
-     "installed": {},
-     "isolation": true,
-     "known_keys": {},
-     "last_version": null,
-     "market_repo": "https://github.com/acme/orch-market",
-     "moved": [],
-     "official": {
-      "key": "BAYGApN98T-m-Q1gqXbIky7trtXKFfaI_RSPgR10Ypqgi5I_8C7edQPRlq56hZe_venVzP_SBaWTXXm6dr45hPs",
-      "repo": "https://github.com/severinlindenmann/orch-marketplace"
-     },
-     "official_ids": [
-      "github",
-      "landing"
-     ],
-     "seen": {}
-    },
-    "files": {
-     "main.py": "print('hello')\n",
-     "orch-addon.json": "{\"api\": \">=1.1,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"{python}\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"standup\", \"schema\": \"orch.addon/3\", \"title\": \"Standup\", \"version\": \"1.0.0\"}"
-    },
-    "id": "standup",
-    "index": {
-     "addons": [
-      {
-       "capabilities": [
-        "network"
-       ],
-       "commit": "0123456789abcdef0123456789abcdef01234567",
-       "id": "standup",
-       "min_orch": "2.0.0",
-       "package_sha256": "sha256:e267e2511527befc96cc8c2a22529e1b8587fa35983a1e7c5a240e169b7e4d9b",
-       "source": {
-        "git": "https://github.com/acme/standup",
-        "subdir": "pkg"
-       },
-       "version": "1.0.0"
-      }
-     ],
-     "format": "orch.market/1",
-     "name": "acme-market",
-     "source": {
-      "git": "https://github.com/acme/orch-market"
-     },
-     "version": 7
-    }
-   },
-   "check": "install",
-   "expect": {
-    "refuse": "market.not_allowed"
-   },
-   "name": "install_hub_policy_malformed_allow_is_a_string"
-  },
-  {
-   "args": {
-    "ctx": {
-     "actor": "human",
-     "builtin": [
-      "wiki",
-      "terminals",
-      "dashboard"
-     ],
-     "core_version": "2.0.1",
-     "git_hosts": [
-      "github.com",
-      "gitlab.com"
-     ],
-     "hub": {
-      "allow": [
-       "https://github.com/acme/orch-market-mirror"
-      ],
-      "block": [],
-      "ceiling": null
-     },
-     "installed": {},
-     "isolation": true,
-     "known_keys": {},
-     "last_version": null,
-     "market_repo": "https://github.com/acme/orch-market",
-     "moved": [],
-     "official": {
-      "key": "BAYGApN98T-m-Q1gqXbIky7trtXKFfaI_RSPgR10Ypqgi5I_8C7edQPRlq56hZe_venVzP_SBaWTXXm6dr45hPs",
-      "repo": "https://github.com/severinlindenmann/orch-marketplace"
-     },
-     "official_ids": [
-      "github",
-      "landing"
-     ],
-     "seen": {}
-    },
-    "files": {
-     "main.py": "print('hello')\n",
-     "orch-addon.json": "{\"api\": \">=1.1,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"{python}\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"standup\", \"schema\": \"orch.addon/3\", \"title\": \"Standup\", \"version\": \"1.0.0\"}"
-    },
-    "id": "standup",
-    "index": {
-     "addons": [
-      {
-       "capabilities": [
-        "network"
-       ],
-       "commit": "0123456789abcdef0123456789abcdef01234567",
-       "id": "standup",
-       "min_orch": "2.0.0",
-       "package_sha256": "sha256:e267e2511527befc96cc8c2a22529e1b8587fa35983a1e7c5a240e169b7e4d9b",
-       "source": {
-        "git": "https://github.com/acme/standup",
-        "subdir": "pkg"
-       },
-       "version": "1.0.0"
-      }
-     ],
-     "format": "orch.market/1",
-     "name": "acme-market",
-     "source": {
-      "git": "https://github.com/acme/orch-market"
-     },
-     "version": 7
-    }
-   },
-   "check": "install",
-   "expect": {
-    "refuse": "market.not_allowed"
-   },
-   "name": "install_hub_policy_malformed_allow_substring_url"
-  },
-  {
-   "args": {
-    "ctx": {
-     "actor": "human",
-     "builtin": [
-      "wiki",
-      "terminals",
-      "dashboard"
-     ],
-     "core_version": "2.0.1",
-     "git_hosts": [
-      "github.com",
-      "gitlab.com"
-     ],
-     "hub": {
-      "allow": [
-       "https://github.com/acme/orch-market"
-      ]
-     },
-     "installed": {},
-     "isolation": true,
-     "known_keys": {},
-     "last_version": null,
-     "market_repo": "https://github.com/acme/orch-market",
-     "moved": [],
-     "official": {
-      "key": "BAYGApN98T-m-Q1gqXbIky7trtXKFfaI_RSPgR10Ypqgi5I_8C7edQPRlq56hZe_venVzP_SBaWTXXm6dr45hPs",
-      "repo": "https://github.com/severinlindenmann/orch-marketplace"
-     },
-     "official_ids": [
-      "github",
-      "landing"
-     ],
-     "seen": {}
-    },
-    "files": {
-     "main.py": "print('hello')\n",
-     "orch-addon.json": "{\"api\": \">=1.1,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"{python}\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"standup\", \"schema\": \"orch.addon/3\", \"title\": \"Standup\", \"version\": \"1.0.0\"}"
-    },
-    "id": "standup",
-    "index": {
-     "addons": [
-      {
-       "capabilities": [
-        "network"
-       ],
-       "commit": "0123456789abcdef0123456789abcdef01234567",
-       "id": "standup",
-       "min_orch": "2.0.0",
-       "package_sha256": "sha256:e267e2511527befc96cc8c2a22529e1b8587fa35983a1e7c5a240e169b7e4d9b",
-       "source": {
-        "git": "https://github.com/acme/standup",
-        "subdir": "pkg"
-       },
-       "version": "1.0.0"
-      }
-     ],
-     "format": "orch.market/1",
-     "name": "acme-market",
-     "source": {
-      "git": "https://github.com/acme/orch-market"
-     },
-     "version": 7
-    }
-   },
-   "check": "install",
-   "expect": {
-    "refuse": "market.not_allowed"
-   },
-   "name": "install_hub_policy_malformed_missing_keys"
-  },
-  {
-   "args": {
-    "ctx": {
-     "actor": "human",
-     "builtin": [
-      "wiki",
-      "terminals",
-      "dashboard"
-     ],
-     "core_version": "2.0.1",
-     "git_hosts": [
-      "github.com",
-      "gitlab.com"
-     ],
-     "hub": {
-      "allow": [
-       "https://github.com/acme/orch-market"
-      ],
-      "block": null,
-      "ceiling": null
-     },
-     "installed": {},
-     "isolation": true,
-     "known_keys": {},
-     "last_version": null,
-     "market_repo": "https://github.com/acme/orch-market",
-     "moved": [],
-     "official": {
-      "key": "BAYGApN98T-m-Q1gqXbIky7trtXKFfaI_RSPgR10Ypqgi5I_8C7edQPRlq56hZe_venVzP_SBaWTXXm6dr45hPs",
-      "repo": "https://github.com/severinlindenmann/orch-marketplace"
-     },
-     "official_ids": [
-      "github",
-      "landing"
-     ],
-     "seen": {}
-    },
-    "files": {
-     "main.py": "print('hello')\n",
-     "orch-addon.json": "{\"api\": \">=1.1,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"{python}\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"standup\", \"schema\": \"orch.addon/3\", \"title\": \"Standup\", \"version\": \"1.0.0\"}"
-    },
-    "id": "standup",
-    "index": {
-     "addons": [
-      {
-       "capabilities": [
-        "network"
-       ],
-       "commit": "0123456789abcdef0123456789abcdef01234567",
-       "id": "standup",
-       "min_orch": "2.0.0",
-       "package_sha256": "sha256:e267e2511527befc96cc8c2a22529e1b8587fa35983a1e7c5a240e169b7e4d9b",
-       "source": {
-        "git": "https://github.com/acme/standup",
-        "subdir": "pkg"
-       },
-       "version": "1.0.0"
-      }
-     ],
-     "format": "orch.market/1",
-     "name": "acme-market",
-     "source": {
-      "git": "https://github.com/acme/orch-market"
-     },
-     "version": 7
-    }
-   },
-   "check": "install",
-   "expect": {
-    "refuse": "market.not_allowed"
-   },
-   "name": "install_hub_policy_malformed_block_is_null"
-  },
-  {
-   "args": {
-    "ctx": {
-     "actor": "human",
-     "builtin": [
-      "wiki",
-      "terminals",
-      "dashboard"
-     ],
-     "core_version": "2.0.1",
-     "git_hosts": [
-      "github.com",
-      "gitlab.com"
-     ],
-     "hub": {
-      "allow": [
-       "https://github.com/acme/orch-market"
-      ],
-      "block": [],
-      "ceiling": "network"
-     },
-     "installed": {},
-     "isolation": true,
-     "known_keys": {},
-     "last_version": null,
-     "market_repo": "https://github.com/acme/orch-market",
-     "moved": [],
-     "official": {
-      "key": "BAYGApN98T-m-Q1gqXbIky7trtXKFfaI_RSPgR10Ypqgi5I_8C7edQPRlq56hZe_venVzP_SBaWTXXm6dr45hPs",
-      "repo": "https://github.com/severinlindenmann/orch-marketplace"
-     },
-     "official_ids": [
-      "github",
-      "landing"
-     ],
-     "seen": {}
-    },
-    "files": {
-     "main.py": "print('hello')\n",
-     "orch-addon.json": "{\"api\": \">=1.1,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"{python}\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"standup\", \"schema\": \"orch.addon/3\", \"title\": \"Standup\", \"version\": \"1.0.0\"}"
-    },
-    "id": "standup",
-    "index": {
-     "addons": [
-      {
-       "capabilities": [
-        "network"
-       ],
-       "commit": "0123456789abcdef0123456789abcdef01234567",
-       "id": "standup",
-       "min_orch": "2.0.0",
-       "package_sha256": "sha256:e267e2511527befc96cc8c2a22529e1b8587fa35983a1e7c5a240e169b7e4d9b",
-       "source": {
-        "git": "https://github.com/acme/standup",
-        "subdir": "pkg"
-       },
-       "version": "1.0.0"
-      }
-     ],
-     "format": "orch.market/1",
-     "name": "acme-market",
-     "source": {
-      "git": "https://github.com/acme/orch-market"
-     },
-     "version": 7
-    }
-   },
-   "check": "install",
-   "expect": {
-    "refuse": "market.not_allowed"
-   },
-   "name": "install_hub_policy_malformed_ceiling_is_a_string"
-  },
-  {
-   "args": {
-    "ctx": {
-     "actor": "human",
-     "builtin": [
-      "wiki",
-      "terminals",
-      "dashboard"
-     ],
-     "core_version": "2.0.1",
-     "git_hosts": [
-      "github.com",
-      "gitlab.com"
-     ],
-     "hub": {
-      "allow": [
-       "https://github.com/acme/orch-market"
-      ],
-      "block": [],
-      "ceiling": [
-       "root"
-      ]
-     },
-     "installed": {},
-     "isolation": true,
-     "known_keys": {},
-     "last_version": null,
-     "market_repo": "https://github.com/acme/orch-market",
-     "moved": [],
-     "official": {
-      "key": "BAYGApN98T-m-Q1gqXbIky7trtXKFfaI_RSPgR10Ypqgi5I_8C7edQPRlq56hZe_venVzP_SBaWTXXm6dr45hPs",
-      "repo": "https://github.com/severinlindenmann/orch-marketplace"
-     },
-     "official_ids": [
-      "github",
-      "landing"
-     ],
-     "seen": {}
-    },
-    "files": {
-     "main.py": "print('hello')\n",
-     "orch-addon.json": "{\"api\": \">=1.1,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"{python}\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"standup\", \"schema\": \"orch.addon/3\", \"title\": \"Standup\", \"version\": \"1.0.0\"}"
-    },
-    "id": "standup",
-    "index": {
-     "addons": [
-      {
-       "capabilities": [
-        "network"
-       ],
-       "commit": "0123456789abcdef0123456789abcdef01234567",
-       "id": "standup",
-       "min_orch": "2.0.0",
-       "package_sha256": "sha256:e267e2511527befc96cc8c2a22529e1b8587fa35983a1e7c5a240e169b7e4d9b",
-       "source": {
-        "git": "https://github.com/acme/standup",
-        "subdir": "pkg"
-       },
-       "version": "1.0.0"
-      }
-     ],
-     "format": "orch.market/1",
-     "name": "acme-market",
-     "source": {
-      "git": "https://github.com/acme/orch-market"
-     },
-     "version": 7
-    }
-   },
-   "check": "install",
-   "expect": {
-    "refuse": "market.not_allowed"
-   },
-   "name": "install_hub_policy_malformed_ceiling_unknown_capability"
-  },
-  {
-   "args": {
-    "ctx": {
-     "actor": "human",
-     "builtin": [
-      "wiki",
-      "terminals",
-      "dashboard"
-     ],
-     "core_version": "2.0.1",
-     "git_hosts": [
-      "github.com",
-      "gitlab.com"
-     ],
-     "hub": {
-      "allow": [
-       "https://github.com/acme/orch-market"
-      ],
-      "block": [],
-      "ceiling": null,
-      "widen": [
-       "pty"
-      ]
-     },
-     "installed": {},
-     "isolation": true,
-     "known_keys": {},
-     "last_version": null,
-     "market_repo": "https://github.com/acme/orch-market",
-     "moved": [],
-     "official": {
-      "key": "BAYGApN98T-m-Q1gqXbIky7trtXKFfaI_RSPgR10Ypqgi5I_8C7edQPRlq56hZe_venVzP_SBaWTXXm6dr45hPs",
-      "repo": "https://github.com/severinlindenmann/orch-marketplace"
-     },
-     "official_ids": [
-      "github",
-      "landing"
-     ],
-     "seen": {}
-    },
-    "files": {
-     "main.py": "print('hello')\n",
-     "orch-addon.json": "{\"api\": \">=1.1,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"{python}\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"standup\", \"schema\": \"orch.addon/3\", \"title\": \"Standup\", \"version\": \"1.0.0\"}"
-    },
-    "id": "standup",
-    "index": {
-     "addons": [
-      {
-       "capabilities": [
-        "network"
-       ],
-       "commit": "0123456789abcdef0123456789abcdef01234567",
-       "id": "standup",
-       "min_orch": "2.0.0",
-       "package_sha256": "sha256:e267e2511527befc96cc8c2a22529e1b8587fa35983a1e7c5a240e169b7e4d9b",
-       "source": {
-        "git": "https://github.com/acme/standup",
-        "subdir": "pkg"
-       },
-       "version": "1.0.0"
-      }
-     ],
-     "format": "orch.market/1",
-     "name": "acme-market",
-     "source": {
-      "git": "https://github.com/acme/orch-market"
-     },
-     "version": 7
-    }
-   },
-   "check": "install",
-   "expect": {
-    "refuse": "market.not_allowed"
-   },
-   "name": "install_hub_policy_malformed_unknown_key"
-  },
-  {
-   "args": {
-    "ctx": {
-     "actor": "human",
-     "builtin": [
-      "wiki",
-      "terminals",
-      "dashboard"
-     ],
-     "core_version": "2.0.1",
-     "git_hosts": [
-      "github.com",
-      "gitlab.com"
-     ],
-     "hub": {
-      "allow": [
-       "https://github.com/acme/orch-market.git"
-      ],
-      "block": [],
-      "ceiling": null
-     },
-     "installed": {},
-     "isolation": true,
-     "known_keys": {},
-     "last_version": null,
-     "market_repo": "https://github.com/acme/orch-market",
-     "moved": [],
-     "official": {
-      "key": "BAYGApN98T-m-Q1gqXbIky7trtXKFfaI_RSPgR10Ypqgi5I_8C7edQPRlq56hZe_venVzP_SBaWTXXm6dr45hPs",
-      "repo": "https://github.com/severinlindenmann/orch-marketplace"
-     },
-     "official_ids": [
-      "github",
-      "landing"
-     ],
-     "seen": {}
-    },
-    "files": {
-     "main.py": "print('hello')\n",
-     "orch-addon.json": "{\"api\": \">=1.1,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"{python}\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"standup\", \"schema\": \"orch.addon/3\", \"title\": \"Standup\", \"version\": \"1.0.0\"}"
-    },
-    "id": "standup",
-    "index": {
-     "addons": [
-      {
-       "capabilities": [
-        "network"
-       ],
-       "commit": "0123456789abcdef0123456789abcdef01234567",
-       "id": "standup",
-       "min_orch": "2.0.0",
-       "package_sha256": "sha256:e267e2511527befc96cc8c2a22529e1b8587fa35983a1e7c5a240e169b7e4d9b",
-       "source": {
-        "git": "https://github.com/acme/standup",
-        "subdir": "pkg"
-       },
-       "version": "1.0.0"
-      }
-     ],
-     "format": "orch.market/1",
-     "name": "acme-market",
-     "source": {
-      "git": "https://github.com/acme/orch-market"
-     },
-     "version": 7
-    }
-   },
-   "check": "install",
-   "expect": {
-    "refuse": "market.not_allowed"
-   },
-   "name": "install_hub_policy_malformed_non_canonical_allow_url"
-  },
-  {
-   "args": {
-    "ctx": {
-     "actor": "human",
-     "builtin": [
-      "wiki",
-      "terminals",
-      "dashboard"
-     ],
-     "core_version": "2.0.1",
-     "git_hosts": [
-      "github.com",
-      "gitlab.com"
-     ],
-     "hub": [
-      "allow"
-     ],
-     "installed": {},
-     "isolation": true,
-     "known_keys": {},
-     "last_version": null,
-     "market_repo": "https://github.com/acme/orch-market",
-     "moved": [],
-     "official": {
-      "key": "BAYGApN98T-m-Q1gqXbIky7trtXKFfaI_RSPgR10Ypqgi5I_8C7edQPRlq56hZe_venVzP_SBaWTXXm6dr45hPs",
-      "repo": "https://github.com/severinlindenmann/orch-marketplace"
-     },
-     "official_ids": [
-      "github",
-      "landing"
-     ],
-     "seen": {}
-    },
-    "files": {
-     "main.py": "print('hello')\n",
-     "orch-addon.json": "{\"api\": \">=1.1,<2\", \"capabilities\": [\"network\"], \"entry\": {\"cmd\": [\"{python}\", \"{pkg}/main.py\"]}, \"min_core\": \"2.0.0\", \"name\": \"standup\", \"schema\": \"orch.addon/3\", \"title\": \"Standup\", \"version\": \"1.0.0\"}"
-    },
-    "id": "standup",
-    "index": {
-     "addons": [
-      {
-       "capabilities": [
-        "network"
-       ],
-       "commit": "0123456789abcdef0123456789abcdef01234567",
-       "id": "standup",
-       "min_orch": "2.0.0",
-       "package_sha256": "sha256:e267e2511527befc96cc8c2a22529e1b8587fa35983a1e7c5a240e169b7e4d9b",
-       "source": {
-        "git": "https://github.com/acme/standup",
-        "subdir": "pkg"
-       },
-       "version": "1.0.0"
-      }
-     ],
-     "format": "orch.market/1",
-     "name": "acme-market",
-     "source": {
-      "git": "https://github.com/acme/orch-market"
-     },
-     "version": 7
-    }
-   },
-   "check": "install",
-   "expect": {
-    "refuse": "market.not_allowed"
-   },
-   "name": "install_hub_policy_malformed_not_an_object"
-  },
-  {
-   "args": {
-    "ctx": {
-     "actor": "human",
-     "builtin": [
-      "wiki",
-      "terminals",
-      "dashboard"
-     ],
-     "core_version": "2.0.1",
-     "git_hosts": [
-      "github.com",
-      "gitlab.com"
-     ],
-     "hub": null,
      "installed": {
       "standup": {
        "origin": "https://github.com/acme/orch-market",
@@ -7761,7 +6508,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {
       "standup": {
        "origin": "https://github.com/acme/orch-market",
@@ -7834,7 +6580,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -7906,7 +6651,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -7974,7 +6718,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},
@@ -8047,7 +6790,6 @@
       "github.com",
       "gitlab.com"
      ],
-     "hub": null,
      "installed": {},
      "isolation": true,
      "known_keys": {},

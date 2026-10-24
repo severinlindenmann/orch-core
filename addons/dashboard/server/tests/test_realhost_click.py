@@ -200,7 +200,7 @@ def test_a_view_that_is_not_the_one_built_is_refused(world, click):
     assert ok.status_code == 200, ok.text
 
 
-def test_a_word_op_needs_the_word_the_view_shows(world, click):
+def test_a_policy_op_signs_on_one_click_and_takes_no_word(world, click):
     policy = {
         "approvers": ["owner"],
         "count": 1,
@@ -210,17 +210,14 @@ def test_a_word_op_needs_the_word_the_view_shows(world, click):
     }
     got = click.prepare({"action": "policy_set", "gate": "requirements", "policy": policy})
     assert got.status_code == 200, got.text
-    assert got.json()["confirm"] == "word"
+    assert got.json()["confirm"] == "click"
     rid = got.json()["request_id"]
     view = click.post("view", {"request_id": rid}).json()
-    word = view["view"]["confirm"]["word"]
-    assert view["view"]["confirm"]["kind"] == "word" and word.endswith("/POLICY") and "~" in word
+    assert view["view"]["confirm"] == {"kind": "click"}
     time.sleep(1.2)
-    for wrong in (None, "policy", word.lower()):
-        body = {"request_id": rid, "view_digest": view["view_digest"], **({"word": wrong} if wrong else {})}
-        res = click.post("sign", body)
-        assert res.status_code == 409 and res.json()["error"]["reason"] == "word", wrong
-    ok = click.post("sign", {"request_id": rid, "view_digest": view["view_digest"], "word": word})
+    typed = click.post("sign", {"request_id": rid, "view_digest": view["view_digest"], "word": "POLICY"})
+    assert typed.status_code == 400 or typed.status_code == 422  # contract 3: there is no word field
+    ok = click.post("sign", {"request_id": rid, "view_digest": view["view_digest"]})
     assert ok.status_code == 200, ok.text
 
 

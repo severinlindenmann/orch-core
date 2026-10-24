@@ -64,7 +64,7 @@ def _valid_record(url: str, rec: Any) -> bool:
         if not isinstance(v, types) or (isinstance(v, bool) and bool not in types):
             return False
     return (
-        rec["class"] in ("official", "dev", "other")
+        rec["class"] in ("official", "dev", "company", "other")
         and _COMMIT.fullmatch(rec["index_commit"]) is not None
         and _HEX64.fullmatch(rec["index_sha256"]) is not None
         and (rec["payload_sha256"] is None or _HEX64.fullmatch(rec["payload_sha256"]) is not None)

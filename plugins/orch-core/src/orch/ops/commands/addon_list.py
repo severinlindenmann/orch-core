@@ -27,11 +27,11 @@ def _credential(c: Call, name: str, state: str, capabilities: Any) -> str | None
 
 
 def handle(ctx: Context, args: dict[str, Any]) -> Result:
-    """Granted addons (with their state: active, disabled, purged, changed since the grant, missing) and packages that
-    are installed but not granted (``not_granted``). ``enabled`` is true only for an active addon. A row of an
-    active addon that holds ``credential``
-    also has ``credential``: ``stored``, ``missing`` or ``unsafe``. P1: this is the one place that loads the
-    registry; P2 loads it for every call that runs or writes an addon."""
+    """Granted addons (with their state: active, disabled, purged, changed since the grant, missing, paused by the
+    hub policy) and packages that are installed but not granted (``not_granted``). ``enabled`` is true only for an
+    active addon. A row of an active addon that holds ``credential`` also has ``credential``: ``stored``, ``missing``
+    or ``unsafe``. P1: this is the one place that loads the registry; P2 loads it for every call that runs or writes
+    an addon."""
     c = Call.of(ctx, "addon.list")
     c.ws.require_root()
     root = c.store.layout.store  # addons/ lives in the store
@@ -42,16 +42,25 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     lines: list[str] = []
     for name in sorted(granted):
         state = registry.state(name)
+        pause = ctx.addon_pause(granted[name]) if ctx.addon_pause is not None and state == "active" else None
+        if pause is not None:  # the hub policy pauses it: not active, so nothing that reads "on" from here turns it on
+            state = "paused"
         row: dict[str, Any] = {
             "name": name, "version": granted[name].version, "enabled": state == "active", "state": state,
         }  # fmt: skip
         if state == "active":
             row["capabilities"] = sorted(granted[name].capabilities)  # the grant's own, for a capability gate
+        if pause is not None:
+            row["paused"] = {k: v for k, v in pause.items() if v is not None}
         held = _credential(c, name, state, granted[name].capabilities)
         if held is not None:
             row["credential"] = held
         rows.append(row)
         note = " since the grant: orch addon grant " + name if state == "changed" else ""
+        if pause is not None:
+            note = f" by hub policy ({pause['code']})" + (
+                f"; reconnect: {pause['reconnect']}" if pause["reconnect"] else ""
+            )
         lines.append(f"{name} {granted[name].version} {state}{note}")
     for name in install.installed_names(root):
         if name in granted:
@@ -87,8 +96,9 @@ OP = operation(
                         "state": STR,
                         "credential": STR,
                         "capabilities": arr(STR),
+                        "paused": obj({"code": STR, "cause": STR, "reconnect": STR}, optional=("reconnect",)),
                     },
-                    optional=("credential", "capabilities"),
+                    optional=("credential", "capabilities", "paused"),
                 )
             ),
         }

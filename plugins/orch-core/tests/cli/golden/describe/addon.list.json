@@ -53,6 +53,25 @@
                   "items": {
                     "type": "string"
                   }
+                },
+                "paused": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "cause": {
+                      "type": "string"
+                    },
+                    "reconnect": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "cause"
+                  ],
+                  "additionalProperties": false
                 }
               },
               "required": [

@@ -1020,6 +1020,8 @@ class RegistryBackend:
         from orch.ops import Context
         from orch.ops.runtime import Workspace
 
+        from . import hubpolicy
+
         service = call.service
         caps = service.caps_for(call.principal)  # pins up to date; git reads run under the caller (F10)
         workspace = Workspace.hosted(
@@ -1041,6 +1043,7 @@ class RegistryBackend:
             unserved=frozenset(NOT_SERVED),
             wait_step=step,
             prepare=prepare,
+            addon_pause=lambda granted: hubpolicy.pause_of(service, granted),
         )
 
     def _run(self, operation: Operation, args: dict[str, Any], ctx: Any, call: Call) -> dict[str, Any]:

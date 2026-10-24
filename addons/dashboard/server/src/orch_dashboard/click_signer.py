@@ -18,9 +18,7 @@ from pathlib import Path
 
 from .errors import HostError, fail
 
-CONTRACTS = (1, 2)  # 2: the signer can hand a runner grant to the runner (deposit-only grant mode, H11c-2)
-#: The first contract that hands a runner grant to the runner (contract 1 reads every `grant` as terminal only).
-DEPOSIT_CONTRACT = 2
+CONTRACTS = (3,)  # 3: click-only confirmation (no typed word); the signer hands a runner grant to the runner
 #: `ORCH_DASHBOARD_CLICK=off` never starts a signer (a kill switch; the tests use it unless they test the signer).
 SWITCH = "ORCH_DASHBOARD_CLICK"
 RESTART_AFTER = 1.0  # seconds: a signer that dies at once is not respawned in a tight loop
@@ -69,7 +67,7 @@ class Signer:
         self.unsettled: Callable[[], bool] = lambda: False  # set by the routes: is a signature's outcome unknown?
         self.client = None
         self.core: str | None = None
-        self.contract: int | None = None  # the running signer's contract (1 or 2), once started
+        self.contract: int | None = None  # the running signer's contract (3), once started
         self.features: frozenset[str] = frozenset()  # the running signer's `status.features` (strings only)
         self.last_spawn = -1e9
         self.refused: tuple[float, HostError] | None = None  # a signer of another contract: until this time
@@ -103,7 +101,7 @@ class Signer:
                 pass
 
     def _ensure(self):
-        """The running signer, started (or restarted) if needed, and checked: its status must say `contract` 1 or 2."""
+        """The running signer, started (or restarted) if needed, and checked: its status must say `contract` 3."""
         if self.off:
             raise unavailable("Click-to-sign is switched off for this server.")
         if self.refused and self.clock() < self.refused[0]:
@@ -130,7 +128,7 @@ class Signer:
                 pass
             raise unavailable() from None
         contract = status.get("contract")
-        if type(contract) is not int or contract not in CONTRACTS:  # strict: True is not 1, "2" is not 2
+        if type(contract) is not int or contract not in CONTRACTS:  # strict: True is not 1, "3" is not 3
             try:
                 client.close()
             except Exception:  # noqa: BLE001
@@ -139,18 +137,12 @@ class Signer:
             self.refused = (self.clock() + CONTRACT_RETRY, error)
             raise error
         self.refused = None
-        self.contract = contract  # 2 means the signer supports runner-grant deposit
+        self.contract = contract
         got = status.get("features")
         self.features = frozenset(f for f in got if type(f) is str) if isinstance(got, list) else frozenset()
         self.core = str(status.get("core"))[:40]
         self.client = client
         return client
-
-    def deposits(self) -> bool:
-        """Does the running signer (started now if needed) hand a runner grant to the runner? Contract 2 and later."""
-        with self.lock:
-            self._ensure()
-            return (self.contract or 0) >= DEPOSIT_CONTRACT
 
     def switchable(self) -> bool:
         """Can the running signer (started now if needed) switch click-to-sign on and off? Never raises."""

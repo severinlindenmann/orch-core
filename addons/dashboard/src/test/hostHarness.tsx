@@ -219,7 +219,7 @@ export class FakeHost {
   requests = new Map<string, HandoffRequest>()
   cancelled: string[] = []
   /** Click-to-sign: what the fake signer was asked, and the Views it shows (by request id). */
-  clickRequests = new Map<string, { op: string; confirm: 'click' | 'word' }>()
+  clickRequests = new Map<string, { op: string; confirm: 'click' }>()
   clickCancelled: string[] = []
   clickSigned: Record<string, unknown>[] = []
   clickCount = 0
@@ -298,7 +298,7 @@ export class FakeHost {
     if (rest === 'click/prepare' && method === 'POST') {
       const request = prepare(body!)
       const id = 'hr_' + String(++this.clickCount).padStart(26, '0')
-      const confirm = request.op === 'policy.set' || request.op.startsWith('member.') ? 'word' : 'click'
+      const confirm = 'click'
       this.clickRequests.set(id, { op: request.op, confirm })
       return json({ request_id: id, expires_at: request.expires_at, op: request.op, confirm })
     }
@@ -314,7 +314,7 @@ export class FakeHost {
           fingerprint: '0123456789ab',
           lines: [`FROM-THE-SIGNER ${got.op}`],
           checks: [],
-          confirm: got.confirm === 'word' ? { kind: 'word', word: `${ws.prefix}~${ws.id.slice(-8)}/POLICY` } : { kind: 'click' },
+          confirm: { kind: 'click' },
           expires_at: new Date(Date.now() + 600_000).toISOString(),
           auth: 'convenience',
           device: 'd_' + '1'.repeat(32),

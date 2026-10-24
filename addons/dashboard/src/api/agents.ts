@@ -96,7 +96,6 @@ export const SHARED_COPY = "the repository's shared working copy (not a separate
 
 export const TERMINAL_ONLY = 'Turn on dashboard execution (orch runner enable) or use the terminal.'
 export const TERMINAL_GRANT = 'Run `orch grant --runner` in your terminal.'
-export const UPDATE_ORCH = "This orch version can't hand a grant to the runner; update orch."
 export const DEPOSIT_UNKNOWN = 'The grant may or may not be with your runner. Revoke it to be sure.'
 
 /** Each closed `deposit_reason` as one sentence; an unknown code reads as `other`. */

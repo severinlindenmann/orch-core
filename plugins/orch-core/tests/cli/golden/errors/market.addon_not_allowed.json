@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "market.addon_not_allowed",
+    "message": "the hub does not allow this add-on",
+    "hint": "ask the hub admin",
+    "fix": {
+      "argv": [
+        "orch",
+        "market",
+        "list"
+      ]
+    },
+    "retryable": false
+  }
+}

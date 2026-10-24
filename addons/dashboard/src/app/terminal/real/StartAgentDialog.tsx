@@ -11,7 +11,7 @@ import { toast } from 'sonner'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   AGENT_MODES, agentsApi, blockedText, HARNESSES, cwdText, DEPOSIT_UNKNOWN, depositReason, runnerQuery, SHARED_COPY, TERMINAL_GRANT,
-  TERMINAL_ONLY, UPDATE_ORCH, LOGIN_NOTICE, worktreeLine, type AgentArgs, type AgentMode, type AgentPreview, type Harness, type Runner,
+  TERMINAL_ONLY, LOGIN_NOTICE, worktreeLine, type AgentArgs, type AgentMode, type AgentPreview, type Harness, type Runner,
 } from '@/api/agents'
 import { clickReady, DEPOSIT_RISK, depositViewOk, type ClickAction } from '@/api/click'
 import { newIdem, type Run } from '@/api/runs'
@@ -679,7 +679,7 @@ export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initi
         }} onClose={() => setHandoff(false)} />}
       {(click.phase === 'preparing' || click.phase === 'viewing') && <Skeleton className="h-16" />}
       {view && (click.phase === 'ready' || click.phase === 'signing') && (viewOk ? (
-        <ClickSignPanel ws={ws} story={storyOf(action)} answer={view} problem={click.problem} signing={click.phase === 'signing'} onSign={(w) => void click.sign(w)} onCancel={() => void click.cancel().then(() => click.reset(true))} />
+        <ClickSignPanel ws={ws} story={storyOf(action)} answer={view} problem={click.problem} signing={click.phase === 'signing'} onSign={() => void click.sign()} onCancel={() => void click.cancel().then(() => click.reset(true))} />
       ) : (
         <p role="alert" className="text-danger" data-testid="runner-grant-bad-view">The review does not say where the grant goes. Nothing was signed. <Button size="xs" variant="ghost" onClick={() => void click.cancel().then(() => click.reset(true))}>Cancel</Button></p>
       ))}
@@ -712,7 +712,7 @@ function RevokeStep({ grant, click }: { grant: string; click: ReturnType<typeof 
   const action: ClickAction = { action: 'grant_revoke', grant }
   if (click.phase === 'done') return <p className="text-text">Revoked.</p>
   if (click.view && (click.phase === 'ready' || click.phase === 'signing'))
-    return <ClickSignPanel answer={click.view} problem={click.problem} signing={click.phase === 'signing'} onSign={(w) => void click.sign(w)} onCancel={() => void click.cancel().then(() => click.reset(true))} />
+    return <ClickSignPanel answer={click.view} problem={click.problem} signing={click.phase === 'signing'} onSign={() => void click.sign()} onCancel={() => void click.cancel().then(() => click.reset(true))} />
   return (
     <div className="mt-1 flex flex-wrap items-center gap-2">
       <Button size="xs" variant="outline" disabled={click.phase !== 'idle' && click.phase !== 'failed'} onClick={() => void (click.phase === 'failed' ? click.again(action) : click.start(action))}>Revoke grant</Button>
@@ -731,7 +731,7 @@ export const FIND_GRANT = 'Its id did not reach this page: revoke your newest ru
 /** The grant's refusals before signing, in the approved words. */
 export function refusalText(e: unknown): string | null {
   if (!(e instanceof ApiError)) return null
-  if (e.code === 'human.click_refused' && e.reason === 'terminal_only') return e.why === 'update_orch' ? UPDATE_ORCH : TERMINAL_ONLY
+  if (e.code === 'human.click_refused' && e.reason === 'terminal_only') return TERMINAL_ONLY
   if (e.code === 'human.click_refused' && e.reason === 'disabled') return TERMINAL_GRANT // review I4: click is off here
   if (e.code === 'click.unavailable' || e.code === 'click.contract' || e.code === 'sign.convenience_unavailable') return TERMINAL_GRANT
   return null

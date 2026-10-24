@@ -3914,7 +3914,7 @@
      "id": "acme-tool",
      "index_key": null,
      "market_url": "https://git.acme.example/tools/orch-market",
-     "publisher_key": null,
+     "publisher_key": "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns",
      "stage": "run",
      "version": "1.2.0"
     }
@@ -3924,6 +3924,188 @@
     "ok": true
    },
    "name": "eval_run_company_market_listed_ok"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": [
+       "landing"
+      ],
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    },
+    "req": {
+     "capabilities": [],
+     "id": "github",
+     "index_key": null,
+     "market_url": "https://github.com/severinlindenmann/orch-marketplace",
+     "publisher_key": null,
+     "stage": "run",
+     "version": "1.2.0"
+    }
+   },
+   "check": "evaluate",
+   "expect": {
+    "error": "market.addon_not_allowed"
+   },
+   "name": "eval_run_allow_not_listed"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": [
+       "github"
+      ],
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    },
+    "req": {
+     "capabilities": [],
+     "id": "github",
+     "index_key": null,
+     "market_url": "https://github.com/severinlindenmann/orch-marketplace",
+     "publisher_key": null,
+     "stage": "run",
+     "version": "1.2.0"
+    }
+   },
+   "check": "evaluate",
+   "expect": {
+    "ok": true
+   },
+   "name": "eval_run_allow_listed_ok"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": [
+       "landing"
+      ],
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    },
+    "req": {
+     "capabilities": [],
+     "id": "terminals",
+     "index_key": null,
+     "market_url": "",
+     "publisher_key": null,
+     "stage": "run",
+     "version": "1.2.0"
+    }
+   },
+   "check": "evaluate",
+   "expect": {
+    "ok": true
+   },
+   "name": "eval_run_allow_does_not_apply_to_a_builtin"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "company",
+       "keys": [
+        "BCejTh71Baqz1ZiwUP6MfSMzpAhmNCYgRu7diVR6q7r10oB62H52URuEgZq1cS22QE5nE1ng5c-97yvbCheugys",
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/tools/orch-market"
+      },
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    },
+    "req": {
+     "capabilities": [],
+     "id": "acme-tool",
+     "index_key": null,
+     "market_url": "https://git.acme.example/tools/orch-market",
+     "publisher_key": "BMw6sSHtXsD4XiAl4_-dVjUbVsY5psaD0T6leF7Qr3PK7zBc5c2wsrcfZcE8h-KkYavBxOJg6fb-MTDjEloefSo",
+     "stage": "run",
+     "version": "1.2.0"
+    }
+   },
+   "check": "evaluate",
+   "expect": {
+    "error": "market.publisher_unpinned"
+   },
+   "name": "eval_run_company_key_no_longer_pinned"
+  },
+  {
+   "args": {
+    "policy": {
+     "addons": {
+      "allow": null,
+      "block": []
+     },
+     "ceiling": null,
+     "markets": [
+      {
+       "class": "company",
+       "keys": [
+        "BCejTh71Baqz1ZiwUP6MfSMzpAhmNCYgRu7diVR6q7r10oB62H52URuEgZq1cS22QE5nE1ng5c-97yvbCheugys",
+        "BKkAgsWUl0u99szf7HdtQ6-y2Dfz7H2zHzO3dlKJKn5GJiGVwT0iiKSbjwlUXSITIvefpRiV6dNNIrJI9rVK3ns"
+       ],
+       "url": "https://git.acme.example/tools/orch-market"
+      },
+      {
+       "class": "official",
+       "keys": [],
+       "url": "https://github.com/severinlindenmann/orch-marketplace"
+      }
+     ]
+    },
+    "req": {
+     "capabilities": [],
+     "id": "acme-tool",
+     "index_key": null,
+     "market_url": "https://git.acme.example/tools/orch-market",
+     "publisher_key": null,
+     "stage": "run",
+     "version": "1.2.0"
+    }
+   },
+   "check": "evaluate",
+   "expect": {
+    "error": "market.publisher_unpinned"
+   },
+   "name": "eval_run_company_without_a_recorded_key"
   },
   {
    "args": {

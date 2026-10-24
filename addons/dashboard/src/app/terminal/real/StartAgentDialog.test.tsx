@@ -22,7 +22,6 @@ const GRANT = 'gr_01M4Y46B485AXD4CBEJZ15Z1TV'
 const REQ = 'hr_01M4Y46B485AXD4CBEJZ15Z1TV'
 const UNTIL = '2026-10-15T20:00:00Z'
 const SOON = new Date(Date.now() + 2 * 86_400_000).toISOString() // a grant that is still valid
-const WORD = `DEMO~${WS.slice(-8)}/GRANT`
 
 const preview = (over: Partial<AgentPreview> = {}): AgentPreview => ({
   spec: 'f'.repeat(64), ticket: 'DEMO-1', display: "claude 'Run orch status, then work on ticket DEMO-1.'", display_hidden: false,
@@ -38,7 +37,7 @@ const grantView = (over: Partial<ClickViewAnswer['view']> = {}): ClickViewAnswer
   view_digest: 'sha256:' + 'c'.repeat(64),
   view: {
     risk: CLICK_RISK, op: 'grant', workspace: { id: WS, name: 'billing', prefix: 'DEMO' }, fingerprint: '0123456789ab',
-    lines: ['grant to agents, 8 hours, workable', '', DEPOSIT_RISK, DEPOSIT_LINE], checks: [], confirm: { kind: 'word', word: WORD },
+    lines: ['grant to agents, 8 hours, workable', '', DEPOSIT_RISK, DEPOSIT_LINE], checks: [], confirm: { kind: 'click' },
     expires_at: new Date(Date.now() + 600_000).toISOString(), auth: 'convenience', device: 'd_x', artifacts: null,
     deposit: true, deposit_line: DEPOSIT_LINE, ...over,
   },
@@ -65,7 +64,7 @@ beforeEach(() => {
     forget: vi.spyOn(agentsApi, 'forget').mockResolvedValue({ forgotten: true }),
     notices: vi.spyOn(agentsApi, 'riskNotices').mockResolvedValue({ acknowledged: {} }),
     acknowledge: vi.spyOn(agentsApi, 'acknowledge').mockResolvedValue({ acknowledged: { start_agent: true } }),
-    prepare: vi.spyOn(api, 'prepareClick').mockResolvedValue({ request_id: REQ, expires_at: new Date(Date.now() + 600_000).toISOString(), op: 'grant', confirm: 'word' }),
+    prepare: vi.spyOn(api, 'prepareClick').mockResolvedValue({ request_id: REQ, expires_at: new Date(Date.now() + 600_000).toISOString(), op: 'grant', confirm: 'click' }),
     view: vi.spyOn(api, 'viewClick').mockResolvedValue(grantView()),
     sign: vi.spyOn(api, 'signClick').mockResolvedValue({ state: 'submitted', duplicate: false, deposit: 'confirmed', deposit_id: REQ.slice(3), grant: GRANT }),
     cancel: vi.spyOn(api, 'cancelClick').mockResolvedValue({ id: REQ, state: 'cancelled' }),
@@ -246,7 +245,6 @@ const noGrant = (reason: 'none' | 'expiring' | 'scope' | 'revoked' = 'none') =>
 async function issueAndSign() {
   fireEvent.click(await screen.findByTestId('runner-grant-issue', {}, T))
   const panel = await screen.findByTestId('click-panel', {}, T)
-  fireEvent.change(within(panel).getByRole('textbox'), { target: { value: WORD } }) // the View's word, typed
   const sign = within(panel).getByRole('button', { name: /^Sign and allow access$/ })
   await waitFor(() => expect(sign).toBeEnabled(), { timeout: ARM_MS + 2000 })
   fireEvent.pointerDown(sign)
@@ -297,7 +295,7 @@ describe('the runner grant', () => {
     s.runner.mockResolvedValue({ runner: runner({ grant: { id: GRANT, until: UNTIL, scope: 'all' } }) })
     await issueAndSign()
     expect(s.prepare.mock.calls[0][1]).toEqual({ action: 'runner_grant', hours: 24, scope: 'all' })
-    expect(s.sign.mock.calls[0][3]).toBe(WORD)
+    expect(s.sign.mock.calls[0][3]).toBeUndefined() // nothing typed, no word sent
     expect(await screen.findByTestId('runner-grant-confirmed', {}, T)).toBeInTheDocument()
   })
 
@@ -360,7 +358,6 @@ describe('the runner grant', () => {
   })
 
   it.each([
-    [{ code: 'human.click_refused', reason: 'terminal_only', why: 'update_orch' }, "This orch version can't hand a grant to the runner; update orch."],
     [{ code: 'human.click_refused', reason: 'terminal_only' }, 'Turn on dashboard execution (orch runner enable) or use the terminal.'],
     [{ code: 'click.unavailable' }, 'Run `orch grant --runner` in your terminal.'],
   ])('refusal %o says %s', async (err, text) => {
@@ -489,7 +486,7 @@ describe('a short, calm dialog (U6)', () => {
     expect(await screen.findByTestId('agent-start', {}, T)).toHaveTextContent('Sign and start agent')
   })
 
-  it('no access: signing the access (word typed inline) starts the agent and says it once', async () => {
+  it('no access: signing the access (one click) starts the agent and says it once', async () => {
     s.runner.mockResolvedValue({ runner: runner() })
     s.preview.mockResolvedValue(noGrant())
     const { onStarted } = mount()
@@ -500,7 +497,6 @@ describe('a short, calm dialog (U6)', () => {
     expect(s.prepare.mock.calls[0][1]).toEqual({ action: 'runner_grant', hours: 8, scope: 'workable' })
     s.runner.mockResolvedValue({ runner: runner({ grant: { id: GRANT, until: SOON, scope: 'workable' } }) })
     s.preview.mockResolvedValue(preview())
-    fireEvent.change(within(panel).getByRole('textbox'), { target: { value: WORD } })
     const sign = within(panel).getByRole('button', { name: /^Sign and start agent$/ })
     await waitFor(() => expect(sign).toBeEnabled(), { timeout: ARM_MS + 2000 })
     fireEvent.pointerDown(sign)
@@ -528,7 +524,6 @@ describe('a short, calm dialog (U6)', () => {
     const panel = await screen.findByTestId('click-panel', {}, T)
     s.runner.mockResolvedValue({ runner: runner({ grant: { id: GRANT, until: SOON, scope: 'workable' } }) })
     s.preview.mockResolvedValue(after)
-    fireEvent.change(within(panel).getByRole('textbox'), { target: { value: WORD } })
     const sign = within(panel).getByRole('button', { name: /^Sign and start agent$/ })
     await waitFor(() => expect(sign).toBeEnabled(), { timeout: ARM_MS + 2000 })
     fireEvent.pointerDown(sign)
@@ -602,7 +597,6 @@ describe('review fixes', () => {
   })
 
   it.each([
-    [{ confirm: { kind: 'word' as const, word: 'DEMO~0a1b2c3d/GRANT' } }],
     [{ workspace: { id: 'f'.repeat(32), name: 'other', prefix: 'DEMO' } }],
   ])('L3: a grant View of another workspace gets no Sign button (%o)', async (over) => {
     s.preview.mockResolvedValue(noGrant())

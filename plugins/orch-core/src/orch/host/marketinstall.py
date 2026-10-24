@@ -32,6 +32,7 @@ import shutil
 import stat
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 from orch import __version__ as CORE_VERSION
@@ -43,7 +44,7 @@ from orch.market import install as mi
 from orch.market.url import canonical_market_url
 from orch.ops.errors import ERRORS
 
-from . import addonenv
+from . import addonenv, hubpolicy
 from .errors import HostError
 from .marketstate import MarketFiles
 
@@ -92,7 +93,7 @@ _STAGE_CODES = (
     "market.package_invalid", "market.digest_mismatch", "market.manifest_mismatch", "market.index_unsigned",
     "market.source_mismatch", "market.unpinned", "market.bad_digest_format", "market.duplicate_id",
     "market.refresh_running", "market.capability_ceiling", "market.lock_missing", "market.lock_invalid",
-    "market.env_failed",
+    "market.env_failed", "market.blocked", "market.addon_not_allowed", "market.publisher_unpinned",
 )  # fmt: skip
 #: the codes each op can raise (the per-op declaration; a test checks every raise site against it)
 OP_CODES: dict[str, tuple[str, ...]] = {
@@ -197,20 +198,30 @@ def _model_addon(service: WorkspaceService, name: str) -> Any:
 
 
 # ------------------------------------------------------------------------------------------------ the class
-def market_class(service: WorkspaceService, url: str) -> tuple[str, tuple[str, ...]]:
-    """``(class, publisher/index keys)`` of the canonical ``url`` for this workspace: the official marketplace, or the
-    sandbox's test marketplace (C5: only a dev host's ``dev.json`` entry, only for a workspace that passes S1 to S6
-    now), else ``market.community_unisolated``. The one place the class is decided; runs on the worker thread."""
-    from . import devmode, marketops
+def market_class(service: WorkspaceService, url: str, pol: Any) -> tuple[str, tuple[str, ...]]:
+    """``(class, publisher/index keys)`` of the canonical ``url`` for this workspace under the hub policy ``pol``
+    (``None`` standalone; :data:`orch.host.hubpolicy.UNREADABLE` refuses): the official marketplace, a ``company``
+    marketplace the hub lists with its pinned keys (V3-D32), or the sandbox's test marketplace (C5: only a dev host's
+    ``dev.json`` entry, only for a workspace that passes S1 to S6 now), else ``market.community_unisolated``. The one
+    place the class is decided; runs on the worker thread."""
+    from . import devmode
 
+    if isinstance(pol, hubpolicy._Unreadable):  # noqa: SLF001
+        raise MarketError("market.not_allowed")
     dev = devmode.test_market(service)
-    cls = policy.gate(url, hub_joined=marketops.hub_joined(service), dev_url=None if dev is None else dev[0])
+    cls = policy.gate(url, policy=pol, dev_url=None if dev is None else dev[0])
+    if cls == "company":
+        return cls, tuple(pol.market(url).keys)
     return cls, (dev[1] if cls == "dev" and dev is not None else constants.OFFICIAL_KEYS if cls == "official" else ())
 
 
 def verdict(raw: bytes, url: str, cls: str, keys: tuple[str, ...], now: float) -> index.Verdict:
-    """Steps 1 and 2 on the exact bytes, with the keys of the class (``official`` and ``dev`` need a signature)."""
-    return index.evaluate(raw, url, official=cls in ("official", "dev"), now=now, keys=keys if cls == "dev" else None)
+    """Steps 1 and 2 on the exact bytes, with the keys of the class (``official``, ``dev`` and the hub's ``company``
+    need a signature; the last two by the keys they were given)."""
+    return index.evaluate(
+        raw, url, official=cls in ("official", "dev", "company"), now=now,
+        keys=keys if cls in ("dev", "company") else None,
+    )  # fmt: skip
 
 
 # ------------------------------------------------------------------------------------------------ serve (worker)
@@ -268,11 +279,8 @@ def _plan_dev(call: Call, args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _plan_stage(call: Call, args: dict[str, Any]) -> dict[str, Any]:
-    from . import marketops
-
     service = call.service
-    pol = policy.current(hub_joined=marketops.hub_joined(service))
-    policy.evaluate("add", pol, {})  # P0: a joined hub, no read
+    pol = hubpolicy.stored(service)  # P0: after the fresh read of execute(); a joined host that cannot verify refuses
     files = _files(service)
     records = files.load()
     installs = files.installs()
@@ -291,8 +299,8 @@ def _plan_stage(call: Call, args: dict[str, Any]) -> dict[str, Any]:
         if url not in records:
             raise HostError("not_found", "that marketplace was not added: orch market list")
     else:
-        url = _find_market(files, records, service, name, prior)
-    cls, keys = market_class(service, url)
+        url = _find_market(files, records, service, name, prior, pol)
+    cls, keys = market_class(service, url, pol)  # step 5 (listed) and step 4 (class), before any read of the market
     return {
         "op": "market.stage", "url": url, "id": name, "update": update or prior is not None, "cls": cls, "keys": keys,
         "root": str(_store_root(service)), "now": service.clock(), "previous": _model_addon(service, name),
@@ -301,25 +309,26 @@ def _plan_stage(call: Call, args: dict[str, Any]) -> dict[str, Any]:
     }  # fmt: skip
 
 
-def _find_market(files: MarketFiles, records: dict, service: WorkspaceService, name: str, prior: Any) -> str:
+def _find_market(files: MarketFiles, records: dict, service: WorkspaceService, name: str, prior: Any, pol: Any) -> str:
     """The one added marketplace that lists ``name`` (from the cached, re-verified index): none is
     ``market.unknown_addon``, more than one ``market.ambiguous_addon``. An installed add-on is its origin's."""
     if prior is not None:
         return prior["origin"]
-    found = []
+    found, denied = [], False
     for url in sorted(records):
         try:
-            cls, keys = market_class(service, url)
+            cls, keys = market_class(service, url, pol)
             raw = files.read_cache(url)
             if raw is None:
                 continue
             v = verdict(raw, url, cls, keys, service.clock())
-        except MarketError:
+        except MarketError as exc:
+            denied = denied or exc.code == "market.not_allowed"
             continue
         if any(e["id"] == name for e in v.doc[ADDONS]):
             found.append(url)
     if not found:
-        raise MarketError("market.unknown_addon")
+        raise MarketError("market.not_allowed" if denied else "market.unknown_addon")  # the hub's word, not "unknown"
     if len(found) > 1:
         raise MarketError("market.ambiguous_addon")
     return found[0]
@@ -391,15 +400,16 @@ def _stage(service: WorkspaceService, plan: dict[str, Any], call: Call | None = 
     raw = files.read_cache(url)
     if raw is None or marketops._sha(raw) != rec["index_sha256"]:  # noqa: SLF001
         raise MarketError("market.malformed")
-    policy.evaluate("index", plan.get("policy"), {"url": url})
     v = verdict(raw, url, cls, keys, now)
+    pol = plan.get("policy")
+    policy.evaluate("index", pol, {"url": url, "index_key": (v.doc.get("signature") or {}).get("key")})  # step 2
     index.check_floor(rec["last_version"], rec["payload_sha256"], v)
     ctx = mi.Ctx(
         url=url, cls=cls, keys=keys, core_version=CORE_VERSION, git_hosts=frozenset(constants.DEFAULT_GIT_HOSTS),
         installed=installs[ADDONS], known_keys=installs["keys"], seen=installs["seen"],
-        official_ids=frozenset(constants.OFFICIAL_IDS), moved=frozenset(constants.MOVED_IDS),
+        official_ids=frozenset(constants.OFFICIAL_IDS), moved=frozenset(constants.MOVED_IDS), hub=pol,
     )  # fmt: skip
-    facts = mi.check_entry(ctx, v.doc, name)
+    facts = mi.check_entry(ctx, v.doc, name)  # steps 6 to 9, the hub's block, allow, pin and ceiling in their places
     prior = facts.prior
     entry = facts.entry
     if (
@@ -408,10 +418,14 @@ def _stage(service: WorkspaceService, plan: dict[str, Any], call: Call | None = 
         and prior["package_sha256"] == entry["package_sha256"]
     ):
         return {"up_to_date": True, "name": name, "version": entry["version"]}
-    policy.evaluate("entry", plan.get("policy"), {"url": url, "id": name, "version": entry["version"]})
     LOG.warning("market.stage fetch %s@%s from %s", name, entry["version"], entry["source"]["git"])  # S13 greps this
     pkg = fetch.fetch_package(entry)
     manifest = mi.check_package(facts, pkg, CORE_VERSION)  # steps 13 to 16, the lockfile (15) included
+    policy.evaluate(  # step 14: the policy again, on the manifest of the bytes that were read (the index is a claim)
+        "grant", pol,
+        {"url": url, "id": name, "version": manifest.version, "capabilities": manifest.capabilities,
+         "publisher_key": facts.publisher_key},
+    )  # fmt: skip
     event = install.grant_event(manifest, pkg)
     planned, dep_view = _dependencies(service, manifest, pkg)
     review = install.review_lines(manifest, pkg, event, plan["previous"], dep_view)
@@ -566,6 +580,15 @@ def _recheck(service: WorkspaceService, record: dict[str, Any], ev: dict[str, An
     staged = record.get("staged")
     if staged is None:  # C1 again at submit: built-in bytes or the bytes of the install record
         gate_plain(files, ev)
+        pol = hubpolicy.stored(
+            service
+        )  # the same grant-stage evaluation as a staged grant, on the then-pinned snapshot
+        if pol is not None:  # no record is a real built-in only (hubpolicy.check): a deleted record is not a built-in
+            grant = SimpleNamespace(
+                name=ev.get("name"), version=ev.get("version"), package_sha256=ev.get("package_sha256"),
+                capabilities=ev.get("capabilities") or [],
+            )  # fmt: skip
+            hubpolicy.check(service, pol, grant, files.installs()[ADDONS].get(ev.get("name")))
         return
     doc, pkg, _ = staged_package(files, ev["name"], staged["stage"], service.clock())
     if pkg.digest != ev["package_sha256"] or doc["version"] != ev["version"]:
@@ -579,7 +602,8 @@ def _recheck(service: WorkspaceService, record: dict[str, Any], ev: dict[str, An
     rec, raw = files.load().get(url), files.read_cache(url)
     if rec is None or raw is None or marketops._sha(raw) != rec["index_sha256"]:  # noqa: SLF001
         raise MarketError("market.staged_changed")
-    cls, keys = market_class(service, url)
+    pol = hubpolicy.stored(service)  # the then-pinned snapshot, no network (step 18, under the store lock)
+    cls, keys = market_class(service, url, pol)
     if cls != doc.get("class"):
         raise MarketError("market.staged_changed")
     now_doc = verdict(raw, url, cls, keys, service.clock()).doc
@@ -599,11 +623,12 @@ def _recheck(service: WorkspaceService, record: dict[str, Any], ev: dict[str, An
     if any(mi.semver(version) < mi.semver(x) for x in floor):
         raise MarketError("market.rollback")
     known = installs["keys"].get(f"{url}|{ev['name']}")
-    if known is not None and doc["publisher_key"] != known:
+    if cls != "company" and known is not None and doc["publisher_key"] != known:  # the hub's pin replaces TOFU
         raise MarketError("market.publisher_key_changed")
     policy.evaluate(
-        "grant", policy.current(hub_joined=_joined(service)),
-        {"url": url, "id": ev["name"], "version": version, "capabilities": ev["capabilities"]},
+        "grant", pol,
+        {"url": url, "id": ev["name"], "version": version, "capabilities": ev["capabilities"],
+         "publisher_key": doc["publisher_key"]},
     )  # fmt: skip
 
 
@@ -619,12 +644,11 @@ def _recheck_dev(service: WorkspaceService, files: MarketFiles, ev: dict[str, An
         raise MarketError("market.reserved_id")
     if name in files.installs()[ADDONS]:
         raise MarketError("market.origin_changed")
-
-
-def _joined(service: WorkspaceService) -> bool:
-    from . import marketops
-
-    return marketops.hub_joined(service)
+    pol = hubpolicy.stored(service)  # a dev folder has no origin: block and ceiling still apply under a hub policy
+    if pol is not None:
+        policy.check_run(
+            pol, name=name, version=ev.get("version"), capabilities=ev.get("capabilities") or [], origin=None, key=None
+        )
 
 
 def gate_plain(files: MarketFiles, ev: dict[str, Any]) -> None:
@@ -704,7 +728,7 @@ def _converge(service: WorkspaceService, stage: str, ev: dict[str, Any]) -> None
         old = cur["seen"].get(key)
         if old is None or mi.semver(doc["version"]) > mi.semver(old):
             cur["seen"][key] = doc["version"]
-        if doc["publisher_key"] is not None:
+        if doc["publisher_key"] is not None and doc.get("tofu") != "pinned":  # the hub's pin replaces TOFU: none stored
             cur["keys"].setdefault(key, doc["publisher_key"])
         write(cur)
     files.drop_stage(stage)
@@ -854,6 +878,10 @@ def recover(service: WorkspaceService) -> None:
 def _installed(service: WorkspaceService) -> dict[str, Any]:
     from . import marketops
 
+    try:  # the run-time view, from the pinned snapshot without network (spec 9)
+        pol: Any = hubpolicy.stored(service)
+    except MarketError:
+        pol = hubpolicy.UNREADABLE
     files = _files(service)
     installs = files.installs()
     rows = []
@@ -863,7 +891,7 @@ def _installed(service: WorkspaceService) -> dict[str, Any]:
         state = state_of(service, name)
         avail = None
         try:
-            cls, keys = market_class(service, rec["origin"])
+            cls, keys = market_class(service, rec["origin"], pol)
             raw = files.read_cache(rec["origin"])
             v = verdict(raw, rec["origin"], cls, keys, service.clock()) if raw is not None else None
         except MarketError:
@@ -891,9 +919,10 @@ def _installed(service: WorkspaceService) -> dict[str, Any]:
                 "publisher": None if key is None else marketops.fingerprint(key),
                 "available": avail,
                 "env": addonenv.env_row(service, name, model),
+                "paused": hubpolicy.paused(service, pol, rec, model, name),
             }  # fmt: skip
         )
-    return {ADDONS: rows}
+    return {ADDONS: rows, "hub": hubpolicy.view(pol)}
 
 
 def _uninstall(service: WorkspaceService, name: str) -> dict[str, Any]:

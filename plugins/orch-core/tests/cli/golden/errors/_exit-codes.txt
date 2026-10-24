@@ -78,6 +78,8 @@ market.rollback 3 retry:false
 market.community_unisolated 3 retry:false
 market.blocked 3 retry:false
 market.not_allowed 3 retry:false
+market.addon_not_allowed 3 retry:false
+market.publisher_unpinned 3 retry:false
 market.unknown_addon 3 retry:false
 market.revoked 3 retry:false
 market.host_not_allowed 3 retry:false

@@ -416,11 +416,10 @@ def test_share_needs_a_real_staged_id(staged):
         handoff.PublishShare(action="publish_share", key="DEMO-1", staged_id=staged)
 
 
-def test_share_and_setup_are_prepare_actions_not_click_ones():
-    # the click signer serves neither: core's CLICK_OPS and WORD_OPS do not list `publish.share`
+def test_share_is_a_click_op_in_core():
     from orch.click.protocol import op_class
 
-    assert op_class("publish.share") == "terminal"
+    assert op_class("publish.share") == "click"
 
 
 # -- the feature: Publish is listed only while the add-on is ON -------------------------------------------------------

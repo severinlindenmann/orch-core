@@ -229,7 +229,7 @@ def click_view(served, human, st):
 
     prepared = human.prepare("addon.grant", {"name": "standup", "staged": st["stage"]})
     return views.build(
-        prepared, lambda w: ("Acme", "DEMO") if w == served.wid else None, kind="click", device="d_" + "1" * 32,
+        prepared, lambda w: ("Acme", "DEMO") if w == served.wid else None, device="d_" + "1" * 32,
         expires_at="2026-10-24T12:00:00Z", artifacts=None,
     )  # fmt: skip
 

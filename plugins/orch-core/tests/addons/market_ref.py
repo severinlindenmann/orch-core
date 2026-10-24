@@ -153,24 +153,89 @@ def is_canonical_url(url: str) -> bool:
 CAPABILITIES = ("choose_model", "credential", "git_push", "network", "pty", "serve_http", "spawn_agent")
 
 
-def hub_policy_ok(hub: Any) -> bool:
-    """Section 9: ``orch.hub-policy/1`` is exactly ``{allow: [url], block: [url], ceiling: [cap] | null}``, URLs in
-    canonical form. Anything else counts as an empty allow list."""
+OFFICIAL_URL = "https://github.com/severinlindenmann/orch-marketplace"  # the pinned official URL (spec 4.2)
 
-    def urls(x: Any) -> bool:
-        return isinstance(x, list) and all(
-            isinstance(u, str) and re.fullmatch(r"https://[a-z0-9.-]+(?:/[^/\s]+)+", u) and is_canonical_url(u)
-            for u in x
-        )
 
-    ceiling = hub.get("ceiling") if isinstance(hub, dict) else 0
-    return (
-        isinstance(hub, dict)
-        and set(hub) == {"allow", "block", "ceiling"}
-        and urls(hub["allow"])
-        and urls(hub["block"])
-        and (ceiling is None or (isinstance(ceiling, list) and all(c in CAPABILITIES for c in ceiling)))
-    )
+def policy_ok(p: Any) -> bool:
+    """Section 9: ``orch.hub-policy/1``, strictly: exact keys at every level, sorted unique lists, canonical URLs,
+    ``class`` recomputed from the URL (``official`` only for the official URL and then no keys), 1 or 2 pinned keys for
+    a ``company``. Written from the spec, independent of ``orch.hubclient.marketpolicy``."""
+
+    def sorted_unique(xs: Any, lo: int, hi: int, each: Any) -> bool:
+        return isinstance(xs, list) and lo <= len(xs) <= hi and xs == sorted(set(xs)) and all(each(x) for x in xs)
+
+    try:
+        if not isinstance(p, dict) or set(p) != {"markets", "addons", "ceiling"} or not isinstance(p["markets"], list):
+            return False
+        if len(p["markets"]) > 16:
+            return False
+        for m in p["markets"]:
+            if not isinstance(m, dict) or set(m) != {"url", "class", "keys"} or not isinstance(m["url"], str):
+                return False
+            if not (re.fullmatch(r"https://[a-z0-9.-]+(?:/[^/\s]+)+", m["url"]) and is_canonical_url(m["url"])):
+                return False
+            if m["url"].endswith(".git"):
+                return False
+            if m["class"] == "official":
+                if m["url"] != OFFICIAL_URL or m["keys"] != []:
+                    return False
+            elif m["class"] == "company":
+                if m["url"] == OFFICIAL_URL or not sorted_unique(
+                    m["keys"], 1, 2, lambda k: isinstance(k, str) and len(k) == 87
+                ):
+                    return False
+            else:
+                return False
+        urls = [m["url"] for m in p["markets"]]
+        if urls != sorted(set(urls)):
+            return False
+        a = p["addons"]
+        if not isinstance(a, dict) or set(a) != {"allow", "block"}:
+            return False
+
+        def ident(x: Any) -> bool:
+            return isinstance(x, str) and re.fullmatch(r"[a-z][a-z0-9-]{0,39}", x) is not None
+
+        sv = r"(?:0|[1-9][0-9]{0,3})"
+
+        def item(x: Any) -> bool:
+            return isinstance(x, str) and re.fullmatch(rf"[a-z][a-z0-9-]{{0,39}}(?:@{sv}\.{sv}\.{sv})?", x) is not None
+
+        if a["allow"] is not None and not sorted_unique(a["allow"], 0, 256, ident):
+            return False
+        if not sorted_unique(a["block"], 0, 256, item):
+            return False
+        c = p["ceiling"]
+        return c is None or sorted_unique(c, 0, len(CAPABILITIES), lambda x: x in CAPABILITIES)
+    except (KeyError, TypeError):
+        return False
+
+
+def evaluate(a: dict[str, Any]) -> None:
+    """The hub-policy steps of section 5/9 for ``{policy, req}`` (the shared ``vectors_hub_policy.json`` ``evaluate``
+    cases). ``policy`` ``None`` or malformed is unreadable: ``market.not_allowed``. First failing check wins."""
+    pol, r = a["policy"], a["req"]
+    if not policy_ok(pol):
+        raise Refuse("market.not_allowed")
+    stage, run = r["stage"], r["stage"] == "run"
+    url = r["market_url"]
+    entry = next((m for m in pol["markets"] if m["url"] == url), None)
+    company = entry is not None and entry["class"] == "company"
+    if not run or url != "":  # a built-in add-on has no marketplace
+        if entry is None:
+            raise Refuse("market.not_allowed")
+        if stage == "install" and company and r["index_key"] not in entry["keys"]:
+            raise Refuse("market.index_unsigned")
+    block, allow = pol["addons"]["block"], pol["addons"]["allow"]
+    if r["id"] in block or f"{r['id']}@{r['version']}" in block:
+        raise Refuse("market.blocked")
+    if allow is not None and r["id"] not in allow and url != "":
+        raise Refuse("market.addon_not_allowed")
+    key = r["publisher_key"]
+    if company and key not in entry["keys"]:
+        raise Refuse("market.publisher_unpinned")
+    if pol["ceiling"] is not None and not set(r["capabilities"]) <= set(pol["ceiling"]):
+        raise Refuse("market.capability_ceiling")
 
 
 def check_index(index: Any) -> dict[str, Any]:
@@ -424,14 +489,6 @@ def install(a: dict[str, Any]) -> dict[str, Any]:
     official = repo == ctx["official"]["repo"]
     if not official and not ctx["isolation"]:
         raise Refuse("market.community_unisolated")
-    hub = ctx["hub"]
-    if hub is not None:
-        if not hub_policy_ok(hub):
-            raise Refuse("market.not_allowed")
-        if repo in hub["block"]:
-            raise Refuse("market.blocked")
-        if repo not in hub["allow"]:
-            raise Refuse("market.not_allowed")
     entry = next((e for e in doc["addons"] if e["id"] == a["id"]), None)
     if entry is None:
         raise Refuse("market.unknown_addon")
@@ -467,9 +524,6 @@ def install(a: dict[str, Any]) -> dict[str, Any]:
     if known is not None and (pub is None or pub["key"] != known):
         raise Refuse("market.publisher_key_changed")
     tofu = "unsigned" if pub is None else ("known" if known is not None else "new")
-    ceiling = None if hub is None else hub["ceiling"]
-    if ceiling is not None and not set(entry["capabilities"]) <= set(ceiling):
-        raise Refuse("market.capability_ceiling")
     need, have = _core_key(entry["min_orch"]), _core_key(ctx["core_version"])
     if need is None or have is None or have < need:
         raise Refuse("market.min_orch")
@@ -514,6 +568,9 @@ def run_case(case: dict[str, Any]) -> dict[str, Any]:
             return {"ok": {"addons": [e["id"] for e in doc["addons"]]}}
         if case["check"] == "install":
             return {"ok": install(case["args"])}
+        if case["check"] == "evaluate":  # the shared vectors_hub_policy.json shape: {policy, req: {…, market_url}}
+            evaluate(case["args"])
+            return {"ok": True}
         if case["check"] == "tree":
             check_tree(case["args"]["entries"])
             return {"ok": {}}

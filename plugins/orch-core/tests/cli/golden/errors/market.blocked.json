@@ -2,7 +2,7 @@
   "ok": false,
   "error": {
     "code": "market.blocked",
-    "message": "the hub blocks this marketplace",
+    "message": "the hub blocks this add-on",
     "hint": "ask the hub admin",
     "fix": {
       "argv": [

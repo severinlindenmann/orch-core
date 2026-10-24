@@ -737,9 +737,9 @@ it('records current-destination confirmation warning preserves the exact URL thr
 })
 
 // M7b: Start agent (Tier A, no signature) shows exactly the host's preview and posts exactly the previewed values plus
-// its spec; the runner grant (the one signed step) is the signer's View with the deposit line and the word, confirmed by holding Sign.
+// its spec; the runner grant (the one signed step) is the signer's View with the deposit line, confirmed by holding Sign.
 describe('start agent', () => {
-  it.each([false, true])('runner grant (extend=%s) carries the deposit line and word before Sign', async (extend) => {
+  it.each([false, true])('runner grant (extend=%s) carries the deposit line before Sign', async (extend) => {
     const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query')
     const { agentsApi } = await import('@/api/agents')
     const { CLICK_RISK, DEPOSIT_LINE, DEPOSIT_RISK } = await import('@/api/click')
@@ -755,10 +755,10 @@ describe('start agent', () => {
       blocked: { code: 'launch.no_grant', message: 'none', detail: { reason: 'none' } },
     })
     vi.spyOn(agentsApi, 'runner').mockResolvedValue({ runner: { connected: true, enabled: true, terminals: false, grant: null } })
-    const prepare = vi.spyOn(api, 'prepareClick').mockResolvedValue({ request_id: 'hr_' + '1'.repeat(26), expires_at: new Date(Date.now() + 6e5).toISOString(), op: 'grant', confirm: 'word' })
+    const prepare = vi.spyOn(api, 'prepareClick').mockResolvedValue({ request_id: 'hr_' + '1'.repeat(26), expires_at: new Date(Date.now() + 6e5).toISOString(), op: 'grant', confirm: 'click' })
     vi.spyOn(api, 'viewClick').mockResolvedValue({ view_digest: 'sha256:' + 'd'.repeat(64), view: {
       risk: CLICK_RISK, op: 'grant', workspace: { id: WS, name: 'demo', prefix: 'DEMO' }, fingerprint: '0123456789ab', checks: [], artifacts: null,
-      lines: ['grant', '', DEPOSIT_RISK, DEPOSIT_LINE], confirm: { kind: 'word', word: 'DEMO~bbbbbbbb/GRANT' }, expires_at: new Date(Date.now() + 6e5).toISOString(),
+      lines: ['grant', '', DEPOSIT_RISK, DEPOSIT_LINE], confirm: { kind: 'click' }, expires_at: new Date(Date.now() + 6e5).toISOString(),
       auth: 'convenience', device: 'd_x', deposit: true, deposit_line: DEPOSIT_LINE } })
     vi.spyOn(api, 'cancelClick').mockResolvedValue({ id: 'x', state: 'cancelled' })
     render(<QueryClientProvider client={new QueryClient()}>{extend
@@ -776,9 +776,9 @@ describe('start agent', () => {
     const panel = await screen.findByTestId('click-panel', {}, T)
     expect(panel.textContent).toContain(DEPOSIT_LINE)
     expect(panel.textContent).toContain(DEPOSIT_RISK)
-    expect(within(panel).getByTestId('typed-word')).toHaveTextContent('Type DEMO~bbbbbbbb/GRANT to confirm')
+    expect(within(panel).queryByRole('textbox')).toBeNull() // nothing is typed
     expect(within(panel).getByTestId('access-length')).toHaveTextContent('Let agents work for you for 8 h.')
-    expect(within(panel).getByRole('button', { name: extend ? 'Sign and extend' : 'Sign and start agent' })).toBeDisabled() // until the word is typed
+    expect(within(panel).getByRole('button', { name: extend ? 'Sign and extend' : 'Sign and start agent' })).toBeDisabled() // until armed
     expect(prepare.mock.calls[0][1]).toEqual({ action: 'runner_grant', hours: 8, scope: 'workable', ...(extend ? { extend: 'gr_old' } : {}) })
     vi.restoreAllMocks()
   })
@@ -860,8 +860,8 @@ it('addon enable confirms the grant name and renders the workspace review withou
   const workspace = { prefix: 'DEMO', id: '0123456789abcdef0123456789abcdef' }
   expect(requestIsConsistent(request)).toBe(true)
   expect(workspaceConfirmWord(request, workspace)).toBe('publish~89abcdef')
-  expect(clickEligible({ action: 'addon_enable', name: 'publish', publish: { server: 'https://files.example.test', share: 'https://links.example.test' } })).toBe(false) // Publish: terminal only
-  expect(clickEligible({ action: 'addon_grant', name: 'publish' })).toBe(false)
+  expect(clickEligible({ action: 'addon_enable', name: 'publish', publish: { server: 'https://files.example.test', share: 'https://links.example.test' } })).toBe(true) // Publish: click (#1198 C2)
+  expect(clickEligible({ action: 'addon_grant', name: 'publish' })).toBe(true)
   expect(clickEligible({ action: 'addon_grant', name: 'usage' })).toBe(true)
   render(<HandoffPanel request={request} workspace={workspace} />)
   expect(screen.getByTestId('handoff-command')).toHaveTextContent('orch sign')
@@ -926,7 +926,7 @@ describe('manual acceptance signing paths', () => {
   })
 })
 
-it('market approval (terminal fallback) displays the exact package name and stage sent; it is click-eligible, except Publish', async () => {
+it('market approval (terminal fallback) displays the exact package name and stage sent; it is click-eligible, Publish too', async () => {
   const { workspaceRequest } = await import('./hostHarness')
   const { state } = await import('./handoffHarness')
   const { clickEligible } = await import('@/api/click')
@@ -943,15 +943,15 @@ it('market approval (terminal fallback) displays the exact package name and stag
   expect(await screen.findByText(visible(action.staged), { exact: false })).toBeVisible()
   expect(screen.getAllByText(action.name, { exact: false }).length).toBeGreaterThan(0)
   expect(clickEligible(action)).toBe(true) // V3-D38: one click where click-to-sign is on, this Terminal review where it is off
-  expect(clickEligible({ ...action, name: 'publish' })).toBe(false)
+  expect(clickEligible({ ...action, name: 'publish' })).toBe(true)
 })
 
 it('a Terminal-only action with One click on shows the Terminal hand-off: why line, exact command, pending, no click prepare', async () => {
   const { workspaceRequest } = await import('./hostHarness')
   const { state } = await import('./handoffHarness')
   const ws = 'b'.repeat(32)
-  const action = { action: 'publish_setup' as const, server: 'https://files.example.test', share: 'https://links.example.test' }
-  const request = workspaceRequest('settings.set', { type: 'settings.changed', publish: { server: action.server, share: action.share } })
+  const action = { action: 'pair_device' as const, offer: 'offer-1' }
+  const request = workspaceRequest('relay.pair_device', { type: 'device.added' })
   vi.spyOn(api, 'getWorkspaces').mockResolvedValue([{ id: ws, click: { custody: 'convenience', enabled: true, available: true } }] as unknown as Awaited<ReturnType<typeof api.getWorkspaces>>)
   vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods: ['terminal', 'click'] } as Awaited<ReturnType<typeof api.getHostSettings>>)
   vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'click', is_default: true, allowed: ['terminal', 'click'] })

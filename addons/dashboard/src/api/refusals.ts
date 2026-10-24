@@ -28,7 +28,7 @@ export const UNAVAILABLE_SENTENCE: Record<UnavailableReason, string> = {
     'You have another device in this workspace whose orch app cannot yet read click-signed entries. Update orch on it (it then declares what it reads), or remove it; until then, sign in the terminal.',
   reader_version: 'The host’s orch-core does not accept click-signed entries. Update orch-core on this Mac.',
   pair_device:
-    'Adding a phone is signed with the typed word, like adding a member: a click alone never adds a device. Sign it in the terminal (orch sign CODE) if the dashboard does not offer it.',
+    'Adding a phone is approved in the Terminal: a click alone never adds a device. Approve it there (orch sign CODE) if the dashboard does not offer it.',
   dev_host: DEV_HOST_SENTENCE,
 }
 

@@ -11,6 +11,11 @@ every real workspace.
 * :func:`check_admit` is the dev side of the one registration choke point :func:`orch.host.registry.admit`: a dev
   host admits sandbox workspaces only (R5), a normal host refuses every ``SBX`` genesis and every workspace with the
   marker (F2).
+* A **pending** dev host (V3-D38, ``design-sandbox-setup.md``): the manifest has neither ``person_id`` nor
+  ``workspaces``, so the sandbox person does not exist yet. It has no dev powers (``S0`` fails first, so
+  :func:`dev_gate` is ``None`` for everything), admits exactly one fresh ``SBX`` genesis through ``host.bootstrap``
+  (``orch setup``'s hosted creation) and nothing through ``host.register``. The kit then stops it, binds the person, the
+  workspace row and the marker, and starts the full dev host, which proves S1 to S5 as before.
 * :func:`refuse_push`: a records push from a dev host (``dev_host``) or of an ``SBX`` workspace on a normal host
   (``sandbox_workspace``).
 
@@ -99,10 +104,13 @@ class DevHost:
     root: Path
     root_id: tuple[int, int]
     sandbox_id: str
-    person_id: str
+    #: the sandbox person; ``None`` only while ``pending``
+    person_id: str | None
     relay_origin: str
     #: the sandbox's test marketplace ``(url, keys)`` from ``dev.json`` (V3 G3, C5), or ``None``
     market: tuple[str, tuple[str, ...]] | None = None
+    #: V3-D38: no person and no workspace bound yet; no dev powers, one fresh ``SBX`` bootstrap
+    pending: bool = False
 
     @property
     def id8(self) -> str:
@@ -232,13 +240,16 @@ def prove(state_dir: Path, env: Mapping[str, str]) -> DevHost:
                 "dev_json_mismatch", "dev.json's relay_origin is not an origin (scheme://host[:port])"
             ) from None
         person = manifest.get("person_id")
+        pending = False
         if not isinstance(person, str):
-            raise refused("no_person", "the manifest names no sandbox person (person_id, written after orch init)")
+            if manifest.get("workspaces"):  # a workspace without its person is a forged or half-written manifest
+                raise refused("no_person", "the manifest names no sandbox person (person_id) but lists workspaces")
+            pending, person = True, None  # V3-D38: the sandbox person does not exist yet (bound after orch setup)
         if _custody_convenience(state):
             raise refused("custody_convenience", "a person custody selects convenience: the dev path never mixes it in")
         m = dev.get("market")
         market = None if m is None else (m["url"], tuple(m["keys"]))
-        return DevHost(root, (st.st_dev, st.st_ino), manifest["id"], person, dev["relay_origin"], market)
+        return DevHost(root, (st.st_dev, st.st_ino), manifest["id"], person, dev["relay_origin"], market, pending)
     finally:
         for d in (hfd, sfd, fd):
             if d >= 0:
@@ -246,6 +257,8 @@ def prove(state_dir: Path, env: Mapping[str, str]) -> DevHost:
 
 
 def status_line(dev: DevHost) -> str:
+    if dev.pending:
+        return f"DEV HOST (pending genesis, no dev powers) for sandbox {dev.id8}: admits one fresh SBX genesis"
     return f"DEV HOST: Simulator convenience answers ON for sandbox {dev.id8} (throwaway workspaces only)"
 
 
@@ -256,7 +269,10 @@ def sandbox_reason(
     dev: DevHost, workspace_id: str, ws_root: str | os.PathLike[str], view: View, *, s6: bool = True
 ) -> str | None:
     """The first of S1 to S6 that fails for this workspace on ``dev`` (a short text naming it), or ``None``. Reads
-    the manifest again through a fresh root descriptor (a change since the start is seen)."""
+    the manifest again through a fresh root descriptor (a change since the start is seen). ``S0`` comes first: a pending
+    host (no sandbox person bound) has no dev powers for any workspace."""
+    if dev.pending or dev.person_id is None:
+        return "S0: the dev host is pending (no sandbox person is bound yet)"
     try:
         fd, st = devsandbox.open_root(dev.root)
     except SandboxRefused as exc:
@@ -368,13 +384,23 @@ def gated(service: Any) -> bool:
 # -- admission, link, push (17.3 R5, F2, F5) ---------------------------------------------------------------------------
 
 
-def check_admit(dev: DevHost | None, workspace_id: str, ws_root: str | os.PathLike[str], view: View) -> None:
+def check_admit(
+    dev: DevHost | None,
+    workspace_id: str,
+    ws_root: str | os.PathLike[str],
+    view: View,
+    *,
+    fresh: bool = False,
+) -> None:
     """The dev part of :func:`orch.host.registry.admit`: a dev host admits a workspace only when S1 to S5 hold
     (``not_sandbox``); a normal host refuses an ``SBX`` genesis or a workspace with the marker
     (``sandbox_workspace``)."""
     if dev is None:
         if view.genesis.get("prefix") == RESERVED_PREFIX or devsandbox.marker_present(ws_root):
             raise refused("sandbox_workspace", f"workspace {workspace_id} is a dev-pair sandbox", hint=SANDBOX_FIX)
+        return
+    if dev.pending:
+        _admit_pending(dev, workspace_id, ws_root, view, fresh=fresh)
         return
     reason = sandbox_reason(dev, workspace_id, ws_root, view, s6=False)
     if reason is not None:
@@ -383,6 +409,34 @@ def check_admit(dev: DevHost | None, workspace_id: str, ws_root: str | os.PathLi
             f"a dev host serves dev-pair sandbox workspaces only; {workspace_id} fails {reason}",
             hint="register real workspaces with your normal host (orch host run without --dev-sim-convenience)",
         )
+
+
+def _admit_pending(
+    dev: DevHost, workspace_id: str, ws_root: str | os.PathLike[str], view: View, *, fresh: bool
+) -> None:
+    """A pending dev host admits only the fresh ``SBX`` genesis of ``host.bootstrap`` (``fresh``): never a
+    registration of an existing workspace. The host (``control.py``) adds the process-wide rules: the registry is
+    empty and this is the
+    first admission of the process. Here: the genesis names ``SBX`` and the sandbox's owner name (the person is fresh:
+    ``Control._check_reserved_prefix``), and the root is ``<root>/ws`` or ``<root>/ws-<n>`` directly below the pinned
+    sandbox root (S1's path part)."""
+    if not fresh:
+        raise refused(
+            "not_sandbox", "a pending dev host admits a fresh SBX genesis (host.bootstrap) only, not a registration"
+        )
+    genesis = view.genesis
+    owner = genesis.get("owner") if isinstance(genesis.get("owner"), Mapping) else {}
+    if genesis.get("prefix") != RESERVED_PREFIX:
+        raise refused("not_sandbox", "a pending dev host admits an SBX genesis only (S3)")
+    if owner.get("name") != devsandbox.owner_name(dev.sandbox_id):
+        raise refused("not_sandbox", "a pending dev host admits the sandbox's owner name only (S3)")
+    path = Path(os.path.abspath(ws_root))
+    try:
+        parent = os.stat(path.parent)
+    except OSError:
+        parent = None
+    if parent is None or (parent.st_dev, parent.st_ino) != dev.root_id or not _WS_DIR.fullmatch(path.name):
+        raise refused("not_sandbox", "the workspace root must be <root>/ws or <root>/ws-<n> of the sandbox (S1)")
 
 
 def _is_sandbox_genesis(service: Any) -> bool:
@@ -453,6 +507,11 @@ def check_registry(dev: DevHost | None, state_dir: Path, entries: Iterable[Any],
     ``sandbox_workspace_registered``."""
     skipped: list[str] = []
     for entry in entries:
+        if dev is not None and dev.pending:  # nothing is bound yet, so nothing may be registered (fail closed)
+            raise refused(
+                "not_sandbox",
+                f"a pending dev host starts with an empty registry, which holds workspace {entry.workspace_id}",
+            )
         if dev is not None:
             view = entry_view(state_dir, entry.workspace_id, entry.root, host_uid)
             reason = (

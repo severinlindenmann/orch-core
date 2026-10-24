@@ -7,7 +7,7 @@ it('labels available, installed and pending states without inventing enabled sta
     'Available',
     'Off',
     'On',
-    'Awaiting Terminal approval',
+    'Waiting for installation approval',
     'Installed',
   ])
 })
@@ -30,6 +30,7 @@ it('keeps the host order and marks only lines the structured diff names', () => 
   s.update!.added.fields = ['a']
   expect(reviewLines(s).map((l) => l.added)).toEqual([false, false, true, false])
 })
-it('market grants are never click eligible', () => {
-  expect(clickEligible({ action: 'market_grant', name: 'calendar', staged: 'demo-stage' })).toBe(false)
+it('market grants are one click (V3-D38), except Publish', () => {
+  expect(clickEligible({ action: 'market_grant', name: 'calendar', staged: 'demo-stage' })).toBe(true)
+  expect(clickEligible({ action: 'market_grant', name: 'publish', staged: 'demo-stage' })).toBe(false)
 })

@@ -20,6 +20,7 @@ from orch.canon.jcs import JcsError, loads_strict
 from orch.canon.jcs import dumps as _dumps
 from orch.crypto import suite as _suite
 from orch.crypto.encoding import EncodingError, b64u, unb64u, unhex
+from orch.hubclient import wire as _wire
 
 CanonError = (JcsError, EncodingError)
 SUITE_ID = _suite.SUITE_ID
@@ -232,6 +233,7 @@ FIELDS: dict[str, dict[str, Check]] = {
         "issued_ms": _int_min(0),
         "roles": lambda x: type(x) is dict,
         "revoked_channels": lambda x: type(x) is list,
+        "market_policy": lambda x: _wire._policy_ok(x),  # the production validator (orch.hubclient.marketpolicy)
         "dev": _bool,
     },
     "hub.binding": {

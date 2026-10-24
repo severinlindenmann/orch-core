@@ -351,10 +351,10 @@ def test_ae3_publish_is_refused_at_sign_when_the_stored_kind_is_forced_down(clic
     assert click.signatures == 0 and not on(human, "model-routing")
 
 
-def test_a_sequence_whose_signed_grant_has_capabilities_keeps_the_word(human):
-    """The grant step is classed from the intent's signed capability list (run 8, 1.6); no list fails closed."""
+def test_a_sequence_whose_signed_grant_has_capabilities_is_a_click_too(human):
+    """V3-D38: a grant is one click whatever its signed capability list (the review lists them)."""
     base = enable(human, "model-routing")
-    for caps, kind in ((["network"], "word"), ([], "click")):
+    for caps, kind in ((["network"], "click"), ([], "click")):
         intent = sequence.validate_intent({**base, "grant": {**base["grant"], "capabilities": caps}})
         assert sequence.confirm_kind(intent) == kind
 
@@ -755,8 +755,8 @@ def test_publish_is_never_turned_on_by_a_click_whatever_the_route(click, served,
 
     assert protocol.op_class("addon.grant", args={"name": "publish"}) == "terminal"
     assert protocol.op_class("addon.grant", events=[{"name": "publish"}]) == "terminal"
-    assert protocol.op_class("addon.grant", args={"name": "usage"}) == "word"
-    assert protocol.op_class("addon.grant", events=[{"name": "usage"}]) == "word"
+    assert protocol.op_class("addon.grant", args={"name": "usage"}) == "click"
+    assert protocol.op_class("addon.grant", events=[{"name": "usage"}]) == "click"
     # at prepare: the plain grant of Publish is refused before the host is asked
     human.run("settings.set", {"set": {"publish": PUBLISH}})
     refused(lambda: click.prepare("addon.grant", {"name": "publish"}), "human.click_refused", "terminal_only")

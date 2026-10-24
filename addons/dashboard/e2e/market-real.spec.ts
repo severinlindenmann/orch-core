@@ -1,6 +1,6 @@
 // A10 against a REAL dev host with the S13 test marketplace (not part of the fake-host run: needs A10_PY, A10_ENV, A10_BASE).
 //   A10_PY=<python with orch-core> A10_ENV=e2e/market-real-env.py A10_BASE=<base dir> playwright test market-real.spec.ts
-// browse -> review -> Continue in Terminal -> the test human signs in the terminal (`orch sign CODE`) -> installed.
+// browse -> review -> Review installation -> the test human signs in the terminal (`orch sign CODE`) -> installed.
 import { execFileSync } from 'node:child_process'
 import path from 'node:path'
 import { expect, test } from '@playwright/test'
@@ -13,7 +13,7 @@ const helper = (...args: string[]) => execFileSync(PY, ["-I", HELPER, ...args], 
 
 test.skip(!PY || !HELPER || !BASE, 'needs a real dev host (A10_PY, A10_ENV, A10_BASE)')
 
-test('real host: browse -> review -> Continue in Terminal -> sign in the terminal -> installed', async ({ page }) => {
+test('real host: browse -> review -> Review installation -> sign in the terminal -> installed', async ({ page }) => {
   test.setTimeout(240_000)
   page.on('pageerror', (e) => console.log('PAGEERROR', e.message))
   page.on('response', (r) => r.status() >= 400 && console.log('HTTP', r.status(), r.url()))
@@ -25,9 +25,9 @@ test('real host: browse -> review -> Continue in Terminal -> sign in the termina
   await page.screenshot({ path: path.join(SHOTS, 'a10-real-browse.png') })
   await hello.getByRole('button', { name: /Install/ }).click()
   const dialog = page.getByRole('dialog')
-  await expect(dialog).toContainText('Nothing is enabled until you sign.', { timeout: 60_000 })
+  await expect(dialog).toContainText('The add-on will be installed turned off.', { timeout: 60_000 })
   await page.screenshot({ path: path.join(SHOTS, 'a10-real-review.png') })
-  await dialog.getByRole('button', { name: 'Continue in Terminal' }).click()
+  await dialog.getByRole('button', { name: 'Review installation' }).click()
   const code = (await page.getByText(/\b[0-9A-Z]{4}-[0-9A-Z]{4}\b/).first().innerText()).match(/\b[0-9A-Z]{4}-[0-9A-Z]{4}\b/)![0]
   await page.screenshot({ path: path.join(SHOTS, 'a10-real-terminal.png') })
   helper('sign', BASE, code) // the scripted test human, in a terminal

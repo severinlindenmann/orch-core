@@ -15,6 +15,7 @@ from orch.crypto import suite as _suite
 from orch.crypto.encoding import EncodingError, b64u, unb64u, unhex
 
 from .errors import HubRefused
+from .marketpolicy import parse_policy
 
 SUITE_ID = _suite.SUITE_ID
 HV = 0
@@ -81,6 +82,14 @@ def is_pub(x: Any) -> bool:
         return True
     except (*_CanonError, _suite.CryptoError):
         return False
+
+
+def _policy_ok(x: Any) -> bool:
+    try:
+        parse_policy(x)
+    except HubRefused:
+        return False
+    return True
 
 
 def _b64u_n(n: int) -> Callable[[Any], bool]:
@@ -155,6 +164,7 @@ _FIELDS: dict[str, dict[str, Callable[[Any], bool]]] = {
         "issued_ms": _int_min(0),
         "roles": lambda x: type(x) is dict,
         "revoked_channels": lambda x: type(x) is list,
+        "market_policy": _policy_ok,  # D14: required, never null (hub protocol 7.1)
         "dev": lambda x: type(x) is bool,
     },
     "hub.card": {

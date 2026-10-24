@@ -1781,13 +1781,9 @@ class ClickSigner:
                 raise refused("check_failed", "the new key is not the one in the review")
 
             def same(prepared: Mapping[str, Any]) -> None:
-                ev = prepared.get("events") or []
-                ok = (
-                    prepared.get("op") == ROTATE_OP
-                    and len(ev) == 1
-                    and ev[0].get("old") == got.old
-                    and ev[0].get("device") == got.new
-                )
+                # the bound fields in their fixed order (op, workspace_id, log, events, ...): one event, checked before
+                _, _, _, (ev,), *_ = (prepared.get(k) for k in views.INVARIANT)
+                ok = prepared.get("op") == ROTATE_OP and ev.get("old") == got.old and ev.get("device") == got.new
                 if not ok:  # the host built another rotation than the one the person clicked
                     from orch.host.signer import SignerRefused
 

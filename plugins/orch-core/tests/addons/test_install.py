@@ -77,7 +77,9 @@ def test_the_owner_grants_a_package_and_the_event_carries_digest_capabilities_an
     assert a.enabled and not a.purged and a.package_sha256 == pkg.digest
     assert hws.provider.shown and "echo" in hws.provider.shown[-1]  # the signing prompt names the grant
     lst = me("addon", "list", "--json").doc["data"]["addons"]
-    assert lst == [{"name": "echo", "version": "1.0.0", "enabled": True, "state": "active"}]
+    assert lst == [
+        {"name": "echo", "version": "1.0.0", "enabled": True, "state": "active", "capabilities": ["serve_http"]}
+    ]
 
 
 def test_an_agent_cannot_grant_disable_or_purge(hws, me, agent):

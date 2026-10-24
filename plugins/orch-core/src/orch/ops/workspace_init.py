@@ -524,7 +524,8 @@ _sleep = time.sleep
 def connect_host(sd: Path, env: Mapping[str, str] | None = None) -> Any:
     """A control-socket client of this UID's host (the test seam is this module attribute). The run directory is
     ``ORCH_HOST_RUN_DIR`` of ``env`` (default: the process environment), else ``<sd>/run``, as for every host
-    command. It checks the socket's owner and the host's welcome before a byte of the request is sent (:mod:`orch.host.client`)."""
+    command. It checks the socket's owner and the host's welcome before a byte of the request is sent
+    (:mod:`orch.host.client`)."""
     from orch.host.cli import _control_path
     from orch.host.control_client import ControlClient
     from orch.host.ownership import LOCK_WAIT_SECONDS

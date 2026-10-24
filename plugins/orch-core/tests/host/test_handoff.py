@@ -733,9 +733,11 @@ def test_orch_sign_says_the_key_has_no_passphrase_only_for_a_convenience_key(hum
     rc, doc, errs = cli(code)
     assert rc == 0, doc
     assert handoff.NO_PASSPHRASE in errs
+    assert handoff.NO_PASSPHRASE in cli.shown.texts[-1]  # stderr is not the terminal here: the review carries it
     assert served.lab.ws.events(key)[-1]["auth"] == "convenience"
     plain = Cli(human, served, monkeypatch)
     code = human.prepare("log", {"ref": key, "text": "passphrase"}, handoff=True)["request"]["code"]
     convenience.set_enabled(served.lab.state, served.wid, False, UID)
     rc, doc, errs = plain(code)
     assert rc == 0 and handoff.NO_PASSPHRASE not in errs
+    assert handoff.NO_PASSPHRASE not in plain.shown.texts[-1]

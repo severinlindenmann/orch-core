@@ -92,27 +92,53 @@ try {
   await page.getByLabel("Current public key").fill(KEY);
   await page.getByRole("button", { name: "Add marketplace" }).click();
   await page.getByText(/already in the list/).waitFor();
-  // a stale version is a conflict: a second browser page changes the rules first
-  const other = await page.context().newPage();
-  await other.goto(HUB_URL + "/");
-  await other.getByRole("link", { name: "Admin" }).click();
-  await other.getByRole("tab", { name: "Marketplaces" }).click();
-  await other.getByLabel("Blocked add-ons").fill("wiki@1.0.0 notes");
-  await other.getByRole("button", { name: "Save rules" }).click();
-  await other.getByText("Rules version 4.").waitFor();
-  await other.close();
-  await page.getByLabel("Blocked add-ons").fill("wiki@1.0.0 other");
+  // a second admin session (B) saves while this page (A) has an unsaved draft
+  const asB = async (edit) => {
+    const other = await page.context().newPage();
+    await other.goto(HUB_URL + "/");
+    await other.getByRole("link", { name: "Admin" }).click();
+    await other.getByRole("tab", { name: "Marketplaces" }).click();
+    await edit(other);
+    await other.getByRole("button", { name: "Save rules" }).click();
+    await other.getByText(/^Saved\./).waitFor();
+    await other.close();
+  };
+  const blockBox = page.getByLabel("Blocked add-ons");
+  // (1) M2: A drafts, B saves, A reloads page data by adding a person elsewhere, then saves: a conflict, not a new version
+  await blockBox.fill("wiki@1.0.0 mine");
+  await asB((o) => o.getByLabel("Blocked add-ons").fill("notes wiki@1.0.0"));  // version 4
+  await page.getByRole("tab", { name: "People & groups" }).click();
+  await page.getByLabel("Name", { exact: true }).fill("Kim");
+  await page.getByRole("button", { name: "Add person" }).click();
+  await page.getByText("Saved", { exact: true }).waitFor();
+  await page.getByRole("tab", { name: "Marketplaces" }).click();
+  await page.getByText(/changed elsewhere \(now version 4\)/).waitFor();
+  assert((await blockBox.inputValue()) === "wiki@1.0.0 mine", "the draft survived the reload");
   await page.getByRole("button", { name: "Save rules" }).click();
-  await page.getByText(/Someone else changed these rules/).waitFor();
-  assert((await page.getByLabel("Blocked add-ons").inputValue()) === "wiki@1.0.0 other", "the conflict keeps my edits");
-  await page.getByRole("button", { name: "Save rules" }).click();  // on top of the latest
+  await page.getByText(/Someone else changed these rules while you were editing/).waitFor();
+  await page.getByText("Rules version 4.").waitFor();  // nothing was saved
+  // (2) B's change survives: A's own change is laid on top of B's version, shown for a re-save
+  const merged = await blockBox.inputValue();
+  assert(merged.includes("notes") && merged.includes("mine") && merged.includes("wiki@1.0.0"), "B's block and mine are both there: " + merged);
+  await page.getByRole("button", { name: "Save rules" }).click();
   await page.getByText("Rules version 5.").waitFor();
+  assert((await blockBox.inputValue()).includes("notes"), "B's block is still there after A's save");
+  // (3) both changed the same thing differently: A's value wins only after an explicit confirm
+  await page.getByLabel("Allow only the selected permissions").check();
+  await page.getByLabel("Run terminal sessions").check();
+  await asB(async (o) => { await o.getByLabel("Allow only the selected permissions").check(); await o.getByLabel("Use the network").check(); });  // v6
+  await page.getByRole("button", { name: "Save rules" }).click();
+  await page.getByText(/Saving would replace changes someone else made/).waitFor();
+  assert(await page.getByRole("button", { name: "Save rules" }).isDisabled(), "Save waits for the confirm");
+  await page.getByLabel(/I have read this/).check();
+  await page.getByRole("button", { name: "Save rules" }).click();
+  await page.getByText("Rules version 7.").waitFor();
   // remove the company marketplace: the confirmation names it and is hub-wide
   await page.getByRole("button", { name: /^Remove https:/ }).click();
   await page.getByText(/for every workspace on this hub/).waitFor();
   await page.getByRole("button", { name: "Remove from all workspaces" }).click();
   await page.getByRole("button", { name: "Save rules" }).click();
-  await page.getByText("Rules version 6.").waitFor();
+  await page.getByText("Rules version 8.").waitFor();
   assert((await page.getByRole("article").count()) === 1, "only the official marketplace is left");
   await shot("admin-marketplaces-saved");
   // add a person, then remove them with the two-step button

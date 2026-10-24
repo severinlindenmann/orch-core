@@ -157,7 +157,7 @@ export function adminView(d) {
       p("Binding: " + txt(w.status ?? "unknown")), w.mode === "selective" ? p("Personal · owner only · " + personName(w.owner_alias)) : null)),
       !data.workspaces.length ? p("No workspaces yet.") : null];
   }
-  const CAPS = [["git_push", "Push code to git"], ["network", "Use the network"], ["pty", "Run terminal sessions"], ["serve_http", "Serve web pages"], ["spawn_agent", "Start other agents"]];
+  const CAPS = [["choose_model", "Choose the AI model"], ["credential", "Use stored credentials"], ["git_push", "Push code to git"], ["network", "Use the network"], ["pty", "Run terminal sessions"], ["serve_http", "Serve web pages"], ["spawn_agent", "Start other agents"]];
   const MAX_COMPANY = 16;
   const official = () => data.policy.official_url;
   const ids = (text) => [...new Set(text.split(/[\s,]+/).filter(Boolean))].sort();
@@ -167,19 +167,50 @@ export function adminView(d) {
   // one Save sends it as the whole object with the version it was based on (a stale version is a conflict).
   let ui = null, mpNote = null, mpFocus = null, mpBusy = false;
   const mpRoot = h("div", {});
-  const fromPolicy = (pol) => ({
+  // ``base`` is what the draft started from ({version, policy}); Save sends base.version, and nothing moves it under a
+  // draft with unsaved edits (a refresh from another panel only shows "changed elsewhere").
+  const fromPolicy = (cur) => ({
+    base: JSON.parse(JSON.stringify({ version: cur.version, policy: cur.policy })), overwrites: [], confirmOver: false,
+    ...draftOf(cur.policy),
+  });
+  const draftOf = (pol) => ({
     markets: JSON.parse(JSON.stringify(pol.markets)),
     onlyAddons: pol.addons.allow !== null, allow: (pol.addons.allow ?? []).join(" "), block: pol.addons.block.join(" "),
     limit: pol.ceiling !== null, caps: new Set(pol.ceiling ?? []),
     confirm: null, editKeys: null, err: null, form: { addr: "", k1: "", k2: "" },
   });
+  // The admin's own changes (draft against its base) laid onto the latest policy. Where someone else changed the same
+  // thing differently the admin's value wins but is listed in ``overwrites`` and needs an explicit confirm.
+  function rebase(base, mine, latest) {
+    const over = [], same = (a, b) => canon(a) === canon(b);
+    const listMerge = (b, m, l) => { const B = new Set(b), M = new Set(m), out = new Set(l); for (const x of M) if (!B.has(x)) out.add(x); for (const x of B) if (!M.has(x)) out.delete(x); return [...out].sort(); };
+    const field = (label, b, m, l) => {
+      if (same(m, b)) return l;
+      if (Array.isArray(b) && Array.isArray(m) && Array.isArray(l)) return listMerge(b, m, l);
+      if (same(l, b) || same(l, m)) return m;
+      over.push(label); return m;
+    };
+    const map = (p) => new Map(p.markets.map((x) => [x.url, x])), B = map(base), M = map(mine), res = map(latest);
+    for (const [url, m] of M) {
+      const b = B.get(url), l = res.get(url);
+      if (b === undefined) { if (l !== undefined && !same(l, m)) over.push("Marketplace " + url + " was added elsewhere with other keys"); res.set(url, m); }
+      else if (!same(m, b)) { if (l === undefined) over.push("Marketplace " + url + " was removed elsewhere; your key change adds it back"); else if (!same(l, b) && !same(l, m)) over.push("Keys of " + url + " were changed elsewhere"); res.set(url, m); }
+    }
+    for (const [url, b] of B) if (!M.has(url)) { const l = res.get(url); if (l !== undefined && !same(l, b)) over.push("Keys of " + url + " were changed elsewhere before you removed it"); res.delete(url); }
+    const policy = {
+      markets: [...res.values()].sort(byUrl),
+      addons: { allow: field("Which add-ons may be installed", base.addons.allow, mine.addons.allow, latest.addons.allow), block: field("Blocked add-ons", base.addons.block, mine.addons.block, latest.addons.block) },
+      ceiling: field("Permission limit", base.ceiling, mine.ceiling, latest.ceiling),
+    };
+    return { policy, over };
+  }
   const toPolicy = () => ({
     markets: [...ui.markets].sort(byUrl),
     addons: { allow: ui.onlyAddons ? ids(ui.allow) : null, block: ids(ui.block) },
     ceiling: ui.limit ? [...ui.caps].sort() : null,
   });
-  const mpDirty = () => ui !== null && canon(toPolicy()) !== canon(data.policy.policy);
-  const syncMp = () => { if (ui === null || !mpDirty()) ui = fromPolicy(data.policy.policy); };
+  const mpDirty = () => ui !== null && canon(toPolicy()) !== canon(ui.base.policy);
+  const syncMp = () => { if (ui === null || !mpDirty()) ui = fromPolicy(data.policy); };
   const mpPaint = () => {
     mpRoot.replaceChildren(...buildMp());
     if (mpFocus) { document.getElementById(mpFocus)?.focus(); mpFocus = null; }
@@ -189,15 +220,20 @@ export function adminView(d) {
   async function saveMp() {
     mpBusy = true; mpPaint();
     try {
-      const r = await d.api("PUT", "/admin/market-policy", { base_version: data.policy.version, policy: toPolicy() });
+      const r = await d.api("PUT", "/admin/market-policy", { base_version: ui.base.version, policy: toPolicy() });
       if (r.status === 200) {
-        data.policy = { ...data.policy, ...r.body }; ui = fromPolicy(data.policy.policy);
+        data.policy = { ...data.policy, ...r.body }; ui = fromPolicy(data.policy);
         mpNote = { kind: "ok", text: "Saved. Every connected workspace gets the new rules (version " + r.body.version + ")." };
         await load();
       } else if (r.status === 409) {
         const g = await d.api("GET", "/admin/market-policy");
-        if (g.status === 200) data.policy = g.body;
-        mpNote = { kind: "warn", conflict: true, text: "Someone else changed these rules in the meantime (they are now version " + data.policy.version + "). Your edits are still here. Check them and save again to apply them on top, or load the latest rules and drop your edits." };
+        if (g.status === 200) {
+          data.policy = g.body;
+          const { policy, over } = rebase(ui.base.policy, toPolicy(), g.body.policy);
+          const keep = { form: ui.form };
+          ui = { ...fromPolicy(g.body), ...draftOf(policy), ...keep, overwrites: over, confirmOver: false };
+          mpNote = { kind: "warn", conflict: true, text: "Someone else changed these rules while you were editing (they are now version " + g.body.version + "). Nothing was saved. Your own changes are laid on top of their version below: check them, then save." + (over.length ? " Some of your changes replace theirs; confirm that below before saving." : "") };
+        } else mpNote = { kind: "bad", text: d.say(g.body?.error ?? "unavailable") };
       } else if (r.status === 400) {
         mpNote = { kind: "bad", text: "The hub did not accept these rules. Check the marketplace addresses and public keys (a key is 87 characters). Nothing was changed." };
       } else mpNote = { kind: "bad", text: d.say(r.body?.error ?? "unavailable") };
@@ -242,9 +278,9 @@ export function adminView(d) {
     const area = (id, label, key, help, disabled) => [h("label", { for: id, text: label }),
       h("textarea", { id, rows: 2, maxlength: 4000, disabled, oninput: (ev) => { ui[key] = ev.target.value; if (key === "block") warn(); touch(); } }), p(help)];
     const warnEl = h("div", {});
-    const saveBtn = h("button", { class: "pri", type: "button", id: "mp-save", text: "Save rules", disabled: !dirty || mpBusy, onclick: () => void saveMp() });
+    const saveBtn = h("button", { class: "pri", type: "button", id: "mp-save", text: "Save rules", disabled: !dirty || mpBusy || (ui.overwrites.length > 0 && !ui.confirmOver), onclick: () => void saveMp() });
     const dirtyBox = h("span", {});
-    const touch = () => { const now = mpDirty(); saveBtn.disabled = !now || mpBusy; dirtyBox.replaceChildren(...(now ? [chip("Unsaved changes", "warn")] : [])); };
+    const touch = () => { const now = mpDirty(); saveBtn.disabled = !now || mpBusy || (ui.overwrites.length > 0 && !ui.confirmOver); dirtyBox.replaceChildren(...(now ? [chip("Unsaved changes", "warn")] : [])); };
     const warn = () => {
       const blocksDashboard = ids(ui.block).some((x) => x === "dashboard" || x.startsWith("dashboard@"));
       warnEl.replaceChildren(blocksDashboard ? h("div", { class: "banner warn", role: "alert", text: "This blocks the dashboard. It stops working in every workspace on this hub until you remove the rule." })
@@ -255,8 +291,13 @@ export function adminView(d) {
     allowArea[1].value = ui.allow; blockArea[1].value = ui.block; warn(); touch();
     const note = mpNote ? h("div", { class: "banner " + mpNote.kind, id: "mp-note", tabindex: "-1", role: mpNote.kind === "ok" ? "status" : "alert" },
       h("div", { text: mpNote.text }),
-      mpNote.conflict ? h("button", { type: "button", text: "Load latest rules and drop my edits", onclick: () => { ui = fromPolicy(data.policy.policy); mpNote = null; mpFocus = "mp-add-addr"; mpPaint(); } }) : null) : null;
-    return [note,
+      mpNote.conflict ? h("button", { type: "button", text: "Load latest rules and drop my edits", onclick: () => { ui = fromPolicy(data.policy); mpNote = null; mpFocus = "mp-add-addr"; mpPaint(); } }) : null) : null;
+    const moved = dirty && data.policy.version !== ui.base.version
+      ? h("div", { class: "banner warn", role: "status", text: "These rules were changed elsewhere (now version " + data.policy.version + "). Your draft started from version " + ui.base.version + ". Saving will be refused and your changes will be laid on top of the latest rules for you to check." }) : null;
+    const over = ui.overwrites.length ? h("div", { class: "banner warn", role: "alert" },
+      p("Saving would replace changes someone else made:"), h("ul", {}, ui.overwrites.map((t) => h("li", { text: txt(t) }))),
+      h("label", { class: "check" }, h("input", { type: "checkbox", id: "mp-confirm-over", checked: ui.confirmOver, onchange: (ev) => { ui.confirmOver = ev.target.checked; touch(); } }), "I have read this: use my version of these")) : null;
+    return [note, moved, over,
       p("These rules apply to every workspace connected to this hub. Installing an add-on still needs a person's review and signature. A signature on a marketplace shows who published it, not that the code is safe."),
       h("section", { class: "card" }, h("h3", { text: "Allowed marketplaces" }),
         ui.markets.length ? ui.markets.map(mpRow) : p("No marketplaces are allowed. Nothing can be installed from a marketplace until you allow one."),
@@ -292,7 +333,7 @@ export function adminView(d) {
           p("With a limit and nothing ticked, no add-on may use any of these permissions. Ticking a permission only makes it possible: a person still has to grant it."))),
       h("div", { class: "row" },
         saveBtn,
-        dirty ? h("button", { type: "button", text: "Discard changes", onclick: () => { ui = fromPolicy(data.policy.policy); mpNote = null; mpPaint(); } }) : null,
+        dirty ? h("button", { type: "button", text: "Discard changes", onclick: () => { ui = fromPolicy(data.policy); mpNote = null; mpPaint(); } }) : null,
         dirtyBox),
       p("Rules version " + data.policy.version + ".")];
   }

@@ -973,8 +973,9 @@ SectionRev = {seq:int, at:Time, hash:Hash | null, actor:Actor, via:"edit"|"exter
 - Text in `data` (`text`, `reason`, `label`, `title`) is the actor's stored content, not host text: it is not escaped like
   `summary`, and a client renders it as untrusted text attributed to `actor`. A `Snip` field `f` has its `f_cut` sibling.
 - **`questions`.**
-  - `text`, `why`, `options` (each `{key, label, cost?}`) and `recommended` are the question as the last `question.asked`
-    for its id defines it (F1 §5.4.1). `to_ref` is the stored `to` (a person id or a ticket role), while `to` stays the
+  - `text`, `options` (verbatim, each `{key, label, text?, facts?, cost?}`; absent for kind `text`) and `spec` (verbatim:
+    `kind` plus `why`, `details`, `recommended`, `allow_other` when present) are the question as the last
+    `question.asked` for its id defines it (ticket-format §5.6.1). `why` and `recommended` are not top-level keys. `to_ref` is the stored `to` (a person id or a ticket role), while `to` stays the
     resolved addressees.
   - `asked_at`, `asked_by` and `asked_seq` come from that same event, so a re-ask with changed text restarts them.
   - `answer` is present exactly when `state` is `"answered"`, from the `question.answered` that counts. `option` and `text`
@@ -8084,26 +8085,29 @@ append the model compares it with the current hash of that question id; a differ
 
 ```
 qid  = hex(SHA-256("orch/v2/question-id|" || cj({"question":"Q1", "ticket":uid, "workspace_id":W}))[0:16])
-hash = "sha256:" + hex(SHA-256("orch/v2/question|" || cj({"options":options, "question_id":qid, "text":text, "ticket":uid})))
+hash = "sha256:" + hex(SHA-256("orch/v2/question|" || cj({"options":options, "question_id":qid, "spec":spec, "text":text, "ticket":uid})))
 ```
 
-- `ticket` is the ticket **uid**, not the key. `options` is the question's list in its asked order, each
-  `{key, label}` plus `cost` when present (a string). When the question has no options, `ticket.get` omits the field
-  and the hash uses `[]`.
-- The phone recomputes `qid` and `hash` from `doc.uid`, its paired workspace id and the displayed `text` and
-  `options`. It shows the sign sheet only when both equal `ticket.get`'s `questions[].qid` and `hash`, and it signs
+- `ticket` is the ticket **uid**, not the key. `options` is the question's list in its asked order, verbatim as
+  `ticket.get` (and the `needs` payload) return it, every option key included. When the question has no options,
+  the read omits the field and the hash uses `[]`. `spec` is every question key except `id`, `to`, `blocking`, `text`
+  and `options`, verbatim as the read returns it (also in the `needs` payload). Clients never rebuild either from
+  view keys (design-question-options §2; fixtures `tests/vectors/f1/{questions,hashes}.json`).
+- The phone recomputes `qid` and `hash` from `doc.uid`, its paired workspace id and the displayed `text`, `options`
+  and `spec`. It shows the sign sheet only when both equal `ticket.get`'s `questions[].qid` and `hash`, and it signs
   the recomputed value. It renders every bound field, `cost` included, and never signs what it did not render.
   Labels it cannot render safely are refused (fail closed; the confusables UX gap is tracked).
-- **Only `text` and `options` are bound.** `why`, `recommended`, `to` and `blocking` are not. A re-ask that changes only
-  those keeps the hash and an existing answer stands (`asked`). The sheet shows them as unbound context, apart from the
+- **`text`, `options` and `spec` are bound** (so `kind`, `why`, `details`, `recommended`, `allow_other` and every option
+  field). Only `to` and `blocking` are routing, outside the hash. A re-ask that changes a bound field gets a new hash
+  and clears an existing answer (`asked`). The sheet shows every bound field before signing, apart from the
   "Signed details" (`qid`, `hash`, `uid`).
 - **An answer means "answer this content whenever eligible".** `asked` keeps an answer only while the hash is equal,
   so A → B → A clears it, and a delayed answer to A is then accepted if it is still eligible (`answered` rechecks
   authority). This is F1 semantics, not a forgery. It is bounded by the 900 s window. A question revision in the hash
   would need a new `hash_v`. Auto re-sign never crosses a context change (14.4 item 2).
 - **Protocol §13** uses the same label and formula over F1 values, but core's values differ from host-api v0's: the
-  uid (not the key), options `{key, label, cost?}` (not `{id, label}`), and `sha256:` hex (not b64u). The phone needs
-  an F1 question parser.
+  uid (not the key), options verbatim `{key, label, text?, facts?, cost?}` (not `{id, label}`), the verbatim `spec`,
+  and `sha256:` hex (not b64u). The phone needs an F1 question parser.
 
 **14.6 Admission (`relay/submit.py`).** Bridge T1 has already run (envelope, seq window, ±300 s, start fence, rid and
 submission row, route scope `decide`, outcome `begin`). `HumanOps._judge` is factored into

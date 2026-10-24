@@ -7,6 +7,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -167,7 +168,10 @@ def test_every_field_equals_the_model_view(w):
     asked = next(e for e in events if e["type"] == "question.asked")
     answered = next(e for e in events if e["type"] == "question.answered")
     assert q["state"] == "answered" and q["blocking"] is True
-    assert q["options"] == asked["question"]["options"] and q["recommended"] == "a" and q["why"] == "because"
+    assert q["options"] == asked["question"]["options"]
+    assert q["spec"] == {"kind": "choice", "recommended": "a", "why": "because"}
+    assert q["spec"] == canon.question_spec(asked["question"])
+    assert "recommended" not in q and "why" not in q  # bound keys live in spec only
     assert (q["text"], q["to_ref"]) == (asked["question"]["text"], asked["question"]["to"])
     assert (q["asked_at"], q["asked_seq"]) == (asked["at"], asked["seq"]) and q["asked_by"]["kind"] == "agent"
     assert q["to"] == [w.lab.owner] and q["answered_by"] == w.lab.owner and q["answered_seq"] == answered["seq"]
@@ -843,3 +847,23 @@ def test_an_open_question_has_no_answer_id_and_a_stale_answer_none(w):
     h.agent("ask", {"ref": key, "text": "which?", "options": ["a", "b"]})
     (q,) = get(h.c, key)["questions"]
     assert q["state"] == "open" and "answer" not in q
+
+
+def test_a_rich_question_read_item_equals_the_frozen_fixture_and_hashes_verbatim(w):
+    """#1123 B3: ``options`` (every option key) and ``spec`` verbatim; a client re-hashes them to the event's hash."""
+    forms = json.loads((Path(__file__).parent.parent / "vectors" / "f1" / "questions.json").read_text("utf-8"))["forms"]
+    for form in forms:
+        uid, key = w.ticket(form["name"])
+        q = dict(form["raw_event"]["question"])
+        qid = canon.question_id(w.wid, uid, q["id"])
+        h = canon.question_hash(qid, uid, q)
+        agent_ev(w, uid, "question.asked", question=q, qid=qid, hash=h)
+        r = ok(w.client().req("ticket.get", {"ref": key}))["data"]
+        (got,) = r["questions"]
+        want = form["read_item"]
+        assert got.get("options") == want.get("options") and got["spec"] == want["spec"]
+        assert "recommended" not in got and "why" not in got
+        again = {**got["spec"], "id": got["id"], "to": "ticket_owner", "blocking": got["blocking"], "text": got["text"]}
+        if got.get("options"):
+            again["options"] = got["options"]
+        assert canon.question_hash(got["qid"], uid, again) == got["hash"] == h

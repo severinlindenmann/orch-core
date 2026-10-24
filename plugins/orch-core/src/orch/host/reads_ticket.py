@@ -223,12 +223,10 @@ def _questions(x: _Ticket) -> list[dict[str, Any]]:
             "answered_seq": answer_event["seq"] if answer_event is not None else None,
             "text": d["text"],
         }
-        for k in ("why", "recommended"):
-            if d.get(k):
-                item[k] = d[k]
         item["to_ref"] = d["to"]
         if d.get("options"):
-            item["options"] = [{k: o[k] for k in ("key", "label", "cost") if k in o} for o in d["options"]]
+            item["options"] = thaw(d["options"])  # verbatim: clients hash exactly these
+        item["spec"] = canon.question_spec(thaw(d))  # verbatim: kind, why, details, recommended, allow_other
         asked = x.by_seq.get(core.asked_seq)
         if asked is not None:
             item.update({"asked_at": asked["at"], "asked_by": readmodel.actor(asked), "asked_seq": asked["seq"]})

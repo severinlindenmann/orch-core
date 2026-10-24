@@ -359,7 +359,6 @@ describe('the runner grant', () => {
   })
 
   it.each([
-    [{ code: 'human.click_refused', reason: 'terminal_only', why: 'update_orch' }, "This orch version can't hand a grant to the runner; update orch."],
     [{ code: 'human.click_refused', reason: 'terminal_only' }, 'Turn on dashboard execution (orch runner enable) or use the terminal.'],
     [{ code: 'click.unavailable' }, 'Run `orch grant --runner` in your terminal.'],
   ])('refusal %o says %s', async (err, text) => {

@@ -137,7 +137,7 @@ class Signer:
             self.refused = (self.clock() + CONTRACT_RETRY, error)
             raise error
         self.refused = None
-        self.contract = contract  # 2 means the signer supports runner-grant deposit
+        self.contract = contract
         got = status.get("features")
         self.features = frozenset(f for f in got if type(f) is str) if isinstance(got, list) else frozenset()
         self.core = str(status.get("core"))[:40]

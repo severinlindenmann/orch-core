@@ -286,8 +286,6 @@ STATES: dict[str, tuple[str, ...]] = {
     "intent.done": ("submitted",),
     "intent.failed": ("submitted",),
 }
-#: `why` (only with `human.click_refused`/`terminal_only`): this orch cannot hand a grant to the runner
-WHYS = ("update_orch",)
 
 
 def valid_code(v) -> bool:
@@ -336,7 +334,6 @@ TOP_KEYS = {
     "retryable": lambda v, code: isinstance(v, bool),
     "retry_after_ms": lambda v, code: retry_after(v) is not None,
     "reason": _reason,
-    "why": _on(CLICK_REFUSED, lambda v, code: isinstance(v, str) and v in WHYS),
     "state": lambda v, code: isinstance(v, str) and v in STATES.get(code, ()),
     "request_id": _on(CLICK_REFUSED, _match(REQUEST_ID, 32)),
     "signed_at": _on(

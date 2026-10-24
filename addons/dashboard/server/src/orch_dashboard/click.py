@@ -76,7 +76,6 @@ DEPOSIT_REASONS = (
 )
 ULID = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 GRANT_ID = re.compile(r"^gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")
-UPDATE_ORCH = "This orch version can't hand a grant to the runner; update orch."
 
 Passphrase = Annotated[str, StringConstraints(min_length=1, max_length=1024)]
 

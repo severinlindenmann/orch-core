@@ -225,11 +225,10 @@ def run(check: str, a: dict[str, Any]) -> dict[str, Any]:
     if check == "owner_proof_recorded":  # readers of hub.joined / hub.left (no clock)
         pk = None if a["pk_pub"] is None else unb64u(a["pk_pub"], 65)
         o = H.check_recorded_owner_proof(
-            a["event_type"], a["payload"], auth=a["auth"], signer_exposed=a["signer_exposed"], at_ms=a["at_ms"],
-            prior_binding_seq=a["prior_binding_seq"], workspace_id=a["workspace_id"],
+            a["event_type"], a["payload"], at_ms=a["at_ms"], prior=a["prior"], workspace_id=a["workspace_id"],
             actor_person_id=a["actor_person_id"], pk_pub=pk, dev_mode=dev,
         )  # fmt: skip
-        return {"proof": None if o is None else o["op"]}
+        return {"proof": o["op"]}
     if check == "card_reader":
         return {"reader": _held(a)["card"]["reader"]}
     if check == "hub_reader":

@@ -38,7 +38,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import zipfile
 from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -128,41 +127,73 @@ def _wheel_paths(names: list[str]) -> list[str]:
     return out
 
 
-def _zip_entry_count(fd: int) -> int:
-    """The number of entries a zip claims in its end-of-central-directory record, read from the last bytes of the file
-    BEFORE ``zipfile`` builds a list of them (a count cap before allocation). Zip64 and anything odd is refused."""
+_CD_SIG = b"PK\x01\x02"
+_CD_FIXED = 46
+_ZIP_ENTRY_MAX = _CD_FIXED + 3 * 65535  # the largest a central directory entry can be
+
+
+def scan_zip(fd: int, budget: envtree.Budget) -> list[tuple[str, int]]:
+    """``[(name, uncompressed size)]`` of a zip, read by walking its central directory OURSELVES, one entry at a time,
+    drawing every entry and every declared byte from ``budget`` before the entry is kept. ``zipfile`` is never asked to
+    list a file whose directory has not been walked here: an end record that lies about its count or size cannot make
+    anything allocate more than the budget (the walk stops at the first entry past it). Zip64, a count that disagrees
+    with what the directory holds, a name that is not UTF-8 or a directory that leaves the file: ``package``."""
     size = os.fstat(fd).st_size
-    tail = os.pread(fd, min(size, 22 + 65535), max(size - (22 + 65535), 0))
+    tail_at = max(size - (22 + 65535), 0)
+    tail = os.pread(fd, size - tail_at, tail_at)
     at = tail.rfind(b"PK\x05\x06")
     if at < 0 or len(tail) - at < 22:
         raise TreeError("package")
-    total = struct.unpack("<H", tail[at + 10 : at + 12])[0]
-    if total == 0xFFFF:  # zip64: the count is elsewhere, and a wheel of this size never needs it
-        raise TreeError("too_large")
-    return total
+    count, cd_size, cd_off = (
+        struct.unpack("<H", tail[at + 10 : at + 12])[0],
+        *struct.unpack("<LL", tail[at + 12 : at + 20]),
+    )
+    if count == 0xFFFF or 0xFFFFFFFF in (cd_size, cd_off) or cd_off + cd_size > tail_at + at:
+        raise TreeError("package")  # zip64, or a directory that does not lie before its end record
+    out: list[tuple[str, int]] = []
+    pos, end, buf = cd_off, cd_off + cd_size, b""
+    while pos < end or buf:
+        while len(buf) < _CD_FIXED and pos < end:
+            chunk = os.pread(fd, min(1 << 16, end - pos), pos)
+            if not chunk:
+                raise TreeError("package")
+            buf, pos = buf + chunk, pos + len(chunk)
+        if len(buf) < _CD_FIXED or buf[:4] != _CD_SIG:
+            raise TreeError("package")
+        n, m, k = struct.unpack("<HHH", buf[28:34])
+        need = _CD_FIXED + n + m + k
+        while len(buf) < need and pos < end:
+            chunk = os.pread(fd, min(1 << 16, end - pos, need - len(buf)), pos)
+            if not chunk:
+                raise TreeError("package")
+            buf, pos = buf + chunk, pos + len(chunk)
+        if len(buf) < need:
+            raise TreeError("package")
+        usize = struct.unpack("<L", buf[24:28])[0]
+        if usize == 0xFFFFFFFF or len(out) >= count:  # zip64, or more entries than the end record says
+            raise TreeError("package")
+        budget.take(usize, 1)  # before the entry is kept
+        try:
+            out.append((buf[_CD_FIXED : _CD_FIXED + n].decode("utf-8"), usize))
+        except UnicodeDecodeError:
+            raise TreeError("package") from None
+        buf = buf[need:]
+    if len(out) != count:
+        raise TreeError("package")
+    return out
 
 
-def _judge_wheel(fd: int, declared: list[int] | None = None) -> None:
+def _judge_wheel(fd: int, budget: envtree.Budget) -> None:
     """The wheel's own member list against the environment path rules (a wheel that would put a ``.pth`` or a
-    ``sitecustomize`` at the root, or a path outside it, is refused before the person signs). The entry count is read
-    first; the sizes the wheel declares (the bytes pip will write) are added to ``declared`` and capped in all."""
+    ``sitecustomize`` at the root, or a path outside it, is refused before the person signs). The members and the bytes
+    they declare (what pip will write) are drawn from the shared ``budget`` of this environment."""
     try:
-        if _zip_entry_count(fd) > envtree.MAX_ENTRIES:
-            raise TreeError("too_large")
-        with os.fdopen(os.dup(fd), "rb") as f, zipfile.ZipFile(f) as z:
-            infos = z.infolist()
-            size = sum(i.file_size for i in infos)
-            if declared is not None:
-                declared[0] += size
-            if len(infos) > envtree.MAX_ENTRIES or (declared[0] if declared else size) > envtree.MAX_BYTES:
-                raise TreeError("too_large")
-            envtree.check_paths(_wheel_paths([i.filename for i in infos]))
-    except (zipfile.BadZipFile, OSError, ValueError, NotImplementedError):
+        names = scan_zip(fd, budget)
+        envtree.check_paths(_wheel_paths([n for n, _ in names]))
+    except OSError:
         raise _failed("package") from None
     except TreeError as e:
         raise _failed(e.reason) from None
-    finally:
-        os.lseek(fd, 0, os.SEEK_SET)
 
 
 def stage_fetch(service: WorkspaceService, lock: lockfile.Lock, planned: Any) -> dict[int, tuple[int, bool]]:
@@ -171,9 +202,9 @@ def stage_fetch(service: WorkspaceService, lock: lockfile.Lock, planned: Any) ->
     stage while the old version still runs. Nothing is unpacked or installed. Returns ``{row index: (bytes,
     compiled)}``. Runs off the worker."""
     deadline = time.monotonic() + STAGE_SECONDS
-    budget = download.Budget()
+    budget = download.new_budget()
+    parse = envtree.Budget()  # every wheel and tarball of this stage draws from this one
     found: dict[int, tuple[int, bool]] = {}
-    declared = [0]  # bytes the wheels say they will write, in all
     with _cache(service) as cache:
         for i, p in enumerate(planned):
             if not p.install:
@@ -184,11 +215,11 @@ def stage_fetch(service: WorkspaceService, lock: lockfile.Lock, planned: Any) ->
                 compiled = src.compiled
                 if lock.kind == "node-package-lock":
                     try:
-                        compiled = untar.unpack(fd, None).compiled  # judged now, written only at build time
+                        compiled = untar.unpack(fd, None, parse).compiled  # judged now, written only at build time
                     except TreeError as e:
                         raise _failed(e.reason) from None
                 else:
-                    _judge_wheel(fd, declared)
+                    _judge_wheel(fd, parse)
                 found[i] = (os.fstat(fd).st_size, compiled)
             finally:
                 os.close(fd)
@@ -250,15 +281,15 @@ def _build_python(
     wheels = build_dir / "wheels"
     wheels.mkdir(0o700)
     lines = []
-    budget = download.Budget()
-    declared = [0]
+    budget = download.new_budget()
+    parse = envtree.Budget()  # every wheel of this environment draws from this one
     for p in planned:
         if not p.install:
             continue
         src = download.locate(p.row, lock.kind, deadline)
         fd = cache.fetch(src, deadline, budget)
         try:
-            _judge_wheel(fd, declared)  # the member list and declared sizes, again, before pip writes anything
+            _judge_wheel(fd, parse)  # the member list and declared sizes, again, before pip writes anything
             _copy_verified(fd, wheels / src.filename, src)
         finally:
             os.close(fd)
@@ -334,7 +365,8 @@ def _mkdir_p(root_fd: int, parts: list[str]) -> int:
 def _build_node(
     env: Path, cache: download.Cache, lock: lockfile.Lock, planned: Any, deadline: float, used: list[str]
 ) -> None:
-    budget = download.Budget()
+    budget = download.new_budget()
+    parse = envtree.Budget()  # every tarball of this environment draws from this one
     root = os.open(env, _DIR)
     try:
         for p in planned:
@@ -345,7 +377,7 @@ def _build_node(
             try:
                 dest = _mkdir_p(root, p.row.key.split("/"))  # the lock key is checked: node_modules/<name>[/...]
                 try:
-                    untar.unpack(fd, dest)
+                    untar.unpack(fd, dest, parse)
                 except TreeError as e:
                     raise _failed(e.reason) from None
                 finally:

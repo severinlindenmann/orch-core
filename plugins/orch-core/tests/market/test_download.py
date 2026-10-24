@@ -19,6 +19,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
 
 from orch.addons import lockfile
+from orch.addons.envtree import Budget
 from orch.market import MarketError, download
 
 BODY = b"hello wheel" * 100
@@ -223,10 +224,10 @@ def read(fd):
 
 def test_the_cache_verifies_before_naming_and_a_hit_is_hashed_again(server, cache):
     c, d = cache
-    b = download.Budget()
+    b = download.new_budget()
     s = src()
     assert read(c.fetch(s, time.monotonic() + 5, b)) == BODY
-    assert [p.name for p in d.iterdir()] == [f"sha256-{s.digest}"] and b.used == len(BODY)
+    assert [p.name for p in d.iterdir()] == [f"sha256-{s.digest}"] and b.bytes == download.MAX_TOTAL - len(BODY)
     n = len(Handler.hits)
     assert read(c.fetch(s, time.monotonic() + 5, b)) == BODY and len(Handler.hits) == n  # a hit: no download
     (d / f"sha256-{s.digest}").write_bytes(b"poison")  # same name, other bytes
@@ -237,7 +238,7 @@ def test_a_hash_mismatch_leaves_nothing_in_the_cache(server, cache):
     c, d = cache
     bad = download.Source(PY, "https://pypi.org/ok", "sha256", "0" * 64, "x.whl")
     with pytest.raises(MarketError) as e:
-        c.fetch(bad, time.monotonic() + 5, download.Budget())
+        c.fetch(bad, time.monotonic() + 5, download.new_budget())
     assert (e.value.code, e.value.reason) == ("market.env_failed", "hash_mismatch")
     assert list(d.iterdir()) == []  # no .part file, no final name
 
@@ -248,13 +249,13 @@ def test_a_cache_entry_that_is_a_link_or_a_hardlink_is_not_used(server, cache, t
     target = tmp_path / "elsewhere"
     target.write_bytes(BODY)  # the right bytes, but behind a symlink
     os.symlink(target, d / f"sha256-{s.digest}")
-    assert read(c.fetch(s, time.monotonic() + 5, download.Budget())) == BODY
+    assert read(c.fetch(s, time.monotonic() + 5, download.new_budget())) == BODY
     assert not (d / f"sha256-{s.digest}").is_symlink()
 
 
 def test_the_budget_caps_the_total(server, cache):
     c, _ = cache
-    b = download.Budget(total=len(BODY) + 10)
+    b = Budget(bytes=len(BODY) + 10, entries=10)
     c.fetch(src(), time.monotonic() + 5, b)
     with pytest.raises(MarketError) as e:
         c.fetch(src(body=b"other"), time.monotonic() + 5, b)  # room is 10 bytes: the 1100-byte body is too large
@@ -323,7 +324,7 @@ def test_a_file_url_on_another_host_is_refused_when_it_is_fetched(server, cache)
     c, _ = cache
     s = download.Source(PY, "https://evil.example/idna.whl", "sha256", H1, "idna.whl")
     with pytest.raises(MarketError) as e:
-        c.fetch(s, time.monotonic() + 5, download.Budget())
+        c.fetch(s, time.monotonic() + 5, download.new_budget())
     assert (e.value.code, e.value.reason) == ("market.env_failed", "download") and server == []
 
 

@@ -21,6 +21,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from orch.addons.envtree import Budget, TreeError
 from orch.market import MarketError
 
 __all__ = [
@@ -97,12 +98,17 @@ def _invalid() -> MarketError:
     return MarketError("market.lock_invalid")
 
 
-def check(kind: str, data: bytes) -> Lock:
-    """The checked :class:`Lock` of ``data``, or ``market.lock_invalid`` (``market.malformed`` for an unknown kind)."""
+def check(kind: str, data: bytes, budget: Budget | None = None) -> Lock:
+    """The checked :class:`Lock` of ``data``, or ``market.lock_invalid`` (``market.malformed`` for an unknown kind).
+    The bytes and the rows are drawn from ``budget`` (default: the lockfile limits) before anything is parsed."""
     if kind not in KINDS:
         raise MarketError("market.malformed")
-    if not isinstance(data, bytes) or len(data) > MAX_LOCK_BYTES:
+    if not isinstance(data, bytes):
         raise _invalid()
+    try:
+        (budget or Budget(bytes=MAX_LOCK_BYTES, entries=MAX_ROWS)).take(len(data))
+    except TreeError:
+        raise _invalid() from None
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError:

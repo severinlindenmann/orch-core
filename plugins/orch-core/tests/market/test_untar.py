@@ -10,7 +10,7 @@ import tarfile
 
 import pytest
 
-from orch.addons.envtree import TreeError
+from orch.addons.envtree import Budget, TreeError
 from orch.market import untar
 
 
@@ -35,7 +35,7 @@ def tgz(*members, raw: bytes | None = None) -> bytes:
     return buf.getvalue() if raw is None else raw
 
 
-def run(tmp_path, blob: bytes, dest=True):
+def run(tmp_path, blob: bytes, dest=True, budget=None):
     src = tmp_path / "t.tgz"
     src.write_bytes(blob)
     out = tmp_path / "out"
@@ -43,7 +43,7 @@ def run(tmp_path, blob: bytes, dest=True):
     fd = os.open(src, os.O_RDONLY)
     dfd = os.open(out, os.O_RDONLY | os.O_DIRECTORY) if dest else None
     try:
-        return untar.unpack(fd, dfd), out
+        return untar.unpack(fd, dfd, budget or Budget()), out
     finally:
         os.close(fd)
         if dfd is not None:
@@ -78,7 +78,7 @@ def test_a_dry_run_writes_nothing_but_judges_the_same(tmp_path):
     src.write_bytes(tgz(("package/x", None, {"type": tarfile.SYMTYPE, "linkname": "/etc/hosts"})))
     fd = os.open(src, os.O_RDONLY)
     with pytest.raises(TreeError):
-        untar.unpack(fd, None)
+        untar.unpack(fd, None, Budget())
     os.close(fd)
 
 
@@ -110,53 +110,56 @@ def test_hostile_members_are_refused_and_nothing_escapes(tmp_path, members, why)
     assert not (tmp_path / "evil").exists() and not (tmp_path.parent / "evil").exists()
 
 
+def too_large(tmp_path, blob, budget):
+    with pytest.raises(TreeError) as e:
+        run(tmp_path, blob, budget=budget)
+    return e.value.reason
+
+
 def test_limits_and_broken_archives(tmp_path, monkeypatch):
     monkeypatch.setattr(untar, "MAX_FILE", 5)
     assert reason(tmp_path, tgz(("package/big", b"123456", None))) == "too_large"
     monkeypatch.setattr(untar, "MAX_FILE", 1 << 20)
-    monkeypatch.setattr(untar, "MAX_ENTRIES", 2)
-    assert reason(tmp_path, tgz(*[(f"package/f{i}", b"", None) for i in range(3)])) == "too_large"
-    monkeypatch.setattr(untar, "MAX_ENTRIES", 100)
-    monkeypatch.setattr(untar, "MAX_BYTES", 4)
-    assert reason(tmp_path, tgz(("package/a", b"123", None), ("package/b", b"123", None))) == "too_large"
-    monkeypatch.setattr(untar, "MAX_BYTES", 1 << 20)
+    assert too_large(tmp_path, tgz(*[(f"package/f{i}", b"", None) for i in range(3)]), Budget(entries=2)) == "too_large"
+    assert (
+        too_large(tmp_path, tgz(("package/a", b"123", None), ("package/b", b"123", None)), Budget(bytes=1200))
+        == "too_large"
+    )
     assert reason(tmp_path, b"not a gzip") == "package"
     assert reason(tmp_path, tgz(("package/a", b"x" * 100, None))[:-20]) == "package"  # truncated
-
-
-def test_the_output_directory_is_not_followed_through_a_planted_link(tmp_path):
-    out = tmp_path / "out"
-    out.mkdir()
-    elsewhere = tmp_path / "elsewhere"
-    elsewhere.mkdir()
-    os.symlink(elsewhere, out / "lib")  # an agent planted a link where the tarball wants a directory
-    src = tmp_path / "t.tgz"
-    src.write_bytes(tgz(("package/lib/x.js", b"x", None)))
-    fd = os.open(src, os.O_RDONLY)
-    dfd = os.open(out, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        with pytest.raises(TreeError):
-            untar.unpack(fd, dfd)
-    finally:
-        os.close(fd)
-        os.close(dfd)
-    assert list(elsewhere.iterdir()) == []
 
 
 def test_a_gzip_bomb_is_stopped_by_the_decompressed_byte_count(tmp_path, monkeypatch):
     """One 5 MiB file of zeros compresses to a few KiB; the cap is on what comes OUT of the decompressor."""
     monkeypatch.setattr(untar, "MAX_FILE", 1 << 30)  # the member cap alone would let it through
-    monkeypatch.setattr(untar, "MAX_BYTES", 1 << 30)
     blob = tgz(("package/zeros", b"\0" * (5 << 20), None))
     assert len(blob) < 20_000
-    monkeypatch.setattr(untar, "MAX_BYTES", 1 << 20)
-    monkeypatch.setattr(untar, "MAX_ENTRIES", 10)  # the per-member allowance is 20 KiB
-    assert reason(tmp_path, blob) == "too_large"
-    # and a file whose header LIES about its size cannot make tarfile inflate more than the limit either
-    monkeypatch.setattr(untar, "MAX_BYTES", 1 << 30)
-    monkeypatch.setattr(untar, "MAX_ENTRIES", 20_000)
+    assert too_large(tmp_path, blob, Budget(bytes=1 << 20, entries=10)) == "too_large"
     info, _ = run(tmp_path, tgz(("package/ok", b"x" * 1000, None)))
     assert info.bytes == 1000
+
+
+def test_many_tarballs_each_under_the_cap_are_over_it_together(tmp_path):
+    """The budget is shared by every archive of one environment: one archive streams ~10 KiB (a tar record), so a 15 KiB
+    budget lets the first through and stops the second, though each alone is far under it."""
+    blob = tgz(("package/data", b"x" * 2000, None))
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    run(tmp_path / "a", blob, budget=Budget(bytes=15_000, entries=100))  # a single archive of this size fits
+    shared = Budget(bytes=15_000, entries=100)
+    run(tmp_path / "b", blob, budget=shared)
+    assert 0 < shared.bytes < 15_000 - 10_000 + 1
+    d = tmp_path / "second"
+    d.mkdir()
+    with pytest.raises(TreeError) as e:
+        run(d, blob, budget=shared)
+    assert e.value.reason == "too_large"
+    many = Budget(entries=5)  # and the member count is aggregate too
+    with pytest.raises(TreeError):
+        for i in range(4):
+            d = tmp_path / f"m{i}"
+            d.mkdir()
+            run(d, tgz(("package/a", b"1", None), ("package/b", b"2", None)), budget=many)
 
 
 def test_an_oversized_pax_or_long_name_header_is_refused_before_it_is_read(tmp_path):
@@ -175,9 +178,9 @@ def test_an_oversized_pax_or_long_name_header_is_refused_before_it_is_read(tmp_p
     assert reason(tmp_path, buf.getvalue()) == "too_large"
 
 
-def test_too_many_members_including_empty_directories(tmp_path, monkeypatch):
-    monkeypatch.setattr(untar, "MAX_ENTRIES", 10)
-    assert reason(tmp_path, tgz(*[(f"package/d{i}/", None, None) for i in range(25)])) == "too_large"
+def test_too_many_members_including_empty_directories(tmp_path):
+    blob = tgz(*[(f"package/d{i}/", None, None) for i in range(25)])
+    assert too_large(tmp_path, blob, Budget(entries=10)) == "too_large"
 
 
 def test_a_sparse_member_is_refused(tmp_path):

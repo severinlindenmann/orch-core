@@ -39,19 +39,21 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urljoin, urlsplit
 
+from orch.addons.envtree import Budget, TreeError
+
 from . import MarketError, address, constants
 
 __all__ = [
     "MAX_ARTIFACT",
     "MAX_INDEX",
     "MAX_TOTAL",
-    "Budget",
     "Cache",
     "Source",
     "choose_wheel",
     "fetch_bytes",
     "get",
     "locate",
+    "new_budget",
 ]
 
 MAX_ARTIFACT = 64 << 20  # one wheel or tarball
@@ -73,20 +75,16 @@ def _failed(reason: str) -> MarketError:
     return MarketError("market.env_failed", reason)
 
 
-@dataclass
-class Budget:
-    """The bytes one add-on may download in all; every artifact (fetched or from the cache) is counted."""
+def new_budget() -> Budget:
+    """What one add-on may download in all (the one :class:`orch.addons.envtree.Budget`): bytes and artifacts."""
+    return Budget(bytes=MAX_TOTAL, entries=1000)
 
-    total: int = MAX_TOTAL
-    used: int = 0
 
-    def room(self) -> int:
-        return min(MAX_ARTIFACT, self.total - self.used)
-
-    def take(self, n: int) -> None:
-        self.used += n
-        if self.used > self.total:
-            raise _failed("too_large")
+def _take(budget: Budget, n_bytes: int, n_entries: int = 0) -> None:
+    try:
+        budget.take(n_bytes, n_entries)
+    except TreeError:
+        raise _failed("too_large") from None
 
 
 # ------------------------------------------------------------------------------------------------ the connection
@@ -218,12 +216,13 @@ class Cache:
         fd = self._open(name)
         if fd is not None:
             try:
-                size = _hash_fd(fd, src.algo, src.digest, min(cap, budget.room()))
+                size = _hash_fd(fd, src.algo, src.digest, min(cap, budget.room(MAX_ARTIFACT)))
+                if size is not None:
+                    _take(budget, size, 1)
             except MarketError:
                 os.close(fd)
                 raise
             if size is not None:
-                budget.take(size)
                 return fd
             os.close(fd)
             self.drop(name)  # a poisoned or damaged cache file is removed and fetched again, never used
@@ -232,10 +231,16 @@ class Cache:
         h = hashlib.new(src.algo)
         try:
             with os.fdopen(out, "wb") as f:
-                size = get(src.url, src.kind, min(cap, budget.room()), deadline, lambda c: (h.update(c), f.write(c)))
+                size = get(
+                    src.url,
+                    src.kind,
+                    min(cap, budget.room(MAX_ARTIFACT)),
+                    deadline,
+                    lambda c: (h.update(c), f.write(c)),
+                )
             if h.hexdigest() != src.digest:
                 raise _failed("hash_mismatch")
-            budget.take(size)
+            _take(budget, size, 1)
             os.rename(tmp, name, src_dir_fd=self.fd, dst_dir_fd=self.fd)
         except BaseException:
             self.drop(tmp)

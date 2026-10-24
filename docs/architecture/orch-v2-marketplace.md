@@ -746,10 +746,14 @@ add-ons run with the host interpreter and `-S`), D8 (`python-requirements` is `u
   by this computer from the lockfile, covered by the digest". An update diff compares what this computer INSTALLS: a
   package that keeps its version and hash but starts to be installed here is changed; `widened` is set by runtime added
   or changed, and by any package added or changed (removals do not widen).
+- **One mechanism for every cap:** `envtree.Budget` (bytes and entries) is the only way a parser consumes input. One
+  budget is shared by everything one operation reads (every wheel and tarball of one environment, every file of one
+  walk, every download of one add-on), so N archives cannot add up to N times what one may use; a parser takes the
+  budget as a parameter, so a new one cannot forget it.
 - **Caps, every one checked before the allocation it guards:** lockfile 1 MiB and 1000 rows (counted before rows are
   parsed); download 64 MiB per artifact (the `Content-Length` before the body, the count per chunk), 256 MiB per
-  add-on, 8 MiB index; wheel member list read after its entry count (20 000, from the end record) and its declared
-  sizes (256 MiB in all); tarball 20 000 members counted as they stream, 64 MiB per file, decompressed bytes counted by
+  add-on, 8 MiB index; wheel central directory walked by orch entry by entry (20 000 entries and 256 MiB declared in all, drawn before each
+  entry is kept; an end record that lies about its count is refused at the first surplus entry); tarball 20 000 members counted as they stream, 64 MiB per file, decompressed bytes counted by
   a reading wrapper (`MAX_BYTES` plus a small allowance per member), PAX and long-name headers 8 KiB, no sparse member;
   environment tree 20 000 entries, 64 levels, 256 MiB, 240 characters per path; pip 300 s and 8 MiB of log; stamp 4 KiB.
 - **Run time:** Python `-S -B` with `PYTHONPATH=<package>:<environment>`; Node `node_modules` link to the environment,

@@ -34,6 +34,7 @@ __all__ = [
     "ENV_FILE_MODE",
     "MAX_BYTES",
     "MAX_ENTRIES",
+    "Budget",
     "EnvLocation",
     "Tree",
     "TreeError",
@@ -65,6 +66,9 @@ _STAMP_KEYS = {"v", "ws", "name", "digest", "kind", "tree", "dirs", "files", "by
 ENV_FILE_MODE = 0o644  # normalized: 0644, or 0755 when any execute bit was set
 
 
+HEADER_ALLOWANCE = 2048  # per archive member: its header block, padding and an extension header
+
+
 class TreeError(Exception):
     """The tree breaks a rule. ``reason`` is one of ``auto_run_file``, ``path_escape``, ``link``, ``too_large``,
     ``package`` (the words of ``market.env_failed``)."""
@@ -72,6 +76,28 @@ class TreeError(Exception):
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
         self.reason = reason
+
+
+@dataclass
+class Budget:
+    """THE way a parser consumes bytes or entries (design G4, the resource-cap invariant): every input-driven loop and
+    buffer draws from one of these BEFORE it allocates, and the object is shared by everything one operation reads (all
+    tarballs and wheels of one environment, every file of one walk), so N archives together cannot exceed what one may.
+    ``bytes`` counts what comes out of a decompressor (headers included) or the bytes a file or download delivers;
+    ``entries`` counts members, rows and directory entries. Exhausted: :class:`TreeError` ``too_large``."""
+
+    bytes: int = MAX_BYTES + MAX_ENTRIES * HEADER_ALLOWANCE
+    entries: int = MAX_ENTRIES
+
+    def take(self, n_bytes: int = 0, n_entries: int = 0) -> None:
+        self.bytes -= n_bytes
+        self.entries -= n_entries
+        if self.bytes < 0 or self.entries < 0:
+            raise TreeError("too_large")
+
+    def room(self, cap: int) -> int:
+        """The most one item may take now: ``cap`` or what is left, whichever is smaller."""
+        return max(min(cap, self.bytes), 0)
 
 
 @dataclass(frozen=True)
@@ -137,7 +163,7 @@ def _norm_mode(st: int, is_dir: bool) -> int:
 
 
 # ------------------------------------------------------------------------------------------------ the walk
-def walk(root: str | os.PathLike[str] | int) -> Tree:
+def walk(root: str | os.PathLike[str] | int, budget: Budget | None = None) -> Tree:
     """Hash the tree below ``root`` (a path, or an open directory descriptor) without following any link: every
     component is opened ``O_NOFOLLOW``; only regular files with one link and directories are allowed; limits on the
     entries, the depth, the total bytes. Raises :class:`TreeError`; ``OSError`` is ``link`` (it means a swap or a
@@ -146,6 +172,7 @@ def walk(root: str | os.PathLike[str] | int) -> Tree:
     entries: list[tuple[str, str, int]] = []
     dirs: list[tuple[str, int]] = []
     total = 0
+    budget = budget if budget is not None else Budget(bytes=MAX_BYTES, entries=MAX_ENTRIES)
     try:
         stack = [(fd, "", 0)]
         while stack:
@@ -156,8 +183,7 @@ def walk(root: str | os.PathLike[str] | int) -> Tree:
                     raise TreeError("package")  # two names that differ only in case
                 for name in sorted(names):
                     rel = prefix + name
-                    if len(entries) + len(dirs) >= MAX_ENTRIES:
-                        raise TreeError("too_large")
+                    budget.take(n_entries=1)  # before the entry is looked at
                     check_paths([rel]) if not prefix else _check_name(rel)
                     st = os.stat(name, dir_fd=dfd, follow_symlinks=False)
                     if stat.S_ISDIR(st.st_mode):
@@ -176,8 +202,7 @@ def walk(root: str | os.PathLike[str] | int) -> Tree:
                             while chunk := os.read(f, 1 << 16):
                                 size += len(chunk)
                                 total += len(chunk)
-                                if total > MAX_BYTES:
-                                    raise TreeError("too_large")
+                                budget.take(len(chunk))
                                 h.update(chunk)
                         finally:
                             os.close(f)

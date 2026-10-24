@@ -18,13 +18,12 @@ import zlib
 from dataclasses import dataclass
 from typing import Any
 
-from orch.addons.envtree import MAX_BYTES, MAX_DEPTH, MAX_ENTRIES, MAX_PATH, TreeError
+from orch.addons.envtree import MAX_DEPTH, MAX_PATH, Budget, TreeError
 
 __all__ = ["MAX_FILE", "MAX_HEADER", "Unpacked", "unpack"]
 
 MAX_FILE = 64 << 20
 MAX_HEADER = 8 << 10  # a PAX or long-name header body (the path of one member): a few KiB is plenty
-HEADER_ALLOWANCE = 2048  # per member: its header block, padding and a PAX header, on top of the file bytes
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f  ]")
 _DIR = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 
@@ -56,22 +55,21 @@ def _rel(name: str) -> list[str]:
 
 
 class _Gunzip:
-    """The decompressed stream of a gzip file, read in bounded pieces and COUNTED: once more than the limit has come out
-    (``MAX_BYTES`` of file data plus a small allowance per member), :class:`TreeError` ``too_large`` is raised, so a
-    gzip bomb is stopped after about the limit, never after it has been inflated into memory. ``tarfile`` is given
-    this object, not the file."""
+    """The decompressed stream of a gzip file, read in bounded pieces and drawn from the shared :class:`Budget` BEFORE
+    each piece is kept: a gzip bomb is stopped after about the budget, never after it has been inflated into memory,
+    and the next tarball of the same environment finds what this one used already gone. ``tarfile`` is given this
+    object, not the file."""
 
-    def __init__(self, fd: int) -> None:
+    def __init__(self, fd: int, budget: Budget) -> None:
         self._fd = fd
+        self._budget = budget
         self._d = zlib.decompressobj(wbits=31)  # gzip framing
         self._tail = b""
-        self._out = 0
         self._eof = False
 
     def read(self, n: int = -1) -> bytes:
         if n is None or n < 0 or n > 1 << 20:
             n = 1 << 20  # never inflate more than a megabyte per call
-        limit = MAX_BYTES + MAX_ENTRIES * HEADER_ALLOWANCE
         got = bytearray()
         while len(got) < n and not self._eof:
             raw = self._tail or os.read(self._fd, 1 << 16)
@@ -80,11 +78,9 @@ class _Gunzip:
                     raise TreeError("package")  # truncated
                 self._eof = True
                 break
-            piece = self._d.decompress(raw, n - len(got))
+            piece = self._d.decompress(raw, min(n - len(got), self._budget.bytes + 1))  # never more than is left, +1
             self._tail = self._d.unconsumed_tail
-            self._out += len(piece)
-            if self._out > limit:
-                raise TreeError("too_large")
+            self._budget.take(len(piece))
             got += piece
             if self._d.eof:
                 self._eof = True
@@ -110,23 +106,21 @@ class _Info(tarfile.TarInfo):
         raise TreeError("link")  # sparse members are never accepted
 
 
-def unpack(fd: int, dest_fd: int | None) -> Unpacked:
+def unpack(fd: int, dest_fd: int | None, budget: Budget) -> Unpacked:
     """Unpack the gzip tarball open at ``fd`` below the directory ``dest_fd`` (or only judge it when ``None``).
-    Raises :class:`orch.addons.envtree.TreeError` (``link``, ``path_escape``, ``too_large``, ``package``)."""
+    ``budget`` is shared by every archive of one environment (decompressed bytes and members). Raises
+    :class:`orch.addons.envtree.TreeError` (``link``, ``path_escape``, ``too_large``, ``package``)."""
     seen_files: set[str] = set()
     seen_dirs: set[str] = set()
     folded: dict[str, str] = {}  # casefolded full path -> path as written
     opened: dict[str, int] = {"": dest_fd} if dest_fd is not None else {}
-    n = total = 0
+    total = 0
     compiled = False
     f = os.fdopen(os.dup(fd), "rb")
     try:
-        with tarfile.open(fileobj=_Gunzip(f.fileno()), mode="r|", tarinfo=_Info) as tar:
-            members = 0
+        with tarfile.open(fileobj=_Gunzip(f.fileno(), budget), mode="r|", tarinfo=_Info) as tar:
             for m in tar:
-                members += 1
-                if members > MAX_ENTRIES:  # every member counts, the root entry and skipped ones too
-                    raise TreeError("too_large")
+                budget.take(n_entries=1)  # every member counts, the root entry and skipped ones too
                 if m.isdir():
                     kind = "d"
                 elif m.isreg():
@@ -136,15 +130,10 @@ def unpack(fd: int, dest_fd: int | None) -> Unpacked:
                 parts = _rel(m.name)
                 if not parts:
                     continue  # the root directory entry
-                n += 1
-                if n > MAX_ENTRIES:
-                    raise TreeError("too_large")
                 if kind == "f":
                     if m.size > MAX_FILE:
                         raise TreeError("too_large")
-                    total += m.size
-                    if total > MAX_BYTES:
-                        raise TreeError("too_large")
+                    total += m.size  # the bytes themselves were drawn from the budget as they were decompressed
                 rel = "/".join(parts)
                 for i in range(1, len(parts) + (1 if kind == "d" else 0)):  # every directory above (and this one)
                     d = "/".join(parts[:i])

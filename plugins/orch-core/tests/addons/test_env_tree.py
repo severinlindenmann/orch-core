@@ -194,3 +194,30 @@ def test_rmtree_at_removes_links_without_following_them(state, tmp_path):
         os.close(fd)
     assert not t.exists() and (outside / "f").read_text() == "x"
     assert stat.S_ISDIR(os.stat(outside).st_mode)
+
+
+def test_budget_is_the_one_mechanism_and_a_walk_draws_from_it(state):
+    b = envtree.Budget(bytes=10, entries=3)
+    b.take(4, 1)
+    assert (b.bytes, b.entries, b.room(100), b.room(2)) == (6, 2, 6, 2)
+    with pytest.raises(envtree.TreeError) as e:
+        b.take(7)
+    assert e.value.reason == "too_large"
+    t = build(state, {"a.py": b"12345", "b.py": b"12345"})
+    shared = envtree.Budget(bytes=12, entries=100)
+    envtree.walk(t, shared)  # 10 bytes: fits
+    with pytest.raises(envtree.TreeError):
+        envtree.walk(t, shared)  # the same budget again: 2 bytes left
+    with pytest.raises(envtree.TreeError):
+        envtree.walk(t, envtree.Budget(bytes=100, entries=1))  # entries are counted too
+
+
+def test_a_lockfile_is_drawn_from_a_budget_too():
+    from orch.addons import lockfile
+    from orch.market import MarketError
+
+    text = ("x==1.0 --hash=sha256:" + "a" * 64 + "\n").encode()
+    lockfile.check("python-requirements", text, envtree.Budget(bytes=len(text), entries=1))
+    with pytest.raises(MarketError) as e:
+        lockfile.check("python-requirements", text, envtree.Budget(bytes=len(text) - 1, entries=1))
+    assert e.value.code == "market.lock_invalid"

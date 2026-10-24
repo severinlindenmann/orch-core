@@ -287,7 +287,7 @@ export class MockStore {
   private installBusyAddons() {
     const demo = this.seedWorkspaces.find((w) => w.prefix === 'DEMO')
     if (!demo) return
-    for (const name of ['activity', 'records', 'worktrees', 'quick', 'models', 'schedules', 'factory', 'links']) {
+    for (const name of ['activity', 'records', 'worktrees', 'quick', 'schedules', 'factory', 'links']) {
       const pkg = this.addons.find((a) => a.name === name)
       if (!pkg || demo.addons[name]) continue
       demo.addons[name] = {
@@ -1023,37 +1023,6 @@ export class MockStore {
     if (!def) return
     const data = (def.addons[addon] ??= {})
     fn(data)
-  }
-
-  /** github/import: a lane issue becomes a new backlog ticket in workspace `wsId` (the github module removes the issue from its state). */
-  importGithubIssue(wsId: string, item: { title?: string; subtitle?: string; badge?: string }): AddonActionResult | StoreFailure {
-    const ws = this.workspaces.find((w) => w.id === wsId)!
-    const title = item.title?.trim()
-    const m = /^(.*)#(\d+)$/.exec(item.subtitle ?? '')
-    if (!title || !m) return refuse(400, 'validation', 'That issue has no title or number to import.')
-    const [, repo, number] = m
-    const external = `GH-${number}`
-    const nums = [...this.defs.keys()].filter((k) => k.startsWith(ws.prefix + '-')).map((k) => Number(k.slice(ws.prefix.length + 1)))
-    const key = `${ws.prefix}-${String(Math.max(0, ...nums) + 1).padStart(4, '0')}`
-    const type = item.badge === 'bug' ? 'bug' : item.badge === 'feature' ? 'feature' : 'chore'
-    const uid = '01J9ZN' + fnvHex(key, 8).toUpperCase().padEnd(20, '0')
-    const def = fillDefinition({
-      key,
-      uid,
-      title,
-      type,
-      links: { repos: [], branches: {}, prs: [], external: [{ label: external, url: `https://github.com/${repo}/issues/${number}` }] },
-    } as FixtureTicket['definition'])
-    this.defs.set(key, def)
-    this.bodies.set(key, { summary: `Imported from GitHub ${item.subtitle}.` })
-    this.wsOfKey.set(key, ws.id)
-    this.events.set(key, [])
-    this.seeded.set(key, 0)
-    const actor = { kind: 'addon', id: 'github' } as const
-    this.append(key, { type: 'ticket.created', actor, status: 'backlog' })
-    this.append(key, { type: 'people.set', owner: this.viewer, assignees: [], reviewers: [], watchers: [] })
-    this.append(key, { type: 'github.imported', actor, external })
-    return { ok: true, message: `Imported ${external} as ${key} (Backlog).`, changed: true, ticket: key }
   }
 
   /** Per-workspace state of an addon (lazily seeded, persisted). */

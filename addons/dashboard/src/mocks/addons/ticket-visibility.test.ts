@@ -9,7 +9,7 @@ import { refused as refusal } from '@/test/refused'
 // Security sweep: an addon's state and actions must not reveal a ticket the viewer cannot see.
 // DEMO-0041 and DEMO-0043 are restricted to Severin; Mara (a maintainer) is outside the list.
 const HIDDEN = ['DEMO-0041', 'DEMO-0043']
-const ADDONS = ['publish', 'github', 'usage', 'wiki', 'estimate', 'terminals', 'worktrees', 'quick', 'records', 'activity', 'start-agent', 'models', 'factory', 'schedules', 'drop', 'land']
+const ADDONS = ['publish', 'usage', 'wiki', 'estimate', 'terminals', 'worktrees', 'quick', 'records', 'activity', 'start-agent', 'factory', 'schedules', 'drop', 'land']
 
 const setup = (viewer: string) => {
   const store = createMockStore({ persist: false })
@@ -48,9 +48,9 @@ describe('addon state hides tickets the viewer cannot see', () => {
       for (const text of hiddenText(s)) expect(json, text).not.toContain(text)
     })
   }
-  it('the listed person still sees their data (publish, github, usage, wiki, terminals)', async () => {
+  it('the listed person still sees their data (publish, usage, wiki, terminals)', async () => {
     const s = setup('p_sev')
-    for (const name of ['publish', 'github', 'usage', 'wiki', 'terminals']) {
+    for (const name of ['publish', 'usage', 'wiki', 'terminals']) {
       const json = JSON.stringify(await stateOf(s, name))
       expect(HIDDEN.some((k) => json.includes(k)), name).toBe(true)
     }
@@ -70,7 +70,7 @@ describe('addon state hides tickets the viewer cannot see', () => {
     const ow = store.workspaces.find((w) => w.prefix !== 'DEMO')!
     store.setViewer(ow.members[0].person)
     const api = createApi(createMockTransport(store, { latency: false }))
-    for (const n of ['publish', 'github', 'usage', 'wiki']) {
+    for (const n of ['publish', 'usage', 'wiki']) {
       if (!addonActive(ow, n)) installAndGrant(store, ow.id, n)
       expect(JSON.stringify(await api.getAddonState(ow.id, n)), n).not.toMatch(/DEMO-/)
     }
@@ -104,23 +104,6 @@ describe('ticket-scoped actions on a hidden ticket are refused', () => {
     // Severin still sees and can decide it.
     const t = setup('p_sev')
     expect((await t.api.getAddonDecisions(t.ws)).some((d) => d.ticket === 'DEMO-0041')).toBe(true)
-  })
-  it('github: approve, open and refresh by id do not touch a hidden ticket PR', async () => {
-    const s = setup('p_mara')
-    const id = 'acme-energy/energy-dbt#29' // DEMO-0041
-    expect(await refusal(run(s, 'github', 'approve', { id }))).toMatchObject({ status: 404, message: 'That pull request no longer exists.' })
-    expect(await refusal(run(s, 'github', 'open', { id }))).toMatchObject({ status: 404, message: 'That pull request no longer exists.' })
-    expect(await refusal(run(s, 'github', 'refresh', { id: 'acme-energy/energy-dbt#31' }))).toMatchObject({ status: 404, message: 'That pull request no longer exists.' }) // DEMO-0043
-    const prs = s.store.addonState(s.ws, 'github').prs as { id: string; review: string; checks: { status: string }[] }[]
-    expect(prs.find((p) => p.id === id)!.review).toBe('requested')
-    expect(prs.find((p) => p.id === 'acme-energy/energy-dbt#31')!.checks.some((c) => c.status === 'pending')).toBe(true)
-  })
-  it('github: refresh without an id picks only a visible pull request', async () => {
-    const s = setup('p_mara')
-    await run(s, 'github', 'refresh', {})
-    const prs = s.store.addonState(s.ws, 'github').prs as { ticket: string; checks: { status: string }[] }[]
-    expect(prs.find((p) => p.ticket === 'DEMO-0043')!.checks.some((c) => c.status === 'pending')).toBe(true) // hidden: untouched
-    expect(prs.find((p) => p.ticket === 'DEMO-0044')!.checks.some((c) => c.status === 'pending')).toBe(false) // visible: refreshed
   })
   it('terminals: a hidden ticket session cannot be opened or closed by id', async () => {
     const s = setup('p_mara')

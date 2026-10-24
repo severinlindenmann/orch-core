@@ -18,9 +18,11 @@ const grantReq = (store: ReturnType<typeof createMockStore>, ws: string, name: s
   const a = store.workspaceAddons(ws).find((x) => x.name === name)!
   return { op: 'grant' as const, version: a.ws.version, package_sha256: a.ws.package_sha256, capabilities: a.ws.capabilities, viewer_actions: viewerActions(store.addons.find((x) => x.name === name)!).map((x) => x.id) }
 }
-const updateReq = (store: ReturnType<typeof createMockStore>) => {
-  const u = store.addons.find((a) => a.name === 'github')!.update!
-  return { op: 'update' as const, version: u.version, package_sha256: u.package_sha256, capabilities: u.capabilities, viewer_actions: ['open'] } // github's viewer-level open
+/** The catalog ships no update, so a test offers one: `name` gets a new version that adds the network capability. */
+const updateReq = (store: ReturnType<typeof createMockStore>, name = 'estimate') => {
+  const pkg = store.addons.find((a) => a.name === name)!
+  pkg.update = { version: '0.9.0', capabilities: ['network'], package_sha256: 'a'.repeat(64), changelog: 'Adds the network capability.', actions: pkg.actions }
+  return { op: 'update' as const, version: '0.9.0', package_sha256: 'a'.repeat(64), capabilities: ['network'], viewer_actions: viewerActions(pkg).map((x) => x.id) }
 }
 const code = async (p: Promise<unknown>) => {
   try {
@@ -37,7 +39,7 @@ describe('addon packages vs per-workspace state', () => {
   it('GET /api/addons lists every known package (seeded and catalog) with no per-workspace fields', async () => {
     const { api } = setup()
     const pkgs = await api.getAddons()
-    expect(pkgs.map((p) => p.name)).toEqual(expect.arrayContaining(['publish', 'github', 'estimate', 'quick', 'models']))
+    expect(pkgs.map((p) => p.name)).toEqual(expect.arrayContaining(['publish', 'estimate', 'quick', 'factory']))
     for (const p of pkgs) for (const k of PER_WORKSPACE) expect(p, `${p.name}.${k}`).not.toHaveProperty(k)
   })
   it('the fixtures carry no per-workspace fields', () => {
@@ -45,13 +47,13 @@ describe('addon packages vs per-workspace state', () => {
   })
   it('GET /api/workspaces/:ws/addons returns installed packages with this workspace state under ws', async () => {
     const { store, api, ws } = setup()
-    await api.postAddonOp(ws, 'github', updateReq(store))
-    const gh = (await api.getWorkspaceAddons(ws)).find((a) => a.name === 'github')!
-    expect(gh.ws).toMatchObject({ version: '0.6.0', status: 'active', enabled: true })
-    expect(pendingUpdate(gh)).toBeNull()
-    const other = (await api.getWorkspaceAddons(store.workspaces[1].id)).find((a) => a.name === 'github')!
-    expect(other.ws.version).toBe('0.5.2')
-    expect(pendingUpdate(other)?.version).toBe('0.6.0')
+    await api.postAddonOp(ws, 'estimate', updateReq(store))
+    const est = (await api.getWorkspaceAddons(ws)).find((a) => a.name === 'estimate')!
+    expect(est.ws).toMatchObject({ version: '0.9.0', status: 'active', enabled: true })
+    expect(pendingUpdate(est)).toBeNull()
+    const other = (await api.getWorkspaceAddons(store.workspaces[1].id)).find((a) => a.name === 'estimate')!
+    expect(other.ws.version).toBe('0.2.0')
+    expect(pendingUpdate(other)?.version).toBe('0.9.0')
   })
   it('a seeded addon, once uninstalled, is in the catalog and can be installed again (needs a new grant)', async () => {
     const { api, ws } = setup()
@@ -68,7 +70,7 @@ describe('addon manager API', () => {
   it('lists the catalog of not-yet-installed addons', async () => {
     const { api, ws } = setup()
     const titles = (await api.getAddonCatalog(ws)).map((a) => a.title)
-    expect(titles).toEqual(['Worktrees', 'Quick tasks', 'Records', 'Activity', 'Model routing', 'AI Factory', 'Schedules', 'Drop', 'Workspace links'])
+    expect(titles).toEqual(['Worktrees', 'Quick tasks', 'Records', 'Activity', 'AI Factory', 'Schedules', 'Drop', 'Workspace links'])
   })
   it('refuses enable before grant with 409 addon.needs_grant', async () => {
     const { api, ws } = setup()
@@ -82,10 +84,10 @@ describe('addon manager API', () => {
   })
   it('the grant event carries the package hash and the capabilities, signed with touchid', async () => {
     const { store, api, ws } = setup()
-    await api.postAddonOp(ws, 'models', { op: 'install' })
-    await api.postAddonOp(ws, 'models', grantReq(store, ws, 'models'))
+    await api.postAddonOp(ws, 'factory', { op: 'install' })
+    await api.postAddonOp(ws, 'factory', grantReq(store, ws, 'factory'))
     const ev = store.wsEventsOf(ws).find((e) => e.type === 'addon.granted')!
-    expect(ev).toMatchObject({ name: 'models', capabilities: ['launch'], presence: 'touchid' })
+    expect(ev).toMatchObject({ name: 'factory', capabilities: ['spawn_agent'], presence: 'touchid' })
     expect(ev.package_sha256).toMatch(/^[0-9a-f]{64}$/)
   })
   it('owner only', async () => {
@@ -100,17 +102,17 @@ describe('addon manager API', () => {
   })
   it('an update is one signed act: it grants the new version and the addon stays on; an out-of-band update needs a grant; uninstall keeps ticket data', async () => {
     const { store, api, ws } = setup()
-    await api.postAddonOp(ws, 'github', updateReq(store))
-    let gh = (await api.getWorkspaceAddons(ws)).find((a) => a.name === 'github')!
-    expect(gh.ws).toMatchObject({ version: '0.6.0', status: 'active' })
+    await api.postAddonOp(ws, 'usage', updateReq(store, 'usage'))
+    let gh = (await api.getWorkspaceAddons(ws)).find((a) => a.name === 'usage')!
+    expect(gh.ws).toMatchObject({ version: '0.9.0', status: 'active' })
     expect(pendingUpdate(gh)).toBeNull()
-    expect(store.addonStateView(ws, 'github')).not.toBeNull()
+    expect(store.addonStateView(ws, 'usage')).not.toBeNull()
     // A new version that arrives without a signature (a record written elsewhere) is off until granted.
     store.appendWs(ws, { type: 'addon.updated', name: 'wiki', version: '0.1.4', package_sha256: 'c'.repeat(64), capabilities: [] })
     expect(store.workspaceAddons(ws).find((a) => a.name === 'wiki')!.ws.status).toBe('needs_grant')
-    gh = (await api.getWorkspaceAddons(ws)).find((a) => a.name === 'github')!
+    gh = (await api.getWorkspaceAddons(ws)).find((a) => a.name === 'usage')!
     expect(gh.ws.status).toBe('active')
-    expect(gh.ws.granted).toMatchObject({ version: '0.6.0', capabilities: ['network', 'spawn_agent'] })
+    expect(gh.ws.granted).toMatchObject({ version: '0.9.0', capabilities: ['network'] })
     const before = JSON.stringify(store.listTickets(ws))
     await api.postAddonOp(ws, 'estimate', { op: 'uninstall' })
     expect(JSON.stringify(store.listTickets(ws))).toBe(before)
@@ -132,11 +134,11 @@ describe('addon manager API', () => {
 
   it('refuses a grant whose capabilities or hash differ from the installed package (409 addon.changed)', async () => {
     const { store, api, ws } = setup()
-    await api.postAddonOp(ws, 'models', { op: 'install' })
-    const g = grantReq(store, ws, 'models')
-    expect(await code(api.postAddonOp(ws, 'models', { ...g, capabilities: ['launch', 'pty'] }))).toBe('409 addon.changed')
-    expect(await code(api.postAddonOp(ws, 'models', { ...g, package_sha256: 'e'.repeat(64) }))).toBe('409 addon.changed')
-    expect(store.workspaceAddons(ws).find((a) => a.name === 'models')!.ws.status).toBe('needs_grant')
+    await api.postAddonOp(ws, 'factory', { op: 'install' })
+    const g = grantReq(store, ws, 'factory')
+    expect(await code(api.postAddonOp(ws, 'factory', { ...g, capabilities: ['spawn_agent', 'pty'] }))).toBe('409 addon.changed')
+    expect(await code(api.postAddonOp(ws, 'factory', { ...g, package_sha256: 'e'.repeat(64) }))).toBe('409 addon.changed')
+    expect(store.workspaceAddons(ws).find((a) => a.name === 'factory')!.ws.status).toBe('needs_grant')
   })
   it('a signed install is one act: installed, granted and on; a changed package is refused and installs nothing', async () => {
     const { store, api, ws } = setup()
@@ -153,16 +155,16 @@ describe('addon manager API', () => {
   })
   it('a grant with enable: true turns the addon on in the same act', async () => {
     const { store, api, ws } = setup()
-    await api.postAddonOp(ws, 'models', { op: 'install' })
-    await api.postAddonOp(ws, 'models', { ...grantReq(store, ws, 'models'), enable: true })
-    expect(store.workspaceAddons(ws).find((a) => a.name === 'models')!.ws).toMatchObject({ status: 'active', enabled: true })
+    await api.postAddonOp(ws, 'factory', { op: 'install' })
+    await api.postAddonOp(ws, 'factory', { ...grantReq(store, ws, 'factory'), enable: true })
+    expect(store.workspaceAddons(ws).find((a) => a.name === 'factory')!.ws).toMatchObject({ status: 'active', enabled: true })
   })
   it('refuses an update whose target differs from the offered one (409 addon.changed)', async () => {
     const { store, api, ws } = setup()
     const u = updateReq(store)
-    expect(await code(api.postAddonOp(ws, 'github', { ...u, capabilities: ['network'] }))).toBe('409 addon.changed')
-    expect(await code(api.postAddonOp(ws, 'github', { ...u, package_sha256: 'd'.repeat(64) }))).toBe('409 addon.changed')
-    expect(await code(api.postAddonOp(ws, 'github', { ...u, version: '0.7.0' }))).toBe('409 addon.changed')
+    expect(await code(api.postAddonOp(ws, 'estimate', { ...u, capabilities: [] }))).toBe('409 addon.changed')
+    expect(await code(api.postAddonOp(ws, 'estimate', { ...u, package_sha256: 'd'.repeat(64) }))).toBe('409 addon.changed')
+    expect(await code(api.postAddonOp(ws, 'estimate', { ...u, version: '0.8.0' }))).toBe('409 addon.changed')
   })
   it('same version but a different package hash is needs_grant', () => {
     const { store, ws } = setup()

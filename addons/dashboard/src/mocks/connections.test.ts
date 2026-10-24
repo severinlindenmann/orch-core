@@ -33,7 +33,6 @@ describe('skills', () => {
     const skills = await api.getSkills(DEMO)
     const by = Object.fromEntries(skills.map((s) => [s.name, s]))
     expect(by.orch.scope).toBe('built_in')
-    expect(by['github-prs'].scope).toBe('built_in') // the github addon is active in DEMO
     expect(by['dbt-seeds']).toMatchObject({ scope: 'workspace', needs: 'declared', version: '1.2.0' })
     expect(by['meter-notes']).toMatchObject({ needs: 'unknown', sidecar: null, version: null })
     // SKILL.md frontmatter carries name and description only.
@@ -43,11 +42,11 @@ describe('skills', () => {
       { name: 'TARIFF_WEBHOOK_SECRET', granted: false, in_secrets_file: false },
     ])
   })
-  it('a workspace without config has the built-in skills only (no github-prs without the addon)', async () => {
+  it('a workspace without config has the built-in skills only ', async () => {
     const { api } = setup()
     const names = (await api.getSkills(INT)).map((s) => s.name)
     expect(names).toContain('orch')
-    expect(names.every((n) => ['orch', 'orch-evidence', 'github-prs'].includes(n))).toBe(true)
+    expect(names.every((n) => ['orch', 'orch-evidence'].includes(n))).toBe(true)
   })
   it('lists only tickets the viewer can see', async () => {
     // DEMO-0044 is restricted to Severin and Mara; Tom (viewer) may not see it.
@@ -165,7 +164,6 @@ describe('ticket needs and the claim / start precheck', () => {
       skills: [
         { name: 'orch', needs: 'declared' },
         { name: 'dbt-seeds', needs: 'declared' },
-        { name: 'github-prs', needs: 'declared' },
       ],
       connections: [
         { name: 'gh', status: 'ok' },

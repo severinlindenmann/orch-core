@@ -29,7 +29,6 @@ const NAVIGATION: [addon: string, action: string, body: Record<string, unknown>]
   ['guide', 'open', { slug: 'start-here' }],
   ['schedules', 'open_run', { run: 'R-4' }],
   ['terminals', 'open', {}],
-  ['github', 'open', { id: 'acme-energy/energy-dbt#29' }],
 ]
 
 describe('navigation actions (manifest kind "navigation")', () => {

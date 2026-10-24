@@ -27,23 +27,6 @@
         "env": []
       },
       "skill_md": "---\nname: orch-evidence\ndescription: Attach evidence to acceptance criteria: test output, screenshots, query results. Use before moving a ticket to testing.\n---\n\n# Evidence for acceptance criteria\n\nEvery criterion needs one artifact that proves it. Attach it with `orch artifact add <file> --proves AC1`.\n\n- Test output: the command and the summary line.\n- Data checks: the query and its result, not a screenshot of it.\n\n"
-    },
-    {
-      "name": "github-prs",
-      "source": "github",
-      "path": "addons/github/skills/github-prs/SKILL.md",
-      "description": "Open and update the ticket's pull request with gh. Use when the work is ready for review.",
-      "sidecar": {
-        "schema_version": 1,
-        "skill_version": "1.4.0",
-        "scope": "built_in",
-        "connections": [
-          "gh"
-        ],
-        "env": []
-      },
-      "addon": "github",
-      "skill_md": "---\nname: github-prs\ndescription: Open and update the ticket's pull request with gh. Use when the work is ready for review.\n---\n\n# Pull requests\n\nOpen the PR from the ticket's own branch: `gh pr create --fill --base develop`.\nLink it on the ticket with `orch link pr <url>`. Never push to a shared branch.\n\n"
     }
   ],
   "workspace": {

@@ -1,4 +1,4 @@
-// The agent line of the New ticket form ("Agent: Claude Code · Do the work · Opus (set in Settings) · Change"), the
+// The agent line of the New ticket form ("Agent: Claude Code · Do the work · Opus · Change"), the
 // access length when the person has no usable agent access yet, and the "not signed" block of the review.
 import { useState } from 'react'
 import { modelLabel } from '@/api/modelRouting'
@@ -50,7 +50,7 @@ function ChangeDialog({ plan, onClose }: { plan: StartPlan; onClose: () => void 
         </DialogHeader>
         <div className="grid grid-cols-1 items-center gap-x-3 gap-y-2 text-xs leading-5 sm:grid-cols-[110px_minmax(0,1fr)]">
           <AgentPick idPrefix="nt-agent" harness={choice.harness} mode={choice.mode} onHarness={(harness) => plan.setPref({ harness, model: '' })} onMode={(mode) => plan.setPref({ mode })} />
-          {plan.models.length > 0 && <ModelPick idPrefix="nt-agent" models={plan.models} model={choice.model} onModel={(model) => plan.setPref({ model })} emptyLabel={plan.routing ? 'As set in Settings for this kind of work' : 'Chosen by the agent app'} />}
+          {plan.models.length > 0 && <ModelPick idPrefix="nt-agent" models={plan.models} model={choice.model} onModel={(model) => plan.setPref({ model })} emptyLabel={plan.routing ? 'Chosen by the model add-on' : 'Chosen by the agent app'} />}
         </div>
         <DialogFooter><Button size="sm" onClick={onClose}>Done</Button></DialogFooter>
       </DialogContent>

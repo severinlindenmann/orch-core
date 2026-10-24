@@ -252,6 +252,24 @@ class Gateway:
         cls._addon_seen[key] = on
         return on
 
+    @classmethod
+    def capability_on(cls, link, capability) -> bool:
+        """Does an add-on that is granted, enabled and holds `capability` exist here? The decision is by the active
+        grant's capability, never by the add-on's name. Unreadable: the last known answer, else off."""
+        welcome = getattr(link, "welcome", None)
+        ws = (welcome.get("workspace") or {}).get("id") if isinstance(welcome, dict) else None
+        key = (ws or id(link), "capability:" + capability)
+        try:
+            rows = link.call("addon.list")["addons"]
+        except (HostError, KeyError, TypeError):
+            return cls._addon_seen.get(key, False)
+        on = any(
+            isinstance(a, dict) and a.get("state") == "active" and capability in (a.get("capabilities") or ())
+            for a in rows
+        )
+        cls._addon_seen[key] = on
+        return on
+
     def features(self, ws):
         link = self.enabled(ws)
         features = []
@@ -334,8 +352,8 @@ class Gateway:
         if "terminals" in features and self.addon_on(link, "terminals"):
             # The Terminals page (menu entry and route) exists only while the add-on is ON; the dock keeps its own gate.
             features.append("terminals_page")
-        if "agent_start" in features and self.addon_on(link, "model-routing"):
-            features.append("model_routing")  # Model routing (add-on on): the Settings section and the model choice
+        if "agent_start" in features and self.capability_on(link, "choose_model"):
+            features.append("model_routing")  # an active add-on holds choose_model: the model choice is offered
         if link.supports("run.list", "run/1") and self.addon_on(link, "usage"):
             # Usage: the page and the ticket box exist only while the add-on is ON for this workspace.
             features.append("usage")

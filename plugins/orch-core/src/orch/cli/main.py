@@ -311,8 +311,10 @@ def main(
         from orch.cli.hub import main as hub_main
 
         return hub_main(args[1:], env=env, out=out, err=err, now=now)
-    if args[:1] == ["addon"] and args[1:2] in (["install"], ["update"], ["remove"], ["setup"]):
-        # add-ons from a marketplace (V3 G3): a host client that signs at the person's terminal, not a registry op
+    if args[:1] == ["addon"] and args[1:2] in (
+        ["install"], ["update"], ["remove"], ["setup"], ["new"], ["pack"], ["dev"],
+    ):  # fmt: skip
+        # add-ons from a marketplace (V3 G3) and the author tools (G5): host clients that sign at the person's terminal
         from orch.cli.addon_market import main as addon_market_main
 
         return addon_market_main(args[1:], env=env, out=out, err=err, now=now)

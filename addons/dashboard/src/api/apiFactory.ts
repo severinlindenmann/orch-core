@@ -1,6 +1,7 @@
 import { activityQuery, type ActivityPage, type ActivityParams } from './activity'
 import { uploadFor, type ArtifactImage, type PastedRef } from './pasteImage'
 import type { Transport } from './transport'
+import type { MarketList, MarketInstalled, StageInput, StageResult } from './market'
 import {
   ApiError,
   type ActionRequest,
@@ -168,6 +169,13 @@ export function createApi(transport: Transport) {
     listHostGrants: (ws: string, active = true) => call<HostGrant[]>('GET', `/api/w/${ws}/grants?active=${active}`),
     /** Quick tasks of a real host (M6): `available: false` without `quick/1`. */
     getQuick: (ws: string, _p: QuickParams = {}) => call<QuickPage>('GET', `/api/w/${ws}/quick`),
+    /** Marketplace reads and owner-only writes; approval uses the Terminal hand-off. */
+    marketList: (ws: string) => call<MarketList>('GET', `/api/w/${ws}/market`),
+    marketInstalled: (ws: string) => call<MarketInstalled>('GET', `/api/w/${ws}/market/installed`),
+    marketStage: (ws: string, input: StageInput) => call<StageResult>('POST', `/api/w/${ws}/market/stage`, input),
+    marketUnstage: (ws: string, stage: string) => call<{ removed: boolean }>('DELETE', `/api/w/${ws}/market/stage/${encodeURIComponent(stage)}`),
+    marketUninstall: (ws: string, name: string) => call<{ name: string; removed: boolean }>('POST', `/api/w/${ws}/market/uninstall`, { name }),
+    marketRefresh: (ws: string, input: { url?: string } = {}) => call<unknown>('POST', `/api/w/${ws}/market/refresh`, input),
     /** The Activity page of a real host: `available: false` without `activity/1`. */
     getActivity: (ws: string, p: ActivityParams = {}) => call<ActivityPage>('GET', `/api/w/${ws}/activity?${activityQuery(p)}`),
     /** Records of a real host (M6): the host's status for owners and maintainers; `available: false` without `records/1`. */

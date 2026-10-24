@@ -179,13 +179,20 @@ def hub_role(state: HubState | None, user_id: str, *, now_ms: int, dev_mode: boo
 
 
 def hub_market_policy(state: HubState | None, *, now_ms: int, dev_mode: bool) -> tuple[int, MarketPolicy] | None:
-    """``(snapshot version, policy)`` of the hub marketplace policy in the pinned snapshot, or ``None``: no hub, not
-    bound, no snapshot, or anything that does not verify now (card expired or revoked, signature, dev marker,
-    workspace, malformed policy). The read-only accessor of the market package (D14): the card and the snapshot are
-    verified again on every read, as in :func:`hub_role`, so the caller sees either a verified policy or nothing and
-    refuses on nothing (fail closed). Never fetches; a caller that needs a fresh one calls :func:`refresh` first."""
-    if state is None or state.snapshot is None or state.status != "bound":
+    """The hub marketplace policy of the pinned snapshot, the read-only accessor of the market package (D14).
+
+    Two shapes, never mixed: ``None`` means exactly "this host is not hub-joined" (no hub state, or status ``unbound``),
+    so the owner decides alone (D79). Every other state is joined, and then the result is ``(snapshot version,
+    policy)`` or **:class:`HubRefused`**: no snapshot pinned yet, status ``joining`` or ``switching``, an expired or
+    revoked card, a bad signature, dev marker, workspace or policy. A caller therefore cannot read a failure as
+    "standalone" (fail closed); it maps a refusal to ``market.not_allowed``. The card and the snapshot are verified
+    again on every read, as in :func:`hub_role`. Never fetches; for a fresh one call :func:`refresh` first."""
+    if state is None or state.status == "unbound":
         return None
+    if state.status != "bound":
+        raise HubRefused("not_bound")
+    if state.snapshot is None:
+        raise HubRefused("no_snapshot")
     try:
         held = _held(state, now_ms, dev_mode)
         o = verify_snapshot(
@@ -193,5 +200,5 @@ def hub_market_policy(state: HubState | None, *, now_ms: int, dev_mode: bool) ->
             revoked_op_certs=frozenset(state.revoked_op_certs),
         )  # fmt: skip
         return o["version"], parse_policy(o["market_policy"])
-    except (HubRefused, KeyError, TypeError):
-        return None
+    except (KeyError, TypeError):
+        raise HubRefused("malformed") from None

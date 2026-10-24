@@ -337,9 +337,8 @@ def _policy(r: Rig) -> Any:
     return snap.hub_market_policy(r.state, now_ms=NOW, dev_mode=True)
 
 
-def test_the_pinned_policy_is_read_only_and_fails_closed():
+def test_the_pinned_policy_is_read_only():
     r = Rig()
-    assert _policy(r) is None  # no snapshot pinned yet
     r.hub.set_snapshot(WS, {ADMIN: "admin"}, market_policy=COMPANY_POLICY)
     r.refresh()
     version, pol = _policy(r)
@@ -347,10 +346,49 @@ def test_the_pinned_policy_is_read_only_and_fails_closed():
     assert [m.cls for m in pol.markets] == ["company", "official"] and pol.market(pol.markets[0].url).keys
     with pytest.raises(dataclasses.FrozenInstanceError):
         pol.allow = ()  # type: ignore[misc]
+
+
+def test_none_only_when_the_host_is_not_hub_joined():
+    r = Rig()
     assert snap.hub_market_policy(None, now_ms=NOW, dev_mode=True) is None
-    assert snap.hub_market_policy(r.state, now_ms=NOW, dev_mode=False) is None  # dev marker mismatch
     r.state.status = "unbound"
-    assert _policy(r) is None
+    assert snap.hub_market_policy(r.state, now_ms=NOW, dev_mode=True) is None
+
+
+def _refused(r: Rig, code: str | None = None, **kw: Any) -> None:
+    with pytest.raises(HubRefused) as e:
+        snap.hub_market_policy(r.state, **{"now_ms": NOW, "dev_mode": True, **kw})
+    assert code is None or e.value.code == code
+
+
+def test_every_joined_but_unverifiable_state_raises_never_none():
+    r = Rig()
+    _refused(r, "no_snapshot")  # joined, nothing pinned yet
+    r.hub.set_snapshot(WS, {ADMIN: "admin"}, market_policy=COMPANY_POLICY)
+    r.refresh()
+    assert _policy(r) is not None
+    _refused(r, now_ms=NOW + 400 * 86_400_000)  # card / op cert expired
+    _refused(r, dev_mode=False)  # dev marker mismatch
+    ok_snapshot = r.state.snapshot
+    r.state.snapshot = {**ok_snapshot, "o": {**ok_snapshot["o"], "version": 99}}  # signature no longer matches
+    _refused(r)
+    r.state.snapshot = {"o": {}, "sig": "x"}
+    _refused(r)
+    r.state.snapshot = ok_snapshot
+    r.state.revoked_op_certs = [r.state.card["op_cert"]["o"]["cert_id"]]  # op cert revoked
+    _refused(r)
+    r.state.revoked_op_certs = []
+    r.state.binding = {}  # damaged binding
+    _refused(r, "malformed")
+
+
+@pytest.mark.parametrize("status", ["switching", "joining"])
+def test_a_joined_host_mid_transition_raises(status):
+    r = Rig()
+    r.hub.set_snapshot(WS, {ADMIN: "admin"}, market_policy=COMPANY_POLICY)
+    r.refresh()
+    r.state.status = status
+    _refused(r, "not_bound")
 
 
 def test_a_snapshot_without_or_with_a_bad_policy_is_refused_and_the_pin_stays():

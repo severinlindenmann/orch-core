@@ -445,7 +445,7 @@ With a hub joined, the workspace host MUST ask the hub's policy before any marke
 the policy is one hub-wide object that the hub admin edits in the hub's admin console and that `HK_op` signs inside
 **every `hub.snapshot`** as the required field `market_policy` (orch-hub `docs/protocol.md` 7.1; there is no snapshot
 without it and no older shape, V3-D36). Core reads it only from a verified, pinned snapshot (`orch.hubclient.snapshot.hub_market_policy`,
-a read-only accessor that verifies again on every read and gives `None` on any failure) and can only refuse by it.
+a read-only accessor that verifies again on every read: `None` only when the host is not hub-joined, `HubRefused` for every joined-but-unverifiable state) and can only refuse by it.
 The vectors are `vectors_hub_policy.json` (`policy` and `evaluate` cases); hub and core run the same file.
 
 The policy object is **`orch.hub-policy/1`**, strict: exactly these keys at every level, no others.
@@ -464,7 +464,7 @@ The policy object is **`orch.hub-policy/1`**, strict: exactly these keys at ever
   (exact). Ids are global across marketplaces. `ceiling` `null` = none; `[]` = capability-free add-ons only.
 - Lists must already be sorted and unique (one form, one hash); a missing key, a wrong type, an unknown key, a
   non-canonical URL, a wrong class or key set, an unknown capability makes the **whole policy malformed**, and a malformed
-  or unreadable policy is **an empty marketplace list** (`market.not_allowed`).
+  or unreadable policy never becomes a policy: a snapshot whose `market_policy` is malformed is refused (`malformed`, the old pin stays), and a joined host with no verifiable pinned snapshot has **no policy** (`hub_market_policy` raises; `None` means only "not hub-joined"). Either way the marketplace is refused (`market.not_allowed`), never read as an empty list or as standalone.
 - A new hub starts with the official marketplace only, `allow: null`, `block: []`, `ceiling: null`.
 
 "A hub is joined" is read from the workspace's signed log, not from a local file: a workspace whose log says it joined a

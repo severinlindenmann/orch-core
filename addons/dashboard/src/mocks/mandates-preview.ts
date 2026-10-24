@@ -300,7 +300,7 @@ export class MandatesPreviewHost {
       },
       decisions,
       refused,
-      revisions: [{ revision: 1, at: iso(issued), what: `Issued on this Mac with Touch ID (preview: nothing was signed). Whole workspace, ${days} ${days === 1 ? 'day' : 'days'}, renewable.` }],
+      revisions: [{ revision: 1, at: iso(issued), what: `Issued on this computer with Touch ID (preview: nothing was signed). Whole workspace, ${days} ${days === 1 ? 'day' : 'days'}, renewable.` }],
     }
   }
 
@@ -352,7 +352,7 @@ export class MandatesPreviewHost {
         m.revision += 1
         m.days = body.days
         m.expires = iso(Date.parse(now) + body.days * DAY)
-        m.revisions.push({ revision: m.revision, at: now, what: `Renewed on this Mac with Touch ID (preview: nothing was signed). ${body.days} ${body.days === 1 ? 'day' : 'days'} from now; same scope, lifetime counters kept.` })
+        m.revisions.push({ revision: m.revision, at: now, what: `Renewed on this computer with Touch ID (preview: nothing was signed). ${body.days} ${body.days === 1 ? 'day' : 'days'} from now; same scope, lifetime counters kept.` })
         break
       }
       case 'stop':

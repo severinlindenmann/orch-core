@@ -109,7 +109,7 @@ export const FULL_ACCESS_WORDS = 'full access'
 /**
  * The hub id an invite names (`<hub_id>:<code>`, core#1110), in the short form the person compares: the first 16 hex
  * digits in groups of four. It comes only from what the person typed or pasted, never from the hub card file, so the
- * comparison cannot be void. `null`: the invite names no hub id (shown as such; the Terminal decides).
+ * comparison cannot be void. `null`: the invite names no hub id (shown as such; the terminal decides).
  */
 export function inviteHubId(invite: string): string | null {
   const m = /^([0-9a-f]{16,64}):[A-Za-z0-9._-]+$/.exec(invite.trim())

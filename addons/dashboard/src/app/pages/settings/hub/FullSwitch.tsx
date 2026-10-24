@@ -22,7 +22,7 @@ export function FullSwitch({ ws, onClose }: { ws: string; onClose: () => void })
       <Field label="Hub card file path" value={card} onChange={setCard} testId="hub-full-card" hint="A file on the computer running this workspace." />
       <p>To continue here, type <Raw>{FULL_ACCESS_WORDS}</Raw>.</p>
       <Field label="Confirm full access" value={words} onChange={setWords} testId="hub-full-words" />
-      <Action id="hub-full-continue" disabled={words.trim().toLowerCase() !== FULL_ACCESS_WORDS || !card.trim()} onClick={() => setTerminal(true)}>Continue to Terminal</Action>
+      <Action id="hub-full-continue" disabled={words.trim().toLowerCase() !== FULL_ACCESS_WORDS || !card.trim()} onClick={() => setTerminal(true)}>Continue to the terminal</Action>
     </>}
   </Flow>
 }

@@ -262,25 +262,25 @@ export function HandoffPanel({ request, workspace = null, why, whyAction }: { re
     <div data-handoff-panel className="space-y-3">
       {request.content && <SignContent content={request.content} ws={workspace?.id} technical={technical} />}
       <p data-testid="terminal-why" className="text-[13px] font-medium text-text">
-        {why === 'terminal_only' ? 'One click can\u2019t approve this one. Approve it in Terminal on this Mac.' : why === 'click_off' ? 'One click is off, so sign in Terminal on this Mac.' : 'Sign in your terminal.'}
+        {why === 'terminal_only' ? 'One click can\u2019t approve this one. Approve it in a terminal on this computer.' : why === 'click_off' ? 'One click is off, so sign in a terminal on this computer.' : 'Sign in your terminal.'}
         {why === 'click_off' && whyAction && <span className="ml-2 font-normal">{whyAction}</span>}
       </p>
       {runnerGrant && (
         <div data-testid="handoff-runner-note" className="space-y-1 text-[13px] text-text">
-          <p>After approving, choose <kbd className="rounded border border-border px-1 font-mono text-[12px]">r</kbd> in Terminal to give the new access to this Mac’s agent runner.</p>
-          <p className="text-[12px] text-text-muted">The agent runner is the part of orch on this Mac that starts agents for you.</p>
+          <p>After approving, choose <kbd className="rounded border border-border px-1 font-mono text-[12px]">r</kbd> in a terminal to give the new access to this computer’s agent runner.</p>
+          <p className="text-[12px] text-text-muted">The agent runner is the part of orch on this computer that starts agents for you.</p>
         </div>
       )}
       {request.code ? <>
         <p className="text-[13px] text-text-muted">1. Copy this command.</p>
         <CommandLine code={request.code} />
       </> : <p className="text-[13px] text-warning">This request has no code any more.</p>}
-      <p className="text-[13px] text-text-muted">2. Paste it into Terminal and press Return.</p>
+      <p className="text-[13px] text-text-muted">2. Paste it into the terminal and press Return.</p>
       <p className="text-[13px] text-text-muted">
-        3. Check that the verification code <code data-testid="handoff-fingerprint" className="font-mono text-[13px] text-text">{request.fingerprint}</code> matches the one in Terminal, read what Terminal shows (that is what you approve), then type{request.content && word ? <> <span className="whitespace-nowrap"><Raw>{word}</Raw></span></> : ' the word shown'}.
+        3. Check that the verification code <code data-testid="handoff-fingerprint" className="font-mono text-[13px] text-text">{request.fingerprint}</code> matches the one in the terminal, read what the terminal shows (that is what you approve), then type{request.content && word ? <> <span className="whitespace-nowrap"><Raw>{word}</Raw></span></> : ' the word shown'}.
       </p>
       {request.op === 'grant' && <p className="text-[12px] text-text-muted" data-testid="grant-handoff-note">After you sign, the terminal asks what to do with the new access. Press r to hand it to the orch runner, otherwise the runner has no access and agents stay off.</p>}
-      {request.content && hostStated && <p role="note" className="text-[12px] text-text-muted">Some values come from orch on this Mac (see details)</p>}
+      {request.content && hostStated && <p role="note" className="text-[12px] text-text-muted">Some values come from orch on this computer (see details)</p>}
       {!request.content && <SignDetails>{technical}</SignDetails>}
       {!request.content && preview}
       <p className="text-[12px] text-text-muted">This page never sees your passphrase or your key. Only approve a code you started yourself.</p>

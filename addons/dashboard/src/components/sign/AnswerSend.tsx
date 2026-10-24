@@ -111,7 +111,7 @@ export function AnswerSend({
         return
       }
       started.current = current
-      void k.start(action, 0, true)
+      void k.start(action)
     }, delay)
     return () => clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -71,7 +71,7 @@ export interface PairOfferStatus {
   label?: string | null
   /** Only while `pending`: the code the phone also shows. The page never displays it; the person types the phone's. */
   sas?: string | null
-  /** Only while `cert_pending`: the code the Mac's primary shows. */
+  /** Only while `cert_pending`: the code this computer's primary shows. */
   cert_code?: string | null
   /** For `rejected`/`failed`: the host's reason (untrusted text). */
   reason?: string | null

@@ -91,7 +91,7 @@ def test_the_same_access_taken_back_twice_is_never_counted_as_two():
 
 
 def test_extend_plain_summary_needs_the_runner_word_else_full_review():
-    assert build(_extend())["headline"].startswith("Extend agent access for this Mac's runner")
+    assert build(_extend())["headline"].startswith("Extend agent access for this computer's runner")
     with pytest.raises(PlainUnavailable):
         build(_extend({"label": "ci"}))
     with pytest.raises(PlainUnavailable):
@@ -104,7 +104,7 @@ def test_extend_headline_words_come_from_the_signed_new_grant_only():
     p = _extend()
     p["events"][0] = {**p["events"][0], "label": "ci"}  # the NEW access is not the runner's: no Extend summary
     c = build(p)
-    assert "this Mac's runner" not in c["headline"]
+    assert "this computer's runner" not in c["headline"]
 
 
 # --- one unlock for one reviewed request --------------------------------------------------------------------------

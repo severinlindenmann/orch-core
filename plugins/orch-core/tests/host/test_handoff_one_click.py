@@ -1,4 +1,4 @@
-"""#1170: the Terminal hand-off (`orch sign CODE`) keeps working while click-to-sign (One click) is on. `auth` names
+"""#1170: the terminal hand-off (`orch sign CODE`) keeps working while click-to-sign (One click) is on. `auth` names
 the custody, not the path: a hand-off bound to the One-click key says `convenience` and passes the same checks as a
 click. Design: ~/orch-dev/state/design-dashboard-first.md part 2."""
 
@@ -48,7 +48,7 @@ def hand(human, key, text="x", **kw):
 
 
 def conv(human):
-    """The signer a Terminal hand-off binds with while One click is on: the owner's device, custody `convenience`."""
+    """The signer a terminal hand-off binds with while One click is on: the owner's device, custody `convenience`."""
     return {**human.signer, **CONV}
 
 

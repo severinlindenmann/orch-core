@@ -16,6 +16,6 @@ export function NotTold({ ws }: { ws: string }) {
     {done ? <p role="status">The workspace no longer lists the hub as waiting to be told.</p> : confirmed ? <TerminalStep ws={ws} request={{ kind: 'stop_telling' }} onStatus={s => { if (!s.not_told) { setDone(true); return true } return false }}>
       <p>Stop trying to tell the hub that you left.</p>
       <p>The hub will keep listing this workspace as joined. That only matters if it comes back.</p>
-    </TerminalStep> : <><p>The hub will keep listing this workspace as joined. That only matters if it comes back.</p><Action id="hub-stop-telling-confirm" onClick={() => setConfirmed(true)}>Continue to Terminal</Action></>}
+    </TerminalStep> : <><p>The hub will keep listing this workspace as joined. That only matters if it comes back.</p><Action id="hub-stop-telling-confirm" onClick={() => setConfirmed(true)}>Continue to the terminal</Action></>}
   </Flow>}</>
 }

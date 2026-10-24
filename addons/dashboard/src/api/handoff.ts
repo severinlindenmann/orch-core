@@ -309,12 +309,10 @@ export const signCommand = (code: string): string => `orch sign ${code}`
 export const ALREADY_DONE = new Set(['gate.already_approved', 'transition.refused', 'addon.already'])
 /**
  * The server derives the host's idem from the action itself (one action intent -> at most one request), so the browser sends
- * no key. These are its answers about the intent: it is already done (a request of it was signed), its request ended
- * (cancelled or expired), or the host holds an attempt that cannot be reached from here (another signing path or device binding).
- * The first two are left only by an explicit click ("Do it again", "Start again"), which advances `retry`.
+ * no key. These are its answers about the intent: it is already done (a request of it was signed), or the host holds an attempt that cannot be reached from here (another signing path or device binding).
+ * Done is left only by an explicit click ("Do it again", "Start again"), which advances `retry`.
  */
 export const INTENT_DONE = 'intent.done'
-export const INTENT_ENDED = 'intent.ended'
 export const INTENT_OPEN = 'intent.open'
 
 /** Codes that mean the state moved between prepare and submit: refetch, then offer to prepare again. */

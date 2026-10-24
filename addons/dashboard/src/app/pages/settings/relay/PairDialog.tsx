@@ -138,7 +138,7 @@ export function PairDialog({ workspace, relay, fetchedAt, onClose }: { workspace
             <p className="rounded-md border border-border bg-bg py-3 text-center font-mono text-2xl tracking-[0.2em]" aria-label={`Code ${p.fingerprint!.split('').join(' ')}`}>
               {spaced(p.fingerprint!)}
             </p>
-            <p className="text-[12px] text-text-muted">This Mac is your primary device, so it signs the new device's certificate here. If the codes differ, cancel: someone else may be trying to join.</p>
+            <p className="text-[12px] text-text-muted">This computer is your primary device, so it signs the new device's certificate here. If the codes differ, cancel: someone else may be trying to join.</p>
           </div>
         )}
 

@@ -531,7 +531,7 @@ def test_one_workspace_failing_does_not_stop_the_search(human, served, monkeypat
     track.failing = {0}  # the first one asked answers workspace.unavailable
     rc, doc, errs = cli(p["request"]["code"])
     assert rc == 0, doc
-    assert "not asked:" in errs and "1 other workspace on this Mac is not reachable" in errs
+    assert "not asked:" in errs and "1 other workspace on this computer is not reachable" in errs
     assert "workspace.unavailable" not in errs and entry["workspace_id"] not in errs  # F2: plain words, no ids
     assert track.all_closed() and len(track.opened) == 2  # the failing connection was closed (33625455)
 

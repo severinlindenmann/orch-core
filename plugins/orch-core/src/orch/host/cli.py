@@ -855,14 +855,14 @@ def _convenience(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) 
 
         held = select.status(state, wid).get("custody")
         if moved is not None:
-            out.write("The key is back under your passphrase: sign in the Terminal with orch sign <code>\n")
+            out.write("The key is back under your passphrase: sign in the terminal with orch sign <code>\n")
         elif held == "convenience":
             out.write(
-                "The key stays in one-click custody, so it cannot sign in the Terminal yet. To sign with a passphrase: "
+                "The key stays in one-click custody, so it cannot sign in the terminal yet. To sign with a passphrase: "
                 f"orch keys custody passphrase --workspace {match[0].get('prefix') or wid} --in-place\n"
             )
         elif held == "passphrase":
-            out.write("Sign in the Terminal with orch sign <code>\n")
+            out.write("Sign in the terminal with orch sign <code>\n")
     if args.switch == "on":
         out.write(
             "Convenience signing: agents running as you, or anything that takes over this dashboard, could sign.\n"

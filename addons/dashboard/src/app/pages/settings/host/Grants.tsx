@@ -155,7 +155,7 @@ export function HostGrants({ workspace }: { workspace: Workspace }) {
             </div>
           )}
           {active.map((g) => {
-            // Active on paper, but the agent runner on this Mac does not hold it (an update restarts the runner and it loses the secret): agents cannot use it.
+            // Active on paper, but the agent runner on this computer does not hold it (an update restarts the runner and it loses the secret): agents cannot use it.
             const orphan = g.label === 'runner' && g.person === viewer && heldId !== undefined && heldId !== g.id
             const who = visible(name(g.person))
             return (
@@ -172,7 +172,7 @@ export function HostGrants({ workspace }: { workspace: Workspace }) {
                 <p className="text-[13px] tabular-nums text-text-muted">
                   Agents can work until {fmtDateTime(g.expires_at)}{g.sessions > 0 ? ` · ${plural(g.sessions, 'agent')} running` : ''}
                 </p>
-                {orphan && <p data-testid="grant-not-held" className="text-[12px] text-text-muted">The agent runner on this Mac no longer holds this access (an update resets it), so agents cannot use it. Give access again from the top bar, or stop this one.</p>}
+                {orphan && <p data-testid="grant-not-held" className="text-[12px] text-text-muted">The agent runner on this computer no longer holds this access (an update resets it), so agents cannot use it. Give access again from the top bar, or stop this one.</p>}
                 {canRevokeHostGrant(role, g.person, viewer) && (
                   <Button variant="outline" size="sm" className="border-danger/50 text-danger hover:text-danger" disabled={!served} title={served ? undefined : 'This host cannot stop access yet.'} aria-label={`Stop access for ${who}`} onClick={() => setStopping(g)}>
                     Stop access

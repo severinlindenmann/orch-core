@@ -27,7 +27,7 @@ export function Field({ label, value, onChange, hint, testId }: { label: string;
 }
 export function Flow({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
   return <Dialog open onOpenChange={open => !open && onClose()}><DialogContent showCloseButton={false} className="data-[state=open]:animate-none data-[state=closed]:animate-none max-h-[85vh] overflow-y-auto sm:max-w-2xl">
-    <div className="flex items-start justify-between gap-3"><DialogTitle>{title}</DialogTitle><Action id="hub-flow-close" onClick={onClose}>Close</Action></div><DialogDescription>Review here. Finish in Terminal on your computer.</DialogDescription>
+    <div className="flex items-start justify-between gap-3"><DialogTitle>{title}</DialogTitle><Action id="hub-flow-close" onClick={onClose}>Close</Action></div><DialogDescription>Review here. Finish in a terminal on your computer.</DialogDescription>
     <div className="min-w-0 space-y-4 text-sm [overflow-wrap:anywhere]">{children}</div>
   </DialogContent></Dialog>
 }

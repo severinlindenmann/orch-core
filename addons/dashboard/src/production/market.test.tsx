@@ -54,7 +54,7 @@ it('update diff values from the package sit inside the AddonFrame', async () => 
   inFrame(within(d).getByText('+ fields:', { exact: false }))
   inFrame(within(d).getByText('- fields:', { exact: false }))
 })
-it('stages the exact source, hands off in Terminal and refreshes after submission', async () => {
+it('stages the exact source, hands off in a terminal and refreshes after submission', async () => {
   const d = await openReview()
   expect(state.host.calls.find((c) => c.path.endsWith('/market/stage'))?.body).toEqual({ id: 'calendar', url: market().url })
   expect(within(d).getByText('Next, review and approve the installation with one click. The add-on will be installed turned off.')).toBeInTheDocument()

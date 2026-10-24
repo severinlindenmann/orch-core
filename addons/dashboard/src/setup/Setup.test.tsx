@@ -45,7 +45,7 @@ const state: SetupState = {
   agent_hours: [8, 24, 72, 168],
   relay: { available: true, enabled: true },
   missing: [],
-  labels: { runner_grant: "Agent access for this Mac's runner", custody: 'One-click approval on this Mac' },
+  labels: { runner_grant: "Agent access for this computer's runner", custody: 'One-click approval on this computer' },
 }
 const current = {
   name: 'Demo',
@@ -292,12 +292,12 @@ test('long runner access is one plain click after the review; digest and fingerp
   render(<Setup api={f.api} />)
   await approval()
   fireEvent.click(screen.getByRole('button', { name: '3 days' }))
-  fireEvent.click(screen.getByLabelText(/Let this Mac’s agent runner/))
+  fireEvent.click(screen.getByLabelText(/Let this computer’s agent runner/))
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Your secret words' })
   await check()
   await screen.findByRole('heading', { name: 'Review your setup' })
-  expect(screen.getByText('This Mac’s agent runner may work on any ticket you can see, as you, for 3 days')).toBeInTheDocument()
+  expect(screen.getByText('This computer’s agent runner may work on any ticket you can see, as you, for 3 days')).toBeInTheDocument()
   expect(screen.queryByText(/scope workable/)).toBeNull() // the raw values are only in the technical details
   expect(screen.getByText(/Return to the terminal window where you started orch setup/)).toBeInTheDocument()
   expect(screen.getByText(/Check that the terminal shows the same words/)).toHaveTextContent('demo not real. If they match, type yes in the terminal and press Enter.')
@@ -522,7 +522,7 @@ test('review is a compact plain summary; blanks and "set at signing" lines stay 
   render(<Setup api={f.api} />)
   await approval()
   fireEvent.click(screen.getByRole('button', { name: '3 days' }))
-  fireEvent.click(screen.getByLabelText(/Let this Mac’s agent runner/))
+  fireEvent.click(screen.getByLabelText(/Let this computer’s agent runner/))
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Your secret words' })
   await check()
@@ -545,7 +545,7 @@ test('finish shows the current values read-only and offers only what is missing,
   expect(screen.queryByLabelText('Your name')).toBeNull()
   expect(screen.getAllByRole('switch').map((el) => el.closest('label')?.textContent ?? '')).toEqual([
     expect.stringContaining('Worktrees'),
-    expect.stringContaining('Agent access for this Mac'),
+    expect.stringContaining('Agent access for this computer'),
     expect.stringContaining('Approve with one click'),
   ])
   expect(screen.getByRole('button', { name: 'Continue →' })).toBeDisabled()
@@ -568,7 +568,7 @@ test('finish never lists custody or ids; missing items are in words', async () =
   const f = fake({ finish: true })
   const { container } = render(<Setup api={f.api} />)
   await screen.findByRole('heading', { name: 'Finish setup in project' })
-  expect(page(container)).toContain('Agent access for this Mac’s runner')
+  expect(page(container)).toContain('Agent access for this computer’s runner')
   expect(page(container)).not.toMatch(/runner_grant|custody|addon:/)
 })
 
@@ -613,7 +613,7 @@ test('agent step: no raw capability codes, plain worktrees text, quick tasks has
   expect(screen.queryByLabelText(/agent runner/)).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: '1 day' }))
   expect(screen.getByRole('button', { name: 'No agent access' })).toHaveAttribute('aria-pressed', 'false')
-  expect(screen.getByLabelText(/Let this Mac’s agent runner/)).not.toBeChecked()
+  expect(screen.getByLabelText(/Let this computer’s agent runner/)).not.toBeChecked()
   fireEvent.click(screen.getByRole('button', { name: 'No agent access' }))
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Your secret words' })
@@ -652,7 +652,7 @@ test('the progress words are shown, and the unfinished items are named in words'
     const res = await f.fetcher(url, init)
     if (String(url).includes('/progress')) {
       const body = await res.json()
-      return new Response(JSON.stringify({ ...body, retry: ['runner_grant', 'custody'], error: { ...body.error, message: 'one-click could not be set up because this Mac refused; your workspace uses the terminal for now.' } }))
+      return new Response(JSON.stringify({ ...body, retry: ['runner_grant', 'custody'], error: { ...body.error, message: 'one-click could not be set up because this computer refused; your workspace uses the terminal for now.' } }))
     }
     return res
   }
@@ -664,7 +664,7 @@ test('the progress words are shown, and the unfinished items are named in words'
   fireEvent.click(screen.getByRole('button', { name: 'Finish setup' }))
   await screen.findByRole('heading', { name: 'Setup needs your attention' })
   expect(page(container)).toContain('one-click could not be set up because')
-  expect(page(container)).toContain("Still to finish: Agent access for this Mac's runner, One-click approval on this Mac")
+  expect(page(container)).toContain("Still to finish: Agent access for this computer's runner, One-click approval on this computer")
 })
 
 test('when the terminal setup ends the page notices within 2 seconds, clears the words and says paused', async () => {
@@ -847,7 +847,7 @@ test('finish offers no runner grant when the workspace agent time is below the s
   }
   render(<Setup api={new SetupAPI('tok', fetcher)} />)
   await screen.findByRole('heading', { name: 'Finish setup in project' })
-  expect(screen.queryByLabelText(/Agent access for this Mac.s runner/)).toBeNull()
+  expect(screen.queryByLabelText(/Agent access for this computer.s runner/)).toBeNull()
 })
 
 test('N7: the review names the workspace from what core returned, not from the typed values', async () => {
@@ -912,8 +912,8 @@ test('F7: an unusual runner grant keeps its raw scope and verbs in the summary l
     items: [{ id: 'runner_grant', type: 'grant.issued', title: 'x', fields: { type: 'grant.issued', hours: 72, scope, verbs } }],
     flags: [],
   }) as unknown as Parameters<typeof summarize>[0]
-  expect(summarize(grant('workable', 'agent')).lines).toEqual(['This Mac’s agent runner may work on any ticket you can see, as you, for 3 days'])
-  expect(summarize(grant('all', 'agent')).lines).toEqual(['This Mac’s agent runner gets agent access for 3 days (scope all, verbs agent)'])
+  expect(summarize(grant('workable', 'agent')).lines).toEqual(['This computer’s agent runner may work on any ticket you can see, as you, for 3 days'])
+  expect(summarize(grant('all', 'agent')).lines).toEqual(['This computer’s agent runner gets agent access for 3 days (scope all, verbs agent)'])
   expect(summarize(grant('workable', 'task.done')).lines[0]).toContain('verbs task.done')
 })
 
@@ -927,7 +927,7 @@ test('U1: a new setup starts with the main add-ons and agent access ticked, all 
   expect(sw).toBeEnabled()
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   expect(screen.getByRole('button', { name: '3 days' })).toHaveAttribute('aria-pressed', 'true')
-  expect(screen.getByLabelText(/Let this Mac’s agent runner/)).toBeChecked()
+  expect(screen.getByLabelText(/Let this computer’s agent runner/)).toBeChecked()
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Your secret words' })
   await check()
@@ -991,7 +991,7 @@ test('after the terminal confirms, the words are replaced by a matched notice', 
   render(<Setup api={f.api} />)
   await approval()
   fireEvent.click(screen.getByRole('button', { name: '3 days' }))
-  fireEvent.click(screen.getByLabelText(/Let this Mac’s agent runner/))
+  fireEvent.click(screen.getByLabelText(/Let this computer’s agent runner/))
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Your secret words' })
   await check()

@@ -1,4 +1,4 @@
-"""#740 manual acceptance and verify decisions along the FULL path the page takes for "Sign in Terminal".
+"""#740 manual acceptance and verify decisions along the FULL path the page takes for "Sign in a terminal".
 
 Core's in-process host (tests.host.live_helpers) serves a workspace; the dashboard's own app answers `POST /handoff`
 through its real Gateway; the response is then checked by the page's own `requestIsConsistent` (src/api/handoff.ts,

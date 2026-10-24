@@ -46,7 +46,7 @@ describe('M-5: why a run ended', () => {
   const ex = (reason: NonNullable<Run['exit']>['reason'], code: number | null, signal: string | null = null) => ({ code, signal, at: '2026-10-14T10:00:00Z', reason, cleanup: 'complete' as const })
   it('says it in plain words, nothing while it runs', () => {
     expect(exitText({ kind: 'agent', state: 'running', exit: null })).toBeNull()
-    expect(exitText(ended('agent', ex('spawn_failed', null)))).toBe('The agent could not be started. Is its program installed on this Mac?')
+    expect(exitText(ended('agent', ex('spawn_failed', null)))).toBe('The agent could not be started. Is its program installed on this computer?')
     expect(exitText(ended('agent', ex('exited', 127)))).toContain('program was not found')
     expect(exitText(ended('agent', ex('exited', 2)))).toBe('The agent ended with an error (code 2).')
     expect(exitText(ended('shell', ex('exited', 0)))).toBe('The terminal finished.')

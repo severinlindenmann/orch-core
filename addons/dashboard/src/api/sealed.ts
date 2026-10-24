@@ -190,9 +190,20 @@ export class RevealKey {
   readonly publicKey: Uint8Array
   #priv: CryptoKey | null
   readonly #seen = new Set<string>()
-  constructor(pair: KeyPair) {
+  readonly #bound: Bound
+  #pinnedDigest: string | null = null
+  constructor(pair: KeyPair, bound: Bound) {
+    if (!bound || !WORKSPACE_RE.test(bound.workspace_id) || !REQUEST_RE.test(bound.request_id)) throw new SealedError('context')
     this.publicKey = pair.publicKey
     this.#priv = pair.privateKey
+    this.#bound = { workspace_id: bound.workspace_id, request_id: bound.request_id }
+  }
+  /** Internal to open(): is this context the one the key was made for (and the pinned View, once there is one)? */
+  _contextMatches(ctx: SealedContext): boolean {
+    return ctx.workspace_id === this.#bound.workspace_id && ctx.request_id === this.#bound.request_id && (this.#pinnedDigest === null || ctx.view_digest === this.#pinnedDigest)
+  }
+  _pinDigest(digest: string): void {
+    this.#pinnedDigest ??= digest
   }
   get publicKeyB64(): string {
     return b64urlEncode(this.publicKey)
@@ -216,12 +227,15 @@ export class RevealKey {
   }
 }
 
-export async function newRevealKey(): Promise<RevealKey> {
-  return new RevealKey(await newKeyPair())
+/** What a reveal key is made for: the approval's workspace and request. open() refuses any other context. */
+export type Bound = { workspace_id: string; request_id: string }
+
+export async function newRevealKey(bound: Bound): Promise<RevealKey> {
+  return new RevealKey(await newKeyPair(), bound)
 }
 
-export function revealKeyFromPair(pair: KeyPair): RevealKey {
-  return new RevealKey(pair)
+export function revealKeyFromPair(pair: KeyPair, bound: Bound): RevealKey {
+  return new RevealKey(pair, bound)
 }
 
 function equalBytes(a: Uint8Array, b: Uint8Array): boolean {
@@ -241,6 +255,8 @@ export async function open(recipient: RevealKey, envelope: unknown, ctx: SealedC
   if (!priv) throw new SealedError('closed')
   // 2. context (and the direction: the browser opens "out" values only)
   if (validContext(ctx) !== 'out') throw new SealedError('context')
+  // 2b. the key's own approval, and the View pinned by the first successful open
+  if (!recipient._contextMatches(ctx)) throw new SealedError('context')
   // 3. exactly v, alg, epk, ct; v the integer 1; the one algorithm
   if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)) throw new SealedError('malformed')
   const env = envelope as Record<string, unknown>
@@ -280,6 +296,7 @@ export async function open(recipient: RevealKey, envelope: unknown, ctx: SealedC
     if (n < 1 || n > padded.length - 2 || Math.ceil((n + 2) / BLOCK) * BLOCK !== padded.length) throw new SealedError('malformed')
     for (let i = 2 + n; i < padded.length; i++) if (padded[i] !== 0) throw new SealedError('malformed')
     recipient._markSeen(epkText)
+    recipient._pinDigest(ctx.view_digest)
     return padded.slice(2, 2 + n)
   } finally {
     padded.fill(0)

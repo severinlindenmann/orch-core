@@ -498,3 +498,11 @@ def test_port_listener_can_rebind_after_a_connection_closed():
     first.close()
     second = launcher.bind_listener(port)  # without SO_REUSEADDR the closed connection's TIME_WAIT can refuse this
     second.close()
+
+
+def test_port_a_test_server_never_lands_on_the_headless_port(tmp_path, monkeypatch):
+    # the autouse fixture makes even a Linux machine without a display (CI) a desktop for the server under test
+    monkeypatch.setattr(launcher.sys, "platform", "linux")
+    assert launcher.listen_port(tmp_path) == 0
+    with pytest.raises(AssertionError, match="fixed headless port"):
+        launcher.bind_listener(launcher.HEADLESS_PORT)

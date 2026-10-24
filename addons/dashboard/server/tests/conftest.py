@@ -26,6 +26,24 @@ def no_signer_child(monkeypatch):
         monkeypatch.delenv(name, raising=False)
 
 
+@pytest.fixture(autouse=True)
+def desktop_not_headless(monkeypatch):
+    """No test depends on the machine it runs on being a desktop or a headless server (CI's Linux runner has no
+    display). Every server a test starts takes the random-port path; parallel workers must never meet on the fixed
+    headless port, so binding it is a test failure. A test of the headless path passes its own environ."""
+    monkeypatch.delenv("SSH_CONNECTION", raising=False)
+    monkeypatch.setenv("DISPLAY", ":99")
+    import orch_dashboard.__main__ as launcher
+
+    real = launcher.bind_listener
+
+    def guarded(wanted):
+        assert wanted != launcher.HEADLESS_PORT, "a test must not bind the fixed headless port"
+        return real(wanted)
+
+    monkeypatch.setattr(launcher, "bind_listener", guarded)
+
+
 @pytest.fixture
 def click_start():
     """The signer's start function for the `gateway` fixture; a test that exercises click-to-sign overrides it."""

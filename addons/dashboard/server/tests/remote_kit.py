@@ -66,6 +66,18 @@ def app(gateway, auth, tmp_path):
 
 
 @pytest.fixture
+def ungated(gateway, auth, tmp_path):
+    """The front with the route table switched off: tests of the handlers' own refusals (defence in depth, R1-4), which
+    the gate would otherwise answer first."""
+    static = tmp_path / "static"
+    (static / "assets").mkdir(parents=True)
+    (static / "index.html").write_text("<html></html>")
+    policy = dataclasses.replace(remote_policy(NAME), route_gate=False)
+    app = create_app(PORT, gateway, auth, static, remote=policy)
+    return TestClient(Front(app), base_url=HTTPS, headers={"X-Orch-Client": SOURCE})
+
+
+@pytest.fixture
 def loop(app):
     return TestClient(app, base_url=ORIGIN)
 

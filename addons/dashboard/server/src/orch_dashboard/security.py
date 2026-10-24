@@ -3,6 +3,7 @@ import contextlib
 from . import widget_frame
 from .errors import response
 from .policy import ListenerPolicy
+from .routegate import ALLOWED, PRE_LOGIN, TERMINALS, RouteGate
 from .testrun import UPLOAD_LIMIT
 
 # Frames: only the locked Widgets route (see policy.py).
@@ -24,11 +25,13 @@ CLICK_STEP = ("/view", "/sign", "/cancel", "/state", "/custody")
 class Security:
     """ASGI checks before routing, including duplicate headers and streamed body limits."""
 
-    def __init__(self, app, auth, policy: ListenerPolicy, others=(), registry=None):
+    def __init__(self, app, auth, policy: ListenerPolicy, others=(), registry=None, router=None):
         """``policy`` is the default listener (loopback). ``others`` are further listeners' policies; a request is
         handled by the one named in ``scope["orch_listener"]``, which only the server that accepted the connection
         sets (front.Front), never a header. A name that is not configured is refused (fail closed)."""
         self.app, self.auth, self.policy = app, auth, policy
+        # The app's router, for the remote route gate. Without one a gated listener answers nothing (fail closed).
+        self.gate = RouteGate(router) if router is not None else None
         # `registry` (create_app's `app.state.policies`) is shared: taking a policy out of it turns that listener off
         self.policies = registry if registry is not None else {p.name: p for p in (policy, *others)}
 
@@ -44,6 +47,15 @@ class Security:
             and self.auth.listener_of(token) == policy.name
             and policy.session_kind_ok(self.auth.login_kind(token))
         )
+
+    def route_ok(self, scope, policy) -> bool:
+        """The one place the remote route table is enforced. On a listener with ``route_gate`` only a route whose rule
+        is ALLOWED, PRE_LOGIN, or TERMINALS (where the policy has terminals on) answers; a refused, step-up (until
+        R1-6), unlisted or unmatched route does not."""
+        if not policy.route_gate:
+            return True
+        rule = self.gate.rule(scope) if self.gate is not None else None
+        return rule in (ALLOWED, PRE_LOGIN) or (rule == TERMINALS and policy.terminals)
 
     async def __call__(self, scope, receive, send):
         if scope["type"] not in ("http", "websocket"):
@@ -115,6 +127,10 @@ class Security:
             bearer = auth[0][7:] if len(auth) == 1 and auth[0].startswith("Bearer ") else ""
             if not self.session_ok(bearer, policy):
                 return await reject("not_found", 404)
+        if not self.route_ok(scope, policy):
+            return await reject(
+                "remote.refused", 403
+            )  # after the session test above: nobody learns routes before login
         if api or path == "/auth/logout":
             auth = values(b"authorization")
             token = auth[0][7:] if len(auth) == 1 and auth[0].startswith("Bearer ") else ""
@@ -221,6 +237,9 @@ class Security:
             or scope.get("subprotocols")
             or scope.get("query_string")
         ):
+            await send({"type": "websocket.close", "code": 1008})
+            return
+        if not self.route_ok(scope, policy):
             await send({"type": "websocket.close", "code": 1008})
             return
         scope = {**scope, "headers": [(k, v) for k, v in headers if k.lower() != b"cookie"]}

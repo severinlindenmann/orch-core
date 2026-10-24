@@ -785,7 +785,9 @@ class ClickSigner:
             cancel=cancel,
             budget=self.budget.reserve,
         )
-        self._sequence_kind(entry, intent)  # re-asserted here: what is signed is what this click may sign
+        kind = self._sequence_kind(entry, intent)  # re-asserted here: what is signed is what this click may sign
+        if approval.kind != kind:  # the approval recorded at prepare must be the class the host-side intent has now
+            raise refused("terminal_only", "this sequence needs more than a click; use the terminal (orch sign CODE)")
         driver = sequence.Driver(
             port,
             self.sessions,

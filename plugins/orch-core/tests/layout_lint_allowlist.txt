@@ -18,7 +18,7 @@ host/custody.py 3
 host/devmode.py 1
 host/dispatch.py 2
 host/handoff.py 2
-host/human.py 18
+host/human.py 19
 host/journal.py 6
 host/reads.py 1
 host/reads_feed.py 1
@@ -27,7 +27,7 @@ host/reads_ws.py 1
 host/records.py 4
 host/review.py 1
 host/signcontent.py 3
-host/signer.py 14
+host/signer.py 16
 hostclient.py 2
 importer/plan.py 1
 importer/v1.py 12

@@ -1142,8 +1142,9 @@ acting owner's `PK` from the roster (the actor must be an owner, as for every hu
 op without a proof is refused before anything is signed (`proof_missing`), on every path.
 
 **At the hub** (reference `check_join_proof`, vectors `join_proof_*`): the hub **always** requires a valid proof
-with a link `join` (`op` `hub.join`) and with a `binding_put` whose binding switches the mode (`op` `hub.mode`),
-whatever the host sends: a missing or `null` proof is `proof_missing` (vectors `join_proof_null_*`), so the hub's
+with a link `join` (`op` `hub.join`) and with a `binding_put` whose binding is new or switches the mode (`op`
+`hub.mode` for selective to full on the same hub, else `hub.join` for a rejoin after `hub.unbound`), whatever the host
+sends. A `binding_put` of an object the hub already holds, byte for byte, and every `hub.unbound` take `null`. Otherwise a missing or `null` proof is `proof_missing` (vectors `join_proof_null_*`), so the hub's
 check holds even against a host that skipped its own. After §9.5: `workspace_id` is the card's, `op` is the link
 op's, and the payload's `hub_id` is this hub's and its `hub_id`, `hk_root_pub`, `mode` and `binding_seq` are the
 binding's. `pk_pub` is the join's owner key (§9.5 step 2), for a `binding_put` the pinned owner's. With the hub's
@@ -1185,8 +1186,8 @@ not a substitute: the proof is required on every path.
 **Rollout.** The card's `reader` ships now on both sides (it changes the signed card, so hub and core deploy
 together; a dev hub re-issues its card, `reissue_card`, to get one). The `owner_proof` payload member, the `join` and
 mode-switch `binding_put` bodies that carry the proof (§10.2), the host checks and the signer ship together with
-orch-core C9/C10, because they change what core sends; until then the reference functions and the vectors pin the
-bytes.
+orch-core C9/C10, because they change what core sends (the orch-core C9 host PR is merged together with this one). A proof lives at most
+600 s: `hub.connect` must reach the hub inside it, else `proof_expired` and the owner signs the join again.
 
 ## 10. The host↔hub link
 
@@ -1232,9 +1233,9 @@ unknown `op` is `unknown_op`.
 | `route_in` | h2w | both | `{"envelope": b64u}` | `{}` |
 | `wk_seal` | w2h | full | `{"epoch", "wrap": b64u}`: `WK_e` sealed to `HXK` (v2 §5.3) | `{}` |
 | `publish_out` | w2h | both | `{"request": {method, host, target, headers, body_hex}}` (§11) | `{"status", "body_hex"}` |
-| `join` | w2h | both | `{"invite", "card", "pk_pub", "binding"}`: the v2 card, the owner's PK, the binding (§9.5); with C9 also `"owner_proof"` (§9.6: always required; missing or `null` → `proof_missing`) | `{}` |
+| `join` | w2h | both | `{"invite", "card", "pk_pub", "binding", "owner_proof"}`: the v2 card, the owner's PK, the binding (§9.5), the owner proof (§9.6: the member is always present; `null` → `proof_missing`) | `{}` |
 | `card_put` | w2h | both | `{"card", "pk_pub"}`: the workspace's v2 card, checked against the join pin, forwarded to orch-publish (§11.2 "Admission through the hub"); refusals: `other_person`, `other_workspace`, `wsk_mismatch`, `stale_card`, `not_bound`, and orch-publish's (`unknown_workspace`, `owner_not_allowed`, `workspace_blocked`, `delegation_changed`, `delegation_refused`, `delegation_mismatch`, `bad_signature`, `unavailable`) | `{}` |
-| `binding_put` | w2h | both | `{"object"}`: a `hub.binding` or `hub.unbound`, forwarded as is; with C9 a binding that switches the mode also carries `"owner_proof"` (§9.6) | `{}` |
+| `binding_put` | w2h | both | `{"object", "owner_proof"}`: a `hub.binding` or `hub.unbound`, forwarded as is; `owner_proof` is always present: the proof (§9.6) for a binding that is new or switches the mode, else `null` | `{}` |
 | `audit_ack` | w2h | both | `{"seq", "head": b64u(32)}` | `{"acked": seq}` (§10.5) |
 | `audit_get` | w2h | both | `{"since"}` | `{"records": [{"record": <hub.audit>, "event"?}], "head", "op_certs": [<hub.op_cert>]}` (D4, §10.5; added) |
 | `share_put` | w2h | selective | `{"item_id", "sealed": b64u}` | `{}` |

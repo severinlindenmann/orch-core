@@ -188,6 +188,16 @@ def join(c: OpContext) -> dict[str, Any]:
             join_msg["binding"], workspace_id=c.workspace_id, wsk_pub=wsk, now_ms=c.now_ms, dev_mode=c.dev_mode
         )
         state = H.apply_binding(c.registry.binding_state(c.workspace_id), b)
+        H.check_join_proof(  # #1198 C9, 9.6 "At the hub": a join is the owner's, whatever the host sends
+            c.body["owner_proof"],
+            pk_pub=unb64u(join_msg["pk_pub"], 65),
+            workspace_id=c.workspace_id,
+            hub_id_=c.hub_id,
+            binding=b,
+            op="hub.join",
+            now_ms=c.now_ms,
+            dev_mode=c.dev_mode,
+        )
         owner_user = getattr(c.invites, "owner_user", None)
         alias = owner_user(invite) if owner_user is not None else None
         c.registry.commit_join(
@@ -254,6 +264,24 @@ def binding_put(c: OpContext) -> dict[str, Any]:
             if b["hub_id"] != c.hub_id:
                 raise Refused("other_hub")
             state = H.apply_binding(held, b)
+            if state != held:  # not a re-sent identical binding: a new join or a mode switch is the owner's (9.6)
+                switch = (
+                    held is not None
+                    and held["status"] == "bound"
+                    and held["binding"]["mode"] == "selective"
+                    and b["mode"] == "full"
+                    and held["binding"]["hub_id"] == b["hub_id"]
+                )
+                H.check_join_proof(
+                    c.body["owner_proof"],
+                    pk_pub=unb64u(pin["pk_pub"], 65),
+                    workspace_id=c.workspace_id,
+                    hub_id_=c.hub_id,
+                    binding=b,
+                    op="hub.mode" if switch else "hub.join",
+                    now_ms=c.now_ms,
+                    dev_mode=c.dev_mode,
+                )
         elif kind == "hub.unbound":
             u = H.verify_unbound(obj, workspace_id=c.workspace_id, wsk_pub=wsk, dev_mode=c.dev_mode)
             if u["hub_id"] != c.hub_id:

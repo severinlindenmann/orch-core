@@ -140,3 +140,24 @@ def addon_dir(served, name="standup") -> Path:
 def on_worker(served, fn):
     """Run ``fn`` on the workspace's worker thread (the store's sqlite handles belong to it), as start-up does."""
     return served.service.executor.submit(fn).result()
+
+
+def write_stage(f: MarketFiles, name: str = "standup", version: str = "1.0.0", pkg=None, now: float = 1_790_000_000):
+    """A stage file as ``market.stage`` leaves it, for a test that signs a package without a marketplace in the loop.
+    Returns the stage id. ``now`` must be before the host clock's ``expires_at`` check."""
+    import base64
+    import secrets
+
+    pkg = pkg if pkg is not None else files(name, version)
+    digest = package.package_digest(pkg)
+    stage = "st_" + secrets.token_hex(16)
+    f.write_stage(
+        {
+            "v": 1, "stage": stage, "name": name, "version": version, "digest": digest, "origin": H.OFFICIAL,
+            "commit": "a" * 40, "publisher_key": None, "tofu": "unsigned", "index_version": 1, "prev_digest": None,
+            "created_at": now, "expires_at": now + 10_000_000_000, "class": "official", "summary": None,
+            "stale": False, "entry": {"id": name, "version": version, "capabilities": ["network"], "min_orch": "2.0.0.dev0"},
+            "files": {p: base64.b64encode(b).decode() for p, b in pkg.items()},
+        }
+    )  # fmt: skip
+    return stage

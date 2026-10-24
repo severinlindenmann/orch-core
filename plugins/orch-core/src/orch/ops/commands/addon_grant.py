@@ -161,9 +161,6 @@ OP = operation(
         err("market.version_reused"),
         err("market.rollback"),
         err("market.publisher_key_changed"),
-        err("market.capability_ceiling"),
-        err("market.not_allowed"),
-        err("market.state_invalid"),
     ),
     handler=handle,
 )

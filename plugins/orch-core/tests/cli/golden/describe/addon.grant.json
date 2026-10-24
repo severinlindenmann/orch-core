@@ -7,7 +7,7 @@
     "cli": "orch addon grant",
     "summary": "Grant an addon its capabilities (owner only); also enables it.",
     "who": "human",
-    "usage": "orch addon grant NAME [--dry-run]",
+    "usage": "orch addon grant NAME [--staged STAGE] [--dry-run]",
     "pre": [
       "workspace_exists",
       "addon_exists",
@@ -25,6 +25,12 @@
           "type": "string",
           "description": "addon name",
           "x-metavar": "NAME"
+        },
+        "staged": {
+          "type": "string",
+          "description": "the stage id that `orch addon install` or `update` made (the package comes from it, not from addons/)",
+          "x-metavar": "STAGE",
+          "pattern": "^st_[0-9a-f]{32}$"
         }
       },
       "x-positional": [
@@ -100,6 +106,83 @@
           "orch",
           "describe",
           "ask"
+        ]
+      },
+      {
+        "code": "market.manifest_mismatch",
+        "exit": 3,
+        "retryable": false,
+        "hint": "the entry is refused",
+        "fix": [
+          "orch",
+          "market",
+          "list"
+        ]
+      },
+      {
+        "code": "market.not_installed",
+        "exit": 3,
+        "retryable": false,
+        "hint": "orch addon install ID",
+        "fix": [
+          "orch",
+          "market",
+          "list"
+        ]
+      },
+      {
+        "code": "market.origin_changed",
+        "exit": 3,
+        "retryable": false,
+        "hint": "orch addon list",
+        "fix": [
+          "orch",
+          "market",
+          "list"
+        ]
+      },
+      {
+        "code": "market.publisher_key_changed",
+        "exit": 3,
+        "retryable": false,
+        "hint": "orch market trust --replace",
+        "fix": [
+          "orch",
+          "market",
+          "list"
+        ]
+      },
+      {
+        "code": "market.rollback",
+        "exit": 3,
+        "retryable": false,
+        "hint": "an older index or entry is refused",
+        "fix": [
+          "orch",
+          "market",
+          "list"
+        ]
+      },
+      {
+        "code": "market.staged_changed",
+        "exit": 3,
+        "retryable": false,
+        "hint": "start again",
+        "fix": [
+          "orch",
+          "market",
+          "list"
+        ]
+      },
+      {
+        "code": "market.version_reused",
+        "exit": 3,
+        "retryable": false,
+        "hint": "raise the version",
+        "fix": [
+          "orch",
+          "market",
+          "list"
         ]
       },
       {

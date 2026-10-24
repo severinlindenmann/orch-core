@@ -75,6 +75,7 @@ export function alsoSigned(content: SignContent, typed: QuickTyped): AlsoSigned 
     if (!same(k.verify ?? [], c.cmd ? [c.cmd] : [])) return null
   }
   const fields = content.fields_changed ?? []
+  if (!Array.isArray(fields)) return null
   if (fields.length !== 3 || !fields.every((f) => (f.before ?? null) === null && Object.keys(f).every((x) => ['field', 'before', 'after'].includes(x)))) return null
   const by = (name: string) => fields.filter((f) => f.field === name)
   if (by('type').length !== 1 || by('owner').length !== 1 || by('labels').length !== 1) return null

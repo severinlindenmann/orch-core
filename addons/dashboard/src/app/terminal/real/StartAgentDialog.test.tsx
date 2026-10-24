@@ -518,6 +518,7 @@ describe('a short, calm dialog (U6)', () => {
     ['the command changed', preview({ display: 'claude --other' })],
     ['the model changed', preview({ model: 'haiku', model_source: 'workspace' })],
     ['a new warning appeared', preview({ warnings: ['A new thing to read.'] })],
+    ['a new environment name appeared', preview({ env: ['NEW_SECRET_NAME'] })],
     ['an unread login-shell notice appeared', preview({ warnings: [LOGIN_NOTICE] })],
   ])('no access: signing the access does not start the agent when %s after the grant; it asks for a new Start', async (_n, after) => {
     s.runner.mockResolvedValue({ runner: runner() })

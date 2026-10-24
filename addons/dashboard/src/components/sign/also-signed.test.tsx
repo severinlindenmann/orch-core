@@ -65,6 +65,7 @@ describe('alsoSigned: the fold is allowed only for exactly the derived review', 
     ['sections that are not a list', (c: Content) => ({ ...c, sections: { length: 2 } }) as unknown as Content],
     ['acceptance that is not a list', (c: Content) => ({ ...c, acceptance: 'AC1' }) as unknown as Content],
     ['tasks that are not a list', (c: Content) => ({ ...c, tasks: { length: 2 } }) as unknown as Content],
+    ['fields that are not a list', (c: Content) => ({ ...c, fields_changed: { length: 3 } }) as unknown as Content],
     ['an unknown key inside a section', (c: Content) => ({ ...c, sections: c.sections!.map((s) => ({ ...s, extra: 1 })) }) as Content],
   ])('fails closed (null) for %s', (_n, change) => {
     expect(alsoSigned(change(hostContent(typed)), typed)).toBeNull()

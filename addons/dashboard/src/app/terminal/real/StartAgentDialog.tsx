@@ -413,7 +413,8 @@ const CHANGED_NOTE = 'Something changed since you looked. Check and press Start 
 /** The preview the person had on screen and the one after the grant say the same about what runs, where and with which model. */
 const sameShown = (a: AgentPreview, b: AgentPreview) =>
   a.display === b.display && a.cwd_path === b.cwd_path && a.cwd.kind === b.cwd.kind && a.cwd.repo === b.cwd.repo && a.cwd.ticket === b.cwd.ticket &&
-  (a.model ?? null) === (b.model ?? null) && (a.model_source ?? null) === (b.model_source ?? null) && a.will_create_worktree === b.will_create_worktree
+  (a.model ?? null) === (b.model ?? null) && (a.model_source ?? null) === (b.model_source ?? null) && a.will_create_worktree === b.will_create_worktree &&
+  a.env.length === b.env.length && a.env.every((n, i) => n === b.env[i])
 const unreadableOf = (d: AgentPreview) => d.display_hidden || d.cwd_path_hidden || d.display === null || d.cwd_path === null
 
 /** The model rows of the options fold (the model is a name from core's list, never typed text). */

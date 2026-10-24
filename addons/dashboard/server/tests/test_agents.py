@@ -141,7 +141,16 @@ def test_preview_passes_the_work_folder_state_and_never_invents_it():
         "exists": True,
         "empty": False,
     }
-    assert project.agent_preview({**base, "workdir": {"exists": True}})["workdir"] == {"exists": True, "empty": False}
+    partials = (
+        {"exists": True},
+        {"empty": True},
+        {},
+        {"exists": 1, "empty": 0},
+        {"exists": "yes", "empty": True},
+        {"exists": False, "empty": None},
+    )
+    for partial in partials:
+        assert "workdir" not in project.agent_preview({**base, "workdir": partial}), partial
     assert "workdir" not in project.agent_preview(base)
     assert "workdir" not in project.agent_preview({**base, "workdir": "empty"})
 

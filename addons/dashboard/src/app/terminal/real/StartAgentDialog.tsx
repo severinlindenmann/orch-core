@@ -176,6 +176,8 @@ function StartAgent({ ws, ticket, onClose, onStarted, initial, choose }: { ws: s
     }
   }, [qc, ws])
   const shownFull = [...(startFull ? ['start_agent' as const] : []), ...(loginFull ? ['login_shell' as const] : [])]
+  const ackNow = useRef<{ login_shell?: boolean }>({})
+  ackNow.current = ack.data?.acknowledged ?? {}
   const ackRef = useRef({ shownFull, acknowledge })
   ackRef.current = { shownFull, acknowledge }
 
@@ -267,8 +269,14 @@ function StartAgent({ ws, ticket, onClose, onStarted, initial, choose }: { ws: s
       if (usableGrant(r, nowMs())) {
         try {
           const data2 = await agentsApi.preview(ws, args)
+          const before = shown?.data ?? null
           setShown({ args, data: data2 })
-          if (!data2.blocked && data2.spec && !unreadableOf(data2)) { await start({ args, data: data2 }); return }
+          // Review L2: start by itself only what the person saw (same command, folder, model, no new worktree) and what the
+          // instant path would start (nothing to read first). Anything else goes back to the form for a press on Start.
+          const loginOpen = data2.warnings.some(isLoginNotice) && ackNow.current.login_shell !== true
+          const fine = !data2.blocked && !!data2.spec && !unreadableOf(data2) && !loginOpen && !data2.warnings.some((x) => !isLoginNotice(x))
+          if (fine && before && sameShown(before, data2)) { await start({ args, data: data2 }); return }
+          if (!data2.blocked) { setNote(CHANGED_NOTE); toast.dismiss(toastId); setStep('form'); return }
         } catch (e) { setError(message(e)) }
         break
       }
@@ -401,6 +409,11 @@ const MODE_SENTENCE = (name: string): Record<AgentMode, string> => ({
   context: `${name} will read the ticket and the code so you can ask questions. It changes nothing.`,
 })
 
+const CHANGED_NOTE = 'Something changed since you looked. Check and press Start again.'
+/** The preview the person had on screen and the one after the grant say the same about what runs, where and with which model. */
+const sameShown = (a: AgentPreview, b: AgentPreview) =>
+  a.display === b.display && a.cwd_path === b.cwd_path && a.cwd.kind === b.cwd.kind && a.cwd.repo === b.cwd.repo && a.cwd.ticket === b.cwd.ticket &&
+  (a.model ?? null) === (b.model ?? null) && (a.model_source ?? null) === (b.model_source ?? null) && a.will_create_worktree === b.will_create_worktree
 const unreadableOf = (d: AgentPreview) => d.display_hidden || d.cwd_path_hidden || d.display === null || d.cwd_path === null
 
 /** The model rows of the options fold (the model is a name from core's list, never typed text). */

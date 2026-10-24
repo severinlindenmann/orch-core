@@ -23,4 +23,20 @@ describe('Start agent split button', () => {
     expect(onChoose).toHaveBeenCalledTimes(1)
     expect(onStart).not.toHaveBeenCalled()
   })
+  it('disabled: both buttons are off and nothing is called', async () => {
+    const onStart = vi.fn()
+    const onChoose = vi.fn()
+    render(<StartAgentSplit harness="claude-code" onStart={onStart} onChoose={onChoose} disabled />)
+    const [main, chevron] = [screen.getByRole('button', { name: 'Start agent' }), screen.getByRole('button', { name: 'Change agent or model' })]
+    expect(main).toBeDisabled()
+    expect(chevron).toBeDisabled()
+    await userEvent.click(main)
+    await userEvent.click(chevron)
+    expect(onStart).not.toHaveBeenCalled()
+    expect(onChoose).not.toHaveBeenCalled()
+  })
+  it('the chevron carries no agent mark', () => {
+    render(<StartAgentSplit harness="codex" onStart={vi.fn()} onChoose={vi.fn()} />)
+    expect(screen.getByRole('button', { name: 'Change agent or model' }).querySelector('[data-agent-icon]')).toBeNull()
+  })
 })

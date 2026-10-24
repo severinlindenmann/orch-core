@@ -2019,6 +2019,32 @@ def test_the_key_comes_from_the_hosts_row_when_the_last_steps_result_has_none(cl
     assert signed.json()["key"] == "DEMO-0045" and signed.json()["deposit"] == "confirmed"
 
 
+def test_an_odd_ticket_key_or_seq_is_not_passed_on(client, token, stub, script, host_check):
+    """The key must be a ticket key (from the result and from the host's row alike); seq must be a real integer."""
+    script.features = ["custody", "sequence"]
+    rid = prepare(client, token, stub, {**SEQUENCE, "agent": {"hours": 24}}).json()["request_id"]
+    base = script.clients[0].handler
+    answer = {}
+
+    def handler(op, args):
+        if op == "sign":
+            script.states[args["request_id"]] = "submitted"
+            return {
+                "result": answer,
+                "duplicate": False,
+                "deposit": "confirmed",
+                "deposit_id": rid[3:],
+                "grant": GRANT,
+            }
+        return base(op, args)
+
+    script.clients[0].handler = handler
+    answer.update(key="demo-1; rm", seq=True)
+    host_check.key = "not a key"
+    body = client.post(url(stub, "sign"), json={"request_id": rid, "view_digest": HASH}, headers=hdr(token)).json()
+    assert "key" not in body and "seq" not in body
+
+
 # --- R3 part B: pasted screenshots ---------------------------------------------------------------------------------
 DIGEST = "ab" * 32
 PIC = {

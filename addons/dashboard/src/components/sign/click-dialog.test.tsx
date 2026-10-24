@@ -85,6 +85,14 @@ const press = (b: HTMLElement) => {
 }
 
 describe('the action dialog with click-to-sign', () => {
+  it('leaving the screen while the review is open cancels the open click request (no slot left until it expires)', async () => {
+    const { unmount } = await toPanel()
+    expect(c.cancel).not.toHaveBeenCalled()
+    unmount()
+    await waitFor(() => expect(c.cancel).toHaveBeenCalledTimes(1))
+    expect(c.cancel.mock.calls[0][1]).toBe(REQ)
+  })
+
   it('opens straight on the review: content first, Sign under it, never a Sign button before the content (WYSIWYS)', async () => {
     const { dialog } = await open()
     // before the review is shown there is no Sign button at all

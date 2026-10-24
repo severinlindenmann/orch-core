@@ -514,6 +514,33 @@ describe('a short, calm dialog (U6)', () => {
     expect(s.prepare).toHaveBeenCalledTimes(1)
   }, 15000)
 
+  it.each([
+    ['the command changed', preview({ display: 'claude --other' })],
+    ['the model changed', preview({ model: 'haiku', model_source: 'workspace' })],
+    ['a new warning appeared', preview({ warnings: ['A new thing to read.'] })],
+    ['an unread login-shell notice appeared', preview({ warnings: [LOGIN_NOTICE] })],
+  ])('no access: signing the access does not start the agent when %s after the grant; it asks for a new Start', async (_n, after) => {
+    s.runner.mockResolvedValue({ runner: runner() })
+    s.preview.mockResolvedValue(noGrant())
+    const { onStarted } = mount()
+    await screen.findByTestId('agent-access', {}, T)
+    await waitFor(() => expect(screen.getByTestId('agent-start')).toBeEnabled(), T)
+    fireEvent.click(screen.getByTestId('agent-start'))
+    const panel = await screen.findByTestId('click-panel', {}, T)
+    s.runner.mockResolvedValue({ runner: runner({ grant: { id: GRANT, until: SOON, scope: 'workable' } }) })
+    s.preview.mockResolvedValue(after)
+    fireEvent.change(within(panel).getByRole('textbox'), { target: { value: WORD } })
+    const sign = within(panel).getByRole('button', { name: /^Sign and start agent$/ })
+    await waitFor(() => expect(sign).toBeEnabled(), { timeout: ARM_MS + 2000 })
+    fireEvent.pointerDown(sign)
+    fireEvent.click(sign)
+    expect(await screen.findByTestId('agent-changed', {}, { timeout: 8000 })).toHaveTextContent('Something changed since you looked. Check and press Start again.')
+    expect(s.start).not.toHaveBeenCalled()
+    expect(onStarted).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('agent-error')).toBeNull()
+    expect(screen.getByTestId('agent-start')).toHaveTextContent('Start agent')
+  }, 15000)
+
   it('valid access and nothing to read: no dialog at all, the agent just starts', async () => {
     s.notices.mockResolvedValue({ acknowledged: { start_agent: true } })
     const { onStarted, onClose } = mount(vi.fn(), vi.fn(), {})

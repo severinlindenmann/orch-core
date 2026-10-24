@@ -56,15 +56,18 @@ export function alsoSigned(content: SignContent, typed: QuickTyped): AlsoSigned 
   const t = content.ticket
   if (!t || t.title !== want.title || !Object.keys(t).every((k) => ['key', 'title', 'uid_tail', 'key_note', 'new'].includes(k))) return null
   const sections = content.sections ?? []
+  if (!Array.isArray(sections)) return null
   if (sections.length !== 2 || !sections.every((s) => keysAre(s, ['id', 'title', 'text']))) return null
   const [req, plan] = sections as [typeof sections[number], typeof sections[number]]
   if (req.id !== 'requirements' || req.title !== 'Requirements' || req.text !== want.requirements || plan.id !== 'plan' || plan.title !== 'Plan' || plan.text !== want.plan) return null
   const acceptance = content.acceptance ?? []
+  if (!Array.isArray(acceptance)) return null
   if (acceptance.length !== want.checks.length) return null
   for (const [i, a] of acceptance.entries()) {
-    if (!Object.keys(a).every((x) => ['id', 'text', 'checked'].includes(x)) || a.checked === true || a.id !== `AC${i + 1}` || a.text !== want.checks[i]!.text) return null
+    if (!Object.keys(a).every((x) => ['id', 'text', 'checked'].includes(x)) || (a.checked !== undefined && a.checked !== false) || a.id !== `AC${i + 1}` || a.text !== want.checks[i]!.text) return null
   }
   const tasks = content.tasks ?? []
+  if (!Array.isArray(tasks)) return null
   if (tasks.length !== want.checks.length) return null
   for (const [i, k] of tasks.entries()) {
     const c = want.checks[i]!

@@ -59,6 +59,12 @@ describe('alsoSigned: the fold is allowed only for exactly the derived review', 
     ['a renamed section title', (c: Content) => ({ ...c, sections: c.sections!.map((s) => (s.id === 'plan' ? { ...s, title: 'Approved by you already' } : s)) })],
     ['a value with trailing whitespace', (c: Content) => ({ ...c, sections: c.sections!.map((s) => (s.id === 'requirements' ? { ...s, text: `${s.text} ` } : s)) })],
     ['a zero-width character in a check', (c: Content) => ({ ...c, acceptance: c.acceptance!.map((a, i) => (i === 0 ? { ...a, text: `${a.text}\u200b` } : a)) })],
+    ['checked: 1 on a check', (c: Content) => ({ ...c, acceptance: c.acceptance!.map((a, i) => (i === 0 ? { ...a, checked: 1 } : a)) }) as unknown as Content],
+    ['checked: "yes" on a check', (c: Content) => ({ ...c, acceptance: c.acceptance!.map((a, i) => (i === 0 ? { ...a, checked: 'yes' } : a)) }) as unknown as Content],
+    ['checked: null on a check', (c: Content) => ({ ...c, acceptance: c.acceptance!.map((a, i) => (i === 0 ? { ...a, checked: null } : a)) }) as unknown as Content],
+    ['sections that are not a list', (c: Content) => ({ ...c, sections: { length: 2 } }) as unknown as Content],
+    ['acceptance that is not a list', (c: Content) => ({ ...c, acceptance: 'AC1' }) as unknown as Content],
+    ['tasks that are not a list', (c: Content) => ({ ...c, tasks: { length: 2 } }) as unknown as Content],
     ['an unknown key inside a section', (c: Content) => ({ ...c, sections: c.sections!.map((s) => ({ ...s, extra: 1 })) }) as Content],
   ])('fails closed (null) for %s', (_n, change) => {
     expect(alsoSigned(change(hostContent(typed)), typed)).toBeNull()

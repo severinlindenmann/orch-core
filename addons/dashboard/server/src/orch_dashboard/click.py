@@ -591,9 +591,9 @@ def register(app: FastAPI, gateway: Gateway):
         if not isinstance(wanted, RunnerGrant):
             # A ticket or quick task whose sequence ends in the agent access: the page needs the ticket's key to start
             # the agent for exactly that ticket, so the key and the seq are answered in this case too.
-            if isinstance(result.get("key"), str):
+            if isinstance(result.get("key"), str) and adapters.runs.KEY.fullmatch(result["key"]):
                 out["key"] = result["key"]
-            if isinstance(result.get("seq"), int):
+            if type(result.get("seq")) is int:
                 out["seq"] = result["seq"]
             if "key" not in out and "deposit" in got:
                 # The result is the last step's (the grant): the ticket's key is on the host's own row of this request.
@@ -602,7 +602,7 @@ def register(app: FastAPI, gateway: Gateway):
                     row = rows[0] if len(rows) == 1 and isinstance(rows[0], dict) and rows[0].get("id") == rid else {}
                 except HostError:
                     row = {}
-                if isinstance(row.get("key"), str):
+                if isinstance(row.get("key"), str) and adapters.runs.KEY.fullmatch(row["key"]):
                     out["key"] = row["key"]
         if isinstance(wanted, RunnerGrant) or "deposit" in got:
             # Of the deposit only its enum, its id and the grant id; never `result` (section 0.8.6 item 6).

@@ -136,8 +136,8 @@ def agent_preview(data):
     # ticket's agent unattended only in a new or empty folder, so a missing answer must read as "not known".
     folder = data.get("workdir")
     workdir = (
-        {"exists": folder.get("exists") is True, "empty": folder.get("empty") is True}
-        if isinstance(folder, dict)
+        {"exists": folder["exists"], "empty": folder["empty"]}
+        if isinstance(folder, dict) and type(folder.get("exists")) is bool and type(folder.get("empty")) is bool
         else None
     )
     return {

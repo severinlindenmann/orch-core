@@ -46,7 +46,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
             "name": name, "version": granted[name].version, "enabled": state == "active", "state": state,
         }  # fmt: skip
         if state == "active":
-            row["capabilities"] = sorted(granted[name].capabilities)  # the grant's, for a page that offers per capability
+            row["capabilities"] = sorted(granted[name].capabilities)  # the grant's own, for a capability gate
         held = _credential(c, name, state, granted[name].capabilities)
         if held is not None:
             row["credential"] = held
@@ -81,7 +81,11 @@ OP = operation(
             "addons": arr(
                 obj(
                     {
-                        "name": STR, "version": STR, "enabled": BOOL, "state": STR, "credential": STR,
+                        "name": STR,
+                        "version": STR,
+                        "enabled": BOOL,
+                        "state": STR,
+                        "credential": STR,
                         "capabilities": arr(STR),
                     },
                     optional=("credential", "capabilities"),

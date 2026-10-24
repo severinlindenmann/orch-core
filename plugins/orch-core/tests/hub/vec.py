@@ -67,6 +67,7 @@ SKIPPED_CHECKS = {
     "pair_link": "phone pairing link (orch-mobile and hub): not a host check",
     "audit": "hub audit chain (D4): hub side",
     "audit_ack": "hub audit chain (D4): hub side",
+    "ws_card_admission": "hub side (workspace card admission at card_put, protocol 9.5): the hub checks the card",
     "admin_read": "hub admin reads (D3/D4): hub side",
     "admin_read_row": "hub admin reads (D3/D4): hub side",
     "admin_read_rows": "hub admin reads (D3/D4): hub side",

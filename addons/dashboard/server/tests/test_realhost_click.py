@@ -161,7 +161,7 @@ def test_the_workspace_card_and_the_flag(world, click):
     assert re.fullmatch(r"d_[0-9a-f]{32}", card.pop("device"))  # the validated device key (#578), never a raw value
     # B6 (b238af89): the card says when the One click risk notice was acknowledged; enabling One click records it.
     assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", card.pop("risk_ack"))
-    assert card == {"custody": "convenience", "enabled": True, "available": True}
+    assert card == {"custody": "convenience", "enabled": True, "available": True, "idle_hours": 12}
     card = world.client.get(click.url("status"), headers=click.headers(False)).json()
     assert card["custody"] == "convenience"
 

@@ -21,6 +21,7 @@ import { fmtDateTime } from '@/lib/time'
 import { Mono, Pill } from '../../ticket/shared'
 import { useSettingsHandoff } from './useSettingsHandoff'
 import { ReaderLevels } from './Readers'
+import { ReplaceKey } from './ReplaceKey'
 import { refusalOf, refusalSentence } from '@/api/refusals'
 import { RefusalDevices } from '@/components/sign/RefusalDevices'
 
@@ -70,6 +71,7 @@ export function HostDevices({ workspace }: { workspace: Workspace }) {
       ) : (
         <Pairing workspace={workspace} />
       )}
+      <ReplaceKey workspace={workspace} />
       <ReaderLevels ws={workspace.id} />
     </div>
   )

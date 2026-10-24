@@ -186,6 +186,7 @@ def reveal_view_ok(view: dict, ws: str, reveal_key: str) -> bool:
 
 
 SEALED_LOCAL_ONLY = "A new passphrase for your key needs a dashboard opened on this computer."
+ROTATE_LOCAL_ONLY = "Replacing this computer's key needs a dashboard opened on this computer."
 #: core's constant (orch.click.protocol BACKUP_KEY_LINE): a hub step's View that lacks it is not shown
 BACKUP_KEY_LINE = "This step also needs your backup key. You type it once here; orch does not keep it"
 HUB_STEPS = (HubJoin, HubLeave)
@@ -298,6 +299,24 @@ class PassphraseSealed(BaseModel):
 
 
 CustodyBody.model_rebuild()
+
+
+class RotateSealed(BaseModel):
+    """The two typed secrets of "Replace this device's key", sealed (purposes `device.recovery_code` and
+    `custody.passphrase`): relayed as ciphertext."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, populate_by_name=False)
+    device_recovery_code: Envelope = Field(alias="device.recovery_code")
+    custody_passphrase: Envelope = Field(alias="custody.passphrase")
+
+
+class RotateBody(BaseModel):
+    """#1198 C13: `request_id`, `view_digest` and `sealed` come from `click/rotate/seal`; the signer does the rest."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    request_id: Annotated[str, StringConstraints(pattern=r"^hr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")]
+    view_digest: ViewDigest
+    sealed: RotateSealed
 
 
 class Sign(Step):
@@ -436,6 +455,85 @@ def register(app: FastAPI, gateway: Gateway):
                 "The signing helper's offer for your passphrase is not what it should be. Nothing changed."
             )
         return got
+
+    def rotate_offer_ok(got: object, ws: str) -> bool:
+        """The signer's review of a key replacement: this workspace, the old and new device ids, a plain click, and
+        exactly the two purposes with the signer's own key (a P-256 point, 87 base64url characters)."""
+        if not isinstance(got, dict) or set(got) != {"request_id", "view_digest", "view", "expires_in"}:
+            return False
+        view = got["view"]
+        if not isinstance(view, dict) or type(got["expires_in"]) is not int:
+            return False
+        seal, workspace = view.get("seal"), view.get("workspace")
+        lines = view.get("lines")
+        device = re.compile(r"^d_[0-9a-f]{32}$")
+        return (
+            isinstance(got["request_id"], str)
+            and re.fullmatch(r"hr_[0-7][0-9A-HJKMNP-TV-Z]{25}", got["request_id"]) is not None
+            and isinstance(got["view_digest"], str)
+            and re.fullmatch(r"sha256:[0-9a-f]{64}", got["view_digest"]) is not None
+            and view.get("op") == "device.rotate"
+            and isinstance(workspace, dict)
+            and workspace.get("id") == ws
+            and isinstance(view.get("old"), str)
+            and device.fullmatch(view["old"]) is not None
+            and isinstance(view.get("new"), str)
+            and device.fullmatch(view["new"]) is not None
+            and view["old"] != view["new"]
+            and view.get("confirm") == {"kind": "click"}
+            and isinstance(lines, list)
+            and all(isinstance(x, str) for x in lines)
+            and isinstance(seal, dict)
+            and set(seal) == {"v", "alg", "pk", "purposes"}
+            and seal["v"] == 1
+            and type(seal["v"]) is int
+            and seal["alg"] == "P256-HKDF-SHA256-A256GCM"
+            and seal["purposes"] == ["device.recovery_code", "custody.passphrase"]
+            and isinstance(seal["pk"], str)
+            and re.fullmatch(rf"{B64URL}{{87}}", seal["pk"]) is not None
+        )
+
+    def rotate_gate(request: Request, ws: str) -> None:
+        """Local sessions only (until the passkey step-up), an owner, a signer that can (begin and sign alike)."""
+        gateway.enabled(ws)
+        if app.state.auth.login_kind(request.state.token) not in REVEAL_SESSION_KINDS:
+            raise refusal_check(ROTATE_LOCAL_ONLY)
+        if not owner(ws):
+            raise fail("role.denied", "Only an owner replaces a device key in the dashboard.", exit=3)
+        if not signer.rotations():
+            raise fail("click.contract", "Update orch-core: its signing helper cannot replace a key yet.", exit=9)
+
+    @app.post("/api/w/{ws}/click/rotate/seal")
+    def rotate_seal(_: SealBegin, request: Request, ws: str = Depends(workspace)):
+        """The review of "Replace this device's key" with the signer's one-use key for the recovery code and the new
+        passphrase (#1198 C13). Nothing secret passes here; the signer refuses while One click is on."""
+        rotate_gate(request, ws)
+        got = signer.call("rotate", {"workspace_id": ws, "begin": True})
+        if got.get("done") is True:  # an earlier run had landed the event and only the install was left
+            return {"done": True, **(adapters.click_card(got) or {})}
+        if not rotate_offer_ok(got, ws):
+            raise refusal_check(
+                "The signing helper's review of the key replacement is not what it should be. Nothing changed."
+            )
+        return got
+
+    @app.post("/api/w/{ws}/click/rotate")
+    def rotate(body: RotateBody, request: Request, ws: str = Depends(workspace)):
+        """Replace this computer's device key: ciphertext only, relayed and never opened here (#1198 C13)."""
+        rotate_gate(request, ws)
+        row = signer.call(
+            "rotate",
+            {
+                "workspace_id": ws,
+                "request_id": body.request_id,
+                "view_digest": body.view_digest,
+                "sealed": {
+                    "device.recovery_code": body.sealed.device_recovery_code.model_dump(),
+                    "custody.passphrase": body.sealed.custody_passphrase.model_dump(),
+                },
+            },
+        )
+        return {"done": True, **(adapters.click_card(row) or {}), "switchable": True}
 
     @app.post("/api/w/{ws}/click/custody")
     def custody(body: CustodyBody, request: Request, ws: str = Depends(workspace)):

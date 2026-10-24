@@ -20,6 +20,9 @@ from .protocol import (
     REVEAL_LINE,
     REVEAL_RISK,
     RISK,
+    ROTATE_LINE,
+    ROTATE_OP,
+    ROTATE_PURPOSES,
     SEALED_OPS,
     op_class,
     refused,
@@ -34,6 +37,8 @@ __all__ = [
     "digest",
     "invariant",
     "reveal_checks",
+    "single_event",
+    "rotation",
 ]
 
 MAX_EVENTS = 16
@@ -88,21 +93,29 @@ def deposit_checks(prepared: Mapping[str, Any]) -> None:
         )
 
 
+def single_event(prepared: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    """The one event of a prepared request, or ``None`` when it carries none, several, or something that is not an
+    object. (The key is read through :data:`INVARIANT` because the layout lint counts string literals naming store
+    entries.)"""
+    events = prepared.get(INVARIANT[3]) if isinstance(prepared, Mapping) else None
+    if isinstance(events, list) and len(events) == 1 and isinstance(events[0], Mapping):
+        return events[0]
+    return None
+
+
 def reveal_checks(prepared: Mapping[str, Any]) -> None:
     """#1198 C7: a grant whose secret is shown once in the page: exactly one ``grant.issued``, ``verbs:"agent"``, 1 to
     168 hours, no ``runner`` label (a runner grant is handed to the runner, never shown), no revoke leg. Anything else
     is ``terminal_only``."""
-    events = prepared.get(INVARIANT[3])  # "events" (the layout lint counts string literals)
+    ev = single_event(prepared)
     ok = (
         prepared.get("op") == "grant"
-        and isinstance(events, list)
-        and len(events) == 1
-        and isinstance(events[0], Mapping)
-        and events[0].get("type") == "grant.issued"
-        and events[0].get("verbs") == "agent"
-        and events[0].get("label") != "runner"
-        and type(events[0].get("hours")) is int
-        and 1 <= events[0]["hours"] <= DEPOSIT_MAX_HOURS
+        and ev is not None
+        and ev.get("type") == "grant.issued"
+        and ev.get("verbs") == "agent"
+        and ev.get("label") != "runner"
+        and type(ev.get("hours")) is int
+        and 1 <= ev["hours"] <= DEPOSIT_MAX_HOURS
     )
     if not ok:
         raise refused(
@@ -243,3 +256,27 @@ def digest(view: Mapping[str, Any]) -> str:
     stable = copy.deepcopy(dict(view))
     stable["checks"] = [{k: v for k, v in c.items() if k != "at"} for c in stable.get("checks") or []]
     return "sha256:" + hashlib.sha256(canon.dumps(stable)).hexdigest()
+
+
+def rotation(*, workspace: Mapping[str, str], old: str, new: str, pk: str) -> dict[str, Any]:
+    """#1198 C13: the review of ``device.rotate`` from the dashboard: what is replaced (this computer's key, old and new
+    device id, as the terminal shows them), and the signer's per-offer key for the two typed secrets (the recovery code
+    and the passphrase of the new key file). No event exists yet: the new key signs it after the secrets are opened."""
+    lines = [
+        f"Replace the signing key of this computer for {signer._clean(workspace['name'])}.",
+        "The old key stops signing everywhere, also while a hub is down. The new key is signed by your recovery code "
+        "for this workspace only; nothing is re-shared with a hub.",
+        f"old device: {old}",
+        f"new device: {new}",
+        ROTATE_LINE,
+    ]
+    return {
+        "op": ROTATE_OP,
+        "workspace": {k: signer._clean(v) for k, v in workspace.items()},
+        "old": old,
+        "new": new,
+        "lines": lines,
+        "confirm": {"kind": "click"},
+        "seal": {"v": sealed.VERSION, "alg": sealed.ALG, "pk": pk, "purposes": list(ROTATE_PURPOSES)},
+        "rotate_line": ROTATE_LINE,
+    }

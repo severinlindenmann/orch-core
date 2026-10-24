@@ -63,6 +63,13 @@ it('expanded widened review puts new lines first and shows additions and removal
   expect(within(d).getByText('- fields:', { exact: false })).toHaveTextContent('Old link')
   expect(within(d).getByRole('list', { name: 'Full review' }).firstChild).toHaveTextContent('Connects to calendar.example.test')
   expect(within(d).queryByText('Show full review')).toBeNull()
+  // The warning leads, then the permissions, then the diff, then the source (Codex a10c).
+  const before = (a: HTMLElement, b: HTMLElement) => expect(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  const warning = within(d).getByText('This update asks for more than before.')
+  const review = within(d).getByRole('list', { name: 'Full review' })
+  before(warning, review)
+  before(review, within(d).getByRole('region', { name: 'Update changes' }))
+  expect(d.textContent!.indexOf('Connects to calendar.example.test')).toBeLessThan(d.textContent!.indexOf('from https://'))
   expect(state.host.calls.find((c) => c.path.endsWith('/market/stage'))?.body).toEqual({ id: 'calendar', update: true })
 })
 it('non-widened updates offer the compact disclosure', async () => {
@@ -80,16 +87,14 @@ it('up to date makes no approval dialog', async () => {
 })
 it('marketplaces explain each publisher state and hub refusal', async () => {
   ws().market = { markets: (['unsigned', 'new', 'known', 'changed'] as const).map((key, i) => market({ url: `${market().url}${i}`, publisher_key: key })) }
-  ws().marketAddError = 'market.community_unisolated'
   show('/w/DEMO/addons?tab=marketplaces')
   await screen.findByText('Matches remembered key', {}, T)
   for (const name of ['Allowed by', 'Added by', 'Publisher signature', 'Repo', 'Last refreshed']) expect(screen.getByRole('columnheader', { name })).toBeInTheDocument()
   for (const text of ['Unsigned', 'First use - key will be remembered', 'Key changed - review required']) expect(screen.getByText(text)).toBeInTheDocument()
-  await userEvent.click(screen.getByRole('button', { name: '+ Add marketplace' }))
-  const d = screen.getByRole('dialog')
-  await userEvent.type(within(d).getByLabelText('Repository URL'), 'https://github.com/demo-example/community')
-  await userEvent.click(within(d).getByRole('button', { name: 'Add marketplace' }))
-  expect(await within(d).findByRole('alert')).toHaveTextContent(EXTERNAL_HELP)
+  const add = screen.getByRole('button', { name: '+ Add marketplace' })
+  expect(add).toBeDisabled()
+  expect(add).toHaveAccessibleDescription(/external marketplaces aren't available in this workspace yet/i)
+  expect(screen.getByText(EXTERNAL_HELP)).toBeInTheDocument()
 })
 it.each(['member', 'no-actions'] as const)('hides every write control for %s', async (mode) => {
   if (mode === 'member') {

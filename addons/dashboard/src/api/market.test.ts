@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { EXTERNAL_HELP, marketError, permissionEffect, publisherWording, reviewLines, stateLabel, validMarketUrl, widened } from './market'
+import { EXTERNAL_HELP, marketError, permissionEffect, publisherWording, reviewLines, stateLabel, widened } from './market'
 import { stage, updateStage } from '@/test/fixtures/market'
 import { clickEligible } from './click'
 it('labels available, installed and pending states without inventing enabled state', () => {
@@ -16,8 +16,6 @@ it('describes effects and publisher memory without claiming safety', () => {
   expect(permissionEffect('secret:calendar')).toBe('Uses your calendar token')
   expect(publisherWording('changed')).toBe('Key changed - review required')
   expect(marketError({ code: 'market.not_allowed' })).toBe(EXTERNAL_HELP)
-  expect(validMarketUrl('https://github.com/demo-example/market')).toBe(true)
-  expect(validMarketUrl('https://github.com.evil.test/a/b')).toBe(false)
 })
 it('keeps widened reviews full, with new lines first', () => {
   expect(widened(stage())).toBe(false)

@@ -122,4 +122,3 @@ export function marketError(error: unknown): string {
   if (code === 'market.publisher_key_changed') return 'The publisher key changed. Review is required.'
   return 'The marketplace request could not be completed. Try again.'
 }
-export const validMarketUrl = (url: string) => /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/?$/.test(url)

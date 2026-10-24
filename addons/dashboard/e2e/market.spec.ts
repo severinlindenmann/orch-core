@@ -71,7 +71,8 @@ test('widened update shows the full review', async ({ page }) => {
 test('marketplaces table', async ({ page }) => {
   await open(page, 'marketplaces')
   await expect(page.getByText('First use - key will be remembered')).toBeVisible()
-  await expect(page.getByText(/aren't available in this workspace yet/)).toBeVisible()
+  await expect(page.getByText(/aren't available in this workspace yet/).first()).toBeVisible()
+  await expect(page.getByRole('button', { name: '+ Add marketplace' })).toBeDisabled()
   await page.screenshot({ path: path.join(SHOTS, 'a10-marketplaces.png') })
 })
 

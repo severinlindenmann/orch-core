@@ -11,7 +11,6 @@ import {
   publisherWording,
   reviewLines,
   stateLabel,
-  validMarketUrl,
   widened,
   type MarketStage,
   type StageInput,
@@ -85,16 +84,8 @@ function Review({
           </DialogTitle>
           <DialogDescription>Approval applies to this exact package; changed code needs new approval.</DialogDescription>
         </DialogHeader>
-        <p>
-          from <Inline>{s.market.url}</Inline> <span className="rounded border border-border px-2 text-xs">{s.market.class}</span>
-        </p>
-        {s.market.stale && <p className="text-warning">Out of date - refresh</p>}
-        {s.market.summary && (
-          <AddonFrame addon={s.name} title="From the addon">
-            <p className="text-xs text-text-muted">Per host, not signed</p>
-            <Inline>{s.market.summary}</Inline>
-          </AddonFrame>
-        )}
+        {widened(s) && <p role="alert" className="rounded border border-warning p-3 font-medium">This update asks for more than before.</p>}
+        {!s.update || widened(s) ? full : null}
         {s.update && (
           <section aria-label="Update changes">
             <p>
@@ -117,14 +108,21 @@ function Review({
             <p>Publisher: {s.update.publisher === 'same' ? 'Matches remembered key' : s.update.publisher === 'first_use' ? publisherWording('new') : 'Unsigned'}</p>
           </section>
         )}
-        {widened(s) && <p className="rounded border border-warning p-3">This update asks for more than before.</p>}
-        {s.update && !widened(s) ? (
+        {s.update && !widened(s) && (
           <details>
             <summary>Show full review</summary>
             {full}
           </details>
-        ) : (
-          full
+        )}
+        <p>
+          from <Inline>{s.market.url}</Inline> <span className="rounded border border-border px-2 text-xs">{s.market.class}</span>
+        </p>
+        {s.market.stale && <p className="text-warning">Out of date - refresh</p>}
+        {s.market.summary && (
+          <AddonFrame addon={s.name} title="From the addon">
+            <p className="text-xs text-text-muted">Per host, not signed</p>
+            <Inline>{s.market.summary}</Inline>
+          </AddonFrame>
         )}
         {s.deps && (
           <p>
@@ -199,8 +197,6 @@ function MarketWorkspace() {
   const [pending, setPending] = useState<string[]>([])
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
-  const [adding, setAdding] = useState(false)
-  const [url, setUrl] = useState('')
   const [remove, setRemove] = useState<InstalledAddon | null>(null)
   const refresh = async () => {
     await Promise.all([qc.invalidateQueries({ queryKey: queries.marketList(ws).queryKey }), qc.invalidateQueries({ queryKey: queries.marketInstalled(ws).queryKey })])
@@ -242,9 +238,9 @@ function MarketWorkspace() {
   return (
     <div className="@container min-w-0 w-full max-w-5xl space-y-4 break-words">
       <h1 className="text-xl font-semibold">Add-ons</h1>
-      <nav aria-label="Add-on tabs" className="flex flex-wrap gap-2 border-b border-border pb-2">
+      <nav aria-label="Add-on tabs" className="flex gap-1 border-b border-border pb-2 @max-[520px]:gap-0">
         {(['browse', 'installed', 'marketplaces'] as const).map((t) => (
-          <Button key={t} variant={tab === t ? 'secondary' : 'ghost'} onClick={() => void navigate({ to: '/addons', search: { tab: t } })}>
+          <Button key={t} size="sm" variant={tab === t ? 'secondary' : 'ghost'} onClick={() => void navigate({ to: '/addons', search: { tab: t } })}>
             {t === 'browse' ? 'Browse' : t === 'installed' ? 'Installed' : 'Marketplaces'}
           </Button>
         ))}
@@ -258,9 +254,9 @@ function MarketWorkspace() {
         <>
           {tab === 'browse' && (
             <>
-              <div className="flex flex-wrap gap-2">
-                <Input aria-label="Search add-ons" placeholder="Search add-ons…" className="min-w-0 flex-1 basis-48" value={search} onChange={(e) => setSearch(e.target.value)} />
-                <select aria-label="Source" className="max-w-full rounded border border-border bg-surface p-2" value={source} onChange={(e) => setSource(e.target.value)}>
+              <div className="grid grid-cols-2 gap-2 @min-[640px]:flex">
+                <Input aria-label="Search add-ons" placeholder="Search add-ons…" className="col-span-2 min-w-0 flex-1 basis-48" value={search} onChange={(e) => setSearch(e.target.value)} />
+                <select aria-label="Source" className="min-w-0 max-w-full rounded border border-border bg-surface p-2 text-sm" value={source} onChange={(e) => setSource(e.target.value)}>
                   <option value="">All sources</option>
                   {markets.map((m) => (
                     <option key={m.url} value={m.url}>
@@ -270,7 +266,7 @@ function MarketWorkspace() {
                 </select>
                 <select
                   aria-label="Permission"
-                  className="max-w-full rounded border border-border bg-surface p-2"
+                  className="min-w-0 max-w-full rounded border border-border bg-surface p-2 text-sm"
                   value={permission}
                   onChange={(e) => setPermission(e.target.value)}
                 >
@@ -305,10 +301,10 @@ function MarketWorkspace() {
                         <Inline>{`${m.class === 'official' ? 'official - ' : ''}${m.url.replace(/^https:\/\/github\.com\//, '')} - ${a.version}`}</Inline>
                       </p>
                       {m.class === 'official' && <p className="text-xs">Official marketplace</p>}
-                      <AddonFrame addon={a.id} title="From the addon" className="flex-1">
-                        <p className="text-xs text-text-faint">Per host, not signed</p>
+                      <div className="flex-1 text-sm">
+                        <p className="text-[11px] text-text-faint">From the add-on, per host, not signed</p>
                         <Inline>{a.from_marketplace.summary}</Inline>
-                      </AddonFrame>
+                      </div>
                       <div className="flex flex-wrap gap-1">
                         {a.capabilities.map((p) => (
                           <span className="rounded-full border border-border px-2 text-xs" key={p}>
@@ -440,7 +436,16 @@ function MarketWorkspace() {
               )}
               <p className="text-xs text-text-muted">Allowed by, added by and publisher signature: per host, not signed.</p>
               <p>{EXTERNAL_HELP}</p>
-              {mayWrite && <Button onClick={() => setAdding(true)}>+ Add marketplace</Button>}
+              {mayWrite && (
+                <div className="space-y-1">
+                  <Button disabled aria-describedby="add-market-why">
+                    + Add marketplace
+                  </Button>
+                  <p id="add-market-why" className="text-xs text-text-muted">
+                    Not available: {EXTERNAL_HELP.charAt(0).toLowerCase() + EXTERNAL_HELP.slice(1)}.
+                  </p>
+                </div>
+              )}
             </>
           )}
         </>
@@ -488,35 +493,6 @@ function MarketWorkspace() {
             }
           }}
         />
-      )}
-      {mayWrite && adding && (
-        <Dialog open onOpenChange={setAdding}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Add marketplace</DialogTitle>
-              <DialogDescription>{EXTERNAL_HELP}</DialogDescription>
-            </DialogHeader>
-            <Input aria-label="Repository URL" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://github.com/owner/repo" />
-            {message && <p role="alert">{message}</p>}
-            <DialogFooter className="sticky -bottom-6 -mx-6 -mb-6 border-t border-border bg-surface px-6 py-4">
-              <Button variant="ghost" onClick={() => setAdding(false)}>
-                Cancel
-              </Button>
-              <Button
-                disabled={busy || !validMarketUrl(url)}
-                onClick={() =>
-                  void write(async () => {
-                    await api.marketAdd(ws, { url })
-                    setAdding(false)
-                    await refresh()
-                  })
-                }
-              >
-                Add marketplace
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
       )}
       {mayWrite && remove && (
         <Dialog open onOpenChange={(open) => !open && setRemove(null)}>

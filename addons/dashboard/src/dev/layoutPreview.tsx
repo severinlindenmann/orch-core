@@ -792,7 +792,7 @@ function install() {
       : ['Turn off dashboard execution for Demo.', 'Open terminals close within a second; agents already running keep running; the dashboard starts no new ones.'] },
     view_digest: 'sha256:' + 'a'.repeat(64),
   })
-  ag.runnerSwitch = async (_ws: string, b: { on: boolean }) => ({ enabled: b.on, terminals: b.on })
+  ag.runnerSwitch = async (_ws: string, b: { on: boolean; terminals?: boolean }) => ({ enabled: b.on, terminals: b.on && !!b.terminals })
   ag.riskNotices = async () => ({ acknowledged: current === 'agent-dialog-acked' ? { start_agent: true, login_shell: true } : {} })
   ag.acknowledge = async () => ({ acknowledged: { start_agent: true } })
   originals.set('shares.list', sharesApi.list)

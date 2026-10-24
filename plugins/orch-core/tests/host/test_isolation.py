@@ -692,3 +692,21 @@ def test_ssh_contexts_vary_local_address_and_try_every_configured_port() -> None
     assert {p for *_x, p in seen} == {22, 2222} and len({t[2] for t in seen}) >= 2 and len(seen) == 6
     f.ports = None  # sshd would not tell its ports
     assert assess_policy(f, "orch-agent-sev").ssh == "unknown"
+
+
+def test_unreadable_recorded_at_setup_is_not_ok_and_never_matches_unreadable() -> None:
+    from orch.setup.osfacts import UNREADABLE
+
+    f = _good()
+    f.sigs["/etc/sudoers"] = UNREADABLE
+    v = assess_policy(f, "orch-agent-sev")
+    assert not v.ok
+    f.pins[AUID]["policy"] = v.document()
+    assert _policy_codes(f) == {"policy_changed_since_setup"}  # same failure on both sides still does not match
+
+
+def test_doas_conf_present_at_setup_makes_the_verdict_unknown() -> None:
+    f = _good()
+    f.sigs["/etc/doas.conf"] = (10, 1, 1, 9)
+    v = assess_policy(f, "orch-agent-sev")
+    assert v.sudo == "unknown" and not v.ok

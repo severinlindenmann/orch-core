@@ -28,7 +28,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final, Literal
 
-from ..setup.osfacts import OsFacts
+from ..setup.osfacts import UNREADABLE, OsFacts
 from ..setup.osusers import AGENT_HOME_ROOT, AGENT_PREFIX, AGENT_SHELL, POLICY_FILES, PRIVILEGED_GROUPS
 
 __all__ = ["EXPOSURE", "AVAILABILITY", "IsolationResult", "Reason", "detect"]
@@ -209,6 +209,8 @@ def _policy(facts: OsFacts, name: str, pin: dict) -> list[Reason]:
     now = {p: facts.file_sig(p) for p in files}
     for path, recorded in files.items():
         sig = now[path]
+        if sig == UNREADABLE or recorded == list(UNREADABLE):  # a failed stat never matches, even another failed stat
+            return [bad]
         if (None if sig is None else list(sig)) != recorded:
             return [bad]
     for folder in (p for p in POLICY_FILES if p.endswith(".d")):  # a file added since: not in the record

@@ -18,7 +18,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from .osfacts import OsFacts, UserInfo
+from .osfacts import UNREADABLE, OsFacts, UserInfo
 
 __all__ = [
     "AGENT_PREFIX",
@@ -295,7 +295,8 @@ class PolicyVerdict:
 
     @property
     def ok(self) -> bool:
-        return self.sudo == "none" and self.ssh == "denied" and self.ssh_dropin
+        unreadable = any(v == list(UNREADABLE) for v in self.files.values())
+        return self.sudo == "none" and self.ssh == "denied" and self.ssh_dropin and not unreadable
 
     def document(self) -> dict[str, Any]:
         return {"sudo": self.sudo, "ssh": self.ssh, "ssh_dropin": self.ssh_dropin, "files": self.files}
@@ -320,8 +321,9 @@ def assess_policy(facts: OsFacts, user: str, *, dropin_text: str | None = None) 
         for entry in facts.listdir(folder):
             sig = facts.file_sig(f"{folder}/{entry}")
             files[f"{folder}/{entry}"] = None if sig is None else list(sig)
+    doas = files.get("/etc/doas.conf") is not None  # doas rules are not checked with doas itself: refuse while present
     return PolicyVerdict(
-        "unknown" if sudo is None else "allowed" if sudo else "none",
+        "unknown" if sudo is None or doas else "allowed" if sudo else "none",
         ssh,
         not facts.sshd_installed()
         or (facts.file_sig(SSHD_DROPIN) is not None and (dropin_text is None or dropin_text == SSHD_DROPIN_TEXT)),

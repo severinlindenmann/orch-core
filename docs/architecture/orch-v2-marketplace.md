@@ -210,6 +210,7 @@ The store maps `(marketplace URL, add-on id)` to a publisher key.
 | no key stored, entry has one | install proceeds; the review shows the key's fingerprint (`SHA256:` of the 65 bytes, as `orch.land.key.fingerprint` does) and "first use: remembered when you sign". The key is stored only after the grant is signed |
 | key stored, entry has the same key | proceeds, review says "same publisher as before" |
 | key stored, entry has another key **or none** | `market.publisher_key_changed`. Only `orch market trust --replace <url> <id>` (human-only, shows both fingerprints, typed confirmation) changes it. Removing a key is a change, so a signature cannot be silently dropped |
+| official marketplace only: key stored, entry has another key that this core release pins (`OFFICIAL_KEYS`) | an official key rotation (#1191): proceeds, review shows the new key as "first use" and the update as widened; the stored key moves to the new one when the grant is signed. The old key need not still be pinned; a key this release does not pin is `market.official_unsigned` first, so a retired key is never taken back |
 
 A key proves continuity ("the same publisher as last time"), not identity. The review says so in those words.
 
@@ -681,6 +682,10 @@ These are the spec's answers; each is marked **provisional** until the owner con
    it. Revisit with G7 if the hub must audit origin. *Provisional.*
 2. **Official key:** the same root, its own certificate with `purpose: "marketplace"` and its own CI environment, never
    the catalog or core key. Core pins a list of two (current and next) so a rotation is not an emergency release.
+   Rotation (#1191): (a) a core release that accepts official key changes (§4.4) is out; (b) the operator re-signs the
+   index and every entry with the next key (`sign-index --rekey`, orch-marketplace docs/signing.md); (c) only after that
+   is on main, a core release pins (next, new next). Hosts on either release accept the re-signed index; a host on (c)
+   refuses anything still signed by the retired key.
    Revocation is through the signed index (§3.1). *Provisional.*
 3. **Catalog versus marketplace:** retire the signed add-on catalog for non-built-in add-ons once G6 lands, and only
    because the official index now has the catalog's guarantees (version, expiry, revocation: §3.1). Keep the bundled

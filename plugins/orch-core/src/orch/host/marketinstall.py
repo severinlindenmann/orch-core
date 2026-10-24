@@ -623,7 +623,7 @@ def _recheck(service: WorkspaceService, record: dict[str, Any], ev: dict[str, An
     if any(mi.semver(version) < mi.semver(x) for x in floor):
         raise MarketError("market.rollback")
     known = installs["keys"].get(f"{url}|{ev['name']}")
-    if cls != "company" and known is not None and doc["publisher_key"] != known:  # the hub's pin replaces TOFU
+    if cls != "company" and not mi.key_change_ok(cls, keys, known, doc["publisher_key"]):  # hub pin replaces TOFU
         raise MarketError("market.publisher_key_changed")
     policy.evaluate(
         "grant", pol,
@@ -728,8 +728,11 @@ def _converge(service: WorkspaceService, stage: str, ev: dict[str, Any]) -> None
         old = cur["seen"].get(key)
         if old is None or mi.semver(doc["version"]) > mi.semver(old):
             cur["seen"][key] = doc["version"]
-        if doc["publisher_key"] is not None and doc.get("tofu") != "pinned":  # the hub's pin replaces TOFU: none stored
-            cur["keys"].setdefault(key, doc["publisher_key"])
+        pk = doc["publisher_key"]
+        if pk is not None and doc.get("class") == "official" and pk in index.official_keys():
+            cur["keys"][key] = pk  # an official key rotation moves the record (#1191); only to a key this release pins
+        elif pk is not None and doc.get("tofu") != "pinned":  # the hub's pin replaces TOFU: none stored
+            cur["keys"].setdefault(key, pk)
         write(cur)
     files.drop_stage(stage)
 

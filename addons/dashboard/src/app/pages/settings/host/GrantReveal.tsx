@@ -1,9 +1,9 @@
 // #1198 C7: agent access for a tool outside the dashboard. The page makes a one-use key, sends its public half when the
 // request is prepared (so the review the person approves is of that key), and after the click opens the sealed secret
 // the signer returns. The secret is shown once, with Copy, then wiped; the dashboard server only ever relayed ciphertext.
-import { Check, Copy, KeyRound, Loader2 } from 'lucide-react'
+import { Check, Copy, KeyRound, Loader2, ShieldAlert } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { revealViewOk, type AgentAccessAction } from '@/api/click'
+import { REVEAL_RISK, revealViewOk, type AgentAccessAction } from '@/api/click'
 import { newRevealKey, SealedError, type RevealKey } from '@/api/sealed'
 import { accessLength } from '@/api/grants'
 import { ClickSignPanel } from '@/components/sign/ClickSignPanel'
@@ -111,13 +111,13 @@ export function GrantReveal({ ws, hours, scope, label, onClose, onChanged }: Gra
       <section aria-label="Agent access secret" data-testid="grant-reveal" className="space-y-3">
         <p className="flex items-center gap-2 text-[14px] font-medium"><KeyRound className="size-4" aria-hidden />Access created for {accessLength(hours)}</p>
         <p role="note" data-testid="grant-reveal-once" className="rounded-md border border-warning/50 bg-warning/10 px-3 py-2 text-[13px]">
-          This secret is shown only once. Copy it now and give it to the tool; orch cannot show it again. If you lose it, stop this access and make a new one.
+          This secret is shown only once. Copy it now; orch cannot show it again. It hides itself after 5 minutes. If you lose it, stop this access and make a new one.
         </p>
         <code data-testid="grant-secret" className="block max-h-40 overflow-auto break-all rounded-md border border-border bg-bg p-3 font-mono text-[12px] select-all">{shown.value}</code>
-        <p className="text-[12px] text-text-muted">The tool reads it as <code>ORCH_GRANT</code>.</p>
+        <p className="text-[12px] text-text-muted">Paste it into the tool's settings as its access secret (the variable <code>ORCH_GRANT</code>).</p>
         <div className="flex flex-wrap justify-end gap-2">
-          <Button variant="outline" onClick={() => void copy()}>{copied ? <><Check className="size-4" aria-hidden />Copied</> : <><Copy className="size-4" aria-hidden />Copy</>}</Button>
-          <Button onClick={finish}>Done, hide it</Button>
+          <Button className="min-h-11" onClick={() => void copy()}>{copied ? <><Check className="size-4" aria-hidden />Copied</> : <><Copy className="size-4" aria-hidden />Copy</>}</Button>
+          <Button variant="outline" className="min-h-11" onClick={finish}>Done, hide it</Button>
         </div>
       </section>
     )
@@ -137,6 +137,12 @@ export function GrantReveal({ ws, hours, scope, label, onClose, onChanged }: Gra
   return (
     <section aria-label="Agent access for a tool" data-testid="grant-reveal-flow" className="space-y-3">
       {(click.phase === 'idle' || click.phase === 'preparing' || click.phase === 'viewing') && <p className="flex items-center gap-2 text-[13px] text-text-muted"><Loader2 className="size-4 animate-spin" aria-hidden />Preparing the review…</p>}
+      {view && (click.phase === 'ready' || click.phase === 'signing') && viewOk === true && (
+        <p role="note" data-testid="grant-reveal-risk" className="flex items-start gap-2 rounded-md border border-warning/50 bg-warning/10 px-3 py-2 text-[13px] font-medium text-text">
+          <ShieldAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
+          <span>{REVEAL_RISK}</span>
+        </p>
+      )}
       {view && (click.phase === 'ready' || click.phase === 'signing') && (viewOk === null ? null : viewOk ? (
         <ClickSignPanel ws={ws} story={storyOf(action(publicKey.current))} answer={view} problem={click.problem} signing={click.phase === 'signing'} onSign={() => void click.sign(publicKey.current)} onCancel={cancel} />
       ) : (

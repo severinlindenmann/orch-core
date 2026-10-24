@@ -73,6 +73,7 @@ describe('the grant reveal', () => {
   it('sends its public key at prepare, with the grant words and nothing secret', async () => {
     mount()
     await signButton()
+    expect(screen.getByTestId('grant-reveal-risk')).toHaveTextContent(REVEAL_RISK)
     expect(s.prepare).toHaveBeenCalledTimes(1)
     expect(s.prepare.mock.calls[0][1]).toEqual({ action: 'agent_access', hours: 48, scope: 'workable', label: 'my tool', reveal_key: pub })
     expect(JSON.stringify(s.prepare.mock.calls)).not.toContain(SECRET)

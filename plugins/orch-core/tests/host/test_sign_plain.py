@@ -30,7 +30,7 @@ def build(prepared, verified=True):
 APPROVE = """\
 Approve the requirements of DEMO-0001 (key per host; signed id …<TAIL>)
 in workspace Acme (DEMO)
-Verification fingerprint: <FP>
+Verification code: <FP>
 
 Context
   | the context
@@ -54,7 +54,7 @@ Empty, not shown: Summary.
 NEW = """\
 Create ticket DEMO-0002 · Elefant Chart (key per host; signed id …<TAIL>)
 in workspace Acme (DEMO)
-Verification fingerprint: <FP>
+Verification code: <FP>
 
 Details
   type: chore
@@ -68,9 +68,9 @@ def test_the_plain_view_of_an_approval_is_headline_and_content_without_hashes(hu
     p = human.prepare("approve", {"ref": key, "gate": "requirements"})
     text = signer.plain(p, WS)
     assert str(text) == APPROVE.replace("<TAIL>", p["log"][-8:]).replace("<FP>", p["fingerprint"])
-    # A-3: the dashboard says "check that this matches the fingerprint in your terminal": the same 12 hex, labelled,
+    # A-3: the dashboard says "check that the verification code matches the one in Terminal": the same 12 hex, labelled,
     # on the third line, before any content (and the full review's own `fingerprint:` line is still in the details)
-    assert text.splitlines()[2] == f"Verification fingerprint: {p['fingerprint']}" and re.fullmatch(
+    assert text.splitlines()[2] == f"Verification code: {p['fingerprint']}" and re.fullmatch(
         r"[0-9a-f]{12}", p["fingerprint"]
     )
     for hidden in ("sha256", "uid ", "pid ", "self-declared", "policy", "gate input"):
@@ -295,6 +295,7 @@ VALUES = {
     "duplicate_of": "DEMO-0007", "resolution": "duplicate", "key": "DEMO-0002", "ticket_type": "chore", "title": "Marker Title",
     "owner": "p_" + "4" * 32, "add": ["p_" + "7" * 32], "remove": ["p_" + "8" * 32], "from": "open", "to": "backlog", "gate": "plan",
     "gates": {"plan": POLICY}, "set": {"grant_hours": 5},
+    "runtime": {"kind": "python-requirements", "lock": "marker-lock.txt", "packages": 3},
     "old": "d_" + "5" * 32, "rotation": {"o": {"kind": "device_rotation", "marker": "rot"}, "sig": "s"},
     "hub_id": "38d8abed52ccfb538da401fd54e64bdc", "hk_root_pub": "marker-hubroot", "mode": "selective", "binding_seq": 3,
     "aliases": [{"person_id": "9" * 32, "user_id": "a" * 32}], "sections": {"summary": {"hash": "sha256:" + "ee" * 32, "refs": ["marker-art"]}},
@@ -822,6 +823,29 @@ def _addon(**change):
     }  # fmt: skip
     ev.update(change)
     return {"op": "addon.grant", "events": [ev], "material": {"kind": "payload", "ticket": None}}
+
+
+def test_g4_an_addon_grant_with_dependencies_is_never_the_short_view_and_says_what_is_installed():
+    runtime = {"kind": "python-requirements", "lock": "requirements.txt", "packages": 3}
+    c = build(_addon(runtime=runtime))
+    assert c["headline"] == "Grant the add-on terminals"
+    rows = {r["field"]: r["after"] for r in c["fields_changed"]}
+    assert "dependencies" in rows and "requirements.txt" in rows["dependencies"] and "3" in rows["dependencies"]
+    assert any("Also installs 3 Python packages listed in requirements.txt after you sign" in n for n in c["notes"])
+    assert any("no package scripts run" in n for n in c["notes"])
+    one = build(_addon(runtime={**runtime, "kind": "node-package-lock", "lock": "package-lock.json", "packages": 1}))
+    assert any("Also installs 1 Node package listed in package-lock.json" in n for n in one["notes"])
+    for bad in (
+        {**runtime, "kind": "go-mod"},
+        {**runtime, "extra": 1},
+        {"kind": "python-requirements", "lock": "x"},
+        {**runtime, "packages": "3"},
+        {**runtime, "packages": 0},
+        {**runtime, "lock": ["x"]},
+        "pip",
+    ):
+        with pytest.raises(signcontent.PlainUnavailable):
+            build(_addon(runtime=bad))
 
 
 def test_f7_an_addon_grant_says_what_the_addon_may_do_and_keeps_digest_and_raw_fields_out_of_the_main_view():

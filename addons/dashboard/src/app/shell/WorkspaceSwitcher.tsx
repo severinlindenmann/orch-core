@@ -81,7 +81,7 @@ function WorkspaceRow({ w, index, current, viewer, shared, onPick, quietFocus }:
 function WorkspaceLine({ workspace, shared }: { workspace: Workspace; shared: boolean }) {
   return (
     <span>
-      {workspace.prefix}
+      <bdi>{visible(workspace.name)}</bdi> ({workspace.prefix}
       {shared && (
         <>
           {' '}
@@ -89,8 +89,8 @@ function WorkspaceLine({ workspace, shared }: { workspace: Workspace; shared: bo
             id {uuid8(workspace.id)}
           </span>
         </>
-      )}{' '}
-      · <bdi>{visible(workspace.name)}</bdi>
+      )}
+      )
     </span>
   )
 }
@@ -141,13 +141,22 @@ export function WorkspaceSwitcher({ collapsed, viewer }: { collapsed: boolean; v
       )}
     >
       {workspace ? <WorkspaceIconFor workspace={workspace} /> : <span aria-hidden className="size-7 shrink-0 rounded-md bg-surface-3" />}
-      {/* The prefix stays beside (expanded) or under (collapsed) the icon: it is what tells look-alike workspaces apart. */}
-      {workspace && (
-        <span data-ws-prefix className={cn('font-mono font-semibold text-text-muted', collapsed ? 'max-w-full truncate text-[9px] leading-none' : 'rounded bg-surface-3 px-1 text-[10px]')}>
-          {workspace.prefix}
+      {/* The tile and the name carry it; the prefix is a quiet second line (in the interface font, cut at 12 characters).
+          Collapsed, the tile stands alone with the full name in its tooltip, except where look-alike workspaces need the short mark. */}
+      {workspace && !collapsed && (
+        <span className="min-w-0 flex-1">
+          <span className="block truncate leading-tight">{visible(workspace.name)}</span>
+          <span data-ws-prefix className="block max-w-[12ch] truncate text-[11px] leading-tight text-text-faint">{workspace.prefix}</span>
         </span>
       )}
-      <span className={cn('min-w-0 flex-1 truncate', collapsed && 'hidden')}>{workspace ? visible(workspace.name) : null}</span>
+      {workspace && collapsed && (
+        <span className="sr-only">
+          {visible(workspace.name)} ({workspace.prefix})
+        </span>
+      )}
+      {workspace && collapsed && currentShared && (
+        <span data-ws-prefix className="max-w-full truncate font-mono text-[9px] font-semibold leading-none text-text-muted">{workspace.prefix}</span>
+      )}
       {currentShared && workspace && (
         <span data-ws-uuid-current className={cn('font-mono text-text-faint', collapsed ? 'max-w-full truncate text-[8px] leading-none' : 'text-[10px]')}>
           {uuid8(workspace.id)}

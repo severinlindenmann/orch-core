@@ -283,10 +283,6 @@ def main(
         from orch.setup.flow import main as setup_main
 
         return setup_main(args[1:], env=env, out=out, err=err)
-    if args[:1] == ["github"]:  # person-side credential custody, independent of the host service
-        from orch.cli.github import main as github_main
-
-        return github_main(args[1:], env=env, out=out, err=err, now=now)
     if args[:1] == ["runner"]:  # dashboard execution and the runner service (orch.runner.cli, H11a): not a registry op
         from orch.runner.cli import main as runner_main
 
@@ -311,7 +307,14 @@ def main(
         from orch.cli.hub import main as hub_main
 
         return hub_main(args[1:], env=env, out=out, err=err, now=now)
-    if args[:1] == ["addon"] and args[1:2] in (["install"], ["update"], ["remove"], ["new"], ["pack"], ["dev"]):
+    if args[:1] == ["addon"] and args[1:2] in (["login"], ["logout"]):
+        # the key an add-on may hold (V3 G6): the person's own terminal only, not a registry op and not a host op
+        from orch.cli.addon_credential import main as addon_credential_main
+
+        return addon_credential_main(args[1:], env=env, out=out, err=err, now=now)
+    if args[:1] == ["addon"] and args[1:2] in (
+        ["install"], ["update"], ["remove"], ["setup"], ["new"], ["pack"], ["dev"],
+    ):  # fmt: skip
         # add-ons from a marketplace (V3 G3) and the author tools (G5): host clients that sign at the person's terminal
         from orch.cli.addon_market import main as addon_market_main
 

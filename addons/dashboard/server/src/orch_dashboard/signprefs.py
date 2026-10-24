@@ -89,7 +89,7 @@ def register(app: FastAPI, gateway: Gateway):
         # No usable stored choice: the effective default is one click when the workspace switched it on (the signer's
         # flag, which needs the risk acknowledgement) and allows it, else terminal. Only the default selection moves:
         # what may sign is still ``sign_methods`` + the signer's own checks, and a stored choice always wins.
-        click = "click" in methods and gateway.one_path_is_click(ws)
+        click = "click" in methods and gateway.one_click_on(ws)
         out = dict(mine) if usable else {"method": "click" if click else "terminal"}
         if "fallback" in out and out["fallback"] not in methods:
             out.pop("fallback")

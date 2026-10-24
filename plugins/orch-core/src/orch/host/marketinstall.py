@@ -35,14 +35,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from orch import __version__ as CORE_VERSION
-from orch.addons import builtin, install
+from orch.addons import builtin, credential, install, lockfile
 from orch.addons.manifest import ManifestError
 from orch.addons.package import PackageError, from_files, read_package
-from orch.market import ADDONS, MarketError, constants, fetch, index, policy
+from orch.market import ADDONS, MarketError, constants, deps, fetch, index, policy
 from orch.market import install as mi
 from orch.market.url import canonical_market_url
 from orch.ops.errors import ERRORS
 
+from . import addonenv
 from .errors import HostError
 from .marketstate import MarketFiles
 
@@ -73,11 +74,13 @@ __all__ = [
 
 LOG = logging.getLogger("orch.host.marketinstall")
 MARKET_OPS: dict[str, int] = {
-    "market.stage": 1, "market.unstage": 1, "market.installed": 1, "market.uninstall": 1, "market.dev_stage": 1,
+    "market.stage": 1, "market.unstage": 1, "market.installed": 1, "market.uninstall": 1, "market.env_build": 1,
+    "market.dev_stage": 1,
 }  # fmt: skip
 READS = frozenset({"market.installed"})
-NETWORK_OPS = frozenset({"market.stage", "market.dev_stage"})  # the fetch / the git read: off the worker, no lock held
-HUMAN_ONLY = frozenset({"market.stage", "market.unstage", "market.uninstall", "market.dev_stage"})
+# the fetch / the git read / the dependency downloads: off the worker, no lock held
+NETWORK_OPS = frozenset({"market.stage", "market.dev_stage", "market.env_build"})
+HUMAN_ONLY = frozenset({"market.stage", "market.unstage", "market.uninstall", "market.dev_stage", "market.env_build"})
 SOURCE_NOTE = "source as claimed by the marketplace"
 DEV_NOTE = "a local folder at this commit (orch addon dev), not a marketplace"
 _STAGE_CODES = (
@@ -88,13 +91,24 @@ _STAGE_CODES = (
     "market.min_orch", "market.address_refused", "market.fetch_failed", "market.commit_mismatch",
     "market.package_invalid", "market.digest_mismatch", "market.manifest_mismatch", "market.index_unsigned",
     "market.source_mismatch", "market.unpinned", "market.bad_digest_format", "market.duplicate_id",
-    "market.refresh_running", "market.capability_ceiling",
+    "market.refresh_running", "market.capability_ceiling", "market.lock_missing", "market.lock_invalid",
+    "market.env_failed",
 )  # fmt: skip
 #: the codes each op can raise (the per-op declaration; a test checks every raise site against it)
 OP_CODES: dict[str, tuple[str, ...]] = {
     "market.stage": _STAGE_CODES,
     "market.unstage": ("market.actor_refused", "market.state_invalid", "market.malformed"),
     "market.installed": ("market.state_invalid", "market.malformed"),
+    "market.env_build": (
+        "market.actor_refused",
+        "market.state_invalid",
+        "market.not_installed",
+        "market.env_failed",
+        "market.lock_missing",
+        "market.lock_invalid",
+        "market.address_refused",
+        "market.fetch_failed",
+    ),
     "market.dev_stage": (
         "market.actor_refused",
         "market.state_invalid",
@@ -104,6 +118,10 @@ OP_CODES: dict[str, tuple[str, ...]] = {
         "market.package_invalid",
         "market.manifest_mismatch",
         "host.dev_refused",
+        "market.lock_missing",
+        "market.lock_invalid",
+        "market.env_failed",
+        "market.address_refused",
     ),
     "market.uninstall": (
         "market.actor_refused",
@@ -131,6 +149,9 @@ SCHEMAS: dict[str, dict[str, Any]] = {
         "additionalProperties": False,
     },
     "market.installed": {"type": "object", "additionalProperties": False},
+    "market.env_build": {
+        "type": "object", "properties": {"name": _NAME}, "required": ["name"], "additionalProperties": False
+    },
     "market.dev_stage": {
         "type": "object",
         "properties": {
@@ -156,10 +177,10 @@ def files_of(service: WorkspaceService) -> MarketFiles:
     return _files(service)
 
 
-def _refuse(op: str, code: str) -> HostError:
+def _refuse(op: str, code: str, reason: str | None = None) -> HostError:
     from .marketops import _refuse as refuse
 
-    return refuse(op, code)
+    return refuse(op, code, reason)
 
 
 def _store_root(service: WorkspaceService) -> Path:
@@ -206,11 +227,25 @@ def serve(call: Call, op: str, args: dict[str, Any]) -> dict[str, Any]:
             return ok_result({"removed": _files(service).drop_stage(args["stage"])})
         if op == "market.uninstall":
             return ok_result(_uninstall(service, args["name"]))
+        if op == "market.env_build":
+            return {"plan": _plan_build(service, args["name"])}
         if op == "market.dev_stage":
             return {"plan": _plan_dev(call, args)}
         return {"plan": _plan_stage(call, args)}
     except MarketError as exc:
-        raise _refuse(op, exc.code) from None
+        raise _refuse(op, exc.code, exc.reason) from None
+
+
+def _plan_build(service: WorkspaceService, name: str) -> dict[str, Any]:
+    """``market.env_build``, worker half: the latest grant of ``name`` (on, with ``runtime``) under the store lock."""
+    from . import addonenv
+
+    return {
+        "op": "market.env_build",
+        "id": name,
+        "grant": addonenv.snapshot(service, name),
+        "root": str(_store_root(service)),
+    }
 
 
 def _plan_dev(call: Call, args: dict[str, Any]) -> dict[str, Any]:
@@ -303,15 +338,30 @@ def run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
 
     service = call.service
     op = plan["op"]
+    if op == "market.env_build":
+        return _env_build(call, plan)
     try:
         out = _dev_stage(service, plan) if op == "market.dev_stage" else _stage(service, plan, call)
     except MarketError as exc:
         _audit(call, f"{op}.refused", id=plan["id"], code=exc.code)
-        raise _refuse(op, exc.code) from None
+        raise _refuse(op, exc.code, exc.reason) from None
     if op == "market.dev_stage":
         _audit(call, op, id=out["name"], stage=out["stage"])
     else:
         _audit(call, op, id=plan["id"], stage=out.get("stage"), up_to_date=out.get("up_to_date", False))
+    return ok_result(out)
+
+
+def _env_build(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
+    from . import addonenv
+    from .workspace import ok_result
+
+    try:
+        out = addonenv.build(call.service, plan["id"], plan["grant"], plan["root"])
+    except MarketError as exc:
+        _audit(call, "market.env_build.refused", id=plan["id"], code=exc.code, reason=exc.reason or "")
+        raise _refuse("market.env_build", exc.code, exc.reason) from None
+    _audit(call, "market.env_build", id=plan["id"], count=out["count"])
     return ok_result(out)
 
 
@@ -361,18 +411,27 @@ def _stage(service: WorkspaceService, plan: dict[str, Any], call: Call | None = 
     policy.evaluate("entry", plan.get("policy"), {"url": url, "id": name, "version": entry["version"]})
     LOG.warning("market.stage fetch %s@%s from %s", name, entry["version"], entry["source"]["git"])  # S13 greps this
     pkg = fetch.fetch_package(entry)
-    manifest = mi.check_package(facts, pkg, CORE_VERSION)
+    manifest = mi.check_package(facts, pkg, CORE_VERSION)  # steps 13 to 16, the lockfile (15) included
     event = install.grant_event(manifest, pkg)
-    review = install.review_lines(manifest, pkg, event, plan["previous"])
+    planned, dep_view = _dependencies(service, manifest, pkg)
+    review = install.review_lines(manifest, pkg, event, plan["previous"], dep_view)
     change = None
     if prior is not None:
+        old_plan = None
         try:
             opkg, old = install.read_installed(plan["root"], name)
             if plan["previous"] is None or opkg.digest != plan["previous"].package_sha256:
                 old = None  # not the bytes of the signed grant: everything counts as widened (review F1)
+            elif old.runtime is not None:
+                with contextlib.suppress(MarketError):  # unreadable old lock: every row of the new one counts as new
+                    old_plan = lockfile.plan(install.read_lock(old, opkg), lockfile.current_host())
         except (PackageError, ManifestError):
             old = None
-        change = mi.diff(old, manifest, prior, facts)
+        change = mi.diff(old, manifest, prior, facts, old_plan, planned)
+        if dep_view is not None or change["deps"]["runtime"] is not None:
+            diff = {"lines": list(change["deps"]["lines"]), "widened": bool(change["widened"])}
+            if dep_view is not None:
+                dep_view["diff"] = diff  # carried to the signer: host-derived, labelled, not signed
         review += [f"update: {x}" for x in change["changes"]]
         review.append("widened: yes, read all of it" if change["widened"] else "widened: no")
     stage = "st_" + secrets.token_hex(16)
@@ -391,7 +450,9 @@ def _stage(service: WorkspaceService, plan: dict[str, Any], call: Call | None = 
             "origin": url, "commit": entry["commit"], "publisher_key": facts.publisher_key, "tofu": facts.tofu,
             "index_version": v.doc["version"], "prev_digest": None if prior is None else prior["package_sha256"],
             "created_at": now, "expires_at": expires, "class": cls, "summary": entry.get("summary"),
-            "stale": v.stale, "entry": {k: entry[k] for k in ("id", "version", "capabilities", "min_orch")},
+            "stale": v.stale,
+            "entry": {k: entry[k] for k in ("id", "version", "capabilities", "min_orch", "runtime") if k in entry},
+            "deps": dep_view,
             "files": {p: base64.b64encode(b).decode("ascii") for p, b in pkg.files.items()},
         }
     )  # fmt: skip
@@ -399,7 +460,20 @@ def _stage(service: WorkspaceService, plan: dict[str, Any], call: Call | None = 
     return {
         "stage": stage, "expires_at": int(expires), "name": name, "version": entry["version"],
         "package_sha256": pkg.digest, "grant": body, "review": review, "market": market, "update": change,
+        "deps": dep_view,
     }  # fmt: skip
+
+
+def _dependencies(service: WorkspaceService, manifest: Any, pkg: Any) -> tuple[Any, dict[str, Any] | None]:
+    """``(planned rows, deps view)`` of a package that declares ``runtime`` (the lock was checked at step 15), else
+    ``(None, None)``. The plan decides what this computer installs: a lock that cannot be installed here is refused
+    now (``market.env_failed``), before the person signs."""
+    if manifest.runtime is None:
+        return None, None
+    lock = install.read_lock(manifest, pkg)
+    planned = lockfile.plan(lock, lockfile.current_host())
+    found = addonenv.stage_fetch(service, lock, planned)  # D3: download and verify now, before the signature
+    return planned, deps.view(manifest.runtime["lock"], lock, planned, found)
 
 
 def _dev_stage(service: WorkspaceService, plan: dict[str, Any]) -> dict[str, Any]:
@@ -425,7 +499,8 @@ def _dev_stage(service: WorkspaceService, plan: dict[str, Any]) -> dict[str, Any
     if name in files_.installs()[ADDONS]:
         raise MarketError("market.origin_changed")  # installed from a marketplace: dev never replaces it
     event = install.grant_event(manifest, pkg)
-    review = install.review_lines(manifest, pkg, event, plan["granted"].get(name))
+    _, dep_view = _dependencies(service, manifest, pkg)  # a dev folder with dependencies is judged and fetched alike
+    review = install.review_lines(manifest, pkg, event, plan["granted"].get(name), dep_view)
     now = plan["now"]
     stage = "st_" + secrets.token_hex(16)
     expires = now + constants.STAGE_TTL
@@ -437,8 +512,9 @@ def _dev_stage(service: WorkspaceService, plan: dict[str, Any]) -> dict[str, Any
             "stale": False,
             "entry": {
                 "id": name, "version": manifest.version, "capabilities": manifest.capabilities,
-                "min_orch": manifest.min_core,
+                "min_orch": manifest.min_core, **({"runtime": manifest.runtime} if manifest.runtime else {}),
             },
+            "deps": dep_view,
             "files": {p: base64.b64encode(b).decode("ascii") for p, b in pkg.files.items()},
         }
     )  # fmt: skip
@@ -568,6 +644,7 @@ def after_grant(service: WorkspaceService, record: dict[str, Any], signed: list[
     forward): put the granted bytes in place and write the records. Idempotent: it decides by digests, never by names,
     and a second run finds nothing to do. Failures are logged, never raised: the registry already fails closed on a
     directory whose digest is not the grant's, and :func:`recover` finishes it at the next start."""
+    sweep_credentials(service)  # V3 G6 C4: a purge or a grant that dropped the capability deletes the key
     staged = record.get("staged")
     if record.get("op") != "addon.grant" or staged is None or not signed:
         return
@@ -575,6 +652,21 @@ def after_grant(service: WorkspaceService, record: dict[str, Any], signed: list[
         _converge(service, staged["stage"], signed[0])
     except Exception:  # noqa: BLE001 - fail closed: the digest check of the registry holds the add-on back
         LOG.exception("market install: finishing the swap of %s failed", staged.get("stage"))
+
+
+def sweep_credentials(service: WorkspaceService) -> None:
+    """Delete the stored key (:mod:`orch.addons.credential`) of every add-on that is not granted, is purged, or whose
+    ACTIVE grant no longer holds ``credential`` (V3 G6 C4). Idempotent; failures are logged, never raised: a key that
+    stays is only read while the grant qualifies (C2)."""
+    try:
+        keep = [
+            n
+            for n, g in install.as_addons(service.store.state.workspace.addons).items()
+            if not g.purged and "credential" in g.capabilities
+        ]
+        credential.sweep(service.state_dir, service.workspace_id, keep)
+    except Exception:  # noqa: BLE001
+        LOG.exception("add-on credential sweep failed")
 
 
 def _converge(service: WorkspaceService, stage: str, ev: dict[str, Any]) -> None:
@@ -745,6 +837,7 @@ def recover(service: WorkspaceService) -> None:
                 LOG.exception("market install: recovery of %s failed", doc["name"])
         elif now > doc.get("expires_at", 0):
             files.drop_stage(doc["stage"])
+    sweep_credentials(service)  # V3 G6 C4: idempotent at start
     root = _store_root(service)
     if (root / install.ADDONS_DIR).is_dir():
         with _addons_dir(root / install.ADDONS_DIR) as d:
@@ -754,6 +847,7 @@ def recover(service: WorkspaceService) -> None:
                     g = _model_addon(service, name)
                     if g is not None and _digest_of(d, name) == g.package_sha256:
                         _rmtree(d, n)  # debris of a finished swap; an unfinished one is handled above
+    addonenv.recover(service)  # then the debris of a crashed environment build
 
 
 # ------------------------------------------------------------------------------------------------ installed, uninstall
@@ -796,6 +890,7 @@ def _installed(service: WorkspaceService) -> dict[str, Any]:
                 "state": state,
                 "publisher": None if key is None else marketops.fingerprint(key),
                 "available": avail,
+                "env": addonenv.env_row(service, name, model),
             }  # fmt: skip
         )
     return {ADDONS: rows}
@@ -818,6 +913,8 @@ def _uninstall(service: WorkspaceService, name: str) -> dict[str, Any]:
                 with _addons_dir(root / install.ADDONS_DIR) as d:
                     _rmtree(d, name)
                     _sweep(d, name)
+            addonenv.remove(service, name)  # its dependency environment goes with it
             del cur[ADDONS][name]  # the rollback floor ("seen") and the publisher key stay
             write(cur)
+    credential.remove(service.state_dir, service.workspace_id, name)  # V3 G6 C4: the key goes with the package
     return {"name": name, "removed": True}

@@ -482,7 +482,7 @@ _MATERIAL_KEYS = {
     "question": ({"kind", "ticket", "question", "review"}, {"kind", "ticket", "question", "review"}),
     "payload": (
         {"kind", "ticket", "review"},
-        {"kind", "ticket", "review", "texts", "before", "sequence", "statement", "grants", "market"},
+        {"kind", "ticket", "review", "texts", "before", "sequence", "statement", "grants", "market", "deps"},
     ),
 }
 
@@ -528,6 +528,7 @@ def _hashes(prepared: Mapping[str, Any], workspace_id: str) -> None:
     _before(material, events)
     _grants(material, events)
     _market(material, events)
+    _deps(material, events)
 
 
 def _gate(material: Mapping[str, Any], ev: Mapping[str, Any], workspace_id: str, log: str) -> None:
@@ -638,6 +639,67 @@ def _market(material: Mapping[str, Any], events: list[Mapping[str, Any]]) -> Non
     )
     if not ok:
         _refuse("material.market is malformed")
+
+
+_DEP_KINDS = ("python-requirements", "node-package-lock")
+_DEP_NOTES = (None, "compiled", "other_platform", "dev")
+_DEP_NAME = re.compile(r"[A-Za-z0-9@._~/ >+-]{1,200}")
+_DEP_VERSION = re.compile(r"[0-9A-Za-z.+!_-]{1,60}")
+
+
+from orch.market.deps import DIFF_LINE as deps_diff_line  # noqa: E402
+
+
+def _deps(material: Mapping[str, Any], events: list[Mapping[str, Any]]) -> None:
+    """``material["deps"]`` (V3 G4, C5): the packages an ``addon.granted`` with ``runtime`` installs, as this computer
+    listed them from the lockfile (covered by the package digest, but not itself signed: the review labels it so).
+    Required on a request that signs an ``addon.granted`` with ``runtime``, forbidden anywhere else, and exactly these
+    keys and shapes; ``kind``, ``lock`` and the package count must equal the SIGNED ``runtime``. Every name and version
+    is a short plain token: nothing here can carry a line break or a command."""
+    block = material.get("deps")
+    with_runtime = [e for e in events if e.get("type") == "addon.granted" and e.get("runtime") is not None]
+    if with_runtime and len(events) != 1:
+        _refuse("an add-on that installs dependencies is signed alone, not in a batch")
+    signed = with_runtime[0]["runtime"] if with_runtime else None
+    if block is None:
+        if signed is not None:
+            _refuse("material.deps is missing for an add-on that installs dependencies")
+        return
+    rows = block.get("rows") if isinstance(block, dict) else None
+    if (
+        signed is None
+        or not isinstance(block, dict)
+        or set(block) - {"diff"} != {"kind", "lock", "count", "bytes", "rows"}
+        or not isinstance(rows, list)
+        or (block["kind"], block["lock"], block["count"]) != (signed["kind"], signed["lock"], signed["packages"])
+        or block["kind"] not in _DEP_KINDS
+        or type(block["count"]) is not int
+        or len(rows) != block["count"]
+        or type(block["bytes"]) is not int
+        or not 0 <= block["bytes"] <= 1 << 30
+    ):
+        _refuse("material.deps is malformed")
+    d = block.get("diff")
+    if d is not None and not (
+        isinstance(d, dict)
+        and set(d) == {"lines", "widened"}
+        and type(d["widened"]) is bool
+        and isinstance(d["lines"], list)
+        and len(d["lines"]) <= 2 * 1000 + 1
+        and all(isinstance(x, str) and 0 < len(x) <= 300 and deps_diff_line.fullmatch(x) for x in d["lines"])
+    ):
+        _refuse("material.deps has a malformed diff")
+    for r in rows:
+        if (
+            not isinstance(r, dict)
+            or set(r) != {"name", "version", "installs", "note"}
+            or not (isinstance(r["name"], str) and _DEP_NAME.fullmatch(r["name"]))
+            or not (isinstance(r["version"], str) and _DEP_VERSION.fullmatch(r["version"]))
+            or type(r["installs"]) is not bool
+            or r["note"] not in _DEP_NOTES
+            or (r["note"] in ("other_platform", "dev")) == r["installs"]
+        ):
+            _refuse("material.deps has a malformed row")
 
 
 def _before(material: Mapping[str, Any], events: list[Mapping[str, Any]]) -> None:
@@ -946,6 +1008,23 @@ def render(
             out.append(f"replaces package (per host, not signed): {_clean(market['replaces'])}")
         if market["summary"]:
             out.append(f"summary from the marketplace (per host, not signed): {_clean(market['summary'])}")
+    deps = material.get("deps")
+    if deps is not None:  # the host's list of what gets installed, from the lockfile (covered by the digest)
+        out.append(
+            f"dependencies (listed by this computer from the lockfile, covered by the digest, not signed itself): "
+            f"{int(deps['count'])} packages, {_clean(deps['kind'])}, {_clean(deps['lock'])}"
+        )
+        for r in deps["rows"]:
+            note = {None: "", "compiled": " (compiled code)", "other_platform": " (not on this computer)",
+                    "dev": " (development, not installed)"}[r["note"]]  # fmt: skip
+            out.append(f"dep {_clean(r['name'])} {_clean(r['version'])}{note}")
+    if deps is not None and deps.get("diff") is not None:
+        d = deps["diff"]
+        out.append(
+            "update of the dependencies (host-derived, not signed): "
+            + ("WIDENED, read all of it" if d["widened"] else "not widened")
+        )
+        out += [f"dep change {_clean(x)}" for x in d["lines"]]
     for path, value in sorted((material.get("before") or {}).items()):
         label = "current value according to the host, not signed" if not path.startswith(("ticket.", "body.")) else ""
         out.append(f"before {_clean(path)}{' (' + label + ')' if label else ''}:")
@@ -1010,7 +1089,7 @@ def plain(
         return Review(prefix + full)
     # The dashboard says "check that this matches the fingerprint in your terminal": the same 12 hex it shows, on a
     # labelled line under the headline (before the first blank line). The full review's `fingerprint:` line stays too.
-    fp = f"Verification fingerprint: {_clean(prepared['fingerprint'])}"
+    fp = f"Verification code: {_clean(prepared['fingerprint'])}"
     lines.insert(lines.index("") if "" in lines else len(lines), fp)
     if artifacts in ("unseen", "checked") and any(e["type"] in ARTIFACT_TYPES for e in prepared["events"]):
         lines += [_clean(UNSEEN if artifacts == "unseen" else SEEN), ""]

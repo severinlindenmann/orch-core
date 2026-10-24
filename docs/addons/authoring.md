@@ -49,9 +49,9 @@ the owner must be able to read every file. `{pkg}` in `entry.cmd` is replaced by
   "name": "changelog",
   "version": "0.3.1",
   "title": "Changelog",
-  "api": ">=1.0,<2",
+  "api": ">=1.1,<2",
   "min_core": "2.0.0.dev0",
-  "entry": {"cmd": ["python3", "{pkg}/changelog.py"]},
+  "entry": {"cmd": ["{python}", "{pkg}/changelog.py"]},
   "capabilities": [],
   "fields": {
     "line": {"type": "string", "max_len": 200, "set_by": ["addon", "member"]},

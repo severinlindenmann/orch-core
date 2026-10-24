@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from orch.layout import STORE_DIR
+from orch.market import ADDONS
 from orch.store.fsio import write_atomic
 
 from ._unix import UnsafePath, check_acl
@@ -201,15 +202,25 @@ def check_workspace_files(state_dir: Path, workspace_id: str, root: Path, host_u
             if item is not None and (not stat.S_ISREG(item.st_mode) or stat.S_IMODE(item.st_mode) & 0o077):
                 raise unsafe(f"{keys / name}: a key must be a 0600 file")
 
-    github = hosts / "github"
-    info = _lstat_owned(github, host_uid)
+    # V3 G6 (design-g6 section 5): add-on credentials. hosts/<ws>/addons/ is a 0700 directory of 0700 per-add-on
+    # directories, each holding regular 0600 files only (orch.addons.credential is the one reader and writer).
+    addons = hosts / ADDONS
+    info = _lstat_owned(addons, host_uid)
     if info is not None:
         if not stat.S_ISDIR(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o700:
-            raise unsafe("GitHub custody requires a 0700 directory")
-        for name in os.listdir(github):
-            item = _lstat_owned(github / name, host_uid)
-            if item is not None and (not stat.S_ISREG(item.st_mode) or stat.S_IMODE(item.st_mode) != 0o600):
-                raise unsafe("GitHub custody requires regular 0600 files")
+            raise unsafe("add-on credential custody requires a 0700 directory")
+        for name in os.listdir(addons):
+            sub = _lstat_owned(addons / name, host_uid)
+            if sub is None:
+                continue
+            if not stat.S_ISDIR(sub.st_mode) or stat.S_IMODE(sub.st_mode) != 0o700:
+                raise unsafe("add-on credential custody requires 0700 directories")
+            for leaf in os.listdir(addons / name):
+                item = _lstat_owned(addons / name / leaf, host_uid)
+                if item is not None and (
+                    not stat.S_ISREG(item.st_mode) or stat.S_IMODE(item.st_mode) != 0o600 or item.st_nlink != 1
+                ):
+                    raise unsafe("add-on credential custody requires regular 0600 files")
 
     # R6a (11A.15.3): every directory under membership/ is a 0700 directory and every file a 0600 regular file (WK,
     # WXK, CK and S are secrets: refused, never repaired, as the WSK above). Walked to depth 3, so R6c's grants/<e>/,

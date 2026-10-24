@@ -429,8 +429,8 @@ def main(
         wid = entry["workspace_id"]
         person = entry["peers"][str(uid)]["person"]
         backend = _backend(state, wid)
-        convenience = getattr(backend, "auth", None) == "convenience"
-        if convenience:  # #1170: the person reads what kind of key signs (in the review too when stderr is elsewhere)
+        one_click = getattr(backend, "auth", None) == "convenience"
+        if one_click:  # #1170: the person reads what kind of key signs (in the review too when stderr is elsewhere)
             err.write(NO_PASSPHRASE + "\n")
         device = device_ref(backend.public_key(human.KEY_ID))
         name = Path(str(entry.get("root") or wid)).name
@@ -457,7 +457,7 @@ def main(
             choose=human.secret_destination,
             sessions=Sessions(state),
             notice=not on_tty,
-            no_passphrase=convenience and not on_tty,
+            no_passphrase=one_click and not on_tty,
         )
     except sequence.Aborted as exc:
         text = f"stopped after {exc.landed} of {exc.total} signatures: {exc.reason}"

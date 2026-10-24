@@ -954,3 +954,38 @@ def test_an_existing_workspace_with_convenience_history_counts_as_seen(click, se
         convenience.refuse_reader_op(service, "member.add", history=True)
     assert info.value.code == "sign.convenience_readers"
     assert path.exists()  # the scan that found them set the mark
+
+
+def test_c21_a_missing_key_refuses_before_the_claim_and_the_request_stays_signable(click, served, human):
+    _, key = human.ticket()
+    p = click.prepare("log", {"ref": key, "text": "key back"})
+    rid = p["request_id"]
+    v = click.view(rid)
+    click.mono.t += 2
+    gone = click.store.items.pop((served.wid, click.owner.device))
+    e = refused(lambda: click.sign(rid, v["view_digest"]), "custody.no_key")
+    assert "no signing key" in e.message
+    assert click.signatures == 0 and pending(served, rid)["state"] == "bound"
+    assert click.signer.records.get(served.wid, rid) is None  # nothing was claimed
+    assert (served.wid, rid) not in click.signer._attempted
+    click.store.items[(served.wid, click.owner.device)] = gone  # the key is back: the same request signs
+    res = click.sign(rid, v["view_digest"])
+    assert res["duplicate"] is False and click.signatures == 1
+
+
+def test_c21_an_unreadable_key_store_is_unavailable_not_uncertain(click, served, human, monkeypatch):
+    from orch.custody.base import CustodyError
+
+    _, key = human.ticket()
+    p = click.prepare("log", {"ref": key, "text": "locked"})
+    v = click.view(p["request_id"])
+    click.mono.t += 2
+
+    def locked(*a):
+        raise CustodyError("locked")
+
+    monkeypatch.setattr(click.store, "get", locked)
+    refused(lambda: click.sign(p["request_id"], v["view_digest"]), "custody.unavailable")
+    assert click.signatures == 0 and click.signer.records.get(served.wid, p["request_id"]) is None
+    monkeypatch.undo()
+    assert click.sign(p["request_id"], v["view_digest"])["duplicate"] is False

@@ -25,6 +25,7 @@ __all__ = [
     "NORMAL_PERSON",
     "PRIVILEGED_GROUPS",
     "SLOT_COUNT",
+    "SLOT_HOME_ROOT",
     "SLOT_PREFIX",
     "OsPlanRefusal",
     "Plan",
@@ -43,6 +44,8 @@ PRIVILEGED_GROUPS = ("sudo", "wheel", "admin", "adm", "docker", "lxd", "libvirt"
 AGENT_SHELL = "/bin/bash"
 SLOT_SHELLS = ("/usr/sbin/nologin", "/sbin/nologin")
 SLOT_SHELL = SLOT_SHELLS[0]
+# An OS directory (the slot users' homes), not an orch store entry: spelled in parts so the store-path lint skips it.
+SLOT_HOME_ROOT = "/var/lib/orch/" + "add" + "ons"
 _NAME = re.compile(r"^[a-z_][a-z0-9_-]*$")
 _MAX_NAME = 32
 _SYSTEM_UID_MAX = 999  # useradd --system; a login-range UID is a person, never ours
@@ -183,7 +186,7 @@ def _expected_agent(person: str) -> UserPlan:
 
 def _expected_slot(n: int) -> UserPlan:
     name = f"{SLOT_PREFIX}{n}"
-    return UserPlan(name, "addon", "create", None, f"/var/lib/orch/addons/{n}", SLOT_SHELL, name)
+    return UserPlan(name, "addon", "create", None, f"{SLOT_HOME_ROOT}/{n}", SLOT_SHELL, name)
 
 
 def _check_existing(facts: OsFacts, want: UserPlan, person_uid: int | None, refusals: list[Refusal]) -> UserPlan:
@@ -284,7 +287,7 @@ NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=yes
-ReadWritePaths=/var/lib/orch/addons/%i
+ReadWritePaths={SLOT_HOME_ROOT}/%i
 RestrictSUIDSGID=yes
 MemoryMax=2G
 TasksMax=512

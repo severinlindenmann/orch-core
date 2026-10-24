@@ -50,10 +50,11 @@ const grantEvent = (type: string, extra: Record<string, unknown>) => ({ type, ac
 it('separates the command from the verification fingerprint', () => {
   const request = { ...fakeRequest(), content: { headline: 'Approve' } }
   render(<HandoffPanel request={request} />)
-  expect(screen.getByText('Copy this command into Terminal')).toBeVisible()
+  expect(screen.getByText('1. Copy this command.')).toBeVisible()
+  expect(screen.getByText('2. Paste it into Terminal and press Return.')).toBeVisible()
   expect(screen.getByTestId('handoff-command')).toHaveTextContent(`orch sign ${request.code}`)
   const note = screen.getByTestId('handoff-fingerprint').parentElement!
-  expect(note).toHaveTextContent(`Verification fingerprint: ${request.fingerprint}. Check that this matches the fingerprint in your terminal.`)
+  expect(note).toHaveTextContent(`3. Check that the verification code ${request.fingerprint} matches the one in Terminal, read what Terminal shows (that is what you approve), then type DEMO-0044/0000000A.`)
   expect(note).not.toHaveTextContent('same code')
   expect(screen.queryByTestId('handoff-runner-note')).toBeNull()
 })
@@ -87,7 +88,7 @@ it('says some values come from orch on this Mac when the host named the access t
 it('says why the terminal is used, once, above the command', () => {
   const request = { ...fakeRequest(), content: { headline: 'Approve' } }
   const { rerender } = render(<HandoffPanel request={request} why="terminal_only" />)
-  expect(screen.getByTestId('terminal-why')).toHaveTextContent('This one is done in your terminal.')
+  expect(screen.getByTestId('terminal-why')).toHaveTextContent('One click can\u2019t approve this one. Approve it in Terminal on this Mac.')
   rerender(<HandoffPanel request={request} why="click_off" whyAction={<a href="/settings/general">Turn on One click</a>} />)
   expect(screen.getByTestId('terminal-why')).toHaveTextContent('One click is off, so sign in Terminal on this Mac.')
   expect(screen.getByRole('link', { name: 'Turn on One click' })).toBeVisible()

@@ -866,12 +866,13 @@ class HumanOps:
         if record.get("sequence") is not None and signer["auth"] not in ("passphrase", "convenience"):
             # a sequence is bound to the passphrase or one-click custody only, here as at prepare (not the phone)
             raise HostError("invalid.input", "a sequence is signed with the passphrase or one-click custody only")
+        unsigned = record["prepared"]["events"]
         if signer["auth"] == "convenience":  # §0.8.6: before a convenience binding, and on every bound read
             convenience.check(
                 call.service,
                 record["person"],
                 signer["device"],
-                removing=_removing(record["op"], [e.get("device") for e in record["prepared"]["events"]]),
+                removing=_removing(record["op"], [e.get("device") for e in unsigned]),
             )
         if state == "bound":
             if record["signer"] != signer:
@@ -898,7 +899,7 @@ class HumanOps:
         if _binds_commits(record["prepared"]):  # N3: a tree dirtied since prepare is refused here, nothing bound
             check_bindings(call, record)
             record = recheck_trees(call, record)
-        for ev in record["prepared"]["events"]:  # the one change binding makes: null -> the signer's device and auth
+        for ev in unsigned:  # the one change binding makes: null -> the signer's device and auth
             ev["actor"]["device"] = signer["device"]
             ev["auth"] = signer["auth"]
         record = {**record, "state": "bound", "signer": signer}

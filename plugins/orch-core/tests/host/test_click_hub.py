@@ -13,14 +13,12 @@ import pytest
 
 from orch.click import sealed
 from orch.click import view as views
-from orch.click.protocol import ClickError
 from orch.custody import personkey
 from orch.host import hubops
 from orch.identity import recovery as rec
-from tests.hub.vec import V
-
 from tests.host import human_helpers
 from tests.host.test_click import Click, pending, refused
+from tests.hub.vec import V
 
 lab, served = human_helpers.lab, human_helpers.served
 
@@ -145,9 +143,7 @@ def test_an_envelope_made_for_another_request_workspace_or_review_is_refused(cli
     kw = dict(kw)
     rid = kw.pop("rid", p["request_id"])
     env = seal_for(v, served, rid, **kw)
-    refused(
-        lambda: click.sign(p["request_id"], v["view_digest"], sealed=env), "human.click_refused", "check_failed"
-    )
+    refused(lambda: click.sign(p["request_id"], v["view_digest"], sealed=env), "human.click_refused", "check_failed")
     assert click.signatures == 0 and hub_state(served) == {}
     click.sign(p["request_id"], v["view_digest"], sealed=seal_for(v, served, p["request_id"]))  # nothing was burnt
     assert click.signatures == 1
@@ -197,7 +193,9 @@ def test_a_review_that_asks_for_no_secret_refuses_a_sealed_value(click, served):
 def test_a_hub_step_is_a_click_only_with_the_sealed_key(click, served):
     p, _ = flow(click)
     prepared = click.signer.approvals[(served.wid, p["request_id"])].prepared
-    common = dict(workspace_id=served.wid, person=served.lab.ws.owner.ref, device=served.lab.ws.owner.device, files=None)
+    common = dict(
+        workspace_id=served.wid, person=served.lab.ws.owner.ref, device=served.lab.ws.owner.device, files=None
+    )
     assert views.check_prepared(prepared, sealed_op=True, **common) == "click"
     refused(lambda: views.check_prepared(prepared, **common), "human.click_refused", "terminal_only")
     refused(lambda: click.prepare("hub.join", join_args(), deposit=True), "invalid.input")
@@ -240,7 +238,7 @@ def test_a_dev_real_mismatch_is_refused(click, served):
         return res
 
     click.tamper = tamper
-    e = refused(
+    refused(
         lambda: click.sign(p["request_id"], v["view_digest"], sealed=seal_for(v, served, p["request_id"])),
         "hub.proof_invalid",
     )

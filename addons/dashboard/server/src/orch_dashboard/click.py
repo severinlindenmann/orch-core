@@ -32,6 +32,8 @@ from .handoff import (
     AddonEnable,
     AgentAccess,
     EditTicket,
+    HubJoin,
+    HubLeave,
     NewTicketSequence,
     PrepareBody,
     QuickStart,
@@ -163,6 +165,37 @@ def reveal_view_ok(view: dict, ws: str, reveal_key: str) -> bool:
     )
 
 
+#: core's constant (orch.click.protocol BACKUP_KEY_LINE): a hub step's View that lacks it is not shown
+BACKUP_KEY_LINE = "This step also needs your backup key. You type it once here; orch does not keep it"
+HUB_STEPS = (HubJoin, HubLeave)
+B64URL = r"[A-Za-z0-9_-]"
+
+
+def backup_view_ok(view: dict, ws: str) -> bool:
+    """A hub step's View (#1198 C10): the sealed field's `hub.backup_key` purpose with the signer's own per-request key
+    (a P-256 point, 87 base64url characters), core's backup-key line, this workspace and a plain click."""
+    seal = view.get("seal")
+    lines = view.get("lines")
+    workspace = view.get("workspace")
+    return (
+        isinstance(workspace, dict)
+        and workspace.get("id") == ws
+        and view.get("deposit") is None
+        and isinstance(seal, dict)
+        and set(seal) == {"v", "alg", "pk", "purposes"}
+        and seal["v"] == 1
+        and type(seal["v"]) is int
+        and seal["alg"] == "P256-HKDF-SHA256-A256GCM"
+        and seal["purposes"] == ["hub.backup_key"]
+        and isinstance(seal["pk"], str)
+        and re.fullmatch(rf"{B64URL}{{87}}", seal["pk"]) is not None
+        and isinstance(lines, list)
+        and BACKUP_KEY_LINE in lines
+        and view.get("backup_key_line") == BACKUP_KEY_LINE
+        and view.get("confirm") == {"kind": "click"}
+    )
+
+
 def reveal_answer(got: dict) -> dict:
     """Of a shown-secret grant's `sign` answer, only the grant id and the sealed envelope, checked for shape and size:
     exactly `v`, `alg`, `epk`, `ct` with the sealed field's values. Never `result`. The envelope is ciphertext for the
@@ -218,10 +251,30 @@ class Step(BaseModel):
     request_id: RequestId
 
 
+class Envelope(BaseModel):
+    """A sealed value as the page made it (sealed-field contract section 4): ciphertext for the signer's key. This
+    server relays it and never opens, keeps or logs it; the signer checks everything else."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    v: Annotated[int, Field(ge=1, le=1)]
+    alg: Annotated[str, StringConstraints(pattern=r"^P256-HKDF-SHA256-A256GCM$")]
+    epk: Annotated[str, StringConstraints(pattern=rf"^{B64URL}{{87}}$")]
+    ct: Annotated[str, StringConstraints(pattern=rf"^{B64URL}{{363,5483}}$")]
+
+
+class Sealed(BaseModel):
+    """The typed secrets of a sign call, by purpose (sealed-field contract section 7). Only the hub backup key today."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    hub_backup_key: Envelope = Field(alias="hub.backup_key")
+
+
 class Sign(Step):
     view_digest: ViewDigest
     #: a shown-secret grant only: the key the review was made for (the signer refuses any other)
     reveal_key: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{87}$")] | None = None
+    #: a hub step only (#1198 C10): the backup key sealed to the signer's key, by purpose
+    sealed: Sealed | None = None
 
 
 class Clicks:
@@ -343,6 +396,8 @@ def register(app: FastAPI, gateway: Gateway):
         token = request.state.token
         if isinstance(body, AgentAccess) and app.state.auth.login_kind(token) not in REVEAL_SESSION_KINDS:
             raise refusal_check("Agent access with a shown secret needs a dashboard opened on this computer.")
+        if isinstance(body, HUB_STEPS) and app.state.auth.login_kind(token) not in REVEAL_SESSION_KINDS:
+            raise refusal_check("A hub step with your backup key needs a dashboard opened on this computer.")
         gateway.enabled(ws)  # pinned workspace, dashboard addon enabled in it (the hand-off's `human()` does this)
         refuse_if_hub_only(gateway, ws)  # V3 C11: full hub mode takes no click signature (the host refuses it too)
         with handoffs.lock:
@@ -362,6 +417,8 @@ def register(app: FastAPI, gateway: Gateway):
             raise fail(
                 "click.contract", "Update orch-core: its signing helper can't sign a ticket and its text yet.", exit=9
             )
+        if isinstance(body, HUB_STEPS) and not signer.backup_keys():
+            raise fail("click.contract", "Update orch-core: its signing helper cannot take a backup key yet.", exit=9)
         planned = plan(gateway, ws, body)  # the only place an op name is chosen
         if planned.sequence and planned.sequence["intent"].get("images") and not signer.images():
             raise fail("click.contract", "Update orch-core: its signing helper cannot sign pictures yet.", exit=9)
@@ -490,7 +547,12 @@ def register(app: FastAPI, gateway: Gateway):
         # Review I1: the grant's View must be of the very record `expected()` checked (the host's fingerprint), so the
         # hours and scope signed are the ones verified.
         # A shown-secret grant: the View must carry the sealed purpose for THIS page's key, and no other View may.
-        if isinstance(wanted, AgentAccess) != (shown.get("seal") is not None) or (
+        if isinstance(
+            wanted, HUB_STEPS
+        ):  # a hub step: the signer's own key for the backup key, and nothing else sealed
+            if not backup_view_ok(shown, ws):
+                raise refusal_check("The review does not ask for your backup key. Nothing was shown. Cancel it.")
+        elif isinstance(wanted, AgentAccess) != (shown.get("seal") is not None) or (
             isinstance(wanted, AgentAccess) and not reveal_view_ok(shown, ws, wanted.reveal_key)
         ):
             raise refusal_check(
@@ -584,6 +646,12 @@ def register(app: FastAPI, gateway: Gateway):
                 sent["reveal_key"] = body.reveal_key
             elif body.reveal_key is not None:
                 raise fail("invalid.input", "only a grant shown in the page takes reveal_key", exit=1)
+            if isinstance(wanted, HUB_STEPS):  # the backup key, sealed: relayed as ciphertext, never read or logged
+                if body.sealed is None:
+                    raise fail("invalid.input", "A hub step needs your backup key.", exit=1)
+                sent["sealed"] = {"hub.backup_key": body.sealed.hub_backup_key.model_dump()}
+            elif body.sealed is not None:
+                raise fail("invalid.input", "only a hub step takes a sealed value", exit=1)
             got = signer.call("sign", sent, lost=lost_sign())
         except HostError as exc:
             # Before follow-up host reads, which may themselves fail. A definite failure never clears an earlier or a

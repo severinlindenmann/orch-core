@@ -1019,9 +1019,9 @@ class ClickSigner:
     # -- the hub backup key by click (#1198 C10, sealed-field purpose hub.backup_key) ---------------------------------
     @staticmethod
     def _sealed_arg(approval: Approval, args: Mapping[str, Any]) -> dict[str, Any] | None:
-        """``sealed`` of a sign call: absent for a review that asks for none; for one that does, an object whose keys are
-        exactly the View's purposes, each an object (the envelope; opened later, only by the recipient). Anything else is
-        refused before anything is opened."""
+        """``sealed`` of a sign call: absent for a review that asks for none; for one that does, an object whose keys
+        are exactly the View's purposes, each an object (the envelope; opened later, by the recipient only).
+        Anything else is refused before anything is opened."""
         want = () if approval.seal is None else SEALED_OPS[approval.op]
         have = args.get("sealed")
         if not want:
@@ -1037,7 +1037,7 @@ class ClickSigner:
     ) -> dict[str, Any]:
         """Open the sealed backup key (recipient bound to this workspace, request and review), derive the person key
         ``PK``, check it is this person's, sign the owner proof over the reviewed payload and nothing else, then wipe
-        the code and ``PK``. A refusal is static (never the key, never a crypto detail) and leaves the request signable."""
+        the code and ``PK``. A refusal is static (never the key or crypto detail) and leaves the request signable."""
         from orch.custody.base import CustodyError
         from orch.custody.personkey import PersonMismatch, TypedCodeSource
         from orch.host import signer as host_signer
@@ -1047,7 +1047,9 @@ class ClickSigner:
         try:
             code = approval.seal.open(envelope, ctx)
         except sealed.SealedError as exc:
-            self._note("refused", workspace=approval.workspace_id, request=approval.request_id, code=f"sealed.{exc.reason}")
+            self._note(
+                "refused", workspace=approval.workspace_id, request=approval.request_id, code=f"sealed.{exc.reason}"
+            )
             raise refused("check_failed", "the backup key could not be read; type it again") from None
         person = self._person(entry)
         try:

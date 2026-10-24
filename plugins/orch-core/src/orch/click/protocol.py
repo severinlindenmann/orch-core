@@ -59,7 +59,7 @@ REVEAL_LINE = "The secret is shown once, on this page, only to you. orch keeps o
 #: could ask for the secret under its own key; the review says so
 REVEAL_RISK = "The secret will be shown once in this browser. Anyone who controls this dashboard could read it."
 #: #1198 C10: the hub steps are clicks only together with the person's backup key, typed once in the page and sealed to
-#: the signer's per-request key (sealed-field contract, purpose ``hub.backup_key``). op -> the purposes its View asks for
+#: the signer's per-request key (sealed-field contract, purpose ``hub.backup_key``). op -> purposes its View asks for
 SEALED_OPS: dict[str, tuple[str, ...]] = {
     "hub.join": ("hub.backup_key",),
     "hub.mode": ("hub.backup_key",),

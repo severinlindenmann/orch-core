@@ -529,7 +529,7 @@ class TypedCodeSource(RecoveryCodeSource):
     """The person key from a recovery code the click signer opened from the sealed field (#1198 C10, purpose
     ``hub.backup_key``), for one proof. The same lifecycle and checks as :class:`RecoveryCodeSource` (the code is
     parsed and the key derived by the one existing path; the derived person must be ``person_id``/``pk_pub`` before
-    anything is signed; only the granted labels sign; no raw-sign call; one use), but the code arrives as bytes instead of
+    anything is signed; only the granted labels sign; no raw-sign call; one use), but the code arrives as bytes, not as
     a prompt on ``/dev/tty``. **It takes ownership of ``code`` (a ``bytearray``) and wipes it on entering**, whatever
     happens; the scalar is wiped on exit. Under ``ORCH_GRANT`` it refuses, like its sibling: an agent never holds PK."""
 

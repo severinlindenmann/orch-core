@@ -171,7 +171,8 @@ def build(
     without changing :func:`digest`. A deposit grant (and only one) gets ``deposit: true`` and ``deposit_line``, and
     its ``lines`` end with the tier-A sentence and that line. A reveal grant (and only one) gets ``seal`` (the sealed
     field's ``grant.secret`` purpose, no key: the page brings its own, sealed-field contract section 7) and
-    ``reveal_line``, which its ``lines`` end with; ``view_digest`` covers both. ``seal_in`` ``(pk, purposes)`` (#1198 C10):
+    ``reveal_line``, which its ``lines`` end with; ``view_digest`` covers both.
+    ``seal_in`` ``(pk, purposes)`` (#1198 C10):
     an op that asks for a typed secret (the hub backup key) carries ``seal`` with the signer's per-request public key
     and exactly those purposes (sealed-field contract section 7), and ``backup_key_line`` in ``lines``."""
     known = workspace(prepared["workspace_id"])

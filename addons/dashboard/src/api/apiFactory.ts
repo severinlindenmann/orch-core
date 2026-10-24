@@ -139,8 +139,8 @@ export function createApi(transport: Transport) {
     /** R3 part B: the bytes of a picture file of a ticket (the page hashes them before showing them). */
     getArtifactImage: (ws: string, key: string, name: string) => call<{ image: ArtifactImage | null }>('GET', `/api/w/${ws}/tickets/${key}/artifacts/${encodeURIComponent(name)}`),
     viewClick: (ws: string, requestId: string) => call<ClickViewAnswer>('POST', `/api/w/${ws}/click/view`, { request_id: requestId }),
-    signClick: (ws: string, requestId: string, viewDigest: string, revealKey?: string) =>
-      call<ClickSigned>('POST', `/api/w/${ws}/click/sign`, { request_id: requestId, view_digest: viewDigest, ...(revealKey ? { reveal_key: revealKey } : {}) }),
+    signClick: (ws: string, requestId: string, viewDigest: string, revealKey?: string, sealed?: Record<string, import('./sealed').Envelope>) =>
+      call<ClickSigned>('POST', `/api/w/${ws}/click/sign`, { request_id: requestId, view_digest: viewDigest, ...(revealKey ? { reveal_key: revealKey } : {}), ...(sealed ? { sealed } : {}) }),
     stateClick: (ws: string, requestId: string) => call<ClickState>('POST', `/api/w/${ws}/click/state`, { request_id: requestId }),
     hubSign: (ws: string, body: import('./hubsign').HubSignRequest) => call<import('./hubsign').HubSignInfo>('POST', `/api/w/${ws}/hubsign`, body),
     /** V3 A7: the hub pages' reads and the Terminal command of a change (the server signs nothing and sends no hub write). */

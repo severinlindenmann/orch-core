@@ -371,7 +371,7 @@ def card_of_another_hub() -> dict:
     opo = {"v": 2, "suite": 2, "kind": "hub.op_cert", "hv": 0, "hub_id": hid, "cert_id": "11" * 16, "op_seq": 1,
            "hk_op_pub": b64u(op_pub), "issued_ms": NOW - 1000, "expires_ms": NOW + 10**9, "dev": True}  # fmt: skip
     o = {"v": 2, "suite": 2, "kind": "hub.card", "hv": 0, "hub_id": hid, "hk_root_pub": b64u(root_pub),
-         "hxk_pub": b64u(op_pub), "relay_url": None, "tls_spki_sha256": b64u(b"\x02" * 32), "card_seq": 1,
+         "hxk_pub": b64u(op_pub), "relay_url": None, "tls_spki_sha256": b64u(b"\x02" * 32), "card_seq": 1, "reader": 1,
          "issued_ms": NOW - 1000, "dev": True}  # fmt: skip
     return {"o": o, "op_cert": {"o": opo, "sig": b64u(S.sign(root, wire.SIG_OP_CERT + cj(opo)))},
             "sig": b64u(S.sign(op, wire.SIG_CARD + cj(o)))}  # fmt: skip

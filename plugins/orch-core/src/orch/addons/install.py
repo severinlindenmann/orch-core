@@ -23,6 +23,7 @@ __all__ = [
     "as_addons",
     "grant_event",
     "installed_names",
+    "read_lock",
     "review_lines",
     "load_registry",
     "package_dir",
@@ -68,8 +69,11 @@ def read_installed(root: str | os.PathLike[str], name: str) -> tuple[Package, Ma
 
 
 def grant_event(manifest: Manifest, package: Package) -> dict[str, Any]:
-    """The payload of ``addon.granted`` for this package: exactly the manifest's capabilities, its declarations."""
-    return {
+    """The payload of ``addon.granted`` for this package: exactly the manifest's capabilities, its declarations, and
+    (V3 G4, D6) ``runtime {kind, lock, packages}`` when the add-on installs dependencies: more code arrives after the
+    signature, so the signature names it. ``packages`` is the number of locked packages, from the checked lockfile of
+    this package. A lock that does not pass the rules is :class:`orch.market.MarketError` (``market.lock_*``)."""
+    event: dict[str, Any] = {
         "type": "addon.granted",
         "name": manifest.name,
         "version": manifest.version,
@@ -77,6 +81,25 @@ def grant_event(manifest: Manifest, package: Package) -> dict[str, Any]:
         "capabilities": manifest.capabilities,
         **declarations(manifest),
     }
+    rt = manifest.runtime
+    if rt is not None:
+        event["runtime"] = {**rt, "packages": len(read_lock(manifest, package).rows)}
+    return event
+
+
+def read_lock(manifest: Manifest, package: Package) -> Any:
+    """The checked :class:`orch.addons.lockfile.Lock` named by the manifest's ``runtime`` (C2: the only way to find
+    a lockfile). ``market.lock_missing``: the package has no such file; ``market.lock_invalid``: it breaks a rule."""
+    from orch.addons import lockfile
+    from orch.market import MarketError
+
+    rt = manifest.runtime
+    if rt is None:
+        raise MarketError("market.lock_missing")
+    data = package.files.get(rt["lock"])
+    if data is None:
+        raise MarketError("market.lock_missing")
+    return lockfile.check(rt["kind"], data)
 
 
 def as_addons(view: Mapping[str, Any]) -> dict[str, Addon]:
@@ -96,6 +119,7 @@ def as_addons(view: Mapping[str, Any]) -> dict[str, Addon]:
                 list(a["artifact_kinds"]),
                 enabled=bool(a["enabled"]),
                 purged=bool(a["purged"]),
+                runtime=None if a.get("runtime") is None else dict(a["runtime"]),
             )
     return out
 

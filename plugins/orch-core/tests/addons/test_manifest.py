@@ -400,3 +400,49 @@ def test_core_declares_its_addon_api():
 
     assert ADDON_API == "1.0"
     assert incompatibility(load_manifest(raw(MANIFEST)), "2.0.0.dev0") is None
+
+
+# ---- V3 G4: ``runtime`` (design-g4 section 2)
+
+
+def runtime_manifest(
+    kind="python-requirements", lock="requirements.txt", cmd0="python3", schema_="orch.addon/3", **more
+):
+    m = {
+        "schema": schema_, "name": "dep", "version": "1.0.0", "title": "Dep", "entry": {"cmd": [cmd0, "{pkg}/main.py"]},
+        "runtime": {"kind": kind, "lock": lock}, **more,
+    }  # fmt: skip
+    if schema_ == "orch.addon/3":
+        m["api"] = ">=1.0,<2"
+    return m
+
+
+def test_runtime_is_an_optional_key_with_a_kind_and_a_lock_path():
+    m = load_manifest(raw(runtime_manifest()))
+    assert m.runtime == {"kind": "python-requirements", "lock": "requirements.txt"}
+    n = load_manifest(raw(runtime_manifest("node-package-lock", "deps/package-lock.json", "node")))
+    assert n.runtime == {"kind": "node-package-lock", "lock": "deps/package-lock.json"}
+    assert load_manifest(raw(MANIFEST)).runtime is None
+    assert "runtime" not in declarations(m)  # the grant adds it with the package count (install.grant_event)
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        runtime_manifest(kind="go-mod"),
+        runtime_manifest(lock="../requirements.txt"),
+        runtime_manifest(lock="/etc/passwd"),
+        runtime_manifest(lock="a//b"),
+        runtime_manifest(lock="req uirements.txt"),
+        runtime_manifest(lock=""),
+        runtime_manifest(cmd0="node"),  # a Python lock starts python3
+        runtime_manifest("node-package-lock", "package-lock.json", "python3"),
+        runtime_manifest(schema_="orch.addon/2"),  # only orch.addon/3
+        {**runtime_manifest(), "runtime": {"kind": "python-requirements"}},
+        {**runtime_manifest(), "runtime": {"kind": "python-requirements", "lock": "r.txt", "index": "https://x"}},
+        {**runtime_manifest(), "runtime": "requirements.txt"},
+    ],
+)
+def test_a_bad_runtime_is_refused(bad):
+    with pytest.raises(ManifestError):
+        load_manifest(raw(bad))

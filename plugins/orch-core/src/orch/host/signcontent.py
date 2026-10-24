@@ -63,7 +63,7 @@ SHOWN: dict[str, frozenset[str]] = {
     "addon.disabled": frozenset({"name"}),
     "addon.purged": frozenset({"name"}),
     "addon.granted": frozenset(
-        {"name", "version", "package_sha256", "capabilities", "artifact_kinds", "fields", "sections"}
+        {"name", "version", "package_sha256", "capabilities", "artifact_kinds", "fields", "sections", "runtime"}
     ),
     "artifact.added": frozenset({"name", "kind", "label", "ac", "task", "ref", "addon", "bytes", "sha256"}),
     "artifact.replaced": frozenset({"name", "kind", "label", "ac", "task", "replaces", "bytes", "sha256"}),
@@ -1404,7 +1404,7 @@ def _addon(typ: str, ev: Mapping[str, Any], out: dict[str, Any]) -> str:
         return f"Purge the add-on {name}"
     version = ev.get("version")
     words = _capability_words(ev.get("capabilities"))
-    declares = any(ev.get(k) not in (None, [], {}) for k in ("fields", "sections", "artifact_kinds"))
+    declares = any(ev.get(k) not in (None, [], {}) for k in ("fields", "sections", "artifact_kinds", "runtime"))
     if named and words is not None and not declares and isinstance(version, str) and _VERSION.fullmatch(version):
         _row(out, "add-on", name)
         _row(out, "version", version)
@@ -1424,7 +1424,32 @@ def _addon(typ: str, ev: Mapping[str, Any], out: dict[str, Any]) -> str:
     for k in ("capabilities", "artifact_kinds", "fields", "sections"):
         if ev.get(k) is not None:
             _row(out, k.replace("_", " "), ev[k])
+    if ev.get("runtime") is not None:
+        runtime = ev["runtime"]
+        _row(out, "dependencies", runtime)
+        out.setdefault("notes", []).append(_runtime_words(runtime))
     return f"Grant the add-on {name}"
+
+
+_RUNTIME_KINDS = {"python-requirements": "Python", "node-package-lock": "Node"}
+
+
+def _runtime_words(runtime: Any) -> str:
+    """V3 G4 (D6): the signed ``runtime`` of an ``addon.granted`` in words; any other shape is the full review."""
+    if (
+        not isinstance(runtime, Mapping)
+        or set(runtime) != {"kind", "lock", "packages"}
+        or runtime["kind"] not in _RUNTIME_KINDS
+        or not isinstance(runtime["lock"], str)
+        or type(runtime["packages"]) is not int
+        or runtime["packages"] < 1
+    ):
+        raise PlainUnavailable("the plain view does not know this runtime")
+    n = runtime["packages"]
+    return (
+        f"Also installs {n} {_RUNTIME_KINDS[runtime['kind']]} package{'' if n == 1 else 's'} listed in "
+        f"{one(runtime['lock'])} after you sign; no package scripts run."
+    )
 
 
 def _cert_rows(out: dict[str, Any], label: str, cert: Any) -> None:

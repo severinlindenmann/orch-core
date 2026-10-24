@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from orch import canon, schema
-from orch.addons.package import MANIFEST_FILE, Package
+from orch.addons.package import MANIFEST_FILE, Package, PackageError, check_path
 
 __all__ = [
     "ADDON_API",
@@ -20,6 +20,7 @@ __all__ = [
     "LEGACY_API",
     "Manifest",
     "ManifestError",
+    "RUNTIME_COMMANDS",
     "declarations",
     "incompatibility",
     "load_manifest",
@@ -87,6 +88,12 @@ class Manifest:
         return self.doc.get("min_core")
 
     @property
+    def runtime(self) -> dict[str, str] | None:
+        """``{kind, lock}``: the one lockfile of the add-on's dependencies (spec 8.1), or ``None``."""
+        rt = self.doc.get("runtime")
+        return None if rt is None else dict(rt)
+
+    @property
     def agents_md(self) -> str:
         return self.doc.get("agents_md", "")
 
@@ -103,7 +110,25 @@ def load_manifest(raw: bytes) -> Manifest:
         raise ManifestError(
             f"orch-addon.json{e.path}: {e.message}".encode("ascii", "backslashreplace").decode()
         ) from None
+    rt = doc.get("runtime")
+    if rt is not None:
+        _check_runtime(doc, rt)
     return Manifest(doc)
+
+
+#: ``runtime.kind`` -> the interpreter the entry command must name (design G4 §2): the command is what the owner
+#: reads, and the runner starts exactly the interpreter the dependencies were chosen for
+RUNTIME_COMMANDS = {"python-requirements": "python3", "node-package-lock": "node"}
+
+
+def _check_runtime(doc: dict[str, Any], rt: dict[str, Any]) -> None:
+    try:
+        check_path(rt["lock"])
+    except PackageError as e:
+        raise ManifestError(f"orch-addon.json/runtime/lock: {e}") from None
+    want = RUNTIME_COMMANDS[rt["kind"]]
+    if doc["entry"]["cmd"][0] != want:
+        raise ManifestError(f"orch-addon.json/runtime: a {rt['kind']} add-on starts with {want!r}")
 
 
 def load_package_manifest(package: Package, directory_name: str | None = None) -> Manifest:

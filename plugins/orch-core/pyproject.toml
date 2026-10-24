@@ -9,6 +9,8 @@ license-files = ["LICENSE"]
 dependencies = [
     "cryptography>=43",
     "jsonschema>=4.26.0",
+    "packaging>=24",  # lockfile and marker parsing (marketplace spec 15.2-11)
+    "pip>=24",  # installs add-on wheels offline into their own environment (spec 8.2, design G4)
     "pyopenssl>=25",
     "segno>=1.6.6",
 ]

@@ -129,6 +129,8 @@ class Addon:
     artifact_kinds: list[str]
     enabled: bool = True
     purged: bool = False
+    #: V3 G4 (D6): ``{kind, lock, packages}`` when the grant also installs dependencies, else ``None``
+    runtime: dict[str, Any] | None = None
 
     @property
     def binds(self) -> dict[str, Any]:

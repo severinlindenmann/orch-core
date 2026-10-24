@@ -18,3 +18,11 @@ CASE_INSENSITIVE_HOSTS = ("github.com", "gitlab.com", "bitbucket.org")
 #: A refresh by an agent within this many seconds of the last fetch of the same market is skipped (E5).
 AGENT_MIN_INTERVAL = 300
 MAX_INDEX_BYTES = 1 << 20
+
+#: Ids of add-ons the official marketplace ships (reserved for it: a non-official marketplace cannot claim them, spec
+#: 5 step 6). A constant of this release; EMPTY until the first official add-on exists.
+OFFICIAL_IDS: tuple[str, ...] = ()
+#: Built-in ids that moved to the official marketplace (G6): only the official marketplace may list these.
+MOVED_IDS: tuple[str, ...] = ()
+#: A staged package is kept this long before the review is signed (design G3 section 2).
+STAGE_TTL = 30 * 60

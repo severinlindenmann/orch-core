@@ -124,11 +124,15 @@ def test_a_hostile_listing_is_package_invalid_before_any_blob(repo, rows):
 def test_a_name_that_is_both_file_and_directory_and_case_twins_in_subdirs(repo):
     m = blob(repo, MANIFEST)
     sub = tree(repo, [("100644", "blob", m, "x")])
-    both = tree(repo, [("100644", "blob", m, "orch-addon.json"), ("040000", "tree", sub, "d"), ("100644", "blob", m, "d")])
+    both = tree(
+        repo, [("100644", "blob", m, "orch-addon.json"), ("040000", "tree", sub, "d"), ("100644", "blob", m, "d")]
+    )
     with pytest.raises(gitsafe.MarketGitError) as e:
         gitsafe.market_export_package(str(repo), commit(repo, both), None)
     assert e.value.kind == "package"
-    twins = tree(repo, [("100644", "blob", m, "orch-addon.json"), ("040000", "tree", sub, "Lib"), ("040000", "tree", sub, "lib")])
+    twins = tree(
+        repo, [("100644", "blob", m, "orch-addon.json"), ("040000", "tree", sub, "Lib"), ("040000", "tree", sub, "lib")]
+    )
     with pytest.raises(gitsafe.MarketGitError) as e:
         gitsafe.market_export_package(str(repo), commit(repo, twins), None)
     assert e.value.kind == "package"

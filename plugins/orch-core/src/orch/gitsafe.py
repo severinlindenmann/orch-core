@@ -1208,9 +1208,7 @@ def _market_run(
     return bytes(bufs["out"])
 
 
-def market_fetch(
-    url: str, commit: str | None, host: str, address: str, staging: str, *, cap: int | None = None
-) -> str:
+def market_fetch(url: str, commit: str | None, host: str, address: str, staging: str, *, cap: int | None = None) -> str:
     """Fetch ``commit`` (or the remote ``HEAD``) of a marketplace into the empty private directory ``staging`` (a
     fresh ``git init --template=``, object format by the length of ``commit``; sha1 for ``HEAD``). Returns the full
     object id fetched, which equals ``commit`` when one was given. ``cap`` is the byte limit of the pack (the index's
@@ -1263,22 +1261,25 @@ _SUBDIR_SEGMENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 
 
 def market_export_package(staging: str, commit: str, subdir: str | None) -> dict[str, bytes]:
-    """The package at ``commit`` (below ``subdir`` when given) as an in-memory ``{path: bytes}`` map, read through plumbing
-    only (spec 5.1.1 ``export_package``): no checkout, so no ``.gitattributes`` filter, ``export-subst``, ``export-ignore``,
-    end-of-line conversion, LFS smudge or hook can touch a byte, and nothing of the tree is written anywhere.
+    """The package at ``commit`` (below ``subdir`` when given) as an in-memory ``{path: bytes}`` map, read through
+    plumbing only (spec 5.1.1 ``export_package``): no checkout, so no ``.gitattributes`` filter, ``export-subst``,
+    ``export-ignore``, end-of-line conversion, LFS smudge or hook can touch a byte, and nothing is written anywhere.
 
-    1. ``ls-tree -r -z -l`` of the tree, judged WHOLE before any blob is read (``MarketGitError('package')``): every mode
-       ``100644``/``100755`` (no link ``120000``, no submodule ``160000``), every path valid under 8.1 (no ``..``, no
-       ``.git``, no leading dot, no non-ASCII), no case twins, no name that is both file and directory, the number of
-       entries, every size and the total within the 8.1 caps (the sizes are the listing's), the manifest at the top.
-    2. ONE ``cat-file --batch`` for all the listed blobs; its output is capped at the listed total plus the batch headers,
-       and each blob's reported type and size must equal the listing. A blob is never written to a path from the tree."""
+    1. ``ls-tree -r -z -l`` of the tree, judged WHOLE before any blob is read (``MarketGitError('package')``): every
+       mode ``100644``/``100755`` (no link ``120000``, no submodule ``160000``), every path valid under 8.1 (no ``..``,
+       no ``.git``, no leading dot, no non-ASCII), no case twins, no name that is both file and directory, the number
+       of entries, every size and the total within the 8.1 caps (the sizes are the listing's), the manifest on top.
+    2. ONE ``cat-file --batch`` for all the listed blobs; its output is capped at the listed total plus the batch
+       headers, and each blob's reported type and size must equal the listing. A blob is never written to a path
+       from the tree."""
     from orch.addons import package
 
     if not staging.startswith("/") or "\0" in staging or _OBJECT_ID.fullmatch(commit) is None:
         raise Unsafe("invalid operand")
     parts = [] if subdir is None else subdir.split("/")
-    if len(parts) > package.MAX_DEPTH - 1 or not all(_SUBDIR_SEGMENT.fullmatch(p) and p != "__pycache__" for p in parts):
+    if len(parts) > package.MAX_DEPTH - 1 or not all(
+        _SUBDIR_SEGMENT.fullmatch(p) and p != "__pycache__" for p in parts
+    ):
         raise Unsafe("invalid subdirectory")
     treeish = f"{commit}:{subdir}" if subdir else f"{commit}^{{tree}}"
     # a listing is bounded by the entry cap: no tree that big is listed (a longer output kills the command)

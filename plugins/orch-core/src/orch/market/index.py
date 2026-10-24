@@ -22,6 +22,7 @@ from . import ADDONS, MarketError, constants
 from .url import canonical_market_url, schema
 
 INDEX_LABEL = b"orch/market/1/index|"
+ENTRY_LABEL = b"orch/market/1/entry|"
 _ORDER_N = 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551
 _COMMIT = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})(?![\s\S])")
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}(?![\s\S])")
@@ -87,6 +88,17 @@ def _verify(key_b64: str, sig_b64: str, message: bytes) -> bool:
         return True
     except (InvalidSignature, EncodingError, ValueError):
         return False
+
+
+def entry_message(entry: dict[str, Any], market: str) -> bytes:
+    """What a publisher signs (4.3): the label, the entry with ``publisher`` reduced to its key, and the URL of the
+    marketplace it is published in (so a signed entry copied into another marketplace does not verify there)."""
+    reduced = {**entry, "publisher": {"key": entry["publisher"]["key"]}}
+    return ENTRY_LABEL + dumps({"entry": reduced, "market": market})
+
+
+def verify_entry(entry: dict[str, Any], market: str) -> bool:
+    return _verify(entry["publisher"]["key"], entry["publisher"]["sig"], entry_message(entry, market))
 
 
 def official_keys() -> tuple[str, ...]:

@@ -157,7 +157,7 @@ function Review({
         <p>{HELP}</p>
         {error && <p role="alert">{error}</p>}
         {expired && <p role="status">This review expired. Review again before approving.</p>}
-        <DialogFooter>
+        <DialogFooter className="sticky -bottom-6 -mx-6 -mb-6 border-t border-border bg-surface px-6 py-4">
           <Button variant="ghost" disabled={busy} onClick={cancel}>
             Cancel
           </Button>
@@ -492,7 +492,7 @@ function MarketWorkspace() {
             </DialogHeader>
             <Input aria-label="Repository URL" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://github.com/owner/repo" />
             {message && <p role="alert">{message}</p>}
-            <DialogFooter>
+            <DialogFooter className="sticky -bottom-6 -mx-6 -mb-6 border-t border-border bg-surface px-6 py-4">
               <Button variant="ghost" onClick={() => setAdding(false)}>
                 Cancel
               </Button>
@@ -521,7 +521,7 @@ function MarketWorkspace() {
             </DialogHeader>
             <Inline>{remove.name}</Inline>
             {message && <p role="alert">{message}</p>}
-            <DialogFooter>
+            <DialogFooter className="sticky -bottom-6 -mx-6 -mb-6 border-t border-border bg-surface px-6 py-4">
               <Button variant="ghost" onClick={() => setRemove(null)}>
                 Cancel
               </Button>

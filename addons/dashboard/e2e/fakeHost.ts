@@ -57,7 +57,7 @@ export function installed() {
   }
 }
 
-const market = (url: string) => ({ url, class: url === OFFICIAL ? 'official' : 'community', commit: 'd'.repeat(40), source_note: 'github:example/source @ 9f2c1e7', publisher: { fingerprint: 'SHA256:7F3Aexample', tofu: 'new' }, index_version: 7, stale: false, summary: 'summary' })
+const market = (url: string) => ({ url, class: url === OFFICIAL ? 'official' : 'community', commit: 'd'.repeat(40), source_note: 'github:example/source @ 9f2c1e7', publisher: { fingerprint: 'SHA256:7F3Aexample', tofu: url === OFFICIAL ? 'known' : 'new' }, index_version: 7, stale: false, summary: 'summary' })
 
 export function stage(id: string, update: boolean) {
   const base = { expires_at: new Date(Date.now() + 600_000).toISOString(), package_sha256: 'sha256:' + (update ? '2' : '4').repeat(64), market: market(OFFICIAL) }

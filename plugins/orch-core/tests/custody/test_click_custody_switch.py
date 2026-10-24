@@ -723,6 +723,71 @@ def test_the_leftover_sweep_runs_for_a_dashboard_off_without_a_passphrase(switch
     assert not store.exists(WS, device)
 
 
+# --- #1198 C17: turning One click back on with a plain click, key already in convenience custody ---------------------
+
+
+def resume(signer, **extra):
+    return signer.handle("custody_on", {"workspace_id": WS, "resume": True, **extra})
+
+
+def test_c17_a_plain_click_turns_it_on_again_after_idle_and_restarts_the_clock(switch, monkeypatch):
+    signer, state, provider, *_ = switch
+    clock = Mono()
+    monkeypatch.setattr(convenience, "_now", clock)
+    on(signer, provider.passphrase)
+    clock.t += 13 * 3600
+    assert not flag(state) and convenience.idle_off(state, WS, os.getuid()) == 12
+    row = resume(signer)
+    assert row["enabled"] is True and row["custody"] == "convenience" and row["risk_ack"]
+    assert flag(state) and convenience.idle_off(state, WS, os.getuid()) is None
+    clock.t += 11 * 3600
+    assert flag(state)  # the clock restarted at the click
+
+
+def test_c17_a_plain_click_after_turn_off_without_passphrase(switch):
+    signer, state, provider, *_ = switch
+    on(signer, provider.passphrase)
+    off(signer)
+    assert resume(signer)["enabled"] is True and flag(state)
+
+
+def test_c17_resume_goes_through_the_readers_rule(switch, monkeypatch):
+    from orch.host.errors import HostError
+
+    signer, state, provider, *_ = switch
+    on(signer, provider.passphrase)
+    off(signer)
+
+    def refuse(*a, **k):
+        raise HostError("sign.convenience_unavailable", "other_member: a reader is too old")
+
+    monkeypatch.setattr(convenience, "refuse_turn_on", refuse)
+    err = refused(lambda: resume(signer), "sign.convenience_unavailable")
+    assert err.reason == "other_member" and not flag(state)
+
+
+def test_c17_resume_refuses_on_a_dev_host(switch, monkeypatch):
+    signer, state, provider, *_ = switch
+    on(signer, provider.passphrase)
+    off(signer)
+    monkeypatch.setattr(
+        convenience,
+        "refuse_dev_host",
+        lambda s, env=None: (_ for _ in ()).throw(convenience.unavailable("dev_host", [])),
+    )
+    refused(lambda: resume(signer), "sign.convenience_unavailable")
+    assert not flag(state)
+
+
+def test_c17_resume_needs_the_key_in_convenience_custody_and_no_passphrase(switch):
+    signer, state, provider, *_ = switch
+    refused(lambda: resume(signer), "invalid.input")  # the key is still under the passphrase
+    on(signer, provider.passphrase)
+    refused(lambda: resume(signer, passphrase="x"), "invalid.input")
+    refused(lambda: signer.handle("custody_on", {"workspace_id": WS, "resume": "yes"}), "invalid.input")
+    assert resume(signer)["enabled"] is True  # already on: nothing changes
+
+
 # -- #1198 C12: the new passphrase of "One click off" arrives sealed -------------------------------------------
 
 

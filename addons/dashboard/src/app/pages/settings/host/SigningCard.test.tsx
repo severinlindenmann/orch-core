@@ -209,6 +209,39 @@ describe('Sign in the dashboard', () => {
     expect(sw).not.toHaveBeenCalled()
   })
 
+  it('says in plain words that One click switched itself off after idle hours', async () => {
+    mount({ custody: 'convenience', enabled: false, available: false, problem: 'idle', idle_hours: 12, switchable: true })
+    expect(await screen.findByTestId('signing-idle-off')).toHaveTextContent('One click switched itself off after 12 hours without use. Turn it on again to continue.')
+    expect(screen.getByTestId('signing-state')).toHaveTextContent('Off: you approve in the terminal')
+  })
+
+  it('turns One click on again with a plain click after the review and the risk notice, no passphrase', async () => {
+    const sw = vi.spyOn(api, 'switchClick').mockResolvedValue(ON)
+    mount({ custody: 'convenience', enabled: false, available: false, problem: 'idle', idle_hours: 12, switchable: true })
+    fireEvent.click(await openSwitch())
+    expect(screen.getByTestId('signing-resume')).toHaveTextContent('switches itself off again after 12 hours')
+    expect(screen.getByTestId('resume-risk')).toHaveTextContent(/agents running as you/)
+    expect(document.querySelectorAll('input[type=password]')).toHaveLength(0)
+    expect(sw).not.toHaveBeenCalled() // nothing before the click on Turn on
+    fireEvent.click(screen.getByRole('button', { name: 'Turn on' }))
+    await waitFor(() => expect(sw).toHaveBeenCalledWith(WS, { on: true, resume: true }))
+    await waitFor(() => expect(screen.getByTestId('signing-state')).toHaveTextContent(/^On: you approve here/))
+  })
+
+  it('the resume panel and the idle line show the configured limit, also after a manual off', async () => {
+    mount({ custody: 'convenience', enabled: false, available: false, problem: 'disabled', idle_hours: 24, switchable: true })
+    fireEvent.click(await openSwitch())
+    expect(screen.getByTestId('signing-resume')).toHaveTextContent('switches itself off again after 24 hours')
+  })
+
+  it('a refused resume (not a dashboard on this computer) keeps the terminal command', async () => {
+    vi.spyOn(api, 'switchClick').mockRejectedValue(new ApiError(403, { code: 'custody.terminal_needed', message: 'needs this computer', retryable: false }))
+    mount({ custody: 'convenience', enabled: false, available: false, problem: 'idle', idle_hours: 12, switchable: true })
+    fireEvent.click(await openSwitch())
+    fireEvent.click(screen.getByRole('button', { name: 'Turn on' }))
+    expect(await screen.findByTestId('signing-error')).toHaveTextContent('orch host convenience on --workspace INT')
+  })
+
   it('the on form shows what moves where, and the field asks for the current passphrase', async () => {
     mount({ ...OFF, device: 'd_' + '1'.repeat(32) })
     fireEvent.click(await openSwitch())

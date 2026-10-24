@@ -94,6 +94,9 @@ def click_card(row):
     }
     if isinstance(row.get("problem"), str):
         out["problem"] = row["problem"][:200]
+    hours = row.get("idle_hours")  # C17: it switched itself off after this many hours without use
+    if type(hours) is int and 1 <= hours <= 168:
+        out["idle_hours"] = hours
     ack = row.get("risk_ack")  # B6: when the one-click risk notice was acknowledged at enable time, else null
     out["risk_ack"] = ack if isinstance(ack, str) and TIME.fullmatch(ack) else None
     if isinstance(row.get("device"), str) and DEVICE.fullmatch(row["device"]):

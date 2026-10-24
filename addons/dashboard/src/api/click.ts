@@ -19,6 +19,8 @@ export interface ClickCard {
   enabled: boolean
   available: boolean
   problem?: string
+  /** C17: the configured idle limit in hours, on or off (One click switches itself off after this long without use). */
+  idle_hours?: number
   switchable?: boolean
   /** The device key (`d_` + 32 hex) the switch would move into this computer's key store. */
   device?: string
@@ -31,6 +33,7 @@ export interface ClickCard {
  */
 export type ClickSwitch =
   | { on: true; passphrase: string }
+  | { on: true; resume: true }
   | { on: false }
   | { on: false; request_id: string; view_digest: string; sealed: { 'custody.passphrase': import('./sealed').Envelope } }
 

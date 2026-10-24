@@ -100,13 +100,18 @@ class CustodyBody(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     on: bool
     passphrase: Passphrase | None = None
+    #: #1198 C17: `on` without a passphrase, for a key already in this computer's key store (idle switch-off): a plain
+    #: click after the review; only from a dashboard opened on this computer (the route checks)
+    resume: bool = False
     request_id: Annotated[str, StringConstraints(pattern=r"^hr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")] | None = None
     view_digest: ViewDigest | None = None
     sealed: "PassphraseSealed | None" = None
 
     @model_validator(mode="after")
     def _shape(self):
-        if self.on and self.passphrase is None:
+        if self.resume and (not self.on or self.passphrase is not None):
+            raise ValueError("resume is on without a passphrase")
+        if self.on and self.passphrase is None and not self.resume:
             raise ValueError("on needs the passphrase")
         if self.on and (self.request_id or self.view_digest or self.sealed):
             raise ValueError("on takes the current passphrase only")
@@ -441,7 +446,18 @@ def register(app: FastAPI, gateway: Gateway):
             raise fail("role.denied", "Only an owner switches signing in the dashboard.", exit=3)
         if not signer.switchable():
             raise fail("click.contract", "Update orch-core: its signing helper cannot switch signing yet.", exit=9)
-        if body.on:  # the proof goes to the signer only; nothing here reads, keeps or logs it
+        if body.resume:
+            # no passphrase to prove: only a dashboard opened on this computer (the same gate as a shown secret), until
+            # the passkey step-up exists; anything else keeps the terminal command on the card
+            if app.state.auth.login_kind(request.state.token) not in REVEAL_SESSION_KINDS:
+                raise fail(
+                    "custody.terminal_needed",
+                    "Turning One click on again needs a dashboard opened on this computer. Use the terminal: "
+                    "orch host convenience on --workspace " + ws,
+                    exit=3,
+                )
+            row = signer.call("custody_on", {"workspace_id": ws, "resume": True})
+        elif body.on:  # the proof goes to the signer only; nothing here reads, keeps or logs it
             row = signer.call("custody_on", {"workspace_id": ws, "passphrase": body.passphrase})
         elif body.sealed is not None:  # off with a NEW passphrase (V3-D31): ciphertext only, relayed and never opened
             if app.state.auth.login_kind(request.state.token) not in REVEAL_SESSION_KINDS:

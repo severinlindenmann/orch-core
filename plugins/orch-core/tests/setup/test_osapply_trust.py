@@ -226,7 +226,7 @@ def test_secure_dir_refuses_a_base_that_is_a_symlink(tmp_path) -> None:
 
 def _acl_for(uid: int) -> bytes:
     o = osapply
-    return o._acl(((o.USER_OBJ, 7), (o.USER, 1, uid), (o.GROUP_OBJ, 0), (o.MASK, 1), (o.OTHER, 0)))
+    return o.acl(((o.USER_OBJ, 7), (o.USER, 1, uid), (o.GROUP_OBJ, 0), (o.MASK, 1), (o.OTHER, 0)))
 
 
 def test_secure_dir_compares_exact_acl_entries(tmp_path) -> None:

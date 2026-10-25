@@ -171,7 +171,7 @@ _UNDEF = 0xFFFFFFFF
 _ACL_NAMES = {"access": "system.posix_acl_access", "default": "system.posix_acl_default"}
 
 
-def _acl(entries: tuple[tuple[int, ...], ...]) -> bytes:
+def acl(entries: tuple[tuple[int, ...], ...]) -> bytes:
     """A POSIX ACL in its xattr form (version 2): ``(tag, perm)`` or ``(tag, perm, id)`` entries in kernel order."""
     out = struct.pack("<I", 2)
     for entry in entries:
@@ -437,8 +437,8 @@ class _Apply:
             self.res.fail(f"'{u.name}' or '{p.person}' could not be looked up.")
             return
         ours, gid = u.name in self.created, grp_.gid
-        x = _acl(((USER_OBJ, 7), (USER, 1, person), (GROUP_OBJ, 0), (MASK, 1), (OTHER, 0)))
-        rx = _acl(((USER_OBJ, 7), (USER, 5, person), (GROUP_OBJ, 5), (MASK, 5), (OTHER, 0)))
+        x = acl(((USER_OBJ, 7), (USER, 1, person), (GROUP_OBJ, 0), (MASK, 1), (OTHER, 0)))
+        rx = acl(((USER_OBJ, 7), (USER, 5, person), (GROUP_OBJ, 5), (MASK, 5), (OTHER, 0)))
         steps = (
             ((u.name,), 0o700, 0o710, x, None, "directory with the person allowed to pass through"),
             ((u.name, "home"), 0o700, 0o700, None, None, "home"),

@@ -37,7 +37,10 @@ test('browse -> review -> Review installation -> installed', async ({ page }) =>
   expect(fake.posts('/handoff')[0].body).toMatchObject({ action: 'market_grant', name: 'jira', staged: STAGE })
   await page.screenshot({ path: path.join(SHOTS, 'a10-terminal.png') })
   fake.signLast() // the mocked human.submit: the person approved in the terminal
-  await expect(jira).toContainText('Off', { timeout: 20_000 })
+  const installed = page.getByRole('dialog', { name: /jira is installed/ })
+  await expect(installed).toContainText('Off', { timeout: 20_000 })
+  await installed.getByRole('button', { name: 'Done, leave it Off' }).click()
+  await expect(jira).toContainText('Off')
   await expect(page.getByText('Waiting for your signature')).toHaveCount(0)
   await page.screenshot({ path: path.join(SHOTS, 'a10-installed.png') })
 })

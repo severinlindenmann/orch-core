@@ -95,11 +95,8 @@ def test_parse_result_drops_absent_arguments_and_applies_defaults():
     assert got.args == {"task": "T3", "run": True, "ac": "AC2", "message": "ok"}
     assert parser.parse(["wait"]).args == {"timeout": 540}
     assert parser.parse(["list", "--mine"]).args == {"mine": True, "limit": 20}
-    assert parser.parse(["ask", "why?", "--options", "a,b", "--rec", "a"]).args == {
-        "text": "why?",
-        "options": ["a", "b"],
-        "rec": "a",
-    }
+    got = parser.parse(["ask", "why?", "--option", "a | A, b", "--option", "b | B", "--rec", "a", "--allow-other"])
+    assert got.args == {"text": "why?", "option": ["a | A, b", "b | B"], "rec": "a", "allow_other": True}
     assert parser.parse(["log", "x", "--dry-run"]).dry_run is True
 
 

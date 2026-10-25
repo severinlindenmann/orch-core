@@ -437,7 +437,7 @@ const CORE_SECTIONS: ChecklistSection[] = [
         id: 'F5',
         title: 'Answer a question on the phone',
         text: 'Window 2, cd ~/orch-run4-a, grant for one hour, export ORCH_GRANT and ORCH_SESSION (as D2).',
-        commands: ['orch grant --hours 1 --label phone', 'orch new "Phone test ticket"', 'orch ask "Pick one" --ref RA-000N --options yes,no --rec yes', 'orch show RA-000N'],
+        commands: ['orch grant --hours 1 --label phone', 'orch new "Phone test ticket"', 'orch ask "Pick one" --ref RA-000N --option "yes | Yes" --option "no | No" --rec yes', 'orch show RA-000N'],
         see: 'Phone: open the question, choose, "Sign and send"; Face ID. Mac: "orch show RA-000N" shows question.answered.',
       },
       {
@@ -465,7 +465,7 @@ const CORE_SECTIONS: ChecklistSection[] = [
         id: 'F8',
         title: 'Push for a new question',
         text: 'Lock the phone. In window 2 with a grant:',
-        commands: ['orch ask "Push test" --ref RA-000N --options yes,no --rec yes'],
+        commands: ['orch ask "Push test" --ref RA-000N --option "yes | Yes" --option "no | No" --rec yes'],
         see: 'A notification within about 30 s; tapping opens the question. If none: report the time, iOS Focus mode, and whether the question shows after opening the app.',
         warn: 'No push toggle was traced in the app Settings.',
       },

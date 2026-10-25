@@ -9,7 +9,7 @@ from tests.ops.helpers import Cli, fenced, wait_for
 def asked(ws, cli):
     cli("new", "A ticket")
     cli("claim", "1")
-    assert cli("ask", "Which?", "--options", "a,b").code == 0
+    assert cli("ask", "Which?", "--option", "a | a", "--option", "b | b").code == 0
     return ws.view("1").questions[0]
 
 

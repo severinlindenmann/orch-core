@@ -119,7 +119,7 @@ def test_show_default_view(ws, cli):
     cli("claim", "1")
     cli("ac", "add", "all 40 tables load")
     cli("task", "add", "export the csvs", "--proves", "AC1")
-    cli("ask", "Which export?", "--options", "csv,api")
+    cli("ask", "Which export?", "--option", "csv | csv", "--option", "api | api")
     r = cli("show")
     assert r.first == "ok DEMO-0001 show default seq=6"
     assert "DEMO-0001 feature in_progress high your claim waiting" in r.out
@@ -302,7 +302,14 @@ def test_the_default_show_stays_within_the_context_budget(ws, cli):
         cli("ac", "add", f"Acceptance criterion number {i} says that something observable is true")
     for i in range(6):
         cli("task", "add", f"Task number {i}: do one concrete thing in the repository", "--proves", "AC1")
-    cli("ask", "Which tariff export is the source of truth, the monthly CSV or the API?", "--options", "csv,api")
+    cli(
+        "ask",
+        "Which tariff export is the source of truth, the monthly CSV or the API?",
+        "--option",
+        "csv | csv",
+        "--option",
+        "api | api",
+    )
     cli("section", "set", "current_state", "-m", "Exported the CSVs; the join still needs the API key.\n" * 5)
     for i in range(6):
         cli("log", f"progress note {i}")

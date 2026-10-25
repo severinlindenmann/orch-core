@@ -6,5 +6,5 @@ turn a rough ticket into requirements, acceptance criteria, a plan and tasks
 4. orch section set plan --file -  # Replace one section of the body with text from -m or --file
 5. orch section set decisions --file -  # Replace one section of the body with text from -m or --file
 6. orch task add 'text' --verify 'one-command, no shell operators' --proves AC1  # Add a task, optionally with a verify command and the criteria it proves
-7. orch ask 'question' --options a,b --rec a  # Ask a person
+7. orch ask 'question' --option 'a | Title | text' --option 'b | Title | text' --rec a  # Ask a person
 next: orch describe CMD

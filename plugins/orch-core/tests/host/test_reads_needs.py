@@ -81,8 +81,8 @@ def promote(w: World, role: str = "maintainer") -> None:
 
 def test_needs_equal_the_model_needs_with_who_limited(w):
     uid, key = mk(w, "gates and questions")
-    agent(w, "ask", {"ref": key, "text": "which?", "to": w.lab.owner})
-    agent(w, "ask", {"ref": key, "text": "later?", "non_blocking": True})
+    agent(w, "ask", {"ref": key, "text": "which?", "text_question": True, "to": w.lab.owner})
+    agent(w, "ask", {"ref": key, "text": "later?", "text_question": True, "non_blocking": True})
     on_store(w, lambda ws: ws.fill(uid))
     items = needs(w)["items"]
     model = model_needs(w, uid)
@@ -103,7 +103,7 @@ def test_a_workspace_with_no_needs_has_no_items(w):
 
 def test_a_question_item_has_text_payload_status_and_since(w):
     uid, key = mk(w, "q")
-    agent(w, "ask", {"ref": key, "text": "which one?", "options": ["a", "b"], "rec": "b", "why": "because"})
+    agent(w, "ask", {"ref": key, "text": "which one?", "option": ["a | a", "b | b"], "rec": "b", "why": "because"})
     asked = [e for e in w.lab.ws.events(key) if e["type"] == "question.asked"][0]
     (item,) = needs(w)["items"]
     assert item == {
@@ -120,17 +120,17 @@ def test_a_question_item_has_text_payload_status_and_since(w):
 def test_a_questions_text_is_never_cut_at_its_longest(w):
     """#1123: a question is at most 140 code points (560 bytes), always under the 1 024-byte snip."""
     uid, key = mk(w, "long")
-    agent(w, "ask", {"ref": key, "text": "\U0001f600" * 140})
+    agent(w, "ask", {"ref": key, "text": "\U0001f600" * 140, "text_question": True})
     (item,) = needs(w)["items"]
     assert item["text"] == "\U0001f600" * 140 and "text_cut" not in item
-    agent(w, "ask", {"ref": key, "text": "short"})
+    agent(w, "ask", {"ref": key, "text": "short", "text_question": True})
     short = needs(w)["items"][1]
     assert short["text"] == "short" and "text_cut" not in short
 
 
 def test_a_non_blocking_question_has_an_empty_detail_and_no_options_key(w):
     uid, key = mk(w, "nb")
-    agent(w, "ask", {"ref": key, "text": "fyi?", "non_blocking": True})
+    agent(w, "ask", {"ref": key, "text": "fyi?", "text_question": True, "non_blocking": True})
     (item,) = needs(w)["items"]
     assert item["detail"] == "" and item["payload"] == {"question": "Q1", "blocking": False, "to": "ticket_owner",
                                                         "spec": {"kind": "text"}}  # fmt: skip
@@ -151,8 +151,10 @@ def test_since_of_a_question_restarts_only_when_its_text_changes(w):
 
 def test_a_questions_who_is_its_addressees_or_the_owners_and_maintainers(w):
     uid, key = mk(w, "to quinn")
-    agent(w, "ask", {"ref": key, "text": "quinn?", "to": w.quinn.ref})
-    agent(w, "ask", {"ref": key, "text": "role?", "to": "reviewers"})  # nobody holds it: owners and maintainers
+    agent(w, "ask", {"ref": key, "text": "quinn?", "text_question": True, "to": w.quinn.ref})
+    agent(
+        w, "ask", {"ref": key, "text": "role?", "text_question": True, "to": "reviewers"}
+    )  # nobody holds it: owners and maintainers
     items = needs(w, {"person": w.quinn.ref})["items"]
     assert [(i["ref"], i["who"]) for i in items] == [("Q1", [w.quinn.ref])]
     items = needs(w)["items"]  # the owner (the viewer): the fallback only
@@ -161,7 +163,7 @@ def test_a_questions_who_is_its_addressees_or_the_owners_and_maintainers(w):
 
 def test_who_never_names_a_person_who_cannot_see_the_ticket(wq):
     uid, key = mk(wq, "restricted question")
-    agent(wq, "ask", {"ref": key, "text": "owner or quinn?", "to": wq.lab.owner})
+    agent(wq, "ask", {"ref": key, "text": "owner or quinn?", "text_question": True, "to": wq.lab.owner})
     promote(wq)
     wq.restrict(uid, [wq.quinn.ref])  # the owner (an addressee) cannot see it
     model = model_needs(wq, uid)
@@ -246,7 +248,7 @@ def test_no_token_who_is_the_ticket_owner_and_the_owners_and_maintainers_who_see
 
 def test_a_closed_ticket_has_no_approve_but_keeps_its_open_question_with_status_closed(w):
     uid, key = mk(w, "closing")
-    agent(w, "ask", {"ref": key, "text": "still open?"})
+    agent(w, "ask", {"ref": key, "text": "still open?", "text_question": True})
     on_store(w, lambda ws: ws.fill(uid))
     assert [i["kind"] for i in needs(w)["items"]] == ["question", "approve"]
     close_ticket(w, uid)
@@ -262,9 +264,9 @@ def test_a_closed_ticket_has_no_approve_but_keeps_its_open_question_with_status_
 
 def test_an_owner_who_is_not_on_a_restricted_list_gets_none_of_xs_items_on_it(w):
     uid, key = mk(w, "for quinn")
-    agent(w, "ask", {"ref": key, "text": "quinn?", "to": w.quinn.ref})
+    agent(w, "ask", {"ref": key, "text": "quinn?", "text_question": True, "to": w.quinn.ref})
     other_uid, other = mk(w, "also for quinn")
-    agent(w, "ask", {"ref": other, "text": "quinn too?", "to": w.quinn.ref})
+    agent(w, "ask", {"ref": other, "text": "quinn too?", "text_question": True, "to": w.quinn.ref})
     assert {i["key"] for i in needs(w, {"person": w.quinn.ref})["items"]} == {key, other}
     w.restrict(uid, [w.quinn.ref])  # quinn on the list, the owner (the caller) is not
     assert [i["key"] for i in needs(w, {"person": w.quinn.ref})["items"]] == [other]  # the one the owner may see
@@ -290,8 +292,8 @@ def test_g_and_n_naming_another_person_are_op_not_allowed_and_a_person_class_own
 def test_needs_of_a_viewer_are_the_viewers_own_and_g_is_the_grants_person(w):
     _, a = mk(w, "owner's")
     _, b = mk(w, "quinn's")
-    agent(w, "ask", {"ref": a, "text": "owner?"})
-    agent(w, "ask", {"ref": b, "text": "quinn?", "to": w.quinn.ref})
+    agent(w, "ask", {"ref": a, "text": "owner?", "text_question": True})
+    agent(w, "ask", {"ref": b, "text": "quinn?", "text_question": True, "to": w.quinn.ref})
     assert [i["key"] for i in needs(w)["items"]] == [a]
     assert [i["key"] for i in needs(w, grant=w.grant, session=SESSION)["items"]] == [a]
     assert [i["key"] for i in needs(w, {"person": w.quinn.ref})["items"]] == [b]
@@ -299,9 +301,9 @@ def test_needs_of_a_viewer_are_the_viewers_own_and_g_is_the_grants_person(w):
 
 def test_no_person_gets_items_on_workspace_tickets_and_none_on_restricted_ones(w):
     uid, key = mk(w, "open question")
-    agent(w, "ask", {"ref": key, "text": "anyone?", "to": w.quinn.ref})
+    agent(w, "ask", {"ref": key, "text": "anyone?", "text_question": True, "to": w.quinn.ref})
     hidden_uid, hidden = mk(w, "zebracorn")
-    agent(w, "ask", {"ref": hidden, "text": "zebracorn?"})
+    agent(w, "ask", {"ref": hidden, "text": "zebracorn?", "text_question": True})
     w.restrict(hidden_uid, [w.lab.owner])
     as_agent_class(w)
     items = needs(w)["items"]  # column N: any `who` on workspace tickets (an ambiguity, documented in the module)
@@ -386,7 +388,7 @@ def test_an_addon_item_carries_the_rule_text_the_addon_and_the_rule(w):
 
 def test_the_sub_cursor_of_needs_joined_to_sub_open_loses_and_repeats_nothing(w):
     _, key = mk(w, "live")
-    agent(w, "ask", {"ref": key, "text": "q?"})
+    agent(w, "ask", {"ref": key, "text": "q?", "text_question": True})
     c = w.conn()
     data = ok(c.call("needs", {}))["data"]
     cursor = data["sub_cursor"]

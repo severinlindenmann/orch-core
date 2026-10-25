@@ -7,7 +7,7 @@
     "cli": "orch ask",
     "summary": "Ask a person; works without a grant (unattended). Then orch wait.",
     "who": "unattended",
-    "usage": "orch ask TEXT [--ref REF] [--options A,B] [--rec KEY] [--to WHO] [--why TEXT] [--non-blocking] [--dry-run]",
+    "usage": "orch ask [TEXT] [--ref REF] [--option 'KEY | TITLE | TEXT'] [--fact 'KEY | LABEL | VALUE'] [--rec KEY] [--allow-other] [--details TEXT] [--details-file PATH] [--text-question] [--question-file PATH] [--to WHO] [--why TEXT] [--non-blocking] [--dry-run]",
     "pre": [
       "ticket_exists",
       "ticket_visible",
@@ -24,7 +24,7 @@
       "properties": {
         "text": {
           "type": "string",
-          "description": "the question",
+          "description": "the question (up to 140 characters)",
           "x-metavar": "TEXT"
         },
         "ref": {
@@ -33,20 +33,51 @@
           "pattern": "^(?:(?:[A-Z][A-Z0-9]{0,15}-)?[0-9]+(?:/T[1-9][0-9]*)?|T[1-9][0-9]*)$",
           "x-metavar": "REF"
         },
-        "options": {
+        "option": {
           "type": "array",
           "items": {
-            "type": "string",
-            "pattern": "^[a-z][a-z0-9_]*$"
+            "type": "string"
           },
-          "description": "answer option keys, comma separated",
-          "x-metavar": "A,B",
-          "x-split": ","
+          "description": "an answer: 'key | title | text' (2 to 6; split on the first two |)",
+          "x-metavar": "'KEY | TITLE | TEXT'"
+        },
+        "fact": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "a fact of an option: 'key | Label | value' (1 to 3 per option)",
+          "x-metavar": "'KEY | LABEL | VALUE'"
         },
         "rec": {
           "type": "string",
           "description": "the recommended option key",
           "x-metavar": "KEY"
+        },
+        "allow_other": {
+          "type": "boolean",
+          "description": "the person may also type an answer of their own"
+        },
+        "details": {
+          "type": "string",
+          "description": "more detail for the person (up to 1500 characters)",
+          "x-metavar": "TEXT"
+        },
+        "details_file": {
+          "type": "string",
+          "description": "read the details from PATH, or - for stdin",
+          "x-metavar": "PATH",
+          "x-file": true
+        },
+        "text_question": {
+          "type": "boolean",
+          "description": "an open question: the person types the answer, no options"
+        },
+        "question_file": {
+          "type": "string",
+          "description": "the whole question as JSON, from PATH or - for stdin (not with TEXT or the flags above)",
+          "x-metavar": "PATH",
+          "x-file": true
         },
         "to": {
           "type": "string",
@@ -66,8 +97,18 @@
       "x-positional": [
         "text"
       ],
-      "required": [
-        "text"
+      "required": [],
+      "oneOf": [
+        {
+          "required": [
+            "text"
+          ]
+        },
+        {
+          "required": [
+            "question_file"
+          ]
+        }
       ],
       "additionalProperties": false
     },

@@ -238,7 +238,11 @@ def test_one_jpos_yields_up_to_three_ids_event_and_needs_or_gone_and_needs(q):
     """§0.9 (amended): one jpos gives ``.e``+``.n`` to a viewer who still sees the ticket and ``.g``+``.n`` to one who
     lost it, never ``.e`` and ``.g`` together. Two subscriptions on the same jpos, one evt each."""
     uid, key = q.ticket()
-    ok(q.client().req("ask", {"ref": key, "text": "which one?"}, grant=q.grant, session=SESSION, idem=True))
+    ok(
+        q.client().req(
+            "ask", {"ref": key, "text": "which one?", "text_question": True}, grant=q.grant, session=SESSION, idem=True
+        )
+    )
     stays, loses = q.conn(), q.conn()
     a = stays.open(["tickets", "needs"])  # P: quinn, who stays on the list
     b = loses.open(["tickets", "needs"], grant=q.grant)  # G: the owner, who is taken off it
@@ -479,7 +483,11 @@ def wait_looks(s, monkeypatch):
 
 def test_wait_parks_on_the_bus_without_holding_the_worker_and_wakes_on_the_decision(w, monkeypatch):
     uid, key = w.ticket()
-    ok(w.client().req("ask", {"ref": key, "text": "which?"}, grant=w.grant, session=SESSION, idem=True))
+    ok(
+        w.client().req(
+            "ask", {"ref": key, "text": "which?", "text_question": True}, grant=w.grant, session=SESSION, idem=True
+        )
+    )
     looks, observes = wait_looks(w, monkeypatch)
     c = w.conn()
     rid = c.send("wait", {"ref": key, "timeout": 60}, grant=w.grant, session=SESSION)

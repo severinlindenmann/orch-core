@@ -20,6 +20,7 @@ from orch.model.tasks import verify_cmd_problem
 from orch.ops import views
 from orch.ops.base import Context, Result
 from orch.ops.errors import OrchError
+from orch.ops.question_input import build_question
 from orch.ops.runtime import Call, Projection, short
 from orch.ops.views import fence
 from orch.schema import SECTIONS_BY_TYPE
@@ -109,34 +110,16 @@ def _next_id(prefix: str, existing: list[str]) -> str:
 
 
 def ask(c: Call, p: Projection, args: dict[str, Any]) -> Out:
-    text = c.text(args["text"], what="question")
-    opts = list(args.get("options") or [])
-    if len(set(opts)) != len(opts):
-        raise OrchError("invalid.input", "an option key is given twice")
-    rec = args.get("rec")
-    if rec is not None and rec not in opts:
-        raise OrchError("invalid.input", "--rec must be one of --options")
-    to = args.get("to") or "ticket_owner"
-    if to not in TO_ROLES and not _PERSON.fullmatch(to):
-        raise OrchError("invalid.input", "--to is a person id or one of " + ", ".join(TO_ROLES))
     qid_n = _next_id("Q", [q["id"] for q in p.last_view.fields["questions"]])
-    options = [{"key": k, "label": k} for k in opts]
-    q: dict[str, Any] = {"id": qid_n, "to": to, "text": text, "blocking": not args.get("non_blocking")}
-    q["kind"] = "choice" if options else "text"  # no options: an open question (kind text)
-    if args.get("why"):
-        q["why"] = c.text(args["why"], what="why")
-    if options:
-        q["options"] = options
-    if rec is not None:
-        q["recommended"] = rec
-    try:
-        canon.validate_question(q)
-    except canon.QuestionError as e:
-        raise OrchError("invalid.input", str(e)) from None
+    q, warnings = build_question(c, args, qid_n)
+    if q["to"] not in TO_ROLES and not _PERSON.fullmatch(q["to"]):
+        raise OrchError("invalid.input", "--to is a person id or one of " + ", ".join(TO_ROLES))
     wid = c.store.state.workspace.workspace_id
     qid = canon.question_id(wid, p.uid, qid_n)
     p.add({"type": "question.asked", "question": q, "qid": qid, "hash": canon.question_hash(qid, p.uid, q)})
-    return Out({"question": qid_n, "blocking": q["blocking"]}, ["orch wait" if q["blocking"] else "orch task next"])
+    return Out(
+        {"question": qid_n, "blocking": q["blocking"]}, ["orch wait" if q["blocking"] else "orch task next"], warnings
+    )
 
 
 def _widgets_addon_on(c: Call) -> bool:

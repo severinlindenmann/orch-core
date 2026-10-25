@@ -13,6 +13,7 @@ MAX_HELP_LINES = 10
 MAX_HELP_BYTES = 800
 MAX_OVERVIEW_LINES = 8
 MAX_OP_HELP_LINES = 14
+OP_HELP_LINES = {"ask": 18}  # ask has the most flags: option, fact, details, text-question, question-file (#1123)
 
 
 def test_describe_one_command_in_every_spelling(cli):
@@ -115,7 +116,7 @@ def test_help_and_overview_size_budget(cli):
         assert len(cli("help", name).out.splitlines()) <= MAX_HELP_LINES
         assert len(cli("help", name).out.encode()) <= MAX_HELP_BYTES
     for op in ops.all():
-        assert len(cli(*op.words, "--help").out.splitlines()) <= MAX_OP_HELP_LINES, op.name
+        assert len(cli(*op.words, "--help").out.splitlines()) <= OP_HELP_LINES.get(op.name, MAX_OP_HELP_LINES), op.name
 
 
 def test_output_is_plain_ascii_free_of_colour_codes(cli):

@@ -31,7 +31,7 @@ def full(human, served, stub, keystore):
     """A ticket with a ready requirements gate and one open question, then a connected full-mode workspace."""
     uid, key = human.ticket("Ship the thing")
     ready(human, key)
-    human.agent("ask", {"ref": key, "text": "which one?"})
+    human.agent("ask", {"ref": key, "text": "which one?", "text_question": True})
     human.run("hub.join", join_args(mode="full"))
     ok(served.client().req("hub.connect", connect_args(addr=ADDR), idem=True))
     assert hubops.signing_mode(served.service) == "full"

@@ -85,7 +85,7 @@ def test_a_scripted_agent_session(ws, orch, tmp_path):
     assert orch("artifact", "add", str(log), "--ac", "AC1").returncode == 0
     r = orch("submit")
     assert r.returncode == 0 and "ticket.submitted testing" in r.stdout, r.stderr
-    r = orch("ask", "Anything else?", "--options", "no,yes", "--rec", "no")
+    r = orch("ask", "Anything else?", "--option", "no | no", "--option", "yes | yes", "--rec", "no")
     assert r.returncode == 0 and "question.asked Q1" in r.stdout
     t = time.monotonic()
     for gate in ("requirements", "plan"):  # the two approvals came while the agent worked: wait hands them over

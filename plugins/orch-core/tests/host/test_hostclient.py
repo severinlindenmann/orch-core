@@ -76,7 +76,7 @@ SCRIPT = [
     ("new", "Second ticket", "--priority", "high"),
     ("claim", "1"),
     ("log", "a note"),
-    ("ask", "Which source?", "--options", "csv,api", "--rec", "csv"),
+    ("ask", "Which source?", "--option", "csv | csv", "--option", "api | api", "--rec", "csv"),
     ("show", "1"),
     ("show", "1", "--json"),
     ("list",),

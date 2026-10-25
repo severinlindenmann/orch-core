@@ -648,8 +648,10 @@ def seed(ws: Workspace) -> dict[str, str]:
         "Should the dark theme also apply to the printed invoice?",
         "--ref",
         k,
-        "--options",
-        "yes,no",
+        "--option",
+        "yes | Yes",
+        "--option",
+        "no | No",
         "--rec",
         "no",
         "--why",
@@ -672,7 +674,8 @@ def seed(ws: Workspace) -> dict[str, str]:
     # open, a question answered by the person
     k = keys["answered"] = key_of(ws.agent("new", "Cache the board query", "--type", "chore", "--priority", "low"))
     ws.unattended(
-        "ask", "Which cache backend should the board use?", "--ref", k, "--options", "memory,redis", "--rec", "memory"
+        "ask", "Which cache backend should the board use?", "--ref", k,
+        "--option", "memory | Memory", "--option", "redis | Redis", "--rec", "memory",
     )
     ws.human("answer", "Q1", "--option", "memory", "--ref", k)
 

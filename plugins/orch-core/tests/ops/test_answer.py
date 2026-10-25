@@ -7,7 +7,7 @@ from tests.ops.humans import make_ticket
 
 
 def ask(agent, text="Which export?", *extra):
-    r = agent("ask", text, "--options", "csv,api", "--rec", "csv", *extra)
+    r = agent("ask", text, "--option", "csv | csv", "--option", "api | api", "--rec", "csv", *extra)
     assert r.code == 0, r.err
     return r
 
@@ -32,7 +32,7 @@ def test_an_option_answer_is_signed_and_reaches_the_waiting_agent(hws, agent, me
 
 def test_text_alone_or_with_an_option(hws, agent, me):
     key = make_ticket(agent)
-    assert agent("ask", "Which export?").code == 0  # no options: a text question takes a text alone (#1123)
+    assert agent("ask", "Which export?", "--text-question").code == 0  # a text question takes a text alone (#1123)
     ask(agent, "And the schema?")
     assert me("answer", "Q1", "-m", "use the API, it is complete", "--ref", key).code == 0
     assert me("answer", "Q2", "--option", "csv", "-m", "as discussed", "--ref", key).code == 0
@@ -79,8 +79,10 @@ def test_answering_a_question_with_approve_never_approves_a_gate(hws, agent, me)
     r = agent(
         "ask",
         "Please review the requirements gate (orch approve or orch request-changes)",
-        "--options",
-        "approve,changes",
+        "--option",
+        "approve | approve",
+        "--option",
+        "changes | changes",
     )
     assert r.code == 0, r.err
     r = me("answer", "Q1", "--option", "approve", "--ref", key)

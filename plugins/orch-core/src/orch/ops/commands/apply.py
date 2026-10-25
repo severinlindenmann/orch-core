@@ -16,7 +16,10 @@ from orch.store import StoreError
 
 MAX_ITEMS = 100
 # keys a batch item may carry where the operation has more than the batch can do (--run, --artifact, --ac)
-ITEM_KEYS = {"task.done": {"task", "message"}}
+ITEM_KEYS = {
+    "task.done": {"task", "message"},
+    "ask": {"text", "option", "fact", "rec", "allow_other", "details", "text_question", "why", "to", "non_blocking"},
+}
 
 
 def _items(c: Call, args: dict[str, Any]) -> tuple[str | None, list[dict[str, Any]]]:

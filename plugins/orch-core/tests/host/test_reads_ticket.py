@@ -101,7 +101,7 @@ def full(w, **verdict):
         a("section.set", {"ref": key, "section": sid, "message": f"the {sid}"})
     a("ac.add", {"ref": key, "text": "it works"})
     a("task.add", {"ref": key, "text": "do it", "verify": "make test", "proves": ["AC1"]})
-    a("ask", {"ref": key, "text": "which?", "options": ["a", "b"], "why": "because", "rec": "a"})
+    a("ask", {"ref": key, "text": "which?", "option": ["a | a", "b | b"], "why": "because", "rec": "a"})
     h.run("approve", {"ref": key, "gate": "requirements"})
     h.run("approve", {"ref": key, "gate": "plan"})
     h.run("answer", {"ref": key, "question": "Q1", "option": "a"})
@@ -735,8 +735,8 @@ def test_question_addressees_and_gate_eligible_are_limited_to_persons_who_can_se
     h = Human(w)
     uid, key = w.ticket("who sees")
     h.agent("claim", {"ref": key})
-    h.agent("ask", {"ref": key, "text": "for quinn?", "to": w.quinn.ref})
-    h.agent("ask", {"ref": key, "text": "for the ticket owner?", "to": "ticket_owner"})
+    h.agent("ask", {"ref": key, "text": "for quinn?", "text_question": True, "to": w.quinn.ref})
+    h.agent("ask", {"ref": key, "text": "for the ticket owner?", "text_question": True, "to": "ticket_owner"})
     w.person_event("people.changed", uid, role="reviewers", add=[w.quinn.ref], remove=[])
     r = get(h.c, key)
     assert [q["to"] for q in r["questions"]] == [[w.quinn.ref], [w.lab.owner]]
@@ -844,7 +844,7 @@ def test_doc_head_and_members_v_are_read_under_one_store_lock(w, monkeypatch):
 def test_an_open_question_has_no_answer_id_and_a_stale_answer_none(w):
     h = Human(w)
     uid, key = w.ticket("q")
-    h.agent("ask", {"ref": key, "text": "which?", "options": ["a", "b"]})
+    h.agent("ask", {"ref": key, "text": "which?", "option": ["a | a", "b | b"]})
     (q,) = get(h.c, key)["questions"]
     assert q["state"] == "open" and "answer" not in q
 

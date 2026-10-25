@@ -6,7 +6,7 @@
     "steps": [
       {
         "op": "ask",
-        "call": "orch ask 'question' --options a,b --rec a"
+        "call": "orch ask 'question' --option 'a | Title | text' --option 'b | Title | text' --rec a"
       },
       {
         "op": "wait",

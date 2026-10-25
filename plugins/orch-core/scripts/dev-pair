@@ -1672,8 +1672,10 @@ def ask(args: argparse.Namespace) -> int:
             asked_text(nonce),
             "--ref",
             key,
-            "--options",
-            f"{answer_key(nonce)},e2e_no_{nonce}",  # a choice question has 2..6 options (#1123)
+            "--option",
+            f"{answer_key(nonce)} | Yes",  # a choice question has 2..6 titled options (#1123)
+            "--option",
+            f"e2e_no_{nonce} | No",
             "--rec",
             answer_key(nonce),
         )

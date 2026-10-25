@@ -169,6 +169,7 @@ def test_main_dispatches_recheck_and_exits_nonzero_on_a_failed_check(monkeypatch
 def test_main_wants_exactly_one_of_person_and_recheck(monkeypatch, capsys) -> None:
     monkeypatch.setattr(osapply.sys, "platform", "linux")
     monkeypatch.setattr(osapply.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(osapply, "_running_from_trusted_copy", lambda: True)
     assert osapply.main([]) == 2
     assert osapply.main(["--person", "sev", "--recheck", "sev"]) == 2
     assert "exactly one" in capsys.readouterr().err

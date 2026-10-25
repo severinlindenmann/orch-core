@@ -457,8 +457,27 @@ def test_a_symlinked_ancestor_is_refused_with_a_clear_message() -> None:
 def test_main_requires_release_with_person(monkeypatch, capsys) -> None:
     monkeypatch.setattr(osapply.sys, "platform", "linux")
     monkeypatch.setattr(osapply.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(osapply, "_running_from_trusted_copy", lambda: True)
     assert osapply.main(["--person", "sev"]) == 2
     assert "--release is required" in capsys.readouterr().err
+
+
+def test_an_untrusted_copy_answers_no_argument_at_all(monkeypatch, capsys) -> None:
+    """The trust refusal comes before argument parsing: no missing-argument message, no usage, no --help."""
+    monkeypatch.setattr(osapply.sys, "platform", "linux")
+    monkeypatch.setattr(osapply.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(osapply, "_running_from_trusted_copy", lambda: False)
+    for argv in (["--person", "sev"], [], ["--help"], ["--bogus"], ["--recheck", "sev"]):
+        assert osapply.main(argv) == 2
+        err = capsys.readouterr().err
+        assert "root-owned copy" in err and "usage" not in err and "required" not in err, argv
+
+
+def test_the_refused_ancestor_is_named_first_with_its_owner_and_mode() -> None:
+    f = _with_release()
+    f.add_path("/opt", uid=1000 + 5, kind="dir", mode=0o777)
+    res, _, _ = _go(facts=f)
+    assert res.problems[0].startswith("/opt (owner 1005, mode 0777) must be owned by root or by you")
 
 
 def test_a_missing_release_is_refused() -> None:

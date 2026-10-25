@@ -39,7 +39,9 @@ def root_machine():
         if not os.path.exists(binary):
             _unmet(f"{binary} is missing")
     person = pwd.getpwuid(os.getuid()).pw_name
-    release = f"/opt/orch-ci-release-{os.getpid()}"
+    # Under /var/lib, a root-only base the image does not touch: /opt on the GitHub runner image is shared with the
+    # tool caches and may not be a plain root 0755 directory, which the release check (rightly) refuses.
+    release = f"/var/lib/orch-ci-release-{os.getpid()}"
     # outside /tmp: the units use PrivateTmp. A stand-in program that just stays up. Root-owned here (a person-owned
     # release needs the person's home to be traversable by the agent, which the person's ACL step does: L5).
     # every directory on its own, explicitly root-owned 0755 (install -d gives parents the umask's mode)
@@ -93,6 +95,14 @@ def tmp_stub() -> str:
     return handle.name
 
 
+def _ancestors(path: str) -> str:
+    """For a failure message: owner and mode of every directory on the way to ``path``."""
+    chain = [path]
+    while chain[-1] != "/":
+        chain.append(os.path.dirname(chain[-1]))
+    return "\n" + _sudo("stat", "-c", "%U:%G %a %n", *chain, check=False).stdout
+
+
 def _apply_as_root(person: str, release: str) -> subprocess.CompletedProcess:
     """The documented command: the fixed launcher under the system interpreter, isolated and without site."""
     from orch.setup.oslauncher import LAUNCHER_PATH
@@ -110,7 +120,7 @@ def test_apply_creates_users_detect_says_isolated_and_rerun_is_a_noop(root_machi
     assert refused.returncode == 2 and "root-owned copy" in refused.stderr, refused.stderr
     first = _apply_as_root(person, release)
     print(first.stdout, first.stderr)
-    assert first.returncode == 0, first.stdout + first.stderr
+    assert first.returncode == 0, first.stdout + first.stderr + _ancestors(release)
     for n in range(1, 9):
         assert pwd.getpwnam(f"orch-addon-{n}").pw_shell == "/usr/sbin/nologin"
     agent = pwd.getpwnam(f"orch-agent-{person}")
@@ -172,7 +182,8 @@ def test_the_runner_unit_rechecks_sudo_as_root_at_every_start(root_machine, tmp_
     from orch.setup.osfacts import RealOsFacts
 
     person, release = root_machine
-    assert _apply_as_root(person, release).returncode == 0
+    applied = _apply_as_root(person, release)
+    assert applied.returncode == 0, applied.stdout + applied.stderr + _ancestors(release)
     unit = f"orch-runner@{person}.service"
     state = tmp_path / "state"
     state.mkdir(mode=0o700)

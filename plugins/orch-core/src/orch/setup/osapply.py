@@ -336,8 +336,8 @@ def release_problem(facts: OsFacts, release: str, person_uid: int | None) -> str
             return f"The release directory {release} must exist and be a plain directory."
         if info.uid not in owners or info.mode & 0o022:
             return (
-                f"{node} must be owned by root or by you and not be writable by others "
-                f"(it is on the path of the release directory {release})."
+                f"{node} (owner {info.uid}, mode {info.mode & 0o7777:04o}) must be owned by root or by you and not be "
+                f"writable by group or other; it is part of the path of the release directory {release}."
             )
         parent = os.path.dirname(node)
         if parent == node:
@@ -742,6 +742,20 @@ def _running_from_trusted_copy() -> bool:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # The trust checks come FIRST: a copy that is not the root-owned one never reads, parses or answers arguments.
+    if sys.platform != "linux":
+        print("Agents run as their own user only on Linux for now; nothing was changed.", file=sys.stderr)
+        return 2
+    if os.geteuid() != 0:
+        print("orch-os-setup must run as root (use sudo). Nothing was changed.", file=sys.stderr)
+        return 2
+    if not _running_from_trusted_copy():
+        print(
+            f"orch-os-setup runs only from the root-owned copy ({TRUSTED_ROOT}); the installer puts it there. "
+            "Nothing was changed.",
+            file=sys.stderr,
+        )
+        return 2
     ap = argparse.ArgumentParser(
         prog="orch-os-setup", description="Create the OS users that agents and add-ons run as."
     )
@@ -763,19 +777,6 @@ def main(argv: list[str] | None = None) -> int:
     if args.person and not args.release:
         print(
             "--release is required with --person (the setup page prints the whole line). Nothing was changed.",
-            file=sys.stderr,
-        )
-        return 2
-    if sys.platform != "linux":
-        print("Agents run as their own user only on Linux for now; nothing was changed.", file=sys.stderr)
-        return 2
-    if os.geteuid() != 0:
-        print("orch-os-setup must run as root (use sudo). Nothing was changed.", file=sys.stderr)
-        return 2
-    if not _running_from_trusted_copy():
-        print(
-            f"orch-os-setup runs only from the root-owned copy ({TRUSTED_ROOT}); the installer puts it there. "
-            "Nothing was changed.",
             file=sys.stderr,
         )
         return 2

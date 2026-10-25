@@ -331,6 +331,12 @@ def _host_endpoint(uid: int, run_dir: Path, *, pins: Any = None) -> tuple[int, P
     return host, default_run_directory(host) / "runner" / "host.sock"
 
 
+def term_peer_uid(uid: int, host_uid: int) -> int | None:
+    """Whose connections the term socket serves: ``None`` (the runner's own UID) in tier A,
+    the person's UID in tier B."""
+    return host_uid if host_uid != uid else None
+
+
 def _run(args: argparse.Namespace, env: Mapping[str, str]) -> int:
     from orch.host import enable as svc
 
@@ -351,7 +357,7 @@ def _run(args: argparse.Namespace, env: Mapping[str, str]) -> int:
     gen = new_gen()
     # tier B (host_uid is the person): only the person's dashboard may connect, by ACL and by peer UID (spec 13.5)
     term = TermListener(Path(run_dir) / "term" / str(uid) / "term.sock", uid, gen=gen, sup=sup,
-                        peer_uid=host_uid if host_uid != uid else None)  # fmt: skip
+                        peer_uid=term_peer_uid(uid, host_uid))  # fmt: skip
     try:
         term.open()
     except OSError as exc:

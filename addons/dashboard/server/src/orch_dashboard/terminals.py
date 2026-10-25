@@ -59,6 +59,13 @@ def execution_line(runs_as: Any) -> str | None:
     return TIER_B_LINE.format(user=runs_as) if isinstance(runs_as, str) and AGENT_USER.fullmatch(runs_as) else None
 
 
+def preview_view(data: Any) -> dict[str, Any]:
+    """The preview for the page: the adapter's view plus the tier B card line (and no `as_person` when it is set)."""
+    out = project.preview(data)
+    line = execution_line(data.get("runs_as")) if isinstance(data, dict) else None
+    return {**out, "execution_line": line, "as_person": out["as_person"] and line is None}
+
+
 RunId = Annotated[str, StringConstraints(pattern=r"^r_[0-7][0-9A-HJKMNP-TV-Z]{25}$")]
 Idem = Annotated[str, StringConstraints(pattern=r"^a_[0-7][0-9A-HJKMNP-TV-Z]{25}$")]
 Model = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9._:\[\]/-]{0,63}$")]
@@ -245,10 +252,7 @@ def register(app: FastAPI, gateway: Gateway, tickets: Tickets) -> None:
 
     @app.post("/api/w/{ws}/terminals/preview")
     def preview(body: PreviewBody, ws: str = Depends(reads.workspace)):
-        data = gateway.call(ws, "term.preview", body.host_args())
-        out = project.preview(data)
-        line = execution_line(data.get("runs_as")) if isinstance(data, dict) else None
-        return {**out, "execution_line": line, "as_person": out["as_person"] and line is None}
+        return preview_view(gateway.call(ws, "term.preview", body.host_args()))
 
     def terminals_listener(request: Request) -> str:
         """The listener of this request, if terminals are on there and the session belongs to it. A shell on the server

@@ -189,7 +189,8 @@ def _plan(call: Call, args: dict[str, Any], hub: RunnerHub | None) -> dict[str, 
     out = plan(call, args, hub, agent=False)
     user = tier_b_user(hub)
     if user is not None:  # spec 13.5: no "shell as me"; the terminal is the agent user's, and the card says so
-        # TODO(after G6 B2): move this into the base digest in agents.plan (it is outside agents.py for now). Until then
+        # TODO(#1198, after G6 B2): move this into the base digest in agents.plan (it is outside agents.py for now).
+        # Until then
         # what is shown (not as you, this user) is bound into the spec here; `term.open` recomputes it the same way.
         base = out["spec"]
         out["spec"] = hashlib.sha256(

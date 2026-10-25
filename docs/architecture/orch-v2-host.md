@@ -13592,7 +13592,7 @@ has recorded the sudo/SSH verdict; a re-run whose verdict fails stops the runner
   by the agent and the agent can edit it: no person-side policy may live in that file; it stays in state the host
   enforces.
 - **The terminal socket** (L9) stays at `/run/orch/agents/orch-agent-<user>/term/<agent uid>/term.sock`, in the agent's
-  own run directory. The runner creates `term/` and `term/<uid>/` (owner the agent, no permission bits for group or other)
+  own run directory. The runner creates `term/` and `term/<uid>/` (owner the agent; the group and other bits show only the ACL mask, `--x` on the directories and `rw-` on the socket, and nothing for other)
   and grants the person `--x` on both and `rw-` on the socket by a POSIX access ACL (`u:<person>:`, mask the same, group and
   other nothing), written and read back at every start; if the ACL cannot be set, no terminal socket is served (fail
   closed). The runner admits a connection only if the kernel's peer UID is the person's (`host_uid` of the pin; root or

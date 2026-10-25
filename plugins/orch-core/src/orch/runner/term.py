@@ -210,22 +210,20 @@ def _int(value: Any) -> bool:
 
 
 _ACL_ACCESS = "system.posix_acl_access"
-_ACL_UNDEF = 0xFFFFFFFF
 
 
 def acl_blob(owner: int, person: int, grant: int) -> bytes:
-    """The access ACL (Linux xattr format, version 2) ``owner`` rwx for dirs / rw for sockets, ``person`` ``grant``
-    (rwx bits), group and other nothing, mask = ``grant``. ``owner`` is the owner's own permission bits."""
-    import struct
+    """The access ACL for the tier B term directories and socket: the owner's own permission bits ``owner``, the person
+    ``grant`` (4 r, 2 w, 1 x), group and other nothing, mask = ``grant``. One encoder, shared with ``orch-os-setup``."""
+    from orch.setup.osapply import GROUP_OBJ, MASK, OTHER, USER, USER_OBJ, acl
 
-    entries = [(0x01, owner, _ACL_UNDEF), (0x02, grant, person), (0x04, 0, _ACL_UNDEF),
-               (0x10, grant, _ACL_UNDEF), (0x20, 0, _ACL_UNDEF)]  # fmt: skip
-    return struct.pack("<I", 2) + b"".join(struct.pack("<HHI", tag, perm, ident) for tag, perm, ident in entries)
+    return acl(((USER_OBJ, owner), (USER, grant, person), (GROUP_OBJ, 0), (MASK, grant), (OTHER, 0)))
 
 
 def _grant_acl(path: Path, person: int, grant: int) -> None:
-    """Give ``person`` ``grant`` (4 r, 2 w, 1 x) on ``path`` and nothing to group or other, by POSIX ACL, then read it
-    back: any failure (no ACL support, a different answer) raises, and the caller serves nothing (fail closed)."""
+    """Give ``person`` the permission bits ``grant`` (4 r, 2 w, 1 x) on ``path``, and group and other nothing, by POSIX
+    ACL (the owner keeps rwx on a directory, rw on a socket), then read it back:
+    any failure (no ACL support, a different answer) raises, and the caller serves nothing (fail closed)."""
     is_dir = stat.S_ISDIR(os.lstat(path).st_mode)
     blob = acl_blob(0o7 if is_dir else 0o6, person, grant)
     try:
@@ -358,8 +356,8 @@ class TermListener:
         """Tier B (spec 13.3, 13.5): ``<agent run>/term`` and ``term/<uid>`` belong to the agent (never root's, never
         anyone's else), carry no permission for group or other, and grant the person ``--x`` by ACL, read back. The
         agent run directory above them is made by root with the person's ACL and is not ours to repair."""
-        if self.peer_uid in (0, self.uid):
-            raise OSError(errno.EPERM, "tier B: the peer must be a person's UID, not root and not the agent")
+        if self.peer_uid == 0:  # (the agent's own UID is tier A by construction: ``tier_b`` is False then)
+            raise OSError(errno.EPERM, "tier B: the peer must be a person's UID, not root")
         for path in (directory.parent, directory):
             with contextlib.suppress(FileExistsError):
                 os.mkdir(path, 0o700)

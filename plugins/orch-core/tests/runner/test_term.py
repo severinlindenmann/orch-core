@@ -345,3 +345,10 @@ def test_tier_b_spec_binds_what_is_shown_and_tier_a_is_byte_identical(monkeypatc
     assert b["spec"] != a["spec"] and len(b["spec"]) == 64
     assert b == terms._plan(None, {}, hub_of(share=share(), uid=AGENT_UID))  # stable, so term.open compares equal
     assert "Never type secrets into it" in b["notice"]
+
+
+def test_runner_term_peer_is_the_person_in_tier_b_and_none_in_tier_a():
+    from orch.runner.cli import term_peer_uid
+
+    assert term_peer_uid(4242, 1000) == 1000  # the host is the person: only the person may connect
+    assert term_peer_uid(1000, 1000) is None  # tier A: the host is this UID

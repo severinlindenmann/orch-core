@@ -579,7 +579,10 @@ def test_the_release_venv_is_built_as_the_person_from_the_lock_with_hashes_and_w
 
     final = sharemirror.install_release_copy(shared.share, source=src, lock=lock, run=fake_uv)
     (venv, install) = [c[0] for c in calls]
-    assert venv[:4] == ["uv", "venv", "--no-python-downloads", "--python"] and venv[4] == str(interp / "python3")
+    assert venv[:5] == ["uv", "--no-config", "venv", "--no-python-downloads", "--python"]
+    assert venv[5] == str(interp / "python3")
+    assert install[:4] == ["uv", "--no-config", "pip", "install"]
+    assert all(env["UV_LINK_MODE"] == "copy" for _argv, env in calls)  # the person's cache is never hardlinked in
     for flag in ("--require-hashes", "--only-binary", ":all:", "-r"):
         assert flag in install
     assert install[install.index("-r") + 1].endswith("/requirements.lock")

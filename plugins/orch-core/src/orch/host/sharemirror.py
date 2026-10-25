@@ -735,11 +735,15 @@ def build_venv(
     of the release's identity (``install_release(lock=...)``). The venv's scripts keep the staging path in their
     shebangs; the launchers run ``venv/bin/python -I`` and never those."""
     venv, lock = staging / "venv", staging / "requirements.lock"
-    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": os.environ.get("HOME", "/"),
-           "UV_PYTHON_INSTALL_DIR": share.python}  # fmt: skip
+    env = {
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "HOME": os.environ.get("HOME", "/"),
+        "UV_PYTHON_INSTALL_DIR": share.python,
+        "UV_LINK_MODE": "copy",
+    }  # fmt: skip  (never hardlink the cache)
     steps = (
-        [uv, "venv", "--no-python-downloads", "--python", python, os.fspath(venv)],
-        [uv, "pip", "install", "--python", os.fspath(venv / "bin" / "python"), "--require-hashes",
+        [uv, "--no-config", "venv", "--no-python-downloads", "--python", python, os.fspath(venv)],
+        [uv, "--no-config", "pip", "install", "--python", os.fspath(venv / "bin" / "python"), "--require-hashes",
          "--only-binary", ":all:", "--no-deps", "-r", os.fspath(lock)],
     )  # fmt: skip
     for argv in steps:

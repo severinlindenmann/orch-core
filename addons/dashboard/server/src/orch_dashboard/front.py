@@ -11,6 +11,7 @@ A Unix socket only the front (Caddy, its own system user) may use, in root's dir
    passes through here, so a local process cannot claim an address, a kind of session or a listener by sending it."""
 
 import socket
+import sys
 
 from .auth import client_address
 from .errors import response
@@ -18,27 +19,73 @@ from .hostlink import peer_uid
 from .policy import REMOTE
 
 CLIENT_HEADER = b"x-orch-client"
+PROC_TCP = "/proc/net/tcp"  # IPv4 sockets with their owner UID; the loopback listener is AF_INET only
 
 
 class PeerChecked(socket.socket):
     """A listening socket whose `accept` drops every connection from another UID than ``front_uid``. Fail closed: a
     peer whose UID cannot be read is dropped too. (asyncio's event loop must be the selector one, which calls
-    `accept` here; uvloop would accept in C and skip the check, so the front server runs `loop="asyncio"`.)"""
+    `accept` here; uvloop would accept in C and skip the check, so every server on such a socket runs `loop="asyncio"`.)
+    """
 
     def __init__(self, front_uid: int, family=socket.AF_UNIX):
         super().__init__(family, socket.SOCK_STREAM)
         self.front_uid = front_uid
 
+    def peer_allowed(self, conn) -> bool:
+        return peer_uid(conn) == self.front_uid
+
     def accept(self):
         conn, addr = super().accept()
         try:
-            allowed = peer_uid(conn) == self.front_uid
-        except OSError:
+            allowed = self.peer_allowed(conn)
+        except (OSError, ValueError):
             allowed = False
         if not allowed:
             conn.close()
-            raise ConnectionAbortedError("peer is not the front")  # asyncio treats this as a false alarm and goes on
+            raise ConnectionAbortedError("peer is not allowed")  # asyncio treats this as a false alarm and goes on
         return conn, addr
+
+
+def tcp_owner_uid(conn, proc_tcp=PROC_TCP) -> int:
+    """The UID that owns the other end of an accepted loopback TCP connection (Linux, L8 of #1198 H1).
+
+    `SO_PEERCRED` exists only for Unix sockets. For TCP the kernel lists every socket with its owner UID in
+    `/proc/net/tcp`: the row whose local address is our peer address and whose remote address is our local address is
+    the client's socket, and its `uid` column is the user that created it. (Both ends are on 127.0.0.1, so the pair of
+    ports is unique among live connections.) Raises OSError if the row is not found: the caller fails closed. Limit: the
+    owner is the socket's creator, so a client that passes the descriptor to another UID's process is judged as the
+    creator; only the person's own processes can hand one over, and they could connect themselves."""
+    (lhost, lport), (rhost, rport) = conn.getsockname()[:2], conn.getpeername()[:2]
+    want_local, want_remote = _hex_addr(rhost, rport), _hex_addr(lhost, lport)
+    with open(proc_tcp) as table:
+        next(table, None)  # header
+        for line in table:
+            fields = line.split()
+            if len(fields) > 7 and fields[1] == want_local and fields[2] == want_remote:
+                return int(fields[7])
+    raise OSError("no socket entry for the peer")
+
+
+def _hex_addr(host, port) -> str:
+    """`/proc/net/tcp` writes an IPv4 address as the host-order hex of its four bytes, then the port in hex."""
+    packed = socket.inet_aton(host)
+    return f"{int.from_bytes(packed, sys.byteorder):08X}:{port:04X}"
+
+
+class LoopbackPeerChecked(PeerChecked):
+    """The dashboard's loopback TCP listener: on Linux every accepted connection must come from the person's UID, so
+    an agent user (`orch-agent-*`) or any other local user cannot reach even the login page. An SSH tunnel's forwarding
+    runs as the person and passes. Elsewhere (macOS has no way to ask the kernel who owns a TCP peer) nothing is
+    dropped and the bearer stays the only gate. ``platform`` and ``proc_tcp`` are for tests."""
+
+    def __init__(self, person_uid: int, platform=None, proc_tcp=PROC_TCP):
+        super().__init__(person_uid, socket.AF_INET)
+        self.enforced = (platform or sys.platform).startswith("linux")
+        self.proc_tcp = proc_tcp
+
+    def peer_allowed(self, conn) -> bool:
+        return not self.enforced or tcp_owner_uid(conn, self.proc_tcp) == self.front_uid
 
 
 class Front:

@@ -88,14 +88,31 @@ def valid_name(name: str) -> str | None:
     return None
 
 
+_TEMPLATE_VALUE = re.compile(r"[0-9A-Za-z.:/_-]+")
+
+
+def template_value(value: object) -> str:
+    """THE guard for everything that is written into a root-owned template (Caddyfile, unit, tmpfiles): only these
+    characters, so a value can never add a line, a brace, a quote or a space. Every placeholder goes through it."""
+    text = str(value)
+    if not _TEMPLATE_VALUE.fullmatch(text):
+        raise ValueError("a value for a root-written file has characters that are not allowed")
+    return text
+
+
 def valid_proxy(text: str) -> str | None:
     """The normalized network of a trusted proxy (``--trusted-proxy``), or ``None`` when it is not acceptable. A
-    network that holds everyone (a /0) would let any client choose its own address, so it is refused."""
+    network that is too wide would let clients choose their own address (IPv4 at least /8, IPv6 at least /32), and a
+    zone or scope id (``%``) is never accepted."""
+    if "%" in text:
+        return None
     try:
         net = ipaddress.ip_network(text.strip(), strict=False)
     except ValueError:
         return None
-    return None if net.prefixlen == 0 else str(net)
+    if net.prefixlen < (8 if net.version == 4 else 32):
+        return None
+    return str(net) if _TEMPLATE_VALUE.fullmatch(str(net)) else None
 
 
 @dataclass(frozen=True)
@@ -120,19 +137,31 @@ class FrontPlan:
         if not valid_person(self.person) or self.person_uid < _PERSON_MIN_UID:
             return f"'{self.person}' is not a normal user that runs orch"
         if len(self.proxies) > MAX_PROXIES or any(valid_proxy(p) != p for p in self.proxies):
-            return "each trusted proxy must be one network such as 203.0.113.0/24 (never 0.0.0.0/0), at most 16"
+            return "each trusted proxy must be one network such as 203.0.113.0/24 (IPv4 /8 or narrower), at most 16"
+        try:
+            self.caddyfile(), self.unit(), self.tmpfiles()
+        except ValueError as exc:
+            return str(exc)
         return None
 
     def caddyfile(self) -> str:
-        servers = ["\t\ttimeouts {", "\t\t\tread_header 10s", "\t\t}"]
+        v = template_value
+        servers = [
+            "\t\ttimeouts {",
+            "\t\t\tread_header 10s",
+            "\t\t\tread_body 10s",  # a slow body must not hold the few upstream connections
+            "\t\t\tidle 2m",
+            "\t\t}",
+            "\t\tprotocols h1 h2",  # no HTTP/3: no UDP 443
+        ]
         if self.proxies:
-            servers.append(f"\t\ttrusted_proxies static {' '.join(self.proxies)}")
+            servers.append(f"\t\ttrusted_proxies static {' '.join(v(p) for p in self.proxies)}")
             # right to left: the first address that is not a trusted proxy, never the leftmost one a client can write
             servers.append("\t\ttrusted_proxies_strict")
         return "\n".join(
             [
                 MARKER,
-                f"# orch-front person-uid={self.person_uid} name={self.name}",
+                f"# orch-front person-uid={v(self.person_uid)} name={v(self.name)}",
                 "{",
                 "\tadmin off",
                 "\tservers {",
@@ -140,12 +169,15 @@ class FrontPlan:
                 "\t}",
                 "}",
                 "",
-                f"{self.name} {{",
+                f"{v(self.name)} {{",
                 "\ttls {",
                 "\t\tprotocols tls1.2 tls1.3",
                 "\t}",
                 '\theader Strict-Transport-Security "max-age=31536000"',
-                f"\treverse_proxy unix/{self.socket} {{",
+                "\trequest_body {",
+                "\t\tmax_size 1MB",
+                "\t}",
+                f"\treverse_proxy unix/{v(self.socket)} {{",
                 # `header_up` with a value SETS the header: whatever the browser sent is replaced, never forwarded.
                 # {client_ip} is the TCP peer, or the address the trusted proxies report (needs Caddy 2.7+).
                 "\t\theader_up X-Orch-Client {client_ip}",
@@ -170,13 +202,22 @@ class FrontPlan:
                 "",
                 "[Service]",
                 "Type=notify",
-                f"User={FRONT_USER}",
-                f"Group={FRONT_GROUP}",
+                f"User={template_value(FRONT_USER)}",
+                f"Group={template_value(FRONT_GROUP)}",
                 "StateDirectory=orch-front",
                 "StateDirectoryMode=0700",
-                f"Environment=HOME={FRONT_HOME} XDG_DATA_HOME={FRONT_HOME}/data XDG_CONFIG_HOME={FRONT_HOME}/config",
-                f"ExecStartPre={CADDY_BIN} validate --config {CADDYFILE} --adapter caddyfile",
-                f"ExecStart={CADDY_BIN} run --config {CADDYFILE} --adapter caddyfile",
+                "Environment="
+                + " ".join(
+                    f"{k}={template_value(path)}"
+                    for k, path in (
+                        ("HOME", FRONT_HOME),
+                        ("XDG_DATA_HOME", FRONT_HOME + "/data"),
+                        ("XDG_CONFIG_HOME", FRONT_HOME + "/config"),
+                    )
+                ),
+                f"ExecStartPre={template_value(CADDY_BIN)} validate --config {template_value(CADDYFILE)} "
+                "--adapter caddyfile",
+                f"ExecStart={template_value(CADDY_BIN)} run --config {template_value(CADDYFILE)} --adapter caddyfile",
                 "Restart=on-failure",
                 "RestartSec=5s",
                 "TimeoutStopSec=10s",
@@ -195,6 +236,15 @@ class FrontPlan:
                 "RestrictNamespaces=yes",
                 "RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX",
                 "LockPersonality=yes",
+                "ProtectClock=yes",
+                "ProtectHostname=yes",
+                "ProtectKernelLogs=yes",
+                "ProtectProc=invisible",
+                "ProcSubset=pid",
+                "RestrictRealtime=yes",
+                "SystemCallFilter=@system-service",
+                "MemoryDenyWriteExecute=yes",
+                "RemoveIPC=yes",
                 "SystemCallArchitectures=native",
                 "UMask=0077",
                 "",
@@ -209,8 +259,9 @@ class FrontPlan:
             "\n".join(
                 [
                     MARKER,
-                    f"d {FRONT_RUN_ROOT} 0711 root root -",
-                    f"d {self.socket_dir} 0750 {self.person} {FRONT_GROUP} -",
+                    f"d {template_value(FRONT_RUN_ROOT)} 0711 root root -",
+                    f"d {template_value(self.socket_dir)} 0750 {template_value(self.person)} "
+                    f"{template_value(FRONT_GROUP)} -",
                 ]
             )
             + "\n"
@@ -247,6 +298,8 @@ def front_user_problem(facts: OsFacts, person_uid: int) -> str | None:
     a user that differs; the person fixes or removes it by hand."""
     u = facts.user(FRONT_USER)
     if u is None:
+        if facts.group(FRONT_GROUP) is not None:
+            return f"A group '{FRONT_GROUP}' exists without its user; fix or remove it and run this again."
         return None
     bad = _forbidden(facts, u.uid, person_uid)
     if bad:
@@ -260,8 +313,8 @@ def front_user_problem(facts: OsFacts, person_uid: int) -> str | None:
         why = f"its main group is not '{FRONT_GROUP}'"
     elif u.groups - {FRONT_GROUP} or u.gids - {u.gid}:
         why = "it is in other groups"
-    elif set(g.members) - {FRONT_USER}:
-        why = f"others are members of the group '{FRONT_GROUP}'"
+    elif set(g.members) - {FRONT_USER} or set(facts.users_with_gid(g.gid)) - {FRONT_USER}:
+        why = f"others are members of the group '{FRONT_GROUP}' (or have it as their main group)"
     else:
         return None
     return f"The existing user '{FRONT_USER}' cannot be used: {why}. Fix or remove it and run this again."
@@ -307,6 +360,14 @@ def apply_enable(facts: OsFacts, ex: Executor, plan: FrontPlan, *, is_root: bool
     bad = front_user_problem(facts, plan.person_uid) or _caddy_problem(facts)
     if bad:
         return res.fail(bad)
+    ver = ex.query([BIN["caddy"], "version"])
+    found = re.match(r"v?(\d+)\.(\d+)", ver.out.strip()) if ver.rc == 0 else None
+    if found is None or (int(found.group(1)), int(found.group(2))) < (2, 7):
+        return res.fail(
+            f"{CADDY_BIN} must be Caddy 2.7 or newer (it said: {ver.out.strip()[:60] or 'nothing'}); the client "
+            "address "
+            "placeholder needs it."
+        )
     st = _Apply(facts, ex, res)
     if ex.query([BIN["systemctl"], "is-active", "--quiet", "caddy.service"]).rc == 0:
         return res.fail(
@@ -458,6 +519,9 @@ def enroll(person: str, ctl: str, *, out=None) -> int:
     if not out.isatty():
         err.write("The enrollment link is a login. It is printed on a terminal only. Nothing was done.\n")
         return 2
+    if not sys.platform.startswith("linux") or not hasattr(socket, "SO_PEERCRED"):
+        err.write("This runs on Linux only. Nothing was done.\n")
+        return 2
     import pwd  # stdlib
 
     try:
@@ -468,49 +532,77 @@ def enroll(person: str, ctl: str, *, out=None) -> int:
     if user.pw_uid < _PERSON_MIN_UID or not valid_person(person) or not os.path.isabs(ctl) or "\0" in ctl:
         err.write(f"'{person}' is not a normal user that runs orch, or the socket path is not absolute.\n")
         return 2
+    folder, leaf = os.path.split(ctl)
     try:
-        st, parent = os.lstat(ctl), os.lstat(os.path.dirname(ctl))
+        # Connect through a directory descriptor opened without following links: the path cannot be swapped, and no
+        # symlinked ancestor of the leaf is followed after the checks.
+        dfd = os.open(folder, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
     except OSError:
         err.write("The dashboard is not running. Start it first (orch dashboard up).\n")
         return 1
-    if (
-        not stat.S_ISSOCK(st.st_mode)
-        or st.st_uid != user.pw_uid
-        or not stat.S_ISDIR(parent.st_mode)
-        or parent.st_uid != user.pw_uid
-        or parent.st_mode & 0o022
-    ):
-        err.write(f"{ctl} is not the dashboard's own control socket of '{person}'. Nothing was done.\n")
-        return 2
     try:
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-            sock.settimeout(3)
-            sock.connect(ctl)
-            if struct.unpack("3i", sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))[1] != user.pw_uid:
-                err.write("The socket is not served by that user's dashboard. Nothing was done.\n")
-                return 2
-            body = b'{"command":"enroll"}'
-            sock.sendall(struct.pack("!I", len(body)) + body)
-            head = _read(sock, 4)
-            size = struct.unpack("!I", head)[0]
-            if not 1 <= size <= 4096:
-                raise ValueError("bad frame")
-            reply = json.loads(_read(sock, size))
-    except (OSError, ValueError, struct.error):
-        err.write("The dashboard did not answer. Nothing was done.\n")
-        return 1
-    if not isinstance(reply, dict) or not isinstance(reply.get("code"), str) or not isinstance(reply.get("name"), str):
+        parent = os.fstat(dfd)
+        try:
+            st = os.lstat(leaf, dir_fd=dfd)
+        except OSError:
+            err.write("The dashboard is not running. Start it first (orch dashboard up).\n")
+            return 1
+        if (
+            "/" in leaf
+            or not stat.S_ISSOCK(st.st_mode)
+            or st.st_uid != user.pw_uid
+            or parent.st_uid != user.pw_uid
+            or parent.st_mode & 0o022
+        ):
+            err.write(f"{ctl} is not the dashboard's own control socket of '{person}'. Nothing was done.\n")
+            return 2
+        configured = _configured(user.pw_uid)
+        if configured is None:
+            err.write("Remote access is not set up by orch for this user. Nothing was done.\n")
+            return 2
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+                sock.settimeout(3)
+                sock.connect(f"/proc/self/fd/{dfd}/{leaf}")
+                if struct.unpack("3i", sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))[1] != user.pw_uid:
+                    err.write("The socket is not served by that user's dashboard. Nothing was done.\n")
+                    return 2
+                body = b'{"command":"enroll"}'
+                sock.sendall(struct.pack("!I", len(body)) + body)
+                size = struct.unpack("!I", _read(sock, 4))[0]
+                if not 1 <= size <= 4096:
+                    raise ValueError("bad frame")
+                reply = json.loads(_read(sock, size))
+            left = None
+            if isinstance(reply, dict) and "code" in reply:
+                left = max(0, int(reply["expires_at"]) - int(time.time()))
+        except (OSError, ValueError, TypeError, OverflowError, KeyError, struct.error):
+            err.write("The dashboard did not answer as expected. Nothing was done.\n")
+            return 1
+    finally:
+        os.close(dfd)
+    if left is None or not isinstance(reply.get("code"), str) or not isinstance(reply.get("name"), str):
         why = reply.get("error") if isinstance(reply, dict) else None
         err.write(f"No link: {why if isinstance(why, str) else 'the dashboard gave no code'}\n")
         return 1
-    if valid_name(reply["name"]) or not re.fullmatch(r"[0-9a-f]{12}-[A-Za-z0-9_-]{16,}", reply["code"]):
-        err.write("The dashboard's answer looks wrong. Nothing was printed.\n")
+    if reply["name"] != configured or not re.fullmatch(r"[0-9a-f]{12}-[A-Za-z0-9_-]{16,}", reply["code"]):
+        err.write("The dashboard's answer does not match what was set up. Nothing was printed.\n")
         return 1
-    left = max(0, int(reply.get("expires_at", 0)) - int(time.time()))
     out.write(f"One-time passkey link; works once, for {left // 60} min.\n")
     out.write(f"https://{reply['name']}/#enroll={reply['code']}\n")
     out.flush()
     return 0
+
+
+def _configured(uid: int) -> str | None:
+    """The name in the root-owned Caddyfile that orch made for this person, else None."""
+    try:
+        with open(CADDYFILE, encoding="utf-8") as handle:
+            text = handle.read(65536)
+    except OSError:
+        return None
+    mine = _PERSON_LINE.search(text)
+    return mine.group(2) if _ours(text) and mine is not None and int(mine.group(1)) == uid else None
 
 
 def _read(sock, n: int) -> bytes:

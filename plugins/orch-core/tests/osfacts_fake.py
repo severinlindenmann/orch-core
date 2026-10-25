@@ -47,6 +47,9 @@ class FakeOsFacts:
     def group(self, name):
         return self.groups.get(name)
 
+    def users_with_gid(self, gid):
+        return [u.name for u in self.users.values() if u.gid == gid]
+
     def stat(self, path):
         return self.paths.get(path)
 

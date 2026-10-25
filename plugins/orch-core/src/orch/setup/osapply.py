@@ -68,6 +68,7 @@ BIN = {
     "systemctl": "/usr/bin/systemctl",
     "install": "/usr/bin/install",
     "sshd": "/usr/sbin/sshd",
+    "caddy": "/usr/bin/caddy",  # only `caddy version`, after osfront checked the file is root's (R1-7)
 }
 _ALLOWED = frozenset(BIN.values())
 TMPFILES_CONF = "/etc/tmpfiles.d/orch.conf"

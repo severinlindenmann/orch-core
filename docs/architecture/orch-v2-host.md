@@ -3692,7 +3692,8 @@ login.
   properties, is refused, never changed. Then the person's side writes `remote.json` and restarts the dashboard
   (`orch-dashboard up`), and **root** (`sudo ... orch-os-setup --front-enroll --person <user> --ctl <ctl.sock>`, the
   trusted copy again) asks it for the first enrollment link over its control socket and prints it on the terminal;
-  the link is never in argv, a file or a log. The dashboard's `ctl.sock` answers `enroll` to a peer with uid 0 and to
+  the link is never in argv, a file or a log (if sudo is set to record terminal output with `log_output`, the link is recorded there: turn that off for
+  `orch-os-setup`). The dashboard's `ctl.sock` answers `enroll` to a peer with uid 0 and to
   nobody else (the person's own uid gets `enroll.root_only`), and root may do nothing else there (no launch code, no
   stop): otherwise a same-UID agent could mint a code, register its own passkey and keep remote access. Later codes
   come from "Add a device" in the dashboard (a local session, or a remote one with step-up). **Residual (tier A):** a

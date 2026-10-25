@@ -21,6 +21,7 @@ class Machine:
         self.facts, self.commands, self.files, self.removed = facts, [], {}, []
         self.active: set[str] = set()
         self.fail: set[str] = set()  # "systemctl:start" style
+        self.caddy_version = "v2.8.4 h1:abc"
 
     def _sub(self, argv) -> str:
         names = {v: k for k, v in BIN.items()}
@@ -48,6 +49,8 @@ class Machine:
         return RunResult(0)
 
     def query(self, argv):
+        if argv[0] == osfront.CADDY_BIN:
+            return RunResult(0, self.caddy_version)
         if argv[1] == "is-active":
             return RunResult(0 if argv[-1] in self.active else 1)
         return RunResult(1)
@@ -65,6 +68,14 @@ class Machine:
 
     def secure_dir(self, base, spec):  # not used by the front
         raise AssertionError("the front makes no agent-owned directories")
+
+
+class _FakeDry(DryRunExecutor):
+    def query(self, argv):
+        return RunResult(0, "v2.8.4 h1:abc") if argv[0] == osfront.CADDY_BIN else RunResult(1)
+
+    def read_file(self, path):
+        return None
 
 
 def world(*, caddy=True, person=True) -> FakeOsFacts:
@@ -88,14 +99,17 @@ def go(facts=None, ex=None, **kw):
     return apply_enable(facts, ex, plan(**kw), is_root=True), ex, facts
 
 
-# --- the files ----------------------------------------------------------------------------------------------------
+# --- the files ----
 def test_the_caddyfile_golden():
     assert plan().caddyfile() == (
         "# managed by orch (orch remote enable); a change here is overwritten, `orch remote disable` removes it\n"
         "# orch-front person-uid=1000 name=orch.example.com\n"
-        "{\n\tadmin off\n\tservers {\n\t\ttimeouts {\n\t\t\tread_header 10s\n\t\t}\n\t}\n}\n\n"
+        "{\n\tadmin off\n\tservers {\n\t\ttimeouts {\n\t\t\tread_header 10s\n"
+        "\t\t\tread_body 10s\n\t\t\tidle 2m\n\t\t}\n"
+        "\t\tprotocols h1 h2\n\t}\n}\n\n"
         "orch.example.com {\n\ttls {\n\t\tprotocols tls1.2 tls1.3\n\t}\n"
         '\theader Strict-Transport-Security "max-age=31536000"\n'
+        "\trequest_body {\n\t\tmax_size 1MB\n\t}\n"
         "\treverse_proxy unix//run/orch/front/1000/front.sock {\n"
         "\t\theader_up X-Orch-Client {client_ip}\n"
         "\t\ttransport http {\n\t\t\tdial_timeout 5s\n\t\t\tmax_conns_per_host 32\n\t\t}\n\t}\n}\n"
@@ -131,6 +145,16 @@ def test_the_unit_golden_runs_caddy_as_the_front_user_with_one_capability():
         "ProtectSystem=strict\n",
         "ProtectHome=yes\n",
         "RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX\n",
+        "LimitNOFILE=8192\n",
+        "ProtectClock=yes\n",
+        "ProtectHostname=yes\n",
+        "ProtectKernelLogs=yes\n",
+        "ProtectProc=invisible\n",
+        "ProcSubset=pid\n",
+        "RestrictRealtime=yes\n",
+        "SystemCallFilter=@system-service\n",
+        "MemoryDenyWriteExecute=yes\n",
+        "RemoveIPC=yes\n",
         "WantedBy=multi-user.target\n",
     ):
         assert want in unit, want
@@ -144,7 +168,7 @@ def test_the_tmpfiles_golden_gives_the_person_the_directory_and_the_front_its_gr
     ]
 
 
-# --- validation ---------------------------------------------------------------------------------------------------
+# --- validation ----
 @pytest.mark.parametrize(
     "name",
     [
@@ -166,7 +190,9 @@ def test_good_names():
 @pytest.mark.parametrize(
     ("text", "want"),
     [("10.0.0.0/8", "10.0.0.0/8"), ("203.0.113.5", "203.0.113.5/32"), ("2001:db8::/32", "2001:db8::/32"),
-     ("0.0.0.0/0", None), ("::/0", None), ("nope", None), ("10.0.0.0/33", None), ("", None)],
+     ("0.0.0.0/0", None), ("::/0", None), ("nope", None), ("10.0.0.0/33", None), ("", None),
+     ("0.0.0.0/1", None), ("128.0.0.0/7", None), ("2000::/31", None), ("fe80::1%eth0", None),
+     ("fe80::1%x\n}\n}\n:8080 {\n/128", None), ("fe80::1%x}/128", None), ("10.0.0.0/8\n}", None)],
 )  # fmt: skip
 def test_trusted_proxy_validation_never_accepts_everyone(text, want):
     assert osfront.valid_proxy(text) == want
@@ -177,7 +203,7 @@ def test_unnormalized_or_too_many_proxies_are_refused():
     assert not go(proxies=tuple(f"10.0.{i}.0/24" for i in range(17)))[0].ok
 
 
-# --- the apply ----------------------------------------------------------------------------------------------------
+# --- the apply ----
 def test_enable_creates_the_user_then_files_then_the_run_directory_then_starts_in_order():
     res, ex, _ = go()
     assert res.ok, res.report()
@@ -234,7 +260,7 @@ def test_a_changed_name_rewrites_the_file_and_restarts():
 
 def test_dry_run_changes_nothing_and_lists_the_exact_actions():
     facts = world()
-    res = apply_enable(facts, DryRunExecutor(), plan(), is_root=True)
+    res = apply_enable(facts, _FakeDry(), plan(), is_root=True)
     assert res.ok and res.dry_run, res.report()
     text = res.report()
     assert text.startswith("Would do:")
@@ -372,7 +398,7 @@ def test_root_and_linux_are_required():
     assert not apply_enable(mac, Machine(mac), plan(), is_root=True).ok
 
 
-# --- disable ------------------------------------------------------------------------------------------------------
+# --- disable ----
 def test_disable_stops_and_removes_what_orch_made_and_keeps_the_user():
     f = world()
     _, ex, _ = go(f)
@@ -405,7 +431,7 @@ def test_disable_fails_loudly_when_the_front_cannot_be_stopped():
     assert not res.ok and "could not be stopped" in res.report() and ex.removed == []
 
 
-# --- the entry (orch-os-setup arguments) --------------------------------------------------------------------------
+# --- the entry (orch-os-setup arguments) ----
 def test_the_trusted_copy_lists_the_front_module():
     from orch.setup.oslauncher import TRUSTED_FILES
 
@@ -434,7 +460,7 @@ def test_bad_argument_combinations_change_nothing(argv, monkeypatch, capsys):
     assert "Nothing was changed" in capsys.readouterr().err
 
 
-# --- --front-enroll: root asks the person's dashboard for the first link ----------------------------------------------
+# --- --front-enroll: root asks the person's dashboard for the first link ----
 class _Tty:
     def __init__(self, tty=True):
         self.tty, self.text = tty, ""
@@ -552,3 +578,83 @@ def test_bad_enroll_argument_combinations_change_nothing(argv, monkeypatch, caps
     monkeypatch.setattr(osapply, "_running_from_trusted_copy", lambda: True)
     monkeypatch.setattr(osapply, "RealExecutor", lambda: pytest.fail("no executor"))
     assert osapply.main(argv) == 2
+
+
+# --- the one guard for everything root writes into a template ----
+@pytest.mark.parametrize("bad", ["a\nb", "a}", "a{", 'a"', "a b", "a;b", "a#b", "a\\b", "", "a%b", "\u00fc"])
+def test_template_value_refuses_everything_but_plain_characters(bad):
+    with pytest.raises(ValueError):
+        osfront.template_value(bad)
+    assert osfront.template_value("fe80::1/128") == "fe80::1/128"
+
+
+def test_a_zone_id_with_a_newline_or_a_brace_never_reaches_the_caddyfile():
+    for zone in ("fe80::1%x\n}\n}\n:8080 {\n/128", "fe80::1%x}/128", "fe80::1%{env.X}/128"):
+        assert osfront.valid_proxy(zone) is None
+        # and even a plan built around the filter (a bug elsewhere) cannot write it: the template refuses
+        bypass = plan(proxies=(zone,))
+        assert bypass.problem() and not go(proxies=(zone,))[0].ok
+        with pytest.raises(ValueError):
+            bypass.caddyfile()
+
+
+def test_every_placeholder_of_every_template_goes_through_the_guard(monkeypatch):
+    seen: list[str] = []
+    real = osfront.template_value
+    monkeypatch.setattr(osfront, "template_value", lambda v: seen.append(str(v)) or real(v))
+    p = FrontPlan("zz-name.example.org", "pp-person", 4242, ("10.9.8.0/24", "172.16.0.0/12"))
+    text = {"caddyfile": p.caddyfile(), "unit": p.unit(), "tmpfiles": p.tmpfiles()}
+    # every variable piece of each file was guarded ...
+    for piece in ("zz-name.example.org", "pp-person", "4242", "10.9.8.0/24", "172.16.0.0/12", p.socket, p.socket_dir):
+        assert piece in seen, piece
+    for const in (
+        osfront.FRONT_USER,
+        osfront.FRONT_GROUP,
+        osfront.CADDY_BIN,
+        osfront.CADDYFILE,
+        osfront.FRONT_RUN_ROOT,
+    ):
+        assert const in seen, const
+    # ... and no variable piece is in a file unguarded: remove every guarded value, nothing variable is left over
+    for name, body in text.items():
+        rest = body
+        for piece in sorted(set(seen), key=len, reverse=True):
+            rest = rest.replace(piece, "")
+        assert "zz-" not in rest and "pp-" not in rest and "4242" not in rest and "10.9.8" not in rest, name
+
+
+def test_the_poisoned_value_of_any_field_stops_every_template_that_uses_it():
+    for field, bad, template in (
+        ("name", "a.example.com\n}\n:80 {", "caddyfile"),
+        ("person", "se\nv", "tmpfiles"),
+    ):
+        p = plan(**{field: bad})
+        with pytest.raises(ValueError):
+            getattr(p, template)()
+        assert not go(**{field: bad})[0].ok
+
+
+def test_the_caddyfile_closes_the_slow_body_hole_and_h3():
+    text = plan().caddyfile()
+    for want in ("read_body 10s", "idle 2m", "read_header 10s", "protocols h1 h2", "max_size 1MB"):
+        assert want in text
+
+
+def test_an_old_or_unreadable_caddy_stops_the_run_with_a_clear_message():
+    for said in ("v2.6.4 h1:x", "v1.0.5", "garbage", ""):
+        f = world()
+        ex = Machine(f)
+        ex.caddy_version = said
+        res, _, _ = go(f, ex)
+        assert not res.ok and "Caddy 2.7 or newer" in res.report() and not ex.commands
+
+
+def test_users_with_the_front_group_as_their_main_group_are_found():
+    f = world()
+    f.add_user("orch-front", 990, gid=990, shell="/usr/sbin/nologin")
+    f.add_user("intruder", 991, gid=990)  # main group = orch-front's group: could enter the socket directory
+    res, ex, _ = go(f)
+    assert not res.ok and "main group" in res.report() and not ex.commands
+    g = world()
+    g.groups["orch-front"] = osapply.GroupInfo("orch-front", 990, frozenset())  # a group left without its user
+    assert "without its user" in go(g)[0].report()

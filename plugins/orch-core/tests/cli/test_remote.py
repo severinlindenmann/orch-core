@@ -93,6 +93,8 @@ class _Dry(DryRunExecutor):
     """The real dry-run executor, but its probes read nothing of this machine: no files, nothing active."""
 
     def query(self, argv):
+        if argv[0] == osfront.CADDY_BIN:
+            return RunResult(0, "v2.8.4 h1:abc")
         return RunResult(1)  # nothing is active: no system caddy, no front yet
 
     def read_file(self, path):
@@ -254,6 +256,7 @@ def test_enable_runs_the_root_copy_through_sudo_then_writes_remote_json_then_res
     assert (directory / "port").read_text() == "9000\n" and stat.S_IMODE((directory / "port").stat().st_mode) == 0o600
     assert directory.stat().st_mode & 0o777 == 0o700
     assert f"https://{NAME}" in out
+    assert "stays down until the dashboard is started" in out
     assert f"ssh -o ExitOnForwardFailure=yes -L 9000:127.0.0.1:9000 {PERSON}@{NAME}" in out  # the way back in
     assert "orch dashboard open --print-url" in out and "orch remote reset" in out
 
@@ -330,7 +333,7 @@ def test_disable_takes_access_away_first_then_stops_the_front_and_keeps_the_user
     assert not (rig.state / "dashboard" / "remote.json").exists()
     assert rig.order == ["stop", "sudo"]
     assert rig.calls[1][-1:] == ["--front-disable"] and "--person" not in rig.calls[1]
-    assert "Remote access is off" in out
+    assert "Remote access is off" in out and "orch remote reset" in out
 
 
 def test_disable_asks_first(rig):

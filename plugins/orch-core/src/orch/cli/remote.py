@@ -380,6 +380,7 @@ def _enable(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, err: 
         out.write("The link could not be made. Run `orch remote reset` to get one.\n")
     out.write("Send the link to the person who will use orch. The first browser to open it wins; it works once.\n")
     out.write("\n".join(_tunnel_lines(args.name, env)) + "\n")
+    out.write("After a reboot remote access stays down until the dashboard is started again (orch dashboard up).\n")
     out.write("Tip: add a CAA record for your domain (letsencrypt.org) so only your certificate authority may issue.\n")
     return 0 if rc == 0 else 1
 
@@ -449,7 +450,8 @@ def _disable(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, err:
             (directory / "remote.json").unlink()
     _stop_dashboard(env, err, directory)
     _root_step(["--front-disable"], env, err)
-    out.write("Remote access is off. The passkeys stay stored; `orch remote enable` turns it on again.\n")
+    out.write("Remote access is off. The passkeys stay stored, and enabling again brings them back.\n")
+    out.write("If you suspect a passkey leaked, run `orch remote reset` to drop them all.\n")
     return 0
 
 

@@ -57,7 +57,7 @@ from typing import TYPE_CHECKING, Any
 from jsonschema import Draft202012Validator
 
 from . import frames
-from ._socket import pidfd_alive, pidfd_pid_now
+from ._socket import pidfd_pid_now
 from .custody import ensure_private_dir, read_json, write_private
 from .enable import _default_run
 from .errors import HostError
@@ -232,23 +232,46 @@ def system_runner_identity(
     The PID alone could be reused (a descriptor passed on, the process gone, the PID taken by the restarted runner).
     So the PID must be bound to the process: by the kernel's pidfd of the peer where there is one (Linux 6.5+), else by
     its start time against the unit's. Neither possible: denied."""
+    # every refusal says which condition denied (ids and numbers only), so a CI log can tell them apart
     if credentials.uid != share.uid:
+        LOG.debug("runner identity denied: peer uid %s is not the agent uid %s", credentials.uid, share.uid)
         return False
     try:
         if pins.share_for(share.host_uid) != share:
+            LOG.debug("runner identity denied: the pin no longer names this agent user")
             return False
-    except (OSError, ValueError):
+    except (OSError, ValueError) as exc:
+        LOG.debug("runner identity denied: the pin cannot be trusted (%s)", type(exc).__name__)
         return False
     main = unit_main_process(share.unit, run)
-    if main is None or main[0] != credentials.pid:
+    if main is None:
+        LOG.debug("runner identity denied: the service manager gave no main process for %s", share.unit)
+        return False
+    if main[0] != credentials.pid:
+        LOG.debug("runner identity denied: peer pid %s is not the unit's MainPID %s", credentials.pid, main[0])
         return False
     if credentials.pidfd_pid is not None:
         fd = credentials.pidfd
         if fd is None or credentials.pidfd_pid != credentials.pid:
+            LOG.debug("runner identity denied: pidfd gave %s for peer pid %s", credentials.pidfd_pid, credentials.pid)
             return False  # the kernel refused the pidfd (an exited peer), or it names another process
-        # read again now, after the manager was asked: still this process, still alive, still the unit's main PID
-        return pidfd_pid_now(fd) == credentials.pid == main[0] and pidfd_alive(fd)
-    return started_when_systemd_says(credentials.pid, main[1])
+        # read again now, after the manager was asked: the pidfd still names this process (``Pid:`` is -1 once it is
+        # gone, which is the liveness test: a signal-0 through the pidfd would fail for another user's process)
+        now = pidfd_pid_now(fd)
+        if now != credentials.pid:
+            LOG.debug("runner identity denied: pidfd now names %s, peer pid %s", now, credentials.pid)
+            return False
+        return True
+    ok = started_when_systemd_says(credentials.pid, main[1])
+    if not ok:
+        LOG.debug(
+            "runner identity denied: start time of pid %s is %s s, the unit's stamp %s us (boot offset %s)",
+            credentials.pid,
+            proc_start_seconds(credentials.pid),
+            main[1],
+            monotonic_to_boot_offset(),
+        )
+    return ok
 
 
 def runner_identity(credentials: Credentials) -> bool:

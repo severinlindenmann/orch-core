@@ -324,7 +324,7 @@ def test_the_host_admits_only_the_runner_unit_through_the_shared_run_directory(
             host_log.append(self.format(record))
 
     capture = Capture(level=logging.DEBUG)
-    top = logging.getLogger("orch")
+    top = logging.getLogger("orch.host")  # not "orch": other tests' leaked threads log there too
     top.addHandler(capture)
     top.setLevel(logging.DEBUG)
     try:

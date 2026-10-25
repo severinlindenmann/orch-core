@@ -5,7 +5,6 @@ import asyncio
 import contextlib
 import errno
 import os
-import signal
 import socket
 import struct
 import sys
@@ -62,18 +61,6 @@ def pidfd_pid_now(fd: int) -> int:
     except (OSError, ValueError):
         pass
     return -1
-
-
-def pidfd_alive(fd: int) -> bool:
-    """The process behind ``fd`` still exists (signal 0 through the pidfd where Python has it)."""
-    send = getattr(signal, "pidfd_send_signal", None)
-    if send is None:
-        return pidfd_pid_now(fd) > 0
-    try:
-        send(fd, 0)
-    except OSError:
-        return False
-    return True
 
 
 def close_pidfd(credentials: Credentials) -> None:

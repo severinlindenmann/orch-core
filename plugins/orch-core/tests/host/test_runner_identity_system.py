@@ -119,7 +119,6 @@ def test_the_kernels_pidfd_binds_the_pid_where_there_is_one(monkeypatch):
     mine = share()
     run = fake_systemctl(show("777", "5000000"))
     monkeypatch.setattr(runners, "proc_start_seconds", lambda pid: 1.0)  # never consulted with a pidfd
-    monkeypatch.setattr(runners, "pidfd_alive", lambda fd: True)
     monkeypatch.setattr(runners, "pidfd_pid_now", lambda fd: 777)
     assert system_runner_identity(mine, FixedPins(mine), Credentials(AGENT_UID, GID, 777, 777, 9), run) is True
     assert system_runner_identity(mine, FixedPins(mine), Credentials(AGENT_UID, GID, 777, 778, 9), run) is False
@@ -141,12 +140,10 @@ def test_the_pidfd_is_read_again_after_the_manager_was_asked(monkeypatch):
         order.append("fdinfo")
         return -1  # the peer exited while the manager was asked
 
-    monkeypatch.setattr(runners, "pidfd_alive", lambda fd: True)
     monkeypatch.setattr(runners, "pidfd_pid_now", now)
     assert system_runner_identity(mine, FixedPins(mine), Credentials(AGENT_UID, GID, 777, 777, 9), run) is False
     assert order == ["systemctl", "fdinfo"]
-    monkeypatch.setattr(runners, "pidfd_pid_now", lambda fd: 777)
-    monkeypatch.setattr(runners, "pidfd_alive", lambda fd: False)  # reaped
+    monkeypatch.setattr(runners, "pidfd_pid_now", lambda fd: 778)  # the pidfd names another process now
     assert system_runner_identity(mine, FixedPins(mine), Credentials(AGENT_UID, GID, 777, 777, 9), run) is False
 
 
@@ -190,3 +187,21 @@ def test_proc_start_seconds_reads_this_process_on_linux():
         assert proc_start_seconds(os.getpid()) is None  # no /proc: the identity then denies
         return
     assert 0 < proc_start_seconds(os.getpid()) < proc_start_seconds(os.getpid()) + 1
+
+
+def test_a_denial_says_which_condition_denied(monkeypatch, caplog):
+    import logging
+
+    from orch.host import runners
+
+    mine = share()
+    monkeypatch.setattr(runners, "pidfd_pid_now", lambda fd: 777)
+    caplog.set_level(logging.DEBUG, logger="orch.host.runners")
+    run = fake_systemctl(show("777"))
+    assert system_runner_identity(mine, FixedPins(mine), Credentials(AGENT_UID, GID, 777, 777, 9), run) is True
+    assert system_runner_identity(mine, FixedPins(mine), Credentials(AGENT_UID, GID, 778, 778, 9), run) is False
+    assert "peer pid 778 is not the unit's MainPID 777" in caplog.text
+    assert system_runner_identity(mine, FixedPins(mine), Credentials(UID, GID, 777), run) is False
+    assert "is not the agent uid" in caplog.text
+    assert system_runner_identity(mine, FixedPins(None), Credentials(AGENT_UID, GID, 777), run) is False
+    assert "pin no longer names" in caplog.text

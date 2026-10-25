@@ -260,20 +260,22 @@ def read(sock):
         data += sock.recv(size - len(data))
     return json.loads(data)
 
-result = {}
+def save(result):
+    with open("/run/orch/agents/orch-agent-%(person)s/probe.json", "w") as out:
+        out.write(json.dumps(result))
+
 for _ in range(240):
     try:
         sock = socket.socket(socket.AF_UNIX)
         sock.connect("/run/orch/%(uid)d/runner/host.sock")
         sock.sendall(frame({"t": "hello", "proto": [1], "client": "probe", "caps": ["runner/1"], "ops": {}}))
         welcome = read(sock)
-        result = {"class": welcome["peer"]["class"], "host_uid": welcome["host_uid"]}
-        break
+        save({"welcome": welcome})
+        if welcome.get("t") == "welcome":
+            break
     except Exception as exc:
-        result = {"error": repr(exc)}
-        time.sleep(0.5)
-with open("/run/orch/agents/orch-agent-%(person)s/probe.json", "w") as out:
-    out.write(json.dumps(result))
+        save({"error": repr(exc)})
+    time.sleep(0.5)
 time.sleep(100000)
 """
 
@@ -299,10 +301,7 @@ def test_the_host_admits_only_the_runner_unit_through_the_shared_run_directory(
     """L4 against real users: the host (the person) serves ``/run/orch/<uid>/runner/host.sock`` in the setgid run
     directory root made. The runner unit's main process (here a probe standing in for the runner) is admitted as class
     ``runner``; another process of the SAME agent user is ``peer.denied``; an unrelated user cannot even connect."""
-    import json
-    import stat
-
-    from tests.host.lifecycle_helpers import HostThread
+    import logging
 
     person, release = root_machine
     applied = _apply_as_root(person, release)
@@ -317,6 +316,48 @@ def test_the_host_admits_only_the_runner_unit_through_the_shared_run_directory(
     state = tmp_path / "state"
     state.mkdir(mode=0o700)
     monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)  # the real service manager is asked below
+    monkeypatch.delenv("ORCH_NO_SERVICE_MANAGER", raising=False)  # (CI may set it: the host would deny every runner)
+    host_log: list[str] = []
+
+    class Capture(logging.Handler):
+        def emit(self, record):
+            host_log.append(self.format(record))
+
+    capture = Capture(level=logging.DEBUG)
+    top = logging.getLogger("orch")
+    top.addHandler(capture)
+    top.setLevel(logging.DEBUG)
+    try:
+        _check_shared_run(person, uid, agent, run, state, host_log)
+    finally:
+        top.removeHandler(capture)
+
+
+def _diagnostics(person: str, uid: int, host_log: list[str]) -> str:
+    """What the next CI run needs to say why the probe never connected (shown only on failure)."""
+    unit = f"orch-runner@{person}.service"
+    sock = f"/run/orch/{uid}/runner/host.sock"
+    parts = [
+        _sudo("systemctl", "status", unit, "--no-pager", "-l", check=False).stdout,
+        _sudo("journalctl", "-u", unit, "-n", "80", "--no-pager", check=False).stdout,
+        _sudo("ls", "-lnd", "/run/orch", f"/run/orch/{uid}", f"/run/orch/{uid}/runner", sock, check=False).stdout,
+        _sudo(
+            "stat", "-c", "%U:%G %a %n", "/run/orch", f"/run/orch/{uid}", f"/run/orch/{uid}/runner", sock, check=False
+        ).stdout,
+        _sudo("ls", "-ln", f"/run/orch/{uid}", "/run/orch/agents", check=False).stdout,
+        "probe.json: " + _sudo("cat", f"/run/orch/agents/orch-agent-{person}/probe.json", check=False).stdout,
+        _sudo("systemctl", "show", "-p", "MainPID", "-p", "ExecMainStartTimestampMonotonic", unit, check=False).stdout,
+        "host log:\n" + "\n".join(host_log[-60:]),
+    ]
+    return "\n----\n".join(parts)
+
+
+def _check_shared_run(person, uid, agent, run, state, host_log) -> None:
+    import json
+    import stat
+
+    from tests.host.lifecycle_helpers import HostThread
+
     with HostThread(state, run) as host:
         assert host.host.share is not None and host.host.share.uid == agent.pw_uid
         shown = {p: os.stat(p) for p in (run, run / "runner", run / "runner" / "host.sock", run / "control")}
@@ -326,9 +367,14 @@ def test_the_host_admits_only_the_runner_unit_through_the_shared_run_directory(
         assert stat.S_IMODE(sock.st_mode) == 0o660 and sock.st_uid == uid and sock.st_gid == agent.pw_gid
         assert stat.S_IMODE(shown[run / "control"].st_mode) == 0o700
         path = f"/run/orch/agents/orch-agent-{person}/probe.json"
-        assert _wait(lambda: _sudo("test", "-s", path, check=False).returncode == 0), "the runner never connected"
-        got = json.loads(_sudo("cat", path).stdout)
-        assert got == {"class": "runner", "host_uid": uid}, got
+
+        def welcomed() -> bool:
+            return '"welcome": {"t": "welcome"' in _sudo("cat", path, check=False).stdout
+
+        if not _wait(welcomed, 60):
+            pytest.fail("the runner never connected\n" + _diagnostics(person, uid, host_log))
+        got = json.loads(_sudo("cat", path).stdout)["welcome"]
+        assert (got["peer"]["class"], got["host_uid"]) == ("runner", uid), got
         target = str(run / "runner" / "host.sock")
         same_user = _sudo("-u", agent.pw_name, "/usr/bin/python3", "-I", "-c", _CLIENT, target)
         assert "peer.denied" in same_user.stdout, same_user.stdout  # the agent user, but not the unit's main process

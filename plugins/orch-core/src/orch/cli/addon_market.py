@@ -294,6 +294,11 @@ def _done(a: argparse.Namespace, result: dict[str, Any]) -> str:
     st = result["stage"]
     deps = result.get("env")
     more = f"; dependencies installed ({deps['count']} files)" if deps else ""
+    if result.get("state") == "disabled":  # 1237: nothing runs and no agent may use it until the person turns it on
+        return (
+            f"ok addon {a.cmd} {st['name']} {st['version']}: signed and installed, it is Off{more}\n"
+            f"next: orch addon enable {st['name']}\n"
+        )
     return f"ok addon {a.cmd} {st['name']} {st['version']}: signed and installed{more}\nnext: orch addon list\n"
 
 
@@ -407,6 +412,8 @@ def _signed(a: argparse.Namespace, env: Mapping[str, str], out: TextIO, as_json:
             conn, backend, device, wid, person, label, "addon.grant", {"name": stage["name"], "staged": stage["stage"]}
         )
         result: dict[str, Any] = {"stage": stage, "installed": True}
+        rows = conn.call("market.installed", {})["data"][ADDONS]  # 1237: an install ends Off; an update keeps its state
+        result["state"] = next((r["state"] for r in rows if r["name"] == stage["name"]), "unknown")
         if stage["grant"].get("runtime") is not None:  # the dependencies the signature promised, now that it exists
             result["env"] = conn.call("market.env_build", {"name": stage["name"]}, timeout=900.0)["data"]
         return result

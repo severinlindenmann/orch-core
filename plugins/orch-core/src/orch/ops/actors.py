@@ -60,6 +60,7 @@ EVENT_ACTORS: dict[str, frozenset[str]] = {
         "device.excluded": "P",
         "addon.granted": "P",
         "addon.disabled": "P",
+        "addon.enabled": "P",
         "addon.purged": "P",
         "hub.joined": "P",
         "hub.left": "P",

@@ -73,6 +73,7 @@ PERSON_TYPES = frozenset(
         "settings.changed",
         "addon.granted",
         "addon.disabled",
+        "addon.enabled",
         "addon.purged",
         "restore",
         "invalid.acknowledged",

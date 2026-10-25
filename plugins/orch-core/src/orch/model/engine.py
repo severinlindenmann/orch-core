@@ -49,6 +49,7 @@ CROSS_TICKETS = frozenset(
         "policy.changed",
         "addon.granted",
         "addon.disabled",
+        "addon.enabled",
         "addon.purged",
         "restore",
         "hub.pinned",  # a channel revocation voids open decisions (C3b-2)
@@ -264,6 +265,7 @@ def _workspace_handler(core: Core, lc: LogCore, e: dict[str, Any], ctx: Ctx) -> 
         "device.excluded": lambda: workspace.device_excluded(core, e),
         "addon.granted": lambda: workspace.addon_event(core, e),
         "addon.disabled": lambda: workspace.addon_event(core, e),
+        "addon.enabled": lambda: workspace.addon_event(core, e),
         "addon.purged": lambda: workspace.addon_event(core, e),
         "hub.joined": lambda: (
             workspace.hub_owner_proof(ws, e, v, dev=hub_dev_of(core, ctx)) or workspace.hub_joined(ws, e)

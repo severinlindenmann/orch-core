@@ -60,6 +60,7 @@ PERSON_TYPES = frozenset(
         "settings.changed",
         "addon.granted",
         "addon.disabled",
+        "addon.enabled",
         "addon.purged",
         "hub.pinned",
         "restore",
@@ -314,7 +315,7 @@ def ws_data(e: Mapping[str, Any], *, grant_person: str | None = None, devices: M
         }
     if t == "grant.revoked":
         return {"grant": e.get("grant"), "person": grant_person}
-    if t == "addon.granted":
+    if t in ("addon.granted", "addon.enabled"):
         return {"name": e.get("name"), "version": e.get("version")}
     if t in ("addon.disabled", "addon.purged"):
         return {"name": e.get("name")}

@@ -22,6 +22,7 @@ EMITS_V1: dict[str, frozenset[str]] = {
     "ac.add": frozenset({"ticket.updated"}),
     "ac.edit": frozenset({"ticket.updated"}),
     "addon.disable": frozenset({"addon.disabled"}),
+    "addon.enable": frozenset({"addon.enabled"}),
     "addon.grant": frozenset({"addon.granted"}),
     "addon.purge": frozenset({"addon.purged"}),
     "answer": frozenset({"question.answered"}),
@@ -82,6 +83,7 @@ EMITS_V1: dict[str, frozenset[str]] = {
 HUMAN_ONLY: frozenset[str] = frozenset(
     {
         "addon.disable",
+        "addon.enable",
         "addon.grant",
         "addon.purge",
         "answer",

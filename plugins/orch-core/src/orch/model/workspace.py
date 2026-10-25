@@ -569,6 +569,10 @@ def addon_event(core: Core, e: dict[str, Any]) -> Refusal | None:
     old = ws.addons.get(name)
     if typ != "addon.granted" and old is None:
         return Refusal(Code.ADDON_UNKNOWN, name)
+    if typ == "addon.enabled" and (
+        old.purged or old.enabled or e["version"] != old.version or e["package_sha256"] != old.package_sha256
+    ):  # 1237: turn on exactly the granted, disabled, unchanged package; no second permissions review
+        return Refusal(Code.ADDON_NOT_DISABLED, name)
     named = generations.addon_binds_gates(old.binds if old else None)  # the gates it named before
     if typ == "addon.granted":
         if (r := addon_rules.check_headings(name, e["sections"], ws.addons)) is not None:
@@ -582,6 +586,7 @@ def addon_event(core: Core, e: dict[str, Any]) -> Refusal | None:
             copy.deepcopy(e["sections"]),
             list(e["artifact_kinds"]),
             runtime=copy.deepcopy(e.get("runtime")),
+            enabled=not e.get("off"),  # 1237: an install leaves it Off (the grant carries "off": true)
         )
         named |= generations.addon_binds_gates(new.binds)
 
@@ -592,6 +597,8 @@ def addon_event(core: Core, e: dict[str, Any]) -> Refusal | None:
         def change() -> None:
             if typ == "addon.disabled":
                 old.enabled = False
+            elif typ == "addon.enabled":
+                old.enabled = True
             else:
                 old.purged = True
                 held = dict(ws.settings.get(ADDONS_KEY) or {})  # G6: its signed settings go with it

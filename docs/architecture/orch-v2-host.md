@@ -1113,7 +1113,7 @@ ActivityItem = {id:ItemId, jpos:int, log:Uid | "workspace", key:Key | null, uid:
       no more than `member.list`, `workspace.show` and `ticket.get` already give that person, per the table below): the
       member and role events (`workspace.created`, `member.added`, `member.removed`, `role.changed`), the device events
       (`device.added`, `device.removed`, `device.revoked`), `policy.changed`, `settings.changed`, `addon.granted`,
-      `addon.disabled`, `addon.purged`, `restore` and `invalid.acknowledged`;
+      `addon.disabled`, `addon.enabled`, `addon.purged`, `restore` and `invalid.acknowledged`;
     - `grant.issued` and `grant.revoked`, whatever the role, only to a person-class owner and to the grant's own person
       (the `grant.list` rule).
 
@@ -1132,7 +1132,7 @@ ActivityItem = {id:ItemId, jpos:int, log:Uid | "workspace", key:Key | null, uid:
     | `settings.changed` | `{keys:[str]}` (the names in `set`, never repo paths or remotes); with `set.repos` also `repos:{name:"set"|"removed"}` (repo names only) |
     | `grant.issued` | `{grant, person, scope, expires_at}` |
     | `grant.revoked` | `{grant, person}` |
-    | `addon.granted`, `addon.disabled`, `addon.purged` | `{name}` (`addon.granted` adds `version`) |
+    | `addon.granted`, `addon.disabled`, `addon.enabled`, `addon.purged` | `{name}` (`addon.granted` and `addon.enabled` add `version`) |
     | `restore` | `{from_seq}` |
     | `invalid.acknowledged` | `{invalid_seq}` |
 

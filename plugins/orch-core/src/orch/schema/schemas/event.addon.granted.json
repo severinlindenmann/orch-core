@@ -630,6 +630,10 @@
         "packages"
       ],
       "additionalProperties": false
+    },
+    "off": {
+      "const": true,
+      "description": "Install leaves Off: present (only true) when the add-on was granted while not enabled (first install, or an update while Off). Absent means On. Turn it on with addon.enabled."
     }
   },
   "required": [

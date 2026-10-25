@@ -69,6 +69,7 @@ ACTOR_RULES: dict[str, str] = {
     "device.excluded": "P",  # C10: hub-signed only (HUB_ONLY)
     "addon.granted": "P",
     "addon.disabled": "P",
+    "addon.enabled": "P",
     "addon.purged": "P",
     "hub.joined": "P",
     "hub.left": "P",
@@ -85,6 +86,7 @@ OPERATE = frozenset(
         "grant.revoked",
         "addon.granted",
         "addon.disabled",
+        "addon.enabled",
         "addon.purged",
         "hub.joined",
         "hub.left",

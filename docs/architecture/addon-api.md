@@ -75,8 +75,9 @@ The closed list: `serve_http`, `spawn_agent`, `pty`, `network`, `git_push`, and 
 
 - Runner environment: `ORCH_ADDON` and `ORCH_ADDON_CAPABILITIES` plus the fixed minimal set in
   `orch.addons.runner.child_env`. Nothing else is passed.
-- Events: `addon.granted`, `addon.disabled`, `addon.purged`.
-- Ops: `addon.grant`, `addon.preview`, `addon.list`, `addon.disable`, `addon.purge`.
+- Events: `addon.granted`, `addon.disabled`, `addon.enabled`, `addon.purged`. An install from a marketplace is granted Off
+  (`addon.granted` with `off: true`); `addon.enabled` turns it on without a second permissions review.
+- Ops: `addon.grant`, `addon.preview`, `addon.list`, `addon.enable`, `addon.disable`, `addon.purge`.
 - A table of which host ops and event kinds each capability allows, and a test that dispatch enforces it, is planned
   for API 1.1 (design section 2.3). Until it lands, this list is the whole surface and anything not named here is not
   part of the contract.

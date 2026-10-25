@@ -63,7 +63,7 @@ _ENVELOPE_OK = frozenset({"v", "id", "type", "actor", "auth", "hash_v", "roster_
 _FORBIDDEN = frozenset({"seq", "at", "prev", "ws_seq", "host_sig", "sig"})
 _GATE_TYPES = {"gate.approved": None, "gate.changes_requested": None, "verdict.given": "verify"}
 _MEMBER_OPS = frozenset({"member.add", "member.remove", "member.role"})
-_ADDON_OPS = frozenset({"addon.grant", "addon.disable", "addon.purge"})
+_ADDON_OPS = frozenset({"addon.grant", "addon.enable", "addon.disable", "addon.purge"})
 #: the addon ops whose typed word is ``<name>~<WS8>``: the ONE definition, shared by the terminal (``orch sign``), the
 #: click view (:func:`orch.click.view.word` delegates here) and the dashboard's hand-off page
 #: (addons/dashboard/src/test/confirm-words.json pins all three)
@@ -788,6 +788,7 @@ _PLAIN = {
     "member.remove": "remove member {person}",
     "member.role": "make {person} {role}",
     "addon.grant": "grant addon {name}",
+    "addon.enable": "enable addon {name}",
     "addon.disable": "disable addon {name}",
     "addon.purge": "purge addon {name}",
     "move": "move {ticket} to {to}",

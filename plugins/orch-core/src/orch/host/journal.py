@@ -91,6 +91,7 @@ NEEDS_WORKSPACE_TYPES = frozenset(
         "settings.changed",
         "addon.granted",
         "addon.disabled",
+        "addon.enabled",
         "addon.purged",
         "restore",
     }

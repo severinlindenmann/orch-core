@@ -149,6 +149,7 @@ CASES: dict[str, tuple[str, dict]] = {
         },
     ),
     "addon.disabled": ("workspace", {"name": "dash"}),
+    "addon.enabled": ("workspace", {"name": "dash", "version": "1.0.0", "package_sha256": "sha256:" + "ab" * 32}),
     "addon.purged": ("workspace", {"name": "dash"}),
     "hub.joined": (
         "workspace",

@@ -90,6 +90,7 @@ _WORKSPACE_ONLY = frozenset(
         "device.excluded",
         "addon.granted",
         "addon.disabled",
+        "addon.enabled",
         "addon.purged",
         "hub.joined",
         "hub.left",

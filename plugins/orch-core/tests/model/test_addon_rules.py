@@ -195,3 +195,53 @@ def test_replay_reserves_heading_keys_until_purge(status):
     assert ("other" in state.workspace.addons) == (status == "purged")
     if expected:
         assert state.workspace.invalid[-1].code == expected
+
+
+# ---------------------------------------------------------------- 1237: install leaves Off, addon.enabled turns it on
+def _enabled(w):
+    return w.state().workspace.addons["echo"]["enabled"]
+
+
+def _grant_off(w):
+    return w.wev(
+        "addon.granted", "sev", name="echo", version="1.0.0", package_sha256=digest("pkg"), capabilities=[],
+        fields=FIELDS, sections=SECTIONS, artifact_kinds=["chart"], off=True,
+    )  # fmt: skip
+
+
+def test_a_grant_with_off_starts_disabled_and_enabled_turns_it_on_with_data_intact():
+    w = World().bootstrap({"mara": "maintainer"})
+    uid = w.ticket()
+    _grant_off(w)
+    assert _enabled(w) is False
+    assert set_(w, uid, "sev", "mood", "good") == "addon.unknown"  # no live fields while Off
+    w.wev("addon.enabled", "sev", name="echo", version="1.0.0", package_sha256=digest("pkg"))
+    assert _enabled(w) is True
+    assert set_(w, uid, "sev", "mood", "good") is None
+
+
+def test_enabled_is_refused_unless_granted_disabled_and_the_same_signed_package():
+    w = World().bootstrap({"mara": "maintainer"})
+    enable = lambda **kw: refused(  # noqa: E731
+        w, "workspace", "addon.enabled", "sev",
+        **{"name": "echo", "version": "1.0.0", "package_sha256": digest("pkg"), **kw},
+    )  # fmt: skip
+    assert enable() == "addon.unknown"  # never granted
+    _grant_off(w)
+    assert enable(version="1.0.1") == "addon.not_disabled"  # not the version that was approved
+    assert enable(package_sha256=digest("other")) == "addon.not_disabled"
+    assert enable(name="ghost") == "addon.unknown"
+    assert enable() is None
+    w.wev("addon.enabled", "sev", name="echo", version="1.0.0", package_sha256=digest("pkg"))
+    assert enable() == "addon.not_disabled"  # already on
+    w.wev("addon.disabled", "sev", name="echo")
+    assert enable() is None  # a disabled add-on turns on again, same package
+    w.wev("addon.purged", "sev", name="echo")
+    assert enable() == "addon.not_disabled"  # purged: install again
+
+
+def test_only_an_owner_signs_addon_enabled():
+    w = World().bootstrap({"mara": "maintainer"})
+    _grant_off(w)
+    ok = refused(w, "workspace", "addon.enabled", "mara", name="echo", version="1.0.0", package_sha256=digest("pkg"))
+    assert ok == "role.denied"

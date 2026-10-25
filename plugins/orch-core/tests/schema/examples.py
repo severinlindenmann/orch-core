@@ -58,6 +58,7 @@ WORKSPACE_ONLY = {
     "device.excluded",
     "addon.granted",
     "addon.disabled",
+    "addon.enabled",
     "addon.purged",
     "hub.joined",
     "hub.left",
@@ -484,6 +485,11 @@ _SPEC = {
         5,
     ),
     "addon.disabled": (PERSON, {"name": "estimate"}, 5),
+    "addon.enabled": (
+        PERSON,
+        {"name": "estimate", "version": "1.0.0", "package_sha256": "sha256:" + "a" * 64},
+        5,
+    ),
     "addon.purged": (PERSON, {"name": "estimate"}, 5),
     "hub.joined": (
         PERSON,

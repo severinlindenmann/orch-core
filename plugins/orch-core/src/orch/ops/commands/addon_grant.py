@@ -110,11 +110,15 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     h.call.ws.require_root()
     from orch.addons import settings_needs
 
-    refusal = settings_needs.grant_refusal(h.store.state.workspace.settings, name)  # AE4: never on without settings
+    stage = args.get("staged")
+    current = h.store.state.workspace.addons.get(name)
+    # 1237: a marketplace install, or an update while the add-on is Off, is signed Off ("off": true): nothing runs until
+    # `addon.enable`, which does the AE4 settings check. Built-ins, setup and a re-grant after "changed" never carry it.
+    off = stage is not None and not (current is not None and current["enabled"] and not current["purged"])
+    refusal = None if off else settings_needs.grant_refusal(h.store.state.workspace.settings, name)  # AE4
     if refusal is not None:
         raise OrchError("invalid.input", refusal, hint="set it up in Settings, Add-ons, then turn it on")
     root = h.store.layout.store  # addons/ lives in the store
-    stage = args.get("staged")
     stage_doc = None
     if stage is not None:
         stage_doc, package, manifest = _staged(h, ctx, name, stage)
@@ -135,6 +139,8 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
         event = install.grant_event(manifest, package)
     except MarketError as e:
         raise _market_refusal(e) from None
+    if off:
+        event["off"] = True
     if manifest.runtime is not None:
         _dependencies(ctx, manifest, package, stage_doc)
     if stage is None:  # C1: a folder is signed only when it is built in or the bytes the install record holds

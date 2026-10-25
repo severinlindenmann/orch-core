@@ -60,6 +60,7 @@ MODULES = (
     "addon_list",
     "addon_grant",
     "addon_preview",
+    "addon_enable",
     "addon_disable",
     "addon_purge",
     "widgets_types",

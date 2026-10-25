@@ -64,9 +64,10 @@ TECHNICAL_KEYS = frozenset(
 #: per event type, the payload keys the plain view shows (in a section, a list or a field row)
 SHOWN: dict[str, frozenset[str]] = {
     "addon.disabled": frozenset({"name"}),
+    "addon.enabled": frozenset({"name", "version", "package_sha256"}),
     "addon.purged": frozenset({"name"}),
     "addon.granted": frozenset(
-        {"name", "version", "package_sha256", "capabilities", "artifact_kinds", "fields", "sections", "runtime"}
+        {"name", "version", "package_sha256", "capabilities", "artifact_kinds", "fields", "sections", "runtime", "off"}
     ),
     "artifact.added": frozenset({"name", "kind", "label", "ac", "task", "ref", "addon", "bytes", "sha256"}),
     "artifact.replaced": frozenset({"name", "kind", "label", "ac", "task", "replaces", "bytes", "sha256"}),
@@ -1353,7 +1354,7 @@ def _event(
             "The file itself is not shown here; compare the digest with the file you meant (details: d)."
         )
         return f"{'Add' if typ == 'artifact.added' else 'Replace'} the file {_s(ev.get('name'))} on {ref}"
-    if typ in ("addon.disabled", "addon.purged", "addon.granted"):
+    if typ in ("addon.disabled", "addon.enabled", "addon.purged", "addon.granted"):
         return _addon(typ, ev, out)
     if typ == "device.added":
         _row(out, "device", ev.get("device"))
@@ -1453,6 +1454,18 @@ def _addon(typ: str, ev: Mapping[str, Any], out: dict[str, Any]) -> str:
     if typ == "addon.purged":
         return f"Purge the add-on {name}"
     version = ev.get("version")
+    if typ == "addon.enabled":  # 1237: no capability list; it gets what the person approved when it was installed
+        _row(out, "add-on", name)
+        _row(out, "version", version)
+        _row(out, "package digest", _short(ev.get("package_sha256")))
+        out.setdefault("notes", []).append(
+            "It gets the permissions you approved when you installed it; nothing new is granted. " + ADDON_TRUST
+        )
+        return (
+            f"Turn on {nice} {_s(version)} (package {_short(ev.get('package_sha256'))}). "
+            "It gets the permissions you approved when you installed it."
+        )
+    off = ev.get("off") is True  # 1237: an install leaves it Off: the grant is reviewed now, the switch is a later click
     words = _capability_words(ev.get("capabilities"))
     declares = any(ev.get(k) not in (None, [], {}) for k in ("fields", "sections", "artifact_kinds", "runtime"))
     if named and words is not None and not declares and isinstance(version, str) and _VERSION.fullmatch(version):
@@ -1462,15 +1475,19 @@ def _addon(typ: str, ev: Mapping[str, Any], out: dict[str, Any]) -> str:
         if explorer:
             _row(out, "it lets owners", EXPLORER_ROW)
         else:
-            _row(out, "it says it will", words or "(declares no capabilities)")
+            _row(out, "what it may do once On" if off else "it says it will", words or "(declares no capabilities)")
         notes = out.setdefault("notes", [])
         notes.append(ADDON_TRUST)
         notes.append("The package digest and the exact capability names are in the technical details.")
         if explorer:
             return EXPLORER_HEADLINE
+        if off:
+            return _install_off(nice, version)
         return f"Turn on {nice}: " + (f"it says it will {words}" if words else "it declares no capabilities")
     _row(out, "version", ev.get("version"))
     _row(out, "package digest", _short(ev.get("package_sha256")))
+    if off:
+        _row(out, "starts", "Off")
     for k in ("capabilities", "artifact_kinds", "fields", "sections"):
         if ev.get(k) is not None:
             _row(out, k.replace("_", " "), ev[k])
@@ -1478,7 +1495,16 @@ def _addon(typ: str, ev: Mapping[str, Any], out: dict[str, Any]) -> str:
         runtime = ev["runtime"]
         _row(out, "dependencies", runtime)
         out.setdefault("notes", []).append(_runtime_words(runtime))
+    if off:
+        out.setdefault("notes", []).append(
+            "The rows below are what it may do once you turn it on; installing it does not turn it on."
+        )
+        return _install_off(nice if named else name, version)
     return f"Grant the add-on {name}"
+
+
+def _install_off(nice: str, version: Any) -> str:
+    return f"Install {nice} {_s(version)}. It stays Off: no agent can use it until you turn it on."
 
 
 _DEP_NOTES = {

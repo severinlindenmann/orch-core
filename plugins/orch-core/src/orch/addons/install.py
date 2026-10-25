@@ -145,6 +145,8 @@ def review_lines(
         f"command {show(shlex.join(manifest.entry_cmd))}",  # quoted: an argument with a space cannot hide in it
         f"capabilities {', '.join(event['capabilities']) or 'none'} (granted exactly as the package declares them)",
     ]
+    if event.get("off") is True:
+        out.append(f"starts Off: nothing runs and no agent may use it until you turn it on (orch addon enable {manifest.name})")
     if deps is not None:
         from orch.market import deps as market_deps
 

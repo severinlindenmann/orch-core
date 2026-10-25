@@ -60,6 +60,7 @@ class Code(StrEnum):
     ADDON_UNKNOWN = "addon.unknown"
     ADDON_FIELD_UNKNOWN = "addon.field_unknown"
     ADDON_VALUE_INVALID = "addon.value_invalid"
+    ADDON_NOT_DISABLED = "addon.not_disabled"  # addon.enabled: not granted-and-disabled at the signed version
     # --- tickets
     TICKET_UNKNOWN = "ticket.unknown"
     TICKET_EXISTS = "ticket.exists"

@@ -201,6 +201,7 @@ CLICK_OPS = frozenset(
         "grant.revoke",
         "grant",  # #1198 C7: with the secret sealed to the page (``reveal_key``), or deposited (``deposit``)
         "addon.disable",
+        "addon.enable",
         "settings.set",
         "hub.join",  # #1198 C10: only with the backup key sealed to the signer (SEALED_OPS); see view.check_prepared
         "hub.mode",

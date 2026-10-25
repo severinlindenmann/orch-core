@@ -1217,7 +1217,13 @@ def test_addon_events():
     V(
         "event", mut(ex.EVENTS[A], lambda e: e["sections"][0].pop("gate")), log="workspace"
     )  # a section need not be gated
+    V("event", mut(ex.EVENTS[A], lambda e: e.update(off=True)), log="workspace")  # 1237: an install leaves it Off
+    bad("event", mut(ex.EVENTS[A], lambda e: e.update(off=False)), "/off")  # only true; absent means On
+    bad("event", mut(ex.EVENTS[A], lambda e: e.update(off="yes")), "/off")
     bad("event", ev("addon.disabled", name="x" * 41), "/name")
+    V("event", ev("addon.enabled", name="estimate", version="1.2.0", package_sha256=ex.digest("pkg")), log="workspace")
+    bad("event", ev("addon.enabled", name="estimate", version="1.2.0", package_sha256="nope"), "/package_sha256")
+    bad("event", ev("addon.enabled", name="x" * 41, version="1.2.0", package_sha256=ex.digest("pkg")), "/name")
     bad("event", ev("addon.purged", name="log"), "/name")
 
 
@@ -1630,7 +1636,7 @@ DOC_NON_EVENTS = {
     "ticket.questions", "ticket.schema", "ticket.size", "ticket.tasks", "ticket.title", "ticket.type", "ticket.uid",
     "ticket.visibility",
     # refusal codes of the §5.11 refusal order
-    "addon.field_unknown", "addon.value_invalid", "device.invalid", "device.scope", "sign.method",
+    "addon.field_unknown", "addon.value_invalid", "addon.not_disabled", "device.invalid", "device.scope", "sign.method",
     "gate.invalidated_mismatch",
     "gate.not_applicable", "gate.not_eligible", "gate.status", "grant.invalid", "grant.scope", "member.unknown",
     "role.denied", "ticket.exists", "ticket.not_visible", "ticket.unknown",

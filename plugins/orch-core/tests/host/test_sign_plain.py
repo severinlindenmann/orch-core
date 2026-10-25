@@ -1466,3 +1466,15 @@ def test_788_the_hosts_word_never_reaches_a_headline_or_summary_as_if_it_were_si
     assert all(
         "per host, not signed" in x.lower() for x in ext["summary"]["lines"] if "this computer's runner, until" in x
     )
+
+
+@pytest.mark.xfail(strict=True, reason="#1237: the View renders from events only, so addon.purge has no counts line; needs its own Opus-checked core change")
+def test_1237_the_view_of_an_addon_purge_carries_the_counts_line(human, served):
+    """Part of #1237 (design item 3): the dashboard offers "Also delete its data" only if the click View says what is lost."""
+    from orch.click import view
+
+    human.run("addon.grant", {"name": "estimate"})
+    p = human.prepare("addon.purge", {"name": "estimate"})
+    v = view.build(p, WS, device=p["events"][0]["actor"]["device"], expires_at="2026-01-01T00:00:00Z", artifacts=None)
+    text = "\n".join(v["lines"]) + flat(v.get("content"))
+    assert re.search(r"\d+ fields, \d+ sections, \d+ artifacts of \d+ tickets", text), v["lines"]

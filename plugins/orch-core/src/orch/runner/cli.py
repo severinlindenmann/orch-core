@@ -349,7 +349,9 @@ def _run(args: argparse.Namespace, env: Mapping[str, str]) -> int:
     for item in swept:
         log.warning("run %s was lost (runner restart); swept %d", item["run"], item["swept"])
     gen = new_gen()
-    term = TermListener(Path(run_dir) / "term" / str(uid) / "term.sock", uid, gen=gen, sup=sup)
+    # tier B (host_uid is the person): only the person's dashboard may connect, by ACL and by peer UID (spec 13.5)
+    term = TermListener(Path(run_dir) / "term" / str(uid) / "term.sock", uid, gen=gen, sup=sup,
+                        peer_uid=host_uid if host_uid != uid else None)  # fmt: skip
     try:
         term.open()
     except OSError as exc:

@@ -1,7 +1,8 @@
 """The runner's term socket (§12.6.1 to §12.6.4): ``<run>/term/<uid>/term.sock``, where the dashboard server attaches.
 
 The host decides every attach and registers it here with ``attach.allow`` over its command stream (§12.6.2); the
-runner never sees a ticket, only its SHA-256. On every new connection (peer UID = the runner's UID) the runner sends
+runner never sees a ticket, only its SHA-256. On every new connection (peer UID = the runner's UID; in tier B the
+PERSON's, §13.5) the runner sends
 first ``{t:"hello", gen, pid}`` (the dashboard server checks both against what the host told it, §12.6.1 step 4); the
 server answers with ``{t:"attach", ticket, nonce}`` within 5 s. Frames use §0.2's codec (4-byte length).
 
@@ -208,6 +209,35 @@ def _int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
+_ACL_ACCESS = "system.posix_acl_access"
+_ACL_UNDEF = 0xFFFFFFFF
+
+
+def acl_blob(owner: int, person: int, grant: int) -> bytes:
+    """The access ACL (Linux xattr format, version 2) ``owner`` rwx for dirs / rw for sockets, ``person`` ``grant``
+    (rwx bits), group and other nothing, mask = ``grant``. ``owner`` is the owner's own permission bits."""
+    import struct
+
+    entries = [(0x01, owner, _ACL_UNDEF), (0x02, grant, person), (0x04, 0, _ACL_UNDEF),
+               (0x10, grant, _ACL_UNDEF), (0x20, 0, _ACL_UNDEF)]  # fmt: skip
+    return struct.pack("<I", 2) + b"".join(struct.pack("<HHI", tag, perm, ident) for tag, perm, ident in entries)
+
+
+def _grant_acl(path: Path, person: int, grant: int) -> None:
+    """Give ``person`` ``grant`` (4 r, 2 w, 1 x) on ``path`` and nothing to group or other, by POSIX ACL, then read it
+    back: any failure (no ACL support, a different answer) raises, and the caller serves nothing (fail closed)."""
+    is_dir = stat.S_ISDIR(os.lstat(path).st_mode)
+    blob = acl_blob(0o7 if is_dir else 0o6, person, grant)
+    try:
+        os.setxattr(path, _ACL_ACCESS, blob, follow_symlinks=False)
+        got = os.getxattr(path, _ACL_ACCESS, follow_symlinks=False)
+    except (AttributeError, OSError) as exc:
+        raise OSError(errno.EPERM, f"{path}: the person's ACL cannot be set ({exc})") from None
+    info = os.lstat(path)
+    if got != blob or stat.S_IMODE(info.st_mode) & 0o007:
+        raise OSError(errno.EPERM, f"{path}: the ACL read back differs")
+
+
 class TermListener:
     def __init__(
         self,
@@ -218,9 +248,15 @@ class TermListener:
         info: Callable[[str], dict[str, Any] | None] | None = None,
         sup: Any = None,
         clock: Callable[[], float] = time.time,
+        peer_uid: int | None = None,
     ) -> None:
         self.path = Path(path)
         self.uid = uid
+        #: whose connections are served: the runner's own UID in tier A (``None``); in tier B (spec 13.5) the PERSON's
+        #: UID, the only one that may connect. Other processes of the agent user (the runs) are refused by the kernel's
+        #: peer UID, and the filesystem grants the person alone by ACL
+        self.peer_uid = uid if peer_uid is None else peer_uid
+        self.tier_b = peer_uid is not None and peer_uid != uid
         self.gen = gen
         #: the supervisor (:class:`orch.runner.supervise.Supervisor`): rings, input, sizes; ``None`` streams nothing
         self.sup = sup
@@ -256,17 +292,20 @@ class TermListener:
     # -- the socket
     def open(self) -> None:
         directory = self.path.parent
-        with contextlib.suppress(FileExistsError):
-            os.mkdir(directory.parent, 0o711)  # <run>/term: only traversed
-        top = os.lstat(directory.parent)
-        if not stat.S_ISDIR(top.st_mode) or top.st_uid not in (0, self.uid) or stat.S_IMODE(top.st_mode) & 0o022:
-            why = f"{directory.parent}: expected a directory of root or UID {self.uid}, not writable by others"
-            raise OSError(errno.EPERM, why)
-        with contextlib.suppress(FileExistsError):
-            os.mkdir(directory, 0o700)
-        info = os.lstat(directory)
-        if not stat.S_ISDIR(info.st_mode) or info.st_uid != self.uid or stat.S_IMODE(info.st_mode) & 0o077:
-            raise OSError(errno.EPERM, f"{directory}: expected a 0700 directory of UID {self.uid}")
+        if self.tier_b:
+            self._open_dirs_tier_b(directory)
+        else:
+            with contextlib.suppress(FileExistsError):
+                os.mkdir(directory.parent, 0o711)  # <run>/term: only traversed
+            top = os.lstat(directory.parent)
+            if not stat.S_ISDIR(top.st_mode) or top.st_uid not in (0, self.uid) or stat.S_IMODE(top.st_mode) & 0o022:
+                why = f"{directory.parent}: expected a directory of root or UID {self.uid}, not writable by others"
+                raise OSError(errno.EPERM, why)
+            with contextlib.suppress(FileExistsError):
+                os.mkdir(directory, 0o700)
+            info = os.lstat(directory)
+            if not stat.S_ISDIR(info.st_mode) or info.st_uid != self.uid or stat.S_IMODE(info.st_mode) & 0o077:
+                raise OSError(errno.EPERM, f"{directory}: expected a 0700 directory of UID {self.uid}")
         try:
             old = os.lstat(self.path)
         except FileNotFoundError:
@@ -288,11 +327,34 @@ class TermListener:
             sock.bind(str(self.path))
         finally:
             os.umask(old_umask)
-        os.chmod(self.path, 0o600)
+        try:
+            if self.tier_b:
+                _grant_acl(self.path, self.peer_uid, 0o6)  # connect needs write: the person alone, by ACL
+            else:
+                os.chmod(self.path, 0o600)
+        except BaseException:
+            sock.close()
+            with contextlib.suppress(OSError):
+                os.unlink(self.path)
+            raise
         sock.listen(16)
         self.sock = sock
         self._thread = threading.Thread(target=self._accept_loop, name="orch-runner-term", daemon=True)
         self._thread.start()
+
+    def _open_dirs_tier_b(self, directory: Path) -> None:
+        """Tier B (spec 13.3, 13.5): ``<agent run>/term`` and ``term/<uid>`` belong to the agent (never root's, never
+        anyone's else), carry no permission for group or other, and grant the person ``--x`` by ACL, read back. The
+        agent run directory above them is made by root with the person's ACL and is not ours to repair."""
+        if self.peer_uid in (0, self.uid):
+            raise OSError(errno.EPERM, "tier B: the peer must be a person's UID, not root and not the agent")
+        for path in (directory.parent, directory):
+            with contextlib.suppress(FileExistsError):
+                os.mkdir(path, 0o700)
+            info = os.lstat(path)
+            if not stat.S_ISDIR(info.st_mode) or info.st_uid != self.uid:
+                raise OSError(errno.EPERM, f"{path}: expected a directory of UID {self.uid}")
+            _grant_acl(path, self.peer_uid, 0o1)
 
     def close(self) -> None:
         self._closing = True
@@ -568,7 +630,7 @@ class TermListener:
     def _handle(self, conn: socket.socket) -> None:
         att: Attachment | None = None
         try:
-            if peer_credentials(conn).uid != self.uid:
+            if peer_credentials(conn).uid != self.peer_uid:
                 return
             _send(conn, {"t": "hello", "gen": self.gen, "pid": os.getpid()})
             decoder = frames.Decoder()

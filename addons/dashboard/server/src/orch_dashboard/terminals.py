@@ -13,6 +13,10 @@ verify the runner and present the host ticket at once.
 **Hygiene.** Nothing here logs, stores, echoes or returns terminal output, input, tickets or frame contents, also not in
 exceptions or validation errors: failures end the socket with a fixed reason and a close code, never a message built
 from data.
+
+**Who the terminal runs as.** In tier B (spec 13.5) terminals run as `orch-agent-<person>`, never as the person: the
+host's preview names that user (`runs_as`) and `execution_line` carries the card line "This terminal runs as
+orch-agent-<person>. It cannot read your keys." (`null` in tier A, where the page keeps its "run as you" line).
 """
 
 from __future__ import annotations
@@ -22,6 +26,7 @@ import base64
 import hashlib
 import json
 import queue
+import re
 import secrets
 import socket
 import struct
@@ -42,6 +47,16 @@ from .errors import HostError, fail, retry_after, valid_code
 from .gateway import Gateway
 from .hostlink import HostLink
 from .policy import LOOPBACK
+
+#: Tier B (spec 13.5): the host names the agent user the terminal runs as (`runs_as`); only this shape is shown.
+AGENT_USER = re.compile(r"^orch-agent-[a-z_][a-z0-9_-]{0,31}$")
+TIER_B_LINE = "This terminal runs as {user}. It cannot read your keys."
+
+
+def execution_line(runs_as: Any) -> str | None:
+    """The terminal header's card line in tier B, else `None` (the page then keeps D-P2-31's "run as you" line)."""
+    return TIER_B_LINE.format(user=runs_as) if isinstance(runs_as, str) and AGENT_USER.fullmatch(runs_as) else None
+
 
 RunId = Annotated[str, StringConstraints(pattern=r"^r_[0-7][0-9A-HJKMNP-TV-Z]{25}$")]
 Idem = Annotated[str, StringConstraints(pattern=r"^a_[0-7][0-9A-HJKMNP-TV-Z]{25}$")]
@@ -229,7 +244,10 @@ def register(app: FastAPI, gateway: Gateway, tickets: Tickets) -> None:
 
     @app.post("/api/w/{ws}/terminals/preview")
     def preview(body: PreviewBody, ws: str = Depends(reads.workspace)):
-        return project.preview(gateway.call(ws, "term.preview", body.host_args()))
+        data = gateway.call(ws, "term.preview", body.host_args())
+        out = project.preview(data)
+        line = execution_line(data.get("runs_as")) if isinstance(data, dict) else None
+        return {**out, "execution_line": line, "as_person": out["as_person"] and line is None}
 
     def terminals_listener(request: Request) -> str:
         """The listener of this request, if terminals are on there and the session belongs to it. A shell on the server

@@ -13574,7 +13574,7 @@ has recorded the sudo/SSH verdict; a re-run whose verdict fails stops the runner
   `orch-runner@<person>.service` (`systemctl show -p MainPID`, a D-Bus client; the pin is read again at every
   connection). A second process of the same agent user is `peer.denied`. The runner reads its own pin, so it knows the
   host is the person (`host_uid`) at `/run/orch/<person uid>/runner/host.sock`, and refuses to start for any `--run` but
-  its own `/run/orch/agents/<user>`. Until L9 moves the terminal socket, `runner.hello` names
+  its own `/run/orch/agents/<user>`. `runner.hello` names
   `/run/orch/agents/<user>/term/<runner uid>/term.sock` and the host accepts only that path.
   The PID is bound to the process, not only compared: by the kernel's pidfd of the peer (`SO_PEERPIDFD`, Linux 6.5+),
   else by its start time in `/proc/<pid>/stat` against the unit's `ExecMainStartTimestampMonotonic` (both converted to
@@ -13591,9 +13591,19 @@ has recorded the sudo/SSH verdict; a re-run whose verdict fails stops the runner
   can lock its own runner out and nobody else. In tier B `runner.json` (programs, `login_shell`, `pass_env`) is owned
   by the agent and the agent can edit it: no person-side policy may live in that file; it stays in state the host
   enforces.
-- The terminal socket moves to `/run/orch/agents/orch-agent-<user>/term.sock` (agent-owned directory with the person's ACL,
-  socket 0660). §12.6.1's checks apply with that path: the directory owned by the runner UID, no write for others
-  except the person's ACL entry, peer UID and PID equal the runner's.
+- **The terminal socket** (L9) stays at `/run/orch/agents/orch-agent-<user>/term/<agent uid>/term.sock`, in the agent's
+  own run directory. The runner creates `term/` and `term/<uid>/` (owner the agent, no permission bits for group or other)
+  and grants the person `--x` on both and `rw-` on the socket by a POSIX access ACL (`u:<person>:`, mask the same, group and
+  other nothing), written and read back at every start; if the ACL cannot be set, no terminal socket is served (fail
+  closed). The runner admits a connection only if the kernel's peer UID is the person's (`host_uid` of the pin; root or
+  the agent itself is refused at `open`), so the agent's own processes, which share the runner's UID, cannot attach.
+  The dashboard's `TermClient` does not trust the host's answer for the path: the runner UID must have a root-owned
+  `agent` pin whose `host_uid` is the client's own UID, the directory is `/run/orch/agents/<pw_name>` from the user
+  database (`orch-agent-*`), the `term/<uid>` directory must be the agent's with no more than `--x` for others, and the
+  peer UID and PID after `connect` must be the runner's (§12.6.1). Any mismatch is `RunnerChanged`.
+- **No shell as the person in tier B.** Terminals start only on a runner whose UID is the pinned agent's (never the
+  person's, never another UID: `runner.unavailable`), re-checked in `term.open`; `term.preview` reports
+  `as_person: false` and `runs_as: orch-agent-<user>`, and the dashboard shows the card line of §13.5.
 - The agent's `orch` CLI finds the host by `ORCH_HOST_RUN_DIR=/run/orch/<person uid>` from the runner's environment.
 - No abstract Unix sockets on the person's side (everyone can reach those); kept as a tested invariant.
 

@@ -28,6 +28,7 @@ from orch.host.errors import HostError, disposition
 from orch.host.hubops import HUB_OPS
 from orch.host.human import HUMAN_OPS
 from orch.host.marketops import MARKET_OPS, MARKET_READS
+from orch.host.mirrorops import MIRROR_OPS
 from orch.host.peerops import PEER_OPS, PEER_READS
 from orch.host.publishing import PUBLISH_OPS
 from orch.host.reads import READ_OPS
@@ -99,6 +100,7 @@ def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
     host |= set(SPACE_OPS)  # V3 C13
     host |= set(MARKET_OPS)  # V3 G2
     host |= set(SHARE_OPS)  # V3 C6
+    host |= set(MIRROR_OPS)  # #1198 L5
     host |= set(GRANT_OPS) | set(AGENT_OPS)  # H11c
     host |= {"reader.declare"}  # H12d-2
     host |= {"phone.request", "phone.cancel"}  # B10 Part B
@@ -235,6 +237,8 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
             assert kind == (
                 ("person_read", "read") if op in ("hub.status", "hub.handoff") else ("person_write", "write")
             )
+        elif op in MIRROR_OPS:  # #1198 L5: P and G, idempotent
+            assert kind == ("pg_read", "read")
         elif op in SHARE_OPS:  # V3 C6: column P only (owner role)
             assert kind == (("person_read", "read") if op in SHARE_READS else ("person_write", "write"))
         elif op in MARKET_OPS:  # V3 G2: P and G; the op refuses an agent's add and --commit itself

@@ -178,7 +178,7 @@ def enable(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, *, con
         )
     try:
         if tier.kind == "B":  # the system unit root installed: read-only here, never written by the person's CLI
-            unit = service.plan_tier_b(str(tier.person), service.tier_b_release(env), uid=uid)
+            unit = service.plan_tier_b(str(tier.person), service.tier_b_release(str(tier.person)), uid=uid)
         else:
             unit = service.plan(env, state, run_dir, releases_dir(dict(env)) / "current")
     except svc.Unsupported as exc:
@@ -493,7 +493,7 @@ def _status(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> in
     try:
         tier = service.agent_tier(state, uid)
         if tier.kind == "B":
-            unit = service.plan_tier_b(str(tier.person), service.tier_b_release(env), uid=uid)
+            unit = service.plan_tier_b(str(tier.person), service.tier_b_release(str(tier.person)), uid=uid)
             doc["card"] = enablement.card_text(tier.agent_user)
             doc["agent_user"] = tier.agent_user
         else:

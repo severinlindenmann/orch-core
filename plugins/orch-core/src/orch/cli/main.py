@@ -289,6 +289,10 @@ def main(
         from orch.setup.flow import main as setup_main
 
         return setup_main(args[1:], env=env, out=out, err=err)
+    if args[:1] == ["share"]:  # the agent user's read-only share, backup of the dashboard (H1 L5): not a registry op
+        from orch.cli.share import main as share_main
+
+        return share_main(args[1:], env=env, out=out, err=err)
     if args[:1] == ["runner"]:  # dashboard execution and the runner service (orch.runner.cli, H11a): not a registry op
         from orch.runner.cli import main as runner_main
 

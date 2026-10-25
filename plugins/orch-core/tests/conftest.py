@@ -221,9 +221,9 @@ def _no_real_service_manager(tmp_path_factory):
     monkeypatch.setattr(enable.Manager, "install", install)
     real_release = release.install_release
 
-    def install_release(version=None, *, target=None, source=None):
+    def install_release(version=None, *, target=None, source=None, python=None):
         refuse_real_home(target if target is not None else release.releases_dir(), "a release")
-        return real_release(version, target=target, source=source)
+        return real_release(version, target=target, source=source, python=python)
 
     monkeypatch.setattr(release, "install_release", install_release)
     try:  # H11e: the records timer has the same fences (no real service manager, no unit under the real home)

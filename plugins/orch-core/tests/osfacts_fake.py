@@ -69,6 +69,11 @@ class FakeOsFacts:
     def can_stat(self, uid, path):
         return not any(path.startswith(d.rstrip("/") + "/") for d in self.unsearchable)
 
+    def acl(self, path, kind):
+        """The ACL bytes a test put into ``acls[path] = (access, default)`` (the apply fake shares that dict)."""
+        have = self.__dict__.get("acls", {}).get(path, (None, None))
+        return have[kind == "default"]
+
     def can_connect(self, uid, path):
         return self.connectable.get((uid, path), False)
 

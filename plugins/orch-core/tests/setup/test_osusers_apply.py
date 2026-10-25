@@ -171,7 +171,7 @@ def test_fresh_run_applies_everything_in_order_with_fixed_binaries() -> None:
     assert repos.mode == 0o750 and repos.acl_access == repos.acl_default and repos.fresh
     assert repos.uid == facts.users["orch-agent-sev"].uid and repos.acl_access is not None
     assert secured["/var/lib/orch/agents/orch-agent-sev"].acl_access is not None  # the person may pass through
-    assert len(secured) == 4 + 8  # agent dir, home, state, repos + the eight slot homes
+    assert len(secured) == 4 + 1 + 8  # agent dir, home, state, repos + the share + the eight slot homes
     assert not any(c[0] == BIN["install"] and "orch-agent-sev" in c[-1] for c in ex.commands)  # never by path
     assert order.index("/etc/orch/pins/991.json") < order.index(BIN["usermod"])  # base pin straight after useradd
     pol = order.index("/etc/orch/pins/991.json", order.index(BIN["usermod"]))

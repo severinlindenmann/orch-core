@@ -25,11 +25,23 @@ The unprivileged host never parses root-written policy (sudoers, sshd): see ``_p
 
 from __future__ import annotations
 
+import posixpath
+import struct
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Final, Literal
 
+from ..setup.osapply import share_acl
 from ..setup.osfacts import UNREADABLE, OsFacts
-from ..setup.osusers import AGENT_HOME_ROOT, AGENT_PREFIX, AGENT_SHELL, POLICY_FILES, PRIVILEGED_GROUPS
+from ..setup.osusers import (
+    AGENT_HOME_ROOT,
+    AGENT_PREFIX,
+    AGENT_SHELL,
+    POLICY_FILES,
+    PRIVILEGED_GROUPS,
+    SHARE_ROOT,
+    share_dir,
+)
 
 __all__ = ["EXPOSURE", "AVAILABILITY", "IsolationResult", "Reason", "detect"]
 
@@ -110,9 +122,11 @@ def _detect(
     key_paths: list[str] | tuple[str, ...] = (),
     *,
     run_root: str = RUN_ROOT,
+    repo_paths: Sequence[str] = (),
 ) -> IsolationResult:
     """``state_dir``: the person's state directory (always checked, and it must exist); ``key_paths``: key files
-    that the agent must not read either (absent ones are skipped, e.g. a key not created yet)."""
+    that the agent must not read either (absent ones are skipped, e.g. a key not created yet); ``repo_paths``: the
+    registered repositories (their chain must carry no ACL entry of an agent user)."""
     if facts.platform != "linux":
         word = {"darwin": "a Mac", "windows": "Windows"}.get(facts.platform, "this system")
         return _same_user(
@@ -159,7 +173,67 @@ def _detect(
         if _may_exist(facts, sock) and facts.can_connect(agent.uid, sock):
             reasons.append(Reason("root_socket", f"The agent user can reach {sock}, which gives root power."))
     reasons += _runner(facts, name, agent.uid, agent.gid, person_uid)
+    reasons += _share(facts, person, person_uid, agent.uid, repo_paths)
     return _result("linux", reasons)
+
+
+def _agent_acl_entry(facts: OsFacts, path: str, agent_uid: int) -> str | None:
+    """Why ``path`` (itself, no symlink followed) carries an ACL entry for an ``orch-agent-*`` user, else ``None``.
+    An ACL that cannot be parsed counts as one (fail closed)."""
+    for kind in ("access", "default"):
+        blob = facts.acl(path, kind)
+        if blob is None:
+            continue
+        if len(blob) < 4 or (len(blob) - 4) % 8 or struct.unpack_from("<I", blob)[0] != 2:
+            return f"{path} has an ACL that orch cannot read"
+        for off in range(4, len(blob), 8):
+            tag, _perm, ident = struct.unpack_from("<HHI", blob, off)
+            if tag != 0x02:  # named user entries only
+                continue
+            who = facts.user_by_uid(ident)
+            if ident == agent_uid or (who is not None and who.name.startswith(AGENT_PREFIX)):
+                return f"{path} lets an agent user in"
+    return None
+
+
+def _share(facts: OsFacts, person: str, person_uid: int, agent_uid: int, repo_paths: Sequence[str]) -> list[Reason]:
+    """The share's exposure facts (design-h1-share-mirror 6). A share that does not exist yet is not an exposure (the
+    admin step has not made it); one that exists must be exactly what setup made, and the agent must have no ACL
+    entry anywhere in the person's home or on the way to a registered repository."""
+    out: list[Reason] = []
+    root = facts.stat(SHARE_ROOT)
+    if root is not None and (
+        root.is_symlink or not root.is_dir or root.uid != 0 or root.mode & 0o7777 != 0o711 or root.has_acl
+    ):
+        out.append(
+            Reason("share_root_wrong", "The folder that holds what is shared with agents is not as setup made it.")
+        )
+    mine = share_dir(person)
+    st = facts.stat(mine)
+    if st is not None:
+        wrong = st.is_symlink or not st.is_dir or st.uid != person_uid or st.mode & 0o7777 != 0o710
+        wrong = wrong or facts.acl(mine, "access") != share_acl(agent_uid) or facts.acl(mine, "default") is not None
+        if wrong:
+            out.append(Reason("share_acl_wrong", "What you share with agents is not set up as orch made it."))
+    home = facts.user(person)
+    chain: list[str] = [home.home] if home is not None else []
+    for repo in repo_paths:
+        node = posixpath.normpath(repo)
+        chain += [node, posixpath.join(node, ".git")]
+        while node not in ("/", ""):
+            node = posixpath.dirname(node)
+            chain.append(node)
+    seen: set[str] = set()
+    for path in chain:
+        if not path or path in seen or facts.stat(path) is None:
+            seen.add(path)
+            continue
+        seen.add(path)
+        why = _agent_acl_entry(facts, path, agent_uid)
+        if why is not None:
+            out.append(Reason("agent_acl_in_home", f"{why}: your files must stay closed to agents."))
+            break  # one is enough; the doctor lists the rest
+    return out
 
 
 def _may_exist(facts: OsFacts, path: str) -> bool:
@@ -333,12 +407,14 @@ def detect(
     key_paths: list[str] | tuple[str, ...] = (),
     *,
     run_root: str = RUN_ROOT,
+    repo_paths: Sequence[str] = (),
 ) -> IsolationResult:
     """``state_dir``: the person's state directory (always checked, and it must exist); ``key_paths``: key files
-    that the agent must not read either (absent ones are skipped, e.g. a key not created yet). Never raises for an
-    operating-system reason: a fact that cannot be read is an exposure fact."""
+    that the agent must not read either (absent ones are skipped, e.g. a key not created yet); ``repo_paths``: the
+    registered repositories. Never raises for an operating-system reason: a fact that cannot be read is an exposure
+    fact."""
     try:
-        return _detect(facts, person, person_uid, state_dir, key_paths, run_root=run_root)
+        return _detect(facts, person, person_uid, state_dir, key_paths, run_root=run_root, repo_paths=repo_paths)
     except OSError as exc:
         return IsolationResult(
             "broken",

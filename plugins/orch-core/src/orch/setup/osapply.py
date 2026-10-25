@@ -36,6 +36,7 @@ from .osusers import (
     AGENT_HOME_ROOT,
     AGENT_PREFIX,
     NORMAL_PERSON,
+    SHARE_ROOT,
     SLOT_HOME_ROOT,
     SSHD_DROPIN,
     PinEntry,
@@ -44,6 +45,8 @@ from .osusers import (
     UserPlan,
     assess_policy,
     plan,
+    share_dir,
+    share_releases,
     valid_person,
 )
 
@@ -57,6 +60,7 @@ __all__ = [
     "apply",
     "main",
     "release_problem",
+    "share_acl",
     "recheck",
     "why_not_ok",
 ]
@@ -177,6 +181,12 @@ def acl(entries: tuple[tuple[int, ...], ...]) -> bytes:
     for entry in entries:
         out += struct.pack("<HHI", entry[0], entry[1], entry[2] if len(entry) > 2 else _UNDEF)
     return out
+
+
+def share_acl(agent_uid: int) -> bytes:
+    """The exact access ACL of ``SHARE_ROOT/<person>`` (13.2 item 5): ``u::rwx,u:<agent>:--x,g::---,m::--x,o::---``.
+    The agent may pass through to the subfolders the person opens for it, and may not list the folder."""
+    return acl(((USER_OBJ, 7), (USER, 1, agent_uid), (GROUP_OBJ, 0), (MASK, 1), (OTHER, 0)))
 
 
 @dataclass(frozen=True)
@@ -378,15 +388,18 @@ class _Apply:
         return None if u is None else u.uid
 
     # directories ----------------------------------------------------------------------------------------------
-    def root_dir(self, path: str) -> None:
-        """A root-owned directory (never below anything an agent owns): created, or checked and left alone."""
+    def root_dir(self, path: str, mode: int = 0o755) -> None:
+        """A root-owned directory (never below anything an agent owns): created, or checked and left alone. An
+        existing one may have fewer permission bits than ``mode``, never more."""
         st = self.facts.stat(path)
         if st is None:
-            self.run([BIN["install"], "-d", "-m", "0755", "-o", _ROOT, "-g", _ROOT, path])
+            self.run([BIN["install"], "-d", "-m", f"{mode:04o}", "-o", _ROOT, "-g", _ROOT, path])
         elif st.is_symlink or not st.is_dir:
             self.res.fail(f"{path} exists but is not a plain directory; setup will not change it.")
         elif not (st.uid == 0 and st.mode & 0o022 == 0):
             self.res.fail(f"{path} exists but is not owned by root or can be written by others.")
+        elif st.mode & 0o777 & ~mode:
+            self.res.fail(f"{path} is more open than it should be ({st.mode & 0o777:04o}); setup will not fix it.")
 
     def secure(self, base: str, spec: DirSpec, what: str) -> bool:
         """Directories below an agent- or slot-owned one are never touched by path: ``ex.secure_dir`` opens them
@@ -405,6 +418,9 @@ class _Apply:
             self.root_dir(path)
             if not self.res.ok:
                 return
+        self.root_dir(SHARE_ROOT, 0o711)  # one name can be passed through, none listed: not even who uses orch
+        if not self.res.ok:
+            return
         if self.facts.sshd_installed():
             self.root_dir("/etc/ssh/sshd_config.d")
 
@@ -452,6 +468,23 @@ class _Apply:
             )
             if not self.res.ok:
                 return
+
+    def share_dir(self, p: Plan, u: UserPlan) -> None:
+        """``SHARE_ROOT/<person>``: the person's, 0700 with the one agent entry ``--x``. Root creates it and sets that
+        ACL (file-descriptor-relative from the root-owned ``SHARE_ROOT``) and never opens anything below it: the person
+        fills it (mirrors, release, interpreter) and nobody else writes there."""
+        person, agent = self.facts.user(p.person), self.uid_of(u.name)
+        if self.dry and agent is None:
+            agent = _UNDEF - 1  # not created yet in a dry run: any placeholder id, nothing is written
+        if person is None or agent is None:
+            self.res.fail(f"'{u.name}' or '{p.person}' could not be looked up.")
+            return
+        spec = DirSpec(
+            (p.person,), person.uid, person.gid, 0o700, 0o710, share_acl(agent), None, False
+        )  # 0710: the mask shows in the group bits
+        self.secure(
+            SHARE_ROOT, spec, f"secure {share_dir(p.person)} ({p.person}, 0700; {u.name} may pass through only)"
+        )
 
     def slot_dirs(self, slots: list[UserPlan]) -> None:
         for u in slots:
@@ -665,7 +698,10 @@ def apply(
             res.fail(r.message)
         _Apply(facts, ex, res).quarantine(p)  # on ANY refusal a kept agent must not keep running or stay recorded
         return res
-    problem = release_problem(facts, release, p.person_uid)
+    # The share's own releases folder is made by the person (root opens nothing below the share), so it need not exist
+    # yet: the runner unit retries until the host has copied the release in. Any other release is checked as before.
+    own_share = p.person_uid is not None and release == share_releases(p.person)
+    problem = None if own_share else release_problem(facts, release, p.person_uid)
     if problem:
         return res.fail(problem)
     st = _Apply(facts, ex, res)
@@ -699,6 +735,7 @@ def apply(
             return res
     for step in (
         lambda: p.agent and st.agent_dirs(p, p.agent),
+        lambda: p.agent and st.share_dir(p, p.agent),
         lambda: st.slot_dirs(list(p.slots)),
         lambda: st.tmpfiles(p),
         lambda: st.sshd_dropin(p),

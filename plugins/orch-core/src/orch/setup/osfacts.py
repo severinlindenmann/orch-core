@@ -84,6 +84,7 @@ class OsFacts(Protocol):
     def listdir(self, path: str) -> list[str]: ...
     def can_read(self, uid: int, path: str) -> bool: ...  # True unless provably unreadable (dirs: r or x counts)
     def can_connect(self, uid: int, path: str) -> bool: ...  # write on the socket and search on every ancestor
+    def acl(self, path: str, kind: str) -> bytes | None: ...  # the raw access ("access") or default ACL; None = none
     def can_stat(self, uid: int, path: str) -> bool: ...  # search (x) on every folder above ``path``: uid can stat it
     # Root-written policy is never parsed here. A root process asks the authoritative tools (setup, L2); the host only
     # compares stat signatures with what the root-owned pin recorded.
@@ -190,6 +191,18 @@ class RealOsFacts:
             if exc.errno in (errno.ENODATA, errno.ENOTSUP):
                 return None
             raise _Unprovable(path) from exc
+
+    def acl(self, path: str, kind: str) -> bytes | None:
+        """The raw ACL xattr of ``path`` itself (a symlink is not followed): ``kind`` is ``"access"`` or ``"default"``.
+        ``None``: no ACL. Any other failure raises ``OSError`` (the caller fails closed)."""
+        try:
+            return os.getxattr(path, _ACL_NAMES[kind == "default"], follow_symlinks=False)
+        except AttributeError:
+            return None
+        except OSError as exc:
+            if exc.errno in (errno.ENODATA, errno.ENOTSUP, errno.ENOENT):
+                return None
+            raise
 
     def _perm(self, st: os.stat_result, path: str, uid: int, gids: frozenset[int]) -> int:
         """The rwx bits (0-7) ``uid`` with ``gids`` gets on ``path``: POSIX ACL algorithm when an ACL exists."""

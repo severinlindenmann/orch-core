@@ -92,7 +92,7 @@ def code_digest() -> str:
     return hashlib.sha256(tree).hexdigest()[:12]
 
 
-def default_version(source: Path | None = None) -> str:
+def default_version(source: Path | None = None, python: str | None = None) -> str:
     """The package version plus 12 hex of the tree digest, so two dev builds never share a release directory."""
     from importlib.metadata import PackageNotFoundError, version
 
@@ -100,7 +100,9 @@ def default_version(source: Path | None = None) -> str:
         base = version("orch-core")
     except PackageNotFoundError:
         base = "0"
-    tree = json.dumps({"files": _manifest(source or _package_dir()), "python": sys.executable}, sort_keys=True).encode()
+    tree = json.dumps(
+        {"files": _manifest(source or _package_dir()), "python": python or sys.executable}, sort_keys=True
+    ).encode()
     # the interpreter is part of the identity: the launchers' shebang names it
     return f"{base}+{hashlib.sha256(tree).hexdigest()[:12]}"
 
@@ -111,13 +113,17 @@ def _freeze(root: Path) -> None:
     os.chmod(root, 0o555)
 
 
-def install_release(version: str | None = None, *, target: Path | None = None, source: Path | None = None) -> Path:
+def install_release(
+    version: str | None = None, *, target: Path | None = None, source: Path | None = None, python: str | None = None
+) -> Path:
+    """``python``: the interpreter the launchers name (default: this one). Tier B passes the one in the share."""
     source = source or _package_dir()
-    version = version or default_version(source)
+    python = python or sys.executable
+    version = version or default_version(source, python)
     if not version or "/" in version or version.startswith("."):
         raise ReleaseError(f"invalid version {version!r}")
-    if any(ch.isspace() for ch in sys.executable) or "\x00" in sys.executable:
-        raise ReleaseError(f"the interpreter path {sys.executable!r} has whitespace: a launcher cannot name it")
+    if any(ch.isspace() for ch in python) or "\x00" in python:
+        raise ReleaseError(f"the interpreter path {python!r} has whitespace: a launcher cannot name it")
     releases = target or releases_dir()
     final = releases / version
     manifest = _manifest(source)
@@ -134,7 +140,7 @@ def install_release(version: str | None = None, *, target: Path | None = None, s
                 first = (final / "bin" / name).read_text().split("\n", 1)[0]
             except OSError as exc:
                 raise ReleaseError(f"release {version} has no readable launcher {name}") from exc
-            if first != f"#!{sys.executable} -I":
+            if first != f"#!{python} -I":
                 raise ReleaseError(
                     f"release {version} was installed for another interpreter ({first[2:]!r}); use a new version"
                 )
@@ -149,8 +155,8 @@ def install_release(version: str | None = None, *, target: Path | None = None, s
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source / rel, dest)
         (staging / "bin").mkdir()
-        (staging / "bin" / "orch-host").write_text(f"#!{sys.executable} -I\n" + LAUNCHER)
-        (staging / "bin" / "orch-runner").write_text(f"#!{sys.executable} -I\n" + RUNNER_LAUNCHER)
+        (staging / "bin" / "orch-host").write_text(f"#!{python} -I\n" + LAUNCHER)
+        (staging / "bin" / "orch-runner").write_text(f"#!{python} -I\n" + RUNNER_LAUNCHER)
         (staging / "RELEASE.json").write_text(json.dumps({"version": version, "files": manifest}, sort_keys=True))
         _freeze(staging)
         os.rename(staging, final)  # atomic: a release appears complete or not at all

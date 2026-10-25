@@ -97,6 +97,7 @@ from .hubops import HUB_OPS
 from .hubops import NETWORK_OPS as HUB_NETWORK_OPS
 from .marketops import MARKET_OPS, MARKET_READS
 from .marketops import NETWORK_OPS as MARKET_NETWORK_OPS
+from .mirrorops import MIRROR_OPS
 from .outcomes import BUILDERS, Planned, request_idem
 from .peerops import NETWORK_OPS as PEER_NETWORK_OPS
 from .peerops import PEER_OPS, PEER_READS
@@ -241,6 +242,7 @@ def served_ops() -> dict[str, int]:
     out.update(SPACE_OPS)  # V3 C13: space.* (shared spaces through the hub)
     out.update(MARKET_OPS)  # V3 G2: market.* (the add-on marketplace)
     out.update(SHARE_OPS)  # V3 C6: share.* (selective-mode share rules)
+    out.update(MIRROR_OPS)  # #1198 L5: mirror.sync (the agent's read-only copy of a repository)
     out.update(GRANT_OPS)  # H11c: grant.deposit, grant.deposit_status, grant.forget (cap run/1)
     out.update(AGENT_OPS)  # H11c: agent.preview, agent.start (cap run/1)
     return out
@@ -296,6 +298,8 @@ def op_kind(name: str) -> tuple[OpKind, Phase] | None:
         return ("person_read", "read") if name in ("hub.status", "hub.handoff") else ("person_write", "write")
     if name in PEER_OPS:  # V3 C12: reads for P and G (an agent reads its inbox); writes P only, owner role
         return ("pg_read", "read") if name in PEER_READS else ("person_write", "write")
+    if name in MIRROR_OPS:  # #1198 L5: P and G (an agent asks for new commits), never N; idempotent, so a read
+        return ("pg_read", "read")
     if name in SHARE_OPS:  # V3 C6: column P only (the op checks the owner role)
         return ("person_read", "read") if name in SHARE_READS else ("person_write", "write")
     if name in SPACE_OPS:  # V3 C13: list and get for P and G (untrusted data), the rest P only (owner role)
@@ -498,6 +502,10 @@ class RegistryBackend:
             from . import hubops
 
             return await hubops.execute(call, result)
+        if op in MIRROR_OPS:  # #1198 L5: git, off the workspace worker
+            from . import mirrorops
+
+            return await mirrorops.execute(call, result)
         if op in SHARE_NETWORK_OPS:  # V3 C6: the hub link, off the workspace worker
             from . import shareops
 
@@ -706,6 +714,10 @@ class RegistryBackend:
                 from . import hubops
 
                 result = hubops.serve(call)
+            elif op in MIRROR_OPS:
+                from . import mirrorops
+
+                result = mirrorops.serve(call)
             elif op in SHARE_OPS:
                 from . import shareops
 

@@ -31,6 +31,10 @@ __all__ = [
     "SLOT_HOME_ROOT",
     "AGENT_HOME_ROOT",
     "AGENT_RUN_ROOT",
+    "SHARE_ROOT",
+    "share_dir",
+    "share_releases",
+    "share_python",
     "RECHECK_COMMAND",
     "SSHD_DROPIN",
     "SSHD_DROPIN_TEXT",
@@ -61,6 +65,9 @@ SLOT_SHELL = SLOT_SHELLS[0]
 SLOT_HOME_ROOT = "/var/lib/orch/" + "add" + "ons"
 AGENT_HOME_ROOT = "/var/lib/orch/agents"
 AGENT_RUN_ROOT = "/run/orch/agents"
+# The read-only place the person fills for the agent (spec 13.2 item 5): bare mirrors of the repositories, the release
+# and the interpreter. Root makes the two directories and the one ACL; only the person writes below.
+SHARE_ROOT = "/var/lib/orch/share"
 # the interpreter is named in the unit, not left to the launcher's shebang: root runs exactly this
 RECHECK_COMMAND = f"/usr/bin/python3 -I -S {LAUNCHER_PATH} --recheck"
 SSHD_DROPIN = "/etc/ssh/sshd_config.d/10-orch-agents.conf"
@@ -81,6 +88,21 @@ def valid_person(person: str) -> bool:
         and len(AGENT_PREFIX + person) <= _MAX_NAME
         and not person.startswith((AGENT_PREFIX, SLOT_PREFIX))
     )
+
+
+def share_dir(person: str) -> str:
+    """The agent's read-only share for ``person`` (``SHARE_ROOT/<person>``): no pin field, the name decides."""
+    return f"{SHARE_ROOT}/{person}"
+
+
+def share_releases(person: str) -> str:
+    """The releases directory of tier B (the person's host copies the verified release in after setup)."""
+    return f"{share_dir(person)}/releases"
+
+
+def share_python(person: str) -> str:
+    """The interpreter tree (``UV_PYTHON_INSTALL_DIR``) the share's release launchers name."""
+    return f"{share_dir(person)}/python"
 
 
 def _good_release(release: str) -> bool:
@@ -214,6 +236,8 @@ class Plan:
         new = [s.name for s in self.slots if s.action == "create"]
         if new:
             out.append(f"Create {len(new)} restricted user(s) for add-ons ({new[0]} to {new[-1]}).")
+        if self.agent:
+            out.append("Make a read-only place for the code your agents use.")
         if self.units:
             out.append("Install the background services that run agents and add-ons as those users.")
         if self.files:

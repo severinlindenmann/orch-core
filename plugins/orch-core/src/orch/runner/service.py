@@ -165,12 +165,13 @@ def agent_tier(state: Path, uid: int | None = None, *, facts: Any = None) -> Tie
     return Tier("broken", AGENT_PREFIX + user.name, user.name, found.summary)
 
 
-def tier_b_release(env: Mapping[str, str]) -> Path:
+def tier_b_release(person: str) -> Path:
     """The ONE release path of tier B: ``orch-os-setup --release`` is given this, and :func:`plan_tier_b` compares the
-    installed unit against it (the unit runs ``<this>/current/bin/orch-runner``)."""
-    from orch.host.release import releases_dir
+    installed unit against it (the unit runs ``<this>/current/bin/orch-runner``). It lives in the share the agent can
+    read (``/var/lib/orch/share/<person>/releases``, spec 13.2 item 5), never in the person's home."""
+    from orch.setup.osusers import share_releases
 
-    return releases_dir(dict(env))
+    return Path(share_releases(person))
 
 
 def plan_tier_b(

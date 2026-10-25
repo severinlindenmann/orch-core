@@ -417,3 +417,30 @@ def test_the_module_never_runs_two_root_tests_at_once(one_root_test_at_a_time) -
     with open(ROOT_LOCK, "a") as other:
         with pytest.raises(BlockingIOError):
             fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def test_front_flags_load_from_the_trusted_copy_and_a_dry_run_changes_nothing(root_machine) -> None:
+    """R1-7: ``--front-enable`` / ``--front-disable`` import ``osfront`` from the root-owned copy under ``-I -S`` (a
+    file missing from TRUSTED_FILES would show up here) and a dry run creates no user, file or unit."""
+    from orch.setup.oslauncher import LAUNCHER_PATH
+
+    person, _release = root_machine
+    base = ["/usr/bin/python3", "-I", "-S", LAUNCHER_PATH]
+    bad = _sudo(*base, "--front-enable", "--person", person, "--name", "localhost", "--dry-run", check=False)
+    assert bad.returncode == 1 and "lowercase DNS name" in bad.stdout + bad.stderr, bad.stdout + bad.stderr
+    plan = _sudo(*base, "--front-enable", "--person", person, "--name", "orch.example.com", "--dry-run", check=False)
+    text = plan.stdout + plan.stderr
+    # no Caddy at /usr/bin/caddy on the runner image (the product accepts only a root-owned one there): the plan
+    # says so; with Caddy installed it lists the actions
+    assert ("Caddy 2.11 or newer is not installed" in text) or ("Would do:" in text), text
+    off = _sudo(*base, "--front-disable", "--dry-run", check=False)
+    assert off.returncode == 0, off.stdout + off.stderr
+    for name in ("orch-front",):
+        try:
+            pwd.getpwnam(name)
+        except KeyError:
+            continue
+        raise AssertionError(f"a dry run created the user {name}")
+    assert not os.path.exists("/etc/orch/front/Caddyfile") and not os.path.exists(
+        "/etc/systemd/system/orch-front.service"
+    )

@@ -1,6 +1,7 @@
 """The front socket's side of the remote dashboard (#1198 R1-4; host spec 0.8.6 item 10.2).
 
-A Unix socket only the front (Caddy, its own system user) may use. Two checks, in this order:
+A Unix socket only the front (Caddy, its own system user) may use, in root's directory `/run/orch/front/<uid>`
+(group `orch-front`, 0750; see `__main__.front_socket_path`). Two checks, in this order:
 1. `PeerChecked`: every accepted connection's peer UID must be the configured front UID; any other is closed before a
    byte is read. This answers the open point of EDGE.md: on a loopback port every local process can claim any client
    address; on this socket only the front can.

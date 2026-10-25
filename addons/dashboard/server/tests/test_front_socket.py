@@ -204,23 +204,70 @@ def test_remote_access_is_off_without_the_file_and_a_wrong_one_refuses_the_start
         remote_config(socket_dir)
 
 
-def test_the_front_socket_directory_must_be_ours_and_closed_to_writers(socket_dir):
+@pytest.fixture
+def front_root(socket_dir, monkeypatch):
+    """`/run/orch/front` as root's setup makes it, for our UID: `<root>/<uid>`, ours, our group standing in for the
+    front's group, mode 0750. The front's group lookup is faked (the fake front user does not exist)."""
+    import orch_dashboard.__main__ as cli
+
+    root = socket_dir / "front"
+    root.mkdir(mode=0o711)
+    directory = root / str(os.getuid())
+    directory.mkdir()
+    os.chown(directory, -1, os.getgid())
+    directory.chmod(0o750)
+    monkeypatch.setattr(cli, "FRONT_RUN_ROOT", root)
+    monkeypatch.setattr(cli, "front_group", lambda uid: os.getgid())
+    return directory
+
+
+def test_the_front_socket_directory_is_root_made_ours_and_closed_to_everyone_else(front_root):
     from orch_dashboard.__main__ import front_socket_path
 
-    path = front_socket_path(socket_dir)
-    assert (
-        path == socket_dir / "dashboard" / "front.sock" and (socket_dir / "dashboard").stat().st_mode & 0o777 == 0o711
-    )
-    (socket_dir / "dashboard").chmod(0o777)
+    assert front_socket_path(os.getuid() + 1) == front_root / "front.sock"
+    for mode in (0o770, 0o755, 0o751, 0o777):  # group write, or anything for others
+        front_root.chmod(mode)
+        with pytest.raises(RuntimeError, match="remote.not_configured"):
+            front_socket_path(os.getuid() + 1)
+    front_root.chmod(0o700)  # tighter is fine (the front just cannot enter; nothing is widened)
+    assert front_socket_path(os.getuid() + 1) == front_root / "front.sock"
+
+
+def test_the_front_socket_directory_is_never_made_here_and_needs_the_fronts_group(front_root, monkeypatch):
+    import orch_dashboard.__main__ as cli
+
+    monkeypatch.setattr(cli, "front_group", lambda uid: os.getgid() + 12345)  # another group than the directory's
     with pytest.raises(RuntimeError, match="remote.not_configured"):
-        front_socket_path(socket_dir)
+        cli.front_socket_path(os.getuid() + 1)
+    monkeypatch.undo()
+    front_root.rmdir()
+    monkeypatch.setattr(cli, "FRONT_RUN_ROOT", front_root.parent)
+    with pytest.raises(RuntimeError, match="remote.not_configured: .* is missing"):
+        cli.front_socket_path(os.getuid() + 1)
+    assert not front_root.exists()  # the person's server cannot give it the front's group, so it creates nothing
+    front_root.symlink_to(front_root.parent)  # a link in its place is no directory of ours
+    with pytest.raises(RuntimeError, match="remote.not_configured"):
+        cli.front_socket_path(os.getuid() + 1)
 
 
-def test_the_server_opens_the_front_socket_only_when_configured_and_removes_it_at_stop(state):
+def test_the_front_is_never_an_agent_or_add_on_user(socket_dir, monkeypatch):
+    import orch_dashboard.__main__ as cli
+
+    other = os.getuid() + 1
+    write_remote(socket_dir, f'{{"name": "{NAME}", "front_uid": {other}}}')
+    for names in (["orch-agent-sev"], ["orch-addon-3"], ["orch-front", "orch-agent-sev"], ["x", "orch-addon-1"]):
+        monkeypatch.setattr(cli, "user_names", lambda uid, names=names: names)  # aliases of one UID count too
+        with pytest.raises(RuntimeError, match="remote.not_configured: front_uid must not be an agent or add-on"):
+            cli.remote_config(socket_dir)
+    monkeypatch.setattr(cli, "user_names", lambda uid: ["orch-front"])
+    assert cli.remote_config(socket_dir)[1] == other
+
+
+def test_the_server_opens_the_front_socket_only_when_configured_and_removes_it_at_stop(state, front_root):
     import orch_dashboard.__main__ as cli
 
     ctl = state / "dashboard" / "ctl.sock"
-    front_path = cli.run_dir(cli.state_dir()) / "dashboard" / "front.sock"
+    front_path = front_root / "front.sock"
     errors = []
 
     def run():
@@ -245,13 +292,13 @@ def test_the_server_opens_the_front_socket_only_when_configured_and_removes_it_a
     cli.control(ctl, "stop")
     thread.join(timeout=10)
     assert not thread.is_alive()
-    # on: the front socket is there, mode 0666 in a 0711 directory, and this user (not the front) is dropped
+    # on: the front socket is there, mode 0666 in root's 0750 directory, and this user (not the front) is dropped
     write_remote(state / "dashboard", f'{{"name": "{NAME}", "front_uid": {os.getuid() + 1}}}')
     thread = threading.Thread(target=run, daemon=True)
     thread.start()
     wait_up()
     assert front_path.is_socket() and front_path.stat().st_mode & 0o777 == 0o666
-    assert front_path.parent.stat().st_mode & 0o777 == 0o711
+    assert front_path.parent.stat().st_mode & 0o777 == 0o750
     assert raw_get(front_path, {"Host": NAME, "X-Orch-Client": SOURCE}) == b""
     cli.control(ctl, "stop")
     thread.join(timeout=15)
@@ -259,12 +306,12 @@ def test_the_server_opens_the_front_socket_only_when_configured_and_removes_it_a
     assert not front_path.exists()  # gone with the server
 
 
-def test_a_bad_remote_json_keeps_loopback_serving_without_a_front(state):
+def test_a_bad_remote_json_keeps_loopback_serving_without_a_front(state, front_root):
     import orch_dashboard.__main__ as cli
 
     write_remote(state / "dashboard", f'{{"name": "127.0.0.1", "front_uid": {os.getuid() + 1}}}')
     ctl = state / "dashboard" / "ctl.sock"
-    front_path = cli.run_dir(cli.state_dir()) / "dashboard" / "front.sock"
+    front_path = front_root / "front.sock"
     thread = threading.Thread(target=cli.serve, daemon=True)
     thread.start()
     for _ in range(300):
@@ -389,3 +436,102 @@ def test_the_remote_problem_is_not_shown_to_the_front(gateway, auth, tmp_path, r
     )
     front = TestClient(Front(app), base_url=HTTPS, headers={"X-Orch-Client": SOURCE})
     assert "remote_problem" not in front.get("/api/session", headers=bearer(remote)).json()
+
+
+def _serve_in_thread(cli, ctl):
+    errors = []
+    thread = threading.Thread(target=lambda: cli.serve(), daemon=True)
+    thread.start()
+    for _ in range(300):
+        try:
+            cli.control(ctl, "hello")
+            return thread, errors
+        except OSError:
+            time.sleep(0.02)
+    raise AssertionError("the server did not start")
+
+
+def _as_root(cli, monkeypatch):
+    """The next ctl peer reads as uid 0 (fake peer credentials); only the server's own accept sees it."""
+    real = cli.peer_uid
+    monkeypatch.setattr(cli, "peer_uid", lambda conn: 0)
+    return lambda: monkeypatch.setattr(cli, "peer_uid", real)
+
+
+def test_ctl_enroll_answers_root_only_and_never_the_persons_own_uid(state, front_root, monkeypatch, capsys):
+    import orch_dashboard.__main__ as cli
+
+    ctl = state / "dashboard" / "ctl.sock"
+    write_remote(state / "dashboard", f'{{"name": "{NAME}", "front_uid": {os.getuid() + 1}}}')
+    thread, _ = _serve_in_thread(cli, ctl)
+    # the person's UID (an agent in tier A runs as the person): a plain refusal, no code
+    reply = cli.control(ctl, "enroll")
+    assert reply == {"error": "enroll.root_only: use sudo"}
+    # root: a fresh code each time, for the configured name, 15 min
+    back = _as_root(cli, monkeypatch)
+    first, second = cli.control(ctl, "enroll"), cli.control(ctl, "enroll")
+    back()
+    assert first["name"] == NAME and first["code"] != second["code"]
+    assert 14 * 60 < first["expires_at"] - time.time() <= 15 * 60
+    ident, _, secret = first["code"].partition("-")
+    assert len(ident) == 12 and len(secret) >= 22  # 128+ bits
+    # root may do nothing else here: no launch code, no stop
+    back = _as_root(cli, monkeypatch)
+    for command in ("launch", "stop", "hello"):
+        with pytest.raises((EOFError, ConnectionError)):
+            cli.control(ctl, command)
+    back()
+    assert cli.control(ctl, "hello")["release"]  # still running, still ours
+    cli.control(ctl, "stop")
+    thread.join(timeout=15)
+    out = capsys.readouterr()
+    assert first["code"] not in out.out + out.err and second["code"] not in out.out + out.err
+
+
+def test_ctl_enroll_is_off_without_remote_access(state, front_root, monkeypatch):
+    import orch_dashboard.__main__ as cli
+
+    ctl = state / "dashboard" / "ctl.sock"
+    thread, _ = _serve_in_thread(cli, ctl)
+    back = _as_root(cli, monkeypatch)
+    reply = cli.control(ctl, "enroll")
+    back()
+    assert set(reply) == {"error"} and "remote.not_configured" in reply["error"]
+    cli.control(ctl, "stop")
+    thread.join(timeout=15)
+
+
+def test_an_other_user_gets_no_answer_on_ctl(state, front_root, monkeypatch):
+    import orch_dashboard.__main__ as cli
+
+    ctl = state / "dashboard" / "ctl.sock"
+    thread, _ = _serve_in_thread(cli, ctl)
+    real = cli.peer_uid
+    monkeypatch.setattr(cli, "peer_uid", lambda conn: os.getuid() + 7)
+    with pytest.raises((EOFError, ConnectionError)):  # closed without an answer; Linux may report it as a reset
+        cli.control(ctl, "enroll")
+    monkeypatch.setattr(cli, "peer_uid", real)
+    cli.control(ctl, "stop")
+    thread.join(timeout=15)
+
+
+def test_up_starts_the_server_and_mints_nothing(state, front_root, monkeypatch, capsys):
+    import orch_dashboard.__main__ as cli
+
+    write_remote(state / "dashboard", f'{{"name": "{NAME}", "front_uid": {os.getuid() + 1}}}')
+    ctl = state / "dashboard" / "ctl.sock"
+    thread = threading.Thread(target=cli.serve, daemon=True)
+    thread.start()
+    for _ in range(300):
+        try:
+            cli.control(ctl, "hello")
+            break
+        except OSError:
+            time.sleep(0.02)
+    cli.start_dashboard()  # a server already runs: it only checks
+    assert capsys.readouterr().out == ""
+    monkeypatch.setenv("ORCH_GRANT", "x")
+    with pytest.raises(cli.AgentRefused):
+        cli.start_dashboard()
+    cli.control(ctl, "stop")
+    thread.join(timeout=15)

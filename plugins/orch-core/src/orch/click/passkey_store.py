@@ -182,6 +182,18 @@ class PasskeyStore:
             self._write(kept)
             return True
 
+    def clear(self) -> int:
+        """Drop every passkey (``orch remote reset``, the owner at the terminal). Works on a store that no longer
+        passes its checks too (that is a reason to reset): the file is replaced, never followed or edited. Returns how
+        many valid passkeys it held (0 when it could not be read)."""
+        with self.lock:
+            try:
+                held = len(self.read())
+            except StoreError:
+                held = 0
+            self._write([])
+            return held
+
 
 def _no_duplicates(pairs):
     keys = [k for k, _ in pairs]

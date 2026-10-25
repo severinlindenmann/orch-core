@@ -31,6 +31,7 @@ TRUSTED_FILES = (
     "orch/setup/osfacts.py",
     "orch/setup/osusers.py",
     "orch/setup/osapply.py",
+    "orch/setup/osfront.py",
 )
 
 

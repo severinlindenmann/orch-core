@@ -79,6 +79,7 @@ class OsFacts(Protocol):
     def user(self, name: str) -> UserInfo | None: ...
     def user_by_uid(self, uid: int) -> UserInfo | None: ...
     def group(self, name: str) -> GroupInfo | None: ...
+    def users_with_gid(self, gid: int) -> list[str]: ...  # names of users whose MAIN group is gid
     def stat(self, path: str) -> PathInfo | None: ...
     def listdir(self, path: str) -> list[str]: ...
     def can_read(self, uid: int, path: str) -> bool: ...  # True unless provably unreadable (dirs: r or x counts)
@@ -147,6 +148,9 @@ class RealOsFacts:
         except KeyError:
             return None
         return GroupInfo(g.gr_name, g.gr_gid, frozenset(g.gr_mem))
+
+    def users_with_gid(self, gid: int) -> list[str]:
+        return [e.pw_name for e in pwd.getpwall() if e.pw_gid == gid]
 
     def _has_acl(self, path: str) -> bool:
         try:

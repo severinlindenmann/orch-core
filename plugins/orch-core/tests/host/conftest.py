@@ -14,3 +14,6 @@ def _fresh_snapshot_store(monkeypatch):
     from orch.host import pages
 
     monkeypatch.setattr(pages, "STORE", pages.SnapshotStore())
+
+
+from tests.no_real_system import _no_real_system_facts  # noqa: E402,F401  (autouse)

@@ -3194,6 +3194,15 @@ def test_c16_the_state_is_read_from_the_addon_list_and_never_the_token(client, t
         assert res.status_code == 200 and res.json() == {"credential": want}, listed
 
 
+def test_c16_the_state_is_owner_only(client, token, stub, script, local, monkeypatch):
+    from orch_dashboard import adapters
+
+    real = adapters.members
+    monkeypatch.setattr(adapters, "members", lambda d: [m.model_copy(update={"role": "maintainer"}) for m in real(d)])
+    res = client.get(url(stub, "github"), headers=hdr(token))
+    assert res.status_code == 403 and res.json()["error"]["code"] == "role.denied"
+
+
 def test_c16_the_contract_refusal_is_in_plain_words(client, token, stub, script, local):
     script.features = ["custody"]
     res = client.post(url(stub, "github/seal"), json={}, headers=hdr(token))

@@ -567,8 +567,10 @@ def register(app: FastAPI, gateway: Gateway):
     @app.get("/api/w/{ws}/click/github")
     def github_state(ws: str = Depends(workspace)):
         """Is a GitHub token saved? `stored`, `missing`, or `null` when the GitHub add-on is off or asks for no key.
-        Read from `addon.list`; the token itself is never read here."""
+        Read from `addon.list`; the token itself is never read here. Owners only, like the other GitHub routes."""
         gateway.enabled(ws)
+        if not owner(ws):
+            raise fail("role.denied", "Only an owner sees the GitHub token.", exit=3)
         rows = gateway.call(ws, "addon.list").get("addons", [])
         row = next(
             (r for r in rows if isinstance(r, dict) and r.get("name") == "github" and r.get("state") == "active"), None

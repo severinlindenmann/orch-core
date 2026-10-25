@@ -59,6 +59,14 @@ describe('GithubToken', () => {
     expect(screen.getByTestId('github-token-remove')).toBeTruthy()
   })
 
+  it('shows nothing, and no error, to a person who is not an owner', async () => {
+    state.mockRejectedValue(new ApiError(403, { code: 'role.denied', message: 'Only an owner sees the GitHub token.', retryable: false } as never))
+    const { container } = mount()
+    await waitFor(() => expect(state).toHaveBeenCalled(), T)
+    await waitFor(() => expect(container.querySelector('[data-testid="github-token"]')).toBeNull(), T)
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
   it('shows no state when the add-on is off', async () => {
     state.mockResolvedValue({ credential: null })
     mount()

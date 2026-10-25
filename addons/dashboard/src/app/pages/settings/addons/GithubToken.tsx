@@ -33,6 +33,7 @@ export function GithubToken({ workspace }: { workspace: Workspace }) {
   const key = ['github-token', workspace.id]
   const state = useQuery({ queryKey: key, queryFn: () => api.githubState(workspace.id) })
   const stored = state.data?.credential === 'stored'
+  const notOwner = state.error instanceof ApiError && state.error.code === 'role.denied'
   const [phase, setPhase] = useState<'idle' | 'loading' | 'ask' | 'sending' | 'saved' | 'removed'>('idle')
   const [offer, setOffer] = useState<CustodySealOffer | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -107,6 +108,7 @@ export function GithubToken({ workspace }: { workspace: Workspace }) {
     }
   }
 
+  if (notOwner) return null // only an owner saves the token: a member sees nothing here, not an error
   return (
     <section data-testid="github-token" aria-labelledby="github-token-heading" className="mt-3 space-y-2 border-t border-border px-4 pt-3">
       <h4 id="github-token-heading" className="text-[14px] font-semibold">GitHub token</h4>

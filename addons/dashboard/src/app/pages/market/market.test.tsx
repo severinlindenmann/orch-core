@@ -1,6 +1,8 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
+import { api } from '@/api/client'
+import { takeSettingsFocus } from '@/app/pages/settings/addons/AddonSettingsPanel'
 import { READS, show, useFakeHost, workspace } from '@/test/hostHarness'
 import { market, stage, installedAddon } from '@/test/fixtures/market'
 import type { AddonPackage } from '@/api/types'
@@ -134,6 +136,50 @@ it('Settings opens a side panel over the list and Cancel puts focus back on the 
   await userEvent.click(await within(panel).findByRole('button', { name: 'Cancel' }, T))
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
   await waitFor(() => expect(screen.getByRole('button', { name: 'Settings' })).toHaveFocus())
+})
+
+for (const [how, close] of [
+  ['Esc', async () => void (await userEvent.keyboard('{Escape}'))],
+  ['the X', async () => void (await userEvent.click(screen.getByRole('button', { name: 'Close' })))],
+] as const) {
+  it(`closing the Settings panel with ${how} puts focus back on the row’s Settings button and leaves no focus request behind`, async () => {
+    show('/w/DEMO/addons?tab=installed')
+    const button = await screen.findByRole('button', { name: 'Settings' }, T)
+    await userEvent.click(button)
+    await screen.findByRole('dialog', { name: /Calendar settings/ }, T)
+    await close()
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Settings' })).toHaveFocus())
+    expect(takeSettingsFocus('calendar')).toBe(false) // the market page never consumes it: nothing may wait for a later Settings > Add-ons visit
+  })
+}
+
+it('a built-in with neither Settings nor Remove has no empty actions wrapper', async () => {
+  show('/w/DEMO/addons?tab=installed')
+  await screen.findByRole('button', { name: 'Remove' }, T)
+  const cell = screen.getByText('Built in').closest('tr')!.querySelector('[data-label="Actions"]')!
+  expect(cell.children).toHaveLength(0)
+})
+
+it('an add-on that needs approval shows the badge, not On', async () => {
+  vi.spyOn(api, 'getWorkspaceAddons').mockResolvedValue([{ name: 'calendar', ws: { status: 'needs_grant' } }] as never)
+  ws().marketInstalled = { addons: [installedAddon({ state: 'active' })] }
+  show('/w/DEMO/addons?tab=installed')
+  const row = within((await screen.findByRole('button', { name: 'Remove' }, T)).closest('tr') as HTMLElement)
+  expect(await row.findByText('Needs your approval')).toBeInTheDocument()
+  expect(row.getByText('Off')).toHaveAttribute('data-state-chip', 'off')
+})
+
+it('Turn off and remove on a stale list: the add-on is already Off, so it is removed with no signature', async () => {
+  ws().marketInstalled = { addons: [installedAddon({ state: 'active' })] }
+  show('/w/DEMO/addons?tab=installed')
+  await userEvent.click(await screen.findByRole('button', { name: 'Remove' }, T))
+  const d = await screen.findByRole('dialog')
+  expect(d).toHaveTextContent('We will turn it off first')
+  ws().marketInstalled = { addons: [installedAddon({ state: 'disabled' })] } // it was turned off elsewhere; the page does not know yet
+  await userEvent.click(within(d).getByRole('button', { name: 'Turn off and remove' }))
+  await waitFor(() => expect(state.host.calls.find((c) => c.path.endsWith('/market/uninstall'))?.body).toEqual({ name: 'calendar' }), T)
+  expect(state.host.posts()).toHaveLength(0)
 })
 
 const SRC = { url: 'https://github.com/acme/hub-market', class: 'company' as const, added: false }

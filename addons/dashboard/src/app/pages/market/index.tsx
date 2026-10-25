@@ -18,8 +18,9 @@ import {
 } from '@/api/market'
 import { AddonFrame } from '@/addon-ui/AddonFrame'
 import { useAddons } from '@/addon-ui/slots'
-import { StateBadge, StateChip } from '@/addon-ui/StateChip'
+import { StateChip } from '@/addon-ui/StateChip'
 import { AddonSettingsPanel } from '@/app/pages/settings/addons/AddonSettingsPanel'
+import { isOn, MarketSettingsButton, MarketStateChips, useNeedsApproval } from '@/app/pages/settings/addons/marketRow'
 import { Inline, Raw, visible } from '@/components/sign/visible'
 import { SignPopover } from '@/components/sign/SignPopover'
 import { LoadFailed } from '@/components/LoadFailed'
@@ -30,8 +31,28 @@ import { usePageHeader } from '@/app/shell/ShellUi'
 import { useWorkspace } from '@/app/workspace'
 import { useRole } from '@/app/useRole'
 
+/** The buttons of an Installed-tab row; nothing is drawn (no empty wrapper) for a built-in with neither Settings nor Remove. */
+function RowActions(p: { addon: InstalledAddon; hasSettings: boolean; settingsOpen: boolean; onSettings: () => void; canWrite: boolean; busy: boolean; onUpdate: () => void; onRemove: () => void }) {
+  const update = p.canWrite && p.addon.origin && p.addon.available && !p.addon.available.revoked
+  const remove = p.canWrite && p.addon.origin
+  if (!p.hasSettings && !update && !remove) return null
+  return (
+    <div className="flex flex-wrap gap-2">
+      {p.hasSettings && <MarketSettingsButton name={p.addon.name} open={p.settingsOpen} onToggle={p.onSettings} />}
+      {update && (
+        <Button disabled={p.busy} onClick={p.onUpdate}>
+          Update...
+        </Button>
+      )}
+      {remove && (
+        <Button variant="ghost" disabled={p.busy} onClick={p.onRemove}>
+          Remove
+        </Button>
+      )}
+    </div>
+  )
+}
 const HELP = 'Next, review and approve the installation with one click. The add-on will be installed Off.'
-const isOn = (state?: string) => state === 'active' || state === 'enabled'
 /** One line for a card whose add-on is not installed (installed ones show the On/Off chip). */
 const availability = (pending: boolean) => (pending ? 'Waiting for installation approval' : 'Available')
 const cell = 'p-2 align-top break-words @max-[800px]:block @max-[800px]:before:block @max-[800px]:before:text-text-faint @max-[800px]:before:content-[attr(data-label)]'
@@ -218,6 +239,7 @@ function MarketWorkspace() {
   const [addPick, setAddPick] = useState<string | null>(null)
   const [offThenRemove, setOffThenRemove] = useState<InstalledAddon | null>(null)
   const packages = useAddons()
+  const needsApproval = useNeedsApproval(ws)
   const refresh = async () => {
     await Promise.all([qc.invalidateQueries({ queryKey: queries.marketList(ws).queryKey }), qc.invalidateQueries({ queryKey: queries.marketInstalled(ws).queryKey })])
   }
@@ -372,8 +394,7 @@ function MarketWorkspace() {
                       <td className={cell} data-label="Add-on">
                         <Inline>{a.name}</Inline>
                         <p className="mt-1 flex flex-wrap items-center gap-1.5">
-                          <StateChip on={isOn(a.state)} />
-                          {a.available && !a.available.revoked && <StateBadge kind="update" />}
+                          <MarketStateChips addon={a} needsApproval={needsApproval.has(a.name)} />
                         </p>
                       </td>
                       <td className={cell} data-label="Source">
@@ -397,23 +418,16 @@ function MarketWorkspace() {
                           )) ?? 'See package review'}
                       </td>
                       <td className={cell} data-label="Actions">
-                        <div className="flex flex-wrap gap-2">
-                          {packages.data?.find((p) => p.name === a.name)?.contributions.some((c) => c.slot === 'settings') && (
-                            <Button size="sm" variant="outline" data-settings-for={a.name} aria-expanded={settingsOf === a.name} onClick={() => setSettingsOf(settingsOf === a.name ? null : a.name)}>
-                              Settings
-                            </Button>
-                          )}
-                          {mayWrite && a.origin && a.available && !a.available.revoked && (
-                            <Button disabled={busy} onClick={() => prepare({ id: a.name, update: true })}>
-                              Update...
-                            </Button>
-                          )}
-                          {mayWrite && a.origin && (
-                            <Button variant="ghost" disabled={busy} onClick={() => setRemove(a)}>
-                              Remove
-                            </Button>
-                          )}
-                        </div>
+                        <RowActions
+                          addon={a}
+                          hasSettings={!!packages.data?.find((p) => p.name === a.name)?.contributions.some((c) => c.slot === 'settings')}
+                          settingsOpen={settingsOf === a.name}
+                          onSettings={() => setSettingsOf(settingsOf === a.name ? null : a.name)}
+                          canWrite={mayWrite}
+                          busy={busy}
+                          onUpdate={() => prepare({ id: a.name, update: true })}
+                          onRemove={() => setRemove(a)}
+                        />
                       </td>
                     </tr>
                   ))}
@@ -710,10 +724,22 @@ function MarketWorkspace() {
               {isOn(remove.state) ? (
                 <Button
                   disabled={busy}
-                  onClick={() => {
-                    setOffThenRemove(remove)
-                    setRemove(null)
-                  }}
+                  onClick={() =>
+                    void write(async () => {
+                      // The list may be stale: if the add-on is already Off the host refuses the switch (`addon.already`),
+                      // so read it fresh and, when it is Off, just remove it (no signature, nothing to turn off).
+                      const fresh = await qc.fetchQuery({ ...queries.marketInstalled(ws), staleTime: 0 })
+                      const now = fresh.addons.find((x) => x.name === remove.name)
+                      if (now && !isOn(now.state)) {
+                        await api.marketUninstall(ws, remove.name)
+                        setRemove(null)
+                        await refresh()
+                        return
+                      }
+                      setOffThenRemove(now ?? remove)
+                      setRemove(null)
+                    })
+                  }
                 >
                   Turn off and remove
                 </Button>

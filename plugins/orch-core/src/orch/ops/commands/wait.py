@@ -76,7 +76,10 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
             c.notes.update(view.uid, now=c.now, cursor=e["seq"], decided=e["seq"], keep=False)
             hints = [HINT.get(fields["kind"]) or ("orch show" if fields.get("outcome") == "pass" else "orch task next")]
             data = {**fields, "cursor": e["seq"], "next": hints[0]}
-            lines = notes_ + (fence(fields["text"], "decision text") if fields.get("text") else [])
+            label = "decision text"
+            if fields["kind"] == "answered" and fields.get("option") is not None:  # a note never replaces the choice
+                label = f"your note; the choice is {fields['option']}"
+            lines = notes_ + (fence(fields["text"], label) if fields.get("text") else [])
             return Result(data=data, key=view.key, seq=e["seq"], cursor=e["seq"], hints=hints, lines=lines, exit=code)
         if step is not None:  # hosted: never sleep on the worker thread; the host wakes us on the next entry
             if not step.expired:

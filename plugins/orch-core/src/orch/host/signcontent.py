@@ -140,11 +140,6 @@ def one(value: Any) -> str:
     return " ⏎ ".join(_s(value).replace("\r\n", "\n").replace("\r", "\n").split("\n"))
 
 
-def _line1(value: Any, limit: int = 80) -> str:
-    one = " ".join(_s(value).split())
-    return one if len(one) <= limit else one[: limit - 1] + "…"
-
-
 def _title(sid: str) -> str:
     return sid.replace("_", " ").replace(".", " ").capitalize()
 
@@ -1028,71 +1023,117 @@ def _gate(
         _row(out, "rule for this gate", policy_words(policy))
 
 
+#: #1123 section 4: the question keys and option keys the signed view renders (every one hash-bound except the routing
+#: ``to`` and ``blocking``), and the kinds it has a renderer for. Anything else => PlainUnavailable (full review).
+_QUESTION_SHOWN = frozenset(
+    {"id", "to", "text", "blocking", "kind", "why", "details", "options", "recommended", "allow_other"}
+)
+_OPTION_SHOWN = frozenset({"key", "label", "text", "facts", "cost"})
+_RENDERED_KINDS = frozenset({"choice", "text"})
+
+
+#: the question rows that hold agent words or orch's own (never a person id): the terminal shows them verbatim, never
+#: through the member-name lookup (Opus delta of f250708a: a title shaped like ``p_<hex>`` must not become a name)
+_QUESTION_VERBATIM_ROWS = frozenset(
+    {"recommended", "an answer in your own words is allowed", "blocks the ticket (per host)", "question hash"}
+)
+
+
+def _verbatim_row(field: str) -> bool:
+    return field.startswith("option ") or field in _QUESTION_VERBATIM_ROWS
+
+
+def _letter(i: int) -> str:
+    return chr(ord("A") + i)  # by STORED order (2..6 options), never by submission or recommendation
+
+
+def _option_head(i: int, o: Mapping[str, Any]) -> str:
+    """The orch-owned part of an option: its letter and key (a key is ``[a-z][a-z0-9_]*``, never free text)."""
+    return f"{_letter(i)} · key {_s(o['key'])}"
+
+
+def _option_parts(o: Mapping[str, Any]) -> list[tuple[str, str]]:
+    """The agent's words of an option, each under an orch-owned name (``title``, ``text``, ``fact N``, ``cost``). Every
+    one of them is a one-line field (``validate_question``), so a line or row that starts with one of these names is
+    orch's own: agent text can never begin a line, and each value stands alone (M1, Opus review of 224e4d19)."""
+    parts = [("title", _s(o["label"]))]
+    if "text" in o:
+        parts.append(("text", _s(o["text"])))
+    parts += [(f"fact {n}", f"{_s(label)}: {_s(value)}") for n, (label, value) in enumerate(o.get("facts", []), 1)]
+    if "cost" in o:
+        parts.append(("cost", _s(o["cost"])))
+    return parts
+
+
 def _question(material: Mapping[str, Any], events: list[Mapping[str, Any]], ticket: Any, out: dict[str, Any]) -> None:
+    """The FROZEN signer View of an answer (design-question-options.md section 4; the dashboard reads these ids):
+    sections ``selected`` (choice), ``answer`` (Other, text kind) or ``note`` (annotation of a choice), ``question``,
+    ``details``, ``why``; rows ``recommended``, one ``option <key>`` per option in stored order, the routing rows, and
+    the technical row ``question hash`` last. Every value is taken from the bound question and the signed event."""
     if len(events) != 1:
         raise PlainUnavailable("a question request holds one answer")
     ev = events[0]
     _check_keys("question.answered", ev, SHOWN["question.answered"], TECHNICAL_KEYS)
-    q = material.get("question") or {}
-    # #1123 A: `kind` is the one new key rendered here (choice/text read as before); details, allow_other and the new
-    # option keys stay unknown, so they fall back to the full review until B2 renders them.
-    _check_keys(
-        "question keys", q, frozenset({"id", "text", "kind", "why", "options", "recommended", "to", "blocking"})
-    )
+    q = material.get("question")
+    if not isinstance(q, dict):
+        raise PlainUnavailable("a question request without its question")
+    _check_keys("question keys", q, _QUESTION_SHOWN)
     for o in q.get("options") or []:
-        _check_keys("question option keys", o, frozenset({"key", "label", "cost"}))
-    keys = [_s(o.get("key")) for o in q.get("options") or []]
-    if len(set(keys)) != len(keys):
-        raise PlainUnavailable("a question with the same option key twice")
-    opts = {_s(o.get("key")): _s(o.get("label")) for o in q.get("options") or []}
-    picked = ev.get("option")
-    answer = opts.get(_s(picked), _s(picked)) if picked else "your own words"
-    out["headline"] = f"Answer “{_line1(q.get('text'), 60)}” on {_ref(ticket)} with {answer}"
-    out["sections"] = [{"id": "question", "title": "Question", "text": _s(q.get("text", ""))}]
-    if q.get("why"):  # bound by the question hash (#1123, spec)
-        out["sections"].append({"id": "why", "title": "Why it was asked", "text": _s(q["why"])})
-    if ev.get("text"):
-        out["sections"].append(
-            {"id": "answer", "title": "Your note" if picked else "Your answer", "text": _s(ev["text"])}
-        )
+        if not isinstance(o, Mapping):
+            raise PlainUnavailable("a question option is not an object")
+        _check_keys("question option keys", o, _OPTION_SHOWN)
+    if q.get("kind") not in _RENDERED_KINDS:
+        raise PlainUnavailable(f"the plain view does not know the question kind {q.get('kind')!r}")
     if ev.get("question") != q.get("id"):
         raise PlainUnavailable("the event and the material name different questions")
-    if picked:
-        # The key too: two options may carry the same label, and the row is what the strip shows and the person signs.
-        _row(
-            out,
-            "your choice",
-            # The suffix goes only when the label IS the key and no other option carries that label: {a: "b"} next to
-            # {b: "b"} must keep it, or the row would not tell the two apart.
-            (
-                answer
-                if answer == _s(picked) and list(opts.values()).count(answer) == 1
-                else f"{answer} (option {_s(picked)})"
-            )
-            if _s(picked) in opts
-            else f"{answer} (not one of the options)",
-        )
-    for o in q.get("options") or []:
-        _row(
-            out,
-            f"option {_s(o.get('key'))}",
-            _s(o.get("label")) + (f" (cost {_s(o['cost'])})" if o.get("cost") else ""),
-        )
-    # who it is addressed to and whether it blocks are routing, the host's word: the question hash does not bind them
-    # (labelled "(per host)"). The recommended option IS bound (#1123, spec), so its row has no such label.
+    picked, typed = ev.get("option"), ev.get("text")
+    try:  # the ONE validator: the shape, the limits, the text rules, and whether this kind takes this answer
+        canon.validate_answer(q, picked, typed)
+    except canon.QuestionError as exc:
+        raise PlainUnavailable(str(exc)) from None
+    if not isinstance(ev.get("hash"), str):
+        raise PlainUnavailable("an answer without its question hash")
+    options = list(q.get("options") or [])
+    index = {o["key"]: i for i, o in enumerate(options)}
+
+    sections: list[dict[str, str]] = []
+    if picked is not None:
+        i = index[picked]
+        lines = [_option_head(i, options[i]), *(f"{name}: {value}" for name, value in _option_parts(options[i]))]
+        sections.append({"id": "selected", "title": "Your choice", "text": "\n".join(lines)})
+        if typed is not None:
+            sections.append({"id": "note", "title": f"Your note; the choice is {picked}", "text": typed})
+        answer = f"option {_letter(i)} (key {_s(picked)})"  # orch's words: the agent's title is in `selected`
+    elif q["kind"] == "choice":  # Other: allowed by `allow_other` (validate_answer checked it)
+        sections.append({"id": "selected", "title": "Your choice", "text": "Something else"})
+        sections.append({"id": "answer", "title": "Your answer", "text": typed})
+        answer = "your own words"
+    else:  # a text question: "Your answer" is the selection, no `selected`
+        sections.append({"id": "answer", "title": "Your answer", "text": typed})
+        answer = "your answer"
+    sections.append({"id": "question", "title": f"Question {q['id']}", "text": q["text"]})
+    if "details" in q:
+        sections.append({"id": "details", "title": "Details from the agent", "text": q["details"]})
+    if "why" in q:
+        sections.append({"id": "why", "title": "Why it was asked", "text": q["why"]})
+    # orch's words only (Opus delta of bf21c8a5): no agent text in the headline, the question is in its own section
+    out["headline"] = f"Answer {q['id']} on {_ref(ticket)} with {answer}"
+    out["sections"] = sections
+
     out["fields_title"] = "About this question"  # facts of the question, not changes: no "- ->" before values
-    for k, label in (("to", "addressed to"), ("blocking", "blocks the ticket"), ("recommended", "recommended option")):
-        if k in q:
-            value = q[k]
-            if value == "ticket_owner":
-                words = "the ticket owner"
-            elif value is True or value is False:
-                words = "yes" if value else "no"
-            elif k == "recommended":
-                words = opts.get(_s(value), _s(value))
-            else:
-                words = _s(value)
-            _row(out, label if k == "recommended" else f"{label} (per host)", words)
+    if "recommended" in q:  # bound by the question hash: an ordinary row, never "per host"
+        r = q["recommended"]
+        _row(out, "recommended", _option_head(index[r], options[index[r]]))  # its title is in the option's rows
+    if "allow_other" in q:
+        _row(out, "an answer in your own words is allowed", "yes")
+    for i, o in enumerate(options):  # one row per option (letter and key only), then one sub-row per agent field
+        _row(out, f"option {_s(o['key'])}", _option_head(i, o))
+        for name, value in _option_parts(o):
+            _row(out, f"option {_s(o['key'])} {name}", value)
+    # who it is addressed to and whether it blocks are routing, the host's word: the question hash does not bind them
+    _row(out, "addressed to (per host)", "the ticket owner" if q["to"] == "ticket_owner" else _s(q["to"]))
+    _row(out, "blocks the ticket (per host)", "yes" if q["blocking"] else "no")
+    _row(out, "question hash", ev["hash"])  # technical: what the signature binds the question by
 
 
 # --- everything else ------------------------------------------------------------------------------------------------
@@ -1661,6 +1702,11 @@ def text(
             title or ("Changes" if any(c["before"] is not None for c in content["fields_changed"]) else "Fields")
         )
         for c in content["fields_changed"]:
+            if _verbatim_row(c["field"]):  # agent words or orch's own: never read as a person id
+                if c["before"] is not None or c.get("before_note"):  # a fact of the question, never a change
+                    raise PlainUnavailable(f"the question row {c['field']!r} carries a value before")
+                out.append(f"  {v(c['field'])}: {v(c['after'])}")
+                continue
             new = "(not set)" if c["after"] is None else who(c["after"])
             if c["before"] is None:
                 out.append(f"  {v(c['field'])}: {new}")

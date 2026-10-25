@@ -1,6 +1,7 @@
 """Private IPC launch, one random loopback listener, and port-ownership proof."""
 
 import argparse
+import asyncio
 import errno
 import fcntl
 import functools
@@ -11,6 +12,7 @@ import html
 import json
 import math
 import os
+import pwd
 import secrets
 import socket
 import stat
@@ -28,8 +30,11 @@ import uvicorn
 
 from .app import create_app
 from .auth import CODE_TTL, SETUP_CODE_TTL, Auth
+from .front import Front, PeerChecked
 from .gateway import Gateway, RunDirectoryError, run_dir, state_dir
-from .hostlink import check_uid, encode, receive
+from .hostlink import check_uid, encode, peer_uid, receive
+from .passkey_routes import ENROLL_TTL
+from .policy import REMOTE, remote_policy
 
 #: seconds a stopping server waits for open connections (a tab's live stream) before it cuts them
 GRACE = 3
@@ -44,6 +49,18 @@ EXPIRY_MARGIN = 1
 HEADLESS_PORT = 47821
 #: file in the dashboard state directory that fixes the port (one decimal number), on any machine
 PORT_FILE = "port"
+#: file in the dashboard state directory that turns remote access on: {"name": "<dns name>", "front_uid": <int>}
+#: (written by `orch remote enable`, R1-7). Absent: remote access is off and no front socket is opened.
+REMOTE_FILE = "remote.json"
+#: the front socket's file name
+FRONT_SOCKET = "front.sock"
+#: where the front socket lives: `<FRONT_RUN_ROOT>/<person uid>/front.sock`. The directory `<uid>` is made by root
+#: (`orch remote enable`, systemd-tmpfiles): the person's, group `orch-front`, mode 0750. So the front's user reaches
+#: the socket without `<state>/run` (0700) or `/run/orch/<uid>` (the agent's group) being opened, and nobody else
+#: (the agent user, an add-on, another person) can even look inside. The peer UID check stays the gate.
+FRONT_RUN_ROOT = Path("/run/orch/front")
+#: users the front may never be: an agent or add-on user is the very process the front keeps out
+FORBIDDEN_FRONT_PREFIXES = ("orch-agent-", "orch-addon-")
 
 
 class AgentRefused(RuntimeError):
@@ -209,6 +226,156 @@ def listen_port(directory, headless=None, port=None):
     return port
 
 
+def remote_config(directory):
+    """``(policy, front_uid)`` from ``<dashboard>/remote.json``, or None when the file is absent (remote access off).
+    Anything wrong with a file that is there refuses the start (host spec 10.2: missing any of it keeps remote mode
+    off, and the server says which), never a silent fall back to loopback only: the administrator asked for remote
+    access and must see that it is not on. The file is read with the checks of the port file: a plain file of ours that
+    nobody else can write (writing it would choose who may use the front socket)."""
+    path = directory / REMOTE_FILE
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return None
+    except OSError:
+        raise RuntimeError(f"remote.not_configured: {path} must be a plain file") from None
+    with os.fdopen(fd) as file:
+        st = os.fstat(file.fileno())
+        if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid() or st.st_mode & 0o022 or st.st_size > 4096:
+            raise RuntimeError(f"remote.not_configured: {path} must be your own small file, not writable by others")
+        text = file.read(4097)
+    try:
+        data = json.loads(text)
+        name, uid = data["name"], data["front_uid"]
+        if set(data) != {"name", "front_uid"} or type(uid) is not int:
+            raise ValueError
+        policy = remote_policy(name)  # the name must be a public DNS name
+    except (ValueError, KeyError, TypeError):
+        raise RuntimeError(
+            f"remote.not_configured: {path} must hold exactly a public DNS name and the front's user id"
+        ) from None
+    if uid <= 0 or uid == os.getuid():
+        # the front is its own system user: a front that shares our UID is no boundary (any process of ours passes)
+        raise RuntimeError("remote.not_configured: front_uid must be a user other than the person's and not root")
+    if any(n.startswith(FORBIDDEN_FRONT_PREFIXES) for n in user_names(uid)):
+        # an agent or add-on user as the front would let exactly the processes it must keep out reach the dashboard
+        raise RuntimeError("remote.not_configured: front_uid must not be an agent or add-on user")
+    return policy, uid
+
+
+def user_names(uid):
+    """Every name the user database gives ``uid`` (aliases too, so a second name cannot hide an agent user)."""
+    try:
+        return [e.pw_name for e in pwd.getpwall() if e.pw_uid == uid]
+    except OSError:  # pragma: no cover - a broken user database: nothing to compare with
+        return []
+
+
+def front_group(uid):
+    """The primary group of the front's user: the one group allowed into the front socket's directory."""
+    try:
+        return pwd.getpwuid(uid).pw_gid
+    except KeyError:
+        raise RuntimeError(f"remote.not_configured: there is no user with id {uid} for the front") from None
+
+
+def front_socket_path(front_uid):
+    """``<FRONT_RUN_ROOT>/<our uid>/front.sock``. The directory is made by root and is not created here (we could not
+    give it the front's group): it must be our own, group = the front's group, no group write and nothing for others,
+    and not a link. A missing or wrong directory means remote access stays off (`orch remote enable` makes it)."""
+    directory = Path(FRONT_RUN_ROOT) / str(os.getuid())
+    try:
+        st = directory.lstat()
+    except OSError:
+        raise RuntimeError(f"remote.not_configured: {directory} is missing; run `orch remote enable`") from None
+    if (
+        not stat.S_ISDIR(st.st_mode)
+        or st.st_uid != os.getuid()
+        or st.st_mode & 0o027
+        or st.st_gid != front_group(front_uid)
+    ):
+        raise RuntimeError(
+            f"remote.not_configured: {directory} must be your own directory in the front's group, mode 0750"
+        )
+    return directory / FRONT_SOCKET
+
+
+def bind_front(path, front_uid):
+    """The front socket: bound at ``path`` (mode 0666: who may connect is decided by the peer UID check of every
+    accepted connection, not by file permissions; the directory above decides who can reach it at all)."""
+    stale_socket(path)
+    sock = PeerChecked(front_uid)
+    old = os.umask(0o000)
+    try:
+        sock.bind(str(path))
+    except BaseException:
+        sock.close()
+        raise
+    finally:
+        os.umask(old)
+    os.chmod(path, 0o666)
+    st = path.lstat()
+    sock.identity = (st.st_ino, st.st_ctime_ns)  # which file is ours: close_front removes nothing else (as ctl.sock)
+    sock.listen(128)
+    sock.setblocking(False)
+    return sock
+
+
+def close_front(front, path):
+    """Close the front socket and remove its file, once: only the socket this process bound (same inode and change
+    time, like ctl.sock), never a file or another process's socket that took the name since."""
+    if front is not None:
+        front.close()
+        if path is not None:
+            with suppress(OSError):
+                st = path.lstat()
+                if stat.S_ISSOCK(st.st_mode) and getattr(front, "identity", None) == (st.st_ino, st.st_ctime_ns):
+                    path.unlink()
+
+
+def server_config(app, front=False):
+    """The one place that builds a uvicorn config, for the loopback server and the front alike. Both run on asyncio's
+    selector loop (`loop="asyncio"`, never uvloop): the front's `PeerChecked.accept` must run for every connection, and
+    `FrontServer` refuses to start on any other loop. The front adds its own limits (the front's Caddy already holds
+    unauthenticated connections to 32; these bound what gets past it)."""
+    extra = (
+        {
+            "lifespan": "off",  # the loopback server owns the app's lifespan
+            "limit_concurrency": 64,
+            "timeout_keep_alive": 5,
+            "h11_max_incomplete_event_size": 16384,
+        }
+        if front
+        else {}
+    )
+    return uvicorn.Config(
+        app,
+        proxy_headers=False,
+        access_log=False,
+        log_level="warning",
+        loop="asyncio",
+        # The terminal WebSocket (section 12.6.6): max_size 64 KiB, no permessage-deflate, no subprotocol.
+        ws="websockets",
+        ws_max_size=65536,
+        ws_per_message_deflate=False,
+        # A browser tab's live stream never ends by itself: after `stop`, cut open connections after GRACE seconds.
+        timeout_graceful_shutdown=GRACE,
+        **extra,
+    )
+
+
+def require_selector_loop(loop):
+    """The peer check lives in `socket.accept`, which only asyncio's selector loops call."""
+    if not isinstance(loop, asyncio.selector_events.BaseSelectorEventLoop):
+        raise RuntimeError("remote.not_configured: the front needs asyncio's selector event loop")
+
+
+class FrontServer(uvicorn.Server):
+    async def startup(self, sockets=None):
+        require_selector_loop(asyncio.get_running_loop())
+        await super().startup(sockets=sockets)
+
+
 def tunnel_line(port, environ=None, user=None, host=None):
     """The command to run on the person's own computer: ``ssh -L <port>:127.0.0.1:<port> <user>@<host>``. The host is
     the address this very SSH session reached us on when there is one, else this machine's name."""
@@ -266,6 +433,14 @@ def _serve(directory, lock_fd=None, port=None):
     if redirects != directory:
         sweep_redirects(redirects)
     auth = Auth(directory=redirects)
+    # A wrong remote.json (or a front socket that cannot be opened) switches remote access off and says why
+    # (`remote.not_configured` in /api/session); the loopback dashboard keeps serving: the person at the machine must
+    # be able to see and fix it.
+    remote_problem = None
+    try:
+        remote = remote_config(directory)
+    except RuntimeError as exc:
+        remote, remote_problem = None, str(exc)
     wanted = listen_port(directory, port=port)
     try:
         listener = bind_listener(wanted)
@@ -277,23 +452,40 @@ def _serve(directory, lock_fd=None, port=None):
         raise
     listener.listen(128)
     port = listener.getsockname()[1]
-    config = uvicorn.Config(
-        create_app(port, gateway=gateway, auth=auth),
-        proxy_headers=False,
-        access_log=False,
-        log_level="warning",
-        # The terminal WebSocket (section 12.6.6): max_size 64 KiB, no permessage-deflate, no subprotocol.
-        ws="websockets",
-        ws_max_size=65536,
-        ws_per_message_deflate=False,
-        # A browser tab's live stream never ends by itself: after `stop`, cut open connections after GRACE seconds.
-        timeout_graceful_shutdown=GRACE,
-    )
-    server = uvicorn.Server(config)
+    front = None
+    front_path = None
+    try:
+        if remote:
+            try:
+                front_path = front_socket_path(remote[1])
+                front = bind_front(front_path, remote[1])
+            except (RuntimeError, OSError) as exc:
+                remote, remote_problem = (
+                    None,
+                    str(exc)
+                    if "remote.not_configured" in str(exc)
+                    else (f"remote.not_configured: the front socket could not be opened ({exc.__class__.__name__})"),
+                )
+        app = create_app(
+            port, gateway=gateway, auth=auth, remote=remote[0] if remote else None, remote_problem=remote_problem
+        )
+    except BaseException:
+        listener.close()
+        close_front(front, front_path)
+        raise
+    server = uvicorn.Server(server_config(app))
+    front_server = front_thread = None
+    if front is not None:
+        front_server = FrontServer(server_config(Front(app), front=True))
     ctl = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     old = os.umask(0o177)
     try:
         ctl.bind(str(ctl_path))
+    except BaseException:
+        ctl.close()
+        listener.close()
+        close_front(front, front_path)
+        raise
     finally:
         os.umask(old)
     os.chmod(ctl_path, 0o600)
@@ -317,19 +509,31 @@ def _serve(directory, lock_fd=None, port=None):
             with conn:
                 try:
                     conn.settimeout(2)
-                    check_uid(conn, os.getuid())
+                    caller = peer_uid(conn)
+                    if caller not in (os.getuid(), 0):
+                        continue  # nobody else gets an answer
                     req = receive(conn)
+                    if caller == 0 and req != {"command": "enroll"}:
+                        continue  # root (sudo orch remote ...) may mint an enrollment code and do nothing else here
                     if req == {"command": "launch"}:
                         conn.sendall(encode({**auth.launch(port), "redirect": str(redirects)}))
                     elif req == {"command": "launch", "kind": "tunnel"}:
                         conn.sendall(encode({**auth.launch(port, tunnel=True), "redirect": str(redirects)}))
                     elif req == {"command": "launch", "kind": "setup"}:
                         conn.sendall(encode({**auth.launch(port, setup=True), "redirect": str(redirects)}))
+                    elif req == {"command": "enroll"}:
+                        # Root only: a same-UID process (an agent in tier A) could otherwise mint a code, register its
+                        # own passkey and keep remote access. The code never goes to the person's own UID.
+                        conn.sendall(
+                            encode(mint_enrollment(app) if caller == 0 else {"error": "enroll.root_only: use sudo"})
+                        )
                     elif req == {"command": "hello"}:
                         conn.sendall(encode({"release": release}))
                     elif req == {"command": "stop"}:
                         conn.sendall(encode({"ok": True}))
                         server.should_exit = True
+                        if front_server is not None:
+                            front_server.should_exit = True
                         # Free the control socket now, not after the shutdown: until then a launcher would connect
                         # to a server that no longer answers (and time out) instead of starting a new one.
                         retire()
@@ -351,11 +555,32 @@ def _serve(directory, lock_fd=None, port=None):
     thread = threading.Thread(target=ipc, daemon=True)
     thread.start()
     try:
+        if front_server is not None:
+            front_thread = threading.Thread(target=front_server.run, kwargs={"sockets": [front]}, daemon=True)
+            front_thread.start()
+            for _ in range(200):  # the front is up, or the start is refused (a half-open remote mode is not offered)
+                if front_server.started or not front_thread.is_alive():
+                    break
+                time.sleep(0.05)
+            if not front_server.started:
+                # loopback keeps serving; remote access is off and says why. "Off" means off before loopback serves:
+                # the front thread is joined and the remote policy leaves the listener registry (fail closed).
+                front_server.should_exit = True
+                front_thread.join(timeout=GRACE + 2)
+                app.state.policies.pop(REMOTE, None)
+                app.state.remote_problem = "remote.not_configured: the front socket did not start"
+                close_front(front, front_path)
+                front = front_server = front_thread = None
         server.run(sockets=[listener])
     finally:
         server.should_exit = True
+        if front_server is not None:
+            front_server.should_exit = True
         retire()
         thread.join(timeout=3)
+        if front_thread is not None:
+            front_thread.join(timeout=GRACE + 2)
+        close_front(front, front_path)
         listener.close()
 
 
@@ -435,6 +660,68 @@ def _stop_stale(ctl, wait=RESTART_WAIT):
     print("restarted the dashboard on the new release")
 
 
+def mint_enrollment(app):
+    """The reply to ctl ``enroll`` from root: a fresh one-time enrollment code (R1-5) for the configured name, or the
+    reason remote access is off. Never logged: the code goes back over ctl.sock to the one root process that asked."""
+    service = getattr(app.state, "passkeys", None)
+    if service is None or app.state.enroll is None or app.state.remote_problem:
+        return {"error": app.state.remote_problem or "remote.not_configured: remote access is off (orch remote enable)"}
+    code = app.state.enroll.mint()
+    return {"code": code, "name": service.rp_id, "expires_at": int(time.time()) + ENROLL_TTL}
+
+
+def start_dashboard():
+    """`orch-dashboard up`: make sure a server runs (it reads remote.json at start). Mints nothing."""
+    refuse_agent()
+    directory = state_dir() / "dashboard"
+    run_dir(state_dir())
+    with private_directory(directory) as fd, locked(fd):
+        control_or_start(directory, "hello")
+
+
+def control_or_start(directory, command, kind=None):
+    """The reply to ``command`` from the dashboard server of ``directory``, starting one when none runs and replacing
+    one of another release. Call while holding the startup lock."""
+    ctl = directory / "ctl.sock"
+    launch = None
+    try:
+        running = _running_release(ctl)
+        if running is None:
+            raise FileNotFoundError(errno.ENOENT, "no dashboard running")
+        if running != code_digest():
+            _stop_stale(ctl)  # raises RuntimeError when it will not stop; prints the one-line notice
+        else:
+            launch = control(ctl, command, kind)
+    except EOFError:
+        # The server closed the connection: it does not know this request (an older release). Replace it, once.
+        _stop_stale(ctl)
+    except OSError as exc:
+        if exc.errno not in (errno.ENOENT, errno.ECONNREFUSED):
+            raise
+    if launch is None:
+        stale_socket(ctl)
+        child = subprocess.Popen(
+            [sys.executable, "-m", "orch_dashboard", "serve", "--launcher-lock"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        for _ in range(100):
+            if child.poll() is not None:
+                raise RuntimeError("dashboard could not start")
+            try:
+                launch = control(ctl, command, kind)
+                break
+            except (FileNotFoundError, ConnectionRefusedError):
+                time.sleep(0.05)
+            except EOFError:
+                raise RuntimeError("the new dashboard closed the connection; run it again") from None
+        else:
+            raise RuntimeError("dashboard did not become ready")
+    return launch
+
+
 def open_dashboard(path="/", print_url=False, emit_url_fd=None, no_browser=False):
     refuse_agent()  # before anything is started or minted
     path = safe_path(path)
@@ -451,43 +738,7 @@ def open_dashboard(path="/", print_url=False, emit_url_fd=None, no_browser=False
     run_dir(state_dir())
     directory = state_dir() / "dashboard"
     with private_directory(directory) as fd, locked(fd):
-        ctl = directory / "ctl.sock"
-        launch = None
-        try:
-            running = _running_release(ctl)
-            if running is None:
-                raise FileNotFoundError(errno.ENOENT, "no dashboard running")
-            if running != code_digest():
-                _stop_stale(ctl)  # raises RuntimeError when it will not stop; prints the one-line notice
-            else:
-                launch = control(ctl, "launch", kind)
-        except EOFError:
-            # The server closed the connection: it does not know this request (an older release). Replace it, once.
-            _stop_stale(ctl)
-        except OSError as exc:
-            if exc.errno not in (errno.ENOENT, errno.ECONNREFUSED):
-                raise
-        if launch is None:
-            stale_socket(ctl)
-            child = subprocess.Popen(
-                [sys.executable, "-m", "orch_dashboard", "serve", "--launcher-lock"],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
-            for _ in range(100):
-                if child.poll() is not None:
-                    raise RuntimeError("dashboard could not start")
-                try:
-                    launch = control(ctl, "launch", kind)
-                    break
-                except (FileNotFoundError, ConnectionRefusedError):
-                    time.sleep(0.05)
-                except EOFError:
-                    raise RuntimeError("the new dashboard closed the connection; run it again") from None
-            else:
-                raise RuntimeError("dashboard did not become ready")
+        launch = control_or_start(directory, "launch", kind)
     # Control can become ready just before the HTTP accept loop.
     for attempt in range(20):
         try:
@@ -599,7 +850,9 @@ def main():
 
         return manifest_main(sys.argv[2:])
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", nargs="?", choices=["open", "launch", "serve", "stop", "restart"], default="open")
+    parser.add_argument(
+        "command", nargs="?", choices=["open", "launch", "serve", "stop", "restart", "up"], default="open"
+    )
     parser.add_argument("path", nargs="?", default="/")
     parser.add_argument(
         "--print-url",
@@ -621,6 +874,8 @@ def main():
             return serve(args.launcher_lock, port=args.port)
         if args.stop or args.command == "stop":
             control(state_dir() / "dashboard/ctl.sock", "stop")
+        elif args.command == "up":
+            start_dashboard()
         elif args.command == "restart":
             restart_dashboard(args.path, print_url=args.print_url)
         else:

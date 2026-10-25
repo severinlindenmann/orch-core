@@ -54,6 +54,18 @@ jobs:
           enable-cache: true
           cache-dependency-glob: plugins/orch-core/uv.lock
       - run: uv sync --locked
+      - name: Pinned Caddy for tests/setup/test_caddy_validate.py
+        # Every slice, not one: the slices hold whole modules, so the module may land in any of them, and in CI a
+        # missing ORCH_CADDY_BIN fails the test. v2.11.7 (not a pre-release); the checksum is the SHA-512 line for
+        # caddy_2.11.7_linux_amd64.tar.gz in the release's own caddy_2.11.7_checksums.txt.
+        run: |
+          set -euo pipefail
+          url=https://github.com/caddyserver/caddy/releases/download/v2.11.7/caddy_2.11.7_linux_amd64.tar.gz
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/caddy.tar.gz" "$url"
+          echo "a7a433a1b133efc3c8d10eb0b99d52a24b5ef5c322dc77f5282182b1c0402139ab83f3a99f0c52409df77d20123fb0b523edad8a66d8f5e49136197bf61ef0e7  $RUNNER_TEMP/caddy.tar.gz" | sha512sum -c -
+          mkdir "$RUNNER_TEMP/caddy"
+          tar -xzf "$RUNNER_TEMP/caddy.tar.gz" -C "$RUNNER_TEMP/caddy" caddy
+          echo "ORCH_CADDY_BIN=$RUNNER_TEMP/caddy/caddy" >> "$GITHUB_ENV"
       - if: matrix.shard == 1  # the lint is the same in every slice
         run: uv run ruff check
       - if: matrix.shard == 1

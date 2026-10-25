@@ -15,8 +15,8 @@ from typing import Any, Protocol
 
 from . import frames
 from ._socket import Credentials as Credentials
+from ._socket import close_pidfd, receive, with_pidfd
 from ._socket import peer_credentials as peer_credentials
-from ._socket import receive
 from .client import Pin as Pin
 from .client import connect_pinned as connect_pinned
 from .client import handshake_pinned as handshake_pinned
@@ -454,8 +454,9 @@ class Server:
         worker = uid == self.registry.worker_uid
         kind = self.listener.kind
         if kind == "runner":
-            # tier A: the runner runs as the host UID; only the runner unit's main PID gets the class (D-P2-25)
-            if not worker and uid == self.listener.host_uid and runner_ok:
+            # tier A: the runner runs as the host UID; tier B: as the pinned agent user (``listener.runner_uid``).
+            # Only the runner unit's main PID gets the class (D-P2-25)
+            if not worker and uid == self.listener.runner_uid and runner_ok:
                 return Peer(uid, "runner")
         elif kind == "worker":
             if worker and self.worker_identity is not None and self.worker_identity(credentials):
@@ -517,10 +518,13 @@ class Server:
                 self.limits.attempt(credentials.uid)
                 runner_ok = False
                 if self.listener.kind == "runner" and self.runner_identity is not None:
-                    try:  # the service manager is asked off the event loop
+                    credentials = with_pidfd(sock, credentials)
+                    try:  # the service manager is asked off the event loop; the pidfd stays open until decided
                         runner_ok = bool(await asyncio.to_thread(self.runner_identity, credentials))
                     except Exception:  # noqa: BLE001 - an unanswerable check denies
                         runner_ok = False
+                    finally:
+                        close_pidfd(credentials)
                 peer = self.classify(credentials, runner_ok=runner_ok)
                 self.limits.acquire(peer, count_attempt=False)
                 acquired = peer

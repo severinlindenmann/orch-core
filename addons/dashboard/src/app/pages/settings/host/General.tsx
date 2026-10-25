@@ -1,4 +1,5 @@
 import { versionQueries, vLabel } from '@/api/versions'
+import { RunnerSwitch } from '@/components/RunnerSwitch'
 import { AccessLength } from '../AccessLength'
 import { ApprovalMethods } from './ApprovalMethods'
 import { useQuery } from '@tanstack/react-query'
@@ -13,7 +14,7 @@ import { Label } from '@/components/ui/label'
 import { queries } from '@/api/queries'
 import { CopyButton } from '../General'
 import { visible } from '@/components/sign/visible'
-import { DASHBOARD_EXECUTION_LINE, TERMINAL_COMMANDS } from '@/api/quickRecords'
+import { DASHBOARD_EXECUTION_LINE } from '@/api/quickRecords'
 import { SigningCard } from './SigningCard'
 import { HostAlarms } from '@/components/dev/DevHost'
 import { Mono, Section } from '../../ticket/shared'
@@ -193,13 +194,19 @@ export function HostGeneral({ workspace }: { workspace: Workspace }) {
                   </p>
                 ) : (
                   <p className="text-text-muted">
-                    Dashboard execution is off for this workspace: no agent or terminal can be started from here. Turn it on in your terminal with <code className="font-mono text-text">{TERMINAL_COMMANDS.runnerEnable}</code>.
+                    Dashboard execution is off for this workspace: no agent or terminal can be started from here. Turn it on below, after you read what it allows.
                   </p>
                 )}
                 <p className="text-text-muted">
                   {runner.connected ? 'The runner on this machine is connected' : 'The runner on this machine is not connected'}
                   {runner.enabled ? `; terminals are ${runner.terminals ? 'available' : 'not available'}.` : '.'}
                 </p>
+                {role === 'owner' && (
+                  <div className="flex flex-wrap items-start gap-2">
+                    <RunnerSwitch ws={workspace.id} on={!runner.enabled} testId="card-runner" variant="secondary" />
+                    {runner.enabled && !runner.terminals && <RunnerSwitch ws={workspace.id} on initialTerminals label="Turn on terminals" testId="card-runner-terminals" variant="secondary" />}
+                  </div>
+                )}
               </div>
             </div>
           )}

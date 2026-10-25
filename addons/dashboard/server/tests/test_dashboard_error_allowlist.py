@@ -168,10 +168,10 @@ def test_a_non_dict_host_error_answers_internal():
 
 # ---- the server's own errors keep what the page reads ---------------------------------------------------------------
 def test_the_servers_own_errors_pass_whole():
-    from orch_dashboard.click import refusal_check
     from orch_dashboard.click_signer import lost_sign
     from orch_dashboard.errors import fail
     from orch_dashboard.handoff import done_error
+    from orch_dashboard.stepup import refusal_check
 
     assert body(refusal_check("x").error)[1]["error"]["reason"] == "check_failed"
     assert body(lost_sign().error)[1]["error"]["reason"] == "uncertain"

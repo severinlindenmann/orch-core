@@ -1,7 +1,8 @@
 """A small client of the runner's term socket (§12.6.1, §12.6.3), for the dashboard server's stream and for tests.
 
 :meth:`TermClient.connect` does the verification of §12.6.1 before it sends a ticket: the socket path is computed from
-the client's own run directory and ``runner.uid`` (the answer's ``socket`` must equal it), the directory
+the client's own run directory (tier B: the
+agent's, from the root-owned pin, §13.3) and ``runner.uid`` (the answer's ``socket`` must equal it), the directory
 ``<run>/term/<uid>/`` is owned by the runner UID with no write for group or other, the peer UID and PID after
 ``connect`` are the runner's, and the first frame is ``{t:"hello", gen, pid}`` with the answer's ``gen``. Any mismatch
 raises :class:`RunnerChanged` (the page says "the runner changed; try again") before a ticket leaves this process.
@@ -56,8 +57,19 @@ class TermEnded(ConnectionError):
 
 
 class TermClient:
-    def __init__(self, run_dir: Path | str, answer: dict[str, Any], *, send_timeout: float = SEND_TIMEOUT) -> None:
-        """``answer``: the ``result.data`` of ``term.attach``; ``send_timeout``: the write deadline of :meth:`send`."""
+    def __init__(
+        self,
+        run_dir: Path | str,
+        answer: dict[str, Any],
+        *,
+        send_timeout: float = SEND_TIMEOUT,
+        pins: Any = None,
+        host_uid: int | None = None,
+    ) -> None:
+        """``answer``: the ``result.data`` of ``term.attach``; ``send_timeout``: the write deadline of :meth:`send`.
+        ``pins`` (an :class:`orch.host.pins.AgentPins`) and ``host_uid`` (this process's UID) are for tests."""
+        self.pins = pins
+        self.host_uid = os.getuid() if host_uid is None else host_uid
         self.run_dir = Path(run_dir)
         self.send_timeout = send_timeout
         self.answer = answer
@@ -80,7 +92,8 @@ class TermClient:
     def connect(self, timeout: float = 5.0) -> dict[str, Any]:
         runner = self.answer["runner"]
         uid = int(runner["uid"])
-        expected = self.run_dir / "term" / str(uid) / "term.sock"
+        base, tier_b = self._term_base(uid)
+        expected = base / "term" / str(uid) / "term.sock"
         if str(self.answer.get("socket")) != str(expected):
             raise RunnerChanged("the socket path is not the one this server computes")
         try:
@@ -89,6 +102,8 @@ class TermClient:
             raise RunnerChanged("the runner's terminal directory is gone") from None
         if not stat.S_ISDIR(info.st_mode) or info.st_uid != uid or stat.S_IMODE(info.st_mode) & 0o022:
             raise RunnerChanged("the runner's terminal directory is not owned by the runner or is writable")
+        if tier_b and stat.S_IMODE(info.st_mode) & 0o067:  # the person's ACL mask is ``--x`` and nothing else shows
+            raise RunnerChanged("the runner's terminal directory is open to more than the person")
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
             sock.settimeout(timeout)
@@ -123,6 +138,31 @@ class TermClient:
         if first.get("t") == "ready":
             self.ready = first
         return first
+
+    def _term_base(self, uid: int) -> tuple[Path, bool]:
+        """Where the runner ``uid``'s ``term/`` directory is, and whether this is tier B. Tier A: this client's own run
+        directory. Tier B (spec 13.3, 13.5): the runner's UID has a root-owned agent pin naming THIS process's UID as
+        its host, and the directory is ``/run/orch/agents/<its user name>``, named by the system's user database, never
+        by the host's answer. A pinned UID that is not this host's agent, or a name that is not ``orch-agent-*``,
+        fails closed."""
+        from orch.host.pins import AgentPins
+
+        doc = (self.pins if self.pins is not None else AgentPins()).get(uid)
+        if doc is None:
+            return self.run_dir, False
+        if doc.get("class") != "agent" or doc.get("host_uid") != self.host_uid or uid == self.host_uid:
+            raise RunnerChanged("the runner is a pinned user that is not this host's agent")
+        import pwd
+
+        from orch.setup.osusers import AGENT_PREFIX, AGENT_RUN_ROOT
+
+        try:
+            name = pwd.getpwuid(uid).pw_name
+        except KeyError:
+            raise RunnerChanged("the runner's user is unknown") from None
+        if not name.startswith(AGENT_PREFIX):
+            raise RunnerChanged("the runner's user is not an agent user")
+        return Path(AGENT_RUN_ROOT) / name, True
 
     # -- frames
     def send(self, frame: dict[str, Any]) -> None:

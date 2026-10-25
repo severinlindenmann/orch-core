@@ -44,6 +44,7 @@ from orch import layout as layout_mod
 from orch.layout import LayoutError
 
 from . import frames
+from ._unix import UnsafePath
 from .blobs import BLOB_MAX, Quota
 from .bus import Bus
 from .control import CONTROL_OPS, ControlGate, ControlOps
@@ -54,7 +55,7 @@ from .jobs import CompletionStore
 from .journal import Cursors, cursor_key
 from .listener import Listener, default_run_directory
 from .ownership import LOCK_WAIT_SECONDS
-from .pins import AgentPins
+from .pins import AgentPins, AgentShare
 from .registry import Entry, Registry, host_dir
 from .transport import WRITE_TIMEOUT_SECONDS, HostLimits, Server
 from .workspace import OpBackend, WorkspaceGate, WorkspaceService
@@ -215,6 +216,14 @@ class Host:
 
         self.runners = RunnerHub(self)
         self.runner_identity = runner_identity or default_identity
+        #: a caller-supplied identity check (tests, dev tools) is never replaced by the tier B system check in
+        #: :meth:`_find_share`; production passes none
+        self._custom_identity = runner_identity is not None
+        #: tier B (spec 13.3), found at start from the root-owned pin: the agent user the run directory is shared with
+        self.share: AgentShare | None = None
+        #: why the pins could not be trusted (``None``: they could). Then nothing is shared with any agent: no runner
+        #: socket, workspaces unavailable. A host whose run directory is the shared one fails to start (tier A modes)
+        self.share_error: str | None = None
         #: dev and tests only (``orch host run --foreground --dev-runner``): also admit a runner of this UID that
         #: ``orch runner run --foreground`` announced in this run directory (:mod:`orch.runner.devmode`)
         self.dev_runner = dev_runner
@@ -244,6 +253,12 @@ class Host:
     @property
     def control_path(self) -> Path:
         return self.run_dir / "control" / "host.sock"
+
+    @property
+    def term_base(self) -> Path:
+        """Where the runner's terminal directory is: the runner's own run directory in tier B (spec 13.3), else
+        ``<run>``. The runner announces its socket in ``runner.hello``; only this path is accepted."""
+        return self.run_dir if self.share is None else self.share.run_dir
 
     @property
     def runner_path(self) -> Path:
@@ -350,8 +365,15 @@ class Host:
         self._stopped = asyncio.Event()
         await asyncio.to_thread(self._prepare)
         try:
+            await self._find_share()
             listener = await asyncio.to_thread(
-                Listener, self.run_dir, "control", host_uid=self.host_uid, gid=os.getgid(), kind="control"
+                Listener,
+                self.run_dir,
+                "control",
+                host_uid=self.host_uid,
+                gid=os.getgid(),
+                kind="control",
+                share=self.share,
             )
         except BlockingIOError:
             self._release_host_lock()
@@ -382,13 +404,37 @@ class Host:
         if self.dev is not None:
             self._dev_logger = asyncio.create_task(self._dev_log_loop())
 
+    async def _find_share(self) -> None:
+        """Tier B is read from the root-owned pin, never from a flag. A pin that cannot be trusted shares NOTHING (no
+        runner socket, no workspace socket) and the host serves with tier A modes: on a machine whose run directory is
+        the shared one (setgid) that fails the directory check, so the start fails closed."""
+        try:
+            self.share = await asyncio.to_thread(self.pins.share_for, self.host_uid)
+        except UnsafePath as exc:
+            self.share, self.share_error = None, str(exc)[:300]
+            LOG.warning("no socket is shared with an agent user: %s", exc)
+        if self.share is not None and not self._custom_identity:
+            from .runners import system_runner_identity
+
+            share, pins = self.share, self.pins
+            self.runner_identity = lambda credentials: system_runner_identity(share, pins, credentials)
+            LOG.info("tier B: %s may use the runner socket (unit %s)", share.user, share.unit)
+
     async def _serve_runner(self) -> None:
         """The runner socket (H11a). A failure leaves the host without a runner (``runner.unavailable``), never down."""
         from .runners import RUNNER_CAPS, RUNNER_OPS
 
+        if self.share_error is not None:
+            return
         try:
             listener = await asyncio.to_thread(
-                Listener, self.run_dir, "runner", host_uid=self.host_uid, gid=os.getgid(), kind="runner"
+                Listener,
+                self.run_dir,
+                "runner",
+                host_uid=self.host_uid,
+                gid=os.getgid(),
+                kind="runner",
+                share=self.share,
             )
         except (OSError, ValueError) as exc:
             LOG.warning("the runner socket is not served: %s", exc)
@@ -408,6 +454,8 @@ class Host:
         self.servers["runner"] = (server, asyncio.create_task(server.serve()))
 
     def _gid(self, entry: Entry) -> int:
+        if self.share is not None:  # tier B: one agent group for every shared socket (spec 13.3), not orch-<ws>
+            return self.share.gid
         try:
             return grp.getgrnam(entry.group).gr_gid
         except KeyError:
@@ -447,9 +495,11 @@ class Host:
         self.services[entry.workspace_id] = service  # an unavailable workspace is still bound: ops name the cause
         await asyncio.to_thread(served_marker, entry.root, True, self.state_dir)
         try:
+            if self.share_error is not None:
+                raise HostError("workspace.unavailable", self.share_error)
             gid = self._gid(entry)
             listener = await asyncio.to_thread(
-                Listener, self.run_dir, entry.workspace_id, host_uid=self.host_uid, gid=gid
+                Listener, self.run_dir, entry.workspace_id, host_uid=self.host_uid, gid=gid, share=self.share
             )
         except (HostError, OSError, ValueError) as exc:
             service.state, service.cause = "unavailable", f"socket: {exc}"[:300]  # and no socket at all

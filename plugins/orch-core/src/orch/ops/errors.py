@@ -595,6 +595,47 @@ _SPECS = [
         "(#1198 C15).",
     ),
     _e(
+        "remote.refused",
+        3,
+        False,
+        "this is not available over remote access",
+        "do it on the computer itself, or over the SSH tunnel",
+        ["orch", "status"],
+        "The remote dashboard answers only the routes its route table allows (#1198 R1-5); the rest, such as terminals "
+        "or the hub signing, stay on the loopback dashboard.",
+    ),
+    _e(
+        "passkey.invalid",
+        3,
+        False,
+        "the passkey was not accepted",
+        "try again, or use the SSH tunnel",
+        ["orch", "status"],
+        "A passkey login or registration failed verification (#1198 R1-5). The reason is logged on the server and "
+        "never sent to the browser.",
+    ),
+    _e(
+        "enroll.expired",
+        3,
+        False,
+        "this enrollment link is not valid any more",
+        "ask the administrator for a new link",
+        ["orch", "status"],
+        "The enrollment code is wrong, used, expired or killed by too many wrong tries; the answer is the same for all "
+        "of them (#1198 R1-5).",
+    ),
+    _e(
+        "passkey.stepup_required",
+        3,
+        False,
+        "this needs a fresh fingerprint or PIN check first",
+        "do the check when the dashboard asks, then click again",
+        ["orch", "status"],
+        "A big action on a remote dashboard session needs a passkey assertion for exactly this review, used once "
+        "(#1198 R1-6). The signer checks it itself; the answer is the same for a missing, stale, replayed or "
+        "wrong one.",
+    ),
+    _e(
         "retry.later",
         9,
         True,

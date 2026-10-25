@@ -242,6 +242,9 @@ class Auth:
     def login_kind(self, token):
         return self.kind
 
+    def stepup_take(self, token, action, digest):
+        return False, None  # no passkey step-up was made
+
 
 def connect_client(link, kind="local"):
     app = FastAPI()
@@ -287,10 +290,10 @@ def test_connect_strips_the_hub_id_of_a_full_invite_and_refuses_another_hubs():
     assert other.status_code == 400 and len(link.calls) == 1  # nothing was sent
 
 
-def test_connect_is_for_a_dashboard_on_this_computer():
+def test_connect_from_a_remote_session_needs_a_passkey_step_up():
     link = Link({"hub.connect": {"mode": "selective"}})
     res = connect(connect_client(link, kind="remote"))
-    assert res.status_code in (403, 409) and link.calls == []
+    assert res.status_code == 403 and res.json()["error"]["code"] == "passkey.stepup_required" and link.calls == []
 
 
 @pytest.mark.parametrize(

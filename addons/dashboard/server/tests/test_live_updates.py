@@ -11,7 +11,7 @@ from orch_dashboard.live import Live, Tab, WorkspaceLive
 
 def authenticated():
     auth = Auth()
-    token = auth.exchange(auth.launch(43210)["code"])[0]["token"]
+    token = auth.exchange(auth.launch(43210)["code"], "local")[0]["token"]
     return auth, token
 
 

@@ -3,11 +3,12 @@
 import array
 import asyncio
 import contextlib
+import errno
 import os
 import socket
 import struct
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from . import frames
 
@@ -17,6 +18,55 @@ class Credentials:
     uid: int
     gid: int
     pid: int
+    #: Linux 6.5+ (SO_PEERPIDFD), set by :func:`with_pidfd` only: ``None`` = the kernel has no such option (ENOPROTOOPT;
+    #: callers use the weaker start time check), ``-1`` = the kernel refused the pidfd or the process is gone (always a
+    #: denial), a pid = the PID the pidfd names.
+    pidfd_pid: int | None = field(default=None, compare=False)
+    #: the OPEN pidfd (only with a ``pidfd_pid`` pid). The accept loop owns it and closes it in a ``finally`` after the
+    #: identity check (:func:`close_pidfd`), not before: the check reads it again after asking the service manager.
+    pidfd: int | None = field(default=None, compare=False)
+
+
+SO_PEERPIDFD = 77
+
+
+def with_pidfd(sock: socket.socket, credentials: Credentials) -> Credentials:
+    """``credentials`` plus the peer's pidfd and the PID it names (a pidfd cannot be redirected to a reused PID).
+
+    Only ``ENOPROTOOPT`` (a kernel before 6.5) leaves ``pidfd_pid`` unset, which makes the caller use the weaker start
+    time check. Every other failure is a denial (``-1``): a peer that has already exited makes the kernel refuse the
+    pidfd (EINVAL, later ESRCH), and that is exactly the case where its PID may be reused."""
+    if sys.platform != "linux":
+        return credentials
+    try:
+        fd = struct.unpack("i", sock.getsockopt(socket.SOL_SOCKET, SO_PEERPIDFD, 4))[0]
+    except OSError as exc:
+        if exc.errno == errno.ENOPROTOOPT:
+            return credentials
+        return Credentials(credentials.uid, credentials.gid, credentials.pid, -1)
+    pid = pidfd_pid_now(fd)
+    if pid < 1:
+        os.close(fd)
+        return Credentials(credentials.uid, credentials.gid, credentials.pid, -1)
+    return Credentials(credentials.uid, credentials.gid, credentials.pid, pid, fd)
+
+
+def pidfd_pid_now(fd: int) -> int:
+    """The PID ``fd`` names now (``Pid:`` of its fdinfo, written by the kernel); ``-1``: gone or unreadable."""
+    try:
+        with open(f"/proc/self/fdinfo/{fd}", encoding="ascii") as handle:
+            for line in handle:
+                if line.startswith("Pid:"):
+                    return int(line.split()[1])
+    except (OSError, ValueError):
+        pass
+    return -1
+
+
+def close_pidfd(credentials: Credentials) -> None:
+    if credentials.pidfd is not None:
+        with contextlib.suppress(OSError):
+            os.close(credentials.pidfd)
 
 
 def peer_credentials(sock: socket.socket) -> Credentials:

@@ -279,6 +279,12 @@ def main(
         from orch.addons.builtin import main as manifest_main
 
         return manifest_main(args[2:], out=out, err=err)
+    if args[:1] == [
+        "remote"
+    ]:  # the HTTPS front of the remote dashboard (R1-7): the person's terminal, not a registry op
+        from orch.cli.remote import main as remote_main
+
+        return remote_main(args[1:], env=env, out=out, err=err)
     if args[:1] == ["setup"]:  # one command to a working workspace and its onboarding page (B9): not a registry op
         from orch.setup.flow import main as setup_main
 

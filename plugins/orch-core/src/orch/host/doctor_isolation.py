@@ -78,6 +78,43 @@ def _plain(name: str) -> bool:
     return _PLAIN_NAME.fullmatch(name) is not None
 
 
+# The invariant (#1198 L13, three review rounds): a value an agent can write (remote name, repo path, file name, user
+# name) reaches ``what``, ``fix`` or a command ONLY through ``shown``, ``shown_path`` or ``_safe_cmd``. Anything that is
+# not plain text is replaced by a neutral word, so it can never fake a "To fix:" line, a command or a control sequence.
+_NAME_MAX = 64
+_PATH_MAX = 200
+
+
+def shown(value: str, neutral: str) -> str:
+    """``value`` if it is a plain name of at most 64 characters, else ``neutral`` ("a remote", "a file", ...)."""
+    return value if len(value) <= _NAME_MAX and _plain(value) else neutral
+
+
+def shown_path(value: str, neutral: str) -> str:
+    """``value`` if it is an absolute path of plain components (at most 200 characters), else ``neutral``."""
+    parts = value.split("/")
+    ok = (
+        value.startswith("/")
+        and len(value) <= _PATH_MAX
+        and all(c == "" or (_plain(c) and len(c) <= _NAME_MAX and c.strip(".") != "") for c in parts)
+    )
+    return value if ok else neutral
+
+
+class _D(str):
+    """A data operand of a suggested command: it must pass ``shown`` or ``shown_path`` to be used at all."""
+
+
+def _safe_cmd(*argv: str) -> str | None:
+    """The one place a suggested command is built: static words as they are, every ``_D`` operand shell-quoted and only
+    if it is plain (a plain name or path needs no quotes). None when any operand is not plain: the caller then gives
+    a fix without the command."""
+    for a in argv:
+        if isinstance(a, _D) and not ((len(a) <= _NAME_MAX and _plain(a)) or shown_path(a, "") != ""):
+            return None
+    return _cmd(*argv)
+
+
 def read_text(path: str) -> str | None:
     """The first 256 KiB of a regular file as text; None when absent, a link, or unreadable. Never raises."""
     try:
@@ -106,9 +143,9 @@ def _secret_files(facts: OsFacts, home: str) -> list[Finding]:
             out.append(
                 Finding(
                     "secret_file_readable",
-                    f"{path} holds a password or token and {why}, so an agent could read it",
-                    _cmd("chmod", "600", "--", path),
-                    path,
+                    f"{shown_path(path, '~/' + rel)} holds a password or token and {why}, so an agent could read it",
+                    _safe_cmd("chmod", "600", "--", _D(path)) or "make that file readable only by you (chmod 600)",
+                    shown_path(path, ""),
                 )
             )
     return out
@@ -164,41 +201,43 @@ def _repo_tokens(roots: Iterable[str], read: Callable[[str], str | None]) -> lis
     out = []
     for root in roots:
         path = f"{root.rstrip('/')}/.git/config"
+        where = shown_path(path, "the .git/config of a repository")
         text = read(path)
         if text is None:
             continue
         try:
             remotes = sorted(set(_remote_tokens(text)))
         except ValueError:
-            out.append(_could_not(f"{path}, which git could not read as a config file"))
+            out.append(_could_not(f"{where}, which git could not read as a config file"))
             continue
         for remote in remotes:
             if remote == "":
                 out.append(
                     Finding(
                         "token_in_remote_url",
-                        f"{path}: an address rewrite contains a password or token, which every program that can read "
-                        "the repository sees",
-                        f"open {path}, remove the token from the [url ...] entry and use a credential helper",
-                        path,
+                        f"In {where} an address rewrite contains a password or token, which every program that can "
+                        "read the repository sees",
+                        "open that file in a text editor, remove the token from the [url ...] entry and use a "
+                        "credential helper",
+                        shown_path(path, ""),
                     )
                 )
                 continue
+            name = shown(remote, "")
+            cmd = _safe_cmd("git", "-C", _D(root), "remote", "set-url", "--", _D(remote)) if name else None
             fix = (
-                "run "
-                + _cmd("git", "-C", root, "remote", "set-url", "--", remote)
-                + " followed by the address without the token, then use a credential helper"
-                if _plain(remote)
+                f"run {cmd} followed by the address without the token, then use a credential helper"
+                if cmd
                 else "change the address of that remote with git remote set-url, without the token, then use a "
                 "credential helper"
             )
             out.append(
                 Finding(
                     "token_in_remote_url",
-                    f"{path}: the address of remote '{remote}' contains a password or token, which every program "
-                    "that can read the repository sees",
+                    f"In {where} the address of {f'remote {name}' if name else 'a remote'} contains a password or "
+                    "token, which every program that can read the repository sees",
                     fix,
-                    path,
+                    shown_path(path, ""),
                 )
             )
     return out
@@ -217,15 +256,16 @@ def _safe_directory(home: str, read: Callable[[str], str | None]) -> list[Findin
         try:
             star = _safe_directory_star(text)
         except ValueError:
-            out.append(_could_not(f"{path}, which git could not read as a config file"))
+            out.append(_could_not(f"{shown_path(path, 'a git settings file')}, which git could not read"))
             continue
         if star:
             out.append(
                 Finding(
                     "safe_directory_star",
-                    f"{path} tells git to trust every folder on this computer, including ones an agent made",
-                    f"remove the line 'directory = *' under [safe] in {path}",
-                    path,
+                    f"{shown_path(path, 'A git settings file')} tells git to trust every folder on this computer, "
+                    "including ones an agent made",
+                    "remove the line 'directory = *' under [safe] in that file",
+                    shown_path(path, ""),
                 )
             )
     return out
@@ -245,16 +285,23 @@ def _groups(facts: OsFacts, person: str | None, agents: list[str]) -> list[Findi
         named = sorted(set(PRIVILEGED_GROUPS) & info.groups)
         if not is_agent:
             named = [g for g in named if g not in _ADMIN_OK_FOR_PERSON]
+        label = shown(name, "an agent user" if is_agent else "your user")
         for g in named:
-            who = f"The agent user {name}" if is_agent else f"You ({name})"
+            who = (
+                f"The agent user {label}"
+                if is_agent and label != "an agent user"
+                else ("An agent user" if is_agent else (f"You ({label})" if label != "your user" else "You"))
+            )
+            if facts.platform == "darwin":
+                cmd = _safe_cmd("dseditgroup", "-o", "edit", "-d", _D(name), "-t", "user", g)
+            else:
+                cmd = _safe_cmd("gpasswd", "-d", _D(name), g)
             out.append(
                 Finding(
                     "privileged_group",
-                    f"{who} {'is' if is_agent else 'are'} in the group '{g}', which lets that user take over this "
-                    "computer" + ("; an agent in it is not isolated" if is_agent else ""),
-                    _ADMIN + _cmd("gpasswd", "-d", name, g)
-                    if _plain(name) and _plain(g)
-                    else "as an administrator, remove that user from the group",
+                    f"{who} {'is' if is_agent else 'are'} in the group '{g}', which lets "
+                    "that user take over this computer" + ("; an agent in it is not isolated" if is_agent else ""),
+                    (_ADMIN + cmd) if cmd else "as an administrator, remove that user from the group",
                     group=g,
                 )
             )
@@ -262,9 +309,9 @@ def _groups(facts: OsFacts, person: str | None, agents: list[str]) -> list[Findi
 
 
 def _hidepid(facts: OsFacts, read: Callable[[str], str | None]) -> list[Finding]:
-    text = read("/proc/mounts")
+    text = read("/proc/self/mounts")
     if text is None:
-        raise OSError("no /proc/mounts")
+        raise OSError("no /proc/self/mounts")
     for line in text.splitlines():
         parts = line.split()
         if len(parts) >= 4 and parts[1] == "/proc":

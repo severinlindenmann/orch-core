@@ -23,12 +23,12 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import FastAPI, Request
+from orch.click import passkeys as wa
+from orch.click.passkey_store import MAX_NAME, Passkey, PasskeyStore, StoreError
 from pydantic import BaseModel, ConfigDict, StringConstraints
 
-from . import passkeys as wa
 from .auth import Auth
 from .errors import response
-from .passkey_store import MAX_NAME, Passkey, PasskeyStore, StoreError
 from .policy import REMOTE
 from .text import hidden
 
@@ -142,8 +142,9 @@ class Ceremonies:
         self.clock, self.lock = clock, threading.Lock()
         self.items: dict[str, tuple[str, bytes, float, object]] = {}
 
-    def start(self, kind: str, bound=None) -> tuple[str, bytes]:
-        challenge, token = wa.new_challenge(), secrets.token_urlsafe(16)
+    def start(self, kind: str, bound=None, challenge: bytes | None = None) -> tuple[str, bytes]:
+        """A step-up passes the ``challenge`` it computed from its nonce; the others get a random one."""
+        challenge, token = challenge or wa.new_challenge(), secrets.token_urlsafe(16)
         with self.lock:
             now = self.clock()
             self.items = {t: v for t, v in self.items.items() if v[2] > now}
@@ -151,6 +152,12 @@ class Ceremonies:
                 del self.items[next(iter(self.items))]
             self.items[token] = (kind, challenge, now + CHALLENGE_TTL, bound)
         return token, challenge
+
+    def open_for(self, kind: str, owner: str) -> int:
+        """How many unexpired challenges of ``kind`` are bound to session ``owner`` (the first part of ``bound``)."""
+        with self.lock:
+            now = self.clock()
+            return sum(1 for k, _, until, b in self.items.values() if k == kind and until > now and b[0] == owner)
 
     def take(self, token: str, kind: str):
         """``(challenge, bound)`` once, or None (unknown, used, expired or another kind's). Taking spends it."""
@@ -168,6 +175,19 @@ class Passkeys:
         self.store, self.rp_id, self.origin = store, rp_id, "https://" + rp_id
         self.codes, self.ceremonies = EnrollCodes(clock), Ceremonies(clock)
         self.clock = clock
+        #: LOCK ORDER: enroll_lock > store.lock, auth.lock, codes.lock, ceremonies.lock. The last four are leaves: no
+        #: code holds one while taking another (checked for every path of passkey_routes and stepup_routes).
+        #: held across a registration's spend + add + un-revoke, and across a removal's remove + drop + burn
+        self.enroll_lock = threading.RLock()
+
+    def burn_enrollments(self) -> None:
+        """A passkey was removed: every open enrollment link and every enrollment challenge in flight dies (a link the
+        removed passkey's holder minted must not outlive it). The owner mints a new one."""
+        with self.enroll_lock:
+            with self.codes.lock:
+                self.codes.open.clear()
+            with self.ceremonies.lock:
+                self.ceremonies.items = {t: v for t, v in self.ceremonies.items.items() if v[0] != "enroll"}
 
     def now(self) -> str:
         return datetime.fromtimestamp(self.clock(), UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -260,7 +280,8 @@ def register(app: FastAPI, auth: Auth, service: Passkeys | None) -> None:
             service.store.touch(credential_id, when=service.now(), sign_count=count)
         except (StoreError, OSError) as exc:
             log.error("passkey store not updated: %s", exc)  # the login itself was verified; last-used is display only
-        return auth.open_remote(request.state.client)
+        opened = auth.open_remote(request.state.client, record.credential_id)
+        return opened or invalid("passkey removed meanwhile")
 
     @app.post("/auth/enroll/options")
     def enroll_options(body: EnrollOptionsBody, request: Request):
@@ -329,8 +350,6 @@ def register(app: FastAPI, auth: Auth, service: Passkeys | None) -> None:
             )
         except wa.PasskeyError as exc:
             return expired(exc.reason)
-        if not service.codes.spend(digest):  # the first browser that completes a registration wins
-            return expired("code spent")
         when = service.now()
         record = Passkey(
             credential_id=wa.b64u_encode(reg.credential_id),
@@ -343,10 +362,16 @@ def register(app: FastAPI, auth: Auth, service: Passkeys | None) -> None:
             last_used=when,
             sign_count=reg.sign_count,
         )
-        try:
-            service.store.add(record)
-        except (StoreError, OSError) as exc:
-            log.error("passkey not stored: %s", exc)
-            return expired("store")  # the code is spent: IT makes a new link
+        # One lock across spend, add and un-revoke: a removal (which burns the links under the same lock) either comes
+        # before all three, so the code is gone, or after all three.
+        with service.enroll_lock:
+            if not service.codes.spend(digest):  # the first browser that completes a registration wins
+                return expired("code spent")
+            try:
+                service.store.add(record)
+            except (StoreError, OSError) as exc:
+                log.error("passkey not stored: %s", exc)
+                return expired("store")  # the code is spent: IT makes a new link
+            auth.allow_credential(record.credential_id)
         log.warning("A passkey was added: %s, %s", name, when)  # the terminal and the log show it (host spec 10.1)
-        return auth.open_remote(request.state.client)
+        return auth.open_remote(request.state.client, record.credential_id)

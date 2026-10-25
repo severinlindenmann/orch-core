@@ -7,6 +7,7 @@ from typing import Annotated
 from fastapi import Depends, FastAPI, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
+from orch.click.passkey_store import PasskeyStore
 from pydantic import BaseModel, ConfigDict, Field
 
 from . import (
@@ -27,6 +28,7 @@ from . import (
     settings,
     shares,
     signprefs,
+    stepup_routes,
     terminals,
     testrun,
     usage,
@@ -41,7 +43,6 @@ from .errors import HostError, fail, host_response, response
 from .explorer import routes as explorer_routes
 from .gateway import Gateway, state_dir
 from .live import Live, SessionStream
-from .passkey_store import PasskeyStore
 from .policy import LOOPBACK, loopback_policy
 from .security import Security
 from .wiki import routes as wiki_routes
@@ -162,6 +163,7 @@ def create_app(
         store = passkeys or PasskeyStore(state_dir() / "dashboard" / "passkeys.json")
         service = passkey_routes.Passkeys(store, remote.host, auth.clock)
     app.state.enroll = service.codes if service else None
+    app.state.passkeys = service
     passkey_routes.register(app, auth, service)
 
     @app.exception_handler(HostError)
@@ -264,6 +266,7 @@ def create_app(
     reads.register(app, gateway)
     handoff.register(app, gateway)
     click.register(app, gateway)
+    stepup_routes.register(app, gateway)
     hubapprove.register(app, gateway)
     hub.register(app, gateway)
     settings.register(app, gateway)

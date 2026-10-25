@@ -2813,9 +2813,8 @@ operations and future additions fail closed (terminal-only). There is one confir
   prepare: a second prepare with the same key is refused and its host request cancelled, and sealing refuses a key
   reserved for another request. The host caps a member's grant at the workspace `grant_hours`; an owner's (or a
   maintainer's) can run to 168 h. The page opens it, shows it once and drops its key. Contract: [orch-v2-sealed-field.md](orch-v2-sealed-field.md) §7.
-  **Until the passkey step-up (item 10.5, R1-6) is built**, the dashboard server prepares a reveal grant only for a
-  session opened on this computer (`login_kind` `local`); a remote or unknown session is refused before the signer is
-  asked.
+  On a remote session the review (`prepare`) is a plain click and signing the reveal (`sign` with the page's
+  `reveal_key`) needs the passkey step-up of item 10.5; a session opened on this computer needs none.
 
 | Class | Ops |
 |---|---|
@@ -3735,12 +3734,13 @@ login.
 - **Pre-login surface**: the app shell and its assets, `/auth/passkey/*` and `/auth/enroll/*`. Nothing else answers
   without a remote session; `/setup` and `/api/setup/*` need a remote session (the setup token stays, on top).
 - **The route table (R1-5).** Every route of the dashboard app has one rule for the front in `routegate.TABLE`:
-  `allowed`, `refused`, `step_up` (refused until R1-6), `pre_login` (the four passkey routes) or `terminals` (allowed
-  only where the listener's policy has terminals on). `security.Security` enforces it in one place, after the session
+  `allowed`, `refused`, `step_up` (a whole route whose handler asks for the passkey, 10.5), `pre_login` (the four
+  passkey routes) or `terminals` (allowed only where the listener's policy has terminals on). `security.Security` enforces it in one place, after the session
   test: a route that is unlisted or matches nothing is refused (`remote.refused`, 403), and a test walks the app's
   routes and fails on one without a rule. Refused for good: launch codes, the setup routes, hub signing, the widget
   frame. Routes that serve several bodies (`click/custody`, `click/runner`, `click/runner/review`, `click/prepare`,
-  `click/sign`) stay `allowed`; their handlers refuse the step-up variants for every session that is not local.
+  `click/sign`) stay `allowed`; their handlers ask `stepup.refuse_step_up`, which needs the passkey step-up (10.5)
+  for the step-up variants of every session that was not opened on this computer.
 - **Passkey routes (R1-5).** `POST /auth/passkey/options` and `/login`, `POST /auth/enroll/options` and `/register`.
   Strict closed bodies (16 KiB), one rate-limit charge per request, a 120 s single-use challenge per ceremony held in
   memory, and one answer for every failure (`passkey.invalid` for login, `enroll.expired` for enrollment: a wrong,
@@ -3772,25 +3772,43 @@ these actions needs its own passkey assertion:
 Everything else, including turning things off and turning remote access off, is a plain click. The step-up rule does not
 apply on loopback, where the person is at the machine or behind the SSH tunnel.
 
-- **One assertion per op, no elevation.** A step-up covers exactly one listed op: it is made for that op's View, used
-  once when that op is signed, and at most 120 s after its challenge was issued. There is no session-wide "recently
-  verified" state (no `last_uv_at`): a step-up never covers another op, another View or a later click.
-- **The signer owns the nonce (R1-6).** When the sign panel shows the View of a listed op on a remote session, the
-  dashboard server asks the click signer for a step-up challenge for that request. The signer draws `nonce` (32 random
-  bytes), keeps `(nonce, request_id, view_digest, issued at)` in memory (monotonic clock) and returns the challenge
-  `SHA-256("orch/v2/dash-stepup|" || nonce || vd)`, where `vd` is the 32 raw bytes of the `view_digest` (`sha256:<hex>`)
-  of the View it built. The browser runs `navigator.credentials.get` with that challenge; the server passes the response
-  on with the sign call.
-- **The signer checks it.** It signs a listed op from a remote session only if the nonce is one it issued for this
-  request and this View, unused and issued at most 120 s ago, and the assertion verifies (10.6) against the passkey
-  store, which the signer reads itself with the store's checks. It marks the nonce used before anything else, whatever
-  the outcome; a restart forgets every nonce, so a new challenge is needed. Otherwise the answer is
-  `passkey.stepup_required`. So a buggy server, or an attacker who only drives its HTTP workflow, cannot replay an old
-  assertion, even when two Views of the same op have the same `view_digest` (code execution as the person is item 0's
-  accepted boundary). The server may check the assertion too, for an early answer; the signer's check
-  is the one that counts.
+- **One assertion per op, no elevation (as built, R1-6).** A step-up covers exactly one listed op: it is made for that
+  op's review digest (or, where the op has no signer review, for `action_digest(action, scope, extra)`: One click on,
+  a hub connect, "Add a device", removing one named passkey), is used once, and is at most ten minutes old when used
+  (owner decision: a fresh touch at most every ten minutes; it is also a request's own lifetime). The browser answers
+  the challenge within 120 s (the server's ceremony); the op follows within the ten minutes. A step-up never covers
+  another op, another review or a later click, and there is no session-wide "recently verified" state.
+- **The ceremony.** `POST /api/w/{ws}/stepup/options {action, view_digest?}` (workspace actions) or
+  `POST /api/stepup/options {action, credential_id?}` (adding a device, removing a passkey) returns a challenge for
+  this session: `SHA-256("orch/v2/dash-stepup|" || nonce || vd)` with `vd` the 32 raw bytes of the digest. The browser
+  runs `navigator.credentials.get` and posts the assertion to `POST /api/stepup/verify`; the server verifies it (10.6),
+  keeps it for this session only, keyed by the digest, and the action's own request then spends it. A failed or
+  second try of a challenge spends it.
+- **The signer owns the nonce for the ops it runs.** For `custody_on`, `custody_off {sealed}`, `rotate {sealed}`,
+  `runner` on and `sign` with a sealed value or reveal key, the server asks the signer (`stepup {workspace_id,
+  view_digest}`, feature `passkey_stepup`) for the nonce. The signer keeps `(nonce, workspace, digest, issued at)` in
+  memory (monotonic clock; a restart forgets all). The server relays the assertion with the op as `remote: true` and
+  `stepup: {nonce, id, response}`. For a call that says `remote`, the signer decides from the op and the arguments
+  whether the step-up is needed (not from anything the server says) and, before anything else, uses up the nonce and
+  accepts only an assertion that verifies (10.6) against the passkey store, which the signer reads itself, for the
+  relying party in `<state>/dashboard/remote.json`, for exactly this workspace and digest, issued at most ten
+  minutes ago. Otherwise the answer is `passkey.stepup_required`. So a buggy server, or an attacker who only drives
+  its HTTP workflow, cannot skip or replay it. A call without `remote` is a session opened on this computer, which
+  the signer trusts as it always has (item 0); a server that lies about that is code execution as the person.
+- **What the touch is bound to.** The signer's nonce is bound to the op and, for `custody_off`, `rotate` and `sign`, to
+  the `request_id`. A hub connect is bound to the hub id and the SHA-256 of the invite it will send; "Add a device" to a
+  `link_id` the server minted with the options; removing a passkey to the SHA-256 of that credential id. A session has
+  at most four open step-ups and each options call is charged to the source's bucket. Grants are keyed by
+  (action, digest); a signer op needs a proof, and a session that is not local always sends `remote: true`.
+- **Removing a passkey** (never the last, checked under the store's lock) ends every session that passkey opened,
+  the requesting one too if it used it, and drops every held step-up it made.
+- **Not signer ops.** The server's own check (the same helper, the same ceremony with a server-drawn nonce) covers
+  `hub/connect`, "Add a device" (`POST /api/passkeys/enroll-link`) and removing a passkey (`DELETE /api/passkeys/{id}`,
+  never the last one). The steps that only open a review (`custody/seal`, `rotate/seal`, `runner/review`, `prepare`)
+  are plain: they sign and reveal nothing, and the touch comes at the step that acts, when the review and its digest
+  exist.
 
-**10.6 WebAuthn verification contract (`orch_dashboard.passkeys`, vectors `addons/dashboard/server/tests/vectors/webauthn_*.json`).**
+**10.6 WebAuthn verification contract (`orch.click.passkeys`, vectors `addons/dashboard/server/tests/vectors/webauthn_*.json`).**
 An own small verifier on `cryptography` (already a core dependency), not the `webauthn` PyPI package: it would add
 `cbor2`, `asn1crypto` and every attestation format (TPM, Android, Apple, packed with x5c) to an internet-facing pre-login
 path, and its defaults (user verification preferred, RSA allowed) would have to be overridden at every call. The verifier

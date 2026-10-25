@@ -144,7 +144,7 @@ def test_share_repo_grants_least_access(world):
     assert agent_entry(k.entries(git / "HEAD")) == 0o4  # a file without the owner's x: read only
     assert agent_entry(k.entries(git / "hook.sh")) == 0o5
     assert k.entries(git / "HEAD", DEFAULT) is None
-    assert k.entries(world.repo / ".env") is None  # the working tree is not shared
+    assert agent_entry(k.entries(world.repo / ".env")) == 0  # the working tree is closed to the agent: u:agent:---
     assert agent_entry(k.entries(world.repo / ".git" / "objects" / "aa" / "bbcc")) == 0o4
     # nothing for group or other changed: the home keeps other = ---, group effective = ---
     ents = {t: p for t, p, _ in k.entries(world.home)}
@@ -153,14 +153,14 @@ def test_share_repo_grants_least_access(world):
     assert (world.repo / ".env").stat().st_mode == mode_before[world.repo / ".env"]
     # the default ACL copies the folder's bits without write: nothing new is writable by group or other
     d = {t: p for t, p, _ in k.entries(git, DEFAULT)}
-    assert d[GROUP_OBJ] == 0o5 and d[OTHER] == 0o5 and d[MASK] == 0o5
+    assert d[GROUP_OBJ] == 0 and d[OTHER] == 0 and d[MASK] == 0o5  # umask is not applied: only the agent gains
 
 
 def test_reapply_changes_nothing(world):
     assert share(world).ok
     snap = dict(world.k.store)
     rep = share(world)
-    assert rep.ok and set(rep.counts()) == {"unchanged"}
+    assert rep.ok and set(rep.counts()) - {"note"} == {"unchanged"}
     assert world.k.store == snap
 
 
@@ -215,7 +215,8 @@ def test_symlink_inside_git_is_not_followed(world):
     target = world.repo / ".env"
     (world.repo / ".git" / "alias").symlink_to(target)
     assert share(world).ok
-    assert world.k.entries(target) is None
+    assert agent_entry(world.k.entries(target)) == 0  # closed as a working tree file; the link was not followed
+    assert world.k.entries(world.repo / ".git" / "alias") is None
 
 
 def test_git_that_is_a_file_or_a_link_is_refused(world):
@@ -232,7 +233,7 @@ def test_hard_linked_file_is_skipped(world):
     os.link(world.repo / ".env", world.repo / ".git" / "linked")
     rep = share(world)
     assert rep.ok
-    assert world.k.entries(world.repo / ".env") is None
+    assert agent_entry(world.k.entries(world.repo / ".env")) == 0  # not granted read through the .git link
     assert any(i.action == "skipped" and "hard link" in i.detail for i in rep.items)
 
 
@@ -337,7 +338,7 @@ def test_real_xattrs_on_linux(tmp_path):
     assert agent_entry(shareacl._parse(os.getxattr(git / "HEAD", ACCESS)), uid) == 4
     with pytest.raises(OSError):
         os.getxattr(repo / ".env", ACCESS)
-    assert shareacl.share_repo(str(repo), agent=agent, home=str(base)).counts().keys() == {"unchanged"}
+    assert set(shareacl.share_repo(str(repo), agent=agent, home=str(base)).counts()) - {"note"} == {"unchanged"}
     assert shareacl.unshare(str(repo), is_repo=True, agent=agent, home=str(base)).ok
     for d in (base, repo, git):
         assert d.stat().st_mode & 0o777 == 0o700
@@ -364,3 +365,28 @@ def test_cli_registration_hook_and_refusals(world, monkeypatch, capsys):
     assert cli.main(["remove", str(world.repo)], env={}, out=out, err=err) == 0
     assert "removed" in out.getvalue()
     assert cli.main(["repo", "/nowhere/x"], env={}, out=io.StringIO(), err=err) == cli.EXIT_REFUSED
+
+
+def test_secrets_and_working_tree_are_closed_and_exposure_is_reported(world):
+    home, repo = world.home, world.repo
+    (home / ".netrc").write_text("machine x password y\n")
+    (home / ".netrc").chmod(0o644)
+    (home / ".aws").mkdir()
+    (home / ".aws" / "credentials").write_text("k\n")
+    (home / ".aws" / "credentials").chmod(0o644)
+    (home / ".ssh").mkdir()
+    (home / "notes.txt").write_text("n\n")
+    (home / "notes.txt").chmod(0o644)
+    (repo / "src").mkdir()
+    (repo / "src" / "a.py").write_text("a\n")
+    rep = share(world)
+    assert rep.ok, rep.text()
+    k = world.k
+    for p in (home / ".netrc", home / ".aws" / "credentials", home / ".ssh", repo / ".env", repo / "src"):
+        assert agent_entry(k.entries(p)) == 0, p
+    assert agent_entry(k.entries(repo / ".git")) == 0o5  # .git stays open
+    text = rep.text()
+    assert "notes.txt" in text and "can read" in text  # other-readable and not closed: reported
+    assert ".netrc" not in next(i.detail for i in rep.items if i.what == "exposed" and i.path == str(home))
+    assert shareacl.unshare(str(repo), is_repo=True, agent=AGENT, home=str(home)).ok
+    assert k.store == {}

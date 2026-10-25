@@ -79,8 +79,12 @@ class Report:
     def text(self) -> str:
         if self.noop:
             return self.noop
-        lines = [f"{it.action:9} {it.what:8} {it.path}" + (f" ({it.detail})" if it.detail else "") for it in self.items
-                 if it.what in ("traverse", "folder", "tree") or it.action == "skipped"]  # fmt: skip
+        shown = ("traverse", "folder", "tree", "closed", "exposed")
+        lines = [
+            f"{it.action:9} {it.what:8} {it.path}" + (f" ({it.detail})" if it.detail else "")
+            for it in self.items
+            if it.what in shown or it.action == "skipped"
+        ]
         total = self.counts()
         lines.append("Summary: " + (", ".join(f"{n} {k}" for k, n in sorted(total.items())) or "nothing to do"))
         if self.problem:
@@ -158,9 +162,9 @@ def _base_access(mode: int) -> list[Entry]:
 
 
 def _base_default(mode: int) -> list[Entry]:
-    """The default ACL's own entries when there is none yet. A default ACL replaces the umask for new objects, so the
-    group and other entries copy the folder's bits minus write (what umask 022 gives): nothing new is ever writable."""
-    return [(USER_OBJ, 0o7, _UNDEF), (GROUP_OBJ, (mode >> 3) & 0o5, _UNDEF), (OTHER, mode & 0o5, _UNDEF)]
+    """The default ACL's own entries when there is none yet. A default ACL replaces the umask for new objects, so group
+    and other get nothing: only the agent's named entry (and the owner) gain access to what is created later."""
+    return [(USER_OBJ, 0o7, _UNDEF), (GROUP_OBJ, 0, _UNDEF), (OTHER, 0, _UNDEF)]
 
 
 def _with_agent(entries: list[Entry], uid: int, perm: int | None) -> list[Entry]:
@@ -343,7 +347,15 @@ class _quiet:
 
 
 def _traverse(
-    chain: _Chain, agent: Agent, euid: int, report: Report, *, upto: int, remove: bool, keep: set[str]
+    chain: _Chain,
+    agent: Agent,
+    euid: int,
+    report: Report,
+    *,
+    upto: int,
+    remove: bool,
+    keep: set[str],
+    close_last: bool = False,
 ) -> None:
     """``--x`` for the agent on the components 0..upto of the chain that are ours; the others must already be
     traversable by everyone (we cannot and must not change them)."""
@@ -367,6 +379,105 @@ def _traverse(
             chain.fds[i], "access", agent, None if remove else _TRAVERSE, _original_mode(chain.fds[i], st), where
         )
         report.items.append(Item(where, "traverse", act))
+        nxt = chain.names[i] if i < len(chain.names) else None
+        _close_and_list(
+            chain.fds[i], where, nxt, agent, euid, report, remove=remove, closed_all=(close_last and i == upto)
+        )
+
+
+#: secrets that live in a home (the doctor's list, L13): the agent gets an explicit "no access" entry on each one
+SECRET_PATHS = (
+    ".netrc", ".git-credentials", ".npmrc", ".pypirc", ".docker/config.json", ".aws/credentials",
+    ".kube/config", ".config/gh/hosts.yml", ".ssh",
+)  # fmt: skip
+_MAX_LISTED = 20
+
+
+def _child(dfd: int, name: str) -> tuple[int, os.stat_result] | None:
+    """An open descriptor and stat of a plain file or folder ``name`` below ``dfd`` (no link followed), else None."""
+    try:
+        st = os.stat(name, dir_fd=dfd, follow_symlinks=False)
+        if stat.S_ISDIR(st.st_mode):
+            fd = os.open(name, _DIR_FLAGS, dir_fd=dfd)
+        elif stat.S_ISREG(st.st_mode):
+            fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=dfd)
+        else:
+            return None
+        got = os.fstat(fd)
+        if (got.st_ino, got.st_dev) != (st.st_ino, st.st_dev):
+            os.close(fd)
+            return None
+        return fd, got
+    except OSError:
+        return None
+
+
+def _deny(dfd: int, rel: str, where: str, agent: Agent, euid: int, report: Report, remove: bool) -> bool:
+    """``u:<agent>:---`` on ``rel`` (a path of plain components below ``dfd``). True when it exists and is closed."""
+    parts = rel.split("/")
+    opened: list[int] = []
+    try:
+        cur = dfd
+        for part in parts[:-1]:
+            got = _child(cur, part)
+            if got is None or not stat.S_ISDIR(got[1].st_mode):
+                return False
+            opened.append(got[0])
+            cur = got[0]
+        got = _child(cur, parts[-1])
+        if got is None:
+            return False
+        opened.append(got[0])
+        fd, st = got
+        path = f"{where.rstrip('/')}/{rel}"
+        if st.st_uid != euid:
+            report.items.append(Item(path, "exposed", "note", "belongs to someone else; orch cannot close it"))
+            return False
+        act = _set_entry(fd, "access", agent, None if remove else 0, _original_mode(fd, st), path)
+        report.items.append(Item(path, "closed", act))
+        return True
+    finally:
+        for fd in opened:
+            os.close(fd)
+
+
+def _close_and_list(
+    dfd: int, where: str, nxt: str | None, agent: Agent, euid: int, report: Report, *, remove: bool, closed_all: bool
+) -> None:
+    """In a folder the agent can now traverse: close the known secrets (and, in a repository's own
+    folder, every entry except ``.git``) with a "no access" entry, then list what other users can still read there."""
+    closed: set[str] = set()
+    for rel in SECRET_PATHS:
+        if rel.split("/")[0] != nxt and _deny(dfd, rel, where, agent, euid, report, remove):
+            closed.add(rel.split("/")[0])
+    try:
+        with os.scandir(dfd) as it:
+            kids = sorted((e.name, e.is_symlink()) for e in it)
+    except OSError:
+        return
+    exposed: list[str] = []
+    for name, is_link in kids:
+        if is_link or name == nxt or name in closed or (closed_all and name == ".git"):
+            continue
+        if closed_all:
+            if _deny(dfd, name, where, agent, euid, report, remove):
+                continue
+        try:
+            st = os.stat(name, dir_fd=dfd, follow_symlinks=False)
+        except OSError:
+            continue
+        if not remove and st.st_mode & (0o005 if stat.S_ISDIR(st.st_mode) else 0o004):
+            exposed.append(name)
+    if exposed:
+        more = f" and {len(exposed) - _MAX_LISTED} more" if len(exposed) > _MAX_LISTED else ""
+        report.items.append(
+            Item(
+                where,
+                "exposed",
+                "note",
+                "other users, the agent too, can read: " + ", ".join(exposed[:_MAX_LISTED]) + more,
+            )
+        )
 
 
 # --- trees ------------------------------------------------------------------------------------------------------------
@@ -525,7 +636,7 @@ def _run(path, sub, agent, euid, home, *, remove, keep, roots) -> Report:
                 _check_owner(chain.stats[last], euid, path)
             _grant_tree(target_fd, path, resolved, euid, report, remove=remove)
         else:  # a repo: the folder itself gets traverse only, its .git the tree
-            _traverse(chain, resolved, euid, report, upto=last, remove=remove, keep=keep_dirs)
+            _traverse(chain, resolved, euid, report, upto=last, remove=remove, keep=keep_dirs, close_last=True)
             git_path = f"{path}/{sub}"
             gfd = _open_dir(sub, chain.fds[last], git_path)
             try:

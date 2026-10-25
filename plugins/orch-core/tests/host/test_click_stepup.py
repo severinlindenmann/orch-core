@@ -38,7 +38,7 @@ def stepup_world(tmp_path):
 
     def ask(digest, *, authn=authn, op="custody_off", rid=STEPUP_RID, **kw):
         args = {"workspace_id": STEPUP_WID, "view_digest": digest, "op": op}
-        if op in ("custody_off", "rotate", "sign"):
+        if op in ("custody_off", "rotate", "sign", "github_token"):
             args["request_id"] = rid
         nonce = signer.handle("stepup", args)["nonce"]
         raw = base64.urlsafe_b64decode(nonce + "=" * (-len(nonce) % 4))
@@ -75,6 +75,7 @@ def passed_the_stepup_gate(signer, op, args):
         ("custody_on", {"workspace_id": STEPUP_WID, "resume": True}),
         ("custody_off", SEALED_OFF),
         ("rotate", SEALED_OFF),
+        ("github_token", SEALED_OFF),  # #1198 C16: the GitHub token is a sealed secret like the others
         ("runner", {"workspace_id": STEPUP_WID, "on": True, "view_digest": DIGEST}),
         ("runner", {"workspace_id": STEPUP_WID, "on": False, "terminals": True, "view_digest": DIGEST}),
         ("sign", {"workspace_id": STEPUP_WID, "request_id": "hr_" + "0" * 26, "view_digest": DIGEST, "sealed": {}}),
@@ -265,3 +266,15 @@ def test_stepup_nonces_are_bounded(stepup_world):
     for _ in range(MAX_NONCES + 10):
         w.signer.handle("stepup", {"workspace_id": STEPUP_WID, "view_digest": DIGEST, "op": "runner"})
     assert len(w.steps.nonces) <= MAX_NONCES
+
+
+def test_stepup_github_token_remote_needs_the_assertion_for_its_review_and_removal_does_not(stepup_world):
+    """#1198 C16: the sealed GitHub token is gated like the other sealed secrets; taking it away is a plain click."""
+    w = stepup_world
+    args = {**SEALED_OFF, "remote": True}
+    passed_the_stepup_gate(w.signer, "github_token", {**args, "stepup": w.ask(DIGEST, op="github_token")})
+    assert stepup_refused(w.signer, "github_token", {**args, "stepup": w.ask(DIGEST, op="rotate")}).code == (
+        "passkey.stepup_required"
+    )
+    passed_the_stepup_gate(w.signer, "github_token", {"workspace_id": STEPUP_WID, "remove": True, "remote": True})
+    passed_the_stepup_gate(w.signer, "github_token", {"workspace_id": STEPUP_WID, "begin": True, "remote": True})

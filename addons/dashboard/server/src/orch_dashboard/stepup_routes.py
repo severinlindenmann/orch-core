@@ -51,15 +51,16 @@ SIGNER_OPS = {
     "custody.on": "custody_on",
     "custody.off": "custody_off",
     "rotate": "rotate",
+    "github.token": "github_token",
     "runner.on": "runner",
     "sign": "sign",
 }
-REQUEST_ACTIONS = frozenset({"custody.off", "rotate", "sign"})
+REQUEST_ACTIONS = frozenset({"custody.off", "rotate", "github.token", "sign"})
 RequestId = Annotated[str, StringConstraints(pattern=r"^hr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")]
 
 
 class WorkspaceOptions(Strict):
-    action: Literal["custody.on", "custody.off", "rotate", "runner.on", "sign", "hub.connect"]
+    action: Literal["custody.on", "custody.off", "rotate", "github.token", "runner.on", "sign", "hub.connect"]
     view_digest: ViewDigest | None = None
     request_id: RequestId | None = None  # custody.off, rotate, sign: the request the review belongs to
     hub_id: Annotated[str, StringConstraints(min_length=1, max_length=128)] | None = None  # hub.connect
@@ -105,6 +106,7 @@ def register(app: FastAPI, gateway) -> None:
             "custody.on": set(),
             "custody.off": {"view_digest", "request_id"},
             "rotate": {"view_digest", "request_id"},
+            "github.token": {"view_digest", "request_id"},
             "runner.on": {"view_digest"},
             "sign": {"view_digest", "request_id"},
             "hub.connect": {"hub_id", "invite_sha256"},

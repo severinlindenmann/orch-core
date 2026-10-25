@@ -155,6 +155,10 @@ export function createApi(transport: Transport) {
     switchClick: (ws: string, body: ClickSwitch) => call<ClickCard>('POST', `/api/w/${ws}/click/custody`, body),
     custodySeal: (ws: string) => call<CustodySealOffer>('POST', `/api/w/${ws}/click/custody/seal`, {}),
     rotateSeal: (ws: string) => call<RotateBegin>('POST', `/api/w/${ws}/click/rotate/seal`, {}),
+    githubSeal: (ws: string) => call<CustodySealOffer>('POST', `/api/w/${ws}/click/github/seal`, {}),
+    githubSave: (ws: string, body: { request_id: string; view_digest: string; sealed: { 'github.token': import('./sealed').Envelope } }) =>
+      call<{ credential: 'stored' }>('POST', `/api/w/${ws}/click/github`, body),
+    githubRemove: (ws: string) => call<{ credential: 'missing' }>('POST', `/api/w/${ws}/click/github/remove`, {}),
     rotateKey: (ws: string, body: { request_id: string; view_digest: string; sealed: Record<string, import('./sealed').Envelope> }) =>
       call<{ done: true } & ClickCard>('POST', `/api/w/${ws}/click/rotate`, body),
     cancelHandoff: (ws: string, id: string) => call<{ id: string; state: string }>('DELETE', `/api/w/${ws}/handoff/${id}`),

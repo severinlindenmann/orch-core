@@ -97,8 +97,7 @@ def _login(a: argparse.Namespace, env: Mapping[str, str], state: Path, wid: str,
             f"a key is 1 to {credential.MAX_LEN} printable characters without spaces, backslashes or double quotes",
         )
     uid = os.getuid()
-    credential.store(state, wid, uid, a.name, credential.Secret(value), now())
-    securitylog.record(state, uid, now(), "addon.login", addon=a.name)
+    credential.person_store(state, wid, uid, a.name, value, now())
     out.write(
         f"Key stored. Only {a.name} gets this key, when orch runs it. Remove it with: orch addon logout {a.name}\n"
     )

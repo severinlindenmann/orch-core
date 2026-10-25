@@ -1,8 +1,10 @@
 """The one key an add-on may hold (V3 G6, design-g6 section 5): the ONLY reader and writer of
 ``<state>/hosts/<ws>/addons/<name>/credential``.
 
-* The person stores it with ``orch addon login <name>`` (tty only, see ``orch.cli.addon_credential``); no host op,
-  no dashboard form and no hub path writes it, and orch does not hand it to agents.
+* The person stores it with ``orch addon login <name>`` (tty only, see ``orch.cli.addon_credential``) or, for the
+  GitHub token, by click in the dashboard (#1198 C16: typed in the page, sealed to the click signer, which calls
+  :func:`person_store`, the one path both use). No host op and no hub path writes it, and orch does not hand it to
+  agents.
 * The file is ``0600`` in a ``0700`` directory of the host UID. ``addons/`` is opened once (``O_NOFOLLOW``) and every
   operation is relative to that fd (tmp + fsync + rename, ``O_EXCL``);
   a loose mode, a link, a second hard link or another owner is refused, never repaired.
@@ -249,6 +251,18 @@ def store(state_dir, workspace_id: str, host_uid: int, name: str, secret: Secret
             _unlink(dfd, tmp)
             raise
         os.fsync(dfd)
+
+
+def person_store(state_dir, workspace_id: str, host_uid: int, name: str, value: str, now: float) -> None:
+    """The person's own store of a key: the shape check, the write and the audit line (name and time, never the value).
+    The one path of ``orch addon login`` and of the dashboard's sealed GitHub token (#1198 C16). Raises ``ValueError``
+    for a value that is not a key; the caller has already checked that the add-on may hold one."""
+    from orch.host import securitylog
+
+    if not valid(value):
+        raise ValueError("invalid credential")
+    store(state_dir, workspace_id, host_uid, name, Secret(value), now)
+    securitylog.record(state_dir, host_uid, now, "addon.login", addon=name)
 
 
 def remove(state_dir, workspace_id: str, name: str) -> bool:

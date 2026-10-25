@@ -113,6 +113,7 @@ def test_status_lists_the_feature(switch):
             "sealed_passphrase",
             "device_rotate",
             "runner_switch",
+            "github_token",
             "passkey_stepup",
         ]
     ]

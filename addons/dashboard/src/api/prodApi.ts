@@ -315,6 +315,10 @@ const click = {
   switchClick: (ws: string, body: ClickSwitch) => call<ClickCard>(`${w(ws)}/click/custody`, 'POST', body),
   custodySeal: (ws: string) => call<CustodySealOffer>(`${w(ws)}/click/custody/seal`, 'POST', {}),
   rotateSeal: (ws: string) => call<RotateBegin>(`${w(ws)}/click/rotate/seal`, 'POST', {}),
+  githubSeal: (ws: string) => call<CustodySealOffer>(`${w(ws)}/click/github/seal`, 'POST', {}),
+  githubSave: (ws: string, body: { request_id: string; view_digest: string; sealed: { 'github.token': import('./sealed').Envelope } }) =>
+    call<{ credential: 'stored' }>(`${w(ws)}/click/github`, 'POST', body),
+  githubRemove: (ws: string) => call<{ credential: 'missing' }>(`${w(ws)}/click/github/remove`, 'POST', {}),
   rotateKey: (ws: string, body: { request_id: string; view_digest: string; sealed: Record<string, import('./sealed').Envelope> }) =>
     call<{ done: true } & ClickCard>(`${w(ws)}/click/rotate`, 'POST', body),
 }

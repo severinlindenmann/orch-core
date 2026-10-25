@@ -127,6 +127,8 @@ class FrontPlan:
         servers = ["\t\ttimeouts {", "\t\t\tread_header 10s", "\t\t}"]
         if self.proxies:
             servers.append(f"\t\ttrusted_proxies static {' '.join(self.proxies)}")
+            # right to left: the first address that is not a trusted proxy, never the leftmost one a client can write
+            servers.append("\t\ttrusted_proxies_strict")
         return "\n".join(
             [
                 MARKER,

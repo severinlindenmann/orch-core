@@ -105,7 +105,7 @@ def test_the_caddyfile_golden():
 def test_trusted_proxies_are_configurable_and_absent_by_default():
     assert "trusted_proxies" not in plan().caddyfile()  # no proxy configured: Caddy uses the TCP peer
     text = plan(proxies=("10.0.0.0/8", "203.0.113.5/32")).caddyfile()
-    assert "\t\ttrusted_proxies static 10.0.0.0/8 203.0.113.5/32\n" in text
+    assert "\t\ttrusted_proxies static 10.0.0.0/8 203.0.113.5/32\n\t\ttrusted_proxies_strict\n" in text
 
 
 def test_the_caddyfile_sets_the_client_header_once_and_never_forwards_the_browsers():

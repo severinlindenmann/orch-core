@@ -41,3 +41,26 @@ def test_logout_all_burns_unused_add_a_device_links(app, front, auth, remote):
         assert (
             front.post("/auth/enroll/options", json={"code": dead}, headers={"Origin": HTTPS}).status_code == 401
         )  # refused afterwards
+
+
+def test_a_link_minted_during_the_logout_is_burned_too(app, front, auth, remote, monkeypatch):
+    minted = []
+    real = auth.logout_everywhere
+
+    def late(kind="remote"):
+        gone = real(kind)
+        minted.append(app.state.enroll.mint())  # a session that was still live made a link just before the end
+        return gone
+
+    monkeypatch.setattr(auth, "logout_everywhere", late)
+    assert front.post("/api/session/logout-all", json={}, headers=bearer(remote, HTTPS)).status_code == 200
+    got = front.post("/auth/enroll/options", json={"code": minted[0]}, headers={"Origin": HTTPS})
+    assert got.status_code == 401
+
+
+def test_an_ended_session_cannot_make_an_enrollment_link(front, auth, remote):
+    assert front.post("/api/session/logout-all", json={}, headers=bearer(remote, HTTPS)).status_code == 200
+    body = {"link_id": "L" * 22}
+    got = front.post("/api/passkeys/enroll-link", json=body, headers=bearer(remote, HTTPS))
+    assert got.status_code in (401, 404)
+    assert not auth.valid(remote)

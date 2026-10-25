@@ -22,16 +22,18 @@ from .policy import REMOTE
 CLIENT_HEADER = b"x-orch-client"
 NETLINK_SOCK_DIAG = 4  # NETLINK_INET_DIAG
 SOCK_DIAG_BY_FAMILY = 20
-NLMSG_ERROR = 2
 NLM_F_REQUEST = 1
 TCP_ESTABLISHED = 1
-_NLHDR = struct.Struct("=IHHII")  # len, type, flags, seq, pid
-_DIAG_REQ = struct.Struct("=BBBBI")  # family, protocol, ext, pad, states
-_DIAG_ID = struct.Struct("!HH4s12s4s12sI2I")  # sport, dport, src, dst, if, cookie (src/dst: IPv4 + 12 pad bytes)
-_DIAG_MSG = struct.Struct(
-    "=BBBB"
-)  # family, state, timer, retrans (then the id, then expires, rqueue, wqueue, uid, inode)
-_UID_AT = _NLHDR.size + _DIAG_MSG.size + _DIAG_ID.size + 12
+# Netlink sock_diag layouts (linux/inet_diag.h). Request: nlmsghdr, inet_diag_req_v2 header, inet_diag_sockid.
+_NLHDR = struct.Struct("=IHHII")  # nlmsghdr: len, type, flags, seq, pid
+_DIAG_REQ = struct.Struct("=BBBBI")  # family, protocol, ext, pad, states (bit mask)
+_DIAG_ID = struct.Struct("!HH4s12s4s12sI2I")  # sport, dport, src, dst (IPv4 + 12 pad bytes each), if, cookie[2]
+IF_ANY = 0
+NO_COOKIE = 0xFFFFFFFF  # INET_DIAG_NOCOOKIE: match the socket whatever its cookie
+# Reply: nlmsghdr, then inet_diag_msg = (family, state, timer, retrans), id, expires, rqueue, wqueue, uid, inode.
+_DIAG_MSG = struct.Struct("=BBBB")  # family, state, timer, retrans
+_DIAG_COUNTERS = 12  # expires, rqueue, wqueue: three u32 between the id and the uid
+_UID_AT = _NLHDR.size + _DIAG_MSG.size + _DIAG_ID.size + _DIAG_COUNTERS
 
 
 class PeerChecked(socket.socket):
@@ -79,7 +81,15 @@ def tcp_owner_uid(conn, netlink=open_netlink) -> int:
     (lhost, lport), (rhost, rport) = conn.getsockname()[:2], conn.getpeername()[:2]
     seq = 1
     ident = _DIAG_ID.pack(
-        rport, lport, socket.inet_aton(rhost), bytes(12), socket.inet_aton(lhost), bytes(12), 0, 0xFFFFFFFF, 0xFFFFFFFF
+        rport,
+        lport,
+        socket.inet_aton(rhost),
+        bytes(12),
+        socket.inet_aton(lhost),
+        bytes(12),
+        IF_ANY,
+        NO_COOKIE,
+        NO_COOKIE,
     )
     body = _DIAG_REQ.pack(socket.AF_INET, socket.IPPROTO_TCP, 0, 0, 1 << TCP_ESTABLISHED) + ident
     request = _NLHDR.pack(_NLHDR.size + len(body), SOCK_DIAG_BY_FAMILY, NLM_F_REQUEST, seq, 0) + body
@@ -89,11 +99,11 @@ def tcp_owner_uid(conn, netlink=open_netlink) -> int:
         reply = sock.recv(4096)
     finally:
         sock.close()
-    if len(reply) < _UID_AT + 4:  # short, or an NLMSG_ERROR (which is 36 bytes)
+    if len(reply) < _NLHDR.size:
         raise OSError("sock_diag gave no socket entry for the peer")
     length, kind, _flags, rseq, _pid = _NLHDR.unpack_from(reply)
     if kind != SOCK_DIAG_BY_FAMILY or rseq != seq or length < _UID_AT + 4 or length > len(reply):
-        raise OSError("sock_diag gave an unexpected reply")
+        raise OSError("sock_diag gave an unexpected or short reply (an NLMSG_ERROR is one)")
     family, state, _timer, _retrans = _DIAG_MSG.unpack_from(reply, _NLHDR.size)
     if family != socket.AF_INET or state != TCP_ESTABLISHED:
         raise OSError("the peer socket is not an established one")

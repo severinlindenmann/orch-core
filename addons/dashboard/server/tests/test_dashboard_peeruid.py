@@ -123,17 +123,17 @@ def test_uvicorn_loop_stays_asyncio_and_both_servers_check_it():
     assert issubclass(launcher.FrontServer, launcher.uvicorn.Server)
 
 
-@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="/proc/net/tcp is Linux only")
-def test_real_proc_reports_our_uid_for_our_own_connection():
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="sock_diag is Linux only")
+def test_real_sock_diag_reports_our_uid_for_our_own_connection():
     srv = launcher.bind_listener(0)
     srv.listen(1)
     client = socket.create_connection(srv.getsockname())
-    conn, _ = srv.accept()  # real /proc: our own UID passes
+    conn, _ = srv.accept()  # real sock_diag: our own UID passes
     assert tcp_owner_uid(conn) == os.geteuid()
     conn.close(), client.close(), srv.close()
 
 
-@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="/proc/net/tcp is Linux only")
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="sock_diag is Linux only")
 def test_real_connection_from_another_process_is_judged_by_its_owner():
     srv = launcher.bind_listener(0)
     srv.listen(1)

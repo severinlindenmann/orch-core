@@ -13737,9 +13737,15 @@ first failed fact named.
   runner) gains no lever over the person's custody; `orch sign CODE` in the terminal keeps working throughout.
 - **§0.8.6 item 3a works in tier B.** The host-state flag file is the person's (host = person), so the dashboard's custody
   switch is offered in both tiers.
-- **The dashboard port (L8, Linux).** The dashboard server drops loopback TCP connections whose socket owner UID
-  (`sock_diag` or `/proc/net/tcp{,6}`) is not the person. The SSH tunnel's forwarding runs as the person, so the VPS path
-  keeps working; an agent does not even reach the login. macOS has no equivalent; there the bearer remains the gate.
+- **The dashboard port (L8, Linux).** The dashboard server drops loopback TCP connections whose socket owner UID is
+  not the person, at accept time (`front.LoopbackPeerChecked`, the same wrapper as the front socket's `PeerChecked`).
+  The owner comes from the kernel's `sock_diag` (NETLINK_INET_DIAG): one exact 4-tuple lookup of the client's socket,
+  never a scan of the socket table, answering `idiag_uid` and `idiag_state`. Only an ESTABLISHED socket counts (orphaned
+  and TIME_WAIT entries read uid 0, which a root person would otherwise accept). Anything unreadable (no `tcp_diag`,
+  a short or odd reply, no such socket) drops the connection. The SSH tunnel's forwarding runs as the person, so the
+  VPS path keeps working; an agent does not even reach the login. **macOS has no equivalent** (the kernel cannot be
+  asked who owns a TCP peer): nothing is dropped there and the bearer remains the only gate. The uvicorn loop stays
+  asyncio's selector loop (uvloop would skip `accept`); both servers refuse to start on another loop.
 - Memory: another UID cannot `ptrace` the person's processes or read their `/proc/<pid>/environ` or `mem`. `argv` is
   world-readable unless `/proc` is mounted `hidepid=invisible` (doctor hint), so secrets stay out of `argv` (tested
   invariant).

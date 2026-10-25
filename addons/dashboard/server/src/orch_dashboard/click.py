@@ -314,6 +314,22 @@ class RotateBody(BaseModel):
     sealed: RotateSealed
 
 
+class GithubSealed(BaseModel):
+    """The GitHub token, sealed (purpose `github.token`): relayed as ciphertext."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, populate_by_name=False)
+    github_token: Envelope = Field(alias="github.token")
+
+
+class GithubBody(BaseModel):
+    """#1198 C16: `request_id`, `view_digest` and `sealed` come from `click/github/seal`; the signer does the rest."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    request_id: Annotated[str, StringConstraints(pattern=r"^hr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")]
+    view_digest: ViewDigest
+    sealed: GithubSealed
+
+
 class RunnerBody(BaseModel):
     """#1198 C14: dashboard execution on or off. `view_digest` is that of the review `click/runner/review` returned for
     the same `on` and `terminals`; the signer acts only on that."""
@@ -416,7 +432,7 @@ def register(app: FastAPI, gateway: Gateway):
         mode = mode_of(gateway, ws)  # V3 C11: advisory, so the page shows the hub panel; the host decides
         return {**card, "switchable": signer.switchable(), **({"mode": mode} if mode else {})}
 
-    def seal_view_ok(got: object) -> bool:
+    def seal_view_ok(got: object, purpose: str = "custody.passphrase") -> bool:
         """The signer offer for a sealed new passphrase: a request id, a review digest and exactly the one purpose with
         the signer's own key (a P-256 point, 87 base64url characters)."""
         if not isinstance(got, dict) or set(got) != {"request_id", "view_digest", "seal", "expires_in"}:
@@ -433,7 +449,7 @@ def register(app: FastAPI, gateway: Gateway):
             and seal["v"] == 1
             and type(seal["v"]) is int
             and seal["alg"] == "P256-HKDF-SHA256-A256GCM"
-            and seal["purposes"] == ["custody.passphrase"]
+            and seal["purposes"] == [purpose]
             and isinstance(seal["pk"], str)
             and re.fullmatch(rf"{B64URL}{{87}}", seal["pk"]) is not None
         )
@@ -539,6 +555,70 @@ def register(app: FastAPI, gateway: Gateway):
             },
         )
         return {"done": True, **(adapters.click_card(row) or {}), "switchable": True}
+
+    def github_gate(ws: str) -> None:
+        """An owner, a signer that can (begin, store and remove alike). The token is the owner's own key for GitHub."""
+        gateway.enabled(ws)
+        if not owner(ws):
+            raise fail("role.denied", "Only an owner saves the GitHub token in the dashboard.", exit=3)
+        if not signer.github_tokens():
+            raise fail("click.contract", "This dashboard needs an update before it can save a GitHub token.", exit=9)
+
+    @app.get("/api/w/{ws}/click/github")
+    def github_state(ws: str = Depends(workspace)):
+        """Is a GitHub token saved? `stored`, `missing`, or `null` when the GitHub add-on is off or asks for no key.
+        Read from `addon.list`; the token itself is never read here. Owners only, like the other GitHub routes."""
+        gateway.enabled(ws)
+        if not owner(ws):
+            raise fail("role.denied", "Only an owner sees the GitHub token.", exit=3)
+        rows = gateway.call(ws, "addon.list").get("addons", [])
+        row = next(
+            (r for r in rows if isinstance(r, dict) and r.get("name") == "github" and r.get("state") == "active"), None
+        )
+        state = None if row is None else row.get("credential")
+        return {"credential": state if state in ("stored", "missing") else None}
+
+    @app.post("/api/w/{ws}/click/github/seal")
+    def github_seal(_body: SealBegin, ws: str = Depends(workspace)):
+        """The signer's one-use key for the GitHub token (#1198 C16). Owners. Nothing secret passes here; the signer
+        refuses when the GitHub add-on is off."""
+        github_gate(ws)
+        got = signer.call("github_token", {"workspace_id": ws, "begin": True})
+        if not seal_view_ok(got, "github.token"):
+            raise refusal_check(
+                "The signing helper's offer for your GitHub token is not what it should be. Nothing changed."
+            )
+        return got
+
+    @app.post("/api/w/{ws}/click/github")
+    def github_token(body: GithubBody, request: Request, ws: str = Depends(workspace)):
+        """Save the GitHub token: ciphertext only, relayed and never opened here (#1198 C16). On a remote session
+        this needs the passkey step-up (`stepup.py`)."""
+        step = refuse_step_up(app.state.auth, request, "github", body, ws)
+        step = ready(step)
+        github_gate(ws)
+        got = signer.call(
+            "github_token",
+            {
+                **step,
+                "workspace_id": ws,
+                "request_id": body.request_id,
+                "view_digest": body.view_digest,
+                "sealed": {"github.token": body.sealed.github_token.model_dump()},
+            },
+        )
+        if got != {"workspace_id": ws, "credential": "stored"}:
+            raise fail("internal", "The signing helper answered something unexpected.", exit=9)
+        return {"credential": "stored"}
+
+    @app.post("/api/w/{ws}/click/github/remove")
+    def github_remove(_body: SealBegin, ws: str = Depends(workspace)):
+        """Delete the stored GitHub token. It only takes authority away, so it is a plain click everywhere."""
+        github_gate(ws)
+        got = signer.call("github_token", {"workspace_id": ws, "remove": True})
+        if got != {"workspace_id": ws, "credential": "missing"}:
+            raise fail("internal", "The signing helper answered something unexpected.", exit=9)
+        return {"credential": "missing"}
 
     @app.post("/api/w/{ws}/click/custody")
     def custody(body: CustodyBody, request: Request, ws: str = Depends(workspace)):

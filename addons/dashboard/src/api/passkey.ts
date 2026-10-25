@@ -233,13 +233,13 @@ export async function enrollDevice(code: string, name: string = deviceName()): P
 
 // ---- step-up: a touch for one big action, after its review is on screen
 
-export type StepUpAction = 'custody.on' | 'custody.off' | 'rotate' | 'runner.on' | 'sign' | 'hub.connect' | 'device.add' | 'passkey.remove'
+export type StepUpAction = 'custody.on' | 'custody.off' | 'rotate' | 'github.token' | 'runner.on' | 'sign' | 'hub.connect' | 'device.add' | 'passkey.remove'
 
 /** What the touch is for. The fields are exactly the ones the server expects for that action, no more. */
 export type StepUpFor =
   | { action: 'custody.on'; ws: string }
   | { action: 'runner.on'; ws: string; view_digest: string }
-  | { action: 'custody.off' | 'rotate' | 'sign'; ws: string; view_digest: string; request_id: string }
+  | { action: 'custody.off' | 'rotate' | 'sign' | 'github.token'; ws: string; view_digest: string; request_id: string }
   | { action: 'hub.connect'; ws: string; hub_id: string; invite_sha256: string }
   | { action: 'device.add' }
   | { action: 'passkey.remove'; credential_id: string }
@@ -257,6 +257,7 @@ const OPTIONS_BODY: Record<StepUpFor['action'], (f: never) => Record<string, unk
   'custody.on': () => ({ action: 'custody.on' }),
   'runner.on': (f: { view_digest: string }) => ({ action: 'runner.on', view_digest: f.view_digest }),
   'custody.off': (f: { view_digest: string; request_id: string }) => ({ action: 'custody.off', view_digest: f.view_digest, request_id: f.request_id }),
+  'github.token': (f: { view_digest: string; request_id: string }) => ({ action: 'github.token', view_digest: f.view_digest, request_id: f.request_id }),
   rotate: (f: { view_digest: string; request_id: string }) => ({ action: 'rotate', view_digest: f.view_digest, request_id: f.request_id }),
   sign: (f: { view_digest: string; request_id: string }) => ({ action: 'sign', view_digest: f.view_digest, request_id: f.request_id }),
   'hub.connect': (f: { hub_id: string; invite_sha256: string }) => ({ action: 'hub.connect', hub_id: f.hub_id, invite_sha256: f.invite_sha256 }),

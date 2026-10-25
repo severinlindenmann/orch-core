@@ -124,13 +124,7 @@ export function ReplaceKey({ workspace, owner = true }: { workspace: Workspace; 
             </Button>
           )}
           {(phase === 'review' || phase === 'sending') && offer && (
-            <form
-              className="space-y-2"
-              onSubmit={(e) => {
-                e.preventDefault()
-                if (ready) void replace()
-              }}
-            >
+            <div className="space-y-2">
               <div data-testid="replace-key-review" className="space-y-1 text-[14px]">
                 {offer.view.lines.slice(0, 2).map((l) => <p key={l}><Inline>{l}</Inline></p>)}
                 <details>
@@ -142,24 +136,24 @@ export function ReplaceKey({ workspace, owner = true }: { workspace: Workspace; 
               <div className="space-y-1.5 pt-2">
               <label className="block text-[14px] font-medium" htmlFor="replace-key-code"><KeyRound className="mr-1 inline size-4" aria-hidden />Recovery code</label>
               <p className="text-[13px] text-text-muted">The 24 words from setup.</p>
-              <input id="replace-key-code" ref={code} type="password" autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false} data-testid="replace-key-code" onChange={check} className="min-h-11 w-full rounded-md border border-border bg-bg px-3 text-[16px] text-text" />
+              <input id="replace-key-code" ref={code} type="password" autoComplete="new-password" data-1p-ignore data-lpignore="true" autoCorrect="off" autoCapitalize="off" spellCheck={false} data-testid="replace-key-code" onChange={check} className="min-h-11 w-full rounded-md border border-border bg-bg px-3 text-[16px] text-text" />
               </div>
               <div className="space-y-1.5 pt-2">
               <label className="block text-[14px] font-medium" htmlFor="replace-key-pw">New passphrase</label>
               <p className="text-[13px] text-text-muted">At least {MIN_NEW_PASSPHRASE} characters. You enter it whenever you sign in a terminal.</p>
-              <input id="replace-key-pw" ref={pw} type="password" autoComplete="new-password" autoCorrect="off" autoCapitalize="off" spellCheck={false} data-testid="replace-key-pw" onChange={check} className="min-h-11 w-full rounded-md border border-border bg-bg px-3 text-[16px] text-text" />
+              <input id="replace-key-pw" ref={pw} type="password" autoComplete="new-password" data-1p-ignore data-lpignore="true" autoCorrect="off" autoCapitalize="off" spellCheck={false} data-testid="replace-key-pw" onChange={check} className="min-h-11 w-full rounded-md border border-border bg-bg px-3 text-[16px] text-text" />
               </div>
               <div className="space-y-1.5 pt-2">
               <label className="block text-[14px] font-medium" htmlFor="replace-key-pw2">Repeat new passphrase</label>
-              <input id="replace-key-pw2" ref={pw2} type="password" autoComplete="new-password" autoCorrect="off" autoCapitalize="off" spellCheck={false} data-testid="replace-key-pw2" onChange={check} className="min-h-11 w-full rounded-md border border-border bg-bg px-3 text-[16px] text-text" />
+              <input id="replace-key-pw2" ref={pw2} type="password" autoComplete="new-password" data-1p-ignore data-lpignore="true" autoCorrect="off" autoCapitalize="off" spellCheck={false} data-testid="replace-key-pw2" onChange={check} className="min-h-11 w-full rounded-md border border-border bg-bg px-3 text-[16px] text-text" />
               </div>
               <div className="flex flex-wrap gap-2 pt-2">
-                <Button type="submit" className="min-h-11" disabled={!ready || phase === 'sending'} data-testid="replace-key-go">
+                <Button type="button" className="min-h-11" onClick={() => void replace()} disabled={!ready || phase === 'sending'} data-testid="replace-key-go">
                   {phase === 'sending' ? <Loader2 className="mr-2 size-4 animate-spin" aria-hidden /> : null}Replace key
                 </Button>
                 <Button type="button" variant="ghost" className="min-h-11" disabled={phase === 'sending'} onClick={() => { clear(); setOffer(null); setPhase('idle') }}>Cancel</Button>
               </div>
-            </form>
+            </div>
           )}
         </>
       )}

@@ -10,7 +10,7 @@ import type { MandatesPreviewState } from './mandatesPreview'
 import type { Api, ListTicketsParams } from './apiFactory'
 import type { SignDefault, SignMethod } from './signing'
 import type { HandoffAction, HandoffRequest, HandoffState } from './handoff'
-import type { ClickAction, ClickCard, ClickState, ClickPrepared, ClickSigned, ClickSwitch, ClickViewAnswer, CustodySealOffer, RotateBegin } from './click'
+import type { ClickAction, ClickCard, ClickState, ClickPrepared, ClickSigned, ClickSwitch, ClickViewAnswer, CustodySealOffer, GithubCredential, GithubSave, RotateBegin } from './click'
 import type { HostGrant, HostReaders, HostSettings, RosterMember } from './settings'
 import type { QuickPage, QuickParams, RecordsRun, RecordsStatus } from './quickRecords'
 import { activityQuery, type ActivityPage, type ActivityParams } from './activity'
@@ -341,6 +341,14 @@ const click = {
   },
   custodySeal: (ws: string) => call<CustodySealOffer>(`${w(ws)}/click/custody/seal`, 'POST', {}),
   rotateSeal: (ws: string) => call<RotateBegin>(`${w(ws)}/click/rotate/seal`, 'POST', {}),
+  githubSeal: (ws: string) => call<CustodySealOffer>(`${w(ws)}/click/github/seal`, 'POST', {}),
+  githubState: (ws: string) => call<{ credential: GithubCredential }>(`${w(ws)}/click/github`, 'GET'),
+  githubSave: async (ws: string, body: GithubSave) => {
+    // Saving the token from the web address needs the passkey touch (owner, 25 Oct); the review is on screen.
+    await stepUp({ action: 'github.token', ws, view_digest: body.view_digest, request_id: body.request_id })
+    return call<{ credential: 'stored' }>(`${w(ws)}/click/github`, 'POST', body).catch(stale)
+  },
+  githubRemove: (ws: string) => call<{ credential: 'missing' }>(`${w(ws)}/click/github/remove`, 'POST', {}),
   rotateKey: async (ws: string, body: { request_id: string; view_digest: string; sealed: Record<string, import('./sealed').Envelope> }) => {
     await stepUp({ action: 'rotate', ws, view_digest: body.view_digest, request_id: body.request_id })
     return call<{ done: true } & ClickCard>(`${w(ws)}/click/rotate`, 'POST', body).catch(stale)

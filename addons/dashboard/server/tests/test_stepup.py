@@ -30,7 +30,16 @@ from orch_dashboard.auth import STEPUP_FRESH
 from orch_dashboard.passkey_routes import CHALLENGE_TTL
 from orch_dashboard.stepup import GUARDED_PATHS, STEP_UP
 
-FEATURES = ["custody", "device_rotate", "runner_switch", "passkey_stepup", "sealed_passphrase", "backup_key", "reveal"]
+FEATURES = [
+    "custody",
+    "device_rotate",
+    "runner_switch",
+    "passkey_stepup",
+    "sealed_passphrase",
+    "backup_key",
+    "reveal",
+    "github_token",
+]
 CHALLENGE_KEY = "A" * 87
 OTHER_HASH = "sha256:" + "cd" * 32
 HUBF = {"hub_id": "hub_" + "a" * 26, "invite_sha256": "0" * 64}
@@ -60,6 +69,14 @@ VARIANTS = [
         HASH,
     ),
     (STEP_UP[4].name, "sign", "sign", {"request_id": REQ, "view_digest": HASH, "reveal_key": CHALLENGE_KEY}, HASH),
+    # #1198 C16: the GitHub token is a sealed secret like the others, so a remote session needs the touch
+    (
+        STEP_UP[5].name,
+        "github",
+        "github.token",
+        {"request_id": REQ, "view_digest": HASH, "sealed": {"github.token": PASS_ENV}},
+        HASH,
+    ),
 ]
 IDS = [f"{r}-{i}" for i, (_, r, _, _, _) in enumerate(VARIANTS)]
 
@@ -100,7 +117,7 @@ class _World:
             body["view_digest"] = digest
         if credential_id is not None:
             body["credential_id"] = credential_id
-        if action in ("custody.off", "rotate", "sign") and digest is not None:
+        if action in ("custody.off", "rotate", "github.token", "sign") and digest is not None:
             body.setdefault("request_id", REQ)
         res = self.front.post(path, json=body, headers=self.headers(token))
         if res.status_code == 200 and "link_id" in res.json():
@@ -441,6 +458,7 @@ def test_no_step_up_name_of_the_owner_list_is_missing():
         "custody.on",
         "custody.off",
         "rotate",
+        "github.token",  # #1198 C16: not on the owner's list; added because the sealed GitHub token is a secret
         "runner.on",
         "sign",
         "hub.connect",

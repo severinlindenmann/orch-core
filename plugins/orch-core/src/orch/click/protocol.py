@@ -102,6 +102,7 @@ OPS = (
     "stash",
     "rotate",
     "runner",
+    "github_token",
     "stepup",
 )
 #: what this signer can do beyond its contract, in ``status.features``: ``custody`` is ``custody_on``/``custody_off``,
@@ -116,6 +117,9 @@ OPS = (
 #: ``device_rotate`` (#1198 C13) is ``rotate {begin}`` (the review: old and new key, and the signer's key for the two
 #: sealed secrets), then ``rotate {request_id, view_digest, sealed}``: a new device key for this computer
 #: ``runner_switch`` (#1198 C14) is ``runner {review}`` then ``runner {on, view_digest}``: dashboard execution on or off
+#: ``github_token`` (#1198 C16) is ``github_token {begin}`` (the signer's one-use key for the one purpose
+#: ``github.token``), then ``github_token {request_id, view_digest, sealed}``: the GitHub token typed in the page is
+#: opened here and stored as the add-on's key, in the person's custody; ``github_token {remove}`` deletes it
 #: ``passkey_stepup`` (#1198 R1-6) is ``stepup {workspace_id, view_digest}`` (a one-use nonce for a passkey
 #: assertion) and
 #: the ``remote``/``stepup`` arguments of the listed ops (custody_on, custody_off {sealed}, rotate {sealed}, runner on,
@@ -129,6 +133,7 @@ FEATURES = (
     "sealed_passphrase",
     "device_rotate",
     "runner_switch",
+    "github_token",
     "passkey_stepup",
 )
 #: the host's ``sign.convenience_unavailable`` reasons (orch-v2-host §0.8.6 item 1), from the host's closed schema

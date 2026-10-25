@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useSwitchGuard } from '@/app/workspace'
+import { GithubToken } from './GithubToken'
 
 // The form (rjsf through AddonNode) loads when the panel first opens.
 const AddonSettings = lazy(() => import('../AddonSettings').then((m) => ({ default: m.AddonSettings })))
@@ -108,6 +109,7 @@ export function AddonSettingsPanel({ name, workspace, canEdit }: { name: string;
         <Suspense fallback={<Skeleton aria-label="Loading addon settings" className="mx-4 h-40" />}>
           <AddonSettings key={workspace.id} name={name} workspace={workspace} canEdit={canEdit} labelledBy={titleId} onDirtyChange={onDirtyChange} onClose={close} />
         </Suspense>
+        {name === 'github' && canEdit && <GithubToken workspace={workspace} />}
       </div>
       {asking && (
         <Dialog open onOpenChange={(o) => !o && keep()}>

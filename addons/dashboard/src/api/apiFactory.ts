@@ -41,7 +41,7 @@ import {
 } from './types'
 import type { MandatesPreviewRequest, MandatesPreviewState } from './mandatesPreview'
 import type { HandoffAction, HandoffRequest, HandoffState } from './handoff'
-import type { ClickAction, ClickCard, ClickState, ClickPrepared, ClickSigned, ClickSwitch, ClickViewAnswer, CustodySealOffer, RotateBegin } from './click'
+import type { ClickAction, ClickCard, ClickState, ClickPrepared, ClickSigned, ClickSwitch, ClickViewAnswer, CustodySealOffer, GithubCredential, GithubSave, RotateBegin } from './click'
 import type { HostGrant, HostReaders, HostSettings, RosterMember } from './settings'
 import type { QuickPage, QuickParams, RecordsRun, RecordsStatus } from './quickRecords'
 import { connectionInfo, connectionList, doctorReport, secretsFileInfo, skillInfo, skillList, type SkillGrantRequest } from './connections'
@@ -155,6 +155,11 @@ export function createApi(transport: Transport) {
     switchClick: (ws: string, body: ClickSwitch) => call<ClickCard>('POST', `/api/w/${ws}/click/custody`, body),
     custodySeal: (ws: string) => call<CustodySealOffer>('POST', `/api/w/${ws}/click/custody/seal`, {}),
     rotateSeal: (ws: string) => call<RotateBegin>('POST', `/api/w/${ws}/click/rotate/seal`, {}),
+    githubSeal: (ws: string) => call<CustodySealOffer>('POST', `/api/w/${ws}/click/github/seal`, {}),
+    githubState: (ws: string) => call<{ credential: GithubCredential }>('GET', `/api/w/${ws}/click/github`),
+    githubSave: (ws: string, body: GithubSave) =>
+      call<{ credential: 'stored' }>('POST', `/api/w/${ws}/click/github`, body),
+    githubRemove: (ws: string) => call<{ credential: 'missing' }>('POST', `/api/w/${ws}/click/github/remove`, {}),
     rotateKey: (ws: string, body: { request_id: string; view_digest: string; sealed: Record<string, import('./sealed').Envelope> }) =>
       call<{ done: true } & ClickCard>('POST', `/api/w/${ws}/click/rotate`, body),
     cancelHandoff: (ws: string, id: string) => call<{ id: string; state: string }>('DELETE', `/api/w/${ws}/handoff/${id}`),

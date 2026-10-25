@@ -136,6 +136,7 @@ STEP_UP: tuple[StepUp, ...] = (
         _view,
         "sign",
     ),
+    StepUp("saving the GitHub token", "github", always, _view, "github.token"),
     StepUp("connecting a hub", "hub/connect", always, _connect, "hub.connect", WORKSPACE),
     StepUp(
         "adding a device",
@@ -156,9 +157,9 @@ STEP_UP: tuple[StepUp, ...] = (
 )
 #: Actions whose nonce the click signer draws and checks again (the op is one the signer runs). The others (a hub
 #: connect, the passkey store) are the server's own: it draws the nonce and is the only check.
-SIGNER_ACTIONS = frozenset({"custody.on", "custody.off", "rotate", "runner.on", "sign"})
+SIGNER_ACTIONS = frozenset({"custody.on", "custody.off", "rotate", "github.token", "runner.on", "sign"})
 #: Actions whose digest is the review's (the browser sends `view_digest`); the rest are `action_digest` of fixed parts.
-VIEW_ACTIONS = frozenset({"custody.off", "rotate", "runner.on", "sign"})
+VIEW_ACTIONS = frozenset({"custody.off", "rotate", "github.token", "runner.on", "sign"})
 
 #: The routes whose handlers must call `refuse_step_up` first (the test checks them): by path.
 GUARDED_PATHS = tuple(dict.fromkeys(s.path for s in STEP_UP))

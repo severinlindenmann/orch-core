@@ -37,7 +37,7 @@ import { AgentIcon } from '@/components/agents/AgentIcon'
 import { AccessSelect } from '@/components/sign/AccessSelect'
 import { SignButton } from '@/components/sign/SignButton'
 import { lastTrigger, SignShell } from '@/components/sign/SignShell'
-import { ExactCommandLine } from '@/components/sign/HandoffPanel'
+import { RunnerSwitch } from '@/components/RunnerSwitch'
 import { usableGrant } from '@/app/pages/new-ticket/startAfterCreate'
 
 export { MODE_HELP, MODE_LABEL } from '@/components/agents/AgentChoice'
@@ -355,8 +355,8 @@ function StartAgent({ ws, ticket, onClose, onStarted, initial, choose }: { ws: s
         {statusLine}
         {!stale && !loading && runnerOff && (
           <div data-testid="agent-runner-off" className="space-y-2">
-            <p className="text-[13px] text-text">The runner is off. Turn it on in your terminal.</p>
-            <ExactCommandLine command={`orch runner enable${prefix ? ` --workspace ${prefix}` : ''}`} testId="runner-enable-command" />
+            <p className="text-[13px] text-text">Dashboard execution is off, so agents cannot start yet.</p>
+            <RunnerSwitch ws={ws} on testId="runner-enable" />
           </div>
         )}
         {needsAccess && !runnerOff && accessSelect}
@@ -653,7 +653,7 @@ export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initi
           <p data-testid="access-may-do" className="border-t border-border pt-4 text-text-muted"><span className="font-medium text-text">What agents may do. </span>Agents (Claude Code) may read and change files in the project folder and run its commands, on {scope === 'all' ? 'all tickets' : 'the tickets you may work on'}.</p>
           <p className="text-xs text-text-muted">This workspace allows access for up to {hoursText(maxHours)}.{extend ? ' Agents that are running now stop; new agents use the extended access.' : ''}</p>
           <Button disabled={!enabled || methods.loading} className="min-h-11 w-full" onClick={() => void issue()} data-testid="runner-grant-issue">{extend ? 'Extend access' : 'Allow agent access'}</Button>
-          {!runner?.enabled && runner && <span className="text-text-muted" data-testid="runner-grant-off">{TERMINAL_ONLY}</span>}
+          {!runner?.enabled && runner && <><span className="text-text-muted" data-testid="runner-grant-off">{TERMINAL_ONLY}</span><RunnerSwitch ws={ws} on testId="runner-grant-enable" variant="secondary" /></>}
         </div> : <div className="flex flex-wrap items-center gap-2">
           <Label htmlFor="grant-hours" className="text-xs text-text-muted">Length</Label>
           <select id="grant-hours" className="h-9 rounded border border-border bg-bg px-2 sm:h-7" value={hours} onChange={(e) => setHours(Number(e.target.value))}>
@@ -665,7 +665,7 @@ export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initi
             <option value="all">All tickets</option>
           </select>
           <Button size="xs" disabled={!enabled || methods.loading} onClick={() => void issue()} data-testid="runner-grant-issue">{extend ? 'Extend access' : 'Issue runner grant'}</Button>
-          {!runner?.enabled && runner && <span className="text-text-muted" data-testid="runner-grant-off">{TERMINAL_ONLY}</span>}
+          {!runner?.enabled && runner && <><span className="text-text-muted" data-testid="runner-grant-off">{TERMINAL_ONLY}</span><RunnerSwitch ws={ws} on testId="runner-grant-enable" variant="secondary" /></>}
         </div>
       )}
       {handoff && workspace && action.hours > 0 && <SignPopover ws={ws} title={extend ? 'Extend agent access' : 'Issue runner grant'} action={action} autoStart

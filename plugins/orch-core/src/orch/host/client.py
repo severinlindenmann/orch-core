@@ -17,6 +17,14 @@ from .listener import check_socket_path
 CLIENT_OPS: dict[str, int] = {"task.done": 2}
 
 
+class Refused(ConnectionError):
+    """The host answered the hello with a ``fatal`` frame (for example ``peer.denied``): it will not talk to us."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(f"the host refused the connection: {code}")
+        self.code = code
+
+
 class PinMismatch(UnsafePath):
     """The process behind the socket is not the one the trusted registry or pin names (a hard refusal, never a
     retry): ``host.untrusted``."""
@@ -92,6 +100,8 @@ def handshake_pinned(pin: Pin, hello: dict[str, Any], *, timeout: float = 2) -> 
                     raise welcome
                 if len(received) != 1 or decoder.pending:
                     raise frames.FrameError(message="Unexpected frame before any request")
+                if welcome.get("t") == "fatal" and isinstance(welcome.get("error"), dict):
+                    raise Refused(str(welcome["error"].get("code")))
                 pin.check_welcome(welcome)
                 if welcome["proto"] not in hello["proto"]:
                     raise frames.FrameError("host.version_mismatch")

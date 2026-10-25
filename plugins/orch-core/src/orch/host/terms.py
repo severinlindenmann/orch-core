@@ -28,6 +28,8 @@ names the workspace root, a declared repo's working copy or a ticket's registere
 
 from __future__ import annotations
 
+import hashlib
+import json
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -184,7 +186,39 @@ def _plan(call: Call, args: dict[str, Any], hub: RunnerHub | None) -> dict[str, 
     """``term.preview``'s answer (and the spec ``term.open`` recomputes): everything the runner will be told."""
     from .agents import plan
 
-    return plan(call, args, hub, agent=False)
+    out = plan(call, args, hub, agent=False)
+    user = tier_b_user(hub)
+    if user is not None:  # spec 13.5: no "shell as me"; the terminal is the agent user's, and the card says so
+        # TODO(#1198, after G6 B2): move this into the base digest in agents.plan (it is outside agents.py for now).
+        # Until then
+        # what is shown (not as you, this user) is bound into the spec here; `term.open` recomputes it the same way.
+        base = out["spec"]
+        out["spec"] = hashlib.sha256(
+            json.dumps({"base": base, "as_person": False, "runs_as": user}, sort_keys=True,
+                       separators=(",", ":")).encode()
+        ).hexdigest()  # fmt: skip
+        out.update(
+            as_person=False, runs_as=user,
+            notice=f"runs as {user}, not as you; it cannot read your keys. Never type secrets into it",
+        )  # fmt: skip
+    return out
+
+
+def tier_b_user(hub: RunnerHub | None) -> str | None:
+    """The agent user terminals run as when the host shares its run directory with one (tier B, spec 13.3), else
+    ``None`` (tier A: the runner is the person)."""
+    share = getattr(getattr(hub, "host", None), "share", None)
+    return None if share is None else share.user
+
+
+def _tier_b_runner_ok(hub: RunnerHub) -> None:
+    """In tier B a terminal starts only on a runner that IS the pinned agent user: never a runner with the person's UID
+    (it would give a shell as the person), never another UID. Read again at use; fails closed."""
+    share = hub.host.share
+    if share is None:
+        return
+    if hub.uid != share.uid or hub.uid == hub.host.host_uid:
+        raise HostError("runner.unavailable", "terminals run only on the agent user's runner", retry_after_ms=1000)
 
 
 # -- the worker half -------------------------------------------------------------------------------------------------
@@ -276,6 +310,7 @@ async def _open(call: Call, hub: RunnerHub, data: dict[str, Any]) -> dict[str, A
     wid = call.service.workspace_id
     person = data["person"]
     run = "r_" + data["idem"][2:]  # the idem names the run: a retry finds the record instead of a second process
+    _tier_b_runner_ok(hub)
     existing = hub.store.records.get(run)
     if existing is not None:
         if existing.get("workspace_id") != wid or existing.get("person") != person:
@@ -300,7 +335,7 @@ async def _open(call: Call, hub: RunnerHub, data: dict[str, Any]) -> dict[str, A
     launch = data["launch"]
     fields = {"run": run, "kind": "shell", "person": person, "ticket": launch["ticket"],
               "harness": data.get("harness", "shell"), "mode": data.get("mode"), "model": data.get("model"),
-              "label": data.get("label"), "as_person": True,
+              "label": data.get("label"), "as_person": tier_b_user(hub) is None,
               "cwd": data.get("cwd") or {"kind": "workspace"}}  # fmt: skip
     if launch.get("mkdir"):
         from .agents import make_workdir

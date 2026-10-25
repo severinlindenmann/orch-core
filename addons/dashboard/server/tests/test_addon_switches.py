@@ -4,7 +4,7 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from orch_dashboard import handoff
-from orch_dashboard.addon_switches import busy, needs
+from orch_dashboard.addon_switches import busy, needs, runner_fix
 from orch_dashboard.errors import HostError
 from orch_dashboard.handoff import AddonDisable, AddonGrant, PrepareBody, expected, host_call
 
@@ -51,9 +51,10 @@ def test_an_addon_with_running_work_cannot_be_turned_off():
 
 def test_an_addon_that_needs_dashboard_execution_says_what_to_run():
     off = {"enabled": False, "terminals": False, "connected": False}
-    assert "orch runner enable" in needs("start-agent", off)
-    assert "orch runner enable" in needs("terminals", off)
-    assert needs("worktrees", off) is None
+    assert "Turn it on here" in needs("start-agent", off) and runner_fix("start-agent", off)
+    assert "Needs dashboard execution" in needs("terminals", off)
+    assert needs("worktrees", off) is None and not runner_fix("worktrees", off)
+    assert not runner_fix("start-agent", None)  # the host says nothing: no switch to offer
     assert needs("start-agent", {**off, "enabled": True}) is None
     assert "Terminals are not turned on" in needs("terminals", {**off, "enabled": True})
     assert needs("terminals", {**off, "enabled": True, "terminals": True}) is None
@@ -212,6 +213,19 @@ def test_each_addon_row_carries_the_manifest_version_and_odd_ones_are_dropped(
     assert rows["publish"]["version"] is None and rows["usage"]["version"] is None
     assert rows["estimate"]["version"] is None  # not listed by the host
     assert rows["dashboard"]["version"] and rows["quick"]["version"]  # the install's own packages
+
+
+def test_c14_rows_offer_the_switch_only_where_dashboard_execution_is_what_is_missing(
+    client, token, stub, gateway, monkeypatch
+):
+    link = _VersionLink(addons=[])
+    monkeypatch.setattr(gateway, "enabled", lambda ws: link)
+    off = {"connected": True, "enabled": False, "terminals": False, "grant": None}
+    monkeypatch.setattr(gateway, "call", lambda ws, op, args=None: {"runner": off} if op == "whoami" else {})
+    rows = {r["id"]: r for r in _get(client, token, stub, "add-ons").json()["add_ons"]}
+    assert rows["start-agent"]["runner_switch"] is True and rows["terminals"]["runner_switch"] is True
+    assert rows["worktrees"]["runner_switch"] is False and rows["dashboard"]["runner_switch"] is False
+    assert "orch runner" not in (rows["start-agent"]["blocked"] or "")
 
 
 def test_clean_version_accepts_versions_and_nothing_else():

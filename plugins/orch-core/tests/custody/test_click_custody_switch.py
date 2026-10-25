@@ -96,10 +96,27 @@ def test_the_signer_advertises_the_switch():
     assert {"custody_on", "custody_off"} <= set(OPS) and "custody" in FEATURES
 
 
+def test_the_signer_advertises_device_rotate():
+    assert "rotate" in OPS and "device_rotate" in FEATURES
+
+
 def test_status_lists_the_feature(switch):
     signer, *_ = switch
     out = signer.status({})
-    assert out["features"] == ["custody", "sequence", "images", "reveal", "backup_key", "sealed_passphrase"]
+    assert out["features"] == [
+        *[
+            "custody",
+            "sequence",
+            "images",
+            "reveal",
+            "backup_key",
+            "sealed_passphrase",
+            "device_rotate",
+            "runner_switch",
+            "github_token",
+            "passkey_stepup",
+        ]
+    ]
     (row,) = out["workspaces"]
     assert row["custody"] == "passphrase" and row["enabled"] is False and row["problem"] == "not_convenience"
 

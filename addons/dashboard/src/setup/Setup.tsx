@@ -32,6 +32,11 @@ export function plainReason(code: string): string {
   if (code.startsWith('client:') || code.startsWith('http.')) return 'The page could not reach orch on this computer.'
   return 'Setup could not go on.'
 }
+/** Why One click is greyed out, in plain words. Core sends a code (today only `dev_host`); an unknown one never shows raw. */
+export function clickOffText(code: string): string {
+  if (code === 'dev_host') return 'One click is off on this test computer; you approve in your terminal.'
+  return 'One click is not available on this computer; you approve in your terminal.'
+}
 function Reason({ reason }: { reason: string }) {
   return (
     <>
@@ -827,7 +832,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                         ? 'Confirm in your terminal'
                         : state.click_available
                           ? 'Approve here with a click'
-                          : state.click_reason}
+                          : clickOffText(state.click_reason)}
                     </small>
                   </span>
                 </label>

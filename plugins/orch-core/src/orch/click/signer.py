@@ -28,6 +28,7 @@ from orch import canon
 
 from . import sealed
 from . import view as views
+from .passkeys import action_digest
 from .protocol import (
     CONTRACT,
     DEPOSIT_MAX_HOURS,
@@ -38,6 +39,8 @@ from .protocol import (
     OP_NAME,
     REASONS,
     REQ,
+    ROTATE_OP,
+    ROTATE_PURPOSES,
     SEALED_OPS,
     WS_ID,
     ClickError,
@@ -45,10 +48,14 @@ from .protocol import (
     refused,
 )
 from .records import RecordError, Records, is_claim
+from .stepup import Stepups
 
 __all__ = ["Approval", "Budget", "ClickSigner"]
 
 KEY_ID = "dk"
+#: the ops a passkey step-up is for, and those whose call names a request (host spec §0.8.6 10.5)
+STEPUP_OPS = frozenset({"custody_on", "custody_off", "rotate", "runner", "sign", "github_token"})
+STEPUP_REQUEST_OPS = frozenset({"custody_off", "rotate", "sign", "github_token"})
 MAX_APPROVALS = 16
 DWELL_SECONDS = 1.0
 PER_MINUTE = 30
@@ -61,6 +68,9 @@ CUSTODY_MISSES = "click-custody.json"
 PASSPHRASE_MAX = 1024
 #: #1198 C12: the signer's offer of a key for the NEW passphrase of "One click off" lives this long, one use
 PASSPHRASE_OFFER_LIFETIME = 300.0
+#: #1198 C16: the add-on that holds the GitHub token, and how long the signer's key for one sealed token lives
+GITHUB_ADDON = "github"
+TOKEN_OFFER_LIFETIME = 300.0
 REQUEST_LIFETIME = 600.0  # §0.8.1: a request lives 10 minutes
 HUMAN_OPS_V1 = ("human.prepare", "human.get", "human.submit", "human.pending", "human.cancel")
 
@@ -96,6 +106,25 @@ class Budget:
                     retryable=True,
                 )
         self.spent.append((now, n))
+
+
+@dataclass
+class Rotation:
+    """#1198 C13: one offer of ``rotate {begin}``: the signer's key for the two sealed secrets, the digest of the review
+    it was made for, the NEW device key (generated in memory, its scalar wiped when the offer ends) and the old device.
+    One use."""
+
+    recipient: sealed.Recipient
+    digest: str
+    deadline: float
+    scalar: bytearray
+    old: str
+    new: str
+
+    def close(self) -> None:
+        self.recipient.close()
+        for i in range(len(self.scalar)):
+            self.scalar[i] = 0
 
 
 @dataclass
@@ -162,6 +191,7 @@ class ClickSigner:
         log: Any = None,
         records: Records | None = None,
         sessions: Any = None,
+        stepups: Stepups | None = None,
     ) -> None:
         self.state = Path(state_dir)
         self.uid = os.getuid() if uid is None else uid
@@ -180,6 +210,10 @@ class ClickSigner:
         #: #1198 C12: (workspace, request id) -> (recipient, view digest, deadline): the key that opens the sealed new
         #: passphrase of ``custody_off``; one per workspace, one use, in memory only
         self._offers: dict[tuple[str, str], tuple[sealed.Recipient, str, float]] = {}
+        #: #1198 C13: (workspace, request id) -> the offer of a new device key; one per workspace, one use, memory only
+        self._rotations: dict[tuple[str, str], Rotation] = {}
+        #: #1198 C16: (workspace, request id) -> (recipient, view digest, deadline) for one sealed GitHub token
+        self._token_offers: dict[tuple[str, str], tuple[sealed.Recipient, str, float]] = {}
         self.busy = False
         #: page keys reserved at prepare, each for one approval (workspace, request): one key, one request, one seal
         #: (sealed-field contract §3)
@@ -196,6 +230,8 @@ class ClickSigner:
 
         #: the durable sessions of sequences (one review, N signatures; batch 11), beside the sign records
         self.sessions = sessions if sessions is not None else Sessions(self.state, wall=wall)
+        #: #1198 R1-6: the passkey step-up nonces and the check of a remote session's assertion
+        self.stepups = stepups if stepups is not None else Stepups(self.state, mono)
         #: the last connection or custody problem per workspace, for ``status`` (it loads no key and connects nowhere)
         self.problems: dict[str, str] = {}
 
@@ -1630,6 +1666,380 @@ class ClickSigner:
             for i in range(len(raw)):
                 raw[i] = 0
 
+    # -- a new device key from the dashboard (#1198 C13, sealed purposes device.recovery_code + custody.passphrase) ---
+    def rotate(self, args: Mapping[str, Any]) -> dict[str, Any]:
+        """``device.rotate`` by click. ``{begin: true}``: the review (this computer's old key and the new key the signer
+        just made in memory) and a one-use key for the two secrets; ``{request_id, view_digest, sealed}``: the recovery
+        code and the passphrase of the new key, opened with that key and bound to this workspace, request and review.
+        The preconditions, the certificate, the host's prepare / check / submit and the install of the new key are
+        :func:`orch.custody.rotate.rotate` (the terminal's own path); the person's click is the confirmation. The
+        recovery code and the scalar of the person key are wiped when the certificate is made; nothing secret is
+        logged, returned or kept. A refusal is static."""
+        entry = self._entry(args.get("workspace_id"))
+        self._tier_a(entry)
+        if "begin" in args:
+            return self._rotate_offer(entry, args)
+        if self.busy:
+            raise refused("busy", "another signature is in progress")
+        self.busy = True
+        try:
+            return self._rotate_sign(entry, args)
+        finally:
+            self.busy = False
+
+    def _convenience_on(self, entry: dict[str, Any]) -> bool:
+        from orch.custody import select
+
+        sel = select.read_selection(self.state, entry["workspace_id"])
+        return bool(self._enabled(entry)) or (
+            sel is not None and (sel["custody"] == "convenience" or sel["transition"] is not None)
+        )
+
+    def _rotate_offer(self, entry: dict[str, Any], args: Mapping[str, Any]) -> dict[str, Any]:
+        from orch import crypto
+        from orch.custody import rotate as rotation
+        from orch.custody.base import CustodyError, KeyNotFound
+
+        wid = entry["workspace_id"]
+        if set(args) != {"workspace_id", "begin"} or args["begin"] is not True:
+            raise ClickError("invalid.input", "begin takes the workspace and true")
+        if self._convenience_on(entry):
+            raise ClickError("invalid.input", "Turn One click off first; then replace the key of this computer.")
+        try:
+            found = rotation.plan(self.state, entry)
+        except KeyNotFound as exc:
+            raise ClickError("custody.no_key", str(exc)) from None
+        except CustodyError as exc:
+            raise ClickError("custody.unavailable", str(exc)[:300]) from None
+        for key in [k for k, r in self._rotations.items() if k[0] == wid or r.recipient.closed]:
+            self._rotations.pop(key).close()
+        if found.finish is not None:  # an earlier run landed the event and stopped before the install: finish it
+            try:
+                with rotation.locked(self.state, entry):  # (the plan above is advisory: look again under the lock)
+                    again = rotation.plan(self.state, entry)
+                    if again.finish is not None:
+                        rotation._install(  # noqa: SLF001
+                            self.state, wid, again.keys, again.stage, again.sel, again.old, again.finish
+                        )
+            except KeyNotFound as exc:
+                raise ClickError("custody.no_key", str(exc)) from None
+            except CustodyError as exc:
+                raise ClickError("custody.unavailable", str(exc)[:300]) from None
+            self.problems.pop(wid, None)
+            self._note("rotated", workspace=wid)
+            return {"done": True, "old": found.old, "new": found.finish, **self._row(entry)}
+        from orch.host.requests import new_request_id
+
+        rid = new_request_id()
+        scalar = bytearray(crypto.private_scalar(crypto.generate_private_key()))
+        new = rotation.Fresh(scalar, "").device
+        recipient = sealed.Recipient("in", workspace_id=wid, request_id=rid)
+        known = self._names(entry)(wid)
+        if known is None:
+            recipient.close()
+            raise ClickError("custody.unavailable", "this workspace is not in your own registry")
+        v = views.rotation(
+            workspace={"id": wid, "name": known[0], "prefix": known[1]}, old=found.old, new=new, pk=recipient.public
+        )
+        digest = views.digest(v)
+        self._rotations[(wid, rid)] = Rotation(
+            recipient, digest, self.mono() + PASSPHRASE_OFFER_LIFETIME, scalar, found.old, new
+        )
+        self._note("review", workspace=wid, request=rid, op=ROTATE_OP)
+        return {"request_id": rid, "view_digest": digest, "view": v, "expires_in": int(PASSPHRASE_OFFER_LIFETIME)}
+
+    def _rotate_sign(self, entry: dict[str, Any], args: Mapping[str, Any]) -> dict[str, Any]:
+        from orch.custody import rotate as rotation
+        from orch.custody.base import CustodyError, KeyNotFound
+        from orch.custody.personkey import BadRecoveryCode, PersonMismatch, TypedCodeSource
+        from orch.custody.strength import check_strength
+
+        wid = entry["workspace_id"]
+        rid, digest, env = args.get("request_id"), args.get("view_digest"), args.get("sealed")
+        if set(args) != {"workspace_id", "request_id", "view_digest", "sealed"}:
+            raise ClickError("invalid.input", "a new device key takes request_id, view_digest and sealed")
+        if type(rid) is not str or not REQ.fullmatch(rid) or type(digest) is not str or not HASH.fullmatch(digest):
+            raise ClickError("invalid.input", "request_id and view_digest are ids")
+        if type(env) is not dict or set(env) != set(ROTATE_PURPOSES) or any(type(v) is not dict for v in env.values()):
+            raise ClickError("invalid.input", "this review needs the recovery code and the passphrase sealed for it")
+        got = self._rotations.get((wid, rid))
+        if got is None or self.mono() >= got.deadline or got.recipient.closed:
+            if got is not None:
+                self._rotations.pop((wid, rid)).close()
+            raise ClickError("invalid.input", "the review closed; start again")
+        if digest != got.digest:
+            raise ClickError("invalid.input", "the secrets were sealed for another review")
+        self._custody_budget()  # wrong recovery codes: at most CUSTODY_TRIES per window, also across a restart
+        opened: dict[str, bytearray] = {}
+        used = False
+        try:
+            for purpose in ROTATE_PURPOSES:
+                try:
+                    opened[purpose] = got.recipient.open(env[purpose], sealed.Context(purpose, wid, rid, got.digest))
+                except sealed.SealedError:
+                    self._note("refused", workspace=wid, request=rid, code="sealed.rotate")
+                    raise ClickError(
+                        "invalid.input", "the recovery code or passphrase could not be read; type both again"
+                    ) from None
+            # both envelopes opened: the offer is used up, whatever happens next (a new offer is needed)
+            self._rotations.pop((wid, rid))
+            used = True
+            # both secrets stay in ``opened`` until the outer ``finally`` zeroises them, whatever refuses first (the
+            # passphrase checks run before the recovery code is handed to the person-key source)
+            code = opened["device.recovery_code"]
+            try:
+                passphrase = bytes(opened["custody.passphrase"]).decode("utf-8")
+            except UnicodeDecodeError:
+                raise ClickError("invalid.input", "passphrase is text") from None
+            if not 0 < len(passphrase) <= PASSPHRASE_MAX:
+                raise ClickError("invalid.input", "passphrase is text")
+            try:
+                check_strength(passphrase)
+            except CustodyError as exc:
+                raise ClickError("invalid.input", str(exc)[:300]) from None
+            fresh = rotation.Fresh(got.scalar, passphrase)
+            if fresh.device != got.new:  # (cannot differ: the review named this very key)
+                raise refused("check_failed", "the new key is not the one in the review")
+
+            def same(prepared: Mapping[str, Any]) -> None:
+                ev = views.single_event(prepared)
+                ok = (
+                    ev is not None
+                    and prepared.get("op") == ROTATE_OP
+                    and ev.get("old") == got.old
+                    and ev.get("device") == got.new
+                )
+                if not ok:  # the host built another rotation than the one the person clicked
+                    from orch.host.signer import SignerRefused
+
+                    raise SignerRefused("the host's request is not the key replacement you reviewed")
+
+            try:
+                out = rotation.rotate(
+                    self.state,
+                    entry,
+                    {},
+                    say=lambda _t: None,
+                    pk_factory=lambda **kw: TypedCodeSource(code, **kw),
+                    confirm=lambda _text, _word: True,  # the click on the review above
+                    now_ms=lambda: int(self.wall() * 1000),
+                    call=lambda op, a, **kw: self._call(entry, op, a, **kw),
+                    fresh=fresh,
+                    before=same,
+                )
+            except (PersonMismatch, BadRecoveryCode) as exc:
+                self._miss()
+                self._note("refused", workspace=wid, request=rid, code="recovery_code")
+                reason = (
+                    "that recovery code is not yours"
+                    if isinstance(exc, PersonMismatch)
+                    else "that is not a recovery code"
+                )
+                raise refused("check_failed", f"{reason}; nothing was signed and your old key is unchanged") from None
+            except KeyNotFound as exc:
+                raise ClickError("custody.no_key", str(exc)) from None
+            except CustodyError as exc:  # SignerRefused is already one (rotate wraps it): static texts of our own
+                self._note("refused", workspace=wid, request=rid, code="custody.rotate")
+                raise ClickError("custody.unavailable", str(exc)[:300]) from None
+        finally:
+            for b in opened.values():
+                for i in range(len(b)):
+                    b[i] = 0
+            if used:  # an offer whose envelopes did not open stays (a relay cannot burn it)
+                got.close()  # the signer's key and the new scalar are dropped with the offer, whatever happened
+        self.problems.pop(wid, None)
+        self._note("rotated", workspace=wid)
+        return {"done": True, "old": out["old"], "new": out["device"], **self._row(entry)}
+
+    # -- dashboard execution on or off (#1198 C14) ---------------------------------------------------------------------
+    #
+    # The switch is the host-local file of ``orch runner enable|disable`` plus the runner service; no signed event.
+    # So it is a signer op like the custody switches, and the work is the CLI's own (``orch.runner.cli.enable`` with the
+    # prompt already answered, ``enablement.set_enabled(False)``), never a second implementation. The person's click is
+    # the confirmation, given on the review ``{review: true, on}`` returns: ``{on, terminals, view_digest}`` is acted on
+    # only when the digest is that review's (what the person read is what is switched). Who may ask for ON (a dashboard
+    # opened on this computer, until the passkey step-up exists) is the dashboard server's rule; OFF only takes
+    # authority away and is a plain click everywhere.
+    def _runner_view(self, entry: dict[str, Any], on: bool, terminals: bool) -> dict[str, Any]:
+        from orch.runner import enablement
+
+        wid = entry["workspace_id"]
+        known = self._names(entry)(wid)
+        if known is None:
+            raise ClickError("custody.unavailable", "this workspace is not in your own registry")
+        text = enablement.risk_text(known[1] or wid[:8], wid, terminals) if on else ""
+        return views.runner_switch(
+            workspace={"id": wid, "name": known[0], "prefix": known[1]}, on=on, terminals=terminals, text=text
+        )
+
+    def runner(self, args: Mapping[str, Any]) -> dict[str, Any]:
+        """``{workspace_id, review: true, on, terminals?}`` answers the View and its digest. ``{workspace_id, on,
+        terminals?, view_digest}`` switches dashboard execution; the answer is ``{enabled, terminals}`` of the
+        workspace. ON installs the runner service as ``orch runner enable`` does and may fail with its codes
+        (``host.busy``, ``invalid.input`` for dev code, ``runner.unavailable``); nothing secret is involved."""
+        import argparse
+
+        from orch.runner import cli as runner_cli
+        from orch.runner import enablement
+
+        entry = self._entry(args.get("workspace_id"))
+        wid, uid = str(entry["workspace_id"]), int(entry["host_uid"])
+        if uid != self.uid:
+            raise ClickError(
+                "custody.terminal_needed",
+                "the host runs as another user here (tier B); switch dashboard execution in the terminal: "
+                f"orch runner enable|disable --workspace {entry.get('prefix') or wid}",
+            )
+        on, terminals = args.get("on"), args.get("terminals", False)
+        review = args.get("review") is True
+        allowed = {"workspace_id", "on", "terminals", "review"} | (set() if review else {"view_digest"})
+        if type(on) is not bool or type(terminals) is not bool or set(args) - allowed or (review != ("review" in args)):
+            raise ClickError(
+                "invalid.input", "runner takes workspace_id, on, optional terminals and a review or digest"
+            )
+        v = self._runner_view(entry, on, terminals)
+        digest = views.digest(v)
+        if review:
+            return {"view": v, "view_digest": digest}
+        if args.get("view_digest") != digest:
+            raise ClickError("invalid.input", "the review changed; read it again")
+        if self.busy:
+            raise refused("busy", "another signature is in progress")
+        if not on:
+            enablement.set_enabled(self.state, wid, False, uid)
+            self._note("runner_off", workspace=wid)
+            return {"workspace_id": wid, **enablement.state_of(self.state, wid, uid)}
+        ns = argparse.Namespace(
+            workspace=wid, no_terminals=not terminals, replace=False, dev=False, state=self.state, run=None, json=False
+        )
+        self.busy = True
+        try:
+            done = runner_cli.enable(ns, dict(os.environ, ORCH_STATE_DIR=str(self.state)), None, confirmed=True)
+        finally:
+            self.busy = False
+        if not done.get("ok"):
+            err = done.get("error") or {}
+            raise ClickError(str(err.get("code") or "internal"), str(err.get("message") or "")[:400])
+        self._note("runner_on", workspace=wid)
+        return {"workspace_id": wid, **enablement.state_of(self.state, wid, uid)}
+
+    # -- the GitHub token typed in the page (#1198 C16, sealed purpose github.token) -----------------------------------
+    def github_token(self, args: Mapping[str, Any]) -> dict[str, Any]:
+        """Store (or remove) the key of the GitHub add-on, for the person, by click. ``{begin: true}`` checks that the
+        add-on is turned on and asks for a key, and answers a one-use key for one sealed token (request id, review
+        digest, the signer's public key). ``{request_id, view_digest, sealed}`` opens it (bound to this workspace,
+        request and review), checks its shape and stores it through :func:`orch.addons.credential.person_store`, the
+        path ``orch addon login`` uses too. ``{remove: true}`` deletes it. The token is read here and only here: the
+        dashboard server relays ciphertext, and nothing is logged or returned but the state ``stored`` / ``missing``.
+        On a remote session the sealed variant needs the passkey step-up (``_stepup_target``)."""
+        from orch.addons import credential
+        from orch.host.errors import HostError
+
+        entry = self._entry(args.get("workspace_id"))
+        try:
+            wid, uid = self._tier_a(entry)
+        except ClickError:
+            raise ClickError(
+                "custody.terminal_needed",
+                "the host runs as another user here (tier B); store the token in the terminal: orch addon login github",
+            ) from None
+        if "begin" in args:
+            if set(args) != {"workspace_id", "begin"} or args["begin"] is not True:
+                raise ClickError("invalid.input", "begin takes the workspace and true")
+            self._github_row(entry)
+            return self._token_offer(wid)
+        if "remove" in args:
+            if set(args) != {"workspace_id", "remove"} or args["remove"] is not True:
+                raise ClickError("invalid.input", "remove takes the workspace and true")
+            return self._token_remove(wid, uid)
+        raw = self._open_token(wid, args)
+        try:
+            self._github_row(entry)
+            text = self._token_text(raw)
+            try:
+                credential.person_store(self.state, wid, uid, GITHUB_ADDON, text, self.wall())
+            except (ValueError, HostError) as exc:
+                raise ClickError(
+                    "custody.unavailable" if isinstance(exc, HostError) else "invalid.input",
+                    "the token could not be stored",
+                ) from None
+        finally:
+            for i in range(len(raw)):
+                raw[i] = 0
+        self._note("github_token", workspace=wid)
+        return {"workspace_id": wid, "credential": "stored"}
+
+    def _github_row(self, entry: dict[str, Any]) -> None:
+        """The GitHub add-on must be on and ask for a key (as ``orch addon login`` checks); the host replays its log."""
+        from orch.market import ADDONS
+
+        got = self._call(entry, "addon.list", {})
+        row = next((r for r in got.get(ADDONS, []) if r.get("name") == GITHUB_ADDON), None)
+        if row is None or row.get("state") != "active" or row.get("credential") is None:
+            raise ClickError("invalid.input", "GitHub is not turned on here, or it asks for no key")
+
+    def _token_offer(self, wid: str) -> dict[str, Any]:
+        from orch.host.requests import new_request_id
+
+        for key in [k for k, (r, _, _) in self._token_offers.items() if k[0] == wid or r.closed]:
+            self._token_offers.pop(key)[0].close()
+        rid = new_request_id()
+        rec = sealed.Recipient("in", workspace_id=wid, request_id=rid)
+        field = {"v": sealed.VERSION, "alg": sealed.ALG, "pk": rec.public, "purposes": ["github.token"]}
+        digest = views.digest({"op": "github.token", "workspace_id": wid, "request_id": rid, "seal": field})
+        self._token_offers[(wid, rid)] = (rec, digest, self.mono() + TOKEN_OFFER_LIFETIME)
+        return {"request_id": rid, "view_digest": digest, "seal": field, "expires_in": int(TOKEN_OFFER_LIFETIME)}
+
+    def _open_token(self, wid: str, args: Mapping[str, Any]) -> bytearray:
+        """The sealed token's bytes (the caller wipes them). The offer is used up by the first open that succeeds; a
+        refusal before that (a corrupted envelope) leaves it, so a relay cannot burn it. Static refusals only."""
+        rid, digest, env = args.get("request_id"), args.get("view_digest"), args.get("sealed")
+        if set(args) != {"workspace_id", "request_id", "view_digest", "sealed"}:
+            raise ClickError("invalid.input", "a sealed token takes request_id, view_digest and sealed")
+        if type(rid) is not str or not REQ.fullmatch(rid) or type(digest) is not str or not HASH.fullmatch(digest):
+            raise ClickError("invalid.input", "request_id and view_digest are ids")
+        if type(env) is not dict or set(env) != {"github.token"} or type(env["github.token"]) is not dict:
+            raise ClickError("invalid.input", "sealed is the github.token envelope")
+        got = self._token_offers.get((wid, rid))
+        if got is None or self.mono() >= got[2] or got[0].closed:
+            if got is not None:
+                self._token_offers.pop((wid, rid))[0].close()
+            raise ClickError("invalid.input", "the token window closed; start again")
+        rec, offered, _ = got
+        if digest != offered:
+            raise ClickError("invalid.input", "the token was sealed for another review")
+        try:
+            raw = rec.open(env["github.token"], sealed.Context("github.token", wid, rid, offered))
+        except sealed.SealedError:
+            raise ClickError("invalid.input", "the token could not be read; paste it again") from None
+        self._token_offers.pop((wid, rid))[0].close()
+        return raw
+
+    @staticmethod
+    def _token_text(raw: bytearray) -> str:
+        from orch.tokenshape import GITHUB_TOKEN_SHAPE
+
+        try:
+            text = bytes(raw).decode("ascii")
+        except UnicodeDecodeError:
+            text = ""
+        if GITHUB_TOKEN_SHAPE.fullmatch(text) is None:
+            raise ClickError(
+                "invalid.input", "that is not a GitHub token (it starts with ghp_, github_pat_ or similar)"
+            )
+        return text
+
+    def _token_remove(self, wid: str, uid: int) -> dict[str, Any]:
+        from orch.addons import credential
+        from orch.host.errors import HostError
+
+        try:
+            credential.person_remove(self.state, wid, uid, GITHUB_ADDON, self.wall())
+        except (HostError, OSError, ValueError):
+            raise ClickError("custody.unavailable", "the token could not be removed") from None
+        self._note("github_token", workspace=wid)
+        return {"workspace_id": wid, "credential": "missing"}
+
     # -- bookkeeping ---------------------------------------------------------------------------------------------------
     def _drop(self, approval: Approval) -> None:
         self.approvals.pop((approval.workspace_id, approval.request_id), None)
@@ -1645,9 +2055,13 @@ class ClickSigner:
         # ``_attempted`` is deliberately not swept: it lives as long as the process (see its definition).
 
     def close(self) -> None:
-        for rec, _, _ in self._offers.values():
+        for rec, _, _ in (*self._offers.values(), *self._token_offers.values()):
             rec.close()
         self._offers.clear()
+        self._token_offers.clear()
+        for rot in self._rotations.values():
+            rot.close()
+        self._rotations.clear()
         for a in self.approvals.values():
             if a.seal is not None:
                 a.seal.close()
@@ -1658,9 +2072,63 @@ class ClickSigner:
                 pass
         self.conns.clear()
 
+    def stepup(self, args: Mapping[str, Any]) -> dict[str, Any]:
+        """``stepup {workspace_id, view_digest, op, request_id?}``: a one-use nonce for a passkey assertion about the
+        op whose review has this digest (host spec §0.8.6 10.5), bound to the op and to the request where the call
+        has one. The server relays it to the browser; ``handle`` checks the answer."""
+        base = {"workspace_id", "view_digest", "op"}
+        if not base <= set(args) <= base | {"request_id"}:
+            raise ClickError("invalid.input", "stepup takes workspace_id, view_digest, op and request_id")
+        entry = self._entry(args["workspace_id"])
+        digest, op, rid = args["view_digest"], args["op"], args.get("request_id")
+        if type(digest) is not str or not HASH.fullmatch(digest):
+            raise ClickError("invalid.input", "view_digest is a digest")
+        if op not in STEPUP_OPS:
+            raise ClickError("invalid.input", "op is a step-up op")
+        if (rid is not None and (type(rid) is not str or not REQ.fullmatch(rid))) or (
+            (rid is not None) != (op in STEPUP_REQUEST_OPS)
+        ):
+            raise ClickError("invalid.input", "request_id goes with exactly the ops that have one")
+        return {"nonce": self.stepups.begin(entry["workspace_id"], digest, op, rid)}
+
+    @staticmethod
+    def _stepup_target(op: str, args: Mapping[str, Any]) -> tuple[str, str | None, str, str | None] | None:
+        """(workspace id, digest, op, request id) of the passkey step-up this call needs from a remote session, or
+        None when this variant of the op is a plain click. THE list of signer-side step-up ops (host spec 10.5)."""
+        wid = args.get("workspace_id")
+        if type(wid) is not str or not WS_ID.fullmatch(wid):
+            return None  # the op itself refuses a bad id
+        if op == "custody_on":
+            return wid, action_digest("custody.on", wid), op, None
+        if (
+            (op in ("custody_off", "rotate", "github_token") and "sealed" in args)
+            or (op == "runner" and not args.get("review") and (args.get("on") is True or args.get("terminals") is True))
+            or (op == "sign" and ("sealed" in args or args.get("reveal_key") is not None))
+        ):
+            digest = args.get("view_digest")
+            rid = args.get("request_id") if op in STEPUP_REQUEST_OPS else None
+            return wid, digest if type(digest) is str else None, op, rid if type(rid) is str else None
+        return None
+
     def handle(self, op: str, args: Mapping[str, Any]) -> dict[str, Any]:
         if not isinstance(args, Mapping):
             raise ClickError("invalid.input", "args is an object")
+        if "remote" in args or "stepup" in args:
+            # #1198 R1-6: the server says the session is a remote one and relays its assertion. The signer decides
+            # from the op and the arguments whether this call needs it, and checks it before anything else.
+            if args.get("remote") is not True:
+                raise ClickError("invalid.input", "stepup comes with remote: true")
+            proof = args.get("stepup")
+            args = {k: v for k, v in args.items() if k not in ("remote", "stepup")}
+            target = self._stepup_target(op, args)
+            if target is not None:
+                try:
+                    self.stepups.check(*target, proof)
+                except ClickError as exc:
+                    self._note("refused", workspace=args.get("workspace_id"), code=exc.code)
+                    raise
+        if op == "stepup":
+            return self.stepup(args)
         fn = {
             "prepare": self.prepare,
             "view": self.view,
@@ -1668,6 +2136,9 @@ class ClickSigner:
             "cancel": self.cancel,
             "custody_on": self.custody_on,
             "custody_off": self.custody_off,
+            "rotate": self.rotate,
+            "runner": self.runner,
+            "github_token": self.github_token,
             "stash": self.stash,
         }.get(op)
         if op == "status":

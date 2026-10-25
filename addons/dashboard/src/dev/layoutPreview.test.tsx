@@ -69,7 +69,7 @@ it('the Start agent scenarios draw core\'s dialog from fixtures and undo their s
   cleanup()
   resetLayoutPreview()
   renderApp('/__layout/agent-blocked')
-  expect(await screen.findByTestId('agent-runner-off')).toHaveTextContent('The runner is off')
+  expect(await screen.findByTestId('agent-runner-off')).toHaveTextContent('Dashboard execution is off')
   cleanup()
   resetLayoutPreview()
   renderApp('/__layout/agent-grant')

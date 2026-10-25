@@ -27,10 +27,10 @@ def test_exchange_atomic_single_use_and_restart():
     auth = Auth()
     code = auth.launch(PORT)["code"]
     with ThreadPoolExecutor(8) as pool:
-        results = list(pool.map(lambda _: auth.exchange(code)[1], range(8)))
+        results = list(pool.map(lambda _: auth.exchange(code, "local")[1], range(8)))
     assert results.count(200) == 1
     assert results.count(401) == 7
-    assert Auth().exchange(code)[1] == 401
+    assert Auth().exchange(code, "local")[1] == 401
 
 
 def test_expiry_and_idle():
@@ -38,11 +38,11 @@ def test_expiry_and_idle():
     auth = Auth(lambda: now[0])
     code = auth.launch(PORT)["code"]
     now[0] += 30
-    assert auth.exchange(code)[1] == 401
-    token = auth.exchange(auth.launch(PORT)["code"])[0]["token"]
+    assert auth.exchange(code, "local")[1] == 401
+    token = auth.exchange(auth.launch(PORT)["code"], "local")[0]["token"]
     now[0] += 43200
     assert not auth.valid(token)
-    token = auth.exchange(auth.launch(PORT)["code"])[0]["token"]
+    token = auth.exchange(auth.launch(PORT)["code"], "local")[0]["token"]
     for _ in range(3):
         now[0] += 25000
         assert auth.valid(token)
@@ -130,7 +130,7 @@ def test_probe_squatter(client, auth):
     verify_probe(launch, lambda url: client.get(url).text)
     with pytest.raises(RuntimeError, match="ownership"):
         verify_probe(launch, lambda _: "squatter")
-    assert auth.exchange(launch["code"])[1] == 200  # probe does not consume launch
+    assert auth.exchange(launch["code"], "local")[1] == 200  # probe does not consume launch
 
 
 def test_directory_symlinks_and_non_socket(tmp_path):
@@ -229,7 +229,7 @@ def test_launcher_opens_only_after_probe(tmp_path, monkeypatch, capsys):
     assert issued["code"] in html and "location.replace" in html and 'http-equiv="refresh"' in html
     # one navigation only: the refresh is a no-JavaScript fallback (two loads would spend the single-use code twice)
     assert '<noscript><meta http-equiv="refresh"' in html and html.count("http-equiv") == 1
-    assert auth.exchange(issued["code"])[1] == 200
+    assert auth.exchange(issued["code"], "local")[1] == 200
     assert not redirect.exists()
     issued = auth.launch(PORT)
     launcher.open_dashboard()
@@ -405,7 +405,7 @@ def test_exchange_and_timer_delete_the_exact_handed_out_file(tmp_path, monkeypat
         assert redirect.parent == server_dir and redirect.is_file()
         created.append(redirect)
         if mode == "exchange":
-            assert auth.exchange(issued["code"])[1] == 200
+            assert auth.exchange(issued["code"], "local")[1] == 200
         else:
             timers[-1].fn()
         assert not redirect.exists()
@@ -439,7 +439,7 @@ def test_setup_launcher_uses_the_login_link_path_with_a_setup_nonce(tmp_path, mo
     assert len(opened) == 1 and opened[0].startswith("file://") and issued["code"] not in opened[0]
     page = auth.files[issued["code"]].read_text()
     assert "launch=" + issued["code"] in page and "to=%2Fsetup" in page
-    assert auth.exchange(issued["code"])[0] is None and auth.exchange_setup(issued["code"]) is True
+    assert auth.exchange(issued["code"], "local")[0] is None and auth.exchange_setup(issued["code"]) is True
 
 
 def test_setup_nonce_lives_five_minutes_and_is_single_use_while_login_stays_30s():
@@ -452,7 +452,7 @@ def test_setup_nonce_lives_five_minutes_and_is_single_use_while_login_stays_30s(
     setup = auth.launch(PORT, setup=True)
     assert setup["expires_at"] - 1000 == 300 and login["expires_at"] - 1000 == 30
     now[0] += 31
-    assert auth.exchange(login["code"])[1] == 401  # a normal link is dead after 30 s
+    assert auth.exchange(login["code"], "local")[1] == 401  # a normal link is dead after 30 s
     now[0] += 250  # 281 s: the setup nonce is alive
     assert auth.exchange_setup(setup["code"]) is True
     assert auth.exchange_setup(setup["code"]) is False  # single use: a second browser is refused

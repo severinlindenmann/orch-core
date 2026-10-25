@@ -175,14 +175,17 @@ class Passkeys:
         self.store, self.rp_id, self.origin = store, rp_id, "https://" + rp_id
         self.codes, self.ceremonies = EnrollCodes(clock), Ceremonies(clock)
         self.clock = clock
+        #: held across a registration's spend + add + un-revoke, and across a removal's remove + drop + burn
+        self.enroll_lock = threading.RLock()
 
     def burn_enrollments(self) -> None:
         """A passkey was removed: every open enrollment link and every enrollment challenge in flight dies (a link the
         removed passkey's holder minted must not outlive it). The owner mints a new one."""
-        with self.codes.lock:
-            self.codes.open.clear()
-        with self.ceremonies.lock:
-            self.ceremonies.items = {t: v for t, v in self.ceremonies.items.items() if v[0] != "enroll"}
+        with self.enroll_lock:
+            with self.codes.lock:
+                self.codes.open.clear()
+            with self.ceremonies.lock:
+                self.ceremonies.items = {t: v for t, v in self.ceremonies.items.items() if v[0] != "enroll"}
 
     def now(self) -> str:
         return datetime.fromtimestamp(self.clock(), UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -345,8 +348,6 @@ def register(app: FastAPI, auth: Auth, service: Passkeys | None) -> None:
             )
         except wa.PasskeyError as exc:
             return expired(exc.reason)
-        if not service.codes.spend(digest):  # the first browser that completes a registration wins
-            return expired("code spent")
         when = service.now()
         record = Passkey(
             credential_id=wa.b64u_encode(reg.credential_id),
@@ -359,11 +360,16 @@ def register(app: FastAPI, auth: Auth, service: Passkeys | None) -> None:
             last_used=when,
             sign_count=reg.sign_count,
         )
-        try:
-            service.store.add(record)
-        except (StoreError, OSError) as exc:
-            log.error("passkey not stored: %s", exc)
-            return expired("store")  # the code is spent: IT makes a new link
+        # One lock across spend, add and un-revoke: a removal (which burns the links under the same lock) either comes
+        # before all three, so the code is gone, or after all three.
+        with service.enroll_lock:
+            if not service.codes.spend(digest):  # the first browser that completes a registration wins
+                return expired("code spent")
+            try:
+                service.store.add(record)
+            except (StoreError, OSError) as exc:
+                log.error("passkey not stored: %s", exc)
+                return expired("store")  # the code is spent: IT makes a new link
+            auth.allow_credential(record.credential_id)
         log.warning("A passkey was added: %s, %s", name, when)  # the terminal and the log show it (host spec 10.1)
-        auth.allow_credential(record.credential_id)
         return auth.open_remote(request.state.client, record.credential_id)

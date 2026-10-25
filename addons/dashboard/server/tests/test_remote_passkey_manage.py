@@ -331,3 +331,32 @@ def test_the_owner_can_mint_a_new_link_right_after_a_removal(world, loop, local)
         world.front, world.app, code=res.json()["code"], name="New", authn=Authenticator(world.authn.rp_id)
     )
     assert done.status_code == 200
+
+
+def test_a_removal_waits_for_a_registration_that_has_spent_its_code(world, monkeypatch):
+    """Between the spend and the add the removal's burn cannot run: the registration finishes first (so it is wholly
+    before the removal), and the burn then finds nothing left to kill but later links."""
+    import threading
+
+    service = world.app.state.passkeys
+    other = second_passkey(world)
+    code = service.codes.mint()
+    burned = threading.Thread(target=service.burn_enrollments)
+    state = {}
+    real_add = service.store.add
+
+    def add(record):
+        burned.start()  # the removal's burn arrives right after the spend ...
+        burned.join(0.3)
+        state["blocked"] = burned.is_alive()  # ... and has to wait for the registration
+        real_add(record)
+
+    monkeypatch.setattr(service.store, "add", add)
+    _, res = enroll(world.front, world.app, code=code, name="Laptop", authn=Authenticator(world.authn.rp_id))
+    burned.join(5)
+    assert res.status_code == 200 and state["blocked"] is True and not burned.is_alive()
+    assert other and not service.codes.open
+    # a code minted for later is burned by the next removal, and the order is the lock's
+    late = service.codes.mint()
+    service.burn_enrollments()
+    assert world.front.post("/auth/enroll/options", json={"code": late}, headers=JSON).status_code == 401

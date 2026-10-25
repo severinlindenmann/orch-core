@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api } from '@/api/client'
 import { addonActive, manifestFor, pendingUpdate, viewerActions } from '@/api/addons'
 import type { AddonOpRequest, AddonPackage, InstalledAddon, Workspace } from '@/api/types'
@@ -13,7 +13,7 @@ import { Table, TableBody, TableHead, TableHeader, TableRow } from '@/components
 import { StateBadge, StateChip } from '@/addon-ui/StateChip'
 import { hasFeature } from '@/api/features'
 import { AddonRow } from './AddonRow'
-import { AddonSettingsPanel, requestSettingsFocus } from './AddonSettingsPanel'
+import { AddonSettingsPanel, requestSettingsFocus, takeSettingsFocus } from './AddonSettingsPanel'
 import { Catalog } from './Catalog'
 import { GrantDialog, type GrantAsk } from './GrantDialog'
 import { toastApiError } from '@/app/toast'
@@ -171,7 +171,6 @@ export function AddonManager({ workspace, canEdit, settingsOf }: { workspace: Wo
 
 /** Add-ons installed from a marketplace: same chip and the same Settings panel as the Add-ons page. */
 function FromMarketplaces({ ws, settingsOf }: { ws: string; settingsOf?: string }) {
-  const navigate = useNavigate()
   const served = hasFeature('market', ws)
   const installed = useQuery({ ...queries.marketInstalled(ws), enabled: served })
   const rows = (installed.data?.addons ?? []).filter((a) => a.origin)
@@ -186,22 +185,35 @@ function FromMarketplaces({ ws, settingsOf }: { ws: string; settingsOf?: string 
             <span className="font-mono text-[12px] text-text-muted">{a.version}</span>
             <StateChip on={a.state === 'active' || a.state === 'enabled'} />
             {a.available && !a.available.revoked && <StateBadge kind="update" />}
-            <Button
-              size="sm"
-              variant="outline"
-              className="ml-auto"
-              data-settings-for={a.name}
-              aria-expanded={settingsOf === a.name}
-              onClick={() => {
-                requestSettingsFocus(a.name)
-                void navigate(settingsOf === a.name ? { to: '/settings/$tab', params: { tab: 'addons' } } : { to: '/settings/addon/$name', params: { name: a.name } })
-              }}
-            >
-              Settings
-            </Button>
+            <MarketSettingsButton name={a.name} open={settingsOf === a.name} />
           </li>
         ))}
       </ul>
     </section>
+  )
+}
+
+/** The Settings button of a marketplace add-on: it takes the keyboard back when the panel closes (as a built-in row's does). */
+function MarketSettingsButton({ name, open }: { name: string; open: boolean }) {
+  const navigate = useNavigate()
+  const button = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    if (takeSettingsFocus(name)) button.current?.focus()
+  }, [name])
+  return (
+    <Button
+      ref={button}
+      size="sm"
+      variant="outline"
+      className="ml-auto"
+      data-settings-for={name}
+      aria-expanded={open}
+      onClick={() => {
+        requestSettingsFocus(name)
+        void navigate(open ? { to: '/settings/$tab', params: { tab: 'addons' } } : { to: '/settings/addon/$name', params: { name } })
+      }}
+    >
+      Settings
+    </Button>
   )
 }

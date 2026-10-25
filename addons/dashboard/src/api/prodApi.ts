@@ -9,7 +9,7 @@ import type { MandatesPreviewState } from './mandatesPreview'
 import type { Api, ListTicketsParams } from './apiFactory'
 import type { SignDefault, SignMethod } from './signing'
 import type { HandoffAction, HandoffRequest, HandoffState } from './handoff'
-import type { ClickAction, ClickCard, ClickState, ClickPrepared, ClickSigned, ClickSwitch, ClickViewAnswer, CustodySealOffer, RotateBegin } from './click'
+import type { ClickAction, ClickCard, ClickState, ClickPrepared, ClickSigned, ClickSwitch, ClickViewAnswer, CustodySealOffer, GithubCredential, GithubSave, RotateBegin } from './click'
 import type { HostGrant, HostReaders, HostSettings, RosterMember } from './settings'
 import type { QuickPage, QuickParams, RecordsRun, RecordsStatus } from './quickRecords'
 import { activityQuery, type ActivityPage, type ActivityParams } from './activity'
@@ -315,6 +315,11 @@ const click = {
   switchClick: (ws: string, body: ClickSwitch) => call<ClickCard>(`${w(ws)}/click/custody`, 'POST', body),
   custodySeal: (ws: string) => call<CustodySealOffer>(`${w(ws)}/click/custody/seal`, 'POST', {}),
   rotateSeal: (ws: string) => call<RotateBegin>(`${w(ws)}/click/rotate/seal`, 'POST', {}),
+  githubSeal: (ws: string) => call<CustodySealOffer>(`${w(ws)}/click/github/seal`, 'POST', {}),
+  githubState: (ws: string) => call<{ credential: GithubCredential }>(`${w(ws)}/click/github`, 'GET'),
+  githubSave: (ws: string, body: GithubSave) =>
+    call<{ credential: 'stored' }>(`${w(ws)}/click/github`, 'POST', body),
+  githubRemove: (ws: string) => call<{ credential: 'missing' }>(`${w(ws)}/click/github/remove`, 'POST', {}),
   rotateKey: (ws: string, body: { request_id: string; view_digest: string; sealed: Record<string, import('./sealed').Envelope> }) =>
     call<{ done: true } & ClickCard>(`${w(ws)}/click/rotate`, 'POST', body),
 }

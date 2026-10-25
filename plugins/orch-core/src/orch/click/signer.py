@@ -54,8 +54,8 @@ __all__ = ["Approval", "Budget", "ClickSigner"]
 
 KEY_ID = "dk"
 #: the ops a passkey step-up is for, and those whose call names a request (host spec §0.8.6 10.5)
-STEPUP_OPS = frozenset({"custody_on", "custody_off", "rotate", "runner", "sign"})
-STEPUP_REQUEST_OPS = frozenset({"custody_off", "rotate", "sign"})
+STEPUP_OPS = frozenset({"custody_on", "custody_off", "rotate", "runner", "sign", "github_token"})
+STEPUP_REQUEST_OPS = frozenset({"custody_off", "rotate", "sign", "github_token"})
 MAX_APPROVALS = 16
 DWELL_SECONDS = 1.0
 PER_MINUTE = 30
@@ -68,6 +68,9 @@ CUSTODY_MISSES = "click-custody.json"
 PASSPHRASE_MAX = 1024
 #: #1198 C12: the signer's offer of a key for the NEW passphrase of "One click off" lives this long, one use
 PASSPHRASE_OFFER_LIFETIME = 300.0
+#: #1198 C16: the add-on that holds the GitHub token, and how long the signer's key for one sealed token lives
+GITHUB_ADDON = "github"
+TOKEN_OFFER_LIFETIME = 300.0
 REQUEST_LIFETIME = 600.0  # §0.8.1: a request lives 10 minutes
 HUMAN_OPS_V1 = ("human.prepare", "human.get", "human.submit", "human.pending", "human.cancel")
 
@@ -209,6 +212,8 @@ class ClickSigner:
         self._offers: dict[tuple[str, str], tuple[sealed.Recipient, str, float]] = {}
         #: #1198 C13: (workspace, request id) -> the offer of a new device key; one per workspace, one use, memory only
         self._rotations: dict[tuple[str, str], Rotation] = {}
+        #: #1198 C16: (workspace, request id) -> (recipient, view digest, deadline) for one sealed GitHub token
+        self._token_offers: dict[tuple[str, str], tuple[sealed.Recipient, str, float]] = {}
         self.busy = False
         #: page keys reserved at prepare, each for one approval (workspace, request): one key, one request, one seal
         #: (sealed-field contract §3)
@@ -1918,6 +1923,123 @@ class ClickSigner:
         self._note("runner_on", workspace=wid)
         return {"workspace_id": wid, **enablement.state_of(self.state, wid, uid)}
 
+    # -- the GitHub token typed in the page (#1198 C16, sealed purpose github.token) -----------------------------------
+    def github_token(self, args: Mapping[str, Any]) -> dict[str, Any]:
+        """Store (or remove) the key of the GitHub add-on, for the person, by click. ``{begin: true}`` checks that the
+        add-on is turned on and asks for a key, and answers a one-use key for one sealed token (request id, review
+        digest, the signer's public key). ``{request_id, view_digest, sealed}`` opens it (bound to this workspace,
+        request and review), checks its shape and stores it through :func:`orch.addons.credential.person_store`, the
+        path ``orch addon login`` uses too. ``{remove: true}`` deletes it. The token is read here and only here: the
+        dashboard server relays ciphertext, and nothing is logged or returned but the state ``stored`` / ``missing``.
+        On a remote session the sealed variant needs the passkey step-up (``_stepup_target``)."""
+        from orch.addons import credential
+        from orch.host.errors import HostError
+
+        entry = self._entry(args.get("workspace_id"))
+        try:
+            wid, uid = self._tier_a(entry)
+        except ClickError:
+            raise ClickError(
+                "custody.terminal_needed",
+                "the host runs as another user here (tier B); store the token in the terminal: orch addon login github",
+            ) from None
+        if "begin" in args:
+            if set(args) != {"workspace_id", "begin"} or args["begin"] is not True:
+                raise ClickError("invalid.input", "begin takes the workspace and true")
+            self._github_row(entry)
+            return self._token_offer(wid)
+        if "remove" in args:
+            if set(args) != {"workspace_id", "remove"} or args["remove"] is not True:
+                raise ClickError("invalid.input", "remove takes the workspace and true")
+            return self._token_remove(wid, uid)
+        raw = self._open_token(wid, args)
+        try:
+            self._github_row(entry)
+            text = self._token_text(raw)
+            try:
+                credential.person_store(self.state, wid, uid, GITHUB_ADDON, text, self.wall())
+            except (ValueError, HostError) as exc:
+                raise ClickError(
+                    "custody.unavailable" if isinstance(exc, HostError) else "invalid.input",
+                    "the token could not be stored",
+                ) from None
+        finally:
+            for i in range(len(raw)):
+                raw[i] = 0
+        self._note("github_token", workspace=wid)
+        return {"workspace_id": wid, "credential": "stored"}
+
+    def _github_row(self, entry: dict[str, Any]) -> None:
+        """The GitHub add-on must be on and ask for a key (as ``orch addon login`` checks); the host replays its log."""
+        from orch.market import ADDONS
+
+        got = self._call(entry, "addon.list", {})
+        row = next((r for r in got.get(ADDONS, []) if r.get("name") == GITHUB_ADDON), None)
+        if row is None or row.get("state") != "active" or row.get("credential") is None:
+            raise ClickError("invalid.input", "GitHub is not turned on here, or it asks for no key")
+
+    def _token_offer(self, wid: str) -> dict[str, Any]:
+        from orch.host.requests import new_request_id
+
+        for key in [k for k, (r, _, _) in self._token_offers.items() if k[0] == wid or r.closed]:
+            self._token_offers.pop(key)[0].close()
+        rid = new_request_id()
+        rec = sealed.Recipient("in", workspace_id=wid, request_id=rid)
+        field = {"v": sealed.VERSION, "alg": sealed.ALG, "pk": rec.public, "purposes": ["github.token"]}
+        digest = views.digest({"op": "github.token", "workspace_id": wid, "request_id": rid, "seal": field})
+        self._token_offers[(wid, rid)] = (rec, digest, self.mono() + TOKEN_OFFER_LIFETIME)
+        return {"request_id": rid, "view_digest": digest, "seal": field, "expires_in": int(TOKEN_OFFER_LIFETIME)}
+
+    def _open_token(self, wid: str, args: Mapping[str, Any]) -> bytearray:
+        """The sealed token's bytes (the caller wipes them). The offer is used up by the first open that succeeds; a
+        refusal before that (a corrupted envelope) leaves it, so a relay cannot burn it. Static refusals only."""
+        rid, digest, env = args.get("request_id"), args.get("view_digest"), args.get("sealed")
+        if set(args) != {"workspace_id", "request_id", "view_digest", "sealed"}:
+            raise ClickError("invalid.input", "a sealed token takes request_id, view_digest and sealed")
+        if type(rid) is not str or not REQ.fullmatch(rid) or type(digest) is not str or not HASH.fullmatch(digest):
+            raise ClickError("invalid.input", "request_id and view_digest are ids")
+        if type(env) is not dict or set(env) != {"github.token"} or type(env["github.token"]) is not dict:
+            raise ClickError("invalid.input", "sealed is the github.token envelope")
+        got = self._token_offers.get((wid, rid))
+        if got is None or self.mono() >= got[2] or got[0].closed:
+            if got is not None:
+                self._token_offers.pop((wid, rid))[0].close()
+            raise ClickError("invalid.input", "the token window closed; start again")
+        rec, offered, _ = got
+        if digest != offered:
+            raise ClickError("invalid.input", "the token was sealed for another review")
+        try:
+            raw = rec.open(env["github.token"], sealed.Context("github.token", wid, rid, offered))
+        except sealed.SealedError:
+            raise ClickError("invalid.input", "the token could not be read; paste it again") from None
+        self._token_offers.pop((wid, rid))[0].close()
+        return raw
+
+    @staticmethod
+    def _token_text(raw: bytearray) -> str:
+        from orch.tokenshape import GITHUB_TOKEN_SHAPE
+
+        try:
+            text = bytes(raw).decode("ascii")
+        except UnicodeDecodeError:
+            text = ""
+        if GITHUB_TOKEN_SHAPE.fullmatch(text) is None:
+            raise ClickError(
+                "invalid.input", "that is not a GitHub token (it starts with ghp_, github_pat_ or similar)"
+            )
+        return text
+
+    def _token_remove(self, wid: str, uid: int) -> dict[str, Any]:
+        from orch.addons import credential
+        from orch.host.errors import HostError
+
+        try:
+            credential.person_remove(self.state, wid, uid, GITHUB_ADDON, self.wall())
+        except (HostError, OSError, ValueError):
+            raise ClickError("custody.unavailable", "the token could not be removed") from None
+        self._note("github_token", workspace=wid)
+        return {"workspace_id": wid, "credential": "missing"}
+
     # -- bookkeeping ---------------------------------------------------------------------------------------------------
     def _drop(self, approval: Approval) -> None:
         self.approvals.pop((approval.workspace_id, approval.request_id), None)
@@ -1933,9 +2055,10 @@ class ClickSigner:
         # ``_attempted`` is deliberately not swept: it lives as long as the process (see its definition).
 
     def close(self) -> None:
-        for rec, _, _ in self._offers.values():
+        for rec, _, _ in (*self._offers.values(), *self._token_offers.values()):
             rec.close()
         self._offers.clear()
+        self._token_offers.clear()
         for rot in self._rotations.values():
             rot.close()
         self._rotations.clear()
@@ -1978,7 +2101,7 @@ class ClickSigner:
         if op == "custody_on":
             return wid, action_digest("custody.on", wid), op, None
         if (
-            (op in ("custody_off", "rotate") and "sealed" in args)
+            (op in ("custody_off", "rotate", "github_token") and "sealed" in args)
             or (op == "runner" and not args.get("review") and (args.get("on") is True or args.get("terminals") is True))
             or (op == "sign" and ("sealed" in args or args.get("reveal_key") is not None))
         ):
@@ -2015,6 +2138,7 @@ class ClickSigner:
             "custody_off": self.custody_off,
             "rotate": self.rotate,
             "runner": self.runner,
+            "github_token": self.github_token,
             "stash": self.stash,
         }.get(op)
         if op == "status":

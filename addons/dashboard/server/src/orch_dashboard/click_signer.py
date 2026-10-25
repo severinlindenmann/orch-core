@@ -33,6 +33,7 @@ TIMEOUT = {
     "custody_on": 60.0,
     "custody_off": 60.0,
     "runner": 120.0,  # on installs the runner release and service, as `orch runner enable` does
+    "github_token": 30.0,  # a sealed GitHub token is opened and written: memory and one small file
     "rotate": 120.0,  # the recovery code is stretched (scrypt) and the host signs the rotation
     "stepup": 8.0,  # a passkey step-up nonce: memory only
 }
@@ -45,6 +46,9 @@ SEALED_PASSPHRASE_FEATURE = (
     "sealed_passphrase"  # `custody_off {begin}`, then `{sealed}`: the new passphrase sealed (core C12)
 )
 ROTATE_FEATURE = "device_rotate"  # `rotate {begin}`, then `{sealed}`: a new device key for this computer (core C13)
+GITHUB_FEATURE = (
+    "github_token"  # `github_token {begin}`, then `{sealed}`: the GitHub token sealed to the signer (core C16)
+)
 RUNNER_FEATURE = "runner_switch"  # `runner {review}`, then `runner {on, view_digest}`: dashboard execution (core C14)
 STEPUP_FEATURE = "passkey_stepup"  # `stepup` nonces and the `remote`/`stepup` arguments of the listed ops (core R1-6)
 SEQUENCE_FEATURE = "sequence"  # `prepare {sequence}`: one review, N signatures (core batch 11)
@@ -212,6 +216,15 @@ class Signer:
             except HostError:
                 return False
             return ROTATE_FEATURE in self.features
+
+    def github_tokens(self) -> bool:
+        """Can the running signer take the GitHub token sealed (`github_token`)? Never raises."""
+        with self.lock:
+            try:
+                self._ensure()
+            except HostError:
+                return False
+            return GITHUB_FEATURE in self.features
 
     def runner_switches(self) -> bool:
         """Can the running signer switch dashboard execution on and off (`runner`)? Never raises."""

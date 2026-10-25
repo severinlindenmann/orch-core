@@ -48,6 +48,7 @@ class Script:
         self.refuse: dict[str, ClickError] = {}
         self.offer: dict = {}  # the answer to `custody_off {begin}`
         self.rotation: dict = {}  # the answer to `rotate {begin}`
+        self.github: dict = {}  # the answer to `github_token {begin}` (#1198 C16)
         self.runner_on = False  # dashboard execution, as the fake signer holds it (#1198 C14)
         self.view = {"view": {"risk": RISK, "lines": [CANARY], "op": "approve"}, "view_digest": HASH}
         self.prepared = 0
@@ -92,6 +93,10 @@ class Script:
                 return {"view": view, "view_digest": HASH}
             self.runner_on = on
             return {"workspace_id": self.ws, "enabled": on, "terminals": on and args["terminals"]}
+        if op == "github_token":
+            if args.get("begin"):
+                return self.github
+            return {"workspace_id": self.ws, "credential": "missing" if args.get("remove") else "stored"}
         if op == "rotate":
             if args.get("begin"):
                 return self.rotation
@@ -2957,6 +2962,122 @@ def test_c13_sign_bodies_are_closed_and_never_echoed(client, token, stub, script
     assert rotate_calls(script) == []
 
 
+# -- #1198 C16: the GitHub token, sealed to the signer --------------------------------------------------
+GH_OFFER_FIELDS = {"request_id": "hr_" + "0" * 25 + "3", "view_digest": HASH, "expires_in": 300}
+
+
+def gh_offer(**over):
+    seal = {"v": 1, "alg": "P256-HKDF-SHA256-A256GCM", "pk": "B" + "Q" * 86, "purposes": ["github.token"]}
+    return {**GH_OFFER_FIELDS, "seal": seal, **over}
+
+
+def gh_body(**over):
+    return {
+        "request_id": GH_OFFER_FIELDS["request_id"],
+        "view_digest": HASH,
+        "sealed": {"github.token": PASS_ENV},
+        **over,
+    }
+
+
+def gh_calls(script):
+    return [c for cl in script.clients for c in cl.calls if c[0] == "github_token"]
+
+
+def test_c16_the_offer_is_relayed_for_an_owner(client, token, stub, script, local):
+    script.features = ["custody", "github_token"]
+    script.github = gh_offer()
+    res = client.post(url(stub, "github/seal"), json={}, headers=hdr(token))
+    assert res.status_code == 200 and res.json() == script.github
+    assert gh_calls(script) == [("github_token", {"workspace_id": stub.ws, "begin": True})]
+
+
+def test_c16_save_relays_ciphertext_only_and_answers_stored(client, token, stub, script, local, caplog, capfd):
+    script.features = ["custody", "github_token"]
+    caplog.set_level(logging.DEBUG)
+    res = client.post(url(stub, "github"), json=gh_body(), headers=hdr(token))
+    assert res.status_code == 200 and res.json() == {"credential": "stored"}
+    assert gh_calls(script) == [
+        (
+            "github_token",
+            {
+                "workspace_id": stub.ws,
+                "request_id": GH_OFFER_FIELDS["request_id"],
+                "view_digest": HASH,
+                "sealed": {"github.token": PASS_ENV},
+            },
+        )
+    ]
+    out, err = capfd.readouterr()
+    assert PASS_ENV["ct"] not in caplog.text + out + err + res.text
+
+
+def test_c16_remove_is_a_plain_click_even_remote(client, token, stub, script, monkeypatch):
+    from orch_dashboard.auth import Auth
+
+    script.features = ["custody", "github_token"]
+    monkeypatch.setattr(Auth, "login_kind", lambda self, token: "remote", raising=False)
+    res = client.post(url(stub, "github/remove"), json={}, headers=hdr(token))
+    assert res.status_code == 200 and res.json() == {"credential": "missing"}
+    assert gh_calls(script) == [("github_token", {"workspace_id": stub.ws, "remove": True})]
+
+
+def test_c16_a_remote_session_needs_the_step_up_and_a_local_one_does_not(client, token, stub, script, monkeypatch):
+    from orch_dashboard.auth import Auth
+
+    script.features = ["custody", "github_token"]
+    monkeypatch.setattr(Auth, "login_kind", lambda self, token: "remote", raising=False)
+    res = client.post(url(stub, "github"), json=gh_body(), headers=hdr(token))
+    assert res.status_code == 403 and res.json()["error"]["code"] == "passkey.stepup_required"
+    assert gh_calls(script) == []
+
+
+def test_c16_owner_only_and_feature_gated(client, token, stub, script, local, monkeypatch):
+    from orch_dashboard import adapters
+
+    script.features = ["custody"]
+    for path, body in (("github/seal", {}), ("github", gh_body()), ("github/remove", {})):
+        assert client.post(url(stub, path), json=body, headers=hdr(token)).json()["error"]["code"] == "click.contract"
+    script.features = ["custody", "github_token"]
+    real = adapters.members
+    monkeypatch.setattr(adapters, "members", lambda d: [m.model_copy(update={"role": "maintainer"}) for m in real(d)])
+    for path, body in (("github/seal", {}), ("github", gh_body()), ("github/remove", {})):
+        assert client.post(url(stub, path), json=body, headers=hdr(token)).json()["error"]["code"] == "role.denied"
+    assert gh_calls(script) == []
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {"seal": {"v": 1, "alg": "P256-HKDF-SHA256-A256GCM", "pk": "B" + "Q" * 86, "purposes": ["custody.passphrase"]}},
+        {"seal": {"v": 1, "alg": "P256-HKDF-SHA256-A256GCM", "pk": "short", "purposes": ["github.token"]}},
+        {"extra": 1},
+    ],
+)
+def test_c16_an_odd_offer_from_the_signer_is_not_passed_on(client, token, stub, script, local, over):
+    script.features = ["custody", "github_token"]
+    script.github = gh_offer(**over)
+    assert client.post(url(stub, "github/seal"), json={}, headers=hdr(token)).status_code == 409
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        gh_body(extra=1),
+        gh_body(token="ghp_CANARY" + "a" * 30),
+        gh_body(sealed={"github.token": PASS_ENV, "hub.backup_key": PASS_ENV}),
+        gh_body(sealed={"custody.passphrase": PASS_ENV}),
+        gh_body(sealed={"github.token": {**PASS_ENV, "v": 2}}),
+        gh_body(request_id="nope"),
+    ],
+)
+def test_c16_bodies_are_closed_and_never_echoed(client, token, stub, script, local, body):
+    script.features = ["custody", "github_token"]
+    res = client.post(url(stub, "github"), json=body, headers=hdr(token))
+    assert res.status_code == 400 and res.json()["error"]["code"] == "invalid.input" and "CANARY" not in res.text
+    assert gh_calls(script) == []
+
+
 def runner_calls(script):
     return [c for cl in script.clients for c in cl.calls if c[0] == "runner"]
 
@@ -3047,3 +3168,43 @@ def test_c14_a_review_for_other_terminals_than_asked_is_not_shown(client, token,
     script.handler = odd
     res = client.post(url(stub, "runner/review"), json={"on": True, "terminals": False}, headers=hdr(token))
     assert res.status_code == 409 and res.json()["error"]["reason"] == "check_failed"
+
+
+def test_c16_the_state_is_read_from_the_addon_list_and_never_the_token(client, token, stub, script, local, monkeypatch):
+    from orch_dashboard.gateway import Gateway
+
+    real = Gateway.call
+    rows: list = []
+    monkeypatch.setattr(
+        Gateway,
+        "call",
+        lambda self, ws, op, args=None: {"addons": rows} if op == "addon.list" else real(self, ws, op, args),
+    )
+    cases = [
+        ([{"name": "github", "state": "active", "credential": "stored"}], "stored"),
+        ([{"name": "github", "state": "active", "credential": "missing"}], "missing"),
+        ([{"name": "github", "state": "active", "credential": None}], None),
+        ([{"name": "github", "state": "off", "credential": "stored"}], None),
+        ([{"name": "other", "state": "active", "credential": "stored"}], None),
+        ([], None),
+    ]
+    for listed, want in cases:
+        rows[:] = listed
+        res = client.get(url(stub, "github"), headers=hdr(token))
+        assert res.status_code == 200 and res.json() == {"credential": want}, listed
+
+
+def test_c16_the_state_is_owner_only(client, token, stub, script, local, monkeypatch):
+    from orch_dashboard import adapters
+
+    real = adapters.members
+    monkeypatch.setattr(adapters, "members", lambda d: [m.model_copy(update={"role": "maintainer"}) for m in real(d)])
+    res = client.get(url(stub, "github"), headers=hdr(token))
+    assert res.status_code == 403 and res.json()["error"]["code"] == "role.denied"
+
+
+def test_c16_the_contract_refusal_is_in_plain_words(client, token, stub, script, local):
+    script.features = ["custody"]
+    res = client.post(url(stub, "github/seal"), json={}, headers=hdr(token))
+    msg = res.json()["error"]["message"]
+    assert "needs an update" in msg and "signing helper" not in msg and "orch-core" not in msg

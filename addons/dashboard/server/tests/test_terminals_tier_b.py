@@ -7,7 +7,10 @@ from orch_dashboard.terminals import execution_line
 
 
 def test_tier_b_line_names_the_agent_user():
-    assert execution_line("orch-agent-sev") == "This terminal runs as orch-agent-sev. It cannot read your keys. Never type secrets into it."
+    assert (
+        execution_line("orch-agent-sev")
+        == "This terminal runs as orch-agent-sev. It cannot read your keys. Never type secrets into it."
+    )
 
 
 @pytest.mark.parametrize("bad", [None, "", "sev", "root", "orch-agent-", "orch-agent-Sev", "orch-agent-a b",

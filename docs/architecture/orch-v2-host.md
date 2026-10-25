@@ -3679,7 +3679,8 @@ login.
 - **The client address (R1-7).** Caddy sets `X-Orch-Client` to `{client_ip}` with `header_up` (which replaces, so a
   header from the browser is never forwarded). Caddy computes it from the TCP peer, or, for peers inside the networks
   given with `orch remote enable --trusted-proxy` (`trusted_proxies static`; never a /0), from `X-Forwarded-For`. Without
-  that option the TCP peer is used. Needs Caddy 2.7 or newer.
+  that option the TCP peer is used. Needs Caddy 2.11 or newer: the version CI validates the generated Caddyfile with
+  (`{client_ip}` itself is 2.7+).
 - **`orch remote enable|disable|reset` (R1-7).** Run by the person on Linux, never as root. `enable --name <name>`
   checks the name points to this server and that ports 80 and 443 are free (`remote.name_mismatch`), prints exactly
   what will change (the root steps are the dry run of the code root will run), asks for a confirm on the person's own

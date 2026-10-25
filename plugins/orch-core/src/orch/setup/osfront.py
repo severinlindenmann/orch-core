@@ -68,6 +68,10 @@ UNIT_NAME = "orch-front.service"
 UNIT_PATH = f"/etc/systemd/system/{UNIT_NAME}"
 TMPFILES_FRONT = "/etc/tmpfiles.d/orch-front.conf"
 CADDY_BIN = "/usr/bin/caddy"
+#: The oldest Caddy accepted. We could not confirm from release notes which release introduced `trusted_proxies_strict`
+#: (`{client_ip}` is 2.7+), so the floor is the version CI validates the generated Caddyfile with
+#: (tests/setup/test_caddy_validate.py, pinned in .github/workflows/orch-core.yml): only what is proven is allowed.
+CADDY_MIN = (2, 11)
 MARKER = "# managed by orch (orch remote enable); a change here is overwritten, `orch remote disable` removes it"
 _PERSON_LINE = re.compile(r"^# orch-front person-uid=(\d+) name=(\S+)$", re.MULTILINE)
 _SYSTEM_UID_MAX = 999
@@ -179,7 +183,7 @@ class FrontPlan:
                 "\t}",
                 f"\treverse_proxy unix/{v(self.socket)} {{",
                 # `header_up` with a value SETS the header: whatever the browser sent is replaced, never forwarded.
-                # {client_ip} is the TCP peer, or the address the trusted proxies report (needs Caddy 2.7+).
+                # {client_ip} is the TCP peer, or the address the trusted proxies report (2.7+; CADDY_MIN).
                 "\t\theader_up X-Orch-Client {client_ip}",
                 "\t\ttransport http {",
                 "\t\t\tdial_timeout 5s",
@@ -324,7 +328,7 @@ def _caddy_problem(facts: OsFacts) -> str | None:
     st = facts.stat(CADDY_BIN)
     if st is None:
         return (
-            f"Caddy 2.7 or newer is not installed at {CADDY_BIN}. Install the caddy package (see "
+            f"Caddy 2.11 or newer is not installed at {CADDY_BIN}. Install the caddy package (see "
             "caddyserver.com/docs/install) and run this again. Do not start its own caddy.service."
         )
     if st.is_symlink or st.is_dir or st.uid != 0 or st.mode & 0o022:
@@ -362,9 +366,9 @@ def apply_enable(facts: OsFacts, ex: Executor, plan: FrontPlan, *, is_root: bool
         return res.fail(bad)
     ver = ex.query([BIN["caddy"], "version"])
     found = re.match(r"v?(\d+)\.(\d+)", ver.out.strip()) if ver.rc == 0 else None
-    if found is None or (int(found.group(1)), int(found.group(2))) < (2, 7):
+    if found is None or (int(found.group(1)), int(found.group(2))) < CADDY_MIN:
         return res.fail(
-            f"{CADDY_BIN} must be Caddy 2.7 or newer (it said: {ver.out.strip()[:60] or 'nothing'}); the client "
+            f"{CADDY_BIN} must be Caddy 2.11 or newer (it said: {ver.out.strip()[:60] or 'nothing'}); the client "
             "address "
             "placeholder needs it."
         )
@@ -534,8 +538,10 @@ def enroll(person: str, ctl: str, *, out=None) -> int:
         return 2
     folder, leaf = os.path.split(ctl)
     try:
-        # Connect through a directory descriptor opened without following links: the path cannot be swapped, and no
-        # symlinked ancestor of the leaf is followed after the checks.
+        # O_NOFOLLOW covers only the LAST component of `folder`; an ancestor can still be a link. Safety does not rest
+        # on the path: the socket's owner, the peer credentials (the process behind it must be the person's, checked
+        # before any byte is sent) and the name match against the root-owned Caddyfile decide. The descriptor only
+        # stops the leaf being swapped between the checks and the connect.
         dfd = os.open(folder, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
     except OSError:
         err.write("The dashboard is not running. Start it first (orch dashboard up).\n")

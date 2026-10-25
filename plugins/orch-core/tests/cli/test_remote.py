@@ -94,7 +94,7 @@ class _Dry(DryRunExecutor):
 
     def query(self, argv):
         if argv[0] == osfront.CADDY_BIN:
-            return RunResult(0, "v2.8.4 h1:abc")
+            return RunResult(0, "v2.11.7 h1:abc")
         return RunResult(1)  # nothing is active: no system caddy, no front yet
 
     def read_file(self, path):
@@ -194,7 +194,7 @@ def test_dry_run_prints_exactly_what_will_change_and_changes_nothing(rig):
 def test_a_root_side_problem_is_shown_in_the_dry_run_and_stops_the_real_run(rig):
     rig.facts.paths.pop(osfront.CADDY_BIN)
     code, out, _ = rig.go("enable", "--name", NAME, "--yes")
-    assert code == 1 and "Caddy 2.7 or newer is not installed" in out and "Nothing was changed" in out
+    assert code == 1 and "Caddy 2.11 or newer is not installed" in out and "Nothing was changed" in out
     assert rig.calls == [] and rig.asked == []
 
 

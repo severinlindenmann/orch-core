@@ -21,7 +21,7 @@ class Machine:
         self.facts, self.commands, self.files, self.removed = facts, [], {}, []
         self.active: set[str] = set()
         self.fail: set[str] = set()  # "systemctl:start" style
-        self.caddy_version = "v2.8.4 h1:abc"
+        self.caddy_version = "v2.11.7 h1:abc"
 
     def _sub(self, argv) -> str:
         names = {v: k for k, v in BIN.items()}
@@ -72,7 +72,7 @@ class Machine:
 
 class _FakeDry(DryRunExecutor):
     def query(self, argv):
-        return RunResult(0, "v2.8.4 h1:abc") if argv[0] == osfront.CADDY_BIN else RunResult(1)
+        return RunResult(0, "v2.11.7 h1:abc") if argv[0] == osfront.CADDY_BIN else RunResult(1)
 
     def read_file(self, path):
         return None
@@ -641,12 +641,12 @@ def test_the_caddyfile_closes_the_slow_body_hole_and_h3():
 
 
 def test_an_old_or_unreadable_caddy_stops_the_run_with_a_clear_message():
-    for said in ("v2.6.4 h1:x", "v1.0.5", "garbage", ""):
+    for said in ("v2.10.2 h1:x", "v1.0.5", "garbage", ""):
         f = world()
         ex = Machine(f)
         ex.caddy_version = said
         res, _, _ = go(f, ex)
-        assert not res.ok and "Caddy 2.7 or newer" in res.report() and not ex.commands
+        assert not res.ok and "Caddy 2.11 or newer" in res.report() and not ex.commands
 
 
 def test_users_with_the_front_group_as_their_main_group_are_found():

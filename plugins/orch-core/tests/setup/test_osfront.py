@@ -541,6 +541,9 @@ def test_enroll_prints_the_link_the_dashboard_returns(short_dir, monkeypatch):
     srv.bind(str(d / "ctl.sock"))
     srv.listen(1)
     code = "0123456789ab-" + "A" * 22
+    caddyfile = tmp_path / "Caddyfile"  # the root-owned file orch made: enroll prints a link only for its name
+    caddyfile.write_text(FrontPlan(NAME, me, os.getuid()).caddyfile())
+    monkeypatch.setattr(osfront, "CADDYFILE", str(caddyfile))
 
     def serve():
         c, _ = srv.accept()

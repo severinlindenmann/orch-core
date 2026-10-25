@@ -478,7 +478,7 @@ def test_ctl_enroll_answers_root_only_and_never_the_persons_own_uid(state, front
     # root may do nothing else here: no launch code, no stop
     back = _as_root(cli, monkeypatch)
     for command in ("launch", "stop", "hello"):
-        with pytest.raises(EOFError):
+        with pytest.raises((EOFError, ConnectionError)):
             cli.control(ctl, command)
     back()
     assert cli.control(ctl, "hello")["release"]  # still running, still ours
@@ -508,7 +508,7 @@ def test_an_other_user_gets_no_answer_on_ctl(state, front_root, monkeypatch):
     thread, _ = _serve_in_thread(cli, ctl)
     real = cli.peer_uid
     monkeypatch.setattr(cli, "peer_uid", lambda conn: os.getuid() + 7)
-    with pytest.raises(EOFError):
+    with pytest.raises((EOFError, ConnectionError)):  # closed without an answer; Linux may report it as a reset
         cli.control(ctl, "enroll")
     monkeypatch.setattr(cli, "peer_uid", real)
     cli.control(ctl, "stop")

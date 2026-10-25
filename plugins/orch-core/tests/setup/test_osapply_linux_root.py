@@ -430,8 +430,9 @@ def test_front_flags_load_from_the_trusted_copy_and_a_dry_run_changes_nothing(ro
     assert bad.returncode == 1 and "lowercase DNS name" in bad.stdout + bad.stderr, bad.stdout + bad.stderr
     plan = _sudo(*base, "--front-enable", "--person", person, "--name", "orch.example.com", "--dry-run", check=False)
     text = plan.stdout + plan.stderr
-    # no Caddy on the runner image: the plan says so; with Caddy installed it lists the actions
-    assert ("Caddy 2.7 or newer is not installed" in text) or ("Would do:" in text), text
+    # no Caddy at /usr/bin/caddy on the runner image (the product accepts only a root-owned one there): the plan
+    # says so; with Caddy installed it lists the actions
+    assert ("Caddy 2.11 or newer is not installed" in text) or ("Would do:" in text), text
     off = _sudo(*base, "--front-disable", "--dry-run", check=False)
     assert off.returncode == 0, off.stdout + off.stderr
     for name in ("orch-front",):

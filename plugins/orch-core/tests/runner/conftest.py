@@ -46,3 +46,6 @@ def sleeper():
         if p.poll() is None:
             p.kill()
         p.wait()
+
+
+from tests.no_real_system import _no_real_system_facts  # noqa: E402,F401  (autouse)

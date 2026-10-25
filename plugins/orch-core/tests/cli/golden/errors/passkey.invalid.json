@@ -1,0 +1,15 @@
+{
+  "ok": false,
+  "error": {
+    "code": "passkey.invalid",
+    "message": "the passkey was not accepted",
+    "hint": "try again, or use the SSH tunnel",
+    "fix": {
+      "argv": [
+        "orch",
+        "status"
+      ]
+    },
+    "retryable": false
+  }
+}

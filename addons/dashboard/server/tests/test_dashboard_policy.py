@@ -446,6 +446,8 @@ def _remote_client(policy=REMOTE):
     auth = Auth()
     local = auth.exchange(auth.launch(PORT)["code"], "local")[0]["token"]
     remote = auth.open_remote()["token"]
+    # these tests are about the listener policy; the route table has its own tests (test_remote_route_gate.py)
+    policy = dataclasses.replace(policy, route_gate=False)
     return TestClient(Security(_app, auth, policy), base_url=f"https://{NAME}"), local, remote
 
 

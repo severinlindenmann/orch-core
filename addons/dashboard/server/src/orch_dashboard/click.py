@@ -49,6 +49,7 @@ from .handoff import (
 )
 from .hubapprove import mode_of, refuse_if_hub_only
 from .reads import workspace
+from .stepup import refusal_check, refuse_step_up
 
 # The card text, verbatim (owner decision, 12 Oct 2026). A View that carries anything else is not shown.
 RISK = "Convenience signing: agents running as you, or anything that takes over this dashboard, could sign."
@@ -159,12 +160,6 @@ def key_fingerprint(key: str) -> str:
     return hashlib.sha256(key.encode()).hexdigest()
 
 
-#: How a session was opened (`Auth.login_kind`) for which `agent_access` may be prepared. Until the passkey step-up for
-#: a grant secret exists (R1-6), only a session opened by `orch dashboard` on this computer may; an unknown kind and
-#: any remote or hub kind are refused (fail closed), so the remote dashboard cannot ship the reveal unprotected.
-REVEAL_SESSION_KINDS = frozenset({"local"})
-
-
 def reveal_view_ok(view: dict, ws: str, reveal_key: str) -> bool:
     """A shown-secret grant's View: no deposit, the sealed field's `grant.secret` purpose bound to the page's own key
     (its fingerprint), core's risk and reveal lines, this workspace and a plain click."""
@@ -185,11 +180,8 @@ def reveal_view_ok(view: dict, ws: str, reveal_key: str) -> bool:
     )
 
 
-SEALED_LOCAL_ONLY = "A new passphrase for your key needs a dashboard opened on this computer."
-RUNNER_LOCAL_ONLY = "Turning on dashboard execution needs a dashboard opened on this computer."
 #: core's constant (orch.click.protocol RUNNER_LINE): the review of turning it on must carry it
 RUNNER_LINE = "Agents may run commands on this computer as you when you start them."
-ROTATE_LOCAL_ONLY = "Replacing this computer's key needs a dashboard opened on this computer."
 #: core's constant (orch.click.protocol BACKUP_KEY_LINE): a hub step's View that lacks it is not shown
 BACKUP_KEY_LINE = "This step also needs your backup key. You type it once here; orch does not keep it"
 HUB_STEPS = (HubJoin, HubLeave)
@@ -374,12 +366,6 @@ def verify(prepared: dict, ws: str, **expect) -> dict:
     return adapters.handoff.request(prepared, ws, **expect)
 
 
-def refusal_check(message: str):
-    return HostError(
-        {"code": "human.click_refused", "message": message, "retryable": False, "reason": "check_failed"}, 3
-    )
-
-
 def register(app: FastAPI, gateway: Gateway):
     clicks = app.state.clicks = Clicks()
     handoffs = app.state.handoffs  # the quota of open requests is one per session, shared with the hand-off
@@ -450,12 +436,11 @@ def register(app: FastAPI, gateway: Gateway):
         return any(m.person == me and m.role == "owner" for m in adapters.members(gateway.call(ws, "member.list")))
 
     @app.post("/api/w/{ws}/click/custody/seal")
-    def custody_seal(_: SealBegin, request: Request, ws: str = Depends(workspace)):
+    def custody_seal(_body: SealBegin, request: Request, ws: str = Depends(workspace)):
         """The signer's one-use key for the NEW passphrase of "One click off" (#1198 C12): request id, review digest
         and the public key. Owners, on a dashboard opened on this computer only. Nothing secret passes here."""
+        refuse_step_up(app.state.auth, request, "custody/seal", _body, ws)
         gateway.enabled(ws)
-        if app.state.auth.login_kind(request.state.token) not in REVEAL_SESSION_KINDS:
-            raise refusal_check(SEALED_LOCAL_ONLY)
         if not owner(ws):
             raise fail("role.denied", "Only an owner switches signing in the dashboard.", exit=3)
         if not signer.passphrase_seals():
@@ -509,17 +494,16 @@ def register(app: FastAPI, gateway: Gateway):
     def rotate_gate(request: Request, ws: str) -> None:
         """Local sessions only (until the passkey step-up), an owner, a signer that can (begin and sign alike)."""
         gateway.enabled(ws)
-        if app.state.auth.login_kind(request.state.token) not in REVEAL_SESSION_KINDS:
-            raise refusal_check(ROTATE_LOCAL_ONLY)
         if not owner(ws):
             raise fail("role.denied", "Only an owner replaces a device key in the dashboard.", exit=3)
         if not signer.rotations():
             raise fail("click.contract", "Update orch-core: its signing helper cannot replace a key yet.", exit=9)
 
     @app.post("/api/w/{ws}/click/rotate/seal")
-    def rotate_seal(_: SealBegin, request: Request, ws: str = Depends(workspace)):
+    def rotate_seal(_body: SealBegin, request: Request, ws: str = Depends(workspace)):
         """The review of "Replace this device's key" with the signer's one-use key for the recovery code and the new
         passphrase (#1198 C13). Nothing secret passes here; the signer refuses while One click is on."""
+        refuse_step_up(app.state.auth, request, "rotate/seal", _body, ws)
         rotate_gate(request, ws)
         got = signer.call("rotate", {"workspace_id": ws, "begin": True})
         if got.get("done") is True:  # an earlier run had landed the event and only the install was left
@@ -533,6 +517,7 @@ def register(app: FastAPI, gateway: Gateway):
     @app.post("/api/w/{ws}/click/rotate")
     def rotate(body: RotateBody, request: Request, ws: str = Depends(workspace)):
         """Replace this computer's device key: ciphertext only, relayed and never opened here (#1198 C13)."""
+        refuse_step_up(app.state.auth, request, "rotate", body, ws)
         rotate_gate(request, ws)
         row = signer.call(
             "rotate",
@@ -552,27 +537,17 @@ def register(app: FastAPI, gateway: Gateway):
     def custody(body: CustodyBody, request: Request, ws: str = Depends(workspace)):
         """Switch signing in the dashboard on or off (section 0.8.6 item 3a): owners only; the signer does the work
         (this process never opens a key) and answers the workspace's card. No route here changes a credential."""
+        refuse_step_up(app.state.auth, request, "custody", body, ws)
         gateway.enabled(ws)
         if not owner(ws):
             raise fail("role.denied", "Only an owner switches signing in the dashboard.", exit=3)
         if not signer.switchable():
             raise fail("click.contract", "Update orch-core: its signing helper cannot switch signing yet.", exit=9)
         if body.resume:
-            # no passphrase to prove: only a dashboard opened on this computer (the same gate as a shown secret), until
-            # the passkey step-up exists; anything else keeps the terminal command on the card
-            if app.state.auth.login_kind(request.state.token) not in REVEAL_SESSION_KINDS:
-                raise fail(
-                    "custody.terminal_needed",
-                    "Turning One click on again needs a dashboard opened on this computer. Use the terminal: "
-                    "orch host convenience on --workspace " + ws,
-                    exit=3,
-                )
             row = signer.call("custody_on", {"workspace_id": ws, "resume": True})
         elif body.on:  # the proof goes to the signer only; nothing here reads, keeps or logs it
             row = signer.call("custody_on", {"workspace_id": ws, "passphrase": body.passphrase})
         elif body.sealed is not None:  # off with a NEW passphrase (V3-D31): ciphertext only, relayed and never opened
-            if app.state.auth.login_kind(request.state.token) not in REVEAL_SESSION_KINDS:
-                raise refusal_check(SEALED_LOCAL_ONLY)
             if not signer.passphrase_seals():
                 raise fail(
                     "click.contract",
@@ -598,8 +573,6 @@ def register(app: FastAPI, gateway: Gateway):
         gateway.enabled(ws)
         if not owner(ws):
             raise fail("role.denied", "Only an owner switches dashboard execution.", exit=3)
-        if body.on and app.state.auth.login_kind(request.state.token) not in REVEAL_SESSION_KINDS:
-            raise refusal_check(RUNNER_LOCAL_ONLY)
         if not signer.runner_switches():
             raise fail(
                 "click.contract", "Update orch-core: its signing helper cannot switch dashboard execution yet.", exit=9
@@ -627,6 +600,7 @@ def register(app: FastAPI, gateway: Gateway):
     @app.post("/api/w/{ws}/click/runner/review")
     def runner_review(body: RunnerBody, request: Request, ws: str = Depends(workspace)):
         """The review of turning dashboard execution on or off: core's own words, relayed after a check."""
+        refuse_step_up(app.state.auth, request, "runner/review", body, ws)
         runner_gate(request, ws, body)
         got = signer.call("runner", {"workspace_id": ws, "review": True, "on": body.on, "terminals": body.terminals})
         if not runner_view_ok(got, ws, body):
@@ -639,6 +613,7 @@ def register(app: FastAPI, gateway: Gateway):
     def runner_switch(body: RunnerBody, request: Request, ws: str = Depends(workspace)):
         """Turn dashboard execution on or off after the review (#1198 C14): the signer does what `orch runner enable` or
         `disable` does. This process starts no service and writes no switch."""
+        refuse_step_up(app.state.auth, request, "runner", body, ws)
         runner_gate(request, ws, body)
         if body.view_digest is None:
             raise fail("invalid.input", "Read the review first.", exit=5)
@@ -662,11 +637,8 @@ def register(app: FastAPI, gateway: Gateway):
 
     @app.post("/api/w/{ws}/click/prepare")
     def prepare(body: ClickBody, request: Request, ws: str = Depends(workspace)):
+        refuse_step_up(app.state.auth, request, "prepare", body, ws)
         token = request.state.token
-        if isinstance(body, AgentAccess) and app.state.auth.login_kind(token) not in REVEAL_SESSION_KINDS:
-            raise refusal_check("Agent access with a shown secret needs a dashboard opened on this computer.")
-        if isinstance(body, HUB_STEPS) and app.state.auth.login_kind(token) not in REVEAL_SESSION_KINDS:
-            raise refusal_check("A hub step with your backup key needs a dashboard opened on this computer.")
         gateway.enabled(ws)  # pinned workspace, dashboard addon enabled in it (the hand-off's `human()` does this)
         refuse_if_hub_only(gateway, ws)  # V3 C11: full hub mode takes no click signature (the host refuses it too)
         with handoffs.lock:
@@ -900,9 +872,7 @@ def register(app: FastAPI, gateway: Gateway):
 
     @app.post("/api/w/{ws}/click/sign")
     def sign(body: Sign, request: Request, ws: str = Depends(workspace)):
-        if body.sealed is not None and app.state.auth.login_kind(request.state.token) not in REVEAL_SESSION_KINDS:
-            # where the typed key arrives: the local-only gate of prepare, repeated (fail closed on any other kind)
-            raise refusal_check("A hub step with your backup key needs a dashboard opened on this computer.")
+        refuse_step_up(app.state.auth, request, "sign", body, ws)  # where a typed key arrives: fail closed
         mine(ws, body.request_id)
         rid = body.request_id
         wanted = clicks.get(rid)[2]

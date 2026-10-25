@@ -3655,7 +3655,7 @@ login.
 | Phishing site with a look-alike name | The passkey is bound to the RP ID; a different name gets no assertion. |
 | DNS hijack or a mis-issued certificate for the real name | Not ours to stop; reduced by a CAA record (setup prints it as advice) and HSTS. A passkey does not help against a valid certificate for the same name. |
 | A TLS-terminating proxy in between (NetBird proxy, Cloudflare, a provider's load balancer) | Forbidden (10.2). Whoever serves the page's JavaScript can change it, read every typed secret before the sealed field encrypts it and click Sign. The start refuses any front other than the configured local socket. |
-| The enrollment link leaks | At least 128 random bits, single use, 15 min, first browser wins; 5 wrong codes in total kill every open link. Anyone on the internet can use that to kill open links without logging in (accepted: a denial of service only; IT makes a new link over SSH). The terminal and the dashboard show "A passkey was added: <name>, <time>" and list all passkeys with Remove; IT can reset over SSH. |
+| The enrollment link leaks | At least 128 random bits, single use, 15 min, first browser wins; 5 wrong secrets for one code burn that code only; a wrong guess of an unknown id costs its source a rate-limit charge and touches no code, so nobody can wipe the owner's open links by guessing. The terminal and the dashboard show "A passkey was added: <name>, <time>" and list all passkeys with Remove; IT can reset over SSH. |
 | Stolen bearer (XSS, an extension, a copied tab) | As in item 8, plus 2 h idle and 12 h absolute life, and step-up (10.5) for each listed action: one assertion per op, bound to that op's review. |
 | Stolen laptop with a passkey | User verification is required (device unlock). Remove the passkey from another device or over SSH. |
 | Lockout by brute-force traffic | Per-source buckets (IPv4 /32, IPv6 /64), so one source's traffic does not use the owner's budget. A distributed flood that reaches the global CPU cap can delay remote login; then the SSH tunnel is the fallback. |
@@ -3726,14 +3726,29 @@ login.
   launch limiter stays as it is, so internet traffic cannot lock out the local owner.
 - **Enrollment.** `orch remote enable` (and later "Add a device" in Settings, a step-up action) prints or shows one link
   `https://<name>/#enroll=<code>`: the code is at least 128 random bits (`secrets.token_urlsafe(16)` or longer) and is
-  compared in constant time; single use, 15 min, the first browser that completes a registration wins; 5 wrong codes in
-  total kill every open link (`enroll.expired`). The fragment never reaches a server log.
+  compared in constant time; single use, 15 min, the first browser that completes a registration wins; 5 wrong secrets
+  for one code burn that code (`enroll.expired`). The fragment never reaches a server log.
 - **The passkey store** `<state>/dashboard/passkeys.json`: mode 0600, owned by the person UID, holding per passkey the
   credential id, the user handle, the COSE public key, its algorithm, the backup-eligible flag of the registration, a
   name ("MacBook, Chrome"), created, last used and the last sign count. No secret is in it, but writing it adds a login,
   so it is read with the `O_NOFOLLOW`, owner and mode checks of the pins file and fails closed.
 - **Pre-login surface**: the app shell and its assets, `/auth/passkey/*` and `/auth/enroll/*`. Nothing else answers
   without a remote session; `/setup` and `/api/setup/*` need a remote session (the setup token stays, on top).
+- **The route table (R1-5).** Every route of the dashboard app has one rule for the front in `routegate.TABLE`:
+  `allowed`, `refused`, `step_up` (refused until R1-6), `pre_login` (the four passkey routes) or `terminals` (allowed
+  only where the listener's policy has terminals on). `security.Security` enforces it in one place, after the session
+  test: a route that is unlisted or matches nothing is refused (`remote.refused`, 403), and a test walks the app's
+  routes and fails on one without a rule. Refused for good: launch codes, the setup routes, hub signing, the widget
+  frame. Routes that serve several bodies (`click/custody`, `click/runner`, `click/runner/review`, `click/prepare`,
+  `click/sign`) stay `allowed`; their handlers refuse the step-up variants for every session that is not local.
+- **Passkey routes (R1-5).** `POST /auth/passkey/options` and `/login`, `POST /auth/enroll/options` and `/register`.
+  Strict closed bodies (16 KiB), one rate-limit charge per request, a 120 s single-use challenge per ceremony held in
+  memory, and one answer for every failure (`passkey.invalid` for login, `enroll.expired` for enrollment: a wrong,
+  used, expired or killed code, a bad registration). The enrollment code is `<id>-<secret>` (public id, 128-bit secret kept only as a digest);
+  5 wrong secrets burn that code only, an unknown id or malformed code costs its source a rate-limit charge and
+  touches no code; the options step checks it, the register step spends it (first browser wins), and the
+  challenge is bound to the code that asked for it.
+  A store that fails its checks means no login and no enrollment.
 - **Terminals are off remotely by default.** `/term` on the front needs the bearer ticket, Origin `https://<name>`
   (`wss://<name>` connection) and the Settings switch "Terminals over remote access", which is off after enable. A
   terminal is a shell on the server.

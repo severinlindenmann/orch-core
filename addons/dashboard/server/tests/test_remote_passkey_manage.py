@@ -291,3 +291,43 @@ def test_a_removed_id_enrolled_again_is_a_new_passkey_and_works(world):
     assert res.status_code == 200, res.text
     assert cid not in world.auth.revoked and world.auth.valid(res.json()["token"])
     assert world.auth.credentials[res.json()["token"]] == cid
+
+
+def test_a_link_minted_before_a_removal_is_dead_after_it_in_options_or_not(world):
+    other = second_passkey(world)
+    cid = b64u(other.credential_id)
+    holder = login_token(world, other)  # the finder of the lost phone, with a live session
+    world.touch("device.add", token=holder, authn=other)
+    kept = link(world, token=holder).json()["code"]
+    world.touch("device.add", token=holder, authn=other)
+    inflight = link(world, token=holder).json()["code"]
+    opts = world.front.post("/auth/enroll/options", json={"code": inflight}, headers=JSON)
+    assert opts.status_code == 200
+    world.touch("passkey.remove", credential_id=cid)
+    assert remove(world, cid).status_code == 200
+    assert not world.auth.valid(holder)
+    # the one already in options: its challenge is gone
+    done = world.authn  # any authenticator; the challenge is unknown
+    created = Authenticator(world.authn.rp_id).create(opts.json()["publicKey"])
+    res = world.front.post(
+        "/auth/enroll/register",
+        json={"challenge_id": opts.json()["challenge_id"], "code": inflight, "name": "Thief", **created},
+        headers=JSON,
+    )
+    assert res.status_code == 401 and done
+    # the one never used: the code is gone
+    assert world.front.post("/auth/enroll/options", json={"code": kept}, headers=JSON).status_code == 401
+    assert len(world.front.get("/api/passkeys", headers=world.headers()).json()["passkeys"]) == 1
+
+
+def test_the_owner_can_mint_a_new_link_right_after_a_removal(world, loop, local):
+    other = second_passkey(world)
+    cid = b64u(other.credential_id)
+    world.touch("passkey.remove", credential_id=cid)
+    assert remove(world, cid).status_code == 200
+    res = loop.post("/api/passkeys/enroll-link", json={"link_id": "L" * 22}, headers=bearer(local, ORIGIN))
+    assert res.status_code == 200
+    _, done = enroll(
+        world.front, world.app, code=res.json()["code"], name="New", authn=Authenticator(world.authn.rp_id)
+    )
+    assert done.status_code == 200

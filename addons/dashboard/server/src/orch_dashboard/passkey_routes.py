@@ -176,6 +176,14 @@ class Passkeys:
         self.codes, self.ceremonies = EnrollCodes(clock), Ceremonies(clock)
         self.clock = clock
 
+    def burn_enrollments(self) -> None:
+        """A passkey was removed: every open enrollment link and every enrollment challenge in flight dies (a link the
+        removed passkey's holder minted must not outlive it). The owner mints a new one."""
+        with self.codes.lock:
+            self.codes.open.clear()
+        with self.ceremonies.lock:
+            self.ceremonies.items = {t: v for t, v in self.ceremonies.items.items() if v[0] != "enroll"}
+
     def now(self) -> str:
         return datetime.fromtimestamp(self.clock(), UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 

@@ -251,6 +251,9 @@ def register(app: FastAPI, gateway) -> None:
         refuse_step_up(auth, request, "passkeys/enroll-link", body, "-")
         service = service_of(request, remote_only=False)
         code = service.codes.mint()
+        if not auth.valid(request.state.token, touch=False):  # the session ended while we minted (a removal)
+            service.codes.open.clear()
+            raise fail("passkey.stepup_required", "Confirm with your fingerprint or PIN first.", exit=3)
         log.warning("A device link was made (valid %s minutes)", ENROLL_TTL // 60)  # the code itself is never logged
         return {"code": code, "link": f"{service.origin}/#enroll={code}", "expires_in": ENROLL_TTL}
 
@@ -266,6 +269,7 @@ def register(app: FastAPI, gateway) -> None:
                 raise fail("not_found", exit=2)
             service.store.remove(raw)  # refuses the last one under its lock
             auth.drop_credential(target.credential_id)  # every session and step-up that passkey made, this one too
+            service.burn_enrollments()  # after the drop: a link its holder minted dies with it
         except LastPasskey:
             raise fail(
                 "invalid.input", "This is the last passkey. Add another first, or turn remote access off.", exit=5

@@ -451,52 +451,87 @@ def _serve_in_thread(cli, ctl):
     raise AssertionError("the server did not start")
 
 
-def test_ctl_enroll_mints_a_one_time_code_only_where_remote_access_is_on(state, front_root, monkeypatch, capsys):
+def _as_root(cli, monkeypatch):
+    """The next ctl peer reads as uid 0 (fake peer credentials); only the server's own accept sees it."""
+    real = cli.peer_uid
+    monkeypatch.setattr(cli, "peer_uid", lambda conn: 0)
+    return lambda: monkeypatch.setattr(cli, "peer_uid", real)
+
+
+def test_ctl_enroll_answers_root_only_and_never_the_persons_own_uid(state, front_root, monkeypatch, capsys):
     import orch_dashboard.__main__ as cli
 
     ctl = state / "dashboard" / "ctl.sock"
-    # off: no remote.json, so no code (and nothing in the reply but the reason)
-    thread, _ = _serve_in_thread(cli, ctl)
-    reply = cli.control(ctl, "enroll")
-    assert set(reply) == {"error"} and "remote.not_configured" in reply["error"]
-    cli.control(ctl, "stop")
-    thread.join(timeout=15)
-    # on: a fresh code each time, for the configured name, 15 min, and it is a real code of the login service
     write_remote(state / "dashboard", f'{{"name": "{NAME}", "front_uid": {os.getuid() + 1}}}')
     thread, _ = _serve_in_thread(cli, ctl)
+    # the person's UID (an agent in tier A runs as the person): a plain refusal, no code
+    reply = cli.control(ctl, "enroll")
+    assert reply == {"error": "enroll.root_only: use sudo"}
+    # root: a fresh code each time, for the configured name, 15 min
+    back = _as_root(cli, monkeypatch)
     first, second = cli.control(ctl, "enroll"), cli.control(ctl, "enroll")
+    back()
     assert first["name"] == NAME and first["code"] != second["code"]
     assert 14 * 60 < first["expires_at"] - time.time() <= 15 * 60
     ident, _, secret = first["code"].partition("-")
     assert len(ident) == 12 and len(secret) >= 22  # 128+ bits
+    # root may do nothing else here: no launch code, no stop
+    back = _as_root(cli, monkeypatch)
+    for command in ("launch", "stop", "hello"):
+        with pytest.raises(EOFError):
+            cli.control(ctl, command)
+    back()
+    assert cli.control(ctl, "hello")["release"]  # still running, still ours
     cli.control(ctl, "stop")
     thread.join(timeout=15)
     out = capsys.readouterr()
-    assert first["code"] not in out.out + out.err  # nothing logged or printed on the way
+    assert first["code"] not in out.out + out.err and second["code"] not in out.out + out.err
 
 
-def test_ctl_enroll_is_refused_under_an_agents_environment(state, monkeypatch):
+def test_ctl_enroll_is_off_without_remote_access(state, front_root, monkeypatch):
     import orch_dashboard.__main__ as cli
 
-    monkeypatch.setenv("ORCH_GRANT", "x")
-    with pytest.raises(cli.AgentRefused):
-        cli.control(state / "dashboard" / "ctl.sock", "enroll")  # before it even connects
-    with pytest.raises(cli.AgentRefused):
-        cli.enroll_dashboard()
-
-
-def test_the_enroll_command_needs_a_terminal_and_prints_the_link_there(state, front_root, monkeypatch, capsys):
-    import orch_dashboard.__main__ as cli
-
-    with pytest.raises(RuntimeError, match="needs a terminal"):
-        cli.enroll_dashboard()  # pytest's stdout is no terminal: the link would land in a capture
-    write_remote(state / "dashboard", f'{{"name": "{NAME}", "front_uid": {os.getuid() + 1}}}')
     ctl = state / "dashboard" / "ctl.sock"
     thread, _ = _serve_in_thread(cli, ctl)
-    monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: True, raising=False)
-    cli.enroll_dashboard()
+    back = _as_root(cli, monkeypatch)
+    reply = cli.control(ctl, "enroll")
+    back()
+    assert set(reply) == {"error"} and "remote.not_configured" in reply["error"]
     cli.control(ctl, "stop")
     thread.join(timeout=15)
-    lines = capsys.readouterr().out.splitlines()
-    assert lines[0].startswith("One-time passkey link; works once, for 15 min")
-    assert lines[1].startswith(f"https://{NAME}/#enroll=") and len(lines) == 2
+
+
+def test_an_other_user_gets_no_answer_on_ctl(state, front_root, monkeypatch):
+    import orch_dashboard.__main__ as cli
+
+    ctl = state / "dashboard" / "ctl.sock"
+    thread, _ = _serve_in_thread(cli, ctl)
+    real = cli.peer_uid
+    monkeypatch.setattr(cli, "peer_uid", lambda conn: os.getuid() + 7)
+    with pytest.raises(EOFError):
+        cli.control(ctl, "enroll")
+    monkeypatch.setattr(cli, "peer_uid", real)
+    cli.control(ctl, "stop")
+    thread.join(timeout=15)
+
+
+def test_up_starts_the_server_and_mints_nothing(state, front_root, monkeypatch, capsys):
+    import orch_dashboard.__main__ as cli
+
+    write_remote(state / "dashboard", f'{{"name": "{NAME}", "front_uid": {os.getuid() + 1}}}')
+    ctl = state / "dashboard" / "ctl.sock"
+    thread = threading.Thread(target=cli.serve, daemon=True)
+    thread.start()
+    for _ in range(300):
+        try:
+            cli.control(ctl, "hello")
+            break
+        except OSError:
+            time.sleep(0.02)
+    cli.start_dashboard()  # a server already runs: it only checks
+    assert capsys.readouterr().out == ""
+    monkeypatch.setenv("ORCH_GRANT", "x")
+    with pytest.raises(cli.AgentRefused):
+        cli.start_dashboard()
+    cli.control(ctl, "stop")
+    thread.join(timeout=15)

@@ -769,6 +769,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--dry-run", action="store_true", help="print the exact actions and change nothing")
     ap.add_argument("--front-enable", action="store_true", help="set up the HTTPS front of the remote dashboard")
     ap.add_argument("--front-disable", action="store_true", help="stop and remove the HTTPS front")
+    ap.add_argument("--front-enroll", action="store_true", help="print the first passkey link of the remote dashboard")
+    ap.add_argument("--ctl", help="with --front-enroll: the person's dashboard control socket")
     ap.add_argument("--name", help="with --front-enable: the public DNS name of the dashboard")
     ap.add_argument(
         "--trusted-proxy",
@@ -777,10 +779,10 @@ def main(argv: list[str] | None = None) -> int:
         help="with --front-enable: a network whose X-Forwarded-For counts",
     )
     args = ap.parse_args(argv)
-    if args.front_enable or args.front_disable:
+    if args.front_enable or args.front_disable or args.front_enroll:
         return _front(args)
-    if args.name or args.trusted_proxy:
-        print("--name and --trusted-proxy go with --front-enable. Nothing was changed.", file=sys.stderr)
+    if args.name or args.trusted_proxy or args.ctl:
+        print("--name, --trusted-proxy and --ctl go with the --front-* options. Nothing was changed.", file=sys.stderr)
         return 2
     if bool(args.person) == bool(args.recheck):
         print(
@@ -812,13 +814,23 @@ def main(argv: list[str] | None = None) -> int:
 
 def _front(args: argparse.Namespace) -> int:
     """``--front-enable`` / ``--front-disable`` (R1-7): the HTTPS front of the remote dashboard, in ``osfront``."""
-    if args.front_enable == args.front_disable or args.recheck or args.release:
-        print("Give exactly one of --front-enable and --front-disable, alone. Nothing was changed.", file=sys.stderr)
+    if [args.front_enable, args.front_disable, args.front_enroll].count(True) != 1 or args.recheck or args.release:
+        print(
+            "Give exactly one of --front-enable, --front-disable and --front-enroll, alone. Nothing was changed.",
+            file=sys.stderr,
+        )
         return 2
-    if args.front_enable and not (args.person and args.name):
+    if args.front_enroll:
+        if not (args.person and args.ctl) or args.name or args.trusted_proxy or args.dry_run or args.ctl is None:
+            print("--front-enroll takes --person and --ctl only. Nothing was changed.", file=sys.stderr)
+            return 2
+        from . import osfront  # noqa: PLC0415
+
+        return osfront.enroll(args.person, args.ctl)
+    if args.front_enable and (args.ctl or not (args.person and args.name)):
         print("--front-enable needs --person and --name. Nothing was changed.", file=sys.stderr)
         return 2
-    if args.front_disable and (args.person or args.name or args.trusted_proxy):
+    if args.front_disable and (args.person or args.name or args.trusted_proxy or args.ctl):
         print("--front-disable takes no other option than --dry-run. Nothing was changed.", file=sys.stderr)
         return 2
     from . import osfront  # noqa: PLC0415  (a trusted file too; only loaded when asked)

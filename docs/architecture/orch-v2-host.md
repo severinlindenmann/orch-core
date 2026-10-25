@@ -3689,9 +3689,15 @@ login.
   (`useradd --system`, no login, locked), the Caddyfile in `/etc/orch/front/`, the unit `orch-front.service` (Caddy as
   `orch-front`, one capability for ports 80/443, sandboxed, `StateDirectory` for its certificates) and the tmpfiles
   entry of the socket directory above. A file there that orch did not make, or a user `orch-front` with other
-  properties, is refused, never changed. Then the person's side writes `remote.json`, restarts the dashboard and asks it
-  for the first enrollment link over its control socket (`orch-dashboard enroll`, a terminal only): the link is printed
-  on the terminal by the dashboard process itself and is never in argv, a file or a log. The printed lines also give the
+  properties, is refused, never changed. Then the person's side writes `remote.json` and restarts the dashboard
+  (`orch-dashboard up`), and **root** (`sudo ... orch-os-setup --front-enroll --person <user> --ctl <ctl.sock>`, the
+  trusted copy again) asks it for the first enrollment link over its control socket and prints it on the terminal;
+  the link is never in argv, a file or a log. The dashboard's `ctl.sock` answers `enroll` to a peer with uid 0 and to
+  nobody else (the person's own uid gets `enroll.root_only`), and root may do nothing else there (no launch code, no
+  stop): otherwise a same-UID agent could mint a code, register its own passkey and keep remote access. Later codes
+  come from "Add a device" in the dashboard (a local session, or a remote one with step-up). **Residual (tier A):** a
+  same-UID agent can still drive a local dashboard session as the person; that is the known limit "tier A = agents
+  run as you", and why One click defaults on only where isolation is detected. The printed lines also give the
   SSH tunnel as the way back in, because a flood of login attempts can use up the global login budget. `disable` takes
   `remote.json`, the dashboard and the front away and keeps the `orch-front` user and its certificates. `reset` stops
   the dashboard (every remote session and open link ends), deletes every passkey and prints a new link.

@@ -27,7 +27,14 @@ refused, a file of ours is replaced), a dry run prints the exact actions and cha
 from __future__ import annotations
 
 import ipaddress
+import json
+import os
 import re
+import socket
+import stat
+import struct
+import sys
+import time
 from dataclasses import dataclass
 
 from .osapply import BIN, ApplyResult, Executor, _Apply
@@ -46,6 +53,7 @@ __all__ = [
     "FrontPlan",
     "apply_disable",
     "apply_enable",
+    "enroll",
     "run",
     "valid_name",
     "valid_proxy",
@@ -436,3 +444,78 @@ def run(args, facts: OsFacts, ex: Executor) -> ApplyResult:
         )
     plan = FrontPlan(args.name or "", args.person, user.uid, tuple(valid_proxy(p) or p for p in args.trusted_proxy))
     return apply_enable(facts, ex, plan, is_root=True)
+
+
+def enroll(person: str, ctl: str, *, out=None) -> int:
+    """``--front-enroll``: ask the person's running dashboard for the first one-time enrollment link and print it on
+    this terminal. Only root may ask: the dashboard answers a code to uid 0 and to nobody else, because a same-UID
+    agent must not mint one. The link is printed here and nowhere else (not argv, a file or a log). ``ctl`` must be
+    the person's own control socket in the person's own directory, served by the person's process."""
+    out = sys.stdout if out is None else out
+    err = sys.stderr
+    if not out.isatty():
+        err.write("The enrollment link is a login. It is printed on a terminal only. Nothing was done.\n")
+        return 2
+    import pwd  # stdlib
+
+    try:
+        user = pwd.getpwnam(person)
+    except KeyError:
+        err.write(f"There is no user named '{person}'. Nothing was done.\n")
+        return 2
+    if user.pw_uid < _PERSON_MIN_UID or not valid_person(person) or not os.path.isabs(ctl) or "\0" in ctl:
+        err.write(f"'{person}' is not a normal user that runs orch, or the socket path is not absolute.\n")
+        return 2
+    try:
+        st, parent = os.lstat(ctl), os.lstat(os.path.dirname(ctl))
+    except OSError:
+        err.write("The dashboard is not running. Start it first (orch dashboard up).\n")
+        return 1
+    if (
+        not stat.S_ISSOCK(st.st_mode)
+        or st.st_uid != user.pw_uid
+        or not stat.S_ISDIR(parent.st_mode)
+        or parent.st_uid != user.pw_uid
+        or parent.st_mode & 0o022
+    ):
+        err.write(f"{ctl} is not the dashboard's own control socket of '{person}'. Nothing was done.\n")
+        return 2
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            sock.settimeout(3)
+            sock.connect(ctl)
+            if struct.unpack("3i", sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))[1] != user.pw_uid:
+                err.write("The socket is not served by that user's dashboard. Nothing was done.\n")
+                return 2
+            body = b'{"command":"enroll"}'
+            sock.sendall(struct.pack("!I", len(body)) + body)
+            head = _read(sock, 4)
+            size = struct.unpack("!I", head)[0]
+            if not 1 <= size <= 4096:
+                raise ValueError("bad frame")
+            reply = json.loads(_read(sock, size))
+    except (OSError, ValueError, struct.error):
+        err.write("The dashboard did not answer. Nothing was done.\n")
+        return 1
+    if not isinstance(reply, dict) or not isinstance(reply.get("code"), str) or not isinstance(reply.get("name"), str):
+        why = reply.get("error") if isinstance(reply, dict) else None
+        err.write(f"No link: {why if isinstance(why, str) else 'the dashboard gave no code'}\n")
+        return 1
+    if valid_name(reply["name"]) or not re.fullmatch(r"[0-9a-f]{12}-[A-Za-z0-9_-]{16,}", reply["code"]):
+        err.write("The dashboard's answer looks wrong. Nothing was printed.\n")
+        return 1
+    left = max(0, int(reply.get("expires_at", 0)) - int(time.time()))
+    out.write(f"One-time passkey link; works once, for {left // 60} min.\n")
+    out.write(f"https://{reply['name']}/#enroll={reply['code']}\n")
+    out.flush()
+    return 0
+
+
+def _read(sock, n: int) -> bytes:
+    data = b""
+    while len(data) < n:
+        chunk = sock.recv(n - len(data))
+        if not chunk:
+            raise OSError("closed")
+        data += chunk
+    return data

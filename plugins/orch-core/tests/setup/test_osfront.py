@@ -432,3 +432,123 @@ def test_bad_argument_combinations_change_nothing(argv, monkeypatch, capsys):
     monkeypatch.setattr(osapply, "RealExecutor", lambda: pytest.fail("no executor"))
     assert osapply.main(argv) == 2
     assert "Nothing was changed" in capsys.readouterr().err
+
+
+# --- --front-enroll: root asks the person's dashboard for the first link ----------------------------------------------
+class _Tty:
+    def __init__(self, tty=True):
+        self.tty, self.text = tty, ""
+
+    def isatty(self):
+        return self.tty
+
+    def write(self, text):
+        self.text += text
+
+    def flush(self):
+        pass
+
+
+def test_enroll_prints_only_on_a_terminal(capsys):
+    out = _Tty(tty=False)
+    assert osfront.enroll("sev", "/nowhere/ctl.sock", out=out) == 2 and out.text == ""
+    assert "terminal" in capsys.readouterr().err
+
+
+@pytest.fixture
+def short_dir():
+    """A short-path private directory (a Unix socket path is limited to ~104 bytes), removed by its exact path."""
+    import shutil
+    import tempfile
+    from pathlib import Path
+
+    d = Path(tempfile.mkdtemp(prefix="ef", dir=Path.home()))
+    yield d
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_enroll_refuses_a_socket_that_is_not_the_persons_own(short_dir, monkeypatch, capsys):
+    import os
+    import pwd
+    import socket
+
+    tmp_path = short_dir
+
+    me = pwd.getpwuid(os.getuid())
+    monkeypatch.setattr(osfront, "_PERSON_MIN_UID", 0)
+    d = tmp_path / "d"
+    d.mkdir(mode=0o700)
+    sock = socket.socket(socket.AF_UNIX)
+    sock.bind(str(d / "ctl.sock"))
+    out = _Tty()
+    # the person named is someone else than the socket's owner
+    monkeypatch.setattr(pwd, "getpwnam", lambda n: pwd.struct_passwd((n, "x", os.getuid() + 1, 1, "", "/", "/bin/sh")))
+    assert osfront.enroll(me.pw_name, str(d / "ctl.sock"), out=out) == 2
+    # a regular file, a relative path, a group-writable directory
+    monkeypatch.undo()
+    monkeypatch.setattr(osfront, "_PERSON_MIN_UID", 0)
+    (d / "plain").write_text("x")
+    assert osfront.enroll(me.pw_name, str(d / "plain"), out=out) == 2
+    assert osfront.enroll(me.pw_name, "ctl.sock", out=out) == 2
+    d.chmod(0o770)
+    assert osfront.enroll(me.pw_name, str(d / "ctl.sock"), out=out) == 2
+    sock.close()
+    assert out.text == "" and "Nothing" in capsys.readouterr().err
+
+
+@pytest.mark.skipif(not hasattr(__import__("socket"), "SO_PEERCRED"), reason="Linux peer credentials")
+def test_enroll_prints_the_link_the_dashboard_returns(short_dir, monkeypatch):
+    import json
+    import os
+    import pwd
+    import socket
+    import struct
+    import threading
+
+    tmp_path = short_dir
+    monkeypatch.setattr(osfront, "_PERSON_MIN_UID", 0)
+    me = pwd.getpwuid(os.getuid()).pw_name
+    monkeypatch.setattr(osfront, "valid_person", lambda p: True)
+    d = tmp_path / "d"
+    d.mkdir(mode=0o700)
+    srv = socket.socket(socket.AF_UNIX)
+    srv.bind(str(d / "ctl.sock"))
+    srv.listen(1)
+    code = "0123456789ab-" + "A" * 22
+
+    def serve():
+        c, _ = srv.accept()
+        n = struct.unpack("!I", c.recv(4))[0]
+        assert json.loads(c.recv(n)) == {"command": "enroll"}
+        body = json.dumps({"code": code, "name": NAME, "expires_at": 2**40}).encode()
+        c.sendall(struct.pack("!I", len(body)) + body)
+        c.close()
+
+    t = threading.Thread(target=serve)
+    t.start()
+    out = _Tty()
+    assert osfront.enroll(me, str(d / "ctl.sock"), out=out) == 0
+    t.join()
+    assert out.text.splitlines()[1] == f"https://{NAME}/#enroll={code}"
+    srv.close()
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--front-enroll", "--person", "sev"],  # no socket
+        ["--front-enroll", "--ctl", "/x/ctl.sock"],  # no person
+        ["--front-enroll", "--person", "sev", "--ctl", "/x", "--name", NAME],
+        ["--front-enroll", "--front-enable", "--person", "sev", "--ctl", "/x"],
+        ["--front-enroll", "--person", "sev", "--ctl", "/x", "--dry-run"],
+        ["--front-enable", "--person", "sev", "--name", NAME, "--ctl", "/x"],
+        ["--front-disable", "--ctl", "/x"],
+        ["--person", "sev", "--release", "/opt/x", "--ctl", "/x"],
+    ],
+)
+def test_bad_enroll_argument_combinations_change_nothing(argv, monkeypatch, capsys):
+    monkeypatch.setattr(osapply.sys, "platform", "linux")
+    monkeypatch.setattr(osapply.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(osapply, "_running_from_trusted_copy", lambda: True)
+    monkeypatch.setattr(osapply, "RealExecutor", lambda: pytest.fail("no executor"))
+    assert osapply.main(argv) == 2

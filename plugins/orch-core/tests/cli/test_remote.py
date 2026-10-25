@@ -68,7 +68,7 @@ class Rig:
 
     def _run(self, argv, env):
         self.calls.append(list(argv))
-        key = "sudo" if argv[0] == remote.SUDO else argv[-1]
+        key = ("sudo-enroll" if "--front-enroll" in argv else "sudo") if argv[0] == remote.SUDO else argv[-1]
         self.order.append(key)
         if key == "stop":
             Path(self.state / "dashboard" / "ctl.sock").unlink(missing_ok=True)
@@ -234,8 +234,17 @@ def test_enable_runs_the_root_copy_through_sudo_then_writes_remote_json_then_res
         "/usr/bin/sudo", "/usr/bin/python3", "-I", "-S", remote.LAUNCHER_PATH, "--front-enable", "--person", PERSON,
         "--name", NAME, "--trusted-proxy", "203.0.113.5/32", "--trusted-proxy", "10.0.0.0/8",
     ]  # fmt: skip
-    assert rig.order == ["sudo", "stop", "enroll"]
-    assert rig.calls[1:] == [["/opt/orch-dashboard", "stop"], ["/opt/orch-dashboard", "enroll"]]
+    assert rig.order == ["sudo", "stop", "up", "sudo-enroll"]
+    assert rig.calls[1:3] == [["/opt/orch-dashboard", "stop"], ["/opt/orch-dashboard", "up"]]
+    ctl = str(rig.state / "dashboard" / "ctl.sock")
+    assert rig.calls[3][:5] == ["/usr/bin/sudo", "/usr/bin/python3", "-I", "-S", remote.LAUNCHER_PATH]
+    assert rig.calls[3][5:] == [
+        "--front-enroll",
+        "--person",
+        PERSON,
+        "--ctl",
+        ctl,
+    ]  # ROOT asks; the person's UID cannot
     directory = rig.state / "dashboard"
     path = directory / "remote.json"
     assert (
@@ -289,7 +298,7 @@ def test_the_enrollment_link_is_never_in_argv_files_output_or_a_pipe(rig, monkey
 
 
 def test_the_enroll_failing_says_how_to_get_a_link(rig):
-    rig.rc["enroll"] = 1
+    rig.rc["sudo-enroll"] = 1
     code, out, _ = rig.go("enable", "--name", NAME, "--yes")
     assert code == 1 and "orch remote reset" in out and (rig.state / "dashboard" / "remote.json").exists()
 
@@ -355,7 +364,7 @@ def test_reset_drops_every_passkey_and_session_and_mints_a_new_link(rig):
     code, out, _ = rig.go("reset", "--yes")
     assert code == 0, out
     assert store.read() == [] and stat.S_IMODE((directory / "passkeys.json").stat().st_mode) == 0o600
-    assert rig.order == ["stop", "enroll"]  # the stop ends sessions and open links; the enroll mints the new one
+    assert rig.order == ["stop", "up", "sudo-enroll"]  # the stop ends sessions and open links; root mints the new one
     assert "Dropped 3 passkeys and all remote sessions." in out
 
 
@@ -378,10 +387,11 @@ def test_reset_dry_run_and_decline_keep_the_passkeys(rig):
     assert len(store.read()) == 1 and rig.calls == []
 
 
-def test_reset_does_not_touch_the_system(rig):
+def test_reset_uses_sudo_only_to_ask_root_for_the_link(rig):
     _enabled(rig)
     rig.go("reset", "--yes")
-    assert remote.SUDO not in [c[0] for c in rig.calls]
+    sudo = [c for c in rig.calls if c[0] == remote.SUDO]
+    assert len(sudo) == 1 and "--front-enroll" in sudo[0] and "--front-enable" not in sudo[0]
 
 
 def test_the_command_is_registered(rig, monkeypatch):

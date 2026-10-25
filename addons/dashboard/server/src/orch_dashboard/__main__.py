@@ -32,7 +32,7 @@ from .app import create_app
 from .auth import CODE_TTL, SETUP_CODE_TTL, Auth
 from .front import Front, PeerChecked
 from .gateway import Gateway, RunDirectoryError, run_dir, state_dir
-from .hostlink import check_uid, encode, receive
+from .hostlink import check_uid, encode, peer_uid, receive
 from .passkey_routes import ENROLL_TTL
 from .policy import REMOTE, remote_policy
 
@@ -111,9 +111,8 @@ def locked(directory_fd):
 def control(path, command, kind=None):
     """One request on ctl.sock. ``launch`` mints a code, so it refuses under an agent's environment first (#542 item 1;
     the socket itself cannot tell an agent of the same UID from the person: the accepted tier-A residual)."""
-    if command in ("launch", "enroll"):
-        refuse_agent()
     if command == "launch":
+        refuse_agent()
         asked = time.time()  # the mint is later: asked + CODE_TTL never outlives the code
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
         sock.settimeout(2)
@@ -510,8 +509,12 @@ def _serve(directory, lock_fd=None, port=None):
             with conn:
                 try:
                     conn.settimeout(2)
-                    check_uid(conn, os.getuid())
+                    caller = peer_uid(conn)
+                    if caller not in (os.getuid(), 0):
+                        continue  # nobody else gets an answer
                     req = receive(conn)
+                    if caller == 0 and req != {"command": "enroll"}:
+                        continue  # root (sudo orch remote ...) may mint an enrollment code and do nothing else here
                     if req == {"command": "launch"}:
                         conn.sendall(encode({**auth.launch(port), "redirect": str(redirects)}))
                     elif req == {"command": "launch", "kind": "tunnel"}:
@@ -519,7 +522,11 @@ def _serve(directory, lock_fd=None, port=None):
                     elif req == {"command": "launch", "kind": "setup"}:
                         conn.sendall(encode({**auth.launch(port, setup=True), "redirect": str(redirects)}))
                     elif req == {"command": "enroll"}:
-                        conn.sendall(encode(mint_enrollment(app)))
+                        # Root only: a same-UID process (an agent in tier A) could otherwise mint a code, register its
+                        # own passkey and keep remote access. The code never goes to the person's own UID.
+                        conn.sendall(
+                            encode(mint_enrollment(app) if caller == 0 else {"error": "enroll.root_only: use sudo"})
+                        )
                     elif req == {"command": "hello"}:
                         conn.sendall(encode({"release": release}))
                     elif req == {"command": "stop"}:
@@ -654,8 +661,8 @@ def _stop_stale(ctl, wait=RESTART_WAIT):
 
 
 def mint_enrollment(app):
-    """The reply to ctl ``enroll``: a fresh one-time enrollment code (R1-5) for the configured name, or the reason remote
-    access is off. Never logged: the code goes back over ctl.sock (mode 0600, our UID) to the one terminal that asked."""
+    """The reply to ctl ``enroll`` from root: a fresh one-time enrollment code (R1-5) for the configured name, or the
+    reason remote access is off. Never logged: the code goes back over ctl.sock to the one root process that asked."""
     service = getattr(app.state, "passkeys", None)
     if service is None or app.state.enroll is None or app.state.remote_problem:
         return {"error": app.state.remote_problem or "remote.not_configured: remote access is off (orch remote enable)"}
@@ -663,22 +670,13 @@ def mint_enrollment(app):
     return {"code": code, "name": service.rp_id, "expires_at": int(time.time()) + ENROLL_TTL}
 
 
-def enroll_dashboard():
-    """`orch-dashboard enroll`: print the one-time link that adds a passkey. A terminal only (the link is a login, so it
-    must not land in a pipe or a log), and the server is started when none runs. Returns the link."""
+def start_dashboard():
+    """`orch-dashboard up`: make sure a server runs (it reads remote.json at start). Mints nothing."""
     refuse_agent()
-    if not sys.stdout.isatty():
-        raise RuntimeError("enroll prints a login link and needs a terminal")
     directory = state_dir() / "dashboard"
     run_dir(state_dir())
     with private_directory(directory) as fd, locked(fd):
-        reply = control_or_start(directory, "enroll")
-    if not isinstance(reply, dict) or "code" not in reply:
-        why = reply.get("error") if isinstance(reply, dict) else None
-        raise RuntimeError(why if isinstance(why, str) and why else "the dashboard gave no enrollment code")
-    left = max(0, math.ceil(float(reply["expires_at"]) - time.time()))
-    print(f"One-time passkey link; works once, for {left // 60} min.")
-    print(f"https://{reply['name']}/#enroll={reply['code']}")
+        control_or_start(directory, "hello")
 
 
 def control_or_start(directory, command, kind=None):
@@ -852,7 +850,9 @@ def main():
 
         return manifest_main(sys.argv[2:])
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", nargs="?", choices=["open", "launch", "serve", "stop", "restart", "enroll"], default="open")
+    parser.add_argument(
+        "command", nargs="?", choices=["open", "launch", "serve", "stop", "restart", "up"], default="open"
+    )
     parser.add_argument("path", nargs="?", default="/")
     parser.add_argument(
         "--print-url",
@@ -874,8 +874,8 @@ def main():
             return serve(args.launcher_lock, port=args.port)
         if args.stop or args.command == "stop":
             control(state_dir() / "dashboard/ctl.sock", "stop")
-        elif args.command == "enroll":
-            enroll_dashboard()
+        elif args.command == "up":
+            start_dashboard()
         elif args.command == "restart":
             restart_dashboard(args.path, print_url=args.print_url)
         else:

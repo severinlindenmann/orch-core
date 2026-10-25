@@ -11,8 +11,8 @@
 4. runs the root steps through ``sudo`` and the root-owned trusted copy ``/usr/lib/orch/os-setup/orch-os-setup``
    (never the person's release as root): the user ``orch-front``, the socket directory, the Caddyfile, the unit;
 5. writes ``<state>/dashboard/remote.json`` (name and the front's user id), restarts the dashboard so it opens the
-   front socket, and asks it for the first enrollment link. The link goes from the dashboard to this terminal over
-   its private control socket and is printed there: it is never in argv, a file or a log.
+   front socket, and has root (sudo) ask it for the first enrollment link: the dashboard hands a code to uid 0 only.
+   The link is printed on this terminal by the root copy and is never in argv, a file or a log.
 
 ``disable`` takes access away (remote.json, the dashboard, the front) and keeps the ``orch-front`` user and its
 certificates. ``reset`` drops every passkey and every remote session and prints a new enrollment link.
@@ -198,14 +198,19 @@ def _confirm(args: argparse.Namespace, out: TextIO, question: str) -> bool:
     return answer.strip().lower() in ("y", "yes")
 
 
-def _root_step(flags: list[str], env: Mapping[str, str], err: TextIO) -> None:
-    """The root part: ``sudo python3 -I -S <trusted copy> <flags>``. Root runs the root-owned copy only."""
+def _run_root(flags: list[str], env: Mapping[str, str]) -> int:
+    """``sudo python3 -I -S <trusted copy> <flags>``. Root runs the root-owned copy only."""
     if not os.path.exists(LAUNCHER_PATH):
         raise Refused(
             "unsupported.platform",
             f"{LAUNCHER_PATH} is not installed. The installer puts it there (orch update / the install command)",
         )
-    rc = _run([SUDO, PYTHON, "-I", "-S", LAUNCHER_PATH, *flags], env)
+    return _run([SUDO, PYTHON, "-I", "-S", LAUNCHER_PATH, *flags], env)
+
+
+def _root_step(flags: list[str], env: Mapping[str, str], err: TextIO) -> None:
+    """The root part of enable and disable; a failure stops the run."""
+    rc = _run_root(flags, env)
     if rc != 0:
         raise Refused("internal", f"the root step failed (exit {rc}); the dashboard was not changed", 1)
 
@@ -271,14 +276,19 @@ def _no_answer(path: Path) -> bool:
 
 
 def _enroll(env: Mapping[str, str], err: TextIO) -> int:
-    """Start the dashboard (it reads remote.json) and print the one-time link. The link is printed by the dashboard
-    process straight to this terminal; it is never read back here."""
+    """Start the dashboard (it reads remote.json), then have ROOT ask it for the first link: the dashboard hands an
+    enrollment code to uid 0 only (a same-UID agent must not mint one). The root copy prints the link straight to this
+    terminal; it is never read back here, never in argv, a file or a log."""
     from orch.cli.dashboard import INSTALL_HINT, find_entry_point
 
     command = find_entry_point(env, err)
     if command is None:
         raise Refused("unsupported.platform", INSTALL_HINT)
-    return _run([*command, "enroll"], env)
+    rc = _run([*command, "up"], env)
+    if rc != 0:
+        return rc
+    ctl = _dashboard_dir(env, create=False) / "ctl.sock"
+    return _run_root(["--front-enroll", "--person", _person(), "--ctl", str(ctl)], env)
 
 
 def _tunnel_lines(name: str, env: Mapping[str, str]) -> list[str]:
@@ -340,7 +350,10 @@ def _enable(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, err: 
     if args.port is not None:
         out.write(f"  write <state>/dashboard/port ({args.port}, the fixed port of the SSH tunnel)\n")
     out.write("  restart the dashboard so it opens the front socket (a running dashboard is stopped)\n")
-    out.write("  print a one-time link that adds the first passkey (works once, for 15 minutes)\n\n")
+    out.write(
+        "  print a one-time link that adds the first passkey (works once, for 15 minutes); sudo asks the dashboard\n"
+        "  for it, because only root may\n\n"
+    )
     if not root_plan.ok:
         out.write("\nNot possible yet. Nothing was changed.\n")
         return 1
@@ -459,7 +472,7 @@ def _reset(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, err: T
     out.flush()
     rc = _enroll(env, err)
     if rc != 0:
-        out.write("The link could not be made. Run `orch dashboard enroll` once the dashboard works.\n")
+        out.write("The link could not be made. Run `orch remote reset` once the dashboard works.\n")
     return 0 if rc == 0 else 1
 
 

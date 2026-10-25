@@ -23,7 +23,14 @@ def _no_real_system_facts():
     # Not through ``monkeypatch``: that fixture would then be set up before every other and undone after them, which
     # changes when a test's own patches are undone relative to its fixtures' teardown.
     service.agent_tier = isolated
+    # The same for the L13 isolation doctor behind ``orch host status``: an empty machine, no real file read.
+    from orch.host import doctor_isolation, status
+
+    real_facts, real_read = status._default_facts, doctor_isolation.read_text
+    status._default_facts = lambda: FakeOsFacts("linux")
+    doctor_isolation.read_text = lambda path: None
     try:
         yield
     finally:
         service.agent_tier = real
+        status._default_facts, doctor_isolation.read_text = real_facts, real_read

@@ -95,7 +95,28 @@ def _here(env: Mapping[str, str], state: Path) -> dict[str, Any] | None:
     return {"root": str(root), "mode": "host", "workspace_id": target.workspace_id, "socket": str(target.socket)}
 
 
-def report(state: Path, env: Mapping[str, str], control: Path) -> dict[str, Any]:
+def _default_facts() -> Any:
+    from orch.setup.osfacts import RealOsFacts
+
+    return RealOsFacts()
+
+
+def _isolation_problems(env: Mapping[str, str], registry: Mapping[str, Any], facts: Any) -> list[dict[str, str]]:
+    """L13: the isolation hazards of this machine as problems (read only; a failure here never hides the rest)."""
+    from . import doctor_isolation as di
+
+    home = env.get("HOME") or str(Path.home())
+    try:
+        facts = facts if facts is not None else _default_facts()
+        me = facts.user_by_uid(os.getuid())
+        roots = [str(e["root"]) for e in registry.get("workspaces") or [] if isinstance(e, dict) and e.get("root")]
+        found = di.check(facts, home, person=me.name if me else None, repos=roots)
+    except Exception:  # noqa: BLE001 - an unreadable machine fact must not break the status report
+        return []
+    return [{"what": f.what, "fix": f.fix} for f in found]
+
+
+def report(state: Path, env: Mapping[str, str], control: Path, *, isolation_facts: Any = None) -> dict[str, Any]:
     from orch import hostclient
 
     from . import convenience
@@ -190,6 +211,7 @@ def report(state: Path, env: Mapping[str, str], control: Path) -> dict[str, Any]
                     "fix": f"orch host unregister {alarm.get('workspace_id')}",
                 }
             )
+    problems += _isolation_problems(env, registry, isolation_facts)
     # an interpreter that differs alone is no problem: the service keeps the one it was enabled with (H7 review)
     here = _here(env, state)
     if here is not None and here.get("mode") == "refused":

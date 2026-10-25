@@ -195,6 +195,18 @@ def create_app(
             auth.logout(request.state.token)  # the session ends even if a cancel failed
         return {"ok": True}
 
+    @app.post("/api/session/logout-all")
+    def logout_all(request: Request):
+        """"Log out everywhere" (R1-8): every remote browser session ends, this one too. Passkeys stay. A plain click:
+        it only takes access away."""
+        for token in auth.logout_everywhere("remote"):
+            for end in (app.state.cancel_session, app.state.cancel_clicks, tickets.forget):
+                try:
+                    end(token)
+                except Exception:  # noqa: BLE001 - the session is already gone; a failed cancel must not stop the rest
+                    pass
+        return {"ok": True}
+
     @app.get("/api/events")
     async def events(request: Request, ws: str = Depends(reads.workspace)):
         await asyncio.to_thread(gateway.enabled, ws)
@@ -218,6 +230,8 @@ def create_app(
             "workspaces": {ws.id: ws.features for ws in workspaces},
             # a wrong remote.json or an unopenable front socket: remote access is off and this says why. Loopback only:
             # the front's callers (the internet, once logged in) learn nothing about the server's configuration.
+            # the web address people sign in at (a name, not a secret): shown in Settings, Remote access
+            **({"remote_address": app.state.passkeys.origin} if app.state.passkeys is not None else {}),
             **(
                 {"remote_problem": app.state.remote_problem}
                 if app.state.remote_problem and request.scope.get("orch_listener", LOOPBACK) == LOOPBACK

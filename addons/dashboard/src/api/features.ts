@@ -5,12 +5,18 @@
 let enabled: ReadonlySet<string> | null = null
 let perWorkspace: Readonly<Record<string, readonly string[]>> = {}
 let login: string | null = null
+let remoteAddress: string | null = null
+let remoteProblem: string | null = null
 
 export interface SessionFeatures {
   features: readonly string[]
   workspaces?: Readonly<Record<string, readonly string[]>>
   /** How this browser session was opened ("local": a launch code from this computer). Absent or unknown: not known. */
   login?: string
+  /** The web address people sign in at, when remote access is on (R1-8). */
+  remote_address?: string
+  /** Loopback only: remote access is configured but not working; the server's measured reason. */
+  remote_problem?: string
 }
 
 /** Production start-up (and tests): the features the server lists. `null` lists everything. */
@@ -18,7 +24,15 @@ export function setFeatures(session: SessionFeatures | null) {
   enabled = session ? new Set(session.features) : null
   perWorkspace = session?.workspaces ?? {}
   login = session?.login ?? null
+  remoteAddress = session?.remote_address ?? null
+  remoteProblem = session?.remote_problem ?? null
 }
+
+/** Was this browser session opened by a passkey sign-in on the web address? Then big actions ask for a touch (step-up). */
+export const isRemoteSession = (): boolean => login === 'remote'
+export const remoteInfo = () => ({ address: remoteAddress, problem: remoteProblem })
+/** Settings shows "Remote access" when remote access is on, or was meant to be and is not working. */
+export const remoteAvailable = (): boolean => remoteAddress !== null || remoteProblem !== null
 
 /**
  * Show "Log out" only for a session that is known to come from a hub or a remote sign-in. A local session (the launch

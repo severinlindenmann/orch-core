@@ -1,4 +1,4 @@
-import { hasFeature, isRealHost } from '@/api/features'
+import { hasFeature, isRealHost, remoteAvailable } from '@/api/features'
 
 export const TABS = [
   { id: 'general', label: 'General' },
@@ -23,11 +23,13 @@ export const HOST_TABS = [
   { id: 'addons', label: 'Add-ons' },
   /** Only while a hub is connected. */
   { id: 'hub', label: 'Hub', feature: 'hub' },
+  /** Only where remote access is on, or was meant to be and is not working. */
+  { id: 'remote', label: 'Remote access', remote: true },
 ] as const
 
 /** The tabs this build shows: the mockup's, or the reduced ones on a real host. */
 export const settingsTabs = (workspace?: string): readonly { id: string; label: string; preview?: boolean }[] =>
-  isRealHost() ? HOST_TABS.filter((t) => !('feature' in t) || hasFeature(t.feature, workspace)) : TABS
+  isRealHost() ? HOST_TABS.filter((t) => !('remote' in t) || remoteAvailable()).filter((t) => !('feature' in t) || hasFeature(t.feature, workspace)) : TABS
 
 /** The known /settings/$tab values on this build; anything else (also the old /settings/devices and /settings/records) redirects to General. Devices and phone pairing live on the Phone row of Add-ons, records in General > Advanced. */
 export const knownSettingsTab = (tab: string): boolean => (isRealHost() ? HOST_TABS.map((t) => t.id) : TABS.map((t) => t.id)).some((id) => id === tab)

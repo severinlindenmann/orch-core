@@ -3,6 +3,7 @@
 // neutrally (an empty list) where a page needs an answer to draw, and with `op.unsupported` everywhere else. Nothing
 // here imports the mock.
 import { clearSession, getToken } from './bootstrap'
+import { inviteDigest, noteStepUpRefused, stepUp } from './passkey'
 import { refreshFeatures } from './features'
 import { createFetchTransport } from './fetchTransport'
 import type { MandatesPreviewState } from './mandatesPreview'
@@ -284,6 +285,21 @@ const handoff = {
  * Click-to-sign (H5c): prepare, look at the signer's View, sign, cancel. The server passes the View through unchanged;
  * the key is in core's signer process and never here.
  */
+/** An action refused for want of a fresh touch (ten minutes passed): the panel says so; the error goes on. */
+const stale = (e: unknown): never => {
+  noteStepUpRefused(e)
+  throw e
+}
+/** The hub id inside a hub card (what the touch for a connect is bound to); a card without one is refused by the server. */
+const hubIdOf = (card: string): string => {
+  try {
+    const id = (JSON.parse(card) as { o?: { hub_id?: unknown } }).o?.hub_id
+    return typeof id === 'string' ? id : ''
+  } catch {
+    return ''
+  }
+}
+
 const click = {
   prepareClick: async (ws: string, action: ClickAction, retry = 0) => {
     await uploadFor(action as { images?: PastedRef[] }, (b) => call(`${w(ws)}/click/images`, 'POST', b)) // R3 part B
@@ -293,8 +309,11 @@ const click = {
   getArtifactImage: (ws: string, key: string, name: string) =>
     call<{ image: ArtifactImage | null }>(`${w(ws)}/tickets/${encodeURIComponent(key)}/artifacts/${encodeURIComponent(name)}`),
   viewClick: (ws: string, requestId: string) => call<ClickViewAnswer>(`${w(ws)}/click/view`, 'POST', { request_id: requestId }),
-  signClick: (ws: string, requestId: string, viewDigest: string, revealKey?: string, sealed?: Record<string, import('./sealed').Envelope>) =>
-    call<ClickSigned>(`${w(ws)}/click/sign`, 'POST', { request_id: requestId, view_digest: viewDigest, ...(revealKey ? { reveal_key: revealKey } : {}), ...(sealed ? { sealed } : {}) }),
+  signClick: async (ws: string, requestId: string, viewDigest: string, revealKey?: string, sealed?: Record<string, import('./sealed').Envelope>) => {
+    // A typed key or a shown secret needs the passkey touch on the web address (the review is on screen: this is its confirm).
+    if (revealKey || sealed) await stepUp({ action: 'sign', ws, view_digest: viewDigest, request_id: requestId })
+    return call<ClickSigned>(`${w(ws)}/click/sign`, 'POST', { request_id: requestId, view_digest: viewDigest, ...(revealKey ? { reveal_key: revealKey } : {}), ...(sealed ? { sealed } : {}) }).catch(stale)
+  },
   stateClick: (ws: string, requestId: string) => call<ClickState>(`${w(ws)}/click/state`, 'POST', { request_id: requestId }),
   /** V3 C11: what the host says to check when the hub's channel signs (a read; nothing is prepared or signed here). */
   hubSign: (ws: string, body: import('./hubsign').HubSignRequest) => call<import('./hubsign').HubSignInfo>(`${w(ws)}/hubsign`, 'POST', body),
@@ -303,7 +322,10 @@ const click = {
   getHubPreview: (ws: string, body: { add?: import('./hub').HubRule; remove?: import('./hub').HubRule }) =>
     call<import('./hub').HubPreview>(`${w(ws)}/hub/share/preview`, 'POST', body),
   getHubCommand: (ws: string, body: import('./hub').HubCommandRequest) => call<import('./hub').HubCommand>(`${w(ws)}/hub/command`, 'POST', body),
-  connectHub: (ws: string, body: import('./hub').HubConnectRequest) => call<import('./hub').HubConnected>(`${w(ws)}/hub/connect`, 'POST', body),
+  connectHub: async (ws: string, body: import('./hub').HubConnectRequest) => {
+    await stepUp({ action: 'hub.connect', ws, hub_id: hubIdOf(body.hub_card), invite_sha256: inviteDigest(body.invite) })
+    return call<import('./hub').HubConnected>(`${w(ws)}/hub/connect`, 'POST', body).catch(stale)
+  },
   cancelClick: (ws: string, requestId: string) => call<{ id: string; state: string }>(`${w(ws)}/click/cancel`, 'POST', { request_id: requestId }),
   // How I approve (B6): the person's own default way to sign, and whether a phone is paired. Both were missing here, so
   // every real host looked as if it "does not provide personal approval preferences" (B11 10). An older server answers
@@ -312,11 +334,17 @@ const click = {
   putSignDefault: (ws: string, body: { method: SignMethod; fallback?: SignMethod }) => call<SignDefault>(`${w(ws)}/me/sign_default`, 'PUT', body),
   phoneAvailable: (ws: string) => call<{ phones: number }>(`${w(ws)}/phone/available`),
   clickStatus: (ws: string) => call<ClickCard>(`${w(ws)}/click/status`),
-  switchClick: (ws: string, body: ClickSwitch) => call<ClickCard>(`${w(ws)}/click/custody`, 'POST', body),
+  switchClick: async (ws: string, body: ClickSwitch) => {
+    if (body.on) await stepUp({ action: 'custody.on', ws })
+    else if ('sealed' in body) await stepUp({ action: 'custody.off', ws, view_digest: body.view_digest, request_id: body.request_id })
+    return call<ClickCard>(`${w(ws)}/click/custody`, 'POST', body).catch(stale)
+  },
   custodySeal: (ws: string) => call<CustodySealOffer>(`${w(ws)}/click/custody/seal`, 'POST', {}),
   rotateSeal: (ws: string) => call<RotateBegin>(`${w(ws)}/click/rotate/seal`, 'POST', {}),
-  rotateKey: (ws: string, body: { request_id: string; view_digest: string; sealed: Record<string, import('./sealed').Envelope> }) =>
-    call<{ done: true } & ClickCard>(`${w(ws)}/click/rotate`, 'POST', body),
+  rotateKey: async (ws: string, body: { request_id: string; view_digest: string; sealed: Record<string, import('./sealed').Envelope> }) => {
+    await stepUp({ action: 'rotate', ws, view_digest: body.view_digest, request_id: body.request_id })
+    return call<{ done: true } & ClickCard>(`${w(ws)}/click/rotate`, 'POST', body).catch(stale)
+  },
 }
 
 const implemented: Record<string, unknown> = { ...reads, ...empty, ...handoff, ...click, ...records }

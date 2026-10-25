@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '@/api/client'
 import { CLICK_RISK, clickProblem, unknownOutcome, type ClickAction, type ClickPrepared, type ClickProblem, type ClickSigned, type ClickViewAnswer } from '@/api/click'
 import { ApiError } from '@/api/types'
+import { PasskeyError } from '@/api/passkey'
 import { type HandoffRequest, type HandoffState } from '@/api/handoff'
 import { fmtClock } from '@/lib/time'
 
@@ -184,6 +185,11 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
         const as = settledAs(open, got)
         settled.current?.('done', as.state, as.request)
       } catch (e) {
+        if (e instanceof PasskeyError && e.kind !== 'network') {
+          // The touch did not happen (cancelled, wrong finger, ran out): the review stays, the note says so, nothing was sent.
+          if (mounted.current) { setError(e); setProblem(null); setPhase('ready') }
+          return
+        }
         if (mounted.current) {
           fail(e, 'ready') // refusals never cancel: the request stays open
           // An unknown outcome (the signer's, or a lost/failed HTTP answer) is waited out, never retried or replaced:

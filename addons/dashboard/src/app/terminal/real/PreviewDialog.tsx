@@ -5,17 +5,18 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { TermPreview } from '@/api/runs'
-import { EXECUTION_LINE } from './executionLine'
+import { EXECUTION_LINE, SeparateAccountLine, separateAccount } from './executionLine'
 
 /** The host's preview, shown before anything starts: what runs, where, as whom. Every value is untrusted text. */
 export function PreviewDialog({ preview, busy, onClose, onConfirm }: { preview: { data: TermPreview | null; error: string } | null; busy: boolean; onClose: () => void; onConfirm: () => void }) {
   const data = preview?.data
+  const separate = separateAccount(data?.execution_line)
   return (
     <Dialog open={!!preview} onOpenChange={(open) => { if (!open) onClose() }}>
       <DialogContent className="max-w-lg gap-3 border-border bg-surface" data-term-preview>
         <DialogHeader>
           <DialogTitle>Open a terminal</DialogTitle>
-          <DialogDescription>{EXECUTION_LINE}</DialogDescription>
+          <DialogDescription>{separate ? 'Read what will open before it starts.' : EXECUTION_LINE}</DialogDescription>
         </DialogHeader>
         {!data && !preview?.error && <Skeleton className="h-20" />}
         {data && (
@@ -24,7 +25,7 @@ export function PreviewDialog({ preview, busy, onClose, onConfirm }: { preview: 
               <dt className="text-text-muted">In</dt>
               <dd>{data.cwd_path !== null ? <Raw>{data.cwd_path}</Raw> : <span className="text-text-muted">{data.cwd_path_hidden ? 'Hidden: the path has invisible characters' : 'Not shown'}</span>}</dd>
               <dt className="text-text-muted">As</dt>
-              <dd>{data.notice ? <Inline>{data.notice}</Inline> : 'acts as you, not as an agent'}</dd>
+              <dd>{separate ? 'a separate account' : data.notice ? <Inline>{data.notice}</Inline> : 'acts as you, not as an agent'}</dd>
             </dl>
             <details data-testid="term-details">
               <summary className="cursor-pointer text-text-muted">Details</summary>
@@ -37,6 +38,7 @@ export function PreviewDialog({ preview, busy, onClose, onConfirm }: { preview: 
             </details>
           </div>
         )}
+        {separate && <SeparateAccountLine user={separate} />}
         {data?.warnings.map((w, i) => <p key={i} role="note" className="text-xs text-warning"><Prose inline>{w}</Prose></p>)}
         {data?.blocked && (
           <p role="alert" className="rounded-md border border-danger/40 bg-danger-soft px-3 py-2 text-xs text-danger">

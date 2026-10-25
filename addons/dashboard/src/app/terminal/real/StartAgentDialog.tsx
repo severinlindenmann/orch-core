@@ -31,7 +31,7 @@ import { hasFeature } from '@/api/features'
 import { modelLabel, routingQueries, STRONG_MODELS } from '@/api/modelRouting'
 import { grantDefaultHours, runnerLengths } from '@/api/grants'
 import { fmtDateTime, fmtExact, nowMs } from '@/lib/time'
-import { EXECUTION_LINE } from './executionLine'
+import { EXECUTION_LINE, SeparateAccountLine, separateAccount } from './executionLine'
 import { MODE_LABEL, ModelPick } from '@/components/agents/AgentChoice'
 import { AgentIcon } from '@/components/agents/AgentIcon'
 import { AccessSelect } from '@/components/sign/AccessSelect'
@@ -163,7 +163,9 @@ function StartAgent({ ws, ticket, onClose, onStarted, initial, choose }: { ws: s
   // The risk notice is shown in full until it is acknowledged once (kept by the dashboard server, per person and
   // workspace); afterwards it is one line whose Details hold the same words. A failed read counts as not acknowledged.
   const ack = useQuery({ queryKey: ['risk-notices', ws], queryFn: () => agentsApi.riskNotices(ws), retry: false })
-  const startFull = ack.data?.acknowledged.start_agent !== true
+  // Tier B: the agent runs as its own account; the "runs as you" notice does not apply, a plain reassurance line does.
+  const separate = separateAccount(data?.execution_line)
+  const startFull = !separate && ack.data?.acknowledged.start_agent !== true
   const warnings = data?.warnings ?? []
   const loginNotice = warnings.filter(isLoginNotice)
   const otherWarnings = warnings.filter((x) => !isLoginNotice(x))
@@ -360,7 +362,7 @@ function StartAgent({ ws, ticket, onClose, onStarted, initial, choose }: { ws: s
           </div>
         )}
         {needsAccess && !runnerOff && accessSelect}
-        <RiskNotice startFull={startFull} loginFull={loginFull} loginNotice={loginNotice} onAcknowledge={() => void acknowledge(shownFull)} single={!!initial}>
+        <RiskNotice separate={separate} startFull={startFull} loginFull={loginFull} loginNotice={loginNotice} onAcknowledge={() => void acknowledge(shownFull)} single={!!initial}>
           {data && <PreviewLines ws={ws} data={data} ticket={ticket} harness={shown?.args.harness ?? harness} />}
         </RiskNotice>
         <details className="group/more" data-testid="agent-more" open={moreOpen || (!!strong && checkFailing)} onToggle={(e) => setMoreOpen(e.currentTarget.open)}>
@@ -428,12 +430,13 @@ const isLoginNotice = (w: string) => w === LOGIN_NOTICE
  * The "runs as you" disclosure (D-P2-31). First time: the full notice, with the login-shell notice, until the person
  * says they read it. After that: one small line, and the same words under Details. Never removed, only folded.
  */
-function RiskNotice({ startFull, loginFull, loginNotice, onAcknowledge, single, children }: { /** Opened right after "Create and start agent": Start is the one button, and starting counts as reading the notice (as it always did). */ single?: boolean; startFull: boolean; loginFull: boolean; loginNotice: string[]; onAcknowledge: () => void; children: ReactNode }) {
+function RiskNotice({ separate, startFull, loginFull, loginNotice, onAcknowledge, single, children }: { /** Opened right after "Create and start agent": Start is the one button, and starting counts as reading the notice (as it always did). */ single?: boolean; /** Tier B: the account the agent runs as. */ separate?: string | null; startFull: boolean; loginFull: boolean; loginNotice: string[]; onAcknowledge: () => void; children: ReactNode }) {
   const full = startFull || loginFull
   const start = <p data-testid="execution-line">{EXECUTION_LINE}</p>
   const login = <>{loginNotice.map((x, i) => <p key={i} role="note" className="text-warning" data-testid="agent-login-notice"><Prose inline>{x}</Prose></p>)}</>
   return (
-    <section aria-label="Runs as you" className="-mb-1 space-y-2 text-xs leading-5" data-testid="agent-risk">
+    <section aria-label={separate ? 'Runs as a separate account' : 'Runs as you'} className="-mb-1 space-y-2 text-xs leading-5" data-testid="agent-risk">
+      {separate && <SeparateAccountLine user={separate} />}
       {full && (
         <div role="note" className="grid gap-2 rounded-md border border-warning/40 bg-warning-soft px-3 py-2 font-normal text-warning sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:[&>p]:col-start-1" data-testid="agent-risk-full">
           {startFull && start}
@@ -444,9 +447,9 @@ function RiskNotice({ startFull, loginFull, loginNotice, onAcknowledge, single, 
         </div>
       )}
       <details className="group/risk" data-testid="agent-details">
-        <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 text-text-muted underline-offset-4 before:size-1.5 before:shrink-0 before:rotate-45 before:border-t before:border-r before:border-current hover:underline [&::-webkit-details-marker]:hidden group-open/risk:before:rotate-[135deg]">{startFull ? 'Details' : <>Runs as you on this computer <span aria-hidden>·</span> Details</>}</summary>
+        <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 text-text-muted underline-offset-4 before:size-1.5 before:shrink-0 before:rotate-45 before:border-t before:border-r before:border-current hover:underline [&::-webkit-details-marker]:hidden group-open/risk:before:rotate-[135deg]">{startFull || separate ? 'Details' : <>Runs as you on this computer <span aria-hidden>·</span> Details</>}</summary>
         <div className="mt-2 space-y-2">
-          {(!startFull || !loginFull) && <div className="space-y-1 text-text-muted">{!startFull && start}{!loginFull && login}</div>}
+          {(!startFull || !loginFull) && <div className="space-y-1 text-text-muted">{!startFull && !separate && start}{!loginFull && login}</div>}
           {children}
         </div>
       </details>

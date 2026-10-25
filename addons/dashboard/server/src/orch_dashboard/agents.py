@@ -22,7 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from . import reads
 from .adapters import runs as project
 from .gateway import Gateway
-from .terminals import Idem, Label, Model
+from .terminals import Idem, Label, Model, execution_line
 
 GrantId = Annotated[str, StringConstraints(pattern=r"^gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")]
 DepositId = Annotated[str, StringConstraints(pattern=r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$")]
@@ -78,7 +78,9 @@ class ForgetBody(BaseModel):
 def register(app: FastAPI, gateway: Gateway) -> None:
     @app.post("/api/w/{ws}/agents/preview")
     def preview(body: AgentPreviewBody, ws: str = Depends(reads.workspace)):
-        return project.agent_preview(gateway.call(ws, "agent.preview", body.host_args()))
+        data = gateway.call(ws, "agent.preview", body.host_args())
+        runs_as = data.get("runs_as") if isinstance(data, dict) else None
+        return {**project.agent_preview(data), "execution_line": execution_line(runs_as)}
 
     @app.get("/api/w/{ws}/model-routing")
     def model_routing(ws: str = Depends(reads.workspace)):

@@ -38,6 +38,7 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     (POST, "/auth/session"): (REFUSED, "launch codes are a local credential"),
     (POST, "/auth/logout"): (ALLOWED, "ends the session"),
     (GET, "/api/session"): (ALLOWED, ""),
+    (POST, "/api/session/logout-all"): (ALLOWED, "ends every remote session; it only takes access away"),
     (GET, "/api/events"): (ALLOWED, "the live stream"),
     (GET, "/api/workspaces"): (ALLOWED, ""),
     (GET, "/api/host"): (ALLOWED, ""),

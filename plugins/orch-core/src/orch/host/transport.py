@@ -454,8 +454,9 @@ class Server:
         worker = uid == self.registry.worker_uid
         kind = self.listener.kind
         if kind == "runner":
-            # tier A: the runner runs as the host UID; only the runner unit's main PID gets the class (D-P2-25)
-            if not worker and uid == self.listener.host_uid and runner_ok:
+            # tier A: the runner runs as the host UID; tier B: as the pinned agent user (``listener.runner_uid``).
+            # Only the runner unit's main PID gets the class (D-P2-25)
+            if not worker and uid == self.listener.runner_uid and runner_ok:
                 return Peer(uid, "runner")
         elif kind == "worker":
             if worker and self.worker_identity is not None and self.worker_identity(credentials):

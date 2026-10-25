@@ -71,7 +71,9 @@ __all__ = [
     "RunStore",
     "RunnerHub",
     "main_pid",
+    "main_pid_system",
     "runner_identity",
+    "system_runner_identity",
 ]
 
 LOG = logging.getLogger(__name__)
@@ -144,6 +146,45 @@ def main_pid(uid: int, run: Callable[[list[str]], Any] | None = None, *, platfor
         return None
     pid = int(found.group(1)) if found else 0
     return pid if pid > 1 else None
+
+
+SYSTEMCTL = ("/usr/bin/systemctl", "/bin/systemctl")
+
+
+def main_pid_system(unit: str, run: Callable[[list[str]], Any] | None = None) -> int | None:
+    """The main PID of the SYSTEM unit ``unit`` (tier B: ``orch-runner@<person>.service``), asked of systemd over its
+    D-Bus interface, which any user may read (``systemctl show`` is that client; no privilege and no file of the
+    agent's is involved). ``None``: not running, unreadable or ambiguous (a denial)."""
+    import os
+
+    from .enable import _default_run
+
+    if not re.fullmatch(r"orch-runner@[A-Za-z0-9_-]{1,40}\.service", unit):
+        return None
+    binary = next((path for path in SYSTEMCTL if os.path.exists(path)), SYSTEMCTL[0])
+    try:
+        res = (run or _default_run)([binary, "show", "-p", "MainPID", "--value", "--", unit])
+    except OSError:
+        return None
+    found = re.fullmatch(r"\s*([0-9]+)\s*", res.stdout or "") if res.returncode == 0 else None
+    pid = int(found.group(1)) if found else 0
+    return pid if pid > 1 else None
+
+
+def system_runner_identity(
+    share: Any, pins: Any, credentials: Credentials, run: Callable[[list[str]], Any] | None = None
+) -> bool:
+    """Tier B: the connecting process is the main process of the agent's runner unit AND the root-owned pin still names
+    exactly this agent user for this host (read again at every connection: a replaced pin or user never matches)."""
+    if credentials.uid != share.uid:
+        return False
+    try:
+        if pins.share_for(share.host_uid) != share:
+            return False
+    except (OSError, ValueError):
+        return False
+    pid = main_pid_system(share.unit, run)
+    return pid is not None and pid == credentials.pid
 
 
 def runner_identity(credentials: Credentials) -> bool:
@@ -463,7 +504,7 @@ class RunnerHub:
     @property
     def term_socket(self) -> Path:
         return (
-            Path(self.host.run_dir)
+            Path(self.host.term_base)
             / "term"
             / str(self.uid if self.uid is not None else self.host.host_uid)
             / "term.sock"
@@ -555,7 +596,7 @@ class RunnerHub:
     # -- runner ops
     def expected_term_socket(self, uid: int) -> Path:
         """§12.6.1: the only term socket path the host accepts for a runner UID."""
-        return Path(self.host.run_dir) / "term" / str(uid) / "term.sock"
+        return Path(self.host.term_base) / "term" / str(uid) / "term.sock"
 
     async def hello(self, session: Session, args: dict[str, Any]) -> dict[str, Any]:
         if self.session is not None and self.session is not session and not self.session.closed:

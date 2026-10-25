@@ -244,3 +244,97 @@ def test_the_runner_unit_rechecks_sudo_as_root_at_every_start(root_machine, tmp_
     _sudo("/usr/bin/systemctl", "reset-failed", unit, check=False)
     assert _sudo("/usr/bin/systemctl", "restart", unit, check=False).returncode == 0
     assert _wait(active) and _wait(isolated)
+
+
+_PROBE = """#!/usr/bin/python3
+import json, socket, time
+
+def frame(value):
+    body = json.dumps(value, separators=(",", ":")).encode()
+    return len(body).to_bytes(4, "big") + body
+
+def read(sock):
+    size = int.from_bytes(sock.recv(4), "big")
+    data = b""
+    while len(data) < size:
+        data += sock.recv(size - len(data))
+    return json.loads(data)
+
+result = {}
+for _ in range(240):
+    try:
+        sock = socket.socket(socket.AF_UNIX)
+        sock.connect("/run/orch/%(uid)d/runner/host.sock")
+        sock.sendall(frame({"t": "hello", "proto": [1], "client": "probe", "caps": ["runner/1"], "ops": {}}))
+        welcome = read(sock)
+        result = {"class": welcome["peer"]["class"], "host_uid": welcome["host_uid"]}
+        break
+    except Exception as exc:
+        result = {"error": repr(exc)}
+        time.sleep(0.5)
+with open("/run/orch/agents/orch-agent-%(person)s/probe.json", "w") as out:
+    out.write(json.dumps(result))
+time.sleep(100000)
+"""
+
+_CLIENT = """
+import json, socket, sys
+sock = socket.socket(socket.AF_UNIX)
+try:
+    sock.connect(sys.argv[1])
+except OSError as exc:
+    print(json.dumps({"errno": exc.errno})); raise SystemExit
+body = json.dumps({"t": "hello", "proto": [1], "client": "x", "caps": []}).encode()
+sock.sendall(len(body).to_bytes(4, "big") + body)
+size = int.from_bytes(sock.recv(4), "big"); data = b""
+while len(data) < size:
+    data += sock.recv(size - len(data))
+print(data.decode())
+"""
+
+
+def test_the_host_admits_only_the_runner_unit_through_the_shared_run_directory(
+    root_machine, tmp_path, monkeypatch
+) -> None:
+    """L4 against real users: the host (the person) serves ``/run/orch/<uid>/runner/host.sock`` in the setgid run
+    directory root made. The runner unit's main process (here a probe standing in for the runner) is admitted as class
+    ``runner``; another process of the SAME agent user is ``peer.denied``; an unrelated user cannot even connect."""
+    import json
+    import stat
+
+    from tests.host.lifecycle_helpers import HostThread
+
+    person, release = root_machine
+    applied = _apply_as_root(person, release)
+    assert applied.returncode == 0, applied.stdout + applied.stderr + _ancestors(release)
+    uid, agent = os.getuid(), pwd.getpwnam(f"orch-agent-{person}")
+    probe = tmp_path / "probe"
+    probe.write_text(_PROBE % {"uid": uid, "person": person})
+    _sudo("install", "-o", "root", "-g", "root", "-m", "0755", str(probe), f"{release}/current/bin/orch-runner")
+    unit = f"orch-runner@{person}.service"
+    assert _sudo("/usr/bin/systemctl", "restart", unit, check=False).returncode == 0
+    run = Path("/run/orch") / str(uid)
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)  # the real service manager is asked below
+    with HostThread(state, run) as host:
+        assert host.host.share is not None and host.host.share.uid == agent.pw_uid
+        shown = {p: os.stat(p) for p in (run, run / "runner", run / "runner" / "host.sock", run / "control")}
+        assert stat.S_IMODE(shown[run].st_mode) == 0o2750 and shown[run].st_gid == agent.pw_gid
+        assert stat.S_IMODE(shown[run / "runner"].st_mode) == 0o2750
+        sock = shown[run / "runner" / "host.sock"]
+        assert stat.S_IMODE(sock.st_mode) == 0o660 and sock.st_uid == uid and sock.st_gid == agent.pw_gid
+        assert stat.S_IMODE(shown[run / "control"].st_mode) == 0o700
+        path = f"/run/orch/agents/orch-agent-{person}/probe.json"
+        assert _wait(lambda: _sudo("test", "-s", path, check=False).returncode == 0), "the runner never connected"
+        got = json.loads(_sudo("cat", path).stdout)
+        assert got == {"class": "runner", "host_uid": uid}, got
+        target = str(run / "runner" / "host.sock")
+        same_user = _sudo("-u", agent.pw_name, "/usr/bin/python3", "-I", "-c", _CLIENT, target)
+        assert "peer.denied" in same_user.stdout, same_user.stdout  # the agent user, but not the unit's main process
+        other = _sudo("-u", "nobody", "/usr/bin/python3", "-I", "-c", _CLIENT, target)
+        assert json.loads(other.stdout) == {"errno": 13}, other.stdout  # EACCES: not even a connection
+        control = _sudo(
+            "-u", agent.pw_name, "/usr/bin/python3", "-I", "-c", _CLIENT, str(run / "control" / "host.sock")
+        )
+        assert json.loads(control.stdout) == {"errno": 13}, control.stdout  # host.* stay person-only

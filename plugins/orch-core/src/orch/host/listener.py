@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Literal
 
 from ._unix import CheckedDirectory, UnsafePath, check_acl
+from .pins import AgentShare
 
 SocketKind = Literal["workspace", "control", "worker", "runner"]
 
@@ -29,6 +30,11 @@ def check_socket_path(path: Path) -> None:
         raise UnsafePath("Socket path must be absolute and at most 100 UTF-8 bytes")
 
 
+#: tier B (spec 13.3): ``<run>`` and every directory shared with the agent user are setgid ``2750`` of the person,
+#: group = the agent user's group; sockets inside are ``0660``. Control stays ``0700``, the person's group.
+SHARED_MODE = 0o2750
+
+
 def default_run_directory(host_uid: int) -> Path:
     if sys.platform == "darwin":
         return Path("/Users/Shared/orch/run") / str(host_uid)
@@ -40,14 +46,30 @@ def default_run_directory(host_uid: int) -> Path:
 class Listener:
     """Own the locked, pinned directory and bound socket until close()."""
 
-    def __init__(self, run: Path, name: str, *, host_uid: int, gid: int, kind: SocketKind = "workspace"):
+    def __init__(
+        self,
+        run: Path,
+        name: str,
+        *,
+        host_uid: int,
+        gid: int,
+        kind: SocketKind = "workspace",
+        share: AgentShare | None = None,
+    ):
         if kind not in {"workspace", "control", "worker", "runner"}:
             raise ValueError("Unknown socket kind")
         if (kind == "workspace" and not re.fullmatch("[0-9a-f]{32}", name)) or (kind != "workspace" and name != kind):
             raise ValueError("Invalid listener directory name")
         self.path = Path(run) / name / "host.sock"
         check_socket_path(self.path)
-        self.host_uid, self.kind = host_uid, kind
+        if share is not None and share.host_uid != host_uid:
+            raise ValueError("The agent share belongs to another host UID")
+        self.host_uid, self.kind, self.share = host_uid, kind, share
+        #: the only UID that may be the runner on a runner socket: the agent user in tier B, else the host UID
+        self.runner_uid = host_uid if share is None else share.uid
+        shared = share is not None and kind != "control"
+        if shared:
+            gid = share.gid  # type: ignore[union-attr]
         self.workspace_id = name if kind == "workspace" else None
         self.sock: socket.socket | None = None
         self.lock_fd: int | None = None
@@ -55,11 +77,23 @@ class Listener:
         self.directory: CheckedDirectory | None = None
         self.identity: tuple[int, int] | None = None
         try:
-            self.run = CheckedDirectory(Path(run), host_uid, mode=0o711)
-            self.directory = CheckedDirectory(
-                self.path.parent, host_uid, mode=0o700 if kind in ("control", "runner") else 0o750, gid=gid
-            )
+            if share is not None:  # made by root (tmpfiles), never by the host: it could not give the group away
+                self.run = CheckedDirectory(
+                    Path(run), host_uid, mode=SHARED_MODE, gid=share.gid, create=False, strict_acl=True
+                )
+            else:
+                self.run = CheckedDirectory(Path(run), host_uid, mode=0o711)
+            if shared:
+                self.directory = CheckedDirectory(
+                    self.path.parent, host_uid, mode=SHARED_MODE, gid=gid, strict_acl=True
+                )
+            else:
+                self.directory = CheckedDirectory(
+                    self.path.parent, host_uid, mode=0o700 if kind in ("control", "runner") else 0o750, gid=gid
+                )
             self.run.recheck()
+            if share is not None and self.directory.identities[: len(self.run.identities)] != self.run.identities:
+                raise UnsafePath("The socket directory is not below the checked run directory")
             self.lock_fd = os.open(
                 "lock",
                 os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK,
@@ -158,6 +192,8 @@ class Listener:
             or stat.S_IMODE(info.st_mode) != 0o660
         ):
             raise UnsafePath("Socket inode, owner, group or mode changed")
+        if self.share is not None:
+            _no_socket_acl(self.directory.fd)
 
     def close(self) -> None:
         if self.sock is not None:
@@ -177,3 +213,17 @@ class Listener:
         if self.run is not None:
             self.run.close()
             self.run = None
+
+
+def _no_socket_acl(directory_fd: int) -> None:
+    """Tier B: an ACL on the socket could open it to another user while the mode bits still read ``0660``."""
+    if sys.platform != "linux":
+        return
+    for name in ("system.posix_acl_access", "system.posix_acl_default"):
+        try:
+            os.getxattr(f"/proc/self/fd/{directory_fd}/host.sock", name, follow_symlinks=False)
+        except OSError as exc:
+            if exc.errno in {errno.ENODATA, errno.ENOTSUP, errno.EOPNOTSUPP}:
+                continue
+            raise UnsafePath("Cannot inspect the socket ACL") from exc
+        raise UnsafePath("The shared socket has an ACL")

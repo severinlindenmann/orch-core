@@ -13539,12 +13539,25 @@ has recorded the sudo/SSH verdict; a re-run whose verdict fails stops the runner
   for Linux tier B, D-P2-6's mode 0711 and per-workspace `orch-<ws>` groups (they stay the later per-workspace option).
   The ancestor rules of D-P2-6 apply; a root-owned `/run/orch` 0755 is the helper-made parent. **Invariant:** inside
   `<run>` only the shared sockets (and the directories leading to them) are group-accessible; every other file (pid
-  files, launch codes, state) is 0600 and every other directory 0700. L4 teaches the transport's ancestor and ACL
-  checks to accept the setgid bit and group `r-x` on `<run>` and nothing wider.
+  files, launch codes, state) is 0600 and every other directory 0700. **Built (L4):** the host finds the agent user from
+  the root-owned pin (class `agent`, `host_uid` = its UID; the name must be `orch-agent-<person>`, the group its own with
+  no other member), never from a flag. It then requires `<run>` to exist already (root made it; the host never creates
+  or repairs it) with owner the person, group the agent's, mode exactly 2750 and no ACL; the runner and workspace socket
+  directories are 2750 with the same group, the control directory stays 0700 in the person's group, sockets are 0660,
+  and every recheck repeats all of it (and rejects an ACL on a socket). A pin that names an agent but cannot be trusted
+  shares nothing (no runner or workspace socket) and leaves the host on tier A modes, which the 2750 directory refuses,
+  so such a host does not start. A pin of class `addon` is a pinned UID that names no workspace and is never the
+  runner.
 - Workspace sockets `<run>/<ws>/host.sock` and the runner socket `<run>/runner/host.sock`: owner the person, group the
   agent's (inherited), socket 0660. The control socket directory stays 0700: `host.*` stay person-only.
 - The runner connects as before (D-P2-24): peer UID = the registered runner UID, bound to the unit's `MainPID` read over
   systemd's D-Bus (readable by any user); the runner checks that its peer is the host UID.
+  **Built (L4):** the runner socket admits only the pinned agent UID, and only when the peer PID is the `MainPID` of
+  `orch-runner@<person>.service` (`systemctl show -p MainPID`, a D-Bus client; the pin is read again at every
+  connection). A second process of the same agent user is `peer.denied`. The runner reads its own pin, so it knows the
+  host is the person (`host_uid`) at `/run/orch/<person uid>/runner/host.sock`, and refuses to start for any `--run` but
+  its own `/run/orch/agents/<user>`. Until L9 moves the terminal socket, `runner.hello` names
+  `/run/orch/agents/<user>/term/<runner uid>/term.sock` and the host accepts only that path.
 - The terminal socket moves to `/run/orch/agents/orch-agent-<user>/term.sock` (agent-owned directory with the person's ACL,
   socket 0660). §12.6.1's checks apply with that path: the directory owned by the runner UID, no write for others
   except the person's ACL entry, peer UID and PID equal the runner's.

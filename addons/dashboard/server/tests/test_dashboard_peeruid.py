@@ -2,82 +2,109 @@
 
 import os
 import socket
+import struct
 import subprocess
 import sys
 
 import pytest
 
 from orch_dashboard import __main__ as launcher
-from orch_dashboard.front import LoopbackPeerChecked, _hex_addr, tcp_owner_uid
-
-HEADER = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnmt   uid  timeout inode\n"
+from orch_dashboard.front import LoopbackPeerChecked, tcp_owner_uid
 
 
-def row(local, remote, uid):
-    return f"   0: {local} {remote} 01 00000000:00000000 00:00000000 00000000  {uid}        0 12345 1 0 100 4 0\n"
+def diag_reply(uid, state=1, family=socket.AF_INET, seq=1, kind=20):
+    msg = struct.pack("=BBBB", family, state, 0, 0) + bytes(48) + struct.pack("=5I", 0, 0, 0, uid, 99)
+    return struct.pack("=IHHII", 16 + len(msg), kind, 0, seq, 0) + msg
 
 
-def listener_and_client(proc_tcp, uid_in_table, platform="linux", person=1000, rows=None):
-    """A real accepted loopback pair; the fake table lists the client's socket with ``uid_in_table``."""
-    srv = LoopbackPeerChecked(person, platform=platform, proc_tcp=str(proc_tcp))
+class FakeNetlink:
+    """Stands for the sock_diag socket: records the request, answers with ``reply`` (or raises it)."""
+
+    def __init__(self, reply):
+        self.reply, self.sent, self.closed = reply, [], False
+
+    def send(self, data):
+        self.sent.append(data)
+
+    def recv(self, size):
+        if isinstance(self.reply, Exception):
+            raise self.reply
+        return self.reply
+
+    def close(self):
+        self.closed = True
+
+
+def pair(reply, platform="linux", person=1000):
+    """A real accepted loopback pair whose peer lookup is answered by a fake sock_diag."""
+    nl = FakeNetlink(reply)
+    srv = LoopbackPeerChecked(person, platform=platform, netlink=lambda: nl)
     srv.bind(("127.0.0.1", 0))
     srv.listen(1)
-    client = socket.create_connection(srv.getsockname())
-    cport, sport = client.getsockname()[1], srv.getsockname()[1]
-    if rows is None:
-        rows = [row(_hex_addr("127.0.0.1", cport), _hex_addr("127.0.0.1", sport), uid_in_table)]
-    proc_tcp.write_text(HEADER + "".join(rows))
-    return srv, client
+    return srv, socket.create_connection(srv.getsockname()), nl
 
 
-def test_peer_with_the_person_uid_is_accepted(tmp_path):
-    srv, client = listener_and_client(tmp_path / "tcp", 1000)
+def test_peer_with_the_person_uid_is_accepted():
+    srv, client, nl = pair(diag_reply(1000))
     conn, _ = srv.accept()
+    assert nl.closed
+    # The request is an exact 4-tuple lookup (no dump flag), TCP over IPv4, established sockets only.
+    length, kind, flags, seq, _ = struct.unpack_from("=IHHII", nl.sent[0])
+    assert (length, kind, flags) == (len(nl.sent[0]), 20, 1)
+    family, proto, _ext, _pad, states = struct.unpack_from("=BBBBI", nl.sent[0], 16)
+    assert (family, proto, states) == (socket.AF_INET, socket.IPPROTO_TCP, 1 << 1)
+    sport, dport = struct.unpack_from("!HH", nl.sent[0], 24)
+    assert (sport, dport) == (client.getsockname()[1], srv.getsockname()[1])
     conn.close(), client.close(), srv.close()
 
 
-def test_peer_with_another_uid_is_dropped(tmp_path):
-    srv, client = listener_and_client(tmp_path / "tcp", 1234)
+@pytest.mark.parametrize(
+    "reply",
+    [
+        diag_reply(1234),  # another user
+        diag_reply(0, state=6),  # TIME_WAIT entries read uid 0
+        diag_reply(1000, state=6),
+        diag_reply(1000, family=socket.AF_INET6),
+        diag_reply(1000, seq=7),
+        diag_reply(1000, kind=2),  # NLMSG_ERROR type
+        diag_reply(1000)[:60],  # truncated
+        struct.pack("=IHHII", 36, 2, 0, 1, 0) + bytes(20),  # a real error reply: ENOENT / no tcp_diag
+        b"",
+        OSError("netlink refused"),
+    ],
+)
+def test_everything_but_an_established_socket_of_the_person_is_dropped(reply):
+    srv, client, nl = pair(reply)
     with pytest.raises(ConnectionAbortedError):
         srv.accept()
-    assert client.recv(1) == b""  # the server closed it
+    assert nl.closed and client.recv(1) == b""
     client.close(), srv.close()
 
 
-@pytest.mark.parametrize("kind", ["missing_row", "no_file", "garbage"])
-def test_unreadable_peer_uid_fails_closed(tmp_path, kind):
-    table = tmp_path / "tcp"
-    rows = [row("0100007F:0001", "0100007F:0002", 1000)] if kind == "missing_row" else None
-    srv, client = listener_and_client(table, 1000, rows=rows or [])
-    if kind == "no_file":
-        table.unlink()
-    if kind == "garbage":
-        table.write_text("not a table\n")
+def test_a_root_person_does_not_accept_a_time_wait_row_of_uid_0():
+    srv, client, _ = pair(diag_reply(0, state=6), person=0)
     with pytest.raises(ConnectionAbortedError):
         srv.accept()
     client.close(), srv.close()
 
 
-def test_only_the_matching_row_counts(tmp_path):
-    table = tmp_path / "tcp"
-    srv = LoopbackPeerChecked(1000, platform="linux", proc_tcp=str(table))
+def test_a_missing_sock_diag_fails_closed():
+    def no_netlink():
+        raise OSError("protocol not supported")
+
+    srv = LoopbackPeerChecked(1000, platform="linux", netlink=no_netlink)
     srv.bind(("127.0.0.1", 0))
     srv.listen(1)
     client = socket.create_connection(srv.getsockname())
-    conn, _ = socket.socket.accept(srv)
-    c, s = client.getsockname()[1], srv.getsockname()[1]
-    table.write_text(
-        HEADER
-        + row(_hex_addr("127.0.0.1", s), _hex_addr("127.0.0.1", c), 1000)  # the server's own end: same pair, swapped
-        + row(_hex_addr("127.0.0.1", c), _hex_addr("127.0.0.1", s), 4321)
-    )
-    assert tcp_owner_uid(conn, str(table)) == 4321
-    conn.close(), client.close(), srv.close()
+    with pytest.raises(ConnectionAbortedError):
+        srv.accept()
+    client.close(), srv.close()
 
 
-def test_macos_does_not_drop_peers(tmp_path):
-    srv, client = listener_and_client(tmp_path / "tcp", 1234, platform="darwin")
+def test_macos_does_not_drop_peers():
+    srv, client, nl = pair(diag_reply(1234), platform="darwin")
     conn, _ = srv.accept()
+    assert not nl.sent
     conn.close(), client.close(), srv.close()
 
 

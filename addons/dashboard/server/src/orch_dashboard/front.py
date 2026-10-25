@@ -11,6 +11,7 @@ A Unix socket only the front (Caddy, its own system user) may use, in root's dir
    passes through here, so a local process cannot claim an address, a kind of session or a listener by sending it."""
 
 import socket
+import struct
 import sys
 
 from .auth import client_address
@@ -19,7 +20,18 @@ from .hostlink import peer_uid
 from .policy import REMOTE
 
 CLIENT_HEADER = b"x-orch-client"
-PROC_TCP = "/proc/net/tcp"  # IPv4 sockets with their owner UID; the loopback listener is AF_INET only
+NETLINK_SOCK_DIAG = 4  # NETLINK_INET_DIAG
+SOCK_DIAG_BY_FAMILY = 20
+NLMSG_ERROR = 2
+NLM_F_REQUEST = 1
+TCP_ESTABLISHED = 1
+_NLHDR = struct.Struct("=IHHII")  # len, type, flags, seq, pid
+_DIAG_REQ = struct.Struct("=BBBBI")  # family, protocol, ext, pad, states
+_DIAG_ID = struct.Struct("!HH4s12s4s12sI2I")  # sport, dport, src, dst, if, cookie (src/dst: IPv4 + 12 pad bytes)
+_DIAG_MSG = struct.Struct(
+    "=BBBB"
+)  # family, state, timer, retrans (then the id, then expires, rqueue, wqueue, uid, inode)
+_UID_AT = _NLHDR.size + _DIAG_MSG.size + _DIAG_ID.size + 12
 
 
 class PeerChecked(socket.socket):
@@ -47,45 +59,60 @@ class PeerChecked(socket.socket):
         return conn, addr
 
 
-def tcp_owner_uid(conn, proc_tcp=PROC_TCP) -> int:
+def open_netlink():
+    sock = socket.socket(socket.AF_NETLINK, socket.SOCK_DGRAM, NETLINK_SOCK_DIAG)
+    sock.settimeout(1.0)
+    return sock
+
+
+def tcp_owner_uid(conn, netlink=open_netlink) -> int:
     """The UID that owns the other end of an accepted loopback TCP connection (Linux, L8 of #1198 H1).
 
-    `SO_PEERCRED` exists only for Unix sockets. For TCP the kernel lists every socket with its owner UID in
-    `/proc/net/tcp`: the row whose local address is our peer address and whose remote address is our local address is
-    the client's socket, and its `uid` column is the user that created it. (Both ends are on 127.0.0.1, so the pair of
-    ports is unique among live connections.) Raises OSError if the row is not found: the caller fails closed. Limit: the
-    owner is the socket's creator, so a client that passes the descriptor to another UID's process is judged as the
-    creator; only the person's own processes can hand one over, and they could connect themselves."""
+    `SO_PEERCRED` exists only for Unix sockets. For TCP we ask the kernel's sock_diag (NETLINK_INET_DIAG) for the
+    client's socket by its exact 4-tuple (our peer address as source, our address as destination): one hash lookup,
+    never a dump of all sockets (a table an agent can fill up would make every accept slow). The reply carries the
+    socket's owner `idiag_uid` and its state. Only an ESTABLISHED socket counts: orphaned and TIME_WAIT entries are
+    reported with uid 0, which a root person would take for themselves. Any error (no tcp_diag in the kernel, a short
+    or odd reply, no such socket) raises OSError, and the caller drops the connection. Stdlib only. Limit: the owner
+    is the socket's creator, so a client that passes the descriptor to another UID's process is judged as the creator;
+    only the person's own processes can hand one over, and they could connect themselves."""
     (lhost, lport), (rhost, rport) = conn.getsockname()[:2], conn.getpeername()[:2]
-    want_local, want_remote = _hex_addr(rhost, rport), _hex_addr(lhost, lport)
-    with open(proc_tcp) as table:
-        next(table, None)  # header
-        for line in table:
-            fields = line.split()
-            if len(fields) > 7 and fields[1] == want_local and fields[2] == want_remote:
-                return int(fields[7])
-    raise OSError("no socket entry for the peer")
-
-
-def _hex_addr(host, port) -> str:
-    """`/proc/net/tcp` writes an IPv4 address as the host-order hex of its four bytes, then the port in hex."""
-    packed = socket.inet_aton(host)
-    return f"{int.from_bytes(packed, sys.byteorder):08X}:{port:04X}"
+    seq = 1
+    ident = _DIAG_ID.pack(
+        rport, lport, socket.inet_aton(rhost), bytes(12), socket.inet_aton(lhost), bytes(12), 0, 0xFFFFFFFF, 0xFFFFFFFF
+    )
+    body = _DIAG_REQ.pack(socket.AF_INET, socket.IPPROTO_TCP, 0, 0, 1 << TCP_ESTABLISHED) + ident
+    request = _NLHDR.pack(_NLHDR.size + len(body), SOCK_DIAG_BY_FAMILY, NLM_F_REQUEST, seq, 0) + body
+    sock = netlink()
+    try:
+        sock.send(request)
+        reply = sock.recv(4096)
+    finally:
+        sock.close()
+    if len(reply) < _UID_AT + 4:  # short, or an NLMSG_ERROR (which is 36 bytes)
+        raise OSError("sock_diag gave no socket entry for the peer")
+    length, kind, _flags, rseq, _pid = _NLHDR.unpack_from(reply)
+    if kind != SOCK_DIAG_BY_FAMILY or rseq != seq or length < _UID_AT + 4 or length > len(reply):
+        raise OSError("sock_diag gave an unexpected reply")
+    family, state, _timer, _retrans = _DIAG_MSG.unpack_from(reply, _NLHDR.size)
+    if family != socket.AF_INET or state != TCP_ESTABLISHED:
+        raise OSError("the peer socket is not an established one")
+    return struct.unpack_from("=I", reply, _UID_AT)[0]
 
 
 class LoopbackPeerChecked(PeerChecked):
     """The dashboard's loopback TCP listener: on Linux every accepted connection must come from the person's UID, so
     an agent user (`orch-agent-*`) or any other local user cannot reach even the login page. An SSH tunnel's forwarding
     runs as the person and passes. Elsewhere (macOS has no way to ask the kernel who owns a TCP peer) nothing is
-    dropped and the bearer stays the only gate. ``platform`` and ``proc_tcp`` are for tests."""
+    dropped and the bearer stays the only gate. ``platform`` and ``netlink`` are for tests."""
 
-    def __init__(self, person_uid: int, platform=None, proc_tcp=PROC_TCP):
+    def __init__(self, person_uid: int, platform=None, netlink=open_netlink):
         super().__init__(person_uid, socket.AF_INET)
         self.enforced = (platform or sys.platform).startswith("linux")
-        self.proc_tcp = proc_tcp
+        self.netlink = netlink
 
     def peer_allowed(self, conn) -> bool:
-        return not self.enforced or tcp_owner_uid(conn, self.proc_tcp) == self.front_uid
+        return not self.enforced or tcp_owner_uid(conn, self.netlink) == self.front_uid
 
 
 class Front:

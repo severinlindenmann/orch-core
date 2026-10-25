@@ -1490,3 +1490,19 @@ def test_1237_a_plain_grant_of_a_name_with_no_package_is_refused_by_the_host(hum
     assert res["ok"] is False and res["error"]["code"] == "not_found", (
         res
     )  # nothing is prepared for a name with no package
+
+
+def test_1237_an_install_off_says_it_stays_off_and_an_enable_has_no_capability_list():
+    c = build(_addon(off=True))
+    assert c["headline"] == "Install Terminals 0.1.0. It stays Off: no agent can use it until you turn it on."
+    rows = {r["field"]: r["after"] for r in c["fields_changed"]}
+    assert rows["what it may do once On"] == "open terminals on this computer, as you" and "it says it will" not in rows
+    full = build(_addon(runtime={"kind": "python-requirements", "lock": "r.txt", "packages": 2}, off=True))
+    assert full["headline"].startswith("Install Terminals 0.1.0. It stays Off")
+    assert {"starts": "Off"}.items() <= {r["field"]: r["after"] for r in full["fields_changed"]}.items()
+    assert build(_addon())["headline"].startswith("Turn on Terminals:")  # no "off": the old words
+    enabled = {"type": "addon.enabled", "name": "terminals", "version": "0.1.0", "package_sha256": "sha256:" + "aa" * 32}
+    on = build({"op": "addon.enable", "events": [enabled], "material": {"kind": "payload", "ticket": None}})
+    assert on["headline"].startswith("Turn on Terminals 0.1.0 (package aaaaaaaaaaaa)")
+    assert on["headline"].endswith("It gets the permissions you approved when you installed it.")
+    assert "it says it will" not in {r["field"] for r in on["fields_changed"]}

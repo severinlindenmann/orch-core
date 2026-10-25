@@ -573,7 +573,9 @@ class HumanOps:
 
         op = record["op"]
         ws = store.state.workspace
-        if op == "addon.grant":
+        if op in ("addon.grant", "addon.enable"):
+            if op == "addon.grant" and events[0].get("off") is True:
+                return  # 1237: signed Off: nothing runs; the check is made again at addon.enable
             if (why := settings_needs.grant_refusal(ws.settings, str(events[0].get("name")))) is not None:
                 raise HostError("invalid.input", why)
         elif op == "settings.set":

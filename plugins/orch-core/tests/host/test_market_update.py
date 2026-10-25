@@ -244,3 +244,50 @@ def test_an_older_index_than_the_stage_saw_is_refused_at_submit(served, human, n
     path.write_bytes(json.dumps({**doc, "index_version": 99}).encode())
     path.chmod(0o600)
     assert err(human.submit_res(prepared["request"]["id"], signed.events)) == "market.staged_changed"
+
+
+# ------------------------------------------------------------------------------------------------ 1237: Off / On
+def _is_on(served):
+    return ok(person(served, "market.installed"))["data"]["addons"][0]["state"]
+
+
+def test_1237_an_update_of_an_on_addon_stays_on_and_an_update_while_off_stays_off(served, human, net, v1):
+    assert _is_on(served) == "enabled"  # the fixture turned it on
+    publish(served, net, "1.0.1")
+    st = ok(stage(served, update=True))["data"]
+    p = human.prepare("addon.grant", {"name": "standup", "staged": st["stage"]})
+    assert "off" not in p["events"][0]  # an update while On is not a second install
+    ok(human.submit_res(p["request"]["id"], human.sign(p).events))
+    assert _is_on(served) == "enabled"
+    d = human.prepare("addon.disable", {"name": "standup"})
+    ok(human.submit_res(d["request"]["id"], human.sign(d).events))
+    publish(served, net, "1.0.2")
+    st = ok(stage(served, update=True))["data"]
+    p = human.prepare("addon.grant", {"name": "standup", "staged": st["stage"]})
+    assert p["events"][0]["off"] is True  # an update while Off stays Off
+    ok(human.submit_res(p["request"]["id"], human.sign(p).events))
+    assert _is_on(served) == "disabled"
+    # the old signed pair no longer matches: enable names the version and digest of the CURRENT grant only
+    on = human.prepare("addon.enable", {"name": "standup"})
+    assert (on["events"][0]["version"], on["events"][0]["package_sha256"]) == ("1.0.2", st["package_sha256"])
+
+
+def test_1237_enable_is_refused_when_on_purged_or_unknown_and_nothing_is_signed(served, human, net, v1):
+    assert err(human.prepare_res("addon.enable", {"name": "standup"})) == "invalid.input"  # already On
+    assert err(human.prepare_res("addon.enable", {"name": "ghost"})) == "not_found"
+    for op in ("addon.disable", "addon.purge"):
+        d = human.prepare(op, {"name": "standup"})
+        ok(human.submit_res(d["request"]["id"], human.sign(d).events))
+    assert err(human.prepare_res("addon.enable", {"name": "standup"})) == "invalid.input"  # purged: install again
+
+
+def test_1237_enable_checks_the_settings_the_off_install_skipped(served, human, net, monkeypatch):
+    from orch.addons import settings_needs as needs
+
+    monkeypatch.setitem(needs.NEEDS_SETTINGS, "standup", "publish")
+    monkeypatch.setitem(needs.TITLES, "standup", "Standup")
+    net.add("standup", "1.0.0")
+    add_market(served, net)
+    do_install(served, human, on=False)  # an Off install needs no settings yet
+    assert _is_on(served) == "disabled"
+    assert err(human.prepare_res("addon.enable", {"name": "standup"})) == "invalid.input"  # AE4 at enable

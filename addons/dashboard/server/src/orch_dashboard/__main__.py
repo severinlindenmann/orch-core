@@ -30,7 +30,7 @@ import uvicorn
 
 from .app import create_app
 from .auth import CODE_TTL, SETUP_CODE_TTL, Auth
-from .front import Front, PeerChecked
+from .front import Front, LoopbackPeerChecked, PeerChecked
 from .gateway import Gateway, RunDirectoryError, run_dir, state_dir
 from .hostlink import check_uid, encode, peer_uid, receive
 from .passkey_routes import ENROLL_TTL
@@ -335,9 +335,9 @@ def close_front(front, path):
 
 def server_config(app, front=False):
     """The one place that builds a uvicorn config, for the loopback server and the front alike. Both run on asyncio's
-    selector loop (`loop="asyncio"`, never uvloop): the front's `PeerChecked.accept` must run for every connection, and
-    `FrontServer` refuses to start on any other loop. The front adds its own limits (the front's Caddy already holds
-    unauthenticated connections to 32; these bound what gets past it)."""
+    selector loop (`loop="asyncio"`, never uvloop): the `PeerChecked.accept` of the loopback listener and of the front
+    must run for every connection, and `FrontServer` (both servers) refuses to start on any other loop. The front adds
+    its own limits (Caddy already holds unauthenticated connections to 32; these bound what gets past it)."""
     extra = (
         {
             "lifespan": "off",  # the loopback server owns the app's lifespan
@@ -398,8 +398,9 @@ def _plain(value):
 
 def bind_listener(wanted):
     """The loopback listener. SO_REUSEADDR so a restart on a fixed port is not refused while the old connections sit
-    in TIME_WAIT (on Linux it never lets anyone take a port that is still listening)."""
-    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    in TIME_WAIT (on Linux it never lets anyone take a port that is still listening). On Linux it drops every peer
+    whose socket belongs to another UID than ours (`LoopbackPeerChecked`, L8): an agent user cannot connect."""
+    listener = LoopbackPeerChecked(os.geteuid())
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
         listener.bind(("127.0.0.1", wanted))
@@ -473,7 +474,7 @@ def _serve(directory, lock_fd=None, port=None):
         listener.close()
         close_front(front, front_path)
         raise
-    server = uvicorn.Server(server_config(app))
+    server = FrontServer(server_config(app))  # refuses a non-selector loop: the listener's peer check needs it
     front_server = front_thread = None
     if front is not None:
         front_server = FrontServer(server_config(Front(app), front=True))

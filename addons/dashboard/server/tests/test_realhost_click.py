@@ -276,6 +276,7 @@ def test_a_signer_that_dies_is_restarted_and_its_open_approvals_are_gone(world, 
 
 def test_the_signer_holds_no_inherited_descriptors_of_ours(world, click):
     """The signer child has the channel only: no listening socket, no host connection of this process."""
+    assert click.prepare(approve(world, "three")).status_code == 200  # the signer starts lazily: start it
     pid = world.gateway.click.client.proc.pid
     out = subprocess.run(["lsof", "-p", str(pid), "-Fn", "-Ft"], capture_output=True, text=True).stdout
     assert str(PORT) not in out

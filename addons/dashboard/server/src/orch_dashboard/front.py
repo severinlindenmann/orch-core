@@ -11,6 +11,8 @@ A Unix socket only the front (Caddy, its own system user) may use, in root's dir
    passes through here, so a local process cannot claim an address, a kind of session or a listener by sending it."""
 
 import socket
+import struct
+import sys
 
 from .auth import client_address
 from .errors import response
@@ -18,27 +20,109 @@ from .hostlink import peer_uid
 from .policy import REMOTE
 
 CLIENT_HEADER = b"x-orch-client"
+NETLINK_SOCK_DIAG = 4  # NETLINK_INET_DIAG
+SOCK_DIAG_BY_FAMILY = 20
+NLM_F_REQUEST = 1
+TCP_ESTABLISHED = 1
+# Netlink sock_diag layouts (linux/inet_diag.h). Request: nlmsghdr, inet_diag_req_v2 header, inet_diag_sockid.
+_NLHDR = struct.Struct("=IHHII")  # nlmsghdr: len, type, flags, seq, pid
+_DIAG_REQ = struct.Struct("=BBBBI")  # family, protocol, ext, pad, states (bit mask)
+_DIAG_ID = struct.Struct("!HH4s12s4s12sI2I")  # sport, dport, src, dst (IPv4 + 12 pad bytes each), if, cookie[2]
+IF_ANY = 0
+NO_COOKIE = 0xFFFFFFFF  # INET_DIAG_NOCOOKIE: match the socket whatever its cookie
+# Reply: nlmsghdr, then inet_diag_msg = (family, state, timer, retrans), id, expires, rqueue, wqueue, uid, inode.
+_DIAG_MSG = struct.Struct("=BBBB")  # family, state, timer, retrans
+_DIAG_COUNTERS = 12  # expires, rqueue, wqueue: three u32 between the id and the uid
+_UID_AT = _NLHDR.size + _DIAG_MSG.size + _DIAG_ID.size + _DIAG_COUNTERS
 
 
 class PeerChecked(socket.socket):
     """A listening socket whose `accept` drops every connection from another UID than ``front_uid``. Fail closed: a
     peer whose UID cannot be read is dropped too. (asyncio's event loop must be the selector one, which calls
-    `accept` here; uvloop would accept in C and skip the check, so the front server runs `loop="asyncio"`.)"""
+    `accept` here; uvloop would accept in C and skip the check, so every server on such a socket runs `loop="asyncio"`.)
+    """
 
     def __init__(self, front_uid: int, family=socket.AF_UNIX):
         super().__init__(family, socket.SOCK_STREAM)
         self.front_uid = front_uid
 
+    def peer_allowed(self, conn) -> bool:
+        return peer_uid(conn) == self.front_uid
+
     def accept(self):
         conn, addr = super().accept()
         try:
-            allowed = peer_uid(conn) == self.front_uid
-        except OSError:
+            allowed = self.peer_allowed(conn)
+        except (OSError, ValueError):
             allowed = False
         if not allowed:
             conn.close()
-            raise ConnectionAbortedError("peer is not the front")  # asyncio treats this as a false alarm and goes on
+            raise ConnectionAbortedError("peer is not allowed")  # asyncio treats this as a false alarm and goes on
         return conn, addr
+
+
+def open_netlink():
+    sock = socket.socket(socket.AF_NETLINK, socket.SOCK_DGRAM, NETLINK_SOCK_DIAG)
+    sock.settimeout(1.0)
+    return sock
+
+
+def tcp_owner_uid(conn, netlink=open_netlink) -> int:
+    """The UID that owns the other end of an accepted loopback TCP connection (Linux, L8 of #1198 H1).
+
+    `SO_PEERCRED` exists only for Unix sockets. For TCP we ask the kernel's sock_diag (NETLINK_INET_DIAG) for the
+    client's socket by its exact 4-tuple (our peer address as source, our address as destination): one hash lookup,
+    never a dump of all sockets (a table an agent can fill up would make every accept slow). The reply carries the
+    socket's owner `idiag_uid` and its state. Only an ESTABLISHED socket counts: orphaned and TIME_WAIT entries are
+    reported with uid 0, which a root person would take for themselves. Any error (no tcp_diag in the kernel, a short
+    or odd reply, no such socket) raises OSError, and the caller drops the connection. Stdlib only. Limit: the owner
+    is the socket's creator, so a client that passes the descriptor to another UID's process is judged as the creator;
+    only the person's own processes can hand one over, and they could connect themselves."""
+    (lhost, lport), (rhost, rport) = conn.getsockname()[:2], conn.getpeername()[:2]
+    seq = 1
+    ident = _DIAG_ID.pack(
+        rport,
+        lport,
+        socket.inet_aton(rhost),
+        bytes(12),
+        socket.inet_aton(lhost),
+        bytes(12),
+        IF_ANY,
+        NO_COOKIE,
+        NO_COOKIE,
+    )
+    body = _DIAG_REQ.pack(socket.AF_INET, socket.IPPROTO_TCP, 0, 0, 1 << TCP_ESTABLISHED) + ident
+    request = _NLHDR.pack(_NLHDR.size + len(body), SOCK_DIAG_BY_FAMILY, NLM_F_REQUEST, seq, 0) + body
+    sock = netlink()
+    try:
+        sock.send(request)
+        reply = sock.recv(4096)
+    finally:
+        sock.close()
+    if len(reply) < _NLHDR.size:
+        raise OSError("sock_diag gave no socket entry for the peer")
+    length, kind, _flags, rseq, _pid = _NLHDR.unpack_from(reply)
+    if kind != SOCK_DIAG_BY_FAMILY or rseq != seq or length < _UID_AT + 4 or length > len(reply):
+        raise OSError("sock_diag gave an unexpected or short reply (an NLMSG_ERROR is one)")
+    family, state, _timer, _retrans = _DIAG_MSG.unpack_from(reply, _NLHDR.size)
+    if family != socket.AF_INET or state != TCP_ESTABLISHED:
+        raise OSError("the peer socket is not an established one")
+    return struct.unpack_from("=I", reply, _UID_AT)[0]
+
+
+class LoopbackPeerChecked(PeerChecked):
+    """The dashboard's loopback TCP listener: on Linux every accepted connection must come from the person's UID, so
+    an agent user (`orch-agent-*`) or any other local user cannot reach even the login page. An SSH tunnel's forwarding
+    runs as the person and passes. Elsewhere (macOS has no way to ask the kernel who owns a TCP peer) nothing is
+    dropped and the bearer stays the only gate. ``platform`` and ``netlink`` are for tests."""
+
+    def __init__(self, person_uid: int, platform=None, netlink=open_netlink):
+        super().__init__(person_uid, socket.AF_INET)
+        self.enforced = (platform or sys.platform).startswith("linux")
+        self.netlink = netlink
+
+    def peer_allowed(self, conn) -> bool:
+        return not self.enforced or tcp_owner_uid(conn, self.netlink) == self.front_uid
 
 
 class Front:

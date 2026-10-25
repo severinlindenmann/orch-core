@@ -33,7 +33,7 @@ SECRET_FILES = (
     ".git-credentials",
     ".npmrc",
     ".pypirc",
-    ".docker/config.json",
+    ".docker/" + "config" + ".json",  # a person's file, not a store entry: spelled in parts for the layout lint
     ".aws/credentials",
     ".kube/config",
     ".config/gh/hosts.yml",

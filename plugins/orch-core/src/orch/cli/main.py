@@ -285,6 +285,10 @@ def main(
         from orch.cli.remote import main as remote_main
 
         return remote_main(args[1:], env=env, out=out, err=err)
+    if args[:1] == ["share"]:  # the person's ACLs for the agent user (H1 L5): their own terminal, not a registry op
+        from orch.cli.share import main as share_main
+
+        return share_main(args[1:], env=env, out=out, err=err)
     if args[:1] == ["setup"]:  # one command to a working workspace and its onboarding page (B9): not a registry op
         from orch.setup.flow import main as setup_main
 

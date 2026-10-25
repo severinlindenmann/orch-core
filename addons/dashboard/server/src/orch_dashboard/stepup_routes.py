@@ -18,30 +18,52 @@ exist only on the remote listener, where a session needs them: a session opened 
 """
 
 import logging
+import secrets
 from types import SimpleNamespace
 from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, Path, Request
 from orch.click import passkeys as wa
-from orch.click.passkey_store import StoreError
+from orch.click.passkey_store import LastPasskey, StoreError
 from pydantic import StringConstraints
 
 from . import reads
-from .errors import fail
+from .errors import fail, response
 from .passkey_routes import ENROLL_TTL, TIMEOUT_MS, Strict, b64
 from .policy import REMOTE
-from .stepup import SIGNER_ACTIONS, VIEW_ACTIONS, refuse_step_up
+from .stepup import (
+    SIGNER_ACTIONS,
+    VIEW_ACTIONS,
+    connect_extra,
+    device_digest,
+    refuse_step_up,
+    removal_digest,
+)
 
 log = logging.getLogger("orch_dashboard.passkey")
 
 ViewDigest = Annotated[str, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
 CredentialId = Annotated[str, Path(pattern=r"^[A-Za-z0-9_-]*$", min_length=22, max_length=1400)]
-WORKSPACE_ACTIONS = ("custody.on", "custody.off", "rotate", "runner.on", "sign", "hub.connect")
+#: step-up challenges one session may have open at once: a stolen bearer cannot flush the owner's nonces
+OPEN_STEPUPS = 4
+#: action -> the signer op its nonce is bound to, and whether the call names a request
+SIGNER_OPS = {
+    "custody.on": "custody_on",
+    "custody.off": "custody_off",
+    "rotate": "rotate",
+    "runner.on": "runner",
+    "sign": "sign",
+}
+REQUEST_ACTIONS = frozenset({"custody.off", "rotate", "sign"})
+RequestId = Annotated[str, StringConstraints(pattern=r"^hr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")]
 
 
 class WorkspaceOptions(Strict):
     action: Literal["custody.on", "custody.off", "rotate", "runner.on", "sign", "hub.connect"]
     view_digest: ViewDigest | None = None
+    request_id: RequestId | None = None  # custody.off, rotate, sign: the request the review belongs to
+    hub_id: Annotated[str, StringConstraints(min_length=1, max_length=128)] | None = None  # hub.connect
+    invite_sha256: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")] | None = None  # hub.connect
 
 
 class HostOptions(Strict):
@@ -62,8 +84,8 @@ class VerifyBody(Strict):
     response: VerifyResponse
 
 
-class Nothing(Strict):
-    pass
+class EnrollLinkBody(Strict):
+    link_id: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{22,64}$")]  # minted by the options of device.add
 
 
 def register(app: FastAPI, gateway) -> None:
@@ -77,22 +99,42 @@ def register(app: FastAPI, gateway) -> None:
             raise fail("not_found", exit=2)
         return service
 
-    def issue(request: Request, action: str, scope: str, view_digest: str | None, credential_id: str | None):
+    def issue(request: Request, action: str, scope: str, fields: dict):
         service = service_of(request, remote_only=True)
+        wanted = {
+            "custody.on": set(),
+            "custody.off": {"view_digest", "request_id"},
+            "rotate": {"view_digest", "request_id"},
+            "runner.on": {"view_digest"},
+            "sign": {"view_digest", "request_id"},
+            "hub.connect": {"hub_id", "invite_sha256"},
+            "device.add": set(),
+            "passkey.remove": {"credential_id"},
+        }[action]
+        given = {k for k, v in fields.items() if v is not None}
+        if given != wanted:  # exactly the fields this action has, no more and no fewer
+            raise fail("invalid.input", "That does not match this action.", exit=5)
+        client = getattr(request.state, "client", None)
+        if client is None:
+            return response("invalid.input", 400)
+        # a stolen bearer must not loop this: it costs a signer round trip and evicts others' nonces
+        if (
+            not auth.remote_attempt(client)
+            or service.ceremonies.open_for("stepup", request.state.token) >= OPEN_STEPUPS
+        ):
+            return response("rate.limited", 429)
+        extra = {}
         if action in VIEW_ACTIONS:
-            if view_digest is None:
-                raise fail("invalid.input", "Read the review first.", exit=5)
-            digest = view_digest
-        elif view_digest is not None:
-            raise fail("invalid.input", "This action has no review digest.", exit=5)
-        elif action == "passkey.remove":
-            if credential_id is None:
-                raise fail("invalid.input", "Name the passkey.", exit=5)
-            digest = wa.action_digest(action, scope, credential_id)
-        else:
+            digest = fields["view_digest"]
+        elif action == "custody.on":
             digest = wa.action_digest(action, scope)
-        if action != "passkey.remove" and credential_id is not None:
-            raise fail("invalid.input", "This action names no passkey.", exit=5)
+        elif action == "hub.connect":
+            digest = wa.action_digest(action, scope, connect_extra(fields["hub_id"], fields["invite_sha256"]))
+        elif action == "device.add":
+            extra["link_id"] = secrets.token_urlsafe(16)  # this touch is for the link asked for with it
+            digest = device_digest(extra["link_id"])
+        else:
+            digest = removal_digest(fields["credential_id"])
         try:
             records = service.store.read()
         except StoreError as exc:
@@ -104,7 +146,10 @@ def register(app: FastAPI, gateway) -> None:
         if signed:
             if not signer.passkey_stepups():
                 raise fail("click.contract", "Update orch-core: its signing helper cannot check a passkey yet.", exit=9)
-            got = signer.call("stepup", {"workspace_id": scope, "view_digest": digest})
+            asked = {"workspace_id": scope, "view_digest": digest, "op": SIGNER_OPS[action]}
+            if action in REQUEST_ACTIONS:
+                asked["request_id"] = fields["request_id"]
+            got = signer.call("stepup", asked)
             try:
                 nonce = wa.b64u_decode(got.get("nonce"), wa.CHALLENGE_BYTES) if isinstance(got, dict) else b""
             except wa.PasskeyError:
@@ -114,10 +159,12 @@ def register(app: FastAPI, gateway) -> None:
         else:
             nonce = wa.new_challenge()
         challenge = wa.stepup_challenge(nonce, digest)
-        token, _ = service.ceremonies.start("stepup", (request.state.token, digest, nonce, signed), challenge=challenge)
+        bound = (request.state.token, action, digest, nonce, signed)
+        token, _ = service.ceremonies.start("stepup", bound, challenge=challenge)
         return {
             "challenge_id": token,
             "view_digest": digest,
+            **extra,
             "publicKey": {
                 "challenge": wa.b64u_encode(challenge),
                 "rpId": service.rp_id,
@@ -129,11 +176,11 @@ def register(app: FastAPI, gateway) -> None:
 
     @app.post("/api/w/{ws}/stepup/options")
     def workspace_options(body: WorkspaceOptions, request: Request, ws: str = Depends(reads.workspace)):
-        return issue(request, body.action, ws, body.view_digest, None)
+        return issue(request, body.action, ws, body.model_dump(exclude={"action"}))
 
     @app.post("/api/stepup/options")
     def host_options(body: HostOptions, request: Request):
-        return issue(request, body.action, "-", None, body.credential_id)
+        return issue(request, body.action, "-", body.model_dump(exclude={"action"}))
 
     @app.post("/api/stepup/verify")
     def verify(body: VerifyBody, request: Request):
@@ -146,7 +193,7 @@ def register(app: FastAPI, gateway) -> None:
         taken = service.ceremonies.take(body.challenge_id, "stepup")  # spent now, whatever follows
         if taken is None:
             raise refused("challenge")
-        challenge, (token, digest, nonce, signed) = taken
+        challenge, (token, action, digest, nonce, signed) = taken
         if token != request.state.token:
             raise refused("another session")
         try:
@@ -181,7 +228,7 @@ def register(app: FastAPI, gateway) -> None:
         if signed:  # what the signer checks again, on its own
             response = {k: v for k, v in body.response.model_dump().items() if v is not None}
             proof = {"nonce": wa.b64u_encode(nonce), "id": body.id, "response": response}
-        if not auth.stepup_grant(token, digest, proof):
+        if not auth.stepup_grant(token, action, digest, proof, record.credential_id):
             raise refused("session")
         return {"ok": True, "view_digest": digest, "valid_for": 600}
 
@@ -200,7 +247,7 @@ def register(app: FastAPI, gateway) -> None:
         }
 
     @app.post("/api/passkeys/enroll-link")
-    def enroll_link(body: Nothing, request: Request):
+    def enroll_link(body: EnrollLinkBody, request: Request):
         refuse_step_up(auth, request, "passkeys/enroll-link", body, "-")
         service = service_of(request, remote_only=False)
         code = service.codes.mint()
@@ -217,11 +264,12 @@ def register(app: FastAPI, gateway) -> None:
             target = next((r for r in records if r.credential_id == wa.b64u_encode(raw)), None)
             if target is None:
                 raise fail("not_found", exit=2)
-            if len(records) == 1:
-                raise fail(
-                    "invalid.input", "This is the last passkey. Add another first, or turn remote access off.", exit=5
-                )
-            service.store.remove(raw)
+            service.store.remove(raw)  # refuses the last one under its lock
+            auth.drop_credential(target.credential_id)  # every session and step-up that passkey made, this one too
+        except LastPasskey:
+            raise fail(
+                "invalid.input", "This is the last passkey. Add another first, or turn remote access off.", exit=5
+            ) from None
         except wa.PasskeyError:
             raise fail("invalid.input", exit=5) from None
         except StoreError as exc:

@@ -21,6 +21,8 @@ when the review and its digest exist. Ops with no signer review (One click on, a
 removing a passkey) bind to `passkeys.action_digest`, which both sides compute.
 """
 
+import hashlib
+import json
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -83,6 +85,36 @@ def _fixed(action: str):
     return lambda body, ws: action_digest(action, ws)
 
 
+def sha256_hex(text: str) -> str:
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+def connect_extra(hub_id: str, invite_sha256: str) -> str:
+    """What a hub connect's touch is bound to besides the workspace: the hub and the invite it will send."""
+    return f"{hub_id}|{invite_sha256}"
+
+
+def _connect(body, ws) -> str | None:
+    """The digest of THIS hub connect, from the request itself: the card's hub id and the SHA-256 of the invite."""
+    try:
+        hub_id = (json.loads(body.hub_card).get("o") or {}).get("hub_id")
+    except (ValueError, AttributeError, TypeError):
+        return None
+    if not isinstance(hub_id, str):
+        return None
+    return action_digest("hub.connect", ws, connect_extra(hub_id, sha256_hex(body.invite)))
+
+
+def device_digest(link_id: str) -> str:
+    """ "Add a device" binds to a value the server minted when the options were asked for (`link_id`)."""
+    return action_digest("device.add", "-", link_id)
+
+
+def removal_digest(credential_id: str) -> str:
+    """Removing a passkey binds to that one credential (its SHA-256, so any id length works)."""
+    return action_digest("passkey.remove", "-", sha256_hex(credential_id))
+
+
 #: The list. Every entry needs a passkey assertion from a session that was not opened on this computer. Whole-route
 #: entries (predicate `always`) are ALSO `step_up` in routegate.TABLE (the gate lets them through to the handler, which
 #: checks; a test keeps the two in step).
@@ -104,12 +136,12 @@ STEP_UP: tuple[StepUp, ...] = (
         _view,
         "sign",
     ),
-    StepUp("connecting a hub", "hub/connect", always, _fixed("hub.connect"), "hub.connect", WORKSPACE),
+    StepUp("connecting a hub", "hub/connect", always, _connect, "hub.connect", WORKSPACE),
     StepUp(
         "adding a device",
         "passkeys/enroll-link",
         always,
-        lambda b, ws: action_digest("device.add", "-"),
+        lambda b, ws: device_digest(b.link_id),
         "device.add",
         HOST,
     ),
@@ -117,7 +149,7 @@ STEP_UP: tuple[StepUp, ...] = (
         "removing a passkey",
         "passkeys/{credential_id}",
         always,
-        lambda b, ws: action_digest("passkey.remove", "-", b.credential_id),
+        lambda b, ws: removal_digest(b.credential_id),
         "passkey.remove",
         HOST,
     ),
@@ -134,7 +166,8 @@ GUARDED_PATHS = tuple(dict.fromkeys(s.path for s in STEP_UP))
 
 def refuse_step_up(auth, request, route: str, body, ws: str) -> dict:
     """Call FIRST in every handler of `GUARDED_PATHS`. Returns the arguments the handler adds to its signer call (see
-    the module text) or raises `passkey.stepup_required`. ``route`` is the entry's `route` (the literal string)."""
+    the module text) or raises `passkey.stepup_required`. ``route`` is the entry's `route` (the literal string).
+    A session that is not local ALWAYS says `remote: True`: a missing proof can never look like a local call."""
     token = request.state.token
     if auth.login_kind(token) == LOCAL:
         return {}
@@ -143,8 +176,8 @@ def refuse_step_up(auth, request, route: str, body, ws: str) -> dict:
             digest = step.digest(body, ws)
             if digest is None:
                 raise stepup_required(step.name)
-            fresh, proof = auth.stepup_take(token, digest)
-            if not fresh:
+            fresh, proof = auth.stepup_take(token, step.action, digest)
+            if not fresh or (proof is None and step.action in SIGNER_ACTIONS):
                 raise stepup_required(step.name)
-            return {"remote": True, "stepup": proof} if proof is not None else {}
+            return {"remote": True, "stepup": proof} if proof is not None else {"remote": True}
     return {"remote": True}

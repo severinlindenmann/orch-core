@@ -56,8 +56,9 @@ class Stepups:
         self.mono = mono
         self._rp_id = rp_id or self._read_rp_id
         self.store = store or PasskeyStore(self.dir / "passkeys.json")
-        #: nonce (raw bytes) -> (workspace id, view digest, issued at); in memory only, a restart forgets all
-        self.nonces: dict[bytes, tuple[str, str, float]] = {}
+        #: nonce (raw bytes) -> (workspace id, view digest, op, request id or None, issued at); in memory only, a
+        #: restart forgets all
+        self.nonces: dict[bytes, tuple[str, str, str, str | None, float]] = {}
 
     def _read_rp_id(self) -> str | None:
         """The configured web name, or None (remote access off, or a file that cannot be trusted)."""
@@ -78,22 +79,24 @@ class Stepups:
             return None
         return name if isinstance(name, str) else None
 
-    def begin(self, workspace_id: str, digest: str) -> str:
-        """A nonce for one step-up of the op whose digest is ``digest`` in ``workspace_id``."""
+    def begin(self, workspace_id: str, digest: str, op: str, request_id: str | None = None) -> str:
+        """A nonce for one step-up of ``op`` (and ``request_id`` where the call has one) whose digest is ``digest`` in
+        ``workspace_id``."""
         if not isinstance(digest, str):
             raise ClickError("invalid.input", "view_digest is a digest")
         wa.stepup_challenge(bytes(wa.CHALLENGE_BYTES), digest)  # shape check only
         now = self.mono()
-        self.nonces = {n: v for n, v in self.nonces.items() if now - v[2] < NONCE_LIFETIME}
+        self.nonces = {n: v for n, v in self.nonces.items() if now - v[4] < NONCE_LIFETIME}
         while len(self.nonces) >= MAX_NONCES:
             del self.nonces[next(iter(self.nonces))]
         nonce = secrets.token_bytes(wa.CHALLENGE_BYTES)
-        self.nonces[nonce] = (workspace_id, digest, now)
+        self.nonces[nonce] = (workspace_id, digest, op, request_id, now)
         return wa.b64u_encode(nonce)
 
-    def check(self, workspace_id: str, digest: str, proof: Any) -> None:
+    def check(self, workspace_id: str, digest: str, op: str, request_id: str | None, proof: Any) -> None:
         """Raise ``passkey.stepup_required`` unless ``proof`` is a valid assertion for a nonce this signer issued for
-        exactly (``workspace_id``, ``digest``). The nonce is used up first, whatever the outcome."""
+        exactly (``workspace_id``, ``digest``, ``op``, ``request_id``). The nonce is used up first, whatever the
+        outcome."""
         try:
             nonce_text = proof["nonce"] if isinstance(proof, dict) else None
             nonce = wa.b64u_decode(nonce_text, wa.CHALLENGE_BYTES) if isinstance(nonce_text, str) else b""
@@ -102,8 +105,13 @@ class Stepups:
         issued = self.nonces.pop(nonce, None)  # used up before anything else
         if issued is None:
             raise _refuse("unknown or used nonce")
-        wid, bound, at = issued
-        if wid != workspace_id or bound != digest or self.mono() - at >= NONCE_LIFETIME:
+        wid, bound, bound_op, bound_request, at = issued
+        if (wid, bound, bound_op, bound_request) != (
+            workspace_id,
+            digest,
+            op,
+            request_id,
+        ) or self.mono() - at >= NONCE_LIFETIME:
             raise _refuse("nonce for another op, or too old")
         rp_id = self._rp_id()
         if rp_id is None:

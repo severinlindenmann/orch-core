@@ -1048,6 +1048,7 @@ def test_a_removal_cannot_clear_the_readers_rule_while_another_reader_still_fail
 # -- #1198 R1-6: the passkey step-up of a remote dashboard session, checked by the signer itself -----------------------
 
 STEPUP_WID = "ab" * 16
+STEPUP_RID = "hr_" + "0" * 26
 
 
 @pytest.fixture
@@ -1070,8 +1071,11 @@ def stepup_world(tmp_path):
     entry = {"workspace_id": STEPUP_WID, "prefix": "w", "root": str(tmp_path), "host_uid": os.getuid(), "peers": {}}
     signer = ClickSigner(state, workspaces=lambda: [entry], mono=mono, stepups=steps)
 
-    def ask(digest, *, authn=authn, **kw):
-        nonce = signer.handle("stepup", {"workspace_id": STEPUP_WID, "view_digest": digest})["nonce"]
+    def ask(digest, *, authn=authn, op="custody_off", rid=STEPUP_RID, **kw):
+        args = {"workspace_id": STEPUP_WID, "view_digest": digest, "op": op}
+        if op in ("custody_off", "rotate", "sign"):
+            args["request_id"] = rid
+        nonce = signer.handle("stepup", args)["nonce"]
         raw = base64.urlsafe_b64decode(nonce + "=" * (-len(nonce) % 4))
         return authn.proof(nonce, wa.stepup_challenge(raw, digest), **kw)
 
@@ -1080,7 +1084,7 @@ def stepup_world(tmp_path):
 
 
 DIGEST = "sha256:" + "1" * 64
-SEALED_OFF = {"workspace_id": STEPUP_WID, "request_id": "hr_" + "0" * 26, "view_digest": DIGEST, "sealed": {}}
+SEALED_OFF = {"workspace_id": STEPUP_WID, "request_id": STEPUP_RID, "view_digest": DIGEST, "sealed": {}}
 
 
 def stepup_refused(signer, op, args):
@@ -1141,18 +1145,21 @@ def test_stepup_a_valid_assertion_for_the_digest_lets_the_op_through_once(stepup
 def test_stepup_the_check_accepts_a_good_assertion_exactly_once(stepup_world):
     w = stepup_world
     proof = w.ask(DIGEST)
-    w.steps.check(STEPUP_WID, DIGEST, proof)  # does not raise
+    w.steps.check(STEPUP_WID, DIGEST, "custody_off", STEPUP_RID, proof)  # does not raise
     with pytest.raises(ClickError):
-        w.steps.check(STEPUP_WID, DIGEST, proof)
+        w.steps.check(STEPUP_WID, DIGEST, "custody_off", STEPUP_RID, proof)
 
 
 def test_stepup_custody_on_binds_to_the_action_digest_not_to_a_view(stepup_world):
     w = stepup_world
     on = {"workspace_id": STEPUP_WID, "passphrase": "x", "remote": True}
     passed_the_stepup_gate(
-        w.signer, "custody_on", {**on, "stepup": w.ask(w.wa.action_digest("custody.on", STEPUP_WID))}
+        w.signer, "custody_on", {**on, "stepup": w.ask(w.wa.action_digest("custody.on", STEPUP_WID), op="custody_on")}
     )
-    assert stepup_refused(w.signer, "custody_on", {**on, "stepup": w.ask(DIGEST)}).code == "passkey.stepup_required"
+    assert (
+        stepup_refused(w.signer, "custody_on", {**on, "stepup": w.ask(DIGEST, op="custody_on")}).code
+        == "passkey.stepup_required"
+    )
 
 
 def test_stepup_an_assertion_for_another_digest_or_workspace_is_refused(stepup_world):
@@ -1160,6 +1167,26 @@ def test_stepup_an_assertion_for_another_digest_or_workspace_is_refused(stepup_w
     other = "sha256:" + "2" * 64
     got = stepup_refused(w.signer, "custody_off", {**SEALED_OFF, "remote": True, "stepup": w.ask(other)})
     assert got.code == "passkey.stepup_required"
+
+
+def test_stepup_a_nonce_is_bound_to_the_op_and_the_request(stepup_world):
+    w = stepup_world
+    args = {**SEALED_OFF, "remote": True}
+    assert stepup_refused(w.signer, "custody_off", {**args, "stepup": w.ask(DIGEST, op="rotate")}).code == (
+        "passkey.stepup_required"
+    )
+    other = "hr_" + "0" * 25 + "1"
+    assert stepup_refused(w.signer, "custody_off", {**args, "stepup": w.ask(DIGEST, rid=other)}).code == (
+        "passkey.stepup_required"
+    )
+    for bad in (
+        {"op": "prepare"},
+        {"op": "custody_on", "request_id": STEPUP_RID},  # a request where the op has none
+        {"op": "sign"},  # none where it needs one
+    ):
+        with pytest.raises(ClickError) as caught:
+            w.signer.handle("stepup", {"workspace_id": STEPUP_WID, "view_digest": DIGEST, **bad})
+        assert caught.value.code == "invalid.input"
 
 
 def test_stepup_a_stale_nonce_is_refused(stepup_world):
@@ -1258,7 +1285,10 @@ def test_stepup_the_arguments_are_closed(stepup_world):
     w = stepup_world
     assert stepup_refused(w.signer, "custody_off", {**SEALED_OFF, "stepup": {}}).code == "invalid.input"
     assert stepup_refused(w.signer, "custody_off", {**SEALED_OFF, "remote": "yes"}).code == "invalid.input"
-    for bad in ({"workspace_id": STEPUP_WID}, {"workspace_id": STEPUP_WID, "view_digest": "x"}):
+    for bad in (
+        {"workspace_id": STEPUP_WID},
+        {"workspace_id": STEPUP_WID, "view_digest": "x", "op": "runner"},
+    ):
         assert stepup_refused(w.signer, "stepup", bad).code == "invalid.input"
     assert "passkey_stepup" in w.signer.status({})["features"]
 
@@ -1268,5 +1298,5 @@ def test_stepup_nonces_are_bounded(stepup_world):
 
     w = stepup_world
     for _ in range(MAX_NONCES + 10):
-        w.signer.handle("stepup", {"workspace_id": STEPUP_WID, "view_digest": DIGEST})
+        w.signer.handle("stepup", {"workspace_id": STEPUP_WID, "view_digest": DIGEST, "op": "runner"})
     assert len(w.steps.nonces) <= MAX_NONCES

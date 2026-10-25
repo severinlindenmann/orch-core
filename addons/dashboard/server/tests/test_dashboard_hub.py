@@ -242,7 +242,7 @@ class Auth:
     def login_kind(self, token):
         return self.kind
 
-    def stepup_take(self, token, digest):
+    def stepup_take(self, token, action, digest):
         return False, None  # no passkey step-up was made
 
 

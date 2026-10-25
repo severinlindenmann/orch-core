@@ -3795,6 +3795,13 @@ apply on loopback, where the person is at the machine or behind the SSH tunnel.
   minutes ago. Otherwise the answer is `passkey.stepup_required`. So a buggy server, or an attacker who only drives
   its HTTP workflow, cannot skip or replay it. A call without `remote` is a session opened on this computer, which
   the signer trusts as it always has (item 0); a server that lies about that is code execution as the person.
+- **What the touch is bound to.** The signer's nonce is bound to the op and, for `custody_off`, `rotate` and `sign`, to
+  the `request_id`. A hub connect is bound to the hub id and the SHA-256 of the invite it will send; "Add a device" to a
+  `link_id` the server minted with the options; removing a passkey to the SHA-256 of that credential id. A session has
+  at most four open step-ups and each options call is charged to the source's bucket. Grants are keyed by
+  (action, digest); a signer op needs a proof, and a session that is not local always sends `remote: true`.
+- **Removing a passkey** (never the last, checked under the store's lock) ends every session that passkey opened,
+  the requesting one too if it used it, and drops every held step-up it made.
 - **Not signer ops.** The server's own check (the same helper, the same ceremony with a server-drawn nonce) covers
   `hub/connect`, "Add a device" (`POST /api/passkeys/enroll-link`) and removing a passkey (`DELETE /api/passkeys/{id}`,
   never the last one). The steps that only open a review (`custody/seal`, `rotate/seal`, `runner/review`, `prepare`)

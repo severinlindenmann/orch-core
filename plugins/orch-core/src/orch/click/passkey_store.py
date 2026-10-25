@@ -26,6 +26,10 @@ class StoreError(Exception):
     """The store cannot be trusted (wrong owner, mode, shape) or written. The reason is for the log only."""
 
 
+class LastPasskey(StoreError):
+    """Removing this passkey would leave none: refused under the store lock (#1198 R1-6)."""
+
+
 @dataclass(frozen=True)
 class Passkey:
     credential_id: str  # base64url
@@ -173,6 +177,8 @@ class PasskeyStore:
             kept = [r for r in records if r.credential_id != wanted]
             if len(kept) == len(records):
                 return False
+            if not kept:
+                raise LastPasskey("last passkey")
             self._write(kept)
             return True
 

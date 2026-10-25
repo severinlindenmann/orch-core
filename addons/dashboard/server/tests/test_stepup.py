@@ -33,6 +33,7 @@ from orch_dashboard.stepup import GUARDED_PATHS, STEP_UP
 FEATURES = ["custody", "device_rotate", "runner_switch", "passkey_stepup", "sealed_passphrase", "backup_key", "reveal"]
 CHALLENGE_KEY = "A" * 87
 OTHER_HASH = "sha256:" + "cd" * 32
+HUBF = {"hub_id": "hub_" + "a" * 26, "invite_sha256": "0" * 64}
 HUB_CARD = '{"o":{"hub_id":"hub_' + "a" * 26 + '"}}'
 
 #: (STEP_UP entry name, the action the ceremony is asked for, method, path template, body, the digest it binds to or
@@ -91,15 +92,20 @@ class _World:
     def headers(self, token=None):
         return bearer(token or self.token, HTTPS)
 
-    def options(self, action, digest=None, token=None, credential_id=None):
+    def options(self, action, digest=None, token=None, credential_id=None, **fields):
         host = action in ("device.add", "passkey.remove")
         path = "/api/stepup/options" if host else f"/api/w/{self.stub.ws}/stepup/options"
-        body = {"action": action}
+        body = {"action": action, **fields}
         if digest is not None:
             body["view_digest"] = digest
         if credential_id is not None:
             body["credential_id"] = credential_id
-        return self.front.post(path, json=body, headers=self.headers(token))
+        if action in ("custody.off", "rotate", "sign") and digest is not None:
+            body.setdefault("request_id", REQ)
+        res = self.front.post(path, json=body, headers=self.headers(token))
+        if res.status_code == 200 and "link_id" in res.json():
+            self.link_id = res.json()["link_id"]
+        return res
 
     def verify(self, opts, token=None, authn=None, **mutate):
         got = (authn or self.authn).get(opts["publicKey"])
@@ -107,9 +113,9 @@ class _World:
         body = {"challenge_id": opts["challenge_id"], **got, **mutate}
         return self.front.post("/api/stepup/verify", json=body, headers=self.headers(token))
 
-    def touch(self, action, digest=None, token=None, credential_id=None, authn=None):
+    def touch(self, action, digest=None, token=None, credential_id=None, authn=None, **fields):
         """A whole step-up: options, the authenticator, verify. Returns the verify response."""
-        opts = self.options(action, digest, token, credential_id)
+        opts = self.options(action, digest, token, credential_id, **fields)
         assert opts.status_code == 200, opts.text
         res = self.verify(opts.json(), token, authn)
         assert res.status_code == 200, res.text
@@ -180,7 +186,7 @@ def test_a_step_up_for_another_review_or_action_is_refused(stub_world, name, rou
     if digest is not None:
         w.touch(action, OTHER_HASH)  # the right action, another review
     else:
-        w.touch("hub.connect")  # no review: another action
+        w.touch("custody.on" if action != "custody.on" else "hub.connect", **({} if action != "custody.on" else HUBF))
     assert refused_for_stepup(w.post(route, body))
 
 
@@ -193,12 +199,21 @@ def test_a_step_up_of_another_session_is_refused(stub_world, auth, name, route, 
     assert not refused_for_stepup(w.post(route, body, token=other))
 
 
+def connect_fields(body):
+    import hashlib
+
+    return {"hub_id": "hub_" + "a" * 26, "invite_sha256": hashlib.sha256(body["invite"].encode()).hexdigest()}
+
+
 def test_the_hub_connect_is_a_step_up_of_its_own(stub_world):
     w = stub_world
     path = f"/api/w/{w.stub.ws}/hub/connect"
     body = {"hub_card": HUB_CARD, "invite": "i" * 40, "idem": "a_" + "0" * 26}
     assert refused_for_stepup(w.front.post(path, json=body, headers=w.headers()))
-    w.touch("hub.connect")
+    other = {**body, "invite": "j" * 40}
+    w.touch("hub.connect", **connect_fields(body))
+    assert refused_for_stepup(w.front.post(path, json=other, headers=w.headers())), "another invite"
+    w.touch("hub.connect", **connect_fields(body))
     res = w.front.post(path, json=body, headers=w.headers())
     assert not refused_for_stepup(res), res.text
     assert refused_for_stepup(w.front.post(path, json=body, headers=w.headers())), "a replay"
@@ -273,7 +288,7 @@ def test_the_ceremony_needs_the_signer_to_know_passkeys(stub_world):
     # and a remote session's call is not sent to a signer that would ignore the assertion
     assert w.post("custody", {"on": False}).status_code == 501
     assert w.signer_calls() == []
-    assert w.options("hub.connect").status_code == 200  # the server's own ops need no signer feature
+    assert w.options("hub.connect", **HUBF).status_code == 200  # the server's own ops need no signer feature
 
 
 def test_the_ceremony_exists_only_on_the_remote_listener(stub_world, loop, local):
@@ -476,7 +491,74 @@ def test_the_proof_the_server_relays_is_what_the_real_signer_check_accepts(stub_
     (proof,) = [a["stepup"] for op, a in w.signer_calls() if op == "runner"]
     steps = Stepups(w.app.state.passkeys.store.path.parent, time.monotonic, rp_id=lambda: NAME,
                     store=w.app.state.passkeys.store)  # fmt: skip
-    steps.nonces[w.script.nonces[-1]] = (w.stub.ws, HASH, time.monotonic())  # the signer issued it
-    steps.check(w.stub.ws, HASH, proof)  # does not raise
+    (asked,) = [a for op, a in w.signer_calls() if op == "stepup"]
+    assert asked == {"workspace_id": w.stub.ws, "view_digest": HASH, "op": "runner"}
+    steps.nonces[w.script.nonces[-1]] = (w.stub.ws, HASH, "runner", None, time.monotonic())  # the signer issued it
+    steps.check(w.stub.ws, HASH, "runner", None, proof)  # does not raise
     with pytest.raises(Exception, match="passkey.stepup_required"):
-        steps.check(w.stub.ws, HASH, proof)  # used up
+        steps.check(w.stub.ws, HASH, "runner", None, proof)  # used up
+
+
+@pytest.mark.parametrize(("name", "route", "action", "body", "digest"), VARIANTS, ids=IDS)
+def test_the_servers_list_and_the_signers_list_agree_on_what_needs_a_step_up(
+    stub_world, name, route, action, body, digest
+):
+    """What each handler sends to the signer is a step-up variant for the signer too (and for the same digest)."""
+    from orch.click.signer import ClickSigner
+
+    w = stub_world
+    if route == "sign":  # no prepared request behind these bodies: asked directly with what the handler would send
+        args = {"workspace_id": w.stub.ws, "request_id": body["request_id"], "view_digest": body["view_digest"]}
+        args |= {k: body[k] for k in ("sealed", "reveal_key") if k in body}
+        got = ClickSigner._stepup_target("sign", args)
+        assert got is not None and got[1:3] == (HASH, "sign")
+        return
+    w.touch(action, digest)
+    assert not refused_for_stepup(w.post(route, body))
+    (call,) = [c for c in w.signer_calls() if c[0] != "stepup"]
+    args = {k: v for k, v in call[1].items() if k not in ("remote", "stepup")}
+    got = ClickSigner._stepup_target(call[0], args)
+    assert got is not None, call
+    if digest is not None:
+        assert got[1] == digest
+    else:
+        from orch.click.passkeys import action_digest
+
+        assert got[1] == action_digest("custody.on", w.stub.ws)
+
+
+def test_the_plain_variants_the_server_sends_are_plain_for_the_signer_too(stub_world):
+    from orch.click.signer import ClickSigner
+
+    w = stub_world
+    for route, body in (
+        ("runner/review", {"on": True}),
+        ("runner", {"on": False, "view_digest": HASH}),
+        ("custody", {"on": False}),
+        ("custody/seal", {}),
+    ):
+        w.post(route, body)
+    sent = [(op, a) for op, a in w.signer_calls() if op != "status"]
+    assert sent
+    for op, args in sent:
+        plain = {k: v for k, v in args.items() if k not in ("remote", "stepup")}
+        assert ClickSigner._stepup_target(op, plain) is None, (op, args)
+
+
+def test_a_remote_session_always_says_remote_even_for_a_plain_variant(stub_world):
+    w = stub_world
+    w.post("runner", {"on": False, "view_digest": HASH})
+    (call,) = [a for op, a in w.signer_calls() if op == "runner"]
+    assert call["remote"] is True and "stepup" not in call
+
+
+def test_a_held_step_up_without_a_proof_never_passes_for_a_signer_op(stub_world):
+    """The structural case: a server-only grant (no proof) for the same digest cannot satisfy a signer op, and the
+    grants are keyed by action, so another action's touch for the same digest does not either."""
+    w = stub_world
+    token = w.token
+    w.auth.stepup_grant(token, "runner.on", HASH, None)  # a grant with no proof
+    assert refused_for_stepup(w.post("runner", {"on": True, "view_digest": HASH}))
+    w.touch("rotate", HASH)  # same digest, another action
+    assert refused_for_stepup(w.post("runner", {"on": True, "view_digest": HASH}))
+    assert w.signer_calls() == [c for c in w.signer_calls() if c[0] == "stepup"]

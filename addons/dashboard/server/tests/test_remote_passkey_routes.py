@@ -168,7 +168,8 @@ def test_the_store_keeps_no_duplicate_and_removes_by_id(front, app, passkey_stor
 
     with pytest.raises(StoreError):
         passkey_store.add(record)
-    assert passkey_store.remove(authn.credential_id) and passkey_store.read() == []
+    enroll(front, app)  # a second one: the last passkey is never removed (R1-6)
+    assert passkey_store.remove(authn.credential_id) and len(passkey_store.read()) == 1
     assert not passkey_store.remove(authn.credential_id)
 
 

@@ -153,6 +153,12 @@ class Ceremonies:
             self.items[token] = (kind, challenge, now + CHALLENGE_TTL, bound)
         return token, challenge
 
+    def open_for(self, kind: str, owner: str) -> int:
+        """How many unexpired challenges of ``kind`` are bound to session ``owner`` (the first part of ``bound``)."""
+        with self.lock:
+            now = self.clock()
+            return sum(1 for k, _, until, b in self.items.values() if k == kind and until > now and b[0] == owner)
+
     def take(self, token: str, kind: str):
         """``(challenge, bound)`` once, or None (unknown, used, expired or another kind's). Taking spends it."""
         with self.lock:
@@ -261,7 +267,7 @@ def register(app: FastAPI, auth: Auth, service: Passkeys | None) -> None:
             service.store.touch(credential_id, when=service.now(), sign_count=count)
         except (StoreError, OSError) as exc:
             log.error("passkey store not updated: %s", exc)  # the login itself was verified; last-used is display only
-        return auth.open_remote(request.state.client)
+        return auth.open_remote(request.state.client, record.credential_id)
 
     @app.post("/auth/enroll/options")
     def enroll_options(body: EnrollOptionsBody, request: Request):
@@ -350,4 +356,4 @@ def register(app: FastAPI, auth: Auth, service: Passkeys | None) -> None:
             log.error("passkey not stored: %s", exc)
             return expired("store")  # the code is spent: IT makes a new link
         log.warning("A passkey was added: %s, %s", name, when)  # the terminal and the log show it (host spec 10.1)
-        return auth.open_remote(request.state.client)
+        return auth.open_remote(request.state.client, record.credential_id)

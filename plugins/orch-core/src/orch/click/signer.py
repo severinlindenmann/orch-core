@@ -53,6 +53,9 @@ from .stepup import Stepups
 __all__ = ["Approval", "Budget", "ClickSigner"]
 
 KEY_ID = "dk"
+#: the ops a passkey step-up is for, and those whose call names a request (host spec §0.8.6 10.5)
+STEPUP_OPS = frozenset({"custody_on", "custody_off", "rotate", "runner", "sign"})
+STEPUP_REQUEST_OPS = frozenset({"custody_off", "rotate", "sign"})
 MAX_APPROVALS = 16
 DWELL_SECONDS = 1.0
 PER_MINUTE = 30
@@ -1947,32 +1950,41 @@ class ClickSigner:
         self.conns.clear()
 
     def stepup(self, args: Mapping[str, Any]) -> dict[str, Any]:
-        """``stepup {workspace_id, view_digest}``: a one-use nonce for a passkey assertion about the op whose review
-        has this digest (host spec §0.8.6 10.5). The server relays it to the browser; ``handle`` checks the answer."""
-        if set(args) != {"workspace_id", "view_digest"}:
-            raise ClickError("invalid.input", "stepup takes workspace_id and view_digest")
+        """``stepup {workspace_id, view_digest, op, request_id?}``: a one-use nonce for a passkey assertion about the
+        op whose review has this digest (host spec §0.8.6 10.5), bound to the op and to the request where the call
+        has one. The server relays it to the browser; ``handle`` checks the answer."""
+        base = {"workspace_id", "view_digest", "op"}
+        if not base <= set(args) <= base | {"request_id"}:
+            raise ClickError("invalid.input", "stepup takes workspace_id, view_digest, op and request_id")
         entry = self._entry(args["workspace_id"])
-        digest = args["view_digest"]
+        digest, op, rid = args["view_digest"], args["op"], args.get("request_id")
         if type(digest) is not str or not HASH.fullmatch(digest):
             raise ClickError("invalid.input", "view_digest is a digest")
-        return {"nonce": self.stepups.begin(entry["workspace_id"], digest)}
+        if op not in STEPUP_OPS:
+            raise ClickError("invalid.input", "op is a step-up op")
+        if (rid is not None and (type(rid) is not str or not REQ.fullmatch(rid))) or (
+            (rid is not None) != (op in STEPUP_REQUEST_OPS)
+        ):
+            raise ClickError("invalid.input", "request_id goes with exactly the ops that have one")
+        return {"nonce": self.stepups.begin(entry["workspace_id"], digest, op, rid)}
 
     @staticmethod
-    def _stepup_target(op: str, args: Mapping[str, Any]) -> tuple[str, str | None] | None:
-        """(workspace id, digest) of the passkey step-up this call needs from a remote session, or None when this
-        variant of the op is a plain click. THE list of signer-side step-up ops (host spec §0.8.6 10.5)."""
+    def _stepup_target(op: str, args: Mapping[str, Any]) -> tuple[str, str | None, str, str | None] | None:
+        """(workspace id, digest, op, request id) of the passkey step-up this call needs from a remote session, or
+        None when this variant of the op is a plain click. THE list of signer-side step-up ops (host spec 10.5)."""
         wid = args.get("workspace_id")
         if type(wid) is not str or not WS_ID.fullmatch(wid):
             return None  # the op itself refuses a bad id
         if op == "custody_on":
-            return wid, action_digest("custody.on", wid)
+            return wid, action_digest("custody.on", wid), op, None
         if (
             (op in ("custody_off", "rotate") and "sealed" in args)
             or (op == "runner" and not args.get("review") and (args.get("on") is True or args.get("terminals") is True))
             or (op == "sign" and ("sealed" in args or args.get("reveal_key") is not None))
         ):
             digest = args.get("view_digest")
-            return wid, digest if type(digest) is str else None
+            rid = args.get("request_id") if op in STEPUP_REQUEST_OPS else None
+            return wid, digest if type(digest) is str else None, op, rid if type(rid) is str else None
         return None
 
     def handle(self, op: str, args: Mapping[str, Any]) -> dict[str, Any]:
@@ -1988,7 +2000,7 @@ class ClickSigner:
             target = self._stepup_target(op, args)
             if target is not None:
                 try:
-                    self.stepups.check(target[0], target[1], proof)
+                    self.stepups.check(*target, proof)
                 except ClickError as exc:
                     self._note("refused", workspace=args.get("workspace_id"), code=exc.code)
                     raise

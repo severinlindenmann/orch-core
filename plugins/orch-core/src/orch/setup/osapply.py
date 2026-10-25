@@ -34,6 +34,7 @@ from .osfacts import UNREADABLE, GroupInfo, OsFacts, RealOsFacts
 from .oslauncher import TRUSTED_ROOT
 from .osusers import (
     AGENT_HOME_ROOT,
+    AGENT_PREFIX,
     NORMAL_PERSON,
     SLOT_HOME_ROOT,
     SSHD_DROPIN,
@@ -43,6 +44,7 @@ from .osusers import (
     UserPlan,
     assess_policy,
     plan,
+    valid_person,
 )
 
 __all__ = [
@@ -54,6 +56,8 @@ __all__ = [
     "RealExecutor",
     "apply",
     "main",
+    "release_problem",
+    "recheck",
     "why_not_ok",
 ]
 
@@ -299,6 +303,8 @@ def why_not_ok(v: PolicyVerdict, agent: str) -> str:
             f"/etc/doas.conf exists. orch cannot check doas rules, so '{agent}' is not recorded as safe. "
             "Remove /etc/doas.conf (or the doas package) and run this again."
         )
+    if v.changed:
+        return "A sudo or SSH policy file changed while it was being checked, so nothing is recorded. Run this again."
     if v.sudo == "allowed":
         return f"'{agent}' has a sudo rule. Remove it and run this again."
     if v.sudo == "unknown":
@@ -312,6 +318,31 @@ def why_not_ok(v: PolicyVerdict, agent: str) -> str:
     if any(sig == list(UNREADABLE) for sig in v.files.values()):
         return "A sudo or SSH policy file could not be read, so the policy cannot be recorded."
     return "The sudo and SSH policy could not be confirmed."
+
+
+def release_problem(facts: OsFacts, release: str, person_uid: int | None) -> str | None:
+    """Why ``release`` cannot be what the units name (``None``: it can). The release lives in the person's tree, so it
+    need not be root's, but nobody else may be able to swap it: the directory and EVERY ancestor are owned by root or
+    by the person and are not writable by group or other (a sticky ``/tmp`` fails this too). Root never executes
+    anything in it (the units' root-run lines name the trusted copy only; the agent runs it as itself), and setup never
+    writes an ACL for an agent or add-on user on it (the person does, §13.2 item 6)."""
+    owners = {0} if person_uid is None else {0, person_uid}
+    node = release
+    while True:
+        info = facts.stat(node)
+        if info is not None and info.is_symlink:  # never followed: its target could be swapped by whoever owns the link
+            return f"{node} is a symbolic link; give the release by its real path."
+        if info is None or (node == release and not info.is_dir):
+            return f"The release directory {release} must exist and be a plain directory."
+        if info.uid not in owners or info.mode & 0o022:
+            return (
+                f"{node} (owner {info.uid}, mode {info.mode & 0o7777:04o}) must be owned by root or by you and not be "
+                f"writable by group or other; it is part of the path of the release directory {release}."
+            )
+        parent = os.path.dirname(node)
+        if parent == node:
+            return None
+        node = parent
 
 
 class _Apply:
@@ -481,13 +512,13 @@ class _Apply:
                 if self.dry or self.ex.query([sysctl, "is-active", "--quiet", name]).rc != 0:
                     self.run([sysctl, "start", name])
 
-    def quarantine(self, p: Plan) -> None:
-        """The agent user no longer passes: drop any old verdict from its pin (the host then answers broken) and stop
-        its runner. Used when a re-run finds, for example, a new sudo rule. Never leaves a running runner behind."""
+    def drop_verdict(self, p: Plan) -> bool:
+        """Rewrite the agent's pin without the policy verdict (the host then answers broken). ``False``: there is
+        nothing to drop (the agent user is not kept) or the pin could not be written (a problem is recorded)."""
         agent = p.agent
         uid = None if agent is None else self.uid_of(agent.name)
         if agent is None or agent.action != "keep" or uid is None:
-            return
+            return False
         entry = next(e for e in p.pins if e.user == agent.name)
         base = _json(PinEntry(entry.user, entry.cls, entry.host_uid, uid).document())
         path = f"{PIN_DIR}/{uid}.json"
@@ -501,15 +532,34 @@ class _Apply:
                 self.ex.write_file(path, base, 0o644)
             except OSError as exc:
                 self.res.fail(f"{path} could not be rewritten ({exc.strerror}).")
+                return False
+        return True
+
+    def quarantine(self, p: Plan) -> None:
+        """The agent user no longer passes: drop any old verdict from its pin (the host then answers broken) and stop
+        its runner. Used when a re-run finds, for example, a new sudo rule. Never leaves a running runner behind: a
+        runner that is still active after ``disable --now`` failed is a problem, not a note."""
+        agent = p.agent
+        if agent is None or agent.action != "keep" or self.uid_of(agent.name) is None:
+            return
+        self.drop_verdict(p)
         sysctl = BIN["systemctl"]
+        stopped = True
         for unit in p.units:
             if unit.name.startswith("orch-runner@"):
                 for inst in unit.instances:
-                    argv = [sysctl, "disable", "--now", f"orch-runner@{inst}.service"]
+                    name = f"orch-runner@{inst}.service"
+                    argv = [sysctl, "disable", "--now", name]
                     # always, whatever the queries would say; "not loaded" is fine, so the result is not a failure
                     self.res.actions.append(" ".join(argv))
-                    self.ex.run(argv)
-        self.res.notes.append(f"the runner of '{agent.name}' was stopped until the check passes again")
+                    if self.ex.run(argv).rc != 0 and self.ex.query([sysctl, "is-active", "--quiet", name]).rc == 0:
+                        stopped = False
+                        self.res.fail(
+                            f"The runner of '{agent.name}' could not be stopped and is still running. "
+                            f"Stop it by hand: systemctl stop {name}"
+                        )
+        if stopped:
+            self.res.notes.append(f"the runner of '{agent.name}' was stopped until the check passes again")
 
     def policy_pin(self, p: Plan) -> None:
         agent = p.agent
@@ -540,6 +590,50 @@ class _Apply:
             self.start_runner(p)  # only now: a runner never starts while the policy check fails
 
 
+_RECHECK_RELEASE = "/recheck-needs-no-release"  # plan() wants a well-formed path; a recheck never reads or uses it
+
+
+def recheck(facts: OsFacts, ex: Executor, person: str, *, is_root: bool) -> ApplyResult:
+    """``orch-os-setup --recheck <person>``: the root-side policy check of the runner's ``ExecStartPre=+`` (spec 13.9).
+    Asks the authoritative tools again (``sudo -l -U`` and ``sshd -T``, so LDAP and sssd are covered too) and runs the
+    same plan checks as setup (groups, properties, pin). ``ok`` only if every answer still holds; then the pin is
+    refreshed with the new stat signatures (the verdict is what counts, the signatures are the host's change
+    detector). Otherwise the verdict is dropped from the pin (the host answers broken) and ``ok`` is false, which makes
+    systemd refuse the start. It never calls ``systemctl``: stopping the unit from inside its own start job would wait
+    on itself, and the failed start is the stop. Fails closed on every error."""
+    res = ApplyResult()
+    if not is_root:
+        return res.fail("orch-os-setup --recheck must run as root. The runner will not start.")
+    if not valid_person(person):
+        return res.fail(f"'{person}' is not a person orch set up agents for. The runner will not start.")
+    if facts.platform != "linux":
+        return res.fail("Agents run as their own user only on Linux. The runner will not start.")
+    info = facts.user(person)
+    if info is None or info.uid == 0:
+        return res.fail(f"There is no user '{person}' to run agents for. The runner will not start.")
+    st = _Apply(facts, ex, res)
+    p = plan(facts, person, info.uid, release=_RECHECK_RELEASE)
+    agent = p.agent
+    if p.refusals or agent is None or agent.action != "keep":
+        for r in p.refusals:
+            res.fail(r.message)
+        if not res.problems:
+            res.fail(f"The user '{AGENT_PREFIX}{person}' does not exist. Run orch-os-setup again.")
+        st.drop_verdict(p)
+        return res
+    verdict = assess_policy(facts, agent.name, dropin_text=ex.read_file(SSHD_DROPIN), host_uid=p.person_uid)
+    res.policy_ok = verdict.ok
+    if not verdict.ok:
+        res.fail(why_not_ok(verdict, agent.name))
+        st.drop_verdict(p)
+        return res
+    uid = agent.uid
+    entry = next(e for e in p.pins if e.user == agent.name)
+    doc = PinEntry(entry.user, entry.cls, entry.host_uid, uid, verdict.document()).document()
+    st.put(f"{PIN_DIR}/{uid}.json", _json(doc), 0o644, replace=True)
+    return res
+
+
 def _json(doc: dict) -> str:
     return json.dumps(doc, sort_keys=True, indent=2) + "\n"
 
@@ -554,7 +648,7 @@ def apply(
     person: str,
     person_uid: int,
     *,
-    release: str = "/opt/orch/release",
+    release: str,
     is_root: bool,
 ) -> ApplyResult:
     dry = bool(getattr(ex, "dry", False))
@@ -570,9 +664,9 @@ def apply(
             res.fail(r.message)
         _Apply(facts, ex, res).quarantine(p)  # on ANY refusal a kept agent must not keep running or stay recorded
         return res
-    rel = facts.stat(release)
-    if rel is None or rel.is_symlink or not rel.is_dir or rel.uid != 0 or rel.mode & 0o022:
-        return res.fail(f"The release directory {release} must exist, be owned by root and not be writable by others.")
+    problem = release_problem(facts, release, p.person_uid)
+    if problem:
+        return res.fail(problem)
     st = _Apply(facts, ex, res)
     if p.create_person:
         st.run(
@@ -648,13 +742,7 @@ def _running_from_trusted_copy() -> bool:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(
-        prog="orch-os-setup", description="Create the OS users that agents and add-ons run as."
-    )
-    ap.add_argument("--person", required=True, help="the login name that runs orch (the host user)")
-    ap.add_argument("--release", default="/opt/orch/release", help="the release directory the services run")
-    ap.add_argument("--dry-run", action="store_true", help="print the exact actions and change nothing")
-    args = ap.parse_args(argv)
+    # The trust checks come FIRST: a copy that is not the root-owned one never reads, parses or answers arguments.
     if sys.platform != "linux":
         print("Agents run as their own user only on Linux for now; nothing was changed.", file=sys.stderr)
         return 2
@@ -668,6 +756,35 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
+    ap = argparse.ArgumentParser(
+        prog="orch-os-setup", description="Create the OS users that agents and add-ons run as."
+    )
+    ap.add_argument("--person", help="the login name that runs orch (the host user)")
+    ap.add_argument(
+        "--recheck",
+        metavar="PERSON",
+        help="ask sudo and sshd again whether the agent user of PERSON is still safe (the runner's start check)",
+    )
+    ap.add_argument("--release", help="the releases directory the services run (required with --person)")
+    ap.add_argument("--dry-run", action="store_true", help="print the exact actions and change nothing")
+    args = ap.parse_args(argv)
+    if bool(args.person) == bool(args.recheck):
+        print(
+            "Give exactly one of --person (set up) or --recheck (the start check). Nothing was changed.",
+            file=sys.stderr,
+        )
+        return 2
+    if args.person and not args.release:
+        print(
+            "--release is required with --person (the setup page prints the whole line). Nothing was changed.",
+            file=sys.stderr,
+        )
+        return 2
+    if args.recheck:
+        res = recheck(_RootFacts(), RealExecutor(), args.recheck, is_root=True)
+        if res.problems:
+            print(res.report(), file=sys.stderr)
+        return 0 if res.ok else 1
     try:
         uid = pwd.getpwnam(args.person).pw_uid
     except KeyError:

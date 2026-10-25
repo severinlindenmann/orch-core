@@ -72,7 +72,7 @@ def test_install_copies_exactly_the_trusted_files_and_a_shebang_launcher(tmp_pat
     found = {str(p.relative_to(dest)) for p in dest.rglob("*") if p.is_file()}
     assert found == {*oslauncher.TRUSTED_FILES, "orch-os-setup"}
     launcher = (dest / "orch-os-setup").read_text()
-    assert launcher.startswith("#!/usr/bin/python3 -I -S\n")
+    assert launcher.startswith("#!/usr/bin/python3 -IS\n")  # one argument: Linux does not split shebang args
     assert stat.S_IMODE((dest / "orch-os-setup").stat().st_mode) == 0o755
     assert stat.S_IMODE((dest / "orch/setup/osapply.py").stat().st_mode) == 0o644
     oslauncher.check_tree(str(dest), owner=(0, ME))  # a fresh copy passes (owner = us instead of root here)

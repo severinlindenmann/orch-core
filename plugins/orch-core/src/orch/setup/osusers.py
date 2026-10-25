@@ -31,6 +31,7 @@ __all__ = [
     "SLOT_HOME_ROOT",
     "AGENT_HOME_ROOT",
     "AGENT_RUN_ROOT",
+    "RECHECK_COMMAND",
     "SSHD_DROPIN",
     "SSHD_DROPIN_TEXT",
     "FileSpec",
@@ -45,6 +46,7 @@ __all__ = [
     "UnitFile",
     "UserPlan",
     "plan",
+    "valid_person",
 ]
 
 AGENT_PREFIX = "orch-agent-"
@@ -59,6 +61,8 @@ SLOT_SHELL = SLOT_SHELLS[0]
 SLOT_HOME_ROOT = "/var/lib/orch/" + "add" + "ons"
 AGENT_HOME_ROOT = "/var/lib/orch/agents"
 AGENT_RUN_ROOT = "/run/orch/agents"
+# the interpreter is named in the unit, not left to the launcher's shebang: root runs exactly this
+RECHECK_COMMAND = f"/usr/bin/python3 -I -S {LAUNCHER_PATH} --recheck"
 SSHD_DROPIN = "/etc/ssh/sshd_config.d/10-orch-agents.conf"
 SSHD_DROPIN_TEXT = f"DenyUsers {AGENT_PREFIX}* {SLOT_PREFIX}*\n"
 _PERSON_MIN_UID = 1000
@@ -67,6 +71,16 @@ _NAME = re.compile(r"^[a-z_][a-z0-9_-]*$")
 _MAX_NAME = 32
 _RELEASE = re.compile(r"^/[A-Za-z0-9_.+/-]*$")  # no whitespace, control characters, '%' or '$': it goes into unit text
 _SYSTEM_UID_MAX = 999  # useradd --system; a login-range UID is a person, never ours
+
+
+def valid_person(person: str) -> bool:
+    """Whether ``person`` can be the instance of ``orch-runner@<person>``: the shape ``plan`` accepts (it is also the
+    check ``--recheck`` makes on the instance systemd passes)."""
+    return bool(
+        _NAME.match(person)
+        and len(AGENT_PREFIX + person) <= _MAX_NAME
+        and not person.startswith((AGENT_PREFIX, SLOT_PREFIX))
+    )
 
 
 def _good_release(release: str) -> bool:
@@ -209,7 +223,7 @@ class Plan:
         return out
 
     def admin_command(self) -> str:
-        """The one line setup shows. Always the root-owned copy at a fixed path, never the person's release."""
+        """The one line setup shows. Always the root-owned copy at a fixed path; root never executes the release."""
         return f"sudo {LAUNCHER_PATH} --person {shlex.quote(self.person)} --release {shlex.quote(self.release)}"
 
 
@@ -301,11 +315,12 @@ class PolicyVerdict:
     ssh: str  # "denied" | "allowed" | "unknown"
     ssh_dropin: bool  # sshd is not installed, or orch's own drop-in is present with the expected content
     files: dict[str, list[int] | None]  # path -> [size, mtime_ns, ctime_ns, inode], or None while absent
+    changed: bool = False  # a policy file changed while sudo and sshd were being asked: no verdict can be trusted
 
     @property
     def ok(self) -> bool:
         unreadable = any(v == list(UNREADABLE) for v in self.files.values())
-        return self.sudo == "none" and self.ssh == "denied" and self.ssh_dropin and not unreadable
+        return self.sudo == "none" and self.ssh == "denied" and self.ssh_dropin and not unreadable and not self.changed
 
     def document(self) -> dict[str, Any]:
         return {"sudo": self.sudo, "ssh": self.ssh, "ssh_dropin": self.ssh_dropin, "files": self.files}
@@ -320,6 +335,23 @@ def assess_policy(
     0750 root) is not recorded on its own: the host can never stat it, so recording it would make every later check
     fail. The folder's own signature stays recorded and catches an entry added, removed or renamed; an in-place edit of
     such a file is the documented limit (it needs root, §13.9)."""
+
+    def signatures() -> dict[str, list[int] | None]:
+        files: dict[str, list[int] | None] = {}
+        for path in POLICY_FILES:
+            sig = facts.file_sig(path)
+            files[path] = None if sig is None else list(sig)
+        for folder in _POLICY_DIRS:
+            for entry in facts.listdir(folder):
+                if host_uid is not None and not facts.can_stat(host_uid, f"{folder}/{entry}"):
+                    continue
+                sig = facts.file_sig(f"{folder}/{entry}")
+                files[f"{folder}/{entry}"] = None if sig is None else list(sig)
+        return files
+
+    # Signatures FIRST, then the authoritative answers, then the signatures again: a file replaced while sudo and sshd
+    # were being asked would otherwise be recorded as "unchanged" next to an answer that belongs to the old content.
+    before, dropin_before = signatures(), facts.file_sig(SSHD_DROPIN)
     sudo = facts.sudo_allows(user)
     ports = facts.sshd_ports()
     answers = (
@@ -328,23 +360,17 @@ def assess_policy(
         else [facts.sshd_denies(user, h, a, la, port) for h, a, la in SSH_CONTEXTS for port in (ports or [22])]
     )
     ssh = "unknown" if any(a is None for a in answers) else "denied" if all(answers) else "allowed"
-    files: dict[str, list[int] | None] = {}
-    for path in POLICY_FILES:
-        sig = facts.file_sig(path)
-        files[path] = None if sig is None else list(sig)
-    for folder in _POLICY_DIRS:
-        for entry in facts.listdir(folder):
-            if host_uid is not None and not facts.can_stat(host_uid, f"{folder}/{entry}"):
-                continue
-            sig = facts.file_sig(f"{folder}/{entry}")
-            files[f"{folder}/{entry}"] = None if sig is None else list(sig)
+    files = before
+    dropin_sig = facts.file_sig(SSHD_DROPIN)
+    changed = signatures() != before or dropin_sig != dropin_before
     doas = files.get("/etc/doas.conf") is not None  # doas rules are not checked with doas itself: refuse while present
     return PolicyVerdict(
         "unknown" if sudo is None or doas else "allowed" if sudo else "none",
         ssh,
         not facts.sshd_installed()
-        or (facts.file_sig(SSHD_DROPIN) is not None and (dropin_text is None or dropin_text == SSHD_DROPIN_TEXT)),
+        or (dropin_sig is not None and (dropin_text is None or dropin_text == SSHD_DROPIN_TEXT)),
         files,
+        changed,
     )
 
 
@@ -377,11 +403,19 @@ def _bad_person(facts: OsFacts, info: UserInfo) -> str:
 # The unit instance is the bare person (runner) or slot number (add-on); the prefix lives in the template, so an
 # instance such as 'root' can never run as root.
 def unit_runner(release: str) -> UnitFile:
+    """The agent runner's system unit (spec 13.2 item 7). ``ExecStartPre=+`` runs the policy recheck as root (the ``+``
+    prefix: not as ``User=``, not sandboxed) from the root-owned trusted copy, never from the release: a failed recheck
+    refuses the start. The writable paths are the agent's own tree (``home`` for its Claude/Codex login, ``state``,
+    ``repos``) and its run directory; everything else is read-only or hidden. ``Delegate=yes`` needs a writable cgroup
+    tree, so ``ProtectControlGroups`` stays off. The state directory is the agent's own, never the person's."""
     content = f"""[Unit]
 Description=orch runner for %i (user orch-agent-%i)
 After=network.target
+# The agent can kill its own runner; a start limit would then stop the unit for good. RestartSec throttles instead.
+StartLimitIntervalSec=0
 
 [Service]
+Type=simple
 User=orch-agent-%i
 Delegate=yes
 NoNewPrivileges=yes
@@ -390,13 +424,24 @@ AmbientCapabilities=
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths={AGENT_HOME_ROOT}/orch-agent-%i {AGENT_RUN_ROOT}/orch-agent-%i
+ProtectProc=invisible
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+ProtectHostname=yes
+LockPersonality=yes
+RestrictRealtime=yes
 RestrictSUIDSGID=yes
+SystemCallArchitectures=native
+ReadWritePaths={AGENT_HOME_ROOT}/orch-agent-%i {AGENT_RUN_ROOT}/orch-agent-%i
 MemoryMax=80%
 TasksMax=4096
+ExecStartPre=+{RECHECK_COMMAND} %i
 ExecStart={release}/current/bin/orch-runner run \\
   --state {AGENT_HOME_ROOT}/orch-agent-%i/state --run {AGENT_RUN_ROOT}/orch-agent-%i
 Restart=always
+RestartSec=2
 
 [Install]
 WantedBy=multi-user.target
@@ -433,7 +478,7 @@ WantedBy=multi-user.target
     return UnitFile("orch-addon@.service", "/etc/systemd/system/orch-addon@.service", content, ())
 
 
-def plan(facts: OsFacts, person: str, person_uid: int, *, release: str = "/opt/orch/release") -> Plan:
+def plan(facts: OsFacts, person: str, person_uid: int, *, release: str) -> Plan:
     """Compute the setup plan for ``person`` (login name and UID). Pure: reads ``facts``, writes nothing."""
     if facts.platform != "linux":
         reason = {

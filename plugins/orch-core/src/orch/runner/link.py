@@ -227,8 +227,14 @@ class HostLink:
         config: RunnerConfig | Callable[[], RunnerConfig] | None = None,
         grants: GrantStore | None = None,
         release: str | None = None,
+        restart: Callable[[bool], dict[str, Any]] | None = None,
+        restarting: Callable[[], bool] | None = None,
     ) -> None:
         self.sup = sup
+        #: ``runner.restart`` (tier B, spec 13.2 item 7): arms the runner's own restart (:mod:`orch.runner.restart`)
+        self._restart = restart
+        #: true once a restart is armed: new spawns are refused, so none is accepted and then killed by the exit
+        self._restarting = restarting or (lambda: False)
         #: the release this process LOADED, taken now (never on the first hello): the host refuses spawns from a
         #: runner of another release than its own (``runner.stale``)
         self.release = release if release is not None else _loaded_release()
@@ -493,6 +499,8 @@ class HostLink:
             with self.sup._spawn_lock:  # the epoch check and the spawn are one step against a reconnect's snapshot
                 if not self._current(tag):
                     raise _Stale()
+                if self._restarting():
+                    raise SpawnError("runner.unavailable", "the agent runner is restarting on a new release; try again")
                 res = self.sup.spawn(spec)
             return {k: res.get(k) for k in ("pid", "state", "started_at", "duplicate")}
         if cmd == "stop":
@@ -519,6 +527,10 @@ class HostLink:
                 raise SpawnError(exc.code, exc.message) from None
         if cmd == "grant.drop":
             return {"dropped": self.grants.drop(args.get("grant"))}
+        if cmd == "restart":
+            if self._restart is None:
+                raise SpawnError("runner.unavailable", "this runner cannot restart itself")
+            return self._restart(args.get("force") is True)
         if cmd == "attach.end":
             if self.term is not None:
                 self.term.end(str(args.get("att")), str(args.get("reason") or "detached"))

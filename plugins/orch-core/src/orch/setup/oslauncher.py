@@ -2,7 +2,7 @@
 
 Root must never run a file it does not own. The person's release lives in the person's home, so it is NOT what
 root runs. The installer (as root) puts a root-owned copy of the few setup modules at ``TRUSTED_ROOT`` and this file as
-``LAUNCHER_PATH`` (see ``osinstall``), with the shebang ``#!/usr/bin/python3 -I -S``: system interpreter, isolated, no
+``LAUNCHER_PATH`` (see ``osinstall``), with the shebang ``#!/usr/bin/python3 -IS``: system interpreter, isolated, no
 ``site`` (so no ``.pth`` files and no site-packages). Before the first ``orch`` import this launcher checks that
 
 - the interpreter and the standard library directory are root's and writable by root only, all the way up;
@@ -20,7 +20,9 @@ import sys
 # /usr/lib, not /usr/local/lib: Debian ships /usr/local as 2775 root:staff, which this launcher must (and does) refuse.
 TRUSTED_ROOT = "/usr/lib/orch/os-setup"
 LAUNCHER_PATH = TRUSTED_ROOT + "/orch-os-setup"
-SHEBANG = "#!/usr/bin/python3 -I -S\n"
+# One argument, "-IS": Linux hands everything after the interpreter to it as a SINGLE argument, so "-I -S" would reach
+# python as the unknown option "- " and the launcher could not be executed directly (``sudo <launcher> ...``).
+SHEBANG = "#!/usr/bin/python3 -IS\n"
 # The only files the root process may import from orch (relative to TRUSTED_ROOT):
 TRUSTED_FILES = (
     "orch/__init__.py",

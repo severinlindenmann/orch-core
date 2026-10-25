@@ -245,3 +245,49 @@ def test_the_options_are_charged_to_the_source_bucket(world, auth):
         codes.add(world.options("device.add").status_code)
         world.app.state.passkeys.ceremonies.items.clear()  # keep the per-session cap out of the way
     assert 429 in codes
+
+
+def remove_during(world, authn, monkeypatch):
+    """The passkey is removed (store and sessions) right after its assertion verified, before the route registers."""
+    store = world.app.state.passkeys.store
+    real = store.touch
+    cid = b64u(authn.credential_id)
+
+    def touch(credential_id, **kw):
+        real(credential_id, **kw)
+        store.remove(authn.credential_id)
+        world.auth.drop_credential(cid)
+
+    monkeypatch.setattr(store, "touch", touch)
+
+
+def test_a_login_verified_before_the_removal_opens_no_session_after_it(world, monkeypatch):
+    from passkey_kit import login
+
+    other = second_passkey(world)
+    remove_during(world, other, monkeypatch)
+    res = login(world.front, other)
+    assert res.status_code == 401 and res.json()["error"]["code"] == "passkey.invalid"
+    assert not [t for t, c in world.auth.credentials.items() if c == b64u(other.credential_id)]
+
+
+def test_a_step_up_verified_before_the_removal_is_held_by_no_session_after_it(world, monkeypatch):
+    other = second_passkey(world)
+    opts = world.options("device.add").json()
+    remove_during(world, other, monkeypatch)
+    res = world.verify(opts, authn=other)
+    assert res.status_code == 403
+    assert refused_for_stepup(link(world, link_id=opts["link_id"]))
+
+
+def test_a_removed_id_enrolled_again_is_a_new_passkey_and_works(world):
+    other = second_passkey(world)
+    cid = b64u(other.credential_id)
+    world.touch("passkey.remove", credential_id=cid)
+    assert remove(world, cid).status_code == 200
+    assert cid in world.auth.revoked
+    code = world.app.state.enroll.mint()
+    _, res = enroll(world.front, world.app, code=code, name="Phone again", authn=other)
+    assert res.status_code == 200, res.text
+    assert cid not in world.auth.revoked and world.auth.valid(res.json()["token"])
+    assert world.auth.credentials[res.json()["token"]] == cid

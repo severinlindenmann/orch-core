@@ -97,6 +97,9 @@ class Auth:
         self.stepups: dict[str, dict[tuple[str, str], tuple[float, object, str | None]]] = {}
         #: remote session -> the credential id (base64url) of the passkey that opened it
         self.credentials: dict[str, str] = {}
+        #: credential ids of removed passkeys: a login or step-up verified before the removal cannot register after it
+        #: (`open_remote`, `stepup_grant` refuse them). Enrolling the same id again clears it (`allow_credential`).
+        self.revoked: set[str] = set()
         self.remote_sources: dict[str, deque] = {}
         self.remote_all = deque()
         self.remote_swept = 0.0
@@ -195,9 +198,12 @@ class Auth:
         """A session of the front, called only after a passkey login (R1-5) has been verified. Lives 12 h / 2 h idle and
         works on the front listener only. ``source`` is the client address the front reported: at most
         ``REMOTE_SESSIONS_PER_SOURCE`` live sessions per source (its /32 or /64) and ``REMOTE_SESSIONS`` in all, the
-        oldest evicted first. ``credential_id`` is the passkey that logged in: removing it ends this session."""
+        oldest evicted first. ``credential_id`` is the passkey that logged in: removing it ends this session, and a
+        removed one opens none (returns None)."""
         key = source_key(source) if source is not None else None
         with self.lock:
+            if credential_id in self.revoked:
+                return None
             now = self.clock()
             self._drop_dead(now)
             self._evict("remote", REMOTE_SESSIONS - 1)
@@ -311,7 +317,7 @@ class Auth:
         token). A newer one for the same pair replaces the older; the oldest goes beyond ``STEPUPS_PER_SESSION``.
         ``credential_id`` is the passkey that made it: removing that passkey drops it."""
         with self.lock:
-            if token not in self.sessions:
+            if token not in self.sessions or credential_id in self.revoked:
                 return False
             held = self.stepups.setdefault(token, {})
             now = self.clock()
@@ -334,10 +340,17 @@ class Auth:
                 return False, None
             return True, entry[1]
 
+    def allow_credential(self, credential_id):
+        """A passkey with this id was enrolled (again): it is no longer revoked. A new enrollment is a new passkey
+        even when an authenticator reuses the id."""
+        with self.lock:
+            self.revoked.discard(credential_id)
+
     def drop_credential(self, credential_id):
         """A passkey was removed: end every session it opened (the requesting one too, if it used it) and drop every
         step-up it made in any session."""
         with self.lock:
+            self.revoked.add(credential_id)
             for token in [t for t, c in self.credentials.items() if c == credential_id]:
                 self._drop(token)
             for held in self.stepups.values():

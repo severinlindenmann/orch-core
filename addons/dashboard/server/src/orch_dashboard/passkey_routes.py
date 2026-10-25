@@ -267,7 +267,8 @@ def register(app: FastAPI, auth: Auth, service: Passkeys | None) -> None:
             service.store.touch(credential_id, when=service.now(), sign_count=count)
         except (StoreError, OSError) as exc:
             log.error("passkey store not updated: %s", exc)  # the login itself was verified; last-used is display only
-        return auth.open_remote(request.state.client, record.credential_id)
+        opened = auth.open_remote(request.state.client, record.credential_id)
+        return opened or invalid("passkey removed meanwhile")
 
     @app.post("/auth/enroll/options")
     def enroll_options(body: EnrollOptionsBody, request: Request):
@@ -356,4 +357,5 @@ def register(app: FastAPI, auth: Auth, service: Passkeys | None) -> None:
             log.error("passkey not stored: %s", exc)
             return expired("store")  # the code is spent: IT makes a new link
         log.warning("A passkey was added: %s, %s", name, when)  # the terminal and the log show it (host spec 10.1)
+        auth.allow_credential(record.credential_id)
         return auth.open_remote(request.state.client, record.credential_id)

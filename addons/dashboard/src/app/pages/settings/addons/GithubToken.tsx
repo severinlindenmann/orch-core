@@ -108,22 +108,16 @@ export function GithubToken({ workspace }: { workspace: Workspace }) {
       {phase === 'saved' && <p role="status" data-testid="github-token-saved" className="text-[13px]">Saved. Only the GitHub add-on gets this token.</p>}
       {phase === 'removed' && <p role="status" data-testid="github-token-removed" className="text-[13px]">The token was removed.</p>}
       {(phase === 'ask' || phase === 'sending') && offer ? (
-        <form
-          className="space-y-2"
-          onSubmit={(e) => {
-            e.preventDefault()
-            if (ready) void save()
-          }}
-        >
+        <div className="space-y-2">
           <label className="block text-[14px] font-medium" htmlFor="github-token-input">Token</label>
-          <input id="github-token-input" ref={field} type="password" autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false} data-testid="github-token-input" onChange={() => setReady(!!field.current?.value.trim())} className="min-h-11 w-full rounded-md border border-border bg-bg px-3 text-[16px] text-text" />
+          <input id="github-token-input" ref={field} type="password" autoComplete="new-password" data-1p-ignore data-lpignore="true" autoCorrect="off" autoCapitalize="off" spellCheck={false} data-testid="github-token-input" onChange={() => setReady(!!field.current?.value.trim())} className="min-h-11 w-full rounded-md border border-border bg-bg px-3 text-[16px] text-text" />
           <div className="flex flex-wrap gap-2">
-            <Button type="submit" className="min-h-11" disabled={!ready || phase === 'sending'} data-testid="github-token-save">
+            <Button type="button" className="min-h-11" onClick={() => void save()} disabled={!ready || phase === 'sending'} data-testid="github-token-save">
               {phase === 'sending' ? <Loader2 className="mr-2 size-4 animate-spin" aria-hidden /> : null}Save token
             </Button>
             <Button type="button" variant="ghost" className="min-h-11" disabled={phase === 'sending'} onClick={() => { clear(); setOffer(null); setPhase('idle') }}>Cancel</Button>
           </div>
-        </form>
+        </div>
       ) : (
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" className="min-h-11" onClick={() => { setError(null); void begin() }} disabled={phase === 'loading'} data-testid="github-token-start">

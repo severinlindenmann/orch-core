@@ -1936,7 +1936,13 @@ class ClickSigner:
         from orch.host.errors import HostError
 
         entry = self._entry(args.get("workspace_id"))
-        wid, uid = self._tier_a(entry)
+        try:
+            wid, uid = self._tier_a(entry)
+        except ClickError:
+            raise ClickError(
+                "custody.terminal_needed",
+                "the host runs as another user here (tier B); store the token in the terminal: orch addon login github",
+            ) from None
         if "begin" in args:
             if set(args) != {"workspace_id", "begin"} or args["begin"] is not True:
                 raise ClickError("invalid.input", "begin takes the workspace and true")

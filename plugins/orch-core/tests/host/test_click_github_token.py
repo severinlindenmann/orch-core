@@ -182,6 +182,7 @@ def test_a_host_of_another_user_is_terminal_only(world):
     with pytest.raises(ClickError) as caught:
         begin(world)
     assert caught.value.code == "custody.terminal_needed"
+    assert "orch addon login github" in str(caught.value) and "convenience" not in str(caught.value)
 
 
 def test_the_cli_and_the_dashboard_share_one_store_path(world, monkeypatch):

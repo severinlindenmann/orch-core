@@ -137,4 +137,17 @@ describe('Replace this device’s key', () => {
     fireEvent.click(screen.getByTestId('replace-key-start'))
     expect(await screen.findByTestId('replace-key-done', {}, T)).toBeInTheDocument()
   })
+
+  it('keeps the browser from offering to save the recovery code or passphrase', async () => {
+    const { container } = mount()
+    const c = await open()
+    expect(container.querySelector('form')).toBeNull()
+    for (const id of ['replace-key-code', 'replace-key-pw', 'replace-key-pw2']) {
+      const el = await field(id)
+      expect(el.getAttribute('autocomplete')).toBe('new-password')
+      expect(el.hasAttribute('data-1p-ignore')).toBe(true)
+      expect(el.getAttribute('data-lpignore')).toBe('true')
+    }
+    expect(c).toBeTruthy()
+  })
 })

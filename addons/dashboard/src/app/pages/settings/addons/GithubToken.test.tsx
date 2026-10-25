@@ -53,6 +53,15 @@ describe('GithubToken', () => {
     expect(document.body.textContent).not.toContain(TOKEN)
   })
 
+  it('keeps the browser from offering to save the token as a password', async () => {
+    const { container } = render(<GithubToken workspace={workspace} />)
+    const input = await type(TOKEN)
+    expect(container.querySelector('form')).toBeNull()
+    expect(input.getAttribute('autocomplete')).toBe('new-password')
+    expect(input.hasAttribute('data-1p-ignore')).toBe(true)
+    expect(input.getAttribute('data-lpignore')).toBe('true')
+  })
+
   it('refuses an offer for another purpose', async () => {
     begin.mockImplementation(async () => offer(['custody.passphrase']))
     render(<GithubToken workspace={workspace} />)

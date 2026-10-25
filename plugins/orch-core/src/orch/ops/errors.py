@@ -625,6 +625,17 @@ _SPECS = [
         "of them (#1198 R1-5).",
     ),
     _e(
+        "passkey.stepup_required",
+        3,
+        False,
+        "this needs a fresh fingerprint or PIN check first",
+        "do the check when the dashboard asks, then click again",
+        ["orch", "status"],
+        "A big action on a remote dashboard session needs a passkey assertion for exactly this review, used once "
+        "(#1198 R1-6). The signer checks it itself; the answer is the same for a missing, stale, replayed or "
+        "wrong one.",
+    ),
+    _e(
         "retry.later",
         9,
         True,

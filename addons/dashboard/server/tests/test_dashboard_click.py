@@ -2,8 +2,10 @@
 rules the section 0.8.6 item 7 puts on this process. The signer is faked here (a scripted channel); the real signer
 runs in test_realhost_click.py."""
 
+import base64
 import logging
 import re
+import secrets
 import threading
 import time
 from pathlib import Path
@@ -54,6 +56,7 @@ class Script:
         self.delay = 0.0
         self.started: list[dict] = []
         self.clients: list[Fake] = []
+        self.nonces: list[bytes] = []  # the step-up nonces it issued
 
     def handler(self, op, args):
         if op in self.refuse:
@@ -75,6 +78,9 @@ class Script:
             return out
         if op == "stash":
             return {"state": "complete"}
+        if op == "stepup":  # #1198 R1-6: the signer's one-use nonce for a passkey step-up
+            self.nonces.append(secrets.token_bytes(32))
+            return {"nonce": base64.urlsafe_b64encode(self.nonces[-1]).rstrip(b"=").decode()}
         if op == "runner":
             on = args["on"]
             if args.get("review"):
@@ -544,7 +550,9 @@ def test_no_route_but_the_click_routes_calls_the_signer():
     holders = sorted(
         p.name for p in root.rglob("*.py") if "gateway.click" in p.read_text() or "self.click" in p.read_text()
     )
-    assert holders == ["click.py", "gateway.py"]  # the gateway reads `status` for the card; nothing else
+    # the gateway reads `status` for the card; the step-up ceremony asks for a passkey nonce (`stepup`); nothing else
+    assert holders == ["click.py", "gateway.py", "stepup_routes.py"]
+    assert [m for m in re.findall(r'signer\.call\("(\w+)"', (root / "stepup_routes.py").read_text())] == ["stepup"]
     assert "orch.click" not in (root / "handoff.py").read_text()
 
 
@@ -1858,14 +1866,12 @@ def test_c12_the_seal_offer_is_relayed_for_an_owner_on_a_local_session(client, t
     ]
 
 
-def test_c12_the_seal_offer_needs_a_local_session_and_an_owner(client, token, stub, script, monkeypatch):
+def test_c12_the_seal_offer_needs_an_owner(client, token, stub, script, monkeypatch):
     from orch_dashboard import adapters
     from orch_dashboard.auth import Auth
 
     script.offer = SEAL_OFFER
     script.features = ["custody", "sealed_passphrase"]
-    monkeypatch.setattr(Auth, "login_kind", lambda self, token: "remote", raising=False)
-    assert seal_post(client, token, stub).status_code == 409
     monkeypatch.setattr(Auth, "login_kind", lambda self, token: "local", raising=False)
     real = adapters.members
     monkeypatch.setattr(adapters, "members", lambda d: [m.model_copy(update={"role": "maintainer"}) for m in real(d)])
@@ -1915,12 +1921,13 @@ def test_c12_off_relays_the_sealed_passphrase_as_ciphertext_only(client, token, 
     assert PASS_ENV["ct"] not in caplog.text + out + err + res.text
 
 
-def test_c12_sealed_off_needs_a_local_session(client, token, stub, script, monkeypatch):
+def test_c12_sealed_off_needs_a_passkey_step_up_off_this_computer(client, token, stub, script, monkeypatch):
     from orch_dashboard.auth import Auth
 
     script.features = ["custody", "sealed_passphrase"]
     monkeypatch.setattr(Auth, "login_kind", lambda self, token: "remote", raising=False)
-    assert switch(client, token, stub, sealed_off()).status_code == 409
+    res = switch(client, token, stub, sealed_off())
+    assert res.status_code == 403 and res.json()["error"]["code"] == "passkey.stepup_required"
     assert not any(c[0] == "custody_off" for cl in script.clients for c in cl.calls)
 
 
@@ -2553,18 +2560,26 @@ def test_the_page_key_fingerprint_matches_the_golden_vectors_shared_with_core_an
         assert len(case["fingerprint"]) == 64 and key_fingerprint(case["key"]) == case["fingerprint"]
 
 
-def test_agent_access_is_refused_on_any_session_that_is_not_a_local_one(client, token, stub, reveals, auth):
-    """Until the passkey step-up (R1-6) exists, a remote or unknown session kind never prepares agent_access."""
-    from orch_dashboard.stepup import REVEAL_SESSION_KINDS
-
-    assert REVEAL_SESSION_KINDS == {"local"}
+def test_a_grant_reveal_is_signed_only_with_a_step_up_on_any_session_that_is_not_a_local_one(
+    client, token, stub, reveals, auth
+):
+    """A remote or unknown session kind prepares the review (a sheet, nothing secret) but never signs the reveal
+    without a passkey step-up (R1-6)."""
+    assert prepare(client, token, stub, agent_access()).status_code == 200
     for kind in ("remote", "hub", "passkey", None):
         auth.kinds[token] = kind
-        res = prepare(client, token, stub, agent_access())
-        assert res.status_code == 409, (kind, res.text)
-    assert sent_of(reveals, "prepare") == []
+        res = client.post(
+            url(stub, "sign"),
+            json={"request_id": REQ, "view_digest": HASH, "reveal_key": PAGE_KEY},
+            headers=hdr(token),
+        )
+        assert res.status_code == 403 and res.json()["error"]["code"] == "passkey.stepup_required", (kind, res.text)
+    assert sent_of(reveals, "sign") == []
     auth.kinds[token] = "local"
-    assert prepare(client, token, stub, agent_access()).status_code == 200
+    res = client.post(
+        url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH, "reveal_key": PAGE_KEY}, headers=hdr(token)
+    )
+    assert res.status_code == 200, res.text
 
 
 def test_c21_a_missing_key_at_sign_is_a_definite_refusal_not_uncertain(client, token, stub, script):
@@ -2658,16 +2673,10 @@ def test_hub_bodies_are_closed(client, token, stub, backup, body):
     assert sent_of(backup, "prepare") == []
 
 
-def test_a_hub_step_needs_a_signer_that_takes_the_backup_key_and_a_local_session(
-    client, token, stub, backup, monkeypatch
-):
+def test_a_hub_step_needs_a_signer_that_takes_the_backup_key(client, token, stub, backup):
     backup.features = ["custody"]
     res = prepare(client, token, stub, hub_join())
     assert res.status_code != 200 and sent_of(backup, "prepare") == []
-    backup.features = ["custody", "backup_key"]
-    monkeypatch.setattr(client_login_kind(), "login_kind", lambda self, token: "remote", raising=False)
-    res = prepare(client, token, stub, hub_join())
-    assert res.status_code == 409 and sent_of(backup, "prepare") == []
 
 
 def test_a_hub_step_is_not_a_terminal_hand_off(client, token, stub, backup):
@@ -2763,7 +2772,7 @@ def test_a_sealed_sign_on_a_non_local_session_never_reaches_the_signer(client, t
     prepare(client, token, stub, hub_join())
     monkeypatch.setattr(client_login_kind(), "login_kind", lambda self, token: "remote", raising=False)
     res = sign_hub(client, token, stub, sealed={"hub.backup_key": BACKUP_ENV})
-    assert res.status_code == 409 and res.json()["error"]["reason"] == "check_failed"
+    assert res.status_code == 403 and res.json()["error"]["code"] == "passkey.stepup_required"
     assert sent_of(backup, "sign") == []
 
 
@@ -2778,14 +2787,13 @@ def test_c17_a_plain_click_resumes_one_click_from_a_local_dashboard(client, toke
     assert calls == [("custody_on", {"workspace_id": stub.ws, "resume": True})]
 
 
-def test_c17_a_resume_from_any_other_session_keeps_the_terminal_command(client, token, stub, script, auth):
+def test_c17_a_resume_from_any_other_session_needs_a_passkey_step_up(client, token, stub, script, auth):
     script.features = ["custody"]
     script.enabled = script.available = False
     for kind in ("remote", "passkey", None):
         auth.kinds[token] = kind
         res = switch(client, token, stub, {"on": True, "resume": True})
-        assert res.json()["error"]["code"] == "custody.terminal_needed", res.text
-        assert "orch host convenience on --workspace" in res.json()["error"]["message"]
+        assert res.json()["error"]["code"] == "passkey.stepup_required", res.text
     assert not any(c[0] == "custody_on" for cl in script.clients for c in cl.calls)
 
 
@@ -2852,15 +2860,17 @@ def test_c13_the_review_is_relayed_for_an_owner_on_a_local_session(client, token
     assert rotate_calls(script) == [("rotate", {"workspace_id": stub.ws, "begin": True})]
 
 
-def test_c13_begin_and_sign_are_local_owner_only_and_need_the_feature(client, token, stub, script, monkeypatch):
+def test_c13_begin_and_sign_are_owner_only_need_the_feature_and_a_step_up_off_this_computer(
+    client, token, stub, script, monkeypatch
+):
     from orch_dashboard import adapters
     from orch_dashboard.auth import Auth
 
     script.rotation = rotate_offer(stub.ws)
     script.features = ["custody", "device_rotate"]
     monkeypatch.setattr(Auth, "login_kind", lambda self, token: "remote", raising=False)
-    assert client.post(url(stub, "rotate/seal"), json={}, headers=hdr(token)).status_code == 409
-    assert client.post(url(stub, "rotate"), json=rotate_body(), headers=hdr(token)).status_code == 409
+    res = client.post(url(stub, "rotate"), json=rotate_body(), headers=hdr(token))
+    assert res.status_code == 403 and res.json()["error"]["code"] == "passkey.stepup_required"
     monkeypatch.setattr(Auth, "login_kind", lambda self, token: "local", raising=False)
     script.features = ["custody"]
     for path, body in (("rotate/seal", {}), ("rotate", rotate_body())):
@@ -2965,14 +2975,13 @@ def test_c14_review_then_on_for_an_owner_on_a_local_session(client, token, stub,
     )  # fmt: skip
 
 
-def test_c14_on_is_local_only_and_off_is_a_plain_click_anywhere(client, token, stub, script, monkeypatch):
+def test_c14_on_needs_a_step_up_and_off_is_a_plain_click_anywhere(client, token, stub, script, monkeypatch):
     from orch_dashboard.auth import Auth
 
-    script.features = ["custody", "runner_switch"]
+    script.features = ["custody", "runner_switch", "passkey_stepup"]
     monkeypatch.setattr(Auth, "login_kind", lambda self, token: "remote", raising=False)
-    for path in ("runner/review", "runner"):
-        res = client.post(url(stub, path), json={"on": True, "view_digest": HASH}, headers=hdr(token))
-        assert res.status_code == 409 and res.json()["error"]["reason"] == "check_failed"
+    res = client.post(url(stub, "runner"), json={"on": True, "view_digest": HASH}, headers=hdr(token))
+    assert res.status_code == 403 and res.json()["error"]["code"] == "passkey.stepup_required"
     assert runner_calls(script) == []
     assert client.post(url(stub, "runner/review"), json={"on": False}, headers=hdr(token)).status_code == 200
     res = client.post(url(stub, "runner"), json={"on": False, "view_digest": HASH}, headers=hdr(token))

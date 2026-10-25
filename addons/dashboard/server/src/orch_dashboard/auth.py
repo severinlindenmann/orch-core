@@ -30,6 +30,10 @@ LIFETIMES = {"local": (86400, 43200), "remote": (43200, 7200)}  # remote: 12 h a
 KIND_LISTENER = {"local": LOOPBACK, "remote": REMOTE}
 #: Kinds a launch code can open: a launch code is made on this computer and is a loopback credential.
 LAUNCH_KINDS = frozenset({"local"})
+#: A passkey step-up (verified by `/api/stepup/verify`) stays usable this long, once, for the op it was made for (owner
+#: decision of 24 Oct 2026: a fresh touch at most every 10 minutes). At most this many wait per session.
+STEPUP_FRESH = 600
+STEPUPS_PER_SESSION = 8
 
 #: Passkey-login buckets, separate from the launch limiter so internet traffic cannot lock out the local owner (host
 #: spec 0.8.6 10.3): 20 per minute per source, 600 per minute overall (a CPU guard only).
@@ -88,6 +92,14 @@ class Auth:
         # The listener each session was opened on; Security refuses the token on any other (see KIND_LISTENER).
         self.listeners: dict[str, str] = {}
         self.session_sources: dict[str, str] = {}  # remote session -> the source bucket that opened it
+        #: remote session -> {(action, digest of the op) -> (verified at, the proof the signer checks again, the
+        #: credential that made it)}; single use
+        self.stepups: dict[str, dict[tuple[str, str], tuple[float, object, str | None]]] = {}
+        #: remote session -> the credential id (base64url) of the passkey that opened it
+        self.credentials: dict[str, str] = {}
+        #: credential ids of removed passkeys: a login or step-up verified before the removal cannot register after it
+        #: (`open_remote`, `stepup_grant` refuse them). Enrolling the same id again clears it (`allow_credential`).
+        self.revoked: set[str] = set()
         self.remote_sources: dict[str, deque] = {}
         self.remote_all = deque()
         self.remote_swept = 0.0
@@ -182,13 +194,16 @@ class Auth:
             self._forget(code)
             return self._mint(now, kind), 200
 
-    def open_remote(self, source=None):
+    def open_remote(self, source=None, credential_id=None):
         """A session of the front, called only after a passkey login (R1-5) has been verified. Lives 12 h / 2 h idle and
         works on the front listener only. ``source`` is the client address the front reported: at most
         ``REMOTE_SESSIONS_PER_SOURCE`` live sessions per source (its /32 or /64) and ``REMOTE_SESSIONS`` in all, the
-        oldest evicted first."""
+        oldest evicted first. ``credential_id`` is the passkey that logged in: removing it ends this session, and a
+        removed one opens none (returns None)."""
         key = source_key(source) if source is not None else None
         with self.lock:
+            if credential_id in self.revoked:
+                return None
             now = self.clock()
             self._drop_dead(now)
             self._evict("remote", REMOTE_SESSIONS - 1)
@@ -197,6 +212,8 @@ class Auth:
             minted = self._mint(now, "remote")
             if key is not None:
                 self.session_sources[minted["token"]] = key
+            if credential_id is not None:
+                self.credentials[minted["token"]] = credential_id
             return minted
 
     def _evict(self, kind, keep, source=None):
@@ -212,7 +229,7 @@ class Auth:
 
     def _drop(self, token):
         """Hold ``self.lock``."""
-        for table in (self.sessions, self.kinds, self.listeners, self.session_sources):
+        for table in (self.sessions, self.kinds, self.listeners, self.session_sources, self.stepups, self.credentials):
             table.pop(token, None)
 
     def _drop_dead(self, now):
@@ -222,7 +239,7 @@ class Auth:
             for t, (born, last) in self.sessions.items()
             if self._alive(self.kinds.get(t), born, last, now)
         }
-        for table in (self.kinds, self.listeners, self.session_sources):
+        for table in (self.kinds, self.listeners, self.session_sources, self.stepups, self.credentials):
             for token in [t for t in table if t not in self.sessions]:
                 del table[token]
 
@@ -294,6 +311,51 @@ class Auth:
         """How this session was opened (``"local"`` or ``"remote"``), or None for an unknown session."""
         with self.lock:
             return self.kinds.get(token) if token in self.sessions else None
+
+    def stepup_grant(self, token, action, digest, proof, credential_id=None):
+        """A verified passkey step-up for ``action`` with ``digest``, kept for this session only (never for another
+        token). A newer one for the same pair replaces the older; the oldest goes beyond ``STEPUPS_PER_SESSION``.
+        ``credential_id`` is the passkey that made it: removing that passkey drops it."""
+        with self.lock:
+            if token not in self.sessions or credential_id in self.revoked:
+                return False
+            held = self.stepups.setdefault(token, {})
+            now = self.clock()
+            for stale in [d for d, (at, _, _) in held.items() if now - at >= STEPUP_FRESH]:
+                del held[stale]
+            held.pop((action, digest), None)
+            while len(held) >= STEPUPS_PER_SESSION:
+                del held[next(iter(held))]
+            held[(action, digest)] = (now, proof, credential_id)
+            return True
+
+    def stepup_take(self, token, action, digest):
+        """``(True, proof)`` once for a step-up of this session for exactly (``action``, ``digest``) that is at most
+        ``STEPUP_FRESH`` old, else ``(False, None)``. Taking spends it, whatever happens to the op afterwards."""
+        with self.lock:
+            if token not in self.sessions:
+                return False, None
+            entry = self.stepups.get(token, {}).pop((action, digest), None)
+            if entry is None or self.clock() - entry[0] >= STEPUP_FRESH:
+                return False, None
+            return True, entry[1]
+
+    def allow_credential(self, credential_id):
+        """A passkey with this id was enrolled (again): it is no longer revoked. A new enrollment is a new passkey
+        even when an authenticator reuses the id."""
+        with self.lock:
+            self.revoked.discard(credential_id)
+
+    def drop_credential(self, credential_id):
+        """A passkey was removed: end every session it opened (the requesting one too, if it used it) and drop every
+        step-up it made in any session."""
+        with self.lock:
+            self.revoked.add(credential_id)
+            for token in [t for t, c in self.credentials.items() if c == credential_id]:
+                self._drop(token)
+            for held in self.stepups.values():
+                for key in [k for k, (_, _, c) in held.items() if c == credential_id]:
+                    del held[key]
 
     def listener_of(self, token):
         """The listener this session was opened on (``"loopback"`` or ``"remote"``), or None when unknown. A session

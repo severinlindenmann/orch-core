@@ -27,6 +27,7 @@ ALG_EDDSA = -8
 
 CHALLENGE_BYTES = 32
 STEPUP_LABEL = b"orch/v2/dash-stepup|"
+ACTION_LABEL = b"orch/v2/dash-stepup-action|"
 
 MAX_CLIENT_DATA = 4096
 MAX_ATTESTATION_OBJECT = 8192
@@ -109,6 +110,17 @@ def stepup_challenge(nonce: bytes, view_digest: str) -> bytes:
     if not isinstance(view_digest, str) or not _VIEW_DIGEST.fullmatch(view_digest):
         raise PasskeyError("stepup_view_digest")
     return hashlib.sha256(STEPUP_LABEL + nonce + bytes.fromhex(view_digest[7:])).digest()
+
+
+def action_digest(action: str, scope: str, extra: str = "") -> str:
+    """The digest a step-up binds to for an op that has no signer View (turning One click on, a hub connect, adding or
+    removing a passkey): SHA-256 over a label and the three texts, as a `sha256:<hex>` digest. `scope` is the workspace
+    id (or `-`), `extra` names the thing acted on (a credential id). Both sides compute it; neither takes it from the
+    browser."""
+    if not all(isinstance(x, str) and len(x) <= 256 for x in (action, scope, extra)):
+        raise PasskeyError("stepup_action")
+    body = json.dumps([action, scope, extra], separators=(",", ":"), ensure_ascii=True).encode()
+    return "sha256:" + hashlib.sha256(ACTION_LABEL + body).hexdigest()
 
 
 def b64u_decode(text: str, max_len: int) -> bytes:

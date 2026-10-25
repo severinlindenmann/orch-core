@@ -1,0 +1,1 @@
+err passkey.stepup_required this needs a fresh fingerprint or PIN check first · retry:false · next: do the check when the dashboard asks, then click again · fix: orch status

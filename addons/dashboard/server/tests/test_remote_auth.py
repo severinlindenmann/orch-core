@@ -32,7 +32,7 @@ from orch_dashboard.auth import (
     client_address,
     source_key,
 )
-from orch_dashboard.stepup import REVEAL_SESSION_KINDS
+from orch_dashboard.stepup import LOCAL
 
 
 def test_exchange_takes_the_kind_and_a_launch_code_opens_a_local_session_only():
@@ -51,7 +51,7 @@ def test_the_remote_kind_is_only_what_the_passkey_login_opens():
     got = auth.open_remote()
     assert auth.login_kind(got["token"]) == "remote" and auth.listener_of(got["token"]) == "remote"
     assert auth.login_kind("unknown") is None and auth.listener_of("unknown") is None
-    assert "remote" not in REVEAL_SESSION_KINDS and REVEAL_SESSION_KINDS == {"local"}
+    assert LOCAL == "local" and auth.login_kind(got["token"]) != LOCAL
 
 
 def test_remote_sessions_live_12_hours_and_2_idle_and_local_ones_keep_24_and_12():

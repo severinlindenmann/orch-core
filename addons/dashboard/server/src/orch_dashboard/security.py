@@ -3,7 +3,7 @@ import contextlib
 from . import widget_frame
 from .errors import response
 from .policy import ListenerPolicy
-from .routegate import ALLOWED, PRE_LOGIN, TERMINALS, RouteGate
+from .routegate import ALLOWED, PRE_LOGIN, STEP_UP, TERMINALS, RouteGate
 from .testrun import UPLOAD_LIMIT
 
 # Frames: only the locked Widgets route (see policy.py).
@@ -50,12 +50,12 @@ class Security:
 
     def route_ok(self, scope, policy) -> bool:
         """The one place the remote route table is enforced. On a listener with ``route_gate`` only a route whose rule
-        is ALLOWED, PRE_LOGIN, or TERMINALS (where the policy has terminals on) answers; a refused, step-up (until
-        R1-6), unlisted or unmatched route does not."""
+        is ALLOWED, STEP_UP (its handler asks for the passkey, `stepup.refuse_step_up`), PRE_LOGIN, or TERMINALS
+        (where the policy has terminals on) answers; a refused, unlisted or unmatched route does not."""
         if not policy.route_gate:
             return True
         rule = self.gate.rule(scope) if self.gate is not None else None
-        return rule in (ALLOWED, PRE_LOGIN) or (rule == TERMINALS and policy.terminals)
+        return rule in (ALLOWED, STEP_UP, PRE_LOGIN) or (rule == TERMINALS and policy.terminals)
 
     async def __call__(self, scope, receive, send):
         if scope["type"] not in ("http", "websocket"):

@@ -39,28 +39,23 @@ from test_dashboard_click import (  # noqa: F401
 
 from orch_dashboard.front import Front
 from orch_dashboard.policy import remote_policy
-from orch_dashboard.stepup import ROTATE_LOCAL_ONLY, RUNNER_LOCAL_ONLY, SEALED_LOCAL_ONLY
 
+NEEDS = "Confirm with your fingerprint or PIN first"
+#: the variants that act (the reviews that only open a sheet are plain, R1-6)
 GATES = [
-    ("runner/review", {"on": True}, RUNNER_LOCAL_ONLY),
-    ("runner", {"on": True, "view_digest": HASH}, RUNNER_LOCAL_ONLY),
-    ("custody/seal", {}, SEALED_LOCAL_ONLY),
+    ("runner", {"on": True, "view_digest": HASH}),
     (
         "custody",
         {"on": False, "request_id": REQ, "view_digest": HASH, "sealed": {"custody.passphrase": PASS_ENV}},
-        SEALED_LOCAL_ONLY,
     ),
-    ("rotate/seal", {}, ROTATE_LOCAL_ONLY),
-    ("rotate", rotate_body(), ROTATE_LOCAL_ONLY),
-    ("custody", {"on": True, "resume": True}, "needs a dashboard opened on this computer"),
-    ("custody", {"on": True, "passphrase": "correct horse"}, "needs a dashboard opened on this computer"),
-    ("prepare", agent_access(), "needs a dashboard opened on this computer"),
-    ("prepare", hub_join(), "needs a dashboard opened on this computer"),
-    ("sign", {"request_id": REQ, "view_digest": HASH, "sealed": {"hub.backup_key": PASS_ENV}}, "needs a dashboard"),
+    ("rotate", rotate_body()),
+    ("custody", {"on": True, "resume": True}),
+    ("custody", {"on": True, "passphrase": "correct horse"}),
+    ("sign", {"request_id": REQ, "view_digest": HASH, "sealed": {"hub.backup_key": PASS_ENV}}),
 ]
 
 
-FEATURES = ["custody", "device_rotate", "runner_switch"]
+FEATURES = ["custody", "device_rotate", "runner_switch", "passkey_stepup"]
 
 
 def step(client, stub, path, body, token, origin):
@@ -106,7 +101,7 @@ def test_a_header_never_makes_a_request_local_or_picks_the_listener(loop, front,
         "X-Orch-Login": "local",
     }
     res = front.post(f"/api/w/{stub.ws}/click/runner", json={"on": True, "view_digest": HASH}, headers=forged)
-    assert res.status_code == 409 and RUNNER_LOCAL_ONLY in res.json()["error"]["message"]
+    assert res.status_code == 403 and res.json()["error"]["code"] == "passkey.stepup_required"
 
 
 def test_the_pre_login_surface_of_the_front_gets_the_address_for_the_login_bucket(auth):
@@ -128,33 +123,32 @@ def test_the_pre_login_surface_of_the_front_gets_the_address_for_the_login_bucke
     assert bare.get("/", headers={"host": f"127.0.0.1:{PORT}"}).status_code == 200
 
 
-@pytest.mark.parametrize(("path", "body", "message"), GATES)
-def test_a_remote_session_on_the_front_gets_each_local_only_refusal(ungated, remote, stub, script, path, body, message):
-    """The handler's own refusal, with the route table off (the table answers first in production)."""
+@pytest.mark.parametrize(("path", "body"), GATES)
+def test_a_remote_session_on_the_front_gets_each_step_up_refusal(ungated, remote, stub, script, path, body):
+    """The handler's own refusal, with the route table off (the table lets these through to the handler anyway)."""
     script.features = FEATURES
     res = step(ungated, stub, path, body, remote, HTTPS)
-    assert res.status_code == 409, res.text
+    assert res.status_code == 403, res.text
     error = res.json()["error"]
-    assert error.get("reason") == "check_failed" or error["code"] == "custody.terminal_needed"
-    assert message in res.json()["error"]["message"]
+    assert error["code"] == "passkey.stepup_required" and NEEDS in error["message"]
     assert [
         c for cl in script.clients for c in cl.calls if c[0] in ("runner", "rotate", "custody_on", "custody_off")
     ] == []
     assert not [c for cl in script.clients for c in cl.calls if c[0] in ("prepare", "sign")]
 
 
-@pytest.mark.parametrize(("path", "body", "message"), GATES)
+@pytest.mark.parametrize(("path", "body"), GATES)
 @pytest.mark.parametrize("kind", ["remote", "passkey", "hub", "", None])
 def test_any_session_kind_that_is_not_local_is_refused_by_the_route_itself(
-    loop, local, auth, stub, script, path, body, message, kind
+    loop, local, auth, stub, script, path, body, kind
 ):
     """Defence in depth: the route does not rely on the listener binding. A session of another kind that reached it
     (the binding broken, a new kind added) is refused, fail closed."""
     script.features = FEATURES
     auth.kinds[local] = kind
     res = step(loop, stub, path, body, local, ORIGIN)
-    assert res.status_code == 409, (kind, res.text)
-    assert message in res.json()["error"]["message"]
+    assert res.status_code == 403, (kind, res.text)
+    assert res.json()["error"]["code"] == "passkey.stepup_required"
     assert not [
         c for cl in script.clients for c in cl.calls if c[0] in ("runner", "rotate", "custody_on", "custody_off")
     ]

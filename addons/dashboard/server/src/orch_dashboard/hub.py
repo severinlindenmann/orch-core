@@ -36,6 +36,7 @@ from . import reads
 from .adapters.addons import display
 from .errors import HostError, fail
 from .gateway import Gateway
+from .stepup import refuse_step_up
 from .terminals import Idem
 from .text import hidden
 
@@ -302,13 +303,12 @@ def register(app: FastAPI, gateway: Gateway):
 
     @app.post("/api/w/{ws}/hub/connect")
     def hub_connect(body: ConnectBody, request: Request, ws: str = Depends(reads.workspace)):
-        """Tell the hub about a join the person just signed (#1198 C11). Local sessions only, like the signing it
-        follows. The invite goes to the host and nowhere else; nothing here logs it."""
+        """Tell the hub about a join the person just signed (#1198 C11). A remote session needs a passkey step-up
+        for it (R1-6); one opened on this computer does not. The invite goes to the host and nowhere else; nothing
+        here logs it."""
+        refuse_step_up(app.state.auth, request, "hub/connect", body, ws)
         from .handoff import _strict_json_object
-        from .stepup import REVEAL_SESSION_KINDS, refusal_check
 
-        if app.state.auth.login_kind(request.state.token) not in REVEAL_SESSION_KINDS:
-            raise refusal_check("Connecting a hub needs a dashboard opened on this computer.")
         try:
             card = _strict_json_object(body.hub_card)
         except ValueError:

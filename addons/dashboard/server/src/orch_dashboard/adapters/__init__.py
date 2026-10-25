@@ -2,7 +2,18 @@
 
 from . import handoff, settings
 from .changes import changes
-from .shell import Me, Member, Workspace, click_card, host_info, isolation_rows, me, members, pinned_prefix, unavailable_reason
+from .shell import (
+    Me,
+    Member,
+    Workspace,
+    click_card,
+    host_info,
+    isolation_rows,
+    me,
+    members,
+    pinned_prefix,
+    unavailable_reason,
+)
 from .tickets import UI_STATUSES, board_statuses, document, events, host_status, page, summary
 from .today import actionable_count, today
 

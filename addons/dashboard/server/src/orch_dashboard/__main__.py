@@ -12,6 +12,7 @@ import html
 import json
 import math
 import os
+import pwd
 import secrets
 import socket
 import stat
@@ -32,6 +33,7 @@ from .auth import CODE_TTL, SETUP_CODE_TTL, Auth
 from .front import Front, PeerChecked
 from .gateway import Gateway, RunDirectoryError, run_dir, state_dir
 from .hostlink import check_uid, encode, receive
+from .passkey_routes import ENROLL_TTL
 from .policy import REMOTE, remote_policy
 
 #: seconds a stopping server waits for open connections (a tab's live stream) before it cuts them
@@ -50,8 +52,15 @@ PORT_FILE = "port"
 #: file in the dashboard state directory that turns remote access on: {"name": "<dns name>", "front_uid": <int>}
 #: (written by `orch remote enable`, R1-7). Absent: remote access is off and no front socket is opened.
 REMOTE_FILE = "remote.json"
-#: the front socket's file name, in `<run>/dashboard/`
+#: the front socket's file name
 FRONT_SOCKET = "front.sock"
+#: where the front socket lives: `<FRONT_RUN_ROOT>/<person uid>/front.sock`. The directory `<uid>` is made by root
+#: (`orch remote enable`, systemd-tmpfiles): the person's, group `orch-front`, mode 0750. So the front's user reaches
+#: the socket without `<state>/run` (0700) or `/run/orch/<uid>` (the agent's group) being opened, and nobody else
+#: (the agent user, an add-on, another person) can even look inside. The peer UID check stays the gate.
+FRONT_RUN_ROOT = Path("/run/orch/front")
+#: users the front may never be: an agent or add-on user is the very process the front keeps out
+FORBIDDEN_FRONT_PREFIXES = ("orch-agent-", "orch-addon-")
 
 
 class AgentRefused(RuntimeError):
@@ -102,8 +111,9 @@ def locked(directory_fd):
 def control(path, command, kind=None):
     """One request on ctl.sock. ``launch`` mints a code, so it refuses under an agent's environment first (#542 item 1;
     the socket itself cannot tell an agent of the same UID from the person: the accepted tier-A residual)."""
-    if command == "launch":
+    if command in ("launch", "enroll"):
         refuse_agent()
+    if command == "launch":
         asked = time.time()  # the mint is later: asked + CODE_TTL never outlives the code
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
         sock.settimeout(2)
@@ -248,17 +258,46 @@ def remote_config(directory):
     if uid <= 0 or uid == os.getuid():
         # the front is its own system user: a front that shares our UID is no boundary (any process of ours passes)
         raise RuntimeError("remote.not_configured: front_uid must be a user other than the person's and not root")
+    if any(n.startswith(FORBIDDEN_FRONT_PREFIXES) for n in user_names(uid)):
+        # an agent or add-on user as the front would let exactly the processes it must keep out reach the dashboard
+        raise RuntimeError("remote.not_configured: front_uid must not be an agent or add-on user")
     return policy, uid
 
 
-def front_socket_path(run):
-    """``<run>/dashboard/front.sock``. The directory is ours and may be crossed (not listed) by the front's user; it
-    must not be a link or writable by anyone else."""
-    directory = run / "dashboard"
-    directory.mkdir(mode=0o711, parents=True, exist_ok=True)
-    st = directory.lstat()
-    if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid() or st.st_mode & 0o022:
-        raise RuntimeError(f"remote.not_configured: {directory} must be your own directory, not writable by others")
+def user_names(uid):
+    """Every name the user database gives ``uid`` (aliases too, so a second name cannot hide an agent user)."""
+    try:
+        return [e.pw_name for e in pwd.getpwall() if e.pw_uid == uid]
+    except OSError:  # pragma: no cover - a broken user database: nothing to compare with
+        return []
+
+
+def front_group(uid):
+    """The primary group of the front's user: the one group allowed into the front socket's directory."""
+    try:
+        return pwd.getpwuid(uid).pw_gid
+    except KeyError:
+        raise RuntimeError(f"remote.not_configured: there is no user with id {uid} for the front") from None
+
+
+def front_socket_path(front_uid):
+    """``<FRONT_RUN_ROOT>/<our uid>/front.sock``. The directory is made by root and is not created here (we could not
+    give it the front's group): it must be our own, group = the front's group, no group write and nothing for others,
+    and not a link. A missing or wrong directory means remote access stays off (`orch remote enable` makes it)."""
+    directory = Path(FRONT_RUN_ROOT) / str(os.getuid())
+    try:
+        st = directory.lstat()
+    except OSError:
+        raise RuntimeError(f"remote.not_configured: {directory} is missing; run `orch remote enable`") from None
+    if (
+        not stat.S_ISDIR(st.st_mode)
+        or st.st_uid != os.getuid()
+        or st.st_mode & 0o027
+        or st.st_gid != front_group(front_uid)
+    ):
+        raise RuntimeError(
+            f"remote.not_configured: {directory} must be your own directory in the front's group, mode 0750"
+        )
     return directory / FRONT_SOCKET
 
 
@@ -419,7 +458,7 @@ def _serve(directory, lock_fd=None, port=None):
     try:
         if remote:
             try:
-                front_path = front_socket_path(run_dir(state_dir()))
+                front_path = front_socket_path(remote[1])
                 front = bind_front(front_path, remote[1])
             except (RuntimeError, OSError) as exc:
                 remote, remote_problem = (
@@ -479,6 +518,8 @@ def _serve(directory, lock_fd=None, port=None):
                         conn.sendall(encode({**auth.launch(port, tunnel=True), "redirect": str(redirects)}))
                     elif req == {"command": "launch", "kind": "setup"}:
                         conn.sendall(encode({**auth.launch(port, setup=True), "redirect": str(redirects)}))
+                    elif req == {"command": "enroll"}:
+                        conn.sendall(encode(mint_enrollment(app)))
                     elif req == {"command": "hello"}:
                         conn.sendall(encode({"release": release}))
                     elif req == {"command": "stop"}:
@@ -612,6 +653,77 @@ def _stop_stale(ctl, wait=RESTART_WAIT):
     print("restarted the dashboard on the new release")
 
 
+def mint_enrollment(app):
+    """The reply to ctl ``enroll``: a fresh one-time enrollment code (R1-5) for the configured name, or the reason remote
+    access is off. Never logged: the code goes back over ctl.sock (mode 0600, our UID) to the one terminal that asked."""
+    service = getattr(app.state, "passkeys", None)
+    if service is None or app.state.enroll is None or app.state.remote_problem:
+        return {"error": app.state.remote_problem or "remote.not_configured: remote access is off (orch remote enable)"}
+    code = app.state.enroll.mint()
+    return {"code": code, "name": service.rp_id, "expires_at": int(time.time()) + ENROLL_TTL}
+
+
+def enroll_dashboard():
+    """`orch-dashboard enroll`: print the one-time link that adds a passkey. A terminal only (the link is a login, so it
+    must not land in a pipe or a log), and the server is started when none runs. Returns the link."""
+    refuse_agent()
+    if not sys.stdout.isatty():
+        raise RuntimeError("enroll prints a login link and needs a terminal")
+    directory = state_dir() / "dashboard"
+    run_dir(state_dir())
+    with private_directory(directory) as fd, locked(fd):
+        reply = control_or_start(directory, "enroll")
+    if not isinstance(reply, dict) or "code" not in reply:
+        why = reply.get("error") if isinstance(reply, dict) else None
+        raise RuntimeError(why if isinstance(why, str) and why else "the dashboard gave no enrollment code")
+    left = max(0, math.ceil(float(reply["expires_at"]) - time.time()))
+    print(f"One-time passkey link; works once, for {left // 60} min.")
+    print(f"https://{reply['name']}/#enroll={reply['code']}")
+
+
+def control_or_start(directory, command, kind=None):
+    """The reply to ``command`` from the dashboard server of ``directory``, starting one when none runs and replacing
+    one of another release. Call while holding the startup lock."""
+    ctl = directory / "ctl.sock"
+    launch = None
+    try:
+        running = _running_release(ctl)
+        if running is None:
+            raise FileNotFoundError(errno.ENOENT, "no dashboard running")
+        if running != code_digest():
+            _stop_stale(ctl)  # raises RuntimeError when it will not stop; prints the one-line notice
+        else:
+            launch = control(ctl, command, kind)
+    except EOFError:
+        # The server closed the connection: it does not know this request (an older release). Replace it, once.
+        _stop_stale(ctl)
+    except OSError as exc:
+        if exc.errno not in (errno.ENOENT, errno.ECONNREFUSED):
+            raise
+    if launch is None:
+        stale_socket(ctl)
+        child = subprocess.Popen(
+            [sys.executable, "-m", "orch_dashboard", "serve", "--launcher-lock"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        for _ in range(100):
+            if child.poll() is not None:
+                raise RuntimeError("dashboard could not start")
+            try:
+                launch = control(ctl, command, kind)
+                break
+            except (FileNotFoundError, ConnectionRefusedError):
+                time.sleep(0.05)
+            except EOFError:
+                raise RuntimeError("the new dashboard closed the connection; run it again") from None
+        else:
+            raise RuntimeError("dashboard did not become ready")
+    return launch
+
+
 def open_dashboard(path="/", print_url=False, emit_url_fd=None, no_browser=False):
     refuse_agent()  # before anything is started or minted
     path = safe_path(path)
@@ -628,43 +740,7 @@ def open_dashboard(path="/", print_url=False, emit_url_fd=None, no_browser=False
     run_dir(state_dir())
     directory = state_dir() / "dashboard"
     with private_directory(directory) as fd, locked(fd):
-        ctl = directory / "ctl.sock"
-        launch = None
-        try:
-            running = _running_release(ctl)
-            if running is None:
-                raise FileNotFoundError(errno.ENOENT, "no dashboard running")
-            if running != code_digest():
-                _stop_stale(ctl)  # raises RuntimeError when it will not stop; prints the one-line notice
-            else:
-                launch = control(ctl, "launch", kind)
-        except EOFError:
-            # The server closed the connection: it does not know this request (an older release). Replace it, once.
-            _stop_stale(ctl)
-        except OSError as exc:
-            if exc.errno not in (errno.ENOENT, errno.ECONNREFUSED):
-                raise
-        if launch is None:
-            stale_socket(ctl)
-            child = subprocess.Popen(
-                [sys.executable, "-m", "orch_dashboard", "serve", "--launcher-lock"],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
-            for _ in range(100):
-                if child.poll() is not None:
-                    raise RuntimeError("dashboard could not start")
-                try:
-                    launch = control(ctl, "launch", kind)
-                    break
-                except (FileNotFoundError, ConnectionRefusedError):
-                    time.sleep(0.05)
-                except EOFError:
-                    raise RuntimeError("the new dashboard closed the connection; run it again") from None
-            else:
-                raise RuntimeError("dashboard did not become ready")
+        launch = control_or_start(directory, "launch", kind)
     # Control can become ready just before the HTTP accept loop.
     for attempt in range(20):
         try:
@@ -776,7 +852,7 @@ def main():
 
         return manifest_main(sys.argv[2:])
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", nargs="?", choices=["open", "launch", "serve", "stop", "restart"], default="open")
+    parser.add_argument("command", nargs="?", choices=["open", "launch", "serve", "stop", "restart", "enroll"], default="open")
     parser.add_argument("path", nargs="?", default="/")
     parser.add_argument(
         "--print-url",
@@ -798,6 +874,8 @@ def main():
             return serve(args.launcher_lock, port=args.port)
         if args.stop or args.command == "stop":
             control(state_dir() / "dashboard/ctl.sock", "stop")
+        elif args.command == "enroll":
+            enroll_dashboard()
         elif args.command == "restart":
             restart_dashboard(args.path, print_url=args.print_url)
         else:

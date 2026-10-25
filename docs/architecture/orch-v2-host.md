@@ -3673,8 +3673,28 @@ login.
 - **The front is Caddy**, installed and configured by one admin step (`orch remote enable --name <name>`, run with
   sudo): its own system user `orch-front`, a generated Caddyfile that only does `reverse_proxy` to the front socket,
   ACME for the configured name, TLS 1.2 or later (1.3 preferred), HSTS `max-age=31536000` (no preload), a 10 s header
-  timeout and at most 32 open unauthenticated connections. Port 80 answers only the ACME challenge and a redirect. The
-  front runs on the same machine as root-installed infrastructure, inside the server's trust boundary like sshd.
+  timeout and at most 32 connections to the dashboard (`max_conns_per_host`; stock Caddy has no per-site cap on
+  inbound unauthenticated connections). Port 80 answers only the ACME challenge and a redirect. The front runs on the
+  same machine as root-installed infrastructure, inside the server's trust boundary like sshd.
+- **The client address (R1-7).** Caddy sets `X-Orch-Client` to `{client_ip}` with `header_up` (which replaces, so a
+  header from the browser is never forwarded). Caddy computes it from the TCP peer, or, for peers inside the networks
+  given with `orch remote enable --trusted-proxy` (`trusted_proxies static`; never a /0), from `X-Forwarded-For`. Without
+  that option the TCP peer is used. Needs Caddy 2.7 or newer.
+- **`orch remote enable|disable|reset` (R1-7).** Run by the person on Linux, never as root. `enable --name <name>`
+  checks the name points to this server and that ports 80 and 443 are free (`remote.name_mismatch`), prints exactly
+  what will change (the root steps are the dry run of the code root will run), asks for a confirm on the person's own
+  terminal (`--dry-run` stops, `--yes` is for scripts), then runs the root steps through
+  `sudo /usr/bin/python3 -I -S /usr/lib/orch/os-setup/orch-os-setup --front-enable --person <user> --name <name>` (the
+  trusted root copy, `osfront.py`; root never runs the person's release): the system user `orch-front`
+  (`useradd --system`, no login, locked), the Caddyfile in `/etc/orch/front/`, the unit `orch-front.service` (Caddy as
+  `orch-front`, one capability for ports 80/443, sandboxed, `StateDirectory` for its certificates) and the tmpfiles
+  entry of the socket directory above. A file there that orch did not make, or a user `orch-front` with other
+  properties, is refused, never changed. Then the person's side writes `remote.json`, restarts the dashboard and asks it
+  for the first enrollment link over its control socket (`orch-dashboard enroll`, a terminal only): the link is printed
+  on the terminal by the dashboard process itself and is never in argv, a file or a log. The printed lines also give the
+  SSH tunnel as the way back in, because a flood of login attempts can use up the global login budget. `disable` takes
+  `remote.json`, the dashboard and the front away and keeps the `orch-front` user and its certificates. `reset` stops
+  the dashboard (every remote session and open link ends), deletes every passkey and prints a new link.
 - **Own domain only.** No "no domain" quick start through a public wildcard DNS service (sslip.io, nip.io): that
   service could point the name elsewhere. `orch remote enable` checks that the name resolves to this server and that
   ports 80 and 443 are reachable, and stops before changing anything if not (`remote.name_mismatch`).
@@ -3711,11 +3731,19 @@ login.
   not writable by others, `front_uid` neither the person nor root) turns the front socket on; a file that is there
   but wrong switches remote access off and shows `remote.not_configured` in `/api/session` (`remote_problem`); the
   loopback dashboard keeps serving.
-- **The front socket (R1-4).** `<run>/dashboard/front.sock` is mode 0666 in a 0711 directory owned by the person:
-  file permissions let the front's user connect, and the server's peer-UID check on every accepted connection (closed
-  before a byte is read unless the peer is `front_uid`) is the authority. Both servers run on asyncio's selector loop
-  (the check lives in `accept`; the front refuses to start on any other loop). The front server adds
-  `limit_concurrency` 64, keep-alive 5 s and a 16 KiB incomplete-event limit behind Caddy's own 32-connection limit.
+- **The front socket (R1-4, R1-7).** `/run/orch/front/<person uid>/front.sock`. The directory is made by root at every
+  boot (systemd-tmpfiles, written by `orch remote enable`): owned by the person, group `orch-front`, mode 0750, below
+  `/run/orch/front` (0711). It is not under `<state>/run` (0700) or `/run/orch/<uid>` (setgid, the agent's group)
+  because the front's user could reach neither without opening it for the agent too; here the agent user, the add-on
+  users and other people cannot even look inside. The dashboard creates nothing there (it could not give the directory
+  the front's group): a missing directory, one that is not the person's, not in the front's group, group-writable or
+  open to others keeps remote access off (`remote.not_configured`). The socket file is mode 0666: who may connect is
+  decided by the server's peer-UID check on every accepted connection (closed before a byte is read unless the peer
+  is `front_uid`), which stays the gate; the directory only keeps everyone else from reaching it. Both servers run on
+  asyncio's selector loop (the check lives in `accept`; the front refuses to start on any other loop). The front server
+  adds `limit_concurrency` 64, keep-alive 5 s and a 16 KiB incomplete-event limit behind Caddy's own limits.
+  `front_uid` is never the person, root, or any user named `orch-agent-*` or `orch-addon-*` (every name the user
+  database gives that id counts).
 - **Terminal tickets belong to a listener.** A ticket records the listener it was minted on and redeems only on that
   listener's socket, for a session of that listener; `attach` and `terminals/open` mint or open nothing where the
   listener's policy has terminals off (the front's default).
@@ -13485,7 +13513,7 @@ Root is needed once, at install, never at run time: no setuid binary, no capabil
 the person's home, so it is not what root executes. The installer, as root, downloads the signed release into a root-owned
 0700 staging directory, verifies the signed manifest against the bytes there, and runs
 `/usr/bin/python3 -I -S <staging>/orch/setup/osinstall.py` (system interpreter, never the release venv, never `-m orch...`).
-That step re-checks the staging tree, copies the four stdlib-only setup modules (with the package `__init__` files) and a launcher to the root-owned
+That step re-checks the staging tree, copies the five stdlib-only setup modules (with the package `__init__` files; the fifth, `osfront`, is the HTTPS front of the remote dashboard, 10.2, run with `--front-enable` / `--front-disable`) and a launcher to the root-owned
 `/usr/lib/orch/os-setup/` (`/usr/lib`, not `/usr/local`: Debian's `/usr/local` can be group-writable), and re-hashes the copy
 against the source. The launcher `/usr/lib/orch/os-setup/orch-os-setup` has the shebang `#!/usr/bin/python3 -IS` (one argument: Linux does not split shebang arguments); before it
 imports anything of orch it checks that the interpreter, the standard library and the whole copy (and every directory above

@@ -31,6 +31,7 @@ class Rig:
         self.asked: list[str] = []
         self.answer = "y"
         self.rc: dict[str, int] = {}
+        self.raises: dict[str, BaseException] = {}
         self.resolves: set[str] | OSError = {"203.0.113.5"}
         self.local = {"203.0.113.5"}
         self.busy: set[int] = set()
@@ -68,6 +69,9 @@ class Rig:
 
     def _run(self, argv, env):
         self.calls.append(list(argv))
+        if argv[-1] in self.raises:
+            self.order.append(argv[-1])
+            raise self.raises[argv[-1]]
         key = ("sudo-enroll" if "--front-enroll" in argv else "sudo") if argv[0] == remote.SUDO else argv[-1]
         self.order.append(key)
         if key == "stop":
@@ -451,6 +455,8 @@ def test_a_failed_teardown_still_brings_the_dashboard_back(rig):
     rig.rc["sudo"] = 1
     code, _, err = rig.go("disable", "--yes")
     assert code == 1 and "root step failed" in err
+    assert "remote access may still be on" in err and "orch remote disable" in err  # not "was not changed"
+    assert "dashboard was not changed" not in err
     assert rig.order == ["stop", "sudo", "up"]  # loopback only: remote.json is gone
 
 
@@ -462,3 +468,29 @@ def test_reset_without_an_entry_point_changes_no_passkey_and_says_why(rig, monke
     code, _, err = rig.go("reset", "--yes")
     # nothing could end the sessions, so the passkeys are not dropped half-way: the run stops with a clear reason
     assert code == 3 and "unsupported.platform" in err and len(store.read()) == 1
+    assert "passkeys were NOT dropped" in err and "orch remote disable" in err
+
+
+def test_a_stop_that_raises_oserror_still_runs_the_teardown_and_the_error_propagates(rig):
+    _enabled(rig)
+    rig.raises["stop"] = OSError("the socket probe failed")
+    code, _, err = rig.go("disable", "--yes")  # main turns an OSError into a plain line and a non-zero exit
+    assert code == 1 and "the socket probe failed" in err
+    assert rig.order == ["stop", "sudo", "up"] and not (rig.state / "dashboard" / "remote.json").exists()
+
+
+def test_ctrl_c_during_the_stop_still_runs_the_teardown_and_stays_an_interrupt(rig):
+    _enabled(rig)
+    rig.raises["stop"] = KeyboardInterrupt()
+    with pytest.raises(KeyboardInterrupt):
+        rig.go("disable", "--yes")
+    assert rig.order == ["stop", "sudo", "up"]
+
+
+def test_a_failing_teardown_does_not_replace_the_error_that_was_already_on_its_way_out(rig):
+    _enabled(rig)
+    rig.raises["stop"] = OSError("first")
+    rig.rc["sudo"] = 1
+    code, _, err = rig.go("disable", "--yes")
+    assert code == 1 and "first" in err and "root step failed" in err  # the original is the exit; both are said
+    assert rig.order == ["stop", "sudo", "up"]

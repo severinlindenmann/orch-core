@@ -208,11 +208,11 @@ def _run_root(flags: list[str], env: Mapping[str, str]) -> int:
     return _run([SUDO, PYTHON, "-I", "-S", LAUNCHER_PATH, *flags], env)
 
 
-def _root_step(flags: list[str], env: Mapping[str, str]) -> None:
-    """The root part of enable and disable; a failure stops the run."""
+def _root_step(flags: list[str], env: Mapping[str, str], failed: str = "the dashboard was not changed") -> None:
+    """The root part of enable and disable; a failure stops the run. ``failed`` says what is true afterwards."""
     rc = _run_root(flags, env)
     if rc != 0:
-        raise Refused("internal", f"the root step failed (exit {rc}); the dashboard was not changed", 1)
+        raise Refused("internal", f"the root step failed (exit {rc}); {failed}", 1)
 
 
 def _write_private(path: Path, body: bytes) -> None:
@@ -466,17 +466,30 @@ def _disable(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, err:
     if have_file:
         with contextlib.suppress(FileNotFoundError):
             (directory / "remote.json").unlink()
-    # The teardown must run whatever happens to the dashboard: stopping it may fail (no entry point, it does not
-    # answer), and that must never leave Caddy and the front user configured.
-    stopped = True
+    # The teardown must run whatever happens to the dashboard, once remote.json is gone: stopping it may fail (no
+    # entry point, it does not answer, an OSError, Ctrl-C), and that must never leave Caddy and the front user
+    # configured. The dashboard is started again last, in an outer finally, and that never raises.
+    stopped = False
+    started = False
     try:
-        _stop_dashboard(env, err, directory)
-    except Refused as exc:
-        stopped = False
-        err.write(f"orch remote: {exc.code}: {exc}\n")
-    try:
-        _root_step(["--front-disable"], env)
-    finally:  # the person's dashboard comes back even when the teardown failed (remote.json is gone: loopback only)
+        try:
+            _stop_dashboard(env, err, directory)
+            stopped = True
+        except Refused as exc:
+            err.write(f"orch remote: {exc.code}: {exc}\n")
+        finally:
+            pending = sys.exc_info()[1]  # the error that is on its way out, if any (it must not be replaced)
+            try:
+                _root_step(
+                    ["--front-disable"],
+                    env,
+                    "remote access may still be on. Run `orch remote disable` again (it is safe to repeat)",
+                )
+            except Refused as exc:
+                if pending is None:
+                    raise
+                err.write(f"orch remote: {exc.code}: {exc}\n")
+    finally:  # the person's dashboard comes back, loopback only (remote.json is gone)
         started = _start_dashboard(env, err)
     out.write("Remote access is off.\n")
     if not stopped:
@@ -501,7 +514,16 @@ def _reset(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, err: T
     out.write("  start the dashboard and print one new one-time link\n")
     if not _confirm(args, out, "Drop every passkey and session?"):
         return 0 if args.dry_run else 1
-    _stop_dashboard(env, err, directory)
+    try:
+        _stop_dashboard(env, err, directory)
+    except Refused as exc:
+        if exc.code != "unsupported.platform":
+            raise
+        raise Refused(
+            exc.code,
+            "the dashboard program was not found, so nothing was stopped: the passkeys were NOT dropped. "
+            "Reinstall the dashboard, or run `orch remote disable`.",
+        ) from None
     held = PasskeyStore(directory / "passkeys.json").clear()
     out.write(f"Dropped {held} passkey{'s' if held != 1 else ''} and all remote sessions.\n")
     out.flush()

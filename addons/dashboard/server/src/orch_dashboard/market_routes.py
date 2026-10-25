@@ -11,7 +11,10 @@ The host is the authority for who may do what; this module only fixes the op, cl
 | POST   /market/uninstall               | market.uninstall   | P, owner, human only                              |
 | POST   /market/refresh                 | market.refresh     | P and G; no `commit` argument (human only) |
 
-`market.add` is not served until "Add marketplace" ships.
+| POST   /market/add                     | market.add         | P, owner, human only; the URL must be one of `market.list` `sources` |
+
+`market.add` is the "+ Add marketplace" picker: the page offers only the `sources` the host lists, and this route
+accepts only those too (a convenience; the host's gate stays the authority and decides again). No step-up, no signature.
 
 Nothing here signs. Installing is the signature of `addon.grant {name, staged}` (`MarketGrant` in handoff.py): one
 click where click-to-sign is on (V3-D38), the terminal hand-off where it is off. All text the host returns about a
@@ -31,6 +34,7 @@ from fastapi import Depends, FastAPI
 from pydantic import BaseModel, ConfigDict, StringConstraints
 
 from . import reads
+from .errors import fail
 from .gateway import Gateway
 from .handoff import MarketName, StageId
 
@@ -60,6 +64,11 @@ class RefreshBody(BaseModel):
 
     model_config = ConfigDict(extra="forbid", strict=True)
     url: Url | None = None
+
+
+class AddBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    url: Url
 
 
 def register(app: FastAPI, gateway: Gateway) -> None:
@@ -92,3 +101,10 @@ def register(app: FastAPI, gateway: Gateway) -> None:
     @app.post("/api/w/{ws}/market/refresh")
     def refresh(body: RefreshBody, ws: str = Depends(reads.workspace)):
         return write(ws, "market.refresh", body.model_dump(exclude_none=True))
+
+    @app.post("/api/w/{ws}/market/add")
+    def add(body: AddBody, ws: str = Depends(reads.workspace)):
+        listed = read(ws, "market.list", {}).get("sources")
+        if not isinstance(listed, list) or body.url not in {s.get("url") for s in listed if isinstance(s, dict)}:
+            raise fail("market.not_allowed", "That marketplace is not one this workspace can add.", exit=3)
+        return write(ws, "market.add", {"url": body.url})

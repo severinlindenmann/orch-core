@@ -131,8 +131,7 @@ def test_routes_need_a_session_and_same_origin_writes(client, token, stub, host)
 
 def test_the_market_feature_needs_every_page_op():
     assert set(gateway_module.MARKET_PAGE_OPS) <= set(hostlink.OPS)
-    assert "market.add" not in hostlink.OPS  # until "Add marketplace" ships
-    assert client_has_no_add_route()
+    assert "market.add" in gateway_module.MARKET_PAGE_OPS and "market.add" in hostlink.MARKET_WRITES
 
 
 def test_the_market_feature_flag_is_on_only_when_the_host_serves_the_ops(client, token, stub, gateway):
@@ -201,7 +200,36 @@ def test_plan_is_one_intent_per_stage_and_skips_the_switch_state_check():
     assert one.idem(ws) == again.idem(ws) != other.idem(ws)
 
 
-def client_has_no_add_route():
-    from orch_dashboard.app import create_app
+SOURCES = {"sources": [{"url": "https://x.test/m", "class": "official", "added": False}], "any_source": False}
 
-    return not any("market/add" in getattr(r, "path", "") for r in create_app(1).routes)
+
+def test_add_accepts_only_a_url_the_host_lists_as_a_source(client, token, stub, host):
+    host.answers["market.list"] = SOURCES
+    res = client.post(url(stub, "/add"), json={"url": "https://x.test/m"}, headers=hdr(token))
+    assert res.status_code == 200, res.text
+    assert [c[0] for c in host.calls] == ["market.list", "market.add"]
+    assert host.calls[1][1:3] == ({"url": "https://x.test/m"}, True)
+
+
+def test_add_of_an_unlisted_url_is_refused_before_market_add(client, token, stub, host):
+    host.answers["market.list"] = SOURCES
+    res = client.post(url(stub, "/add"), json={"url": "https://evil.test/m"}, headers=hdr(token))
+    assert res.status_code == 409 and res.json()["error"]["code"] == "market.not_allowed"
+    assert [c[0] for c in host.calls] == ["market.list"]
+
+
+def test_add_with_no_sources_in_the_list_is_refused(client, token, stub, host):
+    host.answers["market.list"] = {"sources": [], "reason": "market.not_allowed"}
+    res = client.post(url(stub, "/add"), json={"url": "https://x.test/m"}, headers=hdr(token))
+    assert res.status_code == 409
+    assert [c[0] for c in host.calls] == ["market.list"]
+
+
+def test_add_takes_only_a_url_and_a_host_refusal_of_an_agent_is_403(client, token, stub, host):
+    for bad in ({}, {"url": "a b"}, {"url": "https://x.test/m", "commit": "a" * 40}):
+        assert client.post(url(stub, "/add"), json=bad, headers=hdr(token)).status_code in (400, 422)
+    assert host.calls == []
+    host.answers["market.list"] = SOURCES
+    host.answers["market.add"] = refused()
+    res = client.post(url(stub, "/add"), json={"url": "https://x.test/m"}, headers=hdr(token))
+    assert res.status_code == 403 and res.json()["error"]["code"] == "market.actor_refused"

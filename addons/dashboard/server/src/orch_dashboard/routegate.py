@@ -152,6 +152,7 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     # --- add-ons and the marketplace (install is an admin action by plain click; running one needs execution on)
     (GET, W + "/market"): (ALLOWED, ""),
     (GET, W + "/market/installed"): (ALLOWED, ""),
+    (POST, W + "/market/add"): (ALLOWED, "admin action, plain click"),
     (POST, W + "/market/stage"): (ALLOWED, "admin action, plain click"),
     (DELETE, W + "/market/stage/{stage_id}"): (ALLOWED, ""),
     (POST, W + "/market/uninstall"): (ALLOWED, "turning off"),

@@ -85,6 +85,7 @@ WRITE_OPS = (
 MARKET_PAGE_OPS = (
     "market.list",
     "market.installed",
+    "market.add",
     "market.stage",
     "market.unstage",
     "market.uninstall",

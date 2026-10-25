@@ -41,7 +41,7 @@ CAPS = [
     "publish/1",
 ]
 MARKET_READS = ("market.list", "market.installed")
-MARKET_WRITES = ("market.stage", "market.unstage", "market.uninstall", "market.refresh")
+MARKET_WRITES = ("market.add", "market.stage", "market.unstage", "market.uninstall", "market.refresh")
 MARKET_OPS = (*MARKET_READS, *MARKET_WRITES)
 OPS = {
     name: 1
@@ -118,7 +118,7 @@ OPS = {
         "share.rules",
         "share.preview",
         # V3 A10 (design-g3 4.2): the Add-ons page. Reads: market.list, market.installed. Person writes (owner role, the
-        # host refuses an agent): stage, unstage, uninstall, refresh. Every install is a terminal hand-off.
+        # host refuses an agent): add, stage, unstage, uninstall, refresh. Every install is a terminal hand-off.
         *MARKET_OPS,
     )
 }

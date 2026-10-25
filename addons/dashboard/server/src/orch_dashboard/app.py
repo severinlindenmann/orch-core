@@ -199,7 +199,10 @@ def create_app(
     @app.post("/api/session/logout-all")
     def logout_all(request: Request):
         """ "Log out everywhere" (R1-8): every remote browser session ends, this one too. Passkeys stay. A plain click:
-        it only takes access away."""
+        it only takes access away. Open enrollment links
+        die with the sessions (a link minted before a suspected hijack must not add a device after it)."""
+        if app.state.passkeys is not None:
+            app.state.passkeys.burn_enrollments()  # an unused "Add a device" link must not outlive "log out everywhere"
         for token in auth.logout_everywhere("remote"):
             for end in (app.state.cancel_session, app.state.cancel_clicks, tickets.forget):
                 try:

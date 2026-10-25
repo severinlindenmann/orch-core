@@ -82,6 +82,14 @@ describe('login', () => {
   })
 })
 
+describe('the tunnel line', () => {
+  it('names the port the dashboard server uses on a headless machine', async () => {
+    const { readFileSync } = await import('node:fs')
+    const server = readFileSync(`${process.cwd()}/server/src/orch_dashboard/__main__.py`, 'utf8')
+    expect(/^HEADLESS_PORT = (\d+)/m.exec(server)?.[1]).toBe(String(passkey.HEADLESS_PORT))
+  })
+})
+
 describe('add this device', () => {
   beforeEach(() => { history.replaceState(null, '', '/#enroll=' + 'a'.repeat(30)) })
   const open = async () => {

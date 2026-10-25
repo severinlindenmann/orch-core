@@ -9,6 +9,9 @@ import { createFetchTransport } from './fetchTransport'
 import { sha256Hex } from './sha256'
 import { ApiError } from './types'
 
+/** The port a headless machine's dashboard listens on (`HEADLESS_PORT` in the dashboard server; a test keeps them equal): the tunnel line stays true across restarts. */
+export const HEADLESS_PORT = 47821
+
 /** What went wrong, in the few kinds the pages have words for. */
 export type PasskeyFailure =
   /** The person closed the prompt, or it timed out. Nothing was changed. */

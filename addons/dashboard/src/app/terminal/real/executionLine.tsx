@@ -14,11 +14,11 @@ export function separateAccount(line: string | null | undefined): string | null 
 }
 
 /** The plain "separate account" line with a shield: reassurance, so neutral colours (variant A of the R1-8 drafts). */
-export function SeparateAccountLine({ user, className }: { user: string; className?: string }) {
+export function SeparateAccountLine({ user, what = 'terminal', className }: { user: string; /** The dialog's own word: a terminal, or an agent. */ what?: 'terminal' | 'agent'; className?: string }) {
   return (
     <p data-testid="separate-account-line" className={cn('flex items-start gap-2 text-xs leading-5 text-text-muted', className)}>
       <ShieldCheck aria-hidden className="mt-0.5 size-4 shrink-0 text-brand" />
-      <span>This terminal uses a <b className="font-semibold text-text">separate account</b> (<b className="font-semibold text-text">{user}</b>). It cannot read your orch signing keys or passkeys.</span>
+      <span>This {what} uses a <b className="font-semibold text-text">separate account</b> (<b className="font-semibold text-text">{user}</b>). It cannot read your orch signing keys or passkeys.</span>
     </p>
   )
 }

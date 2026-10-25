@@ -29,7 +29,7 @@ export function Badge({ tone, children }: { tone: 'ok' | 'bad' | 'wait'; childre
 export function Notice({ tone, title, children }: { tone: 'err' | 'warn' | 'info'; title: string; children: ReactNode }) {
   return (
     <div role={tone === 'info' ? 'status' : 'alert'} className={cn('mt-4 flex gap-2.5 rounded-md border px-3 py-2.5 text-left text-[13px]', tone === 'err' && 'border-danger/40 bg-danger-soft', tone === 'warn' && 'border-warning/40 bg-warning-soft', tone === 'info' && 'border-info/35 bg-info-soft')}>
-      <span aria-hidden className="font-bold">!</span>
+      <span aria-hidden className="font-bold">{tone === 'info' ? 'i' : '!'}</span>
       <div><b className="mb-0.5 block text-text">{title}</b><span className="text-text-muted">{children}</span></div>
     </div>
   )

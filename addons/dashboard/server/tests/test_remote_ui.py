@@ -28,3 +28,16 @@ def test_tier_b_line_names_only_a_valid_agent_user():
     line = "This terminal runs as orch-agent-sev. It cannot read your keys. Never type secrets into it."
     assert execution_line("orch-agent-sev") == line
     assert execution_line("root") is None and execution_line(None) is None
+
+
+def test_logout_all_burns_unused_add_a_device_links(app, front, auth, remote):
+    code = app.state.enroll.mint()
+    assert (
+        front.post("/auth/enroll/options", json={"code": code}, headers={"Origin": HTTPS}).status_code == 200
+    )  # the link works before
+    fresh = app.state.enroll.mint()
+    assert front.post("/api/session/logout-all", json={}, headers=bearer(remote, HTTPS)).status_code == 200
+    for dead in (code, fresh):
+        assert (
+            front.post("/auth/enroll/options", json={"code": dead}, headers={"Origin": HTTPS}).status_code == 401
+        )  # refused afterwards

@@ -55,7 +55,7 @@ function AddressCard({ address, problem, onCheck }: { address: string | null; pr
   const copy = async (what: string, text: string) => { if (await copyText(text)) { setCopied(what); setTimeout(() => setCopied(null), 2500) } }
   const details = `orch remote access is not working.\nWhat orch measured: ${problem}\nChecked: ${new Date().toISOString()}${address ? `\nAddress: ${address}` : ''}`
   return (
-    <Section title={<>Address{problem ? <Pill tone="warn">Not working</Pill> : address ? <Pill tone="ok">Reachable</Pill> : null}</>} className={problem ? 'border-warning/45' : undefined}>
+    <Section title={<>Address{problem ? <Pill tone="warn">Not working</Pill> : address ? <Pill tone="ok">On</Pill> : null}</>} className={problem ? 'border-warning/45' : undefined}>
       {problem ? (
         <div role="alert" data-testid="remote-problem" className="space-y-2 rounded-md border border-warning/40 bg-warning-soft p-3 text-[13px]">
           <b className="block text-text">People cannot sign in from the web right now</b>
@@ -105,7 +105,7 @@ function PasskeysCard({ rows, loading, failed, onAdd, onChanged }: { rows: Passk
               <tr key={row.id} className="border-t border-border align-middle" data-testid="passkey-row">
                 <td className="py-2.5 pr-2"><span className="font-semibold">{row.name}</span><span className="block text-xs text-text-muted">Added {when(row.created)}</span></td>
                 <td className="pr-2">{when(row.last_used)}</td>
-                <td className="text-right">{!only && <Button size="sm" variant="outline" className="text-danger" onClick={() => { resetStepUp(); setAsking(row) }} disabled={busy}>Remove</Button>}</td>
+                <td className="text-right">{!only && <Button size="sm" variant="outline" className="text-danger" aria-label={`Remove ${row.name}`} onClick={() => { resetStepUp(); setAsking(row) }} disabled={busy}>Remove</Button>}</td>
               </tr>
             ))}
           </tbody>
@@ -169,7 +169,7 @@ function AddDeviceCard({ count, onUsed }: { count: number; onUsed: () => void })
   return (
     <Section title="Add a device">
       <p className="text-[13px] text-text-muted">{LIFE}</p>
-      {state === 'idle' && <p className="mt-1.5 text-[13px] text-text-muted">{needsTouch() ? 'Click "Add a device" and touch your passkey. Then the link and code appear.' : 'Click "Add a device". Then the link and code appear.'}</p>}
+      {state === 'idle' && <p className="mt-1.5 text-[13px] text-text-muted">{needsTouch() ? 'Click "Add a device" and touch your passkey. Then the link and QR code appear.' : 'Click "Add a device". Then the link and QR code appear.'}</p>}
       <div className="mt-2.5"><StepUpNote /></div>
       {error && <p role="alert" className="mt-2 text-[13px] text-danger">{error}</p>}
       {state === 'live' && link && qr && (

@@ -3,12 +3,10 @@
 // words stay (`local`). The way back in (an SSH tunnel) is for IT, behind a fold, never something the person types.
 import { Fingerprint } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { PasskeyError, passkeysSupported, prepareLogin, signIn } from '@/api/passkey'
+import { HEADLESS_PORT as TUNNEL_PORT, PasskeyError, passkeysSupported, prepareLogin, signIn } from '@/api/passkey'
 import { Button } from '@/components/ui/button'
 import { AuthCard, AuthPage, Notice } from './AuthCard'
 
-/** Core's headless dashboard port (`HEADLESS_PORT` in the dashboard server): the tunnel line stays true across restarts. */
-const TUNNEL_PORT = 47821
 const LOCK_MS = 60_000 // the server's sign-in limit is per minute
 
 type Step = 'checking' | 'local' | 'ready' | 'waiting' | 'failed' | 'cancelled' | 'locked' | 'unreachable' | 'unsupported'
@@ -59,7 +57,7 @@ export function LoginGate({ ended = false, local, contact }: { ended?: boolean; 
     <AuthPage>
       <AuthCard
         title={locked ? 'Too many tries' : 'Sign in to orch'}
-        lead={step === 'ready' || waiting ? 'Use the passkey you set up on this device. Your device asks for your fingerprint, face or screen-lock code (the device asks; you type nothing in orch).' : undefined}
+        lead={step === 'ready' || waiting ? 'Use the passkey you set up on this device. Your device asks for your fingerprint, face or screen-lock code.' : undefined}
       >
         {ended && step === 'ready' && <Notice tone="info" title="You were signed out">Sign in again to go on. Nothing was lost.</Notice>}
         {step === 'failed' && <Notice tone="err" title="That did not work">Your device did not confirm. Nothing was changed. Try again, and make sure you use the device you set up orch on.</Notice>}

@@ -99,7 +99,7 @@ describe('tier B: a separate account (R1-8)', () => {
     s.preview.mockResolvedValue(preview({ execution_line: 'This terminal runs as orch-agent-sev. It cannot read your keys. Never type secrets into it.' }))
     mount()
     const line = await screen.findByTestId('separate-account-line', {}, T)
-    expect(line).toHaveTextContent('This terminal uses a separate account (orch-agent-sev). It cannot read your orch signing keys or passkeys.')
+    expect(line).toHaveTextContent('This agent uses a separate account (orch-agent-sev). It cannot read your orch signing keys or passkeys.')
     expect(screen.queryByTestId('execution-line')).toBeNull()
     expect(screen.queryByTestId('agent-risk-full')).toBeNull()
   })

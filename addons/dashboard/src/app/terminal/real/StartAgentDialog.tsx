@@ -163,6 +163,9 @@ function StartAgent({ ws, ticket, onClose, onStarted, initial, choose }: { ws: s
   // The risk notice is shown in full until it is acknowledged once (kept by the dashboard server, per person and
   // workspace); afterwards it is one line whose Details hold the same words. A failed read counts as not acknowledged.
   const ack = useQuery({ queryKey: ['risk-notices', ws], queryFn: () => agentsApi.riskNotices(ws), retry: false })
+  // TODO(H tasks, design-h1-agent-user.md): this suppresses the "runs as you" notice on the host's word (`runs_as`), which is right only
+  // if agent.start FAILS CLOSED (runner.unavailable) instead of falling back to the person when the agent account is set. The
+  // dashboard cannot check that; the H launch task must prove it with a test before tier B is enabled.
   // Tier B: the agent runs as its own account; the "runs as you" notice does not apply, a plain reassurance line does.
   const separate = separateAccount(data?.execution_line)
   const startFull = !separate && ack.data?.acknowledged.start_agent !== true
@@ -436,7 +439,7 @@ function RiskNotice({ separate, startFull, loginFull, loginNotice, onAcknowledge
   const login = <>{loginNotice.map((x, i) => <p key={i} role="note" className="text-warning" data-testid="agent-login-notice"><Prose inline>{x}</Prose></p>)}</>
   return (
     <section aria-label={separate ? 'Runs as a separate account' : 'Runs as you'} className="-mb-1 space-y-2 text-xs leading-5" data-testid="agent-risk">
-      {separate && <SeparateAccountLine user={separate} />}
+      {separate && <SeparateAccountLine user={separate} what="agent" />}
       {full && (
         <div role="note" className="grid gap-2 rounded-md border border-warning/40 bg-warning-soft px-3 py-2 font-normal text-warning sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:[&>p]:col-start-1" data-testid="agent-risk-full">
           {startFull && start}

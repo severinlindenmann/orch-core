@@ -96,10 +96,15 @@ const FIELD_PARTS =
   '[&_.field-radio-group_label>span]:inline-flex [&_.field-radio-group_label>span]:items-center [&_.field-radio-group_label>span]:gap-2 ' +
   '[&_.field-radio-group_input]:accent-[var(--brand)]'
 
-function FieldTemplate({ id, label, children, errors, help, description, hidden, displayLabel, required }: FieldTemplateProps) {
-  if (hidden) return <div className="hidden">{children}</div>
+/**
+ * THE one place a field is marked secret: every field (leaf, object, array, any widget) is drawn inside this wrapper, so
+ * `data-secret` here covers all its descendants. Readers of the form use `closest('[data-secret="true"]')`.
+ */
+function FieldTemplate({ id, label, children, errors, help, description, hidden, displayLabel, required, schema, uiSchema }: FieldTemplateProps) {
+  const secret = isSecretField(schema, uiSchema as Record<string, unknown> | undefined) ? 'true' : undefined
+  if (hidden) return <div className="hidden" data-secret={secret}>{children}</div>
   return (
-    <div className={`space-y-1.5 ${FIELD_PARTS}`}>
+    <div className={`space-y-1.5 ${FIELD_PARTS}`} data-secret={secret}>
       {displayLabel && label && (
         <Label htmlFor={id} className="text-[12px] text-text-muted">
           {label}

@@ -736,8 +736,13 @@ function MarketWorkspace() {
                         await refresh()
                         return
                       }
-                      setOffThenRemove(now ?? remove)
                       setRemove(null)
+                      if (!now) {
+                        // Already gone from the host: nothing to sign, just show the fresh list.
+                        await refresh()
+                        return
+                      }
+                      setOffThenRemove(now)
                     })
                   }
                 >

@@ -182,6 +182,19 @@ it('Turn off and remove on a stale list: the add-on is already Off, so it is rem
   expect(state.host.posts()).toHaveLength(0)
 })
 
+it('Turn off and remove when the add-on is already gone from the host: just refresh, no signature, no uninstall', async () => {
+  ws().marketInstalled = { addons: [installedAddon({ state: 'active' })] }
+  show('/w/DEMO/addons?tab=installed')
+  await userEvent.click(await screen.findByRole('button', { name: 'Remove' }, T))
+  const d = await screen.findByRole('dialog')
+  ws().marketInstalled = { addons: [] } // removed elsewhere
+  await userEvent.click(within(d).getByRole('button', { name: 'Turn off and remove' }))
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull(), T)
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Remove' })).toBeNull(), T)
+  expect(state.host.posts()).toHaveLength(0)
+  expect(state.host.calls.some((c) => c.path.endsWith('/market/uninstall'))).toBe(false)
+})
+
 const SRC = { url: 'https://github.com/acme/hub-market', class: 'company' as const, added: false }
 const DEV = { url: 'https://github.com/acme/test-market', class: 'dev' as const, added: false }
 const OFFICIAL = { url: market().url, class: 'official' as const, added: true }

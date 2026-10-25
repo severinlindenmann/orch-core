@@ -113,6 +113,14 @@ person can configure. `schema` is a closed JSON-Schema subset, checked when the 
 `pattern`, `$ref`, `format`, `default`, `description`, `oneOf` and every other keyword are refused. An add-on must work
 with no settings at all (`null`): there are no required settings in 1.1.
 
+**8.2a Secrets in dashboard forms.** The dashboard draws an add-on's form (`AddonForm`, JSON Schema through rjsf) and, before
+anything is signed, lists what changed ("Approve and save"). A field is a credential when its schema node has `writeOnly: true`,
+or `format` of `password`, `credential` or `secret`, or the `password` widget. The mark may sit on a field or on a container
+(object or array): everything under a marked node is a credential, at any depth and in any widget (text, textarea, select,
+radio, checkboxes, list items). Credentials appear in the changes list only as "<label>: new value", never with old or new
+value. The dashboard enforces this in one place: the form's field wrapper carries `data-secret="true"` and the changes list
+treats any control inside such a wrapper as secret. An add-on that draws its own input outside rjsf gets no such protection.
+
 **8.3 `choose_model`.** Core may ask a granted add-on with `choose_model` for the model of an agent start. The input is
 exactly `{harness, mode, settings}`; the answer is exactly `{"model": <string or null>}`, and the string must be one core
 already allows for that harness. Anything else blocks the start.

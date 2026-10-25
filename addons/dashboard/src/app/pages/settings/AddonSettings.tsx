@@ -28,7 +28,7 @@ function formFields(root: HTMLElement | null): { id: string; label: string; secr
   return els.map((e) => ({
     id: e.id,
     label: (e.id && root?.querySelector(`label[for="${CSS.escape(e.id)}"]`)?.textContent?.replace(/\s*\*$/, '').trim()) || e.getAttribute('aria-label') || e.name || e.id,
-    secret: e.type === 'password' || e.dataset.secret === 'true',
+    secret: e.type === 'password' || e.closest('[data-secret="true"]') !== null,
     value: e.type === 'checkbox' || e.type === 'radio' ? e.checked : e.value,
   }))
 }

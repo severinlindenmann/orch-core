@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import { api } from '@/api/client'
 import { addonActive, manifestFor, pendingUpdate, viewerActions } from '@/api/addons'
 import type { AddonOpRequest, AddonPackage, InstalledAddon, Workspace } from '@/api/types'
@@ -10,11 +10,11 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { StateBadge, StateChip } from '@/addon-ui/StateChip'
 import { hasFeature } from '@/api/features'
 import { AddonRow } from './AddonRow'
-import { AddonSettingsPanel, requestSettingsFocus, takeSettingsFocus } from './AddonSettingsPanel'
+import { AddonSettingsPanel, requestSettingsFocus } from './AddonSettingsPanel'
 import { Catalog } from './Catalog'
+import { MarketSettingsButton, MarketStateChips, useNeedsApproval } from './marketRow'
 import { GrantDialog, type GrantAsk } from './GrantDialog'
 import { toastApiError } from '@/app/toast'
 import { queries } from '@/api/queries'
@@ -127,7 +127,11 @@ export function AddonManager({ workspace, canEdit, settingsOf }: { workspace: Wo
       )}
       <FromMarketplaces ws={ws} settingsOf={settingsOf} />
       {/* The side panel over the list (also for a deep link to an addon that has no row: the panel says so). */}
-      {settingsOf && <AddonSettingsPanel name={settingsOf} workspace={workspace} canEdit={canEdit} onClose={() => navigate({ to: '/settings/$tab', params: { tab: 'addons' } })} />}
+      {settingsOf && <AddonSettingsPanel name={settingsOf} workspace={workspace} canEdit={canEdit} onClose={() => {
+          requestSettingsFocus(settingsOf) // the list is drawn again by the route: the row's Settings button takes the keyboard back
+          return navigate({ to: '/settings/$tab', params: { tab: 'addons' } })
+        }}
+      />}
 
       <Catalog
         ws={ws}
@@ -171,8 +175,10 @@ export function AddonManager({ workspace, canEdit, settingsOf }: { workspace: Wo
 
 /** Add-ons installed from a marketplace: same chip and the same Settings panel as the Add-ons page. */
 function FromMarketplaces({ ws, settingsOf }: { ws: string; settingsOf?: string }) {
+  const navigate = useNavigate()
   const served = hasFeature('market', ws)
   const installed = useQuery({ ...queries.marketInstalled(ws), enabled: served })
+  const needsApproval = useNeedsApproval(ws)
   const rows = (installed.data?.addons ?? []).filter((a) => a.origin)
   if (!served || !rows.length) return null
   return (
@@ -183,37 +189,19 @@ function FromMarketplaces({ ws, settingsOf }: { ws: string; settingsOf?: string 
           <li key={a.name} className="flex flex-wrap items-center gap-2 px-4 py-3 text-sm">
             <span className="font-medium">{a.name}</span>
             <span className="font-mono text-[12px] text-text-muted">{a.version}</span>
-            <StateChip on={a.state === 'active' || a.state === 'enabled'} />
-            {a.available && !a.available.revoked && <StateBadge kind="update" />}
-            <MarketSettingsButton name={a.name} open={settingsOf === a.name} />
+            <MarketStateChips addon={a} needsApproval={needsApproval.has(a.name)} />
+            <MarketSettingsButton
+              name={a.name}
+              className="ml-auto"
+              open={settingsOf === a.name}
+              onToggle={() => {
+                requestSettingsFocus(a.name)
+                void navigate(settingsOf === a.name ? { to: '/settings/$tab', params: { tab: 'addons' } } : { to: '/settings/addon/$name', params: { name: a.name } })
+              }}
+            />
           </li>
         ))}
       </ul>
     </section>
-  )
-}
-
-/** The Settings button of a marketplace add-on: it takes the keyboard back when the panel closes (as a built-in row's does). */
-function MarketSettingsButton({ name, open }: { name: string; open: boolean }) {
-  const navigate = useNavigate()
-  const button = useRef<HTMLButtonElement>(null)
-  useEffect(() => {
-    if (takeSettingsFocus(name)) button.current?.focus()
-  }, [name])
-  return (
-    <Button
-      ref={button}
-      size="sm"
-      variant="outline"
-      className="ml-auto"
-      data-settings-for={name}
-      aria-expanded={open}
-      onClick={() => {
-        requestSettingsFocus(name)
-        void navigate(open ? { to: '/settings/$tab', params: { tab: 'addons' } } : { to: '/settings/addon/$name', params: { name } })
-      }}
-    >
-      Settings
-    </Button>
   )
 }

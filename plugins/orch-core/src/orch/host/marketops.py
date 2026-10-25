@@ -185,7 +185,8 @@ def _serve_checked(call: Call, op: str, args: dict[str, Any], fresh: str | None 
         return marketinstall.serve(call, op, args)
     try:
         if op == "market.list":
-            return ok_result(_list(service, bool(args.get("entries")), now, person=call.column.name == "P" and call.viewer is not None))
+            is_person = call.column.name == "P" and call.viewer is not None
+            return ok_result(_list(service, bool(args.get("entries")), now, person=is_person))
         pol = hubpolicy.stored(service)
         files = _files(service)
         records = files.load()
@@ -441,8 +442,9 @@ def _list(service: WorkspaceService, entries: bool, now: float, person: bool = F
                 for e in doc[ADDONS]
             ]
         rows.append(row)
-    # `sources` are the hub-listed URLs not yet added: for the person (column P) only, never for an agent's grant (column G)
-    return {"markets": rows, **(_sources(service, pol, set(records)) if person else {"sources": [], "any_source": False})}
+    # `sources` (hub-listed URLs not yet added) are for the person (column P) only, never an agent's grant (column G)
+    none: dict[str, Any] = {"sources": [], "any_source": False}
+    return {"markets": rows, **(_sources(service, pol, set(records)) if person else none)}
 
 
 def _sources(service: WorkspaceService, pol: Any, added: set[str]) -> dict[str, Any]:

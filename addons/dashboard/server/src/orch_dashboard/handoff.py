@@ -754,8 +754,9 @@ def _not_locked(name: str) -> str:
     return name
 
 
-#: a shipped or an installed marketplace add-on (#1237 design item 1); the host refuses a name that is neither
-#: (`market.not_installed`) and a name that collides with a shipped one cannot be installed (`market.reserved_id`)
+#: a shipped or an installed marketplace add-on (#1237 design item 1); the host refuses a name with no add-on folder
+#: (`not_found`) and a folder that is not in the install record (`market.not_installed`); a name that collides with a
+#: shipped one cannot be installed (`market.reserved_id`)
 AddonName = Annotated[MarketName, AfterValidator(_not_locked)]
 
 

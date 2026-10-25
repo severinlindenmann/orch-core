@@ -82,17 +82,6 @@ export const ADD_MARKET_HELP = "Only the official and your hub's marketplaces ca
 export const sourceTag = (c: MarketSource['class']) => (c === 'official' ? 'Official' : c === 'company' ? 'Your hub' : 'dev sandbox only')
 export type MarketInstalled = { addons: InstalledAddon[] }
 export const EXTERNAL_HELP = "External marketplaces aren't available in this workspace yet"
-export function stateLabel(state?: string, pending = false): string {
-  return pending || state === 'pending'
-    ? 'Waiting for installation approval'
-    : !state
-      ? 'Available'
-      : state === 'disabled'
-        ? 'Off'
-        : state === 'active' || state === 'enabled'
-          ? 'On'
-          : 'Installed'
-}
 export function permissionEffect(value: string): string {
   const effects: Record<string, string> = {
     network: 'Connects to the internet',

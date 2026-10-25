@@ -28,20 +28,20 @@ function formFields(root: HTMLElement | null): { id: string; label: string; secr
   return els.map((e) => ({
     id: e.id,
     label: (e.id && root?.querySelector(`label[for="${CSS.escape(e.id)}"]`)?.textContent?.replace(/\s*\*$/, '').trim()) || e.getAttribute('aria-label') || e.name || e.id,
-    secret: e.type === 'password',
+    secret: e.type === 'password' || e.dataset.secret === 'true',
     value: e.type === 'checkbox' || e.type === 'radio' ? e.checked : e.value,
   }))
 }
 
 /** What the person has typed into the form, as one comparable string. */
-function formSnapshot(root: HTMLElement | null): string | null {
+export function formSnapshot(root: HTMLElement | null): string | null {
   const fields = formFields(root)
   if (fields.length === 0) return null // the form is not there yet: there is nothing to compare with
   return JSON.stringify(fields.map((f) => [f.id, f.value]))
 }
 
 /** Exactly what changed since the form was last saved or loaded, one line per field. A secret is never echoed. */
-function changedLines(root: HTMLElement | null, baseline: string | null): string[] {
+export function changedLines(root: HTMLElement | null, baseline: string | null): string[] {
   const before = new Map((JSON.parse(baseline ?? '[]') as [string, string | boolean][]).map(([id, v]) => [id, v]))
   const show = (v: string | boolean | undefined) => (v === true ? 'on' : v === false ? 'off' : v === undefined || v === '' ? 'empty' : v)
   return formFields(root)

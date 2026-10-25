@@ -8,11 +8,20 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 
+/**
+ * A credential is named by the add-on's schema (`writeOnly`, or `format` password / credential / secret, or the password widget),
+ * never by the input's look: the control carries `data-secret` so nothing that reads the form shows its value.
+ */
+export function isSecretField(schema?: { writeOnly?: boolean; format?: string }, uiSchema?: Record<string, unknown>): boolean {
+  return !!schema?.writeOnly || ['password', 'credential', 'secret'].includes(schema?.format ?? '') || uiSchema?.['ui:widget'] === 'password'
+}
+
 function BaseInputTemplate(props: BaseInputTemplateProps) {
   const { id, value, type, placeholder, disabled, readonly, required, autofocus, onChange, onBlur, onFocus } = props
   return (
     <Input
       id={id}
+      data-secret={isSecretField(props.schema, props.uiSchema) || type === 'password' ? 'true' : undefined}
       name={props.name || id}
       type={type === 'integer' ? 'number' : (type ?? 'text')}
       value={value ?? ''}
@@ -28,10 +37,11 @@ function BaseInputTemplate(props: BaseInputTemplateProps) {
   )
 }
 
-function TextareaWidget({ id, name, value, disabled, readonly, placeholder, onChange }: WidgetProps) {
+function TextareaWidget({ id, name, value, disabled, readonly, placeholder, onChange, schema, uiSchema }: WidgetProps) {
   return (
     <Textarea
       id={id}
+      data-secret={isSecretField(schema, uiSchema as Record<string, unknown> | undefined) ? 'true' : undefined}
       name={name || id}
       value={value ?? ''}
       placeholder={placeholder}

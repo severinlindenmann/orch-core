@@ -1,16 +1,7 @@
 import { expect, it } from 'vitest'
-import { EXTERNAL_HELP, marketError, permissionEffect, publisherWording, reviewLines, stateLabel, widened } from './market'
+import { EXTERNAL_HELP, marketError, permissionEffect, publisherWording, reviewLines, widened } from './market'
 import { stage, updateStage } from '@/test/fixtures/market'
 import { clickEligible } from './click'
-it('labels available, installed and pending states without inventing enabled state', () => {
-  expect([stateLabel(), stateLabel('disabled'), stateLabel('active'), stateLabel('pending'), stateLabel('unknown')]).toEqual([
-    'Available',
-    'Off',
-    'On',
-    'Waiting for installation approval',
-    'Installed',
-  ])
-})
 it('describes effects and publisher memory without claiming safety', () => {
   expect(permissionEffect('network:calendar.example.test')).toBe('Connects to calendar.example.test')
   expect(permissionEffect('secret:calendar')).toBe('Uses your calendar token')

@@ -76,7 +76,6 @@ export function AddonSettingsPanel({ name, workspace, canEdit, onClose }: { name
   const close = (): void | Promise<void> => {
     let leaving: void | Promise<void> = undefined
     guard(() => {
-      requestSettingsFocus(name) // the row's Settings button takes focus once the list is back (not when the question holds it)
       leaving = onClose()
     })
     return leaving

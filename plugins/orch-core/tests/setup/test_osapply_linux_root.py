@@ -6,15 +6,37 @@ Creates the real users, directories, pins and units on the runner, then asks ``i
 
 from __future__ import annotations
 
+import fcntl
 import os
 import pwd
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
 
-pytestmark = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux only")
+pytestmark = [
+    pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux only"),
+    pytest.mark.xdist_group("linux_root"),  # with `--dist loadgroup` one worker; the lock below holds without it
+]
+
+#: Every test here creates and removes the SAME system users, pins and directories (the person's name, orch-agent-<p>,
+#: /usr/lib/orch/os-setup, /etc/orch/pins). Two at once, on different xdist workers of one machine, fight over
+#: /etc/passwd and delete each other's users. So each test holds this lock from its first line to its last.
+ROOT_LOCK = os.path.join(tempfile.gettempdir(), "orch-ci-root.lock")
+
+
+@pytest.fixture(autouse=True)
+def one_root_test_at_a_time():
+    handle = open(ROOT_LOCK, "a")  # noqa: SIM115 - held across the yield
+    fcntl.flock(handle, fcntl.LOCK_EX)
+    try:
+        yield handle
+    finally:
+        fcntl.flock(handle, fcntl.LOCK_UN)
+        handle.close()
+
 
 SUDO = ["sudo", "-n"]
 
@@ -388,3 +410,10 @@ def _check_shared_run(person, uid, agent, run, state, host_log) -> None:
             "-u", agent.pw_name, "/usr/bin/python3", "-I", "-c", _CLIENT, str(run / "control" / "host.sock")
         )
         assert json.loads(control.stdout) == {"errno": 13}, control.stdout  # host.* stay person-only
+
+
+def test_the_module_never_runs_two_root_tests_at_once(one_root_test_at_a_time) -> None:
+    """The lock is held by this very test: a second holder (another worker) could not take it."""
+    with open(ROOT_LOCK, "a") as other:
+        with pytest.raises(BlockingIOError):
+            fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)

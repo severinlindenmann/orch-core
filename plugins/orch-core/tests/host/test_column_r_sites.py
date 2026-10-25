@@ -100,6 +100,7 @@ SITES: dict[tuple[str, str], tuple[int, str]] = {
     ("marketops.py", "_serve_checked"): (2, "unreachable (market.* are not R ops); after _check, which refused R"),
     ("spaceops.py", "_owner"): (2, "unreachable (space.* are not R ops); R is not P, so it would be refused"),
     ("spaceops.py", "_check"): (2, "unreachable (space.* are not R ops); a relay peer is not column P or G"),
+    ("mirrorops.py", "_run"): (2, "unreachable (mirror.sync is not an R op)"),
     ("worktrees.py", "_claim_ok"): (4, "unreachable (worktree.* are not R ops)"),
     ("worktrees.py", "_plan"): (2, "unreachable (worktree.* are not R ops)"),
     ("worktrees.py", "_register"): (4, "unreachable (worktree.* are not R ops)"),

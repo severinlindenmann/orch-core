@@ -16,7 +16,8 @@ from data.
 
 **Who the terminal runs as.** In tier B (spec 13.5) terminals run as `orch-agent-<person>`, never as the person: the
 host's preview names that user (`runs_as`) and `execution_line` carries the card line "This terminal runs as
-orch-agent-<person>. It cannot read your keys. Never type secrets into it." (`null` in tier A, where the page keeps its "run as you" line).
+orch-agent-<person>. It cannot read your keys. Never type secrets into it."
+(`null` in tier A, where the page keeps its "run as you" line).
 """
 
 from __future__ import annotations

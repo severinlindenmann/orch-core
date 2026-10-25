@@ -895,7 +895,8 @@ Errors: `invalid.input`, `page.expired`, `not_found` (`parent` or `epic`).
 
 LogItem  = {seq:int, type:str, at:Time, actor:Actor, summary:str{0..200}, data?:LogData}
 Question = {id:str, state:"open"|"answered"|"stale", to:[Person], blocking:bool, answered_by:Person | null, answered_seq:int | null,
-            text?:str, why?:str, to_ref?:str, options?:[{key:str, label:str, cost?:str}], recommended?:str,
+            text?:str, to_ref?:str, options?:[{key:str, label:str, text?:str, facts?:[[str,str]], cost?:str}],
+            spec?:{kind:"choice"|"text", why?:str, details?:str, recommended?:str, allow_other?:bool},
             asked_at?:Time, asked_by?:Actor, asked_seq?:int,
             answer?:{by:Person, at:Time, seq:int, option:str | null, text:str | null, auth?:str,  // auth: v1.5
                      signer?:{device:Device, auth:str},                              // signer: H12d-2 (§0.8.6 item 9.11)
@@ -975,8 +976,8 @@ SectionRev = {seq:int, at:Time, hash:Hash | null, actor:Actor, via:"edit"|"exter
 - **`questions`.**
   - `text`, `options` (verbatim, each `{key, label, text?, facts?, cost?}`; absent for kind `text`) and `spec` (verbatim:
     `kind` plus `why`, `details`, `recommended`, `allow_other` when present) are the question as the last
-    `question.asked` for its id defines it (ticket-format §5.6.1). `why` and `recommended` are not top-level keys. `to_ref` is the stored `to` (a person id or a ticket role), while `to` stays the
-    resolved addressees.
+    `question.asked` for its id defines it (ticket-format §5.6.1). `why` and `recommended` are not top-level keys.
+    `to_ref` is the stored `to` (a person id or a ticket role), while `to` stays the resolved addressees.
   - `asked_at`, `asked_by` and `asked_seq` come from that same event, so a re-ask with changed text restarts them.
   - `answer` is present exactly when `state` is `"answered"`, from the `question.answered` that counts. `option` and `text`
     are as signed. The host never returns an answer that belongs to an older question hash (that question is `stale`).
@@ -1034,7 +1035,7 @@ Errors: `not_found`, `ambiguous_ref`.
 NeedItem = {kind:"question"|"approve"|"no_eligible"|"acknowledge"|"addon", key:Key | null, uid:Uid | null,
             ref:str | null, detail:str, who:[Person],
             since?:Time, text?:Snip, status?:Status, payload?:NeedPayload}      // the last three: v1.4, read_ext/1
-NeedPayload = {question:str, blocking:bool, to:str, options:[{key:str, label:str, cost?:str}], recommended?:str, why?:str}   // question
+NeedPayload = {question:str, blocking:bool, to:str, options?:[{key:str, label:str, text?:str, facts?:[[str,str]], cost?:str}], spec:{kind, why?, details?, recommended?, allow_other?}}   // question
             | {gate:Gate, gen:int, count:int, have:int}                                                                    // approve
             | {gate:Gate, cause:"no_token"|"no_visible_person"}                                                           // no_eligible
             | {scope:"ticket"|"workspace"}                                                                                 // acknowledge
@@ -1049,7 +1050,7 @@ NeedPayload = {question:str, blocking:bool, to:str, options:[{key:str, label:str
 
   | `kind` | `key` / `uid` | `ref` | `detail` | `who` | `text` | `payload` |
   |---|---|---|---|---|---|---|
-  | `question` | the ticket | the question id (`Q1`) | `"blocking"` or `""` | the question's current addressees (the `to` person, the holders of the `to` role, or owners and maintainers when it resolves to no member) | the question text, `Snip` | `question` (the id again), `blocking`, `to` (the stored person id or role), `options`, `recommended?`, `why?` |
+  | `question` | the ticket | the question id (`Q1`) | `"blocking"` or `""` | the question's current addressees (the `to` person, the holders of the `to` role, or owners and maintainers when it resolves to no member) | the question text, `Snip` | `question` (the id again), `blocking`, `to` (the stored person id or role), `options?` (verbatim), `spec` (verbatim) |
   | `approve` | the ticket | the gate (`requirements`, `plan`, `verify`, `code`) | `""` | the persons eligible to decide the gate now | absent | `gate`, `gen` (its generation), `count` (the quorum), `have` (persons whose approvals count now, fewer than `count`) |
   | `no_eligible` | the ticket | the gate | `""` | the persons who can see the ticket and may sign its `policy.changed` or `visibility.changed` (the ticket owner, workspace owners and maintainers, F1 §5.4.2) | absent | `{gate, cause:"no_token"\|"no_visible_person"}`. The effective policy of that gate leaves no approver token (F1 §5.7, `gate.no_eligible`); an owner fixes it with `policy.set`. |
   | `acknowledge` | the ticket, or `null` for the workspace log | `null` | `"invalid event in the ticket log"` or `"invalid event in the workspace log"` | the workspace owners | absent | `{scope}`: `"ticket"` or `"workspace"`. An unacknowledged invalid event freezes person decisions there (F1 §12 R5); an owner lifts the freeze with a signed `invalid.acknowledged`. No op for it is served yet (F1 §10.8 lists it as not built). |

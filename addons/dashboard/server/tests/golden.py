@@ -9,7 +9,8 @@ DIRECTORY = Path(__file__).parents[2] / "src/test/fixtures/server-m2"
 ULID = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 PERSON = re.compile(r"^p_[0-9a-f]{32}$")
 SHA = re.compile(r"^[0-9a-f]{40}$")
-DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")  # a question hash: it binds the (random) ticket uid, so its value is per run
+DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
+# A question hash binds the (random) ticket uid, so its value differs per run.
 HASH12 = re.compile(r"^[0-9a-f]{12}$")
 GRANT = re.compile(r"^gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 DEVICE = re.compile(r"^d_[0-9a-f]{32}$")

@@ -30,7 +30,7 @@ def _sudo(*argv: str, check: bool = True) -> subprocess.CompletedProcess:
 
 
 @pytest.fixture
-def root_machine():
+def root_machine(request):
     if not os.environ.get("CI"):
         _unmet("these tests create system users; they run in CI only")
     if subprocess.run([*SUDO, "true"], capture_output=True).returncode != 0:
@@ -39,9 +39,12 @@ def root_machine():
         if not os.path.exists(binary):
             _unmet(f"{binary} is missing")
     person = pwd.getpwuid(os.getuid()).pw_name
+    _undo(person, None, None)  # leftovers of an aborted earlier run on this machine
+    staging = f"/var/lib/orch-ci-staging-{os.getpid()}"
+    release = f"/var/lib/orch-ci-release-{os.getpid()}"
+    request.addfinalizer(lambda: _undo(person, release, staging))  # runs when the setup below fails too
     # Under /var/lib, a root-only base the image does not touch: /opt on the GitHub runner image is shared with the
     # tool caches and may not be a plain root 0755 directory, which the release check (rightly) refuses.
-    release = f"/var/lib/orch-ci-release-{os.getpid()}"
     # outside /tmp: the units use PrivateTmp. A stand-in program that just stays up. Root-owned here (a person-owned
     # release needs the person's home to be traversable by the agent, which the person's ACL step does: L5).
     # every directory on its own, explicitly root-owned 0755 (install -d gives parents the umask's mode)
@@ -52,7 +55,6 @@ def root_machine():
     shown = _sudo("stat", "-c", "%U:%G %a %n", release, f"{release}/current", f"{release}/current/bin").stdout
     assert shown.count("root:root 755") == 3, shown
     # the installer's step: a sealed root staging directory (under root-only parents), then the documented command
-    staging = f"/var/lib/orch-ci-staging-{os.getpid()}"
     _sudo("install", "-d", "-m", "0700", "-o", "root", staging)
     copy = (
         "import shutil, pathlib, sys; from orch.setup import oslauncher as o; "
@@ -65,25 +67,41 @@ def root_machine():
     done = _sudo("/usr/bin/python3", "-I", "-S", f"{staging}/orch/setup/osinstall.py", check=False)
     assert done.returncode == 0, done.stdout + done.stderr
     yield person, release
-    names = [f"orch-agent-{person}", *[f"orch-addon-{n}" for n in range(1, 9)]]
-    for unit in [f"orch-runner@orch-agent-{person}"] + [f"orch-addon@orch-addon-{n}" for n in range(1, 9)]:
-        _sudo("/usr/bin/systemctl", "disable", "--now", f"{unit}.service", check=False)
-    for name in names:
+
+
+def _undo(person: str, release: str | None, staging: str | None) -> None:
+    """Remove exactly what these tests create, by exact name (never a glob), whatever state they stopped in. Called
+    before the test too, so a previous aborted run on the same machine leaves no user for the plan to call foreign."""
+    agent = f"orch-agent-{person}"
+    systemctl = "/usr/bin/systemctl"
+    units = [f"orch-runner@{person}.service", *[f"orch-addon@{n}.service" for n in range(1, 9)]]
+    for unit in units:  # the runner runs as the agent user: it must be gone before the user can be
+        _sudo(systemctl, "disable", "--now", unit, check=False)
+        _sudo(systemctl, "reset-failed", unit, check=False)
+    for name in [agent, *[f"orch-addon-{n}" for n in range(1, 9)]]:
         try:
-            _sudo("rm", "-f", f"/etc/orch/pins/{pwd.getpwnam(name).pw_uid}.json", check=False)
+            uid = pwd.getpwnam(name).pw_uid
         except KeyError:
-            pass
-        _sudo("/usr/sbin/userdel", "--remove", name, check=False)
-    _sudo("rm", "-rf", "/usr/lib/orch/os-setup", staging, check=False)
+            uid = None
+        if uid is not None:
+            _sudo("rm", "-f", f"/etc/orch/pins/{uid}.json", check=False)
+            _sudo("/usr/sbin/userdel", "--remove", "--force", name, check=False)
+        _sudo("/usr/sbin/groupdel", name, check=False)  # a group left without its user
     for path in (
+        "/usr/lib/orch/os-setup",
         "/etc/tmpfiles.d/orch.conf",
         "/etc/ssh/sshd_config.d/10-orch-agents.conf",
+        "/etc/sudoers.d/99-orch-ci-agent",
         "/etc/systemd/system/orch-runner@.service",
         "/etc/systemd/system/orch-addon@.service",
+        f"/run/orch/{os.getuid()}",
+        "/run/orch/agents",
+        "/var/lib/orch",
+        *([release] if release else []),
+        *([staging] if staging else []),
     ):
-        _sudo("rm", "-f", path, check=False)
-    _sudo("rm", "-rf", release, f"/run/orch/{os.getuid()}", "/run/orch/agents", "/var/lib/orch", check=False)
-    _sudo("/usr/bin/systemctl", "daemon-reload", check=False)
+        _sudo("rm", "-rf", path, check=False)
+    _sudo(systemctl, "daemon-reload", check=False)
 
 
 def tmp_stub() -> str:

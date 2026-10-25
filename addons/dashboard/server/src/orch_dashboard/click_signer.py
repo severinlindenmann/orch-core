@@ -34,6 +34,7 @@ TIMEOUT = {
     "custody_off": 60.0,
     "runner": 120.0,  # on installs the runner release and service, as `orch runner enable` does
     "rotate": 120.0,  # the recovery code is stretched (scrypt) and the host signs the rotation
+    "stepup": 8.0,  # a passkey step-up nonce: memory only
 }
 #: the signer can switch click-to-sign on and off (`custody_on`/`custody_off`, section 0.8.6 item 3a)
 CUSTODY_FEATURE = "custody"
@@ -45,6 +46,7 @@ SEALED_PASSPHRASE_FEATURE = (
 )
 ROTATE_FEATURE = "device_rotate"  # `rotate {begin}`, then `{sealed}`: a new device key for this computer (core C13)
 RUNNER_FEATURE = "runner_switch"  # `runner {review}`, then `runner {on, view_digest}`: dashboard execution (core C14)
+STEPUP_FEATURE = "passkey_stepup"  # `stepup` nonces and the `remote`/`stepup` arguments of the listed ops (core R1-6)
 SEQUENCE_FEATURE = "sequence"  # `prepare {sequence}`: one review, N signatures (core batch 11)
 
 
@@ -219,6 +221,16 @@ class Signer:
             except HostError:
                 return False
             return RUNNER_FEATURE in self.features
+
+    def passkey_stepups(self) -> bool:
+        """Does the running signer check a remote session's passkey step-up itself (`remote`, `stepup`)? An older one
+        would ignore both and run the op, so a remote session's step-up op is never sent to it. Never raises."""
+        with self.lock:
+            try:
+                self._ensure()
+            except HostError:
+                return False
+            return STEPUP_FEATURE in self.features
 
     def images(self) -> bool:
         """Can the running signer hold a pasted screenshot (`stash`)? An older one would ignore `images` of the intent

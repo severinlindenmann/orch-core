@@ -10,10 +10,10 @@ from pathlib import Path
 import pytest
 from conftest import ORIGIN, PORT
 from fastapi.testclient import TestClient
+from orch.click.passkey_store import PasskeyStore
 
 from orch_dashboard.app import create_app
 from orch_dashboard.front import Front
-from orch_dashboard.passkey_store import PasskeyStore
 from orch_dashboard.policy import remote_policy
 
 NAME = "orch.example.com"

@@ -71,7 +71,7 @@ def _check_record(row) -> Passkey:
         raise StoreError("length")
     record = Passkey(**row)
     try:
-        record.id_bytes, record.handle_bytes
+        _ = (record.id_bytes, record.handle_bytes)  # decode them now: a bad value fails the whole record
         alg, _ = parse_public_key(record.key_bytes)
     except PasskeyError as exc:
         raise StoreError(f"record value: {exc.reason}") from None

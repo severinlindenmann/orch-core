@@ -1,5 +1,5 @@
 """A software authenticator for the passkey route tests: makes the registration and assertion responses a browser would
-send, for a chosen RP, with its own CBOR encoder (independent of `orch_dashboard.passkeys`)."""
+send, for a chosen RP, with its own CBOR encoder (independent of `orch.click.passkeys`)."""
 
 import hashlib
 import json

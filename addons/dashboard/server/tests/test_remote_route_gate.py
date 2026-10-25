@@ -88,9 +88,9 @@ WALKED = sorted((m, t, r) for (m, t), (r, _) in TABLE.items() if m != "WEBSOCKET
 @pytest.mark.parametrize(("method", "template", "rule"), WALKED)
 def test_each_route_follows_its_rule_for_a_remote_session(front, remote, method, template, rule):
     res = call(front, method, template, remote)
-    if rule in (REFUSED, STEP_UP, TERMINALS):  # terminals are off on the front by default
+    if rule in (REFUSED, TERMINALS):  # terminals are off on the front by default
         assert answered_no(res, (method, template)), (method, template, res.status_code)
-    elif rule == PRE_LOGIN and method == "GET" or rule == ALLOWED:
+    elif rule == PRE_LOGIN and method == "GET" or rule in (ALLOWED, STEP_UP):  # step-up: the handler asks (R1-6)
         assert not gate_refused(res), (method, template, res.status_code, res.text)
 
 
@@ -130,8 +130,11 @@ NAMED = [
     ("POST", "/api/w/{ws}/terminals/open", TERMINALS),
     ("POST", "/api/w/{ws}/terminals/preview", TERMINALS),
     ("POST", "/api/w/{ws}/handoff", ALLOWED),
-    ("POST", "/api/w/{ws}/click/custody/seal", STEP_UP),
-    ("POST", "/api/w/{ws}/click/rotate/seal", STEP_UP),
+    ("POST", "/api/w/{ws}/click/custody/seal", ALLOWED),
+    ("POST", "/api/w/{ws}/click/rotate/seal", ALLOWED),
+    ("POST", "/api/passkeys/enroll-link", STEP_UP),
+    ("DELETE", "/api/passkeys/{credential_id}", STEP_UP),
+    ("POST", "/api/stepup/verify", ALLOWED),
     ("POST", "/api/w/{ws}/click/rotate", STEP_UP),
     ("POST", "/api/w/{ws}/hub/connect", STEP_UP),
     ("POST", "/api/w/{ws}/hubsign", REFUSED),
@@ -143,7 +146,7 @@ NAMED = [
 @pytest.mark.parametrize(("method", "template", "rule"), NAMED)
 def test_the_named_routes_have_the_decided_rule(front, remote, method, template, rule):
     assert TABLE[(method, template)][0] == rule
-    assert answered_no(call(front, method, template, remote), (method, template)) == (rule != ALLOWED)
+    assert answered_no(call(front, method, template, remote), (method, template)) == (rule not in (ALLOWED, STEP_UP))
 
 
 def test_terminals_come_back_with_the_policy_switch(gateway, auth, tmp_path, stub, remote):

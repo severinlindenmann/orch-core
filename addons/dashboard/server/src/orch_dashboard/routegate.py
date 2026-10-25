@@ -9,15 +9,16 @@ Rules:
 * ``ALLOWED``    an admin action or read by plain click after the shown review. The route's own host and signer checks
                  still apply (a remote session never reaches the local-only variants, R1-4).
 * ``REFUSED``    never on remote (a shell on the server, launch codes, hub signing, the setup page).
-* ``STEP_UP``    needs a fresh passkey assertion bound to the request (host spec 0.8.6 10.5). The signer's check lands
-                 in R1-6; until then the gate refuses these like ``REFUSED``.
+* ``STEP_UP``    a whole route that needs a fresh passkey assertion bound to the request (host spec 0.8.6 10.5). The
+                 gate lets it through to its handler, whose first statement is `stepup.refuse_step_up`: the check is
+                 ONE helper, not one per route (R1-6).
 * ``PRE_LOGIN``  answers without a session on remote (passkey login and enrollment); on loopback they do not exist.
 * ``TERMINALS``  a shell on the server: allowed only where the listener's policy has ``terminals`` on (off on remote
                  until the Settings switch of R1-8 turns it on).
 
 A route that serves several bodies where only some are step-up (`click/custody`, `click/runner`, `click/prepare`,
-`click/sign`) is listed ``ALLOWED`` with that noted: the body decides, and the handler refuses the step-up variants for
-every session that is not local (R1-4, pinned by `test_remote_listener.py`) until R1-6.
+`click/sign`) is listed ``ALLOWED`` with that noted: the body decides, and the handler asks `stepup.refuse_step_up`,
+which needs a passkey assertion for the step-up variants of every session that was not opened on this computer.
 """
 
 from starlette.routing import Match
@@ -26,7 +27,7 @@ ALLOWED, REFUSED, STEP_UP, PRE_LOGIN, TERMINALS = "allowed", "refused", "step_up
 RULES = (ALLOWED, REFUSED, STEP_UP, PRE_LOGIN, TERMINALS)
 
 W = "/api/w/{ws}"
-BODY = "body decides: off is plain, on is step-up (the handler refuses on, R1-4)"
+BODY = "body decides: off is plain, on is step-up (the handler asks refuse_step_up)"
 GET, POST, PUT, DELETE, WEBSOCKET = "GET", "POST", "PUT", "DELETE", "WEBSOCKET"
 
 #: (method, route template) -> rule, with the reason where it is not obvious.
@@ -98,22 +99,22 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     (DELETE, W + "/handoff/{request_id}"): (ALLOWED, "cancels a request"),
     # --- click-to-sign
     (GET, W + "/click/status"): (ALLOWED, ""),
-    (POST, W + "/click/custody/seal"): (STEP_UP, "turning One click off with a new passphrase (sealed to the signer)"),
-    (POST, W + "/click/rotate/seal"): (STEP_UP, "device rotate"),
+    (POST, W + "/click/custody/seal"): (
+        ALLOWED,
+        "the review of a sealed new passphrase; the touch is at /click/custody",
+    ),
+    (POST, W + "/click/rotate/seal"): (ALLOWED, "the review of a device rotate; the touch is at /click/rotate"),
     (POST, W + "/click/rotate"): (STEP_UP, "device rotate"),
     (POST, W + "/click/custody"): (ALLOWED, BODY),
-    (POST, W + "/click/runner/review"): (
-        ALLOWED,
-        BODY,
-    ),
+    (POST, W + "/click/runner/review"): (ALLOWED, "the review of dashboard execution; the touch is at /click/runner"),
     (POST, W + "/click/runner"): (ALLOWED, BODY),
     (POST, W + "/click/images"): (ALLOWED, ""),
-    (POST, W + "/click/prepare"): (ALLOWED, "body decides: grant secret reveal and hub steps are refused (R1-4)"),
+    (POST, W + "/click/prepare"): (ALLOWED, "prepares a review of any kind; the touch is at /click/sign"),
     (POST, W + "/click/view"): (ALLOWED, ""),
     (POST, W + "/click/state"): (ALLOWED, ""),
     (POST, W + "/click/sign"): (
         ALLOWED,
-        "body decides: sealed bodies and reveal keys are refused for a remote session",
+        "body decides: sealed bodies and reveal keys are step-up",
     ),
     (POST, W + "/click/cancel"): (ALLOWED, ""),
     # --- hub
@@ -123,6 +124,13 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     (POST, W + "/hub/share/preview"): (ALLOWED, "a read-only preview"),
     (POST, W + "/hub/connect"): (STEP_UP, "the second half of a hub join"),
     (POST, W + "/hub/command"): (ALLOWED, "returns text only"),
+    # --- the passkey step-up ceremony and the passkey store (R1-6)
+    (POST, W + "/stepup/options"): (ALLOWED, "a challenge for this session; the actions are a closed list"),
+    (POST, "/api/stepup/options"): (ALLOWED, "a challenge for this session; the actions are a closed list"),
+    (POST, "/api/stepup/verify"): (ALLOWED, "the assertion, held for this session only"),
+    (GET, "/api/passkeys"): (ALLOWED, ""),
+    (POST, "/api/passkeys/enroll-link"): (STEP_UP, "Add a device"),
+    (DELETE, "/api/passkeys/{credential_id}"): (STEP_UP, "remove a passkey"),
     # --- settings and small preferences
     (GET, W + "/me/sign_default"): (ALLOWED, ""),
     (PUT, W + "/me/sign_default"): (ALLOWED, ""),

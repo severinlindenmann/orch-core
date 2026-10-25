@@ -23,12 +23,12 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import FastAPI, Request
+from orch.click import passkeys as wa
+from orch.click.passkey_store import MAX_NAME, Passkey, PasskeyStore, StoreError
 from pydantic import BaseModel, ConfigDict, StringConstraints
 
-from . import passkeys as wa
 from .auth import Auth
 from .errors import response
-from .passkey_store import MAX_NAME, Passkey, PasskeyStore, StoreError
 from .policy import REMOTE
 from .text import hidden
 
@@ -142,8 +142,9 @@ class Ceremonies:
         self.clock, self.lock = clock, threading.Lock()
         self.items: dict[str, tuple[str, bytes, float, object]] = {}
 
-    def start(self, kind: str, bound=None) -> tuple[str, bytes]:
-        challenge, token = wa.new_challenge(), secrets.token_urlsafe(16)
+    def start(self, kind: str, bound=None, challenge: bytes | None = None) -> tuple[str, bytes]:
+        """A step-up passes the ``challenge`` it computed from its nonce; the others get a random one."""
+        challenge, token = challenge or wa.new_challenge(), secrets.token_urlsafe(16)
         with self.lock:
             now = self.clock()
             self.items = {t: v for t, v in self.items.items() if v[2] > now}

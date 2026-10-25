@@ -28,6 +28,7 @@ from orch import canon
 
 from . import sealed
 from . import view as views
+from .passkeys import action_digest
 from .protocol import (
     CONTRACT,
     DEPOSIT_MAX_HOURS,
@@ -47,6 +48,7 @@ from .protocol import (
     refused,
 )
 from .records import RecordError, Records, is_claim
+from .stepup import Stepups
 
 __all__ = ["Approval", "Budget", "ClickSigner"]
 
@@ -183,6 +185,7 @@ class ClickSigner:
         log: Any = None,
         records: Records | None = None,
         sessions: Any = None,
+        stepups: Stepups | None = None,
     ) -> None:
         self.state = Path(state_dir)
         self.uid = os.getuid() if uid is None else uid
@@ -219,6 +222,8 @@ class ClickSigner:
 
         #: the durable sessions of sequences (one review, N signatures; batch 11), beside the sign records
         self.sessions = sessions if sessions is not None else Sessions(self.state, wall=wall)
+        #: #1198 R1-6: the passkey step-up nonces and the check of a remote session's assertion
+        self.stepups = stepups if stepups is not None else Stepups(self.state, mono)
         #: the last connection or custody problem per workspace, for ``status`` (it loads no key and connects nowhere)
         self.problems: dict[str, str] = {}
 
@@ -1941,9 +1946,54 @@ class ClickSigner:
                 pass
         self.conns.clear()
 
+    def stepup(self, args: Mapping[str, Any]) -> dict[str, Any]:
+        """``stepup {workspace_id, view_digest}``: a one-use nonce for a passkey assertion about the op whose review
+        has this digest (host spec §0.8.6 10.5). The server relays it to the browser; ``handle`` checks the answer."""
+        if set(args) != {"workspace_id", "view_digest"}:
+            raise ClickError("invalid.input", "stepup takes workspace_id and view_digest")
+        entry = self._entry(args["workspace_id"])
+        digest = args["view_digest"]
+        if type(digest) is not str or not HASH.fullmatch(digest):
+            raise ClickError("invalid.input", "view_digest is a digest")
+        return {"nonce": self.stepups.begin(entry["workspace_id"], digest)}
+
+    @staticmethod
+    def _stepup_target(op: str, args: Mapping[str, Any]) -> tuple[str, str | None] | None:
+        """(workspace id, digest) of the passkey step-up this call needs from a remote session, or None when this
+        variant of the op is a plain click. THE list of signer-side step-up ops (host spec §0.8.6 10.5)."""
+        wid = args.get("workspace_id")
+        if type(wid) is not str or not WS_ID.fullmatch(wid):
+            return None  # the op itself refuses a bad id
+        if op == "custody_on":
+            return wid, action_digest("custody.on", wid)
+        if (
+            (op in ("custody_off", "rotate") and "sealed" in args)
+            or (op == "runner" and not args.get("review") and (args.get("on") is True or args.get("terminals") is True))
+            or (op == "sign" and ("sealed" in args or args.get("reveal_key") is not None))
+        ):
+            digest = args.get("view_digest")
+            return wid, digest if type(digest) is str else None
+        return None
+
     def handle(self, op: str, args: Mapping[str, Any]) -> dict[str, Any]:
         if not isinstance(args, Mapping):
             raise ClickError("invalid.input", "args is an object")
+        if "remote" in args or "stepup" in args:
+            # #1198 R1-6: the server says the session is a remote one and relays its assertion. The signer decides
+            # from the op and the arguments whether this call needs it, and checks it before anything else.
+            if args.get("remote") is not True:
+                raise ClickError("invalid.input", "stepup comes with remote: true")
+            proof = args.get("stepup")
+            args = {k: v for k, v in args.items() if k not in ("remote", "stepup")}
+            target = self._stepup_target(op, args)
+            if target is not None:
+                try:
+                    self.stepups.check(target[0], target[1], proof)
+                except ClickError as exc:
+                    self._note("refused", workspace=args.get("workspace_id"), code=exc.code)
+                    raise
+        if op == "stepup":
+            return self.stepup(args)
         fn = {
             "prepare": self.prepare,
             "view": self.view,

@@ -30,6 +30,10 @@ LIFETIMES = {"local": (86400, 43200), "remote": (43200, 7200)}  # remote: 12 h a
 KIND_LISTENER = {"local": LOOPBACK, "remote": REMOTE}
 #: Kinds a launch code can open: a launch code is made on this computer and is a loopback credential.
 LAUNCH_KINDS = frozenset({"local"})
+#: A passkey step-up (verified by `/api/stepup/verify`) stays usable this long, once, for the op it was made for (owner
+#: decision of 24 Oct 2026: a fresh touch at most every 10 minutes). At most this many wait per session.
+STEPUP_FRESH = 600
+STEPUPS_PER_SESSION = 8
 
 #: Passkey-login buckets, separate from the launch limiter so internet traffic cannot lock out the local owner (host
 #: spec 0.8.6 10.3): 20 per minute per source, 600 per minute overall (a CPU guard only).
@@ -88,6 +92,8 @@ class Auth:
         # The listener each session was opened on; Security refuses the token on any other (see KIND_LISTENER).
         self.listeners: dict[str, str] = {}
         self.session_sources: dict[str, str] = {}  # remote session -> the source bucket that opened it
+        #: remote session -> {digest of the op -> (verified at, the proof the signer checks again)}; single use
+        self.stepups: dict[str, dict[str, tuple[float, object]]] = {}
         self.remote_sources: dict[str, deque] = {}
         self.remote_all = deque()
         self.remote_swept = 0.0
@@ -212,7 +218,7 @@ class Auth:
 
     def _drop(self, token):
         """Hold ``self.lock``."""
-        for table in (self.sessions, self.kinds, self.listeners, self.session_sources):
+        for table in (self.sessions, self.kinds, self.listeners, self.session_sources, self.stepups):
             table.pop(token, None)
 
     def _drop_dead(self, now):
@@ -222,7 +228,7 @@ class Auth:
             for t, (born, last) in self.sessions.items()
             if self._alive(self.kinds.get(t), born, last, now)
         }
-        for table in (self.kinds, self.listeners, self.session_sources):
+        for table in (self.kinds, self.listeners, self.session_sources, self.stepups):
             for token in [t for t in table if t not in self.sessions]:
                 del table[token]
 
@@ -294,6 +300,33 @@ class Auth:
         """How this session was opened (``"local"`` or ``"remote"``), or None for an unknown session."""
         with self.lock:
             return self.kinds.get(token) if token in self.sessions else None
+
+    def stepup_grant(self, token, digest, proof):
+        """A verified passkey step-up for the op with ``digest``, kept for this session only (never for another token).
+        A newer one for the same digest replaces the older; the oldest goes beyond ``STEPUPS_PER_SESSION``."""
+        with self.lock:
+            if token not in self.sessions:
+                return False
+            held = self.stepups.setdefault(token, {})
+            now = self.clock()
+            for stale in [d for d, (at, _) in held.items() if now - at >= STEPUP_FRESH]:
+                del held[stale]
+            held.pop(digest, None)
+            while len(held) >= STEPUPS_PER_SESSION:
+                del held[next(iter(held))]
+            held[digest] = (now, proof)
+            return True
+
+    def stepup_take(self, token, digest):
+        """``(True, proof)`` once for a step-up of this session for exactly ``digest`` that is at most ``STEPUP_FRESH``
+        old, else ``(False, None)``. Taking spends it, whatever happens to the op afterwards."""
+        with self.lock:
+            if token not in self.sessions:
+                return False, None
+            entry = self.stepups.get(token, {}).pop(digest, None)
+            if entry is None or self.clock() - entry[0] >= STEPUP_FRESH:
+                return False, None
+            return True, entry[1]
 
     def listener_of(self, token):
         """The listener this session was opened on (``"loopback"`` or ``"remote"``), or None when unknown. A session

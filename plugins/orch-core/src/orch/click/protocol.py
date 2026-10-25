@@ -91,7 +91,19 @@ RUNNER_LINE = "Agents may run commands on this computer as you when you start th
 RUNNER_OFF_LINE = (
     "Open terminals close within a second; agents already running keep running; the dashboard starts no new ones."
 )
-OPS = ("prepare", "view", "sign", "cancel", "status", "custody_on", "custody_off", "stash", "rotate", "runner")
+OPS = (
+    "prepare",
+    "view",
+    "sign",
+    "cancel",
+    "status",
+    "custody_on",
+    "custody_off",
+    "stash",
+    "rotate",
+    "runner",
+    "stepup",
+)
 #: what this signer can do beyond its contract, in ``status.features``: ``custody`` is ``custody_on``/``custody_off``,
 #: the dashboard's click-to-sign switch (§0.8.6 item 3a); ``sequence`` is ``prepare {sequence}``: one review, N
 #: signatures (batch 11); an older signer has no ``features`` and no switch, and ignores ``sequence`` (never asked)
@@ -104,6 +116,10 @@ OPS = ("prepare", "view", "sign", "cancel", "status", "custody_on", "custody_off
 #: ``device_rotate`` (#1198 C13) is ``rotate {begin}`` (the review: old and new key, and the signer's key for the two
 #: sealed secrets), then ``rotate {request_id, view_digest, sealed}``: a new device key for this computer
 #: ``runner_switch`` (#1198 C14) is ``runner {review}`` then ``runner {on, view_digest}``: dashboard execution on or off
+#: ``passkey_stepup`` (#1198 R1-6) is ``stepup {workspace_id, view_digest}`` (a one-use nonce for a passkey
+#: assertion) and
+#: the ``remote``/``stepup`` arguments of the listed ops (custody_on, custody_off {sealed}, rotate {sealed}, runner on,
+#: sign with a sealed value or a reveal key): for a remote dashboard session the signer verifies the assertion itself
 FEATURES = (
     "custody",
     "sequence",
@@ -113,6 +129,7 @@ FEATURES = (
     "sealed_passphrase",
     "device_rotate",
     "runner_switch",
+    "passkey_stepup",
 )
 #: the host's ``sign.convenience_unavailable`` reasons (orch-v2-host §0.8.6 item 1), from the host's closed schema
 REASONS: tuple[str, ...] = tuple(_HOST_DETAIL["sign.convenience_unavailable"]["reason"])  # type: ignore[arg-type]

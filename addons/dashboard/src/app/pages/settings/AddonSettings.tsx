@@ -6,6 +6,8 @@ import { useAddons, useSlot } from '@/addon-ui/slots'
 import { addonActive } from '@/api/addons'
 import type { Workspace } from '@/api/types'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { useOneClick } from './hub/shared'
 import { Skeleton } from '@/components/ui/skeleton'
 import { queries } from '@/api/queries'
 
@@ -20,11 +22,31 @@ function Loading() {
 
 const ONLY_OWNERS_FORM = 'Only owners change settings.'
 
+/** The fields of the form with the words the person sees for them. */
+function formFields(root: HTMLElement | null): { id: string; label: string; secret: boolean; value: string | boolean }[] {
+  const els = Array.from(root?.querySelectorAll<HTMLInputElement>('form input, form select, form textarea') ?? [])
+  return els.map((e) => ({
+    id: e.id,
+    label: (e.id && root?.querySelector(`label[for="${CSS.escape(e.id)}"]`)?.textContent?.replace(/\s*\*$/, '').trim()) || e.getAttribute('aria-label') || e.name || e.id,
+    secret: e.type === 'password',
+    value: e.type === 'checkbox' || e.type === 'radio' ? e.checked : e.value,
+  }))
+}
+
 /** What the person has typed into the form, as one comparable string. */
 function formSnapshot(root: HTMLElement | null): string | null {
-  const els = Array.from(root?.querySelectorAll<HTMLInputElement>('form input, form select, form textarea') ?? [])
-  if (els.length === 0) return null // the form is not there yet: there is nothing to compare with
-  return JSON.stringify(els.map((e) => [e.id, e.type === 'checkbox' || e.type === 'radio' ? e.checked : e.value]))
+  const fields = formFields(root)
+  if (fields.length === 0) return null // the form is not there yet: there is nothing to compare with
+  return JSON.stringify(fields.map((f) => [f.id, f.value]))
+}
+
+/** Exactly what changed since the form was last saved or loaded, one line per field. A secret is never echoed. */
+function changedLines(root: HTMLElement | null, baseline: string | null): string[] {
+  const before = new Map((JSON.parse(baseline ?? '[]') as [string, string | boolean][]).map(([id, v]) => [id, v]))
+  const show = (v: string | boolean | undefined) => (v === true ? 'on' : v === false ? 'off' : v === undefined || v === '' ? 'empty' : v)
+  return formFields(root)
+    .filter((f) => before.get(f.id) !== f.value)
+    .map((f) => (f.secret ? `${f.label}: new value` : `${f.label}: ${show(before.get(f.id))} \u2192 ${show(f.value)}`))
 }
 
 /** The drawer's body and footer: the addon's `settings` contribution (a form node) in its frame; read-only unless owner. */
@@ -59,6 +81,10 @@ export function AddonSettings({
     baseline.current ??= formSnapshot(body.current)
   }, [])
   const [save, setSave] = useState({ pending: false, blocked: true })
+  const oneClick = useOneClick(workspace.id)
+  // With One click off, Save first shows exactly what will be signed; with it on, Save is the single click.
+  const [approving, setApproving] = useState<string[] | null>(null)
+  const submit = () => (document.getElementById(`addon-settings-${name}`) as HTMLFormElement | null)?.requestSubmit()
   // A successful save closes the drawer with a toast; what was just saved is not "unsaved changes" that would stop it.
   const title = pkg?.title ?? name
   const closing = useRef(onClose)
@@ -100,17 +126,48 @@ export function AddonSettings({
       <div ref={body} role="region" aria-labelledby={labelledBy} className="min-h-0 flex-1 overflow-y-auto px-4" onFocusCapture={touch} onPointerDownCapture={touch} onKeyDownCapture={touch} onInputCapture={check} onChangeCapture={check}>
         {content}
       </div>
-      <div className="flex items-center gap-2 border-t border-border p-4">
+      <div className="sticky bottom-0 flex items-center gap-2 border-t border-border bg-bg p-4">
         <p className="flex-1 text-[12px] text-text-muted">{!canEdit ? ONLY_OWNERS_FORM : dirty ? 'Unsaved changes' : ''}</p>
         <Button variant="ghost" onClick={onClose}>
           Cancel
         </Button>
         {c && active && (
-          <Button type="submit" form={formControl.id} disabled={!canEdit || save.pending || save.blocked}>
+          <Button
+            type="button"
+            form={formControl.id}
+            disabled={!canEdit || save.pending || save.blocked}
+            onClick={() => (oneClick === 'on' ? submit() : setApproving(changedLines(body.current, baseline.current)))}
+          >
             Save
           </Button>
         )}
       </div>
+      {approving && (
+        <Dialog open onOpenChange={(o) => !o && setApproving(null)}>
+          <DialogContent className="max-w-md border-border bg-surface">
+            <DialogHeader>
+              <DialogTitle>Approve and save</DialogTitle>
+              <DialogDescription>You are about to change the {title} settings. This is exactly what changes.</DialogDescription>
+            </DialogHeader>
+            <ul aria-label="What changes" className="list-disc space-y-1 pl-5 text-sm">
+              {approving.length ? approving.map((l) => <li key={l}>{l}</li>) : <li>No visible change</li>}
+            </ul>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setApproving(null)}>
+                Back
+              </Button>
+              <Button
+                onClick={() => {
+                  setApproving(null)
+                  submit()
+                }}
+              >
+                Approve and save
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </>
   )
 }

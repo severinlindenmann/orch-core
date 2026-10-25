@@ -57,7 +57,7 @@ it('update diff values from the package sit inside the AddonFrame', async () => 
 it('stages the exact source, hands off in a terminal and refreshes after submission', async () => {
   const d = await openReview()
   expect(state.host.calls.find((c) => c.path.endsWith('/market/stage'))?.body).toEqual({ id: 'calendar', url: market().url })
-  expect(within(d).getByText('Next, review and approve the installation with one click. The add-on will be installed turned off.')).toBeInTheDocument()
+  expect(within(d).getByText('Next, review and approve the installation with one click. The add-on will be installed Off.')).toBeInTheDocument()
   await userEvent.click(within(d).getByRole('button', { name: 'Review installation' }))
   await waitFor(() => expect(state.host.posts()).toHaveLength(1), T)
   expect(state.host.posts()[0].body).toEqual({ action: 'market_grant', name: 'calendar', staged: 'demo-stage' })
@@ -66,7 +66,9 @@ it('stages the exact source, hands off in a terminal and refreshes after submiss
   act(() => {
     state.host.submitted.set([...state.host.requests.keys()][0], 'DEMO-0001')
   })
-  await screen.findByText('Installed · Turn on in Settings > Add-ons', {}, T)
+  // The result dialog: installed and Off, one primary button.
+  await userEvent.click(await screen.findByRole('button', { name: 'Done, leave it Off' }, T))
+  await waitFor(() => expect(within(screen.getByRole('article', { name: 'calendar' })).getByText('Off')).toBeInTheDocument(), T)
 })
 it('Cancel deletes the stage', async () => {
   const d = await openReview()
@@ -130,11 +132,13 @@ it.each(['member', 'no-actions'] as const)('hides every write control for %s', a
   expect(screen.queryByRole('button', { name: '+ Add marketplace' })).toBeNull()
   expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull()
 })
-it('requires turning an active add-on off before Remove', async () => {
+it('Remove is on every installed row; an On add-on says to turn it off first and cannot be removed yet', async () => {
   ws().marketInstalled = { addons: [installedAddon({ state: 'active' })] }
   show('/w/DEMO/addons?tab=installed')
-  expect(await screen.findByRole('button', { name: 'Remove' }, T)).toBeDisabled()
-  expect(screen.getByText('Turn it off in Settings > Add-ons first')).toBeInTheDocument()
+  await userEvent.click(await screen.findByRole('button', { name: 'Remove' }, T))
+  const d = await screen.findByRole('dialog')
+  expect(d).toHaveTextContent('Turn it off in Settings > Add-ons first')
+  expect(within(d).getByRole('button', { name: 'Remove' })).toBeDisabled()
 })
 it('with One click on, install is the signer review and one Sign press: no Terminal, no typed word (V3-D38)', async () => {
   ws().click = { custody: 'convenience', enabled: true, available: true }

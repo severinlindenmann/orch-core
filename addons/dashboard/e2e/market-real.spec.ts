@@ -25,7 +25,7 @@ test('real host: browse -> review -> Review installation -> sign in the terminal
   await page.screenshot({ path: path.join(SHOTS, 'a10-real-browse.png') })
   await hello.getByRole('button', { name: /Install/ }).click()
   const dialog = page.getByRole('dialog')
-  await expect(dialog).toContainText('The add-on will be installed turned off.', { timeout: 60_000 })
+  await expect(dialog).toContainText('The add-on will be installed Off.', { timeout: 60_000 })
   await page.screenshot({ path: path.join(SHOTS, 'a10-real-review.png') })
   await dialog.getByRole('button', { name: 'Review installation' }).click()
   const code = (await page.getByText(/\b[0-9A-Z]{4}-[0-9A-Z]{4}\b/).first().innerText()).match(/\b[0-9A-Z]{4}-[0-9A-Z]{4}\b/)![0]

@@ -10,7 +10,7 @@ describe('Addon manager', () => {
     const heads = screen.getAllByRole('columnheader')
     expect(heads.map((h) => h.textContent)).toEqual(['Addon', 'Capabilities', 'Status', 'On', 'Actions'])
   })
-  it('installs from the catalog in one signed act: Install, the capability sheet, "Grant and turn on", Active', async () => {
+  it('installs from the catalog in one signed act: Install, the capability sheet, "Grant and turn on", On', async () => {
     const { user } = renderApp('/settings/addons')
     await user.click(await screen.findByRole('button', { name: 'Browse addons' }))
     await user.click(within(await screen.findByRole('article', { name: /Quick tasks/ })).getByRole('button', { name: 'Install' }))
@@ -19,7 +19,7 @@ describe('Addon manager', () => {
     expect(dialog).toHaveTextContent('and turns it on')
     expect(screen.queryByRole('row', { name: /Quick tasks/ })).toBeNull()
     await user.click(within(dialog).getByRole('button', { name: 'Grant and turn on' }))
-    await waitFor(() => expect(within(screen.getByRole('row', { name: /Quick tasks/ })).getByText('Active')).toBeInTheDocument())
+    await waitFor(() => expect(within(screen.getByRole('row', { name: /Quick tasks/ })).getByText('On', { selector: '[data-state-chip]' })).toBeInTheDocument())
     expect(within(screen.getByRole('row', { name: /Quick tasks/ })).getByRole('switch', { name: 'Quick tasks enabled' })).toBeEnabled()
     await user.click(await screen.findByRole('button', { name: /More addons/ }))
     await waitFor(() => expect(screen.getAllByRole('link', { name: /Quick tasks/ }).some((l) => l.getAttribute('href') === '/w/DEMO/addon/quick/quick')).toBe(true)) // sidebar nav appeared
@@ -33,7 +33,7 @@ describe('Addon manager', () => {
     // The changelog is the addon's text: shown apart, labelled as the addon's.
     expect(within(screen.getByRole('dialog')).getByRole('region', { name: 'From the addon: changelog' })).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Update' }))
-    await waitFor(() => expect(within(screen.getByRole('row', { name: /Estimate/ })).getByText('Active')).toBeInTheDocument())
+    await waitFor(() => expect(within(screen.getByRole('row', { name: /Estimate/ })).getByText('On', { selector: '[data-state-chip]' })).toBeInTheDocument())
     expect(within(screen.getByRole('row', { name: /Estimate/ })).getByText('0.6.0')).toBeInTheDocument()
     expect(screen.queryByText(/grant again/)).toBeNull()
   })
@@ -71,7 +71,7 @@ describe('Addon manager', () => {
     await user.click(screen.getByRole('button', { name: 'Browse addons' }))
     await user.click(within(await screen.findByRole('article', { name: /Estimate/ })).getByRole('button', { name: 'Install' }))
     await user.click(await screen.findByRole('button', { name: 'Grant and turn on' }))
-    await waitFor(() => expect(within(screen.getByRole('row', { name: /Estimate/ })).getByText('Active')).toBeInTheDocument())
+    await waitFor(() => expect(within(screen.getByRole('row', { name: /Estimate/ })).getByText('On', { selector: '[data-state-chip]' })).toBeInTheDocument())
   })
   it('only the owner grants', async () => {
     renderApp('/settings/addons', { viewer: 'p_mara' })

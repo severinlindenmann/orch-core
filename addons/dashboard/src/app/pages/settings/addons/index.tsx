@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
-import { Fragment, useState } from 'react'
+import { useState } from 'react'
 import { api } from '@/api/client'
 import { addonActive, manifestFor, pendingUpdate, viewerActions } from '@/api/addons'
 import type { AddonOpRequest, AddonPackage, InstalledAddon, Workspace } from '@/api/types'
@@ -9,7 +9,9 @@ import { PIN_ADDON_EVENT } from '@/app/shell/pinEvent'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Table, TableBody, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { StateBadge, StateChip } from '@/addon-ui/StateChip'
+import { hasFeature } from '@/api/features'
 import { AddonRow } from './AddonRow'
 import { AddonSettingsPanel, requestSettingsFocus } from './AddonSettingsPanel'
 import { Catalog } from './Catalog'
@@ -85,6 +87,7 @@ export function AddonManager({ workspace, canEdit, settingsOf }: { workspace: Wo
         <Skeleton className="h-40 w-full" />
       ) : (
         <div className="rounded-lg border border-border bg-surface">
+          <h3 className="px-4 pt-3 text-sm font-semibold">Built in</h3>
           <Table>
             <TableHeader>
               <TableRow>
@@ -99,8 +102,8 @@ export function AddonManager({ workspace, canEdit, settingsOf }: { workspace: Wo
             </TableHeader>
             <TableBody>
               {(installed.data ?? []).map((a) => (
-                <Fragment key={a.name}>
                 <AddonRow
+                  key={a.name}
                   addon={a}
                   settingsOpen={settingsOf === a.name}
                   active={addonActive(workspace, a.name)}
@@ -117,21 +120,14 @@ export function AddonManager({ workspace, canEdit, settingsOf }: { workspace: Wo
                     setEnabled: (on) => void run(a.name, { op: on ? 'enable' : 'disable' }),
                   }}
                 />
-                {settingsOf === a.name && (
-                  <TableRow aria-label={`${a.title} settings`} className="hover:bg-transparent">
-                    <TableCell colSpan={5} className="whitespace-normal bg-surface-2/30">
-                      <AddonSettingsPanel name={a.name} workspace={workspace} canEdit={canEdit} />
-                    </TableCell>
-                  </TableRow>
-                )}
-                </Fragment>
               ))}
             </TableBody>
           </Table>
         </div>
       )}
-      {/* A deep link to an addon that has no row (not installed): the panel says so, under the table. */}
-      {settingsOf && !installed.isLoading && !installed.data?.some((a) => a.name === settingsOf) && <AddonSettingsPanel name={settingsOf} workspace={workspace} canEdit={canEdit} />}
+      <FromMarketplaces ws={ws} settingsOf={settingsOf} />
+      {/* The side panel over the list (also for a deep link to an addon that has no row: the panel says so). */}
+      {settingsOf && <AddonSettingsPanel name={settingsOf} workspace={workspace} canEdit={canEdit} onClose={() => navigate({ to: '/settings/$tab', params: { tab: 'addons' } })} />}
 
       <Catalog
         ws={ws}
@@ -170,5 +166,42 @@ export function AddonManager({ workspace, canEdit, settingsOf }: { workspace: Wo
         </Dialog>
       )}
     </div>
+  )
+}
+
+/** Add-ons installed from a marketplace: same chip and the same Settings panel as the Add-ons page. */
+function FromMarketplaces({ ws, settingsOf }: { ws: string; settingsOf?: string }) {
+  const navigate = useNavigate()
+  const served = hasFeature('market', ws)
+  const installed = useQuery({ ...queries.marketInstalled(ws), enabled: served })
+  const rows = (installed.data?.addons ?? []).filter((a) => a.origin)
+  if (!served || !rows.length) return null
+  return (
+    <section aria-label="From marketplaces" className="rounded-lg border border-border bg-surface">
+      <h3 className="px-4 pt-3 text-sm font-semibold">From marketplaces</h3>
+      <ul className="divide-y divide-border">
+        {rows.map((a) => (
+          <li key={a.name} className="flex flex-wrap items-center gap-2 px-4 py-3 text-sm">
+            <span className="font-medium">{a.name}</span>
+            <span className="font-mono text-[12px] text-text-muted">{a.version}</span>
+            <StateChip on={a.state === 'active' || a.state === 'enabled'} />
+            {a.available && !a.available.revoked && <StateBadge kind="update" />}
+            <Button
+              size="sm"
+              variant="outline"
+              className="ml-auto"
+              data-settings-for={a.name}
+              aria-expanded={settingsOf === a.name}
+              onClick={() => {
+                requestSettingsFocus(a.name)
+                void navigate(settingsOf === a.name ? { to: '/settings/$tab', params: { tab: 'addons' } } : { to: '/settings/addon/$name', params: { name: a.name } })
+              }}
+            >
+              Settings
+            </Button>
+          </li>
+        ))}
+      </ul>
+    </section>
   )
 }

@@ -1,21 +1,15 @@
-import { ChevronDown, TriangleAlert } from 'lucide-react'
+import { TriangleAlert } from 'lucide-react'
 import { useEffect, useRef } from 'react'
 import { AddonBadge } from '@/addon-ui/AddonBadge'
 import { PreviewChip } from '@/addon-ui/PreviewChip'
+import { StateBadge, StateChip } from '@/addon-ui/StateChip'
 import { pendingUpdate } from '@/api/addons'
-import type { AddonStatus, InstalledAddon } from '@/api/types'
+import type { InstalledAddon } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { TableCell, TableRow } from '@/components/ui/table'
-import { cn } from '@/lib/utils'
 import { CapabilityChips } from './CapabilityChips'
 import { takeSettingsFocus } from './AddonSettingsPanel'
-
-const STATUS: Record<AddonStatus, { label: string; dot: string }> = {
-  active: { label: 'Active', dot: 'bg-success' },
-  disabled: { label: 'Disabled', dot: 'bg-text-faint' },
-  needs_grant: { label: 'Needs grant', dot: 'bg-warning' },
-}
 
 export interface RowActions {
   grant: () => void
@@ -39,7 +33,6 @@ export function NeedsGrantNotice({ addon }: { addon: InstalledAddon }) {
 
 /** One installed addon: everything about this workspace's install comes from `addon.ws`. */
 export function AddonRow({ addon, active, canEdit, hasSettings, settingsOpen, actions }: { addon: InstalledAddon; settingsOpen: boolean; active: boolean; canEdit: boolean; hasSettings: boolean; actions: RowActions }) {
-  const s = STATUS[addon.ws.status]
   const needsGrant = addon.ws.status === 'needs_grant'
   const update = pendingUpdate(addon)
   const settingsButton = useRef<HTMLButtonElement>(null)
@@ -66,10 +59,11 @@ export function AddonRow({ addon, active, canEdit, hasSettings, settingsOpen, ac
         <CapabilityChips capabilities={addon.ws.capabilities} />
       </TableCell>
       <TableCell>
-        <span className="inline-flex items-center gap-1.5 text-[13px]">
-          <span className={cn('size-1.5 rounded-full', s.dot)} aria-hidden />
-          {s.label}
-        </span>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <StateChip on={addon.ws.enabled && !needsGrant} />
+          {needsGrant && <StateBadge kind="approval" />}
+          {update && !needsGrant && <StateBadge kind="update" />}
+        </div>
       </TableCell>
       <TableCell>
         <Switch aria-label={`${addon.title} ${addon.ws.enabled && !needsGrant ? 'enabled' : 'disabled'}`} checked={addon.ws.enabled && !needsGrant} disabled={!canEdit || needsGrant} onCheckedChange={actions.setEnabled} />
@@ -84,7 +78,6 @@ export function AddonRow({ addon, active, canEdit, hasSettings, settingsOpen, ac
           {hasSettings && active && (
             <Button ref={settingsButton} size="sm" variant="outline" data-settings-for={addon.name} aria-expanded={settingsOpen} aria-controls={settingsOpen ? `addon-settings-panel-${addon.name}` : undefined} onClick={actions.openSettings}>
               Settings
-              <ChevronDown className={cn('transition-transform', settingsOpen && 'rotate-180')} aria-hidden />
             </Button>
           )}
           {canEdit && update && (

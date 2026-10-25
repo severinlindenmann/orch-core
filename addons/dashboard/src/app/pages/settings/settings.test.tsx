@@ -59,15 +59,14 @@ describe('Settings', () => {
     expect(within(nav).getAllByRole('link').map((l) => l.textContent)).toEqual(['General', 'Members', 'Gates', 'Relay & devicesPreview', 'Addons', 'Skills', 'Connections', 'Hub'])
     expect(within(nav).queryByRole('img', { name: /From addon/ })).toBeNull()
   })
-  it("an addon's settings expand as an accordion beneath its row, one at a time, with Addons marked as the current section", async () => {
+  it("an addon's settings open as a side panel over the list, one at a time, with Addons marked as the current section", async () => {
     const { user } = renderApp('/settings/addons')
     const row = await screen.findByRole('row', { name: /Publish/ })
     expect(within(row).getByRole('button', { name: 'Settings' })).toHaveAttribute('aria-expanded', 'false')
     await user.click(within(row).getByRole('button', { name: 'Settings' }))
     const panel = await screen.findByRole('group', { name: /Publish settings/ })
-    expect(screen.queryByRole('dialog')).toBeNull() // no drawer
+    expect(screen.getByRole('dialog', { name: /Publish settings/ })).toContainElement(panel) // a side panel over the list
     await waitFor(() => expect(within(screen.getByRole('row', { name: /Publish [\d.]+/ })).getByRole('button', { name: 'Settings' })).toHaveAttribute('aria-expanded', 'true'))
-    expect(screen.getByRole('row', { name: /^Publish \d/ }).nextElementSibling).toContainElement(panel) // right beneath the row
     expect(await within(panel).findByRole('button', { name: 'Save' })).toBeInTheDocument()
     expect(within(screen.getByRole('navigation', { name: 'Settings', hidden: true })).getByRole('link', { name: 'Addons', hidden: true })).toHaveAttribute('aria-current', 'page')
     // Opening another row's settings closes this one.
@@ -84,11 +83,11 @@ describe('Settings', () => {
     await user.click(within(screen.getByRole('row', { name: /^Estimate \d/ })).getByRole('button', { name: 'Settings' }))
     await waitFor(() => expect(screen.queryByRole('group', { name: /Estimate settings/ })).toBeNull())
   })
-  it('the deep link opens the Addons tab with that row expanded; closing returns to the Addons list', async () => {
+  it('the deep link opens the Addons tab with its side panel; closing returns to the Addons list', async () => {
     const { user } = renderApp('/settings/addon/estimate')
     const panel = await screen.findByRole('group', { name: /Estimate settings/ })
     expect(await screen.findByRole('row', { name: /Publish/ })).toBeInTheDocument() // the list is there around it
-    expect(panel.closest('tr')?.previousElementSibling).toBe(screen.getByRole('row', { name: /^Estimate \d/ }))
+    expect(panel.closest('[data-slot="addon-settings-sheet"]')).not.toBeNull()
     await user.click(within(panel).getByRole('button', { name: 'Cancel' }))
     await waitFor(() => expect(screen.queryByRole('group', { name: /Estimate settings/ })).toBeNull())
     // closing the panel and re-drawing the list are separate renders: wait for the list (CI flaked on a sync read)
@@ -278,6 +277,28 @@ describe('Settings', () => {
     await waitFor(() => expect(screen.queryByText('Unsaved changes')).toBeNull()) // saved: nothing to discard
     const state = await api.getAddonState(mockStore.workspaces[0].id, 'estimate')
     expect((state.settings as { scale: string }).scale).toBe('fibonacci')
+  })
+  it('Save signs directly when One click is on: no popover', async () => {
+    vi.spyOn(api, 'clickStatus').mockResolvedValue({ enabled: true, available: true, custody: 'convenience' } as never)
+    const { user } = renderApp('/settings/addon/estimate')
+    await user.selectOptions(await screen.findByLabelText(/Scale/), 't-shirt')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    expect(screen.queryByRole('dialog', { name: 'Approve and save' })).toBeNull()
+    expect(await screen.findByText(/Settings saved/)).toBeInTheDocument()
+  })
+  it('with One click off, Save opens one "Approve and save" popover that lists exactly what changed', async () => {
+    vi.spyOn(api, 'clickStatus').mockResolvedValue({ enabled: false, available: true, custody: 'passphrase' } as never)
+    const { user } = renderApp('/settings/addon/estimate')
+    await user.selectOptions(await screen.findByLabelText(/Scale/), 't-shirt')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    const popover = await screen.findByRole('dialog', { name: 'Approve and save' })
+    const lines = within(within(popover).getByRole('list', { name: 'What changes' })).getAllByRole('listitem')
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).toHaveTextContent(/Scale.*fibonacci.*t-shirt/)
+    expect((await api.getAddonState(mockStore.workspaces[0].id, 'estimate')).settings).not.toMatchObject({ scale: 't-shirt' }) // nothing saved yet
+    await user.click(within(popover).getByRole('button', { name: 'Approve and save' }))
+    expect(await screen.findByText(/Settings saved/)).toBeInTheDocument()
+    expect((await api.getAddonState(mockStore.workspaces[0].id, 'estimate')).settings).toMatchObject({ scale: 't-shirt' })
   })
   it('a disabled addon asks to be enabled first', async () => {
     renderApp('/settings/addon/estimate', { setup: (s) => s.appendWs(s.workspaces[0].id, { type: 'addon.disabled', name: 'estimate' }) })

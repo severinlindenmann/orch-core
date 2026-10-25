@@ -10,13 +10,15 @@ import {
   permissionEffect,
   publisherWording,
   reviewLines,
-  stateLabel,
   widened,
   type MarketStage,
   type StageInput,
   type InstalledAddon,
 } from '@/api/market'
 import { AddonFrame } from '@/addon-ui/AddonFrame'
+import { useAddons } from '@/addon-ui/slots'
+import { StateBadge, StateChip } from '@/addon-ui/StateChip'
+import { AddonSettingsPanel } from '@/app/pages/settings/addons/AddonSettingsPanel'
 import { Inline, Raw, visible } from '@/components/sign/visible'
 import { SignPopover } from '@/components/sign/SignPopover'
 import { LoadFailed } from '@/components/LoadFailed'
@@ -27,7 +29,10 @@ import { usePageHeader } from '@/app/shell/ShellUi'
 import { useWorkspace } from '@/app/workspace'
 import { useRole } from '@/app/useRole'
 
-const HELP = 'Next, review and approve the installation with one click. The add-on will be installed turned off.'
+const HELP = 'Next, review and approve the installation with one click. The add-on will be installed Off.'
+const isOn = (state?: string) => state === 'active' || state === 'enabled'
+/** One line for a card whose add-on is not installed (installed ones show the On/Off chip). */
+const availability = (pending: boolean) => (pending ? 'Waiting for installation approval' : 'Available')
 const cell = 'p-2 align-top break-words @max-[800px]:block @max-[800px]:before:block @max-[800px]:before:text-text-faint @max-[800px]:before:content-[attr(data-label)]'
 function Table({ columns, children }: { columns: string[]; children: ReactNode }) {
   return (
@@ -204,6 +209,9 @@ function MarketWorkspace() {
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
   const [remove, setRemove] = useState<InstalledAddon | null>(null)
+  const [settingsOf, setSettingsOf] = useState<string | null>(null)
+  const [done, setDone] = useState<{ name: string; version: string } | null>(null)
+  const packages = useAddons()
   const refresh = async () => {
     await Promise.all([qc.invalidateQueries({ queryKey: queries.marketList(ws).queryKey }), qc.invalidateQueries({ queryKey: queries.marketInstalled(ws).queryKey })])
   }
@@ -318,8 +326,17 @@ function MarketWorkspace() {
                           </span>
                         ))}
                       </div>
-                      <p>{a.revoked ? 'Withdrawn by its publisher' : a.blocked ? 'Blocked by your hub' : stateLabel(a.installed?.state, pending.includes(a.id))}</p>
-                      {a.installed && <p className="text-xs text-text-muted">Installed{a.installed.state === 'disabled' ? ' · Turn on in Settings > Add-ons' : ''}</p>}
+                      {a.revoked ? (
+                        <p>Withdrawn by its publisher</p>
+                      ) : a.blocked ? (
+                        <p>Blocked by your hub</p>
+                      ) : a.installed && a.installed.state !== 'pending' && !pending.includes(a.id) ? (
+                        <p>
+                          <StateChip on={isOn(a.installed.state)} />
+                        </p>
+                      ) : (
+                        <p>{availability(pending.includes(a.id) || a.installed?.state === 'pending')}</p>
+                      )}
                       {mayWrite &&
                         !a.revoked &&
                         (a.blocked ? (
@@ -347,10 +364,13 @@ function MarketWorkspace() {
                     <tr key={a.name} className="@max-[800px]:block @max-[800px]:py-3">
                       <td className={cell} data-label="Add-on">
                         <Inline>{a.name}</Inline>
-                        <p>{stateLabel(a.state)}</p>
+                        <p className="mt-1 flex flex-wrap items-center gap-1.5">
+                          <StateChip on={isOn(a.state)} />
+                          {a.available && !a.available.revoked && <StateBadge kind="update" />}
+                        </p>
                       </td>
                       <td className={cell} data-label="Source">
-                        <Inline>{a.origin ?? 'Built in'}</Inline>
+                        {a.origin ? <Inline>{a.origin}</Inline> : <span className="rounded border border-border px-2 text-xs">Built in</span>}
                       </td>
                       <td className={cell} data-label="Version">
                         <Inline>{a.version}</Inline>
@@ -370,19 +390,23 @@ function MarketWorkspace() {
                           )) ?? 'See package review'}
                       </td>
                       <td className={cell} data-label="Actions">
-                        {mayWrite && a.origin && (
-                          <div className="flex flex-wrap gap-2">
-                            {a.available && !a.available.revoked && (
-                              <Button disabled={busy} onClick={() => prepare({ id: a.name, update: true })}>
-                                Update...
-                              </Button>
-                            )}
-                            <Button variant="ghost" disabled={busy || a.state !== 'disabled'} onClick={() => setRemove(a)}>
+                        <div className="flex flex-wrap gap-2">
+                          {packages.data?.find((p) => p.name === a.name)?.contributions.some((c) => c.slot === 'settings') && (
+                            <Button size="sm" variant="outline" data-settings-for={a.name} aria-expanded={settingsOf === a.name} onClick={() => setSettingsOf(settingsOf === a.name ? null : a.name)}>
+                              Settings
+                            </Button>
+                          )}
+                          {mayWrite && a.origin && a.available && !a.available.revoked && (
+                            <Button disabled={busy} onClick={() => prepare({ id: a.name, update: true })}>
+                              Update...
+                            </Button>
+                          )}
+                          {mayWrite && a.origin && (
+                            <Button variant="ghost" disabled={busy} onClick={() => setRemove(a)}>
                               Remove
                             </Button>
-                            {a.state !== 'disabled' && <p>Turn it off in Settings &gt; Add-ons first</p>}
-                          </div>
-                        )}
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -491,7 +515,7 @@ function MarketWorkspace() {
               <p className="font-medium">
                 <Inline>{handoff.name}</Inline> · Version <Inline>{handoff.version}</Inline>
               </p>
-              <p>After installation: turned off. You turn it on later in Settings.</p>
+              <p>After installation it is Off. You choose later whether to turn it on.</p>
               <p className="text-text-muted">The marketplace lines below are shown by this computer, are not signed and are not verified. Your approval does not cover them.</p>
               {widened(handoff) && <p role="alert" className="font-medium text-warning">This update asks for more than before.</p>}
               {handoff.market.stale && <p className="text-warning">This review is out of date: the marketplace may have changed. Cancel and review again.</p>}
@@ -506,6 +530,7 @@ function MarketWorkspace() {
             if (['done', 'expired', 'cancelled', 'failed'].includes(phase)) {
               setPending((p) => p.filter((n) => n !== handoff.name))
               if (phase === 'done') {
+                setDone({ name: handoff.name, version: handoff.version })
                 setStage(null)
                 setHandoff(null)
               }
@@ -514,21 +539,57 @@ function MarketWorkspace() {
           }}
         />
       )}
+      {done && (
+        <Dialog open onOpenChange={(open) => !open && setDone(null)}>
+          <DialogContent className="max-w-md border-border bg-surface">
+            <DialogHeader>
+              <DialogTitle>
+                <Inline>{done.name}</Inline> is installed
+              </DialogTitle>
+              <DialogDescription>
+                It is <StateChip on={false} /> for now. Installing is not the same as using it: you choose when to turn it on.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button onClick={() => setDone(null)}>Done, leave it Off</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+      {settingsOf && workspace && (
+        <AddonSettingsPanel
+          name={settingsOf}
+          workspace={workspace}
+          canEdit={mayWrite}
+          onClose={() => {
+            const name = settingsOf
+            setSettingsOf(null)
+            // The panel is gone: the row's Settings button takes the keyboard back.
+            setTimeout(() => document.querySelector<HTMLElement>(`[data-settings-for="${CSS.escape(name)}"]`)?.focus(), 0)
+          }}
+        />
+      )}
       {mayWrite && remove && (
         <Dialog open onOpenChange={(open) => !open && setRemove(null)}>
-          <DialogContent>
+          <DialogContent className="max-w-md border-border bg-surface">
             <DialogHeader>
-              <DialogTitle>Remove add-on?</DialogTitle>
+              <DialogTitle>
+                Remove <Inline>{remove.name}</Inline>?
+              </DialogTitle>
               <DialogDescription>Its data stays until you purge it.</DialogDescription>
             </DialogHeader>
-            <Inline>{remove.name}</Inline>
+            {isOn(remove.state) && (
+              <p role="status" className="rounded border border-warning/40 bg-warning-soft p-3 text-sm">
+                It is <StateChip on /> right now. Turn it off in Settings &gt; Add-ons first; then it can be removed.
+              </p>
+            )}
             {message && <p role="alert">{message}</p>}
-            <DialogFooter className="sticky -bottom-6 -mx-6 -mb-6 border-t border-border bg-surface px-6 py-4">
+            <DialogFooter>
               <Button variant="ghost" onClick={() => setRemove(null)}>
                 Cancel
               </Button>
               <Button
-                disabled={busy}
+                disabled={busy || isOn(remove.state)}
                 onClick={() =>
                   void write(async () => {
                     await api.marketUninstall(ws, remove.name)

@@ -108,9 +108,10 @@ def isolation_problems(env: Mapping[str, str], roots: list[str], facts: Any = No
 
     try:
         facts = facts if facts is not None else _default_facts()
-        home = env.get("HOME") or str(Path.home())
-        me = facts.user_by_uid(os.getuid())
-        found = di.check(facts, home, person=me.name if me else None, repos=roots)
+        me = facts.user_by_uid(os.getuid())  # the home comes from the passwd entry, never from $HOME (an env value)
+        if me is None:
+            raise LookupError("no passwd entry")
+        found = di.check(facts, me.home, person=me.name, repos=roots)
     except Exception:  # noqa: BLE001 - no exception text: it could carry a path
         found = [di._could_not("this computer for isolation hazards")]
     return [{"what": f.what, "fix": f.fix} for f in found]

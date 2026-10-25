@@ -105,11 +105,28 @@ class _D(str):
     """A data operand of a suggested command: it must pass ``shown`` or ``shown_path`` to be used at all."""
 
 
+class _T(str):
+    """A trusted operand: a fixed constant, or the person's home from their passwd entry (never from ``$HOME``). It may
+    hold spaces and shell characters (``/Users/John Smith``): it is shell-quoted in a command and shown quoted, and
+    falls back to neutral wording only when :func:`clean_line` would change it (a control or invisible character)."""
+
+
+def _trusted_ok(value: str) -> bool:
+    return clean_line(value) == value
+
+
+def _tshown(value: str, neutral: str) -> str:
+    """A trusted path for prose: quoted when it needs quotes, ``neutral`` when it is not clean text."""
+    return shlex.quote(value) if _trusted_ok(value) else neutral
+
+
 def _safe_cmd(*argv: str) -> str | None:
     """The one place a suggested command is built: static words as they are, every ``_D`` operand shell-quoted and only
     if it is plain (a plain name or path needs no quotes). None when any operand is not plain: the caller then gives
     a fix without the command."""
     for a in argv:
+        if isinstance(a, _T) and not _trusted_ok(a):
+            return None
         if isinstance(a, _D) and not ((len(a) <= _NAME_MAX and _plain(a)) or shown_path(a, "") != ""):
             return None
     return _cmd(*argv)
@@ -143,9 +160,9 @@ def _secret_files(facts: OsFacts, home: str) -> list[Finding]:
             out.append(
                 Finding(
                     "secret_file_readable",
-                    f"{shown_path(path, '~/' + rel)} holds a password or token and {why}, so an agent could read it",
-                    _safe_cmd("chmod", "600", "--", _D(path)) or "make that file readable only by you (chmod 600)",
-                    shown_path(path, ""),
+                    f"{_tshown(path, '~/' + rel)} holds a password or token and {why}, so an agent could read it",
+                    _safe_cmd("chmod", "600", "--", _T(path)) or "make that file readable only by you (chmod 600)",
+                    path if _trusted_ok(path) else "",
                 )
             )
     return out
@@ -256,16 +273,16 @@ def _safe_directory(home: str, read: Callable[[str], str | None]) -> list[Findin
         try:
             star = _safe_directory_star(text)
         except ValueError:
-            out.append(_could_not(f"{shown_path(path, 'a git settings file')}, which git could not read"))
+            out.append(_could_not(f"{_tshown(path, 'a git settings file')}, which git could not read"))
             continue
         if star:
             out.append(
                 Finding(
                     "safe_directory_star",
-                    f"{shown_path(path, 'A git settings file')} tells git to trust every folder on this computer, "
+                    f"{_tshown(path, 'A git settings file')} tells git to trust every folder on this computer, "
                     "including ones an agent made",
                     "remove the line 'directory = *' under [safe] in that file",
-                    shown_path(path, ""),
+                    path if _trusted_ok(path) else "",
                 )
             )
     return out
@@ -312,21 +329,23 @@ def _hidepid(facts: OsFacts, read: Callable[[str], str | None]) -> list[Finding]
     text = read("/proc/self/mounts")
     if text is None:
         raise OSError("no /proc/self/mounts")
-    for line in text.splitlines():
+    last = None
+    for line in text.splitlines():  # mounted twice: the last line is the one in force
         parts = line.split()
         if len(parts) >= 4 and parts[1] == "/proc":
-            opts = parts[3].split(",")
-            if any(o.startswith("hidepid=") and o not in {"hidepid=0", "hidepid=off"} for o in opts):
-                return []
-            return [
-                Finding(
-                    "proc_visible",
-                    "other users on this computer can see the commands you run, which may contain tokens",
-                    _ADMIN + "mount -o remount,hidepid=2 /proc, and add hidepid=2 to the /proc line in /etc/fstab",
-                    "/proc",
-                )
-            ]
-    return []
+            last = parts
+    if last is None:
+        return []
+    if any(o.startswith("hidepid=") and o not in {"hidepid=0", "hidepid=off"} for o in last[3].split(",")):
+        return []
+    return [
+        Finding(
+            "proc_visible",
+            "other users on this computer can see the commands you run, which may contain tokens",
+            _ADMIN + "mount -o remount,hidepid=2 /proc, and add hidepid=2 to the /proc line in /etc/fstab",
+            "/proc",
+        )
+    ]
 
 
 def _could_not(what: str) -> Finding:

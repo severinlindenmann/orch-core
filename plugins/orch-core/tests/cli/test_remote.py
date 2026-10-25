@@ -331,8 +331,8 @@ def test_disable_takes_access_away_first_then_stops_the_front_and_keeps_the_user
     code, out, _ = rig.go("disable", "--yes")
     assert code == 0, out
     assert not (rig.state / "dashboard" / "remote.json").exists()
-    assert rig.order == ["stop", "up", "sudo"]  # the dashboard comes back, without remote access
-    assert rig.calls[2][-1:] == ["--front-disable"] and "--person" not in rig.calls[1]
+    assert rig.order == ["stop", "sudo", "up"]  # teardown first, then the dashboard comes back without remote
+    assert rig.calls[1][-1:] == ["--front-disable"] and "--person" not in rig.calls[1]
     assert "Remote access is off" in out and "orch remote reset" in out
 
 
@@ -403,3 +403,62 @@ def test_the_command_is_registered(rig, monkeypatch):
     out, err = io.StringIO(), io.StringIO()
     code = run(["remote", "enable", "--name", NAME, "--dry-run"], env=rig.env, stdout=out, stderr=err)
     assert code == 0 and "orch remote enable" in out.getvalue()
+
+
+def _no_entry_point(monkeypatch):
+    monkeypatch.setattr("orch.cli.dashboard.find_entry_point", lambda env, err=None: None)
+
+
+def test_disable_order_is_remove_then_stop_then_teardown_then_start(rig):
+    _enabled(rig)
+    seen = []
+    real = rig._run
+
+    def spy(argv, env):
+        seen.append(
+            ("remote.json" if (rig.state / "dashboard" / "remote.json").exists() else "no-remote-json", argv[-1])
+        )
+        return real(argv, env)
+
+    remote._run = spy
+    try:
+        assert rig.go("disable", "--yes")[0] == 0
+    finally:
+        remote._run = real
+    assert seen == [("no-remote-json", "stop"), ("no-remote-json", "--front-disable"), ("no-remote-json", "up")]
+
+
+def test_disable_without_a_dashboard_entry_point_still_tears_the_front_down(rig, monkeypatch):
+    _enabled(rig)
+    _no_entry_point(monkeypatch)
+    code, out, err = rig.go("disable", "--yes")
+    assert code == 0 and "Remote access is off." in out
+    assert [c[-1] for c in rig.calls] == ["--front-disable"]  # nothing else could run, the teardown did
+    assert not (rig.state / "dashboard" / "remote.json").exists()
+    assert "orch dashboard up" in err and "could not be stopped" in out
+
+
+def test_disable_with_a_failing_up_still_says_remote_is_off_after_the_teardown(rig):
+    _enabled(rig)
+    rig.rc["up"] = 1
+    code, out, err = rig.go("disable", "--yes")
+    assert code == 0 and "Remote access is off." in out and "orch dashboard up" in err
+    assert rig.order == ["stop", "sudo", "up"] and "running again" not in out
+
+
+def test_a_failed_teardown_still_brings_the_dashboard_back(rig):
+    _enabled(rig)
+    rig.rc["sudo"] = 1
+    code, _, err = rig.go("disable", "--yes")
+    assert code == 1 and "root step failed" in err
+    assert rig.order == ["stop", "sudo", "up"]  # loopback only: remote.json is gone
+
+
+def test_reset_without_an_entry_point_changes_no_passkey_and_says_why(rig, monkeypatch):
+    _enabled(rig)
+    store = PasskeyStore(rig.state / "dashboard" / "passkeys.json")
+    store.add(Authenticator().record())
+    _no_entry_point(monkeypatch)
+    code, _, err = rig.go("reset", "--yes")
+    # nothing could end the sessions, so the passkeys are not dropped half-way: the run stops with a clear reason
+    assert code == 3 and "unsupported.platform" in err and len(store.read()) == 1

@@ -276,15 +276,16 @@ def _no_answer(path: Path) -> bool:
     return False
 
 
-def _start_dashboard(env: Mapping[str, str], err: TextIO) -> None:
-    """Start the dashboard again (it reads remote.json at start); a failure is said, not hidden."""
-    from orch.cli.dashboard import INSTALL_HINT, find_entry_point
+def _start_dashboard(env: Mapping[str, str], err: TextIO) -> bool:
+    """Start the dashboard again (it reads remote.json at start). Never raises: it runs after the teardown, which a
+    failed start must not skip or undo. A failure is said; returns whether it started."""
+    from orch.cli.dashboard import find_entry_point
 
     command = find_entry_point(env, err)
-    if command is None:
-        raise Refused("unsupported.platform", INSTALL_HINT)
-    if _run([*command, "up"], env) != 0:
+    if command is None or _run([*command, "up"], env) != 0:
         err.write("orch remote: the dashboard did not start again; start it with: orch dashboard up\n")
+        return False
+    return True
 
 
 def _enroll(env: Mapping[str, str], err: TextIO) -> int:
@@ -465,10 +466,23 @@ def _disable(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, err:
     if have_file:
         with contextlib.suppress(FileNotFoundError):
             (directory / "remote.json").unlink()
-    _stop_dashboard(env, err, directory)
-    _start_dashboard(env, err)
-    _root_step(["--front-disable"], env)
-    out.write("Remote access is off. The dashboard is running again on this computer only.\n")
+    # The teardown must run whatever happens to the dashboard: stopping it may fail (no entry point, it does not
+    # answer), and that must never leave Caddy and the front user configured.
+    stopped = True
+    try:
+        _stop_dashboard(env, err, directory)
+    except Refused as exc:
+        stopped = False
+        err.write(f"orch remote: {exc.code}: {exc}\n")
+    try:
+        _root_step(["--front-disable"], env)
+    finally:  # the person's dashboard comes back even when the teardown failed (remote.json is gone: loopback only)
+        started = _start_dashboard(env, err)
+    out.write("Remote access is off.\n")
+    if not stopped:
+        out.write("The running dashboard could not be stopped: restart it so it closes the secure web address.\n")
+    elif started:
+        out.write("The dashboard is running again on this computer only.\n")
     out.write("The passkeys stay stored, and enabling again brings them back.\n")
     out.write("If you suspect a passkey leaked, run `orch remote reset` to drop them all.\n")
     return 0

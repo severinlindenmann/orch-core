@@ -441,4 +441,30 @@ def _list(service: WorkspaceService, entries: bool, now: float) -> dict[str, Any
                 for e in doc[ADDONS]
             ]
         rows.append(row)
-    return {"markets": rows}
+    return {"markets": rows, **_sources(service, pol, set(records))}
+
+
+def _sources(service: WorkspaceService, pol: Any, added: set[str]) -> dict[str, Any]:
+    """The marketplaces this workspace could add, decided by the same gate ``market.add`` uses (never a second rule):
+    the official URL, the ones a joined hub lists, and a sandbox's test marketplace. ``any_source`` is false until
+    #287 (the gate refuses every other URL). A policy that cannot be read lists nothing and says why."""
+    from orch.market import constants
+
+    from . import devmode
+
+    if isinstance(pol, hubpolicy._Unreadable):  # noqa: SLF001
+        return {"sources": [], "any_source": False, "reason": "market.not_allowed"}
+    candidates = [constants.OFFICIAL_URL]
+    if pol is not None:
+        candidates += [m.url for m in pol.markets]
+    dev = devmode.test_market(service)
+    if dev is not None:
+        candidates.append(dev[0])
+    sources: list[dict[str, Any]] = []
+    for url in dict.fromkeys(candidates):
+        try:
+            cls, _keys = marketinstall.market_class(service, url, pol)
+        except MarketError:
+            continue
+        sources.append({"url": url, "class": cls, "added": url in added})
+    return {"sources": sources, "any_source": False}

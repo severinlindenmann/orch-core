@@ -132,14 +132,6 @@ it.each(['member', 'no-actions'] as const)('hides every write control for %s', a
   expect(screen.queryByRole('button', { name: '+ Add marketplace' })).toBeNull()
   expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull()
 })
-it('Remove is on every installed row; an On add-on says to turn it off first and cannot be removed yet', async () => {
-  ws().marketInstalled = { addons: [installedAddon({ state: 'active' })] }
-  show('/w/DEMO/addons?tab=installed')
-  await userEvent.click(await screen.findByRole('button', { name: 'Remove' }, T))
-  const d = await screen.findByRole('dialog')
-  expect(d).toHaveTextContent('Turn it off in Settings > Add-ons first')
-  expect(within(d).getByRole('button', { name: 'Remove' })).toBeDisabled()
-})
 it('with One click on, install is the signer review and one Sign press: no Terminal, no typed word (V3-D38)', async () => {
   ws().click = { custody: 'convenience', enabled: true, available: true }
   ws().features = [...ws().features, 'click']
@@ -187,7 +179,7 @@ it('removes a disabled package only after confirmation', async () => {
   show('/w/DEMO/addons?tab=installed')
   await userEvent.click(await screen.findByRole('button', { name: 'Remove' }, T))
   const d = screen.getByRole('dialog')
-  expect(within(d).getByText('Its data stays until you purge it.')).toBeInTheDocument()
+  expect(within(d).getByText('Its data stays on this computer.')).toBeInTheDocument()
   expect(state.host.calls.some((c) => c.path.endsWith('/market/uninstall'))).toBe(false)
   await userEvent.click(within(d).getByRole('button', { name: 'Remove' }))
   await waitFor(() => expect(state.host.calls.find((c) => c.path.endsWith('/market/uninstall'))?.body).toEqual({ name: 'calendar' }))

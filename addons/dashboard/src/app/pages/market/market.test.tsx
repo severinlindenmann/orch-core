@@ -52,13 +52,59 @@ it('Remove of an Off add-on is one sheet; nothing is sent until Remove is presse
   await waitFor(() => expect(state.host.calls.find((c) => c.path.endsWith('/market/uninstall'))?.body).toEqual({ name: 'calendar' }))
 })
 
-it('an On add-on can show its Remove sheet but it says to turn it off first and cannot remove', async () => {
+const signed = async () => {
+  const { act } = await import('@testing-library/react')
+  await waitFor(() => expect(state.host.posts().length).toBeGreaterThan(0), T)
+  act(() => {
+    state.host.submitted.set([...state.host.requests.keys()].at(-1)!, 'DEMO-0001')
+  })
+}
+
+it('an On add-on: the sheet says we turn it off first, and the button reads Turn off and remove', async () => {
   ws().marketInstalled = { addons: [installedAddon({ state: 'active' })] }
   show('/w/DEMO/addons?tab=installed')
   await userEvent.click(await screen.findByRole('button', { name: 'Remove' }, T))
   const d = await screen.findByRole('dialog')
-  expect(d).toHaveTextContent('Turn it off in Settings > Add-ons first')
-  expect(within(d).getByRole('button', { name: 'Remove' })).toBeDisabled()
+  expect(d).toHaveTextContent('We will turn it off first')
+  expect(within(d).queryByRole('button', { name: 'Remove' })).toBeNull()
+  expect(within(d).getByRole('button', { name: 'Turn off and remove' })).toBeEnabled()
+  expect(state.host.calls.some((c) => c.path.endsWith('/market/uninstall'))).toBe(false)
+})
+
+it('Turn off and remove is one signed addon_disable, then the host uninstall', async () => {
+  ws().marketInstalled = { addons: [installedAddon({ state: 'active' })] }
+  show('/w/DEMO/addons?tab=installed')
+  await userEvent.click(await screen.findByRole('button', { name: 'Remove' }, T))
+  await userEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Turn off and remove' }))
+  await waitFor(() => expect(state.host.posts()).toHaveLength(1), T)
+  expect(state.host.posts()[0].body).toMatchObject({ action: 'addon_disable', name: 'calendar' })
+  expect(state.host.calls.some((c) => c.path.endsWith('/market/uninstall'))).toBe(false) // not before the signature
+  await signed()
+  await waitFor(() => expect(state.host.calls.find((c) => c.path.endsWith('/market/uninstall'))?.body).toEqual({ name: 'calendar' }), T)
+  expect(state.host.posts()).toHaveLength(1) // one approval only
+})
+
+it('if the removal fails after the signature, it says it is turned off and never asks for a second signature', async () => {
+  ws().marketInstalled = { addons: [installedAddon({ state: 'active' })] }
+  state.host.override = (path) => (path.endsWith('/market/uninstall') ? Response.json({ error: { code: 'market.still_enabled', message: 'It was turned on again.' } }, { status: 409 }) : undefined)
+  show('/w/DEMO/addons?tab=installed')
+  await userEvent.click(await screen.findByRole('button', { name: 'Remove' }, T))
+  await userEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Turn off and remove' }))
+  await signed()
+  expect(await screen.findByText(/is turned off, but removing it failed/, {}, T)).toBeInTheDocument()
+  expect(state.host.posts()).toHaveLength(1)
+})
+
+it('Turn on now after an install is one signed addon_grant of that name; Done, leave it Off signs nothing', async () => {
+  show('/w/DEMO/addons')
+  await userEvent.click(await screen.findByRole('button', { name: 'Install...' }, T))
+  await userEvent.click(await screen.findByRole('button', { name: 'Review installation' }, T))
+  await waitFor(() => expect(state.host.posts()).toHaveLength(1), T)
+  await signed()
+  const d = await screen.findByRole('dialog', { name: /calendar is installed/ }, T)
+  await userEvent.click(within(d).getByRole('button', { name: 'Turn on now' }))
+  await waitFor(() => expect(state.host.posts()).toHaveLength(2), T)
+  expect(state.host.posts()[1].body).toMatchObject({ action: 'addon_grant', name: 'calendar' })
 })
 
 it('after the install is approved the result dialog says Off and offers Done, leave it Off', async () => {

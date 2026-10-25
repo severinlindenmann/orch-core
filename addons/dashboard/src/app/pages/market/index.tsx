@@ -211,6 +211,9 @@ function MarketWorkspace() {
   const [remove, setRemove] = useState<InstalledAddon | null>(null)
   const [settingsOf, setSettingsOf] = useState<string | null>(null)
   const [done, setDone] = useState<{ name: string; version: string } | null>(null)
+  /** "Turn on now" after an install, and the first half of "Turn off and remove": one signed switch each. */
+  const [turnOn, setTurnOn] = useState<string | null>(null)
+  const [offThenRemove, setOffThenRemove] = useState<InstalledAddon | null>(null)
   const packages = useAddons()
   const refresh = async () => {
     await Promise.all([qc.invalidateQueries({ queryKey: queries.marketList(ws).queryKey }), qc.invalidateQueries({ queryKey: queries.marketInstalled(ws).queryKey })])
@@ -551,6 +554,12 @@ function MarketWorkspace() {
               </DialogDescription>
             </DialogHeader>
             <DialogFooter>
+              <Button variant="ghost" onClick={() => {
+                setTurnOn(done.name)
+                setDone(null)
+              }}>
+                Turn on now
+              </Button>
               <Button onClick={() => setDone(null)}>Done, leave it Off</Button>
             </DialogFooter>
           </DialogContent>
@@ -569,6 +578,54 @@ function MarketWorkspace() {
           }}
         />
       )}
+      {mayWrite && turnOn && (
+        <SignPopover
+          title={`Turn on ${turnOn}`}
+          ws={ws}
+          anchor={null}
+          action={{ action: 'addon_grant', name: turnOn }}
+          autoStart
+          lead={<p className="text-sm">It becomes available to you and your agents in this workspace. You can turn it off again at any time.</p>}
+          onClose={() => setTurnOn(null)}
+          onSettled={(phase) => {
+            if (['done', 'expired', 'cancelled', 'failed'].includes(phase)) {
+              setTurnOn(null)
+              void refresh()
+            }
+          }}
+        />
+      )}
+      {mayWrite && offThenRemove && (
+        <SignPopover
+          title={`Turn off and remove ${offThenRemove.name}`}
+          ws={ws}
+          anchor={null}
+          action={{ action: 'addon_disable', name: offThenRemove.name }}
+          autoStart
+          doneToast=""
+          lead={<p className="text-sm">One approval turns it off. Then it is removed from this computer; its data stays.</p>}
+          onClose={() => setOffThenRemove(null)}
+          onSettled={(phase) => {
+            if (!['done', 'expired', 'cancelled', 'failed'].includes(phase)) return
+            const name = offThenRemove.name
+            setOffThenRemove(null)
+            if (phase !== 'done') {
+              void refresh()
+              return
+            }
+            // Signed once; the removal is the host's own unsigned op. If it fails the add-on stays Off and installed.
+            void (async () => {
+              try {
+                await api.marketUninstall(ws, name)
+                setMessage('')
+              } catch (e) {
+                setMessage(`${name} is turned off, but removing it failed: ${marketError(e)} Try Remove again.`)
+              }
+              await refresh()
+            })()
+          }}
+        />
+      )}
       {mayWrite && remove && (
         <Dialog open onOpenChange={(open) => !open && setRemove(null)}>
           <DialogContent className="max-w-md border-border bg-surface">
@@ -576,11 +633,11 @@ function MarketWorkspace() {
               <DialogTitle>
                 Remove <Inline>{remove.name}</Inline>?
               </DialogTitle>
-              <DialogDescription>Its data stays until you purge it.</DialogDescription>
+              <DialogDescription>Its data stays on this computer.</DialogDescription>
             </DialogHeader>
             {isOn(remove.state) && (
               <p role="status" className="rounded border border-warning/40 bg-warning-soft p-3 text-sm">
-                It is <StateChip on /> right now. Turn it off in Settings &gt; Add-ons first; then it can be removed.
+                It is <StateChip on /> right now. We will turn it off first, then remove it: one approval.
               </p>
             )}
             {message && <p role="alert">{message}</p>}
@@ -588,18 +645,30 @@ function MarketWorkspace() {
               <Button variant="ghost" onClick={() => setRemove(null)}>
                 Cancel
               </Button>
-              <Button
-                disabled={busy || isOn(remove.state)}
-                onClick={() =>
-                  void write(async () => {
-                    await api.marketUninstall(ws, remove.name)
+              {isOn(remove.state) ? (
+                <Button
+                  disabled={busy}
+                  onClick={() => {
+                    setOffThenRemove(remove)
                     setRemove(null)
-                    await refresh()
-                  })
-                }
-              >
-                Remove
-              </Button>
+                  }}
+                >
+                  Turn off and remove
+                </Button>
+              ) : (
+                <Button
+                  disabled={busy}
+                  onClick={() =>
+                    void write(async () => {
+                      await api.marketUninstall(ws, remove.name)
+                      setRemove(null)
+                      await refresh()
+                    })
+                  }
+                >
+                  Remove
+                </Button>
+              )}
             </DialogFooter>
           </DialogContent>
         </Dialog>

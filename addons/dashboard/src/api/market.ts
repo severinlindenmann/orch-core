@@ -124,7 +124,7 @@ export function reviewLines(stage: MarketStage): { text: string; added: boolean 
 export function marketError(error: unknown): string {
   const code = (error as { code?: string })?.code
   if (code === 'market.community_unisolated' || code === 'market.not_allowed') return EXTERNAL_HELP
-  if (code === 'market.still_enabled') return 'Turn it off in Settings > Add-ons first'
+  if (code === 'market.still_enabled') return 'It is On. Turn it off first, then remove it.'
   if (code === 'market.publisher_key_changed') return 'The publisher key changed. Review is required.'
   return 'The marketplace request could not be completed. Try again.'
 }

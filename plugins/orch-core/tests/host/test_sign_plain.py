@@ -1468,7 +1468,10 @@ def test_788_the_hosts_word_never_reaches_a_headline_or_summary_as_if_it_were_si
     )
 
 
-@pytest.mark.xfail(strict=True, reason="#1237: the View renders from events only, so addon.purge has no counts line; needs its own Opus-checked core change")
+@pytest.mark.xfail(
+    strict=True,
+    reason="#1237: the View renders from events only, so addon.purge has no counts line; needs its own Opus-checked core change",
+)
 def test_1237_the_view_of_an_addon_purge_carries_the_counts_line(human, served):
     """Part of #1237 (design item 3): the dashboard offers "Also delete its data" only if the click View says what is lost."""
     from orch.click import view
@@ -1478,3 +1481,10 @@ def test_1237_the_view_of_an_addon_purge_carries_the_counts_line(human, served):
     v = view.build(p, WS, device=p["events"][0]["actor"]["device"], expires_at="2026-01-01T00:00:00Z", artifacts=None)
     text = "\n".join(v["lines"]) + flat(v.get("content"))
     assert re.search(r"\d+ fields, \d+ sections, \d+ artifacts of \d+ tickets", text), v["lines"]
+
+
+def test_1237_a_plain_grant_of_a_name_with_no_package_is_refused_by_the_host(human, served):
+    res = human.prepare_res("addon.grant", {"name": "nosuch-addon"})
+    assert res["ok"] is False and res["error"]["code"] == "not_found", (
+        res
+    )  # nothing is prepared for a name with no package

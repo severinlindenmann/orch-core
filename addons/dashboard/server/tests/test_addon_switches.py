@@ -13,19 +13,36 @@ def parse(body):
     return TypeAdapter(PrepareBody).validate_python(body)
 
 
-def test_turning_an_addon_on_or_off_is_a_typed_action_for_the_shipped_addons_only():
+def test_turning_an_addon_on_or_off_is_a_typed_action_for_a_shipped_or_installed_addon():
     on = parse({"action": "addon_grant", "name": "terminals"})
     off = parse({"action": "addon_disable", "name": "worktrees"})
     assert isinstance(on, AddonGrant) and isinstance(off, AddonDisable)
     assert host_call(on) == ("addon.grant", {"name": "terminals"})
     assert host_call(off) == ("addon.disable", {"name": "worktrees"})
-    for bad in ("dashboard", "../x", "echo", "", "Terminals"):  # the dashboard stays on; no other package is offered
+    for bad in ("dashboard", "quick", "../x", "", "Terminals", "a" * 41):  # always-on add-ons and odd names never parse
         with pytest.raises(ValidationError):
             parse({"action": "addon_grant", "name": bad})
         with pytest.raises(ValidationError):
             parse({"action": "addon_disable", "name": bad})
     with pytest.raises(ValidationError):
         parse({"action": "addon_grant", "name": "terminals", "extra": 1})
+
+
+def test_1237_an_installed_marketplace_addon_switches_like_a_shipped_one():
+    """Part of #1237: the same ops, class and View; the host judges whether the name is installed."""
+    on = parse({"action": "addon_grant", "name": "deploy-preview"})
+    off = parse({"action": "addon_disable", "name": "deploy-preview"})
+    assert isinstance(on, AddonGrant) and isinstance(off, AddonDisable)
+    assert host_call(on) == ("addon.grant", {"name": "deploy-preview"})
+    assert host_call(off) == ("addon.disable", {"name": "deploy-preview"})
+    assert expected(on)([{"type": "addon.granted", "name": "deploy-preview"}])
+    assert not expected(on)([{"type": "addon.granted", "name": "other"}])
+    assert expected(off)([{"type": "addon.disabled", "name": "deploy-preview"}])
+    for locked in ("dashboard", "quick"):
+        with pytest.raises(ValidationError, match="(?i)always"):
+            parse({"action": "addon_grant", "name": locked})
+        with pytest.raises(ValidationError):
+            parse({"action": "addon_disable", "name": locked})
 
 
 def test_the_prepared_event_must_name_exactly_that_addon():

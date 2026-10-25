@@ -742,8 +742,21 @@ class DeviceRemove(Action):
     device: DeviceId
 
 
-# the dashboard add-on is always on; no other package is offered here
-AddonName = Literal["start-agent", "terminals", "worktrees", "publish", "usage", "estimate", "explorer", "wiki"]
+MarketName = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9-]{0,39}$")]
+
+
+def _not_locked(name: str) -> str:
+    """The dashboard and quick are always on: there is nothing to switch (the host does not know)."""
+    from .addon_switches import LOCKED
+
+    if name in LOCKED:
+        raise ValueError(LOCKED[name])
+    return name
+
+
+#: a shipped or an installed marketplace add-on (#1237 design item 1); the host refuses a name that is neither
+#: (`market.not_installed`) and a name that collides with a shipped one cannot be installed (`market.reserved_id`)
+AddonName = Annotated[MarketName, AfterValidator(_not_locked)]
 
 
 class AddonGrant(Action):
@@ -754,7 +767,6 @@ class AddonGrant(Action):
     name: AddonName
 
 
-MarketName = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9-]{0,39}$")]
 #: core `marketstate._STAGE`: the host's own stage id
 StageId = Annotated[str, StringConstraints(pattern=r"^st_[0-9a-f]{32}$")]
 

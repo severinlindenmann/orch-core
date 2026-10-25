@@ -176,7 +176,7 @@ def test_the_shipped_addon_grant_still_takes_a_name_only():
     with pytest.raises(ValidationError):
         parse({"action": "addon_grant", "name": "terminals", "staged": STAGE})
     with pytest.raises(ValidationError):
-        parse({"action": "addon_grant", "name": "echo"})  # only the shipped names
+        parse({"action": "addon_grant", "name": "dashboard"})  # always on
 
 
 def test_the_prepared_event_must_be_one_grant_of_that_name():

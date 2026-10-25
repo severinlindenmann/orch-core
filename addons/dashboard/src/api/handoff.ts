@@ -61,9 +61,9 @@ export type HandoffAction =
   /** #1198 C15: one click. Core refuses the device that signs and an owner's last working device (`device.lockout`, plain words). */
   | { action: 'device_remove'; device: string }
   | { action: 'grant_revoke'; grant: string; reason?: string }
-  /** R2-2: turn a shipped add-on on (`addon.grant`, the typed word) or off (`addon.disable`, one click). */
-  | { action: 'addon_grant'; name: 'start-agent' | 'terminals' | 'worktrees' | 'publish' | 'usage' | 'estimate' | 'explorer' }
-  | { action: 'addon_disable'; name: 'start-agent' | 'terminals' | 'worktrees' | 'publish' | 'usage' | 'estimate' | 'explorer' }
+  /** R2-2 and #1237: turn a shipped or an installed marketplace add-on on (`addon.grant`) or off (`addon.disable`). The server refuses `dashboard` and `quick`; the host refuses a name with no package. */
+  | { action: 'addon_grant'; name: string }
+  | { action: 'addon_disable'; name: string }
   /** Turn on an add-on that needs settings: the settings and the grant in ONE review (`addon_enable` sequence). Publish: terminal only. */
   | { action: 'addon_enable'; name: 'publish'; publish: { server: string; share: string } }
   /** Publish (P6): where shared files are sent and where a link opens (`settings.set` of `publish`). Terminal only. */

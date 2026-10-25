@@ -5,6 +5,7 @@ joint of ``sub_cursor`` with ``sub.open {after}``."""
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -37,6 +38,9 @@ def wq(tmp_path):
     finally:
         s.close()
         s.lab.close()
+
+
+_FIXTURE = json.loads((Path(__file__).parent.parent / "vectors" / "f1" / "questions.json").read_text("utf-8"))["forms"]
 
 
 def needs(w: World, args: dict[str, Any] | None = None, **kw: Any) -> dict[str, Any]:
@@ -107,7 +111,8 @@ def test_a_question_item_has_text_payload_status_and_since(w):
         "since": asked["at"], "text": "which one?", "status": "open",
         "payload": {
             "question": "Q1", "blocking": True, "to": "ticket_owner",
-            "options": [{"key": "a", "label": "a"}, {"key": "b", "label": "b"}], "recommended": "b", "why": "because",
+            "options": [{"key": "a", "label": "a"}, {"key": "b", "label": "b"}],
+            "spec": {"kind": "choice", "recommended": "b", "why": "because"},
         },
     }  # fmt: skip
 
@@ -123,12 +128,12 @@ def test_a_questions_text_is_never_cut_at_its_longest(w):
     assert short["text"] == "short" and "text_cut" not in short
 
 
-def test_a_non_blocking_question_has_an_empty_detail_and_an_optionless_payload(w):
+def test_a_non_blocking_question_has_an_empty_detail_and_no_options_key(w):
     uid, key = mk(w, "nb")
     agent(w, "ask", {"ref": key, "text": "fyi?", "non_blocking": True})
     (item,) = needs(w)["items"]
     assert item["detail"] == "" and item["payload"] == {"question": "Q1", "blocking": False, "to": "ticket_owner",
-                                                        "options": []}  # fmt: skip
+                                                        "spec": {"kind": "text"}}  # fmt: skip
 
 
 def test_since_of_a_question_restarts_only_when_its_text_changes(w):
@@ -397,3 +402,25 @@ def test_needs_validation(w):
     c = w.client()
     for bad in ({"person": "quinn"}, {"x": 1}, {"person": 5}):
         assert err(c.req("needs", bad)) == "invalid.input", bad
+
+
+def test_a_rich_question_carries_options_and_spec_verbatim_per_the_frozen_fixture(w):
+    """#1123 B3: the needs payload holds the asked ``options`` and ``spec`` as given (every option key, no whitelist);
+    a client hashes exactly ``{question_id, ticket, text, options, spec}`` and gets the event's hash."""
+    for form in _FIXTURE:
+        uid, key = mk(w, "rich")
+        q = dict(form["raw_event"]["question"])
+        qid = canon.question_id(w.wid, uid, q["id"])
+        h = canon.question_hash(qid, uid, q)
+        on_store(w, lambda ws, q=q, qid=qid, h=h, uid=uid: ws.store.append(
+            {"type": "question.asked", "actor": ws.agent, "question": q, "qid": qid, "hash": h}, log=uid
+        ))  # fmt: skip
+        (item,) = [i for i in needs(w)["items"] if i["uid"] == uid]
+        want = form["hub_needs"]["content"]
+        payload = item["payload"]
+        assert payload.get("options") == want.get("options") and payload["spec"] == want["spec"]
+        assert item["text"] == want["text"]
+        again = {**payload["spec"], "id": "Q1", "to": "ticket_owner", "blocking": True, "text": item["text"]}
+        if payload.get("options"):
+            again["options"] = payload["options"]
+        assert canon.question_hash(qid, uid, again) == h

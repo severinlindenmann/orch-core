@@ -30,6 +30,7 @@ import unicodedata
 from collections.abc import Mapping
 from typing import Any
 
+from orch import canon
 from orch.model.needs import Need
 from orch.store import StoreError
 from orch.store.render import thaw
@@ -108,9 +109,10 @@ def need_item(
                 "question": ref,
                 "blocking": bool(q["blocking"]),
                 "to": q["to"],
-                "options": [dict(o) for o in q.get("options") or []],
-                **{k: q[k] for k in ("recommended", "why") if q.get(k) is not None},
+                "spec": canon.question_spec(q),  # verbatim: kind, why, details, recommended, allow_other
             }
+            if q.get("options"):
+                payload["options"] = q["options"]  # verbatim: clients hash exactly these bytes
     elif kind == "approve":
         gate = view.gates[ref]
         if who:

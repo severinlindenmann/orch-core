@@ -9,6 +9,7 @@ from __future__ import annotations
 import fcntl
 import os
 import pwd
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -444,3 +445,140 @@ def test_front_flags_load_from_the_trusted_copy_and_a_dry_run_changes_nothing(ro
     assert not os.path.exists("/etc/orch/front/Caddyfile") and not os.path.exists(
         "/etc/systemd/system/orch-front.service"
     )
+
+
+# --- H1 L5: the agent reads the share and never the home --------------------------------------------------------------
+
+
+def _as_agent(agent, *argv: str) -> subprocess.CompletedProcess:
+    """A command as the agent user: a clean environment, no supplementary groups, through ``setpriv``."""
+    return _sudo(
+        "env", "-i", "PATH=/usr/bin:/bin", f"HOME={agent.pw_dir}", "setpriv", f"--reuid={agent.pw_uid}",
+        f"--regid={agent.pw_gid}", "--clear-groups", *argv, check=False,
+    )  # fmt: skip
+
+
+def test_the_agent_reads_the_share_and_never_the_home(root_machine, tmp_path) -> None:
+    """H1 L5 against the real kernel: root makes the share (0711 and the one ACL), the person fills it (mirror with no
+    secrets, the release the runner starts from), and the agent user, through ``setpriv``, clones the mirror but cannot
+    read the home, ``.env``, ``.git/config`` or the stash blob, cannot write the mirror, cannot list the share root."""
+    import struct
+
+    from orch.host import sharemirror
+    from orch.host.isolation import detect
+    from orch.setup.osapply import GROUP_OBJ, MASK, OTHER, USER, USER_OBJ, acl, share_acl
+    from orch.setup.osfacts import RealOsFacts
+    from orch.setup.osusers import SHARE_ROOT, share_dir, share_releases
+    from tests.host.sharemirror_helpers import TOKEN, make_repo
+
+    person, _release = root_machine  # (its root-owned stand-in release is not used: the runner starts from the share)
+    share_path = share_dir(person)
+    applied = _sudo(
+        "/usr/bin/python3", "-I", "-S", _launcher(), "--person", person,
+        "--release", share_releases(person), check=False,
+    )  # fmt: skip
+    assert applied.returncode == 0, applied.stdout + applied.stderr
+    agent = pwd.getpwnam(f"orch-agent-{person}")
+
+    # root's step: the share root is root's 0711, the person's folder is theirs, 0710 with the mask, the exact ACL
+    shown = _sudo("stat", "-c", "%U:%G %a %n", SHARE_ROOT, share_path).stdout
+    assert f"root:root 711 {SHARE_ROOT}" in shown and f"{person}:" in shown and f" 710 {share_path}" in shown, shown
+    assert os.getxattr(share_path, "system.posix_acl_access") == share_acl(agent.pw_uid)
+    with pytest.raises(OSError):
+        os.getxattr(share_path, "system.posix_acl_default")  # no default ACL on the person's folder
+    if shutil.which("getfacl"):
+        lines = {ln for ln in _sudo("getfacl", "-p", "-n", share_path).stdout.splitlines() if ln and ln[0] != "#"}
+        assert lines == {"user::rwx", f"user:{agent.pw_uid}:--x", "group::---", "mask::--x", "other::---"}, lines
+
+    # the person's side: a private home with a repository (untracked .env, a token in its config, a stash with a secret)
+    home, state = tmp_path / "home", tmp_path / "state"
+    home.mkdir(mode=0o700)
+    state.mkdir(mode=0o700)
+    repo = make_repo(home)
+    stash_blob = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "refs/stash^3:stashed.env"], capture_output=True, text=True, check=True
+    ).stdout.strip()
+    share = sharemirror.share_for(person, state)
+    assert share is not None and share.agent_uid == agent.pw_uid and share.root == share_path
+    ws8 = "0123abcd"
+    got = sharemirror.share_registered_repo(share, ws8, "proj", str(repo))
+    assert got is not None and set(got.heads) == {"refs/heads/main", "refs/tags/v1"}
+    mirror = share.mirror_path(ws8, "proj")
+    sharemirror.ensure_folders(share)
+    rel = Path(share_releases(person))
+    (rel / "v1" / "bin").mkdir(parents=True, mode=0o755)  # inherits the default ACL: the agent reads and runs it
+    stub = rel / "v1" / "bin" / "orch-runner"
+    fd = os.open(stub, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o755)
+    with os.fdopen(fd, "w") as handle:
+        handle.write("#!/bin/sh\nexec sleep 100000\n")
+    (rel / "current").symlink_to("v1")
+
+    # the runner starts from <share>/releases/current (the unit retried every 2 s until the copy was there)
+    unit = f"orch-runner@{person}.service"
+    assert _wait(lambda: _sudo("/usr/bin/systemctl", "is-active", "--quiet", unit, check=False).returncode == 0, 90)
+    pid = _sudo("/usr/bin/systemctl", "show", "-p", "MainPID", "--value", unit).stdout.strip()
+    assert _sudo("ps", "-o", "uid=", "-p", pid).stdout.strip() == str(agent.pw_uid)
+    assert f"{share_releases(person)}/current/bin/orch-runner" in _sudo("systemctl", "cat", unit).stdout
+
+    # the ACLs on the folders the agent reads: access and default, read back from the kernel
+    want = sharemirror.rx_acl(agent.pw_uid)
+    for path in (f"{share_path}/mirrors", f"{share_path}/mirrors/{ws8}", str(rel), f"{share_path}/python"):
+        assert os.getxattr(path, "system.posix_acl_access") == want, path
+        assert os.getxattr(path, "system.posix_acl_default") == want, path
+    entries = [struct.unpack_from("<HHI", want, 4 + 8 * i) for i in range(5)]
+    assert entries == [(USER_OBJ, 7, 0xFFFFFFFF), (USER, 5, agent.pw_uid), (GROUP_OBJ, 0, 0xFFFFFFFF),
+                       (MASK, 5, 0xFFFFFFFF), (OTHER, 0, 0xFFFFFFFF)]  # fmt: skip
+    assert acl(((USER_OBJ, 7), (USER, 5, agent.pw_uid), (GROUP_OBJ, 0), (MASK, 5), (OTHER, 0))) == want
+
+    # the agent clones the mirror (safe.directory is that exact path; empty template; objects are checked)
+    clone = f"{agent.pw_dir}/clone"
+    done = _as_agent(
+        agent, "git", "-c", f"safe.directory={mirror}", "-c", "transfer.fsckObjects=true", "clone", "--no-local",
+        "--template=", "--quiet", mirror, clone,
+    )  # fmt: skip
+    assert done.returncode == 0, done.stdout + done.stderr
+    log = _as_agent(agent, "git", "-C", clone, "log", "--format=%s", "main")
+    assert log.stdout.split() == ["second", "first"], log.stdout + log.stderr
+    assert "v1" in _as_agent(agent, "git", "-C", clone, "tag").stdout
+    assert TOKEN not in _sudo("cat", f"{clone}/.git/config").stdout
+    assert _as_agent(agent, "git", "-C", clone, "cat-file", "-e", stash_blob).returncode != 0  # the stash never got in
+    assert _as_agent(agent, "git", "-C", clone, "rev-parse", "--verify", "refs/stash").returncode != 0
+    assert _as_agent(agent, "cat", f"{mirror}/HEAD").returncode == 0  # it reads what is shared
+
+    # ... and nothing else: not the home, not .env, not .git/config, not the stash's object
+    for target in (f"{repo}/.env", f"{repo}/.git/config", f"{repo}/.git/objects/{stash_blob[:2]}/{stash_blob[2:]}"):
+        assert _as_agent(agent, "cat", target).returncode != 0, target
+    assert _as_agent(agent, "ls", str(home)).returncode != 0
+    # it cannot write the mirror, and cannot list the share root or the person's share folder
+    assert _as_agent(agent, "sh", "-c", f"echo x >> {mirror}/HEAD").returncode != 0
+    assert _as_agent(agent, "mkdir", f"{mirror}/evil").returncode != 0
+    assert _as_agent(agent, "touch", f"{rel}/v1/bin/evil").returncode != 0
+    assert _as_agent(agent, "ls", SHARE_ROOT).returncode != 0
+    assert _as_agent(agent, "ls", share_path).returncode != 0
+    assert _as_agent(agent, "ls", f"{share_path}/mirrors").returncode == 0
+
+    # the host's own view: isolated, no share exposure, the doctor finds nothing exposed
+    result = detect(RealOsFacts(), person, os.getuid(), str(state), [], repo_paths=[str(repo)])
+    exposed = [
+        (r.code, r.message) for r in result.reasons if r.code.startswith("share_") or r.code == "agent_acl_in_home"
+    ]
+    assert exposed == [], exposed
+    assert [r for r in sharemirror.check(share) if r.kind == "exposure"] == []
+
+    # an agent ACL entry on the home is an exposure at once (the person's own xattr write, as a mistake would do it)
+    os.setxattr(
+        home,
+        "system.posix_acl_access",
+        acl(((USER_OBJ, 7), (USER, 1, agent.pw_uid), (GROUP_OBJ, 0), (MASK, 1), (OTHER, 0))),
+    )
+    again = detect(RealOsFacts(), person, os.getuid(), str(state), [], repo_paths=[str(repo)])
+    assert "agent_acl_in_home" in {r.code for r in again.reasons} and again.pause_click_signing
+
+    # unregistering removes the mirror
+    assert sharemirror.delete_mirror(share, ws8, "proj") is True and not os.path.lexists(mirror)
+
+
+def _launcher() -> str:
+    from orch.setup.oslauncher import LAUNCHER_PATH
+
+    return LAUNCHER_PATH

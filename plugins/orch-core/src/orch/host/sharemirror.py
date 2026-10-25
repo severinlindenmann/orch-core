@@ -63,6 +63,7 @@ __all__ = [
     "config_bytes",
     "create_mirror",
     "delete_mirror",
+    "ensure_folders",
     "find_interpreter",
     "install_interpreter",
     "install_release_copy",
@@ -953,6 +954,16 @@ def status_text(share: Share | None) -> Report:
     return rep
 
 
+def ensure_folders(share: Share) -> None:
+    """``mirrors``, ``releases`` and ``python`` below the share, made when missing, each with the agent's read ACL."""
+    root = _open_share(share)
+    try:
+        for sub in ("mirrors", "releases", "python"):
+            os.close(_child(root, sub, share, f"{share.root}/{sub}"))
+    finally:
+        os.close(root)
+
+
 def repair(share: Share | None, *, run: Callable[..., Any] = subprocess.run) -> Report:
     """Make the share right again: the folders and their ACLs, every registered mirror (missing ones are made, the rest
     refreshed) and the release copy when it is missing. Never widens anything: a foreign owner or link is a refusal."""
@@ -960,12 +971,7 @@ def repair(share: Share | None, *, run: Callable[..., Any] = subprocess.run) -> 
         return Report([NOT_SHARED])
     rep = Report()
     try:
-        root = _open_share(share)
-        try:
-            for sub in ("mirrors", "releases", "python"):
-                os.close(_child(root, sub, share, f"{share.root}/{sub}"))
-        finally:
-            os.close(root)
+        ensure_folders(share)
         for key, entry in sorted(_registry(share).items()):
             ws8, _, name = key.partition("/")
             repo = entry.get("repo")

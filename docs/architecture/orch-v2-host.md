@@ -13532,9 +13532,12 @@ has put the copy there; the release path is validated: absolute, plain character
 the person, and every ancestor owned by root or the person and not writable by group or other. A symbolic link anywhere
 on the path is refused, never followed ("give the release by its real path"): hosts such as Fedora Atomic, where `/home`
 is a link to `var/home`, must pass the resolved path. Root never executes anything in it: its only root-run line is the
-recheck from the trusted copy, and setup never writes an ACL for an agent or add-on user, the person does, item 6.
-`--release` is the releases directory that holds `current`, the same path `orch runner enable` compares the installed
-unit against). It computes a plan from OS
+recheck from the trusted copy, and setup writes exactly one ACL for an agent user, on the share folder (item 5); what
+else the agent reads, the person puts there, item 6. `--release` is the releases directory that holds `current`, the
+same path `orch runner enable` compares the installed unit against: in tier B it is `<share>/releases` (item 5), which
+root does not require to exist (the person's host makes it and copies the verified release in; the runner unit retries
+every 2 s until it is there, and "Check again" turns green); a release anywhere else must exist and pass the checks
+above). It computes a plan from OS
 facts, prints it, applies it (`--dry-run` prints the exact actions), and may run again: it repairs, it never widens. It uses
 fixed absolute binaries. Directories below an agent-owned one are only ever opened file-descriptor-relative with
 `O_NOFOLLOW` (never by path), so a symlink planted by the agent is refused. The agent's runner is started only after root
@@ -13556,12 +13559,33 @@ has recorded the sudo/SSH verdict; a re-run whose verdict fails stops the runner
    - `d /run/orch/agents/orch-agent-<user> 0750 orch-agent-<user> orch-agent-<user>` plus the ACL `u:<person>:rwx`,
      default `u:<person>:rw`, so the dashboard (the person) can reach the runner's terminal socket without joining any
      group (a group change needs a re-login of the person's systemd user manager).
-5. **Agent tree.** `/var/lib/orch/agents/orch-agent-<user>/{home,state,repos}`, owned by the agent, 0700, except `repos` 0750
-   with the default ACL `d:u:<person>:rX` (the host reads clones through `orch.gitread`).
-6. **Person-side sharing**, set **as the person** by the CLI right after (no root needed for one's own files):
-   `u:<agent>:x` on each ancestor of the release, the interpreter and each workspace repository inside the person's
-   home; `u:<agent>:rX` plus a default ACL on the release tree and on `<repo>/.git` only. Each ACL is read back and
-   verified.
+5. **Agent tree and share.** `/var/lib/orch/agents/orch-agent-<user>/{home,state,repos}`, owned by the agent, 0700, except `repos` 0750
+   with the default ACL `d:u:<person>:rX` (the host reads clones through `orch.gitread`). **The share:** `/var/lib/orch/share`
+   (root:root 0711: one name can be passed through, none listed) and `/var/lib/orch/share/<person>` (`<person>:<their group>`,
+   0700, access ACL exactly `u::rwx,u:orch-agent-<user>:--x,g::---,m::--x,o::---`, no default ACL, so 0710 shows). Both are made
+   file-descriptor-relative from root-owned parents (an existing folder with other properties is refused, never widened);
+   root opens nothing below `<share>/<person>` and the path follows from the person's name (no pin field). This ACL is the
+   one exception to "setup writes no ACL for an agent user". The agent user never gets an ACL entry in the person's home.
+   Plain step line: "Make a read-only place for the code your agents use."
+6. **The host fills the share**, as the person, no root (`host/sharemirror.py`): `mirrors/<ws8>/<name>.git` (bare copies of a
+   registered repository's branches and tags, created at registration, tier B only; review line "Your agents get a
+   read-only copy of this repository's branches. Your working folder and uncommitted files stay private."), `releases/<version>`
+   with `current`, and `python/` (`UV_PYTHON_INSTALL_DIR`). Each of `mirrors`, `releases`, `python` and every `<ws8>` gets
+   the access ACL and the default ACL `u:<agent>:r-x` (group and other nothing), set by the person and read back. A mirror's
+   `config` is exactly `[core] repositoryformatversion=0, bare=true, logAllRefUpdates=false, hooksPath=<mirror>/hooks`,
+   `[fetch] fsckObjects=true`, `[gc] autoDetach=false`: no remote, no URL or credential setting, `hooks/` empty. It is
+   fetched only on the host, under a per-mirror lock, with `git fetch --prune --no-tags --no-write-fetch-head
+   <repo>/.git '+refs/heads/*:refs/heads/*' '+refs/tags/*:refs/tags/*'` (never `refs/stash`: `git stash -u` holds
+   untracked files such as `.env`), after `gitsafe.gate` on the source and in gitsafe's isolated environment; an integrity
+   failure keeps the old mirror and gives the person a plain refusal. A mirror appears by one `renameat` of a temporary
+   folder, after the fetch. It is refreshed at registration, before each agent start or worktree on that repository, and
+   by `mirror.sync {repo}` (kind pg_read: columns P and G; column G at most once per 30 s per repository, calls inside
+   that time and while a sync runs are coalesced into one run and share its answer; it replaces the name `share.sync` of
+   the design, which hub sharing already uses). Unregistering moves the mirror to a trash name and removes it. After the
+   admin step the host copies the verified release into `releases/<version>` (launchers naming the interpreter in
+   `python/`) and points `current` at it; an update is the same copy, no root. In tier A the release stays in the home.
+   The backup is `orch share status|repair` (refused under `ORCH_GRANT`/`ORCH_SESSION`); the dashboard's "Repair" is the
+   doctor's. Tier A and macOS have no share and no mirror (`Agents run as you; nothing is shared.`).
 7. **Units.** `orch-runner@.service` (instance = the person) and `orch-addon@.service` (instance = the slot number),
    the runner enabled and started (add-on slot units are written but enabled by L3): `User=orch-agent-%i` (the instance is the bare person name, e.g. `orch-runner@sev`, so no instance such as `root` can ever run as root; slots: `orch-addon@<n>` with `User=orch-addon-%i`), `Delegate=yes` (per-run cgroups, D-P2-29), `NoNewPrivileges=yes`, `PrivateTmp=yes`,
    `ProtectSystem=strict`, `ProtectHome=read-only`, `ReadWritePaths=/var/lib/orch/agents/orch-agent-%i /run/orch/agents/orch-agent-%i`,
@@ -13570,7 +13594,8 @@ has recorded the sudo/SSH verdict; a re-run whose verdict fails stops the runner
    `ProtectHostname`, `LockPersonality`, `RestrictRealtime` and `SystemCallArchitectures=native` (`ProtectControlGroups` stays
    off: `Delegate=yes` needs a writable cgroup tree). `ReadWritePaths` is the agent's own tree (`home` for its
    Claude/Codex login, `state`, `repos`) and its run directory; the state directory is the agent's, never the person's.
-   `ExecStart` is the person's `<release>/current/bin/orch-runner` (the release build writes it next to `orch-host`).
+   `ExecStart` is `<release>/current/bin/orch-runner` (the release build writes it next to `orch-host`); in tier B
+   `<release>` is `<share>/releases`, the person's, readable by the agent through the share ACL (item 5, 6).
    **Start check:** `ExecStartPre=+/usr/bin/python3 -I -S /usr/lib/orch/os-setup/orch-os-setup --recheck %i` runs as root
    (the `+` prefix) from the trusted copy, never from the release, before every start, including every `Restart=always`
    restart (`RestartSec=2` throttles it; `StartLimitIntervalSec=0`, because the agent can kill its own runner and a start limit would then stop the unit for good). It asks `sudo -l -U` and `sshd -T`
@@ -13650,19 +13675,23 @@ has recorded the sudo/SSH verdict; a re-run whose verdict fails stops the runner
 | One-click key `<state>/person/<ws>/devices/<d>.key` | person, 0600 in 0700 dirs | nothing |
 | passphrase key, WSK, host state, add-on credentials, all of `<state>/` | person, 0700/0600 | nothing |
 | person's `~/.ssh`, `~/.config/gh`, `~/.claude`, `~/.codex` | person | nothing if 0700/0600; **an other-readable file in a home the agent may traverse is readable** (the doctor lists and fixes these, L13) |
-| person's working tree (incl. untracked `.env`) | person | nothing |
-| person's `<repo>/.git` | person + ACL `u:agent:rX` | read (fetch) |
+| person's working tree (incl. untracked `.env`), `<repo>/.git` (config, stash, hooks) | person | nothing: no ACL entry for the agent anywhere in the person's home |
+| `/var/lib/orch/share` | root, 0711 | pass through to its own name only |
+| `<share>/<person>` | person 0700 + ACL exactly `u:agent:--x` | pass through to `mirrors`, `releases`, `python`; not list |
+| `<share>/<person>/mirrors/<ws8>/<name>.git` (branches and tags only, no remote, no hooks) | person + `u:agent:r-x` and the same as default | read (fetch) |
 | workspace store `<root>/.orch/` | person | nothing directly; only through the host socket |
 | agent clone `/var/lib/orch/agents/orch-agent-<user>/repos/<ws8>/<name>/` and its worktrees | agent + default ACL `u:person:rX` | everything |
-| release and interpreter | person + ACL `u:agent:rX` | read, execute |
+| release `<share>/<person>/releases` and interpreter `<share>/<person>/python` | person + `u:agent:r-x` and the same as default | read, execute; never write |
 
 **Worktrees are worktrees of a clone the agent owns** (amends §12.7). A `git worktree add` into the person's
 repository would put the agent's metadata, refs and objects into the person's `.git`; across UIDs that needs a
 writable `.git`, and a writable `.git` lets the agent plant `config` or hooks that the person's next `git` runs as the
-person, a full escape. So there is one clone per (agent user, repository), fetched as the agent from the person's
-`.git`, and per-ticket worktrees of that clone. `safe.directory` is passed on the command line
+person, a full escape. So there is one clone per (agent user, repository), fetched as the agent from the **mirror**
+(`<share>/mirrors/<ws8>/<name>.git`, item 13.2.6; the agent never reads the person's `.git`, whose `config` can hold a
+token), and per-ticket worktrees of that clone. The clone passes `-c transfer.fsckObjects=true` and an empty
+`--template=`; the runner refuses any mirror path outside `SHARE_ROOT/<person>/mirrors/`. `safe.directory` is passed on the command line
 (`-c safe.directory=<exact path>`), never written to a file and never `*`. The gitsafe owner rule becomes "owned by the
-pinned person UID" for the fetch source and "owned by me" for the clone. The way back is unchanged in kind: `diff`,
+pinned person UID" for the fetch source (the mirror) and "owned by me" for the clone. The way back is unchanged in kind: `diff`,
 `tree.check` and landing read the agent's clone through `orch.gitread` as the host (the host runs `tree.check` itself,
 as in tier A; the worker split of H10 is not required for tier B). **Condition:** the host reads an agent-owned tree
 only through the `orch.gitread` child with its limits, opened from the pinned directory with `O_NOFOLLOW`, objects by
@@ -13715,9 +13744,14 @@ first failed fact named.
   The failed facts split by cause:
   - **exposure facts** (an agent could reach the key or act as the person): the agent or slot user in a privileged
     group; an ACL entry for it on `<state>` or a key file; a missing or foreign pin; the runner's peer UID is the
-    person's; `<run>` or the control directory wider than 13.3. These **pause click signing** (13.7) and keep the
-    marketplace gate closed;
-  - **availability facts** (nothing is exposed, something is down): the runner or slot unit not active. One click
+    person's; `<run>` or the control directory wider than 13.3; `/var/lib/orch/share` not root 0711, or
+    `<share>/<person>` not exactly the ACL of 13.2 item 5 (when they exist); any `u:orch-agent-*` ACL entry on the
+    person's home or on the chain of a registered repository; and, from the doctor (`sharemirror.check`), a mirror whose
+    `config` is not the written bytes, whose `hooks/` is not empty, that holds a ref besides heads and tags, a
+    `FETCH_HEAD`, a link, a foreign owner or an ACL beyond the agent's `r-x`, or a release the agent, the group or others
+    can write. These **pause click signing** (13.7) and keep the marketplace gate closed;
+  - **availability facts** (nothing is exposed, something is down): the runner or slot unit not active; a mirror or
+    the release missing, or a mirror behind its repository (a stale mirror never pauses anything). One click
     stays on, with the red line and the doctor; the marketplace gate stays closed for an inactive slot.
 - Used by: the One-click default (13.7), the dashboard's status line ("Agents run as their own user" or the red line),
   the marketplace gate (13.8, #929) and setup's "Check again".

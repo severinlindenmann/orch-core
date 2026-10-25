@@ -247,7 +247,17 @@ def register(app: FastAPI, auth: Auth, service: Passkeys | None) -> None:
             log.error("passkey store refused: %s", exc)
             return invalid("store")  # fail closed: no login while the store cannot be trusted
         try:
-            service.store.touch(credential_id, when=service.now(), sign_count=result.sign_count)
+            count = result.sign_count
+            if record.sign_count and count and count <= record.sign_count:
+                # never refused (synced passkeys differ); shown to the owner as a warning and the higher value is kept
+                log.warning(
+                    "possible cloned passkey: %s: sign count %s did not rise above %s",
+                    record.name,
+                    count,
+                    record.sign_count,
+                )
+                count = record.sign_count
+            service.store.touch(credential_id, when=service.now(), sign_count=count)
         except (StoreError, OSError) as exc:
             log.error("passkey store not updated: %s", exc)  # the login itself was verified; last-used is display only
         return auth.open_remote(request.state.client)

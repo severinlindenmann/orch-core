@@ -53,6 +53,7 @@ GATES = [
     ("rotate/seal", {}, ROTATE_LOCAL_ONLY),
     ("rotate", rotate_body(), ROTATE_LOCAL_ONLY),
     ("custody", {"on": True, "resume": True}, "needs a dashboard opened on this computer"),
+    ("custody", {"on": True, "passphrase": "correct horse"}, "needs a dashboard opened on this computer"),
     ("prepare", agent_access(), "needs a dashboard opened on this computer"),
     ("prepare", hub_join(), "needs a dashboard opened on this computer"),
     ("sign", {"request_id": REQ, "view_digest": HASH, "sealed": {"hub.backup_key": PASS_ENV}}, "needs a dashboard"),

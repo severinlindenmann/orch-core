@@ -484,3 +484,16 @@ def test_expired_and_logged_out_sessions_leave_no_state(auth, clock):
     clock.now += 43201
     assert not auth.valid(token)
     assert auth.session_sources == {}
+
+
+def test_a_sign_count_that_does_not_rise_logs_a_warning_keeps_the_higher_value_and_logs_in(
+    front, app, passkey_store, caplog
+):
+    authn, _ = enroll(front, app)
+    assert login(front, authn).status_code == 200 and login(front, authn).status_code == 200
+    assert passkey_store.read()[0].sign_count == 2
+    authn.count = 0  # a clone starts again at 1
+    with caplog.at_level("WARNING", logger="orch_dashboard.passkey"):
+        assert login(front, authn).status_code == 200
+    assert "possible cloned passkey" in caplog.text
+    assert passkey_store.read()[0].sign_count == 2

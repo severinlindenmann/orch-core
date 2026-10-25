@@ -98,7 +98,7 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     (DELETE, W + "/handoff/{request_id}"): (ALLOWED, "cancels a request"),
     # --- click-to-sign
     (GET, W + "/click/status"): (ALLOWED, ""),
-    (POST, W + "/click/custody/seal"): (STEP_UP, "turning One click on (typed passphrase sealed to the signer)"),
+    (POST, W + "/click/custody/seal"): (STEP_UP, "turning One click off with a new passphrase (sealed to the signer)"),
     (POST, W + "/click/rotate/seal"): (STEP_UP, "device rotate"),
     (POST, W + "/click/rotate"): (STEP_UP, "device rotate"),
     (POST, W + "/click/custody"): (ALLOWED, BODY),

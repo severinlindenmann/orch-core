@@ -34,6 +34,8 @@ OPEN_ENDED = {"/api/events"}  # a stream: not walked by the generic test (it nev
 
 
 def app_routes(app):
+    # a mount or a plain Starlette Route would be skipped below: the walk must see every kind of route there is
+    assert all(isinstance(r, APIRoute | APIWebSocketRoute) for r in app.routes), "a route type the walk cannot read"
     for route in app.routes:
         if isinstance(route, APIRoute):
             yield from ((m, route.path) for m in sorted(route.methods) if m not in ("HEAD", "OPTIONS"))

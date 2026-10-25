@@ -319,3 +319,14 @@ def test_tier_b_setup_and_the_cli_name_the_same_release_so_the_unit_compares_equ
 def test_tier_b_plan_refuses_a_release_path_a_unit_cannot_hold() -> None:
     with pytest.raises(svc.Unsupported):
         service.plan_tier_b("sev", Path("/home/my user/releases"), platform="linux")
+
+
+def test_tier_b_printed_admin_line_names_the_release_the_cli_compares_against() -> None:
+    import shlex
+
+    env = {"HOME": "/home/sev"}
+    facts = FakeOsFacts()
+    facts.add_user("sev", 1000, home="/home/sev")
+    line = osusers.plan(facts, "sev", 1000, release=str(service.tier_b_release(env))).admin_command()
+    argv = shlex.split(line)
+    assert argv[argv.index("--release") + 1] == str(service.tier_b_release(env))

@@ -330,7 +330,9 @@ def release_problem(facts: OsFacts, release: str, person_uid: int | None) -> str
     node = release
     while True:
         info = facts.stat(node)
-        if info is None or (node == release and (info.is_symlink or not info.is_dir)):
+        if info is not None and info.is_symlink:  # never followed: its target could be swapped by whoever owns the link
+            return f"{node} is a symbolic link; give the release by its real path."
+        if info is None or (node == release and not info.is_dir):
             return f"The release directory {release} must exist and be a plain directory."
         if info.uid not in owners or info.mode & 0o022:
             return (
@@ -749,12 +751,18 @@ def main(argv: list[str] | None = None) -> int:
         metavar="PERSON",
         help="ask sudo and sshd again whether the agent user of PERSON is still safe (the runner's start check)",
     )
-    ap.add_argument("--release", default="/opt/orch/release", help="the release directory the services run")
+    ap.add_argument("--release", help="the releases directory the services run (required with --person)")
     ap.add_argument("--dry-run", action="store_true", help="print the exact actions and change nothing")
     args = ap.parse_args(argv)
     if bool(args.person) == bool(args.recheck):
         print(
             "Give exactly one of --person (set up) or --recheck (the start check). Nothing was changed.",
+            file=sys.stderr,
+        )
+        return 2
+    if args.person and not args.release:
+        print(
+            "--release is required with --person (the setup page prints the whole line). Nothing was changed.",
             file=sys.stderr,
         )
         return 2

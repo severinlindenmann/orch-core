@@ -368,18 +368,18 @@ def test_executor_refuses_a_program_that_is_not_fixed() -> None:
 
 def test_main_refuses_non_root_and_non_linux(monkeypatch, capsys) -> None:
     monkeypatch.setattr(osapply.sys, "platform", "darwin")
-    assert osapply.main(["--person", "sev"]) == 2
+    assert osapply.main(["--person", "sev", "--release", "/r"]) == 2
     assert "Linux" in capsys.readouterr().err
     monkeypatch.setattr(osapply.sys, "platform", "linux")
     monkeypatch.setattr(osapply.os, "geteuid", lambda: 1000)
-    assert osapply.main(["--person", "sev"]) == 2
+    assert osapply.main(["--person", "sev", "--release", "/r"]) == 2
     assert "root" in capsys.readouterr().err
 
 
 def test_main_runs_only_from_the_root_owned_copy(monkeypatch, capsys) -> None:
     monkeypatch.setattr(osapply.sys, "platform", "linux")
     monkeypatch.setattr(osapply.os, "geteuid", lambda: 0)
-    assert osapply.main(["--person", "sev"]) == 2  # this source tree is not /usr/lib/orch/os-setup
+    assert osapply.main(["--person", "sev", "--release", "/r"]) == 2  # this source tree is not /usr/lib/orch/os-setup
     assert "root-owned copy" in capsys.readouterr().err
 
 
@@ -443,6 +443,21 @@ def test_a_release_anyone_else_could_swap_is_refused(mutate) -> None:
     mutate(f)
     res, ex, _ = _go(facts=f)
     assert not res.ok and "release" in res.problems[0] and ex.commands == []
+
+
+def test_a_symlinked_ancestor_is_refused_with_a_clear_message() -> None:
+    f = _with_release()
+    f.add_path("/opt", kind="link")  # like /home -> var/home
+    res, ex, _ = _go(facts=f)
+    assert not res.ok and "/opt is a symbolic link; give the release by its real path" in res.problems[0]
+    assert ex.commands == []
+
+
+def test_main_requires_release_with_person(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(osapply.sys, "platform", "linux")
+    monkeypatch.setattr(osapply.os, "geteuid", lambda: 0)
+    assert osapply.main(["--person", "sev"]) == 2
+    assert "--release is required" in capsys.readouterr().err
 
 
 def test_a_missing_release_is_refused() -> None:

@@ -298,8 +298,8 @@ def op_kind(name: str) -> tuple[OpKind, Phase] | None:
         return ("person_read", "read") if name in ("hub.status", "hub.handoff") else ("person_write", "write")
     if name in PEER_OPS:  # V3 C12: reads for P and G (an agent reads its inbox); writes P only, owner role
         return ("pg_read", "read") if name in PEER_READS else ("person_write", "write")
-    if name in MIRROR_OPS:  # #1198 L5: P and G (an agent asks for new commits), never N; idempotent, so a read
-        return ("pg_read", "read")
+    if name in MIRROR_OPS:  # #1198 L5: P and G (an agent asks for new commits), never N; it runs git and writes
+        return ("pg_write", "write")
     if name in SHARE_OPS:  # V3 C6: column P only (the op checks the owner role)
         return ("person_read", "read") if name in SHARE_READS else ("person_write", "write")
     if name in SPACE_OPS:  # V3 C13: list and get for P and G (untrusted data), the rest P only (owner role)

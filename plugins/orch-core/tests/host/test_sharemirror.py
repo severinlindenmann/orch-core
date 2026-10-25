@@ -28,6 +28,29 @@ from tests.host.sharemirror_helpers import (
 
 world = sharemirror_helpers.world  # the fixture
 
+
+def test_the_agent_can_read_every_new_mirror_file_and_folder(world):
+    """Linux cuts an inherited default ACL by the create mode: a folder made 0700 or a config made 0600 gives the agent
+    nothing and its clone fails. Every folder must give r-x and every file r (the tmp folder before the rename too)."""
+    os.umask(0)  # the kernel ignores the umask under a default ACL; what counts is the mode that was asked for
+    final = Path(world.share.mirror_path(world.ws8, "proj"))
+    seen: list[str] = []
+    real = sharemirror._fetch
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(sharemirror, "_fetch", lambda m, g: (seen.append(m), real(m, g))[1])
+    try:
+        sharemirror.create_mirror(world.share, world.ws8, "proj", str(world.repo))
+    finally:
+        monkey.undo()
+    assert Path(seen[0]).name.startswith(".proj.tmp-")
+    for path in [final, *final.rglob("*")]:
+        want = 0o5 if path.is_dir() else 0o4
+        got = world.k.agent_view(path, AGENT_UID)
+        assert got & want == want, f"{path.relative_to(final)}: the agent would get {got:03b}"
+    assert (final / "config").stat().st_mode & 0o777 == 0o640
+    assert world.k.of(final, ACCESS) == sharemirror.rx_acl(AGENT_UID)  # set exactly, before the rename
+
+
 # --- 2: the config bytes, empty hooks, no remote, no FETCH_HEAD, no token -----------------------------------
 
 
@@ -141,8 +164,10 @@ def test_the_mirror_appears_complete_or_not_at_all(world, monkeypatch):
 
 def test_a_repository_whose_own_config_runs_programs_is_refused_before_git_runs(world):
     git(world.repo, "config", "core.alternateRefsCommand", "touch /tmp/pwned")
-    with pytest.raises(ShareError, match="allow-list"):
+    with pytest.raises(ShareError) as refused:
         sharemirror.create_mirror(world.share, world.ws8, "proj", str(world.repo))
+    assert str(refused.value) == "This repository's settings can make git run programs, so orch will not copy it."
+    assert "core.alternaterefscommand" in refused.value.details and "allow-list" in refused.value.details
     assert not os.path.lexists(world.share.mirror_path(world.ws8, "proj"))
 
 
@@ -153,7 +178,7 @@ def test_column_g_and_p_may_sync_and_n_may_not():
     p = resolve("person", "absent", True)
     g = resolve("agent", "verified", True)
     n = resolve("agent", "absent", True)
-    assert [refusal(c, "pg_read", "mirror.sync") for c in (p, g, n)] == [None, None, "op.not_allowed"]
+    assert [refusal(c, "pg_write", "mirror.sync") for c in (p, g, n)] == [None, None, "op.not_allowed"]
 
 
 def test_the_gate_limits_g_to_one_run_per_interval_and_never_limits_p():
@@ -205,15 +230,25 @@ def test_calls_that_arrive_while_a_sync_runs_are_coalesced_into_it():
     assert sorted(a[1] for a in answers) == [False, False, True] and {a[0] for a in answers} == {"heads"}
 
 
-def test_a_failed_sync_is_shared_with_its_waiters_and_not_remembered():
-    gate = SyncGate(30.0)
+def test_a_failed_sync_counts_toward_the_limit_for_g_but_not_for_the_person():
+    now = [0.0]
+    gate = SyncGate(30.0, clock=lambda: now[0])
+    runs: list[int] = []
 
     def boom():
+        runs.append(1)
         raise ShareError("no")
 
     with pytest.raises(ShareError):
         gate.run("k", boom, limited=True)
-    assert gate.run("k", lambda: "ok", limited=True) == ("ok", True)  # a failure never blocks the next try
+    with pytest.raises(ShareError):  # the agent asks again inside the window: the same error, git does not run again
+        gate.run("k", boom, limited=True)
+    assert len(runs) == 1
+    assert gate.run("k", lambda: "ok", limited=False) == ("ok", True)  # the person may always try
+    now[0] += 31
+    with pytest.raises(ShareError):
+        gate.run("k2", boom, limited=True)
+    assert len(runs) == 2
 
 
 # --- 6: unregister deletes the mirror -----------------------------------------------------------------------
@@ -514,3 +549,72 @@ def test_orch_share_status_and_repair_on_a_share(world, monkeypatch):
     assert cli.main(["status"], env={}, out=out, err=io.StringIO()) == 0  # only an availability note: not copied yet
     assert "1 repositories" in out.getvalue() and "not copied in yet" in out.getvalue()
     assert mode(_final(world)) & 0o007 == 0 and stat.S_ISDIR(os.lstat(_final(world)).st_mode)
+
+
+# --- the venv of the release: built by the person from a lock, before the freeze ------------------------------
+
+
+def test_the_release_venv_is_built_as_the_person_from_the_lock_with_hashes_and_wheels_only(shared):
+    interp = shared.root / "python" / "cpython-3.12-test" / "bin"
+    interp.mkdir(parents=True)
+    (interp / "python3").write_text("#!/bin/sh\n")
+    src = shared.base / "orch-src" / "orch"
+    src.mkdir(parents=True)
+    (src / "__init__.py").write_text("")
+    lock = shared.base / "requirements.lock"
+    lock.write_text("jsonschema==4.0.0 \\\n    --hash=sha256:" + "a" * 64 + "\n")
+    calls: list[tuple[list[str], dict]] = []
+
+    class Done:
+        returncode = 0
+        stderr = ""
+
+    def fake_uv(argv, **kw):
+        calls.append((argv, kw["env"]))
+        if argv[1] == "venv":  # what uv would make; the release is still writable here (before the freeze)
+            bin_dir = Path(argv[-1]) / "bin"
+            bin_dir.mkdir(parents=True)
+            (bin_dir / "python").write_text("#!/bin/sh\n")
+        return Done()
+
+    final = sharemirror.install_release_copy(shared.share, source=src, lock=lock, run=fake_uv)
+    (venv, install) = [c[0] for c in calls]
+    assert venv[:4] == ["uv", "venv", "--no-python-downloads", "--python"] and venv[4] == str(interp / "python3")
+    for flag in ("--require-hashes", "--only-binary", ":all:", "-r"):
+        assert flag in install
+    assert install[install.index("-r") + 1].endswith("/requirements.lock")
+    assert all(env["UV_PYTHON_INSTALL_DIR"] == shared.share.python for _argv, env in calls)
+    import hashlib
+    import json
+
+    assert (
+        json.loads((final / "RELEASE.json").read_text())["lock_sha256"] == hashlib.sha256(lock.read_bytes()).hexdigest()
+    )
+    assert (final / "bin" / "orch-runner").read_text().startswith(f"#!{final}/venv/bin/python -I\n")
+    assert (final / "requirements.lock").read_bytes() == lock.read_bytes()
+    assert _doctor(shared) == {}
+    # another lock is another release (the digest is part of the version); the same lock is the same release
+    lock.write_text(lock.read_text() + "# changed\n")
+    other = sharemirror.install_release_copy(shared.share, source=src, lock=lock, run=fake_uv)
+    assert other != final
+
+
+def test_a_failing_uv_gives_a_plain_sentence_with_the_output_under_details(shared):
+    interp = shared.root / "python" / "cpython-3.12-test" / "bin"
+    interp.mkdir(parents=True)
+    (interp / "python3").write_text("#!/bin/sh\n")
+    src = shared.base / "orch-src" / "orch"
+    src.mkdir(parents=True)
+    (src / "__init__.py").write_text("")
+    lock = shared.base / "requirements.lock"
+    lock.write_text("x\n")
+
+    class Bad:
+        returncode = 2
+        stderr = "hash mismatch for jsonschema"
+
+    with pytest.raises(ShareError) as bad:
+        sharemirror.install_release_copy(shared.share, source=src, lock=lock, run=lambda *a, **k: Bad())
+    assert str(bad.value) == "The program for your agents could not be set up with its libraries."
+    assert "hash mismatch" in bad.value.details
+    assert not list((shared.root / "releases").glob(".staging-*")), "a failed build leaves no half release"

@@ -104,6 +104,11 @@ class FakeExec:
         self.files.pop(path, None)
         self.facts.sigs.pop(path, None)
 
+    def narrow_dir(self, path, mode):
+        st = self.facts.stat(path)
+        self.facts.add_path(path, uid=st.uid, gid=st.gid, mode=(st.mode & 0o777) & mode, kind="dir")
+        return True
+
     def secure_dir(self, base, spec):
         """Mirrors osapply.secure_dir on the fake world."""
         path = "/".join((base, *spec.chain))

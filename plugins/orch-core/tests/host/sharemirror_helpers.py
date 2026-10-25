@@ -44,6 +44,21 @@ class FakeKernel:
         if not self.drop_sets:
             self.store[self._key(fd, name)] = value
 
+    def agent_view(self, path: str | Path, agent_uid: int) -> int:
+        """What the agent gets (rwx bits 0-7) on ``path`` the way Linux works it out. An object with an access ACL set
+        explicitly: the agent's entry cut by the mask. One made inside a folder with a default ACL: that default's
+        ``r-x`` cut by the GROUP bits of the mode it was created with (the umask is ignored there, the create mode is
+        not). Run the test with umask 0, so the modes are the ones git and orch asked for."""
+        import struct
+
+        st = os.stat(path)
+        blob = self.store.get((st.st_dev, st.st_ino, ACCESS))
+        if blob is not None:
+            entries = [struct.unpack_from("<HHI", blob, 4 + 8 * i) for i in range((len(blob) - 4) // 8)]
+            mask = next(p for t, p, _ in entries if t == 0x10)
+            return next((p for t, p, i in entries if t == 2 and i == agent_uid), 0) & mask
+        return 0o5 & ((st.st_mode >> 3) & 7)
+
     def of(self, path: str | Path, name: str = ACCESS) -> bytes | None:
         st = os.stat(path)
         return self.store.get((st.st_dev, st.st_ino, name))

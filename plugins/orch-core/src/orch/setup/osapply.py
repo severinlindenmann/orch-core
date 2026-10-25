@@ -96,6 +96,7 @@ class Executor(Protocol):
     def read_file(self, path: str) -> str | None: ...
     def remove(self, path: str) -> None: ...
     def secure_dir(self, base: str, spec: DirSpec) -> tuple[bool, str | None]: ...
+    def narrow_dir(self, path: str, mode: int) -> bool: ...  # clear permission bits outside ``mode``, fd-relative
 
 
 def _spawn(argv: list[str]) -> RunResult:
@@ -148,6 +149,19 @@ class RealExecutor:
     def secure_dir(self, base: str, spec: DirSpec) -> tuple[bool, str | None]:
         return secure_dir(base, spec)
 
+    def narrow_dir(self, path: str, mode: int) -> bool:
+        """Remove the permission bits of the root-owned directory ``path`` that ``mode`` does not have, through a
+        descriptor opened with O_NOFOLLOW (never by path, never a bit added). ``False``: not a plain root-owned one."""
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            info = os.fstat(fd)
+            if info.st_uid != 0 or info.st_mode & 0o022:
+                return False
+            os.fchmod(fd, stat.S_IMODE(info.st_mode) & mode)
+            return True
+        finally:
+            os.close(fd)
+
 
 class DryRunExecutor(RealExecutor):
     """Records nothing itself (``apply`` records every action); changes nothing; queries and reads are real."""
@@ -168,6 +182,9 @@ class DryRunExecutor(RealExecutor):
 
     def secure_dir(self, base: str, spec: DirSpec) -> tuple[bool, str | None]:
         return False, None
+
+    def narrow_dir(self, path: str, mode: int) -> bool:
+        return True
 
 
 USER_OBJ, USER, GROUP_OBJ, MASK, OTHER = 0x01, 0x02, 0x04, 0x10, 0x20
@@ -398,8 +415,10 @@ class _Apply:
             self.res.fail(f"{path} exists but is not a plain directory; setup will not change it.")
         elif not (st.uid == 0 and st.mode & 0o022 == 0):
             self.res.fail(f"{path} exists but is not owned by root or can be written by others.")
-        elif st.mode & 0o777 & ~mode:
-            self.res.fail(f"{path} is more open than it should be ({st.mode & 0o777:04o}); setup will not fix it.")
+        elif st.mode & 0o777 & ~mode:  # only ever narrowed (a bit cleared, none added), through a descriptor
+            self.res.actions.append(f"narrow {path} from {st.mode & 0o777:04o} to {st.mode & mode & 0o777:04o}")
+            if not self.ex.narrow_dir(path, mode):
+                self.res.fail(f"{path} is not a plain directory of root; setup will not change it.")
 
     def secure(self, base: str, spec: DirSpec, what: str) -> bool:
         """Directories below an agent- or slot-owned one are never touched by path: ``ex.secure_dir`` opens them
@@ -423,6 +442,31 @@ class _Apply:
             return
         if self.facts.sshd_installed():
             self.root_dir("/etc/ssh/sshd_config.d")
+
+    def share_guard(self, p: Plan) -> None:
+        """An existing ``<share>/<person>`` names its agent by UID. After a ``userdel`` without a teardown, a new user
+        that gets the same UID would read the share, and one with another UID would find a share nobody may use.
+        Until a teardown exists (it must remove the folder before ``userdel``), setup refuses an agent user whose UID
+        differs from the one the share's ACL names. Only the folder itself is read (its ACL), nothing below it."""
+        agent = p.agent
+        if agent is None:
+            return
+        have = self.facts.acl(share_dir(p.person), "access")
+        if have is None:
+            return
+        named = {
+            int.from_bytes(have[off + 4 : off + 8], "little")
+            for off in range(4, len(have) - 7, 8)
+            if int.from_bytes(have[off : off + 2], "little") == USER
+        }
+        uid = self.uid_of(agent.name)
+        if uid is None or named != {uid}:
+            ids = ", ".join(map(str, sorted(named)))
+            self.res.fail(
+                f"{share_dir(p.person)} is set up for another agent user (user id {ids}), "
+                f"not for '{agent.name}'. Remove that folder first (an earlier agent user was removed without it), "
+                "then run this again."
+            )
 
     def create_users(self, p: Plan) -> None:
         for u in p.all_users():
@@ -722,6 +766,9 @@ def apply(
                     res.fail(r.message)
                 return res if res.problems else res.fail(f"'{NORMAL_PERSON}' does not exist after useradd.")
     st.common_dirs()
+    if not res.ok:
+        return res
+    st.share_guard(p)
     if not res.ok:
         return res
     st.create_users(p)

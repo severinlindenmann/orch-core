@@ -243,6 +243,17 @@ def enable(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, *, con
         install_release(target=releases_dir(dict(env)))
     except (ReleaseError, OSError) as exc:
         return _fail("internal", f"the release could not be installed: {exc}", 1)
+    if (
+        agent_user is not None
+    ):  # tier B: the runner starts from the share (13.2 item 5): copy the release in, as the person
+        from orch.host import sharemirror
+
+        share = sharemirror.share_for(str(tier.person), Path(state))
+        if share is not None:
+            try:
+                sharemirror.install_release_copy(share)
+            except sharemirror.ShareError as exc:
+                return _fail("runner.unavailable", f"the program for your agents is not in the shared folder: {exc}", 9)
     try:
         ensure_private_dir(Path(state), uid)
         ensure_private_dir(Path(state) / "runner", uid)  # launchd opens runner.out there before exec

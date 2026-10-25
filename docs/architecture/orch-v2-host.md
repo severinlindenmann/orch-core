@@ -13563,9 +13563,9 @@ has recorded the sudo/SSH verdict; a re-run whose verdict fails stops the runner
    with the default ACL `d:u:<person>:rX` (the host reads clones through `orch.gitread`). **The share:** `/var/lib/orch/share`
    (root:root 0711: one name can be passed through, none listed) and `/var/lib/orch/share/<person>` (`<person>:<their group>`,
    0700, access ACL exactly `u::rwx,u:orch-agent-<user>:--x,g::---,m::--x,o::---`, no default ACL, so 0710 shows). Both are made
-   file-descriptor-relative from root-owned parents (an existing folder with other properties is refused, never widened);
+   file-descriptor-relative from root-owned parents (an existing `/var/lib/orch/share` that is too open is narrowed through a descriptor, never widened; a `<share>/<person>` with other properties is refused);
    root opens nothing below `<share>/<person>` and the path follows from the person's name (no pin field). This ACL is the
-   one exception to "setup writes no ACL for an agent user". The agent user never gets an ACL entry in the person's home.
+   one exception to "setup writes no ACL for an agent user". The ACL names the agent by UID, so setup refuses to create or keep an agent user whose UID differs from the one in an existing share ACL (after a `userdel` a new user with the same UID would read the share): **teardown must remove `<share>/<person>` before `userdel`** (no teardown exists yet; tracked as an issue). The agent user never gets an ACL entry in the person's home.
    Plain step line: "Make a read-only place for the code your agents use."
 6. **The host fills the share**, as the person, no root (`host/sharemirror.py`): `mirrors/<ws8>/<name>.git` (bare copies of a
    registered repository's branches and tags, created at registration, tier B only; review line "Your agents get a
@@ -13579,11 +13579,11 @@ has recorded the sudo/SSH verdict; a re-run whose verdict fails stops the runner
    untracked files such as `.env`), after `gitsafe.gate` on the source and in gitsafe's isolated environment; an integrity
    failure keeps the old mirror and gives the person a plain refusal. A mirror appears by one `renameat` of a temporary
    folder, after the fetch. It is refreshed at registration, before each agent start or worktree on that repository, and
-   by `mirror.sync {repo}` (kind pg_read: columns P and G; column G at most once per 30 s per repository, calls inside
+   by `mirror.sync {repo}` (kind pg_write: columns P and G; column G at most once per 30 s per repository, calls inside
    that time and while a sync runs are coalesced into one run and share its answer; it replaces the name `share.sync` of
    the design, which hub sharing already uses). Unregistering moves the mirror to a trash name and removes it. After the
    admin step the host copies the verified release into `releases/<version>` (launchers naming the interpreter in
-   `python/`) and points `current` at it; an update is the same copy, no root. In tier A the release stays in the home.
+   `python/`) and points `current` at it; an update is the same copy, no root. In tier A the release stays in the home. The release has its own libraries: before the release is frozen the host, as the person, builds `releases/<version>/venv` with `uv venv` from `python/` and `uv pip install --require-hashes --only-binary :all:` from the release's hash-pinned `requirements.lock` (the lock's digest is in `RELEASE.json` and in the version); never root. A failed sync counts toward column G's 30 s limit too. Mirror folders get the agent's `r-x` set exactly (Linux cuts an inherited default ACL by the create mode), and `config` is 0640. A registration refusal by the config allow-list says "This repository's settings can make git run programs, so orch will not copy it." with the key and the fix under Technical details.
    The backup is `orch share status|repair` (refused under `ORCH_GRANT`/`ORCH_SESSION`); the dashboard's "Repair" is the
    doctor's. Tier A and macOS have no share and no mirror (`Agents run as you; nothing is shared.`).
 7. **Units.** `orch-runner@.service` (instance = the person) and `orch-addon@.service` (instance = the slot number),
@@ -13706,6 +13706,12 @@ agent-owned tree** (symlink races).
 agent UID refuses with a plain message ("this workspace is served by its host"), not with `EACCES` (L7). The plugin's
 hooks (`orch instructions hook …`) run as the agent through the socket; `instructions.hook` must accept the agent
 class (today it is P-only and works because a tier-A agent is person class).
+
+**L5 wiring: what is done and what E1 is blocked on.** Done: `orch share status|repair`; `orch runner enable` in tier B copies the release into the share (`sharemirror.install_release_copy`). **Blocked until** (each a precise call, owned by files outside L5; E1 `vps-agent-uid` does not start before all four):
+1. Repository registration (the G6 registration flow) calls `sharemirror.share_registered_repo(share, ws8, name, repo)` and shows `REVIEW_LINE`; unregistering calls `sharemirror.delete_mirror`. Until then the registry is empty and `repair` and `mirror.sync` have nothing to make.
+2. `host/agents.py` / `host/launch.py` (G6 B2): `sharemirror.sync_mirror(share, ws8, name)` before each agent start and each worktree on that repository (L6 clones from the mirror).
+3. The setup page's "Check again" (L12, #1190) calls `sharemirror.ensure_folders` and `install_release_copy`.
+4. The release build produces the hash-pinned `requirements.lock` (`uv export --format requirements-txt --hashes`) that `sharemirror.default_lock()` looks for beside `pyproject.toml`; without it the release has no venv and the runner cannot import its libraries.
 
 ### 13.5 Runner, environment, terminals, sign-in (amends D-P2-24, D-P2-27, D-P2-31, §12.4.3, §12.6)
 

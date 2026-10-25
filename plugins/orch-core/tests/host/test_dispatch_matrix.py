@@ -237,8 +237,8 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
             assert kind == (
                 ("person_read", "read") if op in ("hub.status", "hub.handoff") else ("person_write", "write")
             )
-        elif op in MIRROR_OPS:  # #1198 L5: P and G, idempotent
-            assert kind == ("pg_read", "read")
+        elif op in MIRROR_OPS:  # #1198 L5: P and G, it runs git and writes
+            assert kind == ("pg_write", "write")
         elif op in SHARE_OPS:  # V3 C6: column P only (owner role)
             assert kind == (("person_read", "read") if op in SHARE_READS else ("person_write", "write"))
         elif op in MARKET_OPS:  # V3 G2: P and G; the op refuses an agent's add and --commit itself

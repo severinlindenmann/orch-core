@@ -61,7 +61,9 @@ __all__ = [
     "SyncGate",
     "check",
     "config_bytes",
+    "build_venv",
     "create_mirror",
+    "default_lock",
     "delete_mirror",
     "ensure_folders",
     "find_interpreter",
@@ -92,7 +94,12 @@ _HEAD = re.compile(r"^ref: (refs/heads/[A-Za-z0-9._/@+-]{1,200})\n?$")
 
 
 class ShareError(Exception):
-    """A refusal with a plain sentence for the person. Nothing further is changed after one."""
+    """A refusal with a plain sentence for the person. Nothing further is changed after one. ``details`` is the
+    technical part (a config key and the fix) for a "Technical details" fold, never the headline."""
+
+    def __init__(self, message: str, details: str = "") -> None:
+        super().__init__(message)
+        self.details = details
 
 
 @dataclass(frozen=True)
@@ -409,7 +416,9 @@ def _source(repo: str) -> str:
     try:
         gitsafe.gate(repo, os.environ)
     except gitsafe.Unsafe as exc:
-        raise ShareError(str(exc)) from None
+        raise ShareError(
+            "This repository's settings can make git run programs, so orch will not copy it.", details=str(exc)
+        ) from None
     return gitdir
 
 
@@ -512,6 +521,7 @@ def create_mirror(share: Share, ws8: str, name: str, repo: str) -> MirrorResult:
                     if code != 0:
                         raise ShareError("The shared copy could not be started.")
                     _write_config(parent, tmp_name, final)
+                    _open_to_agent(parent, tmp_name, share)
                     _fetch(tmp, gitdir)
                     _set_head(tmp, gitdir)
                     _git(["gc", "--auto", "--quiet"], mirror=tmp)
@@ -528,19 +538,29 @@ def create_mirror(share: Share, ws8: str, name: str, repo: str) -> MirrorResult:
         return MirrorResult(heads, created=True, truncated=cut)
 
 
+def _open_to_agent(parent: int, name: str, share: Share) -> None:
+    """Linux masks an inherited default ACL with the create mode, so a folder made 0700 gives the agent nothing. Set the
+    mirror's own access ACL exactly (the agent's ``r-x``) before it takes its final name."""
+    fd = os.open(name, _DIR_FLAGS, dir_fd=parent)
+    try:
+        _set_exact(fd, _ACCESS, rx_acl(share.agent_uid), f"{share.mirrors}/{name}")
+    finally:
+        os.close(fd)
+
+
 def _write_config(parent: int, tmp_name: str, final: str) -> None:
     """Replace git's own ``config`` with ours, created with O_EXCL; ``hooks/`` is made empty."""
     box = os.open(tmp_name, _DIR_FLAGS, dir_fd=parent)
     try:
         with contextlib.suppress(FileNotFoundError):
             os.unlink("config", dir_fd=box)
-        fd = os.open("config", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=box)
+        fd = os.open("config", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o640, dir_fd=box)
         with os.fdopen(fd, "wb") as handle:
             handle.write(config_bytes(final))
             handle.flush()
             os.fsync(handle.fileno())
         with contextlib.suppress(FileExistsError):
-            os.mkdir("hooks", 0o700, dir_fd=box)
+            os.mkdir("hooks", 0o750, dir_fd=box)
         for stray in ("description", "FETCH_HEAD"):
             with contextlib.suppress(FileNotFoundError):
                 os.unlink(stray, dir_fd=box)
@@ -620,14 +640,15 @@ class _Flight:
 
 class SyncGate:
     """A call that arrives while a sync of the same repository runs waits for it and gets its answer; a limited caller
-    (column G) inside :data:`SYNC_INTERVAL` of the last finished sync gets that answer again. The person is never
-    limited, but also joins a running sync."""
+    (column G) inside :data:`SYNC_INTERVAL` of the last finished sync gets that answer again, or its error: a failed
+    sync counts toward the limit too, so an agent cannot hammer a repository that fails. The person is never limited,
+    but also joins a running sync."""
 
     def __init__(self, interval: float = SYNC_INTERVAL, clock: Callable[[], float] = time.monotonic) -> None:
         self.interval, self.clock = interval, clock
         self._mu = threading.Lock()
         self._running: dict[str, _Flight] = {}
-        self._last: dict[str, tuple[float, Any]] = {}
+        self._last: dict[str, tuple[float, Any, BaseException | None]] = {}
 
     def run(self, key: str, work: Callable[[], Any], *, limited: bool) -> tuple[Any, bool]:
         """``(answer, ran)``: ``ran`` is False when the answer was shared with another call or is the last one."""
@@ -636,6 +657,8 @@ class SyncGate:
             if flight is None:
                 last = self._last.get(key)
                 if limited and last is not None and self.clock() - last[0] < self.interval:
+                    if last[2] is not None:
+                        raise last[2]
                     return last[1], False
                 flight = self._running[key] = _Flight()
                 mine = True
@@ -648,14 +671,13 @@ class SyncGate:
             return flight.answer, False
         try:
             flight.answer = work()
-        except BaseException as exc:  # shared with the waiters, then raised for this call too
+        except BaseException as exc:  # shared with the waiters, remembered for the window, then raised
             flight.error = exc
             raise
         finally:
             with self._mu:
                 self._running.pop(key, None)
-                if flight.error is None:
-                    self._last[key] = (self.clock(), flight.answer)
+                self._last[key] = (self.clock(), flight.answer, flight.error)
             flight.done.set()
         return flight.answer, True
 
@@ -704,14 +726,59 @@ def install_interpreter(
     return exe
 
 
-def install_release_copy(share: Share, *, source: Path | None = None) -> Path:
+def build_venv(
+    share: Share, staging: Path, python: str, *, run: Callable[..., Any] = subprocess.run, uv: str = "uv"
+) -> None:
+    """Build ``staging/venv`` from ``staging/requirements.lock`` with the share's interpreter, as the person and never
+    as root: ``uv venv`` (no download, that interpreter only), then ``uv pip install --require-hashes --only-binary
+    :all:`` (every file named by hash in the lock, wheels only, so no build step runs code). The lock's digest is part
+    of the release's identity (``install_release(lock=...)``). The venv's scripts keep the staging path in their
+    shebangs; the launchers run ``venv/bin/python -I`` and never those."""
+    venv, lock = staging / "venv", staging / "requirements.lock"
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": os.environ.get("HOME", "/"),
+           "UV_PYTHON_INSTALL_DIR": share.python}  # fmt: skip
+    steps = (
+        [uv, "venv", "--no-python-downloads", "--python", python, os.fspath(venv)],
+        [uv, "pip", "install", "--python", os.fspath(venv / "bin" / "python"), "--require-hashes",
+         "--only-binary", ":all:", "--no-deps", "-r", os.fspath(lock)],
+    )  # fmt: skip
+    for argv in steps:
+        try:
+            done = run(argv, env=env, capture_output=True, text=True, timeout=900, check=False)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise ShareError(f"uv could not be run ({exc})") from None
+        if done.returncode != 0:
+            raise ShareError(
+                "The program for your agents could not be set up with its libraries.",
+                details=(done.stderr or "")[-1500:],
+            )
+
+
+def default_lock() -> Path | None:
+    """The hash-pinned requirements file shipped next to the code (``requirements.lock`` beside ``pyproject.toml``), or
+    ``None``: the release build does not produce one yet (see spec 13.4, "blocked until")."""
+    from .release import _package_dir
+
+    path = _package_dir().parents[1] / "requirements.lock"
+    return path if path.is_file() else None
+
+
+def install_release_copy(
+    share: Share,
+    *,
+    source: Path | None = None,
+    lock: Path | None = None,
+    run: Callable[..., Any] = subprocess.run,
+) -> Path:
     """The host's copy step after the admin step: this code (or ``source``) becomes ``<share>/releases/<version>`` with
-    ``current``, its launchers naming the interpreter in ``<share>/python``. The agent reads it; nobody else writes."""
+    ``current``, its launchers naming the interpreter in ``<share>/python``, or, with a ``lock`` (default:
+    :func:`default_lock`), the venv built from it. The agent reads it; nobody else writes."""
     from .release import ReleaseError, install_release
 
     interpreter = find_interpreter(share)
     if interpreter is None:
         raise ShareError("Python for your agents is not installed yet (orch share repair installs it).")
+    lock = lock if lock is not None else default_lock()
     root = _open_share(share)
     try:
         for sub in ("python", "releases"):  # both carry the agent's read ACL (the interpreter may be placed by hand)
@@ -719,7 +786,10 @@ def install_release_copy(share: Share, *, source: Path | None = None) -> Path:
     finally:
         os.close(root)
     try:
-        return install_release(target=Path(share.releases), source=source, python=interpreter)
+        return install_release(
+            target=Path(share.releases), source=source, python=interpreter, lock=lock,
+            prepare=lambda staging: build_venv(share, staging, interpreter, run=run),
+        )  # fmt: skip
     except ReleaseError as exc:
         raise ShareError(str(exc)) from None
 
@@ -983,15 +1053,19 @@ def repair(share: Share | None, *, run: Callable[..., Any] = subprocess.run) -> 
             except ShareError as exc:
                 rep.ok = False
                 rep.lines.append(f"PROBLEM: {key}: {exc}")
+                if exc.details:
+                    rep.lines.append(f"  Technical details: {exc.details}")
         if not os.path.lexists(f"{share.releases}/current"):
             try:
                 if find_interpreter(share) is None:
                     install_interpreter(share, run=run)
                     rep.lines.append("installed Python for your agents")
-                rep.lines.append(f"copied the release: {install_release_copy(share)}")
+                rep.lines.append(f"copied the release: {install_release_copy(share, run=run)}")
             except ShareError as exc:
                 rep.ok = False
                 rep.lines.append(f"PROBLEM: the program for your agents: {exc}")
+                if exc.details:
+                    rep.lines.append(f"  Technical details: {exc.details}")
     except ShareError as exc:
         rep.ok = False
         rep.lines.append(f"PROBLEM: {exc}")

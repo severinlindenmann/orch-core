@@ -81,15 +81,53 @@ def test_a_symlinked_share_or_share_root_is_refused_not_followed():
     assert not res2.ok and "symlink or not a directory" in res2.report()
 
 
-@pytest.mark.parametrize("mode", [0o755, 0o751, 0o775])
-def test_a_share_root_that_is_more_open_than_0711_is_refused(mode):
+@pytest.mark.parametrize("mode", [0o755, 0o751, 0o710])
+def test_a_share_root_more_open_than_0711_is_narrowed_never_widened(mode):
     facts = FakeOsFacts()
     facts.add_user(PERSON, UID, home="/home/sev")
     _rel(facts, kind="dir", mode=0o755)
     facts.add_path(SHARE_ROOT, uid=0, gid=0, mode=mode, kind="dir")
     res, ex, _ = _go(facts)
-    assert not res.ok and ("more open" in res.report() or "written by others" in res.report())
-    assert ex.secures == []
+    assert res.ok, res.report()
+    assert facts.stat(SHARE_ROOT).mode & 0o777 == mode & 0o711  # bits cleared, none added (0710 stays 0710)
+
+
+def test_a_share_root_others_can_write_or_a_foreign_one_is_still_refused():
+    for kw in ({"mode": 0o775}, {"mode": 0o711, "uid": 1234}):
+        facts = FakeOsFacts()
+        facts.add_user(PERSON, UID, home="/home/sev")
+        _rel(facts, kind="dir", mode=0o755)
+        facts.add_path(SHARE_ROOT, **{"uid": 0, "gid": 0, "kind": "dir", **kw})
+        res, ex, _ = _go(facts)
+        assert not res.ok and ex.secures == [], kw
+
+
+def test_an_agent_user_whose_uid_differs_from_the_one_in_the_share_acl_is_refused_before_useradd():
+    facts = FakeOsFacts()
+    facts.add_user(PERSON, UID, home="/home/sev")
+    _rel(facts, kind="dir", mode=0o755)
+    facts.add_path(SHARE_ROOT, uid=0, gid=0, mode=0o711, kind="dir")
+    facts.add_path(SHARE, uid=UID, gid=UID, mode=0o710, kind="dir", acl=True)
+    facts.__dict__.setdefault("acls", {})[SHARE] = (share_acl(777), None)  # an earlier agent user, since removed
+    res, ex, _ = _go(facts)
+    assert (
+        not res.ok and "another agent user (user id 777)" in res.report() and "Remove that folder first" in res.report()
+    )
+    assert not [c for c in ex.commands if c[0] == osapply.BIN["useradd"]]  # nothing was created
+    # the agent user exists with a different uid: refused as well; with the same uid it is accepted
+    ok_facts = FakeOsFacts()
+    ok_facts.add_user(PERSON, UID, home="/home/sev")
+    first, ex1, _ = _go(ok_facts)
+    assert first.ok
+    agent = ok_facts.users["orch-agent-sev"]
+    ex2 = FakeExec(ok_facts)
+    ex2.files, ex2.active, ex2.enabled = dict(ex1.files), set(ex1.active), set(ex1.enabled)
+    assert apply(ok_facts, ex2, PERSON, UID, release=REL, is_root=True).ok
+    ok_facts.__dict__["acls"][SHARE] = (share_acl(agent.uid + 1), None)
+    ex3 = FakeExec(ok_facts)
+    ex3.files, ex3.active, ex3.enabled = dict(ex1.files), set(ex1.active), set(ex1.enabled)
+    again = apply(ok_facts, ex3, PERSON, UID, release=REL, is_root=True)
+    assert not again.ok and "another agent user" in again.report()
 
 
 def test_the_plan_says_it_in_plain_words_and_names_the_share_paths():

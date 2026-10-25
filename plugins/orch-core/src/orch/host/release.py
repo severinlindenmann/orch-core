@@ -27,6 +27,7 @@ import secrets
 import shutil
 import stat
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 __all__ = [
@@ -109,17 +110,30 @@ def default_version(source: Path | None = None, python: str | None = None) -> st
 
 def _freeze(root: Path) -> None:
     for path in sorted(root.rglob("*"), key=lambda p: len(p.parts), reverse=True):
+        if path.is_symlink():  # a venv links to its interpreter: never change what a link points at
+            continue
         os.chmod(path, 0o555 if path.is_dir() else (0o555 if path.parent.name == "bin" else 0o444))
     os.chmod(root, 0o555)
 
 
 def install_release(
-    version: str | None = None, *, target: Path | None = None, source: Path | None = None, python: str | None = None
+    version: str | None = None,
+    *,
+    target: Path | None = None,
+    source: Path | None = None,
+    python: str | None = None,
+    lock: Path | None = None,
+    prepare: Callable[[Path], None] | None = None,
 ) -> Path:
-    """``python``: the interpreter the launchers name (default: this one). Tier B passes the one in the share."""
+    """``python``: the interpreter the launchers name (default: this one). Tier B passes the one in the share.
+
+    ``lock`` (tier B): the release's hash-pinned requirements file. Its bytes are copied to ``requirements.lock``, its
+    digest goes into ``RELEASE.json`` and into the version, and ``prepare(staging)`` (which builds ``staging/venv``
+    from it) runs BEFORE the release is frozen; the launchers then name ``<release>/venv/bin/python``."""
     source = source or _package_dir()
     python = python or sys.executable
-    version = version or default_version(source, python)
+    lock_digest = hashlib.sha256(lock.read_bytes()).hexdigest() if lock is not None else None
+    version = version or default_version(source, python + (lock_digest or ""))
     if not version or "/" in version or version.startswith("."):
         raise ReleaseError(f"invalid version {version!r}")
     if any(ch.isspace() for ch in python) or "\x00" in python:
@@ -140,7 +154,8 @@ def install_release(
                 first = (final / "bin" / name).read_text().split("\n", 1)[0]
             except OSError as exc:
                 raise ReleaseError(f"release {version} has no readable launcher {name}") from exc
-            if first != f"#!{python} -I":
+            want_python = f"{final}/venv/bin/python" if lock is not None else python
+            if first != f"#!{want_python} -I":
                 raise ReleaseError(
                     f"release {version} was installed for another interpreter ({first[2:]!r}); use a new version"
                 )
@@ -155,9 +170,18 @@ def install_release(
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source / rel, dest)
         (staging / "bin").mkdir()
-        (staging / "bin" / "orch-host").write_text(f"#!{python} -I\n" + LAUNCHER)
-        (staging / "bin" / "orch-runner").write_text(f"#!{python} -I\n" + RUNNER_LAUNCHER)
-        (staging / "RELEASE.json").write_text(json.dumps({"version": version, "files": manifest}, sort_keys=True))
+        launcher_python = python
+        doc: dict[str, object] = {"version": version, "files": manifest}
+        if lock is not None:
+            if prepare is None:
+                raise ReleaseError("a lock needs a step that builds the environment from it")
+            shutil.copyfile(lock, staging / "requirements.lock")
+            prepare(staging)
+            launcher_python = f"{final}/venv/bin/python"
+            doc["lock_sha256"] = lock_digest
+        (staging / "bin" / "orch-host").write_text(f"#!{launcher_python} -I\n" + LAUNCHER)
+        (staging / "bin" / "orch-runner").write_text(f"#!{launcher_python} -I\n" + RUNNER_LAUNCHER)
+        (staging / "RELEASE.json").write_text(json.dumps(doc, sort_keys=True))
         _freeze(staging)
         os.rename(staging, final)  # atomic: a release appears complete or not at all
         _point_current(releases, version)

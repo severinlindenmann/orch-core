@@ -111,7 +111,10 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     (POST, W + "/click/prepare"): (ALLOWED, "body decides: grant secret reveal and hub steps are refused (R1-4)"),
     (POST, W + "/click/view"): (ALLOWED, ""),
     (POST, W + "/click/state"): (ALLOWED, ""),
-    (POST, W + "/click/sign"): (ALLOWED, "sealed bodies (typed secrets) are refused for a remote session (R1-4)"),
+    (POST, W + "/click/sign"): (
+        ALLOWED,
+        "body decides: sealed bodies and reveal keys are refused for a remote session",
+    ),
     (POST, W + "/click/cancel"): (ALLOWED, ""),
     # --- hub
     (POST, W + "/hubsign"): (REFUSED, "remote mode signs nothing for the hub (D81)"),

@@ -21,7 +21,7 @@ from test_dashboard_click import (  # noqa: F401
     script,
 )
 
-from orch_dashboard import stepup
+from orch_dashboard import routegate, stepup
 from orch_dashboard.stepup import GUARDED_ROUTES, STEP_UP
 
 FEATURES = ["custody", "device_rotate", "runner_switch"]
@@ -116,3 +116,25 @@ def test_no_route_adds_a_passkey_or_a_device_yet(app):
     paths = [r.path for r in app.routes if isinstance(r, APIRoute)]
     assert not [p for p in paths if any(w in p for w in ("passkey/add", "passkey/remove", "device/add", "enroll/mint"))]
     assert stepup.NO_ROUTE_YET  # R1-6 must give these a step-up when they get routes
+
+
+def test_the_body_decides_routes_of_the_table_are_exactly_the_guarded_routes():
+    """A new body-decides handler cannot go unguarded: the table marks it, and so must `stepup.GUARDED_ROUTES` (and
+    the reverse). Routes that are wholly step-up in the table are guarded too, as a backup."""
+    from orch_dashboard.routegate import ALLOWED, TABLE
+
+    prefix = "/api/w/{ws}/click/"
+    body_decides = {
+        path.removeprefix(prefix)
+        for (method, path), (rule, why) in TABLE.items()
+        if rule == ALLOWED and why.startswith("body decides") and method == "POST"
+    }
+    assert body_decides
+    whole_route = {
+        path.removeprefix(prefix)
+        for (_, path), (rule, _) in TABLE.items()
+        if rule == routegate.STEP_UP and prefix in path
+    }
+    guarded = set(GUARDED_ROUTES)
+    assert body_decides == guarded - whole_route
+    assert whole_route <= guarded

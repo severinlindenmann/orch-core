@@ -55,6 +55,7 @@ from typing import TYPE_CHECKING, Any
 from jsonschema import Draft202012Validator
 
 from . import frames
+from ._socket import pidfd_alive, pidfd_pid_now
 from .custody import ensure_private_dir, read_json, write_private
 from .errors import HostError
 from .transport import Credentials, Session
@@ -256,7 +257,11 @@ def system_runner_identity(
     if main is None or main[0] != credentials.pid:
         return False
     if credentials.pidfd_pid is not None:
-        return credentials.pidfd_pid == credentials.pid
+        fd = credentials.pidfd
+        if fd is None or credentials.pidfd_pid != credentials.pid:
+            return False  # the kernel refused the pidfd (an exited peer), or it names another process
+        # read again now, after the manager was asked: still this process, still alive, still the unit's main PID
+        return pidfd_pid_now(fd) == credentials.pid == main[0] and pidfd_alive(fd)
     return started_when_systemd_says(credentials.pid, main[1])
 
 

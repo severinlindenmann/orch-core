@@ -6,6 +6,7 @@ two-user path runs in the Linux root CI job (``tests/setup/test_osapply_linux_ro
 
 from __future__ import annotations
 
+import errno
 import os
 import shutil
 import stat
@@ -348,9 +349,68 @@ def test_the_kernels_pidfd_binds_the_pid_where_there_is_one(monkeypatch):
     mine = share()
     run = fake_systemctl(show("777", "5000000"))
     monkeypatch.setattr(runners, "proc_start_seconds", lambda pid: 1.0)  # never consulted with a pidfd
-    assert system_runner_identity(mine, FixedPins(mine), Credentials(AGENT_UID, GID, 777, 777), run) is True
-    assert system_runner_identity(mine, FixedPins(mine), Credentials(AGENT_UID, GID, 777, 778), run) is False
+    monkeypatch.setattr(runners, "pidfd_alive", lambda fd: True)
+    monkeypatch.setattr(runners, "pidfd_pid_now", lambda fd: 777)
+    assert system_runner_identity(mine, FixedPins(mine), Credentials(AGENT_UID, GID, 777, 777, 9), run) is True
+    assert system_runner_identity(mine, FixedPins(mine), Credentials(AGENT_UID, GID, 777, 778, 9), run) is False
     assert system_runner_identity(mine, FixedPins(mine), Credentials(AGENT_UID, GID, 777, -1), run) is False
+    assert system_runner_identity(mine, FixedPins(mine), Credentials(AGENT_UID, GID, 777, 777), run) is False  # no fd
+
+
+def test_the_pidfd_is_read_again_after_the_manager_was_asked(monkeypatch):
+    from orch.host import runners
+
+    mine = share()
+    order: list[str] = []
+
+    def run(argv):
+        order.append("systemctl")
+        return SimpleNamespace(returncode=0, stdout=show("777"), stderr="")
+
+    def now(fd):
+        order.append("fdinfo")
+        return -1  # the peer exited while the manager was asked
+
+    monkeypatch.setattr(runners, "pidfd_alive", lambda fd: True)
+    monkeypatch.setattr(runners, "pidfd_pid_now", now)
+    assert system_runner_identity(mine, FixedPins(mine), Credentials(AGENT_UID, GID, 777, 777, 9), run) is False
+    assert order == ["systemctl", "fdinfo"]
+    monkeypatch.setattr(runners, "pidfd_pid_now", lambda fd: 777)
+    monkeypatch.setattr(runners, "pidfd_alive", lambda fd: False)  # reaped
+    assert system_runner_identity(mine, FixedPins(mine), Credentials(AGENT_UID, GID, 777, 777, 9), run) is False
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="SO_PEERPIDFD is Linux")
+@pytest.mark.parametrize(
+    "code,expected", [(errno.ENOPROTOOPT, None), (errno.EINVAL, -1), (errno.ESRCH, -1), (errno.EPERM, -1)]
+)
+def test_only_a_kernel_without_the_option_falls_back_to_start_time(code, expected):
+    from orch.host._socket import with_pidfd
+
+    class Sock:
+        def getsockopt(self, *args):
+            raise OSError(code, "x")
+
+    got = with_pidfd(Sock(), Credentials(AGENT_UID, GID, 777))  # type: ignore[arg-type]
+    assert got.pidfd_pid == expected and got.pidfd is None
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="SO_PEERPIDFD is Linux")
+def test_an_unreadable_pidfd_is_a_denial_and_leaks_no_fd(monkeypatch):
+    import struct
+
+    from orch.host import _socket
+
+    fd = os.open("/dev/null", os.O_RDONLY)
+
+    class Sock:
+        def getsockopt(self, *args):
+            return struct.pack("i", fd)
+
+    monkeypatch.setattr(_socket, "pidfd_pid_now", lambda f: -1)
+    assert _socket.with_pidfd(Sock(), Credentials(AGENT_UID, GID, 777)).pidfd_pid == -1  # type: ignore[arg-type]
+    with pytest.raises(OSError):
+        os.fstat(fd)  # closed
 
 
 def test_proc_start_seconds_reads_this_process_on_linux():
@@ -658,3 +718,24 @@ def test_runner_endpoint_refuses_when_the_pin_is_untrusted(pins_dir):
     write_pin(pins_dir, UID, {"class": "agent", "host_uid": UID + 1}, mode=0o666)
     with pytest.raises(SystemExit):
         _host_endpoint(UID, Path("/run/orch/agents/orch-agent-sev"), pins=AgentPins(pins_dir, owner=UID))
+
+
+# -- recovery: refused again and again ---------------------------------------------------------------------------------
+
+
+def test_the_runner_gives_up_after_three_denials_in_a_row():
+    from orch.host.client import Refused
+    from orch.runner.link import DENIED_LIMIT, HostLink
+
+    gave_up = []
+    link = HostLink.__new__(HostLink)
+    link._denied, link._on_denied = 0, lambda: gave_up.append(1)
+    for _ in range(DENIED_LIMIT - 1):
+        link._count_denial(Refused("peer.denied"))
+    assert gave_up == []
+    link._count_denial(ConnectionError("down"))  # another failure breaks the run
+    for _ in range(DENIED_LIMIT - 1):
+        link._count_denial(Refused("peer.denied"))
+    assert gave_up == []
+    link._count_denial(Refused("peer.denied"))
+    assert gave_up == [1] and DENIED_LIMIT == 3

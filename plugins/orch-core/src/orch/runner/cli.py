@@ -380,9 +380,15 @@ def _run(args: argparse.Namespace, env: Mapping[str, str]) -> int:
     from .restart import RestartGate
 
     gate = RestartGate(lambda: len(sup.table.live()), stop, lock=sup._spawn_lock)
+    refused = threading.Event()
+
+    def give_up() -> None:  # refused again and again: exit non-zero, `Restart=always` starts a fresh process
+        refused.set()
+        stop.set()
+
     link = HostLink(sup, host_socket, host_uid=host_uid, gen=gen, term=term,
                     config=lambda: read_config(state, uid), grants=grants, release=release,
-                    restart=gate.request, restarting=lambda: gate.armed)  # fmt: skip
+                    restart=gate.request, restarting=lambda: gate.armed, on_denied=give_up)  # fmt: skip
     link.start()
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(sig, lambda *_: stop.set())
@@ -400,7 +406,7 @@ def _run(args: argparse.Namespace, env: Mapping[str, str]) -> int:
                 from . import devmode
 
                 devmode.withdraw(announced, os.getpid())
-    return 0
+    return 1 if refused.is_set() else 0
 
 
 def main(argv: list[str], *, env: Mapping[str, str] | None = None, out: TextIO | None = None) -> int:

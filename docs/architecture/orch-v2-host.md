@@ -13562,7 +13562,13 @@ has recorded the sudo/SSH verdict; a re-run whose verdict fails stops the runner
   else by its start time in `/proc/<pid>/stat` against the unit's `ExecMainStartTimestampMonotonic` (both converted to
   the boot clock, within a second); where neither can be read the connection is denied. The query runs
   `systemctl` with `env={PATH, LC_ALL=C}` and a 3 s limit. A suspend after the runner started makes the start times
-  disagree and denies it until the unit restarts (fail closed).
+  disagree and denies it until the unit restarts (fail closed): after three `peer.denied` answers in a row the runner
+  exits non-zero and `Restart=always` (no start limit) starts it afresh. With a pidfd there is no such lockout. The
+  pidfd is the only path that is used when the kernel has it: only a kernel without the option (`ENOPROTOOPT`) falls back
+  to the start time; any other error (an exited peer: EINVAL, ESRCH) denies. The pidfd stays open until the decision
+  and its `Pid:` is read again after the manager was asked. **Residual (LOW):** on kernels before 6.5 (Debian 12,
+  Ubuntu 22.04) the start-time fallback cannot catch the reuse of a PID that the unit's own main process left behind;
+  the runner is inside the agent's trust domain, so this adds nothing the agent user could not already do.
   The agent and its runner share one UID, so they share one connection-attempt bucket and the 32-connection cap: an agent
   can lock its own runner out and nobody else. In tier B `runner.json` (programs, `login_shell`, `pass_env`) is owned
   by the agent and the agent can edit it: no person-side policy may live in that file; it stays in state the host

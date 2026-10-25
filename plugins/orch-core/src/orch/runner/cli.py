@@ -217,17 +217,18 @@ def enable(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, *, con
                 "start and refuses while they are not safe: run orch-os-setup again to see why",
                 9,
             )
-    differs = None if agent_user is not None else svc.differences(unit)
-    if agent_user is None and not args.replace and (differs or (differs is None and host_cli._loaded(manager))):
-        named = differs or ["unit"]  # no unit file here, but the label is loaded: from a unit file elsewhere
-        what = ", ".join(named) + " differ" if differs else "unit differs: the label is loaded from another file"
-        return _fail(
-            "host.busy",
-            f"a runner service ({unit.label}) is already installed for another setup ({what}); replacing it ends its "
-            "runs. To do that on purpose: orch runner enable --replace",
-            4,
-            differs=named,
-        )
+    else:  # tier A: an installed unit for another setup is never replaced silently
+        differs = svc.differences(unit)
+        if not args.replace and (differs or (differs is None and host_cli._loaded(manager))):
+            named = differs or ["unit"]  # no unit file here, but the label is loaded: from a unit file elsewhere
+            what = ", ".join(named) + " differ" if differs else "unit differs: the label is loaded from another file"
+            return _fail(
+                "host.busy",
+                f"a runner service ({unit.label}) is already installed for another setup ({what}); replacing it ends "
+                "its runs. To do that on purpose: orch runner enable --replace",
+                4,
+                differs=named,
+            )
     terminals = not args.no_terminals
     text = enablement.risk_text(prefix or wid[:8], wid, terminals, agent_user)
     if not confirmed:

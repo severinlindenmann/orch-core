@@ -472,7 +472,7 @@ class Manager:
         if self.plan.kind == "launchd":
             return ["launchctl", "kickstart", "-k", self._target()]
         if self._system:
-            return ["sudo", "systemctl", "restart", self.plan.systemd_name]
+            raise self._root_only("restarting")  # no advice either: the host restarts the runner (runner.restart)
         return ["systemctl", "--user", "restart", self.plan.systemd_name]
 
     def restart_now(self) -> list[list[str]]:

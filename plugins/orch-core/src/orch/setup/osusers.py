@@ -478,7 +478,7 @@ WantedBy=multi-user.target
     return UnitFile("orch-addon@.service", "/etc/systemd/system/orch-addon@.service", content, ())
 
 
-def plan(facts: OsFacts, person: str, person_uid: int, *, release: str = "/opt/orch/release") -> Plan:
+def plan(facts: OsFacts, person: str, person_uid: int, *, release: str) -> Plan:
     """Compute the setup plan for ``person`` (login name and UID). Pure: reads ``facts``, writes nothing."""
     if facts.platform != "linux":
         reason = {

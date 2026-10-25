@@ -443,13 +443,18 @@ class RunnerHub:
     def connected(self) -> bool:
         return self.session is not None and not self.session.closed
 
+    @staticmethod
+    def _host_release() -> str:
+        """This host's release id (looked up at call time: ``.service`` imports this module)."""
+        from .service import _release_id
+
+        return _release_id()
+
     def require_current(self) -> None:
         """One rule for every start (agent, shell, spawn): the runner must run the same release as this host. A runner
         from an older install would apply its old rules (and an old environment allow-list) to new requests. The
         refusal is plain; no check is relaxed."""
-        from .service import _release_id
-
-        if self.release != _release_id():
+        if self.release != self._host_release():
             raise HostError(
                 "runner.stale",
                 "the agent runner is from an older orch version; run `orch host enable` to restart it",
@@ -605,9 +610,7 @@ class RunnerHub:
         that loaded another release than this host is asked to restart when idle (``runner.restart``, spec 13.2 item 7);
         ``Restart=always`` brings it back on ``<release>/current``. Tier A restarts through the person's service
         manager (:func:`orch.runner.service.restart_if_stale`), never here."""
-        from .service import _release_id
-
-        mine = _release_id()
+        mine = self._host_release()
         if self.uid is None or self.uid == self.host.host_uid or self.release == mine:
             return
         if self._restart_asked == mine:

@@ -56,16 +56,17 @@ def risk_text(prefix: str, workspace_id: str, terminals: bool, agent_user: str |
     """The text the person is shown (and the record keeps). With ``agent_user`` (tier B) the words say the agents run as
     that user; without it the text is exactly D-P2-31's, which the signing review also uses."""
     if agent_user is not None:
+        opens = " and open terminals" if terminals else ""
         lines = [
             f"Turn on dashboard execution for {prefix} ({workspace_id}) on this account.",
             "",
             card_text(agent_user),
             "",
-            "The dashboard can then start agents, create worktrees" + (" and open terminals" if terminals else "")
-            + " for this workspace, as that user. It has no access to your SSH keys or your orch keys.",
+            f"The dashboard can then start agents, create worktrees{opens} for this workspace, as that user. "
+            "It has no access to your SSH keys or your orch keys.",
             "Anything that takes over this dashboard can still start agents and give them work to do; it is not kept "
             "out by this switch.",
-        ]  # fmt: skip
+        ]
         if not terminals:
             lines += ["", NO_TERMINALS_TEXT]
         return "\n".join(lines) + "\n"

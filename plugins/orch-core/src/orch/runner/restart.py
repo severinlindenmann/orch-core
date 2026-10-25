@@ -4,7 +4,7 @@ In tier B the runner is a system unit the person cannot restart (no root), so a 
 host: the host sends the ``restart`` command, the runner ends when it has no live runs (agents, terminals) and
 ``Restart=always`` starts it again from ``<release>/current``, which is the new code. With ``force`` it ends at once and
 its runs are stopped like any controlled stop (D-P2-39); the person chose that. Once armed, the link refuses every new
-spawn (``runner.restarting``). The gate only ever sets the runner's own
+spawn (``runner.unavailable``, "restarting on a new release"). The gate only ever sets the runner's own
 stop event: it carries no authority beyond what the host socket's peer check already gave the command.
 """
 

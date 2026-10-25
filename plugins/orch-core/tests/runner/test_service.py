@@ -124,7 +124,8 @@ def test_tier_b_manager_reads_the_system_manager_without_user() -> None:
     assert mgr.active() is True and mgr.main_pid() == 777 and mgr.loaded() is True
     assert run.ran and all(argv[0] == "systemctl" and "--user" not in argv for argv in run.ran)
     assert ["systemctl", "show", "-p", "MainPID", "--value", "orch-runner@sev.service"] in run.ran
-    assert mgr.restart_command() == ["sudo", "systemctl", "restart", "orch-runner@sev.service"]
+    with pytest.raises(svc.SystemUnit):  # not even advice: the host restarts the runner (runner.restart)
+        mgr.restart_command()
 
 
 def test_tier_b_manager_never_changes_a_system_unit() -> None:

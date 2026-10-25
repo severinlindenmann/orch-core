@@ -11,7 +11,7 @@ from orch.setup.osapply import BIN, RunResult, apply, recheck
 from orch.setup.oslauncher import LAUNCHER_PATH
 from orch.setup.osusers import AGENT_HOME_ROOT, AGENT_RUN_ROOT
 from tests.osfacts_fake import FakeOsFacts
-from tests.setup.test_osusers_apply import PERSON, UID, FakeExec, _go
+from tests.setup.test_osusers_apply import PERSON, REL, UID, FakeExec, _go
 
 UNIT = "/etc/systemd/system/orch-runner@.service"
 
@@ -195,7 +195,7 @@ def test_a_failed_stop_during_quarantine_is_a_problem_not_a_note() -> None:
         return real_run(argv)
 
     ex2.run = run
-    res2 = apply(facts, ex2, PERSON, UID, is_root=True)
+    res2 = apply(facts, ex2, PERSON, UID, release=REL, is_root=True)
     assert not res2.ok
     assert any("could not be stopped" in p and "orch-runner@sev.service" in p for p in res2.problems)
     assert not any("was stopped" in n for n in res2.notes)
@@ -209,7 +209,7 @@ def test_a_failed_disable_of_a_runner_that_is_not_running_is_fine() -> None:
     ex2.files, ex2.enabled = dict(ex.files), set(ex.enabled)  # not active
     real_run = ex2.run
     ex2.run = lambda argv: RunResult(1, "not loaded") if argv[1:3] == ["disable", "--now"] else real_run(argv)
-    res2 = apply(facts, ex2, PERSON, UID, is_root=True)
+    res2 = apply(facts, ex2, PERSON, UID, release=REL, is_root=True)
     assert not any("could not be stopped" in p for p in res2.problems)
     assert any("was stopped" in n for n in res2.notes)
 

@@ -11,6 +11,7 @@ from orch.setup.osapply import BIN, ApplyResult, DryRunExecutor, RunResult, appl
 from orch.setup.osusers import SSHD_DROPIN
 from tests.osfacts_fake import FakeOsFacts
 
+REL = "/opt/orch/release"
 PERSON, UID = "sev", 1000
 
 
@@ -199,7 +200,7 @@ def test_second_run_changes_nothing() -> None:
     assert res.ok, res.report()
     ex2 = FakeExec(facts)
     ex2.files, ex2.active, ex2.enabled = dict(ex.files), set(ex.active), set(ex.enabled)
-    res2 = apply(facts, ex2, PERSON, UID, is_root=True)
+    res2 = apply(facts, ex2, PERSON, UID, release=REL, is_root=True)
     assert res2.ok, res2.report()
     progs = set(ex2.programs())
     assert not progs & {"useradd", "usermod", "install", "tmpfiles"}
@@ -231,7 +232,7 @@ def test_wrong_existing_dir_is_refused_not_loosened() -> None:
                    gid=facts.users["orch-agent-sev"].gid, kind="dir", mode=0o755)  # fmt: skip
     ex2 = FakeExec(facts)
     ex2.files = dict(ex.files)
-    res2 = apply(facts, ex2, PERSON, UID, is_root=True)
+    res2 = apply(facts, ex2, PERSON, UID, release=REL, is_root=True)
     assert not res2.ok and "more open" in " ".join(res2.problems)
     assert not any(c[0] == BIN["install"] and c[-1].endswith("/state") for c in ex2.commands)
 
@@ -317,7 +318,7 @@ def test_rerun_after_fixing_the_policy_adds_the_policy_to_the_pin() -> None:
     del f.sigs["/etc/doas.conf"]
     ex2 = FakeExec(f)
     ex2.files = dict(ex.files)
-    res2 = apply(f, ex2, PERSON, UID, is_root=True)
+    res2 = apply(f, ex2, PERSON, UID, release=REL, is_root=True)
     assert res2.ok, res2.report()
     uid = f.users["orch-agent-sev"].uid
     assert "policy" in json.loads(ex2.files[f"/etc/orch/pins/{uid}.json"])
@@ -338,7 +339,7 @@ def test_root_login_creates_orch_person_then_plans_again() -> None:
     f = FakeOsFacts()
     _rel(f, kind="dir", mode=0o755)
     ex = FakeExec(f)
-    res = apply(f, ex, "root", 0, is_root=True)
+    res = apply(f, ex, "root", 0, release=REL, is_root=True)
     created = [c for c in ex.commands if c[0] == BIN["useradd"] and "--system" not in c]
     assert created and created[0][-1] == "orch"
     assert "d /run/orch/1000 2750 orch orch-agent-orch -" in ex.files.get(osapply.TMPFILES_CONF, "") or not res.ok
@@ -350,7 +351,7 @@ def test_dry_run_prints_exact_actions_and_changes_nothing(monkeypatch) -> None:
     _rel(f, kind="dir", mode=0o755)
     ex = DryRunExecutor()
     monkeypatch.setattr(ex, "query", lambda argv: RunResult(1))
-    res = apply(f, ex, PERSON, UID, is_root=True)
+    res = apply(f, ex, PERSON, UID, release=REL, is_root=True)
     assert res.dry_run and res.ok, res.report()
     text = res.report()
     assert text.startswith("Would do:")
@@ -493,7 +494,7 @@ def test_symlinked_repos_stops_before_any_tool_touches_it() -> None:
     facts.add_path("/var/lib/orch/agents/orch-agent-sev/repos", uid=facts.users["orch-agent-sev"].uid, kind="link")
     ex2 = FakeExec(facts)
     ex2.files = dict(ex.files)
-    res2 = apply(facts, ex2, PERSON, UID, is_root=True)
+    res2 = apply(facts, ex2, PERSON, UID, release=REL, is_root=True)
     assert not res2.ok and "symlink" in " ".join(res2.problems)
     assert not [c for c in ex2.commands if c[0] in (BIN["install"], BIN["tmpfiles"])]
     assert not [c for c in ex2.commands if c[0] == "write"]  # nothing after the failure
@@ -537,7 +538,7 @@ def test_a_rerun_whose_policy_now_fails_stops_the_runner_and_drops_the_verdict()
     facts.sudo_answer = True  # a sudo rule appeared for the agent user
     ex2 = FakeExec(facts)
     ex2.files, ex2.active, ex2.enabled = dict(ex.files), set(ex.active), set(ex.enabled)
-    res2 = apply(facts, ex2, PERSON, UID, is_root=True)
+    res2 = apply(facts, ex2, PERSON, UID, release=REL, is_root=True)
     assert not res2.ok
     assert [BIN["systemctl"], "disable", "--now", "orch-runner@sev.service"] in ex2.commands
     assert "orch-runner@sev.service" not in ex2.active
@@ -550,7 +551,7 @@ def test_a_rerun_with_a_failing_sshd_verdict_also_stops_the_runner() -> None:
     facts.sshd_answer = False
     ex2 = FakeExec(facts)
     ex2.files, ex2.active, ex2.enabled = dict(ex.files), set(ex.active), set(ex.enabled)
-    res2 = apply(facts, ex2, PERSON, UID, is_root=True)
+    res2 = apply(facts, ex2, PERSON, UID, release=REL, is_root=True)
     assert not res2.ok and "orch-runner@sev.service" not in ex2.active
     uid = facts.users["orch-agent-sev"].uid
     assert "policy" not in json.loads(ex2.files[f"/etc/orch/pins/{uid}.json"])
@@ -559,7 +560,7 @@ def test_a_rerun_with_a_failing_sshd_verdict_also_stops_the_runner() -> None:
 def test_the_runner_instance_is_the_bare_person_and_the_prefix_is_in_the_template() -> None:
     from orch.setup.osusers import plan
 
-    p = plan(FakeOsFacts(), PERSON, UID)
+    p = plan(FakeOsFacts(), PERSON, UID, release=REL)
     assert p.units[0].instances == ("sev",) and "User=orch-agent-%i" in p.units[0].content
     assert p.units[1].instances == tuple("12345678") and "User=orch-addon-%i" in p.units[1].content
     assert "User=%i" not in p.units[0].content + p.units[1].content
@@ -579,7 +580,7 @@ def test_a_foreign_user_sharing_the_agents_uid_stops_the_runner_and_drops_the_ve
     )  # fmt: skip
     ex2 = FakeExec(facts)
     ex2.files, ex2.active, ex2.enabled = dict(ex.files), set(ex.active), set(ex.enabled)
-    res2 = apply(facts, ex2, PERSON, UID, is_root=True)
+    res2 = apply(facts, ex2, PERSON, UID, release=REL, is_root=True)
     assert not res2.ok and any("orch-addon-1" in p for p in res2.problems)  # the refusal names the other user
     assert [BIN["systemctl"], "disable", "--now", "orch-runner@sev.service"] in ex2.commands
     assert "policy" not in json.loads(ex2.files[f"/etc/orch/pins/{agent_uid}.json"])
@@ -599,7 +600,7 @@ def test_quarantine_always_stops_and_rewrites_even_when_queries_and_reads_fail()
         return real_read(path)
 
     ex2.read_file = flaky
-    res2 = apply(facts, ex2, PERSON, UID, is_root=True)
+    res2 = apply(facts, ex2, PERSON, UID, release=REL, is_root=True)
     assert not res2.ok
     assert [BIN["systemctl"], "disable", "--now", "orch-runner@sev.service"] in ex2.commands
     uid = facts.users["orch-agent-sev"].uid
@@ -611,7 +612,7 @@ def test_admin_command_quotes_what_needs_quoting() -> None:
 
     from orch.setup.osusers import plan
 
-    p = dataclasses.replace(plan(FakeOsFacts(), PERSON, UID), release="/opt/a b;x", person="s ev")
+    p = dataclasses.replace(plan(FakeOsFacts(), PERSON, UID, release=REL), release="/opt/a b;x", person="s ev")
     cmd = p.admin_command()
     assert "--release '/opt/a b;x'" in cmd and "--person 's ev'" in cmd
 
@@ -623,7 +624,7 @@ def test_a_refused_run_does_not_say_nothing_to_change() -> None:
     assert done.ok and "Nothing to change" not in done.report()  # it did things
     ex2 = FakeExec(facts)
     ex2.files, ex2.active, ex2.enabled = dict(ex.files), set(ex.active), set(ex.enabled)
-    again = apply(facts, ex2, PERSON, UID, is_root=True)
+    again = apply(facts, ex2, PERSON, UID, release=REL, is_root=True)
     assert again.ok and again.report() == "Nothing to change."
 
 
@@ -681,7 +682,7 @@ def test_every_fact_detect_reads_after_apply_is_reachable_by_the_person() -> Non
     facts.add_user(PERSON, UID, home="/home/sev")
     _rel(facts, kind="dir", mode=0o755)
     ex = FakeExec(facts)
-    assert apply(facts, ex, PERSON, UID, is_root=True).ok
+    assert apply(facts, ex, PERSON, UID, release=REL, is_root=True).ok
     state = "/home/sev/.local/state/orch"
     facts.add_path("/home/sev", uid=UID, gid=UID, mode=0o750, kind="dir")
     facts.add_path(state, uid=UID, gid=UID, mode=0o700, kind="dir")
@@ -727,7 +728,7 @@ def _applied_world():
     facts.sigs["/etc/sudoers.d"] = (60, 2, 3, 4)
     facts.sigs["/etc/sudoers.d/runner"] = (30, 2, 3, 5)
     facts.unsearchable = {"/etc/sudoers.d"}
-    assert apply(facts, FakeExec(facts), PERSON, UID, is_root=True).ok
+    assert apply(facts, FakeExec(facts), PERSON, UID, release=REL, is_root=True).ok
     facts.host_view = True
     return facts
 
@@ -768,7 +769,7 @@ def test_a_readable_folder_entry_is_recorded_and_watched() -> None:
     facts.add_path("/etc/sudoers.d/90-x")
     facts.sigs["/etc/sudoers.d/90-x"] = (30, 2, 3, 5)
     facts.sigs["/etc/sudoers.d"] = (60, 2, 3, 4)
-    assert apply(facts, FakeExec(facts), PERSON, UID, is_root=True).ok
+    assert apply(facts, FakeExec(facts), PERSON, UID, release=REL, is_root=True).ok
     facts.host_view = True
     assert "/etc/sudoers.d/90-x" in facts.pins[facts.users["orch-agent-sev"].uid]["policy"]["files"]
     facts.sigs["/etc/sudoers.d/90-x"] = (31, 2, 3, 5)  # edited in place

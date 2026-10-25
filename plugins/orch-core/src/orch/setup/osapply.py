@@ -590,7 +590,7 @@ class _Apply:
             self.start_runner(p)  # only now: a runner never starts while the policy check fails
 
 
-_RECHECK_RELEASE = "/opt/orch/release"  # the plan needs a release path to be built; a recheck never reads or uses it
+_RECHECK_RELEASE = "/recheck-needs-no-release"  # plan() wants a well-formed path; a recheck never reads or uses it
 
 
 def recheck(facts: OsFacts, ex: Executor, person: str, *, is_root: bool) -> ApplyResult:
@@ -648,7 +648,7 @@ def apply(
     person: str,
     person_uid: int,
     *,
-    release: str = "/opt/orch/release",
+    release: str,
     is_root: bool,
 ) -> ApplyResult:
     dry = bool(getattr(ex, "dry", False))

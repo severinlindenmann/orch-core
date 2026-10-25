@@ -713,7 +713,7 @@ function MarketWorkspace() {
             </DialogHeader>
             {isOn(remove.state) && (
               <p role="status" className="rounded border border-warning/40 bg-warning-soft p-3 text-sm">
-                It is <StateChip on /> right now. We will turn it off first, then remove it: one approval.
+                It is <StateChip on /> right now. We will turn it off first, then remove it. Its data stays, so installing it again brings it back.
               </p>
             )}
             {message && <p role="alert">{message}</p>}

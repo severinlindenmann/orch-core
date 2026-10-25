@@ -27,9 +27,17 @@ def test_standalone_lists_only_the_official_marketplace_and_no_free_address(serv
     got = listing(served)
     assert got["sources"] == [{"url": constants.OFFICIAL_URL, "class": "official", "added": False}]
     assert got["any_source"] is False and "reason" not in got
-    assert listing(served, agent)["sources"] == got["sources"]  # a read for P and G alike
+    assert listing(served, agent)["markets"] == got["markets"]  # the rows are a read for P and G alike
     assert err(person(served, "market.add", {"url": "https://example.org/x/y"})) == "market.community_unisolated"
     assert net.index_calls == []
+
+
+def test_an_agent_sees_no_sources_even_when_a_hub_lists_some(served, net, monkeypatch):
+    h = Hub(monkeypatch, net)
+    h.set(markets=[{"url": ACME, "class": "company", "keys": [H.KEY_B64]}, _official()])
+    assert listing(served)["sources"]  # the person sees them
+    got = listing(served, agent)
+    assert got["sources"] == [] and got["any_source"] is False
 
 
 def test_joined_lists_exactly_what_the_hub_lists_and_the_unlisted_url_is_refused_with_no_fetch(

@@ -185,7 +185,7 @@ def _serve_checked(call: Call, op: str, args: dict[str, Any], fresh: str | None 
         return marketinstall.serve(call, op, args)
     try:
         if op == "market.list":
-            return ok_result(_list(service, bool(args.get("entries")), now))
+            return ok_result(_list(service, bool(args.get("entries")), now, person=call.column.name == "P" and call.viewer is not None))
         pol = hubpolicy.stored(service)
         files = _files(service)
         records = files.load()
@@ -391,7 +391,7 @@ def _update_available(rec: dict[str, Any] | None, url: str, entry: dict[str, Any
     return semver(entry["version"]) > semver(rec["version"])
 
 
-def _list(service: WorkspaceService, entries: bool, now: float) -> dict[str, Any]:
+def _list(service: WorkspaceService, entries: bool, now: float, person: bool = False) -> dict[str, Any]:
     files = _files(service)
     try:
         records = files.load()
@@ -441,7 +441,8 @@ def _list(service: WorkspaceService, entries: bool, now: float) -> dict[str, Any
                 for e in doc[ADDONS]
             ]
         rows.append(row)
-    return {"markets": rows, **_sources(service, pol, set(records))}
+    # `sources` are the hub-listed URLs not yet added: for the person (column P) only, never for an agent's grant (column G)
+    return {"markets": rows, **(_sources(service, pol, set(records)) if person else {"sources": [], "any_source": False})}
 
 
 def _sources(service: WorkspaceService, pol: Any, added: set[str]) -> dict[str, Any]:

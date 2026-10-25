@@ -126,12 +126,21 @@ def stage(served, name="standup", **more):
     return person(served, "market.stage", {"id": name, **more})
 
 
-def install(served, human, name="standup", **more):
-    """stage → prepare → sign → submit; returns (stage result, prepared, submit result)."""
+def install(served, human, name="standup", on=True, **more):
+    """stage → prepare → sign → submit; returns (stage result, prepared, submit result). 1237: an install is signed
+    Off; ``on`` (the default, most tests are about a running add-on) then signs the one-click ``addon.enable``."""
     st = ok(stage(served, name, **more))["data"]
     prepared = human.prepare("addon.grant", {"name": name, "staged": st["stage"]})
     signed = human.sign(prepared)
-    return st, prepared, ok(human.submit_res(prepared["request"]["id"], signed.events))
+    res = ok(human.submit_res(prepared["request"]["id"], signed.events))
+    if on and prepared["events"][0].get("off"):
+        turn_on(human, name)
+    return st, prepared, res
+
+
+def turn_on(human, name="standup"):
+    on = human.prepare("addon.enable", {"name": name})
+    return ok(human.submit_res(on["request"]["id"], human.sign(on).events))
 
 
 def addon_dir(served, name="standup") -> Path:

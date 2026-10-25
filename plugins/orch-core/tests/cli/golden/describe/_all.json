@@ -376,6 +376,13 @@
         "summary": "Show what turning an addon on would sign, without installing or granting it."
       },
       {
+        "name": "addon.enable",
+        "cli": "addon enable",
+        "group": "Admin",
+        "who": "human",
+        "summary": "Turn on an installed addon that is Off (owner only); it gets the permissions you approved at install."
+      },
+      {
         "name": "addon.disable",
         "cli": "addon disable",
         "group": "Admin",

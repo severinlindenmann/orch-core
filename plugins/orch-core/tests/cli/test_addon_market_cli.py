@@ -108,6 +108,8 @@ def test_setup_asks_the_host_to_build_and_install_prints_what_it_did(monkeypatch
                                             "commit": "a" * 40, "source_note": "n", "summary": None,
                                             "publisher": {"fingerprint": None, "tofu": "unsigned"}},
                                  "package_sha256": "sha256:" + "0" * 64}}  # fmt: skip
+            if op == "market.installed":
+                return {"data": {"addons": [{"name": "standup", "state": "disabled"}]}}
             raise AssertionError(op)
 
         def close(self):
@@ -120,4 +122,5 @@ def test_setup_asks_the_host_to_build_and_install_prints_what_it_did(monkeypatch
     calls.clear()
     code, out = run(["install", "standup"], as_json=False)
     assert code == 0 and "dependencies installed (7 files)" in out
-    assert [c[0] for c in calls] == ["market.stage", "market.env_build"]  # after the signature, never before
+    assert "it is Off" in out and "next: orch addon enable standup" in out  # 1237: an install ends Off
+    assert [c[0] for c in calls] == ["market.stage", "market.installed", "market.env_build"]  # env after the signature

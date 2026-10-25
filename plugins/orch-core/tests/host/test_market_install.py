@@ -57,6 +57,8 @@ def test_install_stages_then_the_signed_grant_installs(served, human, ready):
     assert prepared["material"]["market"]["url"] == H.OFFICIAL
     assert [e["type"] for e in prepared["events"]] == ["addon.granted"]
     assert prepared["events"][0]["package_sha256"] == st["package_sha256"]
+    assert prepared["events"][0]["off"] is True  # 1237: an install leaves it Off
+    assert "off" not in st["grant"]  # the preview is the capability body; "off" is added when the host signs
     assert "market" not in json.dumps(prepared["events"])  # nothing of the source is signed (5.2)
     assert not addon_dir(served).exists() and mfiles(served).installs()["addons"] == {}  # prepared is not installed
     signed = human.sign(prepared)
@@ -69,7 +71,14 @@ def test_install_stages_then_the_signed_grant_installs(served, human, ready):
     assert rec["seen"] == {f"{H.OFFICIAL}|standup": "1.0.0"} and rec["keys"] == {f"{H.OFFICIAL}|standup": H.KEY_B64}
     assert f.stages() == []
     inst = ok(person(served, "market.installed"))["data"]["addons"][0]
-    assert inst["name"] == "standup" and inst["state"] == "enabled" and inst["available"] is None
+    assert inst["name"] == "standup" and inst["state"] == "disabled" and inst["available"] is None
+    on = human.prepare("addon.enable", {"name": "standup"})  # the one click that turns it on
+    assert [(e["type"], e["version"], e["package_sha256"]) for e in on["events"]] == [
+        ("addon.enabled", "1.0.0", st["package_sha256"])
+    ]
+    ok(human.submit_res(on["request"]["id"], human.sign(on).events))
+    inst = ok(person(served, "market.installed"))["data"]["addons"][0]
+    assert inst["state"] == "enabled"
     row = ok(person(served, "market.list", {"entries": True}))["data"]["markets"][0]["addons"][0]
     assert row["installed"] == {"version": "1.0.0", "state": "enabled"} and row["update"] is False
 
@@ -322,8 +331,11 @@ def test_a_copied_folder_cannot_be_granted_plainly(served, human):
 
 def test_a_builtin_is_granted_plainly_and_a_disabled_install_is_re_enabled_from_its_record(served, human, ready):
     ok(human.prepare_res("addon.grant", {"name": "terminals"}))
-    install(served, human)
-    ok(human.prepare_res("addon.disable", {"name": "standup"}))
+    assert "off" not in human.prepare("addon.grant", {"name": "terminals"})["events"][0]  # built-ins are On
+    install(served, human, on=False)
+    assert err(human.prepare_res("addon.disable", {"name": "standup"})) == "invalid.input"  # Off already: no event
+    on = human.prepare("addon.enable", {"name": "standup"})
+    ok(human.submit_res(on["request"]["id"], human.sign(on).events))
     prepared = human.prepare("addon.disable", {"name": "standup"})
     ok(human.submit_res(prepared["request"]["id"], human.sign(prepared).events))
     again = human.prepare("addon.grant", {"name": "standup"})  # the bytes of the install record

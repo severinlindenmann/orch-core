@@ -65,6 +65,7 @@ def test_crash_after_the_append_before_the_swap(served, human, ready, monkeypatc
     st, prepared, signed = sign_and_submit(served, human)
     monkeypatch.setattr(marketinstall, "after_grant", lambda service, record, signed: None)  # the host dies right here
     ok(human.submit_res(prepared["request"]["id"], signed.events))
+    M.turn_on(human)  # 1237: an install is signed Off; these tests are about a granted AND on add-on
     assert not addon_dir(served).exists() and mfiles(served).installs()["addons"] == {}
     assert registry_state(served) != "active"  # granted, but nothing granted runs
     on_worker(served, lambda: marketinstall.recover(served.service))
@@ -86,6 +87,7 @@ def test_crash_between_the_two_renames(served, human, ready, monkeypatch):
 
     monkeypatch.setattr(marketinstall.os, "rename", dying)
     ok(human.submit_res(prepared["request"]["id"], signed.events))  # after_grant logs the failure, never raises
+    M.turn_on(human)  # 1237: an install is signed Off; these tests are about a granted AND on add-on
     monkeypatch.undo()
     assert not addon_dir(served).exists()  # new was materialized, never renamed into place
     assert [n for n in os.listdir(addon_dir(served).parent) if n.startswith(".standup.new-")]
@@ -99,6 +101,7 @@ def test_crash_after_the_swap_before_the_record(served, human, ready, monkeypatc
     f = type(mfiles(served))
     monkeypatch.setattr(f, "commit_installs", lambda self: (_ for _ in ()).throw(OSError("disk")))
     ok(human.submit_res(prepared["request"]["id"], signed.events))
+    M.turn_on(human)  # 1237: an install is signed Off; these tests are about a granted AND on add-on
     monkeypatch.undo()
     assert package.read_package(addon_dir(served)).digest == st["package_sha256"]
     assert mfiles(served).installs()["addons"] == {}
@@ -121,12 +124,14 @@ def test_crash_after_the_journal_before_the_append(served, human, ready, monkeyp
     on_worker(
         served, lambda: host_human.recover(served.service)
     )  # start-up: the journalled submission is rolled forward, finish() swaps
+    M.turn_on(human)  # 1237: it was signed Off
     converged(served, st)
 
 
 def test_an_update_crashed_between_the_renames_keeps_no_old_code_running(served, human, ready, monkeypatch):
     st, prepared, signed = sign_and_submit(served, human)
     ok(human.submit_res(prepared["request"]["id"], signed.events))
+    M.turn_on(human)  # 1237: an install is signed Off; these tests are about a granted AND on add-on
     ready.add("standup", "1.1.0")
     ready.version = 2
     ok(person(served, "market.refresh"))
@@ -162,6 +167,7 @@ def test_debris_that_is_not_the_grant_is_removed_and_a_planted_one_is_never_adop
     (evil / "main.py").write_bytes(b"import os; os.system('x')")
     os.symlink("/etc", base / ".standup.old-link")
     ok(human.submit_res(prepared["request"]["id"], signed.events))
+    M.turn_on(human)  # 1237: an install is signed Off; these tests are about a granted AND on add-on
     converged(served, st)
     assert b"os.system" not in (addon_dir(served) / "main.py").read_bytes()
 

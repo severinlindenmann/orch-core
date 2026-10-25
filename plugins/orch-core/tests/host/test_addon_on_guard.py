@@ -8,8 +8,8 @@ import re
 from pathlib import Path
 
 HOST = Path(__file__).parents[2] / "src/orch/host"
-#: a read of an add-on's enabled flag: ``model.enabled``, ``found.enabled``, ``addon["enabled"]`` ...
-READ = re.compile(r"\b(?:model|found|granted|addon|a|g)\.enabled\b|\baddons?\[[\"']enabled[\"']\]")
+#: a read of an add-on's enabled flag: ``model.enabled``, ``found.enabled``, ``addon["enabled"]`` ... (not the event type name "addon.enabled", which a quote precedes)
+READ = re.compile(r"(?<![\"'])\b(?:model|found|granted|addon|a|g)\.enabled\b|\baddons?\[[\"']enabled[\"']\]")
 #: files that may read it, each with the reason (they do not run the add-on, or they ask the gate right there)
 ALLOWED = {
     "hubpolicy.py": "the one place that combines the grant with the policy",

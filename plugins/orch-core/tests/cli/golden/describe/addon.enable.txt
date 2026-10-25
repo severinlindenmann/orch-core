@@ -1,0 +1,18 @@
+ok describe addon.enable
+Turn on an installed addon that is Off (owner only); it gets the permissions you approved at install.
+usage: orch addon enable NAME [--dry-run]
+who: human · emits: addon.enabled
+pre: workspace_exists addon_exists role_allows user_presence
+args:
+  NAME  addon name
+  --dry-run  say what would happen, append nothing
+errors:
+  not_found (exit 2): orch list
+  custody.no_key (exit 3): orch setup sets up your device key | fix: orch help
+  custody.no_prompt (exit 3): run this command yourself, in your own terminal | fix: orch help
+  custody.wrong_passphrase (exit 3): run the command again and type your passphrase | fix: orch help
+  human_only (exit 3): orch ask or orch wait | fix: orch describe ask
+  role.denied (exit 3): ask an owner or maintainer | fix: orch status
+  lock.busy (exit 4 retry): retry in a moment | fix: orch status
+  members.stale (exit 9 retry): retry; the person re-signs | fix: orch status
+out: ok addon.enabled {name} seq={seq} / next: {next}

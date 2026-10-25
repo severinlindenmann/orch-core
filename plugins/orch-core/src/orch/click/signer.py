@@ -2017,14 +2017,13 @@ class ClickSigner:
 
     @staticmethod
     def _token_text(raw: bytearray) -> str:
-        from orch.addons import credential
         from orch.tokenshape import GITHUB_TOKEN_SHAPE
 
         try:
             text = bytes(raw).decode("ascii")
         except UnicodeDecodeError:
             text = ""
-        if GITHUB_TOKEN_SHAPE.fullmatch(text) is None or not credential.valid(text):
+        if GITHUB_TOKEN_SHAPE.fullmatch(text) is None:
             raise ClickError(
                 "invalid.input", "that is not a GitHub token (it starts with ghp_, github_pat_ or similar)"
             )
@@ -2032,12 +2031,10 @@ class ClickSigner:
 
     def _token_remove(self, wid: str, uid: int) -> dict[str, Any]:
         from orch.addons import credential
-        from orch.host import securitylog
         from orch.host.errors import HostError
 
         try:
-            credential.remove(self.state, wid, GITHUB_ADDON)
-            securitylog.record(self.state, uid, self.wall(), "addon.logout", addon=GITHUB_ADDON)
+            credential.person_remove(self.state, wid, uid, GITHUB_ADDON, self.wall())
         except (HostError, OSError, ValueError):
             raise ClickError("custody.unavailable", "the token could not be removed") from None
         self._note("github_token", workspace=wid)

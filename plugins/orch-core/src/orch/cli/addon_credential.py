@@ -24,7 +24,6 @@ from typing import Any, TextIO
 
 from orch.addons import credential
 from orch.custody import NoPrompt
-from orch.host import securitylog
 from orch.host.errors import HostError
 from orch.market import ADDONS
 from orch.ops.workspace_init import Terminal
@@ -124,8 +123,7 @@ def main(
         if a.cmd == "login":
             _login(a, env, state, wid, out, now)
         else:
-            removed = credential.remove(state, wid, a.name)
-            securitylog.record(state, uid, now(), "addon.logout", addon=a.name)
+            removed = credential.person_remove(state, wid, uid, a.name, now())
             out.write("Key removed.\n" if removed else "No key was stored.\n")
         return 0
     except _Refusal as exc:

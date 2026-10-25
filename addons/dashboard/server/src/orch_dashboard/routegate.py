@@ -105,6 +105,7 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     ),
     (POST, W + "/click/rotate/seal"): (ALLOWED, "the review of a device rotate; the touch is at /click/rotate"),
     (POST, W + "/click/rotate"): (STEP_UP, "device rotate"),
+    (GET, W + "/click/github"): (ALLOWED, "whether a GitHub token is saved; reads the add-on list, never the token"),
     (POST, W + "/click/github/seal"): (
         ALLOWED,
         "the signer's key for a sealed GitHub token; the touch is at /click/github",

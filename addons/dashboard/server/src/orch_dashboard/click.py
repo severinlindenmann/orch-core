@@ -562,7 +562,19 @@ def register(app: FastAPI, gateway: Gateway):
         if not owner(ws):
             raise fail("role.denied", "Only an owner saves the GitHub token in the dashboard.", exit=3)
         if not signer.github_tokens():
-            raise fail("click.contract", "Update orch-core: its signing helper cannot take a GitHub token yet.", exit=9)
+            raise fail("click.contract", "This dashboard needs an update before it can save a GitHub token.", exit=9)
+
+    @app.get("/api/w/{ws}/click/github")
+    def github_state(ws: str = Depends(workspace)):
+        """Is a GitHub token saved? `stored`, `missing`, or `null` when the GitHub add-on is off or asks for no key.
+        Read from `addon.list`; the token itself is never read here."""
+        gateway.enabled(ws)
+        rows = gateway.call(ws, "addon.list").get("addons", [])
+        row = next(
+            (r for r in rows if isinstance(r, dict) and r.get("name") == "github" and r.get("state") == "active"), None
+        )
+        state = None if row is None else row.get("credential")
+        return {"credential": state if state in ("stored", "missing") else None}
 
     @app.post("/api/w/{ws}/click/github/seal")
     def github_seal(_body: SealBegin, ws: str = Depends(workspace)):

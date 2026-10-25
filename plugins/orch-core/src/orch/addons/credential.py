@@ -265,6 +265,17 @@ def person_store(state_dir, workspace_id: str, host_uid: int, name: str, value: 
     securitylog.record(state_dir, host_uid, now, "addon.login", addon=name)
 
 
+def person_remove(state_dir, workspace_id: str, host_uid: int, name: str, now: float) -> bool:
+    """The person's own removal of a key: delete it (:func:`remove`, idempotent) and write the audit line (name and
+    time). The one path of ``orch addon logout`` and of the dashboard's "Remove token" (#1198 C16). ``False`` when
+    there was no key."""
+    from orch.host import securitylog
+
+    removed = remove(state_dir, workspace_id, name)
+    securitylog.record(state_dir, host_uid, now, "addon.logout", addon=name)
+    return removed
+
+
 def remove(state_dir, workspace_id: str, name: str) -> bool:
     """Delete the credential directory of ``name``; ``False`` when there was none. Idempotent. Relative to the checked
     ``addons`` fd: an entry that is a link or a regular file is unlinked; a directory is entered only if it is private

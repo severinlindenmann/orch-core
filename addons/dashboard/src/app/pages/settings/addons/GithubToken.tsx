@@ -3,6 +3,7 @@
 // place `orch addon login github` does. The typed text lives in the input only: it is read once at the click, the field
 // is emptied at once, and nothing else holds it (no state, no storage).
 import { Loader2 } from 'lucide-react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { api } from '@/api/client'
 import type { CustodySealOffer } from '@/api/click'
@@ -12,7 +13,7 @@ import { Button } from '@/components/ui/button'
 
 const MESSAGES: Record<string, string> = {
   'role.denied': 'Only an owner saves the GitHub token.',
-  'click.contract': 'Update orch-core: its signing helper cannot take a GitHub token yet.',
+  'click.contract': 'This dashboard needs an update before it can save a GitHub token.',
   'passkey.stepup_required': 'Confirm with your fingerprint or PIN first, then try again.',
 }
 
@@ -28,6 +29,10 @@ const offerOk = (o: CustodySealOffer) =>
   o.seal?.pk?.length === 87 && o.seal.purposes.length === 1 && o.seal.purposes[0] === 'github.token'
 
 export function GithubToken({ workspace }: { workspace: Workspace }) {
+  const qc = useQueryClient()
+  const key = ['github-token', workspace.id]
+  const state = useQuery({ queryKey: key, queryFn: () => api.githubState(workspace.id) })
+  const stored = state.data?.credential === 'stored'
   const [phase, setPhase] = useState<'idle' | 'loading' | 'ask' | 'sending' | 'saved' | 'removed'>('idle')
   const [offer, setOffer] = useState<CustodySealOffer | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -75,6 +80,7 @@ export function GithubToken({ workspace }: { workspace: Workspace }) {
       await api.githubSave(workspace.id, { request_id: offer.request_id, view_digest: offer.view_digest, sealed: { 'github.token': env } })
       setOffer(null)
       setPhase('saved')
+      void qc.invalidateQueries({ queryKey: key })
     } catch (e) {
       text = null
       setError(sentence(e))
@@ -93,6 +99,7 @@ export function GithubToken({ workspace }: { workspace: Workspace }) {
       await api.githubRemove(workspace.id)
       setOffer(null)
       setPhase('removed')
+      void qc.invalidateQueries({ queryKey: key })
     } catch (e) {
       setError(sentence(e))
     } finally {
@@ -104,9 +111,12 @@ export function GithubToken({ workspace }: { workspace: Workspace }) {
     <section data-testid="github-token" aria-labelledby="github-token-heading" className="mt-3 space-y-2 border-t border-border px-4 pt-3">
       <h4 id="github-token-heading" className="text-[14px] font-semibold">GitHub token</h4>
       <p className="text-[13px] text-text-muted">Read-only access to your repositories. It stays on this computer and only the GitHub add-on gets it.</p>
+      {state.data && state.data.credential !== null && (
+        <p data-testid="github-token-state" className="text-[14px] font-medium">{stored ? 'A token is saved.' : 'No token yet.'}</p>
+      )}
       {error && <p role="alert" data-testid="github-token-error" className="text-[13px] text-danger">{error}</p>}
       {phase === 'saved' && <p role="status" data-testid="github-token-saved" className="text-[13px]">Saved. Only the GitHub add-on gets this token.</p>}
-      {phase === 'removed' && <p role="status" data-testid="github-token-removed" className="text-[13px]">The token was removed.</p>}
+      {phase === 'removed' && <p role="status" data-testid="github-token-removed" className="text-[13px]">The token was removed. GitHub stops working until you add a token again.</p>}
       {(phase === 'ask' || phase === 'sending') && offer ? (
         <div className="space-y-2">
           <label className="block text-[14px] font-medium" htmlFor="github-token-input">Token</label>
@@ -121,9 +131,9 @@ export function GithubToken({ workspace }: { workspace: Workspace }) {
       ) : (
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" className="min-h-11" onClick={() => { setError(null); void begin() }} disabled={phase === 'loading'} data-testid="github-token-start">
-            {phase === 'loading' ? <Loader2 className="mr-2 size-4 animate-spin" aria-hidden /> : null}{phase === 'saved' ? 'Replace token' : 'Add token'}
+            {phase === 'loading' ? <Loader2 className="mr-2 size-4 animate-spin" aria-hidden /> : null}{stored ? 'Replace token' : 'Add token'}
           </Button>
-          <Button variant="ghost" className="min-h-11" onClick={() => void remove()} data-testid="github-token-remove">Remove token</Button>
+          {stored && <Button variant="ghost" className="min-h-11" onClick={() => void remove()} data-testid="github-token-remove">Remove token</Button>}
         </div>
       )}
     </section>

@@ -32,7 +32,6 @@ def world(tmp_path, monkeypatch):
     signer = ClickSigner(state, workspaces=lambda: [entry], mono=mono, wall=lambda: 1_700_000_000.0)
     rows = {"github": {"name": "github", "state": "active", "credential": "missing"}}
     signer._call = lambda e, op, args, **kw: {"addons": list(rows.values())}  # noqa: SLF001
-    monkeypatch.setattr("orch.market.ADDONS", "addons")
     w = type("W", (), {})()
     w.state, w.signer, w.mono, w.rows, w.entry = state, signer, mono, rows, entry
     yield w
@@ -93,6 +92,8 @@ def test_a_new_token_replaces_the_old_one_and_remove_deletes_it(world):
         "credential": "missing",
     }
     assert stored(world) is None
+    audit = (world.state / "host" / "audit-security.jsonl").read_text().splitlines()
+    assert json.loads(audit[-1]) == {"at": 1_700_000_000, "event": "addon.logout", "addon": "github"}
 
 
 @pytest.mark.parametrize(
@@ -114,7 +115,9 @@ def test_an_envelope_for_another_purpose_request_workspace_or_review_stores_noth
 def test_a_replay_stores_nothing_and_a_corrupted_envelope_leaves_the_offer(world):
     offer = begin(world)
     env = {"github.token": seal(offer)}
-    broken = {"github.token": {**env["github.token"], "ct": "A" + env["github.token"]["ct"][1:]}}
+    ct = env["github.token"]["ct"]
+    # a different first character, always: "A" + ct[1:] left the envelope unchanged 1 time in 64 (the flake)
+    broken = {"github.token": {**env["github.token"], "ct": ("B" if ct[0] == "A" else "A") + ct[1:]}}
     with pytest.raises(ClickError):
         go(world, offer, broken)
     go(world, offer, env)  # the corrupted try did not burn the offer

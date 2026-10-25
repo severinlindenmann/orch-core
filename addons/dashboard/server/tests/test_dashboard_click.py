@@ -3168,3 +3168,34 @@ def test_c14_a_review_for_other_terminals_than_asked_is_not_shown(client, token,
     script.handler = odd
     res = client.post(url(stub, "runner/review"), json={"on": True, "terminals": False}, headers=hdr(token))
     assert res.status_code == 409 and res.json()["error"]["reason"] == "check_failed"
+
+
+def test_c16_the_state_is_read_from_the_addon_list_and_never_the_token(client, token, stub, script, local, monkeypatch):
+    from orch_dashboard.gateway import Gateway
+
+    real = Gateway.call
+    rows: list = []
+    monkeypatch.setattr(
+        Gateway,
+        "call",
+        lambda self, ws, op, args=None: {"addons": rows} if op == "addon.list" else real(self, ws, op, args),
+    )
+    cases = [
+        ([{"name": "github", "state": "active", "credential": "stored"}], "stored"),
+        ([{"name": "github", "state": "active", "credential": "missing"}], "missing"),
+        ([{"name": "github", "state": "active", "credential": None}], None),
+        ([{"name": "github", "state": "off", "credential": "stored"}], None),
+        ([{"name": "other", "state": "active", "credential": "stored"}], None),
+        ([], None),
+    ]
+    for listed, want in cases:
+        rows[:] = listed
+        res = client.get(url(stub, "github"), headers=hdr(token))
+        assert res.status_code == 200 and res.json() == {"credential": want}, listed
+
+
+def test_c16_the_contract_refusal_is_in_plain_words(client, token, stub, script, local):
+    script.features = ["custody"]
+    res = client.post(url(stub, "github/seal"), json={}, headers=hdr(token))
+    msg = res.json()["error"]["message"]
+    assert "needs an update" in msg and "signing helper" not in msg and "orch-core" not in msg

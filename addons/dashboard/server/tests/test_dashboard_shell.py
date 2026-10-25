@@ -15,6 +15,7 @@ def test_closed_route_allowlist():
         "/auth/probe",
         "/auth/session",
         "/auth/logout",
+        "/api/session/logout-all",
         "/auth/passkey/options",
         "/auth/passkey/login",
         "/auth/enroll/options",

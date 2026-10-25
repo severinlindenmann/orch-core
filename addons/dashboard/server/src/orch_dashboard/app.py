@@ -61,6 +61,7 @@ SETTINGS_TABS = (
     "members",
     "gates",
     "grants",
+    "remote",
     "addons",
     "hub",
 )  # HOST_TABS (settings/tabs.ts)
@@ -197,7 +198,7 @@ def create_app(
 
     @app.post("/api/session/logout-all")
     def logout_all(request: Request):
-        """"Log out everywhere" (R1-8): every remote browser session ends, this one too. Passkeys stay. A plain click:
+        """ "Log out everywhere" (R1-8): every remote browser session ends, this one too. Passkeys stay. A plain click:
         it only takes access away."""
         for token in auth.logout_everywhere("remote"):
             for end in (app.state.cancel_session, app.state.cancel_clicks, tickets.forget):

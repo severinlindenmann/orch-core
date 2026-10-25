@@ -1,7 +1,8 @@
-"""R1-8 server pieces: "Log out everywhere", the web address in the session answer, the tier B line on an agent preview."""
+"""R1-8 server pieces: "Log out everywhere", the web address in the session answer, the tier B line."""
 
 from remote_kit import *  # noqa: F403 - the fixtures (app, front, loop, remote, local, bearer)
 from remote_kit import HTTPS, bearer
+
 from orch_dashboard.terminals import execution_line
 
 
@@ -24,5 +25,6 @@ def test_session_answer_names_the_web_address_when_remote_is_on(loop, local):
 
 
 def test_tier_b_line_names_only_a_valid_agent_user():
-    assert execution_line("orch-agent-sev") == "This terminal runs as orch-agent-sev. It cannot read your keys. Never type secrets into it."
+    line = "This terminal runs as orch-agent-sev. It cannot read your keys. Never type secrets into it."
+    assert execution_line("orch-agent-sev") == line
     assert execution_line("root") is None and execution_line(None) is None

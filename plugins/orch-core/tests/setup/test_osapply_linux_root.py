@@ -369,7 +369,11 @@ def _check_shared_run(person, uid, agent, run, state, host_log) -> None:
         path = f"/run/orch/agents/orch-agent-{person}/probe.json"
 
         def welcomed() -> bool:
-            return '"welcome": {"t": "welcome"' in _sudo("cat", path, check=False).stdout
+            try:
+                hello = json.loads(_sudo("cat", path, check=False).stdout).get("welcome") or {}
+            except ValueError:
+                return False
+            return hello.get("t") == "welcome" and (hello.get("peer") or {}).get("class") == "runner"
 
         if not _wait(welcomed, 60):
             pytest.fail("the runner never connected\n" + _diagnostics(person, uid, host_log))

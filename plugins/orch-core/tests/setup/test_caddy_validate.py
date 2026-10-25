@@ -64,3 +64,9 @@ def test_the_trusted_proxy_options_reach_the_adapted_config(caddy, tmp_path):
     for want in ('"trusted_proxies_strict"', '"ranges":["10.0.0.0/8"]', "{http.vars.client_ip}", '"h1"', '"h2"'):
         assert want in done.stdout.replace(" ", ""), want
     assert '"h3"' not in done.stdout
+
+
+def test_the_plain_case_has_no_trusted_proxy_lines(caddy):
+    text = FrontPlan("orch.example.com", "sev", 1000, ()).caddyfile()
+    assert "trusted_proxies" not in text  # no proxy given: Caddy uses the TCP peer
+    assert "trusted_proxies_strict" not in text

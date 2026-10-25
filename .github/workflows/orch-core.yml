@@ -56,7 +56,7 @@ jobs:
       - run: uv sync --locked
       - name: Pinned Caddy for tests/setup/test_caddy_validate.py
         # Every slice, not one: the slices hold whole modules, so the module may land in any of them, and in CI a
-        # missing ORCH_CADDY_BIN fails the test. v2.11.7 (not a pre-release); the sha256 is the line for
+        # missing ORCH_CADDY_BIN fails the test. v2.11.7 (not a pre-release); the checksum is the SHA-512 line for
         # caddy_2.11.7_linux_amd64.tar.gz in the release's own caddy_2.11.7_checksums.txt.
         run: |
           set -euo pipefail

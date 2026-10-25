@@ -822,7 +822,7 @@ def _front(args: argparse.Namespace) -> int:
         )
         return 2
     if args.front_enroll:
-        if not (args.person and args.ctl) or args.name or args.trusted_proxy or args.dry_run or args.ctl is None:
+        if not (args.person and args.ctl) or args.name or args.trusted_proxy or args.dry_run:
             print("--front-enroll takes --person and --ctl only. Nothing was changed.", file=sys.stderr)
             return 2
         from . import osfront  # noqa: PLC0415

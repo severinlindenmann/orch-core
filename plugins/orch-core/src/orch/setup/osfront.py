@@ -328,8 +328,9 @@ def _caddy_problem(facts: OsFacts) -> str | None:
     st = facts.stat(CADDY_BIN)
     if st is None:
         return (
-            f"Caddy 2.11 or newer is not installed at {CADDY_BIN}. Install the caddy package (see "
-            "caddyserver.com/docs/install) and run this again. Do not start its own caddy.service."
+            f"Caddy 2.11 or newer is not installed at {CADDY_BIN}. Distribution packages are often "
+            "older: install it from Caddy's official apt repository (see caddyserver.com/docs/install) "
+            "and run this again. Do not start its own caddy.service."
         )
     if st.is_symlink or st.is_dir or st.uid != 0 or st.mode & 0o022:
         return f"{CADDY_BIN} must be a plain file owned by root that others cannot write."
@@ -369,8 +370,7 @@ def apply_enable(facts: OsFacts, ex: Executor, plan: FrontPlan, *, is_root: bool
     if found is None or (int(found.group(1)), int(found.group(2))) < CADDY_MIN:
         return res.fail(
             f"{CADDY_BIN} must be Caddy 2.11 or newer (it said: {ver.out.strip()[:60] or 'nothing'}); the client "
-            "address "
-            "placeholder needs it."
+            "address placeholder needs it."
         )
     st = _Apply(facts, ex, res)
     if ex.query([BIN["systemctl"], "is-active", "--quiet", "caddy.service"]).rc == 0:

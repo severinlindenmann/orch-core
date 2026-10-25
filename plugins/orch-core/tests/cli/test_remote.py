@@ -184,8 +184,8 @@ def test_dry_run_prints_exactly_what_will_change_and_changes_nothing(rig):
         f"write {osfront.UNIT_PATH}",
         "/run/orch/front/1000",
         "remote.json",
-        "<state>/dashboard/port (9000",
-        "one-time link",
+        "for the SSH fallback in <state>/dashboard/port",
+        "one-time first sign-in link",
         "Dry run: nothing was changed.",
     ):
         assert want in out, want
@@ -331,8 +331,8 @@ def test_disable_takes_access_away_first_then_stops_the_front_and_keeps_the_user
     code, out, _ = rig.go("disable", "--yes")
     assert code == 0, out
     assert not (rig.state / "dashboard" / "remote.json").exists()
-    assert rig.order == ["stop", "sudo"]
-    assert rig.calls[1][-1:] == ["--front-disable"] and "--person" not in rig.calls[1]
+    assert rig.order == ["stop", "up", "sudo"]  # the dashboard comes back, without remote access
+    assert rig.calls[2][-1:] == ["--front-disable"] and "--person" not in rig.calls[1]
     assert "Remote access is off" in out and "orch remote reset" in out
 
 

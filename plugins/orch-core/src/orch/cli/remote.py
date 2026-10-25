@@ -208,23 +208,23 @@ def _run_root(flags: list[str], env: Mapping[str, str]) -> int:
     return _run([SUDO, PYTHON, "-I", "-S", LAUNCHER_PATH, *flags], env)
 
 
-def _root_step(flags: list[str], env: Mapping[str, str], err: TextIO) -> None:
+def _root_step(flags: list[str], env: Mapping[str, str]) -> None:
     """The root part of enable and disable; a failure stops the run."""
     rc = _run_root(flags, env)
     if rc != 0:
         raise Refused("internal", f"the root step failed (exit {rc}); the dashboard was not changed", 1)
 
 
-def _write_remote_json(directory: Path, name: str, front_uid: int) -> None:
-    body = json.dumps({"name": name, "front_uid": front_uid}, sort_keys=True).encode()
-    fd, tmp = tempfile.mkstemp(prefix=".remote-", dir=directory)
+def _write_private(path: Path, body: bytes) -> None:
+    """Replace ``path`` with ``body``, never readable by others at any moment (mkstemp makes the file 0600)."""
+    fd, tmp = tempfile.mkstemp(prefix=".new-", dir=path.parent)
     try:
         os.fchmod(fd, 0o600)
         with os.fdopen(fd, "wb") as handle:
             handle.write(body)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(tmp, directory / "remote.json")
+        os.replace(tmp, path)
     except BaseException:
         with contextlib.suppress(OSError):
             os.unlink(tmp)
@@ -232,7 +232,8 @@ def _write_remote_json(directory: Path, name: str, front_uid: int) -> None:
 
 
 def _front_uid() -> int:
-    """The id of the user ``orch-front`` the root step made, checked again here: never the person, root, or an agent
+    """The id of the user ``orch-front`` the root step made, checked again here (the same rule as
+    ``osfront._forbidden``, which runs as root; this copy runs as the person): never the person, root, or an agent
     or add-on user (the dashboard refuses such a file at start; better not to write it)."""
     try:
         entry = pwd.getpwnam(osfront.FRONT_USER)
@@ -275,6 +276,17 @@ def _no_answer(path: Path) -> bool:
     return False
 
 
+def _start_dashboard(env: Mapping[str, str], err: TextIO) -> None:
+    """Start the dashboard again (it reads remote.json at start); a failure is said, not hidden."""
+    from orch.cli.dashboard import INSTALL_HINT, find_entry_point
+
+    command = find_entry_point(env, err)
+    if command is None:
+        raise Refused("unsupported.platform", INSTALL_HINT)
+    if _run([*command, "up"], env) != 0:
+        err.write("orch remote: the dashboard did not start again; start it with: orch dashboard up\n")
+
+
 def _enroll(env: Mapping[str, str], err: TextIO) -> int:
     """Start the dashboard (it reads remote.json), then have ROOT ask it for the first link: the dashboard hands an
     enrollment code to uid 0 only (a same-UID agent must not mint one). The root copy prints the link straight to this
@@ -296,10 +308,12 @@ def _tunnel_lines(name: str, env: Mapping[str, str]) -> list[str]:
     with contextlib.suppress(OSError, ValueError):
         port = int((_state(env) / "dashboard" / "port").read_text().strip())
     return [
-        "Locked out, the link ran out, or you prefer SSH? The SSH tunnel always works (it does not use the passkeys):",
+        "If you are locked out, the link ran out, or you prefer SSH, the SSH tunnel always works (no passkey needed).",
+        "On your computer, run:",
         f"  ssh -o ExitOnForwardFailure=yes -L {port}:127.0.0.1:{port} {_person()}@{name}",
-        "then, on this server:  orch dashboard open --print-url   and open the link it prints in the browser",
-        "that the tunnel serves. To get a new passkey link from here:  orch remote reset",
+        "Then, on the server (in that SSH session), run:  orch dashboard open --print-url",
+        "and open the link it prints in your computer's browser.",
+        "For a new sign-in link, run on the server:  orch remote reset",
     ]
 
 
@@ -341,47 +355,49 @@ def _enable(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, err: 
     person = _person()
     plan = osfront.FrontPlan(args.name, person, _uid(), tuple(proxies))
     root_plan = osfront.apply_enable(RealOsFacts(), DryRunExecutor(), plan, is_root=True)
+    if not root_plan.ok:
+        out.write("This is not possible yet:\n")
+        out.write("".join(f"  {p}\n" for p in root_plan.problems))
+        out.write("Nothing was changed.\n")
+        return 1
     out.write(f"orch remote enable: https://{args.name}\n\n")
     out.write(f"Checked: {args.name} points to this server; ports 80 and 443 are free here.\n\n")
     out.write("With sudo (your password is asked for):\n")
     out.write(_indent(root_plan))
     out.write("\nAs you:\n")
-    out.write("  write <state>/dashboard/remote.json (the name and the front's user id)\n")
+    out.write("  save the secure web address and the web server's user in <state>/dashboard/remote.json\n")
     if args.port is not None:
-        out.write(f"  write <state>/dashboard/port ({args.port}, the fixed port of the SSH tunnel)\n")
-    out.write("  restart the dashboard so it opens the front socket (a running dashboard is stopped)\n")
+        out.write(f"  save port {args.port} for the SSH fallback in <state>/dashboard/port\n")
+    out.write("  restart the dashboard so it opens the secure web address (a running dashboard is stopped)\n")
     out.write(
-        "  print a one-time link that adds the first passkey (works once, for 15 minutes); sudo asks the dashboard\n"
-        "  for it, because only root may\n\n"
+        "  print a one-time first sign-in link (works once, for 15 minutes); sudo asks the dashboard for it,\n"
+        "  because only the administrator may\n\n"
     )
-    if not root_plan.ok:
-        out.write("\nNot possible yet. Nothing was changed.\n")
-        return 1
     if not _confirm(args, out, "Make these changes?"):
         return 0 if args.dry_run else 1
     flags = ["--front-enable", "--person", person, "--name", args.name]
     for net in proxies:
         flags += ["--trusted-proxy", net]
-    _root_step(flags, env, err)
+    _root_step(flags, env)
     uid = _front_uid()
     directory = _dashboard_dir(env, create=True)
     if args.port is not None:
-        port_file = directory / "port"
-        tmp = directory / f".port-{os.getpid()}"
-        tmp.write_text(f"{args.port}\n")
-        tmp.chmod(0o600)
-        os.replace(tmp, port_file)
-    _write_remote_json(directory, args.name, uid)
+        _write_private(directory / "port", f"{args.port}\n".encode())
+    _write_private(
+        directory / "remote.json", json.dumps({"name": args.name, "front_uid": uid}, sort_keys=True).encode()
+    )
     _stop_dashboard(env, err, directory)
     out.write(f"\norch is reachable at https://{args.name}\n")
     out.flush()
     rc = _enroll(env, err)
     if rc != 0:
-        out.write("The link could not be made. Run `orch remote reset` to get one.\n")
+        out.write("The sign-in link could not be made. Run `orch remote reset` to get one.\n")
     out.write("Send the link to the person who will use orch. The first browser to open it wins; it works once.\n")
     out.write("\n".join(_tunnel_lines(args.name, env)) + "\n")
     out.write("After a reboot remote access stays down until the dashboard is started again (orch dashboard up).\n")
-    out.write("Tip: add a CAA record for your domain (letsencrypt.org) so only your certificate authority may issue.\n")
+    out.write(
+        "Tip: add a CAA DNS record for your domain (letsencrypt.org) so only that company may issue its certificate.\n"
+    )
     return 0 if rc == 0 else 1
 
 
@@ -437,7 +453,8 @@ def _disable(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, err:
     have_file = (directory / "remote.json").exists()
     root_plan = osfront.apply_disable(RealOsFacts(), DryRunExecutor(), is_root=True)
     out.write("orch remote disable\n\nAs you:\n")
-    out.write("  remove <state>/dashboard/remote.json\n  stop the dashboard (it opens again without remote access)\n")
+    out.write("  remove <state>/dashboard/remote.json\n")
+    out.write("  stop the dashboard and start it again without remote access\n")
     out.write("\nWith sudo (your password is asked for):\n")
     out.write(_indent(root_plan))
     if not root_plan.ok:
@@ -449,8 +466,10 @@ def _disable(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, err:
         with contextlib.suppress(FileNotFoundError):
             (directory / "remote.json").unlink()
     _stop_dashboard(env, err, directory)
-    _root_step(["--front-disable"], env, err)
-    out.write("Remote access is off. The passkeys stay stored, and enabling again brings them back.\n")
+    _start_dashboard(env, err)
+    _root_step(["--front-disable"], env)
+    out.write("Remote access is off. The dashboard is running again on this computer only.\n")
+    out.write("The passkeys stay stored, and enabling again brings them back.\n")
     out.write("If you suspect a passkey leaked, run `orch remote reset` to drop them all.\n")
     return 0
 
@@ -463,7 +482,7 @@ def _reset(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, err: T
     if not (directory / "remote.json").exists():
         raise Refused("remote.not_configured", "remote access is off; there is nothing to reset (orch remote enable)")
     out.write("orch remote reset\n\nAs you:\n")
-    out.write("  stop the dashboard: every remote session ends and every open enrollment link dies\n")
+    out.write("  stop the dashboard: every remote session ends and every open sign-in link dies\n")
     out.write("  delete every passkey (everybody has to add a passkey again)\n")
     out.write("  start the dashboard and print one new one-time link\n")
     if not _confirm(args, out, "Drop every passkey and session?"):
